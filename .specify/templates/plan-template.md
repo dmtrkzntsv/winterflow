@@ -31,7 +31,15 @@
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-[Gates determined based on constitution file]
+Confirm alignment with Constitution (v1.0.0):
+
+- Readable & Deterministic Code: Identify any sources of non-determinism and planned seams.
+- Modular Maintainability & Clear Boundaries: List modules touched/added and their single responsibility.
+- Automated Quality Assurance: Planned test types (unit/contract/integration) per story.
+- Consistent & Accessible User Experience: Define error/response format & performance budgets.
+- Observability, Performance & Reliability: Metrics/traces to add and dashboards impacted.
+
+Document deviations with issue link, expiry date, and rollback.
 
 ## Project Structure
 

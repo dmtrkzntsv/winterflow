@@ -65,7 +65,7 @@
 
 [Add more user stories as needed, each with an assigned priority]
 
-### Edge Cases
+### Edge Cases & Determinism
 
 <!--
   ACTION REQUIRED: The content in this section represents placeholders.
@@ -74,6 +74,8 @@
 
 - What happens when [boundary condition]?
 - How does system handle [error scenario]?
+- How is non-determinism (time, randomness, external APIs) isolated for testing?
+- What is the expected error response shape for failures here?
 
 ## Requirements *(mandatory)*
 
@@ -89,11 +91,14 @@
 - **FR-003**: Users MUST be able to [key interaction, e.g., "reset their password"]
 - **FR-004**: System MUST [data requirement, e.g., "persist user preferences"]
 - **FR-005**: System MUST [behavior, e.g., "log all security events"]
+- **FR-006**: System MUST emit required metrics/traces for its critical paths
+  (link to observability plan section)
+- **FR-007**: System MUST meet p95 latency of [X ms] for [primary action]
 
 *Example of marking unclear requirements:*
 
-- **FR-006**: System MUST authenticate users via [NEEDS CLARIFICATION: auth method not specified - email/password, SSO, OAuth?]
-- **FR-007**: System MUST retain user data for [NEEDS CLARIFICATION: retention period not specified]
+- **FR-008**: System MUST authenticate users via [NEEDS CLARIFICATION: auth method not specified - email/password, SSO, OAuth?]
+- **FR-009**: System MUST retain user data for [NEEDS CLARIFICATION: retention period not specified]
 
 ### Key Entities *(include if feature involves data)*
 
@@ -113,3 +118,5 @@
 - **SC-002**: [Measurable metric, e.g., "System handles 1000 concurrent users without degradation"]
 - **SC-003**: [User satisfaction metric, e.g., "90% of users successfully complete primary task on first attempt"]
 - **SC-004**: [Business metric, e.g., "Reduce support tickets related to [X] by 50%"]
+- **SC-005**: p95 latency for [primary action] ≤ [X ms]
+- **SC-006**: Error responses conform 100% to documented schema across test suite

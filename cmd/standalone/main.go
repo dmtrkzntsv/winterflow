@@ -12,6 +12,8 @@ import (
 	corsmw "winterflow/internal/app/controller/middleware/cors"
 	logmw "winterflow/internal/app/controller/middleware/logger"
 	timeoutmw "winterflow/internal/app/controller/middleware/timeout"
+	"winterflow/internal/domain/usecase/server"
+	"winterflow/internal/infra/redis"
 
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
@@ -31,8 +33,15 @@ func main() {
 	log.Info("Standalone service starting", "pid", os.Getpid())
 
 	cfg := config.NewConfig()
+
+	// domain logic
+	server.NewUseCase(&server.Deps{
+		redis.NewServerRepository(),
+	})
+
 	d := controller.NewDispatcher(controller.Deps{
 		Logger: log,
+		Cfg:    cfg,
 	})
 
 	d.Use(logmw.WithLogger(log), timeoutmw.WithTimeout(cfg.GetRouteTimeout()), corsmw.UseCORS)

@@ -13,9 +13,14 @@ type Deps struct {
 	Cfg    *config.Config
 }
 
+type route struct {
+	handler     http.HandlerFunc
+	middlewares []Middleware
+}
+
 func NewDispatcher(d Deps) *Dispatcher {
 	return &Dispatcher{
-		handlers:    make(map[string]map[string]http.HandlerFunc),
+		handlers:    make(map[string]map[string]route),
 		log:         d.Logger,
 		cfg:         config.NewConfig(),
 		middlewares: make([]Middleware, 0),
@@ -23,7 +28,7 @@ func NewDispatcher(d Deps) *Dispatcher {
 }
 
 type Dispatcher struct {
-	handlers    map[string]map[string]http.HandlerFunc
+	handlers    map[string]map[string]route
 	middlewares []Middleware
 	log         *logger.Logger
 	cfg         *config.Config
@@ -36,11 +41,14 @@ func (d *Dispatcher) Use(mws ...Middleware) {
 	d.middlewares = append(d.middlewares, mws...)
 }
 
-func (d *Dispatcher) Register(method, path string, handler http.HandlerFunc) {
+func (d *Dispatcher) Register(method, path string, handler http.HandlerFunc, mws ...Middleware) {
 	if d.handlers[path] == nil {
-		d.handlers[path] = make(map[string]http.HandlerFunc)
+		d.handlers[path] = make(map[string]route)
 	}
-	d.handlers[path][method] = handler
+	// make a copy to avoid external slice mutation
+	cp := make([]Middleware, len(mws))
+	copy(cp, mws)
+	d.handlers[path][method] = route{handler: handler, middlewares: cp}
 }
 
 func (d *Dispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -48,8 +56,13 @@ func (d *Dispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	method := r.Method
 
 	if handlers, exists := d.handlers[path]; exists {
-		if handler, exists := handlers[method]; exists {
-			var h http.Handler = http.HandlerFunc(handler)
+		if rt, exists := handlers[method]; exists {
+			var h http.Handler = http.HandlerFunc(rt.handler)
+			// apply route-specific middlewares
+			for i := len(rt.middlewares) - 1; i >= 0; i-- {
+				h = rt.middlewares[i](h)
+			}
+			// apply global middlewares
 			for i := len(d.middlewares) - 1; i >= 0; i-- {
 				h = d.middlewares[i](h)
 			}

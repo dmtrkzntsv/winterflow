@@ -1,4 +1,4 @@
 .env
-standalone
+/standalone
 .idea
 .DS_Store

@@ -1,6 +1,10 @@
 package config
 
-import "os"
+import (
+	"os"
+	"strconv"
+	"time"
+)
 
 type Config struct {
 }
@@ -15,4 +19,16 @@ func (c *Config) GetLogLevel() string {
 
 func (c *Config) GetServerPort() string {
 	return os.Getenv("PORT")
+}
+
+func (c *Config) GetDefaultRouteTimeout() time.Duration {
+	v := os.Getenv("HTTP_TIMEOUT_MS")
+	if v == "" {
+		return 0
+	}
+	ms, err := strconv.Atoi(v)
+	if err != nil || ms <= 0 {
+		return 0
+	}
+	return time.Duration(ms) * time.Millisecond
 }

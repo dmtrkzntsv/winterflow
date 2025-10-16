@@ -11,6 +11,7 @@ import (
 	"winterflow/internal/app/controller"
 	corsmw "winterflow/internal/app/controller/middleware/cors"
 	logmw "winterflow/internal/app/controller/middleware/logger"
+	timeoutmw "winterflow/internal/app/controller/middleware/timeout"
 
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
@@ -33,8 +34,10 @@ func main() {
 	d := controller.NewDispatcher(controller.Deps{
 		Logger: log,
 	})
-	d.Use(logmw.WithLogger(log), corsmw.UseCORS)
+
+	d.Use(logmw.WithLogger(log), timeoutmw.WithTimeout(cfg.GetDefaultRouteTimeout()), corsmw.UseCORS)
 	d.RegisterRoutes()
+
 	srv := &http.Server{
 		Addr:         ":" + cfg.GetServerPort(),
 		Handler:      d,

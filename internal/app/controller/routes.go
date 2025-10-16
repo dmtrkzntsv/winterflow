@@ -2,6 +2,7 @@ package controller
 
 import (
 	"net/http"
+	"winterflow/internal/app/controller/handler/server"
 	"winterflow/internal/app/controller/util"
 )
 
@@ -10,7 +11,6 @@ func (d *Dispatcher) RegisterRoutes() {
 		util.Success(w, "healthy", nil)
 	})
 
-	d.Register("GET", "/api/v1/test/test-method", func(w http.ResponseWriter, r *http.Request) {
-		util.Success(w, "TEST METHOD OK", nil)
-	})
+	serverAPI := server.NewHandler(&server.Deps{})
+	d.Register("GET", "/api/v1/server/get-servers", serverAPI.GetServers)
 }

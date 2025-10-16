@@ -21,9 +21,9 @@ type route struct {
 func NewDispatcher(d Deps) *Dispatcher {
 	return &Dispatcher{
 		handlers:    make(map[string]map[string]route),
+		middlewares: make([]Middleware, 0),
 		log:         d.Logger,
 		cfg:         config.NewConfig(),
-		middlewares: make([]Middleware, 0),
 	}
 }
 

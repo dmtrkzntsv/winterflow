@@ -7,11 +7,11 @@ type UseCase struct {
 }
 
 type Deps struct {
-	Repository port.ServerRepository
+	ServerRepo port.ServerRepository
 }
 
 func NewUseCase(d *Deps) *UseCase {
 	return &UseCase{
-		repository: d.Repository,
+		repository: d.ServerRepo,
 	}
 }

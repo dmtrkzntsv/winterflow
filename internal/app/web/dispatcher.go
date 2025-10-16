@@ -1,7 +1,8 @@
-package controller
+package web
 
 import (
 	"net/http"
+	"winterflow/internal/domain/port"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
 )
@@ -9,8 +10,9 @@ import (
 type Middleware func(http.Handler) http.Handler
 
 type Deps struct {
-	Logger *logger.Logger
-	Cfg    *config.Config
+	Logger  *logger.Logger
+	Cfg     *config.Config
+	Factory port.Factory
 }
 
 type route struct {
@@ -23,7 +25,8 @@ func NewDispatcher(d Deps) *Dispatcher {
 		handlers:    make(map[string]map[string]route),
 		middlewares: make([]Middleware, 0),
 		log:         d.Logger,
-		cfg:         config.NewConfig(),
+		cfg:         d.Cfg,
+		factory:     d.Factory,
 	}
 }
 
@@ -32,6 +35,7 @@ type Dispatcher struct {
 	middlewares []Middleware
 	log         *logger.Logger
 	cfg         *config.Config
+	factory     port.Factory
 }
 
 func (d *Dispatcher) Use(mws ...Middleware) {

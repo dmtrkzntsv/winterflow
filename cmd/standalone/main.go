@@ -8,13 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
-	"winterflow/internal/app/controller"
-	corsmw "winterflow/internal/app/controller/middleware/cors"
-	logmw "winterflow/internal/app/controller/middleware/logger"
-	timeoutmw "winterflow/internal/app/controller/middleware/timeout"
-	"winterflow/internal/domain/usecase/server"
-	"winterflow/internal/infra/redis"
-
+	"winterflow/internal/app/web"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
 
@@ -31,30 +25,9 @@ func main() {
 		log.Info(".env not found, using system environment variables")
 	}
 	log.Info("Standalone service starting", "pid", os.Getpid())
-
 	cfg := config.NewConfig()
 
-	// domain logic
-	server.NewUseCase(&server.Deps{
-		redis.NewServerRepository(),
-	})
-
-	d := controller.NewDispatcher(controller.Deps{
-		Logger: log,
-		Cfg:    cfg,
-	})
-
-	d.Use(logmw.WithLogger(log), timeoutmw.WithTimeout(cfg.GetRouteTimeout()), corsmw.UseCORS)
-	d.RegisterRoutes()
-
-	srv := &http.Server{
-		Addr:         ":" + cfg.GetServerPort(),
-		Handler:      d,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
-		IdleTimeout:  120 * time.Second,
-	}
-
+	srv := web.NewServer(log, cfg)
 	go func() {
 		log.Info(fmt.Sprintf("Starting server on port %s", cfg.GetServerPort()))
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

@@ -1,9 +1,9 @@
-package controller
+package web
 
 import (
 	"net/http"
-	"winterflow/internal/app/controller/handler/server"
-	"winterflow/internal/app/controller/util"
+	"winterflow/internal/app/web/handler/server"
+	"winterflow/internal/app/web/util"
 )
 
 func (d *Dispatcher) RegisterRoutes() {
@@ -11,6 +11,8 @@ func (d *Dispatcher) RegisterRoutes() {
 		util.Success(w, "healthy", nil)
 	})
 
-	serverAPI := server.NewHandler(&server.Deps{})
+	serverAPI := server.NewHandler(&server.Deps{
+		ServerRepo: d.factory.NewServerRepository(),
+	})
 	d.Register("GET", "/api/v1/server/get-servers", serverAPI.GetServers)
 }

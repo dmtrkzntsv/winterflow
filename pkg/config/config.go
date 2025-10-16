@@ -21,8 +21,8 @@ func (c *Config) GetServerPort() string {
 	return os.Getenv("PORT")
 }
 
-func (c *Config) GetDefaultRouteTimeout() time.Duration {
-	v := os.Getenv("HTTP_TIMEOUT_MS")
+func (c *Config) GetRouteTimeout() time.Duration {
+	v := os.Getenv("ROUTE_TIMEOUT_MS")
 	if v == "" {
 		return 0
 	}

@@ -35,7 +35,7 @@ func main() {
 		Logger: log,
 	})
 
-	d.Use(logmw.WithLogger(log), timeoutmw.WithTimeout(cfg.GetDefaultRouteTimeout()), corsmw.UseCORS)
+	d.Use(logmw.WithLogger(log), timeoutmw.WithTimeout(cfg.GetRouteTimeout()), corsmw.UseCORS)
 	d.RegisterRoutes()
 
 	srv := &http.Server{

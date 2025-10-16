@@ -3,6 +3,7 @@ package web
 import (
 	"net/http"
 	"time"
+	"winterflow/internal/app"
 	corsmw "winterflow/internal/app/web/middleware/cors"
 	logmw "winterflow/internal/app/web/middleware/logger"
 	timeoutmw "winterflow/internal/app/web/middleware/timeout"
@@ -11,11 +12,11 @@ import (
 	"winterflow/pkg/logger"
 )
 
-func NewServer(log *logger.Logger, cfg *config.Config) *http.Server {
+func NewServer(mode app.AppMode, log *logger.Logger, cfg *config.Config) *http.Server {
 	d := NewDispatcher(Deps{
 		Logger:  log,
 		Cfg:     cfg,
-		Factory: bootstrap.NewStandaloneFactory(),
+		Factory: bootstrap.NewFactory(mode),
 	})
 
 	d.Use(logmw.WithLogger(log), timeoutmw.WithTimeout(cfg.GetRouteTimeout()), corsmw.UseCORS)

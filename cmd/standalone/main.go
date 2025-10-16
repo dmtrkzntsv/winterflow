@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+	"winterflow/internal/app"
 	"winterflow/internal/app/web"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
@@ -27,7 +28,7 @@ func main() {
 	log.Info("Standalone service starting", "pid", os.Getpid())
 	cfg := config.NewConfig()
 
-	srv := web.NewServer(log, cfg)
+	srv := web.NewServer(app.AppModeStandalone, log, cfg)
 	go func() {
 		log.Info(fmt.Sprintf("Starting server on port %s", cfg.GetServerPort()))
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

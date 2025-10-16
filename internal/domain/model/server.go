@@ -3,9 +3,8 @@ package model
 import "time"
 
 type Capability struct {
-	Name        string
-	Description string
-	Value       string // Value provided by the agent
+	Name  string
+	Value string
 }
 
 type Feature struct {

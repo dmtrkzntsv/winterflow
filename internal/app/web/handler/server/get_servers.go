@@ -7,7 +7,11 @@ import (
 )
 
 func (h *Handler) GetServers(w http.ResponseWriter, r *http.Request) {
-	servers, _ := h.serverRepo.GetServers()
+	servers, err := h.serverRepo.GetServers()
+	if err != nil {
+		util.Error(w, "failed to load servers", nil)
+		return
+	}
 	util.Success(w, "ok", struct {
 		Servers []model.Server `json:"servers"`
 	}{Servers: servers})

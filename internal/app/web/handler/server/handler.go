@@ -17,5 +17,5 @@ func NewHandler(d *Deps) *Handler {
 	server.NewUseCase(&server.Deps{
 		ServerRepo: d.ServerRepo,
 	})
-	return &Handler{}
+	return &Handler{serverRepo: d.ServerRepo}
 }

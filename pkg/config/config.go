@@ -2,8 +2,6 @@ package config
 
 import (
 	"os"
-	"strconv"
-	"time"
 )
 
 type Config struct {
@@ -17,20 +15,16 @@ func (c *Config) GetLogLevel() string {
 	return os.Getenv("LOG_LEVEL")
 }
 
-func (c *Config) GetServerPort() string {
-	return os.Getenv("PORT")
+func (c *Config) GetApiPort() string {
+	return os.Getenv("API_PORT")
 }
 
-func (c *Config) GetRouteTimeout() time.Duration {
-	v := os.Getenv("ROUTE_TIMEOUT_MS")
-	if v == "" {
-		return 0
-	}
-	ms, err := strconv.Atoi(v)
-	if err != nil || ms <= 0 {
-		return 0
-	}
-	return time.Duration(ms) * time.Millisecond
+func (c *Config) GetApiURL() string {
+	return os.Getenv("API_URL")
+}
+
+func (c *Config) GetWebURL() string {
+	return os.Getenv("WEB_URL")
 }
 
 func (c *Config) GetAllowedOrigins() string {
@@ -39,4 +33,23 @@ func (c *Config) GetAllowedOrigins() string {
 		return "*"
 	}
 	return v
+}
+
+func (c *Config) IsAuthSupported(a string) bool {
+	result := false
+	if a == "google" {
+		gcid, gcs := c.GetGoogleAuth()
+		if gcid != "" && gcs != "" {
+			result = true
+		}
+	}
+	return result
+}
+
+func (c *Config) GetGoogleAuth() (clientID string, clientSecret string) {
+	return os.Getenv("GOOGLE_CLIENT_ID"), os.Getenv("GOOGLE_CLIENT_SECRET")
+}
+
+func (c *Config) GetJwtSecret() string {
+	return os.Getenv("JWT_SECRET")
 }

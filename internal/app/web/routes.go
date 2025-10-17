@@ -8,19 +8,24 @@ import (
 	srvstream "winterflow/internal/domain/service/stream"
 )
 
-func (d *Dispatcher) RegisterRoutes() {
-	d.Register("GET", "/_/health", func(w http.ResponseWriter, r *http.Request) {
+func (ro *Routing) registerRoutes() {
+	ro.Router.Get("/_/health", func(w http.ResponseWriter, r *http.Request) {
 		util.Success(w, "healthy", nil)
 	})
 
+	authRoutes, avaRoutes := ro.Auth.Handlers()
+	ro.Router.Mount("/auth", authRoutes)  // add auth handlers
+	ro.Router.Mount("/avatar", avaRoutes) // add avatar handler
+
+	amw := ro.Auth.Middleware()
 	stream := webstream.NewHandler(&webstream.Deps{
-		Logger:        d.log,
+		Logger:        ro.Logger,
 		StreamManager: srvstream.NewStreamManager(),
 	})
-	d.Register("GET", "/api/v1/stream", stream.Stream)
+	ro.Router.Get("/api/v1/stream", stream.Stream)
 
 	serverAPI := server.NewHandler(&server.Deps{
-		ServerRepo: d.factory.NewServerRepository(),
+		ServerRepo: ro.Factory.NewServerRepository(),
 	})
-	d.Register("GET", "/api/v1/server/get-servers", serverAPI.GetServers)
+	ro.Router.With(amw.Auth).Get("/api/v1/server/get-servers", serverAPI.GetServers)
 }

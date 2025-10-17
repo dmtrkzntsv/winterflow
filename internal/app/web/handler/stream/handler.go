@@ -38,6 +38,9 @@ func (h *Handler) Stream(w http.ResponseWriter, r *http.Request) {
 
 	// @todo: replace with real user ID from auth context
 	userID := r.Header.Get("X-User-ID")
+	if userID == "" {
+		userID = "anonymous"
+	}
 	ch := h.stream.AddSession(userID)
 	defer h.stream.RemoveSession(userID, ch)
 
@@ -50,7 +53,6 @@ func (h *Handler) Stream(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 			time.Sleep(1 * time.Second)
 		case <-ctx.Done():
-			h.logger.Debug("Client disconnected", "userID", userID)
 			return
 		}
 	}

@@ -32,3 +32,11 @@ func (c *Config) GetRouteTimeout() time.Duration {
 	}
 	return time.Duration(ms) * time.Millisecond
 }
+
+func (c *Config) GetAllowedOrigins() string {
+	v := os.Getenv("CORS_ALLOW_ORIGINS")
+	if v == "" {
+		return "*"
+	}
+	return v
+}

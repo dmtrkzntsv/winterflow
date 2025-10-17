@@ -19,7 +19,7 @@ func NewServer(mode app.AppMode, log *logger.Logger, cfg *config.Config) *http.S
 		Factory: bootstrap.NewFactory(mode),
 	})
 
-	d.Use(logmw.WithLogger(log), timeoutmw.WithTimeout(cfg.GetRouteTimeout()), corsmw.UseCORS)
+	d.Use(logmw.WithLogger(log), timeoutmw.WithTimeout(cfg.GetRouteTimeout()), corsmw.UseCORS(cfg.GetAllowedOrigins()))
 	d.RegisterRoutes()
 
 	return &http.Server{

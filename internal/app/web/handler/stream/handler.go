@@ -45,6 +45,7 @@ func (h *Handler) Stream(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case msg := <-ch:
+			h.logger.Debug("Received a stream message", "userID", userID, "msg", msg)
 			fmt.Fprintf(w, "%s\n\n", msg)
 			flusher.Flush()
 			time.Sleep(1 * time.Second)

@@ -1,6 +1,7 @@
 package stream
 
 import (
+	"encoding/json"
 	"sync"
 	"winterflow/internal/domain/model"
 )
@@ -46,10 +47,12 @@ func (b *Manager) RemoveSession(userID string, ch chan string) {
 func (b *Manager) Publish(userID string, msg model.StreamMessage) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	msgBytes, _ := json.Marshal(msg)
+	data := string(msgBytes)
 	if chans, ok := b.sessions[userID]; ok {
 		for _, ch := range chans {
 			select {
-			case ch <- msg.Payload.(string):
+			case ch <- data:
 			default:
 			}
 		}

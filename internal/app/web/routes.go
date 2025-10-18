@@ -2,6 +2,7 @@ package web
 
 import (
 	"net/http"
+	happ "winterflow/internal/app/web/handler/app"
 	"winterflow/internal/app/web/handler/server"
 	webstream "winterflow/internal/app/web/handler/stream"
 	"winterflow/internal/app/web/util"
@@ -24,8 +25,15 @@ func (ro *Routing) registerRoutes() {
 	})
 	ro.Router.Get("/api/v1/stream", stream.Stream)
 
-	serverAPI := server.NewHandler(&server.Deps{
+	appsAPI := happ.NewHandler(&happ.Deps{
+		Logger:  ro.Logger,
+		AppRepo: ro.Factory.NewAppRepository(),
+	})
+	ro.Router.With(amw.Auth, happ.GetAppsValidationMiddleware).Get("/api/v1/app/get-apps", appsAPI.GetApps)
+
+	serversAPI := server.NewHandler(&server.Deps{
+		Logger:     ro.Logger,
 		ServerRepo: ro.Factory.NewServerRepository(),
 	})
-	ro.Router.With(amw.Auth).Get("/api/v1/server/get-servers", serverAPI.GetServers)
+	ro.Router.With(amw.Auth).Get("/api/v1/server/get-servers", serversAPI.GetServers)
 }

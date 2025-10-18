@@ -3,6 +3,7 @@ package server
 import (
 	"winterflow/internal/domain/port"
 	"winterflow/internal/domain/usecase/server"
+	"winterflow/pkg/logger"
 )
 
 type Handler struct {
@@ -10,6 +11,7 @@ type Handler struct {
 }
 
 type Deps struct {
+	Logger     *logger.Logger
 	ServerRepo port.ServerRepository
 }
 

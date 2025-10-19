@@ -1,0 +1,24 @@
+services:
+#  winterflow-api:
+#    build:
+#      context: .
+#      dockerfile: winterflow-api.Dockerfile
+#    depends_on:
+#      - winterflow-bus
+#    env_file:
+#      - .env
+#    ports:
+#      - "8080:8080"
+
+  winterflow-bus:
+    image: redis:8-alpine
+    command: /bin/sh -c "redis-server --requirepass $$REDIS_PASSWORD"
+    env_file:
+      - .env
+    ports:
+      - "6379:6379"
+#    volumes:
+#      - redis-data:/data
+
+#volumes:
+#  redis-data:

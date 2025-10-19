@@ -12,7 +12,6 @@ import (
 	"winterflow/internal/infra/bootstrap"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
-	"winterflow/pkg/mode"
 
 	"github.com/joho/godotenv"
 )
@@ -22,7 +21,7 @@ func main() {
 	cfg := config.NewConfig()
 	log := logger.NewLogger(logger.LoggerConfiguration{
 		LogLevel: os.Getenv("LOG_LEVEL"),
-		Service:  mode.AppModeStandalone.String(),
+		Service:  "winterflow",
 	})
 	if err != nil {
 		log.Info(".env not found, using system environment variables")

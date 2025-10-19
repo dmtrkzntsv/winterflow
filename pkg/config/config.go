@@ -69,9 +69,17 @@ func (c *Config) GetRedisCredentials() (addr, pass string, db int) {
 }
 
 func (c *Config) GetBusRequestQueue() string {
-	return os.Getenv("BUS_REQUEST_QUEUE")
+	v := os.Getenv("BUS_REQUEST_QUEUE")
+	if v == "" {
+		v = "requests:" + c.GetRegion()
+	}
+	return v
 }
 
 func (c *Config) GetBusResponseQueue() string {
-	return os.Getenv("BUS_RESPONSE_QUEUE")
+	v := os.Getenv("BUS_RESPONSE_QUEUE")
+	if v == "" {
+		v = "responses:" + c.GetRegion()
+	}
+	return v
 }

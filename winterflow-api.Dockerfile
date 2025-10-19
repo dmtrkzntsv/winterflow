@@ -7,16 +7,16 @@ RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/standalone ./cmd/standalone
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /out/api ./cmd/api
 
 FROM gcr.io/distroless/base-debian12:nonroot
 
 WORKDIR /app
 
-COPY --from=builder /out/standalone ./standalone
+COPY --from=builder /out/api ./api
 
 ENV API_PORT=8080
 
 EXPOSE 8080
 
-ENTRYPOINT ["/app/standalone"]
+ENTRYPOINT ["/app/api"]

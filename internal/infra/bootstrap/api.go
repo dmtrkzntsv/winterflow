@@ -31,6 +31,7 @@ func NewApiFactory(ctx context.Context, log *logger.Logger, cfg *config.Config) 
 	if redisbus.Ping(ctx, rc) != nil {
 		log.Fatalf("failed to connect to redis at %s", addr)
 	}
+	log.Debug("connected to redis", "addr", addr, "db", db)
 
 	b := redisbus.NewBus(rc, log)
 	rm := reply.NewReplyManager(log)

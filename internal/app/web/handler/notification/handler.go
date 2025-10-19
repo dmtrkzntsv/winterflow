@@ -1,4 +1,4 @@
-package server
+package notification
 
 import (
 	"fmt"
@@ -9,24 +9,24 @@ import (
 )
 
 type Handler struct {
-	logger *logger.Logger
-	stream port.StreamManager
+	log *logger.Logger
+	nm  port.NotificationManager
 }
 
 type Deps struct {
-	Logger        *logger.Logger
-	StreamManager port.StreamManager
+	Logger              *logger.Logger
+	NotificationManager port.NotificationManager
 }
 
 func NewHandler(d *Deps) *Handler {
 	return &Handler{
-		logger: d.Logger,
-		stream: d.StreamManager,
+		log: d.Logger,
+		nm:  d.NotificationManager,
 	}
 }
 
 func (h *Handler) Stream(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Content-Type", "text/event-nm")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
@@ -41,14 +41,14 @@ func (h *Handler) Stream(w http.ResponseWriter, r *http.Request) {
 	if userID == "" {
 		userID = "anonymous"
 	}
-	ch := h.stream.AddSession(userID)
-	defer h.stream.RemoveSession(userID, ch)
+	ch := h.nm.AddChannel(userID)
+	defer h.nm.RemoveChannel(userID, ch)
 
 	ctx := r.Context()
 	for {
 		select {
 		case msg := <-ch:
-			h.logger.Debug("Received a stream message", "userID", userID, "msg", msg)
+			h.log.Debug("Received a nm message", "userID", userID, "msg", msg)
 			fmt.Fprintf(w, "%s\n\n", msg)
 			flusher.Flush()
 			time.Sleep(1 * time.Second)

@@ -2,3 +2,8 @@
 /standalone
 .idea
 .DS_Store
+
+
+
+# tmp exclude
+pkg/bus

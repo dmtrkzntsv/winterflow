@@ -5,11 +5,10 @@ import (
 	"os"
 	"path/filepath"
 	"time"
-	"winterflow/internal/app"
 	auth2 "winterflow/internal/app/web/auth"
 	corsmw "winterflow/internal/app/web/middleware/cors"
 	logmw "winterflow/internal/app/web/middleware/logger"
-	"winterflow/internal/infra/bootstrap"
+	"winterflow/internal/domain/port"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
 
@@ -20,53 +19,53 @@ import (
 	"github.com/go-pkgz/auth/v2/token"
 )
 
-type Routing struct {
+type Server struct {
 	Logger  *logger.Logger
 	Cfg     *config.Config
-	Factory *bootstrap.Factory
+	Factory port.AppFactory
 	Router  *chi.Mux
 	Auth    *auth.Service
 }
 
-func NewServer(mode app.AppMode, log *logger.Logger, cfg *config.Config) *http.Server {
-	ro := Routing{
+func NewServer(log *logger.Logger, cfg *config.Config, factory port.AppFactory) *http.Server {
+	s := Server{
 		Logger:  log,
 		Cfg:     cfg,
-		Factory: bootstrap.NewFactory(mode),
+		Factory: factory,
 		Router:  chi.NewRouter(),
 	}
-	ro.registerMiddleware()
-	ro.registerAuth()
-	ro.registerRoutes()
+	s.registerMiddleware()
+	s.registerAuth()
+	s.registerRoutes()
 
-	return &http.Server{Addr: ":" + cfg.GetApiPort(), Handler: ro.Router}
+	return &http.Server{Addr: ":" + cfg.GetApiPort(), Handler: s.Router}
 }
 
-func (ro *Routing) registerMiddleware() {
-	//ro.Router.Use(middleware.Logger)
-	ro.Router.Use(logmw.WithLogger(ro.Logger))
-	ro.Router.Use(middleware.RequestID)
-	ro.Router.Use(middleware.RealIP)
-	ro.Router.Use(corsmw.UseCORS(ro.Cfg.GetAllowedOrigins()))
-	//ro.Router.Use(middleware.Timeout(ro.Cfg.GetRouteTimeout() * time.Second))
-	ro.Router.Use(middleware.Recoverer)
+func (s *Server) registerMiddleware() {
+	//s.Router.Use(middleware.Logger)
+	s.Router.Use(logmw.WithLogger(s.Logger))
+	s.Router.Use(middleware.RequestID)
+	s.Router.Use(middleware.RealIP)
+	s.Router.Use(corsmw.UseCORS(s.Cfg.GetAllowedOrigins()))
+	//s.Router.Use(middleware.Timeout(s.Cfg.GetRouteTimeout() * time.Second))
+	s.Router.Use(middleware.Recoverer)
 }
 
-func (ro *Routing) registerAuth() {
+func (s *Server) registerAuth() {
 	avaDir := filepath.Join(os.TempDir(), "winterflow_avatars")
 	options := auth.Opts{
 		SecretReader: token.SecretFunc(func(id string) (string, error) { // secret key for JWT
-			return ro.Cfg.GetJwtSecret(), nil
+			return s.Cfg.GetJwtSecret(), nil
 		}),
 		TokenDuration:   time.Minute * 5,
 		CookieDuration:  time.Hour * 24,
 		Issuer:          "winterflow",
-		URL:             ro.Cfg.GetWebURL(),
+		URL:             s.Cfg.GetWebURL(),
 		AvatarStore:     avatar.NewLocalFS(avaDir),
 		AvatarRoutePath: "/avatar",
 		DisableXSRF:     true,
 		ClaimsUpd: token.ClaimsUpdFunc(func(claims token.Claims) token.Claims {
-			ro.Logger.Debug("updating claims: %+v", claims)
+			s.Logger.Debug("updating claims: %+v", claims)
 			if claims.User != nil {
 				if claims.User.Email == "" {
 					if e := claims.User.StrAttr("email"); e != "" {
@@ -79,11 +78,11 @@ func (ro *Routing) registerAuth() {
 	}
 
 	service := auth.NewService(options)
-	ggle := auth2.NewGoogleAuth(*ro.Cfg)
+	ggle := auth2.NewGoogleAuth(*s.Cfg)
 	if ggle.IsEnabled() {
-		ro.Logger.Debug("Enabling Google Auth")
+		s.Logger.Debug("Enabling Google Auth")
 		service.AddCustomProvider(ggle.Name, ggle.Client, ggle.Options)
 	}
 
-	ro.Auth = service
+	s.Auth = service
 }

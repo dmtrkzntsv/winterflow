@@ -13,6 +13,11 @@ type Bus struct {
 	log *logger.Logger
 }
 
+type BusMessage struct {
+	Channel string
+	Payload string
+}
+
 func NewBus(rdb *redis.Client, log *logger.Logger) *Bus {
 	return &Bus{rdb: rdb, log: log}
 }
@@ -33,14 +38,9 @@ func (b *Bus) Publish(ctx context.Context, channel string, v any) error {
 	return nil
 }
 
-type Message struct {
-	Channel string
-	Data    []byte
-}
-
-func (b *Bus) Subscribe(ctx context.Context, channels ...string) (<-chan Message, func() error, error) {
+func (b *Bus) Subscribe(ctx context.Context, channels ...string) (<-chan BusMessage, func() error, error) {
 	pubsub := b.rdb.Subscribe(ctx, channels...)
-	out := make(chan Message, 64)
+	out := make(chan BusMessage, 64)
 
 	go func() {
 		defer close(out)
@@ -50,7 +50,7 @@ func (b *Bus) Subscribe(ctx context.Context, channels ...string) (<-chan Message
 				b.log.Error("failed to receive bus message", err)
 				return
 			}
-			out <- Message{Channel: msg.Channel, Data: []byte(msg.Payload)}
+			out <- BusMessage{Channel: msg.Channel, Payload: msg.Payload}
 		}
 	}()
 

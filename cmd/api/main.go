@@ -22,7 +22,7 @@ func main() {
 	cfg := config.NewConfig()
 	log := logger.NewLogger(logger.LoggerConfiguration{
 		LogLevel: os.Getenv("LOG_LEVEL"),
-		Service:  mode.AppModeStandalone.String(),
+		Service:  mode.AppModeDistributed.String(),
 	})
 	if err != nil {
 		log.Info(".env not found, using system environment variables")
@@ -33,7 +33,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	factory := bootstrap.NewStandaloneFactory(log, cfg)
+	factory := bootstrap.NewApiFactory(ctx, log, cfg)
 	srv := web.NewServer(log, cfg, factory)
 
 	go func() {

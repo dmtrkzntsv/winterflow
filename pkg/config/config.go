@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strconv"
 )
 
 type Config struct {
@@ -9,6 +10,10 @@ type Config struct {
 
 func NewConfig() *Config {
 	return &Config{}
+}
+
+func (c *Config) GetRegion() string {
+	return os.Getenv("REGION")
 }
 
 func (c *Config) GetLogLevel() string {
@@ -52,4 +57,21 @@ func (c *Config) GetGoogleAuth() (clientID string, clientSecret string) {
 
 func (c *Config) GetJwtSecret() string {
 	return os.Getenv("JWT_SECRET")
+}
+
+func (c *Config) GetRedisCredentials() (addr, pass string, db int) {
+	addr, pass = os.Getenv("REDIS_ADDR"), os.Getenv("REDIS_PASSWORD")
+	db, err := strconv.Atoi(os.Getenv("REDIS_DB"))
+	if err != nil {
+		db = 0
+	}
+	return addr, pass, db
+}
+
+func (c *Config) GetBusRequestQueue() string {
+	return os.Getenv("BUS_REQUEST_QUEUE")
+}
+
+func (c *Config) GetBusResponseQueue() string {
+	return os.Getenv("BUS_RESPONSE_QUEUE")
 }

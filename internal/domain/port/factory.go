@@ -1,6 +1,7 @@
 package port
 
-type Factory interface {
+type AppFactory interface {
 	NewServerRepository() ServerRepository
 	NewAppRepository() AppRepository
+	NewAppService() AppService
 }

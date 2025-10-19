@@ -13,7 +13,7 @@ func (h *Handler) GetApps(w http.ResponseWriter, r *http.Request) {
 
 	// @todo check ownership
 
-	apps, err := h.appRepo.GetApps(serverID)
+	apps, err := h.usecase.GetApps(r.Context(), serverID)
 	if err != nil {
 		util.Error(w, "failed to load servers", nil)
 		return

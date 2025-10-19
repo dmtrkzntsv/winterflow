@@ -3,37 +3,38 @@ package web
 import (
 	"net/http"
 	happ "winterflow/internal/app/web/handler/app"
+	"winterflow/internal/app/web/handler/notification"
 	"winterflow/internal/app/web/handler/server"
-	webstream "winterflow/internal/app/web/handler/stream"
 	"winterflow/internal/app/web/util"
-	srvstream "winterflow/internal/domain/service/stream"
+	nm "winterflow/internal/domain/service/notification"
 )
 
-func (ro *Routing) registerRoutes() {
-	ro.Router.Get("/_/health", func(w http.ResponseWriter, r *http.Request) {
+func (s *Server) registerRoutes() {
+	s.Router.Get("/_/health", func(w http.ResponseWriter, r *http.Request) {
 		util.Success(w, "healthy", nil)
 	})
 
-	authRoutes, avaRoutes := ro.Auth.Handlers()
-	ro.Router.Mount("/auth", authRoutes)  // add auth handlers
-	ro.Router.Mount("/avatar", avaRoutes) // add avatar handler
+	authRoutes, avaRoutes := s.Auth.Handlers()
+	s.Router.Mount("/auth", authRoutes)  // add auth handlers
+	s.Router.Mount("/avatar", avaRoutes) // add avatar handler
 
-	amw := ro.Auth.Middleware()
-	stream := webstream.NewHandler(&webstream.Deps{
-		Logger:        ro.Logger,
-		StreamManager: srvstream.NewStreamManager(),
+	amw := s.Auth.Middleware()
+	notificationAPI := notification.NewHandler(&notification.Deps{
+		Logger:              s.Logger,
+		NotificationManager: nm.NewNotificationManager(),
 	})
-	ro.Router.Get("/api/v1/stream", stream.Stream)
+	s.Router.Get("/api/v1/notification/stream", notificationAPI.Stream)
 
 	appsAPI := happ.NewHandler(&happ.Deps{
-		Logger:  ro.Logger,
-		AppRepo: ro.Factory.NewAppRepository(),
+		Logger:              s.Logger,
+		AppService:          s.Factory.NewAppService(),
+		NotificationManager: nm.NewNotificationManager(),
 	})
-	ro.Router.With(amw.Auth, happ.GetAppsValidationMiddleware).Get("/api/v1/app/get-apps", appsAPI.GetApps)
+	s.Router.With(amw.Auth, happ.GetAppsValidationMiddleware).Get("/api/v1/app/get-apps", appsAPI.GetApps)
 
 	serversAPI := server.NewHandler(&server.Deps{
-		Logger:     ro.Logger,
-		ServerRepo: ro.Factory.NewServerRepository(),
+		Logger:     s.Logger,
+		ServerRepo: s.Factory.NewServerRepository(),
 	})
-	ro.Router.With(amw.Auth).Get("/api/v1/server/get-servers", serversAPI.GetServers)
+	s.Router.With(amw.Auth).Get("/api/v1/server/get-servers", serversAPI.GetServers)
 }

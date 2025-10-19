@@ -4,8 +4,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
-	auth2 "winterflow/internal/app/web/auth"
+	authprvd "winterflow/internal/app/web/auth"
 	corsmw "winterflow/internal/app/web/middleware/cors"
 	logmw "winterflow/internal/app/web/middleware/logger"
 	"winterflow/internal/domain/port"
@@ -66,6 +67,9 @@ func (s *Server) registerAuth() {
 		ClaimsUpd: token.ClaimsUpdFunc(func(claims token.Claims) token.Claims {
 			s.Logger.Debug("updating claims: %+v", claims)
 			if claims.User != nil {
+				if strings.HasPrefix(claims.User.ID, authprvd.LocalProvider+"_") {
+					claims.User.Email = claims.User.Name + "@winterflow.local"
+				}
 				if claims.User.Email == "" {
 					if e := claims.User.StrAttr("email"); e != "" {
 						claims.User.Email = e
@@ -77,11 +81,8 @@ func (s *Server) registerAuth() {
 	}
 
 	service := auth.NewService(options)
-	ggle := auth2.NewGoogleAuth(*s.Cfg)
-	if ggle.IsEnabled() {
-		s.Logger.Debug("Enabling Google Auth")
-		service.AddCustomProvider(ggle.Name, ggle.Client, ggle.Options)
-	}
+	authprvd.AddGoogleAuth(service, s.Logger, *s.Cfg)
+	authprvd.AddLocalAuth(service, *s.Cfg)
 
 	s.Auth = service
 }

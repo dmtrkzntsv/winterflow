@@ -47,7 +47,6 @@ func (s *Server) registerMiddleware() {
 	s.Router.Use(middleware.RequestID)
 	s.Router.Use(middleware.RealIP)
 	s.Router.Use(corsmw.UseCORS(s.Cfg.GetAllowedOrigins()))
-	//s.Router.Use(middleware.Timeout(s.Cfg.GetRouteTimeout() * time.Second))
 	s.Router.Use(middleware.Recoverer)
 }
 

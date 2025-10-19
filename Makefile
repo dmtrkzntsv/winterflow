@@ -31,3 +31,7 @@ standalone:
 
 api:
 	$(GO) run ./cmd/api
+
+sqlc:
+	@echo "Generating SQLC code..."
+	@sqlc generate

@@ -1,0 +1,26 @@
+version: "2"
+sql:
+  - engine: "sqlite"
+    queries: "internal/infra/db/schema/queries"
+    schema: "internal/infra/db/schema/migrations"
+    gen:
+      go:
+        package: "db"
+        out: "internal/infra/db/generated"
+        sql_package: "database/sql"
+        emit_json_tags: true
+        emit_prepared_queries: true
+        emit_interface: true
+        emit_exact_table_names: false
+        emit_empty_slices: true
+        overrides:
+          - db_type: "DATETIME"
+            go_type: 
+              type: "DateTime"
+              import: "winterflow/internal/infra/db/types"
+            nullable: false
+          - db_type: "DATETIME"
+            go_type: 
+              type: "NullDateTime"
+              import: "winterflow/internal/infra/db/types"
+            nullable: true

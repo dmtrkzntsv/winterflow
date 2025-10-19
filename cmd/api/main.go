@@ -28,7 +28,6 @@ func main() {
 	}
 	log.Info("Service starting", "pid", os.Getpid())
 
-	// Create context that listens for the interrupt signal
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 

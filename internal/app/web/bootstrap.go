@@ -57,6 +57,7 @@ func (s *Server) registerAuth() {
 		SecretReader: token.SecretFunc(func(id string) (string, error) { // secret key for JWT
 			return s.Cfg.GetJwtSecret(), nil
 		}),
+		SecureCookies:   true,
 		TokenDuration:   time.Minute * 5,
 		CookieDuration:  time.Hour * 24,
 		Issuer:          "winterflow",

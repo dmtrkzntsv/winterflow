@@ -4,6 +4,4 @@
 bin/
 
 
-
-# tmp exclude
-pkg/bus
+data/

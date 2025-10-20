@@ -2,8 +2,6 @@ package web
 
 import (
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 	authprvd "winterflow/internal/app/web/auth"
@@ -52,9 +50,8 @@ func (s *Server) registerMiddleware() {
 }
 
 func (s *Server) registerAuth() {
-	avaDir := filepath.Join(os.TempDir(), "winterflow_avatars")
 	options := auth.Opts{
-		SecretReader: token.SecretFunc(func(id string) (string, error) { // secret key for JWT
+		SecretReader: token.SecretFunc(func(aud string) (string, error) {
 			return s.Cfg.GetJwtSecret(), nil
 		}),
 		SecureCookies:   true,
@@ -62,7 +59,7 @@ func (s *Server) registerAuth() {
 		CookieDuration:  time.Hour * 24,
 		Issuer:          "winterflow",
 		URL:             s.Cfg.GetWebURL(),
-		AvatarStore:     avatar.NewLocalFS(avaDir),
+		AvatarStore:     avatar.NewLocalFS(s.Cfg.GetAvatarsStoragePath()),
 		AvatarRoutePath: "/avatar",
 		DisableXSRF:     true,
 		ClaimsUpd: token.ClaimsUpdFunc(func(claims token.Claims) token.Claims {

@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 	"strconv"
 )
 
@@ -70,6 +71,18 @@ func (c *Config) GetLocalAuth() (login string, pass string) {
 
 func (c *Config) GetJwtSecret() string {
 	return os.Getenv("JWT_SECRET")
+}
+
+func (c *Config) GetAvatarsStoragePath() string {
+	v := os.Getenv("AVATARS_STORAGE_PATH")
+	if v == "" {
+		dir, _ := os.Getwd()
+		v = filepath.Join(dir, "data/avatars")
+		if _, err := os.Stat(v); os.IsNotExist(err) {
+			_ = os.MkdirAll(v, os.ModePerm)
+		}
+	}
+	return v
 }
 
 func (c *Config) GetRedisCredentials() (addr, pass string, db int) {

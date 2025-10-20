@@ -1,7 +1,9 @@
 package auth
 
 import (
+	"errors"
 	"winterflow/pkg/config"
+	"winterflow/pkg/logger"
 
 	"github.com/go-pkgz/auth/v2"
 	"github.com/go-pkgz/auth/v2/provider"
@@ -9,7 +11,7 @@ import (
 
 const LocalProvider = "local"
 
-func AddLocalAuth(service *auth.Service, config config.Config) {
+func AddLocalAuth(service *auth.Service, log *logger.Logger, config config.Config) {
 	if !config.IsAuthSupported(LocalProvider) {
 		return
 	}
@@ -21,6 +23,7 @@ func AddLocalAuth(service *auth.Service, config config.Config) {
 		} else {
 			ok = false
 		}
-		return ok, nil
+		return ok, errors.New("invalid login or password")
 	}))
+	log.Debug("Enabling Local Auth")
 }

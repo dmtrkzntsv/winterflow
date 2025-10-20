@@ -1,6 +1,7 @@
 package web
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -76,11 +77,21 @@ func (s *Server) registerAuth() {
 			}
 			return claims
 		}),
+		BasicAuthChecker: func(userID, pat string) (bool, token.User, error) {
+			// Validate the provided token string
+			// Authorization: Basic base64(userID:PAT)
+			// @todo implement PAT check
+			//valid, userInfo := checkPAT(userID, token)
+			//if valid {
+			//    return true, userInfo, nil
+			//}
+			return false, token.User{}, errors.New("invalid token")
+		},
 	}
 
 	service := auth.NewService(options)
 	authprvd.AddGoogleAuth(service, s.Logger, *s.Cfg)
-	authprvd.AddLocalAuth(service, *s.Cfg)
+	authprvd.AddLocalAuth(service, s.Logger, *s.Cfg)
 
 	s.Auth = service
 }

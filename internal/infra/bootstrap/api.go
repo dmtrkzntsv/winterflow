@@ -21,6 +21,11 @@ type ApiFactory struct {
 	cfg *config.Config
 }
 
+func (f *ApiFactory) NewUserService() port.UserService {
+	//TODO implement me
+	panic("implement me")
+}
+
 func NewApiFactory(ctx context.Context, log *logger.Logger, cfg *config.Config) *ApiFactory {
 	addr, pass, db := cfg.GetRedisCredentials()
 	rc := redisbus.NewClient(redisbus.Config{

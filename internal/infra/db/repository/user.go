@@ -99,3 +99,27 @@ func (r *DbUserRepository) CreateUser(ctx context.Context, dto dto.UserDTO) (mod
 		LastSeenAt: u.LastSeen.Time(),
 	}, nil
 }
+
+func (r *DbUserRepository) GetUser(ctx context.Context, userID string) (model.User, error) {
+	repo, err := r.db.Repo(ctx)
+	if err != nil {
+		return model.User{}, err
+	}
+	defer repo.Close()
+
+	user, err := repo.GetUser(ctx, userID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return model.User{}, model.ErrorUserNotFound
+		}
+		return model.User{}, err
+	}
+
+	return model.User{
+		ID:         user.UserID.(string),
+		Name:       user.Name,
+		AvatarURL:  user.Avatar.String,
+		CreatedAt:  user.CreatedAt.Time(),
+		LastSeenAt: user.LastSeen.Time(),
+	}, nil
+}

@@ -10,11 +10,9 @@ import (
 	corsmw "winterflow/internal/app/web/middleware/cors"
 	logmw "winterflow/internal/app/web/middleware/logger"
 	"winterflow/internal/domain/dto"
-	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/port"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
-	"winterflow/pkg/util"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -72,28 +70,21 @@ func (s *Server) registerAuth() {
 			if claims.User != nil {
 				ctx := context.Background()
 				parts := strings.SplitN(claims.User.ID, "_", 2)
-				repo := s.Factory.NewUserRepository()
-				ca, err := repo.GetByConnectedAccount(ctx, parts[0], parts[1])
-				if err != nil && errors.Is(err, model.ErrorUserNotFound) {
-					userID := util.GenerateID()
-					cu, err := repo.CreateUser(ctx, dto.UserDTO{
-						Provider:  parts[0],
-						AccountID: parts[1],
-						UserID:    userID,
-						Name:      claims.User.Name,
-						AvatarURL: strings.TrimPrefix(claims.User.Picture, s.Cfg.GetWebURL()),
-					})
-					if err != nil {
-						s.Logger.Error("failed to create user: %v", err)
-					}
-					claims.ID = cu.ID
-					claims.User.ID = cu.ID
-					claims.User.Picture = cu.AvatarURL
-				} else if err == nil {
-					claims.ID = ca.ID
-					claims.User.ID = ca.ID
-					claims.User.Picture = ca.AvatarURL
+				user, err := s.Factory.NewUserService().FindOrCreateUser(ctx, dto.UserDTO{
+					Provider:  parts[0],
+					AccountID: parts[1],
+					UserID:    "",
+					Name:      claims.User.Name,
+					AvatarURL: strings.TrimPrefix(claims.User.Picture, s.Cfg.GetWebURL()),
+				})
+				if err != nil {
+					s.Logger.Error("failed to find or create user: %v", err)
+					return claims
 				}
+				claims.ID = user.ID
+				claims.User.ID = user.ID
+				claims.User.Picture = user.AvatarURL
+				claims.User.Name = user.Name
 			}
 			return claims
 		}),

@@ -23,7 +23,7 @@ func (s *Server) registerRoutes() {
 		Logger:              s.Logger,
 		NotificationManager: nm.NewNotificationManager(),
 	})
-	s.Router.Get("/api/v1/notification/stream", notificationAPI.Stream)
+	s.Router.With(amw.Auth).Get("/api/v1/notification/stream", notificationAPI.Stream)
 
 	appsAPI := happ.NewHandler(&happ.Deps{
 		Logger:              s.Logger,

@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -8,9 +9,12 @@ import (
 	authprvd "winterflow/internal/app/web/auth"
 	corsmw "winterflow/internal/app/web/middleware/cors"
 	logmw "winterflow/internal/app/web/middleware/logger"
+	"winterflow/internal/domain/dto"
+	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/port"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
+	"winterflow/pkg/util"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -66,13 +70,29 @@ func (s *Server) registerAuth() {
 		ClaimsUpd: token.ClaimsUpdFunc(func(claims token.Claims) token.Claims {
 			s.Logger.Debug("updating claims: %+v", claims)
 			if claims.User != nil {
-				if strings.HasPrefix(claims.User.ID, authprvd.LocalProvider+"_") {
-					claims.User.Email = claims.User.Name + "@winterflow.local"
-				}
-				if claims.User.Email == "" {
-					if e := claims.User.StrAttr("email"); e != "" {
-						claims.User.Email = e
+				ctx := context.Background()
+				parts := strings.SplitN(claims.User.ID, "_", 2)
+				repo := s.Factory.NewUserRepository()
+				ca, err := repo.GetByConnectedAccount(ctx, parts[0], parts[1])
+				if err != nil && errors.Is(err, model.ErrorUserNotFound) {
+					userID := util.GenerateID()
+					cu, err := repo.CreateUser(ctx, dto.UserDTO{
+						Provider:  parts[0],
+						AccountID: parts[1],
+						UserID:    userID,
+						Name:      claims.User.Name,
+						AvatarURL: strings.TrimPrefix(claims.User.Picture, s.Cfg.GetWebURL()),
+					})
+					if err != nil {
+						s.Logger.Error("failed to create user: %v", err)
 					}
+					claims.ID = cu.ID
+					claims.User.ID = cu.ID
+					claims.User.Picture = cu.AvatarURL
+				} else if err == nil {
+					claims.ID = ca.ID
+					claims.User.ID = ca.ID
+					claims.User.Picture = ca.AvatarURL
 				}
 			}
 			return claims

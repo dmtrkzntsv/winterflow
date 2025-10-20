@@ -33,6 +33,10 @@ func (c *Config) GetWebURL() string {
 	return os.Getenv("WEB_URL")
 }
 
+func (c *Config) GetDbURL() string {
+	return os.Getenv("DATABASE_URL")
+}
+
 func (c *Config) GetAllowedOrigins() string {
 	v := os.Getenv("CORS_ALLOW_ORIGINS")
 	if v == "" {

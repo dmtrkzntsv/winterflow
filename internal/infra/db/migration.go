@@ -1,4 +1,4 @@
-package migration
+package db
 
 import (
 	"database/sql"
@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	schema "winterflow/internal/infra/db/schema"
 	"winterflow/pkg/logger"
 )
 
@@ -30,7 +31,7 @@ func NewMigrator(log *logger.Logger, db *sql.DB) *Migrator {
 }
 
 func (m *Migrator) LoadMigrations() error {
-	files, err := fs.ReadDir(MigrationsFS, "migrations")
+	files, err := fs.ReadDir(schema.MigrationsFS, "migrations")
 	if err != nil {
 		return fmt.Errorf("failed to read migrations directory: %w", err)
 	}
@@ -47,7 +48,7 @@ func (m *Migrator) LoadMigrations() error {
 			return fmt.Errorf("invalid migration filename format: %s", file.Name())
 		}
 
-		content, err := fs.ReadFile(MigrationsFS, "migrations/"+file.Name())
+		content, err := fs.ReadFile(schema.MigrationsFS, "migrations/"+file.Name())
 		if err != nil {
 			m.log.Error("failed to read migration file", "file", file.Name(), "err", err)
 			return fmt.Errorf("failed to read migration file %s: %w", file.Name(), err)

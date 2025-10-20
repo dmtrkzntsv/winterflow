@@ -2,6 +2,8 @@ package bootstrap
 
 import (
 	"winterflow/internal/domain/port"
+	"winterflow/internal/infra/db"
+	"winterflow/internal/infra/db/repository"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
 )
@@ -9,23 +11,30 @@ import (
 type StandaloneFactory struct {
 	log *logger.Logger
 	cfg *config.Config
+	db  *db.Connection
 }
 
 func NewStandaloneFactory(log *logger.Logger, cfg *config.Config) *StandaloneFactory {
+	dbconn := db.NewDbConnection(log, cfg.GetDbURL())
 	return &StandaloneFactory{
 		log: log,
 		cfg: cfg,
+		db:  dbconn,
 	}
 }
 
-func (sf *StandaloneFactory) NewServerRepository() port.ServerRepository {
+func (f *StandaloneFactory) NewServerRepository() port.ServerRepository {
 	return nil
 }
 
-func (sf *StandaloneFactory) NewAppRepository() port.AppRepository {
+func (f *StandaloneFactory) NewAppRepository() port.AppRepository {
 	return nil
 }
 
-func (sf *StandaloneFactory) NewAppService() port.AppService {
+func (f *StandaloneFactory) NewUserRepository() port.UserRepository {
+	return repository.NewDbUserRepository(f.db, f.log)
+}
+
+func (f *StandaloneFactory) NewAppService() port.AppService {
 	return nil
 }

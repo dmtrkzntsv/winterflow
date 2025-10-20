@@ -62,14 +62,18 @@ func NewApiFactory(ctx context.Context, log *logger.Logger, cfg *config.Config) 
 	}
 }
 
-func (sf *ApiFactory) NewServerRepository() port.ServerRepository {
+func (f *ApiFactory) NewServerRepository() port.ServerRepository {
 	return infradb.NewDbServerRepository()
 }
 
-func (sf *ApiFactory) NewAppRepository() port.AppRepository {
+func (f *ApiFactory) NewUserRepository() port.UserRepository {
+	return nil
+}
+
+func (f *ApiFactory) NewAppRepository() port.AppRepository {
 	return infrafs.NewFsAppRepository()
 }
 
-func (sf *ApiFactory) NewAppService() port.AppService {
-	return redisappsrv.NewAppService(sf.log, sf.cfg, sf.bus, sf.rm)
+func (f *ApiFactory) NewAppService() port.AppService {
+	return redisappsrv.NewAppService(f.log, f.cfg, f.bus, f.rm)
 }

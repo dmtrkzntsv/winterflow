@@ -19,11 +19,10 @@ func AddLocalAuth(service *auth.Service, log *logger.Logger, config config.Confi
 	login, pass := config.GetLocalAuth()
 	service.AddDirectProvider(LocalProvider, provider.CredCheckerFunc(func(user, password string) (ok bool, err error) {
 		if user == login && password == pass {
-			ok = true
-		} else {
-			ok = false
+			return true, nil
 		}
-		return ok, errors.New("invalid login or password")
+		ok = false
+		return false, errors.New("invalid login or password")
 	}))
 	log.Debug("Enabling Local Auth")
 }

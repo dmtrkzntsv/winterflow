@@ -14,6 +14,14 @@ import (
 	"winterflow/pkg/logger"
 )
 
+type ApiContainer struct {
+	factory *ApiFactory
+}
+
+func (c *ApiContainer) GetAppFactory() *ApiFactory {
+	return c.factory
+}
+
 type ApiFactory struct {
 	bus *redisbus.Bus
 	rm  *reply.Manager
@@ -21,12 +29,7 @@ type ApiFactory struct {
 	cfg *config.Config
 }
 
-func (f *ApiFactory) NewUserService() port.UserService {
-	//TODO implement me
-	panic("implement me")
-}
-
-func NewApiFactory(ctx context.Context, log *logger.Logger, cfg *config.Config) *ApiFactory {
+func BootstrapAPI(ctx context.Context, log *logger.Logger, cfg *config.Config) *ApiContainer {
 	addr, pass, db := cfg.GetRedisCredentials()
 	rc := redisbus.NewClient(redisbus.Config{
 		Addr:     addr,
@@ -59,12 +62,19 @@ func NewApiFactory(ctx context.Context, log *logger.Logger, cfg *config.Config) 
 		}
 	}()
 
-	return &ApiFactory{
-		bus: b,
-		rm:  rm,
-		log: log,
-		cfg: cfg,
+	return &ApiContainer{
+		factory: &ApiFactory{
+			bus: b,
+			rm:  rm,
+			log: log,
+			cfg: cfg,
+		},
 	}
+}
+
+func (f *ApiFactory) NewUserService() port.UserService {
+	//TODO implement me
+	panic("implement me")
 }
 
 func (f *ApiFactory) NewServerRepository() port.ServerRepository {

@@ -31,8 +31,8 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	factory := bootstrap.NewApiFactory(ctx, log, cfg)
-	srv := web.NewServer(log, cfg, factory)
+	container := bootstrap.BootstrapAPI(ctx, log, cfg)
+	srv := web.NewServer(log, cfg, container.GetAppFactory())
 
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

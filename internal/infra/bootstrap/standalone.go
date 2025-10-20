@@ -9,23 +9,33 @@ import (
 	"winterflow/pkg/logger"
 )
 
+type StandaloneContainer struct {
+	factory *StandaloneFactory
+}
+
+func (c *StandaloneContainer) GetAppFactory() *StandaloneFactory {
+	return c.factory
+}
+
 type StandaloneFactory struct {
 	log *logger.Logger
 	cfg *config.Config
 	db  *db.Connection
 }
 
-func (f *StandaloneFactory) NewUserService() port.UserService {
-	return service.NewDbUserService(f.log, repository.NewDbUserRepository(f.db, f.log))
+func BootstrapStandalone(log *logger.Logger, cfg *config.Config) *StandaloneContainer {
+	dbconn := db.NewDbConnection(log, cfg.GetDbURL())
+	return &StandaloneContainer{
+		factory: &StandaloneFactory{
+			log: log,
+			cfg: cfg,
+			db:  dbconn,
+		},
+	}
 }
 
-func NewStandaloneFactory(log *logger.Logger, cfg *config.Config) *StandaloneFactory {
-	dbconn := db.NewDbConnection(log, cfg.GetDbURL())
-	return &StandaloneFactory{
-		log: log,
-		cfg: cfg,
-		db:  dbconn,
-	}
+func (f *StandaloneFactory) NewUserService() port.UserService {
+	return service.NewDbUserService(f.log, repository.NewDbUserRepository(f.db, f.log))
 }
 
 func (f *StandaloneFactory) NewServerRepository() port.ServerRepository {

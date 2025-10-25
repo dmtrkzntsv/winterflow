@@ -114,6 +114,10 @@ func (c *Config) GetBusResponseQueue() string {
 	return v
 }
 
+func (c *Config) GetHubHost() string {
+	return os.Getenv("HUB_HOST")
+}
+
 func (c *Config) GetHubPort() string {
 	return os.Getenv("HUB_PORT")
 }
@@ -128,4 +132,16 @@ func (c *Config) GetHubCertPath() string {
 
 func (c *Config) GetHubKeyPath() string {
 	return os.Getenv("HUB_KEY_PATH")
+}
+
+func (c *Config) GetAgentCertPath() string {
+	return os.Getenv("AGENT_CERT_PATH")
+}
+
+func (c *Config) GetAgentKeyPath() string {
+	return os.Getenv("AGENT_KEY_PATH")
+}
+
+func (c *Config) GetAgentCACertPath() string {
+	return os.Getenv("AGENT_CA_CERT_PATH")
 }

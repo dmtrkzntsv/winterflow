@@ -119,13 +119,13 @@ func (c *Config) GetHubPort() string {
 }
 
 func (c *Config) GetHubCACertPath() string {
-	return os.Getenv("")
+	return os.Getenv("HUB_CA_CERT_PATH")
 }
 
-func (c *Config) GetHubServerCertPath() string {
-	return os.Getenv("")
+func (c *Config) GetHubCertPath() string {
+	return os.Getenv("HUB_CERT_PATH")
 }
 
-func (c *Config) GetHubServerKeyPath() string {
-	return os.Getenv("")
+func (c *Config) GetHubKeyPath() string {
+	return os.Getenv("HUB_KEY_PATH")
 }

@@ -5,7 +5,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"winterflow/internal/infra/transport/grpc/hub"
+	grpchub "winterflow/internal/infra/transport/grpc/hub"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
 
@@ -28,7 +28,7 @@ func main() {
 	defer stop()
 
 	//container := bootstrap.BootstrapHUB(ctx, log, cfg)
-	hub := hub.NewHub(log, cfg)
+	hub := grpchub.NewHub(log, cfg)
 
 	go func() {
 		if err := hub.ListenAndServe(ctx); err != nil {

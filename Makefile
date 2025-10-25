@@ -37,3 +37,12 @@ grpc:
 	@go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
 	@echo "Generating gRPC code..."
 	@PATH="$$PATH:$$(go env GOPATH)/bin" protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative internal/infra/transport/grpc/proto/hub.proto
+
+generate-certs:
+	mkdir -p data/certs
+	openssl ecparam -name prime256v1 -genkey -noout -out data/certs/ca.key
+	openssl req -x509 -new -key data/certs/ca.key -sha256 -days 36500 -out data/certs/ca.crt -subj "/C=CA/O=WinterFlow.io/OU=CA/CN=WinterFlow.io CA/emailAddress=info@winterflow.io"
+	openssl ecparam -name prime256v1 -genkey -noout -out data/certs/hub.key
+	openssl req -new -key data/certs/hub.key -out data/certs/hub.csr -subj "/C=CA/O=WinterFlow.io/OU=SERVER/CN=winterflow.io/emailAddress=info@winterflow.io"
+	openssl x509 -req -in data/certs/hub.csr -CA data/certs/ca.crt -CAkey data/certs/ca.key -CAcreateserial -out data/certs/hub.crt -days 36500 -sha256 -extfile data/certs/ext.cnf -extensions v3_ext
+	cat data/certs/hub.crt data/certs/ca.crt > data/certs/hub_fullchain.crt

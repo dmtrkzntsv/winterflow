@@ -12,8 +12,9 @@ import (
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
 
-	"google.golang.org/grpc"
 	"winterflow/internal/infra/transport/grpc/proto"
+
+	"google.golang.org/grpc"
 	//"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
@@ -61,7 +62,7 @@ func createServer(log *logger.Logger, cfg *config.Config) *grpc.Server {
 		log.Fatal("Failed to append CA certificate to pool")
 	}
 
-	serverCert, err := tls.LoadX509KeyPair(cfg.GetHubServerCertPath(), cfg.GetHubServerKeyPath())
+	serverCert, err := tls.LoadX509KeyPair(cfg.GetHubCertPath(), cfg.GetHubKeyPath())
 	if err != nil {
 		log.Fatal("Failed to load server certificate and key", "error", err)
 	}
@@ -79,7 +80,7 @@ func createServer(log *logger.Logger, cfg *config.Config) *grpc.Server {
 	}
 
 	log.Info("TLS configuration", "client_auth", tlsConfig.ClientAuth, "ca_cert_path", cfg.GetHubCACertPath())
-	log.Info("Hub certificate loaded", "cert", cfg.GetHubServerCertPath(), "key", cfg.GetHubServerKeyPath())
+	log.Info("Hub certificate loaded", "cert", cfg.GetHubCertPath(), "key", cfg.GetHubKeyPath())
 
 	creds := credentials.NewTLS(tlsConfig)
 	srv := grpc.NewServer(

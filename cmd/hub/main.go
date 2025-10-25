@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 	grpchub "winterflow/internal/infra/transport/grpc/hub"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
@@ -37,12 +38,13 @@ func main() {
 	}()
 
 	<-ctx.Done()
+	log.Info("Shutdown signal received, starting graceful shutdown")
 
-	//shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	//defer cancel()
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
-	if err := hub.Shutdown(); err != nil {
-		log.Fatal(err)
+	if err := hub.Shutdown(shutdownCtx); err != nil {
+		log.Fatal("Error during shutdown", "error", err)
 	}
-	log.Info("server gracefully stopped")
+	log.Info("Server gracefully stopped")
 }

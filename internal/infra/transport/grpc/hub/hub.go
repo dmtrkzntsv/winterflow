@@ -117,9 +117,10 @@ func (h *Hub) ListenAndServe(ctx context.Context) error {
 	return nil
 }
 
-func (h *Hub) Shutdown() error {
+func (h *Hub) Shutdown(ctx context.Context) error {
 	h.log.Info("Shutting down gRPC server")
 
+	// Cancel all active agent streams
 	h.agentsLock.Lock()
 	for id, server := range h.agents {
 		if server.streamActive && server.cancelFunc != nil {
@@ -129,8 +130,22 @@ func (h *Hub) Shutdown() error {
 	}
 	h.agentsLock.Unlock()
 
-	time.Sleep(2 * time.Second)
+	// Create a channel to signal when graceful stop completes
+	done := make(chan struct{})
 
-	h.srv.GracefulStop()
-	return nil
+	go func() {
+		h.srv.GracefulStop()
+		close(done)
+	}()
+
+	// Wait for either graceful shutdown to complete or context timeout
+	select {
+	case <-done:
+		h.log.Info("gRPC server shutdown completed gracefully")
+		return nil
+	case <-ctx.Done():
+		h.log.Warn("Graceful shutdown timeout, forcing stop")
+		h.srv.Stop()
+		return ctx.Err()
+	}
 }

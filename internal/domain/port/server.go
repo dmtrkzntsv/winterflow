@@ -3,5 +3,5 @@ package port
 import "winterflow/internal/domain/model"
 
 type ServerRepository interface {
-	GetServers() ([]model.Server, error)
+	GetServers() ([]model.Agent, error)
 }

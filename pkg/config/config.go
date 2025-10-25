@@ -113,3 +113,19 @@ func (c *Config) GetBusResponseQueue() string {
 	}
 	return v
 }
+
+func (c *Config) GetHubPort() string {
+	return os.Getenv("HUB_PORT")
+}
+
+func (c *Config) GetHubCACertPath() string {
+	return os.Getenv("")
+}
+
+func (c *Config) GetHubServerCertPath() string {
+	return os.Getenv("")
+}
+
+func (c *Config) GetHubServerKeyPath() string {
+	return os.Getenv("")
+}

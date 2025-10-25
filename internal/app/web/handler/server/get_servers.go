@@ -13,6 +13,6 @@ func (h *Handler) GetServers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	util.Success(w, "ok", struct {
-		Servers []model.Server `json:"servers"`
+		Servers []model.Agent `json:"servers"`
 	}{Servers: servers})
 }

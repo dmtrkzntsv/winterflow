@@ -1,0 +1,147 @@
+syntax = "proto3";
+
+package proto;
+
+option go_package = "winterflow/internal/transport/grpc/proto";
+import "google/protobuf/timestamp.proto";
+
+// -----------------------------------------------------------------------------
+// Status / base
+// -----------------------------------------------------------------------------
+enum ResponseCode {
+  RESPONSE_CODE_UNSPECIFIED = 0;
+  RESPONSE_CODE_SUCCESS = 1;
+  RESPONSE_CODE_INVALID_REQUEST = 2;
+  RESPONSE_CODE_TOO_MANY_REQUESTS = 3;
+  RESPONSE_CODE_UNAUTHORIZED = 4;
+  RESPONSE_CODE_SERVER_ERROR = 5;
+}
+
+message BaseMessage {
+  // Unique id for this message (idempotency-friendly)
+  string message_id = 1;
+  google.protobuf.Timestamp timestamp = 2;
+  // Set once identity is known
+  string agent_id = 3;
+  // For rolling upgrades (e.g., "1.0.0")
+  string protocol_version = 4;
+}
+
+message BaseResponse {
+  string message_id = 1;
+  google.protobuf.Timestamp timestamp = 2;
+  ResponseCode response_code = 3;
+  string detail = 4;          // human-readable
+  string agent_id = 5;
+  string protocol_version = 6;
+}
+
+message App {
+  string app_id = 1;
+  string name = 2;
+  string version = 3;
+  string icon = 4;
+  string color = 5;
+  string protocol_version = 6;
+}
+
+// -----------------------------------------------------------------------------
+// Registration / health
+// -----------------------------------------------------------------------------
+message RegisterAgentRequest {
+  BaseMessage base = 1;
+  map<string, string> capabilities = 2; // {"os":"linux","arch":"amd64"}
+  map<string, bool> features = 3;       // {"can_install":true}
+  repeated App apps = 4;                // installed apps
+}
+
+message RegisterAgentResponse {
+  BaseResponse base = 1;
+}
+
+message AgentHeartbeat {
+  BaseMessage base = 1;
+}
+message AgentHeartbeatResponse {
+  BaseResponse base = 1;
+}
+
+message AgentMetrics {
+  BaseMessage base = 1;
+}
+message AgentMetricsResponse {
+  BaseResponse base = 1;
+}
+
+// -----------------------------------------------------------------------------
+// Generic request/response envelopes
+// -----------------------------------------------------------------------------
+message RequestEnvelope {
+  BaseMessage base = 1;
+
+  // Correlation id for this request. By convention, set to base.message_id.
+  string request_id = 2;
+
+  // Free-form type, e.g., "install_app", "fetch_logs"
+  string type = 3;
+
+  // Content negotiation helpers; JSON today, protobuf later if needed.
+  string content_type = 4;     // e.g., "application/json"
+  string schema_version = 5;   // optional semantic version of payload
+
+  // Command-specific payload (JSON or other by content_type)
+  bytes payload = 6;
+}
+
+message ResponseEnvelope {
+  BaseResponse base = 1;
+
+  // MUST echo the initiating RequestEnvelope.request_id
+  string request_id = 2;
+
+  // Same semantic "type" as the request (or a subtype like "install_app.result")
+  string type = 3;
+
+  string content_type = 4;     // e.g., "application/json"
+  string schema_version = 5;
+
+  // Command-specific payload
+  bytes payload = 6;
+}
+
+// -----------------------------------------------------------------------------
+// Bidirectional stream wrappers
+// -----------------------------------------------------------------------------
+message ServerCommand {
+  oneof command {
+    // Responses to agent-initiated messages
+    AgentHeartbeatResponse heartbeat_response = 1;
+    AgentMetricsResponse   metrics_response = 2;
+
+    // Server-initiated commands (50+)
+    RequestEnvelope        request = 50;
+  }
+}
+
+message AgentMessage {
+  oneof message {
+    // Agent-initiated messages
+    AgentHeartbeat         heartbeat = 1;
+    AgentMetrics           metrics = 2;
+
+    // Responses to server-initiated commands (50+)
+    ResponseEnvelope       response = 50;
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Service
+// -----------------------------------------------------------------------------
+service AgentService {
+  rpc RegisterAgent(RegisterAgentRequest) returns (RegisterAgentResponse) {}
+
+  // Bidirectional stream:
+  // - agent sends heartbeats/metrics; server replies
+  // - server sends commands; agent replies
+  rpc AgentStream(stream AgentMessage) returns (stream ServerCommand) {}
+}

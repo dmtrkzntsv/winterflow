@@ -1,8 +1,8 @@
 package app
 
 import (
-	"winterflow/internal/infra/mem/service/reply"
-	redisbus "winterflow/internal/infra/redis/bus"
+	"winterflow/internal/infra/transport/mem/service/reply"
+	redisbus "winterflow/internal/infra/transport/redis/bus"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
 )

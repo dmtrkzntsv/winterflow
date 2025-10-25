@@ -9,6 +9,6 @@ func NewDbServerRepository() *DbServerRepository {
 type DbServerRepository struct {
 }
 
-func (r *DbServerRepository) GetServers() ([]model.Server, error) {
-	return make([]model.Server, 0), nil
+func (r *DbServerRepository) GetServers() ([]model.Agent, error) {
+	return make([]model.Agent, 0), nil
 }

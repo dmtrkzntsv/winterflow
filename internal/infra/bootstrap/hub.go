@@ -5,31 +5,28 @@ import (
 	"encoding/json"
 	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/port"
-	infrafs "winterflow/internal/infra/agent/repository"
-	infradb "winterflow/internal/infra/db/repository"
 	"winterflow/internal/infra/transport/mem/service/reply"
 	redisbus "winterflow/internal/infra/transport/redis/bus"
-	redisappsrv "winterflow/internal/infra/transport/redis/service/app"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
 )
 
-type ApiContainer struct {
-	factory *ApiFactory
+type HubContainer struct {
+	factory *HubFactory
 }
 
-func (c *ApiContainer) GetAppFactory() *ApiFactory {
+func (c *HubContainer) GetHubFactory() *HubFactory {
 	return c.factory
 }
 
-type ApiFactory struct {
+type HubFactory struct {
 	bus *redisbus.Bus
 	rm  *reply.Manager
 	log *logger.Logger
 	cfg *config.Config
 }
 
-func BootstrapAPI(ctx context.Context, log *logger.Logger, cfg *config.Config) *ApiContainer {
+func BootstrapHUB(ctx context.Context, log *logger.Logger, cfg *config.Config) *HubContainer {
 	addr, pass, db := cfg.GetRedisCredentials()
 	rc := redisbus.NewClient(redisbus.Config{
 		Addr:     addr,
@@ -62,8 +59,8 @@ func BootstrapAPI(ctx context.Context, log *logger.Logger, cfg *config.Config) *
 		}
 	}()
 
-	return &ApiContainer{
-		factory: &ApiFactory{
+	return &HubContainer{
+		factory: &HubFactory{
 			bus: b,
 			rm:  rm,
 			log: log,
@@ -72,23 +69,27 @@ func BootstrapAPI(ctx context.Context, log *logger.Logger, cfg *config.Config) *
 	}
 }
 
-func (f *ApiFactory) NewUserService() port.UserService {
+func (f *HubFactory) NewUserService() port.UserService {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (f *ApiFactory) NewServerRepository() port.ServerRepository {
-	return infradb.NewDbServerRepository()
+func (f *HubFactory) NewServerRepository() port.ServerRepository {
+	//TODO implement me
+	panic("implement me")
 }
 
-func (f *ApiFactory) NewUserRepository() port.UserRepository {
-	return nil
+func (f *HubFactory) NewUserRepository() port.UserRepository {
+	//TODO implement me
+	panic("implement me")
 }
 
-func (f *ApiFactory) NewAppRepository() port.AppRepository {
-	return infrafs.NewFsAppRepository()
+func (f *HubFactory) NewAppRepository() port.AppRepository {
+	//TODO implement me
+	panic("implement me")
 }
 
-func (f *ApiFactory) NewAppService() port.AppService {
-	return redisappsrv.NewAppService(f.log, f.cfg, f.bus, f.rm)
+func (f *HubFactory) NewAppService() port.AppService {
+	//TODO implement me
+	panic("implement me")
 }

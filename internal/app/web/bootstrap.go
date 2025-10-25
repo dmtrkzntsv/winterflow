@@ -18,6 +18,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-pkgz/auth/v2"
 	"github.com/go-pkgz/auth/v2/avatar"
+	logger2 "github.com/go-pkgz/auth/v2/logger"
 	"github.com/go-pkgz/auth/v2/token"
 )
 
@@ -56,6 +57,9 @@ func (s *Server) registerAuth() {
 	options := auth.Opts{
 		SecretReader: token.SecretFunc(func(aud string) (string, error) {
 			return s.Cfg.GetJwtSecret(), nil
+		}),
+		Logger: logger2.Func(func(format string, args ...interface{}) {
+			s.Logger.Debug(format, args...)
 		}),
 		SecureCookies:   true,
 		TokenDuration:   time.Minute * 5,

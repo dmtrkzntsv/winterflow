@@ -243,9 +243,7 @@ type App struct {
 	AppId           string                 `protobuf:"bytes,1,opt,name=app_id,json=appId,proto3" json:"app_id,omitempty"`
 	Name            string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
 	Version         string                 `protobuf:"bytes,3,opt,name=version,proto3" json:"version,omitempty"`
-	Icon            string                 `protobuf:"bytes,4,opt,name=icon,proto3" json:"icon,omitempty"`
-	Color           string                 `protobuf:"bytes,5,opt,name=color,proto3" json:"color,omitempty"`
-	ProtocolVersion string                 `protobuf:"bytes,6,opt,name=protocol_version,json=protocolVersion,proto3" json:"protocol_version,omitempty"`
+	ProtocolVersion string                 `protobuf:"bytes,4,opt,name=protocol_version,json=protocolVersion,proto3" json:"protocol_version,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -297,20 +295,6 @@ func (x *App) GetName() string {
 func (x *App) GetVersion() string {
 	if x != nil {
 		return x.Version
-	}
-	return ""
-}
-
-func (x *App) GetIcon() string {
-	if x != nil {
-		return x.Icon
-	}
-	return ""
-}
-
-func (x *App) GetColor() string {
-	if x != nil {
-		return x.Color
 	}
 	return ""
 }
@@ -525,94 +509,6 @@ func (x *AgentHeartbeatResponse) GetBase() *BaseResponse {
 	return nil
 }
 
-type AgentMetrics struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Base          *BaseMessage           `protobuf:"bytes,1,opt,name=base,proto3" json:"base,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *AgentMetrics) Reset() {
-	*x = AgentMetrics{}
-	mi := &file_internal_infra_transport_grpc_proto_hub_proto_msgTypes[7]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *AgentMetrics) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*AgentMetrics) ProtoMessage() {}
-
-func (x *AgentMetrics) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_infra_transport_grpc_proto_hub_proto_msgTypes[7]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use AgentMetrics.ProtoReflect.Descriptor instead.
-func (*AgentMetrics) Descriptor() ([]byte, []int) {
-	return file_internal_infra_transport_grpc_proto_hub_proto_rawDescGZIP(), []int{7}
-}
-
-func (x *AgentMetrics) GetBase() *BaseMessage {
-	if x != nil {
-		return x.Base
-	}
-	return nil
-}
-
-type AgentMetricsResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Base          *BaseResponse          `protobuf:"bytes,1,opt,name=base,proto3" json:"base,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *AgentMetricsResponse) Reset() {
-	*x = AgentMetricsResponse{}
-	mi := &file_internal_infra_transport_grpc_proto_hub_proto_msgTypes[8]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *AgentMetricsResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*AgentMetricsResponse) ProtoMessage() {}
-
-func (x *AgentMetricsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_infra_transport_grpc_proto_hub_proto_msgTypes[8]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use AgentMetricsResponse.ProtoReflect.Descriptor instead.
-func (*AgentMetricsResponse) Descriptor() ([]byte, []int) {
-	return file_internal_infra_transport_grpc_proto_hub_proto_rawDescGZIP(), []int{8}
-}
-
-func (x *AgentMetricsResponse) GetBase() *BaseResponse {
-	if x != nil {
-		return x.Base
-	}
-	return nil
-}
-
 // -----------------------------------------------------------------------------
 // Generic request/response envelopes
 // -----------------------------------------------------------------------------
@@ -634,7 +530,7 @@ type RequestEnvelope struct {
 
 func (x *RequestEnvelope) Reset() {
 	*x = RequestEnvelope{}
-	mi := &file_internal_infra_transport_grpc_proto_hub_proto_msgTypes[9]
+	mi := &file_internal_infra_transport_grpc_proto_hub_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -646,7 +542,7 @@ func (x *RequestEnvelope) String() string {
 func (*RequestEnvelope) ProtoMessage() {}
 
 func (x *RequestEnvelope) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_infra_transport_grpc_proto_hub_proto_msgTypes[9]
+	mi := &file_internal_infra_transport_grpc_proto_hub_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -659,7 +555,7 @@ func (x *RequestEnvelope) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RequestEnvelope.ProtoReflect.Descriptor instead.
 func (*RequestEnvelope) Descriptor() ([]byte, []int) {
-	return file_internal_infra_transport_grpc_proto_hub_proto_rawDescGZIP(), []int{9}
+	return file_internal_infra_transport_grpc_proto_hub_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *RequestEnvelope) GetBase() *BaseMessage {
@@ -721,7 +617,7 @@ type ResponseEnvelope struct {
 
 func (x *ResponseEnvelope) Reset() {
 	*x = ResponseEnvelope{}
-	mi := &file_internal_infra_transport_grpc_proto_hub_proto_msgTypes[10]
+	mi := &file_internal_infra_transport_grpc_proto_hub_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -733,7 +629,7 @@ func (x *ResponseEnvelope) String() string {
 func (*ResponseEnvelope) ProtoMessage() {}
 
 func (x *ResponseEnvelope) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_infra_transport_grpc_proto_hub_proto_msgTypes[10]
+	mi := &file_internal_infra_transport_grpc_proto_hub_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -746,7 +642,7 @@ func (x *ResponseEnvelope) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResponseEnvelope.ProtoReflect.Descriptor instead.
 func (*ResponseEnvelope) Descriptor() ([]byte, []int) {
-	return file_internal_infra_transport_grpc_proto_hub_proto_rawDescGZIP(), []int{10}
+	return file_internal_infra_transport_grpc_proto_hub_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ResponseEnvelope) GetBase() *BaseResponse {
@@ -799,7 +695,6 @@ type ServerCommand struct {
 	// Types that are valid to be assigned to Command:
 	//
 	//	*ServerCommand_HeartbeatResponse
-	//	*ServerCommand_MetricsResponse
 	//	*ServerCommand_Request
 	Command       isServerCommand_Command `protobuf_oneof:"command"`
 	unknownFields protoimpl.UnknownFields
@@ -808,7 +703,7 @@ type ServerCommand struct {
 
 func (x *ServerCommand) Reset() {
 	*x = ServerCommand{}
-	mi := &file_internal_infra_transport_grpc_proto_hub_proto_msgTypes[11]
+	mi := &file_internal_infra_transport_grpc_proto_hub_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -820,7 +715,7 @@ func (x *ServerCommand) String() string {
 func (*ServerCommand) ProtoMessage() {}
 
 func (x *ServerCommand) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_infra_transport_grpc_proto_hub_proto_msgTypes[11]
+	mi := &file_internal_infra_transport_grpc_proto_hub_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -833,7 +728,7 @@ func (x *ServerCommand) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServerCommand.ProtoReflect.Descriptor instead.
 func (*ServerCommand) Descriptor() ([]byte, []int) {
-	return file_internal_infra_transport_grpc_proto_hub_proto_rawDescGZIP(), []int{11}
+	return file_internal_infra_transport_grpc_proto_hub_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ServerCommand) GetCommand() isServerCommand_Command {
@@ -847,15 +742,6 @@ func (x *ServerCommand) GetHeartbeatResponse() *AgentHeartbeatResponse {
 	if x != nil {
 		if x, ok := x.Command.(*ServerCommand_HeartbeatResponse); ok {
 			return x.HeartbeatResponse
-		}
-	}
-	return nil
-}
-
-func (x *ServerCommand) GetMetricsResponse() *AgentMetricsResponse {
-	if x != nil {
-		if x, ok := x.Command.(*ServerCommand_MetricsResponse); ok {
-			return x.MetricsResponse
 		}
 	}
 	return nil
@@ -879,18 +765,12 @@ type ServerCommand_HeartbeatResponse struct {
 	HeartbeatResponse *AgentHeartbeatResponse `protobuf:"bytes,1,opt,name=heartbeat_response,json=heartbeatResponse,proto3,oneof"`
 }
 
-type ServerCommand_MetricsResponse struct {
-	MetricsResponse *AgentMetricsResponse `protobuf:"bytes,2,opt,name=metrics_response,json=metricsResponse,proto3,oneof"`
-}
-
 type ServerCommand_Request struct {
 	// Server-initiated commands (50+)
 	Request *RequestEnvelope `protobuf:"bytes,50,opt,name=request,proto3,oneof"`
 }
 
 func (*ServerCommand_HeartbeatResponse) isServerCommand_Command() {}
-
-func (*ServerCommand_MetricsResponse) isServerCommand_Command() {}
 
 func (*ServerCommand_Request) isServerCommand_Command() {}
 
@@ -899,7 +779,6 @@ type AgentMessage struct {
 	// Types that are valid to be assigned to Message:
 	//
 	//	*AgentMessage_Heartbeat
-	//	*AgentMessage_Metrics
 	//	*AgentMessage_Response
 	Message       isAgentMessage_Message `protobuf_oneof:"message"`
 	unknownFields protoimpl.UnknownFields
@@ -908,7 +787,7 @@ type AgentMessage struct {
 
 func (x *AgentMessage) Reset() {
 	*x = AgentMessage{}
-	mi := &file_internal_infra_transport_grpc_proto_hub_proto_msgTypes[12]
+	mi := &file_internal_infra_transport_grpc_proto_hub_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -920,7 +799,7 @@ func (x *AgentMessage) String() string {
 func (*AgentMessage) ProtoMessage() {}
 
 func (x *AgentMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_infra_transport_grpc_proto_hub_proto_msgTypes[12]
+	mi := &file_internal_infra_transport_grpc_proto_hub_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -933,7 +812,7 @@ func (x *AgentMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentMessage.ProtoReflect.Descriptor instead.
 func (*AgentMessage) Descriptor() ([]byte, []int) {
-	return file_internal_infra_transport_grpc_proto_hub_proto_rawDescGZIP(), []int{12}
+	return file_internal_infra_transport_grpc_proto_hub_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *AgentMessage) GetMessage() isAgentMessage_Message {
@@ -947,15 +826,6 @@ func (x *AgentMessage) GetHeartbeat() *AgentHeartbeat {
 	if x != nil {
 		if x, ok := x.Message.(*AgentMessage_Heartbeat); ok {
 			return x.Heartbeat
-		}
-	}
-	return nil
-}
-
-func (x *AgentMessage) GetMetrics() *AgentMetrics {
-	if x != nil {
-		if x, ok := x.Message.(*AgentMessage_Metrics); ok {
-			return x.Metrics
 		}
 	}
 	return nil
@@ -979,18 +849,12 @@ type AgentMessage_Heartbeat struct {
 	Heartbeat *AgentHeartbeat `protobuf:"bytes,1,opt,name=heartbeat,proto3,oneof"`
 }
 
-type AgentMessage_Metrics struct {
-	Metrics *AgentMetrics `protobuf:"bytes,2,opt,name=metrics,proto3,oneof"`
-}
-
 type AgentMessage_Response struct {
 	// Responses to server-initiated commands (50+)
 	Response *ResponseEnvelope `protobuf:"bytes,50,opt,name=response,proto3,oneof"`
 }
 
 func (*AgentMessage_Heartbeat) isAgentMessage_Message() {}
-
-func (*AgentMessage_Metrics) isAgentMessage_Message() {}
 
 func (*AgentMessage_Response) isAgentMessage_Message() {}
 
@@ -1012,14 +876,12 @@ const file_internal_infra_transport_grpc_proto_hub_proto_rawDesc = "" +
 	"\rresponse_code\x18\x03 \x01(\x0e2\x13.proto.ResponseCodeR\fresponseCode\x12\x16\n" +
 	"\x06detail\x18\x04 \x01(\tR\x06detail\x12\x19\n" +
 	"\bagent_id\x18\x05 \x01(\tR\aagentId\x12)\n" +
-	"\x10protocol_version\x18\x06 \x01(\tR\x0fprotocolVersion\"\x9f\x01\n" +
+	"\x10protocol_version\x18\x06 \x01(\tR\x0fprotocolVersion\"u\n" +
 	"\x03App\x12\x15\n" +
 	"\x06app_id\x18\x01 \x01(\tR\x05appId\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x18\n" +
-	"\aversion\x18\x03 \x01(\tR\aversion\x12\x12\n" +
-	"\x04icon\x18\x04 \x01(\tR\x04icon\x12\x14\n" +
-	"\x05color\x18\x05 \x01(\tR\x05color\x12)\n" +
-	"\x10protocol_version\x18\x06 \x01(\tR\x0fprotocolVersion\"\xf6\x02\n" +
+	"\aversion\x18\x03 \x01(\tR\aversion\x12)\n" +
+	"\x10protocol_version\x18\x04 \x01(\tR\x0fprotocolVersion\"\xf6\x02\n" +
 	"\x14RegisterAgentRequest\x12&\n" +
 	"\x04base\x18\x01 \x01(\v2\x12.proto.BaseMessageR\x04base\x12Q\n" +
 	"\fcapabilities\x18\x02 \x03(\v2-.proto.RegisterAgentRequest.CapabilitiesEntryR\fcapabilities\x12E\n" +
@@ -1037,10 +899,6 @@ const file_internal_infra_transport_grpc_proto_hub_proto_rawDesc = "" +
 	"\x0eAgentHeartbeat\x12&\n" +
 	"\x04base\x18\x01 \x01(\v2\x12.proto.BaseMessageR\x04base\"A\n" +
 	"\x16AgentHeartbeatResponse\x12'\n" +
-	"\x04base\x18\x01 \x01(\v2\x13.proto.BaseResponseR\x04base\"6\n" +
-	"\fAgentMetrics\x12&\n" +
-	"\x04base\x18\x01 \x01(\v2\x12.proto.BaseMessageR\x04base\"?\n" +
-	"\x14AgentMetricsResponse\x12'\n" +
 	"\x04base\x18\x01 \x01(\v2\x13.proto.BaseResponseR\x04base\"\xd0\x01\n" +
 	"\x0fRequestEnvelope\x12&\n" +
 	"\x04base\x18\x01 \x01(\v2\x12.proto.BaseMessageR\x04base\x12\x1d\n" +
@@ -1057,15 +915,13 @@ const file_internal_infra_transport_grpc_proto_hub_proto_rawDesc = "" +
 	"\x04type\x18\x03 \x01(\tR\x04type\x12!\n" +
 	"\fcontent_type\x18\x04 \x01(\tR\vcontentType\x12%\n" +
 	"\x0eschema_version\x18\x05 \x01(\tR\rschemaVersion\x12\x18\n" +
-	"\apayload\x18\x06 \x01(\fR\apayload\"\xe8\x01\n" +
+	"\apayload\x18\x06 \x01(\fR\apayload\"\x9e\x01\n" +
 	"\rServerCommand\x12N\n" +
-	"\x12heartbeat_response\x18\x01 \x01(\v2\x1d.proto.AgentHeartbeatResponseH\x00R\x11heartbeatResponse\x12H\n" +
-	"\x10metrics_response\x18\x02 \x01(\v2\x1b.proto.AgentMetricsResponseH\x00R\x0fmetricsResponse\x122\n" +
+	"\x12heartbeat_response\x18\x01 \x01(\v2\x1d.proto.AgentHeartbeatResponseH\x00R\x11heartbeatResponse\x122\n" +
 	"\arequest\x182 \x01(\v2\x16.proto.RequestEnvelopeH\x00R\arequestB\t\n" +
-	"\acommand\"\xb8\x01\n" +
+	"\acommand\"\x87\x01\n" +
 	"\fAgentMessage\x125\n" +
-	"\theartbeat\x18\x01 \x01(\v2\x15.proto.AgentHeartbeatH\x00R\theartbeat\x12/\n" +
-	"\ametrics\x18\x02 \x01(\v2\x13.proto.AgentMetricsH\x00R\ametrics\x125\n" +
+	"\theartbeat\x18\x01 \x01(\v2\x15.proto.AgentHeartbeatH\x00R\theartbeat\x125\n" +
 	"\bresponse\x182 \x01(\v2\x17.proto.ResponseEnvelopeH\x00R\bresponseB\t\n" +
 	"\amessage*\xd0\x01\n" +
 	"\fResponseCode\x12\x1d\n" +
@@ -1092,7 +948,7 @@ func file_internal_infra_transport_grpc_proto_hub_proto_rawDescGZIP() []byte {
 }
 
 var file_internal_infra_transport_grpc_proto_hub_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_internal_infra_transport_grpc_proto_hub_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_internal_infra_transport_grpc_proto_hub_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_internal_infra_transport_grpc_proto_hub_proto_goTypes = []any{
 	(ResponseCode)(0),              // 0: proto.ResponseCode
 	(*BaseMessage)(nil),            // 1: proto.BaseMessage
@@ -1102,46 +958,40 @@ var file_internal_infra_transport_grpc_proto_hub_proto_goTypes = []any{
 	(*RegisterAgentResponse)(nil),  // 5: proto.RegisterAgentResponse
 	(*AgentHeartbeat)(nil),         // 6: proto.AgentHeartbeat
 	(*AgentHeartbeatResponse)(nil), // 7: proto.AgentHeartbeatResponse
-	(*AgentMetrics)(nil),           // 8: proto.AgentMetrics
-	(*AgentMetricsResponse)(nil),   // 9: proto.AgentMetricsResponse
-	(*RequestEnvelope)(nil),        // 10: proto.RequestEnvelope
-	(*ResponseEnvelope)(nil),       // 11: proto.ResponseEnvelope
-	(*ServerCommand)(nil),          // 12: proto.ServerCommand
-	(*AgentMessage)(nil),           // 13: proto.AgentMessage
-	nil,                            // 14: proto.RegisterAgentRequest.CapabilitiesEntry
-	nil,                            // 15: proto.RegisterAgentRequest.FeaturesEntry
-	(*timestamppb.Timestamp)(nil),  // 16: google.protobuf.Timestamp
+	(*RequestEnvelope)(nil),        // 8: proto.RequestEnvelope
+	(*ResponseEnvelope)(nil),       // 9: proto.ResponseEnvelope
+	(*ServerCommand)(nil),          // 10: proto.ServerCommand
+	(*AgentMessage)(nil),           // 11: proto.AgentMessage
+	nil,                            // 12: proto.RegisterAgentRequest.CapabilitiesEntry
+	nil,                            // 13: proto.RegisterAgentRequest.FeaturesEntry
+	(*timestamppb.Timestamp)(nil),  // 14: google.protobuf.Timestamp
 }
 var file_internal_infra_transport_grpc_proto_hub_proto_depIdxs = []int32{
-	16, // 0: proto.BaseMessage.timestamp:type_name -> google.protobuf.Timestamp
-	16, // 1: proto.BaseResponse.timestamp:type_name -> google.protobuf.Timestamp
+	14, // 0: proto.BaseMessage.timestamp:type_name -> google.protobuf.Timestamp
+	14, // 1: proto.BaseResponse.timestamp:type_name -> google.protobuf.Timestamp
 	0,  // 2: proto.BaseResponse.response_code:type_name -> proto.ResponseCode
 	1,  // 3: proto.RegisterAgentRequest.base:type_name -> proto.BaseMessage
-	14, // 4: proto.RegisterAgentRequest.capabilities:type_name -> proto.RegisterAgentRequest.CapabilitiesEntry
-	15, // 5: proto.RegisterAgentRequest.features:type_name -> proto.RegisterAgentRequest.FeaturesEntry
+	12, // 4: proto.RegisterAgentRequest.capabilities:type_name -> proto.RegisterAgentRequest.CapabilitiesEntry
+	13, // 5: proto.RegisterAgentRequest.features:type_name -> proto.RegisterAgentRequest.FeaturesEntry
 	3,  // 6: proto.RegisterAgentRequest.apps:type_name -> proto.App
 	2,  // 7: proto.RegisterAgentResponse.base:type_name -> proto.BaseResponse
 	1,  // 8: proto.AgentHeartbeat.base:type_name -> proto.BaseMessage
 	2,  // 9: proto.AgentHeartbeatResponse.base:type_name -> proto.BaseResponse
-	1,  // 10: proto.AgentMetrics.base:type_name -> proto.BaseMessage
-	2,  // 11: proto.AgentMetricsResponse.base:type_name -> proto.BaseResponse
-	1,  // 12: proto.RequestEnvelope.base:type_name -> proto.BaseMessage
-	2,  // 13: proto.ResponseEnvelope.base:type_name -> proto.BaseResponse
-	7,  // 14: proto.ServerCommand.heartbeat_response:type_name -> proto.AgentHeartbeatResponse
-	9,  // 15: proto.ServerCommand.metrics_response:type_name -> proto.AgentMetricsResponse
-	10, // 16: proto.ServerCommand.request:type_name -> proto.RequestEnvelope
-	6,  // 17: proto.AgentMessage.heartbeat:type_name -> proto.AgentHeartbeat
-	8,  // 18: proto.AgentMessage.metrics:type_name -> proto.AgentMetrics
-	11, // 19: proto.AgentMessage.response:type_name -> proto.ResponseEnvelope
-	4,  // 20: proto.AgentService.RegisterAgent:input_type -> proto.RegisterAgentRequest
-	13, // 21: proto.AgentService.AgentStream:input_type -> proto.AgentMessage
-	5,  // 22: proto.AgentService.RegisterAgent:output_type -> proto.RegisterAgentResponse
-	12, // 23: proto.AgentService.AgentStream:output_type -> proto.ServerCommand
-	22, // [22:24] is the sub-list for method output_type
-	20, // [20:22] is the sub-list for method input_type
-	20, // [20:20] is the sub-list for extension type_name
-	20, // [20:20] is the sub-list for extension extendee
-	0,  // [0:20] is the sub-list for field type_name
+	1,  // 10: proto.RequestEnvelope.base:type_name -> proto.BaseMessage
+	2,  // 11: proto.ResponseEnvelope.base:type_name -> proto.BaseResponse
+	7,  // 12: proto.ServerCommand.heartbeat_response:type_name -> proto.AgentHeartbeatResponse
+	8,  // 13: proto.ServerCommand.request:type_name -> proto.RequestEnvelope
+	6,  // 14: proto.AgentMessage.heartbeat:type_name -> proto.AgentHeartbeat
+	9,  // 15: proto.AgentMessage.response:type_name -> proto.ResponseEnvelope
+	4,  // 16: proto.AgentService.RegisterAgent:input_type -> proto.RegisterAgentRequest
+	11, // 17: proto.AgentService.AgentStream:input_type -> proto.AgentMessage
+	5,  // 18: proto.AgentService.RegisterAgent:output_type -> proto.RegisterAgentResponse
+	10, // 19: proto.AgentService.AgentStream:output_type -> proto.ServerCommand
+	18, // [18:20] is the sub-list for method output_type
+	16, // [16:18] is the sub-list for method input_type
+	16, // [16:16] is the sub-list for extension type_name
+	16, // [16:16] is the sub-list for extension extendee
+	0,  // [0:16] is the sub-list for field type_name
 }
 
 func init() { file_internal_infra_transport_grpc_proto_hub_proto_init() }
@@ -1149,14 +999,12 @@ func file_internal_infra_transport_grpc_proto_hub_proto_init() {
 	if File_internal_infra_transport_grpc_proto_hub_proto != nil {
 		return
 	}
-	file_internal_infra_transport_grpc_proto_hub_proto_msgTypes[11].OneofWrappers = []any{
+	file_internal_infra_transport_grpc_proto_hub_proto_msgTypes[9].OneofWrappers = []any{
 		(*ServerCommand_HeartbeatResponse)(nil),
-		(*ServerCommand_MetricsResponse)(nil),
 		(*ServerCommand_Request)(nil),
 	}
-	file_internal_infra_transport_grpc_proto_hub_proto_msgTypes[12].OneofWrappers = []any{
+	file_internal_infra_transport_grpc_proto_hub_proto_msgTypes[10].OneofWrappers = []any{
 		(*AgentMessage_Heartbeat)(nil),
-		(*AgentMessage_Metrics)(nil),
 		(*AgentMessage_Response)(nil),
 	}
 	type x struct{}
@@ -1165,7 +1013,7 @@ func file_internal_infra_transport_grpc_proto_hub_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_internal_infra_transport_grpc_proto_hub_proto_rawDesc), len(file_internal_infra_transport_grpc_proto_hub_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   15,
+			NumMessages:   13,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

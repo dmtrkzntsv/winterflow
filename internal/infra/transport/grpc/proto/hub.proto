@@ -40,9 +40,7 @@ message App {
   string app_id = 1;
   string name = 2;
   string version = 3;
-  string icon = 4;
-  string color = 5;
-  string protocol_version = 6;
+  string protocol_version = 4;
 }
 
 // -----------------------------------------------------------------------------
@@ -63,13 +61,6 @@ message AgentHeartbeat {
   BaseMessage base = 1;
 }
 message AgentHeartbeatResponse {
-  BaseResponse base = 1;
-}
-
-message AgentMetrics {
-  BaseMessage base = 1;
-}
-message AgentMetricsResponse {
   BaseResponse base = 1;
 }
 
@@ -116,7 +107,6 @@ message ServerCommand {
   oneof command {
     // Responses to agent-initiated messages
     AgentHeartbeatResponse heartbeat_response = 1;
-    AgentMetricsResponse   metrics_response = 2;
 
     // Server-initiated commands (50+)
     RequestEnvelope        request = 50;
@@ -127,7 +117,6 @@ message AgentMessage {
   oneof message {
     // Agent-initiated messages
     AgentHeartbeat         heartbeat = 1;
-    AgentMetrics           metrics = 2;
 
     // Responses to server-initiated commands (50+)
     ResponseEnvelope       response = 50;

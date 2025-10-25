@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"fmt"
 	"net"
 	"os"
 	"sync"
@@ -15,13 +16,15 @@ import (
 	"winterflow/internal/infra/transport/grpc/proto"
 
 	"google.golang.org/grpc"
-	//"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
-	//"google.golang.org/grpc/status"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type Hub struct {
+	proto.UnimplementedAgentServiceServer
 	agents     map[string]*agent
 	agentsLock sync.RWMutex
 	cfg        *config.Config
@@ -47,6 +50,7 @@ func NewHub(log *logger.Logger, cfg *config.Config) *Hub {
 		log:    log,
 		srv:    createServer(log, cfg),
 	}
+	proto.RegisterAgentServiceServer(h.srv, h)
 
 	return h
 }
@@ -98,7 +102,6 @@ func createServer(log *logger.Logger, cfg *config.Config) *grpc.Server {
 			MaxConnectionAgeGrace: 5 * time.Minute,
 		}),
 	)
-	//proto.RegisterAgentServiceServer(srv, h)
 
 	return srv
 }
@@ -147,5 +150,162 @@ func (h *Hub) Shutdown(ctx context.Context) error {
 		h.log.Warn("Graceful shutdown timeout, forcing stop")
 		h.srv.Stop()
 		return ctx.Err()
+	}
+}
+
+func (h *Hub) RegisterAgent(ctx context.Context, req *proto.RegisterAgentRequest) (*proto.RegisterAgentResponse, error) {
+	if req.Base == nil {
+		return nil, status.Errorf(codes.InvalidArgument, "base message is required")
+	}
+
+	agentID := req.Base.AgentId
+	if agentID == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "agent_id is required")
+	}
+
+	h.log.Info("Agent registration request",
+		"agent_id", agentID,
+		"capabilities", req.Capabilities,
+		"features", req.Features,
+		"apps_count", len(req.Apps))
+
+	h.agentsLock.Lock()
+	defer h.agentsLock.Unlock()
+
+	if existingAgent, exists := h.agents[agentID]; exists {
+		h.log.Info("Agent already registered, updating info", "agent_id", agentID)
+		existingAgent.lastSeen = time.Now()
+	} else {
+		h.log.Info("Registering new agent", "agent_id", agentID)
+		h.agents[agentID] = &agent{
+			streamActive:        false,
+			lastSeen:            time.Now(),
+			metrics:             make(map[string]string),
+			cancelFunc:          nil,
+			stream:              nil,
+			pendingRequests:     make(map[string]interface{}),
+			pendingRequestsLock: sync.RWMutex{},
+		}
+	}
+
+	response := &proto.RegisterAgentResponse{
+		Base: &proto.BaseResponse{
+			MessageId:       fmt.Sprintf("reg-resp-%d", time.Now().UnixNano()),
+			Timestamp:       timestamppb.Now(),
+			ResponseCode:    proto.ResponseCode_RESPONSE_CODE_SUCCESS,
+			Detail:          "Agent registered successfully",
+			AgentId:         agentID,
+			ProtocolVersion: req.Base.ProtocolVersion,
+		},
+	}
+
+	h.log.Info("Agent registration successful", "agent_id", agentID)
+	return response, nil
+}
+
+func (h *Hub) AgentStream(stream grpc.BidiStreamingServer[proto.AgentMessage, proto.ServerCommand]) error {
+	var agentID string
+	var agent *agent
+	//var streamCtx context.Context
+	var cancel context.CancelFunc
+
+	defer func() {
+		if cancel != nil {
+			cancel()
+		}
+		if agent != nil && agentID != "" {
+			h.agentsLock.Lock()
+			agent.streamActive = false
+			agent.stream = nil
+			agent.cancelFunc = nil
+			h.agentsLock.Unlock()
+			h.log.Info("Agent stream closed", "agent_id", agentID)
+		}
+	}()
+
+	h.log.Info("New agent stream connection established")
+
+	for {
+		msg, err := stream.Recv()
+		if err != nil {
+			h.log.Error("Error receiving message from agent", "error", err, "agent_id", agentID)
+			return err
+		}
+
+		switch payload := msg.Message.(type) {
+		case *proto.AgentMessage_Heartbeat:
+			if payload.Heartbeat.Base == nil {
+				h.log.Warn("Received heartbeat without base message", "agent_id", agentID)
+				continue
+			}
+
+			currentAgentID := payload.Heartbeat.Base.AgentId
+			if agentID == "" {
+				agentID = currentAgentID
+				h.log.Info("Agent stream identified", "agent_id", agentID)
+
+				h.agentsLock.Lock()
+				if existingAgent, exists := h.agents[agentID]; exists {
+					agent = existingAgent
+					agent.streamActive = true
+					agent.stream = stream
+					agent.lastSeen = time.Now()
+
+					_, cancel = context.WithCancel(stream.Context())
+					agent.cancelFunc = cancel
+				} else {
+					h.agentsLock.Unlock()
+					h.log.Warn("Agent not registered, closing stream", "agent_id", agentID)
+					return status.Errorf(codes.Unauthenticated, "agent not registered")
+				}
+				h.agentsLock.Unlock()
+			} else if currentAgentID != agentID {
+				h.log.Warn("Agent ID mismatch in stream", "expected", agentID, "received", currentAgentID)
+				return status.Errorf(codes.InvalidArgument, "agent ID mismatch")
+			}
+
+			if agent != nil {
+				h.agentsLock.Lock()
+				agent.lastSeen = time.Now()
+				h.agentsLock.Unlock()
+			}
+
+			heartbeatResponse := &proto.ServerCommand{
+				Command: &proto.ServerCommand_HeartbeatResponse{
+					HeartbeatResponse: &proto.AgentHeartbeatResponse{
+						Base: &proto.BaseResponse{
+							MessageId:       fmt.Sprintf("hb-resp-%d", time.Now().UnixNano()),
+							Timestamp:       timestamppb.Now(),
+							ResponseCode:    proto.ResponseCode_RESPONSE_CODE_SUCCESS,
+							Detail:          "Heartbeat acknowledged",
+							AgentId:         agentID,
+							ProtocolVersion: payload.Heartbeat.Base.ProtocolVersion,
+						},
+					},
+				},
+			}
+
+			if err := stream.Send(heartbeatResponse); err != nil {
+				h.log.Error("Error sending heartbeat response", "error", err, "agent_id", agentID)
+				return err
+			}
+
+			h.log.Debug("Heartbeat processed", "agent_id", agentID)
+
+		case *proto.AgentMessage_Response:
+			if payload.Response.Base == nil {
+				h.log.Warn("Received response without base message", "agent_id", agentID)
+				continue
+			}
+
+			h.log.Info("Received response from agent",
+				"agent_id", agentID,
+				"request_id", payload.Response.RequestId,
+				"type", payload.Response.Type,
+				"response_code", payload.Response.Base.ResponseCode)
+
+		default:
+			h.log.Warn("Received unknown message type from agent", "agent_id", agentID)
+		}
 	}
 }

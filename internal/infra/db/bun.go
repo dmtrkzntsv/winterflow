@@ -44,13 +44,13 @@ func setupBun(connStr string, log *logger.Logger) (*bun.DB, error) {
 	var err error
 	var db *bun.DB
 
-	if strings.HasPrefix(connStr, "sqlite3://") || strings.HasPrefix(connStr, "sqlite://") {
+	if strings.HasPrefix(connStr, "sqlite://") {
 		sqldb, err = setupSQLite(connStr, log)
 		if err != nil {
 			return nil, fmt.Errorf("failed to setup SQLite: %w", err)
 		}
 		db = bun.NewDB(sqldb, sqlitedialect.New())
-	} else if strings.HasPrefix(connStr, "postgres://") || strings.HasPrefix(connStr, "postgresql://") {
+	} else if strings.HasPrefix(connStr, "postgres://") {
 		sqldb, err = setupPostgreSQL(connStr, log)
 		if err != nil {
 			return nil, fmt.Errorf("failed to setup PostgreSQL: %w", err)
@@ -86,8 +86,7 @@ func setupBun(connStr string, log *logger.Logger) (*bun.DB, error) {
 }
 
 func setupSQLite(connStr string, log *logger.Logger) (*sql.DB, error) {
-	dbPath := strings.TrimPrefix(connStr, "sqlite3://")
-	dbPath = strings.TrimPrefix(dbPath, "sqlite://")
+	dbPath := strings.TrimPrefix(connStr, "sqlite://")
 
 	if dbPath == "" {
 		return nil, fmt.Errorf("invalid connection string: path is empty")

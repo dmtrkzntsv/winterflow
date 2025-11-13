@@ -20,11 +20,11 @@ func (c *StandaloneContainer) GetAppFactory() *StandaloneFactory {
 type StandaloneFactory struct {
 	log *logger.Logger
 	cfg *config.Config
-	db  *db.Connection
+	db  *db.BunConnection
 }
 
 func BootstrapStandalone(log *logger.Logger, cfg *config.Config) *StandaloneContainer {
-	dbconn := db.NewDbConnection(log, cfg.GetDbURL())
+	dbconn := db.NewBunConnection(log, cfg.GetDbURL())
 	return &StandaloneContainer{
 		factory: &StandaloneFactory{
 			log: log,

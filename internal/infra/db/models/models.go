@@ -1,8 +1,9 @@
 package models
 
 import (
-	"github.com/uptrace/bun"
 	"winterflow/internal/infra/db/types"
+
+	"github.com/uptrace/bun"
 )
 
 type Organization struct {

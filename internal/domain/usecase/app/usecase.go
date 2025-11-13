@@ -50,7 +50,7 @@ func (uc *UseCase) CreateApp(ctx context.Context, serverID string, app model.App
 			n.Payload = app
 			n.Timestamp = app.CreatedAt
 		}
-		// @todo store app to the database
+		// @todo save app to the database
 		uc.nm.Publish(userID, n)
 	})
 }

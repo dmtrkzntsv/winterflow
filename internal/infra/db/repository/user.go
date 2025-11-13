@@ -29,11 +29,25 @@ type DbUserRepository struct {
 func (r *DbUserRepository) GetByConnectedAccount(ctx context.Context, provider, accountID string) (model.User, error) {
 	dbi := r.db.GetDB()
 
-	var user models.User
+	// First find the connected account to get the user ID
+	var connectedAccount models.UserConnectedAccount
 	err := dbi.NewSelect().
+		Model(&connectedAccount).
+		Where("provider = ? AND external_id = ?", provider, accountID).
+		Scan(ctx)
+
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return model.User{}, model.ErrorUserNotFound
+		}
+		return model.User{}, err
+	}
+
+	// Then get the user by ID
+	var user models.User
+	err = dbi.NewSelect().
 		Model(&user).
-		Join("JOIN user_connected_accounts AS uca ON uca.user_id = user.user_id").
-		Where("uca.provider = ? AND uca.external_id = ?", provider, accountID).
+		Where("user_id = ?", connectedAccount.UserID).
 		Scan(ctx)
 
 	if err != nil {
@@ -99,7 +113,7 @@ func (r *DbUserRepository) GetUser(ctx context.Context, userID string) (model.Us
 	var user models.User
 	err := dbi.NewSelect().
 		Model(&user).
-		Where("user.user_id = ?", userID).
+		Where("user_id = ?", userID).
 		Scan(ctx)
 
 	if err != nil {

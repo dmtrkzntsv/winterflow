@@ -16,7 +16,9 @@ import (
 	"github.com/uptrace/bun/driver/pgdriver"
 	"github.com/uptrace/bun/driver/sqliteshim"
 	"github.com/uptrace/bun/extra/bundebug"
+	"github.com/uptrace/bun/migrate"
 
+	"winterflow/internal/infra/db/migrations"
 	"winterflow/pkg/logger"
 )
 
@@ -69,13 +71,13 @@ func setupBun(connStr string, log *logger.Logger) (*bun.DB, error) {
 	// Register models for Bun ORM
 	registerModels(db)
 
-	// Run migrations
-	migrator := NewMigrator(log, sqldb)
-	if err := migrator.LoadMigrations(); err != nil {
-		return nil, fmt.Errorf("failed to load migrations: %w", err)
+	// Run migrations using Bun's migration system
+	migrator := migrate.NewMigrator(db, migrations.Migrations)
+	if err := migrator.Init(context.Background()); err != nil {
+		return nil, fmt.Errorf("failed to initialize migrator: %w", err)
 	}
 
-	if err := migrator.Migrate(); err != nil {
+	if _, err := migrator.Migrate(context.Background()); err != nil {
 		return nil, fmt.Errorf("failed to run migrations: %w", err)
 	}
 

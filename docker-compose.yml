@@ -18,7 +18,18 @@ services:
     ports:
       - "6379:6379"
 #    volumes:
-#      - redis-data:/data
+#      - winterflow-bus-redis:/data
+
+  winterflow-db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: wfuser
+      POSTGRES_PASSWORD: wfpassword
+      POSTGRES_DB: winterflow
+    ports:
+      - "5432:5432"
+#    volumes:
+#      - winterflow-db-data:/var/lib/postgresql/data
 
 #volumes:
-#  redis-data:
+#  winterflow-bus-redis:

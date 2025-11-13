@@ -25,10 +25,12 @@ func createInitialSchemaFixed(ctx context.Context, db *bun.DB) error {
 		timestampType = "TIMESTAMPTZ"
 		timestampDefault = "DEFAULT NOW()"
 		uuidType = "UUID"
-	} else {
+	} else if dialectName == dialect.SQLite {
 		timestampType = "TIMESTAMP"
 		timestampDefault = "DEFAULT CURRENT_TIMESTAMP"
 		uuidType = "VARCHAR(36)"
+	} else {
+		return fmt.Errorf("unsupported database dialect: %s", dialectName)
 	}
 
 	// Create all tables with proper types for each database

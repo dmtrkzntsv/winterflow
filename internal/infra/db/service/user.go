@@ -30,6 +30,7 @@ func (s *DbUserService) FindOrCreateUser(ctx context.Context, dto dto.UserDTO) (
 		cu, err := s.repo.CreateUser(ctx, dto)
 		if err != nil {
 			s.log.Error("failed to create user: %v", err)
+			return model.User{}, err
 		}
 		return cu, nil
 	}

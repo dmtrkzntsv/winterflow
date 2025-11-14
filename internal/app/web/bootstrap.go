@@ -74,9 +74,14 @@ func (s *Server) registerAuth() {
 			if claims.User != nil {
 				ctx := context.Background()
 				parts := strings.SplitN(claims.User.ID, "_", 2)
+				provider := parts[0]
+				accountId := parts[1]
+				if provider == "local" {
+					accountId = "local"
+				}
 				user, err := s.Factory.NewUserService().FindOrCreateUser(ctx, dto.UserDTO{
-					Provider:  parts[0],
-					AccountID: parts[1],
+					Provider:  provider,
+					AccountID: accountId,
 					UserID:    "",
 					Name:      claims.User.Name,
 					AvatarURL: strings.TrimPrefix(claims.User.Picture, s.Cfg.GetWebURL()),

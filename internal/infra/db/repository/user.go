@@ -4,11 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"winterflow/internal/domain/dto"
 	"winterflow/internal/domain/model"
 	"winterflow/internal/infra/db"
 	"winterflow/internal/infra/db/models"
-	"winterflow/internal/infra/db/types"
 	"winterflow/pkg/logger"
 	"winterflow/pkg/util"
 
@@ -71,9 +71,9 @@ func (r *DbUserRepository) CreateUser(ctx context.Context, dto dto.UserDTO) (mod
 	org := &models.Organization{
 		BaseModel:          bun.BaseModel{},
 		OrganizationID:     util.GenerateID(),
-		Name:               dto.Name + "'s Org",
+		Name:               strings.ToLower(dto.Name) + "'s org",
 		SubscriptionStatus: model.SubscriptionStatusUnpaid.Value(),
-		CreatedAt:          types.DateTime{},
+		CreatedAt:          util.NewDateTime(),
 	}
 
 	user := &models.User{
@@ -89,7 +89,7 @@ func (r *DbUserRepository) CreateUser(ctx context.Context, dto dto.UserDTO) (mod
 		OrganizationID: org.OrganizationID,
 		UserID:         user.UserID,
 		Role:           model.RoleOwner.Value(),
-		CreatedAt:      types.DateTime{},
+		CreatedAt:      util.NewDateTime(),
 		Organization:   org,
 		User:           user,
 	}
@@ -97,7 +97,7 @@ func (r *DbUserRepository) CreateUser(ctx context.Context, dto dto.UserDTO) (mod
 	connectedAccount := &models.UserConnectedAccount{
 		Provider:   dto.Provider,
 		ExternalID: dto.AccountID,
-		UserID:     dto.UserID,
+		UserID:     user.UserID,
 	}
 
 	err := r.db.Transaction(ctx, func(tx bun.IDB) error {

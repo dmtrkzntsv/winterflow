@@ -8,10 +8,12 @@ import {
   type ReactNode,
 } from "react"
 
+import { apiBaseUrl } from "@/config"
+
 const AUTH_TOKEN_KEY = "wf_auth_token"
 
 type LoginPayload = {
-  email: string
+  username: string
   password: string
 }
 
@@ -35,8 +37,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     () => Boolean(readStoredToken()) // hydrate from localStorage
   )
 
-  const login = useCallback(async ({ email }: LoginPayload) => {
-    const token = window.btoa(email)
+  const login = useCallback(async ({ username }: LoginPayload) => {
+    const loginEndpoint = `${apiBaseUrl}/auth/login`
+    console.debug("[auth] login endpoint", loginEndpoint)
+    const token = window.btoa(username)
     window.localStorage.setItem(AUTH_TOKEN_KEY, token)
     setIsAuthenticated(true)
   }, [])

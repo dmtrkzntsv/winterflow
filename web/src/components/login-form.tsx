@@ -2,6 +2,7 @@ import type { ComponentPropsWithoutRef, FormEvent } from "react"
 import { Trans, useTranslation } from "react-i18next"
 
 import { cn } from "@/lib/utils"
+import { apiBaseUrl, appBaseUrl } from "@/config"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import {
@@ -136,6 +137,14 @@ export function LoginForm({
                                                 type="button"
                                                 disabled={!isAvailable}
                                                 className="min-w-16"
+                                                onClick={() => {
+                                                    if (!isAvailable) return
+                                                    const site = window.location.origin
+                                                    const loginUrl = `${apiBaseUrl}/auth/${provider.id}/login?site=${encodeURIComponent(
+                                                        site,
+                                                    )}&from=${encodeURIComponent(appBaseUrl)}`
+                                                    window.location.href = loginUrl
+                                                }}
                                             >
                                                 {provider.icon}
                                                 <span className="sr-only">{t(provider.labelKey)}</span>

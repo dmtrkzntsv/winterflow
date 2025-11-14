@@ -10,8 +10,6 @@ import {
 
 import { apiBaseUrl } from "@/config"
 
-const AUTH_TOKEN_KEY = "wf_auth_token"
-
 type LoginPayload = {
   username: string
   password: string
@@ -25,39 +23,60 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined)
 
-const readStoredToken = () => {
-  if (typeof window === "undefined") {
-    return null
-  }
-  return window.localStorage.getItem(AUTH_TOKEN_KEY)
-}
-
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [isAuthenticated, setIsAuthenticated] = useState(
-    () => Boolean(readStoredToken()) // hydrate from localStorage
-  )
+  const [isAuthenticated, setIsAuthenticated] = useState(false)
 
   const login = useCallback(async ({ username }: LoginPayload) => {
     const loginEndpoint = `${apiBaseUrl}/auth/login`
     console.debug("[auth] login endpoint", loginEndpoint)
-    const token = window.btoa(username)
-    window.localStorage.setItem(AUTH_TOKEN_KEY, token)
+    const response = await fetch(loginEndpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ username }),
+      credentials: "include",
+    })
+    if (!response.ok) {
+      throw new Error("Failed to login")
+    }
     setIsAuthenticated(true)
   }, [])
 
-  const logout = useCallback(() => {
-    window.localStorage.removeItem(AUTH_TOKEN_KEY)
-    setIsAuthenticated(false)
+  const logout = useCallback(async () => {
+    try {
+      const response = await fetch(`${apiBaseUrl}/auth/logout`, {
+        method: "POST",
+        credentials: "include",
+      })
+      if (!response.ok) {
+        throw new Error("Failed to logout")
+      }
+    } catch (error) {
+      console.error("Failed to logout", error)
+    } finally {
+      setIsAuthenticated(false)
+    }
   }, [])
 
   useEffect(() => {
-    const handleStorage = (event: StorageEvent) => {
-      if (event.key === AUTH_TOKEN_KEY) {
-        setIsAuthenticated(Boolean(event.newValue))
+    const fetchStatus = async () => {
+      try {
+        const response = await fetch(`${apiBaseUrl}/auth/status`, {
+          credentials: "include",
+        })
+        if (!response.ok) {
+          throw new Error("Failed to fetch auth status")
+        }
+        const data = (await response.json()) as { status?: string }
+        setIsAuthenticated(data.status === "logged in")
+      } catch (error) {
+        console.error("Failed to fetch auth status", error)
+        setIsAuthenticated(false)
       }
     }
-    window.addEventListener("storage", handleStorage)
-    return () => window.removeEventListener("storage", handleStorage)
+
+    void fetchStatus()
   }, [])
 
   const value = useMemo(

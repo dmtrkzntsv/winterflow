@@ -3,7 +3,7 @@ BIN_DIR := bin
 STANDALONE_BIN := $(BIN_DIR)/standalone
 API_BIN := $(BIN_DIR)/api
 
-.PHONY: build lint standalone api
+.PHONY: build lint standalone api web
 
 build:
 	$(GO) build -o $(STANDALONE_BIN) ./cmd/standalone
@@ -29,6 +29,9 @@ hub:
 
 agent:
 	$(GO) run ./cmd/agent
+
+web:
+	pnpm --dir web dev
 
 sqlc:
 	@echo "Generating SQLC code..."

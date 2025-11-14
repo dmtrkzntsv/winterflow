@@ -25,7 +25,7 @@ const SNOWFLAKE_COUNT = 34
 
 const createFlakes = (): Snowflake[] =>
   Array.from({ length: SNOWFLAKE_COUNT }, (_, idx) => ({
-    left: Math.random() * 100,
+    left: Math.random() * 95,
     delay: 0,
     duration: 18 + Math.random() * 6,
     size: 18 + Math.random() * 18,

@@ -7,7 +7,6 @@ import (
 	"winterflow/internal/domain/model"
 	repo "winterflow/internal/infra/db/repository"
 	"winterflow/pkg/logger"
-	"winterflow/pkg/util"
 )
 
 type DbUserService struct {
@@ -27,9 +26,6 @@ func (s *DbUserService) FindOrCreateUser(ctx context.Context, dto dto.UserDTO) (
 	if err != nil {
 		if !errors.Is(err, model.ErrorUserNotFound) {
 			return model.User{}, err
-		}
-		if dto.UserID == "" {
-			dto.UserID = util.GenerateID()
 		}
 		cu, err := s.repo.CreateUser(ctx, dto)
 		if err != nil {

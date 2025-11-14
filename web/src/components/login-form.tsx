@@ -139,11 +139,20 @@ export function LoginForm({
                                                 className="min-w-16"
                                                 onClick={() => {
                                                     if (!isAvailable) return
-                                                    const site = window.location.origin
-                                                    const loginUrl = `${apiBaseUrl}/auth/${provider.id}/login?site=${encodeURIComponent(
-                                                        site,
+                                                    const siteUrl = window.location.origin
+                                                    let siteHost = siteUrl
+                                                    try {
+                                                        siteHost = new URL(siteUrl).hostname
+                                                    } catch {
+                                                        try {
+                                                            siteHost = new URL(appBaseUrl).hostname
+                                                        } catch {
+                                                            siteHost = siteUrl
+                                                        }
+                                                    }
+                                                    window.location.href = `${apiBaseUrl}/auth/${provider.id}/login?site=${encodeURIComponent(
+                                                        siteHost,
                                                     )}&from=${encodeURIComponent(appBaseUrl)}`
-                                                    window.location.href = loginUrl
                                                 }}
                                             >
                                                 {provider.icon}

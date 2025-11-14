@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from "react"
 
-import { apiBaseUrl } from "@/config"
+import { apiBaseUrl, appBaseUrl } from "@/config"
 
 type LoginPayload = {
   username: string
@@ -26,15 +26,33 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined)
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
 
-  const login = useCallback(async ({ username }: LoginPayload) => {
-    const loginEndpoint = `${apiBaseUrl}/auth/login`
-    console.debug("[auth] login endpoint", loginEndpoint)
+  const login = useCallback(async ({ username, password }: LoginPayload) => {
+    const loginEndpoint = `${apiBaseUrl}/auth/local/login?session=1`
+    const origin =
+      typeof window !== "undefined" ? window.location.origin : appBaseUrl
+    let audienceHost = origin
+    try {
+      audienceHost = new URL(origin).hostname
+    } catch {
+      try {
+        audienceHost = new URL(appBaseUrl).hostname
+      } catch {
+        audienceHost = origin
+      }
+    }
+
+    const body = new URLSearchParams({
+      user: username,
+      passwd: password,
+      aud: audienceHost,
+    })
+
     const response = await fetch(loginEndpoint, {
       method: "POST",
       headers: {
-        "Content-Type": "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
       },
-      body: JSON.stringify({ username }),
+      body: body.toString(),
       credentials: "include",
     })
     if (!response.ok) {

@@ -28,7 +28,7 @@ const en = {
       providerUnavailable: "Authentication method unavailable right now.",
       localUnavailable: "Email + password login is unavailable.",
       terms:
-        "By clicking continue, you agree to our <TermsLink>Terms of Service</TermsLink> and <PrivacyLink>Privacy Policy</PrivacyLink>.",
+        "By authorizing, you agree to our <TermsLink>Terms of Service</TermsLink> and <PrivacyLink>Privacy Policy</PrivacyLink>.",
     },
   },
 }

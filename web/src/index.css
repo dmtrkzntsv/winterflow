@@ -174,3 +174,32 @@
     cursor: not-allowed;
   }
 }
+
+.login-snowflake {
+  position: absolute;
+  top: -10%;
+  z-index: 5;
+  display: block;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.9);
+  filter: drop-shadow(0 0 8px rgba(14, 165, 233, 0.8));
+  animation-name: login-snowfall;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  transform: translateZ(0);
+  will-change: transform, opacity;
+}
+
+@keyframes login-snowfall {
+  0% {
+    transform: translate3d(var(--flake-drift, 0px), -50px, 0);
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate3d(calc(var(--flake-drift, 0px) * -1), calc(100vh + 50px), 0);
+    opacity: 0;
+  }
+}

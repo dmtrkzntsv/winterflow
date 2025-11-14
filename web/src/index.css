@@ -177,29 +177,35 @@
 
 .login-snowflake {
   position: absolute;
-  top: -10%;
+  top: 0;
   z-index: 5;
-  display: block;
-  border-radius: 9999px;
-  background: rgba(255, 255, 255, 0.9);
-  filter: drop-shadow(0 0 8px rgba(14, 165, 233, 0.8));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #f8fafc;
+  filter: drop-shadow(0 0 10px rgba(14, 165, 233, 0.8));
+  mix-blend-mode: screen;
   animation-name: login-snowfall;
   animation-timing-function: linear;
   animation-iteration-count: infinite;
   transform: translateZ(0);
   will-change: transform, opacity;
 }
+.login-snowflake svg {
+  width: 100%;
+  height: 100%;
+  stroke: currentColor;
+  stroke-width: 3.2;
+  fill: none;
+}
 
 @keyframes login-snowfall {
   0% {
-    transform: translate3d(var(--flake-drift, 0px), -50px, 0);
-    opacity: 0;
-  }
-  10% {
+    transform: translate3d(var(--flake-drift, 0px), var(--initial-y, -60px), 0);
     opacity: 1;
   }
   100% {
-    transform: translate3d(calc(var(--flake-drift, 0px) * -1), calc(100vh + 50px), 0);
+    transform: translate3d(calc(var(--flake-drift, 0px) * -1), calc(100vh + 60px), 0);
     opacity: 0;
   }
 }

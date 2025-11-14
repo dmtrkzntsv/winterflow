@@ -5,6 +5,7 @@ import { createBrowserRouter, RouterProvider } from "react-router-dom"
 import "@/lib/i18n"
 
 import { RequireAuth } from "@/components/require-auth"
+import { LogoSprite } from "@/components/app-logo"
 import { AuthProvider } from "@/context/auth-context"
 import { AppLayout } from "@/layouts/app-layout"
 import HomePage from "@/pages/home"
@@ -34,6 +35,7 @@ const router = createBrowserRouter([
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <AuthProvider>
+      <LogoSprite />
       <RouterProvider router={router} />
     </AuthProvider>
   </StrictMode>

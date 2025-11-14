@@ -13,21 +13,23 @@ type Snowflake = {
   size: number
   opacity: number
   drift: number
+  initialY: number
   id: number
 }
 
 type LoginIllustrationProps = ComponentPropsWithoutRef<"div">
-type SnowflakeStyle = CSSProperties & { "--flake-drift": string }
-const SNOWFLAKE_COUNT = 26
+type SnowflakeStyle = CSSProperties & { "--flake-drift": string; "--initial-y": string }
+const SNOWFLAKE_COUNT = 34
 
 const createFlakes = (): Snowflake[] =>
   Array.from({ length: SNOWFLAKE_COUNT }, (_, idx) => ({
     left: Math.random() * 100,
-    delay: Math.random() * 5,
-    duration: 6 + Math.random() * 6,
-    size: 8 + Math.random() * 12,
+    delay: 0,
+    duration: 18 + Math.random() * 6,
+    size: 18 + Math.random() * 18,
     opacity: 0.6 + Math.random() * 0.4,
-    drift: (Math.random() - 0.5) * 60,
+    drift: (Math.random() - 0.5) * 20,
+    initialY: -60 - (Math.random() * 800),
     id: idx,
   }))
 
@@ -54,6 +56,7 @@ export function LoginIllustration({ className, ...props }: LoginIllustrationProp
           height: `${flake.size}px`,
           opacity: flake.opacity,
           "--flake-drift": `${flake.drift}px`,
+          "--initial-y": `${flake.initialY}px`,
         }
         return (
           <span
@@ -61,7 +64,14 @@ export function LoginIllustration({ className, ...props }: LoginIllustrationProp
             className="login-snowflake pointer-events-none"
             aria-hidden="true"
             style={style}
-          />
+          >
+            <svg
+              viewBox="0 0 24 24"
+              className="h-full w-full text-white drop-shadow-[0_2px_6px_rgba(14,165,233,0.55)]"
+            >
+              <use href="#winterflow-asterisk" />
+            </svg>
+          </span>
         )
       })}
       <div className="absolute inset-x-0 bottom-0 z-10 h-24 bg-gradient-to-t from-[#0f172a]/80 to-transparent" />

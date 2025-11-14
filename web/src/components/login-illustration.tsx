@@ -14,11 +14,13 @@ type Snowflake = {
   opacity: number
   drift: number
   initialY: number
+  rotationDuration: number
+  rotationAmount: number
   id: number
 }
 
 type LoginIllustrationProps = ComponentPropsWithoutRef<"div">
-type SnowflakeStyle = CSSProperties & { "--flake-drift": string; "--initial-y": string }
+type SnowflakeStyle = CSSProperties & { "--flake-drift": string; "--initial-y": string; "--rotation-end": string }
 const SNOWFLAKE_COUNT = 34
 
 const createFlakes = (): Snowflake[] =>
@@ -30,6 +32,8 @@ const createFlakes = (): Snowflake[] =>
     opacity: 0.6 + Math.random() * 0.4,
     drift: (Math.random() - 0.5) * 20,
     initialY: -60 - (Math.random() * 800),
+    rotationDuration: 4 + Math.random() * 8,
+    rotationAmount: (Math.random() - 0.5) * 720,
     id: idx,
   }))
 
@@ -57,6 +61,7 @@ export function LoginIllustration({ className, ...props }: LoginIllustrationProp
           opacity: flake.opacity,
           "--flake-drift": `${flake.drift}px`,
           "--initial-y": `${flake.initialY}px`,
+          "--rotation-end": `${flake.rotationAmount}deg`,
         }
         return (
           <span

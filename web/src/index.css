@@ -185,9 +185,7 @@
   color: #f8fafc;
   filter: drop-shadow(0 0 10px rgba(14, 165, 233, 0.8));
   mix-blend-mode: screen;
-  animation-name: login-snowfall;
-  animation-timing-function: linear;
-  animation-iteration-count: infinite;
+  animation: login-snowfall linear infinite;
   transform: translateZ(0);
   will-change: transform, opacity;
 }
@@ -201,11 +199,11 @@
 
 @keyframes login-snowfall {
   0% {
-    transform: translate3d(var(--flake-drift, 0px), var(--initial-y, -60px), 0);
+    transform: translate3d(var(--flake-drift, 0px), var(--initial-y, -60px), 0) rotate(0deg);
     opacity: 1;
   }
   100% {
-    transform: translate3d(calc(var(--flake-drift, 0px) * -1), calc(100vh + 60px), 0);
+    transform: translate3d(calc(var(--flake-drift, 0px) * -1), calc(100vh + 60px), 0) rotate(var(--rotation-end, 360deg));
     opacity: 0;
   }
 }

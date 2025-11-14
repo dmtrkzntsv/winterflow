@@ -12,6 +12,7 @@ import {
     FieldSeparator,
 } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { PasswordInput } from "@/components/ui/password-input"
 
 type LoginFormValues = {
   username: string
@@ -94,12 +95,13 @@ export function LoginForm({
                             </Field>
                             <Field>
                                 <FieldLabel htmlFor="password">{t("login.passwordLabel")}</FieldLabel>
-                                <Input
+                                <PasswordInput
                                     id="password"
                                     name="password"
-                                    type="password"
                                     disabled={!localEnabled}
                                     required
+                                    toggleLabel={t("login.showPassword")}
+                                    hideLabel={t("login.hidePassword")}
                                 />
                             </Field>
                             <Field>

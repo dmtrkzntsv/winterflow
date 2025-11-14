@@ -15,6 +15,8 @@ const en = {
       usernameLabel: "Username",
       usernamePlaceholder: "Username",
       passwordLabel: "Password",
+      showPassword: "Show password",
+      hidePassword: "Hide password",
       submit: "Login",
       submitting: "Logging in...",
       errorGeneric: "We couldn't sign you in. Try again.",

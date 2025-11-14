@@ -1,0 +1,71 @@
+.winterflow-icon {
+  fill: currentColor;
+}
+
+.logo-container {
+  display: inline-flex;
+  align-items: center;
+  transition: all 0.3s ease;
+}
+
+.logo-container:hover .logo-text {
+  transform: translateY(-1px);
+  text-shadow: 0 4px 12px rgba(59, 130, 246, 0.25);
+}
+
+.logo-container:hover svg {
+  transform: rotate(180deg);
+  transition: transform 0.6s ease;
+}
+
+.logo-winter {
+  background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  font-weight: 700;
+  margin-right: -0.05em;
+}
+
+.logo-flow {
+  background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  font-weight: 800;
+  position: relative;
+  margin-right: -0.05em;
+}
+
+.logo-io {
+  color: oklch(0.707 0.165 254.624);
+  font-weight: 300;
+  margin-left: -0.05em;
+  opacity: 0.9;
+}
+
+.logo-text {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  letter-spacing: -0.025em;
+  transition: all 0.3s ease;
+  gap: 0.05em;
+}
+
+@keyframes spin-slow {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin-slow {
+  animation: spin-slow 3s linear infinite;
+}
+
+.animate-spin-slow svg {
+  color: #3b82f6;
+} 

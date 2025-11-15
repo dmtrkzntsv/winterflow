@@ -28,7 +28,7 @@ const en = {
       providerUnavailable: "Authentication method unavailable right now.",
       localUnavailable: "Email + password login is unavailable.",
       terms:
-        "By authorizing, you agree to our <TermsLink>Terms of Service</TermsLink> and <PrivacyLink>Privacy Policy</PrivacyLink>.",
+        "By using <WinterflowLink>WinterFlow.io</WinterflowLink>, you agree to our <TermsLink>Terms of Service</TermsLink> and <PrivacyLink>Privacy Policy</PrivacyLink>.",
     },
   },
 }

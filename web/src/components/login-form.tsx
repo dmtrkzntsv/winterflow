@@ -171,6 +171,9 @@ export function LoginForm({
                 <Trans
                     i18nKey="login.terms"
                     components={{
+                        WinterflowLink: (
+                            <a href="https://winterflow.io/" className="underline-offset-2 hover:underline" target={"_blank"} />
+                        ),
                         TermsLink: (
                             <a href="https://winterflow.io/legal/terms-of-service/" className="underline-offset-2 hover:underline" target={"_blank"} />
                         ),

@@ -94,6 +94,7 @@ func (s *Server) registerAuth() {
 				claims.User.ID = user.ID
 				claims.User.Picture = user.AvatarURL
 				claims.User.Name = user.Name
+				claims.User.SetStrAttr("provider", provider)
 			}
 			return claims
 		}),

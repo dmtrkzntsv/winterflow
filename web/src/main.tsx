@@ -7,6 +7,7 @@ import "@/lib/i18n"
 import { RequireAuth } from "@/components/require-auth"
 import { LogoSprite } from "@/components/app-logo"
 import { AuthProvider } from "@/context/auth-context"
+import { UserProvider } from "@/context/user-context"
 import { AppLayout } from "@/layouts/app-layout"
 import HomePage from "@/pages/home"
 import LoginPage from "@/pages/login"
@@ -35,8 +36,10 @@ const router = createBrowserRouter([
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <AuthProvider>
-      <LogoSprite />
-      <RouterProvider router={router} />
+      <UserProvider>
+        <LogoSprite />
+        <RouterProvider router={router} />
+      </UserProvider>
     </AuthProvider>
   </StrictMode>
 )

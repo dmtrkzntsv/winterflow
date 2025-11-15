@@ -18,6 +18,16 @@
   transition: transform 0.6s ease;
 }
 
+.logo-spin-hover svg {
+  transform-origin: center;
+  transition: none;
+}
+
+.logo-spin-hover:hover svg {
+  transform: rotate(360deg);
+  transition: transform 1.2s ease;
+}
+
 .logo-winter {
   background: linear-gradient(135deg, #1e40af 0%, #3b82f6 100%);
   -webkit-background-clip: text;

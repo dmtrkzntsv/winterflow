@@ -2,14 +2,13 @@
 
 import * as React from "react"
 import {
-    AudioWaveform,
     BookOpen,
     Bot,
-    Command,
     Frame,
-    GalleryVerticalEnd, LifeBuoy,
+    LifeBuoy,
     Map,
-    PieChart, Send,
+    PieChart,
+    Send,
     Settings2,
     SquareTerminal,
 } from "lucide-react"
@@ -37,17 +36,14 @@ const data = {
     teams: [
         {
             name: "Acme Inc",
-            logo: GalleryVerticalEnd,
             plan: "Enterprise",
         },
         {
             name: "Acme Corp.",
-            logo: AudioWaveform,
             plan: "Startup",
         },
         {
             name: "Evil Corp.",
-            logo: Command,
             plan: "Free",
         },
     ],

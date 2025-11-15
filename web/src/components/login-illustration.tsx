@@ -1,5 +1,8 @@
 import {
+  useEffect,
   useMemo,
+  useRef,
+  useState,
   type ComponentPropsWithoutRef,
   type CSSProperties,
 } from "react"
@@ -13,40 +16,67 @@ type Snowflake = {
   size: number
   opacity: number
   drift: number
-  initialY: number
   rotationDuration: number
   rotationAmount: number
   id: number
 }
 
 type LoginIllustrationProps = ComponentPropsWithoutRef<"div">
-type SnowflakeStyle = CSSProperties & { "--flake-drift": string; "--initial-y": string; "--rotation-end": string }
+type SnowflakeStyle = CSSProperties & { "--flake-drift": string; "--rotation-end": string }
+type LoginIllustrationStyle = CSSProperties & { "--snowfall-height"?: string }
 const SNOWFLAKE_COUNT = 34
 
 const createFlakes = (): Snowflake[] =>
   Array.from({ length: SNOWFLAKE_COUNT }, (_, idx) => ({
     left: Math.random() * 95,
-    delay: 0,
+    delay: -Math.random() * 18,
     duration: 18 + Math.random() * 6,
     size: 18 + Math.random() * 18,
     opacity: 0.6 + Math.random() * 0.4,
     drift: (Math.random() - 0.5) * 20,
-    initialY: -60 - (Math.random() * 800),
     rotationDuration: 4 + Math.random() * 8,
     rotationAmount: (Math.random() - 0.5) * 720,
     id: idx,
   }))
 
-export function LoginIllustration({ className, ...props }: LoginIllustrationProps) {
+export function LoginIllustration({ className, style, ...props }: LoginIllustrationProps) {
   const flakes = useMemo(createFlakes, [])
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [containerHeight, setContainerHeight] = useState(0)
+
+  useEffect(() => {
+    const node = containerRef.current
+    if (!node) {
+      return
+    }
+
+    const updateHeight = () => setContainerHeight(node.offsetHeight)
+    updateHeight()
+
+    if (typeof ResizeObserver === "undefined") {
+      return
+    }
+
+    const observer = new ResizeObserver(updateHeight)
+    observer.observe(node)
+
+    return () => observer.disconnect()
+  }, [])
+
+  const mergedStyle: LoginIllustrationStyle = {
+    ...(style ?? {}),
+    "--snowfall-height": `${containerHeight}px`,
+  }
 
   return (
     <div
+      ref={containerRef}
       className={cn(
         "bg-gradient-to-br from-[#0f172a] via-[#1d2743] to-[#0f172a] relative overflow-hidden rounded-md",
         "border border-white/10 shadow-inner",
         className,
       )}
+      style={mergedStyle}
       {...props}
     >
       <div className="absolute inset-0 z-0 bg-[radial-gradient(circle_at_20%_20%,rgba(255,255,255,0.25),transparent_45%)]" />
@@ -60,7 +90,6 @@ export function LoginIllustration({ className, ...props }: LoginIllustrationProp
           height: `${flake.size}px`,
           opacity: flake.opacity,
           "--flake-drift": `${flake.drift}px`,
-          "--initial-y": `${flake.initialY}px`,
           "--rotation-end": `${flake.rotationAmount}deg`,
         }
         return (

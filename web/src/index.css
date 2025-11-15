@@ -199,11 +199,16 @@
 
 @keyframes login-snowfall {
   0% {
-    transform: translate3d(var(--flake-drift, 0px), var(--initial-y, -60px), 0) rotate(0deg);
+    transform: translate3d(var(--flake-drift, 0px), -100px, 0) rotate(0deg);
     opacity: 1;
   }
   100% {
-    transform: translate3d(calc(var(--flake-drift, 0px) * -1), calc(100vh + 60px), 0) rotate(var(--rotation-end, 360deg));
+    transform: translate3d(
+      calc(var(--flake-drift, 0px) * -1),
+      calc(var(--snowfall-height, 0px) + 100px),
+      0
+    )
+      rotate(var(--rotation-end, 360deg));
     opacity: 0;
   }
 }

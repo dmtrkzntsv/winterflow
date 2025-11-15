@@ -27,13 +27,15 @@ export type AppLayoutOutletContext = {
   setBreadcrumbs: (items: BreadcrumbEntry[]) => void
 }
 
-export function AppLayout() {
+function AppLayoutContent() {
   const [breadcrumbs, setBreadcrumbs] = useState<BreadcrumbEntry[]>([])
 
   return (
-    <SidebarProvider>
-      <AppSidebar />
-      <SidebarInset className="md:ml-[var(--sidebar-width)] md:peer-data-[collapsible=icon]:ml-[calc(var(--sidebar-width-icon)_+_theme(spacing.4))]">
+    <SidebarInset
+      style={{
+        transition: 'margin-left 200ms ease-linear',
+      }}
+    >
         <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
           <div className="flex items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
@@ -77,6 +79,14 @@ export function AppLayout() {
           <Outlet context={{ setBreadcrumbs }} />
         </div>
       </SidebarInset>
+  )
+}
+
+export function AppLayout() {
+  return (
+    <SidebarProvider>
+      <AppSidebar />
+      <AppLayoutContent />
     </SidebarProvider>
   )
 }

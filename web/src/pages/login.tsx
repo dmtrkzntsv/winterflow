@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom"
 import { useTranslation } from "react-i18next"
 
 import { LoginForm } from "@/components/login-form"
-import { useAuth } from "@/context/auth-context"
+import { useAuth } from "@/context/use-auth"
 import { apiBaseUrl } from "@/config"
 
 export default function LoginPage() {

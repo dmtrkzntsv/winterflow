@@ -40,7 +40,7 @@ const createFlakes = (): Snowflake[] =>
   }))
 
 export function LoginIllustration({ className, style, ...props }: LoginIllustrationProps) {
-  const flakes = useMemo(createFlakes, [])
+  const flakes = useMemo(() => createFlakes(), [])
   const containerRef = useRef<HTMLDivElement>(null)
   const [containerHeight, setContainerHeight] = useState(0)
 

@@ -14,6 +14,7 @@ fmt:
 
 lint:
 	$(GO) vet ./...
+	pnpm --dir web run lint
 
 mod:
 	$(GO) mod tidy

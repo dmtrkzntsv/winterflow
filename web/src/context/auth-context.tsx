@@ -1,27 +1,10 @@
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useState,
-  type ReactNode,
-} from "react"
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react"
 
 import { apiBaseUrl, appBaseUrl } from "@/config"
-
-type LoginPayload = {
-  username: string
-  password: string
-}
-
-type AuthContextValue = {
-  isAuthenticated: boolean
-  login: (payload: LoginPayload) => Promise<void>
-  logout: () => void
-}
-
-const AuthContext = createContext<AuthContextValue | undefined>(undefined)
+import {
+  AuthContext,
+  type LoginPayload,
+} from "./auth-context-base"
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false)
@@ -107,12 +90,4 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
-}
-
-export function useAuth() {
-  const context = useContext(AuthContext)
-  if (!context) {
-    throw new Error("useAuth must be used within an AuthProvider")
-  }
-  return context
 }

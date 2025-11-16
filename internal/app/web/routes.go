@@ -33,8 +33,8 @@ func (s *Server) registerRoutes() {
 	s.Router.With(amw.Auth, happ.GetAppsValidationMiddleware).Get("/api/v1/app/get-apps", appsAPI.GetApps)
 
 	serversAPI := server.NewHandler(&server.Deps{
-		Logger:     s.Logger,
-		ServerRepo: s.Factory.NewServerRepository(),
+		Logger:        s.Logger,
+		ServerService: s.Factory.NewServerService(),
 	})
 	s.Router.With(amw.Auth).Get("/api/v1/server/get-servers", serversAPI.GetServers)
 }

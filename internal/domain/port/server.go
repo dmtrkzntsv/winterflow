@@ -1,7 +1,14 @@
 package port
 
-import "winterflow/internal/domain/model"
+import (
+	"context"
+	"winterflow/internal/domain/model"
+)
 
 type ServerRepository interface {
-	GetServers() ([]model.Agent, error)
+	GetServers(ctx context.Context, userID string) ([]model.Server, error)
+}
+
+type ServerService interface {
+	GetServers(ctx context.Context, userID string) ([]model.Server, error)
 }

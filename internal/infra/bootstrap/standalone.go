@@ -39,6 +39,10 @@ func (f *StandaloneFactory) NewUserService() port.UserService {
 }
 
 func (f *StandaloneFactory) NewServerRepository() port.ServerRepository {
+	return repository.NewDbServerRepository(f.db, f.log)
+}
+
+func (f *StandaloneFactory) NewServerService() port.ServerService {
 	return nil
 }
 

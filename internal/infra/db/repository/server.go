@@ -1,14 +1,24 @@
 package repository
 
-import "winterflow/internal/domain/model"
+import (
+	"context"
+	"winterflow/internal/domain/model"
+	"winterflow/internal/infra/db"
+	"winterflow/pkg/logger"
+)
 
-func NewDbServerRepository() *DbServerRepository {
-	return &DbServerRepository{}
+func NewDbServerRepository(db *db.BunConnection, log *logger.Logger) *DbServerRepository {
+	return &DbServerRepository{
+		db:  db,
+		log: log,
+	}
 }
 
 type DbServerRepository struct {
+	db  *db.BunConnection
+	log *logger.Logger
 }
 
-func (r *DbServerRepository) GetServers() ([]model.Agent, error) {
-	return make([]model.Agent, 0), nil
+func (r *DbServerRepository) GetServers(ctx context.Context, userID string) ([]model.Server, error) {
+	return make([]model.Server, 0), nil
 }

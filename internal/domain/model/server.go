@@ -16,7 +16,7 @@ type Certificate struct {
 	Certificate string `json:"certificate"`
 }
 
-type Agent struct {
+type Server struct {
 	ID             string       `json:"id"`
 	OrganizationID string       `json:"organization_id"`
 	Name           string       `json:"name"`

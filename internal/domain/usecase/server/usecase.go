@@ -1,17 +1,32 @@
 package server
 
-import "winterflow/internal/domain/port"
+import (
+	"context"
+	"winterflow/internal/domain/model"
+	"winterflow/internal/domain/port"
+	"winterflow/pkg/logger"
+)
 
 type UseCase struct {
-	repository port.ServerRepository
+	srvsvc port.ServerService
+	nm     port.NotificationManager
+	log    *logger.Logger
 }
 
 type Deps struct {
-	ServerRepo port.ServerRepository
+	ServerService       port.ServerService
+	NotificationManager port.NotificationManager
+	Log                 *logger.Logger
 }
 
 func NewUseCase(d *Deps) *UseCase {
 	return &UseCase{
-		repository: d.ServerRepo,
+		srvsvc: d.ServerService,
+		nm:     d.NotificationManager,
+		log:    d.Log,
 	}
+}
+
+func (uc *UseCase) GetServers(ctx context.Context, userID string) ([]model.Server, error) {
+	return uc.srvsvc.GetServers(ctx, userID)
 }

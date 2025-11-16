@@ -1,6 +1,7 @@
 package port
 
 type AppFactory interface {
+	NewServerService() ServerService
 	NewServerRepository() ServerRepository
 
 	NewUserService() UserService

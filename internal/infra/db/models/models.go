@@ -63,48 +63,48 @@ type UserConnectedAccount struct {
 	User *User `bun:"rel:belongs-to,join:user_id=user_id"`
 }
 
-type Agent struct {
-	bun.BaseModel `bun:"table:agents"`
+type Server struct {
+	bun.BaseModel `bun:"table:servers"`
 
-	AgentID            string          `bun:"agent_id,pk,type:char(36)" json:"agent_id"`
+	ServerID           string          `bun:"server_id,pk,type:char(36)" json:"server_id"`
 	OrganizationID     string          `bun:"organization_id,notnull,type:char(36)" json:"organization_id"`
 	Name               string          `bun:"name,notnull" json:"name"`
 	SubscriptionStatus string          `bun:"subscription_status,notnull,default:'unpaid'" json:"subscription_status"`
 	CreatedAt          types.DateTime  `bun:"created_at,notnull" json:"created_at"`
 	LastSeen           *types.DateTime `bun:"last_seen,nullzero" json:"last_seen"`
 
-	Organization *Organization      `bun:"rel:belongs-to,join:organization_id=organization_id"`
-	Capabilities []AgentCapability  `bun:"rel:has-many,join:agent_id=agent_id"`
-	Features     []AgentFeature     `bun:"rel:has-many,join:agent_id=agent_id"`
-	Certificates []AgentCertificate `bun:"rel:has-many,join:agent_id=agent_id"`
-	Apps         []App              `bun:"rel:has-many,join:agent_id=agent_id"`
+	Organization *Organization       `bun:"rel:belongs-to,join:organization_id=organization_id"`
+	Capabilities []ServerCapability  `bun:"rel:has-many,join:server_id=server_id"`
+	Features     []ServerFeature     `bun:"rel:has-many,join:server_id=server_id"`
+	Certificates []ServerCertificate `bun:"rel:has-many,join:server_id=server_id"`
+	Apps         []App               `bun:"rel:has-many,join:server_id=server_id"`
 }
 
-type AgentCapability struct {
-	bun.BaseModel `bun:"table:agent_capabilities"`
+type ServerCapability struct {
+	bun.BaseModel `bun:"table:server_capabilities"`
 
-	AgentID   string         `bun:"agent_id,pk,type:char(36)" json:"agent_id"`
+	ServerID  string         `bun:"server_id,pk,type:char(36)" json:"server_id"`
 	Name      string         `bun:"name,pk" json:"name"`
 	Value     string         `bun:"value,notnull,default:''" json:"value"`
 	UpdatedAt types.DateTime `bun:"updated_at,notnull" json:"updated_at"`
 
-	Agent *Agent `bun:"rel:belongs-to,join:agent_id=agent_id"`
+	Server *Server `bun:"rel:belongs-to,join:server_id=server_id"`
 }
 
-type AgentFeature struct {
-	bun.BaseModel `bun:"table:agent_features"`
+type ServerFeature struct {
+	bun.BaseModel `bun:"table:server_features"`
 
-	AgentID   string `bun:"agent_id,pk,type:char(36)" json:"agent_id"`
+	ServerID  string `bun:"server_id,pk,type:char(36)" json:"server_id"`
 	Name      string `bun:"name,pk" json:"name"`
 	IsEnabled bool   `bun:"is_enabled,notnull" json:"is_enabled"`
 
-	Agent *Agent `bun:"rel:belongs-to,join:agent_id=agent_id"`
+	Server *Server `bun:"rel:belongs-to,join:server_id=server_id"`
 }
 
-type AgentRegistration struct {
-	bun.BaseModel `bun:"table:agent_registrations"`
+type ServerRegistration struct {
+	bun.BaseModel `bun:"table:server_registrations"`
 
-	AgentID              string         `bun:"agent_id,pk,type:char(36)" json:"agent_id"`
+	ServerID             string         `bun:"server_id,pk,type:char(36)" json:"server_id"`
 	CertificateID        string         `bun:"certificate_id,notnull,type:char(36)" json:"certificate_id"`
 	Hostname             string         `bun:"hostname,notnull" json:"hostname"`
 	Code                 string         `bun:"code,unique,type:char(6)" json:"code"`
@@ -114,17 +114,17 @@ type AgentRegistration struct {
 	CreatedAt            types.DateTime `bun:"created_at,notnull" json:"created_at"`
 }
 
-type AgentCertificate struct {
-	bun.BaseModel `bun:"table:agent_certificates"`
+type ServerCertificate struct {
+	bun.BaseModel `bun:"table:server_certificates"`
 
 	CertificateID string         `bun:"certificate_id,pk,type:char(36)" json:"certificate_id"`
-	AgentID       string         `bun:"agent_id,notnull,type:char(36)" json:"agent_id"`
+	ServerID      string         `bun:"server_id,notnull,type:char(36)" json:"server_id"`
 	Certificate   string         `bun:"certificate,notnull" json:"certificate"`
 	IsActive      bool           `bun:"is_active,notnull,default:true" json:"is_active"`
 	ExpiresAt     types.DateTime `bun:"expires_at,notnull" json:"expires_at"`
 	CreatedAt     types.DateTime `bun:"created_at,notnull" json:"created_at"`
 
-	Agent *Agent `bun:"rel:belongs-to,join:agent_id=agent_id"`
+	Server *Server `bun:"rel:belongs-to,join:server_id=server_id"`
 }
 
 type ReleaseVersion struct {
@@ -141,7 +141,7 @@ type App struct {
 	bun.BaseModel `bun:"table:apps"`
 
 	AppID      string         `bun:"app_id,pk,type:char(36)" json:"app_id"`
-	AgentID    string         `bun:"agent_id,notnull,type:char(36)" json:"agent_id"`
+	ServerID   string         `bun:"server_id,notnull,type:char(36)" json:"server_id"`
 	TemplateID *string        `bun:"template_id,nullzero,type:char(36)" json:"template_id"`
 	Name       string         `bun:"name,notnull" json:"name"`
 	Version    string         `bun:"version,notnull,default:''" json:"version"`
@@ -149,5 +149,5 @@ type App struct {
 	Color      string         `bun:"color,notnull,type:char(7)" json:"color"`
 	CreatedAt  types.DateTime `bun:"created_at,notnull" json:"created_at"`
 
-	Agent *Agent `bun:"rel:belongs-to,join:agent_id=agent_id"`
+	Server *Server `bun:"rel:belongs-to,join:server_id=server_id"`
 }

@@ -6,7 +6,6 @@ import (
 	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/port"
 	infrafs "winterflow/internal/infra/agent/repository"
-	infradb "winterflow/internal/infra/db/repository"
 	"winterflow/internal/infra/transport/mem/service/reply"
 	redisbus "winterflow/internal/infra/transport/redis/bus"
 	redisappsrv "winterflow/internal/infra/transport/redis/service/app"
@@ -78,7 +77,7 @@ func (f *ApiFactory) NewUserService() port.UserService {
 }
 
 func (f *ApiFactory) NewServerRepository() port.ServerRepository {
-	return infradb.NewDbServerRepository()
+	return nil
 }
 
 func (f *ApiFactory) NewUserRepository() port.UserRepository {

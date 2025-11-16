@@ -2,22 +2,25 @@ package server
 
 import (
 	"winterflow/internal/domain/port"
-	"winterflow/internal/domain/usecase/server"
+	usesrv "winterflow/internal/domain/usecase/server"
 	"winterflow/pkg/logger"
 )
 
 type Handler struct {
-	serverRepo port.ServerRepository
+	usecase usesrv.UseCase
 }
 
 type Deps struct {
-	Logger     *logger.Logger
-	ServerRepo port.ServerRepository
+	Logger              *logger.Logger
+	ServerService       port.ServerService
+	NotificationManager port.NotificationManager
 }
 
 func NewHandler(d *Deps) *Handler {
-	server.NewUseCase(&server.Deps{
-		ServerRepo: d.ServerRepo,
+	uc := usesrv.NewUseCase(&usesrv.Deps{
+		ServerService:       d.ServerService,
+		Log:                 d.Logger,
+		NotificationManager: d.NotificationManager,
 	})
-	return &Handler{serverRepo: d.ServerRepo}
+	return &Handler{usecase: *uc}
 }

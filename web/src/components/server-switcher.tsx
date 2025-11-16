@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/sidebar";
 import { useSidebar } from "@/components/ui/use-sidebar";
 import { LogoSpinner } from "@/components/app-logo";
+import { isStandalone } from "@/config";
 
 export function ServerSwitcher({
   servers,
@@ -31,8 +32,32 @@ export function ServerSwitcher({
   const { isMobile } = useSidebar();
   const [activeServer, setActiveServer] = React.useState(servers[0]);
 
+  React.useEffect(() => {
+    setActiveServer(servers[0]);
+  }, [servers]);
+
   if (!activeServer) {
     return null;
+  }
+
+  if (isStandalone) {
+    return (
+      <SidebarMenu>
+        <SidebarMenuItem>
+          <SidebarMenuButton size="lg">
+            <LogoSpinner
+              size="md"
+              containerClassName="bg-white text-sidebar-primary-soft flex aspect-square size-8 items-center justify-center rounded-lg border border-sidebar-border/50"
+              iconClassName="text-sidebar-primary-soft"
+            />
+            <div className="grid flex-1 text-left text-sm leading-tight">
+              <span className="truncate font-medium">{activeServer.name}</span>
+              <span className="truncate text-xs">{activeServer.status}</span>
+            </div>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+      </SidebarMenu>
+    );
   }
 
   return (

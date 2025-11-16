@@ -18,7 +18,7 @@ import {
   SidebarMenuItem,
 } from "@/components/ui/sidebar";
 import { useSidebar } from "@/components/ui/use-sidebar";
-import { LogoIcon } from "@/components/app-logo";
+import { LogoSpinner } from "@/components/app-logo";
 
 export function TeamSwitcher({
   teams,
@@ -44,9 +44,11 @@ export function TeamSwitcher({
               size="lg"
               className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
             >
-              <div className="logo-spin-hover bg-white text-sidebar-primary-soft flex aspect-square size-8 items-center justify-center rounded-lg border border-sidebar-border/50">
-                <LogoIcon size="md" className="text-sidebar-primary-soft" />
-              </div>
+              <LogoSpinner
+                size="md"
+                containerClassName="bg-white text-sidebar-primary-soft flex aspect-square size-8 items-center justify-center rounded-lg border border-sidebar-border/50"
+                iconClassName="text-sidebar-primary-soft"
+              />
               <div className="grid flex-1 text-left text-sm leading-tight">
                 <span className="truncate font-medium">{activeTeam.name}</span>
                 <span className="truncate text-xs">{activeTeam.plan}</span>
@@ -69,12 +71,11 @@ export function TeamSwitcher({
                 onClick={() => setActiveTeam(team)}
                 className="gap-2 p-2"
               >
-                <div className="logo-spin-hover bg-white text-sidebar-primary-soft flex size-6 items-center justify-center rounded-md border border-sidebar-border/50">
-                  <LogoIcon
-                    size="sm"
-                    className="text-sidebar-primary-soft shrink-0"
-                  />
-                </div>
+                <LogoSpinner
+                  size="sm"
+                  containerClassName="bg-white text-sidebar-primary-soft flex size-6 items-center justify-center rounded-md border border-sidebar-border/50"
+                  iconClassName="text-sidebar-primary-soft shrink-0"
+                />
                 {team.name}
                 <DropdownMenuShortcut>⌘{index + 1}</DropdownMenuShortcut>
               </DropdownMenuItem>

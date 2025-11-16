@@ -1,6 +1,7 @@
 import React from 'react'
 import '../styles/logo.css'
 import { Link, type LinkProps } from 'react-router-dom'
+import { cn } from '@/lib/utils'
 
 export function LogoSprite() {
   return (
@@ -36,6 +37,38 @@ export function LogoIcon({ size = 'md', className, ...props }: LogoIconProps) {
     >
       <use href="#winterflow-asterisk" />
     </svg>
+  )
+}
+
+type LogoSpinnerProps = {
+  size?: React.ComponentProps<typeof LogoIcon>['size']
+  containerClassName?: string
+  iconClassName?: string
+}
+
+export function LogoSpinner({
+  size = 'md',
+  containerClassName,
+  iconClassName,
+}: LogoSpinnerProps) {
+  const [isSpinning, setIsSpinning] = React.useState(false)
+
+  return (
+    <div
+      onMouseEnter={() => {
+        if (!isSpinning) {
+          setIsSpinning(true)
+        }
+      }}
+      onAnimationEnd={() => setIsSpinning(false)}
+      className={cn(
+        'logo-spin-hover',
+        containerClassName,
+        isSpinning && 'logo-spin-active',
+      )}
+    >
+      <LogoIcon size={size} className={iconClassName} />
+    </div>
   )
 }
 

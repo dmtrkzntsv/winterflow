@@ -20,12 +20,10 @@
 
 .logo-spin-hover svg {
   transform-origin: center;
-  transition: none;
 }
 
-.logo-spin-hover:hover svg {
-  transform: rotate(360deg);
-  transition: transform 1.2s ease;
+.logo-spin-active svg {
+  animation: logo-spin-once 1.2s ease;
 }
 
 .logo-winter {
@@ -63,6 +61,15 @@
   gap: 0.05em;
 }
 
+@keyframes logo-spin-once {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @keyframes spin-slow {
   from {
     transform: rotate(0deg);
@@ -78,4 +85,4 @@
 
 .animate-spin-slow svg {
   color: #3b82f6;
-} 
+}

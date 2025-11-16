@@ -24,13 +24,13 @@ import (
 
 type Server struct {
 	Logger  *logger.Logger
-	Cfg     *config.Config
+	Cfg     *config.ServerConfig
 	Factory port.AppFactory
 	Router  *chi.Mux
 	Auth    *auth.Service
 }
 
-func NewServer(log *logger.Logger, cfg *config.Config, factory port.AppFactory) *http.Server {
+func NewServer(log *logger.Logger, cfg *config.ServerConfig, factory port.AppFactory) *http.Server {
 	s := Server{
 		Logger:  log,
 		Cfg:     cfg,

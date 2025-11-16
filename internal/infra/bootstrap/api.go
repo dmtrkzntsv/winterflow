@@ -25,10 +25,10 @@ type ApiFactory struct {
 	bus *redisbus.Bus
 	rm  *reply.Manager
 	log *logger.Logger
-	cfg *config.Config
+	cfg *config.ServerConfig
 }
 
-func BootstrapAPI(ctx context.Context, log *logger.Logger, cfg *config.Config) *ApiContainer {
+func BootstrapAPI(ctx context.Context, log *logger.Logger, cfg *config.ServerConfig) *ApiContainer {
 	addr, pass, db := cfg.GetRedisCredentials()
 	rc := redisbus.NewClient(redisbus.Config{
 		Addr:     addr,

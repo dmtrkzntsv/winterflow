@@ -27,7 +27,7 @@ type Hub struct {
 	proto.UnimplementedAgentServiceServer
 	agents     map[string]*agent
 	agentsLock sync.RWMutex
-	cfg        *config.Config
+	cfg        *config.ServerConfig
 	log        *logger.Logger
 	srv        *grpc.Server
 }
@@ -43,7 +43,7 @@ type agent struct {
 	pendingRequestsLock sync.RWMutex
 }
 
-func NewHub(log *logger.Logger, cfg *config.Config) *Hub {
+func NewHub(log *logger.Logger, cfg *config.ServerConfig) *Hub {
 	h := &Hub{
 		agents: make(map[string]*agent),
 		cfg:    cfg,
@@ -55,7 +55,7 @@ func NewHub(log *logger.Logger, cfg *config.Config) *Hub {
 	return h
 }
 
-func createServer(log *logger.Logger, cfg *config.Config) *grpc.Server {
+func createServer(log *logger.Logger, cfg *config.ServerConfig) *grpc.Server {
 	caCert, err := os.ReadFile(cfg.GetHubCACertPath())
 	if err != nil {
 		log.Fatal("Failed to read CA certificate", "error", err)

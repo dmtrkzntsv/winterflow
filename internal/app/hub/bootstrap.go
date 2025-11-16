@@ -8,11 +8,11 @@ import (
 
 type Hub struct {
 	Logger  *logger.Logger
-	Cfg     *config.Config
+	Cfg     *config.ServerConfig
 	Factory port.AppFactory
 }
 
-func NewHUB(log *logger.Logger, cfg *config.Config, factory port.AppFactory) *Hub {
+func NewHUB(log *logger.Logger, cfg *config.ServerConfig, factory port.AppFactory) *Hub {
 	return &Hub{
 		Logger:  log,
 		Cfg:     cfg,

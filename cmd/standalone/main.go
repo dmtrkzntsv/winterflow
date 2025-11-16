@@ -18,7 +18,7 @@ import (
 
 func main() {
 	err := godotenv.Load()
-	cfg := config.NewConfig("standalone")
+	cfg := config.NewServerConfig("standalone")
 	log := logger.NewLogger(logger.LoggerConfiguration{
 		LogLevel: os.Getenv("LOG_LEVEL"),
 		Service:  "winterflow",

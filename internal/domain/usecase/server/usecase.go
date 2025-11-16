@@ -30,3 +30,7 @@ func NewUseCase(d *Deps) *UseCase {
 func (uc *UseCase) GetServers(ctx context.Context, userID string) ([]model.Server, error) {
 	return uc.srvsvc.GetServers(ctx, userID)
 }
+
+func (uc *UseCase) AddServer(ctx context.Context, serverID string, app model.App) error {
+	return nil
+}

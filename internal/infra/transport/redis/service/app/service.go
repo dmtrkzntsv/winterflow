@@ -7,7 +7,7 @@ import (
 	"winterflow/pkg/logger"
 )
 
-func NewAppService(log *logger.Logger, cfg *config.Config, bus *redisbus.Bus, rm *reply.Manager) *RedisAppService {
+func NewAppService(log *logger.Logger, cfg *config.ServerConfig, bus *redisbus.Bus, rm *reply.Manager) *RedisAppService {
 	return &RedisAppService{
 		log: log,
 		cfg: cfg,
@@ -20,5 +20,5 @@ type RedisAppService struct {
 	rm  *reply.Manager
 	bus *redisbus.Bus
 	log *logger.Logger
-	cfg *config.Config
+	cfg *config.ServerConfig
 }

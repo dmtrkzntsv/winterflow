@@ -20,7 +20,7 @@ import (
 )
 
 type Agent struct {
-	cfg    *config.Config
+	cfg    *config.ServerConfig
 	log    *logger.Logger
 	conn   *grpc.ClientConn
 	client proto.AgentServiceClient
@@ -39,7 +39,7 @@ type Agent struct {
 	registeredMutex sync.RWMutex
 }
 
-func NewAgent(log *logger.Logger, cfg *config.Config, agentID string) *Agent {
+func NewAgent(log *logger.Logger, cfg *config.ServerConfig, agentID string) *Agent {
 	return &Agent{
 		cfg:             cfg,
 		log:             log,

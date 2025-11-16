@@ -11,7 +11,7 @@ import (
 
 const EnvProvider = "env"
 
-func AddEnvAuth(service *auth.Service, log *logger.Logger, config config.Config) {
+func AddEnvAuth(service *auth.Service, log *logger.Logger, config config.ServerConfig) {
 	if !config.IsAuthSupported(EnvProvider) {
 		return
 	}

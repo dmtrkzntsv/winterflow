@@ -6,39 +6,39 @@ import (
 	"strconv"
 )
 
-type Config struct {
+type ServerConfig struct {
 	mode string
 }
 
-func NewConfig(mode string) *Config {
-	return &Config{mode: mode}
+func NewServerConfig(mode string) *ServerConfig {
+	return &ServerConfig{mode: mode}
 }
 
-func (c *Config) GetRegion() string {
+func (c *ServerConfig) GetRegion() string {
 	return os.Getenv("REGION")
 }
 
-func (c *Config) GetLogLevel() string {
+func (c *ServerConfig) GetLogLevel() string {
 	return os.Getenv("LOG_LEVEL")
 }
 
-func (c *Config) GetApiPort() string {
+func (c *ServerConfig) GetApiPort() string {
 	return os.Getenv("API_PORT")
 }
 
-func (c *Config) GetApiURL() string {
+func (c *ServerConfig) GetApiURL() string {
 	return os.Getenv("API_URL")
 }
 
-func (c *Config) GetWebURL() string {
+func (c *ServerConfig) GetWebURL() string {
 	return os.Getenv("WEB_URL")
 }
 
-func (c *Config) GetDbURL() string {
+func (c *ServerConfig) GetDbURL() string {
 	return os.Getenv("DATABASE_URL")
 }
 
-func (c *Config) GetAllowedOrigins() string {
+func (c *ServerConfig) GetAllowedOrigins() string {
 	v := os.Getenv("CORS_ALLOW_ORIGINS")
 	if v == "" {
 		return "*"
@@ -46,7 +46,7 @@ func (c *Config) GetAllowedOrigins() string {
 	return v
 }
 
-func (c *Config) IsAuthSupported(a string) bool {
+func (c *ServerConfig) IsAuthSupported(a string) bool {
 	result := false
 	switch a {
 	case "google":
@@ -69,19 +69,19 @@ func (c *Config) IsAuthSupported(a string) bool {
 	return result
 }
 
-func (c *Config) GetGoogleAuth() (clientID string, clientSecret string) {
+func (c *ServerConfig) GetGoogleAuth() (clientID string, clientSecret string) {
 	return os.Getenv("AUTH_GOOGLE_CLIENT_ID"), os.Getenv("AUTH_GOOGLE_CLIENT_SECRET")
 }
 
-func (c *Config) GetEnvAuth() (username string, password string) {
+func (c *ServerConfig) GetEnvAuth() (username string, password string) {
 	return os.Getenv("AUTH_ENV_USERNAME"), os.Getenv("AUTH_ENV_PASSWORD")
 }
 
-func (c *Config) GetJwtSecret() string {
+func (c *ServerConfig) GetJwtSecret() string {
 	return os.Getenv("JWT_SECRET")
 }
 
-func (c *Config) GetAvatarsStoragePath() string {
+func (c *ServerConfig) GetAvatarsStoragePath() string {
 	v := os.Getenv("AVATARS_STORAGE_PATH")
 	if v == "" {
 		dir, _ := os.Getwd()
@@ -93,7 +93,7 @@ func (c *Config) GetAvatarsStoragePath() string {
 	return v
 }
 
-func (c *Config) GetRedisCredentials() (addr, pass string, db int) {
+func (c *ServerConfig) GetRedisCredentials() (addr, pass string, db int) {
 	addr, pass = os.Getenv("REDIS_ADDR"), os.Getenv("REDIS_PASSWORD")
 	db, err := strconv.Atoi(os.Getenv("REDIS_DB"))
 	if err != nil {
@@ -102,7 +102,7 @@ func (c *Config) GetRedisCredentials() (addr, pass string, db int) {
 	return addr, pass, db
 }
 
-func (c *Config) GetBusRequestQueue() string {
+func (c *ServerConfig) GetBusRequestQueue() string {
 	v := os.Getenv("BUS_REQUEST_QUEUE")
 	if v == "" {
 		v = "requests:" + c.GetRegion()
@@ -110,7 +110,7 @@ func (c *Config) GetBusRequestQueue() string {
 	return v
 }
 
-func (c *Config) GetBusResponseQueue() string {
+func (c *ServerConfig) GetBusResponseQueue() string {
 	v := os.Getenv("BUS_RESPONSE_QUEUE")
 	if v == "" {
 		v = "responses:" + c.GetRegion()
@@ -118,42 +118,42 @@ func (c *Config) GetBusResponseQueue() string {
 	return v
 }
 
-func (c *Config) GetHubHost() string {
+func (c *ServerConfig) GetHubHost() string {
 	return os.Getenv("HUB_HOST")
 }
 
-func (c *Config) GetHubPort() string {
+func (c *ServerConfig) GetHubPort() string {
 	return os.Getenv("HUB_PORT")
 }
 
-func (c *Config) GetHubCACertPath() string {
+func (c *ServerConfig) GetHubCACertPath() string {
 	return os.Getenv("HUB_CA_CERT_PATH")
 }
 
-func (c *Config) GetHubCertPath() string {
+func (c *ServerConfig) GetHubCertPath() string {
 	return os.Getenv("HUB_CERT_PATH")
 }
 
-func (c *Config) GetHubKeyPath() string {
+func (c *ServerConfig) GetHubKeyPath() string {
 	return os.Getenv("HUB_KEY_PATH")
 }
 
-func (c *Config) GetAgentCertPath() string {
+func (c *ServerConfig) GetAgentCertPath() string {
 	return os.Getenv("AGENT_CERT_PATH")
 }
 
-func (c *Config) GetAgentKeyPath() string {
+func (c *ServerConfig) GetAgentKeyPath() string {
 	return os.Getenv("AGENT_KEY_PATH")
 }
 
-func (c *Config) GetAgentCACertPath() string {
+func (c *ServerConfig) GetAgentCACertPath() string {
 	return os.Getenv("AGENT_CA_CERT_PATH")
 }
 
-func (c *Config) GetMode() string {
+func (c *ServerConfig) GetMode() string {
 	return c.mode
 }
 
-func (c *Config) IsStandalone() bool {
+func (c *ServerConfig) IsStandalone() bool {
 	return c.mode == "standalone"
 }

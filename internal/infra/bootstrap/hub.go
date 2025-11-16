@@ -23,10 +23,10 @@ type HubFactory struct {
 	bus *redisbus.Bus
 	rm  *reply.Manager
 	log *logger.Logger
-	cfg *config.Config
+	cfg *config.ServerConfig
 }
 
-func BootstrapHUB(ctx context.Context, log *logger.Logger, cfg *config.Config) *HubContainer {
+func BootstrapHUB(ctx context.Context, log *logger.Logger, cfg *config.ServerConfig) *HubContainer {
 	addr, pass, db := cfg.GetRedisCredentials()
 	rc := redisbus.NewClient(redisbus.Config{
 		Addr:     addr,

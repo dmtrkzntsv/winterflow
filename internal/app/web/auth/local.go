@@ -16,9 +16,9 @@ func AddLocalAuth(service *auth.Service, log *logger.Logger, config config.Confi
 		return
 	}
 
-	login, pass := config.GetLocalAuth()
-	service.AddDirectProvider(LocalProvider, provider.CredCheckerFunc(func(user, password string) (ok bool, err error) {
-		if user == login && password == pass {
+	username, password := config.GetLocalAuth()
+	service.AddDirectProvider(LocalProvider, provider.CredCheckerFunc(func(usr, psw string) (ok bool, err error) {
+		if usr == username && psw == password {
 			return true, nil
 		}
 		ok = false

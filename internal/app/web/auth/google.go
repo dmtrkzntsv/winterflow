@@ -36,5 +36,5 @@ func AddGoogleAuth(service *auth.Service, log *logger.Logger, config config.Conf
 			return u
 		},
 	})
-	log.Debug("Enabling Google Auth")
+	log.Debug("Enabling Google auth provider")
 }

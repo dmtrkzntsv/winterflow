@@ -55,8 +55,8 @@ func (c *Config) IsAuthSupported(a string) bool {
 		} else {
 			result = true
 		}
-	case "local":
-		username, pass := c.GetLocalAuth()
+	case ".env":
+		username, pass := c.GetEnvAuth()
 		if username == "" || pass == "" {
 			result = false
 		} else {
@@ -70,8 +70,8 @@ func (c *Config) GetGoogleAuth() (clientID string, clientSecret string) {
 	return os.Getenv("AUTH_GOOGLE_CLIENT_ID"), os.Getenv("AUTH_GOOGLE_CLIENT_SECRET")
 }
 
-func (c *Config) GetLocalAuth() (username string, pass string) {
-	return os.Getenv("AUTH_LOCAL_USERNAME"), os.Getenv("AUTH_LOCAL_PASSWORD")
+func (c *Config) GetEnvAuth() (username string, password string) {
+	return os.Getenv("AUTH_ENV_USERNAME"), os.Getenv("AUTH_ENV_PASSWORD")
 }
 
 func (c *Config) GetJwtSecret() string {

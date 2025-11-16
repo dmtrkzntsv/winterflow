@@ -15,7 +15,7 @@ import (
 
 func main() {
 	err := godotenv.Load()
-	cfg := config.NewConfig()
+	cfg := config.NewConfig("distributed")
 	log := logger.NewLogger(logger.LoggerConfiguration{
 		LogLevel: os.Getenv("LOG_LEVEL"),
 		Service:  "winterflow-hub",

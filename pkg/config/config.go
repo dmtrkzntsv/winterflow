@@ -7,10 +7,11 @@ import (
 )
 
 type Config struct {
+	mode string
 }
 
-func NewConfig() *Config {
-	return &Config{}
+func NewConfig(mode string) *Config {
+	return &Config{mode: mode}
 }
 
 func (c *Config) GetRegion() string {
@@ -49,11 +50,13 @@ func (c *Config) IsAuthSupported(a string) bool {
 	result := false
 	switch a {
 	case "google":
-		gcid, gcs := c.GetGoogleAuth()
-		if gcid == "" || gcs == "" {
-			result = false
-		} else {
-			result = true
+		if !c.IsStandalone() {
+			gcid, gcs := c.GetGoogleAuth()
+			if gcid == "" || gcs == "" {
+				result = false
+			} else {
+				result = true
+			}
 		}
 	case "env":
 		username, pass := c.GetEnvAuth()
@@ -145,4 +148,12 @@ func (c *Config) GetAgentKeyPath() string {
 
 func (c *Config) GetAgentCACertPath() string {
 	return os.Getenv("AGENT_CA_CERT_PATH")
+}
+
+func (c *Config) GetMode() string {
+	return c.mode
+}
+
+func (c *Config) IsStandalone() bool {
+	return c.mode == "standalone"
 }

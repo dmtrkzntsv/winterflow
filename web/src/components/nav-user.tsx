@@ -33,7 +33,6 @@ export function NavUser() {
   const { isMobile } = useSidebar();
   const { logout } = useAuth();
   const { user, loading } = useUser();
-  console.log(user, loading);
   const { t } = useTranslation();
   const displayName = user?.name ?? (loading ? "Loading..." : "Unknown user");
   const provider = user?.provider ?? "";

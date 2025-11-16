@@ -25,12 +25,13 @@ type StandaloneFactory struct {
 
 func BootstrapStandalone(log *logger.Logger, cfg *config.Config) *StandaloneContainer {
 	dbconn := db.NewBunConnection(log, cfg.GetDbURL())
+	factory := StandaloneFactory{
+		log: log,
+		cfg: cfg,
+		db:  dbconn,
+	}
 	return &StandaloneContainer{
-		factory: &StandaloneFactory{
-			log: log,
-			cfg: cfg,
-			db:  dbconn,
-		},
+		factory: &factory,
 	}
 }
 

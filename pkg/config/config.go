@@ -47,16 +47,17 @@ func (c *Config) GetAllowedOrigins() string {
 
 func (c *Config) IsAuthSupported(a string) bool {
 	result := false
-	if a == "google" {
+	switch a {
+	case "google":
 		gcid, gcs := c.GetGoogleAuth()
 		if gcid == "" || gcs == "" {
 			result = false
 		} else {
 			result = true
 		}
-	} else if a == "local" {
-		email, pass := c.GetLocalAuth()
-		if email == "" || pass == "" {
+	case "local":
+		username, pass := c.GetLocalAuth()
+		if username == "" || pass == "" {
 			result = false
 		} else {
 			result = true
@@ -66,11 +67,11 @@ func (c *Config) IsAuthSupported(a string) bool {
 }
 
 func (c *Config) GetGoogleAuth() (clientID string, clientSecret string) {
-	return os.Getenv("GOOGLE_CLIENT_ID"), os.Getenv("GOOGLE_CLIENT_SECRET")
+	return os.Getenv("AUTH_GOOGLE_CLIENT_ID"), os.Getenv("AUTH_GOOGLE_CLIENT_SECRET")
 }
 
-func (c *Config) GetLocalAuth() (login string, pass string) {
-	return os.Getenv("LOCAL_AUTH_LOGIN"), os.Getenv("LOCAL_AUTH_PASS")
+func (c *Config) GetLocalAuth() (username string, pass string) {
+	return os.Getenv("AUTH_LOCAL_USERNAME"), os.Getenv("AUTH_LOCAL_PASSWORD")
 }
 
 func (c *Config) GetJwtSecret() string {

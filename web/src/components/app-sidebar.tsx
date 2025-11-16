@@ -16,7 +16,7 @@ import {
 import { NavMain } from "@/components/nav-main"
 import { NavProjects } from "@/components/nav-projects"
 import { NavUser } from "@/components/nav-user"
-import { TeamSwitcher } from "@/components/team-switcher"
+import { ServerSwitcher } from "@/components/server-switcher"
 import { NavSecondary } from "@/components/nav-secondary"
 import {
     Sidebar,
@@ -28,18 +28,18 @@ import {
 
 // This is sample data.
 const data = {
-    teams: [
+    servers: [
         {
-            name: "Acme Inc",
-            plan: "Enterprise",
+            name: "Acme API",
+            status: "Production",
         },
         {
-            name: "Acme Corp.",
-            plan: "Startup",
+            name: "Acme Worker",
+            status: "Staging",
         },
         {
-            name: "Evil Corp.",
-            plan: "Free",
+            name: "Evil Corp Proxy",
+            status: "Sandbox",
         },
     ],
     navMain: [
@@ -164,7 +164,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
     return (
         <Sidebar collapsible="icon" {...props}>
             <SidebarHeader>
-                <TeamSwitcher teams={data.teams} />
+                <ServerSwitcher servers={data.servers} />
             </SidebarHeader>
             <SidebarContent>
                 <NavMain items={data.navMain} />

@@ -20,18 +20,18 @@ import {
 import { useSidebar } from "@/components/ui/use-sidebar";
 import { LogoSpinner } from "@/components/app-logo";
 
-export function TeamSwitcher({
-  teams,
+export function ServerSwitcher({
+  servers,
 }: {
-  teams: {
+  servers: {
     name: string;
-    plan: string;
+    status: string;
   }[];
 }) {
   const { isMobile } = useSidebar();
-  const [activeTeam, setActiveTeam] = React.useState(teams[0]);
+  const [activeServer, setActiveServer] = React.useState(servers[0]);
 
-  if (!activeTeam) {
+  if (!activeServer) {
     return null;
   }
 
@@ -50,8 +50,8 @@ export function TeamSwitcher({
                 iconClassName="text-sidebar-primary-soft"
               />
               <div className="grid flex-1 text-left text-sm leading-tight">
-                <span className="truncate font-medium">{activeTeam.name}</span>
-                <span className="truncate text-xs">{activeTeam.plan}</span>
+                <span className="truncate font-medium">{activeServer.name}</span>
+                <span className="truncate text-xs">{activeServer.status}</span>
               </div>
               <ChevronsUpDown className="ml-auto" />
             </SidebarMenuButton>
@@ -63,12 +63,12 @@ export function TeamSwitcher({
             sideOffset={4}
           >
             <DropdownMenuLabel className="text-muted-foreground text-xs">
-              Teams
+              Servers
             </DropdownMenuLabel>
-            {teams.map((team, index) => (
+            {servers.map((server, index) => (
               <DropdownMenuItem
-                key={team.name}
-                onClick={() => setActiveTeam(team)}
+                key={server.name}
+                onClick={() => setActiveServer(server)}
                 className="gap-2 p-2"
               >
                 <LogoSpinner
@@ -76,7 +76,7 @@ export function TeamSwitcher({
                   containerClassName="bg-white text-sidebar-primary-soft flex size-6 items-center justify-center rounded-md border border-sidebar-border/50"
                   iconClassName="text-sidebar-primary-soft shrink-0"
                 />
-                {team.name}
+                {server.name}
                 <DropdownMenuShortcut>⌘{index + 1}</DropdownMenuShortcut>
               </DropdownMenuItem>
             ))}
@@ -85,7 +85,7 @@ export function TeamSwitcher({
               <div className="flex size-6 items-center justify-center rounded-md border bg-transparent">
                 <Plus className="size-4" />
               </div>
-              <div className="text-muted-foreground font-medium">Add team</div>
+              <div className="text-muted-foreground font-medium">Add server</div>
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

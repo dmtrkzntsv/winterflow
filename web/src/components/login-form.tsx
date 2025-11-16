@@ -34,13 +34,13 @@ export function LoginForm({
   onSubmitCredentials,
   isSubmitting = false,
   error,
-  availableProviders = [".env"],
+  availableProviders = ["env"],
   providersLoading = false,
   ...props
 }: LoginFormProps) {
   const { t } = useTranslation();
   const providerSet = new Set(availableProviders);
-  const envProviderEnabled = providerSet.has(".env") && !providersLoading;
+  const envProviderEnabled = providerSet.has("env") && !providersLoading;
 
   const socialProviders = [
     {

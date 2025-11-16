@@ -55,7 +55,7 @@ func (c *Config) IsAuthSupported(a string) bool {
 		} else {
 			result = true
 		}
-	case ".env":
+	case "env":
 		username, pass := c.GetEnvAuth()
 		if username == "" || pass == "" {
 			result = false

@@ -9,7 +9,7 @@ import (
 	"github.com/go-pkgz/auth/v2/provider"
 )
 
-const EnvProvider = ".env"
+const EnvProvider = "env"
 
 func AddEnvAuth(service *auth.Service, log *logger.Logger, config config.Config) {
 	if !config.IsAuthSupported(EnvProvider) {

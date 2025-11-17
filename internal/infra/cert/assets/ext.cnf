@@ -1,0 +1,27 @@
+[v3_ext]
+# --- basic cert properties ---
+basicConstraints = CA:FALSE
+keyUsage         = digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth
+
+# --- Subject Alternative Names ---
+subjectAltName   = @alt_names
+
+[alt_names]
+# Main domain
+DNS.1 = winterflow.io
+
+# Service-specific subdomains
+DNS.2 = api.winterflow.io
+DNS.3 = hub.winterflow.io
+
+# Wildcard domains
+DNS.4 = *.api.winterflow.io
+DNS.5 = *.hub.winterflow.io
+DNS.6 = *.winterflow.io
+
+# Local development
+DNS.7 = localhost
+DNS.8 = 127.0.0.1
+IP.1 = 127.0.0.1
+IP.2 = ::1

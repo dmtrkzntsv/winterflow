@@ -5,5 +5,10 @@ import (
 )
 
 func GenerateID() string {
-	return uuid.New().String()
+	uuid.New()
+	id, err := uuid.NewV7()
+	if err != nil {
+		panic(err)
+	}
+	return id.String()
 }

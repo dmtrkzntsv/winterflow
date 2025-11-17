@@ -1,60 +1,38 @@
 package bootstrap
 
 import (
-	"winterflow/internal/domain/port"
+	"context"
+	agentsrv "winterflow/internal/infra/agent/service"
+	"winterflow/internal/infra/bootstrap/container"
+	"winterflow/internal/infra/cert"
 	"winterflow/internal/infra/db"
-	"winterflow/internal/infra/db/repository"
-	"winterflow/internal/infra/db/service"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
 )
 
-type StandaloneContainer struct {
-	factory *StandaloneFactory
-}
-
-func (c *StandaloneContainer) GetAppFactory() *StandaloneFactory {
-	return c.factory
-}
-
-type StandaloneFactory struct {
-	log *logger.Logger
-	cfg *config.ServerConfig
-	db  *db.BunConnection
-}
-
-func BootstrapStandalone(log *logger.Logger, cfg *config.ServerConfig) *StandaloneContainer {
+func BootstrapStandalone(log *logger.Logger, cfg *config.ServerConfig) *container.StandaloneContainer {
 	dbconn := db.NewBunConnection(log, cfg.GetDbURL())
-	factory := StandaloneFactory{
-		log: log,
-		cfg: cfg,
-		db:  dbconn,
+	agentservice := agentsrv.NewAgentService()
+	certmanager, err := cert.NewManager(cfg, log)
+	if err != nil {
+		log.Fatalf("Failed to create certificate manager: %v", err)
 	}
-	return &StandaloneContainer{
-		factory: &factory,
+	factory := container.StandaloneFactory{
+		Log: log,
+		Cfg: cfg,
+		Db:  dbconn,
 	}
-}
+	c := container.StandaloneContainer{
+		Factory: &factory,
+		Cert:    certmanager,
+	}
+	if !cert.IsServerCertificateGenerated() {
+		certmanager.GenerateServer(true)
+	}
 
-func (f *StandaloneFactory) NewUserService() port.UserService {
-	return service.NewDbUserService(f.log, repository.NewDbUserRepository(f.db, f.log))
-}
+	if !agentservice.IsRegistered() {
+		agentservice.Register(context.TODO(), log, cfg, &c)
+	}
 
-func (f *StandaloneFactory) NewServerRepository() port.ServerRepository {
-	return repository.NewDbServerRepository(f.db, f.log)
-}
-
-func (f *StandaloneFactory) NewServerService() port.ServerService {
-	return nil
-}
-
-func (f *StandaloneFactory) NewAppRepository() port.AppRepository {
-	return nil
-}
-
-func (f *StandaloneFactory) NewUserRepository() port.UserRepository {
-	return repository.NewDbUserRepository(f.db, f.log)
-}
-
-func (f *StandaloneFactory) NewAppService() port.AppService {
-	return nil
+	return &c
 }

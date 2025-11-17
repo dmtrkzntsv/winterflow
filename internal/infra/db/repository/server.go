@@ -27,3 +27,7 @@ func (r *DbServerRepository) GetServers(ctx context.Context, userID string) ([]m
 func (r *DbServerRepository) AddServer(ctx context.Context, dto dto.ServerDTO) (model.Server, error) {
 	return model.Server{}, nil
 }
+
+func (r *DbServerRepository) RegisterServer(ctx context.Context, dto dto.ServerRegistrationDTO) error {
+	return nil
+}

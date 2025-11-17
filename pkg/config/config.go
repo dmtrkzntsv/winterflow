@@ -126,8 +126,28 @@ func (c *ServerConfig) GetHubPort() string {
 	return os.Getenv("HUB_PORT")
 }
 
+func (c *ServerConfig) GetHubCASubject() string {
+	return os.Getenv("HUB_CA_SUBJECT")
+}
+
+func (c *ServerConfig) GetHubServerSubject() string {
+	return os.Getenv("HUB_SERVER_SUBJECT")
+}
+
+func (c *ServerConfig) GetHubCertExtPath() string {
+	return os.Getenv("HUB_CERT_EXT")
+}
+
+func (c *ServerConfig) GetHubCertDir() string {
+	return os.Getenv("HUB_CERT_DIR")
+}
+
 func (c *ServerConfig) GetHubCACertPath() string {
 	return os.Getenv("HUB_CA_CERT_PATH")
+}
+
+func (c *ServerConfig) GetHubCAKeyPath() string {
+	return os.Getenv("HUB_CA_KEY_PATH")
 }
 
 func (c *ServerConfig) GetHubCertPath() string {

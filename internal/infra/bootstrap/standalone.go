@@ -34,7 +34,11 @@ func BootstrapStandalone(log *logger.Logger, cfg *config.ServerConfig) *containe
 
 	agentservice := agentsrv.NewAgentService(&c)
 	if !agentservice.IsRegistered() {
-		agentservice.Register(context.TODO())
+		serverID, code, err := agentservice.Register(context.TODO())
+		if err != nil {
+			log.Fatalf("Failed to register server: %v", err)
+		}
+		log.Info("Agent registered successfully with Server ID: %s and Code: %s", serverID, code)
 	}
 
 	return &c

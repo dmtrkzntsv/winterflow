@@ -51,7 +51,7 @@ func (as *AgentService) IsRegistered() bool {
 	return true
 }
 
-func (as *AgentService) Register(ctx context.Context) error {
+func (as *AgentService) Register(ctx context.Context) (string, string, error) {
 	err := as.c.Cert.GenerateServer(false)
 	if err != nil {
 		as.c.Log.Fatalf("Failed to generate server certificates: %v", err)
@@ -63,6 +63,7 @@ func (as *AgentService) Register(ctx context.Context) error {
 		as.c.Log.Fatalf("Failed to generate agent certificates: %v", err)
 	}
 	sr := as.c.Factory.NewServerRepository()
+	code := "12345"
 	sr.RegisterServer(context.TODO(), dto.ServerRegistrationDTO{
 		ServerID:      serverID,
 		CertificateID: certificateID,
@@ -70,11 +71,11 @@ func (as *AgentService) Register(ctx context.Context) error {
 			name, _ := os.Hostname()
 			return name
 		}(),
-		Code:                 "12345",
+		Code:                 code,
 		ExpiresAt:            time.Now().AddDate(0, 0, 1),
 		Certificate:          []byte{},
 		CertificateExpiresAt: *expiresAt,
 	})
 
-	return nil
+	return serverID, code, nil
 }

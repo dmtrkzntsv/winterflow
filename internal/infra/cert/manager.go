@@ -14,18 +14,6 @@ const (
 	validityYears = 100
 )
 
-var defaultPaths = certpkg.Paths{
-	CAKey:           "ca.key",
-	CACert:          "ca.crt",
-	ServerKey:       "server.key",
-	ServerCSR:       "server.csr",
-	ServerCert:      "server.crt",
-	ServerFullChain: "server_fullchain.crt",
-	AgentKey:        "agent.key",
-	AgentCSR:        "agent.csr",
-	AgentCert:       "agent.crt",
-}
-
 type Manager struct {
 	generator *certpkg.Generator
 	cfg       *config.ServerConfig
@@ -34,8 +22,17 @@ type Manager struct {
 }
 
 func NewManager(cfg *config.ServerConfig, log *logger.Logger) (*Manager, error) {
-	paths := defaultPaths
-
+	paths := certpkg.Paths{
+		CAKey:           cfg.GetHubCAKeyFilename(),
+		CACert:          cfg.GetHubCACertFilename(),
+		ServerKey:       cfg.GetHubKeyFilename(),
+		ServerCSR:       cfg.GetHubCSRFilename(),
+		ServerCert:      cfg.GetHubCertFilename(),
+		ServerFullChain: cfg.GetHubFullchainFilename(),
+		AgentKey:        cfg.GetAgentKeyFilename(),
+		AgentCSR:        cfg.GetAgentCSRFilename(),
+		AgentCert:       cfg.GetAgentCertFilename(),
+	}
 	gen, err := certpkg.NewGenerator(cfg.GetHubCertDir(), cfg.GetHubCertExtPath(), paths, cfg.GetHubCASubject(), cfg.GetHubServerSubject(), validityYears)
 	if err != nil {
 		return nil, fmt.Errorf("create cert generator: %w", err)

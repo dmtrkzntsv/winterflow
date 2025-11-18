@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 )
@@ -135,40 +136,88 @@ func (c *ServerConfig) GetHubServerSubject() string {
 }
 
 func (c *ServerConfig) GetHubCertExtPath() string {
-	return os.Getenv("HUB_CERT_EXT")
+	return os.Getenv("HUB_CERT_EXT_PATH")
 }
 
 func (c *ServerConfig) GetHubCertDir() string {
 	return os.Getenv("HUB_CERT_DIR")
 }
 
+func (c *ServerConfig) GetHubCACertFilename() string {
+	return "ca.crt"
+}
+
 func (c *ServerConfig) GetHubCACertPath() string {
-	return os.Getenv("HUB_CA_CERT_PATH")
+	return path.Join(c.GetHubCertDir(), c.GetHubCACertFilename())
+}
+
+func (c *ServerConfig) GetHubCAKeyFilename() string {
+	return "ca.key"
 }
 
 func (c *ServerConfig) GetHubCAKeyPath() string {
-	return os.Getenv("HUB_CA_KEY_PATH")
+	return path.Join(c.GetHubCertDir(), c.GetHubCAKeyFilename())
+}
+
+func (c *ServerConfig) GetHubCertFilename() string {
+	return "hub.crt"
 }
 
 func (c *ServerConfig) GetHubCertPath() string {
-	return os.Getenv("HUB_CERT_PATH")
+	return path.Join(c.GetHubCertDir(), c.GetHubCertFilename())
+}
+
+func (c *ServerConfig) GetHubCSRFilename() string {
+	return "hub.csr"
+}
+
+func (c *ServerConfig) GetHubCSRPath() string {
+	return path.Join(c.GetHubCertDir(), c.GetHubCSRFilename())
+}
+
+func (c *ServerConfig) GetHubFullchainFilename() string {
+	return "hub_fullchain.crt"
+}
+
+func (c *ServerConfig) GetHubFullchainPath() string {
+	return path.Join(c.GetHubCertDir(), c.GetHubFullchainFilename())
+}
+
+func (c *ServerConfig) GetHubKeyFilename() string {
+	return "hub.key"
 }
 
 func (c *ServerConfig) GetHubKeyPath() string {
-	return os.Getenv("HUB_KEY_PATH")
+	return path.Join(c.GetHubCertDir(), c.GetHubKeyFilename())
+}
+
+func (c *ServerConfig) GetAgentCertFilename() string {
+	return "agent.crt"
 }
 
 func (c *ServerConfig) GetAgentCertPath() string {
-	return os.Getenv("AGENT_CERT_PATH")
+	return path.Join(c.GetHubCertDir(), c.GetAgentCertFilename())
+}
+
+func (c *ServerConfig) GetAgentKeyFilename() string {
+	return "agent.key"
 }
 
 func (c *ServerConfig) GetAgentKeyPath() string {
-	return os.Getenv("AGENT_KEY_PATH")
+	return path.Join(c.GetHubCertDir(), c.GetAgentKeyFilename())
 }
 
-func (c *ServerConfig) GetAgentCACertPath() string {
-	return os.Getenv("AGENT_CA_CERT_PATH")
+func (c *ServerConfig) GetAgentCSRFilename() string {
+	return "agent.csr"
 }
+
+func (c *ServerConfig) GetAgentCSRPath() string {
+	return path.Join(c.GetHubCertDir(), c.GetAgentCSRFilename())
+}
+
+// func (c *ServerConfig) GetAgentCACertPath() string {
+// 	return os.Getenv("AGENT_CA_CERT_PATH")
+// }
 
 func (c *ServerConfig) GetMode() string {
 	return c.mode

@@ -6,16 +6,17 @@ import (
 	"time"
 	"winterflow/internal/domain/dto"
 	"winterflow/internal/infra/bootstrap/container"
-	"winterflow/pkg/config"
-	"winterflow/pkg/logger"
 	"winterflow/pkg/util"
 )
 
 type AgentService struct {
+	c *container.StandaloneContainer
 }
 
-func NewAgentService() *AgentService {
-	return &AgentService{}
+func NewAgentService(c *container.StandaloneContainer) *AgentService {
+	return &AgentService{
+		c: c,
+	}
 }
 
 func (as *AgentService) HasConfig() bool {
@@ -35,21 +36,33 @@ func (as *AgentService) GenerateKeys(ctx context.Context) error {
 }
 
 func (as *AgentService) IsRegistered() bool {
+	exists, _ := as.c.Cert.ExistsAgentKey()
+	if !exists {
+		return false
+	}
+	exists, _ = as.c.Cert.ExistsAgentCertificate()
+	if !exists {
+		return false
+	}
+	exists, _ = as.c.Cert.ExistsAgentCSR()
+	if !exists {
+		return false
+	}
 	return true
 }
 
-func (as *AgentService) Register(ctx context.Context, log *logger.Logger, cfg *config.ServerConfig, c *container.StandaloneContainer) error {
-	err := c.Cert.GenerateServer(false)
+func (as *AgentService) Register(ctx context.Context) error {
+	err := as.c.Cert.GenerateServer(false)
 	if err != nil {
-		log.Fatalf("Failed to generate server certificates: %v", err)
+		as.c.Log.Fatalf("Failed to generate server certificates: %v", err)
 	}
 	serverID := util.GenerateID()
 	certificateID := util.GenerateID()
-	expiresAt, err := c.Cert.GenerateAgent(certificateID)
+	expiresAt, err := as.c.Cert.GenerateAgent(certificateID)
 	if err != nil {
-		log.Fatalf("Failed to generate agent certificates: %v", err)
+		as.c.Log.Fatalf("Failed to generate agent certificates: %v", err)
 	}
-	sr := c.Factory.NewServerRepository()
+	sr := as.c.Factory.NewServerRepository()
 	sr.RegisterServer(context.TODO(), dto.ServerRegistrationDTO{
 		ServerID:      serverID,
 		CertificateID: certificateID,

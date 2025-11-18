@@ -12,7 +12,7 @@ import (
 
 func BootstrapStandalone(log *logger.Logger, cfg *config.ServerConfig) *container.StandaloneContainer {
 	dbconn := db.NewBunConnection(log, cfg.GetDbURL())
-	agentservice := agentsrv.NewAgentService()
+
 	certmanager, err := cert.NewManager(cfg, log)
 	if err != nil {
 		log.Fatalf("Failed to create certificate manager: %v", err)
@@ -25,13 +25,16 @@ func BootstrapStandalone(log *logger.Logger, cfg *config.ServerConfig) *containe
 	c := container.StandaloneContainer{
 		Factory: &factory,
 		Cert:    certmanager,
+		Log:     log,
+		Cfg:     cfg,
 	}
-	if !cert.IsServerCertificateGenerated() {
+	if !cert.IsServerCertificateGenerated(certmanager) {
 		certmanager.GenerateServer(true)
 	}
 
+	agentservice := agentsrv.NewAgentService(&c)
 	if !agentservice.IsRegistered() {
-		agentservice.Register(context.TODO(), log, cfg, &c)
+		agentservice.Register(context.TODO())
 	}
 
 	return &c

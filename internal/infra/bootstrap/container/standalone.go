@@ -13,6 +13,8 @@ import (
 type StandaloneContainer struct {
 	Factory *StandaloneFactory
 	Cert    *cert.Manager
+	Log     *logger.Logger
+	Cfg     *config.ServerConfig
 }
 
 func (c *StandaloneContainer) GetAppFactory() *StandaloneFactory {

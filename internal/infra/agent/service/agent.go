@@ -51,20 +51,20 @@ func (as *AgentService) IsRegistered() bool {
 	return true
 }
 
-func (as *AgentService) Register(ctx context.Context) (string, string, error) {
-	err := as.c.Cert.GenerateServer(false)
-	if err != nil {
-		as.c.Log.Fatalf("Failed to generate server certificates: %v", err)
-	}
+func (as *AgentService) Register(ctx context.Context, code string) (string, error) {
 	serverID := util.GenerateID()
 	certificateID := util.GenerateID()
 	expiresAt, err := as.c.Cert.GenerateAgent(certificateID)
 	if err != nil {
 		as.c.Log.Fatalf("Failed to generate agent certificates: %v", err)
 	}
+	cert, err := as.c.Cert.GetAgentCertificate()
+	if err != nil {
+		as.c.Log.Fatalf("Failed to get agent certificate: %v", err)
+		return "", err
+	}
 	sr := as.c.Factory.NewServerRepository()
-	code := "12345"
-	sr.RegisterServer(context.TODO(), dto.ServerRegistrationDTO{
+	err = sr.RegisterServer(context.TODO(), dto.ServerRegistrationDTO{
 		ServerID:      serverID,
 		CertificateID: certificateID,
 		Hostname: func() string {
@@ -73,9 +73,17 @@ func (as *AgentService) Register(ctx context.Context) (string, string, error) {
 		}(),
 		Code:                 code,
 		ExpiresAt:            time.Now().AddDate(0, 0, 1),
-		Certificate:          []byte{},
+		Certificate:          cert,
 		CertificateExpiresAt: *expiresAt,
 	})
+	if err != nil {
+		as.c.Log.Fatalf("Failed to register server, removing the agent certificates: %v", err)
+		err = as.c.Cert.DeleteAgent()
+		if err != nil {
+			as.c.Log.Fatalf("Failed to clean up agent certificates after registration failure: %v", err)
+		}
+		return "", err
+	}
 
-	return serverID, code, nil
+	return serverID, nil
 }

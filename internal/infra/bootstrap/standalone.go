@@ -8,6 +8,7 @@ import (
 	"winterflow/internal/infra/db"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
+	"winterflow/pkg/util"
 )
 
 func BootstrapStandalone(log *logger.Logger, cfg *config.ServerConfig) *container.StandaloneContainer {
@@ -34,7 +35,8 @@ func BootstrapStandalone(log *logger.Logger, cfg *config.ServerConfig) *containe
 
 	agentservice := agentsrv.NewAgentService(&c)
 	if !agentservice.IsRegistered() {
-		serverID, code, err := agentservice.Register(context.TODO())
+		code := util.GenerateRandomCode(6)
+		serverID, err := agentservice.Register(context.TODO(), code)
 		if err != nil {
 			log.Fatalf("Failed to register server: %v", err)
 		}

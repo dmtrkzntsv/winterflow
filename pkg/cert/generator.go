@@ -430,6 +430,52 @@ func (g *Generator) ExistsAgentCertificate() (bool, error) {
 	return g.pathExists(g.paths.AgentCert)
 }
 
+func (g *Generator) GetAgentCertificate() ([]byte, error) {
+	agentCertPath := g.join(g.paths.AgentCert)
+	data, err := os.ReadFile(agentCertPath)
+	if err != nil {
+		return nil, fmt.Errorf("read agent certificate: %w", err)
+	}
+
+	return data, nil
+}
+
+func (g *Generator) DeleteCAKey() error {
+	return g.deleteArtifact(g.paths.CAKey, "CA private key")
+}
+
+func (g *Generator) DeleteCACertificate() error {
+	return g.deleteArtifact(g.paths.CACert, "CA certificate")
+}
+
+func (g *Generator) DeleteServerKey() error {
+	return g.deleteArtifact(g.paths.ServerKey, "server private key")
+}
+
+func (g *Generator) DeleteServerCSR() error {
+	return g.deleteArtifact(g.paths.ServerCSR, "server CSR")
+}
+
+func (g *Generator) DeleteServerCertificate() error {
+	return g.deleteArtifact(g.paths.ServerCert, "server certificate")
+}
+
+func (g *Generator) DeleteFullchainCertificate() error {
+	return g.deleteArtifact(g.paths.ServerFullChain, "full-chain certificate")
+}
+
+func (g *Generator) DeleteAgentKey() error {
+	return g.deleteArtifact(g.paths.AgentKey, "agent private key")
+}
+
+func (g *Generator) DeleteAgentCSR() error {
+	return g.deleteArtifact(g.paths.AgentCSR, "agent CSR")
+}
+
+func (g *Generator) DeleteAgentCertificate() error {
+	return g.deleteArtifact(g.paths.AgentCert, "agent certificate")
+}
+
 func (g *Generator) ensureOutputDir() error {
 	if err := os.MkdirAll(g.outputPath, defaultDirectoryPerm); err != nil {
 		return fmt.Errorf("create output directory: %w", err)
@@ -453,6 +499,19 @@ func (g *Generator) pathExists(filename string) (bool, error) {
 	}
 
 	return true, nil
+}
+
+func (g *Generator) deleteArtifact(filename, label string) error {
+	fullPath := g.join(filename)
+	if err := os.Remove(fullPath); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+
+		return fmt.Errorf("delete %s (%s): %w", label, fullPath, err)
+	}
+
+	return nil
 }
 
 func (g *Generator) createCACertificatePEM(privateKey *ecdsa.PrivateKey) ([]byte, error) {

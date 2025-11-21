@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+	"fmt"
 	agentsrv "winterflow/internal/infra/agent/service"
 	"winterflow/internal/infra/bootstrap/container"
 	"winterflow/internal/infra/cert"
@@ -41,6 +42,7 @@ func BootstrapStandalone(log *logger.Logger, cfg *config.ServerConfig) *containe
 			log.Fatalf("Failed to register server: %v", err)
 		}
 		log.Info("Agent registered successfully with Server ID: %s and Code: %s", serverID, code)
+		defer fmt.Printf("\n\nVisit winterflow and add your server by using the code: \n     %s\n\n\n\n", code)
 	}
 
 	return &c

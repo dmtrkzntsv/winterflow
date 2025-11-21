@@ -61,3 +61,7 @@ func (r *DbServerRepository) RegisterServer(ctx context.Context, dto dto.ServerR
 
 	return nil
 }
+
+func (r *DbServerRepository) IsServerRegistered(ctx context.Context, serverID string) (bool, error) {
+	return true, nil
+}

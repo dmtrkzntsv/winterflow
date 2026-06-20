@@ -8,6 +8,35 @@ import (
 	"winterflow/pkg/logger"
 )
 
+// ctxKey is a private type for context keys so they can't collide with keys
+// defined in other packages.
+type ctxKey string
+
+const (
+	ctxUserID    ctxKey = "userID"
+	ctxRequestID ctxKey = "requestID"
+)
+
+// WithUserID and WithRequestID attach the routing identifiers the CreateApp
+// async callback needs. Handlers call these before invoking the usecase.
+func WithUserID(ctx context.Context, userID string) context.Context {
+	return context.WithValue(ctx, ctxUserID, userID)
+}
+
+func WithRequestID(ctx context.Context, requestID string) context.Context {
+	return context.WithValue(ctx, ctxRequestID, requestID)
+}
+
+func userIDFrom(ctx context.Context) string {
+	v, _ := ctx.Value(ctxUserID).(string)
+	return v
+}
+
+func requestIDFrom(ctx context.Context) string {
+	v, _ := ctx.Value(ctxRequestID).(string)
+	return v
+}
+
 type UseCase struct {
 	appsvc port.AppService
 	nm     port.NotificationManager
@@ -33,8 +62,8 @@ func (uc *UseCase) GetApps(ctx context.Context, serverID string) ([]model.App, e
 }
 
 func (uc *UseCase) CreateApp(ctx context.Context, serverID string, app model.App) error {
-	userID := ctx.Value("userID").(string)
-	requestID := ctx.Value("requestID").(string)
+	userID := userIDFrom(ctx)
+	requestID := requestIDFrom(ctx)
 
 	return uc.appsvc.CreateApp(ctx, serverID, app, func(app model.App, err error) {
 		n := model.Notification{
@@ -50,7 +79,8 @@ func (uc *UseCase) CreateApp(ctx context.Context, serverID string, app model.App
 			n.Payload = app
 			n.Timestamp = app.CreatedAt
 		}
-		// @todo save app to the database
+		// @todo persist the app to the database once the apps repository write
+		// path is ported (out of scope for the first vertical slice).
 		uc.nm.Publish(userID, n)
 	})
 }

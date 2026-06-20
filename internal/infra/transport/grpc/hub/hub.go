@@ -4,11 +4,14 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
 	"sync"
 	"time"
+	"winterflow/internal/domain/model"
+	"winterflow/internal/infra/transport/bus"
 	"winterflow/internal/infra/transport/grpc/handler"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
@@ -30,6 +33,7 @@ type Hub struct {
 	cfg        *config.ServerConfig
 	log        *logger.Logger
 	srv        *grpc.Server
+	bus        bus.Bus
 }
 
 type agent struct {
@@ -43,16 +47,112 @@ type agent struct {
 	pendingRequestsLock sync.RWMutex
 }
 
-func NewHub(log *logger.Logger, cfg *config.ServerConfig) *Hub {
+func NewHub(log *logger.Logger, cfg *config.ServerConfig, b bus.Bus) *Hub {
 	h := &Hub{
 		agents: make(map[string]*agent),
 		cfg:    cfg,
 		log:    log,
 		srv:    createServer(log, cfg),
+		bus:    b,
 	}
 	proto.RegisterAgentServiceServer(h.srv, h)
 
 	return h
+}
+
+// StartBusBridge subscribes to the request queue and forwards each command
+// onto the target agent's active gRPC stream. It runs until ctx is cancelled.
+// The Hub is the only consumer of the request queue; agent responses are
+// published back onto the response queue from AgentStream.
+func (h *Hub) StartBusBridge(ctx context.Context) error {
+	if h.bus == nil {
+		h.log.Warn("no bus configured, hub will not forward commands")
+		return nil
+	}
+	msgs, cancel, err := h.bus.Subscribe(ctx, h.cfg.GetBusRequestQueue())
+	if err != nil {
+		return fmt.Errorf("subscribe request queue: %w", err)
+	}
+	go func() {
+		defer cancel()
+		for msg := range msgs {
+			var cmd bus.CommandMessage
+			if err := json.Unmarshal([]byte(msg.Payload), &cmd); err != nil {
+				h.log.Error("failed to unmarshal command message", err)
+				continue
+			}
+			h.dispatchToAgent(cmd)
+		}
+	}()
+	h.log.Info("hub bus bridge started", "request_queue", h.cfg.GetBusRequestQueue())
+	return nil
+}
+
+// dispatchToAgent locates the addressed agent's stream and sends the command.
+// If the agent is unknown or offline it publishes an error result back so the
+// caller doesn't block until timeout.
+func (h *Hub) dispatchToAgent(cmd bus.CommandMessage) {
+	h.agentsLock.RLock()
+	a, ok := h.agents[cmd.AgentID]
+	active := ok && a.streamActive && a.stream != nil
+	stream := func() grpc.BidiStreamingServer[proto.AgentMessage, proto.ServerCommand] {
+		if active {
+			return a.stream
+		}
+		return nil
+	}()
+	h.agentsLock.RUnlock()
+
+	if !active {
+		h.log.Warn("command for offline/unknown agent", "agent_id", cmd.AgentID, "request_id", cmd.RequestID)
+		h.publishResult(cmd.RequestID, model.NotificationStatusError, nil, "agent not connected")
+		return
+	}
+
+	req := &proto.ServerCommand{
+		Command: &proto.ServerCommand_Request{
+			Request: &proto.RequestEnvelope{
+				Base: &proto.BaseMessage{
+					MessageId:       cmd.RequestID,
+					Timestamp:       timestamppb.Now(),
+					AgentId:         cmd.AgentID,
+					ProtocolVersion: "1.0.0",
+				},
+				RequestId:     cmd.RequestID,
+				Type:          cmd.Type,
+				ContentType:   "application/json",
+				SchemaVersion: "1.0.0",
+				Payload:       cmd.Payload,
+			},
+		},
+	}
+	if err := stream.Send(req); err != nil {
+		h.log.Error("failed to send command to agent", "error", err, "agent_id", cmd.AgentID)
+		h.publishResult(cmd.RequestID, model.NotificationStatusError, nil, "failed to deliver command to agent")
+	}
+}
+
+// publishResult emits an agent's reply (or a delivery error) onto the response
+// queue as a model.Notification keyed by the request id, which the API's
+// reply.Manager uses to wake the blocked caller.
+func (h *Hub) publishResult(requestID string, statusCode model.NotificationStatus, payload []byte, detail string) {
+	if h.bus == nil {
+		return
+	}
+	ntf := model.Notification{
+		Type:      model.NotificationOperationResult,
+		Ref:       requestID,
+		Status:    statusCode,
+		Timestamp: time.Now(),
+	}
+	if statusCode == model.NotificationStatusError {
+		ntf.Error = detail
+	} else if len(payload) > 0 {
+		ntf.Payload = json.RawMessage(payload)
+	}
+	if err := h.bus.Publish(context.Background(), h.cfg.GetBusResponseQueue(), ntf); err != nil {
+		h.log.Error("failed to publish result", "error", err, "request_id", requestID)
+	}
 }
 
 func createServer(log *logger.Logger, cfg *config.ServerConfig) *grpc.Server {
@@ -303,6 +403,16 @@ func (h *Hub) AgentStream(stream grpc.BidiStreamingServer[proto.AgentMessage, pr
 				"request_id", payload.Response.RequestId,
 				"type", payload.Response.Type,
 				"response_code", payload.Response.Base.ResponseCode)
+
+			// Forward the agent's reply back onto the response queue, keyed by
+			// request_id, so the originating API caller (blocked in its
+			// reply.Manager) wakes up with the result.
+			statusCode := model.NotificationStatusSuccess
+			detail := payload.Response.Base.Detail
+			if payload.Response.Base.ResponseCode != proto.ResponseCode_RESPONSE_CODE_SUCCESS {
+				statusCode = model.NotificationStatusError
+			}
+			h.publishResult(payload.Response.RequestId, statusCode, payload.Response.Payload, detail)
 
 		default:
 			h.log.Warn("Received unknown message type from agent", "agent_id", agentID)

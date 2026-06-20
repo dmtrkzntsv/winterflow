@@ -119,6 +119,29 @@ func (c *ServerConfig) GetBusResponseQueue() string {
 	return v
 }
 
+// GetAgentDataDir is the root under which the agent stores app revisions and
+// rendered deployments. Defaults to "data" (relative to the working directory)
+// to match the repo layout; override with AGENT_DATA_DIR in production
+// (v1 used /opt/winterflow).
+func (c *ServerConfig) GetAgentDataDir() string {
+	if v := os.Getenv("AGENT_DATA_DIR"); v != "" {
+		return v
+	}
+	return "data"
+}
+
+// GetAppsTemplatesDir holds per-app, per-revision source templates:
+// {dataDir}/apps_templates/{appID}/{revision}/.
+func (c *ServerConfig) GetAppsTemplatesDir() string {
+	return path.Join(c.GetAgentDataDir(), "apps_templates")
+}
+
+// GetAppsDir holds the rendered, ready-to-run deployments:
+// {dataDir}/apps/{appID}/.
+func (c *ServerConfig) GetAppsDir() string {
+	return path.Join(c.GetAgentDataDir(), "apps")
+}
+
 func (c *ServerConfig) GetHubHost() string {
 	return os.Getenv("HUB_HOST")
 }
@@ -215,9 +238,16 @@ func (c *ServerConfig) GetAgentCSRPath() string {
 	return path.Join(c.GetHubCertDir(), c.GetAgentCSRFilename())
 }
 
-// func (c *ServerConfig) GetAgentCACertPath() string {
-// 	return os.Getenv("AGENT_CA_CERT_PATH")
-// }
+// GetAgentCACertPath returns the path to the CA certificate the agent uses to
+// verify the hub. It is the same CA that signs the hub's server certificate;
+// an explicit AGENT_CA_CERT_PATH overrides it for deployments that ship the CA
+// separately from the hub cert directory.
+func (c *ServerConfig) GetAgentCACertPath() string {
+	if p := os.Getenv("AGENT_CA_CERT_PATH"); p != "" {
+		return p
+	}
+	return c.GetHubCACertPath()
+}
 
 func (c *ServerConfig) GetMode() string {
 	return c.mode

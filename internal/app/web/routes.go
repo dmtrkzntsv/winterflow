@@ -6,7 +6,6 @@ import (
 	"winterflow/internal/app/web/handler/notification"
 	"winterflow/internal/app/web/handler/server"
 	"winterflow/internal/app/web/util"
-	nm "winterflow/internal/domain/service/notification"
 )
 
 func (s *Server) registerRoutes() {
@@ -19,22 +18,28 @@ func (s *Server) registerRoutes() {
 	s.Router.Mount("/avatar", avaRoutes) // add avatar handler
 
 	amw := s.Auth.Middleware()
+
+	// The NotificationManager is shared across every handler: the SSE stream
+	// subscribes to it and the usecases publish to it, so async results reach
+	// the browser. Each handler MUST receive the same instance from Deps.
 	notificationAPI := notification.NewHandler(&notification.Deps{
 		Logger:              s.Logger,
-		NotificationManager: nm.NewNotificationManager(),
+		NotificationManager: s.Deps.NotificationManager,
 	})
 	s.Router.With(amw.Auth).Get("/api/v1/notification/stream", notificationAPI.Stream)
 
 	appsAPI := happ.NewHandler(&happ.Deps{
 		Logger:              s.Logger,
-		AppService:          s.Factory.NewAppService(),
-		NotificationManager: nm.NewNotificationManager(),
+		AppService:          s.Deps.AppService,
+		NotificationManager: s.Deps.NotificationManager,
 	})
 	s.Router.With(amw.Auth, happ.GetAppsValidationMiddleware).Get("/api/v1/app/get-apps", appsAPI.GetApps)
+	s.Router.With(amw.Auth).Post("/api/v1/app/create-app", appsAPI.CreateApp)
 
 	serversAPI := server.NewHandler(&server.Deps{
-		Logger:        s.Logger,
-		ServerService: s.Factory.NewServerService(),
+		Logger:              s.Logger,
+		ServerService:       s.Deps.ServerService,
+		NotificationManager: s.Deps.NotificationManager,
 	})
 	s.Router.With(amw.Auth).Get("/api/v1/server/get-servers", serversAPI.GetServers)
 }

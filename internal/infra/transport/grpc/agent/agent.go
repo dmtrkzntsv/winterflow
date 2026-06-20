@@ -19,6 +19,14 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+// Dispatcher handles a command RequestEnvelope received from the hub and
+// returns the ResponseEnvelope to send back. Implemented by the agent
+// application layer (internal/app/agent); kept as an interface here so the
+// transport stays decoupled from business logic.
+type Dispatcher interface {
+	Dispatch(ctx context.Context, req *proto.RequestEnvelope) *proto.ResponseEnvelope
+}
+
 type Agent struct {
 	cfg    *config.ServerConfig
 	log    *logger.Logger
@@ -30,10 +38,12 @@ type Agent struct {
 	capabilities    map[string]string
 	features        map[string]bool
 	apps            []*proto.App
+	dispatcher      Dispatcher
 
 	streamMutex  sync.RWMutex
 	streamActive bool
 	streamCancel context.CancelFunc
+	sendMutex    sync.Mutex // serializes stream.Send across heartbeat + handler goroutines
 
 	registered      bool
 	registeredMutex sync.RWMutex
@@ -51,6 +61,12 @@ func NewAgent(log *logger.Logger, cfg *config.ServerConfig, agentID string) *Age
 		streamActive:    false,
 		registered:      false,
 	}
+}
+
+// SetDispatcher installs the command handler the agent invokes for each
+// RequestEnvelope received from the hub.
+func (a *Agent) SetDispatcher(d Dispatcher) {
+	a.dispatcher = d
 }
 
 func (a *Agent) SetCapabilities(capabilities map[string]string) {
@@ -221,7 +237,7 @@ func (a *Agent) heartbeatRoutine(ctx context.Context, stream grpc.BidiStreamingC
 				},
 			}
 
-			if err := stream.Send(heartbeat); err != nil {
+			if err := a.sendMessage(stream, heartbeat); err != nil {
 				a.log.Error("Failed to send heartbeat", "error", err, "agent_id", a.agentID)
 				return
 			}
@@ -272,36 +288,57 @@ func (a *Agent) handleIncomingMessages(ctx context.Context, stream grpc.BidiStre
 					"request_id", cmd.Request.RequestId,
 					"type", cmd.Request.Type)
 
-				// Send a simple acknowledgment response
-				response := &proto.AgentMessage{
-					Message: &proto.AgentMessage_Response{
-						Response: &proto.ResponseEnvelope{
-							Base: &proto.BaseResponse{
-								MessageId:       fmt.Sprintf("resp-%d", time.Now().UnixNano()),
-								Timestamp:       timestamppb.Now(),
-								ResponseCode:    proto.ResponseCode_RESPONSE_CODE_SUCCESS,
-								Detail:          "Request processed",
-								AgentId:         a.agentID,
-								ProtocolVersion: a.protocolVersion,
-							},
-							RequestId:     cmd.Request.RequestId,
-							Type:          cmd.Request.Type + ".result",
-							ContentType:   "application/json",
-							SchemaVersion: "1.0.0",
-							Payload:       []byte(`{"status": "completed"}`),
-						},
-					},
-				}
-
-				if err := stream.Send(response); err != nil {
-					a.log.Error("Failed to send response", "error", err, "agent_id", a.agentID)
-					return
-				}
+				// Dispatch in its own goroutine so a slow handler (e.g. a
+				// `docker compose up`) doesn't stall heartbeats or other
+				// commands on the receive loop. stream.Send is safe here:
+				// gRPC permits one concurrent Send and one Recv.
+				go a.handleRequest(ctx, stream, cmd.Request)
 
 			default:
 				a.log.Warn("Received unknown command type from hub", "agent_id", a.agentID)
 			}
 		}
+	}
+}
+
+// sendMessage serializes all stream.Send calls. gRPC streams allow only one
+// concurrent Send, and both the heartbeat routine and per-request handler
+// goroutines send on the same stream.
+func (a *Agent) sendMessage(stream grpc.BidiStreamingClient[proto.AgentMessage, proto.ServerCommand], msg *proto.AgentMessage) error {
+	a.sendMutex.Lock()
+	defer a.sendMutex.Unlock()
+	return stream.Send(msg)
+}
+
+// handleRequest dispatches a single command and sends the response back. It
+// runs in its own goroutine so long-running commands don't block the receive
+// loop.
+func (a *Agent) handleRequest(ctx context.Context, stream grpc.BidiStreamingClient[proto.AgentMessage, proto.ServerCommand], req *proto.RequestEnvelope) {
+	var resp *proto.ResponseEnvelope
+	if a.dispatcher == nil {
+		a.log.Error("no dispatcher configured", "agent_id", a.agentID, "type", req.Type)
+		resp = &proto.ResponseEnvelope{
+			Base: &proto.BaseResponse{
+				MessageId:       fmt.Sprintf("resp-%d", time.Now().UnixNano()),
+				Timestamp:       timestamppb.Now(),
+				ResponseCode:    proto.ResponseCode_RESPONSE_CODE_SERVER_ERROR,
+				Detail:          "agent has no command dispatcher",
+				AgentId:         a.agentID,
+				ProtocolVersion: a.protocolVersion,
+			},
+			RequestId:     req.RequestId,
+			Type:          req.Type,
+			ContentType:   "application/json",
+			SchemaVersion: "1.0.0",
+		}
+	} else {
+		resp = a.dispatcher.Dispatch(ctx, req)
+	}
+
+	if err := a.sendMessage(stream, &proto.AgentMessage{
+		Message: &proto.AgentMessage_Response{Response: resp},
+	}); err != nil {
+		a.log.Error("Failed to send response", "error", err, "agent_id", a.agentID, "request_id", req.RequestId)
 	}
 }
 

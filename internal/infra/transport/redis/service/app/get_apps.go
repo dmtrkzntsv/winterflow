@@ -8,7 +8,7 @@ import (
 	"winterflow/pkg/util"
 )
 
-func (s *RedisAppService) GetApps(ctx context.Context, serverID string) ([]model.App, error) {
+func (s *BusAppService) GetApps(ctx context.Context, serverID string) ([]model.App, error) {
 	// @todo
 	if err := s.bus.Publish(ctx, "apps:get", nil); err != nil {
 		return nil, err

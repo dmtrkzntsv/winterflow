@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"syscall"
 	"time"
+	appagent "winterflow/internal/app/agent"
+	dockercompose "winterflow/internal/infra/orchestrator/docker_compose"
 	grpcagent "winterflow/internal/infra/transport/grpc/agent"
 	"winterflow/internal/infra/transport/grpc/proto"
 	"winterflow/pkg/config"
@@ -63,6 +65,11 @@ func main() {
 	agent.SetCapabilities(capabilities)
 	agent.SetFeatures(features)
 	agent.SetApps(apps)
+
+	// Wire the command dispatcher: incoming hub commands are executed against
+	// the Docker Compose orchestrator.
+	orchestrator := dockercompose.NewRepository(cfg, log)
+	agent.SetDispatcher(appagent.NewDispatcher(orchestrator, log))
 
 	// Connect to hub
 	log.Info("Connecting to hub", "agent_id", agentID)

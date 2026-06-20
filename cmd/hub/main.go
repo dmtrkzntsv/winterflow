@@ -6,6 +6,7 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+	"winterflow/internal/infra/bootstrap"
 	grpchub "winterflow/internal/infra/transport/grpc/hub"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
@@ -28,8 +29,12 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	//container := bootstrap.BootstrapHUB(ctx, log, cfg)
-	hub := grpchub.NewHub(log, cfg)
+	hubDeps := bootstrap.BootstrapHUB(ctx, log, cfg)
+	hub := grpchub.NewHub(log, cfg, hubDeps.Bus)
+
+	if err := hub.StartBusBridge(ctx); err != nil {
+		log.Fatal("Failed to start bus bridge", "error", err)
+	}
 
 	go func() {
 		if err := hub.ListenAndServe(ctx); err != nil {

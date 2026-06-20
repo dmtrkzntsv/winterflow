@@ -23,6 +23,17 @@ Frontend code resides in `web/`, a Vite + React 19 workspace that uses pnpm, Tai
 Persistent artifacts such as SQLite files and local certificates live in `data/`. 
 Keep tests beside the code they exercise (e.g., `internal/agents/agent_test.go`) to simplify package imports.
 
+## Architecture
+
+WinterFlow ships as four binaries from one repo and supports two topologies:
+
+- **Standalone** (`cmd/standalone`): a single process — HTTP API, agent, and Docker Compose orchestrator — backed by SQLite. The command bus and the "hub" run **in-process** (`internal/app/agent/inprocess.go` over `internal/infra/transport/mem/bus`); no Redis or gRPC hop.
+- **Distributed**: a horizontally-scalable **API** (`cmd/api`, the "brain", owns persistence) ⇄ **Redis Bus** (`internal/infra/transport/redis/bus`) ⇄ horizontally-scalable **Hub** (`cmd/hub`, gRPC server, mTLS) ⇄ **Agent** (`cmd/agent`). The API publishes a command onto the request queue; the Hub forwards it down the agent's gRPC stream; the agent's reply travels back up onto the response queue, where the API's `reply.Manager` wakes the blocked caller.
+
+Layering is hexagonal: `internal/domain/{model,port,usecase,service}` (business logic, transport-agnostic) over `internal/infra/{db,transport,orchestrator,cert}` (adapters), with `internal/app/{web,agent}` as the delivery layer. There is **no DI/factory abstraction** — each binary wires its concrete dependencies explicitly in `internal/infra/bootstrap` and hands a `Deps` struct to the server.
+
+**Single gRPC envelope + typed commands.** All hub↔agent traffic rides one envelope (`proto.RequestEnvelope`/`ResponseEnvelope`: a `type` string + JSON `payload`). The catalog of command types and their payload structs lives in `internal/domain/command`; `internal/infra/transport/codec` is the only place that (de)serializes payloads, so handlers on both ends work with typed Go values. Add a feature by: defining a command type + payload struct, adding an agent handler in `internal/app/agent`, and adding a usecase + route on the API side.
+
 ## Build, Test, and Development Commands
 - `make build` – compiles the standalone and API binaries into `bin/`.
 - `make api | make hub | make agent` – runs the selected service with `go run`.
@@ -38,10 +49,10 @@ Frontend code follows TypeScript strict mode with React function components and 
 Use PascalCase for components (`AgentList`) and kebab-case for filenames (`agent-list.tsx`) unless the file defines a component (then match its name).
 
 ## Testing Guidelines
-Unit and integration coverage rely on the standard Go toolchain: run `go test ./...` from the repo root and include new table-driven tests when adding logic in `internal/` or `pkg/`. 
+Unit and integration coverage rely on the standard Go toolchain: run `go test ./...` from the repo root. 
+Add table-driven tests beside the code they exercise (`*_test.go` in the same package) when adding logic in `internal/` or `pkg/` — favour testing pure helpers and message/transport correlation (see `internal/infra/transport/codec`, `internal/infra/transport/grpc/hub`, and `internal/infra/orchestrator/docker_compose` for examples). 
 The frontend currently relies on type safety plus ESLint; if you introduce Vitest or Playwright, add scripts to `web/package.json` and document fixtures in this guide. 
 Always mention which suites you executed in PR descriptions.
-Do not create any tests by default.
 
 ## Commit & Pull Request Guidelines
 The Git history follows Conventional Commits (`feat:`, `fix:`, `refactor:`). 

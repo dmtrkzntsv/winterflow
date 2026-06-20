@@ -5,17 +5,23 @@ import (
 	"os"
 	"time"
 	"winterflow/internal/domain/dto"
-	"winterflow/internal/infra/bootstrap/container"
+	"winterflow/internal/domain/port"
+	"winterflow/internal/infra/cert"
+	"winterflow/pkg/logger"
 	"winterflow/pkg/util"
 )
 
 type AgentService struct {
-	c *container.StandaloneContainer
+	log        *logger.Logger
+	cert       *cert.Manager
+	serverRepo port.ServerRepository
 }
 
-func NewAgentService(c *container.StandaloneContainer) *AgentService {
+func NewAgentService(log *logger.Logger, certManager *cert.Manager, serverRepo port.ServerRepository) *AgentService {
 	return &AgentService{
-		c: c,
+		log:        log,
+		cert:       certManager,
+		serverRepo: serverRepo,
 	}
 }
 
@@ -36,15 +42,15 @@ func (as *AgentService) GenerateKeys(ctx context.Context) error {
 }
 
 func (as *AgentService) IsRegistered() bool {
-	exists, _ := as.c.Cert.ExistsAgentKey()
+	exists, _ := as.cert.ExistsAgentKey()
 	if !exists {
 		return false
 	}
-	exists, _ = as.c.Cert.ExistsAgentCertificate()
+	exists, _ = as.cert.ExistsAgentCertificate()
 	if !exists {
 		return false
 	}
-	exists, _ = as.c.Cert.ExistsAgentCSR()
+	exists, _ = as.cert.ExistsAgentCSR()
 	if !exists {
 		return false
 	}
@@ -54,17 +60,16 @@ func (as *AgentService) IsRegistered() bool {
 func (as *AgentService) Register(ctx context.Context, code string) (string, error) {
 	serverID := util.GenerateID()
 	certificateID := util.GenerateID()
-	expiresAt, err := as.c.Cert.GenerateAgent(certificateID)
+	expiresAt, err := as.cert.GenerateAgent(certificateID)
 	if err != nil {
-		as.c.Log.Fatalf("Failed to generate agent certificates: %v", err)
+		as.log.Fatalf("Failed to generate agent certificates: %v", err)
 	}
-	cert, err := as.c.Cert.GetAgentCertificate()
+	cert, err := as.cert.GetAgentCertificate()
 	if err != nil {
-		as.c.Log.Fatalf("Failed to get agent certificate: %v", err)
+		as.log.Fatalf("Failed to get agent certificate: %v", err)
 		return "", err
 	}
-	sr := as.c.Factory.NewServerRepository()
-	err = sr.RegisterServer(context.TODO(), dto.ServerRegistrationDTO{
+	err = as.serverRepo.RegisterServer(ctx, dto.ServerRegistrationDTO{
 		ServerID:      serverID,
 		CertificateID: certificateID,
 		Hostname: func() string {
@@ -77,10 +82,10 @@ func (as *AgentService) Register(ctx context.Context, code string) (string, erro
 		CertificateExpiresAt: *expiresAt,
 	})
 	if err != nil {
-		as.c.Log.Fatalf("Failed to register server, removing the agent certificates: %v", err)
-		err = as.c.Cert.DeleteAgent()
+		as.log.Fatalf("Failed to register server, removing the agent certificates: %v", err)
+		err = as.cert.DeleteAgent()
 		if err != nil {
-			as.c.Log.Fatalf("Failed to clean up agent certificates after registration failure: %v", err)
+			as.log.Fatalf("Failed to clean up agent certificates after registration failure: %v", err)
 		}
 		return "", err
 	}

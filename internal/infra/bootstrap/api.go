@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"winterflow/internal/domain/model"
-	"winterflow/internal/domain/port"
-	infrafs "winterflow/internal/infra/agent/repository"
+	notificationsvc "winterflow/internal/domain/service/notification"
+	"winterflow/internal/infra/db"
+	"winterflow/internal/infra/db/repository"
+	dbservice "winterflow/internal/infra/db/service"
 	"winterflow/internal/infra/transport/mem/service/reply"
 	redisbus "winterflow/internal/infra/transport/redis/bus"
 	redisappsrv "winterflow/internal/infra/transport/redis/service/app"
@@ -13,32 +15,21 @@ import (
 	"winterflow/pkg/logger"
 )
 
-type ApiContainer struct {
-	factory *ApiFactory
-}
-
-func (c *ApiContainer) GetAppFactory() *ApiFactory {
-	return c.factory
-}
-
-type ApiFactory struct {
-	bus *redisbus.Bus
-	rm  *reply.Manager
-	log *logger.Logger
-	cfg *config.ServerConfig
-}
-
-func BootstrapAPI(ctx context.Context, log *logger.Logger, cfg *config.ServerConfig) *ApiContainer {
-	addr, pass, db := cfg.GetRedisCredentials()
+// BootstrapAPI wires the distributed "brain": DB-backed user/server services
+// (the API still owns persistence) and a Redis-backed AppService that publishes
+// commands onto the Bus. A single subscriber drains the response queue and hands
+// replies to the reply.Manager so blocked callers wake up.
+func BootstrapAPI(ctx context.Context, log *logger.Logger, cfg *config.ServerConfig) *Deps {
+	addr, pass, redisDB := cfg.GetRedisCredentials()
 	rc := redisbus.NewClient(redisbus.Config{
 		Addr:     addr,
 		Password: pass,
-		DB:       db,
+		DB:       redisDB,
 	})
 	if redisbus.Ping(ctx, rc) != nil {
 		log.Fatalf("failed to connect to redis at %s", addr)
 	}
-	log.Debug("connected to redis", "addr", addr, "db", db)
+	log.Debug("connected to redis", "addr", addr, "db", redisDB)
 
 	b := redisbus.NewBus(rc, log)
 	rm := reply.NewReplyManager(log)
@@ -61,33 +52,16 @@ func BootstrapAPI(ctx context.Context, log *logger.Logger, cfg *config.ServerCon
 		}
 	}()
 
-	return &ApiContainer{
-		factory: &ApiFactory{
-			bus: b,
-			rm:  rm,
-			log: log,
-			cfg: cfg,
-		},
+	dbconn := db.NewBunConnection(log, cfg.GetDbURL())
+	userRepo := repository.NewDbUserRepository(dbconn, log)
+	serverRepo := repository.NewDbServerRepository(dbconn, log)
+
+	return &Deps{
+		Log:                 log,
+		Cfg:                 cfg,
+		UserService:         dbservice.NewDbUserService(log, userRepo),
+		ServerService:       dbservice.NewDbServerService(log, serverRepo),
+		AppService:          redisappsrv.NewAppService(log, cfg, b, rm),
+		NotificationManager: notificationsvc.NewNotificationManager(),
 	}
-}
-
-func (f *ApiFactory) NewUserService() port.UserService {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (f *ApiFactory) NewServerRepository() port.ServerRepository {
-	return nil
-}
-
-func (f *ApiFactory) NewUserRepository() port.UserRepository {
-	return nil
-}
-
-func (f *ApiFactory) NewAppRepository() port.AppRepository {
-	return infrafs.NewFsAppRepository()
-}
-
-func (f *ApiFactory) NewAppService() port.AppService {
-	return redisappsrv.NewAppService(f.log, f.cfg, f.bus, f.rm)
 }

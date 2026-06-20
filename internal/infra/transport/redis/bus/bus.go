@@ -3,6 +3,7 @@ package redisbus
 import (
 	"context"
 	"encoding/json"
+	"winterflow/internal/infra/transport/bus"
 	"winterflow/pkg/logger"
 
 	"github.com/redis/go-redis/v9"
@@ -13,10 +14,9 @@ type Bus struct {
 	log *logger.Logger
 }
 
-type BusMessage struct {
-	Channel string
-	Payload string
-}
+// BusMessage aliases the transport-neutral bus.Message so *Bus satisfies
+// bus.Bus and existing references keep compiling.
+type BusMessage = bus.Message
 
 func NewBus(rdb *redis.Client, log *logger.Logger) *Bus {
 	return &Bus{rdb: rdb, log: log}

@@ -10,7 +10,7 @@ import (
 	corsmw "winterflow/internal/app/web/middleware/cors"
 	logmw "winterflow/internal/app/web/middleware/logger"
 	"winterflow/internal/domain/dto"
-	"winterflow/internal/domain/port"
+	"winterflow/internal/infra/bootstrap"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
 
@@ -23,19 +23,20 @@ import (
 )
 
 type Server struct {
-	Logger  *logger.Logger
-	Cfg     *config.ServerConfig
-	Factory port.AppFactory
-	Router  *chi.Mux
-	Auth    *auth.Service
+	Logger *logger.Logger
+	Cfg    *config.ServerConfig
+	Deps   *bootstrap.Deps
+	Router *chi.Mux
+	Auth   *auth.Service
 }
 
-func NewServer(log *logger.Logger, cfg *config.ServerConfig, factory port.AppFactory) *http.Server {
+func NewServer(deps *bootstrap.Deps) *http.Server {
+	cfg := deps.Cfg
 	s := Server{
-		Logger:  log,
-		Cfg:     cfg,
-		Factory: factory,
-		Router:  chi.NewRouter(),
+		Logger: deps.Log,
+		Cfg:    cfg,
+		Deps:   deps,
+		Router: chi.NewRouter(),
 	}
 	s.registerMiddleware()
 	s.registerAuth()
@@ -79,7 +80,7 @@ func (s *Server) registerAuth() {
 				if provider == authprvd.EnvProvider {
 					accountId = authprvd.EnvProvider
 				}
-				user, err := s.Factory.NewUserService().FindOrCreateUser(ctx, dto.UserDTO{
+				user, err := s.Deps.UserService.FindOrCreateUser(ctx, dto.UserDTO{
 					Provider:  provider,
 					AccountID: accountId,
 					UserID:    "",

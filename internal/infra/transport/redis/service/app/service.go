@@ -1,24 +1,28 @@
 package app
 
 import (
+	"winterflow/internal/infra/transport/bus"
 	"winterflow/internal/infra/transport/mem/service/reply"
-	redisbus "winterflow/internal/infra/transport/redis/bus"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
 )
 
-func NewAppService(log *logger.Logger, cfg *config.ServerConfig, bus *redisbus.Bus, rm *reply.Manager) *RedisAppService {
-	return &RedisAppService{
+// BusAppService implements port.AppService over a message bus: it publishes
+// commands onto the request queue and awaits the agent's reply via the
+// reply.Manager. It is bus-agnostic — the same type backs the distributed
+// (Redis) and standalone (in-process) topologies through the bus.Bus interface.
+func NewAppService(log *logger.Logger, cfg *config.ServerConfig, b bus.Bus, rm *reply.Manager) *BusAppService {
+	return &BusAppService{
 		log: log,
 		cfg: cfg,
-		bus: bus,
+		bus: b,
 		rm:  rm,
 	}
 }
 
-type RedisAppService struct {
+type BusAppService struct {
 	rm  *reply.Manager
-	bus *redisbus.Bus
+	bus bus.Bus
 	log *logger.Logger
 	cfg *config.ServerConfig
 }

@@ -39,7 +39,9 @@ func (s *Server) registerRoutes() {
 	serversAPI := server.NewHandler(&server.Deps{
 		Logger:              s.Logger,
 		ServerService:       s.Deps.ServerService,
+		UserService:         s.Deps.UserService,
 		NotificationManager: s.Deps.NotificationManager,
 	})
 	s.Router.With(amw.Auth).Get("/api/v1/server/get-servers", serversAPI.GetServers)
+	s.Router.With(amw.Auth).Post("/api/v1/server/register", serversAPI.Register)
 }

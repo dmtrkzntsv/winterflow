@@ -37,3 +37,7 @@ func (s *DbUserService) FindOrCreateUser(ctx context.Context, dto dto.UserDTO) (
 
 	return user, nil
 }
+
+func (s *DbUserService) PrimaryOrganizationID(ctx context.Context, userID string) (string, error) {
+	return s.repo.PrimaryOrganizationID(ctx, userID)
+}

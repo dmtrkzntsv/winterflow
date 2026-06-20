@@ -160,3 +160,23 @@ func (r *DbUserRepository) GetUser(ctx context.Context, userID string) (model.Us
 		LastSeenAt: user.LastSeen.Time(),
 	}, nil
 }
+
+// PrimaryOrganizationID returns the user's organization. The 1-user-per-org
+// model gives each user exactly one (created at signup); if a user ever belongs
+// to several, the oldest membership wins so the result is stable.
+func (r *DbUserRepository) PrimaryOrganizationID(ctx context.Context, userID string) (string, error) {
+	var ou models.OrganizationUser
+	err := r.db.GetDB().NewSelect().
+		Model(&ou).
+		Where("user_id = ?", userID).
+		Order("created_at ASC").
+		Limit(1).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", model.ErrorUserNotFound
+		}
+		return "", err
+	}
+	return ou.OrganizationID, nil
+}

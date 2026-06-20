@@ -3,7 +3,7 @@ import { Check, Copy, ExternalLink, HelpCircle, Plus, X } from "lucide-react";
 import { Logo } from "@/components/app-logo";
 import { Button } from "@/components/ui/button";
 import { CodeInput } from "@/components/ui/code-input";
-import { isStandalone } from "@/config";
+import { apiBaseUrl, isStandalone } from "@/config";
 import {
   CreateOrganizationModal,
   type OrganizationPreview,
@@ -12,6 +12,7 @@ import {
 interface ServerSelectionDialogProps {
   isOpen: boolean;
   onClose: () => void;
+  onServerAdded?: () => void;
 }
 
 interface Partner {
@@ -86,10 +87,12 @@ const defaultOrganizations: OrganizationPreview[] = [
 export function ServerSelectionDialog({
   isOpen,
   onClose,
+  onServerAdded,
 }: ServerSelectionDialogProps) {
   const [deviceCode, setDeviceCode] = React.useState("");
   const [isCopied, setIsCopied] = React.useState(false);
   const [isRegistering, setIsRegistering] = React.useState(false);
+  const [registerError, setRegisterError] = React.useState<string | null>(null);
   const [selectedProvider, setSelectedProvider] = React.useState<Partner>(
     partners[0],
   );
@@ -115,15 +118,47 @@ export function ServerSelectionDialog({
     setTimeout(() => setIsCopied(false), 2000);
   };
 
-  const handleConnectAgent = () => {
-    if (deviceCode.length !== 6 || !selectedOrganizationId) return;
+  const handleConnectAgent = async () => {
+    // Standalone resolves the org server-side, so only distributed requires a
+    // selected organization.
+    if (deviceCode.length !== 6) return;
+    if (!isStandalone && !selectedOrganizationId) return;
 
     setIsRegistering(true);
-    // Simulate a pending state so the UI still feels interactive
-    setTimeout(() => {
-      setIsRegistering(false);
+    setRegisterError(null);
+
+    const base = apiBaseUrl.endsWith("/")
+      ? apiBaseUrl.slice(0, -1)
+      : apiBaseUrl;
+
+    try {
+      const response = await fetch(`${base}/api/v1/server/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          code: deviceCode,
+          ...(selectedOrganizationId
+            ? { organization_id: selectedOrganizationId }
+            : {}),
+        }),
+      });
+
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) {
+        throw new Error(result?.message ?? "Failed to add server");
+      }
+
       setDeviceCode("");
-    }, 1200);
+      onServerAdded?.();
+      onClose();
+    } catch (err) {
+      setRegisterError(
+        err instanceof Error ? err.message : "Failed to add server",
+      );
+    } finally {
+      setIsRegistering(false);
+    }
   };
 
   const handleOrganizationCreated = (newOrganization: OrganizationPreview) => {
@@ -183,6 +218,9 @@ export function ServerSelectionDialog({
               >
                 {isRegistering ? "Connecting..." : "Connect Server"}
               </Button>
+              {registerError && (
+                <p className="text-sm text-destructive">{registerError}</p>
+              )}
               <div className="rounded-lg border bg-muted/60 p-4 text-sm text-muted-foreground">
                 <p className="font-medium text-foreground">Need help?</p>
                 <p className="mt-1">
@@ -505,6 +543,11 @@ export function ServerSelectionDialog({
                     >
                       {isRegistering ? "Connecting..." : "Connect Server"}
                     </Button>
+                    {registerError && (
+                      <p className="mt-2 text-sm text-destructive">
+                        {registerError}
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>

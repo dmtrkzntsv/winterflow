@@ -8,11 +8,14 @@ import (
 
 type Handler struct {
 	usecase usesrv.UseCase
+	users   port.UserService
+	log     *logger.Logger
 }
 
 type Deps struct {
 	Logger              *logger.Logger
 	ServerService       port.ServerService
+	UserService         port.UserService
 	NotificationManager port.NotificationManager
 }
 
@@ -22,5 +25,5 @@ func NewHandler(d *Deps) *Handler {
 		Log:                 d.Logger,
 		NotificationManager: d.NotificationManager,
 	})
-	return &Handler{usecase: *uc}
+	return &Handler{usecase: *uc, users: d.UserService, log: d.Logger}
 }

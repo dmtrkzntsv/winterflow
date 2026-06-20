@@ -96,6 +96,13 @@ func (s *Server) registerAuth() {
 				claims.User.Picture = user.AvatarURL
 				claims.User.Name = user.Name
 				claims.User.SetStrAttr("provider", provider)
+
+				// Standalone: the embedded agent self-registered at boot with a
+				// pairing code but isn't linked to any org. Claim it into the
+				// first user's org automatically so the server "just appears".
+				if s.Cfg.IsStandalone() {
+					s.autoClaimStandaloneServer(ctx, user.ID)
+				}
 			}
 			return claims
 		}),
@@ -116,4 +123,33 @@ func (s *Server) registerAuth() {
 	authprvd.AddEnvAuth(service, s.Logger, *s.Cfg)
 
 	s.Auth = service
+}
+
+// autoClaimStandaloneServer links the embedded agent's pending registration to
+// the user's organization, so a standalone user never has to type the pairing
+// code. It is a no-op when there is no single pending registration (already
+// claimed, or — defensively — more than one), making it safe to run on every
+// login.
+func (s *Server) autoClaimStandaloneServer(ctx context.Context, userID string) {
+	code, ok, err := s.Deps.ServerService.PendingRegistrationCode(ctx)
+	if err != nil {
+		s.Logger.Error("auto-claim: failed to read pending registration", "error", err)
+		return
+	}
+	if !ok {
+		return
+	}
+
+	orgID, err := s.Deps.UserService.PrimaryOrganizationID(ctx, userID)
+	if err != nil {
+		s.Logger.Error("auto-claim: failed to resolve organization", "error", err)
+		return
+	}
+
+	srv, err := s.Deps.ServerService.ClaimServer(ctx, dto.ClaimServerDTO{Code: code, OrganizationID: orgID})
+	if err != nil {
+		s.Logger.Error("auto-claim: failed to claim server", "error", err)
+		return
+	}
+	s.Logger.Info("auto-claimed standalone server", "server_id", srv.ID, "organization_id", orgID)
 }

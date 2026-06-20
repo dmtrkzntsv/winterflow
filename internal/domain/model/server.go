@@ -1,6 +1,18 @@
 package model
 
-import "time"
+import (
+	"errors"
+	"time"
+)
+
+var (
+	// ErrInvalidRegistrationCode is returned when no pending registration
+	// matches the supplied code.
+	ErrInvalidRegistrationCode = errors.New("invalid registration code")
+	// ErrRegistrationCodeExpired is returned when the matching registration
+	// has passed its expiry.
+	ErrRegistrationCodeExpired = errors.New("registration code has expired")
+)
 
 type Capability struct {
 	Name  string

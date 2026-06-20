@@ -25,6 +25,17 @@ func (s *DbServerService) GetServers(ctx context.Context, userID string) ([]mode
 }
 
 func (s *DbServerService) AddServer(ctx context.Context, dto dto.ServerDTO, callback func(app model.Server, err error)) error {
-	// @todo Implement server creation logic
+	// @todo Implement provider-driven server provisioning (out of scope here;
+	// claim-by-code is the implemented path — see ClaimServer).
 	return nil
+}
+
+// ClaimServer materializes a server from a pending registration code into the
+// caller's organization.
+func (s *DbServerService) ClaimServer(ctx context.Context, d dto.ClaimServerDTO) (model.Server, error) {
+	return s.repo.ClaimServer(ctx, d)
+}
+
+func (s *DbServerService) PendingRegistrationCode(ctx context.Context) (string, bool, error) {
+	return s.repo.PendingRegistrationCode(ctx)
 }

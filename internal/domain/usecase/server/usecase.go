@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"winterflow/internal/domain/dto"
 	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/port"
 	"winterflow/pkg/logger"
@@ -33,4 +34,13 @@ func (uc *UseCase) GetServers(ctx context.Context, userID string) ([]model.Serve
 
 func (uc *UseCase) AddServer(ctx context.Context, serverID string, app model.App) error {
 	return nil
+}
+
+// ClaimServer claims a pending server registration (by pairing code) into the
+// given organization.
+func (uc *UseCase) ClaimServer(ctx context.Context, code, organizationID string) (model.Server, error) {
+	return uc.srvsvc.ClaimServer(ctx, dto.ClaimServerDTO{
+		Code:           code,
+		OrganizationID: organizationID,
+	})
 }

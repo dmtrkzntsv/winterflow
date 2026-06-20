@@ -149,11 +149,10 @@ func (r *DbServerRepository) ClaimServer(ctx context.Context, d dto.ClaimServerD
 	}
 
 	server := &models.Server{
-		ServerID:           reg.ServerID,
-		OrganizationID:     d.OrganizationID,
-		Name:               reg.Hostname,
-		SubscriptionStatus: model.SubscriptionStatusUnpaid.Value(),
-		CreatedAt:          util.NewDateTime(),
+		ServerID:       reg.ServerID,
+		OrganizationID: d.OrganizationID,
+		Name:           reg.Hostname,
+		CreatedAt:      util.NewDateTime(),
 	}
 	cert := &models.ServerCertificate{
 		CertificateID: reg.CertificateID,

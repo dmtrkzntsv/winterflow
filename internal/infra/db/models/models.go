@@ -9,10 +9,9 @@ import (
 type Organization struct {
 	bun.BaseModel `bun:"table:organizations"`
 
-	OrganizationID     string         `bun:"organization_id,pk,type:char(36)" json:"organization_id"`
-	Name               string         `bun:"name,notnull" json:"name"`
-	SubscriptionStatus string         `bun:"subscription_status,notnull,default:'unpaid'" json:"subscription_status"`
-	CreatedAt          types.DateTime `bun:"created_at,notnull" json:"created_at"`
+	OrganizationID string         `bun:"organization_id,pk,type:char(36)" json:"organization_id"`
+	Name           string         `bun:"name,notnull" json:"name"`
+	CreatedAt      types.DateTime `bun:"created_at,notnull" json:"created_at"`
 }
 
 type OrganizationUser struct {
@@ -66,12 +65,11 @@ type UserConnectedAccount struct {
 type Server struct {
 	bun.BaseModel `bun:"table:servers"`
 
-	ServerID           string          `bun:"server_id,pk,type:char(36)" json:"server_id"`
-	OrganizationID     string          `bun:"organization_id,notnull,type:char(36)" json:"organization_id"`
-	Name               string          `bun:"name,notnull" json:"name"`
-	SubscriptionStatus string          `bun:"subscription_status,notnull,default:'unpaid'" json:"subscription_status"`
-	CreatedAt          types.DateTime  `bun:"created_at,notnull" json:"created_at"`
-	LastSeen           *types.DateTime `bun:"last_seen,nullzero" json:"last_seen"`
+	ServerID       string          `bun:"server_id,pk,type:char(36)" json:"server_id"`
+	OrganizationID string          `bun:"organization_id,notnull,type:char(36)" json:"organization_id"`
+	Name           string          `bun:"name,notnull" json:"name"`
+	CreatedAt      types.DateTime  `bun:"created_at,notnull" json:"created_at"`
+	LastSeen       *types.DateTime `bun:"last_seen,nullzero" json:"last_seen"`
 
 	Organization *Organization       `bun:"rel:belongs-to,join:organization_id=organization_id"`
 	Capabilities []ServerCapability  `bun:"rel:has-many,join:server_id=server_id"`

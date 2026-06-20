@@ -69,11 +69,10 @@ func (r *DbUserRepository) GetByConnectedAccount(ctx context.Context, provider, 
 
 func (r *DbUserRepository) CreateUser(ctx context.Context, dto dto.UserDTO) (model.User, error) {
 	org := &models.Organization{
-		BaseModel:          bun.BaseModel{},
-		OrganizationID:     util.GenerateID(),
-		Name:               strings.ToLower(dto.Name) + "'s org",
-		SubscriptionStatus: model.SubscriptionStatusUnpaid.Value(),
-		CreatedAt:          util.NewDateTime(),
+		BaseModel:      bun.BaseModel{},
+		OrganizationID: util.GenerateID(),
+		Name:           strings.ToLower(dto.Name) + "'s org",
+		CreatedAt:      util.NewDateTime(),
 	}
 
 	user := &models.User{

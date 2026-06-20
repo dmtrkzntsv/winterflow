@@ -38,7 +38,6 @@ func createInitialSchemaFixed(ctx context.Context, db *bun.DB) error {
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS organizations (
             organization_id %s PRIMARY KEY,
             name VARCHAR(255) NOT NULL,
-            subscription_status VARCHAR(6) NOT NULL DEFAULT 'unpaid' CHECK (subscription_status IN ('paid', 'unpaid')),
             created_at %s NOT NULL %s
         )`, uuidType, timestampType, timestampDefault),
 
@@ -82,7 +81,6 @@ func createInitialSchemaFixed(ctx context.Context, db *bun.DB) error {
             server_id %s PRIMARY KEY,
             organization_id %s NOT NULL,
             name VARCHAR(64) NOT NULL,
-            subscription_status VARCHAR(8) NOT NULL DEFAULT 'unpaid' CHECK (subscription_status IN ('paid', 'unpaid')),
             created_at %s NOT NULL %s,
             last_seen %s,
             FOREIGN KEY (organization_id) REFERENCES organizations (organization_id) ON DELETE CASCADE

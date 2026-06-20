@@ -3,7 +3,6 @@ package bootstrap
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	appagent "winterflow/internal/app/agent"
 	"winterflow/internal/domain/model"
 	notificationsvc "winterflow/internal/domain/service/notification"
@@ -97,13 +96,16 @@ func BootstrapStandalone(ctx context.Context, log *logger.Logger, cfg *config.Se
 		if err := serverRepo.ClearPendingRegistrations(context.TODO()); err != nil {
 			log.Fatalf("Failed to clear stale registrations: %v", err)
 		}
+		// The code is an internal detail in standalone: the embedded server is
+		// claimed automatically on first login, so there is nothing for the
+		// user to "visit and enter". Keep registration silent (debug only) — no
+		// pairing instructions in the CLI output.
 		code := util.GenerateRandomCode(6)
 		serverID, err := agentservice.Register(context.TODO(), code)
 		if err != nil {
 			log.Fatalf("Failed to register server: %v", err)
 		}
-		log.Info("Agent registered successfully with Server ID: %s and Code: %s", serverID, code)
-		defer fmt.Printf("\n\nVisit winterflow and add your server by using the code: \n     %s\n\n\n\n", code)
+		log.Debug("standalone server registered", "server_id", serverID)
 	}
 
 	return deps

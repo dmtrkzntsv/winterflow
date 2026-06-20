@@ -26,6 +26,11 @@ import type { Server } from "@/context/servers-context-base";
 const ONLINE_WINDOW_MS = 2 * 60 * 1000;
 
 function statusLabel(server: Server): string {
+  // In standalone the app *is* the server: there is no remote connection to
+  // report on, so describe it as the local server rather than as online/offline.
+  if (isStandalone) {
+    return "This server";
+  }
   if (!server.lastSeenAt) {
     return "Never connected";
   }
@@ -75,10 +80,11 @@ export function ServerSwitcher({
     if (loading) {
       return placeholderRow("WinterFlow", "Loading…");
     }
-    // Settled with no server. In standalone the embedded server should have
-    // been claimed at login; show its state plainly rather than "Loading…".
+    // Settled with no server row yet. In standalone the app itself is the
+    // server (claimed automatically at login), so label it as such rather than
+    // implying a missing remote connection.
     if (isStandalone) {
-      return placeholderRow("WinterFlow", "Not connected");
+      return placeholderRow("WinterFlow", "This server");
     }
     return (
       <SidebarMenu>

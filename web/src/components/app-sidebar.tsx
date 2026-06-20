@@ -28,20 +28,6 @@ import {
 
 // This is sample data.
 const data = {
-    servers: [
-        {
-            name: "Acme API",
-            status: "Production",
-        },
-        {
-            name: "Acme Worker",
-            status: "Staging",
-        },
-        {
-            name: "Evil Corp Proxy",
-            status: "Sandbox",
-        },
-    ],
     navMain: [
         {
             title: "Playground",
@@ -160,11 +146,14 @@ const data = {
     ],
 }
 
-export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
+export function AppSidebar({
+    onAddServer,
+    ...props
+}: React.ComponentProps<typeof Sidebar> & { onAddServer?: () => void }) {
     return (
         <Sidebar collapsible="icon" {...props}>
             <SidebarHeader>
-                <ServerSwitcher servers={data.servers} />
+                <ServerSwitcher onAddServer={onAddServer} />
             </SidebarHeader>
             <SidebarContent>
                 <NavMain items={data.navMain} />

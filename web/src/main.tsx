@@ -8,6 +8,7 @@ import { RequireAuth } from "@/components/require-auth"
 import { LogoSprite } from "@/components/app-logo"
 import { AuthProvider } from "@/context/auth-context"
 import { UserProvider } from "@/context/user-context"
+import { ServersProvider } from "@/context/servers-context"
 import { AppLayout } from "@/layouts/app-layout"
 import HomePage from "@/pages/home"
 import LoginPage from "@/pages/login"
@@ -37,8 +38,10 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <AuthProvider>
       <UserProvider>
-        <LogoSprite />
-        <RouterProvider router={router} />
+        <ServersProvider>
+          <LogoSprite />
+          <RouterProvider router={router} />
+        </ServersProvider>
       </UserProvider>
     </AuthProvider>
   </StrictMode>

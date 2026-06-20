@@ -2,6 +2,9 @@ import { Fragment, useState } from "react"
 import { Outlet } from "react-router-dom"
 
 import { AppSidebar } from "@/components/app-sidebar"
+import { ServerSelectionDialog } from "@/components/server-creation-dialog"
+import { isStandalone } from "@/config"
+import { useServers } from "@/context/use-servers"
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -83,10 +86,26 @@ function AppLayoutContent() {
 }
 
 export function AppLayout() {
+  const { refresh } = useServers()
+  const [isServerDialogOpen, setIsServerDialogOpen] = useState(false)
+
+  // Adding servers is a cloud/distributed capability; the standalone build
+  // ships a single embedded server, so the trigger is omitted there.
+  const handleAddServer = isStandalone
+    ? undefined
+    : () => setIsServerDialogOpen(true)
+
   return (
     <SidebarProvider>
-      <AppSidebar />
+      <AppSidebar onAddServer={handleAddServer} />
       <AppLayoutContent />
+      {!isStandalone ? (
+        <ServerSelectionDialog
+          isOpen={isServerDialogOpen}
+          onClose={() => setIsServerDialogOpen(false)}
+          onServerAdded={() => void refresh()}
+        />
+      ) : null}
     </SidebarProvider>
   )
 }

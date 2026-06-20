@@ -1,6 +1,5 @@
 "use client";
 
-import * as React from "react";
 import { ChevronsUpDown, Plus } from "lucide-react";
 
 import {
@@ -20,26 +19,36 @@ import {
 import { useSidebar } from "@/components/ui/use-sidebar";
 import { LogoSpinner } from "@/components/app-logo";
 import { isStandalone } from "@/config";
+import { useServers } from "@/context/use-servers";
+import type { Server } from "@/context/servers-context-base";
+
+// A server is considered online if it has reported in within this window.
+const ONLINE_WINDOW_MS = 2 * 60 * 1000;
+
+function statusLabel(server: Server): string {
+  if (!server.lastSeenAt) {
+    return "Never connected";
+  }
+  const seen = new Date(server.lastSeenAt).getTime();
+  if (Number.isNaN(seen)) {
+    return "Unknown";
+  }
+  return Date.now() - seen <= ONLINE_WINDOW_MS ? "Online" : "Offline";
+}
 
 export function ServerSwitcher({
-  servers,
+  onAddServer,
 }: {
-  servers: {
-    name: string;
-    status: string;
-  }[];
+  onAddServer?: () => void;
 }) {
   const { isMobile } = useSidebar();
-  const [activeServer, setActiveServer] = React.useState(servers[0]);
-
-  React.useEffect(() => {
-    setActiveServer(servers[0]);
-  }, [servers]);
+  const { servers, activeServer, setActiveServerId } = useServers();
 
   if (!activeServer) {
     return null;
   }
 
+  // Standalone: a single embedded server, no switching and no "add server".
   if (isStandalone) {
     return (
       <SidebarMenu>
@@ -52,7 +61,9 @@ export function ServerSwitcher({
             />
             <div className="grid flex-1 text-left text-sm leading-tight">
               <span className="truncate font-medium">{activeServer.name}</span>
-              <span className="truncate text-xs">{activeServer.status}</span>
+              <span className="truncate text-xs">
+                {statusLabel(activeServer)}
+              </span>
             </div>
           </SidebarMenuButton>
         </SidebarMenuItem>
@@ -75,8 +86,12 @@ export function ServerSwitcher({
                 iconClassName="text-sidebar-primary-soft"
               />
               <div className="grid flex-1 text-left text-sm leading-tight">
-                <span className="truncate font-medium">{activeServer.name}</span>
-                <span className="truncate text-xs">{activeServer.status}</span>
+                <span className="truncate font-medium">
+                  {activeServer.name}
+                </span>
+                <span className="truncate text-xs">
+                  {statusLabel(activeServer)}
+                </span>
               </div>
               <ChevronsUpDown className="ml-auto" />
             </SidebarMenuButton>
@@ -92,8 +107,8 @@ export function ServerSwitcher({
             </DropdownMenuLabel>
             {servers.map((server, index) => (
               <DropdownMenuItem
-                key={server.name}
-                onClick={() => setActiveServer(server)}
+                key={server.id}
+                onClick={() => setActiveServerId(server.id)}
                 className="gap-2 p-2"
               >
                 <LogoSpinner
@@ -106,11 +121,16 @@ export function ServerSwitcher({
               </DropdownMenuItem>
             ))}
             <DropdownMenuSeparator />
-            <DropdownMenuItem className="gap-2 p-2">
+            <DropdownMenuItem
+              className="gap-2 p-2"
+              onClick={() => onAddServer?.()}
+            >
               <div className="flex size-6 items-center justify-center rounded-md border bg-transparent">
                 <Plus className="size-4" />
               </div>
-              <div className="text-muted-foreground font-medium">Add server</div>
+              <div className="text-muted-foreground font-medium">
+                Add server
+              </div>
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

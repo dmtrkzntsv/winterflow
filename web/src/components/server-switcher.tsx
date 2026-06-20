@@ -36,16 +36,70 @@ function statusLabel(server: Server): string {
   return Date.now() - seen <= ONLINE_WINDOW_MS ? "Online" : "Offline";
 }
 
+// placeholderRow renders a stable sidebar header row (icon + two lines) so the
+// switcher never disappears while servers are loading or absent.
+function placeholderRow(title: string, subtitle: string) {
+  return (
+    <SidebarMenu>
+      <SidebarMenuItem>
+        <SidebarMenuButton size="lg">
+          <LogoSpinner
+            size="md"
+            containerClassName="bg-white text-sidebar-primary-soft flex aspect-square size-8 items-center justify-center rounded-lg border border-sidebar-border/50"
+            iconClassName="text-sidebar-primary-soft"
+          />
+          <div className="grid flex-1 text-left text-sm leading-tight">
+            <span className="truncate font-medium">{title}</span>
+            <span className="truncate text-xs text-muted-foreground">
+              {subtitle}
+            </span>
+          </div>
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    </SidebarMenu>
+  );
+}
+
 export function ServerSwitcher({
   onAddServer,
 }: {
   onAddServer?: () => void;
 }) {
   const { isMobile } = useSidebar();
-  const { servers, activeServer, setActiveServerId } = useServers();
+  const { servers, activeServer, setActiveServerId, loading } = useServers();
 
+  // Never collapse to nothing: show a stable placeholder while loading or when
+  // there are no servers yet, instead of disappearing.
   if (!activeServer) {
-    return null;
+    if (loading) {
+      return placeholderRow("Loading…", "Fetching servers");
+    }
+    if (isStandalone) {
+      // The embedded server is claimed on first login; until then, show it as
+      // pending rather than hiding the switcher.
+      return placeholderRow("This server", "Connecting…");
+    }
+    return (
+      <SidebarMenu>
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            size="lg"
+            onClick={() => onAddServer?.()}
+            className="cursor-pointer"
+          >
+            <div className="flex aspect-square size-8 items-center justify-center rounded-lg border border-sidebar-border/50 bg-transparent">
+              <Plus className="size-4" />
+            </div>
+            <div className="grid flex-1 text-left text-sm leading-tight">
+              <span className="truncate font-medium">Add a server</span>
+              <span className="truncate text-xs text-muted-foreground">
+                No servers yet
+              </span>
+            </div>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+      </SidebarMenu>
+    );
   }
 
   // Standalone: a single embedded server, no switching and no "add server".

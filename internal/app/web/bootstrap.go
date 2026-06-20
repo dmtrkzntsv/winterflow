@@ -91,8 +91,14 @@ func (s *Server) registerAuth() {
 					s.Logger.Error("failed to find or create user: %v", err)
 					return claims
 				}
+				// NOTE: keep claims.User.ID in the provider-prefixed form the
+				// go-pkgz middleware expects — it derives the provider by
+				// splitting User.ID on "_" (isProviderAllowed). Overwriting it
+				// with the bare DB UUID makes that check fail and 401s every
+				// /api/v1 request. Our internal user id is carried as a claim
+				// attribute instead (read via util.GetUserID).
 				claims.ID = user.ID
-				claims.User.ID = user.ID
+				claims.User.SetStrAttr("user_id", user.ID)
 				claims.User.Picture = user.AvatarURL
 				claims.User.Name = user.Name
 				claims.User.SetStrAttr("provider", provider)

@@ -76,8 +76,12 @@ func (as *AgentService) Register(ctx context.Context, code string) (string, erro
 			name, _ := os.Hostname()
 			return name
 		}(),
-		Code:                 code,
-		ExpiresAt:            time.Now().AddDate(0, 0, 1),
+		Code: code,
+		// Standalone's embedded agent is not paired by a human typing the code
+		// within a short window — it is claimed automatically on first login.
+		// Give the registration a generous validity so the box stays claimable
+		// across restarts and idle periods.
+		ExpiresAt:            time.Now().AddDate(1, 0, 0),
 		Certificate:          cert,
 		CertificateExpiresAt: *expiresAt,
 	})

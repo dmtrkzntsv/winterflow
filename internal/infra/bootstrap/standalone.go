@@ -82,8 +82,21 @@ func BootstrapStandalone(ctx context.Context, log *logger.Logger, cfg *config.Se
 		certmanager.GenerateServer(true)
 	}
 
+	// Standalone keeps exactly one claimable registration for its embedded
+	// agent until a server is claimed. Gating on "is a server claimed?" (rather
+	// than "do certs exist?") means an expired or leftover registration is
+	// replaced with a fresh one on boot, so the box stays claimable. Once
+	// claimed, the first login's auto-claim materialized the server and this is
+	// skipped.
 	agentservice := agentsrv.NewAgentService(log, certmanager, serverRepo)
-	if !agentservice.IsRegistered() {
+	claimed, err := serverRepo.HasAnyServer(context.TODO())
+	if err != nil {
+		log.Fatalf("Failed to check server registration state: %v", err)
+	}
+	if !claimed {
+		if err := serverRepo.ClearPendingRegistrations(context.TODO()); err != nil {
+			log.Fatalf("Failed to clear stale registrations: %v", err)
+		}
 		code := util.GenerateRandomCode(6)
 		serverID, err := agentservice.Register(context.TODO(), code)
 		if err != nil {

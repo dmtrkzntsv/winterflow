@@ -71,13 +71,14 @@ export function ServerSwitcher({
   // Never collapse to nothing: show a stable placeholder while loading or when
   // there are no servers yet, instead of disappearing.
   if (!activeServer) {
+    // Fetch still in flight — "Loading…" is honest here.
     if (loading) {
-      return placeholderRow("Loading…", "Fetching servers");
+      return placeholderRow("WinterFlow", "Loading…");
     }
+    // Settled with no server. In standalone the embedded server should have
+    // been claimed at login; show its state plainly rather than "Loading…".
     if (isStandalone) {
-      // The embedded server is claimed on first login; until then, show it as
-      // pending rather than hiding the switcher.
-      return placeholderRow("This server", "Connecting…");
+      return placeholderRow("WinterFlow", "Not connected");
     }
     return (
       <SidebarMenu>

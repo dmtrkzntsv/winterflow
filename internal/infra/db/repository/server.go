@@ -109,6 +109,24 @@ func (r *DbServerRepository) IsServerRegistered(ctx context.Context, serverID st
 		Exists(ctx)
 }
 
+// HasAnyServer reports whether any Server has been claimed. Used by standalone
+// bootstrap to decide whether the embedded agent still needs a pending
+// registration.
+func (r *DbServerRepository) HasAnyServer(ctx context.Context) (bool, error) {
+	return r.db.GetDB().NewSelect().Model((*models.Server)(nil)).Exists(ctx)
+}
+
+// ClearPendingRegistrations removes all unclaimed registrations. Standalone
+// re-issues a single fresh one each boot (while unclaimed), so stale/expired
+// rows from earlier boots don't accumulate or block the claim.
+func (r *DbServerRepository) ClearPendingRegistrations(ctx context.Context) error {
+	_, err := r.db.GetDB().NewDelete().
+		Model((*models.ServerRegistration)(nil)).
+		Where("1 = 1").
+		Exec(ctx)
+	return err
+}
+
 // ClaimServer consumes a pending registration by code and materializes the
 // Server + its active certificate, owned by the given organization, in one
 // transaction. Mirrors the v1 RegisterAgent flow.
@@ -168,20 +186,23 @@ func (r *DbServerRepository) ClaimServer(ctx context.Context, d dto.ClaimServerD
 	return toDomainServer(server), nil
 }
 
-// PendingRegistrationCode returns the code of the single unclaimed registration,
-// if exactly one exists (used by standalone auto-claim). Returns ok=false when
-// there are zero or multiple pending registrations.
+// PendingRegistrationCode returns the code of the most recent unclaimed
+// registration (used by standalone auto-claim, where the box has one logical
+// embedded agent). Returns ok=false only when there are no pending
+// registrations. The newest wins so leftover registrations from earlier boots
+// don't block the claim.
 func (r *DbServerRepository) PendingRegistrationCode(ctx context.Context) (string, bool, error) {
-	var regs []models.ServerRegistration
+	var reg models.ServerRegistration
 	err := r.db.GetDB().NewSelect().
-		Model(&regs).
-		Limit(2).
+		Model(&reg).
+		Order("created_at DESC").
+		Limit(1).
 		Scan(ctx)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", false, nil
+		}
 		return "", false, err
 	}
-	if len(regs) != 1 {
-		return "", false, nil
-	}
-	return regs[0].Code, true, nil
+	return reg.Code, true, nil
 }

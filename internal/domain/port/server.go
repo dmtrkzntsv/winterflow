@@ -18,10 +18,16 @@ type ServerRepository interface {
 	// model.ErrRegistrationCodeExpired on a bad/stale code.
 	ClaimServer(ctx context.Context, dto dto.ClaimServerDTO) (model.Server, error)
 
-	// PendingRegistrationCode returns the code of the single unclaimed
-	// registration, if exactly one exists. Used by standalone auto-claim,
-	// where there is one embedded agent and no code to type.
+	// PendingRegistrationCode returns the code of the most recent unclaimed
+	// registration. Used by standalone auto-claim, where there is one embedded
+	// agent and no code to type.
 	PendingRegistrationCode(ctx context.Context) (string, bool, error)
+
+	// HasAnyServer reports whether any server has been claimed.
+	HasAnyServer(ctx context.Context) (bool, error)
+
+	// ClearPendingRegistrations removes all unclaimed registrations.
+	ClearPendingRegistrations(ctx context.Context) error
 }
 
 type ServerService interface {

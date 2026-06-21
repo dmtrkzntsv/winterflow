@@ -41,6 +41,16 @@ func (d *Dispatcher) Dispatch(ctx context.Context, req *proto.RequestEnvelope) *
 		return d.handleListApps(ctx, agentID, req)
 	case command.TypeAppsStatus:
 		return d.handleAppsStatus(ctx, agentID, req)
+	case command.TypeAppGet:
+		return d.handleGetApp(ctx, agentID, req)
+	case command.TypeAppControl:
+		return d.handleControlApp(ctx, agentID, req)
+	case command.TypeAppDelete:
+		return d.handleDeleteApp(ctx, agentID, req)
+	case command.TypeAppRename:
+		return d.handleRenameApp(ctx, agentID, req)
+	case command.TypeAppLogs:
+		return d.handleGetLogs(ctx, agentID, req)
 	default:
 		d.log.Warn("unhandled command type", "type", req.Type)
 		return d.errResponse(agentID, req, "unsupported command type: "+req.Type)
@@ -90,6 +100,109 @@ func (d *Dispatcher) handleListApps(ctx context.Context, agentID string, req *pr
 	resp, err := codec.EncodeResponse(agentID, req.RequestId, command.TypeAppsList,
 		proto.ResponseCode_RESPONSE_CODE_SUCCESS, "ok",
 		command.ListAppsResponse{Apps: apps})
+	if err != nil {
+		return d.errResponse(agentID, req, err.Error())
+	}
+	return resp
+}
+
+func (d *Dispatcher) handleGetApp(ctx context.Context, agentID string, req *proto.RequestEnvelope) *proto.ResponseEnvelope {
+	var in command.GetAppRequest
+	if err := codec.DecodePayload(req.Payload, &in); err != nil {
+		return d.errResponse(agentID, req, "invalid payload: "+err.Error())
+	}
+	res, err := d.orch.GetApp(ctx, in.AppID, in.Revision)
+	if err != nil {
+		return d.errResponse(agentID, req, err.Error())
+	}
+	resp, err := codec.EncodeResponse(agentID, req.RequestId, command.TypeAppGet,
+		proto.ResponseCode_RESPONSE_CODE_SUCCESS, "ok", res)
+	if err != nil {
+		return d.errResponse(agentID, req, err.Error())
+	}
+	return resp
+}
+
+func (d *Dispatcher) handleControlApp(ctx context.Context, agentID string, req *proto.RequestEnvelope) *proto.ResponseEnvelope {
+	var in command.ControlAppRequest
+	if err := codec.DecodePayload(req.Payload, &in); err != nil {
+		return d.errResponse(agentID, req, "invalid payload: "+err.Error())
+	}
+
+	var err error
+	switch in.Action {
+	case command.ControlStart:
+		err = d.orch.StartApp(ctx, in.AppID)
+	case command.ControlStop:
+		err = d.orch.StopApp(ctx, in.AppID)
+	case command.ControlRestart:
+		err = d.orch.RestartApp(ctx, in.AppID)
+	case command.ControlUpdate:
+		err = d.orch.UpdateApp(ctx, in.AppID)
+	default:
+		return d.errResponse(agentID, req, "unknown control action: "+string(in.Action))
+	}
+	if err != nil {
+		d.log.Error("control app failed", "app_id", in.AppID, "action", in.Action, "error", err)
+		return d.errResponse(agentID, req, err.Error())
+	}
+
+	resp, err := codec.EncodeResponse(agentID, req.RequestId, command.TypeAppControl,
+		proto.ResponseCode_RESPONSE_CODE_SUCCESS, "ok",
+		command.ControlAppResponse{AppID: in.AppID, Action: in.Action})
+	if err != nil {
+		return d.errResponse(agentID, req, err.Error())
+	}
+	return resp
+}
+
+func (d *Dispatcher) handleDeleteApp(ctx context.Context, agentID string, req *proto.RequestEnvelope) *proto.ResponseEnvelope {
+	var in command.DeleteAppRequest
+	if err := codec.DecodePayload(req.Payload, &in); err != nil {
+		return d.errResponse(agentID, req, "invalid payload: "+err.Error())
+	}
+	if err := d.orch.DeleteApp(ctx, in.AppID); err != nil {
+		d.log.Error("delete app failed", "app_id", in.AppID, "error", err)
+		return d.errResponse(agentID, req, err.Error())
+	}
+	resp, err := codec.EncodeResponse(agentID, req.RequestId, command.TypeAppDelete,
+		proto.ResponseCode_RESPONSE_CODE_SUCCESS, "ok",
+		command.DeleteAppResponse{AppID: in.AppID})
+	if err != nil {
+		return d.errResponse(agentID, req, err.Error())
+	}
+	return resp
+}
+
+func (d *Dispatcher) handleRenameApp(ctx context.Context, agentID string, req *proto.RequestEnvelope) *proto.ResponseEnvelope {
+	var in command.RenameAppRequest
+	if err := codec.DecodePayload(req.Payload, &in); err != nil {
+		return d.errResponse(agentID, req, "invalid payload: "+err.Error())
+	}
+	if err := d.orch.RenameApp(ctx, in.AppID, in.Name); err != nil {
+		d.log.Error("rename app failed", "app_id", in.AppID, "error", err)
+		return d.errResponse(agentID, req, err.Error())
+	}
+	resp, err := codec.EncodeResponse(agentID, req.RequestId, command.TypeAppRename,
+		proto.ResponseCode_RESPONSE_CODE_SUCCESS, "ok",
+		command.RenameAppResponse{AppID: in.AppID, Name: in.Name})
+	if err != nil {
+		return d.errResponse(agentID, req, err.Error())
+	}
+	return resp
+}
+
+func (d *Dispatcher) handleGetLogs(ctx context.Context, agentID string, req *proto.RequestEnvelope) *proto.ResponseEnvelope {
+	var in command.GetLogsRequest
+	if err := codec.DecodePayload(req.Payload, &in); err != nil {
+		return d.errResponse(agentID, req, "invalid payload: "+err.Error())
+	}
+	res, err := d.orch.GetLogs(ctx, in)
+	if err != nil {
+		return d.errResponse(agentID, req, err.Error())
+	}
+	resp, err := codec.EncodeResponse(agentID, req.RequestId, command.TypeAppLogs,
+		proto.ResponseCode_RESPONSE_CODE_SUCCESS, "ok", res)
 	if err != nil {
 		return d.errResponse(agentID, req, err.Error())
 	}

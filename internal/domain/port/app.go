@@ -13,6 +13,7 @@ type AppRepository interface {
 	GetApp(ctx context.Context, appID string) (model.App, error)
 	CreateApp(ctx context.Context, app model.App) error
 	DeleteApp(ctx context.Context, appID string) error
+	RenameApp(ctx context.Context, appID, name string) error
 	// SyncApps makes the DB mirror the agent's reported apps for a server:
 	// upsert those present, remove those absent.
 	SyncApps(ctx context.Context, serverID string, apps []model.App) error

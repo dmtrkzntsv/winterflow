@@ -87,3 +87,81 @@ type ListAppsRequest struct{}
 type ListAppsResponse struct {
 	Apps []model.App `json:"apps"`
 }
+
+// --- app.control --------------------------------------------------------------
+
+// ControlAction identifies a lifecycle action for an app.
+type ControlAction string
+
+const (
+	ControlStart   ControlAction = "start"
+	ControlStop    ControlAction = "stop"
+	ControlRestart ControlAction = "restart"
+	ControlUpdate  ControlAction = "update"
+)
+
+type ControlAppRequest struct {
+	AppID  string        `json:"app_id"`
+	Action ControlAction `json:"action"`
+}
+
+type ControlAppResponse struct {
+	AppID  string        `json:"app_id"`
+	Action ControlAction `json:"action"`
+}
+
+// --- app.delete ---------------------------------------------------------------
+
+type DeleteAppRequest struct {
+	AppID string `json:"app_id"`
+}
+
+type DeleteAppResponse struct {
+	AppID string `json:"app_id"`
+}
+
+// --- app.rename ---------------------------------------------------------------
+
+type RenameAppRequest struct {
+	AppID string `json:"app_id"`
+	Name  string `json:"name"`
+}
+
+type RenameAppResponse struct {
+	AppID string `json:"app_id"`
+	Name  string `json:"name"`
+}
+
+// --- app.logs -----------------------------------------------------------------
+
+// LogLevel mirrors v1's best-effort log level classification.
+type LogLevel int8
+
+const (
+	LogLevelUnknown LogLevel = iota
+	LogLevelTrace
+	LogLevelDebug
+	LogLevelInfo
+	LogLevelWarn
+	LogLevelError
+	LogLevelFatal
+)
+
+type LogEntry struct {
+	Timestamp   int64    `json:"timestamp"`
+	Level       LogLevel `json:"level"`
+	Message     string   `json:"message"`
+	ContainerID string   `json:"container_id,omitempty"`
+	Container   string   `json:"container,omitempty"`
+}
+
+type GetLogsRequest struct {
+	AppID string `json:"app_id"`
+	Since int64  `json:"since,omitempty"` // unix seconds; 0 = no lower bound
+	Tail  int32  `json:"tail,omitempty"`  // 0 = all
+}
+
+type GetLogsResponse struct {
+	AppID string     `json:"app_id"`
+	Logs  []LogEntry `json:"logs"`
+}

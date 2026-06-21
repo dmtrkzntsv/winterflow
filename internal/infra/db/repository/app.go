@@ -80,6 +80,15 @@ func (r *DbAppRepository) DeleteApp(ctx context.Context, appID string) error {
 	return err
 }
 
+func (r *DbAppRepository) RenameApp(ctx context.Context, appID, name string) error {
+	_, err := r.db.GetDB().NewUpdate().
+		Model((*models.App)(nil)).
+		Set("name = ?", name).
+		Where("app_id = ?", appID).
+		Exec(ctx)
+	return err
+}
+
 // SyncApps makes the DB mirror the agent's reported apps for a server: upsert
 // the reported ones and delete any DB rows the agent no longer has.
 func (r *DbAppRepository) SyncApps(ctx context.Context, serverID string, apps []model.App) error {

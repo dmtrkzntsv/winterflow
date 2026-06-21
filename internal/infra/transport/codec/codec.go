@@ -99,6 +99,14 @@ func NewRequestPayload(typ command.Type) (any, error) {
 		return &command.ListAppsRequest{}, nil
 	case command.TypeAppsStatus:
 		return &command.GetAppsStatusRequest{}, nil
+	case command.TypeAppControl:
+		return &command.ControlAppRequest{}, nil
+	case command.TypeAppDelete:
+		return &command.DeleteAppRequest{}, nil
+	case command.TypeAppRename:
+		return &command.RenameAppRequest{}, nil
+	case command.TypeAppLogs:
+		return &command.GetLogsRequest{}, nil
 	default:
 		return nil, fmt.Errorf("codec: unknown command type %q", typ)
 	}

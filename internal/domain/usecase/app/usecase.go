@@ -61,6 +61,76 @@ func (uc *UseCase) RefreshApps(ctx context.Context, userID, serverID string) (st
 	})
 }
 
+// ControlApp dispatches a lifecycle action (start/stop/restart/update) to the
+// server's agent. Pure agent operation: no DB change; the result flows over SSE.
+func (uc *UseCase) ControlApp(ctx context.Context, userID, serverID, appID string, action command.ControlAction) (string, error) {
+	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
+		AgentID: serverID,
+		UserID:  userID,
+		Type:    command.TypeAppControl,
+		Payload: command.ControlAppRequest{AppID: appID, Action: action},
+	})
+}
+
+// DeleteApp dispatches an app.delete to the agent and, on success, removes the
+// app from the DB cache.
+func (uc *UseCase) DeleteApp(ctx context.Context, userID, serverID, appID string) (string, error) {
+	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
+		AgentID: serverID,
+		UserID:  userID,
+		Type:    command.TypeAppDelete,
+		Payload: command.DeleteAppRequest{AppID: appID},
+		OnResult: func(res port.CommandResult) {
+			if !res.Success {
+				return
+			}
+			if err := uc.repo.DeleteApp(context.Background(), appID); err != nil {
+				uc.log.Error("DeleteApp: remove row", "error", err, "app_id", appID)
+			}
+		},
+	})
+}
+
+// RenameApp dispatches an app.rename to the agent and, on success, updates the
+// app's name in the DB cache.
+func (uc *UseCase) RenameApp(ctx context.Context, userID, serverID, appID, name string) (string, error) {
+	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
+		AgentID: serverID,
+		UserID:  userID,
+		Type:    command.TypeAppRename,
+		Payload: command.RenameAppRequest{AppID: appID, Name: name},
+		OnResult: func(res port.CommandResult) {
+			if !res.Success {
+				return
+			}
+			if err := uc.repo.RenameApp(context.Background(), appID, name); err != nil {
+				uc.log.Error("RenameApp: update row", "error", err, "app_id", appID)
+			}
+		},
+	})
+}
+
+// GetApp dispatches an app.get to the agent (its filesystem holds the config +
+// revisions). The result is delivered over SSE, correlated by request id.
+func (uc *UseCase) GetApp(ctx context.Context, userID, serverID, appID string, revision uint32) (string, error) {
+	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
+		AgentID: serverID,
+		UserID:  userID,
+		Type:    command.TypeAppGet,
+		Payload: command.GetAppRequest{AppID: appID, Revision: revision},
+	})
+}
+
+// GetLogs dispatches an app.logs to the agent. The log entries return over SSE.
+func (uc *UseCase) GetLogs(ctx context.Context, userID, serverID, appID string, since int64, tail int32) (string, error) {
+	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
+		AgentID: serverID,
+		UserID:  userID,
+		Type:    command.TypeAppLogs,
+		Payload: command.GetLogsRequest{AppID: appID, Since: since, Tail: tail},
+	})
+}
+
 // CreateApp dispatches an app.save command to the server's agent and returns
 // the request id immediately. This call does not block. When the agent confirms
 // the save, the OnResult hook persists the app to the DB (the agent assigns the

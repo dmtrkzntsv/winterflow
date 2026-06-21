@@ -223,6 +223,46 @@ func (r *Repository) composeUp(ctx context.Context, appID string) error {
 	return nil
 }
 
+// composeDown runs `docker compose down --remove-orphans` in the app's rendered
+// directory. It is a no-op (nil) if the directory does not exist.
+func (r *Repository) composeDown(ctx context.Context, appID string) error {
+	runDir := path.Join(r.cfg.GetAppsDir(), appID)
+	if _, err := os.Stat(runDir); err != nil {
+		return nil
+	}
+	cmd := exec.CommandContext(ctx, "docker", "compose", "--project-name", projectName(appID), "down", "--remove-orphans")
+	cmd.Dir = runDir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// composeRestart runs `docker compose restart` in the app's rendered directory.
+func (r *Repository) composeRestart(ctx context.Context, appID string) error {
+	runDir := path.Join(r.cfg.GetAppsDir(), appID)
+	cmd := exec.CommandContext(ctx, "docker", "compose", "--project-name", projectName(appID), "restart")
+	cmd.Dir = runDir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// composePull runs `docker compose pull` in the app's rendered directory.
+func (r *Repository) composePull(ctx context.Context, appID string) error {
+	runDir := path.Join(r.cfg.GetAppsDir(), appID)
+	cmd := exec.CommandContext(ctx, "docker", "compose", "--project-name", projectName(appID), "pull")
+	cmd.Dir = runDir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // composePS runs `docker compose ps --format json` and parses the per-container
 // lines.
 func (r *Repository) composePS(ctx context.Context, appID string) ([]composePS, error) {

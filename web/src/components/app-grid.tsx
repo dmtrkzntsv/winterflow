@@ -45,7 +45,12 @@ export function AppGrid() {
         {apps.map((app) => (
           <Card key={app.id} className="transition-colors hover:bg-muted/50">
             <CardContent className="flex items-center gap-3 p-4">
-              <AppIcon name={app.name} color={app.color} className="size-10" />
+              <AppIcon
+                name={app.name}
+                icon={app.icon}
+                color={app.color}
+                className="size-10"
+              />
               <div className="min-w-0 flex-1">
                 <div className="truncate font-medium">{app.name}</div>
                 <div className="truncate text-xs text-muted-foreground">

@@ -36,6 +36,7 @@ export function NavApps() {
               <SidebarMenuButton>
                 <AppIcon
                   name={app.name}
+                  icon={app.icon}
                   color={app.color}
                   className="size-5 text-[10px]"
                 />

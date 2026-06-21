@@ -7,6 +7,7 @@ import (
 	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/port"
 	"winterflow/pkg/logger"
+	"winterflow/pkg/util"
 )
 
 type UseCase struct {
@@ -138,6 +139,12 @@ func (uc *UseCase) GetLogs(ctx context.Context, userID, serverID, appID string, 
 // agent confirms the save, the OnResult hook persists the app and the result is
 // delivered to the user over SSE.
 func (uc *UseCase) CreateApp(ctx context.Context, userID, serverID string, app model.App, payload command.AppPayload) (string, error) {
+	// New apps have no id yet; the API owns identity, so assign one here and use
+	// it both on the wire (the agent keys its on-disk storage by app id) and on
+	// the persisted catalog record.
+	if app.ID == "" {
+		app.ID = util.GenerateID()
+	}
 	payload.AppID = app.ID
 	if len(payload.Config) == 0 {
 		// Fall back to the catalog record as the config blob when the caller

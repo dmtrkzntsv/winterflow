@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { IconPicker } from "@/components/icon-picker";
 import { useState } from "react";
 import {
   localId,
@@ -113,24 +114,34 @@ export function AppEditor({ state, onChange }: Props) {
           <CardTitle>Details</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2">
-          <div className="grid gap-2">
-            <Label htmlFor="app-name">Name</Label>
-            <Input
-              id="app-name"
-              value={state.config.name}
-              placeholder="my-app"
-              onChange={(e) => setConfig({ name: e.target.value })}
-            />
-          </div>
-          <div className="grid gap-2">
-            <Label htmlFor="app-color">Color</Label>
-            <Input
-              id="app-color"
-              type="color"
-              className="h-9 w-16 p-1"
-              value={state.config.color || "#64748b"}
-              onChange={(e) => setConfig({ color: e.target.value })}
-            />
+          <div className="flex items-end gap-3 sm:col-span-2">
+            <div className="grid gap-2">
+              <Label>Icon</Label>
+              <IconPicker
+                value={state.config.icon}
+                color={state.config.color}
+                onChange={(icon) => setConfig({ icon })}
+              />
+            </div>
+            <div className="grid flex-1 gap-2">
+              <Label htmlFor="app-name">Name</Label>
+              <Input
+                id="app-name"
+                value={state.config.name}
+                placeholder="my-app"
+                onChange={(e) => setConfig({ name: e.target.value })}
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="app-color">Color</Label>
+              <Input
+                id="app-color"
+                type="color"
+                className="h-9 w-16 p-1"
+                value={state.config.color || "#64748b"}
+                onChange={(e) => setConfig({ color: e.target.value })}
+              />
+            </div>
           </div>
           <div className="grid gap-2 sm:col-span-2">
             <Label htmlFor="app-desc">Description</Label>

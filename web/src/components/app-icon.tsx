@@ -1,19 +1,23 @@
-import { cn } from "@/lib/utils";
+import { createElement } from "react";
 
-// AppIcon renders an app's colored tile with its initial. (Lucide icon-name
-// rendering can be added later; the initial avoids a dynamic-import dependency
-// and is robust for any app.)
+import { cn } from "@/lib/utils";
+import { getAppIcon } from "@/lib/app-icons";
+
+// AppIcon renders an app's colored tile. When `icon` names a known icon it shows
+// that glyph; otherwise it falls back to the uppercase initial of `name`.
 export function AppIcon({
   name,
+  icon,
   color,
   className,
 }: {
   name?: string;
+  icon?: string;
   color?: string;
   className?: string;
 }) {
   const bg = color || "#64748b";
-  const initial = (name?.trim()?.[0] ?? "?").toUpperCase();
+  const glyph = getAppIcon(icon);
   return (
     <div
       className={cn(
@@ -22,7 +26,9 @@ export function AppIcon({
       )}
       style={{ backgroundColor: bg }}
     >
-      {initial}
+      {glyph
+        ? createElement(glyph, { className: "size-[60%]" })
+        : (name?.trim()?.[0] ?? "?").toUpperCase()}
     </div>
   );
 }

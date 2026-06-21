@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   MoreVertical,
   Play,
@@ -7,6 +8,7 @@ import {
   ArrowUpCircle,
   ScrollText,
   Pencil,
+  SquarePen,
   Trash2,
 } from "lucide-react";
 
@@ -48,6 +50,7 @@ export function AppActions({
   app: App;
   onShowLogs: (app: App) => void;
 }) {
+  const navigate = useNavigate();
   const { control, remove, rename } = useApps();
   const [busy, setBusy] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
@@ -105,6 +108,11 @@ export function AppActions({
             <ArrowUpCircle className="size-4" /> Update
           </DropdownMenuItem>
           <DropdownMenuSeparator />
+          <DropdownMenuItem
+            onSelect={() => navigate(`/apps/${app.id}/edit`)}
+          >
+            <SquarePen className="size-4" /> Edit
+          </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => onShowLogs(app)}>
             <ScrollText className="size-4" /> Logs
           </DropdownMenuItem>

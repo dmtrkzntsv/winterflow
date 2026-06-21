@@ -48,6 +48,22 @@ export type AppsContextValue = {
   }) => Promise<void>;
   // getPublicKey returns the server's ECIES public key for encrypting secrets.
   getPublicKey: () => Promise<string>;
+  // getApp fetches an app's config + files + variables from the agent (for
+  // editing). Secret values are returned masked by the agent.
+  getApp: (appId: string) => Promise<AppDetailPayload>;
+};
+
+// AppDetailPayload mirrors the agent's GetAppResponse over SSE. Byte fields
+// (config, content) arrive base64-encoded.
+export type AppDetailPayload = {
+  app: {
+    app_id: string;
+    config: string; // base64 JSON of the stored config
+    variables: { id?: string; name: string; content: string; encrypted?: boolean }[] | null;
+    files: { id?: string; name: string; content: string; encrypted?: boolean }[] | null;
+  };
+  revision: number;
+  available_revisions: number[] | null;
 };
 
 export const AppsContext = createContext<AppsContextValue | undefined>(

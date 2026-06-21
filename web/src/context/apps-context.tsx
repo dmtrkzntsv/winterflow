@@ -15,6 +15,7 @@ import { apiBaseUrl } from "@/config";
 import {
   AppsContext,
   type App,
+  type AppDetailPayload,
   type ControlAction,
 } from "./apps-context-base";
 
@@ -241,6 +242,31 @@ export function AppsProvider({ children }: { children: ReactNode }) {
     return key;
   }, [activeServerId]);
 
+  // getApp fetches an app's config + files + variables from the agent (app.get,
+  // result over SSE). Used to populate the editor for editing. Secret values
+  // come back masked by the agent; the editor sends them back unchanged.
+  const getApp = useCallback(
+    async (appId: string): Promise<AppDetailPayload> => {
+      if (!activeServerId) throw new Error("No active server");
+      const res = await fetch(
+        `${base}/api/v1/app/get-app?server_id=${encodeURIComponent(
+          activeServerId,
+        )}&app_id=${encodeURIComponent(appId)}`,
+        { credentials: "include" },
+      );
+      if (!res.ok) throw new Error(`Failed to fetch app: ${res.status}`);
+      const accepted = (await res.json()) as AcceptedResponse;
+      const ref = accepted.data?.request_id;
+      if (!ref) throw new Error("No request id");
+      const result = await waitFor(ref);
+      if (result.status && result.status !== 0) {
+        throw new Error(result.error || "Failed to fetch app");
+      }
+      return result.payload as AppDetailPayload;
+    },
+    [activeServerId, waitFor],
+  );
+
   // createApp dispatches app.save with the full payload and awaits its result.
   const createApp = useCallback(
     async (body: {
@@ -271,6 +297,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       rename,
       createApp,
       getPublicKey,
+      getApp,
     }),
     [
       apps,
@@ -283,6 +310,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       rename,
       createApp,
       getPublicKey,
+      getApp,
     ],
   );
 

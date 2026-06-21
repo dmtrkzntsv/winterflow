@@ -34,6 +34,10 @@ const router = createBrowserRouter([
         path: "/apps/new",
         element: <CreateAppPage />,
       },
+      {
+        path: "/apps/:appId/edit",
+        element: <CreateAppPage />,
+      },
     ],
   },
   {

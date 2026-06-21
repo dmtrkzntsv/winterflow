@@ -110,6 +110,9 @@ func (r *Repository) GetApp(ctx context.Context, appID string, revision uint32) 
 }
 
 // readRevision reconstructs an AppPayload from a stored revision directory.
+// Secret values are masked with the "<encrypted>" placeholder (their plaintext
+// never leaves the agent); the editor sends the placeholder back on save and the
+// stored value is preserved.
 func (r *Repository) readRevision(revDir, appID string) (command.AppPayload, error) {
 	payload := command.AppPayload{AppID: appID}
 
@@ -119,12 +122,19 @@ func (r *Repository) readRevision(revDir, appID string) (command.AppPayload, err
 	}
 	payload.Config = cfg
 
+	encVars, encFiles := encryptedNames(cfg)
+
 	// Variables are stored as a single name->value JSON map.
 	if raw, err := os.ReadFile(path.Join(revDir, "vars", "values.json")); err == nil {
 		var vars map[string]string
 		if err := json.Unmarshal(raw, &vars); err == nil {
 			for name, val := range vars {
-				payload.Variables = append(payload.Variables, command.ContentItem{Name: name, Content: []byte(val)})
+				item := command.ContentItem{Name: name, Content: []byte(val)}
+				if encVars[name] {
+					item.Encrypted = true
+					item.Content = []byte(command.EncryptedPlaceholder)
+				}
+				payload.Variables = append(payload.Variables, item)
 			}
 		}
 	}
@@ -143,11 +153,47 @@ func (r *Repository) readRevision(revDir, appID string) (command.AppPayload, err
 		if readErr != nil {
 			return nil
 		}
-		payload.Files = append(payload.Files, command.ContentItem{Name: rel, Content: content})
+		item := command.ContentItem{Name: rel, Content: content}
+		if encFiles[rel] {
+			item.Encrypted = true
+			item.Content = []byte(command.EncryptedPlaceholder)
+		}
+		payload.Files = append(payload.Files, item)
 		return nil
 	})
 
 	return payload, nil
+}
+
+// encryptedNames parses the stored config to find which variables/files are
+// marked secret, so their values can be masked when read back.
+func encryptedNames(cfg []byte) (vars map[string]bool, files map[string]bool) {
+	vars = map[string]bool{}
+	files = map[string]bool{}
+	var c struct {
+		Files []struct {
+			Filename    string `json:"filename"`
+			IsEncrypted bool   `json:"is_encrypted"`
+		} `json:"files"`
+		Variables []struct {
+			Name        string `json:"name"`
+			IsEncrypted bool   `json:"is_encrypted"`
+		} `json:"variables"`
+	}
+	if json.Unmarshal(cfg, &c) != nil {
+		return vars, files
+	}
+	for _, f := range c.Files {
+		if f.IsEncrypted {
+			files[f.Filename] = true
+		}
+	}
+	for _, v := range c.Variables {
+		if v.IsEncrypted {
+			vars[v.Name] = true
+		}
+	}
+	return vars, files
 }
 
 // RenameApp updates the app's display name in its latest revision config. The

@@ -4,7 +4,9 @@ import { Plus } from "lucide-react"
 
 import { useAppBreadcrumbs } from "@/layouts/use-app-layout"
 import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { ServerSelectionDialog } from "@/components/server-creation-dialog"
+import { ServerCards } from "@/components/server-cards"
 import { AppGrid } from "@/components/app-grid"
 import { isStandalone } from "@/config"
 import { useServers } from "@/context/use-servers"
@@ -12,45 +14,47 @@ import { useServers } from "@/context/use-servers"
 export default function HomePage() {
   const navigate = useNavigate()
   const [isServerDialogOpen, setIsServerDialogOpen] = useState(false)
-  const { servers, loading, refresh } = useServers()
+  const { refresh } = useServers()
   const breadcrumbs = useMemo(
     () => [
       { label: "Overview", href: "#", hideOnMobile: true },
-      { label: "Welcome" },
+      { label: "Dashboard" },
     ],
     []
   )
   useAppBreadcrumbs(breadcrumbs)
 
   return (
-    <>
-      <div className="flex items-center justify-between mb-6">
-        <p className="text-sm text-muted-foreground">
-          {loading
-            ? "Loading servers…"
-            : `${servers.length} server${servers.length === 1 ? "" : "s"}`}
-        </p>
-        <div className="flex gap-2">
-          {/* Adding servers is a cloud/distributed capability. The standalone
-              build ships one embedded server, so the action is omitted there. */}
-          {!isStandalone ? (
-            <Button
-              variant="outline"
-              onClick={() => setIsServerDialogOpen(true)}
-              className="cursor-pointer"
-            >
-              Add Server
-            </Button>
-          ) : null}
+    <div className="space-y-6">
+      {/* Servers row (v1 AgentList). Adding servers is a cloud capability; the
+          standalone build ships one embedded server, so the action is hidden. */}
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-medium text-muted-foreground">Servers</h2>
+        {!isStandalone ? (
           <Button
-            onClick={() => navigate("/apps/new")}
-            className="cursor-pointer"
+            variant="outline"
+            size="sm"
+            onClick={() => setIsServerDialogOpen(true)}
           >
+            <Plus className="size-4" /> Add Server
+          </Button>
+        ) : null}
+      </div>
+      <ServerCards />
+
+      {/* Apps section, wrapped in a titled Card (v1 dashboard-app-list). */}
+      <Card>
+        <CardHeader className="flex-row items-center justify-between space-y-0">
+          <CardTitle>Apps</CardTitle>
+          <Button size="sm" onClick={() => navigate("/apps/new")}>
             <Plus className="size-4" /> New App
           </Button>
-        </div>
-      </div>
-      <AppGrid />
+        </CardHeader>
+        <CardContent>
+          <AppGrid />
+        </CardContent>
+      </Card>
+
       {!isStandalone ? (
         <ServerSelectionDialog
           isOpen={isServerDialogOpen}
@@ -58,6 +62,6 @@ export default function HomePage() {
           onServerAdded={() => void refresh()}
         />
       ) : null}
-    </>
+    </div>
   )
 }

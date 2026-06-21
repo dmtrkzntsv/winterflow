@@ -1,10 +1,11 @@
 "use client"
 
 import * as React from "react"
-import { Container, LayoutDashboard } from "lucide-react"
+import { LayoutDashboard, Settings2 } from "lucide-react"
 
 import { NavMain } from "@/components/nav-main"
 import { NavApps } from "@/components/nav-apps"
+import { NavSecondary } from "@/components/nav-secondary"
 import { NavUser } from "@/components/nav-user"
 import { ServerSwitcher } from "@/components/server-switcher"
 import {
@@ -15,9 +16,10 @@ import {
     SidebarRail,
 } from "@/components/ui/sidebar"
 
-// Platform navigation. Mirrors v1 (Dashboard + an Apps group); catalog,
-// settings, and organization management are out of scope for v2 and are
-// intentionally omitted rather than stubbed.
+// Platform navigation: Dashboard + the live Apps group, with Server Settings
+// (Docker registries/networks + agent update) pinned to the bottom — mirroring
+// v1's primary/secondary split. Catalog and organization management remain out
+// of scope for v2.
 const navMain = [
     {
         title: "Dashboard",
@@ -25,10 +27,13 @@ const navMain = [
         icon: LayoutDashboard,
         isActive: true,
     },
+]
+
+const navSecondary = [
     {
-        title: "Docker",
-        url: "/docker",
-        icon: Container,
+        title: "Server Settings",
+        url: "/settings",
+        icon: Settings2,
     },
 ]
 
@@ -44,6 +49,7 @@ export function AppSidebar({
             <SidebarContent>
                 <NavMain items={navMain} />
                 <NavApps />
+                <NavSecondary items={navSecondary} className="mt-auto" />
             </SidebarContent>
             <SidebarFooter>
                 <NavUser />

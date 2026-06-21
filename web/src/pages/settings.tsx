@@ -30,9 +30,11 @@ import {
   type Registry,
 } from "@/context/use-docker";
 
-export default function DockerPage() {
+// SettingsPage is the server-level settings view (v1 "Server Settings"): Docker
+// registries and networks, plus agent self-update.
+export default function SettingsPage() {
   const breadcrumbs = useMemo(
-    () => [{ label: "Docker" }, { label: "Resources" }],
+    () => [{ label: "Server" }, { label: "Settings" }],
     [],
   );
   useAppBreadcrumbs(breadcrumbs);
@@ -42,7 +44,7 @@ export default function DockerPage() {
   if (!docker.hasServer) {
     return (
       <p className="text-sm text-muted-foreground">
-        Select a server to manage its Docker resources.
+        Select a server to manage its settings.
       </p>
     );
   }

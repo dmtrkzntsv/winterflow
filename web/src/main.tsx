@@ -16,7 +16,7 @@ import { AppLayout } from "@/layouts/app-layout"
 import HomePage from "@/pages/home"
 import CreateAppPage from "@/pages/create-app"
 import AppDetailsPage from "@/pages/app-details"
-import DockerPage from "@/pages/docker"
+import SettingsPage from "@/pages/settings"
 import LoginPage from "@/pages/login"
 import "./index.css"
 
@@ -45,8 +45,8 @@ const router = createBrowserRouter([
         element: <AppDetailsPage />,
       },
       {
-        path: "/docker",
-        element: <DockerPage />,
+        path: "/settings",
+        element: <SettingsPage />,
       },
     ],
   },

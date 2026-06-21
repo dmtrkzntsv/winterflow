@@ -134,7 +134,7 @@ func (h *Hub) dispatchToAgent(cmd bus.CommandMessage) {
 
 // publishResult emits an agent's reply (or a delivery error) onto the response
 // queue as a model.Notification keyed by the request id, which the API's
-// reply.Manager uses to wake the blocked caller.
+// dispatch.Manager routes to the originating user over SSE.
 func (h *Hub) publishResult(requestID string, statusCode model.NotificationStatus, payload []byte, detail string) {
 	if h.bus == nil {
 		return
@@ -405,8 +405,8 @@ func (h *Hub) AgentStream(stream grpc.BidiStreamingServer[proto.AgentMessage, pr
 				"response_code", payload.Response.Base.ResponseCode)
 
 			// Forward the agent's reply back onto the response queue, keyed by
-			// request_id, so the originating API caller (blocked in its
-			// reply.Manager) wakes up with the result.
+			// request_id, so the originating API can route the result to the
+			// user over SSE.
 			statusCode := model.NotificationStatusSuccess
 			detail := payload.Response.Base.Detail
 			if payload.Response.Base.ResponseCode != proto.ResponseCode_RESPONSE_CODE_SUCCESS {

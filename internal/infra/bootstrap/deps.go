@@ -19,6 +19,7 @@ type Deps struct {
 
 	UserService         port.UserService
 	ServerService       port.ServerService
-	AppService          port.AppService
+	AppRepository       port.AppRepository
+	CommandDispatcher   port.CommandDispatcher
 	NotificationManager port.NotificationManager
 }

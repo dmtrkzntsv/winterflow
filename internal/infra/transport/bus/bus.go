@@ -9,8 +9,8 @@
 //
 // The API publishes a CommandMessage on the request queue; the Hub consumes it,
 // forwards it to the target agent's gRPC stream, and publishes the agent's
-// ResultMessage back on the response queue, where the API's reply.Manager wakes
-// the blocked caller.
+// result back on the response queue, where the API's dispatch.Manager routes it
+// to the originating user over SSE (correlated by request_id).
 package bus
 
 import "context"

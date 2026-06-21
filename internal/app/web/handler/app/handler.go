@@ -11,16 +11,16 @@ type Handler struct {
 }
 
 type Deps struct {
-	Logger              *logger.Logger
-	AppService          port.AppService
-	NotificationManager port.NotificationManager
+	Logger            *logger.Logger
+	CommandDispatcher port.CommandDispatcher
+	AppRepository     port.AppRepository
 }
 
 func NewHandler(d *Deps) *Handler {
 	uc := useapp.NewUseCase(&useapp.Deps{
-		AppService:          d.AppService,
-		Log:                 d.Logger,
-		NotificationManager: d.NotificationManager,
+		CommandDispatcher: d.CommandDispatcher,
+		AppRepository:     d.AppRepository,
+		Log:               d.Logger,
 	})
 	return &Handler{usecase: *uc}
 }

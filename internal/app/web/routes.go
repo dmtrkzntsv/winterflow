@@ -29,9 +29,9 @@ func (s *Server) registerRoutes() {
 	s.Router.With(amw.Auth).Get("/api/v1/notification/stream", notificationAPI.Stream)
 
 	appsAPI := happ.NewHandler(&happ.Deps{
-		Logger:              s.Logger,
-		AppService:          s.Deps.AppService,
-		NotificationManager: s.Deps.NotificationManager,
+		Logger:            s.Logger,
+		CommandDispatcher: s.Deps.CommandDispatcher,
+		AppRepository:     s.Deps.AppRepository,
 	})
 	s.Router.With(amw.Auth, happ.GetAppsValidationMiddleware).Get("/api/v1/app/get-apps", appsAPI.GetApps)
 	s.Router.With(amw.Auth).Post("/api/v1/app/create-app", appsAPI.CreateApp)

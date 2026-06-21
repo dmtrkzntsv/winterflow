@@ -119,6 +119,17 @@ func (c *ServerConfig) GetBusResponseQueue() string {
 	return v
 }
 
+// GetBusEventsQueue is the channel agents push unsolicited events onto
+// (heartbeat liveness, app/server status). Region-scoped: a region maps to a
+// single API instance, which is the sole consumer.
+func (c *ServerConfig) GetBusEventsQueue() string {
+	v := os.Getenv("BUS_EVENTS_QUEUE")
+	if v == "" {
+		v = "events:" + c.GetRegion()
+	}
+	return v
+}
+
 // GetAgentDataDir is the root under which the agent stores app revisions and
 // rendered deployments. Defaults to "data" (relative to the working directory)
 // to match the repo layout; override with AGENT_DATA_DIR in production

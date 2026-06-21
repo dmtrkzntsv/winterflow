@@ -12,9 +12,8 @@ import (
 	"winterflow/internal/infra/db/repository"
 	dbservice "winterflow/internal/infra/db/service"
 	dockercompose "winterflow/internal/infra/orchestrator/docker_compose"
+	"winterflow/internal/infra/transport/dispatch"
 	membus "winterflow/internal/infra/transport/mem/bus"
-	"winterflow/internal/infra/transport/mem/service/reply"
-	busappsrv "winterflow/internal/infra/transport/redis/service/app"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
 	"winterflow/pkg/util"
@@ -38,11 +37,13 @@ func BootstrapStandalone(ctx context.Context, log *logger.Logger, cfg *config.Se
 
 	userRepo := repository.NewDbUserRepository(dbconn, log)
 	serverRepo := repository.NewDbServerRepository(dbconn, log)
+	appRepo := repository.NewDbAppRepository(dbconn, log)
 
-	// In-process bus + reply manager + response subscriber: identical wiring to
-	// the distributed API, but Redis is replaced by an in-memory bus.
+	// In-process bus + command dispatcher + response subscriber: identical wiring
+	// to the distributed API, but Redis is replaced by an in-memory bus.
 	b := membus.NewBus(log)
-	rm := reply.NewReplyManager(log)
+	nm := notificationsvc.NewNotificationManager()
+	cmdDispatcher := dispatch.NewManager(b, nm, cfg, log)
 	go func() {
 		msgs, cancel, err := b.Subscribe(ctx, cfg.GetBusResponseQueue())
 		if err != nil {
@@ -55,15 +56,15 @@ func BootstrapStandalone(ctx context.Context, log *logger.Logger, cfg *config.Se
 				log.Error("failed to unmarshal bus message", err)
 				continue
 			}
-			rm.Publish(ntf.Ref, ntf)
+			cmdDispatcher.HandleResult(ntf)
 		}
 	}()
 
 	// In-process bridge: consumes the request queue and runs commands against
 	// the local Docker Compose orchestrator (the standalone Hub + agent).
 	orchestrator := dockercompose.NewRepository(cfg, log)
-	dispatcher := appagent.NewDispatcher(orchestrator, log)
-	bridge := appagent.NewInProcessBridge(b, cfg, dispatcher, log)
+	agentDispatcher := appagent.NewDispatcher(orchestrator, log)
+	bridge := appagent.NewInProcessBridge(b, cfg, agentDispatcher, log)
 	if err := bridge.Start(ctx); err != nil {
 		log.Fatalf("failed to start in-process bridge: %v", err)
 	}
@@ -73,8 +74,9 @@ func BootstrapStandalone(ctx context.Context, log *logger.Logger, cfg *config.Se
 		Cfg:                 cfg,
 		UserService:         dbservice.NewDbUserService(log, userRepo),
 		ServerService:       dbservice.NewDbServerService(log, serverRepo),
-		AppService:          busappsrv.NewAppService(log, cfg, b, rm),
-		NotificationManager: notificationsvc.NewNotificationManager(),
+		AppRepository:       appRepo,
+		CommandDispatcher:   cmdDispatcher,
+		NotificationManager: nm,
 	}
 
 	if !cert.IsServerCertificateGenerated(certmanager) {

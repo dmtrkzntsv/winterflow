@@ -15,6 +15,7 @@ import (
 	"winterflow/pkg/config"
 	"winterflow/pkg/crypto"
 	"winterflow/pkg/logger"
+	"winterflow/pkg/version"
 
 	"github.com/joho/godotenv"
 )
@@ -45,6 +46,7 @@ func main() {
 		"arch":       runtime.GOARCH,
 		"go_version": runtime.Version(),
 		"hostname":   getHostname(),
+		"version":    version.GetVersion(),
 	}
 
 	// Publish the agent's EC public key so the API can hand it to the browser
@@ -66,7 +68,7 @@ func main() {
 		{
 			AppId:           "winterflow-agent",
 			Name:            "Winterflow Agent",
-			Version:         "1.0.0",
+			Version:         version.GetVersion(),
 			ProtocolVersion: "1.0.0",
 		},
 	}

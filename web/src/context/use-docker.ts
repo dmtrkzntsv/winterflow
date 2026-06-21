@@ -120,6 +120,12 @@ export function useDocker() {
     [dispatch],
   );
 
+  const updateAgent = useCallback(
+    (version: string) =>
+      dispatch("/api/v1/agent/update", { method: "POST", body: { version } }),
+    [dispatch],
+  );
+
   return {
     hasServer: Boolean(serverId),
     listRegistries,
@@ -128,5 +134,6 @@ export function useDocker() {
     listNetworks,
     createNetwork,
     deleteNetwork,
+    updateAgent,
   };
 }

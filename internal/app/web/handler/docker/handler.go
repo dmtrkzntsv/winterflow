@@ -149,6 +149,30 @@ func (h *Handler) CreateNetwork(w http.ResponseWriter, r *http.Request) {
 	accepted(w, "create network dispatched", reqID)
 }
 
+// --- agent self-update ---
+
+func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
+	userID, serverID, ok := caller(w, r)
+	if !ok {
+		return
+	}
+	var req command.UpdateAgentRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		webutil.Error(w, "invalid request body", nil)
+		return
+	}
+	if req.Version == "" {
+		webutil.Error(w, "version is required", nil)
+		return
+	}
+	reqID, err := h.usecase.UpdateAgent(r.Context(), userID, serverID, req.Version)
+	if err != nil {
+		webutil.Error(w, "failed to update agent", nil)
+		return
+	}
+	accepted(w, "agent update dispatched", reqID)
+}
+
 func (h *Handler) DeleteNetwork(w http.ResponseWriter, r *http.Request) {
 	userID, serverID, ok := caller(w, r)
 	if !ok {

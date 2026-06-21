@@ -119,6 +119,8 @@ func NewRequestPayload(typ command.Type) (any, error) {
 		return &command.CreateNetworkRequest{}, nil
 	case command.TypeNetworkDelete:
 		return &command.DeleteNetworkRequest{}, nil
+	case command.TypeAgentUpdate:
+		return &command.UpdateAgentRequest{}, nil
 	default:
 		return nil, fmt.Errorf("codec: unknown command type %q", typ)
 	}

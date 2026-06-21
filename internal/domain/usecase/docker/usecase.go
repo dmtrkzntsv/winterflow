@@ -61,3 +61,12 @@ func (uc *UseCase) CreateNetwork(ctx context.Context, userID, serverID string, r
 func (uc *UseCase) DeleteNetwork(ctx context.Context, userID, serverID, name string) (string, error) {
 	return uc.dispatch(ctx, userID, serverID, command.TypeNetworkDelete, command.DeleteNetworkRequest{Name: name})
 }
+
+// --- agent self-update ---
+
+// UpdateAgent dispatches an agent.update to the server's agent. The agent
+// downloads the target release, swaps its binary, and exits to restart; the
+// (brief) result returns over SSE.
+func (uc *UseCase) UpdateAgent(ctx context.Context, userID, serverID, version string) (string, error) {
+	return uc.dispatch(ctx, userID, serverID, command.TypeAgentUpdate, command.UpdateAgentRequest{Version: version})
+}

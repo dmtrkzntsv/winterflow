@@ -267,3 +267,14 @@ func (c *ServerConfig) GetMode() string {
 func (c *ServerConfig) IsStandalone() bool {
 	return c.mode == "standalone"
 }
+
+// GetGitHubReleasesURL is the base URL the agent downloads its self-update
+// binaries from. The expected layout is
+// {base}/{version}/winterflow-agent-{os}-{arch}. Override with
+// GITHUB_RELEASES_URL.
+func (c *ServerConfig) GetGitHubReleasesURL() string {
+	if v := os.Getenv("GITHUB_RELEASES_URL"); v != "" {
+		return v
+	}
+	return "https://github.com/winterflowio/winterflow-agent/releases/download"
+}

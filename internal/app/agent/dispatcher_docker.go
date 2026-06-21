@@ -75,6 +75,19 @@ func (d *Dispatcher) handleDeleteNetwork(ctx context.Context, agentID string, re
 	return d.ok(agentID, req, command.TypeNetworkDelete, command.DeleteNetworkResponse{Name: in.Name})
 }
 
+func (d *Dispatcher) handleUpdateAgent(ctx context.Context, agentID string, req *proto.RequestEnvelope) *proto.ResponseEnvelope {
+	var in command.UpdateAgentRequest
+	if err := codec.DecodePayload(req.Payload, &in); err != nil {
+		return d.errResponse(agentID, req, "invalid payload: "+err.Error())
+	}
+	res, err := d.orch.UpdateAgent(ctx, in)
+	if err != nil {
+		d.log.Error("agent update failed", "target", in.Version, "error", err)
+		return d.errResponse(agentID, req, err.Error())
+	}
+	return d.ok(agentID, req, command.TypeAgentUpdate, res)
+}
+
 // ok encodes a success response, falling back to an error envelope on a marshal
 // failure. A small helper to keep the docker handlers terse.
 func (d *Dispatcher) ok(agentID string, req *proto.RequestEnvelope, typ command.Type, payload any) *proto.ResponseEnvelope {

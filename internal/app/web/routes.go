@@ -55,6 +55,7 @@ func (s *Server) registerRoutes() {
 	s.Router.With(amw.Auth).Get("/api/v1/network/list", dockerAPI.ListNetworks)
 	s.Router.With(amw.Auth).Post("/api/v1/network/create", dockerAPI.CreateNetwork)
 	s.Router.With(amw.Auth).Post("/api/v1/network/delete", dockerAPI.DeleteNetwork)
+	s.Router.With(amw.Auth).Post("/api/v1/agent/update", dockerAPI.UpdateAgent)
 
 	serversAPI := server.NewHandler(&server.Deps{
 		Logger:              s.Logger,

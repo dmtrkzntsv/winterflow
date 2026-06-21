@@ -51,7 +51,58 @@ export default function DockerPage() {
     <div className="space-y-6">
       <RegistriesCard docker={docker} />
       <NetworksCard docker={docker} />
+      <AgentCard docker={docker} />
     </div>
+  );
+}
+
+function AgentCard({ docker }: { docker: Docker }) {
+  const [version, setVersion] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const update = async () => {
+    setBusy(true);
+    try {
+      await docker.updateAgent(version.trim());
+      toast.success("Agent update dispatched", {
+        description: "The agent will restart on the new version.",
+      });
+      setVersion("");
+    } catch (e) {
+      toast.error("Failed to update agent", {
+        description: e instanceof Error ? e.message : undefined,
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Agent</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="flex items-end gap-2">
+          <div className="grid flex-1 gap-1.5">
+            <Label htmlFor="agent-version">Update to version</Label>
+            <Input
+              id="agent-version"
+              placeholder="e.g. 1.2.3"
+              value={version}
+              onChange={(e) => setVersion(e.target.value)}
+            />
+          </div>
+          <Button onClick={() => void update()} disabled={busy || !version.trim()}>
+            {busy ? "Updating…" : "Update agent"}
+          </Button>
+        </div>
+        <p className="mt-2 text-xs text-muted-foreground">
+          The agent downloads the release, replaces its binary, and restarts.
+          Only newer versions are applied.
+        </p>
+      </CardContent>
+    </Card>
   );
 }
 

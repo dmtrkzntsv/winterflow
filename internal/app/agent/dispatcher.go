@@ -63,6 +63,8 @@ func (d *Dispatcher) Dispatch(ctx context.Context, req *proto.RequestEnvelope) *
 		return d.handleCreateNetwork(ctx, agentID, req)
 	case command.TypeNetworkDelete:
 		return d.handleDeleteNetwork(ctx, agentID, req)
+	case command.TypeAgentUpdate:
+		return d.handleUpdateAgent(ctx, agentID, req)
 	default:
 		d.log.Warn("unhandled command type", "type", req.Type)
 		return d.errResponse(agentID, req, "unsupported command type: "+req.Type)

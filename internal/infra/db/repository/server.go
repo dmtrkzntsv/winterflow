@@ -171,6 +171,22 @@ func (r *DbServerRepository) SaveCapabilities(ctx context.Context, serverID stri
 	})
 }
 
+func (r *DbServerRepository) GetCapability(ctx context.Context, serverID, name string) (string, bool, error) {
+	var cap models.ServerCapability
+	err := r.db.GetDB().NewSelect().
+		Model(&cap).
+		Where("server_id = ?", serverID).
+		Where("name = ?", name).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	return cap.Value, true, nil
+}
+
 // ClearPendingRegistrations removes all unclaimed registrations. Standalone
 // re-issues a single fresh one each boot (while unclaimed), so stale/expired
 // rows from earlier boots don't accumulate or block the claim.

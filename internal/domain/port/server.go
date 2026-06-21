@@ -34,6 +34,10 @@ type ServerRepository interface {
 
 	// SaveCapabilities upserts a server's capabilities and features.
 	SaveCapabilities(ctx context.Context, serverID string, capabilities map[string]string, features map[string]bool) error
+
+	// GetCapability returns a single capability value for a server. ok is false
+	// if the server has no such capability recorded.
+	GetCapability(ctx context.Context, serverID, name string) (value string, ok bool, err error)
 }
 
 type ServerService interface {

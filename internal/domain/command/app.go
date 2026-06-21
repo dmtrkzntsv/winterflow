@@ -12,11 +12,26 @@ type AppPayload struct {
 	Files     []ContentItem `json:"files"`     // id -> content
 }
 
-// ContentItem is a single variable or file: a UUID and its raw content.
+// ContentItem is a single variable or file carried in an app payload.
+//
+//   - Name is the authoritative key: the ${VAR} name for a variable, or the
+//     filename (relative path) for a file.
+//   - Encrypted marks a secret. When set, Content is an ECIES payload (base64)
+//     that the agent decrypts with its private key before writing/substituting,
+//     unless Content is the sentinel "<encrypted>", which means "keep the value
+//     already stored for this item" (used when editing without re-entering a
+//     secret).
 type ContentItem struct {
-	ID      string `json:"id"`
-	Content []byte `json:"content"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Content   []byte `json:"content"`
+	Encrypted bool   `json:"encrypted,omitempty"`
 }
+
+// EncryptedPlaceholder is the sentinel value meaning "preserve the existing
+// stored secret" — the browser sends it instead of re-encrypting an unchanged
+// secret on edit.
+const EncryptedPlaceholder = "<encrypted>"
 
 // --- app.save -----------------------------------------------------------------
 

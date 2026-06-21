@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 
 	"winterflow/internal/domain/command"
@@ -118,30 +119,33 @@ func (r *Repository) readRevision(revDir, appID string) (command.AppPayload, err
 	}
 	payload.Config = cfg
 
-	// Variables are stored as a single id->value JSON map.
+	// Variables are stored as a single name->value JSON map.
 	if raw, err := os.ReadFile(path.Join(revDir, "vars", "values.json")); err == nil {
 		var vars map[string]string
 		if err := json.Unmarshal(raw, &vars); err == nil {
-			for id, val := range vars {
-				payload.Variables = append(payload.Variables, command.ContentItem{ID: id, Content: []byte(val)})
+			for name, val := range vars {
+				payload.Variables = append(payload.Variables, command.ContentItem{Name: name, Content: []byte(val)})
 			}
 		}
 	}
 
-	// Files are stored one per id under files/.
+	// Files are stored under files/{name} (names may contain subpaths).
 	filesDir := path.Join(revDir, "files")
-	if entries, err := os.ReadDir(filesDir); err == nil {
-		for _, e := range entries {
-			if e.IsDir() {
-				continue
-			}
-			content, err := os.ReadFile(path.Join(filesDir, e.Name()))
-			if err != nil {
-				return payload, fmt.Errorf("read file %s: %w", e.Name(), err)
-			}
-			payload.Files = append(payload.Files, command.ContentItem{ID: e.Name(), Content: content})
+	_ = filepath.WalkDir(filesDir, func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
 		}
-	}
+		rel, relErr := filepath.Rel(filesDir, p)
+		if relErr != nil {
+			return nil
+		}
+		content, readErr := os.ReadFile(p)
+		if readErr != nil {
+			return nil
+		}
+		payload.Files = append(payload.Files, command.ContentItem{Name: rel, Content: content})
+		return nil
+	})
 
 	return payload, nil
 }
@@ -181,14 +185,30 @@ func (r *Repository) RenameApp(ctx context.Context, appID, newName string) error
 
 // redeployLatest renders the latest stored revision and brings the app up. Used
 // when a control action targets an app that was pruned from disk but still has
-// stored revisions.
+// stored revisions. The stored revision already holds resolved (plaintext)
+// values, so it renders without any decryption.
 func (r *Repository) redeployLatest(ctx context.Context, appID string) error {
-	resp, err := r.GetApp(ctx, appID, 0)
+	revisions, err := r.listRevisions(appID)
 	if err != nil {
 		return err
 	}
-	revDir := path.Join(r.cfg.GetAppsTemplatesDir(), appID, strconv.FormatUint(uint64(resp.Revision), 10))
-	if err := r.render(revDir, resp.App); err != nil {
+	if len(revisions) == 0 {
+		return fmt.Errorf("app %s has no revisions", appID)
+	}
+	latest := revisions[len(revisions)-1]
+	revDir := path.Join(r.cfg.GetAppsTemplatesDir(), appID, strconv.FormatUint(uint64(latest), 10))
+
+	var vars []resolvedItem
+	if raw, err := os.ReadFile(path.Join(revDir, "vars", "values.json")); err == nil {
+		var m map[string]string
+		if json.Unmarshal(raw, &m) == nil {
+			for name, val := range m {
+				vars = append(vars, resolvedItem{name: name, content: []byte(val)})
+			}
+		}
+	}
+
+	if err := r.render(revDir, appID, vars); err != nil {
 		return fmt.Errorf("render templates: %w", err)
 	}
 	return r.composeUp(ctx, appID)

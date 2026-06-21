@@ -132,17 +132,20 @@ func (uc *UseCase) GetLogs(ctx context.Context, userID, serverID, appID string, 
 }
 
 // CreateApp dispatches an app.save command to the server's agent and returns
-// the request id immediately. This call does not block. When the agent confirms
-// the save, the OnResult hook persists the app to the DB (the agent assigns the
-// app id) and the result is delivered to the user over SSE.
-func (uc *UseCase) CreateApp(ctx context.Context, userID, serverID string, app model.App) (string, error) {
-	cfgBytes, _ := json.Marshal(app)
-	req := command.SaveAppRequest{
-		App: command.AppPayload{
-			AppID:  app.ID,
-			Config: cfgBytes,
-		},
+// the request id immediately. This call does not block. payload carries the
+// app's config blob plus its files and variables (secrets pre-encrypted by the
+// browser); app is the catalog record persisted to the DB on success. When the
+// agent confirms the save, the OnResult hook persists the app and the result is
+// delivered to the user over SSE.
+func (uc *UseCase) CreateApp(ctx context.Context, userID, serverID string, app model.App, payload command.AppPayload) (string, error) {
+	payload.AppID = app.ID
+	if len(payload.Config) == 0 {
+		// Fall back to the catalog record as the config blob when the caller
+		// didn't supply a richer config (keeps older callers working).
+		cfgBytes, _ := json.Marshal(app)
+		payload.Config = cfgBytes
 	}
+	req := command.SaveAppRequest{App: payload}
 	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
 		AgentID: serverID,
 		UserID:  userID,

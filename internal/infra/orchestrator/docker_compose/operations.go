@@ -30,12 +30,18 @@ func (r *Repository) SaveApp(ctx context.Context, app command.AppPayload) (uint3
 	}
 	rev := nextRevision(revisions)
 
+	// Resolve secrets (decrypt or preserve via "<encrypted>") against the
+	// previous revision's stored plaintext, keyed by name.
+	prevVars, prevFiles := r.previousValues(app.AppID)
+	vars := r.resolveItems(app.Variables, prevVars)
+	files := r.resolveItems(app.Files, prevFiles)
+
 	revDir := path.Join(r.cfg.GetAppsTemplatesDir(), app.AppID, strconv.FormatUint(uint64(rev), 10))
-	if err := r.writeRevision(revDir, app); err != nil {
+	if err := r.writeRevision(revDir, app.Config, vars, files); err != nil {
 		return 0, fmt.Errorf("write revision: %w", err)
 	}
 
-	if err := r.render(revDir, app); err != nil {
+	if err := r.render(revDir, app.AppID, vars); err != nil {
 		return 0, fmt.Errorf("render templates: %w", err)
 	}
 
@@ -139,67 +145,78 @@ func (r *Repository) listRevisions(appID string) ([]uint32, error) {
 	return parseRevisions(names), nil
 }
 
-func (r *Repository) writeRevision(revDir string, app command.AppPayload) error {
+// writeRevision stores a revision on disk: the config blob, each file under
+// files/{name} (resolved plaintext), and the variable values keyed by name in
+// vars/values.json. File names may contain relative subpaths.
+func (r *Repository) writeRevision(revDir string, config []byte, vars, files []resolvedItem) error {
 	if err := os.MkdirAll(path.Join(revDir, "files"), 0o755); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(path.Join(revDir, "vars"), 0o755); err != nil {
 		return err
 	}
-	if err := os.WriteFile(path.Join(revDir, "config.json"), app.Config, 0o644); err != nil {
+	if err := os.WriteFile(path.Join(revDir, "config.json"), config, 0o644); err != nil {
 		return err
 	}
-	for _, f := range app.Files {
-		if err := os.WriteFile(path.Join(revDir, "files", f.ID), f.Content, 0o600); err != nil {
+	for _, f := range files {
+		dst := path.Join(revDir, "files", f.name)
+		if err := os.MkdirAll(path.Dir(dst), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(dst, f.content, 0o600); err != nil {
 			return err
 		}
 	}
-	vars := make(map[string]string, len(app.Variables))
-	for _, v := range app.Variables {
-		vars[v.ID] = string(v.Content)
+	values := make(map[string]string, len(vars))
+	for _, v := range vars {
+		values[v.name] = string(v.content)
 	}
-	varsJSON, _ := json.Marshal(vars)
-	return os.WriteFile(path.Join(revDir, "vars", "values.json"), varsJSON, 0o600)
+	valuesJSON, _ := json.Marshal(values)
+	return os.WriteFile(path.Join(revDir, "vars", "values.json"), valuesJSON, 0o600)
 }
 
-// render substitutes variables into each template file and writes the result
-// into the running directory apps/{appID}/.
-func (r *Repository) render(revDir string, app command.AppPayload) error {
-	vars := make(map[string]string, len(app.Variables))
-	for _, v := range app.Variables {
-		vars[v.ID] = string(v.Content)
+// render substitutes variables into each stored template file and writes the
+// result into the running directory apps/{appID}/, preserving relative paths.
+func (r *Repository) render(revDir, appID string, vars []resolvedItem) error {
+	values := make(map[string]string, len(vars))
+	for _, v := range vars {
+		values[v.name] = string(v.content)
 	}
 
-	runDir := path.Join(r.cfg.GetAppsDir(), app.AppID)
+	runDir := path.Join(r.cfg.GetAppsDir(), appID)
 	if err := os.MkdirAll(runDir, 0o755); err != nil {
 		return err
 	}
 
 	filesDir := path.Join(revDir, "files")
-	entries, err := os.ReadDir(filesDir)
-	if err != nil {
-		if os.IsNotExist(err) {
+	return filepath.WalkDir(filesDir, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		if d.IsDir() {
 			return nil
 		}
-		return err
-	}
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		raw, err := os.ReadFile(path.Join(filesDir, e.Name()))
+		rel, err := filepath.Rel(filesDir, p)
 		if err != nil {
 			return err
 		}
-		rendered, err := template.Substitute(string(raw), vars)
+		raw, err := os.ReadFile(p)
 		if err != nil {
-			return fmt.Errorf("substitute %s: %w", e.Name(), err)
-		}
-		if err := os.WriteFile(path.Join(runDir, e.Name()), []byte(rendered), 0o600); err != nil {
 			return err
 		}
-	}
-	return nil
+		rendered, err := template.Substitute(string(raw), values)
+		if err != nil {
+			return fmt.Errorf("substitute %s: %w", rel, err)
+		}
+		dst := path.Join(runDir, rel)
+		if err := os.MkdirAll(path.Dir(dst), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(dst, []byte(rendered), 0o600)
+	})
 }
 
 func (r *Repository) pruneRevisions(appID string, all []uint32) {

@@ -13,6 +13,7 @@ import (
 	grpcagent "winterflow/internal/infra/transport/grpc/agent"
 	"winterflow/internal/infra/transport/grpc/proto"
 	"winterflow/pkg/config"
+	"winterflow/pkg/crypto"
 	"winterflow/pkg/logger"
 
 	"github.com/joho/godotenv"
@@ -44,6 +45,14 @@ func main() {
 		"arch":       runtime.GOARCH,
 		"go_version": runtime.Version(),
 		"hostname":   getHostname(),
+	}
+
+	// Publish the agent's EC public key so the API can hand it to the browser
+	// for ECIES-encrypting app secrets (the agent decrypts with its private key).
+	if point, err := crypto.PublicKeyPointFromCertPath(cfg.GetAgentCertPath()); err == nil {
+		capabilities["public_key"] = point
+	} else {
+		log.Warn("failed to export agent public key", "error", err)
 	}
 
 	features := map[string]bool{

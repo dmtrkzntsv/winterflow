@@ -9,6 +9,7 @@ import { LogoSprite } from "@/components/app-logo"
 import { AuthProvider } from "@/context/auth-context"
 import { UserProvider } from "@/context/user-context"
 import { ServersProvider } from "@/context/servers-context"
+import { NotificationsProvider } from "@/context/notifications-context"
 import { AppsProvider } from "@/context/apps-context"
 import { AppLayout } from "@/layouts/app-layout"
 import HomePage from "@/pages/home"
@@ -39,12 +40,14 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <AuthProvider>
       <UserProvider>
-        <ServersProvider>
-          <AppsProvider>
-            <LogoSprite />
-            <RouterProvider router={router} />
-          </AppsProvider>
-        </ServersProvider>
+        <NotificationsProvider>
+          <ServersProvider>
+            <AppsProvider>
+              <LogoSprite />
+              <RouterProvider router={router} />
+            </AppsProvider>
+          </ServersProvider>
+        </NotificationsProvider>
       </UserProvider>
     </AuthProvider>
   </StrictMode>

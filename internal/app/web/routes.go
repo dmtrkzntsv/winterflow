@@ -34,6 +34,7 @@ func (s *Server) registerRoutes() {
 		AppRepository:     s.Deps.AppRepository,
 	})
 	s.Router.With(amw.Auth, happ.GetAppsValidationMiddleware).Get("/api/v1/app/get-apps", appsAPI.GetApps)
+	s.Router.With(amw.Auth, happ.GetAppsValidationMiddleware).Post("/api/v1/app/refresh-apps", appsAPI.RefreshApps)
 	s.Router.With(amw.Auth).Post("/api/v1/app/create-app", appsAPI.CreateApp)
 
 	serversAPI := server.NewHandler(&server.Deps{

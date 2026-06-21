@@ -27,8 +27,9 @@ import (
 const pendingTTL = 10 * time.Minute
 
 type pending struct {
-	userID  string
-	expires time.Time
+	userID   string
+	expires  time.Time
+	onResult func(port.CommandResult)
 }
 
 // Manager publishes commands and routes their results to users via the
@@ -63,7 +64,7 @@ func (m *Manager) Dispatch(ctx context.Context, in port.DispatchInput) (string, 
 		return "", err
 	}
 
-	m.remember(requestID, in.UserID)
+	m.remember(requestID, in.UserID, in.OnResult)
 
 	if err := m.bus.Publish(ctx, m.cfg.GetBusRequestQueue(), bus.CommandMessage{
 		AgentID:   in.AgentID,
@@ -77,23 +78,47 @@ func (m *Manager) Dispatch(ctx context.Context, in port.DispatchInput) (string, 
 	return requestID, nil
 }
 
-// HandleResult routes a result notification (from the response queue) to the
-// user who originated the request. Called by the bus response subscriber.
+// HandleResult runs the request's OnResult hook (DB side effects) and then
+// routes the notification to the originating user over SSE. Called by the bus
+// response subscriber.
 func (m *Manager) HandleResult(ntf model.Notification) {
-	userID, ok := m.take(ntf.Ref)
+	p, ok := m.take(ntf.Ref)
 	if !ok {
 		// Unknown/expired request id — nothing to deliver to.
 		m.log.Debug("dispatch: no owner for result", "request_id", ntf.Ref)
 		return
 	}
-	m.nm.Publish(userID, ntf)
+	if p.onResult != nil {
+		p.onResult(port.CommandResult{
+			Success: ntf.Status == model.NotificationStatusSuccess,
+			Error:   ntf.Error,
+			Payload: rawPayload(ntf.Payload),
+		})
+	}
+	m.nm.Publish(p.userID, ntf)
 }
 
-func (m *Manager) remember(requestID, userID string) {
+// rawPayload extracts the JSON bytes from a notification payload, which may be
+// json.RawMessage, []byte, or a decoded value.
+func rawPayload(v any) []byte {
+	switch p := v.(type) {
+	case nil:
+		return nil
+	case json.RawMessage:
+		return p
+	case []byte:
+		return p
+	default:
+		b, _ := json.Marshal(v)
+		return b
+	}
+}
+
+func (m *Manager) remember(requestID, userID string, onResult func(port.CommandResult)) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.evictExpiredLocked()
-	m.pending[requestID] = pending{userID: userID, expires: time.Now().Add(pendingTTL)}
+	m.pending[requestID] = pending{userID: userID, expires: time.Now().Add(pendingTTL), onResult: onResult}
 }
 
 func (m *Manager) forget(requestID string) {
@@ -102,18 +127,18 @@ func (m *Manager) forget(requestID string) {
 	delete(m.pending, requestID)
 }
 
-func (m *Manager) take(requestID string) (string, bool) {
+func (m *Manager) take(requestID string) (pending, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	p, ok := m.pending[requestID]
 	if !ok {
-		return "", false
+		return pending{}, false
 	}
 	delete(m.pending, requestID)
 	if time.Now().After(p.expires) {
-		return "", false
+		return pending{}, false
 	}
-	return p.userID, true
+	return p, true
 }
 
 // evictExpiredLocked drops stale entries; caller holds the lock. Cheap because

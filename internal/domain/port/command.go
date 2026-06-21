@@ -22,4 +22,18 @@ type DispatchInput struct {
 	UserID  string       // owner of the request; results route back here over SSE
 	Type    command.Type // command type
 	Payload any          // JSON-serializable payload struct
+
+	// OnResult, if set, runs when the agent's result arrives (before SSE
+	// delivery). Use it for side effects like persisting the confirmed entity
+	// to the DB. It must be quick and non-blocking; it does not affect routing.
+	OnResult func(CommandResult)
+}
+
+// CommandResult is the outcome of a dispatched command, passed to OnResult.
+type CommandResult struct {
+	Success bool
+	Error   string
+	// Payload is the raw JSON of the agent's typed response (e.g.
+	// command.SaveAppResponse); decode with the codec.
+	Payload []byte
 }

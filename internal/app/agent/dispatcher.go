@@ -37,6 +37,8 @@ func (d *Dispatcher) Dispatch(ctx context.Context, req *proto.RequestEnvelope) *
 	switch command.Type(req.Type) {
 	case command.TypeAppSave:
 		return d.handleSaveApp(ctx, agentID, req)
+	case command.TypeAppsList:
+		return d.handleListApps(ctx, agentID, req)
 	case command.TypeAppsStatus:
 		return d.handleAppsStatus(ctx, agentID, req)
 	default:
@@ -74,6 +76,20 @@ func (d *Dispatcher) handleAppsStatus(ctx context.Context, agentID string, req *
 	resp, err := codec.EncodeResponse(agentID, req.RequestId, command.TypeAppsStatus,
 		proto.ResponseCode_RESPONSE_CODE_SUCCESS, "ok",
 		command.GetAppsStatusResponse{Apps: apps})
+	if err != nil {
+		return d.errResponse(agentID, req, err.Error())
+	}
+	return resp
+}
+
+func (d *Dispatcher) handleListApps(ctx context.Context, agentID string, req *proto.RequestEnvelope) *proto.ResponseEnvelope {
+	apps, err := d.orch.ListApps(ctx)
+	if err != nil {
+		return d.errResponse(agentID, req, err.Error())
+	}
+	resp, err := codec.EncodeResponse(agentID, req.RequestId, command.TypeAppsList,
+		proto.ResponseCode_RESPONSE_CODE_SUCCESS, "ok",
+		command.ListAppsResponse{Apps: apps})
 	if err != nil {
 		return d.errResponse(agentID, req, err.Error())
 	}

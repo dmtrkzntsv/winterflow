@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"winterflow/internal/domain/command"
+	"winterflow/internal/domain/model"
 	"winterflow/pkg/template"
 )
 
@@ -74,6 +75,46 @@ func (r *Repository) GetAppsStatus(ctx context.Context) ([]command.AppStatus, er
 			StatusCode: aggregateStatus(cs),
 			Containers: cs,
 		})
+	}
+	return out, nil
+}
+
+// ListApps returns the apps the agent actually has on disk (its filesystem is
+// the source of truth). For each app dir it reads the latest revision's
+// config.json, which holds the marshaled app info.
+func (r *Repository) ListApps(ctx context.Context) ([]model.App, error) {
+	entries, err := os.ReadDir(r.cfg.GetAppsTemplatesDir())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []model.App{}, nil
+		}
+		return nil, err
+	}
+
+	out := make([]model.App, 0, len(entries))
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		appID := e.Name()
+		revs, err := r.listRevisions(appID)
+		if err != nil || len(revs) == 0 {
+			continue
+		}
+		latest := revs[len(revs)-1]
+		cfgPath := path.Join(r.cfg.GetAppsTemplatesDir(), appID, strconv.FormatUint(uint64(latest), 10), "config.json")
+		raw, err := os.ReadFile(cfgPath)
+		if err != nil {
+			r.log.Warn("failed to read app config", "app_id", appID, "error", err)
+			continue
+		}
+		var app model.App
+		if err := json.Unmarshal(raw, &app); err != nil {
+			r.log.Warn("failed to parse app config", "app_id", appID, "error", err)
+			continue
+		}
+		app.ID = appID // dir name is authoritative
+		out = append(out, app)
 	}
 	return out, nil
 }

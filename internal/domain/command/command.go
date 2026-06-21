@@ -21,6 +21,7 @@ const (
 	// App lifecycle (implemented in the first vertical slice).
 	TypeAppSave    Type = "app.save"    // create/persist a new app revision
 	TypeAppGet     Type = "app.get"     // fetch an app's config + revisions
+	TypeAppsList   Type = "apps.list"   // list deployed apps (info) — agent is source of truth
 	TypeAppsStatus Type = "apps.status" // container status for all apps
 
 	// App lifecycle (declared now, implemented in later iterations).

@@ -76,12 +76,14 @@ type GetAppsStatusResponse struct {
 	Apps []AppStatus `json:"apps"`
 }
 
-// GetAppsRequest / GetAppsResponse back the read-only API listing of apps known
-// to an agent (model.App is the catalog-level record, distinct from AppPayload).
-type GetAppsRequest struct {
-	ServerID string `json:"server_id"`
-}
+// --- apps.list ----------------------------------------------------------------
 
-type GetAppsResponse struct {
+// ListAppsRequest asks the agent for the apps it actually has deployed (its
+// filesystem is the source of truth). The API reconciles its DB cache against
+// the response (model.App is the catalog-level info record, distinct from
+// AppPayload, which carries the deployable config/vars/files).
+type ListAppsRequest struct{}
+
+type ListAppsResponse struct {
 	Apps []model.App `json:"apps"`
 }

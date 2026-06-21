@@ -95,6 +95,8 @@ func NewRequestPayload(typ command.Type) (any, error) {
 		return &command.SaveAppRequest{}, nil
 	case command.TypeAppGet:
 		return &command.GetAppRequest{}, nil
+	case command.TypeAppsList:
+		return &command.ListAppsRequest{}, nil
 	case command.TypeAppsStatus:
 		return &command.GetAppsStatusRequest{}, nil
 	default:

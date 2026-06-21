@@ -72,7 +72,7 @@ func (s *Server) registerAuth() {
 		Logger: logger2.Func(func(format string, args ...interface{}) {
 			s.Logger.Debug(format, args...)
 		}),
-		SecureCookies:   true,
+		SecureCookies:   s.Cfg.GetSecureCookies(),
 		TokenDuration:   time.Minute * 5,
 		CookieDuration:  time.Hour * 24,
 		Issuer:          "winterflow",

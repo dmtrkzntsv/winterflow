@@ -5,6 +5,7 @@ import (
 	"path"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 type ServerConfig struct {
@@ -33,6 +34,15 @@ func (c *ServerConfig) GetApiURL() string {
 
 func (c *ServerConfig) GetWebURL() string {
 	return os.Getenv("WEB_URL")
+}
+
+// GetSecureCookies reports whether auth cookies should carry the Secure flag.
+// Secure cookies are only sent over HTTPS (browsers also treat localhost as
+// secure), so we derive this from the WEB_URL scheme: https in production,
+// off for plain-http dev (e.g. accessing the dev server over http://<host>),
+// where a Secure cookie would be silently dropped and every request 401s.
+func (c *ServerConfig) GetSecureCookies() bool {
+	return strings.HasPrefix(os.Getenv("WEB_URL"), "https://")
 }
 
 func (c *ServerConfig) GetDbURL() string {

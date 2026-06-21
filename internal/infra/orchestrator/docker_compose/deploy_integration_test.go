@@ -83,6 +83,43 @@ func TestSaveAppDeploysContainer(t *testing.T) {
 	}
 }
 
+// TestNetworkLifecycle exercises the real network create -> list -> delete path
+// against Docker.
+func TestNetworkLifecycle(t *testing.T) {
+	t.Setenv("AGENT_DATA_DIR", t.TempDir())
+	cfg := config.NewServerConfig("standalone")
+	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
+	repo := NewRepository(cfg, log)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	name := "wf-itg-net"
+	t.Cleanup(func() { _ = repo.DeleteNetwork(context.Background(), name) })
+
+	if err := repo.CreateNetwork(ctx, command.CreateNetworkRequest{Name: name}); err != nil {
+		t.Fatalf("CreateNetwork: %v", err)
+	}
+
+	nets, err := repo.ListNetworks(ctx)
+	if err != nil {
+		t.Fatalf("ListNetworks: %v", err)
+	}
+	found := false
+	for _, n := range nets {
+		if n.Name == name {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("created network %q not in list", name)
+	}
+
+	if err := repo.DeleteNetwork(ctx, name); err != nil {
+		t.Fatalf("DeleteNetwork: %v", err)
+	}
+}
+
 func mustJSON(t *testing.T, v any) []byte {
 	t.Helper()
 	b, err := json.Marshal(v)

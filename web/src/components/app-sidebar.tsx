@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { LayoutDashboard } from "lucide-react"
+import { Container, LayoutDashboard } from "lucide-react"
 
 import { NavMain } from "@/components/nav-main"
 import { NavApps } from "@/components/nav-apps"
@@ -24,6 +24,11 @@ const navMain = [
         url: "/",
         icon: LayoutDashboard,
         isActive: true,
+    },
+    {
+        title: "Docker",
+        url: "/docker",
+        icon: Container,
     },
 ]
 

@@ -107,6 +107,18 @@ func NewRequestPayload(typ command.Type) (any, error) {
 		return &command.RenameAppRequest{}, nil
 	case command.TypeAppLogs:
 		return &command.GetLogsRequest{}, nil
+	case command.TypeRegistryList:
+		return &command.ListRegistriesRequest{}, nil
+	case command.TypeRegistryCreate:
+		return &command.CreateRegistryRequest{}, nil
+	case command.TypeRegistryDelete:
+		return &command.DeleteRegistryRequest{}, nil
+	case command.TypeNetworkList:
+		return &command.ListNetworksRequest{}, nil
+	case command.TypeNetworkCreate:
+		return &command.CreateNetworkRequest{}, nil
+	case command.TypeNetworkDelete:
+		return &command.DeleteNetworkRequest{}, nil
 	default:
 		return nil, fmt.Errorf("codec: unknown command type %q", typ)
 	}

@@ -3,6 +3,7 @@ package web
 import (
 	"net/http"
 	happ "winterflow/internal/app/web/handler/app"
+	hdocker "winterflow/internal/app/web/handler/docker"
 	"winterflow/internal/app/web/handler/notification"
 	"winterflow/internal/app/web/handler/server"
 	"winterflow/internal/app/web/util"
@@ -43,6 +44,17 @@ func (s *Server) registerRoutes() {
 	s.Router.With(amw.Auth).Post("/api/v1/app/control-app", appsAPI.ControlApp)
 	s.Router.With(amw.Auth).Post("/api/v1/app/delete-app", appsAPI.DeleteApp)
 	s.Router.With(amw.Auth).Post("/api/v1/app/rename-app", appsAPI.RenameApp)
+
+	dockerAPI := hdocker.NewHandler(&hdocker.Deps{
+		Logger:            s.Logger,
+		CommandDispatcher: s.Deps.CommandDispatcher,
+	})
+	s.Router.With(amw.Auth).Get("/api/v1/registry/list", dockerAPI.ListRegistries)
+	s.Router.With(amw.Auth).Post("/api/v1/registry/create", dockerAPI.CreateRegistry)
+	s.Router.With(amw.Auth).Post("/api/v1/registry/delete", dockerAPI.DeleteRegistry)
+	s.Router.With(amw.Auth).Get("/api/v1/network/list", dockerAPI.ListNetworks)
+	s.Router.With(amw.Auth).Post("/api/v1/network/create", dockerAPI.CreateNetwork)
+	s.Router.With(amw.Auth).Post("/api/v1/network/delete", dockerAPI.DeleteNetwork)
 
 	serversAPI := server.NewHandler(&server.Deps{
 		Logger:              s.Logger,

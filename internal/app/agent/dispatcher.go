@@ -51,6 +51,18 @@ func (d *Dispatcher) Dispatch(ctx context.Context, req *proto.RequestEnvelope) *
 		return d.handleRenameApp(ctx, agentID, req)
 	case command.TypeAppLogs:
 		return d.handleGetLogs(ctx, agentID, req)
+	case command.TypeRegistryList:
+		return d.handleListRegistries(ctx, agentID, req)
+	case command.TypeRegistryCreate:
+		return d.handleCreateRegistry(ctx, agentID, req)
+	case command.TypeRegistryDelete:
+		return d.handleDeleteRegistry(ctx, agentID, req)
+	case command.TypeNetworkList:
+		return d.handleListNetworks(ctx, agentID, req)
+	case command.TypeNetworkCreate:
+		return d.handleCreateNetwork(ctx, agentID, req)
+	case command.TypeNetworkDelete:
+		return d.handleDeleteNetwork(ctx, agentID, req)
 	default:
 		d.log.Warn("unhandled command type", "type", req.Type)
 		return d.errResponse(agentID, req, "unsupported command type: "+req.Type)

@@ -6,6 +6,7 @@ import "@/lib/i18n"
 
 import { RequireAuth } from "@/components/require-auth"
 import { LogoSprite } from "@/components/app-logo"
+import { Toaster } from "@/components/ui/sonner"
 import { AuthProvider } from "@/context/auth-context"
 import { UserProvider } from "@/context/user-context"
 import { ServersProvider } from "@/context/servers-context"
@@ -45,6 +46,7 @@ createRoot(document.getElementById("root")!).render(
             <AppsProvider>
               <LogoSprite />
               <RouterProvider router={router} />
+              <Toaster />
             </AppsProvider>
           </ServersProvider>
         </NotificationsProvider>

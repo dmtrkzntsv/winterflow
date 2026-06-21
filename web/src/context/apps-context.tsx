@@ -12,7 +12,11 @@ import { useServers } from "@/context/use-servers";
 import { useNotifications } from "@/context/use-notifications";
 import { apiBaseUrl } from "@/config";
 
-import { AppsContext, type App } from "./apps-context-base";
+import {
+  AppsContext,
+  type App,
+  type ControlAction,
+} from "./apps-context-base";
 
 type AppResponse = {
   id: string;
@@ -27,6 +31,15 @@ type AppResponse = {
 type GetAppsResponse = {
   success: boolean;
   data?: { apps?: AppResponse[] | null };
+};
+
+type AppStatusResponse = {
+  app_id: string;
+  status_code: number;
+};
+
+type GetAppsStatusResponse = {
+  data?: { apps?: AppStatusResponse[] | null };
 };
 
 type AcceptedResponse = {
@@ -45,11 +58,17 @@ const toApp = (a: AppResponse): App => ({
   createdAt: a.created_at,
 });
 
+// STATUS_POLL_MS is how often the UI pulls the live (in-memory, TTL'd) status
+// snapshot. Status also arrives via SSE, but a slow poll keeps it fresh on
+// first paint and after reconnects.
+const STATUS_POLL_MS = 15000;
+
 export function AppsProvider({ children }: { children: ReactNode }) {
   const { isAuthenticated } = useAuth();
   const { activeServerId } = useServers();
-  const { subscribe } = useNotifications();
+  const { subscribe, waitFor } = useNotifications();
   const [apps, setApps] = useState<App[]>([]);
+  const [statusByApp, setStatusByApp] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const mounted = useRef(false);
@@ -122,6 +141,37 @@ export function AppsProvider({ children }: { children: ReactNode }) {
     void refresh();
   }, [refresh]);
 
+  // loadStatus pulls the live container-status snapshot (in-memory, TTL'd).
+  const loadStatus = useCallback(async () => {
+    if (!isAuthenticated || !activeServerId) {
+      if (mounted.current) setStatusByApp({});
+      return;
+    }
+    try {
+      const res = await fetch(
+        `${base}/api/v1/app/get-apps-status?server_id=${encodeURIComponent(activeServerId)}`,
+        { credentials: "include" },
+      );
+      if (!res.ok) return;
+      const result = (await res.json()) as GetAppsStatusResponse;
+      if (!mounted.current) return;
+      const map: Record<string, number> = {};
+      for (const s of result.data?.apps ?? []) {
+        map[s.app_id] = s.status_code;
+      }
+      setStatusByApp(map);
+    } catch {
+      // Status is best-effort; absence renders as "unknown".
+    }
+  }, [isAuthenticated, activeServerId]);
+
+  useEffect(() => {
+    void loadStatus();
+    if (!isAuthenticated || !activeServerId) return;
+    const id = setInterval(() => void loadStatus(), STATUS_POLL_MS);
+    return () => clearInterval(id);
+  }, [loadStatus, isAuthenticated, activeServerId]);
+
   // Re-read the apps list when a dispatched command's result arrives over SSE.
   // The backend persists/reconciles the DB before publishing, so a plain
   // re-read picks up the synced state.
@@ -135,9 +185,60 @@ export function AppsProvider({ children }: { children: ReactNode }) {
     return unsubscribe;
   }, [subscribe, loadApps]);
 
+  // dispatchAndWait POSTs a fire-and-forward command, awaits its SSE result by
+  // request_id, then refreshes the list and status.
+  const dispatchAndWait = useCallback(
+    async (path: string, body: Record<string, unknown>) => {
+      if (!activeServerId) throw new Error("No active server");
+      const res = await fetch(`${base}/api/v1/app/${path}`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...body, server_id: activeServerId }),
+      });
+      if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+      const accepted = (await res.json()) as AcceptedResponse;
+      const ref = accepted.data?.request_id;
+      if (ref) {
+        const result = await waitFor(ref);
+        if (result.status && result.status !== 0) {
+          throw new Error(result.error || "Operation failed");
+        }
+      }
+      await Promise.all([loadApps(), loadStatus()]);
+    },
+    [activeServerId, waitFor, loadApps, loadStatus],
+  );
+
+  const control = useCallback(
+    (appId: string, action: ControlAction) =>
+      dispatchAndWait("control-app", { app_id: appId, action }),
+    [dispatchAndWait],
+  );
+
+  const remove = useCallback(
+    (appId: string) => dispatchAndWait("delete-app", { app_id: appId }),
+    [dispatchAndWait],
+  );
+
+  const rename = useCallback(
+    (appId: string, name: string) =>
+      dispatchAndWait("rename-app", { app_id: appId, name }),
+    [dispatchAndWait],
+  );
+
   const value = useMemo(
-    () => ({ apps, loading, error, refresh }),
-    [apps, loading, error, refresh],
+    () => ({
+      apps,
+      statusByApp,
+      loading,
+      error,
+      refresh,
+      control,
+      remove,
+      rename,
+    }),
+    [apps, statusByApp, loading, error, refresh, control, remove, rename],
   );
 
   return <AppsContext.Provider value={value}>{children}</AppsContext.Provider>;

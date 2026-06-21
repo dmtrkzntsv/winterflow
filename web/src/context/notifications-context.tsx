@@ -56,18 +56,32 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     };
   }, [isAuthenticated]);
 
-  const value = useMemo(
-    () => ({
+  const value = useMemo(() => {
+    const subscribe = (handler: NotificationHandler) => {
+      handlersRef.current.add(handler);
+      return () => {
+        handlersRef.current.delete(handler);
+      };
+    };
+    return {
       connected,
-      subscribe(handler: NotificationHandler) {
-        handlersRef.current.add(handler);
-        return () => {
-          handlersRef.current.delete(handler);
-        };
+      subscribe,
+      waitFor(requestId: string, timeoutMs = 60000) {
+        return new Promise<Notification>((resolve, reject) => {
+          const unsubscribe = subscribe((n) => {
+            if (n.ref !== requestId) return;
+            clearTimeout(timer);
+            unsubscribe();
+            resolve(n);
+          });
+          const timer = setTimeout(() => {
+            unsubscribe();
+            reject(new Error("Timed out waiting for command result"));
+          }, timeoutMs);
+        });
       },
-    }),
-    [connected],
-  );
+    };
+  }, [connected]);
 
   return (
     <NotificationsContext.Provider value={value}>

@@ -19,6 +19,9 @@ export type NotificationsContextValue = {
   // subscribe registers a handler invoked for every incoming notification.
   // Returns an unsubscribe function.
   subscribe: (handler: NotificationHandler) => () => void;
+  // waitFor resolves with the notification whose ref matches the given
+  // request_id (an await-style bridge over the SSE stream). Rejects on timeout.
+  waitFor: (requestId: string, timeoutMs?: number) => Promise<Notification>;
 };
 
 export const NotificationsContext =

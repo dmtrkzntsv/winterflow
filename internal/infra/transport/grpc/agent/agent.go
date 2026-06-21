@@ -43,7 +43,8 @@ type Agent struct {
 	streamMutex  sync.RWMutex
 	streamActive bool
 	streamCancel context.CancelFunc
-	sendMutex    sync.Mutex // serializes stream.Send across heartbeat + handler goroutines
+	streamDone   chan struct{} // closed when the active stream's receive loop exits
+	sendMutex    sync.Mutex    // serializes stream.Send across heartbeat + handler goroutines
 
 	registered      bool
 	registeredMutex sync.RWMutex
@@ -198,9 +199,11 @@ func (a *Agent) StartStream(ctx context.Context) error {
 		return fmt.Errorf("failed to start stream: %w", err)
 	}
 
+	done := make(chan struct{})
 	a.streamMutex.Lock()
 	a.streamActive = true
 	a.streamCancel = cancel
+	a.streamDone = done
 	a.streamMutex.Unlock()
 
 	a.log.Info("Agent stream started", "agent_id", a.agentID)
@@ -208,8 +211,9 @@ func (a *Agent) StartStream(ctx context.Context) error {
 	// Start heartbeat routine
 	go a.heartbeatRoutine(streamCtx, stream)
 
-	// Handle incoming messages
-	go a.handleIncomingMessages(streamCtx, stream)
+	// Handle incoming messages; signals `done` when the stream ends so the
+	// supervising Run loop can reconnect.
+	go a.handleIncomingMessages(streamCtx, stream, done)
 
 	return nil
 }
@@ -247,7 +251,7 @@ func (a *Agent) heartbeatRoutine(ctx context.Context, stream grpc.BidiStreamingC
 	}
 }
 
-func (a *Agent) handleIncomingMessages(ctx context.Context, stream grpc.BidiStreamingClient[proto.AgentMessage, proto.ServerCommand]) {
+func (a *Agent) handleIncomingMessages(ctx context.Context, stream grpc.BidiStreamingClient[proto.AgentMessage, proto.ServerCommand], done chan struct{}) {
 	defer func() {
 		a.streamMutex.Lock()
 		a.streamActive = false
@@ -256,6 +260,7 @@ func (a *Agent) handleIncomingMessages(ctx context.Context, stream grpc.BidiStre
 			a.streamCancel = nil
 		}
 		a.streamMutex.Unlock()
+		close(done) // wake the supervising Run loop to reconnect
 		a.log.Info("Agent stream closed", "agent_id", a.agentID)
 	}()
 
@@ -340,6 +345,113 @@ func (a *Agent) handleRequest(ctx context.Context, stream grpc.BidiStreamingClie
 	}); err != nil {
 		a.log.Error("Failed to send response", "error", err, "agent_id", a.agentID, "request_id", req.RequestId)
 	}
+}
+
+// Run supervises the agent connection for the lifetime of ctx: it connects,
+// registers, starts the stream, and waits. When the stream drops (network blip,
+// hub restart) it reconnects with exponential backoff. It returns only when ctx
+// is canceled. This replaces the one-shot Connect/Register/StartStream sequence
+// so a transient failure no longer kills the agent.
+func (a *Agent) Run(ctx context.Context) {
+	const (
+		baseBackoff = 1 * time.Second
+		maxBackoff  = 30 * time.Second
+	)
+	backoff := baseBackoff
+
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+
+		done, err := a.connectRegisterStream(ctx)
+		if err != nil {
+			a.log.Warn("agent connection attempt failed, will retry",
+				"error", err, "retry_in", backoff.String())
+			a.teardownConn()
+			if !sleepCtx(ctx, backoff) {
+				return
+			}
+			backoff = nextBackoff(backoff, maxBackoff)
+			continue
+		}
+
+		// Connected and streaming — reset backoff and wait for the stream to end
+		// or for shutdown.
+		backoff = baseBackoff
+		select {
+		case <-ctx.Done():
+			return
+		case <-done:
+			a.log.Warn("agent stream ended, reconnecting", "agent_id", a.agentID)
+			a.teardownConn()
+			if !sleepCtx(ctx, backoff) {
+				return
+			}
+			backoff = nextBackoff(backoff, maxBackoff)
+		}
+	}
+}
+
+// connectRegisterStream performs one full bring-up and returns the stream's done
+// channel. On any step failure it returns the error (the caller backs off).
+func (a *Agent) connectRegisterStream(ctx context.Context) (chan struct{}, error) {
+	if err := a.Connect(ctx); err != nil {
+		return nil, fmt.Errorf("connect: %w", err)
+	}
+	if err := a.Register(ctx); err != nil {
+		return nil, fmt.Errorf("register: %w", err)
+	}
+	if err := a.StartStream(ctx); err != nil {
+		return nil, fmt.Errorf("start stream: %w", err)
+	}
+	a.streamMutex.RLock()
+	done := a.streamDone
+	a.streamMutex.RUnlock()
+	return done, nil
+}
+
+// teardownConn closes the connection and clears per-connection state so the next
+// attempt starts clean.
+func (a *Agent) teardownConn() {
+	a.streamMutex.Lock()
+	if a.streamCancel != nil {
+		a.streamCancel()
+		a.streamCancel = nil
+	}
+	a.streamActive = false
+	a.streamMutex.Unlock()
+
+	a.registeredMutex.Lock()
+	a.registered = false
+	a.registeredMutex.Unlock()
+
+	if a.conn != nil {
+		_ = a.conn.Close()
+		a.conn = nil
+		a.client = nil
+	}
+}
+
+// sleepCtx sleeps for d or until ctx is canceled; returns false if canceled.
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
+	}
+}
+
+// nextBackoff doubles cur, capped at max.
+func nextBackoff(cur, max time.Duration) time.Duration {
+	next := cur * 2
+	if next > max {
+		return max
+	}
+	return next
 }
 
 func (a *Agent) Stop(ctx context.Context) error {

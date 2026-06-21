@@ -80,23 +80,11 @@ func main() {
 	orchestrator := dockercompose.NewRepository(cfg, log)
 	agent.SetDispatcher(appagent.NewDispatcher(orchestrator, log))
 
-	// Connect to hub
-	log.Info("Connecting to hub", "agent_id", agentID)
-	if err := agent.Connect(ctx); err != nil {
-		log.Fatal("Failed to connect to hub", "error", err)
-	}
-
-	// Register with hub
-	log.Info("Registering with hub", "agent_id", agentID)
-	if err := agent.Register(ctx); err != nil {
-		log.Fatal("Failed to register with hub", "error", err)
-	}
-
-	// Start streaming
-	log.Info("Starting agent stream", "agent_id", agentID)
-	if err := agent.StartStream(ctx); err != nil {
-		log.Fatal("Failed to start stream", "error", err)
-	}
+	// Supervise the connection: connect, register, stream, and reconnect with
+	// backoff on failure, until ctx is canceled. Runs in the background so the
+	// signal handler below stays responsive.
+	log.Info("Starting agent connection supervisor", "agent_id", agentID)
+	go agent.Run(ctx)
 
 	// Status monitoring routine
 	go func() {

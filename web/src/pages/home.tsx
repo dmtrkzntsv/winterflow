@@ -3,6 +3,7 @@ import { useMemo, useState } from "react"
 import { useAppBreadcrumbs } from "@/layouts/use-app-layout"
 import { Button } from "@/components/ui/button"
 import { ServerSelectionDialog } from "@/components/server-creation-dialog"
+import { AppGrid } from "@/components/app-grid"
 import { isStandalone } from "@/config"
 import { useServers } from "@/context/use-servers"
 
@@ -46,12 +47,7 @@ export default function HomePage() {
           </Button>
         )}
       </div>
-      <div className="grid auto-rows-min gap-4 md:grid-cols-3">
-        <div className="bg-muted/50 aspect-video rounded-xl" />
-        <div className="bg-muted/50 aspect-video rounded-xl" />
-        <div className="bg-muted/50 aspect-video rounded-xl" />
-      </div>
-      <div className="bg-muted/50 min-h-[100vh] flex-1 rounded-xl md:min-h-min" />
+      <AppGrid />
       {!isStandalone ? (
         <ServerSelectionDialog
           isOpen={isServerDialogOpen}

@@ -9,6 +9,7 @@ import { LogoSprite } from "@/components/app-logo"
 import { AuthProvider } from "@/context/auth-context"
 import { UserProvider } from "@/context/user-context"
 import { ServersProvider } from "@/context/servers-context"
+import { AppsProvider } from "@/context/apps-context"
 import { AppLayout } from "@/layouts/app-layout"
 import HomePage from "@/pages/home"
 import LoginPage from "@/pages/login"
@@ -39,8 +40,10 @@ createRoot(document.getElementById("root")!).render(
     <AuthProvider>
       <UserProvider>
         <ServersProvider>
-          <LogoSprite />
-          <RouterProvider router={router} />
+          <AppsProvider>
+            <LogoSprite />
+            <RouterProvider router={router} />
+          </AppsProvider>
         </ServersProvider>
       </UserProvider>
     </AuthProvider>

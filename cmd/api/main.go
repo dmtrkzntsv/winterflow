@@ -32,7 +32,7 @@ func main() {
 	defer stop()
 
 	deps := bootstrap.BootstrapAPI(ctx, log, cfg)
-	srv := web.NewServer(deps)
+	srv := web.NewServer(ctx, deps)
 
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

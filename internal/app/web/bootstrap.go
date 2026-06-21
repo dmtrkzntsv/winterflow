@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -30,7 +31,12 @@ type Server struct {
 	Auth   *auth.Service
 }
 
-func NewServer(deps *bootstrap.Deps) *http.Server {
+// NewServer builds the HTTP server. baseCtx is the process lifecycle context
+// (canceled on shutdown); it becomes the BaseContext for every request so that
+// long-lived handlers — notably the SSE stream — observe shutdown via
+// r.Context().Done() and unblock srv.Shutdown instead of holding it open until
+// the timeout.
+func NewServer(baseCtx context.Context, deps *bootstrap.Deps) *http.Server {
 	cfg := deps.Cfg
 	s := Server{
 		Logger: deps.Log,
@@ -42,7 +48,11 @@ func NewServer(deps *bootstrap.Deps) *http.Server {
 	s.registerAuth()
 	s.registerRoutes()
 
-	return &http.Server{Addr: ":" + cfg.GetApiPort(), Handler: s.Router}
+	return &http.Server{
+		Addr:        ":" + cfg.GetApiPort(),
+		Handler:     s.Router,
+		BaseContext: func(net.Listener) context.Context { return baseCtx },
+	}
 }
 
 func (s *Server) registerMiddleware() {

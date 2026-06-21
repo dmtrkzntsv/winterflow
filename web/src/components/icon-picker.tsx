@@ -25,7 +25,9 @@ export function IconPicker({
   const [query, setQuery] = useState("");
 
   const filtered = query
-    ? APP_ICON_NAMES.filter((n) => n.includes(query.toLowerCase()))
+    ? APP_ICON_NAMES.filter((n) =>
+        n.toLowerCase().includes(query.toLowerCase()),
+      )
     : APP_ICON_NAMES;
 
   return (

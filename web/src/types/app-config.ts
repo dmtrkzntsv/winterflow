@@ -45,5 +45,6 @@ export const DEFAULT_COMPOSE = `services:
   app:
     image: nginx:alpine
     ports:
-      - "8080:80"
+      # host:container — change the host port if it's already in use
+      - "8088:80"
 `;

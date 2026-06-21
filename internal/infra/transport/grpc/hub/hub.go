@@ -84,8 +84,52 @@ func (h *Hub) StartBusBridge(ctx context.Context) error {
 			h.dispatchToAgent(cmd)
 		}
 	}()
+	go h.reapStaleAgents(ctx)
 	h.log.Info("hub bus bridge started", "request_queue", h.cfg.GetBusRequestQueue())
 	return nil
+}
+
+const (
+	// staleAgentTTL is how long an agent may go without a heartbeat before the
+	// hub drops its registration. Agents heartbeat every 30s; ~3 missed beats.
+	staleAgentTTL = 100 * time.Second
+	reapInterval  = 30 * time.Second
+)
+
+// reapStaleAgents periodically removes agents that haven't been seen within the
+// TTL — covering wedged streams or registrations whose stream never connected,
+// which the stream-close path alone can't catch.
+func (h *Hub) reapStaleAgents(ctx context.Context) {
+	ticker := time.NewTicker(reapInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			h.reapOnce(now)
+		}
+	}
+}
+
+// reapOnce removes agents idle past the TTL as of now. Returns the count
+// removed (exposed for testing).
+func (h *Hub) reapOnce(now time.Time) int {
+	h.agentsLock.Lock()
+	defer h.agentsLock.Unlock()
+	removed := 0
+	for id, a := range h.agents {
+		if now.Sub(a.lastSeen) <= staleAgentTTL {
+			continue
+		}
+		if a.cancelFunc != nil {
+			a.cancelFunc()
+		}
+		delete(h.agents, id)
+		removed++
+		h.log.Warn("reaped stale agent", "agent_id", id, "last_seen", a.lastSeen)
+	}
+	return removed
 }
 
 // dispatchToAgent locates the addressed agent's stream and sends the command.
@@ -340,11 +384,16 @@ func (h *Hub) AgentStream(stream grpc.BidiStreamingServer[proto.AgentMessage, pr
 		if cancel != nil {
 			cancel()
 		}
-		if agent != nil && agentID != "" {
+		if agentID != "" {
 			h.agentsLock.Lock()
-			agent.streamActive = false
-			agent.stream = nil
-			agent.cancelFunc = nil
+			// Remove the agent entirely on stream close: a disconnected agent
+			// should not linger in the registry (it would appear registered, and
+			// stale entries accumulate across reconnects). It re-registers on
+			// reconnect. Only delete if the map still points at this stream, so a
+			// fast reconnect that already replaced the entry isn't clobbered.
+			if cur, ok := h.agents[agentID]; ok && cur == agent {
+				delete(h.agents, agentID)
+			}
 			h.agentsLock.Unlock()
 			h.log.Info("Agent stream closed", "agent_id", agentID)
 		}

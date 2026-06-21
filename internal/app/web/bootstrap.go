@@ -112,15 +112,18 @@ func (s *Server) registerAuth() {
 			}
 			return claims
 		}),
-		BasicAuthChecker: func(userID, pat string) (bool, token.User, error) {
-			// Validate the provided token string
-			// Authorization: Basic base64(userID:PAT)
-			// @todo implement PAT check
-			//valid, userInfo := checkPAT(userID, token)
-			//if valid {
-			//    return true, userInfo, nil
-			//}
-			return false, token.User{}, errors.New("invalid token")
+		BasicAuthChecker: func(_, pat string) (bool, token.User, error) {
+			// Personal access token auth: Authorization: Basic base64(user:PAT).
+			// The PAT is the password; the username is ignored. The basic-auth
+			// path bypasses the provider check, so we set the real user id
+			// directly (and via the user_id attr that util.GetUserID reads).
+			user, err := s.Deps.UserService.FindByToken(context.Background(), pat)
+			if err != nil {
+				return false, token.User{}, errors.New("invalid token")
+			}
+			u := token.User{ID: user.ID, Name: user.Name}
+			u.SetStrAttr("user_id", user.ID)
+			return true, u, nil
 		},
 	}
 

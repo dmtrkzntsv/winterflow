@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"strings"
+	"time"
 	"winterflow/internal/domain/dto"
 	"winterflow/internal/domain/model"
 	"winterflow/internal/infra/db"
@@ -178,4 +179,65 @@ func (r *DbUserRepository) PrimaryOrganizationID(ctx context.Context, userID str
 		return "", err
 	}
 	return ou.OrganizationID, nil
+}
+
+const tokenTypePAT = "pat"
+
+func (r *DbUserRepository) FindByToken(ctx context.Context, token string) (model.User, error) {
+	var t models.UserToken
+	err := r.db.GetDB().NewSelect().Model(&t).Where("token = ?", token).Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return model.User{}, model.ErrInvalidToken
+		}
+		return model.User{}, err
+	}
+	if t.ExpiresAt != nil && time.Now().After(t.ExpiresAt.Time()) {
+		return model.User{}, model.ErrInvalidToken
+	}
+	return r.GetUser(ctx, t.UserID)
+}
+
+func (r *DbUserRepository) CreateToken(ctx context.Context, userID string) (string, error) {
+	secret, err := util.GenerateSecureToken(16) // 32 hex chars to match char(32)
+	if err != nil {
+		return "", err
+	}
+	row := &models.UserToken{
+		TokenID:   util.GenerateID(),
+		Token:     secret,
+		TokenType: tokenTypePAT,
+		UserID:    userID,
+		CreatedAt: util.NewDateTime(),
+	}
+	if _, err := r.db.GetDB().NewInsert().Model(row).Exec(ctx); err != nil {
+		return "", err
+	}
+	return secret, nil
+}
+
+func (r *DbUserRepository) ListTokens(ctx context.Context, userID string) ([]model.Token, error) {
+	var rows []models.UserToken
+	err := r.db.GetDB().NewSelect().Model(&rows).Where("user_id = ?", userID).Order("created_at DESC").Scan(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]model.Token, 0, len(rows))
+	for i := range rows {
+		t := model.Token{ID: rows[i].TokenID, Type: rows[i].TokenType, CreatedAt: rows[i].CreatedAt.Time()}
+		if rows[i].ExpiresAt != nil {
+			e := rows[i].ExpiresAt.Time()
+			t.ExpiresAt = &e
+		}
+		out = append(out, t)
+	}
+	return out, nil
+}
+
+func (r *DbUserRepository) RevokeToken(ctx context.Context, userID, tokenID string) error {
+	_, err := r.db.GetDB().NewDelete().
+		Model((*models.UserToken)(nil)).
+		Where("token_id = ? AND user_id = ?", tokenID, userID).
+		Exec(ctx)
+	return err
 }

@@ -41,3 +41,7 @@ func (s *DbUserService) FindOrCreateUser(ctx context.Context, dto dto.UserDTO) (
 func (s *DbUserService) PrimaryOrganizationID(ctx context.Context, userID string) (string, error) {
 	return s.repo.PrimaryOrganizationID(ctx, userID)
 }
+
+func (s *DbUserService) FindByToken(ctx context.Context, token string) (model.User, error) {
+	return s.repo.FindByToken(ctx, token)
+}

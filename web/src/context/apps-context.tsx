@@ -227,6 +227,38 @@ export function AppsProvider({ children }: { children: ReactNode }) {
     [dispatchAndWait],
   );
 
+  // getPublicKey fetches the server's ECIES public key (for encrypting secrets).
+  const getPublicKey = useCallback(async (): Promise<string> => {
+    if (!activeServerId) throw new Error("No active server");
+    const res = await fetch(
+      `${base}/api/v1/server/get-public-key?server_id=${encodeURIComponent(activeServerId)}`,
+      { credentials: "include" },
+    );
+    if (!res.ok) throw new Error(`Failed to fetch public key: ${res.status}`);
+    const result = (await res.json()) as { data?: { public_key?: string } };
+    const key = result.data?.public_key;
+    if (!key) throw new Error("Server returned no public key");
+    return key;
+  }, [activeServerId]);
+
+  // createApp dispatches app.save with the full payload and awaits its result.
+  const createApp = useCallback(
+    async (body: {
+      app: Record<string, unknown>;
+      config: unknown;
+      files: { name: string; content: string; encrypted: boolean }[];
+      variables: { name: string; content: string; encrypted: boolean }[];
+    }) => {
+      await dispatchAndWait("create-app", {
+        app: body.app,
+        config: body.config,
+        files: body.files,
+        variables: body.variables,
+      });
+    },
+    [dispatchAndWait],
+  );
+
   const value = useMemo(
     () => ({
       apps,
@@ -237,8 +269,21 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       control,
       remove,
       rename,
+      createApp,
+      getPublicKey,
     }),
-    [apps, statusByApp, loading, error, refresh, control, remove, rename],
+    [
+      apps,
+      statusByApp,
+      loading,
+      error,
+      refresh,
+      control,
+      remove,
+      rename,
+      createApp,
+      getPublicKey,
+    ],
   );
 
   return <AppsContext.Provider value={value}>{children}</AppsContext.Provider>;

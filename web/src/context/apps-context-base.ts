@@ -38,6 +38,16 @@ export type AppsContextValue = {
   control: (appId: string, action: ControlAction) => Promise<void>;
   remove: (appId: string) => Promise<void>;
   rename: (appId: string, name: string) => Promise<void>;
+  // createApp dispatches app.save with the full payload (config + files +
+  // variables) and awaits the result.
+  createApp: (body: {
+    app: Record<string, unknown>;
+    config: unknown;
+    files: { name: string; content: string; encrypted: boolean }[];
+    variables: { name: string; content: string; encrypted: boolean }[];
+  }) => Promise<void>;
+  // getPublicKey returns the server's ECIES public key for encrypting secrets.
+  getPublicKey: () => Promise<string>;
 };
 
 export const AppsContext = createContext<AppsContextValue | undefined>(

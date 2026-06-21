@@ -14,6 +14,7 @@ import { NotificationsProvider } from "@/context/notifications-context"
 import { AppsProvider } from "@/context/apps-context"
 import { AppLayout } from "@/layouts/app-layout"
 import HomePage from "@/pages/home"
+import CreateAppPage from "@/pages/create-app"
 import LoginPage from "@/pages/login"
 import "./index.css"
 
@@ -28,6 +29,10 @@ const router = createBrowserRouter([
       {
         path: "/",
         element: <HomePage />,
+      },
+      {
+        path: "/apps/new",
+        element: <CreateAppPage />,
       },
     ],
   },

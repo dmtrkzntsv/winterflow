@@ -1,4 +1,6 @@
 import { useMemo, useState } from "react"
+import { useNavigate } from "react-router-dom"
+import { Plus } from "lucide-react"
 
 import { useAppBreadcrumbs } from "@/layouts/use-app-layout"
 import { Button } from "@/components/ui/button"
@@ -8,6 +10,7 @@ import { isStandalone } from "@/config"
 import { useServers } from "@/context/use-servers"
 
 export default function HomePage() {
+  const navigate = useNavigate()
   const [isServerDialogOpen, setIsServerDialogOpen] = useState(false)
   const { servers, loading, refresh } = useServers()
   const breadcrumbs = useMemo(
@@ -27,25 +30,25 @@ export default function HomePage() {
             ? "Loading servers…"
             : `${servers.length} server${servers.length === 1 ? "" : "s"}`}
         </p>
-        {/* Adding servers is a cloud/distributed capability. The standalone
-            build ships one embedded server, so the action is disabled with a
-            hint rather than hidden, to signal it exists in the cloud version. */}
-        {isStandalone ? (
+        <div className="flex gap-2">
+          {/* Adding servers is a cloud/distributed capability. The standalone
+              build ships one embedded server, so the action is omitted there. */}
+          {!isStandalone ? (
+            <Button
+              variant="outline"
+              onClick={() => setIsServerDialogOpen(true)}
+              className="cursor-pointer"
+            >
+              Add Server
+            </Button>
+          ) : null}
           <Button
-            disabled
-            className="cursor-not-allowed"
-            title="Available in the cloud version"
-          >
-            Add Server
-          </Button>
-        ) : (
-          <Button
-            onClick={() => setIsServerDialogOpen(true)}
+            onClick={() => navigate("/apps/new")}
             className="cursor-pointer"
           >
-            Add Server
+            <Plus className="size-4" /> New App
           </Button>
-        )}
+        </div>
       </div>
       <AppGrid />
       {!isStandalone ? (

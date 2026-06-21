@@ -15,6 +15,7 @@ import { AppsProvider } from "@/context/apps-context"
 import { AppLayout } from "@/layouts/app-layout"
 import HomePage from "@/pages/home"
 import CreateAppPage from "@/pages/create-app"
+import AppDetailsPage from "@/pages/app-details"
 import DockerPage from "@/pages/docker"
 import LoginPage from "@/pages/login"
 import "./index.css"
@@ -38,6 +39,10 @@ const router = createBrowserRouter([
       {
         path: "/apps/:appId/edit",
         element: <CreateAppPage />,
+      },
+      {
+        path: "/app/:appId",
+        element: <AppDetailsPage />,
       },
       {
         path: "/docker",

@@ -1,18 +1,15 @@
-import { useState } from "react";
+import { Link } from "react-router-dom";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { AppIcon } from "@/components/app-icon";
 import { AppStatusBadge } from "@/components/app-status-badge";
-import { AppActions } from "@/components/app-actions";
-import { AppLogsSheet } from "@/components/app-logs-sheet";
 import { useApps } from "@/context/use-apps";
-import type { App } from "@/context/apps-context-base";
 
-// AppGrid renders the active server's apps as a card grid in the main container
-// (v1 dashboard parity), with live status and per-app lifecycle actions.
+// AppGrid renders the active server's apps as a grid of cards; each card links
+// to the app's details page (v1 parity — controls/logs live there, not on the
+// card).
 export function AppGrid() {
   const { apps, statusByApp, loading, error } = useApps();
-  const [logsApp, setLogsApp] = useState<App | null>(null);
 
   if (loading && apps.length === 0) {
     return (
@@ -40,10 +37,10 @@ export function AppGrid() {
   }
 
   return (
-    <>
-      <div className="grid auto-rows-min gap-4 md:grid-cols-3">
-        {apps.map((app) => (
-          <Card key={app.id} className="transition-colors hover:bg-muted/50">
+    <div className="grid auto-rows-min gap-4 md:grid-cols-3">
+      {apps.map((app) => (
+        <Link key={app.id} to={`/app/${app.id}`} className="block">
+          <Card className="transition-colors hover:bg-muted/50">
             <CardContent className="flex items-center gap-3 p-4">
               <AppIcon
                 name={app.name}
@@ -58,18 +55,10 @@ export function AppGrid() {
                 </div>
               </div>
               <AppStatusBadge status={statusByApp[app.id]} />
-              <AppActions app={app} onShowLogs={setLogsApp} />
             </CardContent>
           </Card>
-        ))}
-      </div>
-      <AppLogsSheet
-        app={logsApp}
-        open={logsApp !== null}
-        onOpenChange={(open) => {
-          if (!open) setLogsApp(null);
-        }}
-      />
-    </>
+        </Link>
+      ))}
+    </div>
   );
 }

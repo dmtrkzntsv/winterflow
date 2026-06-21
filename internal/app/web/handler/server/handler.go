@@ -2,6 +2,7 @@ package server
 
 import (
 	"winterflow/internal/domain/port"
+	"winterflow/internal/domain/service/status"
 	usesrv "winterflow/internal/domain/usecase/server"
 	"winterflow/pkg/logger"
 )
@@ -9,6 +10,7 @@ import (
 type Handler struct {
 	usecase usesrv.UseCase
 	users   port.UserService
+	status  *status.Cache
 	log     *logger.Logger
 }
 
@@ -16,6 +18,7 @@ type Deps struct {
 	Logger              *logger.Logger
 	ServerService       port.ServerService
 	UserService         port.UserService
+	StatusCache         *status.Cache
 	NotificationManager port.NotificationManager
 }
 
@@ -25,5 +28,5 @@ func NewHandler(d *Deps) *Handler {
 		Log:                 d.Logger,
 		NotificationManager: d.NotificationManager,
 	})
-	return &Handler{usecase: *uc, users: d.UserService, log: d.Logger}
+	return &Handler{usecase: *uc, users: d.UserService, status: d.StatusCache, log: d.Logger}
 }

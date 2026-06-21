@@ -38,3 +38,23 @@ type CommandMessage struct {
 	Type      string `json:"type"`
 	Payload   []byte `json:"payload"`
 }
+
+// EventKind enumerates the agent-initiated events published on events:<region>.
+type EventKind string
+
+const (
+	// EventServerOnline is a liveness pulse (from heartbeat): the server is up.
+	EventServerOnline EventKind = "server.online"
+	// EventCapabilities reports a server's capabilities/features (on register).
+	EventCapabilities EventKind = "server.capabilities"
+	// EventAppsStatus reports container status for a server's apps.
+	EventAppsStatus EventKind = "apps.status"
+)
+
+// EventMessage is the events-queue payload: an unsolicited event from a server's
+// agent. ServerID identifies the source; Payload is the JSON body for Kind.
+type EventMessage struct {
+	ServerID string    `json:"server_id"`
+	Kind     EventKind `json:"kind"`
+	Payload  []byte    `json:"payload"`
+}

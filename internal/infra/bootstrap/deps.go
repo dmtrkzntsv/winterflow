@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"winterflow/internal/domain/port"
+	"winterflow/internal/domain/service/status"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
 )
@@ -19,7 +20,9 @@ type Deps struct {
 
 	UserService         port.UserService
 	ServerService       port.ServerService
+	ServerRepository    port.ServerRepository
 	AppRepository       port.AppRepository
 	CommandDispatcher   port.CommandDispatcher
 	NotificationManager port.NotificationManager
+	StatusCache         *status.Cache
 }

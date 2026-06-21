@@ -116,6 +116,61 @@ func (r *DbServerRepository) HasAnyServer(ctx context.Context) (bool, error) {
 	return r.db.GetDB().NewSelect().Model((*models.Server)(nil)).Exists(ctx)
 }
 
+// FirstServerID returns the id of the (single) claimed server, if any. Used by
+// standalone to mark its embedded server online.
+func (r *DbServerRepository) FirstServerID(ctx context.Context) (string, bool, error) {
+	var s models.Server
+	err := r.db.GetDB().NewSelect().Model(&s).Limit(1).Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	return s.ServerID, true, nil
+}
+
+// TouchLastSeen records that a server reported in just now (durable info,
+// distinct from ephemeral live status). No-op if the server isn't claimed yet.
+func (r *DbServerRepository) TouchLastSeen(ctx context.Context, serverID string) error {
+	now := util.NewDateTime()
+	_, err := r.db.GetDB().NewUpdate().
+		Model((*models.Server)(nil)).
+		Set("last_seen = ?", now).
+		Where("server_id = ?", serverID).
+		Exec(ctx)
+	return err
+}
+
+// SaveCapabilities upserts a server's capabilities and features (info → DB).
+func (r *DbServerRepository) SaveCapabilities(ctx context.Context, serverID string, capabilities map[string]string, features map[string]bool) error {
+	now := util.NewDateTime()
+	return r.db.Transaction(ctx, func(tx bun.IDB) error {
+		for name, value := range capabilities {
+			cap := &models.ServerCapability{ServerID: serverID, Name: name, Value: value, UpdatedAt: now}
+			if _, err := tx.NewInsert().
+				Model(cap).
+				On("CONFLICT (server_id, name) DO UPDATE").
+				Set("value = EXCLUDED.value").
+				Set("updated_at = EXCLUDED.updated_at").
+				Exec(ctx); err != nil {
+				return err
+			}
+		}
+		for name, enabled := range features {
+			feat := &models.ServerFeature{ServerID: serverID, Name: name, IsEnabled: enabled}
+			if _, err := tx.NewInsert().
+				Model(feat).
+				On("CONFLICT (server_id, name) DO UPDATE").
+				Set("is_enabled = EXCLUDED.is_enabled").
+				Exec(ctx); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 // ClearPendingRegistrations removes all unclaimed registrations. Standalone
 // re-issues a single fresh one each boot (while unclaimed), so stale/expired
 // rows from earlier boots don't accumulate or block the claim.

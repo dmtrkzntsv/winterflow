@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"winterflow/internal/domain/model"
 	notificationsvc "winterflow/internal/domain/service/notification"
+	"winterflow/internal/domain/service/status"
 	"winterflow/internal/infra/db"
 	"winterflow/internal/infra/db/repository"
 	dbservice "winterflow/internal/infra/db/service"
@@ -33,6 +34,7 @@ func BootstrapAPI(ctx context.Context, log *logger.Logger, cfg *config.ServerCon
 	b := redisbus.NewBus(rc, log)
 	nm := notificationsvc.NewNotificationManager()
 	dispatcher := dispatch.NewManager(b, nm, cfg, log)
+	statusCache := status.NewCache(statusTTL)
 
 	startResponseSubscriber(ctx, b, dispatcher, cfg, log)
 
@@ -41,14 +43,18 @@ func BootstrapAPI(ctx context.Context, log *logger.Logger, cfg *config.ServerCon
 	serverRepo := repository.NewDbServerRepository(dbconn, log)
 	appRepo := repository.NewDbAppRepository(dbconn, log)
 
+	startEventsSubscriber(ctx, b, statusCache, serverRepo, cfg, log)
+
 	return &Deps{
 		Log:                 log,
 		Cfg:                 cfg,
 		UserService:         dbservice.NewDbUserService(log, userRepo),
 		ServerService:       dbservice.NewDbServerService(log, serverRepo),
+		ServerRepository:    serverRepo,
 		AppRepository:       appRepo,
 		CommandDispatcher:   dispatcher,
 		NotificationManager: nm,
+		StatusCache:         statusCache,
 	}
 }
 

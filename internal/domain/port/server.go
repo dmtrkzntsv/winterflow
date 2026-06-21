@@ -28,6 +28,12 @@ type ServerRepository interface {
 
 	// ClearPendingRegistrations removes all unclaimed registrations.
 	ClearPendingRegistrations(ctx context.Context) error
+
+	// TouchLastSeen records that a server reported in (durable info).
+	TouchLastSeen(ctx context.Context, serverID string) error
+
+	// SaveCapabilities upserts a server's capabilities and features.
+	SaveCapabilities(ctx context.Context, serverID string, capabilities map[string]string, features map[string]bool) error
 }
 
 type ServerService interface {

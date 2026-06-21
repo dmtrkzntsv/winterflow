@@ -3,9 +3,11 @@ package bootstrap
 import (
 	"context"
 	"encoding/json"
+	"time"
 	appagent "winterflow/internal/app/agent"
 	"winterflow/internal/domain/model"
 	notificationsvc "winterflow/internal/domain/service/notification"
+	"winterflow/internal/domain/service/status"
 	agentsrv "winterflow/internal/infra/agent/service"
 	"winterflow/internal/infra/cert"
 	"winterflow/internal/infra/db"
@@ -44,6 +46,8 @@ func BootstrapStandalone(ctx context.Context, log *logger.Logger, cfg *config.Se
 	b := membus.NewBus(log)
 	nm := notificationsvc.NewNotificationManager()
 	cmdDispatcher := dispatch.NewManager(b, nm, cfg, log)
+	statusCache := status.NewCache(statusTTL)
+	startEventsSubscriber(ctx, b, statusCache, serverRepo, cfg, log)
 	go func() {
 		msgs, cancel, err := b.Subscribe(ctx, cfg.GetBusResponseQueue())
 		if err != nil {
@@ -74,10 +78,17 @@ func BootstrapStandalone(ctx context.Context, log *logger.Logger, cfg *config.Se
 		Cfg:                 cfg,
 		UserService:         dbservice.NewDbUserService(log, userRepo),
 		ServerService:       dbservice.NewDbServerService(log, serverRepo),
+		ServerRepository:    serverRepo,
 		AppRepository:       appRepo,
 		CommandDispatcher:   cmdDispatcher,
 		NotificationManager: nm,
+		StatusCache:         statusCache,
 	}
+
+	// Standalone has no gRPC Hub emitting heartbeats; the embedded agent is the
+	// box itself and is "online" while the process runs. Keep the status cache
+	// warm with a periodic liveness pulse for the local server.
+	go markEmbeddedServerOnline(ctx, serverRepo, statusCache, log)
 
 	if !cert.IsServerCertificateGenerated(certmanager) {
 		certmanager.GenerateServer(true)
@@ -111,4 +122,30 @@ func BootstrapStandalone(ctx context.Context, log *logger.Logger, cfg *config.Se
 	}
 
 	return deps
+}
+
+// markEmbeddedServerOnline keeps the local server's liveness fresh in the status
+// cache. The standalone process is the agent, so it is online while running.
+func markEmbeddedServerOnline(ctx context.Context, serverRepo *repository.DbServerRepository, cache *status.Cache, log *logger.Logger) {
+	pulse := func() {
+		id, ok, err := serverRepo.FirstServerID(ctx)
+		if err != nil {
+			log.Debug("liveness pulse: lookup failed", "error", err)
+			return
+		}
+		if ok {
+			cache.MarkOnline(id, time.Now())
+		}
+	}
+	pulse()
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			pulse()
+		}
+	}
 }

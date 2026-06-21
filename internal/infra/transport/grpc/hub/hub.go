@@ -155,6 +155,22 @@ func (h *Hub) publishResult(requestID string, statusCode model.NotificationStatu
 	}
 }
 
+// publishEvent forwards an agent-initiated event (liveness, capabilities,
+// status) to the region's events queue, where the API persists/caches it and
+// pushes to SSE.
+func (h *Hub) publishEvent(kind bus.EventKind, serverID string, payload []byte) {
+	if h.bus == nil {
+		return
+	}
+	if err := h.bus.Publish(context.Background(), h.cfg.GetBusEventsQueue(), bus.EventMessage{
+		ServerID: serverID,
+		Kind:     kind,
+		Payload:  payload,
+	}); err != nil {
+		h.log.Error("failed to publish event", "error", err, "kind", kind, "server_id", serverID)
+	}
+}
+
 func createServer(log *logger.Logger, cfg *config.ServerConfig) *grpc.Server {
 	caCert, err := os.ReadFile(cfg.GetHubCACertPath())
 	if err != nil {
@@ -299,8 +315,19 @@ func (h *Hub) RegisterAgent(ctx context.Context, req *proto.RegisterAgentRequest
 		},
 	}
 
+	// Report the agent's capabilities/features so the API can persist them.
+	if caps, err := json.Marshal(capabilitiesEvent{Capabilities: req.Capabilities, Features: req.Features}); err == nil {
+		h.publishEvent(bus.EventCapabilities, agentID, caps)
+	}
+
 	h.log.Info("Agent registration successful", "agent_id", agentID)
 	return response, nil
+}
+
+// capabilitiesEvent is the JSON body of a bus.EventCapabilities event.
+type capabilitiesEvent struct {
+	Capabilities map[string]string `json:"capabilities"`
+	Features     map[string]bool   `json:"features"`
 }
 
 func (h *Hub) AgentStream(stream grpc.BidiStreamingServer[proto.AgentMessage, proto.ServerCommand]) error {
@@ -369,6 +396,10 @@ func (h *Hub) AgentStream(stream grpc.BidiStreamingServer[proto.AgentMessage, pr
 				agent.lastSeen = time.Now()
 				h.agentsLock.Unlock()
 			}
+
+			// A heartbeat is a liveness pulse: tell the API the server is up so
+			// it can update last_seen + the in-memory status cache.
+			h.publishEvent(bus.EventServerOnline, agentID, nil)
 
 			heartbeatResponse := &proto.ServerCommand{
 				Command: &proto.ServerCommand_HeartbeatResponse{

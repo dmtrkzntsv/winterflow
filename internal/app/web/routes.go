@@ -32,8 +32,10 @@ func (s *Server) registerRoutes() {
 		Logger:            s.Logger,
 		CommandDispatcher: s.Deps.CommandDispatcher,
 		AppRepository:     s.Deps.AppRepository,
+		StatusCache:       s.Deps.StatusCache,
 	})
 	s.Router.With(amw.Auth, happ.GetAppsValidationMiddleware).Get("/api/v1/app/get-apps", appsAPI.GetApps)
+	s.Router.With(amw.Auth, happ.GetAppsValidationMiddleware).Get("/api/v1/app/get-apps-status", appsAPI.GetAppsStatus)
 	s.Router.With(amw.Auth, happ.GetAppsValidationMiddleware).Post("/api/v1/app/refresh-apps", appsAPI.RefreshApps)
 	s.Router.With(amw.Auth).Post("/api/v1/app/create-app", appsAPI.CreateApp)
 
@@ -41,8 +43,10 @@ func (s *Server) registerRoutes() {
 		Logger:              s.Logger,
 		ServerService:       s.Deps.ServerService,
 		UserService:         s.Deps.UserService,
+		StatusCache:         s.Deps.StatusCache,
 		NotificationManager: s.Deps.NotificationManager,
 	})
 	s.Router.With(amw.Auth).Get("/api/v1/server/get-servers", serversAPI.GetServers)
+	s.Router.With(amw.Auth).Get("/api/v1/server/get-servers-status", serversAPI.GetServersStatus)
 	s.Router.With(amw.Auth).Post("/api/v1/server/register", serversAPI.Register)
 }

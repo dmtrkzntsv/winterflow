@@ -12,6 +12,7 @@ import (
 	"time"
 	"winterflow/internal/domain/model"
 	"winterflow/internal/infra/transport/bus"
+	"winterflow/internal/infra/transport/codec"
 	"winterflow/internal/infra/transport/grpc/handler"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
@@ -64,21 +65,9 @@ func (h *Hub) StartBusBridge(ctx context.Context) error {
 		h.log.Warn("no bus configured, hub will not forward commands")
 		return nil
 	}
-	msgs, cancel, err := h.bus.Subscribe(ctx, h.cfg.GetBusRequestQueue())
-	if err != nil {
-		return fmt.Errorf("subscribe request queue: %w", err)
-	}
-	go func() {
-		defer cancel()
-		for msg := range msgs {
-			var cmd bus.CommandMessage
-			if err := json.Unmarshal([]byte(msg.Payload), &cmd); err != nil {
-				h.log.Error("failed to unmarshal command message", err)
-				continue
-			}
-			h.dispatchToAgent(cmd)
-		}
-	}()
+	bus.SubscribeJSON(ctx, h.bus, h.cfg.GetBusRequestQueue(), h.log, func(cmd bus.CommandMessage) {
+		h.dispatchToAgent(cmd)
+	})
 	go h.reapStaleAgents(ctx)
 	h.log.Info("hub bus bridge started", "request_queue", h.cfg.GetBusRequestQueue())
 	return nil
@@ -141,54 +130,42 @@ func (h *Hub) dispatchToAgent(cmd bus.CommandMessage) {
 
 	if !active {
 		h.log.Warn("command for offline/unknown agent", "agent_id", cmd.AgentID, "request_id", cmd.RequestID)
-		h.publishResult(cmd.RequestID, model.NotificationStatusError, nil, "agent not connected")
+		h.publishError(cmd.RequestID, "agent not connected")
 		return
 	}
 
 	req := &proto.ServerCommand{
 		Command: &proto.ServerCommand_Request{
-			Request: &proto.RequestEnvelope{
-				Base: &proto.BaseMessage{
-					MessageId:       cmd.RequestID,
-					Timestamp:       timestamppb.Now(),
-					AgentId:         cmd.AgentID,
-					ProtocolVersion: "1.0.0",
-				},
-				RequestId:     cmd.RequestID,
-				Type:          cmd.Type,
-				ContentType:   "application/json",
-				SchemaVersion: "1.0.0",
-				Payload:       cmd.Payload,
-			},
+			Request: codec.EnvelopeFromCommand(cmd),
 		},
 	}
 	if err := stream.Send(req); err != nil {
 		h.log.Error("failed to send command to agent", "error", err, "agent_id", cmd.AgentID)
-		h.publishResult(cmd.RequestID, model.NotificationStatusError, nil, "failed to deliver command to agent")
+		h.publishError(cmd.RequestID, "failed to deliver command to agent")
 	}
 }
 
-// publishResult emits an agent's reply (or a delivery error) onto the response
-// queue as a model.Notification keyed by the request id, which the API's
-// dispatch.Manager routes to the originating user over SSE.
-func (h *Hub) publishResult(requestID string, statusCode model.NotificationStatus, payload []byte, detail string) {
+// publishNotification emits a result onto the response queue, where the API's
+// dispatch.Manager routes it to the originating user over SSE (keyed by Ref).
+func (h *Hub) publishNotification(n model.Notification) {
 	if h.bus == nil {
 		return
 	}
-	ntf := model.Notification{
+	if err := h.bus.Publish(context.Background(), h.cfg.GetBusResponseQueue(), n); err != nil {
+		h.log.Error("failed to publish result", "error", err, "request_id", n.Ref)
+	}
+}
+
+// publishError emits a synthetic delivery failure for a command the hub could
+// not forward (unknown/offline agent, dead stream).
+func (h *Hub) publishError(requestID, detail string) {
+	h.publishNotification(model.Notification{
 		Type:      model.NotificationOperationResult,
 		Ref:       requestID,
-		Status:    statusCode,
+		Status:    model.NotificationStatusError,
+		Error:     detail,
 		Timestamp: time.Now(),
-	}
-	if statusCode == model.NotificationStatusError {
-		ntf.Error = detail
-	} else if len(payload) > 0 {
-		ntf.Payload = json.RawMessage(payload)
-	}
-	if err := h.bus.Publish(context.Background(), h.cfg.GetBusResponseQueue(), ntf); err != nil {
-		h.log.Error("failed to publish result", "error", err, "request_id", requestID)
-	}
+	})
 }
 
 // publishEvent forwards an agent-initiated event (liveness, capabilities,
@@ -460,12 +437,7 @@ func (h *Hub) AgentStream(stream grpc.BidiStreamingServer[proto.AgentMessage, pr
 			// Forward the agent's reply back onto the response queue, keyed by
 			// request_id, so the originating API can route the result to the
 			// user over SSE.
-			statusCode := model.NotificationStatusSuccess
-			detail := payload.Response.Base.Detail
-			if payload.Response.Base.ResponseCode != proto.ResponseCode_RESPONSE_CODE_SUCCESS {
-				statusCode = model.NotificationStatusError
-			}
-			h.publishResult(payload.Response.RequestId, statusCode, payload.Response.Payload, detail)
+			h.publishNotification(codec.NotificationFromResponse(payload.Response.RequestId, payload.Response))
 
 		default:
 			h.log.Warn("Received unknown message type from agent", "agent_id", agentID)

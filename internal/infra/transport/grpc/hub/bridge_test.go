@@ -78,9 +78,9 @@ func TestDispatchToOfflineAgentPublishesError(t *testing.T) {
 	}
 }
 
-// publishResult must key the notification by request id and carry the payload
-// through on success.
-func TestPublishResultSuccess(t *testing.T) {
+// publishNotification must key the notification by request id and carry the
+// payload through on success.
+func TestPublishNotificationSuccess(t *testing.T) {
 	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
 	b := membus.NewBus(log)
 	h := newTestHub(t, b)
@@ -96,7 +96,13 @@ func TestPublishResultSuccess(t *testing.T) {
 	defer cancelSub()
 	time.Sleep(20 * time.Millisecond)
 
-	h.publishResult("req-7", model.NotificationStatusSuccess, []byte(`{"app_id":"a1","revision":2}`), "ok")
+	h.publishNotification(model.Notification{
+		Type:      model.NotificationOperationResult,
+		Ref:       "req-7",
+		Status:    model.NotificationStatusSuccess,
+		Payload:   json.RawMessage(`{"app_id":"a1","revision":2}`),
+		Timestamp: time.Now(),
+	})
 
 	select {
 	case msg := <-results:

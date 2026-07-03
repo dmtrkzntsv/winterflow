@@ -166,30 +166,64 @@ ciphertext+tag)`.
 - **Server Settings** page (`/settings`) holds registries/networks/agent-update;
   sidebar nav = Dashboard + Apps group + bottom-pinned Server Settings.
 
+### ✅ Phase 5 — Backend cleanup + live status + frontend refresh (2026-07)
+
+Spec: `docs/superpowers/specs/2026-07-02-v2-finish-migration-design.md`.
+
+- **Backend cleanup (~900 lines):** dead code deleted (PAT management surface,
+  AddServer chain, vestigial ports/models, hub cancel machinery, transport/dto);
+  `bus.SubscribeJSON` generic consumer; shared `codec.EnvelopeFromCommand` /
+  `NotificationFromResponse` used by both bridges; shared `wireCore` bootstrap
+  for standalone + API.
+- **Live status pipeline (the apps-status producer was missing — the endpoint
+  always returned `[]`):** the agent now pushes `apps.status` every 30s
+  (immediately on start) — distributed via the new `AgentEvent` stream message,
+  standalone straight onto the events queue. The API fans transitions out over
+  SSE as unsolicited notifications: `server_status {server_id, liveness}` on
+  unknown↔online flips (a 15s sweeper emits the offline direction) and
+  `apps_status {server_id, apps}` per report, to all members of the owning org.
+  The agent also heartbeats immediately on stream start (previously commands
+  bounced with "agent not connected" for up to 30s after connect).
+- **Hardware capabilities:** agents report `server_ip`, `system_cpu_cores`,
+  `system_memory_total`, `system_disk_total` (pkg/sysinfo, stdlib collectors);
+  `get-servers` serializes capabilities.
+- **Frontend:** v1 theme tokens; v1 URL structure (`/create-app`; the edit
+  route is gone — editing is an Editor tab on app details, `?tab=` addressable);
+  CodeMirror 6 file editor (yaml highlighting); lightweight logs viewer
+  (tail select + sticky autoscroll); v1-style square app cards with
+  status-colored borders and staggered entrance animation, fed by SSE; server
+  cards with status dot, IP, specs, agent version, SSE-driven.
+- **Tests:** backend coverage 10.7% → **60.6%** (63.9% excluding generated
+  gRPC code), incl. a full hub↔agent E2E over real in-process mTLS.
+
 ### ❌ Explicitly out of scope (deferred — NOT in the migration)
-- **Catalog / one-click app templates** (v1 `/catalog`, `/catalog/:name`).
+- **Catalog / one-click app templates** (considered 2026-07 and dropped).
 - **Organization & member management** (v2 auto-creates one org per user).
 - **Stripe billing / subscriptions** (the `subscription_status` columns were
   removed; when re-added it'll be in dedicated tables).
 
+### 🔜 Approved next phases (designed, not yet built — see the 2026-07-02 spec)
+- **A1 — deployment rework:** one folder per app that IS the deployment
+  (`apps-data/{appID}` canonical + `apps/` name-symlinks), git-per-app history
+  (go-git), compose-native `.env`/`.env.secrets` (no custom `${VAR}` rendering;
+  `pkg/template` dies), `app.revisions` + `app.rollback` commands, History tab.
+  Ride-alongs: dispatcher switch → generic handler map, `DispatchJSON` web
+  helper (fixes auth errors returning 400 instead of 401), delete `db/service`
+  shim + pass-through usecases.
+- **A2 — git-sourced apps:** deploy from a repo URL (branch + compose path),
+  SHA pinning per deploy, polling auto-redeploy, ECIES-encrypted repo tokens,
+  `image.tags` registry tag browsing in the editor.
+
 ### ⚠️ Known partial / follow-ups
-- **Server cards** show name + last-seen only — not live online status,
-  hardware specs, or IP. The web `servers-context` doesn't fetch
-  `get-servers-status` or expose capabilities yet. To finish: have the servers
-  context poll `get-servers-status` (like the apps context does) and read the
-  `server_capabilities` for specs.
-- **App details "Edit"** opens the standalone editor route (`/apps/:id/edit`)
-  rather than an inline Editor tab; v1 had Editor as a tab.
-- **Theme/visual styling** was intentionally NOT changed to match v1. v1's exact
-  theme tokens (for reference) are in v1's
-  `web/src/styles/index.css` / prod `index-*.css`: radius `0.5rem`, vivid blue
-  primary `oklch(0.623 0.214 259.815)`, white surfaces, neutral-gray sidebar.
-  v2 currently uses a steel-blue primary (`#5a8ec0`), `0.625rem` radius, and a
-  slate-50 background. Port the tokens into `web/src/index.css` if a visual match
-  is wanted.
 - The web ESLint suite has **one pre-existing error** in the generated shadcn
   `web/src/components/ui/sidebar.tsx` (fast-refresh rule). It predates this work;
   every commit otherwise lints clean.
+- `cert.Manager.GenerateServer(false)` regenerates only missing artifacts, so
+  deleting just `ca.key` leaves a key mismatched with the surviving `ca.crt`
+  (surfaced by the new cert tests; use `override=true` to regenerate the set).
+- The distributed agent's identity is `agent-<timestamp>` generated per run
+  (`cmd/agent/main.go`); it should derive from the claimed server id / cert CN
+  before the distributed topology ships.
 
 ## Current command + route surface (source of truth: `routes.go`, `command.go`)
 
@@ -205,9 +239,13 @@ API routes (all `/api/v1`):
   `registry/{list,create,delete}`, `network/{list,create,delete}`,
   `agent/update`.
 - SSE: `notification/stream`. Auth/server: `server/register`, `/auth/*`.
+- Unsolicited SSE notification types (no `ref`): `server_status`
+  (`{server_id, liveness}`) and `apps_status` (`{server_id, apps}`), pushed to
+  the owning org's members on agent events/transitions.
 
-Web pages (`web/src/pages/`): `home`, `app-details`, `create-app` (also handles
-`/apps/:id/edit`), `settings`, `login`.
+Web pages (`web/src/pages/`): `home` (`/`), `app-details` (`/app/:appId`,
+tabs Logs/Editor/Settings via `?tab=`), `create-app` (`/create-app`,
+create-only), `settings`, `login`.
 
 ## Key files by area
 

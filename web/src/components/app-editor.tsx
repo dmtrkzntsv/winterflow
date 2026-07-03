@@ -3,9 +3,9 @@ import { Eye, EyeOff, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { CodeEditor } from "@/components/code-editor";
 import { IconPicker } from "@/components/icon-picker";
 import { useState } from "react";
 import {
@@ -197,12 +197,10 @@ export function AppEditor({ state, onChange }: Props) {
                   <Trash2 className="size-4" />
                 </Button>
               </div>
-              <Textarea
+              <CodeEditor
                 value={state.files[f.id] ?? ""}
-                onChange={(e) => updateFileContent(f.id, e.target.value)}
-                rows={8}
-                spellCheck={false}
-                className="font-mono text-xs"
+                onChange={(content) => updateFileContent(f.id, content)}
+                filename={f.filename}
                 placeholder="file contents (use ${VAR} for variables)"
               />
             </div>

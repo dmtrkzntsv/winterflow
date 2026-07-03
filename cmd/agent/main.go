@@ -10,6 +10,7 @@ import (
 	"time"
 	appagent "winterflow/internal/app/agent"
 	dockercompose "winterflow/internal/infra/orchestrator/docker_compose"
+	"winterflow/internal/infra/transport/bus"
 	grpcagent "winterflow/internal/infra/transport/grpc/agent"
 	"winterflow/internal/infra/transport/grpc/proto"
 	"winterflow/pkg/config"
@@ -87,6 +88,12 @@ func main() {
 	// signal handler below stays responsive.
 	log.Info("Starting agent connection supervisor", "agent_id", agentID)
 	go agent.Run(ctx)
+
+	// Periodic apps-status push: feeds the API's status cache and the SSE
+	// live-status pipeline. Ticks while the stream is down are skipped.
+	go appagent.RunStatusReporter(ctx, orchestrator, func(kind bus.EventKind, payload []byte) error {
+		return agent.SendEvent(string(kind), payload)
+	}, 30*time.Second, log)
 
 	// Status monitoring routine
 	go func() {

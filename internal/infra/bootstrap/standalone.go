@@ -4,12 +4,11 @@ import (
 	"context"
 	"time"
 	appagent "winterflow/internal/app/agent"
-	"winterflow/internal/domain/service/status"
 	agentsrv "winterflow/internal/infra/agent/service"
 	"winterflow/internal/infra/cert"
 	"winterflow/internal/infra/db"
-	"winterflow/internal/infra/db/repository"
 	dockercompose "winterflow/internal/infra/orchestrator/docker_compose"
+	"winterflow/internal/infra/transport/bus"
 	membus "winterflow/internal/infra/transport/mem/bus"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
@@ -46,10 +45,19 @@ func BootstrapStandalone(ctx context.Context, log *logger.Logger, cfg *config.Se
 		log.Fatalf("failed to start in-process bridge: %v", err)
 	}
 
-	// Standalone has no gRPC Hub emitting heartbeats; the embedded agent is the
-	// box itself and is "online" while the process runs. Keep the status cache
-	// warm with a periodic liveness pulse for the local server.
-	go markEmbeddedServerOnline(ctx, serverRepo, deps.StatusCache, log)
+	// Standalone has no gRPC Hub forwarding agent events; the embedded agent is
+	// the box itself. Run the same status reporter the distributed agent runs,
+	// publishing apps.status straight onto the in-process events queue — that
+	// feeds the status cache (doubling as the liveness pulse) and the SSE push.
+	// Until the embedded server is claimed there is no server id to report as,
+	// so ticks are skipped silently.
+	go appagent.RunStatusReporter(ctx, orchestrator, func(kind bus.EventKind, payload []byte) error {
+		id, ok, err := serverRepo.FirstServerID(ctx)
+		if err != nil || !ok {
+			return err
+		}
+		return b.Publish(ctx, cfg.GetBusEventsQueue(), bus.EventMessage{ServerID: id, Kind: kind, Payload: payload})
+	}, 30*time.Second, log)
 
 	if !cert.IsServerCertificateGenerated(certmanager) {
 		certmanager.GenerateServer(true)
@@ -83,30 +91,4 @@ func BootstrapStandalone(ctx context.Context, log *logger.Logger, cfg *config.Se
 	}
 
 	return deps
-}
-
-// markEmbeddedServerOnline keeps the local server's liveness fresh in the status
-// cache. The standalone process is the agent, so it is online while running.
-func markEmbeddedServerOnline(ctx context.Context, serverRepo *repository.DbServerRepository, cache *status.Cache, log *logger.Logger) {
-	pulse := func() {
-		id, ok, err := serverRepo.FirstServerID(ctx)
-		if err != nil {
-			log.Debug("liveness pulse: lookup failed", "error", err)
-			return
-		}
-		if ok {
-			cache.MarkOnline(id, time.Now())
-		}
-	}
-	pulse()
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			pulse()
-		}
-	}
 }

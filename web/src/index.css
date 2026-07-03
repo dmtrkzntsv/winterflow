@@ -217,3 +217,18 @@
         opacity: 0;
     }
 }
+
+/* Staggered entrance for app tiles; delay is set inline per card. */
+.app-card-in {
+    animation: app-card-in 0.3s ease-out backwards;
+}
+@keyframes app-card-in {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: none;
+    }
+}

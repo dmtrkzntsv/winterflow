@@ -186,6 +186,27 @@ export function AppsProvider({ children }: { children: ReactNode }) {
     return unsubscribe;
   }, [subscribe, loadApps]);
 
+  // Live status push: the agent reports apps.status every 30s and the API fans
+  // it out as an apps_status notification. The 15s poll above stays as a
+  // reconnect/seed fallback.
+  useEffect(() => {
+    return subscribe((n) => {
+      if (n.type !== "apps_status") return;
+      const p = n.payload as
+        | {
+            server_id?: string;
+            apps?: { app_id: string; status_code: number }[] | null;
+          }
+        | undefined;
+      if (!p?.server_id || p.server_id !== activeServerId) return;
+      const map: Record<string, number> = {};
+      for (const s of p.apps ?? []) {
+        map[s.app_id] = s.status_code;
+      }
+      setStatusByApp(map);
+    });
+  }, [subscribe, activeServerId]);
+
   // dispatchAndWait POSTs a fire-and-forward command, awaits its SSE result by
   // request_id, then refreshes the list and status.
   const dispatchAndWait = useCallback(

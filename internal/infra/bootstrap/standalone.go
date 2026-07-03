@@ -2,10 +2,8 @@ package bootstrap
 
 import (
 	"context"
-	"encoding/json"
 	"time"
 	appagent "winterflow/internal/app/agent"
-	"winterflow/internal/domain/model"
 	notificationsvc "winterflow/internal/domain/service/notification"
 	"winterflow/internal/domain/service/status"
 	agentsrv "winterflow/internal/infra/agent/service"
@@ -48,21 +46,7 @@ func BootstrapStandalone(ctx context.Context, log *logger.Logger, cfg *config.Se
 	cmdDispatcher := dispatch.NewManager(b, nm, cfg, log)
 	statusCache := status.NewCache(statusTTL)
 	startEventsSubscriber(ctx, b, statusCache, serverRepo, cfg, log)
-	go func() {
-		msgs, cancel, err := b.Subscribe(ctx, cfg.GetBusResponseQueue())
-		if err != nil {
-			log.Fatalf("failed to subscribe to response queue: %v", err)
-		}
-		defer cancel()
-		for msg := range msgs {
-			var ntf model.Notification
-			if err := json.Unmarshal([]byte(msg.Payload), &ntf); err != nil {
-				log.Error("failed to unmarshal bus message", err)
-				continue
-			}
-			cmdDispatcher.HandleResult(ntf)
-		}
-	}()
+	startResponseSubscriber(ctx, b, cmdDispatcher, cfg, log)
 
 	// In-process bridge: consumes the request queue and runs commands against
 	// the local Docker Compose orchestrator (the standalone Hub + agent).

@@ -28,21 +28,9 @@ type capabilitiesEvent struct {
 // liveness, capabilities, status), updating the in-memory status cache and the
 // DB (capabilities/last_seen). It is the API's consumer of events:<region>.
 func startEventsSubscriber(ctx context.Context, b bus.Bus, cache *status.Cache, serverRepo port.ServerRepository, cfg *config.ServerConfig, log *logger.Logger) {
-	go func() {
-		msgs, cancel, err := b.Subscribe(ctx, cfg.GetBusEventsQueue())
-		if err != nil {
-			log.Fatalf("failed to subscribe to events queue: %v", err)
-		}
-		defer cancel()
-		for msg := range msgs {
-			var ev bus.EventMessage
-			if err := json.Unmarshal([]byte(msg.Payload), &ev); err != nil {
-				log.Error("failed to unmarshal event", err)
-				continue
-			}
-			handleEvent(ctx, ev, cache, serverRepo, log)
-		}
-	}()
+	bus.SubscribeJSON(ctx, b, cfg.GetBusEventsQueue(), log, func(ev bus.EventMessage) {
+		handleEvent(ctx, ev, cache, serverRepo, log)
+	})
 	log.Debug("events subscriber started", "events_queue", cfg.GetBusEventsQueue())
 }
 

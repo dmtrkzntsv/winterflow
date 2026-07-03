@@ -53,7 +53,7 @@ const toServer = (s: ServerResponse): Server => ({
 
 export function ServersProvider({ children }: { children: ReactNode }) {
   const { isAuthenticated } = useAuth();
-  const { subscribe } = useNotifications();
+  const { subscribe, connected } = useNotifications();
   const [servers, setServers] = useState<Server[]>([]);
   const [activeServerId, setActiveServerId] = useState<string | null>(null);
   const [statusByServer, setStatusByServer] = useState<
@@ -132,8 +132,9 @@ export function ServersProvider({ children }: { children: ReactNode }) {
     void fetchServers();
   }, [fetchServers]);
 
-  // Seed liveness once per login; afterwards server_status SSE events keep it
-  // current (transitions are pushed, not polled).
+  // Seed liveness on login and re-seed when the SSE stream (re)connects — a
+  // dropped stream can miss a server_status transition. Steady-state updates
+  // are pushed, not polled.
   useEffect(() => {
     if (!isAuthenticated) return;
     let cancelled = false;
@@ -153,7 +154,7 @@ export function ServersProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [isAuthenticated]);
+  }, [isAuthenticated, connected]);
 
   useEffect(() => {
     if (!isAuthenticated) return;

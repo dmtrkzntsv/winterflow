@@ -59,15 +59,10 @@ const toApp = (a: AppResponse): App => ({
   createdAt: a.created_at,
 });
 
-// STATUS_POLL_MS is how often the UI pulls the live (in-memory, TTL'd) status
-// snapshot. Status also arrives via SSE, but a slow poll keeps it fresh on
-// first paint and after reconnects.
-const STATUS_POLL_MS = 15000;
-
 export function AppsProvider({ children }: { children: ReactNode }) {
   const { isAuthenticated } = useAuth();
   const { activeServerId } = useServers();
-  const { subscribe, waitFor } = useNotifications();
+  const { subscribe, waitFor, connected } = useNotifications();
   const [apps, setApps] = useState<App[]>([]);
   const [statusByApp, setStatusByApp] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
@@ -166,12 +161,13 @@ export function AppsProvider({ children }: { children: ReactNode }) {
     }
   }, [isAuthenticated, activeServerId]);
 
+  // Status is pushed over SSE (apps_status, every agent report); this fetch
+  // only seeds the snapshot on load/server switch and re-seeds after the
+  // stream (re)connects, covering events missed while disconnected. No
+  // interval polling.
   useEffect(() => {
     void loadStatus();
-    if (!isAuthenticated || !activeServerId) return;
-    const id = setInterval(() => void loadStatus(), STATUS_POLL_MS);
-    return () => clearInterval(id);
-  }, [loadStatus, isAuthenticated, activeServerId]);
+  }, [loadStatus, connected]);
 
   // Re-read the apps list when a dispatched command's result arrives over SSE.
   // The backend persists/reconciles the DB before publishing, so a plain

@@ -4,15 +4,12 @@ import (
 	"context"
 	"time"
 	appagent "winterflow/internal/app/agent"
-	notificationsvc "winterflow/internal/domain/service/notification"
 	"winterflow/internal/domain/service/status"
 	agentsrv "winterflow/internal/infra/agent/service"
 	"winterflow/internal/infra/cert"
 	"winterflow/internal/infra/db"
 	"winterflow/internal/infra/db/repository"
-	dbservice "winterflow/internal/infra/db/service"
 	dockercompose "winterflow/internal/infra/orchestrator/docker_compose"
-	"winterflow/internal/infra/transport/dispatch"
 	membus "winterflow/internal/infra/transport/mem/bus"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
@@ -35,18 +32,10 @@ func BootstrapStandalone(ctx context.Context, log *logger.Logger, cfg *config.Se
 		log.Fatalf("Failed to create certificate manager: %v", err)
 	}
 
-	userRepo := repository.NewDbUserRepository(dbconn, log)
-	serverRepo := repository.NewDbServerRepository(dbconn, log)
-	appRepo := repository.NewDbAppRepository(dbconn, log)
-
-	// In-process bus + command dispatcher + response subscriber: identical wiring
-	// to the distributed API, but Redis is replaced by an in-memory bus.
+	// Identical core wiring to the distributed API; Redis is replaced by an
+	// in-memory bus.
 	b := membus.NewBus(log)
-	nm := notificationsvc.NewNotificationManager()
-	cmdDispatcher := dispatch.NewManager(b, nm, cfg, log)
-	statusCache := status.NewCache(statusTTL)
-	startEventsSubscriber(ctx, b, statusCache, serverRepo, cfg, log)
-	startResponseSubscriber(ctx, b, cmdDispatcher, cfg, log)
+	deps, serverRepo := wireCore(ctx, b, dbconn, cfg, log)
 
 	// In-process bridge: consumes the request queue and runs commands against
 	// the local Docker Compose orchestrator (the standalone Hub + agent).
@@ -57,22 +46,10 @@ func BootstrapStandalone(ctx context.Context, log *logger.Logger, cfg *config.Se
 		log.Fatalf("failed to start in-process bridge: %v", err)
 	}
 
-	deps := &Deps{
-		Log:                 log,
-		Cfg:                 cfg,
-		UserService:         dbservice.NewDbUserService(log, userRepo),
-		ServerService:       dbservice.NewDbServerService(log, serverRepo),
-		ServerRepository:    serverRepo,
-		AppRepository:       appRepo,
-		CommandDispatcher:   cmdDispatcher,
-		NotificationManager: nm,
-		StatusCache:         statusCache,
-	}
-
 	// Standalone has no gRPC Hub emitting heartbeats; the embedded agent is the
 	// box itself and is "online" while the process runs. Keep the status cache
 	// warm with a periodic liveness pulse for the local server.
-	go markEmbeddedServerOnline(ctx, serverRepo, statusCache, log)
+	go markEmbeddedServerOnline(ctx, serverRepo, deps.StatusCache, log)
 
 	if !cert.IsServerCertificateGenerated(certmanager) {
 		certmanager.GenerateServer(true)

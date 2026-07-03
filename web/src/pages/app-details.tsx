@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   ArrowUpCircle,
   Play,
@@ -30,6 +30,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { AppIcon } from "@/components/app-icon";
+import { AppEditorPanel } from "@/components/app-editor-panel";
 import { AppStatusBadge } from "@/components/app-status-badge";
 import { useApps } from "@/context/use-apps";
 import { useNotifications } from "@/context/use-notifications";
@@ -52,10 +53,21 @@ const LEVEL_CLASS: Record<number, string> = {
   6: "text-red-600 font-semibold",
 };
 
+const TABS = ["logs", "editor", "settings"] as const;
+
 export default function AppDetailsPage() {
   const { appId } = useParams();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { apps, statusByApp, control, remove, rename } = useApps();
+
+  const tabParam = searchParams.get("tab") ?? "logs";
+  const tab = (TABS as readonly string[]).includes(tabParam)
+    ? tabParam
+    : "logs";
+  const setTab = (next: string) => {
+    setSearchParams(next === "logs" ? {} : { tab: next }, { replace: true });
+  };
 
   const app = useMemo(() => apps.find((a) => a.id === appId), [apps, appId]);
 
@@ -146,7 +158,7 @@ export default function AppDetailsPage() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => navigate(`/apps/${app.id}/edit`)}
+              onClick={() => setTab("editor")}
             >
               <SquarePen className="size-4" /> Edit
             </Button>
@@ -154,13 +166,17 @@ export default function AppDetailsPage() {
         </div>
       </div>
 
-      <Tabs defaultValue="logs">
+      <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="logs">Logs</TabsTrigger>
+          <TabsTrigger value="editor">Editor</TabsTrigger>
           <TabsTrigger value="settings">Settings</TabsTrigger>
         </TabsList>
         <TabsContent value="logs">
           <LogsTab appId={app.id} />
+        </TabsContent>
+        <TabsContent value="editor">
+          <AppEditorPanel appId={app.id} />
         </TabsContent>
         <TabsContent value="settings">
           <SettingsTab

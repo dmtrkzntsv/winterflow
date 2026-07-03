@@ -33,11 +33,7 @@ const router = createBrowserRouter([
         element: <HomePage />,
       },
       {
-        path: "/apps/new",
-        element: <CreateAppPage />,
-      },
-      {
-        path: "/apps/:appId/edit",
+        path: "/create-app",
         element: <CreateAppPage />,
       },
       {

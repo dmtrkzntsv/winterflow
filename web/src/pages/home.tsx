@@ -46,7 +46,7 @@ export default function HomePage() {
       <Card>
         <CardHeader className="flex-row items-center justify-between space-y-0">
           <CardTitle>Apps</CardTitle>
-          <Button size="sm" onClick={() => navigate("/apps/new")}>
+          <Button size="sm" onClick={() => navigate("/create-app")}>
             <Plus className="size-4" /> New App
           </Button>
         </CardHeader>

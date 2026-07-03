@@ -10,7 +10,6 @@ package codec
 import (
 	"encoding/json"
 	"fmt"
-	"time"
 
 	"winterflow/internal/domain/command"
 	"winterflow/internal/infra/transport/grpc/proto"
@@ -126,6 +125,3 @@ func NewRequestPayload(typ command.Type) (any, error) {
 	}
 }
 
-// UnixTimestamp is a small helper for the Bus DTO hop, which carries timestamps
-// as unix seconds rather than protobuf Timestamps.
-func UnixTimestamp(t time.Time) int64 { return t.Unix() }

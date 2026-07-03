@@ -31,18 +31,3 @@ func TestReapOnceRemovesOnlyStaleAgents(t *testing.T) {
 		t.Error("agent at exactly TTL should remain (strictly-greater removal)")
 	}
 }
-
-func TestReapOnceCancelsStreamContext(t *testing.T) {
-	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
-	h := newTestHub(t, membus.NewBus(log))
-
-	canceled := false
-	h.agents["stale"] = &agent{
-		lastSeen:   time.Now().Add(-5 * time.Minute),
-		cancelFunc: func() { canceled = true },
-	}
-	h.reapOnce(time.Now())
-	if !canceled {
-		t.Error("reaping a stale agent should cancel its stream context")
-	}
-}

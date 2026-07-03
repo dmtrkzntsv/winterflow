@@ -14,10 +14,6 @@ type Bus struct {
 	log *logger.Logger
 }
 
-// BusMessage aliases the transport-neutral bus.Message so *Bus satisfies
-// bus.Bus and existing references keep compiling.
-type BusMessage = bus.Message
-
 func NewBus(rdb *redis.Client, log *logger.Logger) *Bus {
 	return &Bus{rdb: rdb, log: log}
 }
@@ -38,9 +34,9 @@ func (b *Bus) Publish(ctx context.Context, channel string, v any) error {
 	return nil
 }
 
-func (b *Bus) Subscribe(ctx context.Context, channels ...string) (<-chan BusMessage, func() error, error) {
+func (b *Bus) Subscribe(ctx context.Context, channels ...string) (<-chan bus.Message, func() error, error) {
 	pubsub := b.rdb.Subscribe(ctx, channels...)
-	out := make(chan BusMessage, 64)
+	out := make(chan bus.Message, 64)
 
 	go func() {
 		defer close(out)
@@ -50,7 +46,7 @@ func (b *Bus) Subscribe(ctx context.Context, channels ...string) (<-chan BusMess
 				b.log.Error("failed to receive bus message", err)
 				return
 			}
-			out <- BusMessage{Channel: msg.Channel, Payload: msg.Payload}
+			out <- bus.Message{Channel: msg.Channel, Payload: msg.Payload}
 		}
 	}()
 

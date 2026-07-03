@@ -39,12 +39,7 @@ type Hub struct {
 type agent struct {
 	streamActive bool
 	lastSeen     time.Time
-	metrics      map[string]string
-	cancelFunc   context.CancelFunc                                                // To cancel active stream
 	stream       grpc.BidiStreamingServer[proto.AgentMessage, proto.ServerCommand] // Reference to the active stream
-
-	pendingRequests     map[string]interface{}
-	pendingRequestsLock sync.RWMutex
 }
 
 func NewHub(log *logger.Logger, cfg *config.ServerConfig, b bus.Bus) *Hub {
@@ -121,9 +116,6 @@ func (h *Hub) reapOnce(now time.Time) int {
 	for id, a := range h.agents {
 		if now.Sub(a.lastSeen) <= staleAgentTTL {
 			continue
-		}
-		if a.cancelFunc != nil {
-			a.cancelFunc()
 		}
 		delete(h.agents, id)
 		removed++
@@ -283,15 +275,8 @@ func (h *Hub) ListenAndServe(ctx context.Context) error {
 func (h *Hub) Shutdown(ctx context.Context) error {
 	h.log.Info("Shutting down gRPC server")
 
-	// Cancel all active agent streams
-	h.agentsLock.Lock()
-	for id, server := range h.agents {
-		if server.streamActive && server.cancelFunc != nil {
-			h.log.Info("Cancelling active stream", "agent_id", id)
-			server.cancelFunc()
-		}
-	}
-	h.agentsLock.Unlock()
+	// Active agent streams are torn down by GracefulStop / Stop below; the
+	// stream handlers' defers clean up the registry.
 
 	// Create a channel to signal when graceful stop completes
 	done := make(chan struct{})
@@ -338,13 +323,9 @@ func (h *Hub) RegisterAgent(ctx context.Context, req *proto.RegisterAgentRequest
 	} else {
 		h.log.Info("Registering new agent", "agent_id", agentID)
 		h.agents[agentID] = &agent{
-			streamActive:        false,
-			lastSeen:            time.Now(),
-			metrics:             make(map[string]string),
-			cancelFunc:          nil,
-			stream:              nil,
-			pendingRequests:     make(map[string]interface{}),
-			pendingRequestsLock: sync.RWMutex{},
+			streamActive: false,
+			lastSeen:     time.Now(),
+			stream:       nil,
 		}
 	}
 
@@ -377,13 +358,8 @@ type capabilitiesEvent struct {
 func (h *Hub) AgentStream(stream grpc.BidiStreamingServer[proto.AgentMessage, proto.ServerCommand]) error {
 	var agentID string
 	var agent *agent
-	//var streamCtx context.Context
-	var cancel context.CancelFunc
 
 	defer func() {
-		if cancel != nil {
-			cancel()
-		}
 		if agentID != "" {
 			h.agentsLock.Lock()
 			// Remove the agent entirely on stream close: a disconnected agent
@@ -426,9 +402,6 @@ func (h *Hub) AgentStream(stream grpc.BidiStreamingServer[proto.AgentMessage, pr
 					agent.streamActive = true
 					agent.stream = stream
 					agent.lastSeen = time.Now()
-
-					_, cancel = context.WithCancel(stream.Context())
-					agent.cancelFunc = cancel
 				} else {
 					h.agentsLock.Unlock()
 					h.log.Warn("Agent not registered, closing stream", "agent_id", agentID)

@@ -153,6 +153,13 @@ func (c *ServerConfig) GetAppsTemplatesDir() string {
 	return path.Join(c.GetAgentDataDir(), "apps_templates")
 }
 
+// GetAppsDataDir holds the canonical per-app deployment folders (each one a
+// git repository): {dataDir}/apps-data/{appID}/. The sibling GetAppsDir holds
+// human-readable symlinks into it.
+func (c *ServerConfig) GetAppsDataDir() string {
+	return path.Join(c.GetAgentDataDir(), "apps-data")
+}
+
 // GetAppsDir holds the rendered, ready-to-run deployments:
 // {dataDir}/apps/{appID}/.
 func (c *ServerConfig) GetAppsDir() string {

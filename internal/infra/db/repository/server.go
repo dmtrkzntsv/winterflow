@@ -96,6 +96,28 @@ func (r *DbServerRepository) RegisterServer(ctx context.Context, dto dto.ServerR
 	return nil
 }
 
+// GetServerUserIDs returns the user ids of every member of the organization
+// that owns the server. Used to fan out unsolicited status notifications to
+// the users who can see the server. Unknown server → empty, no error.
+func (r *DbServerRepository) GetServerUserIDs(ctx context.Context, serverID string) ([]string, error) {
+	dbi := r.db.GetDB()
+	var userIDs []string
+	err := dbi.NewSelect().
+		Model((*models.OrganizationUser)(nil)).
+		Column("user_id").
+		Where("organization_id IN (?)",
+			dbi.NewSelect().
+				Model((*models.Server)(nil)).
+				Column("organization_id").
+				Where("server_id = ?", serverID),
+		).
+		Scan(ctx, &userIDs)
+	if err != nil {
+		return nil, err
+	}
+	return userIDs, nil
+}
+
 // HasAnyServer reports whether any Server has been claimed. Used by standalone
 // bootstrap to decide whether the embedded agent still needs a pending
 // registration.

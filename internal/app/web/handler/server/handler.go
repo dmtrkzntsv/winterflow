@@ -18,20 +18,18 @@ type Handler struct {
 }
 
 type Deps struct {
-	Logger              *logger.Logger
-	ServerService       port.ServerService
-	ServerRepository    port.ServerRepository
-	UserService         port.UserService
-	StatusCache         *status.Cache
-	NotificationManager port.NotificationManager
-	Cfg                 *config.ServerConfig
+	Logger           *logger.Logger
+	ServerService    port.ServerService
+	ServerRepository port.ServerRepository
+	UserService      port.UserService
+	StatusCache      *status.Cache
+	Cfg              *config.ServerConfig
 }
 
 func NewHandler(d *Deps) *Handler {
 	uc := usesrv.NewUseCase(&usesrv.Deps{
-		ServerService:       d.ServerService,
-		Log:                 d.Logger,
-		NotificationManager: d.NotificationManager,
+		ServerService: d.ServerService,
+		Log:           d.Logger,
 	})
 	return &Handler{
 		usecase: *uc,

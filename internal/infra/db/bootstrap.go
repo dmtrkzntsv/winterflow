@@ -17,6 +17,5 @@ func registerModels(db *bun.DB) {
 	db.RegisterModel((*models.ServerFeature)(nil))
 	db.RegisterModel((*models.ServerRegistration)(nil))
 	db.RegisterModel((*models.ServerCertificate)(nil))
-	db.RegisterModel((*models.ReleaseVersion)(nil))
 	db.RegisterModel((*models.App)(nil))
 }

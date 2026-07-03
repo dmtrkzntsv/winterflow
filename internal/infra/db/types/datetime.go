@@ -8,6 +8,11 @@ import (
 
 type DateTime time.Time
 
+// NewDateTime returns the current time as a DateTime.
+func NewDateTime() DateTime {
+	return DateTime(time.Now())
+}
+
 func (dt DateTime) Value() (driver.Value, error) {
 	t := time.Time(dt)
 	return t.UTC().Format("2006-01-02 15:04:05"), nil

@@ -25,38 +25,6 @@ func NewAgentService(log *logger.Logger, certManager *cert.Manager, serverRepo p
 	}
 }
 
-func (as *AgentService) HasConfig() bool {
-	return false
-}
-
-func (as *AgentService) GenerateConfig(ctx context.Context) error {
-	return nil
-}
-
-func (as *AgentService) HasKeys() bool {
-	return false
-}
-
-func (as *AgentService) GenerateKeys(ctx context.Context) error {
-	return nil
-}
-
-func (as *AgentService) IsRegistered() bool {
-	exists, _ := as.cert.ExistsAgentKey()
-	if !exists {
-		return false
-	}
-	exists, _ = as.cert.ExistsAgentCertificate()
-	if !exists {
-		return false
-	}
-	exists, _ = as.cert.ExistsAgentCSR()
-	if !exists {
-		return false
-	}
-	return true
-}
-
 func (as *AgentService) Register(ctx context.Context, code string) (string, error) {
 	serverID := util.GenerateID()
 	certificateID := util.GenerateID()

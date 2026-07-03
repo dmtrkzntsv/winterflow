@@ -17,13 +17,6 @@ type UserRepository interface {
 	// FindByToken resolves a personal access token to its user, enforcing
 	// expiry. Returns model.ErrInvalidToken when the token is unknown/expired.
 	FindByToken(ctx context.Context, token string) (model.User, error)
-	// CreateToken issues a personal access token for a user, returning the
-	// generated token string.
-	CreateToken(ctx context.Context, userID string) (string, error)
-	// ListTokens returns the user's token metadata (without the secret).
-	ListTokens(ctx context.Context, userID string) ([]model.Token, error)
-	// RevokeToken deletes a token by id, scoped to the owning user.
-	RevokeToken(ctx context.Context, userID, tokenID string) error
 }
 
 type UserService interface {

@@ -58,7 +58,7 @@ func (r *DbAppRepository) GetApp(ctx context.Context, appID string) (model.App, 
 func (r *DbAppRepository) CreateApp(ctx context.Context, app model.App) error {
 	row := toDBApp(app)
 	if row.CreatedAt.Time().IsZero() {
-		row.CreatedAt = util.NewDateTime()
+		row.CreatedAt = types.NewDateTime()
 	}
 	_, err := r.db.GetDB().NewInsert().
 		Model(row).
@@ -98,7 +98,7 @@ func (r *DbAppRepository) SyncApps(ctx context.Context, serverID string, apps []
 			a.ServerID = serverID
 			row := toDBApp(a)
 			if row.CreatedAt.Time().IsZero() {
-				row.CreatedAt = util.NewDateTime()
+				row.CreatedAt = types.NewDateTime()
 			}
 			if _, err := tx.NewInsert().
 				Model(row).

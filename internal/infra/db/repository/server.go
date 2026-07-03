@@ -12,7 +12,6 @@ import (
 	"winterflow/internal/infra/db/models"
 	"winterflow/internal/infra/db/types"
 	"winterflow/pkg/logger"
-	"winterflow/pkg/util"
 
 	"github.com/uptrace/bun"
 )
@@ -54,10 +53,6 @@ func (r *DbServerRepository) GetServers(ctx context.Context, userID string) ([]m
 	return out, nil
 }
 
-func (r *DbServerRepository) AddServer(ctx context.Context, dto dto.ServerDTO) (model.Server, error) {
-	return model.Server{}, nil
-}
-
 // toDomainServer maps a DB server row to the domain model.
 func toDomainServer(s *models.Server) model.Server {
 	srv := model.Server{
@@ -83,7 +78,7 @@ func (r *DbServerRepository) RegisterServer(ctx context.Context, dto dto.ServerR
 		ExpiresAt:            types.DateTime(dto.ExpiresAt),
 		Certificate:          base64.StdEncoding.EncodeToString([]byte(dto.Certificate)),
 		CertificateExpiresAt: types.DateTime(dto.CertificateExpiresAt),
-		CreatedAt:            util.NewDateTime(),
+		CreatedAt:            types.NewDateTime(),
 	}
 
 	dbi := r.db.GetDB()
@@ -99,14 +94,6 @@ func (r *DbServerRepository) RegisterServer(ctx context.Context, dto dto.ServerR
 	}
 
 	return nil
-}
-
-// IsServerRegistered reports whether a materialized Server row exists.
-func (r *DbServerRepository) IsServerRegistered(ctx context.Context, serverID string) (bool, error) {
-	return r.db.GetDB().NewSelect().
-		Model((*models.Server)(nil)).
-		Where("server_id = ?", serverID).
-		Exists(ctx)
 }
 
 // HasAnyServer reports whether any Server has been claimed. Used by standalone
@@ -133,7 +120,7 @@ func (r *DbServerRepository) FirstServerID(ctx context.Context) (string, bool, e
 // TouchLastSeen records that a server reported in just now (durable info,
 // distinct from ephemeral live status). No-op if the server isn't claimed yet.
 func (r *DbServerRepository) TouchLastSeen(ctx context.Context, serverID string) error {
-	now := util.NewDateTime()
+	now := types.NewDateTime()
 	_, err := r.db.GetDB().NewUpdate().
 		Model((*models.Server)(nil)).
 		Set("last_seen = ?", now).
@@ -144,7 +131,7 @@ func (r *DbServerRepository) TouchLastSeen(ctx context.Context, serverID string)
 
 // SaveCapabilities upserts a server's capabilities and features (info → DB).
 func (r *DbServerRepository) SaveCapabilities(ctx context.Context, serverID string, capabilities map[string]string, features map[string]bool) error {
-	now := util.NewDateTime()
+	now := types.NewDateTime()
 	return r.db.Transaction(ctx, func(tx bun.IDB) error {
 		for name, value := range capabilities {
 			cap := &models.ServerCapability{ServerID: serverID, Name: name, Value: value, UpdatedAt: now}
@@ -223,7 +210,7 @@ func (r *DbServerRepository) ClaimServer(ctx context.Context, d dto.ClaimServerD
 		ServerID:       reg.ServerID,
 		OrganizationID: d.OrganizationID,
 		Name:           reg.Hostname,
-		CreatedAt:      util.NewDateTime(),
+		CreatedAt:      types.NewDateTime(),
 	}
 	cert := &models.ServerCertificate{
 		CertificateID: reg.CertificateID,
@@ -231,7 +218,7 @@ func (r *DbServerRepository) ClaimServer(ctx context.Context, d dto.ClaimServerD
 		Certificate:   reg.Certificate,
 		IsActive:      true,
 		ExpiresAt:     reg.CertificateExpiresAt,
-		CreatedAt:     util.NewDateTime(),
+		CreatedAt:     types.NewDateTime(),
 	}
 
 	err = r.db.Transaction(ctx, func(tx bun.IDB) error {

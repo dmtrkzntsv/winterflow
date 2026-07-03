@@ -10,6 +10,7 @@ import (
 	"winterflow/internal/domain/model"
 	"winterflow/internal/infra/db"
 	"winterflow/internal/infra/db/models"
+	"winterflow/internal/infra/db/types"
 	"winterflow/pkg/logger"
 	"winterflow/pkg/util"
 
@@ -73,15 +74,15 @@ func (r *DbUserRepository) CreateUser(ctx context.Context, dto dto.UserDTO) (mod
 		BaseModel:      bun.BaseModel{},
 		OrganizationID: util.GenerateID(),
 		Name:           strings.ToLower(dto.Name) + "'s org",
-		CreatedAt:      util.NewDateTime(),
+		CreatedAt:      types.NewDateTime(),
 	}
 
 	user := &models.User{
 		UserID:    util.GenerateID(),
 		Name:      dto.Name,
 		Avatar:    util.RefString(dto.AvatarURL),
-		CreatedAt: util.NewDateTime(),
-		LastSeen:  util.NewDateTime(),
+		CreatedAt: types.NewDateTime(),
+		LastSeen:  types.NewDateTime(),
 	}
 
 	orgUser := &models.OrganizationUser{
@@ -89,7 +90,7 @@ func (r *DbUserRepository) CreateUser(ctx context.Context, dto dto.UserDTO) (mod
 		OrganizationID: org.OrganizationID,
 		UserID:         user.UserID,
 		Role:           model.RoleOwner.Value(),
-		CreatedAt:      util.NewDateTime(),
+		CreatedAt:      types.NewDateTime(),
 		Organization:   org,
 		User:           user,
 	}
@@ -181,8 +182,6 @@ func (r *DbUserRepository) PrimaryOrganizationID(ctx context.Context, userID str
 	return ou.OrganizationID, nil
 }
 
-const tokenTypePAT = "pat"
-
 func (r *DbUserRepository) FindByToken(ctx context.Context, token string) (model.User, error) {
 	var t models.UserToken
 	err := r.db.GetDB().NewSelect().Model(&t).Where("token = ?", token).Scan(ctx)
@@ -196,48 +195,4 @@ func (r *DbUserRepository) FindByToken(ctx context.Context, token string) (model
 		return model.User{}, model.ErrInvalidToken
 	}
 	return r.GetUser(ctx, t.UserID)
-}
-
-func (r *DbUserRepository) CreateToken(ctx context.Context, userID string) (string, error) {
-	secret, err := util.GenerateSecureToken(16) // 32 hex chars to match char(32)
-	if err != nil {
-		return "", err
-	}
-	row := &models.UserToken{
-		TokenID:   util.GenerateID(),
-		Token:     secret,
-		TokenType: tokenTypePAT,
-		UserID:    userID,
-		CreatedAt: util.NewDateTime(),
-	}
-	if _, err := r.db.GetDB().NewInsert().Model(row).Exec(ctx); err != nil {
-		return "", err
-	}
-	return secret, nil
-}
-
-func (r *DbUserRepository) ListTokens(ctx context.Context, userID string) ([]model.Token, error) {
-	var rows []models.UserToken
-	err := r.db.GetDB().NewSelect().Model(&rows).Where("user_id = ?", userID).Order("created_at DESC").Scan(ctx)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]model.Token, 0, len(rows))
-	for i := range rows {
-		t := model.Token{ID: rows[i].TokenID, Type: rows[i].TokenType, CreatedAt: rows[i].CreatedAt.Time()}
-		if rows[i].ExpiresAt != nil {
-			e := rows[i].ExpiresAt.Time()
-			t.ExpiresAt = &e
-		}
-		out = append(out, t)
-	}
-	return out, nil
-}
-
-func (r *DbUserRepository) RevokeToken(ctx context.Context, userID, tokenID string) error {
-	_, err := r.db.GetDB().NewDelete().
-		Model((*models.UserToken)(nil)).
-		Where("token_id = ? AND user_id = ?", tokenID, userID).
-		Exec(ctx)
-	return err
 }

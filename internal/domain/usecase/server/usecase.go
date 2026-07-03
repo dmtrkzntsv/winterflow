@@ -10,30 +10,23 @@ import (
 
 type UseCase struct {
 	srvsvc port.ServerService
-	nm     port.NotificationManager
 	log    *logger.Logger
 }
 
 type Deps struct {
-	ServerService       port.ServerService
-	NotificationManager port.NotificationManager
-	Log                 *logger.Logger
+	ServerService port.ServerService
+	Log           *logger.Logger
 }
 
 func NewUseCase(d *Deps) *UseCase {
 	return &UseCase{
 		srvsvc: d.ServerService,
-		nm:     d.NotificationManager,
 		log:    d.Log,
 	}
 }
 
 func (uc *UseCase) GetServers(ctx context.Context, userID string) ([]model.Server, error) {
 	return uc.srvsvc.GetServers(ctx, userID)
-}
-
-func (uc *UseCase) AddServer(ctx context.Context, serverID string, app model.App) error {
-	return nil
 }
 
 // ClaimServer claims a pending server registration (by pairing code) into the

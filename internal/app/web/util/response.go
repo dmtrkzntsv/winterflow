@@ -43,7 +43,3 @@ func Error(w http.ResponseWriter, message string, data interface{}) {
 		Data:    data,
 	})
 }
-
-func Failure(w http.ResponseWriter) {
-	w.WriteHeader(http.StatusInternalServerError)
-}

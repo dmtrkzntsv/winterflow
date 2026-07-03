@@ -168,7 +168,6 @@ func createInitialSchemaFixed(ctx context.Context, db *bun.DB) error {
 func dropInitialSchemaFixed(ctx context.Context, db *bun.DB) error {
 	tables := []string{
 		"apps",
-		"release_versions",
 		"server_certificates",
 		"server_registrations",
 		"server_features",

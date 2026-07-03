@@ -125,16 +125,6 @@ type ServerCertificate struct {
 	Server *Server `bun:"rel:belongs-to,join:server_id=server_id"`
 }
 
-type ReleaseVersion struct {
-	bun.BaseModel `bun:"table:release_versions"`
-
-	VersionNumber string  `bun:"version_number,pk,type:char(9)" json:"version_number"`
-	Name          string  `bun:"name,unique,notnull" json:"name"`
-	IsBeta        bool    `bun:"is_beta,notnull,default:false" json:"is_beta"`
-	Message       *string `bun:"message,nullzero" json:"message"`
-	Url           string  `bun:"url,notnull" json:"url"`
-}
-
 type App struct {
 	bun.BaseModel `bun:"table:apps"`
 

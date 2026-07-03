@@ -28,10 +28,6 @@ func (c *ServerConfig) GetApiPort() string {
 	return os.Getenv("API_PORT")
 }
 
-func (c *ServerConfig) GetApiURL() string {
-	return os.Getenv("API_URL")
-}
-
 func (c *ServerConfig) GetWebURL() string {
 	return os.Getenv("WEB_URL")
 }
@@ -215,16 +211,8 @@ func (c *ServerConfig) GetHubCSRFilename() string {
 	return "hub.csr"
 }
 
-func (c *ServerConfig) GetHubCSRPath() string {
-	return path.Join(c.GetHubCertDir(), c.GetHubCSRFilename())
-}
-
 func (c *ServerConfig) GetHubFullchainFilename() string {
 	return "hub_fullchain.crt"
-}
-
-func (c *ServerConfig) GetHubFullchainPath() string {
-	return path.Join(c.GetHubCertDir(), c.GetHubFullchainFilename())
 }
 
 func (c *ServerConfig) GetHubKeyFilename() string {
@@ -255,10 +243,6 @@ func (c *ServerConfig) GetAgentCSRFilename() string {
 	return "agent.csr"
 }
 
-func (c *ServerConfig) GetAgentCSRPath() string {
-	return path.Join(c.GetHubCertDir(), c.GetAgentCSRFilename())
-}
-
 // GetAgentCACertPath returns the path to the CA certificate the agent uses to
 // verify the hub. It is the same CA that signs the hub's server certificate;
 // an explicit AGENT_CA_CERT_PATH overrides it for deployments that ship the CA
@@ -268,10 +252,6 @@ func (c *ServerConfig) GetAgentCACertPath() string {
 		return p
 	}
 	return c.GetHubCACertPath()
-}
-
-func (c *ServerConfig) GetMode() string {
-	return c.mode
 }
 
 func (c *ServerConfig) IsStandalone() bool {

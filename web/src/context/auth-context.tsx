@@ -11,6 +11,7 @@ import { AuthContext, type LoginPayload } from "./auth-context-base";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [checked, setChecked] = useState(false);
 
   const login = useCallback(async ({ username, password }: LoginPayload) => {
     const loginEndpoint = `${apiBaseUrl}/auth/env/login?session=1`;
@@ -77,6 +78,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } catch (error) {
         console.error("Failed to fetch auth status", error);
         setIsAuthenticated(false);
+      } finally {
+        setChecked(true);
       }
     };
 
@@ -86,10 +89,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value = useMemo(
     () => ({
       isAuthenticated,
+      checked,
       login,
       logout,
     }),
-    [isAuthenticated, login, logout],
+    [isAuthenticated, checked, login, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

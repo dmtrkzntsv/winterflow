@@ -54,9 +54,12 @@ export default function LoginPage() {
 
     useEffect(() => {
         if (isAuthenticated) {
-            navigate("/", { replace: true })
+            const redirectTo =
+                (location.state as { from?: { pathname?: string } } | undefined)?.from
+                    ?.pathname ?? "/"
+            navigate(redirectTo, { replace: true })
         }
-    }, [isAuthenticated, navigate])
+    }, [isAuthenticated, navigate, location.state])
 
     const handleSubmit = async (values: { username: string; password: string }) => {
         setIsSubmitting(true)

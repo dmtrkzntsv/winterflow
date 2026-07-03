@@ -422,6 +422,24 @@ func (h *Hub) AgentStream(stream grpc.BidiStreamingServer[proto.AgentMessage, pr
 
 			h.log.Debug("Heartbeat processed", "agent_id", agentID)
 
+		case *proto.AgentMessage_Event:
+			// Unsolicited agent push (e.g. apps.status): forward verbatim onto
+			// the events queue. Also a liveness signal.
+			sourceID := agentID
+			if sourceID == "" && payload.Event.Base != nil {
+				sourceID = payload.Event.Base.AgentId
+			}
+			if sourceID == "" {
+				h.log.Warn("event without agent identity, dropping", "kind", payload.Event.Kind)
+				continue
+			}
+			if agent != nil {
+				h.agentsLock.Lock()
+				agent.lastSeen = time.Now()
+				h.agentsLock.Unlock()
+			}
+			h.publishEvent(bus.EventKind(payload.Event.Kind), sourceID, payload.Event.Payload)
+
 		case *proto.AgentMessage_Response:
 			if payload.Response.Base == nil {
 				h.log.Warn("Received response without base message", "agent_id", agentID)

@@ -64,6 +64,19 @@ message AgentHeartbeatResponse {
   BaseResponse base = 1;
 }
 
+// AgentEvent is an unsolicited, fire-and-forget push from the agent (no
+// response expected). The hub forwards it verbatim onto the region's events
+// queue as a bus.EventMessage.
+message AgentEvent {
+  BaseMessage base = 1;
+
+  // bus.EventKind value, e.g. "apps.status".
+  string kind = 2;
+
+  // JSON body for kind.
+  bytes payload = 3;
+}
+
 // -----------------------------------------------------------------------------
 // Generic request/response envelopes
 // -----------------------------------------------------------------------------
@@ -117,6 +130,7 @@ message AgentMessage {
   oneof message {
     // Agent-initiated messages
     AgentHeartbeat         heartbeat = 1;
+    AgentEvent             event = 2;
 
     // Responses to server-initiated commands (50+)
     ResponseEnvelope       response = 50;

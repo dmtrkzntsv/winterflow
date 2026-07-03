@@ -44,7 +44,8 @@ type Agent struct {
 	streamActive bool
 	streamCancel context.CancelFunc
 	streamDone   chan struct{} // closed when the active stream's receive loop exits
-	sendMutex    sync.Mutex    // serializes stream.Send across heartbeat + handler goroutines
+	stream       grpc.BidiStreamingClient[proto.AgentMessage, proto.ServerCommand]
+	sendMutex    sync.Mutex // serializes stream.Send across heartbeat + handler goroutines
 
 	registered      bool
 	registeredMutex sync.RWMutex
@@ -204,6 +205,7 @@ func (a *Agent) StartStream(ctx context.Context) error {
 	a.streamActive = true
 	a.streamCancel = cancel
 	a.streamDone = done
+	a.stream = stream
 	a.streamMutex.Unlock()
 
 	a.log.Info("Agent stream started", "agent_id", a.agentID)
@@ -255,6 +257,7 @@ func (a *Agent) handleIncomingMessages(ctx context.Context, stream grpc.BidiStre
 	defer func() {
 		a.streamMutex.Lock()
 		a.streamActive = false
+		a.stream = nil
 		if a.streamCancel != nil {
 			a.streamCancel()
 			a.streamCancel = nil
@@ -313,6 +316,33 @@ func (a *Agent) sendMessage(stream grpc.BidiStreamingClient[proto.AgentMessage, 
 	a.sendMutex.Lock()
 	defer a.sendMutex.Unlock()
 	return stream.Send(msg)
+}
+
+// SendEvent pushes an unsolicited, fire-and-forget event (e.g. apps.status)
+// up the active stream. Returns an error when no stream is active; callers
+// treat that as "skip this tick", not fatal — the reporter fires again.
+func (a *Agent) SendEvent(kind string, payload []byte) error {
+	a.streamMutex.RLock()
+	stream := a.stream
+	active := a.streamActive
+	a.streamMutex.RUnlock()
+	if !active || stream == nil {
+		return fmt.Errorf("no active stream")
+	}
+	return a.sendMessage(stream, &proto.AgentMessage{
+		Message: &proto.AgentMessage_Event{
+			Event: &proto.AgentEvent{
+				Base: &proto.BaseMessage{
+					MessageId:       fmt.Sprintf("ev-%d", time.Now().UnixNano()),
+					Timestamp:       timestamppb.Now(),
+					AgentId:         a.agentID,
+					ProtocolVersion: a.protocolVersion,
+				},
+				Kind:    kind,
+				Payload: payload,
+			},
+		},
+	})
 }
 
 // handleRequest dispatches a single command and sends the response back. It

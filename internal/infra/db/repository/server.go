@@ -34,6 +34,7 @@ func (r *DbServerRepository) GetServers(ctx context.Context, userID string) ([]m
 	var servers []models.Server
 	err := dbi.NewSelect().
 		Model(&servers).
+		Relation("Capabilities").
 		Where("organization_id IN (?)",
 			dbi.NewSelect().
 				Model((*models.OrganizationUser)(nil)).
@@ -64,6 +65,12 @@ func toDomainServer(s *models.Server) model.Server {
 	if s.LastSeen != nil {
 		t := s.LastSeen.Time()
 		srv.LastSeenAt = &t
+	}
+	for i := range s.Capabilities {
+		srv.Capabilities = append(srv.Capabilities, model.Capability{
+			Name:  s.Capabilities[i].Name,
+			Value: s.Capabilities[i].Value,
+		})
 	}
 	return srv
 }

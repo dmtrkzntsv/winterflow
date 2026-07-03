@@ -2,8 +2,10 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
 	"winterflow/internal/infra/db"
@@ -87,5 +89,39 @@ func TestGetServerUserIDsUnknownServerIsEmpty(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Fatalf("want empty, got %v", got)
+	}
+}
+
+func TestGetServersIncludesCapabilities(t *testing.T) {
+	conn := newTestDB(t)
+	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
+	repo := NewDbServerRepository(conn, log)
+
+	seedOrgWithServer(t, conn, "org-1", "srv-1")
+	seedUser(t, conn, "alice", "org-1")
+	if err := repo.SaveCapabilities(context.Background(), "srv-1",
+		map[string]string{"server_ip": "203.0.113.7", "system_cpu_cores": "8"}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	servers, err := repo.GetServers(context.Background(), "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(servers) != 1 {
+		t.Fatalf("want 1 server, got %d", len(servers))
+	}
+	caps := map[string]string{}
+	for _, c := range servers[0].Capabilities {
+		caps[c.Name] = c.Value
+	}
+	if caps["server_ip"] != "203.0.113.7" || caps["system_cpu_cores"] != "8" {
+		t.Fatalf("capabilities = %v", caps)
+	}
+
+	// The JSON the handler sends must expose name/value in lower case.
+	raw, _ := json.Marshal(servers[0])
+	if !strings.Contains(string(raw), `"name":"server_ip"`) || !strings.Contains(string(raw), `"value":"203.0.113.7"`) {
+		t.Fatalf("serialized server = %s", raw)
 	}
 }

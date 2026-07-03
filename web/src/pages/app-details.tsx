@@ -14,8 +14,6 @@ import { useAppBreadcrumbs } from "@/layouts/use-app-layout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Spinner } from "@/components/ui/spinner";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -30,6 +28,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { AppIcon } from "@/components/app-icon";
+import { LogsView, type LogLine } from "@/components/logs-view";
 import { AppEditorPanel } from "@/components/app-editor-panel";
 import { AppStatusBadge } from "@/components/app-status-badge";
 import { useApps } from "@/context/use-apps";
@@ -39,19 +38,6 @@ import { apiBaseUrl } from "@/config";
 import type { ControlAction } from "@/context/apps-context-base";
 
 const base = apiBaseUrl.endsWith("/") ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
-
-type LogEntry = {
-  timestamp: number;
-  level: number;
-  message: string;
-  container?: string;
-};
-
-const LEVEL_CLASS: Record<number, string> = {
-  4: "text-yellow-500",
-  5: "text-red-500",
-  6: "text-red-600 font-semibold",
-};
 
 const TABS = ["logs", "editor", "settings"] as const;
 
@@ -197,7 +183,8 @@ export default function AppDetailsPage() {
 function LogsTab({ appId }: { appId: string }) {
   const { activeServerId } = useServers();
   const { waitFor } = useNotifications();
-  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [logs, setLogs] = useState<LogLine[]>([]);
+  const [tail, setTail] = useState<number>(200);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -208,7 +195,7 @@ function LogsTab({ appId }: { appId: string }) {
     try {
       const url = `${base}/api/v1/app/get-logs?server_id=${encodeURIComponent(
         activeServerId,
-      )}&app_id=${encodeURIComponent(appId)}&tail=200`;
+      )}&app_id=${encodeURIComponent(appId)}&tail=${tail}`;
       const res = await fetch(url, { credentials: "include" });
       if (!res.ok) throw new Error(`Request failed: ${res.status}`);
       const accepted = (await res.json()) as { data?: { request_id?: string } };
@@ -218,57 +205,28 @@ function LogsTab({ appId }: { appId: string }) {
       if (result.status && result.status !== 0) {
         throw new Error(result.error || "Failed to fetch logs");
       }
-      const payload = result.payload as { logs?: LogEntry[] } | undefined;
+      const payload = result.payload as { logs?: LogLine[] } | undefined;
       setLogs(payload?.logs ?? []);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to fetch logs");
     } finally {
       setLoading(false);
     }
-  }, [appId, activeServerId, waitFor]);
+  }, [appId, activeServerId, waitFor, tail]);
 
   useEffect(() => {
     void fetchLogs();
   }, [fetchLogs]);
 
   return (
-    <Card>
-      <CardHeader className="flex-row items-center justify-between space-y-0">
-        <CardTitle>Logs</CardTitle>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => void fetchLogs()}
-          disabled={loading}
-        >
-          Refresh
-        </Button>
-      </CardHeader>
-      <CardContent>
-        {loading ? (
-          <div className="flex h-40 items-center justify-center">
-            <Spinner />
-          </div>
-        ) : error ? (
-          <p className="text-sm text-destructive">{error}</p>
-        ) : logs.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No logs.</p>
-        ) : (
-          <ScrollArea className="h-96 rounded-md border bg-muted/30">
-            <div className="p-3 font-mono text-xs">
-              {logs.map((l, i) => (
-                <div key={i} className="whitespace-pre-wrap break-all">
-                  {l.container ? (
-                    <span className="text-muted-foreground">{l.container} </span>
-                  ) : null}
-                  <span className={LEVEL_CLASS[l.level] ?? ""}>{l.message}</span>
-                </div>
-              ))}
-            </div>
-          </ScrollArea>
-        )}
-      </CardContent>
-    </Card>
+    <LogsView
+      lines={logs}
+      loading={loading}
+      error={error}
+      tail={tail}
+      onTailChange={setTail}
+      onRefresh={() => void fetchLogs()}
+    />
   );
 }
 

@@ -41,14 +41,10 @@ func main() {
 
 	agent := grpcagent.NewAgent(log, cfg, agentID)
 
-	// Set agent capabilities and features
-	capabilities := map[string]string{
-		"os":         runtime.GOOS,
-		"arch":       runtime.GOARCH,
-		"go_version": runtime.Version(),
-		"hostname":   getHostname(),
-		"version":    version.GetVersion(),
-	}
+	// Set agent capabilities and features: platform identity + hardware specs
+	// + outbound IP (shared collector), plus the runtime version.
+	capabilities := appagent.HostCapabilities(cfg.GetAgentDataDir())
+	capabilities["go_version"] = runtime.Version()
 
 	// Publish the agent's EC public key so the API can hand it to the browser
 	// for ECIES-encrypting app secrets (the agent decrypts with its private key).
@@ -127,12 +123,4 @@ func main() {
 		os.Exit(1)
 	}
 	log.Info("Agent gracefully stopped")
-}
-
-func getHostname() string {
-	hostname, err := os.Hostname()
-	if err != nil {
-		return "unknown"
-	}
-	return hostname
 }

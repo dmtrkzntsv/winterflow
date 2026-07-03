@@ -2,15 +2,18 @@ package bootstrap
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 	appagent "winterflow/internal/app/agent"
 	agentsrv "winterflow/internal/infra/agent/service"
 	"winterflow/internal/infra/cert"
 	"winterflow/internal/infra/db"
+	"winterflow/internal/infra/db/repository"
 	dockercompose "winterflow/internal/infra/orchestrator/docker_compose"
 	"winterflow/internal/infra/transport/bus"
 	membus "winterflow/internal/infra/transport/mem/bus"
 	"winterflow/pkg/config"
+	"winterflow/pkg/crypto"
 	"winterflow/pkg/logger"
 	"winterflow/pkg/util"
 )
@@ -44,6 +47,12 @@ func BootstrapStandalone(ctx context.Context, log *logger.Logger, cfg *config.Se
 	if err := bridge.Start(ctx); err != nil {
 		log.Fatalf("failed to start in-process bridge: %v", err)
 	}
+
+	// Report the embedded server's capabilities (specs, IP, version, public
+	// key) through the same events path a distributed agent's registration
+	// uses. Retries until the server has been claimed (no id to attach them to
+	// before that), then exits.
+	go publishEmbeddedCapabilities(ctx, b, serverRepo, cfg, log)
 
 	// Standalone has no gRPC Hub forwarding agent events; the embedded agent is
 	// the box itself. Run the same status reporter the distributed agent runs,
@@ -91,4 +100,42 @@ func BootstrapStandalone(ctx context.Context, log *logger.Logger, cfg *config.Se
 	}
 
 	return deps
+}
+
+// publishEmbeddedCapabilities reports the standalone box's capabilities on the
+// events queue — the same EventCapabilities a distributed agent's registration
+// produces — so the DB and the UI see specs/IP/version without a hub. The
+// embedded server may not be claimed yet at boot; poll until it exists.
+func publishEmbeddedCapabilities(ctx context.Context, b bus.Bus, serverRepo *repository.DbServerRepository, cfg *config.ServerConfig, log *logger.Logger) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
+		id, ok, err := serverRepo.FirstServerID(ctx)
+		if err == nil && ok {
+			caps := appagent.HostCapabilities(cfg.GetAgentDataDir())
+			if point, err := crypto.PublicKeyPointFromCertPath(cfg.GetAgentCertPath()); err == nil {
+				caps["public_key"] = point
+			}
+			features := map[string]bool{
+				"can_install":    true,
+				"can_execute":    true,
+				"can_fetch_logs": true,
+				"can_monitor":    true,
+			}
+			body, err := json.Marshal(capabilitiesEvent{Capabilities: caps, Features: features})
+			if err != nil {
+				log.Error("marshal embedded capabilities", err)
+				return
+			}
+			if err := b.Publish(ctx, cfg.GetBusEventsQueue(), bus.EventMessage{ServerID: id, Kind: bus.EventCapabilities, Payload: body}); err != nil {
+				log.Error("publish embedded capabilities", err)
+			}
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }

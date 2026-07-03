@@ -31,7 +31,7 @@ func wireCore(ctx context.Context, b bus.Bus, dbconn *db.BunConnection, cfg *con
 	statusCache := status.NewCache(statusTTL)
 
 	startResponseSubscriber(ctx, b, dispatcher, cfg, log)
-	startEventsSubscriber(ctx, b, statusCache, serverRepo, cfg, log)
+	startEventsSubscriber(ctx, b, statusCache, serverRepo, nm, cfg, log)
 
 	return &Deps{
 		Log:                 log,

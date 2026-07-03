@@ -16,10 +16,18 @@ const streamUrl = `${base}/api/v1/notification/stream`;
 // fans every incoming notification out to subscribers. The backend delivers
 // async command results (Ref = request_id) and unsolicited status/changed
 // events here; consumers (e.g. AppsProvider) subscribe to react to them.
+// Results can arrive on the SSE stream BEFORE the caller has parsed its 202
+// response to learn the request_id (the agent answers fast commands in ~1ms).
+// Recent correlated notifications are kept briefly so waitFor can resolve from
+// this buffer instead of missing an event it wasn't yet subscribed for.
+const REPLAY_TTL_MS = 30000;
+const REPLAY_MAX = 100;
+
 export function NotificationsProvider({ children }: { children: ReactNode }) {
   const { isAuthenticated } = useAuth();
   const [connected, setConnected] = useState(false);
   const handlersRef = useRef<Set<NotificationHandler>>(new Set());
+  const replayRef = useRef<{ n: Notification; at: number }[]>([]);
 
   useEffect(() => {
     // When not authenticated we open no stream; `connected` stays/returns false
@@ -40,6 +48,14 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
         parsed = JSON.parse(event.data) as Notification;
       } catch {
         return;
+      }
+      // Buffer correlated results (unsolicited events have no ref) for
+      // waitFor callers that lost the 202-vs-SSE race.
+      if (parsed.ref) {
+        const now = Date.now();
+        const kept = replayRef.current.filter((e) => now - e.at < REPLAY_TTL_MS);
+        kept.push({ n: parsed, at: now });
+        replayRef.current = kept.slice(-REPLAY_MAX);
       }
       handlersRef.current.forEach((handler) => {
         try {
@@ -68,6 +84,16 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
       subscribe,
       waitFor(requestId: string, timeoutMs = 60000) {
         return new Promise<Notification>((resolve, reject) => {
+          // The result may already have arrived while the 202 response was
+          // still being read — check the replay buffer before subscribing.
+          const now = Date.now();
+          const early = replayRef.current.find(
+            (e) => e.n.ref === requestId && now - e.at < REPLAY_TTL_MS,
+          );
+          if (early) {
+            resolve(early.n);
+            return;
+          }
           const unsubscribe = subscribe((n) => {
             if (n.ref !== requestId) return;
             clearTimeout(timer);

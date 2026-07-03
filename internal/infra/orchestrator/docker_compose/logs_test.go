@@ -1,10 +1,48 @@
 package dockercompose
 
 import (
+	"context"
 	"testing"
 
 	"winterflow/internal/domain/command"
 )
+
+func TestDetectLogLevel(t *testing.T) {
+	cases := []struct {
+		msg  string
+		want command.LogLevel
+	}{
+		{"TRACE fine detail", command.LogLevelTrace},
+		{"debug: something", command.LogLevelDebug},
+		{"INFO ok", command.LogLevelInfo},
+		{"WARN careful", command.LogLevelWarn},
+		{"WARNING careful", command.LogLevelWarn},
+		{"ERROR broken", command.LogLevelError},
+		{"FATAL dead", command.LogLevelFatal},
+		{"plain text", command.LogLevelUnknown},
+	}
+	for _, c := range cases {
+		if got := detectLogLevel(c.msg); got != c.want {
+			t.Errorf("detectLogLevel(%q) = %d, want %d", c.msg, got, c.want)
+		}
+	}
+}
+
+func TestGetLogsNotDeployed(t *testing.T) {
+	r := newTestRepo(t)
+	// An app without a rendered run dir has no logs; this is not an error and
+	// never shells out to docker.
+	resp, err := r.GetLogs(context.Background(), command.GetLogsRequest{AppID: "ghost", Tail: 50})
+	if err != nil {
+		t.Fatalf("GetLogs: %v", err)
+	}
+	if resp.AppID != "ghost" {
+		t.Errorf("AppID = %q, want ghost", resp.AppID)
+	}
+	if len(resp.Logs) != 0 {
+		t.Errorf("Logs = %v, want empty", resp.Logs)
+	}
+}
 
 func TestParseComposeLogLine(t *testing.T) {
 	tests := []struct {

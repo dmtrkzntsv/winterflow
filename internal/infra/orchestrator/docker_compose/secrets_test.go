@@ -58,6 +58,31 @@ func TestResolveItemsPlaintextPassthrough(t *testing.T) {
 	}
 }
 
+func TestResolveItemsUndecryptableSecretIsSkipped(t *testing.T) {
+	r := newTestRepo(t)
+	// Encrypted content that is not the placeholder must be decrypted with the
+	// agent key; garbage input fails and the item is dropped rather than
+	// poisoning the render.
+	got := r.resolveItems([]command.ContentItem{
+		{Name: "API_KEY", Encrypted: true, Content: []byte("not-a-valid-ecies-payload")},
+		{Name: "PORT", Content: []byte("8080")},
+	}, map[string]string{})
+	if len(got) != 1 || got[0].name != "PORT" {
+		t.Errorf("expected only the plaintext item to survive, got %+v", got)
+	}
+}
+
+func TestResolveItemsFallsBackToID(t *testing.T) {
+	r := newTestRepo(t)
+	// Older payloads keyed items on ID with no Name.
+	got := r.resolveItems([]command.ContentItem{
+		{ID: "legacy-id", Content: []byte("value")},
+	}, map[string]string{})
+	if len(got) != 1 || got[0].name != "legacy-id" {
+		t.Errorf("expected name to fall back to ID, got %+v", got)
+	}
+}
+
 func TestEncryptedNamesParsesConfig(t *testing.T) {
 	cfg := []byte(`{
 		"files":[{"filename":"compose.yml","is_encrypted":false},{"filename":"secret.env","is_encrypted":true}],
@@ -69,5 +94,12 @@ func TestEncryptedNamesParsesConfig(t *testing.T) {
 	}
 	if !files["secret.env"] || files["compose.yml"] {
 		t.Errorf("file encryption flags wrong: %+v", files)
+	}
+}
+
+func TestEncryptedNamesInvalidConfig(t *testing.T) {
+	vars, files := encryptedNames([]byte("not json"))
+	if len(vars) != 0 || len(files) != 0 {
+		t.Errorf("expected empty maps for unparseable config, got %v %v", vars, files)
 	}
 }

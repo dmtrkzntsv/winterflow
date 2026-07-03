@@ -120,4 +120,14 @@ func TestParseComposePS(t *testing.T) {
 	if err != nil || lines != nil {
 		t.Errorf("empty parse: lines=%v err=%v", lines, err)
 	}
+
+	// Malformed array form.
+	if _, err := parseComposePS([]byte("[{broken")); err == nil {
+		t.Error("expected error for malformed array output")
+	}
+
+	// Malformed line in ndjson form.
+	if _, err := parseComposePS([]byte("{\"ID\":\"abc\"}\n{broken")); err == nil {
+		t.Error("expected error for malformed ndjson line")
+	}
 }

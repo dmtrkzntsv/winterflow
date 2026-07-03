@@ -224,33 +224,43 @@ func (a *Agent) heartbeatRoutine(ctx context.Context, stream grpc.BidiStreamingC
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
+	// Beat immediately: the hub marks the stream active on the first
+	// heartbeat, so waiting a full tick would leave a window right after
+	// connect where commands bounce with "agent not connected".
+	if err := a.sendHeartbeat(stream); err != nil {
+		a.log.Error("Failed to send initial heartbeat", "error", err, "agent_id", a.agentID)
+		return
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
 			a.log.Info("Heartbeat routine stopping", "agent_id", a.agentID)
 			return
 		case <-ticker.C:
-			heartbeat := &proto.AgentMessage{
-				Message: &proto.AgentMessage_Heartbeat{
-					Heartbeat: &proto.AgentHeartbeat{
-						Base: &proto.BaseMessage{
-							MessageId:       fmt.Sprintf("hb-%d", time.Now().UnixNano()),
-							Timestamp:       timestamppb.Now(),
-							AgentId:         a.agentID,
-							ProtocolVersion: a.protocolVersion,
-						},
-					},
-				},
-			}
-
-			if err := a.sendMessage(stream, heartbeat); err != nil {
+			if err := a.sendHeartbeat(stream); err != nil {
 				a.log.Error("Failed to send heartbeat", "error", err, "agent_id", a.agentID)
 				return
 			}
-
 			a.log.Debug("Heartbeat sent", "agent_id", a.agentID)
 		}
 	}
+}
+
+func (a *Agent) sendHeartbeat(stream grpc.BidiStreamingClient[proto.AgentMessage, proto.ServerCommand]) error {
+	heartbeat := &proto.AgentMessage{
+		Message: &proto.AgentMessage_Heartbeat{
+			Heartbeat: &proto.AgentHeartbeat{
+				Base: &proto.BaseMessage{
+					MessageId:       fmt.Sprintf("hb-%d", time.Now().UnixNano()),
+					Timestamp:       timestamppb.Now(),
+					AgentId:         a.agentID,
+					ProtocolVersion: a.protocolVersion,
+				},
+			},
+		},
+	}
+	return a.sendMessage(stream, heartbeat)
 }
 
 func (a *Agent) handleIncomingMessages(ctx context.Context, stream grpc.BidiStreamingClient[proto.AgentMessage, proto.ServerCommand], done chan struct{}) {

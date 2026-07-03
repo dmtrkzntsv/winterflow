@@ -57,20 +57,48 @@ func NewCache(ttl time.Duration) *Cache {
 	}
 }
 
-// MarkOnline records a liveness pulse for a server.
-func (c *Cache) MarkOnline(serverID string, now time.Time) {
+// MarkOnline records a liveness pulse for a server. It reports whether the
+// pulse was a transition (the server was unknown — absent or expired — and is
+// now online), so callers can push the flip to browsers without spamming one
+// notification per heartbeat.
+func (c *Cache) MarkOnline(serverID string, now time.Time) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.servers[serverID] = serverEntry{expires: now.Add(c.ttl)}
+	return c.markOnlineLocked(serverID, now)
 }
 
-// SetAppStatus records the latest container status for a server's apps.
-func (c *Cache) SetAppStatus(serverID string, apps []command.AppStatus, now time.Time) {
+func (c *Cache) markOnlineLocked(serverID string, now time.Time) bool {
+	e, ok := c.servers[serverID]
+	transition := !ok || now.After(e.expires)
+	c.servers[serverID] = serverEntry{expires: now.Add(c.ttl)}
+	return transition
+}
+
+// SetAppStatus records the latest container status for a server's apps. Like
+// MarkOnline it reports whether this doubled as a liveness transition.
+func (c *Cache) SetAppStatus(serverID string, apps []command.AppStatus, now time.Time) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.apps[serverID] = appEntry{apps: apps, expires: now.Add(c.ttl)}
 	// A status report is also a liveness signal.
-	c.servers[serverID] = serverEntry{expires: now.Add(c.ttl)}
+	return c.markOnlineLocked(serverID, now)
+}
+
+// ExpireStale removes server liveness entries whose TTL has passed and returns
+// their ids — each online→unknown flip is reported exactly once. A sweeper
+// calls this periodically to push "went unknown" transitions over SSE; a
+// later pulse re-creates the entry and reports a fresh transition.
+func (c *Cache) ExpireStale(now time.Time) []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var flipped []string
+	for id, e := range c.servers {
+		if now.After(e.expires) {
+			delete(c.servers, id)
+			flipped = append(flipped, id)
+		}
+	}
+	return flipped
 }
 
 // ServerLiveness returns online if the server reported within the TTL, else

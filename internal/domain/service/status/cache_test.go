@@ -58,3 +58,70 @@ func TestSetAppStatusAlsoMarksOnline(t *testing.T) {
 		t.Errorf("a status report should also be a liveness signal, got %q", got)
 	}
 }
+
+func TestMarkOnlineReportsTransition(t *testing.T) {
+	c := NewCache(60 * time.Second)
+	now := time.Unix(1000, 0)
+
+	if !c.MarkOnline("srv-1", now) {
+		t.Error("first pulse: want transition (unknown -> online)")
+	}
+	if c.MarkOnline("srv-1", now.Add(30*time.Second)) {
+		t.Error("refresh within TTL: want no transition")
+	}
+	// Entry expired without a sweep: the next pulse is a fresh transition.
+	if !c.MarkOnline("srv-1", now.Add(200*time.Second)) {
+		t.Error("pulse after expiry: want transition")
+	}
+}
+
+func TestSetAppStatusReportsLivenessTransition(t *testing.T) {
+	c := NewCache(60 * time.Second)
+	now := time.Unix(1000, 0)
+
+	if !c.SetAppStatus("srv-1", nil, now) {
+		t.Error("first status report: want transition")
+	}
+	if c.SetAppStatus("srv-1", nil, now.Add(10*time.Second)) {
+		t.Error("second report within TTL: want no transition")
+	}
+}
+
+func TestExpireStaleReturnsEachFlipOnce(t *testing.T) {
+	c := NewCache(60 * time.Second)
+	now := time.Unix(1000, 0)
+	c.MarkOnline("srv-1", now)
+	c.MarkOnline("srv-2", now.Add(30*time.Second))
+
+	if got := c.ExpireStale(now.Add(45 * time.Second)); len(got) != 0 {
+		t.Fatalf("nothing expired yet, got %v", got)
+	}
+
+	got := c.ExpireStale(now.Add(70 * time.Second))
+	if len(got) != 1 || got[0] != "srv-1" {
+		t.Fatalf("want [srv-1], got %v", got)
+	}
+	// A second sweep must not report srv-1 again.
+	if got := c.ExpireStale(now.Add(75 * time.Second)); len(got) != 0 {
+		t.Fatalf("srv-1 already reported, got %v", got)
+	}
+	// srv-2 expires later.
+	got = c.ExpireStale(now.Add(120 * time.Second))
+	if len(got) != 1 || got[0] != "srv-2" {
+		t.Fatalf("want [srv-2], got %v", got)
+	}
+}
+
+func TestExpireStaleThenReonlineTransitionsAgain(t *testing.T) {
+	c := NewCache(60 * time.Second)
+	now := time.Unix(1000, 0)
+	c.MarkOnline("srv-1", now)
+	c.ExpireStale(now.Add(90 * time.Second))
+
+	if !c.MarkOnline("srv-1", now.Add(100*time.Second)) {
+		t.Error("re-online after sweep: want transition")
+	}
+	if got := c.ExpireStale(now.Add(200 * time.Second)); len(got) != 1 || got[0] != "srv-1" {
+		t.Fatalf("second expiry cycle: want [srv-1], got %v", got)
+	}
+}

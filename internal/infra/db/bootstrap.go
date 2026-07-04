@@ -12,6 +12,7 @@ func registerModels(db *bun.DB) {
 	db.RegisterModel((*models.User)(nil))
 	db.RegisterModel((*models.UserToken)(nil))
 	db.RegisterModel((*models.UserConnectedAccount)(nil))
+	db.RegisterModel((*models.UserCredentials)(nil))
 	db.RegisterModel((*models.Server)(nil))
 	db.RegisterModel((*models.ServerCapability)(nil))
 	db.RegisterModel((*models.ServerFeature)(nil))

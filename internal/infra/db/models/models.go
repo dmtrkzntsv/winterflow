@@ -55,6 +55,18 @@ type UserToken struct {
 	User *User `bun:"rel:belongs-to,join:user_id=user_id"`
 }
 
+type UserCredentials struct {
+	bun.BaseModel `bun:"table:user_credentials"`
+
+	UserID             string         `bun:"user_id,pk,type:char(36)" json:"user_id"`
+	Email              string         `bun:"email,unique,notnull" json:"email"`
+	PasswordHash       string         `bun:"password_hash,notnull" json:"-"`
+	MustChangePassword bool           `bun:"must_change_password,notnull" json:"must_change_password"`
+	UpdatedAt          types.DateTime `bun:"updated_at,notnull" json:"updated_at"`
+
+	User *User `bun:"rel:belongs-to,join:user_id=user_id"`
+}
+
 type UserConnectedAccount struct {
 	bun.BaseModel `bun:"table:user_connected_accounts"`
 

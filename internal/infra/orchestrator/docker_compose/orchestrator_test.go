@@ -1,50 +1,10 @@
 package dockercompose
 
 import (
-	"reflect"
 	"testing"
 
 	"winterflow/internal/domain/command"
 )
-
-func TestParseRevisions(t *testing.T) {
-	got := parseRevisions([]string{"3", "1", "x", "10", "2"})
-	want := []uint32{1, 2, 3, 10}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("parseRevisions = %v, want %v", got, want)
-	}
-}
-
-func TestNextRevision(t *testing.T) {
-	if got := nextRevision(nil); got != 1 {
-		t.Errorf("nextRevision(nil) = %d, want 1", got)
-	}
-	if got := nextRevision([]uint32{1, 2, 5}); got != 6 {
-		t.Errorf("nextRevision = %d, want 6", got)
-	}
-}
-
-func TestRevisionsToPrune(t *testing.T) {
-	cases := []struct {
-		name     string
-		existing []uint32
-		keep     int
-		want     []uint32
-	}{
-		{"under limit", []uint32{1, 2}, 3, nil},
-		{"at limit", []uint32{1, 2, 3}, 3, nil},
-		{"over limit prunes oldest", []uint32{1, 2, 3, 4, 5}, 3, []uint32{1, 2}},
-		{"unsorted input", []uint32{5, 1, 3, 2, 4}, 2, []uint32{1, 2, 3}},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			got := revisionsToPrune(c.existing, c.keep)
-			if !reflect.DeepEqual(got, c.want) {
-				t.Errorf("revisionsToPrune(%v, %d) = %v, want %v", c.existing, c.keep, got, c.want)
-			}
-		})
-	}
-}
 
 func TestMapContainerState(t *testing.T) {
 	cases := []struct {

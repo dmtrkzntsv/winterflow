@@ -41,20 +41,48 @@ type SaveAppRequest struct {
 
 type SaveAppResponse struct {
 	AppID    string `json:"app_id"`
-	Revision uint32 `json:"revision"`
+	Revision string `json:"revision"` // git commit hash of the save
 }
 
 // --- app.get ------------------------------------------------------------------
 
 type GetAppRequest struct {
-	AppID    string `json:"app_id"`
-	Revision uint32 `json:"revision,omitempty"` // 0 = latest
+	AppID string `json:"app_id"`
 }
 
 type GetAppResponse struct {
-	App                AppPayload `json:"app"`
-	Revision           uint32     `json:"revision"`
-	AvailableRevisions []uint32   `json:"available_revisions"`
+	App AppPayload `json:"app"`
+}
+
+// --- app.revisions --------------------------------------------------------
+
+// RevisionInfo is one commit of an app's git history.
+type RevisionInfo struct {
+	Hash      string `json:"hash"`
+	Subject   string `json:"subject"`
+	Timestamp int64  `json:"timestamp"` // unix seconds
+}
+
+type GetRevisionsRequest struct {
+	AppID string `json:"app_id"`
+}
+
+type GetRevisionsResponse struct {
+	AppID     string         `json:"app_id"`
+	Current   string         `json:"current"` // HEAD hash
+	Revisions []RevisionInfo `json:"revisions"`
+}
+
+// --- app.rollback ---------------------------------------------------------
+
+type RollbackAppRequest struct {
+	AppID string `json:"app_id"`
+	Hash  string `json:"hash"`
+}
+
+type RollbackAppResponse struct {
+	AppID    string `json:"app_id"`
+	Revision string `json:"revision"` // the new HEAD created by the rollback
 }
 
 // --- apps.status --------------------------------------------------------------

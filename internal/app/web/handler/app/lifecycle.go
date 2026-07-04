@@ -130,13 +130,7 @@ func (h *Handler) GetApp(w http.ResponseWriter, r *http.Request) {
 		webutil.Error(w, "server_id and app_id are required", nil)
 		return
 	}
-	var revision uint32
-	if rev := r.URL.Query().Get("revision"); rev != "" {
-		if v, err := strconv.ParseUint(rev, 10, 32); err == nil {
-			revision = uint32(v)
-		}
-	}
-	requestID, err := h.usecase.GetApp(r.Context(), userID, serverID, appID, revision)
+	requestID, err := h.usecase.GetApp(r.Context(), userID, serverID, appID)
 	if err != nil {
 		webutil.Error(w, "failed to get app", nil)
 		return

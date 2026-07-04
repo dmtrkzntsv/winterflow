@@ -6,56 +6,129 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
 
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
-	"winterflow/pkg/template"
 )
 
-// SaveApp persists a new revision of the app, renders its templated files into
-// the running directory, and brings the deployment up with `docker compose up
-// -d`. It returns the assigned revision number.
-func (r *Repository) SaveApp(ctx context.Context, app command.AppPayload) (uint32, error) {
-	if app.AppID == "" {
-		return 0, fmt.Errorf("app_id is required")
-	}
-
-	revisions, err := r.listRevisions(app.AppID)
+// SaveApp persists an app into its git-backed folder and brings the
+// deployment up. The folder IS the deployment: compose runs in it directly.
+// Every save is a commit; the commit hash is returned as the revision.
+func (r *Repository) SaveApp(ctx context.Context, app command.AppPayload) (string, error) {
+	hash, err := r.saveWithoutDeploy(app)
 	if err != nil {
-		return 0, err
+		return "", err
 	}
-	rev := nextRevision(revisions)
-
-	// Resolve secrets (decrypt or preserve via "<encrypted>") against the
-	// previous revision's stored plaintext, keyed by name.
-	prevVars, prevFiles := r.previousValues(app.AppID)
-	vars := r.resolveItems(app.Variables, prevVars)
-	files := r.resolveItems(app.Files, prevFiles)
-
-	revDir := path.Join(r.cfg.GetAppsTemplatesDir(), app.AppID, strconv.FormatUint(uint64(rev), 10))
-	if err := r.writeRevision(revDir, app.Config, vars, files); err != nil {
-		return 0, fmt.Errorf("write revision: %w", err)
-	}
-
-	if err := r.render(revDir, app.AppID, vars); err != nil {
-		return 0, fmt.Errorf("render templates: %w", err)
-	}
-
 	if err := r.composeUp(ctx, app.AppID); err != nil {
-		return 0, fmt.Errorf("docker compose up: %w", err)
+		return "", fmt.Errorf("docker compose up: %w", err)
 	}
-
-	r.pruneRevisions(app.AppID, append(revisions, rev))
-	return rev, nil
+	return hash, nil
 }
 
-// GetAppsStatus reports container status for every app the agent knows about.
+// saveWithoutDeploy is SaveApp minus the compose invocation: write the store,
+// commit, materialize secrets, and fix the symlink. Split out so the full
+// persistence path is testable without Docker.
+func (r *Repository) saveWithoutDeploy(app command.AppPayload) (string, error) {
+	if app.AppID == "" {
+		return "", fmt.Errorf("app_id is required")
+	}
+	dir := r.appDataDir(app.AppID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	if err := gitEnsure(dir); err != nil {
+		return "", fmt.Errorf("init app repo: %w", err)
+	}
+
+	store, err := r.writeAppStore(dir, app)
+	if err != nil {
+		return "", fmt.Errorf("write app store: %w", err)
+	}
+
+	name := r.appName(dir, app.AppID)
+	hash, err := gitCommitAll(dir, "save "+name)
+	if err != nil {
+		return "", fmt.Errorf("commit: %w", err)
+	}
+
+	if err := r.materializeSecrets(dir, store); err != nil {
+		return "", fmt.Errorf("materialize secrets: %w", err)
+	}
+	if _, err := ensureAppSymlink(r.cfg.GetAppsDir(), "apps-data", app.AppID, name); err != nil {
+		r.log.Warn("failed to update app symlink", "app_id", app.AppID, "error", err)
+	}
+	return hash, nil
+}
+
+// Revisions returns the app's git history (newest first) and the current HEAD.
+func (r *Repository) Revisions(ctx context.Context, appID string) ([]command.RevisionInfo, string, error) {
+	dir := r.appDataDir(appID)
+	if _, err := os.Stat(dir); err != nil {
+		return nil, "", fmt.Errorf("app %s not found", appID)
+	}
+	log, err := gitLog(dir)
+	if err != nil {
+		return nil, "", err
+	}
+	out := make([]command.RevisionInfo, 0, len(log))
+	for _, c := range log {
+		out = append(out, command.RevisionInfo{Hash: c.Hash, Subject: c.Subject, Timestamp: c.Timestamp})
+	}
+	current := ""
+	if len(log) > 0 {
+		current = log[0].Hash
+	}
+	return out, current, nil
+}
+
+// Rollback restores the given commit's tree as a NEW commit (history stays
+// linear), re-materializes secrets from the restored store, and redeploys.
+// Returns the new HEAD hash.
+func (r *Repository) Rollback(ctx context.Context, appID, hash string) (string, error) {
+	newHead, err := r.rollbackWithoutDeploy(appID, hash)
+	if err != nil {
+		return "", err
+	}
+	if err := r.composeUp(ctx, appID); err != nil {
+		return "", fmt.Errorf("docker compose up: %w", err)
+	}
+	return newHead, nil
+}
+
+// rollbackWithoutDeploy restores the commit, commits the restored tree, and
+// re-materializes secrets — everything except bringing containers up.
+func (r *Repository) rollbackWithoutDeploy(appID, hash string) (string, error) {
+	dir := r.appDataDir(appID)
+	if _, err := os.Stat(dir); err != nil {
+		return "", fmt.Errorf("app %s not found", appID)
+	}
+	if err := gitRestore(dir, hash); err != nil {
+		return "", fmt.Errorf("restore %s: %w", hash, err)
+	}
+	short := hash
+	if len(short) > 8 {
+		short = short[:8]
+	}
+	newHead, err := gitCommitAll(dir, "rollback to "+short)
+	if err != nil {
+		return "", fmt.Errorf("commit rollback: %w", err)
+	}
+	if err := r.materializeSecrets(dir, loadSecretStore(dir)); err != nil {
+		return "", fmt.Errorf("materialize secrets: %w", err)
+	}
+	// The restored config may carry a different name — keep the symlink true.
+	if _, err := ensureAppSymlink(r.cfg.GetAppsDir(), "apps-data", appID, r.appName(dir, appID)); err != nil {
+		r.log.Warn("failed to update app symlink", "app_id", appID, "error", err)
+	}
+	return newHead, nil
+}
+
+// GetAppsStatus reports container status for every app the agent has.
 func (r *Repository) GetAppsStatus(ctx context.Context) ([]command.AppStatus, error) {
-	entries, err := os.ReadDir(r.cfg.GetAppsTemplatesDir())
+	entries, err := os.ReadDir(r.cfg.GetAppsDataDir())
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []command.AppStatus{}, nil
@@ -85,11 +158,11 @@ func (r *Repository) GetAppsStatus(ctx context.Context) ([]command.AppStatus, er
 	return out, nil
 }
 
-// ListApps returns the apps the agent actually has on disk (its filesystem is
-// the source of truth). For each app dir it reads the latest revision's
-// config.json, which holds the marshaled app info.
+// ListApps returns the apps present on disk (the agent's filesystem is the
+// source of truth) and heals the human-readable symlinks in apps/ as a side
+// effect of every listing. Version is the app's commit count.
 func (r *Repository) ListApps(ctx context.Context) ([]model.App, error) {
-	entries, err := os.ReadDir(r.cfg.GetAppsTemplatesDir())
+	entries, err := os.ReadDir(r.cfg.GetAppsDataDir())
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []model.App{}, nil
@@ -97,19 +170,15 @@ func (r *Repository) ListApps(ctx context.Context) ([]model.App, error) {
 		return nil, err
 	}
 
+	names := map[string]string{}
 	out := make([]model.App, 0, len(entries))
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
 		}
 		appID := e.Name()
-		revs, err := r.listRevisions(appID)
-		if err != nil || len(revs) == 0 {
-			continue
-		}
-		latest := revs[len(revs)-1]
-		cfgPath := path.Join(r.cfg.GetAppsTemplatesDir(), appID, strconv.FormatUint(uint64(latest), 10), "config.json")
-		raw, err := os.ReadFile(cfgPath)
+		dir := filepath.Join(r.cfg.GetAppsDataDir(), appID)
+		_, raw, err := r.readAppConfig(dir)
 		if err != nil {
 			r.log.Warn("failed to read app config", "app_id", appID, "error", err)
 			continue
@@ -120,119 +189,49 @@ func (r *Repository) ListApps(ctx context.Context) ([]model.App, error) {
 			continue
 		}
 		app.ID = appID // dir name is authoritative
+		if n, err := gitCount(dir); err == nil {
+			app.Version = strconv.Itoa(n)
+		}
 		out = append(out, app)
+		names[appID] = app.Name
+	}
+
+	if err := healAppSymlinks(r.cfg.GetAppsDir(), "apps-data", names); err != nil {
+		r.log.Warn("failed to heal app symlinks", "error", err)
 	}
 	return out, nil
 }
 
-// --- internals ----------------------------------------------------------------
-
-func (r *Repository) listRevisions(appID string) ([]uint32, error) {
-	dir := path.Join(r.cfg.GetAppsTemplatesDir(), appID)
-	entries, err := os.ReadDir(dir)
+// appName reads the display name from the committed config, falling back to
+// the app id.
+func (r *Repository) appName(dir, appID string) string {
+	cfg, _, err := r.readAppConfig(dir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
+		return appID
 	}
-	names := make([]string, 0, len(entries))
-	for _, e := range entries {
-		if e.IsDir() {
-			names = append(names, e.Name())
-		}
+	if n, _ := cfg["name"].(string); n != "" {
+		return n
 	}
-	return parseRevisions(names), nil
+	return appID
 }
 
-// writeRevision stores a revision on disk: the config blob, each file under
-// files/{name} (resolved plaintext), and the variable values keyed by name in
-// vars/values.json. File names may contain relative subpaths.
-func (r *Repository) writeRevision(revDir string, config []byte, vars, files []resolvedItem) error {
-	if err := os.MkdirAll(path.Join(revDir, "files"), 0o755); err != nil {
-		return err
+// --- compose helpers ------------------------------------------------------
+
+// composeArgs builds the common CLI prefix. When materialized secrets exist,
+// both env files are passed explicitly (an explicit --env-file disables the
+// automatic .env load, so .env must be repeated).
+func (r *Repository) composeArgs(appID string, verb ...string) []string {
+	args := []string{"compose", "--project-name", projectName(appID)}
+	dir := r.appDataDir(appID)
+	if _, err := os.Stat(filepath.Join(dir, envSecretsRel)); err == nil {
+		args = append(args, "--env-file", envRel, "--env-file", envSecretsRel)
 	}
-	if err := os.MkdirAll(path.Join(revDir, "vars"), 0o755); err != nil {
-		return err
-	}
-	if err := os.WriteFile(path.Join(revDir, "config.json"), config, 0o644); err != nil {
-		return err
-	}
-	for _, f := range files {
-		dst := path.Join(revDir, "files", f.name)
-		if err := os.MkdirAll(path.Dir(dst), 0o755); err != nil {
-			return err
-		}
-		if err := os.WriteFile(dst, f.content, 0o600); err != nil {
-			return err
-		}
-	}
-	values := make(map[string]string, len(vars))
-	for _, v := range vars {
-		values[v.name] = string(v.content)
-	}
-	valuesJSON, _ := json.Marshal(values)
-	return os.WriteFile(path.Join(revDir, "vars", "values.json"), valuesJSON, 0o600)
+	return append(args, verb...)
 }
 
-// render substitutes variables into each stored template file and writes the
-// result into the running directory apps/{appID}/, preserving relative paths.
-func (r *Repository) render(revDir, appID string, vars []resolvedItem) error {
-	values := make(map[string]string, len(vars))
-	for _, v := range vars {
-		values[v.name] = string(v.content)
-	}
-
-	runDir := path.Join(r.cfg.GetAppsDir(), appID)
-	if err := os.MkdirAll(runDir, 0o755); err != nil {
-		return err
-	}
-
-	filesDir := path.Join(revDir, "files")
-	return filepath.WalkDir(filesDir, func(p string, d os.DirEntry, err error) error {
-		if err != nil {
-			if os.IsNotExist(err) {
-				return nil
-			}
-			return err
-		}
-		if d.IsDir() {
-			return nil
-		}
-		rel, err := filepath.Rel(filesDir, p)
-		if err != nil {
-			return err
-		}
-		raw, err := os.ReadFile(p)
-		if err != nil {
-			return err
-		}
-		rendered, err := template.Substitute(string(raw), values)
-		if err != nil {
-			return fmt.Errorf("substitute %s: %w", rel, err)
-		}
-		dst := path.Join(runDir, rel)
-		if err := os.MkdirAll(path.Dir(dst), 0o755); err != nil {
-			return err
-		}
-		return os.WriteFile(dst, []byte(rendered), 0o600)
-	})
-}
-
-func (r *Repository) pruneRevisions(appID string, all []uint32) {
-	for _, rev := range revisionsToPrune(all, maxRevisions) {
-		dir := path.Join(r.cfg.GetAppsTemplatesDir(), appID, strconv.FormatUint(uint64(rev), 10))
-		if err := os.RemoveAll(dir); err != nil {
-			r.log.Warn("failed to prune revision", "app_id", appID, "revision", rev, "error", err)
-		}
-	}
-}
-
-// composeUp runs `docker compose up -d` in the app's rendered directory.
-func (r *Repository) composeUp(ctx context.Context, appID string) error {
-	runDir := path.Join(r.cfg.GetAppsDir(), appID)
-	cmd := exec.CommandContext(ctx, "docker", "compose", "--project-name", projectName(appID), "up", "-d")
-	cmd.Dir = runDir
+func (r *Repository) composeRun(ctx context.Context, appID string, verb ...string) error {
+	cmd := exec.CommandContext(ctx, "docker", r.composeArgs(appID, verb...)...)
+	cmd.Dir = r.appDataDir(appID)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
@@ -240,55 +239,35 @@ func (r *Repository) composeUp(ctx context.Context, appID string) error {
 	return nil
 }
 
-// composeDown runs `docker compose down --remove-orphans` in the app's rendered
-// directory. It is a no-op (nil) if the directory does not exist.
+func (r *Repository) composeUp(ctx context.Context, appID string) error {
+	return r.composeRun(ctx, appID, "up", "-d", "--remove-orphans")
+}
+
+// composeDown is a no-op (nil) if the app dir does not exist.
 func (r *Repository) composeDown(ctx context.Context, appID string) error {
-	runDir := path.Join(r.cfg.GetAppsDir(), appID)
-	if _, err := os.Stat(runDir); err != nil {
+	if _, err := os.Stat(r.appDataDir(appID)); err != nil {
 		return nil
 	}
-	cmd := exec.CommandContext(ctx, "docker", "compose", "--project-name", projectName(appID), "down", "--remove-orphans")
-	cmd.Dir = runDir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
-	}
-	return nil
+	return r.composeRun(ctx, appID, "down", "--remove-orphans")
 }
 
-// composeRestart runs `docker compose restart` in the app's rendered directory.
 func (r *Repository) composeRestart(ctx context.Context, appID string) error {
-	runDir := path.Join(r.cfg.GetAppsDir(), appID)
-	cmd := exec.CommandContext(ctx, "docker", "compose", "--project-name", projectName(appID), "restart")
-	cmd.Dir = runDir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
-	}
-	return nil
+	return r.composeRun(ctx, appID, "restart")
 }
 
-// composePull runs `docker compose pull` in the app's rendered directory.
 func (r *Repository) composePull(ctx context.Context, appID string) error {
-	runDir := path.Join(r.cfg.GetAppsDir(), appID)
-	cmd := exec.CommandContext(ctx, "docker", "compose", "--project-name", projectName(appID), "pull")
-	cmd.Dir = runDir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
-	}
-	return nil
+	return r.composeRun(ctx, appID, "pull")
 }
 
-// composePS runs `docker compose ps --format json` and parses the per-container
-// lines.
+// composePS runs `docker compose ps --format json` and parses the
+// per-container lines.
 func (r *Repository) composePS(ctx context.Context, appID string) ([]composePS, error) {
-	runDir := path.Join(r.cfg.GetAppsDir(), appID)
-	if _, err := os.Stat(runDir); err != nil {
+	dir := r.appDataDir(appID)
+	if _, err := os.Stat(dir); err != nil {
 		return nil, nil
 	}
-	cmd := exec.CommandContext(ctx, "docker", "compose", "--project-name", projectName(appID), "ps", "--format", "json", "--all")
-	cmd.Dir = runDir
+	cmd := exec.CommandContext(ctx, "docker", r.composeArgs(appID, "ps", "--format", "json", "--all")...)
+	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, err
@@ -296,8 +275,8 @@ func (r *Repository) composePS(ctx context.Context, appID string) ([]composePS, 
 	return parseComposePS(out)
 }
 
-// parseComposePS handles both the newline-delimited JSON objects (newer compose)
-// and the single JSON array forms of `docker compose ps --format json`.
+// parseComposePS handles both the newline-delimited JSON objects (newer
+// compose) and the single JSON array forms of `docker compose ps`.
 func parseComposePS(out []byte) ([]composePS, error) {
 	trimmed := strings.TrimSpace(string(out))
 	if trimmed == "" {

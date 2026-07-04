@@ -4,535 +4,363 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"path"
-	"reflect"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"winterflow/internal/domain/command"
-	"winterflow/internal/domain/model"
 )
 
-// mustWriteRevision stores a revision directly through the repository's
-// writeRevision helper, failing the test on error.
-func mustWriteRevision(t *testing.T, r *Repository, appID string, rev string, config []byte, vars, files []resolvedItem) string {
+// savedApp writes an app via the deploy-free save path and returns its hash.
+func savedApp(t *testing.T, r *Repository, appID, name, compose string) string {
 	t.Helper()
-	revDir := path.Join(r.cfg.GetAppsTemplatesDir(), appID, rev)
-	if err := r.writeRevision(revDir, config, vars, files); err != nil {
-		t.Fatalf("writeRevision: %v", err)
-	}
-	return revDir
-}
-
-func TestWriteAndReadRevisionRoundTrip(t *testing.T) {
-	r := newTestRepo(t)
-	config := []byte(`{
-		"name": "demo",
-		"files":[{"filename":"secret.env","is_encrypted":true},{"filename":"compose.yml","is_encrypted":false}],
-		"variables":[{"name":"API_KEY","is_encrypted":true},{"name":"PORT","is_encrypted":false}]
-	}`)
-	vars := []resolvedItem{
-		{name: "API_KEY", content: []byte("topsecret")},
-		{name: "PORT", content: []byte("8080")},
-	}
-	files := []resolvedItem{
-		{name: "compose.yml", content: []byte("services: {}")},
-		{name: "secret.env", content: []byte("KEY=VALUE")},
-		{name: "conf/nested.txt", content: []byte("nested")},
-	}
-	revDir := mustWriteRevision(t, r, "demo", "1", config, vars, files)
-
-	payload, err := r.readRevision(revDir, "demo")
-	if err != nil {
-		t.Fatalf("readRevision: %v", err)
-	}
-	if payload.AppID != "demo" {
-		t.Errorf("AppID = %q, want demo", payload.AppID)
-	}
-	if !reflect.DeepEqual(payload.Config, config) {
-		t.Errorf("config not preserved")
-	}
-
-	gotVars := map[string]command.ContentItem{}
-	for _, v := range payload.Variables {
-		gotVars[v.Name] = v
-	}
-	if v := gotVars["PORT"]; string(v.Content) != "8080" || v.Encrypted {
-		t.Errorf("PORT = %+v, want plaintext 8080", v)
-	}
-	if v := gotVars["API_KEY"]; string(v.Content) != command.EncryptedPlaceholder || !v.Encrypted {
-		t.Errorf("API_KEY = %+v, want masked placeholder", v)
-	}
-
-	gotFiles := map[string]command.ContentItem{}
-	for _, f := range payload.Files {
-		gotFiles[f.Name] = f
-	}
-	if f := gotFiles["compose.yml"]; string(f.Content) != "services: {}" || f.Encrypted {
-		t.Errorf("compose.yml = %+v, want plaintext", f)
-	}
-	if f := gotFiles["secret.env"]; string(f.Content) != command.EncryptedPlaceholder || !f.Encrypted {
-		t.Errorf("secret.env = %+v, want masked placeholder", f)
-	}
-	if f := gotFiles["conf/nested.txt"]; string(f.Content) != "nested" {
-		t.Errorf("nested file = %+v, want content preserved with relative path", f)
-	}
-}
-
-func TestListRevisionsFromDisk(t *testing.T) {
-	r := newTestRepo(t)
-
-	// Missing app dir is not an error, just empty.
-	revs, err := r.listRevisions("nope")
-	if err != nil || revs != nil {
-		t.Errorf("missing dir: revs=%v err=%v, want nil,nil", revs, err)
-	}
-
-	appDir := path.Join(r.cfg.GetAppsTemplatesDir(), "demo")
-	for _, name := range []string{"2", "10", "1", "junk"} {
-		if err := os.MkdirAll(path.Join(appDir, name), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	// A stray file must be ignored.
-	if err := os.WriteFile(path.Join(appDir, "5"), []byte("file, not dir"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	revs, err = r.listRevisions("demo")
-	if err != nil {
-		t.Fatalf("listRevisions: %v", err)
-	}
-	if want := []uint32{1, 2, 10}; !reflect.DeepEqual(revs, want) {
-		t.Errorf("listRevisions = %v, want %v", revs, want)
-	}
-}
-
-func TestRenderSubstitutesVariables(t *testing.T) {
-	r := newTestRepo(t)
-	files := []resolvedItem{
-		{name: "compose.yml", content: []byte("image: app:${TAG}")},
-		{name: "conf/app.conf", content: []byte("port=${PORT:-9090}")},
-	}
-	revDir := mustWriteRevision(t, r, "demo", "1", []byte(`{}`), nil, files)
-
-	vars := []resolvedItem{{name: "TAG", content: []byte("v1")}}
-	if err := r.render(revDir, "demo", vars); err != nil {
-		t.Fatalf("render: %v", err)
-	}
-
-	runDir := path.Join(r.cfg.GetAppsDir(), "demo")
-	got, err := os.ReadFile(path.Join(runDir, "compose.yml"))
-	if err != nil {
-		t.Fatalf("read rendered compose.yml: %v", err)
-	}
-	if string(got) != "image: app:v1" {
-		t.Errorf("compose.yml = %q, want image: app:v1", got)
-	}
-	got, err = os.ReadFile(path.Join(runDir, "conf", "app.conf"))
-	if err != nil {
-		t.Fatalf("read rendered nested file: %v", err)
-	}
-	if string(got) != "port=9090" {
-		t.Errorf("app.conf = %q, want default-substituted port=9090", got)
-	}
-
-	if !r.appRunDirExists("demo") {
-		t.Error("appRunDirExists = false after render, want true")
-	}
-	if r.appRunDirExists("ghost") {
-		t.Error("appRunDirExists = true for unknown app, want false")
-	}
-}
-
-func TestRenderFailsOnMissingMandatoryVariable(t *testing.T) {
-	r := newTestRepo(t)
-	files := []resolvedItem{
-		{name: "compose.yml", content: []byte("secret: ${WF_TEST_ABSENT_VAR:?required}")},
-	}
-	revDir := mustWriteRevision(t, r, "demo", "1", []byte(`{}`), nil, files)
-
-	if err := r.render(revDir, "demo", nil); err == nil {
-		t.Error("expected error for unset mandatory variable")
-	}
-}
-
-func TestPruneRevisionsRemovesOldest(t *testing.T) {
-	r := newTestRepo(t)
-	appDir := path.Join(r.cfg.GetAppsTemplatesDir(), "demo")
-	for _, rev := range []string{"1", "2", "3", "4", "5"} {
-		if err := os.MkdirAll(path.Join(appDir, rev), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	r.pruneRevisions("demo", []uint32{1, 2, 3, 4, 5})
-
-	revs, err := r.listRevisions("demo")
-	if err != nil {
-		t.Fatalf("listRevisions: %v", err)
-	}
-	if want := []uint32{3, 4, 5}; !reflect.DeepEqual(revs, want) {
-		t.Errorf("revisions after prune = %v, want %v", revs, want)
-	}
-}
-
-func TestPreviousValuesReadsLatestRevision(t *testing.T) {
-	r := newTestRepo(t)
-
-	// No revisions: empty maps, not nil.
-	vars, files := r.previousValues("nope")
-	if len(vars) != 0 || len(files) != 0 {
-		t.Errorf("expected empty maps for unknown app, got %v %v", vars, files)
-	}
-
-	mustWriteRevision(t, r, "demo", "1", []byte(`{}`),
-		[]resolvedItem{{name: "OLD", content: []byte("old-value")}},
-		nil)
-	mustWriteRevision(t, r, "demo", "2", []byte(`{}`),
-		[]resolvedItem{{name: "API_KEY", content: []byte("stored-secret")}},
-		[]resolvedItem{{name: "secret.env", content: []byte("KEY=VALUE")}})
-
-	vars, files = r.previousValues("demo")
-	if vars["API_KEY"] != "stored-secret" {
-		t.Errorf("vars = %v, want API_KEY from latest revision", vars)
-	}
-	if _, ok := vars["OLD"]; ok {
-		t.Errorf("vars = %v, must not include older revision values", vars)
-	}
-	if files["secret.env"] != "KEY=VALUE" {
-		t.Errorf("files = %v, want secret.env content", files)
-	}
-}
-
-func TestListApps(t *testing.T) {
-	r := newTestRepo(t)
-	ctx := context.Background()
-
-	// Missing root dir: empty, no error.
-	apps, err := r.ListApps(ctx)
-	if err != nil {
-		t.Fatalf("ListApps (no dir): %v", err)
-	}
-	if len(apps) != 0 {
-		t.Errorf("ListApps (no dir) = %v, want empty", apps)
-	}
-
-	cfg, _ := json.Marshal(model.App{ID: "stale-id", Name: "My App", Icon: "box"})
-	mustWriteRevision(t, r, "app-1", "1", cfg, nil, nil)
-	mustWriteRevision(t, r, "app-1", "2", cfg, nil, nil)
-
-	// App dir with no revision subdirs is skipped.
-	if err := os.MkdirAll(path.Join(r.cfg.GetAppsTemplatesDir(), "empty-app"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	// App with an unparseable config is skipped.
-	mustWriteRevision(t, r, "broken-app", "1", []byte("not json"), nil, nil)
-	// Stray file at the root is skipped.
-	if err := os.WriteFile(path.Join(r.cfg.GetAppsTemplatesDir(), "stray.txt"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	apps, err = r.ListApps(ctx)
-	if err != nil {
-		t.Fatalf("ListApps: %v", err)
-	}
-	if len(apps) != 1 {
-		t.Fatalf("ListApps = %+v, want exactly one app", apps)
-	}
-	if apps[0].ID != "app-1" {
-		t.Errorf("app ID = %q, want dir name app-1 (authoritative over config)", apps[0].ID)
-	}
-	if apps[0].Name != "My App" || apps[0].Icon != "box" {
-		t.Errorf("app metadata = %+v, want name/icon from config.json", apps[0])
-	}
-}
-
-func TestGetApp(t *testing.T) {
-	r := newTestRepo(t)
-	ctx := context.Background()
-
-	if _, err := r.GetApp(ctx, "nope", 0); err == nil || !strings.Contains(err.Error(), "no revisions") {
-		t.Errorf("GetApp unknown app err = %v, want no-revisions error", err)
-	}
-
-	mustWriteRevision(t, r, "demo", "1", []byte(`{"name":"one"}`), nil, nil)
-	mustWriteRevision(t, r, "demo", "2", []byte(`{"name":"two"}`), nil, nil)
-
-	// Revision 0 resolves to the latest.
-	resp, err := r.GetApp(ctx, "demo", 0)
-	if err != nil {
-		t.Fatalf("GetApp latest: %v", err)
-	}
-	if resp.Revision != 2 || string(resp.App.Config) != `{"name":"two"}` {
-		t.Errorf("latest = rev %d config %s, want rev 2 config two", resp.Revision, resp.App.Config)
-	}
-	if want := []uint32{1, 2}; !reflect.DeepEqual(resp.AvailableRevisions, want) {
-		t.Errorf("AvailableRevisions = %v, want %v", resp.AvailableRevisions, want)
-	}
-
-	// Explicit older revision.
-	resp, err = r.GetApp(ctx, "demo", 1)
-	if err != nil {
-		t.Fatalf("GetApp rev 1: %v", err)
-	}
-	if resp.Revision != 1 || string(resp.App.Config) != `{"name":"one"}` {
-		t.Errorf("rev 1 = rev %d config %s", resp.Revision, resp.App.Config)
-	}
-
-	// Nonexistent revision.
-	if _, err := r.GetApp(ctx, "demo", 99); err == nil || !strings.Contains(err.Error(), "not found") {
-		t.Errorf("GetApp rev 99 err = %v, want not-found error", err)
-	}
-}
-
-func TestRenameApp(t *testing.T) {
-	r := newTestRepo(t)
-	ctx := context.Background()
-
-	if err := r.RenameApp(ctx, "nope", "x"); err == nil {
-		t.Error("expected error renaming app with no revisions")
-	}
-
-	mustWriteRevision(t, r, "demo", "1", []byte(`{"name":"old","icon":"box"}`), nil, nil)
-	mustWriteRevision(t, r, "demo", "2", []byte(`{"name":"old","icon":"box"}`), nil, nil)
-
-	if err := r.RenameApp(ctx, "demo", "renamed"); err != nil {
-		t.Fatalf("RenameApp: %v", err)
-	}
-
-	raw, err := os.ReadFile(path.Join(r.cfg.GetAppsTemplatesDir(), "demo", "2", "config.json"))
+	hash, err := r.saveWithoutDeploy(command.AppPayload{
+		AppID:  appID,
+		Config: []byte(`{"name":"` + name + `","files":[{"filename":"compose.yml","is_encrypted":false}],"variables":[{"name":"PORT","is_encrypted":false}]}`),
+		Files: []command.ContentItem{
+			{Name: "compose.yml", Content: []byte(compose)},
+		},
+		Variables: []command.ContentItem{
+			{Name: "PORT", Content: []byte("8080")},
+		},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var cfg map[string]any
-	if err := json.Unmarshal(raw, &cfg); err != nil {
-		t.Fatalf("updated config is not valid JSON: %v", err)
-	}
-	if cfg["name"] != "renamed" || cfg["icon"] != "box" {
-		t.Errorf("config after rename = %v, want name updated and other fields kept", cfg)
+	return hash
+}
+
+func TestSaveCreatesCommitAndSymlink(t *testing.T) {
+	r := newTestRepo(t)
+	hash := savedApp(t, r, "app-1", "grafana", "services: {}\n")
+	if hash == "" {
+		t.Fatal("no hash returned")
 	}
 
-	// Only the latest revision is touched.
-	raw, _ = os.ReadFile(path.Join(r.cfg.GetAppsTemplatesDir(), "demo", "1", "config.json"))
-	if !strings.Contains(string(raw), `"old"`) {
-		t.Errorf("older revision was modified: %s", raw)
+	dir := r.appDataDir("app-1")
+	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
+		t.Fatal("app dir is not a git repo")
 	}
-
-	// Malformed latest config is an error.
-	mustWriteRevision(t, r, "broken", "1", []byte("not json"), nil, nil)
-	if err := r.RenameApp(ctx, "broken", "x"); err == nil {
-		t.Error("expected error for unparseable config")
+	if got, _ := os.ReadFile(filepath.Join(dir, "compose.yml")); string(got) != "services: {}\n" {
+		t.Fatalf("compose.yml = %q", got)
+	}
+	if n, _ := gitCount(dir); n != 1 {
+		t.Fatalf("commit count = %d", n)
+	}
+	// The human-readable symlink resolves to the data dir.
+	target, err := os.Readlink(filepath.Join(r.cfg.GetAppsDir(), "grafana"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target != filepath.Join("..", "apps-data", "app-1") {
+		t.Fatalf("symlink target = %q", target)
 	}
 }
 
-func TestGetAppsStatusWithoutRunningApps(t *testing.T) {
+func TestSecondSaveGrowsHistory(t *testing.T) {
 	r := newTestRepo(t)
-	ctx := context.Background()
-
-	// Missing templates root: empty, no error.
-	statuses, err := r.GetAppsStatus(ctx)
-	if err != nil {
-		t.Fatalf("GetAppsStatus (no dir): %v", err)
+	h1 := savedApp(t, r, "app-1", "grafana", "one\n")
+	h2 := savedApp(t, r, "app-1", "grafana", "two\n")
+	if h1 == h2 {
+		t.Fatal("expected a new commit for the second save")
 	}
-	if len(statuses) != 0 {
-		t.Errorf("GetAppsStatus (no dir) = %v, want empty", statuses)
-	}
-
-	// An app that has stored revisions but no rendered run dir yields Unknown
-	// without shelling out to docker (composePS short-circuits on the missing
-	// directory).
-	mustWriteRevision(t, r, "demo", "1", []byte(`{}`), nil, nil)
-	if err := os.WriteFile(path.Join(r.cfg.GetAppsTemplatesDir(), "stray.txt"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	statuses, err = r.GetAppsStatus(ctx)
-	if err != nil {
-		t.Fatalf("GetAppsStatus: %v", err)
-	}
-	if len(statuses) != 1 {
-		t.Fatalf("GetAppsStatus = %+v, want one entry", statuses)
-	}
-	if statuses[0].AppID != "demo" || statuses[0].StatusCode != command.ContainerStatusUnknown {
-		t.Errorf("status = %+v, want demo/unknown", statuses[0])
-	}
-	if len(statuses[0].Containers) != 0 {
-		t.Errorf("containers = %+v, want none", statuses[0].Containers)
+	if n, _ := gitCount(r.appDataDir("app-1")); n != 2 {
+		t.Fatalf("count = %d", n)
 	}
 }
 
 func TestSaveAppRequiresAppID(t *testing.T) {
 	r := newTestRepo(t)
-	if _, err := r.SaveApp(context.Background(), command.AppPayload{}); err == nil {
-		t.Error("expected error for empty app_id")
+	if _, err := r.saveWithoutDeploy(command.AppPayload{}); err == nil {
+		t.Fatal("expected app_id validation error")
 	}
 }
 
-func TestControlActionsWithoutRevisionsFail(t *testing.T) {
+func TestListAppsReadsNewLayoutAndHealsSymlinks(t *testing.T) {
 	r := newTestRepo(t)
-	ctx := context.Background()
+	savedApp(t, r, "app-1", "grafana", "x\n")
+	savedApp(t, r, "app-2", "postgres", "y\n")
 
-	// No run dir and no stored revisions: redeployLatest must refuse without
-	// ever reaching docker.
-	if err := r.StartApp(ctx, "ghost"); err == nil || !strings.Contains(err.Error(), "no revisions") {
-		t.Errorf("StartApp err = %v, want no-revisions error", err)
-	}
-	if err := r.RestartApp(ctx, "ghost"); err == nil || !strings.Contains(err.Error(), "no revisions") {
-		t.Errorf("RestartApp err = %v, want no-revisions error", err)
-	}
-	if err := r.UpdateApp(ctx, "ghost"); err == nil || !strings.Contains(err.Error(), "no revisions") {
-		t.Errorf("UpdateApp err = %v, want no-revisions error", err)
-	}
-}
-
-func TestStopAppMissingIsNoop(t *testing.T) {
-	r := newTestRepo(t)
-	if err := r.StopApp(context.Background(), "ghost"); err != nil {
-		t.Errorf("StopApp on missing app = %v, want nil", err)
-	}
-}
-
-func TestDeleteAppRemovesStoredRevisions(t *testing.T) {
-	r := newTestRepo(t)
-	mustWriteRevision(t, r, "demo", "1", []byte(`{}`), nil, nil)
-
-	// No run dir exists, so compose down is a no-op and no docker is invoked.
-	if err := r.DeleteApp(context.Background(), "demo"); err != nil {
-		t.Fatalf("DeleteApp: %v", err)
-	}
-	if _, err := os.Stat(path.Join(r.cfg.GetAppsTemplatesDir(), "demo")); !os.IsNotExist(err) {
-		t.Errorf("templates dir still present after delete (stat err = %v)", err)
-	}
-}
-
-func TestProjectName(t *testing.T) {
-	if got := projectName("my-app"); got != "wf-my-app" {
-		t.Errorf("projectName = %q, want wf-my-app", got)
-	}
-	// Path components are stripped so an app id can never escape into another
-	// compose project namespace.
-	if got := projectName("../evil"); got != "wf-evil" {
-		t.Errorf("projectName traversal = %q, want wf-evil", got)
-	}
-}
-
-func TestListRevisionsPropagatesReadErrors(t *testing.T) {
-	r := newTestRepo(t)
-	// The app "dir" is a regular file: ReadDir fails with ENOTDIR, which is not
-	// a not-exist and must surface.
-	if err := os.MkdirAll(r.cfg.GetAppsTemplatesDir(), 0o755); err != nil {
+	// Sabotage: remove one link, add a dangling one.
+	if err := os.Remove(filepath.Join(r.cfg.GetAppsDir(), "grafana")); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path.Join(r.cfg.GetAppsTemplatesDir(), "demo"), []byte("x"), 0o644); err != nil {
+	_ = os.Symlink(filepath.Join("..", "apps-data", "ghost"), filepath.Join(r.cfg.GetAppsDir(), "zombie"))
+
+	apps, err := r.ListApps(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.listRevisions("demo"); err == nil {
-		t.Error("expected error when app path is not a directory")
+	if len(apps) != 2 {
+		t.Fatalf("apps = %+v", apps)
 	}
-	// The same failure must propagate through GetApp and RenameApp.
-	if _, err := r.GetApp(context.Background(), "demo", 0); err == nil {
-		t.Error("expected GetApp to propagate listRevisions error")
+	byID := map[string]string{}
+	versions := map[string]string{}
+	for _, a := range apps {
+		byID[a.ID] = a.Name
+		versions[a.ID] = a.Version
 	}
-	if err := r.RenameApp(context.Background(), "demo", "x"); err == nil {
-		t.Error("expected RenameApp to propagate listRevisions error")
+	if byID["app-1"] != "grafana" || byID["app-2"] != "postgres" {
+		t.Fatalf("names = %v", byID)
 	}
-	if err := r.StartApp(context.Background(), "demo"); err == nil {
-		t.Error("expected StartApp (redeploy) to propagate listRevisions error")
+	if versions["app-1"] != "1" {
+		t.Fatalf("version should be the commit count, got %q", versions["app-1"])
+	}
+	// Healed: grafana link is back, zombie is gone.
+	if _, err := os.Readlink(filepath.Join(r.cfg.GetAppsDir(), "grafana")); err != nil {
+		t.Fatal("missing link not healed")
+	}
+	if _, err := os.Lstat(filepath.Join(r.cfg.GetAppsDir(), "zombie")); !os.IsNotExist(err) {
+		t.Fatal("dangling link not pruned")
 	}
 }
 
-func TestListAppsAndStatusPropagateRootErrors(t *testing.T) {
+func TestListAppsEmptyRootAndErrorPropagation(t *testing.T) {
 	r := newTestRepo(t)
-	// apps_templates itself is a regular file: ReadDir fails with ENOTDIR.
-	if err := os.WriteFile(r.cfg.GetAppsTemplatesDir(), []byte("x"), 0o644); err != nil {
+	apps, err := r.ListApps(context.Background())
+	if err != nil || len(apps) != 0 {
+		t.Fatalf("empty root: %v %v", apps, err)
+	}
+	statuses, err := r.GetAppsStatus(context.Background())
+	if err != nil || len(statuses) != 0 {
+		t.Fatalf("empty root status: %v %v", statuses, err)
+	}
+
+	// A file where the dir should be → real error.
+	if err := os.WriteFile(r.cfg.GetAppsDataDir(), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := r.ListApps(context.Background()); err == nil {
-		t.Error("expected ListApps error when templates root is not a directory")
+		t.Fatal("expected error for blocked apps-data root")
 	}
 	if _, err := r.GetAppsStatus(context.Background()); err == nil {
-		t.Error("expected GetAppsStatus error when templates root is not a directory")
+		t.Fatal("expected error for blocked apps-data root")
 	}
 }
 
-func TestReadRevisionMissingConfig(t *testing.T) {
+func TestGetAppRoundTripAndMasking(t *testing.T) {
+	r, pub := newSecretRepo(t)
+	p := storePayload(pub, t) // has secret var DB_PASS + secret file certs/tls.key
+	if _, err := r.saveWithoutDeploy(p); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := r.GetApp(context.Background(), "app-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(resp.App.Config) == "" {
+		t.Fatal("config missing")
+	}
+
+	items := map[string]command.ContentItem{}
+	for _, v := range resp.App.Variables {
+		items["var:"+v.Name] = v
+	}
+	for _, f := range resp.App.Files {
+		items["file:"+f.Name] = f
+	}
+	if string(items["var:PORT"].Content) != "8080" {
+		t.Fatalf("PORT = %q", items["var:PORT"].Content)
+	}
+	if v := items["var:DB_PASS"]; !v.Encrypted || string(v.Content) != command.EncryptedPlaceholder {
+		t.Fatalf("DB_PASS not masked: %+v", v)
+	}
+	if f := items["file:compose.yml"]; string(f.Content) != "services: {}\n" {
+		t.Fatalf("compose.yml = %q", f.Content)
+	}
+	if f := items["file:certs/tls.key"]; !f.Encrypted || string(f.Content) != command.EncryptedPlaceholder {
+		t.Fatalf("secret file not masked: %+v", f)
+	}
+}
+
+func TestGetAppMissing(t *testing.T) {
 	r := newTestRepo(t)
-	revDir := t.TempDir()
-	if _, err := r.readRevision(revDir, "demo"); err == nil {
-		t.Error("expected error when config.json is missing")
+	if _, err := r.GetApp(context.Background(), "nope"); err == nil {
+		t.Fatal("expected error for unknown app")
+	}
+}
+
+func TestRenameAppCommitsAndSwapsSymlink(t *testing.T) {
+	r := newTestRepo(t)
+	savedApp(t, r, "app-1", "oldname", "x\n")
+
+	if err := r.RenameApp(context.Background(), "app-1", "newname"); err != nil {
+		t.Fatal(err)
+	}
+	dir := r.appDataDir("app-1")
+	cfg, _, _ := r.readAppConfig(dir)
+	if cfg["name"] != "newname" {
+		t.Fatalf("config name = %v", cfg["name"])
+	}
+	if n, _ := gitCount(dir); n != 2 {
+		t.Fatalf("rename should commit; count = %d", n)
+	}
+	if _, err := os.Lstat(filepath.Join(r.cfg.GetAppsDir(), "oldname")); !os.IsNotExist(err) {
+		t.Fatal("old symlink should be gone")
+	}
+	if _, err := os.Readlink(filepath.Join(r.cfg.GetAppsDir(), "newname")); err != nil {
+		t.Fatal("new symlink missing")
 	}
 }
 
 func TestRenameAppMissingConfig(t *testing.T) {
 	r := newTestRepo(t)
-	// Revision dir exists but has no config.json.
-	if err := os.MkdirAll(path.Join(r.cfg.GetAppsTemplatesDir(), "demo", "1"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.RenameApp(context.Background(), "demo", "x"); err == nil {
-		t.Error("expected error when latest revision has no config.json")
+	if err := r.RenameApp(context.Background(), "nope", "x"); err == nil {
+		t.Fatal("expected error")
 	}
 }
 
-func TestRenderWithoutFilesDirIsNoop(t *testing.T) {
+func TestRevisionsNewestFirst(t *testing.T) {
 	r := newTestRepo(t)
-	// A revision without a files/ subdir renders nothing but is not an error.
-	revDir := path.Join(r.cfg.GetAppsTemplatesDir(), "demo", "1")
-	if err := os.MkdirAll(revDir, 0o755); err != nil {
+	h1 := savedApp(t, r, "app-1", "demo", "one\n")
+	h2 := savedApp(t, r, "app-1", "demo", "two\n")
+
+	revs, current, err := r.Revisions(context.Background(), "app-1")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := r.render(revDir, "demo", nil); err != nil {
-		t.Errorf("render without files dir = %v, want nil", err)
+	if current != h2 {
+		t.Fatalf("current = %s, want %s", current, h2)
+	}
+	if len(revs) != 2 || revs[0].Hash != h2 || revs[1].Hash != h1 {
+		t.Fatalf("revs = %+v", revs)
+	}
+	if !strings.HasPrefix(revs[0].Subject, "save ") || revs[0].Timestamp == 0 {
+		t.Fatalf("rev meta = %+v", revs[0])
 	}
 }
 
-func TestWriteRevisionFailsWhenPathBlocked(t *testing.T) {
+func TestRevisionsUnknownApp(t *testing.T) {
 	r := newTestRepo(t)
-	// A regular file sits where the revision dir must be created.
-	blocked := path.Join(t.TempDir(), "blocked")
-	if err := os.WriteFile(blocked, []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.writeRevision(path.Join(blocked, "1"), []byte(`{}`), nil, nil); err == nil {
-		t.Error("expected error when revision path cannot be created")
-	}
-
-	// A file item with an empty name resolves to the files/ directory itself
-	// and must fail rather than clobber it.
-	revDir := path.Join(t.TempDir(), "1")
-	err := r.writeRevision(revDir, []byte(`{}`), nil, []resolvedItem{{name: "", content: []byte("x")}})
-	if err == nil {
-		t.Error("expected error for file item with empty name")
+	if _, _, err := r.Revisions(context.Background(), "nope"); err == nil {
+		t.Fatal("expected error")
 	}
 }
 
-func TestRenderFailsWhenRunRootBlocked(t *testing.T) {
+func TestRollbackRestoresTreeAsNewCommit(t *testing.T) {
 	r := newTestRepo(t)
-	revDir := mustWriteRevision(t, r, "demo", "1", []byte(`{}`), nil,
-		[]resolvedItem{{name: "compose.yml", content: []byte("services: {}")}})
+	h1 := savedApp(t, r, "app-1", "demo", "version-one\n")
+	savedApp(t, r, "app-1", "demo", "version-two\n")
 
-	// A regular file occupies the apps/ root, so the run dir cannot be created.
-	if err := os.WriteFile(r.cfg.GetAppsDir(), []byte("x"), 0o644); err != nil {
+	newHead, err := r.rollbackWithoutDeploy("app-1", h1)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := r.render(revDir, "demo", nil); err == nil {
-		t.Error("expected error when run dir cannot be created")
+	dir := r.appDataDir("app-1")
+	if got, _ := os.ReadFile(filepath.Join(dir, "compose.yml")); string(got) != "version-one\n" {
+		t.Fatalf("compose.yml = %q", got)
+	}
+	if n, _ := gitCount(dir); n != 3 {
+		t.Fatalf("rollback must add a commit; count = %d", n)
+	}
+	if newHead == h1 {
+		t.Fatal("rollback head must be new")
+	}
+	revs, current, _ := r.Revisions(context.Background(), "app-1")
+	if current != newHead || !strings.HasPrefix(revs[0].Subject, "rollback to ") {
+		t.Fatalf("history after rollback: %+v", revs)
 	}
 }
 
-func TestToContainerStatuses(t *testing.T) {
-	got := toContainerStatuses([]composePS{
-		{ID: "abc", Name: "web", State: "running", ExitCode: 0},
-		{ID: "def", Name: "db", State: "exited", ExitCode: 137},
-	})
-	if len(got) != 2 {
-		t.Fatalf("len = %d, want 2", len(got))
+func TestRollbackUnknownAppOrHash(t *testing.T) {
+	r := newTestRepo(t)
+	if _, err := r.rollbackWithoutDeploy("nope", "abc"); err == nil {
+		t.Fatal("unknown app must error")
 	}
-	if got[0].ContainerID != "abc" || got[0].Name != "web" || got[0].StatusCode != command.ContainerStatusActive {
-		t.Errorf("first = %+v", got[0])
+	savedApp(t, r, "app-1", "demo", "x\n")
+	if _, err := r.rollbackWithoutDeploy("app-1", "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"); err == nil {
+		t.Fatal("unknown hash must error")
 	}
-	if got[1].StatusCode != command.ContainerStatusProblematic || got[1].ExitCode != 137 {
-		t.Errorf("second = %+v", got[1])
+}
+
+func TestDeleteAppRemovesDirAndSymlink(t *testing.T) {
+	r := newTestRepo(t)
+	savedApp(t, r, "app-1", "demo", "x\n")
+
+	if err := r.DeleteApp(context.Background(), "app-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(r.appDataDir("app-1")); !os.IsNotExist(err) {
+		t.Fatal("app dir should be removed")
+	}
+	if _, err := os.Lstat(filepath.Join(r.cfg.GetAppsDir(), "demo")); !os.IsNotExist(err) {
+		t.Fatal("symlink should be removed")
+	}
+}
+
+func TestStopAppMissingIsNoop(t *testing.T) {
+	r := newTestRepo(t)
+	if err := r.StopApp(context.Background(), "missing"); err != nil {
+		t.Fatalf("stop on missing app must be a no-op: %v", err)
+	}
+}
+
+func TestControlActionsOnMissingAppFail(t *testing.T) {
+	r := newTestRepo(t)
+	ctx := context.Background()
+	if err := r.StartApp(ctx, "missing"); err == nil {
+		t.Fatal("start should fail")
+	}
+	if err := r.RestartApp(ctx, "missing"); err == nil {
+		t.Fatal("restart should fail")
+	}
+	if err := r.UpdateApp(ctx, "missing"); err == nil {
+		t.Fatal("update should fail")
+	}
+}
+
+func TestComposeArgsIncludeEnvFilesOnlyWithSecrets(t *testing.T) {
+	r := newTestRepo(t)
+	savedApp(t, r, "app-1", "demo", "x\n")
+
+	args := strings.Join(r.composeArgs("app-1", "up"), " ")
+	if strings.Contains(args, "--env-file") {
+		t.Fatalf("no secrets -> no explicit env files: %s", args)
+	}
+
+	// Materialized secrets flip the flags on.
+	dir := r.appDataDir("app-1")
+	if err := os.WriteFile(filepath.Join(dir, envSecretsRel), []byte("A=1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	args = strings.Join(r.composeArgs("app-1", "up"), " ")
+	if !strings.Contains(args, "--env-file .env --env-file .env.secrets") {
+		t.Fatalf("secrets present -> both env files expected: %s", args)
+	}
+}
+
+func TestProjectName(t *testing.T) {
+	if projectName("abc") != "wf-abc" {
+		t.Fatal(projectName("abc"))
+	}
+	if projectName("../../etc") != "wf-etc" {
+		t.Fatalf("traversal not stripped: %s", projectName("../../etc"))
+	}
+}
+
+func TestGetLogsNotDeployedIsEmpty(t *testing.T) {
+	r := newTestRepo(t)
+	resp, err := r.GetLogs(context.Background(), command.GetLogsRequest{AppID: "missing", Tail: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Logs) != 0 {
+		t.Fatalf("logs = %+v", resp.Logs)
+	}
+}
+
+func TestSaveConfigRoundTripThroughJSON(t *testing.T) {
+	// The committed config.json is the API-authored blob; model.App parses its
+	// name/icon/color fields for the reconcile list.
+	r := newTestRepo(t)
+	savedApp(t, r, "app-1", "demo", "x\n")
+	_, raw, err := r.readAppConfig(r.appDataDir("app-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil || m["name"] != "demo" {
+		t.Fatalf("config = %s (%v)", raw, err)
 	}
 }

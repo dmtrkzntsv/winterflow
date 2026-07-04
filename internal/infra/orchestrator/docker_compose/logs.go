@@ -6,7 +6,6 @@ import (
 	"context"
 	"os"
 	"os/exec"
-	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -26,13 +25,13 @@ var ansiRegexp = regexp.MustCompile("\x1b\\[[0-9;]*[A-Za-z]")
 func (r *Repository) GetLogs(ctx context.Context, in command.GetLogsRequest) (command.GetLogsResponse, error) {
 	resp := command.GetLogsResponse{AppID: in.AppID, Logs: []command.LogEntry{}}
 
-	runDir := path.Join(r.cfg.GetAppsDir(), in.AppID)
+	runDir := r.appDataDir(in.AppID)
 	if _, err := os.Stat(runDir); err != nil {
 		// Not deployed: no logs, not an error.
 		return resp, nil
 	}
 
-	args := []string{"compose", "--project-name", projectName(in.AppID), "logs", "--no-color", "--timestamps"}
+	args := r.composeArgs(in.AppID, "logs", "--no-color", "--timestamps")
 	if in.Tail > 0 {
 		args = append(args, "--tail", strconv.Itoa(int(in.Tail)))
 	} else {

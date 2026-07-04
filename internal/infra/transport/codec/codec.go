@@ -17,29 +17,6 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// EncodeRequest builds a RequestEnvelope addressed to agentID, carrying the JSON
-// encoding of payload under the given command type. requestID correlates the
-// eventual response; by convention it is also the envelope's message id.
-func EncodeRequest(agentID, requestID string, typ command.Type, payload any) (*proto.RequestEnvelope, error) {
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("codec: marshal %s request: %w", typ, err)
-	}
-	return &proto.RequestEnvelope{
-		Base: &proto.BaseMessage{
-			MessageId:       requestID,
-			Timestamp:       timestamppb.Now(),
-			AgentId:         agentID,
-			ProtocolVersion: command.SchemaVersion,
-		},
-		RequestId:     requestID,
-		Type:          string(typ),
-		ContentType:   command.ContentTypeJSON,
-		SchemaVersion: command.SchemaVersion,
-		Payload:       raw,
-	}, nil
-}
-
 // EncodeResponse builds a ResponseEnvelope that echoes the originating
 // requestID and command type, carrying the JSON encoding of payload.
 func EncodeResponse(agentID, requestID string, typ command.Type, code proto.ResponseCode, detail string, payload any) (*proto.ResponseEnvelope, error) {
@@ -83,45 +60,3 @@ func DecodePayload(raw []byte, v any) error {
 	}
 	return nil
 }
-
-// NewRequestPayload allocates an empty request struct for the given command
-// type. The agent dispatcher uses it to decode an incoming RequestEnvelope into
-// the right Go type before handing it to a handler. Returns an error for
-// unknown types so a typo can't silently produce a nil payload.
-func NewRequestPayload(typ command.Type) (any, error) {
-	switch typ {
-	case command.TypeAppSave:
-		return &command.SaveAppRequest{}, nil
-	case command.TypeAppGet:
-		return &command.GetAppRequest{}, nil
-	case command.TypeAppsList:
-		return &command.ListAppsRequest{}, nil
-	case command.TypeAppsStatus:
-		return &command.GetAppsStatusRequest{}, nil
-	case command.TypeAppControl:
-		return &command.ControlAppRequest{}, nil
-	case command.TypeAppDelete:
-		return &command.DeleteAppRequest{}, nil
-	case command.TypeAppRename:
-		return &command.RenameAppRequest{}, nil
-	case command.TypeAppLogs:
-		return &command.GetLogsRequest{}, nil
-	case command.TypeRegistryList:
-		return &command.ListRegistriesRequest{}, nil
-	case command.TypeRegistryCreate:
-		return &command.CreateRegistryRequest{}, nil
-	case command.TypeRegistryDelete:
-		return &command.DeleteRegistryRequest{}, nil
-	case command.TypeNetworkList:
-		return &command.ListNetworksRequest{}, nil
-	case command.TypeNetworkCreate:
-		return &command.CreateNetworkRequest{}, nil
-	case command.TypeNetworkDelete:
-		return &command.DeleteNetworkRequest{}, nil
-	case command.TypeAgentUpdate:
-		return &command.UpdateAgentRequest{}, nil
-	default:
-		return nil, fmt.Errorf("codec: unknown command type %q", typ)
-	}
-}
-

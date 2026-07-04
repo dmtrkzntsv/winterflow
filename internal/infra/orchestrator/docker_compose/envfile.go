@@ -6,6 +6,13 @@ import (
 	"strings"
 )
 
+// resolvedItem is a named plaintext value (a variable or file content) ready
+// to serialize into a deploy artifact.
+type resolvedItem struct {
+	name    string
+	content []byte
+}
+
 // marshalEnv renders variables as a compose-compatible env file: NAME=VALUE
 // lines sorted by name. Values containing newlines or double quotes are
 // double-quoted with \n and \" escapes (the dotenv dialect docker compose

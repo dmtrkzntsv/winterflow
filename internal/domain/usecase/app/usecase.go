@@ -111,14 +111,36 @@ func (uc *UseCase) RenameApp(ctx context.Context, userID, serverID, appID, name 
 	})
 }
 
-// GetApp dispatches an app.get to the agent (its filesystem holds the config +
-// revisions). The result is delivered over SSE, correlated by request id.
-func (uc *UseCase) GetApp(ctx context.Context, userID, serverID, appID string, revision uint32) (string, error) {
+// GetApp dispatches an app.get to the agent (its filesystem holds the config).
+// The result is delivered over SSE, correlated by request id.
+func (uc *UseCase) GetApp(ctx context.Context, userID, serverID, appID string) (string, error) {
 	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
 		AgentID: serverID,
 		UserID:  userID,
 		Type:    command.TypeAppGet,
-		Payload: command.GetAppRequest{AppID: appID, Revision: revision},
+		Payload: command.GetAppRequest{AppID: appID},
+	})
+}
+
+// GetRevisions dispatches an app.revisions to the agent: the app's git
+// history, newest first. The result is delivered over SSE.
+func (uc *UseCase) GetRevisions(ctx context.Context, userID, serverID, appID string) (string, error) {
+	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
+		AgentID: serverID,
+		UserID:  userID,
+		Type:    command.TypeAppRevisions,
+		Payload: command.GetRevisionsRequest{AppID: appID},
+	})
+}
+
+// RollbackApp dispatches an app.rollback: the agent restores the given commit
+// as a new revision and redeploys. The result is delivered over SSE.
+func (uc *UseCase) RollbackApp(ctx context.Context, userID, serverID, appID, hash string) (string, error) {
+	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
+		AgentID: serverID,
+		UserID:  userID,
+		Type:    command.TypeAppRollback,
+		Payload: command.RollbackAppRequest{AppID: appID, Hash: hash},
 	})
 }
 

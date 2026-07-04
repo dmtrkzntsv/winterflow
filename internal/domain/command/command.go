@@ -30,6 +30,10 @@ const (
 	TypeAppControl Type = "app.control"
 	TypeAppLogs    Type = "app.logs"
 
+	// App history (git-backed).
+	TypeAppRevisions Type = "app.revisions" // list an app's commit history
+	TypeAppRollback  Type = "app.rollback"  // restore a revision as a new commit + redeploy
+
 	// Docker registries.
 	TypeRegistryList   Type = "registry.list"
 	TypeRegistryCreate Type = "registry.create"

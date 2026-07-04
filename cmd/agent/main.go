@@ -91,6 +91,10 @@ func main() {
 		return agent.SendEvent(string(kind), payload)
 	}, 30*time.Second, log)
 
+	// Auto-update for git-sourced apps: polls upstreams on each app's own
+	// interval and redeploys on new commits.
+	go appagent.RunSourcePoller(ctx, orchestrator, log)
+
 	// Status monitoring routine
 	go func() {
 		ticker := time.NewTicker(60 * time.Second)

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
@@ -253,6 +254,63 @@ func (r *Repository) refreshSourceWithoutDeploy(appID string) (bool, string, err
 		return false, "", fmt.Errorf("commit source update: %w", err)
 	}
 	return true, sha, nil
+}
+
+// defaultPollSeconds is the upstream poll interval when an app doesn't set
+// its own.
+const defaultPollSeconds = 120
+
+// RefreshDueSources polls every git-sourced app whose auto_update is on and
+// whose interval has elapsed; on an upstream advance it re-pins (a commit)
+// and redeploys. Returns the ids that were updated. Redeploy failures are
+// logged, not fatal — the pin already moved and the next control action or
+// poll retries the deploy.
+func (r *Repository) RefreshDueSources(ctx context.Context) []string {
+	entries, err := os.ReadDir(r.cfg.GetAppsDataDir())
+	if err != nil {
+		return nil
+	}
+	var updated []string
+	now := time.Now()
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		appID := e.Name()
+		spec := r.appSourceSpec(filepath.Join(r.cfg.GetAppsDataDir(), appID))
+		if spec == nil || !spec.AutoUpdate {
+			continue
+		}
+		interval := time.Duration(spec.PollSeconds) * time.Second
+		if interval <= 0 {
+			interval = defaultPollSeconds * time.Second
+		}
+		r.sourceMu.Lock()
+		last := r.sourceChecks[appID]
+		due := now.Sub(last) >= interval
+		if due {
+			r.sourceChecks[appID] = now
+		}
+		r.sourceMu.Unlock()
+		if !due {
+			continue
+		}
+
+		changed, sha, err := r.refreshSourceWithoutDeploy(appID)
+		if err != nil {
+			r.log.Warn("source poll failed", "app_id", appID, "error", err)
+			continue
+		}
+		if !changed {
+			continue
+		}
+		r.log.Info("source updated, redeploying", "app_id", appID, "sha", sha)
+		if err := r.deploy(ctx, appID); err != nil {
+			r.log.Warn("redeploy after source update failed", "app_id", appID, "error", err)
+		}
+		updated = append(updated, appID)
+	}
+	return updated
 }
 
 // appName reads the display name from the committed config, falling back to

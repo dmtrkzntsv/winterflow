@@ -7,9 +7,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"winterflow/internal/domain/command"
 )
+
+// timeSleepShim keeps the polling test readable.
+func timeSleepShim() { time.Sleep(100 * time.Millisecond) }
 
 // sourcePayload builds a git-sourced app payload against a local upstream.
 func sourcePayload(upstream string, composePath string) command.AppPayload {
@@ -220,5 +224,57 @@ func TestRefreshSourceWithoutDeploy(t *testing.T) {
 	after, _ := gitCount(dir)
 	if after != before+1 {
 		t.Fatalf("refresh must commit the new pin: %d -> %d", before, after)
+	}
+}
+
+func TestRefreshDueSourcesHonorsIntervalAndFlag(t *testing.T) {
+	r := newTestRepo(t)
+	up, commit := newUpstream(t)
+	commit("f", "v1\n")
+
+	// App A: auto_update on, 1s interval (test payload default).
+	if _, err := r.saveWithoutDeploy(sourcePayload(up, "")); err != nil {
+		t.Fatal(err)
+	}
+	// App B: auto_update off.
+	pOff := sourcePayload(up, "")
+	pOff.AppID = "git-app-off"
+	cfg := map[string]any{}
+	_ = json.Unmarshal(pOff.Config, &cfg)
+	cfg["source"].(map[string]any)["auto_update"] = false
+	pOff.Config, _ = json.Marshal(cfg)
+	pOff.Source.AutoUpdate = false
+	if _, err := r.saveWithoutDeploy(pOff); err != nil {
+		t.Fatal(err)
+	}
+
+	// No upstream change: nothing due even after the interval.
+	if ids := r.RefreshDueSources(context.Background()); len(ids) != 0 {
+		t.Fatalf("no change -> no updates, got %v", ids)
+	}
+
+	commit("f", "v2\n")
+	// First call after the save may be within the 1s window; wait it out.
+	deadlineIDs := []string{}
+	for i := 0; i < 30; i++ {
+		deadlineIDs = r.RefreshDueSources(context.Background())
+		if len(deadlineIDs) > 0 {
+			break
+		}
+		timeSleepShim()
+	}
+	if len(deadlineIDs) != 1 || deadlineIDs[0] != "git-app" {
+		t.Fatalf("want [git-app], got %v", deadlineIDs)
+	}
+	// The auto_update=false app must never be touched.
+	for _, id := range deadlineIDs {
+		if id == "git-app-off" {
+			t.Fatal("auto_update=false app was refreshed")
+		}
+	}
+	lock, _ := readSourceLock(r.appDataDir("git-app"))
+	upHead, _ := gitLog(up)
+	if lock.SHA != upHead[0].Hash {
+		t.Fatalf("lock not advanced: %s vs %s", lock.SHA, upHead[0].Hash)
 	}
 }

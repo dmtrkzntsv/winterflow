@@ -1,33 +1,45 @@
-// Package dockercompose deploys and inspects apps via the `docker compose` CLI.
-//
-// It is the v2 port of the v1 agent's docker_compose orchestrator, trimmed to
-// what the first vertical slice needs: persist an app revision, render its
-// templated files, bring it up, and report container status. It shells out to
-// `docker compose` rather than the Docker SDK to stay dependency-light, exactly
-// as v1's compose_cmd helpers did.
+// Package dockercompose deploys and inspects apps via the `docker compose`
+// CLI. It shells out rather than using the Docker SDK to stay
+// dependency-light, as v1 did.
 //
 // On-disk layout (rooted at cfg.GetAgentDataDir()):
 //
-//	apps_templates/{appID}/{revision}/config.json   -- app metadata (JSON)
-//	apps_templates/{appID}/{revision}/vars/values.json
-//	apps_templates/{appID}/{revision}/files/{id}     -- raw template files
-//	apps/{appID}/                                    -- rendered, running deployment
+//	apps/                        -- human-readable view: {slug} -> ../apps-data/{appID}
+//	apps-data/{appID}/           -- canonical app folder, a git repository:
+//	  .winterflow/config.json    --   committed app config blob
+//	  .winterflow/secrets.json   --   committed, ECIES ciphertext only
+//	  .winterflow/source.lock    --   committed upstream SHA (git-sourced apps)
+//	  compose.yml, <files...>    --   committed verbatim
+//	  .env                       --   committed plain variables
+//	  .env.secrets, source/      --   gitignored deploy artifacts
+//
+// The folder IS the deployment: compose runs in it directly, every save is a
+// commit, and rollbacks restore old trees as new commits.
 package dockercompose
 
 import (
+	"sync"
+	"time"
+
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
 )
 
-// maxRevisions is the number of historical revisions kept per app; older ones
-// are pruned after a successful save (matches v1's behaviour).
-const maxRevisions = 3
-
 type Repository struct {
 	cfg *config.ServerConfig
 	log *logger.Logger
+
+	// sourceChecks remembers when each git-sourced app's upstream was last
+	// polled, so RefreshDueSources honors per-app intervals across ticks.
+	// In-memory only: a restart simply re-checks everything.
+	sourceMu     sync.Mutex
+	sourceChecks map[string]time.Time
 }
 
 func NewRepository(cfg *config.ServerConfig, log *logger.Logger) *Repository {
-	return &Repository{cfg: cfg, log: log}
+	return &Repository{
+		cfg:          cfg,
+		log:          log,
+		sourceChecks: make(map[string]time.Time),
+	}
 }

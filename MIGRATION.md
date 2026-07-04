@@ -299,7 +299,8 @@ Commands: `app.save`, `app.get`, `apps.list`, `apps.status`, `app.control`,
 
 API routes (all `/api/v1`):
 - Info (200 sync): `server/get-servers`, `server/get-servers-status`,
-  `server/get-public-key`, `app/get-apps`, `app/get-apps-status`.
+  `server/get-public-key`, `app/get-apps`, `app/get-apps-status`,
+  `user/create-token`, `user/get-tokens`, `user/delete-token`.
 - Agent-bound (202 + SSE): `app/save-app` (upsert: create + edit), `app/get-app`, `app/get-logs`,
   `app/get-revisions`, `app/rollback-app`, `image/get-tags`, `app/control-app`,
   `app/delete-app`, `app/rename-app`, `app/refresh-apps`,
@@ -312,7 +313,13 @@ API routes (all `/api/v1`):
 
 Web pages (`web/src/pages/`): `home` (`/`), `app-details` (`/app/:appId`,
 tabs Logs/Editor/History/Settings via `?tab=`), `create-app` (`/create-app`,
-create-only), `settings`, `login`.
+create-only), `settings`, `user-tokens` (`/user/tokens`), `login`.
+
+Personal access tokens (post-migration): `wfp_`-prefixed, SHA-256-hashed at
+rest (plaintext shown once at creation), sent as `Authorization: Bearer
+wfp_…` (patauth middleware) or Basic auth with the token as password
+(go-pkgz BasicAuthChecker). Managed at `/user/tokens`. No scopes — a token
+carries its user's full access.
 
 ## Key files by area
 

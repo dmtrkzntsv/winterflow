@@ -36,7 +36,7 @@ func TestCreateAppAssignsIDWhenMissing(t *testing.T) {
 	reqID, err := uc.CreateApp(context.Background(), "user-1", "server-1", model.App{Name: "demo"}, command.AppPayload{
 		Config: []byte(`{"name":"demo"}`),
 		Files:  []command.ContentItem{{Name: "compose.yml", Content: []byte("services: {}")}},
-	})
+	}, false)
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestCreateAppKeepsProvidedID(t *testing.T) {
 
 	_, err := uc.CreateApp(context.Background(), "u", "s", model.App{ID: "fixed-id", Name: "demo"}, command.AppPayload{
 		Config: []byte(`{}`),
-	})
+	}, false)
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}

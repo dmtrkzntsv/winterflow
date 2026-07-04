@@ -135,3 +135,19 @@ func TestDispatchImageTags(t *testing.T) {
 		t.Fatalf("error reply not correlated: %+v", resp)
 	}
 }
+
+func TestDispatchDraftSaveSkipsDeploy(t *testing.T) {
+	d := newTestDispatcher(t)
+	// Deliberately broken compose: a draft save must still succeed because it
+	// never touches docker; a full save on the same payload would fail at
+	// compose up.
+	body := []byte(`{"draft":true,"app":{"app_id":"a1","config":"e30=","files":[{"name":"compose.yml","content":"bm90IHZhbGlkIHlhbWw="}],"variables":[]}}`)
+	resp := d.Dispatch(context.Background(), envelope(string(command.TypeAppSave), body))
+	if resp.Base.ResponseCode != proto.ResponseCode_RESPONSE_CODE_SUCCESS {
+		t.Fatalf("draft save should not deploy: %+v", resp)
+	}
+	var saved command.SaveAppResponse
+	if err := json.Unmarshal(resp.Payload, &saved); err != nil || saved.Revision == "" {
+		t.Fatalf("draft save must return the commit hash: %s (%v)", resp.Payload, err)
+	}
+}

@@ -328,10 +328,15 @@ export function AppsProvider({ children }: { children: ReactNode }) {
         throw new Error(result.error || "Failed to fetch revisions");
       }
       const payload = result.payload as
-        | { current?: string; revisions?: AppRevisions["revisions"] | null }
+        | {
+            current?: string;
+            deployed?: string;
+            revisions?: AppRevisions["revisions"] | null;
+          }
         | undefined;
       return {
         current: payload?.current ?? "",
+        deployed: payload?.deployed ?? "",
         revisions: payload?.revisions ?? [],
       };
     },
@@ -348,6 +353,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
   // createApp dispatches app.save with the full payload and awaits its result.
   const createApp = useCallback(
     async (body: {
+      draft?: boolean;
       source?: unknown;
       app: Record<string, unknown>;
       config: unknown;
@@ -360,6 +366,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
         files: body.files,
         variables: body.variables,
         ...(body.source ? { source: body.source } : {}),
+        ...(body.draft ? { draft: true } : {}),
       });
     },
     [dispatchAndWait],

@@ -40,7 +40,7 @@ export function AppEditorPanel({ appId }: { appId: string }) {
     void load();
   }, [load]);
 
-  const handleSave = async () => {
+  const handleSave = async (draft: boolean) => {
     const err = validateEditorState(state);
     if (err) {
       toast.error(err);
@@ -49,12 +49,12 @@ export function AppEditorPanel({ appId }: { appId: string }) {
     setSaving(true);
     try {
       const payload = await buildSavePayload(state, getPublicKey, appId);
-      await createApp(payload);
-      toast.success("App updated");
+      await createApp({ ...payload, draft });
+      toast.success(draft ? "Draft saved — not deployed yet" : "App updated");
       // Reload so masked secrets and server-side normalization are reflected.
       await load();
     } catch (e) {
-      toast.error("Failed to update app", {
+      toast.error(draft ? "Failed to save draft" : "Failed to update app", {
         description: e instanceof Error ? e.message : undefined,
       });
     } finally {
@@ -91,7 +91,14 @@ export function AppEditorPanel({ appId }: { appId: string }) {
         >
           Discard changes
         </Button>
-        <Button onClick={() => void handleSave()} disabled={saving}>
+        <Button
+          variant="secondary"
+          onClick={() => void handleSave(true)}
+          disabled={saving}
+        >
+          Save draft
+        </Button>
+        <Button onClick={() => void handleSave(false)} disabled={saving}>
           {saving ? "Saving…" : "Save & redeploy"}
         </Button>
       </div>

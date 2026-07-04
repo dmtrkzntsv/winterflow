@@ -23,7 +23,12 @@ func (r *Repository) deploy(ctx context.Context, appID string) error {
 	if err := r.materializeSecrets(dir, loadSecretStore(dir)); err != nil {
 		return fmt.Errorf("materialize secrets: %w", err)
 	}
-	return r.composeUp(ctx, appID)
+	if err := r.composeUp(ctx, appID); err != nil {
+		return err
+	}
+	// The worktree (HEAD) is what just went live.
+	r.markDeployed(appID, "")
+	return nil
 }
 
 // StartApp brings an app up.

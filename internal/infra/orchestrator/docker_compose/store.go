@@ -21,7 +21,27 @@ const (
 	envRel        = ".env"
 	envSecretsRel = ".env.secrets"
 	gitignoreRel  = ".gitignore"
+	// deployedRel marks the commit that is actually running (written after a
+	// successful compose up). Runtime state, not history — gitignored, so
+	// drafts (commits ahead of it) don't churn the repo.
+	deployedRel = ".winterflow/deployed"
 )
+
+// writeDeployedMark records the commit hash that was just deployed.
+func writeDeployedMark(dir, sha string) error {
+	return os.WriteFile(filepath.Join(dir, deployedRel), []byte(sha), 0o644)
+}
+
+// readDeployedMark returns the last successfully deployed commit, ok=false
+// when the app has never recorded one (pre-feature apps, fresh drafts).
+func readDeployedMark(dir string) (string, bool) {
+	raw, err := os.ReadFile(filepath.Join(dir, deployedRel))
+	if err != nil {
+		return "", false
+	}
+	sha := strings.TrimSpace(string(raw))
+	return sha, sha != ""
+}
 
 // secretStore is the committed, encrypted-at-rest secret state: ECIES
 // ciphertext (base64) keyed by variable name / file path. Plaintext exists
@@ -199,7 +219,7 @@ func (r *Repository) writeAppStore(dir string, app command.AppPayload) (secretSt
 		return secretStore{}, err
 	}
 
-	ignored := []string{envSecretsRel}
+	ignored := []string{envSecretsRel, deployedRel}
 	if app.Source != nil {
 		ignored = append(ignored, sourceDirRel+"/")
 	}

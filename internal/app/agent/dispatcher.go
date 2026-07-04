@@ -70,7 +70,11 @@ func handle[Req any, Resp any](d *Dispatcher, fn func(context.Context, Req) (Res
 func (d *Dispatcher) newHandlers() map[command.Type]handlerFunc {
 	return map[command.Type]handlerFunc{
 		command.TypeAppSave: handle(d, func(ctx context.Context, in command.SaveAppRequest) (command.SaveAppResponse, error) {
-			hash, err := d.orch.SaveApp(ctx, in.App)
+			save := d.orch.SaveApp
+			if in.Draft {
+				save = d.orch.SaveAppDraft
+			}
+			hash, err := save(ctx, in.App)
 			return command.SaveAppResponse{AppID: in.App.AppID, Revision: hash}, err
 		}),
 		command.TypeAppsList: handle(d, func(ctx context.Context, _ command.ListAppsRequest) (command.ListAppsResponse, error) {
@@ -111,7 +115,12 @@ func (d *Dispatcher) newHandlers() map[command.Type]handlerFunc {
 		}),
 		command.TypeAppRevisions: handle(d, func(ctx context.Context, in command.GetRevisionsRequest) (command.GetRevisionsResponse, error) {
 			revs, current, err := d.orch.Revisions(ctx, in.AppID)
-			return command.GetRevisionsResponse{AppID: in.AppID, Current: current, Revisions: revs}, err
+			return command.GetRevisionsResponse{
+				AppID:     in.AppID,
+				Current:   current,
+				Deployed:  d.orch.DeployedRevision(in.AppID),
+				Revisions: revs,
+			}, err
 		}),
 		command.TypeAppRollback: handle(d, func(ctx context.Context, in command.RollbackAppRequest) (command.RollbackAppResponse, error) {
 			newHead, err := d.orch.Rollback(ctx, in.AppID, in.Hash)

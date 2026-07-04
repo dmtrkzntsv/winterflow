@@ -171,7 +171,7 @@ func (uc *UseCase) GetLogs(ctx context.Context, userID, serverID, appID string, 
 // browser); app is the catalog record persisted to the DB on success. When the
 // agent confirms the save, the OnResult hook persists the app and the result is
 // delivered to the user over SSE.
-func (uc *UseCase) CreateApp(ctx context.Context, userID, serverID string, app model.App, payload command.AppPayload) (string, error) {
+func (uc *UseCase) CreateApp(ctx context.Context, userID, serverID string, app model.App, payload command.AppPayload, draft bool) (string, error) {
 	// New apps have no id yet; the API owns identity, so assign one here and use
 	// it both on the wire (the agent keys its on-disk storage by app id) and on
 	// the persisted catalog record.
@@ -185,7 +185,7 @@ func (uc *UseCase) CreateApp(ctx context.Context, userID, serverID string, app m
 		cfgBytes, _ := json.Marshal(app)
 		payload.Config = cfgBytes
 	}
-	req := command.SaveAppRequest{App: payload}
+	req := command.SaveAppRequest{App: payload, Draft: draft}
 	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
 		AgentID: serverID,
 		UserID:  userID,

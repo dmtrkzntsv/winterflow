@@ -35,6 +35,8 @@ type createAppRequest struct {
 	Files     []contentItemRequest `json:"files"`
 	Variables []contentItemRequest `json:"variables"`
 	Source    *sourceRequest       `json:"source,omitempty"`
+	// Draft saves the changes as a commit without deploying.
+	Draft bool `json:"draft,omitempty"`
 }
 
 func toContentItems(items []contentItemRequest) []command.ContentItem {
@@ -93,7 +95,7 @@ func (h *Handler) CreateApp(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	requestID, err := h.usecase.CreateApp(r.Context(), userID, req.ServerID, app, payload)
+	requestID, err := h.usecase.CreateApp(r.Context(), userID, req.ServerID, app, payload, req.Draft)
 	if err != nil {
 		webutil.Error(w, "failed to create app", nil)
 		return

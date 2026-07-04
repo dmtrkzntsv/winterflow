@@ -18,6 +18,7 @@ export type AppRevision = {
 
 export type AppRevisions = {
   current: string;
+  deployed: string; // "" = unknown / never recorded
   revisions: AppRevision[];
 };
 
@@ -52,6 +53,7 @@ export type AppsContextValue = {
   // createApp dispatches app.save with the full payload (config + files +
   // variables) and awaits the result.
   createApp: (body: {
+    draft?: boolean;
     source?: unknown;
     app: Record<string, unknown>;
     config: unknown;

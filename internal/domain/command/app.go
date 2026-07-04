@@ -52,6 +52,9 @@ const EncryptedPlaceholder = "<encrypted>"
 
 type SaveAppRequest struct {
 	App AppPayload `json:"app"`
+	// Draft commits the changes without deploying them; the commit sits ahead
+	// of the deployed mark until explicitly deployed.
+	Draft bool `json:"draft,omitempty"`
 }
 
 type SaveAppResponse struct {
@@ -84,7 +87,8 @@ type GetRevisionsRequest struct {
 
 type GetRevisionsResponse struct {
 	AppID     string         `json:"app_id"`
-	Current   string         `json:"current"` // HEAD hash
+	Current   string         `json:"current"`  // HEAD hash
+	Deployed  string         `json:"deployed"` // last successfully deployed hash ("" = unknown)
 	Revisions []RevisionInfo `json:"revisions"`
 }
 

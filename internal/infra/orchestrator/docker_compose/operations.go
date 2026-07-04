@@ -26,7 +26,37 @@ func (r *Repository) SaveApp(ctx context.Context, app command.AppPayload) (strin
 	if err := r.composeUp(ctx, app.AppID); err != nil {
 		return "", fmt.Errorf("docker compose up: %w", err)
 	}
+	r.markDeployed(app.AppID, hash)
 	return hash, nil
+}
+
+// SaveAppDraft persists and commits without deploying: the commit becomes a
+// draft sitting ahead of the deployed mark until the user deploys it.
+func (r *Repository) SaveAppDraft(ctx context.Context, app command.AppPayload) (string, error) {
+	return r.saveWithoutDeploy(app)
+}
+
+// DeployedRevision returns the last successfully deployed commit ("" when
+// unknown — the app predates the mark or has never been deployed).
+func (r *Repository) DeployedRevision(appID string) string {
+	sha, _ := readDeployedMark(r.appDataDir(appID))
+	return sha
+}
+
+// markDeployed records a successful deploy; failures only log (the deploy
+// itself succeeded).
+func (r *Repository) markDeployed(appID, sha string) {
+	if sha == "" {
+		if head, err := gitLog(r.appDataDir(appID)); err == nil && len(head) > 0 {
+			sha = head[0].Hash
+		}
+	}
+	if sha == "" {
+		return
+	}
+	if err := writeDeployedMark(r.appDataDir(appID), sha); err != nil {
+		r.log.Warn("failed to record deployed revision", "app_id", appID, "error", err)
+	}
 }
 
 // saveWithoutDeploy is SaveApp minus the compose invocation: write the store,
@@ -104,6 +134,7 @@ func (r *Repository) Rollback(ctx context.Context, appID, hash string) (string, 
 	if err := r.composeUp(ctx, appID); err != nil {
 		return "", fmt.Errorf("docker compose up: %w", err)
 	}
+	r.markDeployed(appID, newHead)
 	return newHead, nil
 }
 

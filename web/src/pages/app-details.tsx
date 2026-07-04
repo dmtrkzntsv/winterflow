@@ -238,7 +238,7 @@ function LogsTab({ appId }: { appId: string }) {
 }
 
 function HistoryTab({ appId }: { appId: string }) {
-  const { getRevisions, rollback } = useApps();
+  const { getRevisions, rollback, control } = useApps();
   const [data, setData] = useState<AppRevisions | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -275,6 +275,23 @@ function HistoryTab({ appId }: { appId: string }) {
     }
   };
 
+  // Deploying the current draft is a plain start: the worktree already holds
+  // HEAD, so materialize + compose up brings the draft live.
+  const doDeploy = async () => {
+    setBusy(true);
+    try {
+      await control(appId, "start");
+      toast.success("Draft deployed");
+      await load();
+    } catch (e) {
+      toast.error("Deploy failed", {
+        description: e instanceof Error ? e.message : undefined,
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <Card>
       <CardHeader className="flex-row items-center justify-between space-y-0">
@@ -296,6 +313,8 @@ function HistoryTab({ appId }: { appId: string }) {
           <div className="divide-y">
             {data.revisions.map((rev) => {
               const isCurrent = rev.hash === data.current;
+              const isDeployed = data.deployed !== "" && rev.hash === data.deployed;
+              const isUndeployedDraft = isCurrent && data.deployed !== "" && !isDeployed;
               return (
                 <div key={rev.hash} className="flex items-center gap-3 py-2.5">
                   <code className="shrink-0 rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
@@ -307,10 +326,24 @@ function HistoryTab({ appId }: { appId: string }) {
                       {new Date(rev.timestamp * 1000).toLocaleString()}
                     </div>
                   </div>
+                  {isDeployed ? (
+                    <Badge className="shrink-0">Deployed</Badge>
+                  ) : null}
                   {isCurrent ? (
-                    <Badge variant="secondary" className="shrink-0">
-                      Current
-                    </Badge>
+                    isUndeployedDraft ? (
+                      <>
+                        <Badge variant="outline" className="shrink-0">
+                          Draft
+                        </Badge>
+                        <Button size="sm" onClick={() => void doDeploy()} disabled={busy}>
+                          Deploy
+                        </Button>
+                      </>
+                    ) : (
+                      <Badge variant="secondary" className="shrink-0">
+                        Current
+                      </Badge>
+                    )
                   ) : (
                     <AlertDialog>
                       <AlertDialogTrigger asChild>

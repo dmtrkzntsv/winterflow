@@ -261,6 +261,15 @@ The app folder IS the deployment (`docker compose` runs in it directly):
 - Verified: 13-check live E2E (clone/pin/gitignore, deploy from repo compose,
   update→re-pin, rollback→source v1).
 
+### ✅ Post-migration: draft saves (2026-07)
+
+`app.save` accepts `draft: true`: changes are committed without deploying.
+The gitignored `.winterflow/deployed` mark (written after every successful
+compose up) tracks what is actually live, `app.revisions` returns it, and
+the History tab badges **Deployed** vs **Draft** with a Deploy button for an
+undeployed HEAD. The Editor tab offers **Save draft** next to
+**Save & redeploy**.
+
 ## 🎉 Migration status: COMPLETE
 
 Every planned phase has shipped: foundation, app lifecycle + secrets,

@@ -344,3 +344,46 @@ func TestSaveConfigRoundTripThroughJSON(t *testing.T) {
 		t.Fatalf("config = %s (%v)", raw, err)
 	}
 }
+
+func TestDraftSaveCommitsWithoutTouchingDeployedMark(t *testing.T) {
+	r := newTestRepo(t)
+	h1 := savedApp(t, r, "app-1", "demo", "one\n")
+	dir := r.appDataDir("app-1")
+
+	// Simulate a successful deploy of the first save.
+	if err := writeDeployedMark(dir, h1); err != nil {
+		t.Fatal(err)
+	}
+
+	// A draft save commits but leaves the deployed mark alone.
+	h2 := savedApp(t, r, "app-1", "demo", "two\n")
+	if h2 == h1 {
+		t.Fatal("draft save should create a commit")
+	}
+	if got, ok := readDeployedMark(dir); !ok || got != h1 {
+		t.Fatalf("deployed mark = %q ok=%v, want %q untouched", got, ok, h1)
+	}
+
+	// The mark is a deploy artifact, not history: it must be gitignored.
+	if out, _ := os.ReadFile(filepath.Join(dir, ".gitignore")); !strings.Contains(string(out), ".winterflow/deployed") {
+		t.Fatalf(".gitignore misses the deployed mark: %q", out)
+	}
+
+	// Revisions reports both pointers so the UI can badge them.
+	revs, current, err := r.Revisions(context.Background(), "app-1")
+	if err != nil || len(revs) != 2 {
+		t.Fatalf("revs = %+v (%v)", revs, err)
+	}
+	deployed := r.DeployedRevision("app-1")
+	if current != h2 || deployed != h1 {
+		t.Fatalf("current=%s deployed=%s, want %s / %s", current, deployed, h2, h1)
+	}
+}
+
+func TestDeployedRevisionUnknownIsEmpty(t *testing.T) {
+	r := newTestRepo(t)
+	savedApp(t, r, "app-1", "demo", "x\n")
+	if got := r.DeployedRevision("app-1"); got != "" {
+		t.Fatalf("no mark -> empty, got %q", got)
+	}
+}

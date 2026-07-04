@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { useAppBreadcrumbs } from "@/layouts/use-app-layout";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -30,8 +32,11 @@ import {
   type Registry,
 } from "@/context/use-docker";
 
-// SettingsPage is the server-level settings view (v1 "Server Settings"): Docker
-// registries and networks, plus agent self-update.
+const TABS = ["registries", "networks", "agent"] as const;
+
+// SettingsPage is the server-level settings view (v1 "Server Settings"):
+// Docker registries and networks, plus agent self-update — one tab per
+// section, synced to ?tab= like the app details page.
 export default function SettingsPage() {
   const breadcrumbs = useMemo(
     () => [{ label: "Server" }, { label: "Settings" }],
@@ -40,6 +45,17 @@ export default function SettingsPage() {
   useAppBreadcrumbs(breadcrumbs);
 
   const docker = useDocker();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const tabParam = searchParams.get("tab") ?? "registries";
+  const tab = (TABS as readonly string[]).includes(tabParam)
+    ? tabParam
+    : "registries";
+  const setTab = (next: string) => {
+    setSearchParams(next === "registries" ? {} : { tab: next }, {
+      replace: true,
+    });
+  };
 
   if (!docker.hasServer) {
     return (
@@ -50,11 +66,22 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <RegistriesCard docker={docker} />
-      <NetworksCard docker={docker} />
-      <AgentCard docker={docker} />
-    </div>
+    <Tabs value={tab} onValueChange={setTab}>
+      <TabsList>
+        <TabsTrigger value="registries">Registries</TabsTrigger>
+        <TabsTrigger value="networks">Networks</TabsTrigger>
+        <TabsTrigger value="agent">Agent</TabsTrigger>
+      </TabsList>
+      <TabsContent value="registries">
+        <RegistriesCard docker={docker} />
+      </TabsContent>
+      <TabsContent value="networks">
+        <NetworksCard docker={docker} />
+      </TabsContent>
+      <TabsContent value="agent">
+        <AgentCard docker={docker} />
+      </TabsContent>
+    </Tabs>
   );
 }
 

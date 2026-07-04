@@ -73,3 +73,14 @@ type DeleteNetworkRequest struct {
 type DeleteNetworkResponse struct {
 	Name string `json:"name"`
 }
+
+// --- image.tags -------------------------------------------------------------
+
+type ImageTagsRequest struct {
+	Image string `json:"image"` // e.g. "nginx", "ghcr.io/org/app:tag"
+}
+
+type ImageTagsResponse struct {
+	Image string   `json:"image"`
+	Tags  []string `json:"tags"`
+}

@@ -7,9 +7,24 @@ import "winterflow/internal/domain/model"
 // the deployment. Contents are kept as bytes so binary files survive the trip.
 type AppPayload struct {
 	AppID     string        `json:"app_id"`
-	Config    []byte        `json:"config"`    // JSON-encoded model.AppConfig (ported later)
+	Config    []byte        `json:"config"`    // JSON-encoded app config blob
 	Variables []ContentItem `json:"variables"` // id -> content
 	Files     []ContentItem `json:"files"`     // id -> content
+	// Source, when set, makes this a git-sourced app: the agent clones the
+	// repo into the app's source/ dir and pins the deployed SHA per save.
+	Source *SourcePayload `json:"source,omitempty"`
+}
+
+// SourcePayload configures deployment from an upstream git repository.
+type SourcePayload struct {
+	RepoURL     string `json:"repo_url"`
+	Branch      string `json:"branch"`
+	ComposePath string `json:"compose_path,omitempty"` // compose file inside the repo
+	AutoUpdate  bool   `json:"auto_update"`
+	PollSeconds int    `json:"poll_seconds,omitempty"` // 0 = default (120)
+	// Token is ECIES ciphertext for private repos, the "<encrypted>"
+	// placeholder to keep the stored token, or empty for anonymous access.
+	Token []byte `json:"token,omitempty"`
 }
 
 // ContentItem is a single variable or file carried in an app payload.

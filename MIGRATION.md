@@ -85,20 +85,19 @@ that (de)serializes payloads.
 ### The repeatable pattern — every feature follows this
 
 1. **Command type + payload structs** in `internal/domain/command/`.
-2. **Register** the request struct in `codec.NewRequestPayload`
-   (`internal/infra/transport/codec/codec.go`).
-3. **Orchestrator op** in `internal/infra/orchestrator/docker_compose/` (CLI-based;
-   port from v1 `/tmp/winterflow-v1-agent/...`).
-4. **Agent handler** in `internal/app/agent/dispatcher.go` (or a sibling like
-   `dispatcher_docker.go`): decode → run orchestrator → `codec.EncodeResponse`.
-5. **API side**: domain `port` method → usecase (`internal/domain/usecase/...`)
+2. **Orchestrator op** in `internal/infra/orchestrator/docker_compose/`
+   (CLI-based).
+3. **One registration line** in the agent Dispatcher's `newHandlers` map
+   (`internal/app/agent/dispatcher.go`) — the generic `handle[Req, Resp]`
+   adapter does the decode/encode.
+4. **API side**: domain `port` method → usecase (`internal/domain/usecase/...`)
    that calls `CommandDispatcher.Dispatch` (publishes, returns `request_id`; use
    the `OnResult` hook for DB side effects) → HTTP handler + route in
    `internal/app/web/`. Handler returns `202 {request_id}`; result over SSE.
-6. **Web UI**: context/hook dispatches the command and `await`s the matching SSE
+5. **Web UI**: context/hook dispatches the command and `await`s the matching SSE
    notification by `request_id` (the `waitFor(requestId)` helper in
    `notifications-context`). Refetch the affected list on success.
-7. **Tests** for pure helpers/codec; Docker integration tests behind the
+6. **Tests** for pure helpers/codec; Docker integration tests behind the
    `integration` build tag for orchestrator ops.
 
 `app.save` is the reference agent-command path. `get-servers`/`get-apps` are the
@@ -117,8 +116,9 @@ ciphertext+tag)`.
 - The browser implements the matching encrypt in `web/src/lib/ecies.ts` via Web
   Crypto.
 - On edit, unchanged secrets are sent as the `<encrypted>` placeholder; the
-  agent preserves the stored value and never returns plaintext (`readRevision`
-  masks encrypted fields).
+  agent preserves the stored ciphertext and never returns plaintext (app.get
+  masks encrypted fields). Since A1, secrets are encrypted at rest on the
+  agent too (committed `secrets.json` holds ciphertext only).
 
 ## What's done (✅) and what's not
 
@@ -202,14 +202,43 @@ Spec: `docs/superpowers/specs/2026-07-02-v2-finish-migration-design.md`.
 - **Stripe billing / subscriptions** (the `subscription_status` columns were
   removed; when re-added it'll be in dedicated tables).
 
-### 🔜 Approved next phases (designed, not yet built — see the 2026-07-02 spec)
-- **A1 — deployment rework:** one folder per app that IS the deployment
-  (`apps-data/{appID}` canonical + `apps/` name-symlinks), git-per-app history
-  (go-git), compose-native `.env`/`.env.secrets` (no custom `${VAR}` rendering;
-  `pkg/template` dies), `app.revisions` + `app.rollback` commands, History tab.
-  Ride-alongs: dispatcher switch → generic handler map, `DispatchJSON` web
-  helper (fixes auth errors returning 400 instead of 401), delete `db/service`
-  shim + pass-through usecases.
+### ✅ Phase A1 — git-per-app deployment rework (2026-07)
+
+The app folder IS the deployment (`docker compose` runs in it directly):
+
+```
+{AGENT_DATA_DIR}/
+  apps/                      # `ls apps/` = the app list: {slug} -> ../apps-data/{appID}
+  apps-data/{appID}/         # canonical folder, a git repository
+    .winterflow/config.json  # committed app config blob
+    .winterflow/secrets.json # committed, ECIES ciphertext only
+    compose.yml, <files...>  # committed verbatim
+    .env                     # committed plain variables
+    .env.secrets             # gitignored; decrypted at deploy
+```
+
+- **History = git** (go-git, no host git needed): every save/rename commits;
+  `app.rollback` restores an old tree as a NEW commit (linear history) and
+  redeploys; `app.revisions` lists the log. UI: **History tab** with rollback.
+- **Secrets are now encrypted at rest** — the old layout stored resolved
+  plaintext in revisions; now plaintext exists only in the gitignored deploy
+  outputs, never in git objects. `"<encrypted>"` placeholders preserve the
+  previous *ciphertext* without any decryption.
+- **Compose-native env:** no custom `${VAR}` rendering (`pkg/template`
+  deleted); compose interpolates from `--env-file .env --env-file
+  .env.secrets`. App version = commit count.
+- Ride-alongs: dispatcher switch → typed registration map (adding a command =
+  one line; `codec.NewRequestPayload`/`EncodeRequest` deleted);
+  `RequireUser`/`DecodeBody` web helpers (auth failures now 401, was 400);
+  `db/service` shim + `usecase/server`/`usecase/docker` pass-throughs deleted
+  (repositories implement the ports; `usecase/app` stays for its OnResult
+  hooks).
+- No data migration: the old `apps_templates`/rendered layout simply stops
+  being read (v2 was never released).
+- Verified end-to-end in a real browser + Docker: 16-check E2E covering slug
+  symlinks, commits, secret-at-rest guarantees, edit→commit, UI rollback.
+
+### 🔜 Approved next phase (designed, not yet built — see the 2026-07-02 spec)
 - **A2 — git-sourced apps:** deploy from a repo URL (branch + compose path),
   SHA pinning per deploy, polling auto-redeploy, ECIES-encrypted repo tokens,
   `image.tags` registry tag browsing in the editor.
@@ -228,14 +257,15 @@ Spec: `docs/superpowers/specs/2026-07-02-v2-finish-migration-design.md`.
 ## Current command + route surface (source of truth: `routes.go`, `command.go`)
 
 Commands: `app.save`, `app.get`, `apps.list`, `apps.status`, `app.control`,
-`app.delete`, `app.rename`, `app.logs`, `registry.list/create/delete`,
-`network.list/create/delete`, `agent.update`.
+`app.delete`, `app.rename`, `app.logs`, `app.revisions`, `app.rollback`,
+`registry.list/create/delete`, `network.list/create/delete`, `agent.update`.
 
 API routes (all `/api/v1`):
 - Info (200 sync): `server/get-servers`, `server/get-servers-status`,
   `server/get-public-key`, `app/get-apps`, `app/get-apps-status`.
 - Agent-bound (202 + SSE): `app/create-app`, `app/get-app`, `app/get-logs`,
-  `app/control-app`, `app/delete-app`, `app/rename-app`, `app/refresh-apps`,
+  `app/get-revisions`, `app/rollback-app`, `app/control-app`,
+  `app/delete-app`, `app/rename-app`, `app/refresh-apps`,
   `registry/{list,create,delete}`, `network/{list,create,delete}`,
   `agent/update`.
 - SSE: `notification/stream`. Auth/server: `server/register`, `/auth/*`.
@@ -244,7 +274,7 @@ API routes (all `/api/v1`):
   the owning org's members on agent events/transitions.
 
 Web pages (`web/src/pages/`): `home` (`/`), `app-details` (`/app/:appId`,
-tabs Logs/Editor/Settings via `?tab=`), `create-app` (`/create-app`,
+tabs Logs/Editor/History/Settings via `?tab=`), `create-app` (`/create-app`,
 create-only), `settings`, `login`.
 
 ## Key files by area

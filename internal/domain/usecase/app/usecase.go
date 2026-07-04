@@ -165,13 +165,15 @@ func (uc *UseCase) GetLogs(ctx context.Context, userID, serverID, appID string, 
 	})
 }
 
-// CreateApp dispatches an app.save command to the server's agent and returns
-// the request id immediately. This call does not block. payload carries the
-// app's config blob plus its files and variables (secrets pre-encrypted by the
-// browser); app is the catalog record persisted to the DB on success. When the
-// agent confirms the save, the OnResult hook persists the app and the result is
-// delivered to the user over SSE.
-func (uc *UseCase) CreateApp(ctx context.Context, userID, serverID string, app model.App, payload command.AppPayload, draft bool) (string, error) {
+// SaveApp dispatches an app.save command to the server's agent and returns
+// the request id immediately. This call does not block. It is an upsert:
+// an empty app.ID means create (the API assigns identity), a present one
+// means edit. payload carries the app's config blob plus its files and
+// variables (secrets pre-encrypted by the browser); app is the catalog record
+// persisted to the DB on success. When the agent confirms the save, the
+// OnResult hook persists the app and the result is delivered to the user
+// over SSE.
+func (uc *UseCase) SaveApp(ctx context.Context, userID, serverID string, app model.App, payload command.AppPayload, draft bool) (string, error) {
 	// New apps have no id yet; the API owns identity, so assign one here and use
 	// it both on the wire (the agent keys its on-disk storage by app id) and on
 	// the persisted catalog record.
@@ -198,7 +200,7 @@ func (uc *UseCase) CreateApp(ctx context.Context, userID, serverID string, app m
 			var saved command.SaveAppResponse
 			if len(res.Payload) > 0 {
 				if err := json.Unmarshal(res.Payload, &saved); err != nil {
-					uc.log.Error("CreateApp: decode result", "error", err)
+					uc.log.Error("SaveApp: decode result", "error", err)
 					return
 				}
 			}
@@ -207,8 +209,8 @@ func (uc *UseCase) CreateApp(ctx context.Context, userID, serverID string, app m
 			if saved.AppID != "" {
 				persisted.ID = saved.AppID
 			}
-			if err := uc.repo.CreateApp(context.Background(), persisted); err != nil {
-				uc.log.Error("CreateApp: persist", "error", err, "app_id", persisted.ID)
+			if err := uc.repo.SaveApp(context.Background(), persisted); err != nil {
+				uc.log.Error("SaveApp: persist", "error", err, "app_id", persisted.ID)
 			}
 		},
 	})

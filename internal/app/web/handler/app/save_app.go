@@ -28,7 +28,7 @@ type sourceRequest struct {
 	Token       string `json:"token"`
 }
 
-type createAppRequest struct {
+type saveAppRequest struct {
 	ServerID  string               `json:"server_id"`
 	App       model.App            `json:"app"`
 	Config    json.RawMessage      `json:"config"`
@@ -51,17 +51,18 @@ func toContentItems(items []contentItemRequest) []command.ContentItem {
 	return out
 }
 
-// CreateApp accepts an app definition and dispatches an app.save command to the
-// target agent (fire-and-forward). It returns 202 immediately with a
+// SaveApp accepts the app's full desired state and dispatches an app.save
+// command to the target agent (fire-and-forward). Create vs edit is decided by
+// the presence of app.id in the body. It returns 202 immediately with a
 // request_id; the result is delivered to the caller over the SSE notification
 // stream, correlated by that request_id.
-func (h *Handler) CreateApp(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) SaveApp(w http.ResponseWriter, r *http.Request) {
 	userID, ok := webutil.RequireUser(w, r)
 	if !ok {
 		return
 	}
 
-	req, ok := webutil.DecodeBody[createAppRequest](w, r)
+	req, ok := webutil.DecodeBody[saveAppRequest](w, r)
 	if !ok {
 		return
 	}
@@ -95,13 +96,13 @@ func (h *Handler) CreateApp(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	requestID, err := h.usecase.CreateApp(r.Context(), userID, req.ServerID, app, payload, req.Draft)
+	requestID, err := h.usecase.SaveApp(r.Context(), userID, req.ServerID, app, payload, req.Draft)
 	if err != nil {
-		webutil.Error(w, "failed to create app", nil)
+		webutil.Error(w, "failed to save app", nil)
 		return
 	}
 
-	webutil.Accepted(w, "app creation dispatched", struct {
+	webutil.Accepted(w, "app save dispatched", struct {
 		RequestID string `json:"request_id"`
 	}{RequestID: requestID})
 }

@@ -11,7 +11,8 @@ import (
 type AppRepository interface {
 	GetApps(ctx context.Context, serverID string) ([]model.App, error)
 	GetApp(ctx context.Context, appID string) (model.App, error)
-	CreateApp(ctx context.Context, app model.App) error
+	// SaveApp upserts the catalog record (create and edit share one path).
+	SaveApp(ctx context.Context, app model.App) error
 	DeleteApp(ctx context.Context, appID string) error
 	RenameApp(ctx context.Context, appID, name string) error
 	// SyncApps makes the DB mirror the agent's reported apps for a server:

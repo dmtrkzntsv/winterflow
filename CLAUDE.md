@@ -28,7 +28,7 @@ This is the **v2 monorepo** that merges the v1 `winterflow-agent` and `winterflo
 - **Distributed** (`config.NewServerConfig("distributed")`): horizontally-scalable **API** (`cmd/api`, the "brain", owns persistence) ⇄ **Redis Bus** ⇄ horizontally-scalable **Hub** (`cmd/hub`, gRPC server with mTLS) ⇄ **Agent** (`cmd/agent`). The API publishes a command to the request queue; the Hub forwards it down the addressed agent's gRPC stream; the agent's reply travels back up onto the response queue, where the API's `reply.Manager` wakes the blocked caller.
 
 **The command round-trip** (trace this to understand the whole system):
-1. HTTP handler (`internal/app/web/handler/`) → usecase (`internal/domain/usecase/`) → `port.AppService.CreateApp(...)` with a result callback.
+1. HTTP handler (`internal/app/web/handler/`) → usecase (`internal/domain/usecase/`) → `port.AppService.SaveApp(...)` with a result callback.
 2. The service implementation (`internal/infra/transport/redis/service/app`, type `BusAppService` — bus-agnostic despite the package path) publishes a `bus.CommandMessage` keyed by a `request_id` and registers a reply channel.
 3. The Hub (`internal/infra/transport/grpc/hub`) consumes the request queue via `StartBusBridge`, looks up the agent stream, and sends a `proto.RequestEnvelope`. In standalone, `internal/app/agent/inprocess.go` (`InProcessBridge`) does the same in-memory.
 4. The agent's `Dispatcher` (`internal/app/agent`) decodes the envelope, runs the Docker Compose orchestrator, and returns a `proto.ResponseEnvelope`.

@@ -50,9 +50,10 @@ export type AppsContextValue = {
   control: (appId: string, action: ControlAction) => Promise<void>;
   remove: (appId: string) => Promise<void>;
   rename: (appId: string, name: string) => Promise<void>;
-  // createApp dispatches app.save with the full payload (config + files +
-  // variables) and awaits the result.
-  createApp: (body: {
+  // saveApp dispatches app.save with the full payload (config + files +
+  // variables) and awaits the result. Upsert: app.id present = edit,
+  // absent = create.
+  saveApp: (body: {
     draft?: boolean;
     source?: unknown;
     app: Record<string, unknown>;

@@ -38,7 +38,7 @@ func (s *Server) registerRoutes() {
 	s.Router.With(amw.Auth, happ.GetAppsValidationMiddleware).Get("/api/v1/app/get-apps", appsAPI.GetApps)
 	s.Router.With(amw.Auth, happ.GetAppsValidationMiddleware).Get("/api/v1/app/get-apps-status", appsAPI.GetAppsStatus)
 	s.Router.With(amw.Auth, happ.GetAppsValidationMiddleware).Post("/api/v1/app/refresh-apps", appsAPI.RefreshApps)
-	s.Router.With(amw.Auth).Post("/api/v1/app/create-app", appsAPI.CreateApp)
+	s.Router.With(amw.Auth).Post("/api/v1/app/save-app", appsAPI.SaveApp)
 	s.Router.With(amw.Auth).Get("/api/v1/app/get-app", appsAPI.GetApp)
 	s.Router.With(amw.Auth).Get("/api/v1/app/get-logs", appsAPI.GetLogs)
 	s.Router.With(amw.Auth).Get("/api/v1/app/get-revisions", appsAPI.GetRevisions)

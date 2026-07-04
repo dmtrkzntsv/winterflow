@@ -15,7 +15,7 @@ import type { AppEditorState } from "@/types/app-config";
 
 export default function CreateAppPage() {
   const navigate = useNavigate();
-  const { createApp, getPublicKey } = useApps();
+  const { saveApp, getPublicKey } = useApps();
   const [state, setState] = useState<AppEditorState>(emptyEditorState);
   const [saving, setSaving] = useState(false);
 
@@ -34,7 +34,7 @@ export default function CreateAppPage() {
     setSaving(true);
     try {
       const payload = await buildSavePayload(state, getPublicKey);
-      await createApp(payload);
+      await saveApp(payload);
       toast.success("App created");
       navigate("/");
     } catch (e) {

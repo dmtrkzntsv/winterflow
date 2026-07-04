@@ -17,7 +17,7 @@ import type { AppEditorState } from "@/types/app-config";
 // app's current revision, lets the user edit compose/files/variables, and
 // saves in place (app.save with the app id → new revision + redeploy).
 export function AppEditorPanel({ appId }: { appId: string }) {
-  const { createApp, getApp, getPublicKey } = useApps();
+  const { saveApp, getApp, getPublicKey } = useApps();
   const [state, setState] = useState<AppEditorState>(emptyEditorState);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -49,7 +49,7 @@ export function AppEditorPanel({ appId }: { appId: string }) {
     setSaving(true);
     try {
       const payload = await buildSavePayload(state, getPublicKey, appId);
-      await createApp({ ...payload, draft });
+      await saveApp({ ...payload, draft });
       toast.success(draft ? "Draft saved — not deployed yet" : "App updated");
       // Reload so masked secrets and server-side normalization are reflected.
       await load();

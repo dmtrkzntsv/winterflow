@@ -23,7 +23,7 @@ func TestAppCRUDRoundTrip(t *testing.T) {
 	ctx := context.Background()
 
 	app := model.App{ID: "app-1", ServerID: "srv-1", Name: "grafana", Version: "1", Icon: "chart", Color: "#123456"}
-	if err := repo.CreateApp(ctx, app); err != nil {
+	if err := repo.SaveApp(ctx, app); err != nil {
 		t.Fatal(err)
 	}
 
@@ -34,7 +34,7 @@ func TestAppCRUDRoundTrip(t *testing.T) {
 
 	// Upsert on conflict: same id, new name.
 	app.Name = "grafana-2"
-	if err := repo.CreateApp(ctx, app); err != nil {
+	if err := repo.SaveApp(ctx, app); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = repo.GetApp(ctx, "app-1")
@@ -72,7 +72,7 @@ func TestSyncAppsMirrorsAgentState(t *testing.T) {
 		{ID: "drop", ServerID: "srv-1", Name: "drop"},
 	}
 	for _, a := range seed {
-		if err := repo.CreateApp(ctx, a); err != nil {
+		if err := repo.SaveApp(ctx, a); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -102,7 +102,7 @@ func TestSyncAppsMirrorsAgentState(t *testing.T) {
 func TestSyncAppsEmptyReportDeletesAll(t *testing.T) {
 	repo := newAppRepo(t)
 	ctx := context.Background()
-	if err := repo.CreateApp(ctx, model.App{ID: "a", ServerID: "srv-1", Name: "a"}); err != nil {
+	if err := repo.SaveApp(ctx, model.App{ID: "a", ServerID: "srv-1", Name: "a"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := repo.SyncApps(ctx, "srv-1", nil); err != nil {

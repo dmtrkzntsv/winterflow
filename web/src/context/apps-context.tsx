@@ -350,8 +350,9 @@ export function AppsProvider({ children }: { children: ReactNode }) {
     [dispatchAndWait],
   );
 
-  // createApp dispatches app.save with the full payload and awaits its result.
-  const createApp = useCallback(
+  // saveApp dispatches app.save with the full payload (an upsert: app.id
+  // present = edit, absent = create) and awaits its result.
+  const saveApp = useCallback(
     async (body: {
       draft?: boolean;
       source?: unknown;
@@ -360,7 +361,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       files: { name: string; content: string; encrypted: boolean }[];
       variables: { name: string; content: string; encrypted: boolean }[];
     }) => {
-      await dispatchAndWait("create-app", {
+      await dispatchAndWait("save-app", {
         app: body.app,
         config: body.config,
         files: body.files,
@@ -382,7 +383,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       control,
       remove,
       rename,
-      createApp,
+      saveApp,
       getPublicKey,
       getApp,
       getImageTags,
@@ -398,7 +399,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       control,
       remove,
       rename,
-      createApp,
+      saveApp,
       getPublicKey,
       getApp,
       getImageTags,

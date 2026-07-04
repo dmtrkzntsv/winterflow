@@ -35,7 +35,7 @@ func (f *fakeAppRepo) GetApps(context.Context, string) ([]model.App, error) { re
 func (f *fakeAppRepo) GetApp(context.Context, string) (model.App, error) {
 	return model.App{}, model.ErrAppNotFound
 }
-func (f *fakeAppRepo) CreateApp(context.Context, model.App) error         { return nil }
+func (f *fakeAppRepo) SaveApp(context.Context, model.App) error           { return nil }
 func (f *fakeAppRepo) DeleteApp(context.Context, string) error            { return nil }
 func (f *fakeAppRepo) RenameApp(context.Context, string, string) error    { return nil }
 func (f *fakeAppRepo) SyncApps(context.Context, string, []model.App) error { return nil }
@@ -153,11 +153,11 @@ func TestAgentBoundHandlersReturn202WithRequestID(t *testing.T) {
 	}
 }
 
-func TestCreateAppAccepts(t *testing.T) {
+func TestSaveAppAccepts(t *testing.T) {
 	h, fd, _ := newHandler(t)
 	body := `{"server_id":"s1","app":{"name":"demo"},"config":{"name":"demo"},"files":[{"name":"compose.yml","content":"x","encrypted":false}],"variables":[]}`
-	r := authed(httptest.NewRequest("POST", "/api/v1/app/create-app", strings.NewReader(body)))
-	w := do(h.CreateApp, r)
+	r := authed(httptest.NewRequest("POST", "/api/v1/app/save-app", strings.NewReader(body)))
+	w := do(h.SaveApp, r)
 	if w.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
 	}

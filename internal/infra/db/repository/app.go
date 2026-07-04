@@ -55,7 +55,7 @@ func (r *DbAppRepository) GetApp(ctx context.Context, appID string) (model.App, 
 	return toDomainApp(&row), nil
 }
 
-func (r *DbAppRepository) CreateApp(ctx context.Context, app model.App) error {
+func (r *DbAppRepository) SaveApp(ctx context.Context, app model.App) error {
 	row := toDBApp(app)
 	if row.CreatedAt.Time().IsZero() {
 		row.CreatedAt = types.NewDateTime()

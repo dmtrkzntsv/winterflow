@@ -24,6 +24,8 @@ type OrgStore interface {
 	RemoveMember(ctx context.Context, orgID, userID string) error
 	SetPassword(ctx context.Context, userID, password string, mustChange bool) error
 	GetCredentials(ctx context.Context, userID string) (model.Credentials, error)
+	GetOrganization(ctx context.Context, orgID string) (model.Organization, error)
+	UpdateOrganization(ctx context.Context, orgID, name, icon, color string) error
 }
 
 type Deps struct {
@@ -253,4 +255,53 @@ func (h *Handler) ResetMemberPassword(w http.ResponseWriter, r *http.Request) {
 		UserID       string `json:"user_id"`
 		TempPassword string `json:"temp_password"`
 	}{req.UserID, tempPassword})
+}
+
+// GetOrganization returns the caller's org identity (name, icon, color).
+// Visible to every member — only updates are admin-gated.
+func (h *Handler) GetOrganization(w http.ResponseWriter, r *http.Request) {
+	_, orgID, ok := h.callerOrg(w, r)
+	if !ok {
+		return
+	}
+	org, err := h.users.GetOrganization(r.Context(), orgID)
+	if err != nil {
+		h.log.Error("GetOrganization", "error", err, "org_id", orgID)
+		webutil.Error(w, "failed to load organization", nil)
+		return
+	}
+	webutil.Success(w, "organization", org)
+}
+
+type updateOrganizationRequest struct {
+	Name  string `json:"name"`
+	Icon  string `json:"icon"`
+	Color string `json:"color"`
+}
+
+// UpdateOrganization sets the org's name/icon/color (admin-only via route).
+func (h *Handler) UpdateOrganization(w http.ResponseWriter, r *http.Request) {
+	_, orgID, ok := h.callerOrg(w, r)
+	if !ok {
+		return
+	}
+	req, ok := webutil.DecodeBody[updateOrganizationRequest](w, r)
+	if !ok {
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" || len(name) > 64 {
+		webutil.Error(w, "name is required (max 64 chars)", nil)
+		return
+	}
+	if len(req.Icon) > 64 || len(req.Color) > 7 {
+		webutil.Error(w, "invalid icon or color", nil)
+		return
+	}
+	if err := h.users.UpdateOrganization(r.Context(), orgID, name, req.Icon, req.Color); err != nil {
+		h.log.Error("UpdateOrganization", "error", err, "org_id", orgID)
+		webutil.Error(w, "failed to update organization", nil)
+		return
+	}
+	webutil.Success(w, "organization updated", nil)
 }

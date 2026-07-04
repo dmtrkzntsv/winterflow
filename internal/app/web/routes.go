@@ -3,6 +3,7 @@ package web
 import (
 	"net/http"
 	happ "winterflow/internal/app/web/handler/app"
+	hauth "winterflow/internal/app/web/handler/auth"
 	hdocker "winterflow/internal/app/web/handler/docker"
 	"winterflow/internal/app/web/handler/notification"
 	horg "winterflow/internal/app/web/handler/org"
@@ -31,18 +32,15 @@ func (s *Server) registerRoutes() {
 	// lifecycle.
 	adminMW := rbac.RequireAdmin(s.Deps.UserService)
 
-	// Public auth metadata: tells the login page whether this is a fresh
-	// instance (first local login creates the admin account).
-	s.Router.Get("/api/v1/auth/state", func(w http.ResponseWriter, r *http.Request) {
-		n, err := s.Deps.UserService.CountUsers(r.Context())
-		if err != nil {
-			util.Error(w, "failed to read auth state", nil)
-			return
-		}
-		util.Success(w, "auth state", struct {
-			Bootstrap bool `json:"bootstrap"`
-		}{Bootstrap: n == 0})
+	// Public auth surface: registration (accounts are only created here or
+	// by an admin) and the state the login/register pages render from.
+	authAPI := hauth.NewHandler(&hauth.Deps{
+		Logger: s.Logger,
+		Cfg:    s.Cfg,
+		Users:  s.Deps.UserService,
 	})
+	s.Router.Post("/api/v1/auth/register", authAPI.Register)
+	s.Router.Get("/api/v1/auth/state", authAPI.State)
 
 	// The NotificationManager is shared across every handler: the SSE stream
 	// subscribes to it and the usecases publish to it, so async results reach
@@ -116,4 +114,6 @@ func (s *Server) registerRoutes() {
 	s.Router.With(authMW, adminMW).Post("/api/v1/org/update-member", orgAPI.UpdateMember)
 	s.Router.With(authMW, adminMW).Post("/api/v1/org/remove-member", orgAPI.RemoveMember)
 	s.Router.With(authMW, adminMW).Post("/api/v1/org/reset-member-password", orgAPI.ResetMemberPassword)
+	s.Router.With(authMW).Get("/api/v1/org/get-organization", orgAPI.GetOrganization)
+	s.Router.With(authMW, adminMW).Post("/api/v1/org/update-organization", orgAPI.UpdateOrganization)
 }

@@ -15,6 +15,8 @@ import (
 )
 
 type fakeOrgStore struct {
+	org        model.Organization
+	updatedOrg string
 	members    []model.Member
 	created    []string
 	updated    map[string]string
@@ -56,6 +58,13 @@ func (f *fakeOrgStore) RemoveMember(_ context.Context, _, userID string) error {
 }
 func (f *fakeOrgStore) SetPassword(_ context.Context, userID, _ string, mustChange bool) error {
 	f.resetPw = append(f.resetPw, userID)
+	return nil
+}
+func (f *fakeOrgStore) GetOrganization(context.Context, string) (model.Organization, error) {
+	return f.org, nil
+}
+func (f *fakeOrgStore) UpdateOrganization(_ context.Context, _, name, icon, color string) error {
+	f.updatedOrg = name + "|" + icon + "|" + color
 	return nil
 }
 func (f *fakeOrgStore) GetCredentials(_ context.Context, userID string) (model.Credentials, error) {
@@ -183,5 +192,44 @@ func TestGetMembers(t *testing.T) {
 	h.GetMembers(w, r)
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "owner") {
 		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestGetOrganization(t *testing.T) {
+	h, f := newHandler()
+	f.org = model.Organization{ID: "org-1", Name: "Homelab", Icon: "server", Color: "#3b82f6"}
+	r := authed(httptest.NewRequest("GET", "/x", nil))
+	w := httptest.NewRecorder()
+	h.GetOrganization(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d", w.Code)
+	}
+	var resp struct {
+		Data model.Organization `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Data.Name != "Homelab" || resp.Data.Icon != "server" || resp.Data.Color != "#3b82f6" {
+		t.Errorf("org = %+v", resp.Data)
+	}
+}
+
+func TestUpdateOrganizationValidation(t *testing.T) {
+	h, f := newHandler()
+	for _, body := range []string{
+		`{"name":"","icon":"server","color":"#fff"}`,
+		`{"name":"` + strings.Repeat("x", 65) + `","icon":"","color":""}`,
+		`{"name":"ok","icon":"","color":"not-a-color-way-too-long"}`,
+	} {
+		if w := post(h.UpdateOrganization, body); w.Code != http.StatusBadRequest {
+			t.Errorf("body %s: code = %d, want 400", body, w.Code)
+		}
+	}
+	if w := post(h.UpdateOrganization, `{"name":"Homelab","icon":"server","color":"#3b82f6"}`); w.Code != http.StatusOK {
+		t.Errorf("valid update: code = %d", w.Code)
+	}
+	if f.updatedOrg != "Homelab|server|#3b82f6" {
+		t.Errorf("updatedOrg = %q", f.updatedOrg)
 	}
 }

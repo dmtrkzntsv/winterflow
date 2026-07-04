@@ -11,6 +11,7 @@ import (
 	corsmw "winterflow/internal/app/web/middleware/cors"
 	logmw "winterflow/internal/app/web/middleware/logger"
 	"winterflow/internal/domain/dto"
+	"winterflow/internal/domain/model"
 	"winterflow/internal/infra/bootstrap"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
@@ -93,15 +94,26 @@ func (s *Server) registerAuth() {
 					// written at bootstrap/member creation is keyed by email.
 					accountId = strings.ToLower(strings.TrimSpace(claims.User.Name))
 				}
-				user, err := s.Deps.UserService.FindOrCreateUser(ctx, dto.UserDTO{
-					Provider:  provider,
-					AccountID: accountId,
-					UserID:    "",
-					Name:      claims.User.Name,
-					AvatarURL: strings.TrimPrefix(claims.User.Picture, s.Cfg.GetWebURL()),
-				})
+				// OAuth first-logins create accounts (find-or-create) only
+				// while registration is open — otherwise Google would bypass
+				// REGISTRATION_ENABLED and the standalone single-org rule.
+				// Find-only misses leave the claims without a user_id attr,
+				// which util.GetUserID treats as unauthenticated (401).
+				var user model.User
+				var err error
+				if s.registrationOpen(ctx) {
+					user, err = s.Deps.UserService.FindOrCreateUser(ctx, dto.UserDTO{
+						Provider:  provider,
+						AccountID: accountId,
+						UserID:    "",
+						Name:      claims.User.Name,
+						AvatarURL: strings.TrimPrefix(claims.User.Picture, s.Cfg.GetWebURL()),
+					})
+				} else {
+					user, err = s.Deps.UserService.GetByConnectedAccount(ctx, provider, accountId)
+				}
 				if err != nil {
-					s.Logger.Error("failed to find or create user: %v", err)
+					s.Logger.Error("failed to resolve user for %s login: %v", provider, err)
 					return claims
 				}
 				// NOTE: keep claims.User.ID in the provider-prefixed form the
@@ -174,4 +186,22 @@ func (s *Server) autoClaimStandaloneServer(ctx context.Context, userID string) {
 		return
 	}
 	s.Logger.Info("auto-claimed standalone server", "server_id", srv.ID, "organization_id", orgID)
+}
+
+// registrationOpen mirrors the register endpoint's policy: a fresh instance
+// (zero users) is always claimable; afterwards standalone is closed and
+// distributed follows REGISTRATION_ENABLED.
+func (s *Server) registrationOpen(ctx context.Context) bool {
+	n, err := s.Deps.UserService.CountUsers(ctx)
+	if err != nil {
+		s.Logger.Error("registrationOpen: count users: %v", err)
+		return false
+	}
+	if n == 0 {
+		return true
+	}
+	if s.Cfg.IsStandalone() {
+		return false
+	}
+	return s.Cfg.IsRegistrationEnabled()
 }

@@ -300,7 +300,10 @@ Commands: `app.save`, `app.get`, `apps.list`, `apps.status`, `app.control`,
 API routes (all `/api/v1`):
 - Info (200 sync): `server/get-servers`, `server/get-servers-status`,
   `server/get-public-key`, `app/get-apps`, `app/get-apps-status`,
-  `user/create-token`, `user/get-tokens`, `user/delete-token`.
+  `user/create-token`, `user/get-tokens`, `user/delete-token`,
+  `user/get-profile`, `user/change-password`, `auth/state` (public),
+  and admin-only `org/{create-user,get-members,update-member,remove-member,
+  reset-member-password}`.
 - Agent-bound (202 + SSE): `app/save-app` (upsert: create + edit), `app/get-app`, `app/get-logs`,
   `app/get-revisions`, `app/rollback-app`, `image/get-tags`, `app/control-app`,
   `app/delete-app`, `app/rename-app`, `app/refresh-apps`,
@@ -313,7 +316,17 @@ API routes (all `/api/v1`):
 
 Web pages (`web/src/pages/`): `home` (`/`), `app-details` (`/app/:appId`,
 tabs Logs/Editor/History/Settings via `?tab=`), `create-app` (`/create-app`,
-create-only), `settings`, `user-tokens` (`/user/tokens`), `login`.
+create-only), `settings`, `user-tokens` (`/user/tokens`), `user-password`
+(`/user/password`), `org-members` (`/org/members`, admins), `login`.
+
+Authentication (post-migration): local email+password is the always-on
+default — on a fresh instance the FIRST login creates the admin account
+(user + org + owner). Google OAuth optional. Env auth removed
+(AUTH_ENV_USERNAME/PASSWORD are gone — dev setups must bootstrap via first
+login instead). Admins manage members at `/org/members` (temp passwords
+shown once, forced change on first login); rbac middleware gates org
+management, server registration, agent update, and registry/network
+mutations to owner/admin.
 
 Personal access tokens (post-migration): `wfp_`-prefixed, SHA-256-hashed at
 rest (plaintext shown once at creation), sent as `Authorization: Bearer

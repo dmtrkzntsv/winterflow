@@ -47,7 +47,7 @@ patterns chosen by whether the agent is involved:
    (`app.get`, `app.logs`, `apps.list`, registry/network list, `agent.update`).
    The handler validates, dispatches to the bus, and returns `202` immediately —
    it never blocks. The agent's result returns up the bus and is delivered to
-   the browser over the **SSE stream** (`/api/v1/notification/stream`),
+   the browser over the **SSE stream** (`/api/v1/sse`),
    correlated by `request_id`.
 3. **Agent-initiated push → SSE (unsolicited).** Heartbeat liveness +
    capabilities + app/server status events flow up the agent stream; the Hub
@@ -306,7 +306,7 @@ API routes (all `/api/v1`):
   `app/delete-app`, `app/rename-app`, `app/refresh-apps`,
   `registry/{list,create,delete}`, `network/{list,create,delete}`,
   `agent/update`.
-- SSE: `notification/stream`. Auth/server: `server/register`, `/auth/*`.
+- SSE: `sse`. Auth/server: `server/register`, `/auth/*`.
 - Unsolicited SSE notification types (no `ref`): `server_status`
   (`{server_id, liveness}`) and `apps_status` (`{server_id, apps}`), pushed to
   the owning org's members on agent events/transitions.
@@ -360,7 +360,7 @@ carries its user's full access.
   `go test ./...`. Orchestrator integration (needs Docker):
   `go test -tags integration ./internal/infra/orchestrator/docker_compose/`.
 - Async contract: every agent-bound endpoint returns `202 {request_id}` with no
-  multi-second block; the result arrives on `/api/v1/notification/stream` keyed
+  multi-second block; the result arrives on `/api/v1/sse` keyed
   by that id. No `reply.Manager`/`WaitForReply` remains.
 - Standalone E2E: `make standalone`; exercise endpoints with an authed session;
   confirm Docker effects (`docker ps`) and DB rows (`sqlite3 winterflow.sqlite`).

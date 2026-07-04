@@ -1,7 +1,7 @@
 import { createContext } from "react";
 
 // Notification mirrors the backend model.Notification delivered over the SSE
-// stream (/api/v1/notification/stream).
+// stream (/api/v1/sse).
 export type Notification = {
   type: string;
   ref: string;

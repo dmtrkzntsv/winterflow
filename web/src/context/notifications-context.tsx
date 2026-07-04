@@ -10,7 +10,7 @@ import {
 } from "./notifications-context-base";
 
 const base = apiBaseUrl.endsWith("/") ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
-const streamUrl = `${base}/api/v1/notification/stream`;
+const streamUrl = `${base}/api/v1/sse`;
 
 // NotificationsProvider holds a single EventSource to the API's SSE stream and
 // fans every incoming notification out to subscribers. The backend delivers

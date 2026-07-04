@@ -140,6 +140,11 @@ func (d *Dispatcher) newHandlers() map[command.Type]handlerFunc {
 			return command.DeleteNetworkResponse{Name: in.Name}, d.orch.DeleteNetwork(ctx, in.Name)
 		}),
 
+		command.TypeImageTags: handle(d, func(ctx context.Context, in command.ImageTagsRequest) (command.ImageTagsResponse, error) {
+			tags, err := d.orch.ImageTags(ctx, in.Image)
+			return command.ImageTagsResponse{Image: in.Image, Tags: tags}, err
+		}),
+
 		command.TypeAgentUpdate: handle(d, func(ctx context.Context, in command.UpdateAgentRequest) (command.UpdateAgentResponse, error) {
 			return d.orch.UpdateAgent(ctx, in)
 		}),

@@ -123,3 +123,15 @@ func TestDispatchDockerAndLifecycleFilesystemPaths(t *testing.T) {
 		t.Fatalf("app.delete: %+v", resp)
 	}
 }
+
+func TestDispatchImageTags(t *testing.T) {
+	d := newTestDispatcher(t)
+	// Empty image is a validation error surfaced as a correlated error reply.
+	resp := d.Dispatch(context.Background(), envelope(string(command.TypeImageTags), []byte(`{"image":""}`)))
+	if resp.Base.ResponseCode == proto.ResponseCode_RESPONSE_CODE_SUCCESS {
+		t.Fatalf("empty image should fail: %+v", resp)
+	}
+	if resp.RequestId != "req-1" {
+		t.Fatalf("error reply not correlated: %+v", resp)
+	}
+}

@@ -7,6 +7,15 @@
 //   [ ephemeral public key (65 bytes, 0x04 || X || Y) | IV (12) | ciphertext+tag ]
 //
 // The agent reverses this with its EC private key.
+//
+// Two interchangeable implementations produce that exact layout:
+//   - Web Crypto (native), used when available;
+//   - noble (pure JS), used on insecure contexts — self-hosted installs are
+//     typically reached over plain http on a LAN, where browsers expose
+//     crypto.getRandomValues but NOT crypto.subtle.
+import { p256 } from "@noble/curves/nist.js";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { gcm } from "@noble/ciphers/aes.js";
 
 function base64ToBytes(b64: string): Uint8Array<ArrayBuffer> {
   const bin = atob(b64);
@@ -21,17 +30,16 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(bin);
 }
 
-// importServerPublicKey turns the base64 uncompressed point (0x04||X||Y) from
-// the API into a CryptoKey usable for ECDH.
-async function importServerPublicKey(pointB64: string): Promise<CryptoKey> {
-  const raw = base64ToBytes(pointB64);
-  return crypto.subtle.importKey(
-    "raw",
-    raw,
-    { name: "ECDH", namedCurve: "P-256" },
-    false,
-    [],
-  );
+function assemblePayload(
+  ephPoint: Uint8Array,
+  iv: Uint8Array,
+  ciphertext: Uint8Array,
+): string {
+  const payload = new Uint8Array(ephPoint.length + iv.length + ciphertext.length);
+  payload.set(ephPoint, 0);
+  payload.set(iv, ephPoint.length);
+  payload.set(ciphertext, ephPoint.length + iv.length);
+  return bytesToBase64(payload);
 }
 
 // encryptSecret encrypts plaintext for the server identified by its base64
@@ -40,7 +48,46 @@ export async function encryptSecret(
   plaintext: string,
   serverPublicKeyB64: string,
 ): Promise<string> {
-  const serverPub = await importServerPublicKey(serverPublicKeyB64);
+  if (globalThis.crypto?.subtle) {
+    return encryptWithWebCrypto(plaintext, serverPublicKeyB64);
+  }
+  return encryptWithNoble(plaintext, serverPublicKeyB64);
+}
+
+// --- pure-JS path (insecure contexts: http over LAN) ------------------------
+
+function encryptWithNoble(plaintext: string, serverPublicKeyB64: string): string {
+  const serverPoint = base64ToBytes(serverPublicKeyB64);
+
+  const ephPriv = p256.utils.randomSecretKey();
+  const ephPoint = p256.getPublicKey(ephPriv, false); // 65B uncompressed
+
+  // getSharedSecret returns the uncompressed shared point; the secret is its
+  // 32-byte X coordinate (matching Web Crypto's deriveBits).
+  const shared = p256.getSharedSecret(ephPriv, serverPoint, false);
+  const sharedX = shared.subarray(1, 33);
+
+  const aesKey = sha256(sharedX);
+  const iv = crypto.getRandomValues(new Uint8Array(new ArrayBuffer(12)));
+  // noble's gcm appends the 16-byte tag to the ciphertext, same as Web Crypto.
+  const ciphertext = gcm(aesKey, iv).encrypt(new TextEncoder().encode(plaintext));
+
+  return assemblePayload(ephPoint, iv, ciphertext);
+}
+
+// --- Web Crypto path (secure contexts) ---------------------------------------
+
+async function encryptWithWebCrypto(
+  plaintext: string,
+  serverPublicKeyB64: string,
+): Promise<string> {
+  const serverPub = await crypto.subtle.importKey(
+    "raw",
+    base64ToBytes(serverPublicKeyB64),
+    { name: "ECDH", namedCurve: "P-256" },
+    false,
+    [],
+  );
 
   const ephemeral = await crypto.subtle.generateKey(
     { name: "ECDH", namedCurve: "P-256" },
@@ -76,15 +123,9 @@ export async function encryptSecret(
     ),
   );
 
-  // Export the ephemeral public key as the uncompressed point.
   const ephPoint = new Uint8Array(
     await crypto.subtle.exportKey("raw", ephemeral.publicKey),
   );
 
-  const payload = new Uint8Array(ephPoint.length + iv.length + ciphertext.length);
-  payload.set(ephPoint, 0);
-  payload.set(iv, ephPoint.length);
-  payload.set(ciphertext, ephPoint.length + iv.length);
-
-  return bytesToBase64(payload);
+  return assemblePayload(ephPoint, iv, ciphertext);
 }

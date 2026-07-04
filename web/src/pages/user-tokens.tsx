@@ -38,6 +38,29 @@ function fmtDate(iso: string | null): string {
   return new Date(iso).toLocaleDateString();
 }
 
+// copyText works on insecure (plain-http LAN) origins too, where browsers
+// don't expose navigator.clipboard — same constraint as crypto.subtle in
+// lib/ecies.ts. Falls back to the legacy selection-based copy.
+async function copyText(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  try {
+    if (!document.execCommand("copy")) {
+      throw new Error("copy rejected");
+    }
+  } finally {
+    ta.remove();
+  }
+}
+
 // UserTokensPage manages personal access tokens: list, generate (with a
 // one-time plaintext reveal), and revoke. Tokens authenticate API calls via
 // "Authorization: Bearer wfp_…" or Basic auth (token as password).
@@ -83,9 +106,13 @@ export default function UserTokensPage() {
 
   const handleCopy = async () => {
     if (!created) return;
-    await navigator.clipboard.writeText(created.token);
-    setCopied(true);
-    toast.success("Token copied");
+    try {
+      await copyText(created.token);
+      setCopied(true);
+      toast.success("Token copied");
+    } catch {
+      toast.error("Copy failed — select the token and copy it manually");
+    }
   };
 
   const handleRevoke = async (tokenId: string, tokenName: string) => {

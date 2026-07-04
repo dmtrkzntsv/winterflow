@@ -180,6 +180,28 @@ func (h *Handler) RollbackApp(w http.ResponseWriter, r *http.Request) {
 	accepted(w, "rollback dispatched", requestID)
 }
 
+// GetImageTags dispatches an image.tags to the agent (registry v2 listing
+// with the agent's docker credentials). Returns 202 + request_id; the tag
+// list arrives over SSE. Query: server_id, image.
+func (h *Handler) GetImageTags(w http.ResponseWriter, r *http.Request) {
+	userID, ok := webutil.RequireUser(w, r)
+	if !ok {
+		return
+	}
+	serverID := r.URL.Query().Get("server_id")
+	image := r.URL.Query().Get("image")
+	if serverID == "" || image == "" {
+		webutil.Error(w, "server_id and image are required", nil)
+		return
+	}
+	requestID, err := h.usecase.GetImageTags(r.Context(), userID, serverID, image)
+	if err != nil {
+		webutil.Error(w, "failed to get image tags", nil)
+		return
+	}
+	accepted(w, "image tags fetch dispatched", requestID)
+}
+
 // GetLogs dispatches an app.logs to the agent. Returns 202 + request_id; the
 // log entries arrive over SSE. Query: server_id, app_id, optional since, tail.
 func (h *Handler) GetLogs(w http.ResponseWriter, r *http.Request) {

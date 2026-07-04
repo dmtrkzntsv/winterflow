@@ -124,6 +124,11 @@ func TestAgentBoundHandlersReturn202WithRequestID(t *testing.T) {
 			httptest.NewRequest("GET", "/api/v1/app/get-revisions?server_id=s1&app_id=a1", nil),
 		},
 		{
+			"image-tags",
+			func(h *Handler) http.HandlerFunc { return h.GetImageTags },
+			httptest.NewRequest("GET", "/api/v1/image/get-tags?server_id=s1&image=nginx", nil),
+		},
+		{
 			"rollback",
 			func(h *Handler) http.HandlerFunc { return h.RollbackApp },
 			httptest.NewRequest("POST", "/api/v1/app/rollback-app",

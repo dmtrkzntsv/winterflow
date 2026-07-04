@@ -144,6 +144,17 @@ func (uc *UseCase) RollbackApp(ctx context.Context, userID, serverID, appID, has
 	})
 }
 
+// GetImageTags dispatches an image.tags to the agent, which queries the
+// registry with its own docker credentials. The tag list returns over SSE.
+func (uc *UseCase) GetImageTags(ctx context.Context, userID, serverID, image string) (string, error) {
+	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
+		AgentID: serverID,
+		UserID:  userID,
+		Type:    command.TypeImageTags,
+		Payload: command.ImageTagsRequest{Image: image},
+	})
+}
+
 // GetLogs dispatches an app.logs to the agent. The log entries return over SSE.
 func (uc *UseCase) GetLogs(ctx context.Context, userID, serverID, appID string, since int64, tail int32) (string, error) {
 	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{

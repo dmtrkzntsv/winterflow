@@ -43,6 +43,7 @@ func (s *Server) registerRoutes() {
 	s.Router.With(amw.Auth).Get("/api/v1/app/get-logs", appsAPI.GetLogs)
 	s.Router.With(amw.Auth).Get("/api/v1/app/get-revisions", appsAPI.GetRevisions)
 	s.Router.With(amw.Auth).Post("/api/v1/app/rollback-app", appsAPI.RollbackApp)
+	s.Router.With(amw.Auth).Get("/api/v1/image/get-tags", appsAPI.GetImageTags)
 	s.Router.With(amw.Auth).Post("/api/v1/app/control-app", appsAPI.ControlApp)
 	s.Router.With(amw.Auth).Post("/api/v1/app/delete-app", appsAPI.DeleteApp)
 	s.Router.With(amw.Auth).Post("/api/v1/app/rename-app", appsAPI.RenameApp)

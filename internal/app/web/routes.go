@@ -6,6 +6,7 @@ import (
 	hdocker "winterflow/internal/app/web/handler/docker"
 	"winterflow/internal/app/web/handler/notification"
 	"winterflow/internal/app/web/handler/server"
+	huser "winterflow/internal/app/web/handler/user"
 	"winterflow/internal/app/web/middleware/patauth"
 	"winterflow/internal/app/web/util"
 )
@@ -75,4 +76,12 @@ func (s *Server) registerRoutes() {
 	s.Router.With(authMW).Get("/api/v1/server/get-servers-status", serversAPI.GetServersStatus)
 	s.Router.With(authMW).Get("/api/v1/server/get-public-key", serversAPI.GetPublicKey)
 	s.Router.With(authMW).Post("/api/v1/server/register", serversAPI.Register)
+
+	usersAPI := huser.NewHandler(&huser.Deps{
+		Logger: s.Logger,
+		Tokens: s.Deps.UserService,
+	})
+	s.Router.With(authMW).Post("/api/v1/user/create-token", usersAPI.CreateToken)
+	s.Router.With(authMW).Get("/api/v1/user/get-tokens", usersAPI.GetTokens)
+	s.Router.With(authMW).Post("/api/v1/user/delete-token", usersAPI.DeleteToken)
 }

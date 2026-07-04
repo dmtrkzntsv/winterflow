@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/signal"
 	"runtime"
@@ -36,8 +35,9 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	// Generate agent ID (in production, this might come from config or be persistent)
-	agentID := fmt.Sprintf("agent-%d", time.Now().Unix())
+	// Stable identity: AGENT_ID env > agent cert CommonName (the claimed
+	// server id) > an id persisted under the data dir. Never per-run.
+	agentID := appagent.ResolveAgentID(cfg, log)
 
 	agent := grpcagent.NewAgent(log, cfg, agentID)
 

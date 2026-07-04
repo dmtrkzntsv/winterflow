@@ -270,15 +270,16 @@ apps (A2). Deliberately not ported: catalog/templates (dropped), orgs &
 members, billing.
 
 ### ⚠️ Known partial / follow-ups
-- The web ESLint suite has **one pre-existing error** in the generated shadcn
-  `web/src/components/ui/sidebar.tsx` (fast-refresh rule). It predates this work;
-  every commit otherwise lints clean.
-- `cert.Manager.GenerateServer(false)` regenerates only missing artifacts, so
-  deleting just `ca.key` leaves a key mismatched with the surviving `ca.crt`
-  (surfaced by the new cert tests; use `override=true` to regenerate the set).
-- The distributed agent's identity is `agent-<timestamp>` generated per run
-  (`cmd/agent/main.go`); it should derive from the claimed server id / cert CN
-  before the distributed topology ships.
+
+All previously-listed follow-ups are resolved (2026-07):
+- The web ESLint suite passes with **zero errors** (the shadcn `sidebar.tsx`
+  hook re-export moved out of the component file).
+- `cert.Manager.GenerateServer(false)` now **heals consistently**: a broken
+  CA pair regenerates the CA and everything signed by it; a new server key
+  cascades to the server cert and full chain.
+- The agent's identity is **stable and cert-derived**: `AGENT_ID` env >
+  agent-cert CommonName (registration now writes the server id there) > an
+  id persisted under the data dir. No more per-run `agent-<timestamp>`.
 
 ## Current command + route surface (source of truth: `routes.go`, `command.go`)
 

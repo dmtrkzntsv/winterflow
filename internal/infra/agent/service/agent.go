@@ -28,7 +28,9 @@ func NewAgentService(log *logger.Logger, certManager *cert.Manager, serverRepo p
 func (as *AgentService) Register(ctx context.Context, code string) (string, error) {
 	serverID := util.GenerateID()
 	certificateID := util.GenerateID()
-	expiresAt, err := as.cert.GenerateAgent(certificateID)
+	// The certificate's CN carries the SERVER id: a provisioned agent derives
+	// its routing identity from its own cert (see appagent.ResolveAgentID).
+	expiresAt, err := as.cert.GenerateAgent(serverID)
 	if err != nil {
 		as.log.Fatalf("Failed to generate agent certificates: %v", err)
 	}

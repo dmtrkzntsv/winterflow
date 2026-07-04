@@ -415,3 +415,79 @@ func TestIsServerCertificateGeneratedPartialArtifacts(t *testing.T) {
 		}
 	}
 }
+
+// Regenerating after ANY single artifact loss must yield a consistent,
+// verifiable set without override: a broken CA pair escalates to a full
+// regeneration (certs signed by a discarded CA can't chain to a new one),
+// and dependents cascade (new server key -> new server cert -> new chain).
+func TestGenerateServerHealsAnySingleMissingArtifact(t *testing.T) {
+	m, cfg, _ := newTestManager(t)
+	_ = cfg
+
+	cases := []struct {
+		name string
+		del  func() error
+	}{
+		{"CA key", m.DeleteCAKey},
+		{"CA cert", m.DeleteCACertificate},
+		{"server key", m.DeleteServerKey},
+		{"server cert", m.DeleteServerCertificate},
+		{"fullchain", m.DeleteFullchainCertificate},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := m.GenerateServer(true); err != nil {
+				t.Fatalf("baseline: %v", err)
+			}
+			if err := tc.del(); err != nil {
+				t.Fatalf("delete %s: %v", tc.name, err)
+			}
+			if err := m.GenerateServer(false); err != nil {
+				t.Fatalf("heal after losing %s: %v", tc.name, err)
+			}
+			assertServerChainValid(t, m)
+			// And a subsequent agent issuance must work against the healed CA.
+			if _, err := m.GenerateAgent("post-heal-agent"); err != nil {
+				t.Fatalf("agent issuance after healing %s: %v", tc.name, err)
+			}
+		})
+	}
+}
+
+// assertServerChainValid verifies the on-disk server material is internally
+// consistent: server cert signed by the CA cert, fullchain = server + CA.
+func assertServerChainValid(t *testing.T, m *Manager) {
+	t.Helper()
+	dir := m.cfg.GetHubCertDir()
+	caCert := parseCertFile(t, filepath.Join(dir, m.paths.CACert))
+	serverCert := parseCertFile(t, filepath.Join(dir, m.paths.ServerCert))
+	if err := serverCert.CheckSignatureFrom(caCert); err != nil {
+		t.Fatalf("server cert does not chain to CA: %v", err)
+	}
+	full, err := os.ReadFile(filepath.Join(dir, m.paths.ServerFullChain))
+	if err != nil {
+		t.Fatalf("read fullchain: %v", err)
+	}
+	block, rest := pem.Decode(full)
+	if block == nil {
+		t.Fatal("fullchain: no first PEM block")
+	}
+	first, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("fullchain first cert: %v", err)
+	}
+	if first.SerialNumber.Cmp(serverCert.SerialNumber) != 0 {
+		t.Fatal("fullchain does not start with the current server cert")
+	}
+	block2, _ := pem.Decode(rest)
+	if block2 == nil {
+		t.Fatal("fullchain: missing CA block")
+	}
+	second, err := x509.ParseCertificate(block2.Bytes)
+	if err != nil {
+		t.Fatalf("fullchain second cert: %v", err)
+	}
+	if second.SerialNumber.Cmp(caCert.SerialNumber) != 0 {
+		t.Fatal("fullchain does not end with the current CA cert")
+	}
+}

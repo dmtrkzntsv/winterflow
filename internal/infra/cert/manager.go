@@ -46,41 +46,81 @@ func NewManager(cfg *config.ServerConfig, log *logger.Logger) (*Manager, error) 
 	}, nil
 }
 
+// GenerateServer ensures a complete, internally consistent set of server
+// certificate material. Artifacts are not independent, so missing pieces
+// cascade instead of being filled in blindly:
+//
+//   - the CA key and certificate are a pair — regenerating one half would
+//     leave the survivor useless, so losing either regenerates both AND
+//     everything signed by the old CA;
+//   - a new server key invalidates the existing server certificate;
+//   - a new server certificate (or CA) invalidates the full chain.
 func (m *Manager) GenerateServer(override bool) error {
-	caKeyPath := path.Join(m.cfg.GetHubCertDir(), m.paths.CAKey)
-	caCertPath := path.Join(m.cfg.GetHubCertDir(), m.paths.CACert)
-	serverKeyPath := path.Join(m.cfg.GetHubCertDir(), m.paths.ServerKey)
-	serverCertPath := path.Join(m.cfg.GetHubCertDir(), m.paths.ServerCert)
-	fullChainPath := path.Join(m.cfg.GetHubCertDir(), m.paths.ServerFullChain)
-
-	artifacts := []struct {
-		name     string
-		path     string
-		exists   func() (bool, error)
-		generate func() error
-	}{
-		{"CA private key", caKeyPath, m.ExistsCAKey, m.GenerateCAKey},
-		{"CA certificate", caCertPath, m.ExistsCACertificate, m.GenerateCACertificate},
-		{"server private key", serverKeyPath, m.ExistsServerKey, m.GenerateServerKey},
-		{"server certificate", serverCertPath, m.ExistsServerCertificate, m.GenerateServerCertificate},
-		{"full-chain certificate", fullChainPath, m.ExistsFullchainCertificate, m.GenerateFullchainCertificate},
+	exists := func(name string, fn func() (bool, error)) (bool, error) {
+		ok, err := fn()
+		if err != nil {
+			return false, fmt.Errorf("check %s: %w", name, err)
+		}
+		return ok, nil
+	}
+	generate := func(name, p string, fn func() error) error {
+		m.log.Info("generating certificate artifact", "artifact", name, "path", path.Join(m.cfg.GetHubCertDir(), p), "override", override)
+		if err := fn(); err != nil {
+			return fmt.Errorf("generate %s: %w", name, err)
+		}
+		return nil
 	}
 
-	for _, artifact := range artifacts {
-		if !override {
-			exists, err := artifact.exists()
-			if err != nil {
-				return fmt.Errorf("check %s: %w", artifact.name, err)
-			}
-			if exists {
-				m.log.Debug("certificate artifact exists, skipping", "artifact", artifact.name, "path", artifact.path)
-				continue
-			}
+	caKeyOK, err := exists("CA private key", m.ExistsCAKey)
+	if err != nil {
+		return err
+	}
+	caCertOK, err := exists("CA certificate", m.ExistsCACertificate)
+	if err != nil {
+		return err
+	}
+	regenCA := override || !caKeyOK || !caCertOK
+	if regenCA {
+		if !override && (caKeyOK || caCertOK) {
+			m.log.Warn("CA key/cert pair incomplete — regenerating the CA and everything signed by it")
 		}
+		if err := generate("CA private key", m.paths.CAKey, m.GenerateCAKey); err != nil {
+			return err
+		}
+		if err := generate("CA certificate", m.paths.CACert, m.GenerateCACertificate); err != nil {
+			return err
+		}
+	}
 
-		m.log.Info("generating certificate artifact", "artifact", artifact.name, "path", artifact.path, "override", override)
-		if err := artifact.generate(); err != nil {
-			return fmt.Errorf("generate %s: %w", artifact.name, err)
+	serverKeyOK, err := exists("server private key", m.ExistsServerKey)
+	if err != nil {
+		return err
+	}
+	regenServerKey := override || !serverKeyOK
+	if regenServerKey {
+		if err := generate("server private key", m.paths.ServerKey, m.GenerateServerKey); err != nil {
+			return err
+		}
+	}
+
+	serverCertOK, err := exists("server certificate", m.ExistsServerCertificate)
+	if err != nil {
+		return err
+	}
+	regenServerCert := regenCA || regenServerKey || !serverCertOK
+	if regenServerCert {
+		if err := generate("server certificate", m.paths.ServerCert, m.GenerateServerCertificate); err != nil {
+			return err
+		}
+	}
+
+	fullChainOK, err := exists("full-chain certificate", m.ExistsFullchainCertificate)
+	if err != nil {
+		return err
+	}
+	if regenServerCert || !fullChainOK {
+		if err := generate("full-chain certificate", m.paths.ServerFullChain, m.GenerateFullchainCertificate); err != nil {
+			return err
 		}
 	}
 

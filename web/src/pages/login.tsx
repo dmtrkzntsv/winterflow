@@ -16,13 +16,17 @@ export default function LoginPage() {
     const [providers, setProviders] = useState<string[]>([])
     const [providersLoading, setProvidersLoading] = useState(true)
     const [bootstrap, setBootstrap] = useState(false)
+    const [registerEnabled, setRegisterEnabled] = useState(false)
 
     useEffect(() => {
         let cancelled = false
         fetch(`${apiBaseUrl}/api/v1/auth/state`)
             .then((res) => res.json())
             .then((body) => {
-                if (!cancelled) setBootstrap(Boolean(body?.data?.bootstrap))
+                if (!cancelled) {
+                    setBootstrap(Boolean(body?.data?.bootstrap))
+                    setRegisterEnabled(Boolean(body?.data?.registration_enabled))
+                }
             })
             .catch(() => {})
         return () => {
@@ -109,6 +113,10 @@ export default function LoginPage() {
                     availableProviders={effectiveProviders}
                     providersLoading={providersLoading}
                     bootstrap={bootstrap}
+                    registerEnabled={registerEnabled}
+                    defaultEmail={
+                        (location.state as { email?: string } | undefined)?.email ?? ""
+                    }
                 />
             </div>
         </div>

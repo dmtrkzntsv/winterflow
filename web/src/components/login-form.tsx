@@ -1,4 +1,5 @@
 import type { ComponentPropsWithoutRef, FormEvent } from "react";
+import { Link } from "react-router-dom";
 import { Trans, useTranslation } from "react-i18next";
 
 import { cn } from "@/lib/utils";
@@ -27,8 +28,11 @@ type LoginFormProps = ComponentPropsWithoutRef<"div"> & {
   error?: string | null;
   availableProviders?: string[];
   providersLoading?: boolean;
-  // bootstrap: fresh instance — the first login creates the admin account.
+  // bootstrap: fresh instance — registering creates the admin account.
   bootstrap?: boolean;
+  // registerEnabled: show the "create an account" link.
+  registerEnabled?: boolean;
+  defaultEmail?: string;
 };
 
 export function LoginForm({
@@ -39,6 +43,8 @@ export function LoginForm({
   availableProviders = ["local"],
   providersLoading = false,
   bootstrap = false,
+  registerEnabled = false,
+  defaultEmail = "",
   ...props
 }: LoginFormProps) {
   const { t } = useTranslation();
@@ -93,6 +99,7 @@ export function LoginForm({
                   type="email"
                   autoComplete="email"
                   placeholder={t("login.usernamePlaceholder")}
+                  defaultValue={defaultEmail}
                   required
                 />
               </Field>
@@ -123,6 +130,17 @@ export function LoginForm({
                   role="status"
                 >
                   {t("login.bootstrapHint")}
+                </FieldDescription>
+              ) : null}
+              {registerEnabled ? (
+                <FieldDescription className="text-center text-sm">
+                  {t("login.noAccount")}{" "}
+                  <Link
+                    to="/register"
+                    className="underline underline-offset-2"
+                  >
+                    {t("login.registerLink")}
+                  </Link>
                 </FieldDescription>
               ) : null}
               {error ? (

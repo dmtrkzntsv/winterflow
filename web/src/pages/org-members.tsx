@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, Copy, Plus, Trash2, KeyRound } from "lucide-react";
+import { Check, Copy, Pencil, Plus, Trash2, KeyRound } from "lucide-react";
 import { toast } from "sonner";
 
 import { useAppBreadcrumbs } from "@/layouts/use-app-layout";
@@ -26,6 +26,15 @@ import {
 } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/spinner";
 import { useProfile } from "@/context/use-profile";
+import { AppIcon } from "@/components/app-icon";
+import { IconPicker } from "@/components/icon-picker";
+
+type Organization = {
+  org_id: string;
+  name: string;
+  icon: string;
+  color: string;
+};
 
 type Member = {
   id: string;
@@ -115,7 +124,14 @@ export default function OrgMembersPage() {
     [],
   );
   useAppBreadcrumbs(breadcrumbs);
-  const { profile } = useProfile();
+  const { profile, isAdmin } = useProfile();
+
+  const [org, setOrg] = useState<Organization | null>(null);
+  const [orgEditOpen, setOrgEditOpen] = useState(false);
+  const [orgName, setOrgName] = useState("");
+  const [orgIcon, setOrgIcon] = useState("");
+  const [orgColor, setOrgColor] = useState("#64748b");
+  const [orgBusy, setOrgBusy] = useState(false);
 
   const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
@@ -148,9 +164,49 @@ export default function OrgMembersPage() {
     }
   }, []);
 
+  const refreshOrg = useCallback(async () => {
+    try {
+      setOrg(await api<Organization>("/api/v1/org/get-organization"));
+    } catch (e) {
+      console.error("Failed to load organization", e);
+    }
+  }, []);
+
   useEffect(() => {
     void refresh();
-  }, [refresh]);
+    void refreshOrg();
+  }, [refresh, refreshOrg]);
+
+  const openOrgEdit = () => {
+    setOrgName(org?.name ?? "");
+    setOrgIcon(org?.icon ?? "");
+    setOrgColor(org?.color || "#64748b");
+    setOrgEditOpen(true);
+  };
+
+  const handleOrgSave = async () => {
+    if (!orgName.trim()) {
+      toast.error("Organization name is required");
+      return;
+    }
+    setOrgBusy(true);
+    try {
+      await postJSON("/api/v1/org/update-organization", {
+        name: orgName.trim(),
+        icon: orgIcon,
+        color: orgColor,
+      });
+      toast.success("Organization updated");
+      setOrgEditOpen(false);
+      void refreshOrg();
+    } catch (e) {
+      toast.error("Failed to update organization", {
+        description: e instanceof Error ? e.message : undefined,
+      });
+    } finally {
+      setOrgBusy(false);
+    }
+  };
 
   const openAdd = () => {
     setName("");
@@ -231,6 +287,30 @@ export default function OrgMembersPage() {
 
   return (
     <div className="mx-auto w-full max-w-4xl space-y-6">
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle>Organization</CardTitle>
+          {isAdmin ? (
+            <Button size="sm" variant="outline" onClick={openOrgEdit}>
+              <Pencil /> Edit
+            </Button>
+          ) : null}
+        </CardHeader>
+        <CardContent>
+          {org ? (
+            <div className="flex items-center gap-3">
+              <AppIcon icon={org.icon} color={org.color} />
+              <div>
+                <p className="font-medium">{org.name}</p>
+                <p className="text-xs text-muted-foreground">{org.org_id}</p>
+              </div>
+            </div>
+          ) : (
+            <Spinner />
+          )}
+        </CardContent>
+      </Card>
+
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Members</CardTitle>
@@ -390,6 +470,60 @@ export default function OrgMembersPage() {
               </DialogFooter>
             </>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={orgEditOpen} onOpenChange={setOrgEditOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit organization</DialogTitle>
+            <DialogDescription>
+              Name, icon, and color — same vocabulary as apps.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="flex items-end gap-3">
+              <div className="space-y-2">
+                <Label>Icon</Label>
+                <IconPicker
+                  value={orgIcon}
+                  color={orgColor}
+                  onChange={setOrgIcon}
+                />
+              </div>
+              <div className="flex-1 space-y-2">
+                <Label htmlFor="org-name">Name</Label>
+                <Input
+                  id="org-name"
+                  value={orgName}
+                  maxLength={64}
+                  onChange={(e) => setOrgName(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="org-color">Color</Label>
+                <Input
+                  id="org-color"
+                  type="color"
+                  className="h-9 w-16 p-1"
+                  value={orgColor}
+                  onChange={(e) => setOrgColor(e.target.value)}
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setOrgEditOpen(false)}
+              disabled={orgBusy}
+            >
+              Cancel
+            </Button>
+            <Button onClick={() => void handleOrgSave()} disabled={orgBusy}>
+              {orgBusy ? "Saving…" : "Save"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

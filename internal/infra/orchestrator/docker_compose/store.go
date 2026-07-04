@@ -29,6 +29,10 @@ const (
 type secretStore struct {
 	Variables map[string]string `json:"variables"`
 	Files     map[string]string `json:"files"`
+	// SourceToken is the ECIES-encrypted access token for a git-sourced app's
+	// private upstream ("" for anonymous). Decrypted only for git transport
+	// auth — never materialized into .env.secrets.
+	SourceToken string `json:"source_token,omitempty"`
 }
 
 func newSecretStore() secretStore {

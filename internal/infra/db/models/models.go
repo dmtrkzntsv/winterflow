@@ -42,12 +42,15 @@ type User struct {
 type UserToken struct {
 	bun.BaseModel `bun:"table:user_tokens"`
 
-	TokenID   string          `bun:"token_id,pk,type:char(36)" json:"token_id"`
-	Token     string          `bun:"token,unique,type:char(32)" json:"token"`
-	TokenType string          `bun:"token_type,notnull" json:"token_type"`
-	UserID    string          `bun:"user_id,type:char(36)" json:"user_id"`
-	ExpiresAt *types.DateTime `bun:"expires_at,nullzero" json:"expires_at"`
-	CreatedAt types.DateTime  `bun:"created_at,notnull" json:"created_at"`
+	TokenID     string          `bun:"token_id,pk,type:char(36)" json:"token_id"`
+	UserID      string          `bun:"user_id,type:char(36)" json:"user_id"`
+	Name        string          `bun:"name,notnull" json:"name"`
+	TokenPrefix string          `bun:"token_prefix,notnull" json:"token_prefix"`
+	TokenHash   string          `bun:"token_hash,unique,notnull" json:"-"`
+	TokenType   string          `bun:"token_type,notnull" json:"token_type"`
+	ExpiresAt   *types.DateTime `bun:"expires_at,nullzero" json:"expires_at"`
+	LastUsedAt  *types.DateTime `bun:"last_used_at,nullzero" json:"last_used_at"`
+	CreatedAt   types.DateTime  `bun:"created_at,notnull" json:"created_at"`
 
 	User *User `bun:"rel:belongs-to,join:user_id=user_id"`
 }

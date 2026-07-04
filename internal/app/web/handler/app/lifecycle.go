@@ -138,6 +138,59 @@ func (h *Handler) GetApp(w http.ResponseWriter, r *http.Request) {
 	accepted(w, "app fetch dispatched", requestID)
 }
 
+// GetRevisions dispatches an app.revisions to the agent (its git history).
+// Returns 202 + request_id; the list arrives over SSE. Query: server_id, app_id.
+func (h *Handler) GetRevisions(w http.ResponseWriter, r *http.Request) {
+	userID, err := webutil.GetUserID(r)
+	if err != nil || userID == "" {
+		webutil.Error(w, "unauthorized", nil)
+		return
+	}
+	serverID := r.URL.Query().Get("server_id")
+	appID := r.URL.Query().Get("app_id")
+	if serverID == "" || appID == "" {
+		webutil.Error(w, "server_id and app_id are required", nil)
+		return
+	}
+	requestID, err := h.usecase.GetRevisions(r.Context(), userID, serverID, appID)
+	if err != nil {
+		webutil.Error(w, "failed to get revisions", nil)
+		return
+	}
+	accepted(w, "revisions fetch dispatched", requestID)
+}
+
+type rollbackAppRequest struct {
+	ServerID string `json:"server_id"`
+	AppID    string `json:"app_id"`
+	Hash     string `json:"hash"`
+}
+
+// RollbackApp dispatches an app.rollback: the agent restores the given commit
+// as a new revision and redeploys. Returns 202 + request_id.
+func (h *Handler) RollbackApp(w http.ResponseWriter, r *http.Request) {
+	userID, err := webutil.GetUserID(r)
+	if err != nil || userID == "" {
+		webutil.Error(w, "unauthorized", nil)
+		return
+	}
+	var req rollbackAppRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		webutil.Error(w, "invalid request body", nil)
+		return
+	}
+	if req.ServerID == "" || req.AppID == "" || req.Hash == "" {
+		webutil.Error(w, "server_id, app_id and hash are required", nil)
+		return
+	}
+	requestID, err := h.usecase.RollbackApp(r.Context(), userID, req.ServerID, req.AppID, req.Hash)
+	if err != nil {
+		webutil.Error(w, "failed to roll back app", nil)
+		return
+	}
+	accepted(w, "rollback dispatched", requestID)
+}
+
 // GetLogs dispatches an app.logs to the agent. Returns 202 + request_id; the
 // log entries arrive over SSE. Query: server_id, app_id, optional since, tail.
 func (h *Handler) GetLogs(w http.ResponseWriter, r *http.Request) {

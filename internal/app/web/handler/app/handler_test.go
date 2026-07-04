@@ -118,6 +118,17 @@ func TestAgentBoundHandlersReturn202WithRequestID(t *testing.T) {
 			func(h *Handler) http.HandlerFunc { return h.RefreshApps },
 			httptest.NewRequest("POST", "/api/v1/app/refresh-apps?server_id=s1", nil),
 		},
+		{
+			"get-revisions",
+			func(h *Handler) http.HandlerFunc { return h.GetRevisions },
+			httptest.NewRequest("GET", "/api/v1/app/get-revisions?server_id=s1&app_id=a1", nil),
+		},
+		{
+			"rollback",
+			func(h *Handler) http.HandlerFunc { return h.RollbackApp },
+			httptest.NewRequest("POST", "/api/v1/app/rollback-app",
+				strings.NewReader(`{"server_id":"s1","app_id":"a1","hash":"abc123"}`)),
+		},
 	}
 
 	for _, tc := range cases {
@@ -171,6 +182,12 @@ func TestHandlersRejectInvalidInput(t *testing.T) {
 	r = authed(httptest.NewRequest("POST", "/x", strings.NewReader(`{"server_id":"s1"}`)))
 	if w := do(h.DeleteApp, r); w.Code != http.StatusBadRequest {
 		t.Fatalf("missing app_id: status %d", w.Code)
+	}
+	// Rollback without a hash.
+	r = authed(httptest.NewRequest("POST", "/x",
+		strings.NewReader(`{"server_id":"s1","app_id":"a1"}`)))
+	if w := do(h.RollbackApp, r); w.Code != http.StatusBadRequest {
+		t.Fatalf("missing hash: status %d", w.Code)
 	}
 	// Invalid control action.
 	r = authed(httptest.NewRequest("POST", "/x",

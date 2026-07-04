@@ -238,10 +238,36 @@ The app folder IS the deployment (`docker compose` runs in it directly):
 - Verified end-to-end in a real browser + Docker: 16-check E2E covering slug
   symlinks, commits, secret-at-rest guarantees, edit→commit, UI rollback.
 
-### 🔜 Approved next phase (designed, not yet built — see the 2026-07-02 spec)
-- **A2 — git-sourced apps:** deploy from a repo URL (branch + compose path),
-  SHA pinning per deploy, polling auto-redeploy, ECIES-encrypted repo tokens,
-  `image.tags` registry tag browsing in the editor.
+### ✅ Phase A2 — git-sourced apps + image tags (2026-07)
+
+- **Deploy from a repo URL:** the "Deploy from Git" editor card configures
+  repo URL/branch/compose path; the agent clones into the app's gitignored
+  `source/`, pins the deployed SHA in the committed `source.lock`, and runs
+  compose against `source/{compose_path}` (repo-root compose auto-detected;
+  a winterflow-authored root `compose.yml` referencing `./source` works when
+  the repo has none). Env files are passed explicitly so the app's committed
+  `.env` keeps driving interpolation.
+- **Rollback restores the source position too** — the lock rides in every
+  save commit, and rollback checks `source/` out at exactly that SHA.
+- **Auto-update:** an agent-side poller (30s tick, per-app interval, default
+  120s, toggleable) fetches upstreams and re-pins + redeploys on new commits
+  — works behind NAT, no webhooks needed.
+- **Private repos:** ECIES-encrypted access token stored in `secrets.json`
+  (`x-access-token` transport auth), placeholder semantics like every secret.
+- **`image.tags`:** registry HTTP v2 tag listing with the agent's docker
+  credentials (Docker Hub bearer flow, pagination); the editor shows image
+  chips under compose files with a filterable tag picker that rewrites the
+  reference.
+- Verified: 13-check live E2E (clone/pin/gitignore, deploy from repo compose,
+  update→re-pin, rollback→source v1).
+
+## 🎉 Migration status: COMPLETE
+
+Every planned phase has shipped: foundation, app lifecycle + secrets,
+registries/networks, hardening, UI structure, backend cleanup, live status,
+frontend refresh, the git-per-app deployment rework (A1), and git-sourced
+apps (A2). Deliberately not ported: catalog/templates (dropped), orgs &
+members, billing.
 
 ### ⚠️ Known partial / follow-ups
 - The web ESLint suite has **one pre-existing error** in the generated shadcn
@@ -258,13 +284,14 @@ The app folder IS the deployment (`docker compose` runs in it directly):
 
 Commands: `app.save`, `app.get`, `apps.list`, `apps.status`, `app.control`,
 `app.delete`, `app.rename`, `app.logs`, `app.revisions`, `app.rollback`,
-`registry.list/create/delete`, `network.list/create/delete`, `agent.update`.
+`image.tags`, `registry.list/create/delete`, `network.list/create/delete`,
+`agent.update`.
 
 API routes (all `/api/v1`):
 - Info (200 sync): `server/get-servers`, `server/get-servers-status`,
   `server/get-public-key`, `app/get-apps`, `app/get-apps-status`.
 - Agent-bound (202 + SSE): `app/create-app`, `app/get-app`, `app/get-logs`,
-  `app/get-revisions`, `app/rollback-app`, `app/control-app`,
+  `app/get-revisions`, `app/rollback-app`, `image/get-tags`, `app/control-app`,
   `app/delete-app`, `app/rename-app`, `app/refresh-apps`,
   `registry/{list,create,delete}`, `network/{list,create,delete}`,
   `agent/update`.

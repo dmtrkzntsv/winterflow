@@ -329,3 +329,18 @@ func TestGetGitHubReleasesURL(t *testing.T) {
 		t.Fatalf("override GetGitHubReleasesURL() = %q", got)
 	}
 }
+
+func TestIsRegistrationEnabled(t *testing.T) {
+	c := NewServerConfig("standalone")
+	cases := map[string]bool{"": true, "true": true, "1": true, "false": false, "0": false, "FALSE": false}
+	for val, want := range cases {
+		if val == "" {
+			unsetenv(t, "REGISTRATION_ENABLED")
+		} else {
+			t.Setenv("REGISTRATION_ENABLED", val)
+		}
+		if got := c.IsRegistrationEnabled(); got != want {
+			t.Errorf("REGISTRATION_ENABLED=%q: got %v, want %v", val, got, want)
+		}
+	}
+}

@@ -343,3 +343,56 @@ func TestRemoveMemberDeletesUserAndTokens(t *testing.T) {
 		t.Errorf("members after removal = %d, want 1", len(members))
 	}
 }
+
+func TestRegisterLocalUserCreatesOwnOrg(t *testing.T) {
+	repo := newUserRepo(t)
+	ctx := context.Background()
+
+	a, err := repo.RegisterLocalUser(ctx, "Alice", "Alice@X.io", "alicepass-123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := repo.RegisterLocalUser(ctx, "Bob", "bob@x.io", "bobpass-1234")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Name != "Alice" {
+		t.Errorf("name = %q", a.Name)
+	}
+	orgA, _ := repo.PrimaryOrganizationID(ctx, a.ID)
+	orgB, _ := repo.PrimaryOrganizationID(ctx, b.ID)
+	if orgA == "" || orgA == orgB {
+		t.Errorf("orgs not distinct: %q vs %q", orgA, orgB)
+	}
+	if role, _ := repo.RoleOf(ctx, a.ID); role != "owner" {
+		t.Errorf("role = %q", role)
+	}
+	if u, err := repo.VerifyLocalCredentials(ctx, "alice@x.io", "alicepass-123"); err != nil || u.ID != a.ID {
+		t.Errorf("login after register: %v", err)
+	}
+	if _, err := repo.RegisterLocalUser(ctx, "Eve", "ALICE@x.io", "x-password-1"); !errors.Is(err, model.ErrEmailTaken) {
+		t.Errorf("dup email err = %v, want ErrEmailTaken", err)
+	}
+}
+
+func TestGetUpdateOrganization(t *testing.T) {
+	repo := newUserRepo(t)
+	ctx := context.Background()
+	u, _ := repo.RegisterLocalUser(ctx, "Alice", "a@o.io", "alicepass-123")
+	orgID, _ := repo.PrimaryOrganizationID(ctx, u.ID)
+
+	org, err := repo.GetOrganization(ctx, orgID)
+	if err != nil || org.ID != orgID || org.Name == "" {
+		t.Fatalf("GetOrganization = %+v, %v", org, err)
+	}
+	if err := repo.UpdateOrganization(ctx, orgID, "Homelab", "server", "#3b82f6"); err != nil {
+		t.Fatal(err)
+	}
+	org, _ = repo.GetOrganization(ctx, orgID)
+	if org.Name != "Homelab" || org.Icon != "server" || org.Color != "#3b82f6" {
+		t.Errorf("after update: %+v", org)
+	}
+	if _, err := repo.GetOrganization(ctx, "nope"); err == nil {
+		t.Error("unknown org must error")
+	}
+}

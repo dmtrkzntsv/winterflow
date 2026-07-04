@@ -71,6 +71,18 @@ func (c *ServerConfig) IsAuthSupported(a string) bool {
 	return result
 }
 
+// IsRegistrationEnabled reports whether self-signup is open. Default on;
+// set REGISTRATION_ENABLED=false to close it. The first-user claim step
+// ignores this (a fresh instance must never be unclaimable).
+func (c *ServerConfig) IsRegistrationEnabled() bool {
+	switch strings.ToLower(os.Getenv("REGISTRATION_ENABLED")) {
+	case "false", "0":
+		return false
+	default:
+		return true
+	}
+}
+
 func (c *ServerConfig) GetGoogleAuth() (clientID string, clientSecret string) {
 	return os.Getenv("AUTH_GOOGLE_CLIENT_ID"), os.Getenv("AUTH_GOOGLE_CLIENT_SECRET")
 }

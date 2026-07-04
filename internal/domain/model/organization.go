@@ -1,5 +1,14 @@
 package model
 
+// Organization is the tenant: servers belong to it, users are members of it.
+// Standalone instances have exactly one.
+type Organization struct {
+	ID    string `json:"org_id"`
+	Name  string `json:"name"`
+	Icon  string `json:"icon"`
+	Color string `json:"color"`
+}
+
 type OrganizationRole string
 
 const (

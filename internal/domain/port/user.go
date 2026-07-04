@@ -56,6 +56,14 @@ type UserRepository interface {
 	// RoleOf returns the user's role in their primary organization.
 	RoleOf(ctx context.Context, userID string) (string, error)
 
+	// RegisterLocalUser is open self-signup: user + their own organization
+	// (owner) + credentials. model.ErrEmailTaken on duplicates.
+	RegisterLocalUser(ctx context.Context, name, email, password string) (model.User, error)
+	// GetOrganization returns the org's identity (name, icon, color).
+	GetOrganization(ctx context.Context, orgID string) (model.Organization, error)
+	// UpdateOrganization sets the org's identity.
+	UpdateOrganization(ctx context.Context, orgID, name, icon, color string) error
+
 	// FindOrCreateUser resolves a connected account to a user, creating the
 	// user + org on first login.
 	FindOrCreateUser(ctx context.Context, dto dto.UserDTO) (model.User, error)

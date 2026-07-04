@@ -619,3 +619,97 @@ func (r *DbUserRepository) RoleOf(ctx context.Context, userID string) (string, e
 	}
 	return row.Role, nil
 }
+
+// RegisterLocalUser is open self-signup (distributed topology): user + their
+// OWN organization (owner) + credentials + local connected account. The
+// standalone claim step uses BootstrapLocalAdmin instead.
+func (r *DbUserRepository) RegisterLocalUser(ctx context.Context, name, email, password string) (model.User, error) {
+	email = normalizeEmail(email)
+	hash, err := hashPassword(password)
+	if err != nil {
+		return model.User{}, err
+	}
+	org := &models.Organization{
+		OrganizationID: util.GenerateID(),
+		Name:           name + "'s org",
+		CreatedAt:      types.NewDateTime(),
+	}
+	user := &models.User{
+		UserID:    util.GenerateID(),
+		Name:      name,
+		CreatedAt: types.NewDateTime(),
+		LastSeen:  types.NewDateTime(),
+	}
+	err = r.db.Transaction(ctx, func(tx bun.IDB) error {
+		taken, err := tx.NewSelect().Model((*models.UserCredentials)(nil)).
+			Where("email = ?", email).Exists(ctx)
+		if err != nil {
+			return err
+		}
+		if taken {
+			return model.ErrEmailTaken
+		}
+		if _, err := tx.NewInsert().Model(org).Exec(ctx); err != nil {
+			return err
+		}
+		if _, err := tx.NewInsert().Model(user).Exec(ctx); err != nil {
+			return err
+		}
+		if _, err := tx.NewInsert().Model(&models.OrganizationUser{
+			OrganizationID: org.OrganizationID,
+			UserID:         user.UserID,
+			Role:           model.RoleOwner.Value(),
+			CreatedAt:      types.NewDateTime(),
+		}).Exec(ctx); err != nil {
+			return err
+		}
+		if _, err := tx.NewInsert().Model(&models.UserConnectedAccount{
+			Provider:   "local",
+			ExternalID: email,
+			UserID:     user.UserID,
+		}).Exec(ctx); err != nil {
+			return err
+		}
+		_, err = tx.NewInsert().Model(&models.UserCredentials{
+			UserID:       user.UserID,
+			Email:        email,
+			PasswordHash: hash,
+			UpdatedAt:    types.NewDateTime(),
+		}).Exec(ctx)
+		return err
+	})
+	if err != nil {
+		return model.User{}, err
+	}
+	return model.User{ID: user.UserID, Name: user.Name, CreatedAt: user.CreatedAt.Time(), LastSeenAt: user.LastSeen.Time()}, nil
+}
+
+func (r *DbUserRepository) GetOrganization(ctx context.Context, orgID string) (model.Organization, error) {
+	var org models.Organization
+	err := r.db.GetDB().NewSelect().Model(&org).
+		Where("organization_id = ?", orgID).
+		Scan(ctx)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return model.Organization{}, model.ErrorUserNotFound
+		}
+		return model.Organization{}, err
+	}
+	return model.Organization{ID: org.OrganizationID, Name: org.Name, Icon: org.Icon, Color: org.Color}, nil
+}
+
+func (r *DbUserRepository) UpdateOrganization(ctx context.Context, orgID, name, icon, color string) error {
+	res, err := r.db.GetDB().NewUpdate().Model((*models.Organization)(nil)).
+		Set("name = ?", name).
+		Set("icon = ?", icon).
+		Set("color = ?", color).
+		Where("organization_id = ?", orgID).
+		Exec(ctx)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return model.ErrorUserNotFound
+	}
+	return nil
+}

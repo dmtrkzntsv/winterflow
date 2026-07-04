@@ -11,6 +11,8 @@ type Organization struct {
 
 	OrganizationID string         `bun:"organization_id,pk,type:char(36)" json:"organization_id"`
 	Name           string         `bun:"name,notnull" json:"name"`
+	Icon           string         `bun:"icon,notnull,default:''" json:"icon"`
+	Color          string         `bun:"color,notnull,default:''" json:"color"`
 	CreatedAt      types.DateTime `bun:"created_at,notnull" json:"created_at"`
 }
 

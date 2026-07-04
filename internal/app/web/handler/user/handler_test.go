@@ -130,3 +130,120 @@ func TestUnauthenticatedIs401(t *testing.T) {
 		t.Errorf("code = %d, want 401", w.Code)
 	}
 }
+
+type fakeProfileStore struct {
+	role       string
+	creds      *model.Credentials
+	verifyErr  error
+	setCalls   []bool // mustChange flag per SetPassword call
+	setUserIDs []string
+}
+
+func (f *fakeProfileStore) GetUser(_ context.Context, userID string) (model.User, error) {
+	return model.User{ID: userID, Name: "Alice"}, nil
+}
+func (f *fakeProfileStore) RoleOf(context.Context, string) (string, error) { return f.role, nil }
+func (f *fakeProfileStore) GetCredentials(context.Context, string) (model.Credentials, error) {
+	if f.creds == nil {
+		return model.Credentials{}, model.ErrorUserNotFound
+	}
+	return *f.creds, nil
+}
+func (f *fakeProfileStore) VerifyLocalCredentials(context.Context, string, string) (model.User, error) {
+	if f.verifyErr != nil {
+		return model.User{}, f.verifyErr
+	}
+	return model.User{ID: "user-1"}, nil
+}
+func (f *fakeProfileStore) SetPassword(_ context.Context, userID, _ string, mustChange bool) error {
+	f.setUserIDs = append(f.setUserIDs, userID)
+	f.setCalls = append(f.setCalls, mustChange)
+	return nil
+}
+
+func newProfileHandler(f *fakeProfileStore) *Handler {
+	return NewHandler(&Deps{
+		Logger: logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"}),
+		Tokens: &fakeTokens{},
+		Users:  f,
+	})
+}
+
+func TestGetProfileShape(t *testing.T) {
+	f := &fakeProfileStore{role: "owner", creds: &model.Credentials{Email: "a@b.io", MustChangePassword: true}}
+	h := newProfileHandler(f)
+	r := authed(httptest.NewRequest("GET", "/x", nil))
+	w := httptest.NewRecorder()
+	h.GetProfile(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d", w.Code)
+	}
+	var resp struct {
+		Data struct {
+			UserID             string `json:"user_id"`
+			Role               string `json:"role"`
+			Email              string `json:"email"`
+			MustChangePassword bool   `json:"must_change_password"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Data.Role != "owner" || resp.Data.Email != "a@b.io" || !resp.Data.MustChangePassword {
+		t.Errorf("profile = %+v", resp.Data)
+	}
+}
+
+func TestGetProfileGoogleOnlyHasNoEmail(t *testing.T) {
+	h := newProfileHandler(&fakeProfileStore{role: "member", creds: nil})
+	r := authed(httptest.NewRequest("GET", "/x", nil))
+	w := httptest.NewRecorder()
+	h.GetProfile(w, r)
+	if w.Code != http.StatusOK || strings.Contains(w.Body.String(), "must_change_password\":true") {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestChangePassword(t *testing.T) {
+	f := &fakeProfileStore{creds: &model.Credentials{Email: "a@b.io", MustChangePassword: true}}
+	h := newProfileHandler(f)
+
+	// Success clears must-change.
+	r := authed(httptest.NewRequest("POST", "/x", strings.NewReader(`{"current_password":"old-temp","new_password":"brand-new-pass1"}`)))
+	w := httptest.NewRecorder()
+	h.ChangePassword(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	if len(f.setCalls) != 1 || f.setCalls[0] != false {
+		t.Errorf("SetPassword calls = %v, want one with mustChange=false", f.setCalls)
+	}
+
+	// Wrong current password → 400.
+	f.verifyErr = model.ErrInvalidCredentials
+	r = authed(httptest.NewRequest("POST", "/x", strings.NewReader(`{"current_password":"nope","new_password":"brand-new-pass1"}`)))
+	w = httptest.NewRecorder()
+	h.ChangePassword(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("wrong current: code = %d, want 400", w.Code)
+	}
+
+	// Too-short new password → 400.
+	f.verifyErr = nil
+	r = authed(httptest.NewRequest("POST", "/x", strings.NewReader(`{"current_password":"old","new_password":"short"}`)))
+	w = httptest.NewRecorder()
+	h.ChangePassword(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("short new: code = %d, want 400", w.Code)
+	}
+}
+
+func TestChangePasswordGoogleOnly400(t *testing.T) {
+	h := newProfileHandler(&fakeProfileStore{creds: nil})
+	r := authed(httptest.NewRequest("POST", "/x", strings.NewReader(`{"current_password":"x","new_password":"long-enough-pw1"}`)))
+	w := httptest.NewRecorder()
+	h.ChangePassword(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("code = %d, want 400", w.Code)
+	}
+}

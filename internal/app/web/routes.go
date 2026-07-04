@@ -5,9 +5,11 @@ import (
 	happ "winterflow/internal/app/web/handler/app"
 	hdocker "winterflow/internal/app/web/handler/docker"
 	"winterflow/internal/app/web/handler/notification"
+	horg "winterflow/internal/app/web/handler/org"
 	"winterflow/internal/app/web/handler/server"
 	huser "winterflow/internal/app/web/handler/user"
 	"winterflow/internal/app/web/middleware/patauth"
+	"winterflow/internal/app/web/middleware/rbac"
 	"winterflow/internal/app/web/util"
 )
 
@@ -24,6 +26,23 @@ func (s *Server) registerRoutes() {
 	// authMW = PAT bearer first, JWT session otherwise. Every /api/v1 route
 	// uses this so tokens work everywhere a browser session does.
 	authMW := patauth.Middleware(s.Deps.UserService, amw.Auth)
+	// adminMW gates administration (member management, server registration,
+	// infrastructure mutations) to owners/admins. Members keep the full app
+	// lifecycle.
+	adminMW := rbac.RequireAdmin(s.Deps.UserService)
+
+	// Public auth metadata: tells the login page whether this is a fresh
+	// instance (first local login creates the admin account).
+	s.Router.Get("/api/v1/auth/state", func(w http.ResponseWriter, r *http.Request) {
+		n, err := s.Deps.UserService.CountUsers(r.Context())
+		if err != nil {
+			util.Error(w, "failed to read auth state", nil)
+			return
+		}
+		util.Success(w, "auth state", struct {
+			Bootstrap bool `json:"bootstrap"`
+		}{Bootstrap: n == 0})
+	})
 
 	// The NotificationManager is shared across every handler: the SSE stream
 	// subscribes to it and the usecases publish to it, so async results reach
@@ -58,12 +77,12 @@ func (s *Server) registerRoutes() {
 		CommandDispatcher: s.Deps.CommandDispatcher,
 	})
 	s.Router.With(authMW).Get("/api/v1/registry/list", dockerAPI.ListRegistries)
-	s.Router.With(authMW).Post("/api/v1/registry/create", dockerAPI.CreateRegistry)
-	s.Router.With(authMW).Post("/api/v1/registry/delete", dockerAPI.DeleteRegistry)
+	s.Router.With(authMW, adminMW).Post("/api/v1/registry/create", dockerAPI.CreateRegistry)
+	s.Router.With(authMW, adminMW).Post("/api/v1/registry/delete", dockerAPI.DeleteRegistry)
 	s.Router.With(authMW).Get("/api/v1/network/list", dockerAPI.ListNetworks)
-	s.Router.With(authMW).Post("/api/v1/network/create", dockerAPI.CreateNetwork)
-	s.Router.With(authMW).Post("/api/v1/network/delete", dockerAPI.DeleteNetwork)
-	s.Router.With(authMW).Post("/api/v1/agent/update", dockerAPI.UpdateAgent)
+	s.Router.With(authMW, adminMW).Post("/api/v1/network/create", dockerAPI.CreateNetwork)
+	s.Router.With(authMW, adminMW).Post("/api/v1/network/delete", dockerAPI.DeleteNetwork)
+	s.Router.With(authMW, adminMW).Post("/api/v1/agent/update", dockerAPI.UpdateAgent)
 
 	serversAPI := server.NewHandler(&server.Deps{
 		Logger:           s.Logger,
@@ -75,13 +94,26 @@ func (s *Server) registerRoutes() {
 	s.Router.With(authMW).Get("/api/v1/server/get-servers", serversAPI.GetServers)
 	s.Router.With(authMW).Get("/api/v1/server/get-servers-status", serversAPI.GetServersStatus)
 	s.Router.With(authMW).Get("/api/v1/server/get-public-key", serversAPI.GetPublicKey)
-	s.Router.With(authMW).Post("/api/v1/server/register", serversAPI.Register)
+	s.Router.With(authMW, adminMW).Post("/api/v1/server/register", serversAPI.Register)
 
 	usersAPI := huser.NewHandler(&huser.Deps{
 		Logger: s.Logger,
 		Tokens: s.Deps.UserService,
+		Users:  s.Deps.UserService,
 	})
 	s.Router.With(authMW).Post("/api/v1/user/create-token", usersAPI.CreateToken)
 	s.Router.With(authMW).Get("/api/v1/user/get-tokens", usersAPI.GetTokens)
 	s.Router.With(authMW).Post("/api/v1/user/delete-token", usersAPI.DeleteToken)
+	s.Router.With(authMW).Get("/api/v1/user/get-profile", usersAPI.GetProfile)
+	s.Router.With(authMW).Post("/api/v1/user/change-password", usersAPI.ChangePassword)
+
+	orgAPI := horg.NewHandler(&horg.Deps{
+		Logger: s.Logger,
+		Users:  s.Deps.UserService,
+	})
+	s.Router.With(authMW, adminMW).Post("/api/v1/org/create-user", orgAPI.CreateUser)
+	s.Router.With(authMW, adminMW).Get("/api/v1/org/get-members", orgAPI.GetMembers)
+	s.Router.With(authMW, adminMW).Post("/api/v1/org/update-member", orgAPI.UpdateMember)
+	s.Router.With(authMW, adminMW).Post("/api/v1/org/remove-member", orgAPI.RemoveMember)
+	s.Router.With(authMW, adminMW).Post("/api/v1/org/reset-member-password", orgAPI.ResetMemberPassword)
 }

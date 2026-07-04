@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -15,9 +16,10 @@ import (
 )
 
 // TestSaveAppDeploysContainer is an integration test (build tag `integration`,
-// requires Docker) that exercises the real create->deploy path: SaveApp writes
-// a compose file with a substituted variable, runs `docker compose up`, and we
-// assert the container reports active. Run with:
+// requires Docker) exercising the real create->deploy->rollback path on the
+// git-per-app layout: SaveApp commits and runs `docker compose up` in the app
+// folder (compose interpolates ${VAR} from the committed .env), Rollback
+// restores the first commit and redeploys. Run with:
 //
 //	go test -tags integration -run TestSaveAppDeploysContainer ./internal/infra/orchestrator/docker_compose/
 func TestSaveAppDeploysContainer(t *testing.T) {
@@ -33,7 +35,7 @@ func TestSaveAppDeploysContainer(t *testing.T) {
 
 	app := command.AppPayload{
 		AppID:  appID,
-		Config: mustJSON(t, map[string]string{"name": "itg-test"}),
+		Config: mustJSON(t, map[string]any{"name": "itg-test", "files": []map[string]any{{"filename": "compose.yml"}}, "variables": []map[string]any{{"name": "CONTAINER_NAME"}}}),
 		Files: []command.ContentItem{
 			{Name: "compose.yml", Content: []byte(compose)},
 		},
@@ -49,37 +51,63 @@ func TestSaveAppDeploysContainer(t *testing.T) {
 		_ = repo.DeleteApp(context.Background(), appID)
 	})
 
-	rev, err := repo.SaveApp(ctx, app)
+	h1, err := repo.SaveApp(ctx, app)
 	if err != nil {
 		t.Fatalf("SaveApp: %v", err)
 	}
-	if rev != 1 {
-		t.Errorf("revision = %d, want 1", rev)
+	if h1 == "" {
+		t.Fatal("no commit hash")
 	}
 
-	// The rendered compose file must exist with the variable substituted.
-	rendered, err := os.ReadFile(cfg.GetAppsDir() + "/" + appID + "/compose.yml")
-	if err != nil {
-		t.Fatalf("read rendered compose: %v", err)
+	// The folder IS the deployment: compose.yml verbatim, ${VAR} in .env.
+	appDir := filepath.Join(cfg.GetAppsDataDir(), appID)
+	if raw, err := os.ReadFile(filepath.Join(appDir, "compose.yml")); err != nil || !contains(string(raw), "${CONTAINER_NAME}") {
+		t.Fatalf("compose.yml should keep the placeholder (compose interpolates): %q %v", raw, err)
 	}
-	if want := "container_name: itg_hello"; !contains(string(rendered), want) {
-		t.Errorf("rendered compose missing %q:\n%s", want, rendered)
+	if raw, err := os.ReadFile(filepath.Join(appDir, ".env")); err != nil || !contains(string(raw), "CONTAINER_NAME=itg_hello") {
+		t.Fatalf(".env = %q (%v)", raw, err)
 	}
-
-	// Status should list the app (hello-world exits 0, so Stopped is fine — the
-	// point is the deploy ran and the container exists).
+	// The human-readable symlink resolves to the app folder.
+	if _, err := os.Stat(filepath.Join(cfg.GetAppsDir(), "itg-test")); err != nil {
+		t.Fatalf("apps/ symlink missing: %v", err)
+	}
+	// The container name proves compose actually interpolated from .env.
 	statuses, err := repo.GetAppsStatus(ctx)
 	if err != nil {
 		t.Fatalf("GetAppsStatus: %v", err)
 	}
 	found := false
 	for _, s := range statuses {
-		if s.AppID == appID {
-			found = true
+		if s.AppID != appID {
+			continue
+		}
+		found = true
+		if len(s.Containers) == 0 || !contains(s.Containers[0].Name, "itg_hello") {
+			t.Errorf("container name not interpolated: %+v", s.Containers)
 		}
 	}
 	if !found {
 		t.Errorf("app %s not found in statuses %+v", appID, statuses)
+	}
+
+	// Second save + rollback: the first compose content comes back, deployed.
+	app.Files[0].Content = []byte(compose + "    # v2 marker\n")
+	if _, err := repo.SaveApp(ctx, app); err != nil {
+		t.Fatalf("second SaveApp: %v", err)
+	}
+	newHead, err := repo.Rollback(ctx, appID, h1)
+	if err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	if newHead == h1 {
+		t.Fatal("rollback must create a new commit")
+	}
+	if raw, _ := os.ReadFile(filepath.Join(appDir, "compose.yml")); contains(string(raw), "# v2 marker") {
+		t.Fatalf("rollback did not restore v1 compose: %q", raw)
+	}
+	revs, _, err := repo.Revisions(ctx, appID)
+	if err != nil || len(revs) != 3 {
+		t.Fatalf("history after rollback = %+v (%v)", revs, err)
 	}
 }
 
@@ -130,12 +158,10 @@ func mustJSON(t *testing.T, v any) []byte {
 }
 
 func contains(s, sub string) bool {
-	return len(s) >= len(sub) && (func() bool {
-		for i := 0; i+len(sub) <= len(s); i++ {
-			if s[i:i+len(sub)] == sub {
-				return true
-			}
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
 		}
-		return false
-	})()
+	}
+	return false
 }

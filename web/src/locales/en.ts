@@ -14,8 +14,6 @@ const en = {
       subtitle: "Login to your Winterflow account",
       usernameLabel: "Email",
       usernamePlaceholder: "you@example.com",
-      bootstrapHint:
-        "No accounts exist yet — register to create the admin account.",
       noAccount: "No account yet?",
       registerLink: "Create an account",
       passwordLabel: "Password",

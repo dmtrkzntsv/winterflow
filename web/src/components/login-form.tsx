@@ -28,8 +28,6 @@ type LoginFormProps = ComponentPropsWithoutRef<"div"> & {
   error?: string | null;
   availableProviders?: string[];
   providersLoading?: boolean;
-  // bootstrap: fresh instance — registering creates the admin account.
-  bootstrap?: boolean;
   // registerEnabled: show the "create an account" link.
   registerEnabled?: boolean;
   defaultEmail?: string;
@@ -42,7 +40,6 @@ export function LoginForm({
   error,
   availableProviders = ["local"],
   providersLoading = false,
-  bootstrap = false,
   registerEnabled = false,
   defaultEmail = "",
   ...props
@@ -124,14 +121,6 @@ export function LoginForm({
                   {isSubmitting ? t("login.submitting") : t("login.submit")}
                 </Button>
               </Field>
-              {bootstrap ? (
-                <FieldDescription
-                  className="text-center text-sm"
-                  role="status"
-                >
-                  {t("login.bootstrapHint")}
-                </FieldDescription>
-              ) : null}
               {registerEnabled ? (
                 <FieldDescription className="text-center text-sm">
                   {t("login.noAccount")}{" "}

@@ -15,7 +15,6 @@ export default function LoginPage() {
     const [error, setError] = useState<string | null>(null)
     const [providers, setProviders] = useState<string[]>([])
     const [providersLoading, setProvidersLoading] = useState(true)
-    const [bootstrap, setBootstrap] = useState(false)
     const [registerEnabled, setRegisterEnabled] = useState(false)
 
     useEffect(() => {
@@ -24,7 +23,6 @@ export default function LoginPage() {
             .then((res) => res.json())
             .then((body) => {
                 if (!cancelled) {
-                    setBootstrap(Boolean(body?.data?.bootstrap))
                     setRegisterEnabled(Boolean(body?.data?.registration_enabled))
                 }
             })
@@ -112,7 +110,6 @@ export default function LoginPage() {
                     error={error}
                     availableProviders={effectiveProviders}
                     providersLoading={providersLoading}
-                    bootstrap={bootstrap}
                     registerEnabled={registerEnabled}
                     defaultEmail={
                         (location.state as { email?: string } | undefined)?.email ?? ""

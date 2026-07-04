@@ -18,9 +18,8 @@ type registerServerRequest struct {
 // user's membership, so a client can't claim a server into an org it doesn't
 // belong to.
 func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
-	userID, err := util.GetUserID(r)
-	if err != nil || userID == "" {
-		util.Error(w, "failed to load user info", nil)
+	userID, ok := util.RequireUser(w, r)
+	if !ok {
 		return
 	}
 

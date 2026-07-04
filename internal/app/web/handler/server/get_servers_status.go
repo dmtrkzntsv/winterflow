@@ -15,9 +15,8 @@ type serverStatusDTO struct {
 // GetServersStatus returns live liveness (from the in-memory TTL cache) for the
 // user's servers. Status is never persisted; absence/expiry reads as "unknown".
 func (h *Handler) GetServersStatus(w http.ResponseWriter, r *http.Request) {
-	userID, err := util.GetUserID(r)
-	if err != nil || userID == "" {
-		util.Error(w, "failed to load user info", nil)
+	userID, ok := util.RequireUser(w, r)
+	if !ok {
 		return
 	}
 

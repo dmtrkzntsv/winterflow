@@ -165,8 +165,8 @@ func TestHandlersRejectUnauthenticated(t *testing.T) {
 	h, _, _ := newHandler(t)
 	r := httptest.NewRequest("POST", "/api/v1/app/control-app",
 		strings.NewReader(`{"server_id":"s1","app_id":"a1","action":"start"}`))
-	if w := do(h.ControlApp, r); w.Code == http.StatusAccepted {
-		t.Fatalf("unauthenticated request accepted: %d", w.Code)
+	if w := do(h.ControlApp, r); w.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated must be 401, got %d", w.Code)
 	}
 }
 

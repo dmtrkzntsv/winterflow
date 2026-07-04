@@ -4,7 +4,6 @@
 package docker
 
 import (
-	"encoding/json"
 	"net/http"
 
 	webutil "winterflow/internal/app/web/util"
@@ -40,9 +39,8 @@ func accepted(w http.ResponseWriter, msg, requestID string) {
 // caller resolves the user id and the server_id query param, writing the error
 // response itself when either is missing.
 func caller(w http.ResponseWriter, r *http.Request) (userID, serverID string, ok bool) {
-	userID, err := webutil.GetUserID(r)
-	if err != nil || userID == "" {
-		webutil.Error(w, "unauthorized", nil)
+	userID, ok = webutil.RequireUser(w, r)
+	if !ok {
 		return "", "", false
 	}
 	serverID = r.URL.Query().Get("server_id")
@@ -73,9 +71,8 @@ func (h *Handler) CreateRegistry(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var req command.CreateRegistryRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		webutil.Error(w, "invalid request body", nil)
+	req, ok := webutil.DecodeBody[command.CreateRegistryRequest](w, r)
+	if !ok {
 		return
 	}
 	if req.Address == "" || req.Username == "" {
@@ -95,9 +92,8 @@ func (h *Handler) DeleteRegistry(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var req command.DeleteRegistryRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		webutil.Error(w, "invalid request body", nil)
+	req, ok := webutil.DecodeBody[command.DeleteRegistryRequest](w, r)
+	if !ok {
 		return
 	}
 	if req.Address == "" {
@@ -132,9 +128,8 @@ func (h *Handler) CreateNetwork(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var req command.CreateNetworkRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		webutil.Error(w, "invalid request body", nil)
+	req, ok := webutil.DecodeBody[command.CreateNetworkRequest](w, r)
+	if !ok {
 		return
 	}
 	if req.Name == "" {
@@ -156,9 +151,8 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var req command.UpdateAgentRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		webutil.Error(w, "invalid request body", nil)
+	req, ok := webutil.DecodeBody[command.UpdateAgentRequest](w, r)
+	if !ok {
 		return
 	}
 	if req.Version == "" {
@@ -178,9 +172,8 @@ func (h *Handler) DeleteNetwork(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var req command.DeleteNetworkRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		webutil.Error(w, "invalid request body", nil)
+	req, ok := webutil.DecodeBody[command.DeleteNetworkRequest](w, r)
+	if !ok {
 		return
 	}
 	if req.Name == "" {

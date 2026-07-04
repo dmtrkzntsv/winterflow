@@ -42,15 +42,13 @@ func toContentItems(items []contentItemRequest) []command.ContentItem {
 // request_id; the result is delivered to the caller over the SSE notification
 // stream, correlated by that request_id.
 func (h *Handler) CreateApp(w http.ResponseWriter, r *http.Request) {
-	userID, err := webutil.GetUserID(r)
-	if err != nil || userID == "" {
-		webutil.Error(w, "unauthorized", nil)
+	userID, ok := webutil.RequireUser(w, r)
+	if !ok {
 		return
 	}
 
-	var req createAppRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		webutil.Error(w, "invalid request body", nil)
+	req, ok := webutil.DecodeBody[createAppRequest](w, r)
+	if !ok {
 		return
 	}
 	if req.ServerID == "" {

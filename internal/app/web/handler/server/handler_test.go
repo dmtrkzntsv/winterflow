@@ -148,7 +148,7 @@ func TestGetServersRequiresAuth(t *testing.T) {
 	h, _, _, _ := newEnv(t)
 	w := httptest.NewRecorder()
 	h.GetServers(w, httptest.NewRequest("GET", "/x", nil))
-	if w.Code == http.StatusOK {
-		t.Fatalf("unauthenticated request succeeded")
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated must be 401, got %d", w.Code)
 	}
 }

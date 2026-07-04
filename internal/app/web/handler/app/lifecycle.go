@@ -1,7 +1,6 @@
 package server
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 
@@ -27,14 +26,12 @@ type controlAppRequest struct {
 // ControlApp dispatches a start/stop/restart/update action to the app's agent
 // (fire-and-forward). Returns 202 + request_id; the result arrives over SSE.
 func (h *Handler) ControlApp(w http.ResponseWriter, r *http.Request) {
-	userID, err := webutil.GetUserID(r)
-	if err != nil || userID == "" {
-		webutil.Error(w, "unauthorized", nil)
+	userID, ok := webutil.RequireUser(w, r)
+	if !ok {
 		return
 	}
-	var req controlAppRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		webutil.Error(w, "invalid request body", nil)
+	req, ok := webutil.DecodeBody[controlAppRequest](w, r)
+	if !ok {
 		return
 	}
 	if req.ServerID == "" || req.AppID == "" {
@@ -63,14 +60,12 @@ type deleteAppRequest struct {
 
 // DeleteApp dispatches an app.delete to the agent. Returns 202 + request_id.
 func (h *Handler) DeleteApp(w http.ResponseWriter, r *http.Request) {
-	userID, err := webutil.GetUserID(r)
-	if err != nil || userID == "" {
-		webutil.Error(w, "unauthorized", nil)
+	userID, ok := webutil.RequireUser(w, r)
+	if !ok {
 		return
 	}
-	var req deleteAppRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		webutil.Error(w, "invalid request body", nil)
+	req, ok := webutil.DecodeBody[deleteAppRequest](w, r)
+	if !ok {
 		return
 	}
 	if req.ServerID == "" || req.AppID == "" {
@@ -93,14 +88,12 @@ type renameAppRequest struct {
 
 // RenameApp dispatches an app.rename to the agent. Returns 202 + request_id.
 func (h *Handler) RenameApp(w http.ResponseWriter, r *http.Request) {
-	userID, err := webutil.GetUserID(r)
-	if err != nil || userID == "" {
-		webutil.Error(w, "unauthorized", nil)
+	userID, ok := webutil.RequireUser(w, r)
+	if !ok {
 		return
 	}
-	var req renameAppRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		webutil.Error(w, "invalid request body", nil)
+	req, ok := webutil.DecodeBody[renameAppRequest](w, r)
+	if !ok {
 		return
 	}
 	if req.ServerID == "" || req.AppID == "" || req.Name == "" {
@@ -119,9 +112,8 @@ func (h *Handler) RenameApp(w http.ResponseWriter, r *http.Request) {
 // 202 + request_id; the result arrives over SSE. Query: server_id, app_id,
 // optional revision.
 func (h *Handler) GetApp(w http.ResponseWriter, r *http.Request) {
-	userID, err := webutil.GetUserID(r)
-	if err != nil || userID == "" {
-		webutil.Error(w, "unauthorized", nil)
+	userID, ok := webutil.RequireUser(w, r)
+	if !ok {
 		return
 	}
 	serverID := r.URL.Query().Get("server_id")
@@ -141,9 +133,8 @@ func (h *Handler) GetApp(w http.ResponseWriter, r *http.Request) {
 // GetRevisions dispatches an app.revisions to the agent (its git history).
 // Returns 202 + request_id; the list arrives over SSE. Query: server_id, app_id.
 func (h *Handler) GetRevisions(w http.ResponseWriter, r *http.Request) {
-	userID, err := webutil.GetUserID(r)
-	if err != nil || userID == "" {
-		webutil.Error(w, "unauthorized", nil)
+	userID, ok := webutil.RequireUser(w, r)
+	if !ok {
 		return
 	}
 	serverID := r.URL.Query().Get("server_id")
@@ -169,14 +160,12 @@ type rollbackAppRequest struct {
 // RollbackApp dispatches an app.rollback: the agent restores the given commit
 // as a new revision and redeploys. Returns 202 + request_id.
 func (h *Handler) RollbackApp(w http.ResponseWriter, r *http.Request) {
-	userID, err := webutil.GetUserID(r)
-	if err != nil || userID == "" {
-		webutil.Error(w, "unauthorized", nil)
+	userID, ok := webutil.RequireUser(w, r)
+	if !ok {
 		return
 	}
-	var req rollbackAppRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		webutil.Error(w, "invalid request body", nil)
+	req, ok := webutil.DecodeBody[rollbackAppRequest](w, r)
+	if !ok {
 		return
 	}
 	if req.ServerID == "" || req.AppID == "" || req.Hash == "" {
@@ -194,9 +183,8 @@ func (h *Handler) RollbackApp(w http.ResponseWriter, r *http.Request) {
 // GetLogs dispatches an app.logs to the agent. Returns 202 + request_id; the
 // log entries arrive over SSE. Query: server_id, app_id, optional since, tail.
 func (h *Handler) GetLogs(w http.ResponseWriter, r *http.Request) {
-	userID, err := webutil.GetUserID(r)
-	if err != nil || userID == "" {
-		webutil.Error(w, "unauthorized", nil)
+	userID, ok := webutil.RequireUser(w, r)
+	if !ok {
 		return
 	}
 	serverID := r.URL.Query().Get("server_id")

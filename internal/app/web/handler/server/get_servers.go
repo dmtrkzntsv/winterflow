@@ -7,9 +7,8 @@ import (
 )
 
 func (h *Handler) GetServers(w http.ResponseWriter, r *http.Request) {
-	userID, err := util.GetUserID(r)
-	if err != nil {
-		util.Error(w, "failed to load user info", err)
+	userID, ok := util.RequireUser(w, r)
+	if !ok {
 		return
 	}
 

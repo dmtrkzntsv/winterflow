@@ -94,8 +94,8 @@ func TestDockerHandlersValidate(t *testing.T) {
 	r = httptest.NewRequest("GET", "/x?server_id=s1", nil)
 	w = httptest.NewRecorder()
 	h.ListNetworks(w, r)
-	if w.Code == http.StatusAccepted {
-		t.Fatalf("unauthenticated accepted: %d", w.Code)
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated must be 401, got %d", w.Code)
 	}
 
 	// Missing required body fields.

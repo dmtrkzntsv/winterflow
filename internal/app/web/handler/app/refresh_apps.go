@@ -10,9 +10,8 @@ import (
 // reconciled list is delivered over SSE. The UI calls this on the apps view to
 // re-sync against the agent (the source of truth).
 func (h *Handler) RefreshApps(w http.ResponseWriter, r *http.Request) {
-	userID, err := webutil.GetUserID(r)
-	if err != nil || userID == "" {
-		webutil.Error(w, "unauthorized", nil)
+	userID, ok := webutil.RequireUser(w, r)
+	if !ok {
 		return
 	}
 

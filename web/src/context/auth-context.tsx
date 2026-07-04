@@ -14,7 +14,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [checked, setChecked] = useState(false);
 
   const login = useCallback(async ({ username, password }: LoginPayload) => {
-    const loginEndpoint = `${apiBaseUrl}/auth/env/login?session=1`;
+    const loginEndpoint = `${apiBaseUrl}/auth/local/login?session=1`;
     const origin =
       typeof window !== "undefined" ? window.location.origin : appBaseUrl;
     let audienceHost = origin;

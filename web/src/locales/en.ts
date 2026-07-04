@@ -12,8 +12,10 @@ const en = {
     login: {
       title: "Welcome back",
       subtitle: "Login to your Winterflow account",
-      usernameLabel: "Username",
-      usernamePlaceholder: "Username",
+      usernameLabel: "Email",
+      usernamePlaceholder: "you@example.com",
+      bootstrapHint:
+        "No accounts exist yet — your first login creates the admin account with this email and password.",
       passwordLabel: "Password",
       showPassword: "Show password",
       hidePassword: "Hide password",

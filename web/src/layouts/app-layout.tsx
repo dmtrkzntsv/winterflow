@@ -1,5 +1,7 @@
 import { Fragment, useState } from "react"
-import { Outlet } from "react-router-dom"
+import { Navigate, Outlet, useLocation } from "react-router-dom"
+
+import { useProfile } from "@/context/use-profile"
 
 import { AppSidebar } from "@/components/app-sidebar"
 import { ServerSelectionDialog } from "@/components/server-creation-dialog"
@@ -86,8 +88,19 @@ function AppLayoutContent() {
 }
 
 export function AppLayout() {
+  const { profile } = useProfile()
+  const location = useLocation()
   const { refresh } = useServers()
   const [isServerDialogOpen, setIsServerDialogOpen] = useState(false)
+
+  // Users on a temporary password are forced to set their own before doing
+  // anything else.
+  if (
+    profile?.must_change_password &&
+    location.pathname !== "/user/password"
+  ) {
+    return <Navigate to="/user/password" replace />
+  }
 
   // Adding servers is a cloud/distributed capability; the standalone build
   // ships a single embedded server, so the trigger is omitted there.

@@ -27,6 +27,8 @@ type LoginFormProps = ComponentPropsWithoutRef<"div"> & {
   error?: string | null;
   availableProviders?: string[];
   providersLoading?: boolean;
+  // bootstrap: fresh instance — the first login creates the admin account.
+  bootstrap?: boolean;
 };
 
 export function LoginForm({
@@ -34,13 +36,13 @@ export function LoginForm({
   onSubmitCredentials,
   isSubmitting = false,
   error,
-  availableProviders = ["env"],
+  availableProviders = ["local"],
   providersLoading = false,
+  bootstrap = false,
   ...props
 }: LoginFormProps) {
   const { t } = useTranslation();
   const providerSet = new Set(availableProviders);
-  const envProviderEnabled = providerSet.has("env") && !providersLoading;
 
   const socialProviders = [
     {
@@ -74,10 +76,7 @@ export function LoginForm({
       <Card className="overflow-hidden p-0">
         <CardContent className="grid p-0 md:grid-cols-2">
           <form className="p-6 md:p-8" onSubmit={handleSubmit}>
-            <FieldGroup
-              className={cn({ "opacity-60": !envProviderEnabled })}
-              aria-disabled={!envProviderEnabled}
-            >
+            <FieldGroup>
               <div className="flex flex-col items-center gap-2 text-center">
                 <h1 className="text-2xl font-bold">{t("login.title")}</h1>
                 <p className="text-muted-foreground text-balance">
@@ -91,9 +90,9 @@ export function LoginForm({
                 <Input
                   id="username"
                   name="username"
-                  type="text"
+                  type="email"
+                  autoComplete="email"
                   placeholder={t("login.usernamePlaceholder")}
-                  disabled={!envProviderEnabled}
                   required
                 />
               </Field>
@@ -104,7 +103,6 @@ export function LoginForm({
                 <PasswordInput
                   id="password"
                   name="password"
-                  disabled={!envProviderEnabled}
                   required
                   toggleLabel={t("login.showPassword")}
                   hideLabel={t("login.hidePassword")}
@@ -113,12 +111,20 @@ export function LoginForm({
               <Field>
                 <Button
                   type="submit"
-                  disabled={isSubmitting || !envProviderEnabled}
+                  disabled={isSubmitting}
                   className="w-full"
                 >
                   {isSubmitting ? t("login.submitting") : t("login.submit")}
                 </Button>
               </Field>
+              {bootstrap ? (
+                <FieldDescription
+                  className="text-center text-sm"
+                  role="status"
+                >
+                  {t("login.bootstrapHint")}
+                </FieldDescription>
+              ) : null}
               {error ? (
                 <FieldDescription
                   className="text-destructive text-sm"

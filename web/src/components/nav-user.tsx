@@ -1,7 +1,9 @@
 "use client";
 
-import { ChevronsUpDown, KeyRound, LogOut } from "lucide-react";
+import { ChevronsUpDown, KeyRound, LockKeyhole, LogOut, Users } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+
+import { useProfile } from "@/context/use-profile";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -27,6 +29,7 @@ export function NavUser() {
   const { isMobile } = useSidebar();
   const { logout } = useAuth();
   const navigate = useNavigate();
+  const { profile, isAdmin } = useProfile();
   const { user, loading } = useUser();
   const { t } = useTranslation();
   const displayName = user?.name ?? (loading ? "Loading..." : "Unknown user");
@@ -83,10 +86,22 @@ export function NavUser() {
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
+              {isAdmin ? (
+                <DropdownMenuItem onClick={() => navigate("/org/members")}>
+                  <Users />
+                  Members
+                </DropdownMenuItem>
+              ) : null}
               <DropdownMenuItem onClick={() => navigate("/user/tokens")}>
                 <KeyRound />
                 API tokens
               </DropdownMenuItem>
+              {profile?.email ? (
+                <DropdownMenuItem onClick={() => navigate("/user/password")}>
+                  <LockKeyhole />
+                  Change password
+                </DropdownMenuItem>
+              ) : null}
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuItem

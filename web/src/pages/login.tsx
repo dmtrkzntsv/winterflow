@@ -15,6 +15,20 @@ export default function LoginPage() {
     const [error, setError] = useState<string | null>(null)
     const [providers, setProviders] = useState<string[]>([])
     const [providersLoading, setProvidersLoading] = useState(true)
+    const [bootstrap, setBootstrap] = useState(false)
+
+    useEffect(() => {
+        let cancelled = false
+        fetch(`${apiBaseUrl}/api/v1/auth/state`)
+            .then((res) => res.json())
+            .then((body) => {
+                if (!cancelled) setBootstrap(Boolean(body?.data?.bootstrap))
+            })
+            .catch(() => {})
+        return () => {
+            cancelled = true
+        }
+    }, [])
 
     useEffect(() => {
         let cancelled = false
@@ -94,6 +108,7 @@ export default function LoginPage() {
                     error={error}
                     availableProviders={effectiveProviders}
                     providersLoading={providersLoading}
+                    bootstrap={bootstrap}
                 />
             </div>
         </div>

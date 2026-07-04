@@ -53,6 +53,8 @@ func (c *ServerConfig) GetAllowedOrigins() string {
 	return v
 }
 
+// IsAuthSupported reports whether an OPTIONAL auth provider is configured.
+// The local email+password provider is always on and never consulted here.
 func (c *ServerConfig) IsAuthSupported(a string) bool {
 	result := false
 	switch a {
@@ -65,23 +67,12 @@ func (c *ServerConfig) IsAuthSupported(a string) bool {
 				result = true
 			}
 		}
-	case "env":
-		username, pass := c.GetEnvAuth()
-		if username == "" || pass == "" {
-			result = false
-		} else {
-			result = true
-		}
 	}
 	return result
 }
 
 func (c *ServerConfig) GetGoogleAuth() (clientID string, clientSecret string) {
 	return os.Getenv("AUTH_GOOGLE_CLIENT_ID"), os.Getenv("AUTH_GOOGLE_CLIENT_SECRET")
-}
-
-func (c *ServerConfig) GetEnvAuth() (username string, password string) {
-	return os.Getenv("AUTH_ENV_USERNAME"), os.Getenv("AUTH_ENV_PASSWORD")
 }
 
 func (c *ServerConfig) GetJwtSecret() string {

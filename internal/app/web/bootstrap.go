@@ -87,8 +87,11 @@ func (s *Server) registerAuth() {
 				parts := strings.SplitN(claims.User.ID, "_", 2)
 				provider := parts[0]
 				accountId := parts[1]
-				if provider == authprvd.EnvProvider {
-					accountId = authprvd.EnvProvider
+				if provider == authprvd.LocalProvider {
+					// Direct providers hash the login into User.ID; the raw
+					// login (the email) is in User.Name. The connected account
+					// written at bootstrap/member creation is keyed by email.
+					accountId = strings.ToLower(strings.TrimSpace(claims.User.Name))
 				}
 				user, err := s.Deps.UserService.FindOrCreateUser(ctx, dto.UserDTO{
 					Provider:  provider,
@@ -139,7 +142,7 @@ func (s *Server) registerAuth() {
 
 	service := auth.NewService(options)
 	authprvd.AddGoogleAuth(service, s.Logger, *s.Cfg)
-	authprvd.AddEnvAuth(service, s.Logger, *s.Cfg)
+	authprvd.AddLocalAuth(service, s.Logger, s.Deps.UserService)
 
 	s.Auth = service
 }

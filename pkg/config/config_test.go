@@ -251,17 +251,10 @@ func TestIsAuthSupported(t *testing.T) {
 			want:     false,
 		},
 		{
-			name:     "env auth enabled with both credentials",
+			name:     "env provider no longer exists",
 			mode:     "standalone",
 			provider: "env",
 			env:      map[string]string{"AUTH_ENV_USERNAME": "admin", "AUTH_ENV_PASSWORD": "pw"},
-			want:     true,
-		},
-		{
-			name:     "env auth disabled with missing password",
-			mode:     "standalone",
-			provider: "env",
-			env:      map[string]string{"AUTH_ENV_USERNAME": "admin"},
 			want:     false,
 		},
 		{
@@ -294,11 +287,6 @@ func TestGetAuthCredentialPairs(t *testing.T) {
 	t.Setenv("AUTH_GOOGLE_CLIENT_SECRET", "gsec")
 	if id, sec := c.GetGoogleAuth(); id != "gid" || sec != "gsec" {
 		t.Fatalf("GetGoogleAuth() = (%q, %q), want (gid, gsec)", id, sec)
-	}
-	t.Setenv("AUTH_ENV_USERNAME", "user")
-	t.Setenv("AUTH_ENV_PASSWORD", "pass")
-	if u, p := c.GetEnvAuth(); u != "user" || p != "pass" {
-		t.Fatalf("GetEnvAuth() = (%q, %q), want (user, pass)", u, p)
 	}
 }
 

@@ -17,12 +17,24 @@ type contentItemRequest struct {
 	Encrypted bool   `json:"encrypted"`
 }
 
+// sourceRequest configures a git-sourced app. token is an ECIES base64
+// payload, the "<encrypted>" sentinel, or empty for anonymous access.
+type sourceRequest struct {
+	RepoURL     string `json:"repo_url"`
+	Branch      string `json:"branch"`
+	ComposePath string `json:"compose_path"`
+	AutoUpdate  bool   `json:"auto_update"`
+	PollSeconds int    `json:"poll_seconds"`
+	Token       string `json:"token"`
+}
+
 type createAppRequest struct {
 	ServerID  string               `json:"server_id"`
 	App       model.App            `json:"app"`
 	Config    json.RawMessage      `json:"config"`
 	Files     []contentItemRequest `json:"files"`
 	Variables []contentItemRequest `json:"variables"`
+	Source    *sourceRequest       `json:"source,omitempty"`
 }
 
 func toContentItems(items []contentItemRequest) []command.ContentItem {
@@ -65,6 +77,20 @@ func (h *Handler) CreateApp(w http.ResponseWriter, r *http.Request) {
 		Config:    req.Config,
 		Files:     toContentItems(req.Files),
 		Variables: toContentItems(req.Variables),
+	}
+	if req.Source != nil {
+		if req.Source.RepoURL == "" || req.Source.Branch == "" {
+			webutil.Error(w, "source repo_url and branch are required", nil)
+			return
+		}
+		payload.Source = &command.SourcePayload{
+			RepoURL:     req.Source.RepoURL,
+			Branch:      req.Source.Branch,
+			ComposePath: req.Source.ComposePath,
+			AutoUpdate:  req.Source.AutoUpdate,
+			PollSeconds: req.Source.PollSeconds,
+			Token:       []byte(req.Source.Token),
+		}
 	}
 
 	requestID, err := h.usecase.CreateApp(r.Context(), userID, req.ServerID, app, payload)

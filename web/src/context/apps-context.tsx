@@ -324,6 +324,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
   // createApp dispatches app.save with the full payload and awaits its result.
   const createApp = useCallback(
     async (body: {
+      source?: unknown;
       app: Record<string, unknown>;
       config: unknown;
       files: { name: string; content: string; encrypted: boolean }[];
@@ -334,6 +335,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
         config: body.config,
         files: body.files,
         variables: body.variables,
+        ...(body.source ? { source: body.source } : {}),
       });
     },
     [dispatchAndWait],

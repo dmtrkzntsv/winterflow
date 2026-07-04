@@ -5,6 +5,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
+import { PasswordInput } from "@/components/ui/password-input";
 import { CodeEditor } from "@/components/code-editor";
 import { IconPicker } from "@/components/icon-picker";
 import { useState } from "react";
@@ -153,6 +155,90 @@ export function AppEditor({ state, onChange }: Props) {
             />
           </div>
         </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="flex-row items-center justify-between space-y-0">
+          <CardTitle>Deploy from Git</CardTitle>
+          <Switch
+            checked={Boolean(state.config.source)}
+            onCheckedChange={(on) =>
+              setConfig({
+                source: on
+                  ? state.config.source ?? {
+                      repo_url: "",
+                      branch: "main",
+                      compose_path: "",
+                      auto_update: true,
+                      poll_seconds: 120,
+                    }
+                  : undefined,
+              })
+            }
+          />
+        </CardHeader>
+        {state.config.source ? (
+          <CardContent className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-2 sm:col-span-2">
+              <Label htmlFor="src-url">Repository URL</Label>
+              <Input
+                id="src-url"
+                value={state.config.source.repo_url}
+                placeholder="https://github.com/org/app"
+                className="font-mono"
+                onChange={(e) =>
+                  setConfig({ source: { ...state.config.source!, repo_url: e.target.value } })
+                }
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="src-branch">Branch</Label>
+              <Input
+                id="src-branch"
+                value={state.config.source.branch}
+                placeholder="main"
+                className="font-mono"
+                onChange={(e) =>
+                  setConfig({ source: { ...state.config.source!, branch: e.target.value } })
+                }
+              />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="src-compose">Compose file path (optional)</Label>
+              <Input
+                id="src-compose"
+                value={state.config.source.compose_path || ""}
+                placeholder="deploy/compose.yml — repo root by default"
+                className="font-mono"
+                onChange={(e) =>
+                  setConfig({ source: { ...state.config.source!, compose_path: e.target.value } })
+                }
+              />
+            </div>
+            <div className="grid gap-2 sm:col-span-2">
+              <Label htmlFor="src-token">Access token (private repos)</Label>
+              <PasswordInput
+                id="src-token"
+                value={state.sourceToken || ""}
+                placeholder={state.config.source.token_set ? "•••••• (stored — leave blank to keep)" : "optional"}
+                onChange={(e) => onChange({ ...state, sourceToken: e.target.value })}
+              />
+            </div>
+            <label className="flex items-center gap-2 text-sm sm:col-span-2">
+              <Checkbox
+                checked={state.config.source.auto_update}
+                onCheckedChange={(c) =>
+                  setConfig({ source: { ...state.config.source!, auto_update: c === true } })
+                }
+              />
+              Auto-update: poll the repository and redeploy on new commits
+            </label>
+            <p className="text-xs text-muted-foreground sm:col-span-2">
+              If the repository has no compose file, add a root <code>compose.yml</code> below —
+              the cloned repo is available at <code>./source</code>.
+            </p>
+          </CardContent>
+        ) : null}
       </Card>
 
       <Card>

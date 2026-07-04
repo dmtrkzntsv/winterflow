@@ -86,6 +86,8 @@ export function stateFromDetail(
     return { id, name: v.name, is_encrypted: encrypted };
   });
 
+  const cfgSource = (cfg as { source?: import("@/types/app-config").AppSourceConfig }).source;
+
   return {
     config: {
       id: appId,
@@ -95,6 +97,7 @@ export function stateFromDetail(
       color: cfg.color ?? "#64748b",
       files: fileMetas,
       variables: varMetas,
+      source: cfgSource,
     },
     files,
     variables,
@@ -103,12 +106,18 @@ export function stateFromDetail(
 
 export function validateEditorState(state: AppEditorState): string | null {
   if (!state.config.name.trim()) return "App name is required.";
+  const src = state.config.source;
+  if (src) {
+    if (!src.repo_url.trim()) return "Repository URL is required.";
+    if (!src.branch.trim()) return "Branch is required.";
+  }
   const hasCompose = state.config.files.some(
     (f) =>
       f.filename.trim() === "compose.yml" ||
       f.filename.trim() === "docker-compose.yml",
   );
-  if (!hasCompose)
+  // Git-sourced apps may take their compose file from the repo.
+  if (!hasCompose && !src)
     return "A compose.yml (or docker-compose.yml) file is required.";
   for (const f of state.config.files) {
     if (!f.filename.trim()) return "Every file needs a filename.";
@@ -183,5 +192,36 @@ export async function buildSavePayload(
   };
   if (appId) app.id = appId;
 
-  return { app, config, files, variables };
+  // Git source: token is encrypted like any secret; unchanged tokens ride as
+  // the placeholder so the agent keeps the stored ciphertext.
+  let source: Record<string, unknown> | undefined;
+  const src = state.config.source;
+  if (src) {
+    let token = "";
+    if (state.sourceToken) {
+      token = await encryptSecret(state.sourceToken, await getPublicKey());
+    } else if (src.token_set) {
+      token = "<encrypted>";
+    }
+    source = {
+      repo_url: src.repo_url.trim(),
+      branch: src.branch.trim(),
+      compose_path: (src.compose_path || "").trim(),
+      auto_update: src.auto_update,
+      poll_seconds: src.poll_seconds || 0,
+      token,
+    };
+    // The committed config blob carries the source metadata (never the token)
+    // so the editor can redisplay it.
+    (config as Record<string, unknown>).source = {
+      repo_url: source.repo_url,
+      branch: source.branch,
+      compose_path: source.compose_path,
+      auto_update: source.auto_update,
+      poll_seconds: source.poll_seconds,
+      token_set: Boolean(state.sourceToken) || Boolean(src.token_set),
+    };
+  }
+
+  return source ? { app, config, files, variables, source } : { app, config, files, variables };
 }

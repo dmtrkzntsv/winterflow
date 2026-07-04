@@ -15,6 +15,17 @@ export type AppVariableMeta = {
   is_encrypted: boolean;
 };
 
+export type AppSourceConfig = {
+  repo_url: string;
+  branch: string;
+  compose_path?: string;
+  auto_update: boolean;
+  poll_seconds?: number;
+  // Whether an access token is stored on the agent (the token itself never
+  // travels back; edits send the "<encrypted>" placeholder to keep it).
+  token_set?: boolean;
+};
+
 export type AppConfig = {
   id: string;
   name: string;
@@ -24,6 +35,7 @@ export type AppConfig = {
   version?: string;
   files: AppFileMeta[];
   variables: AppVariableMeta[];
+  source?: AppSourceConfig;
 };
 
 // Editor working state: the config metadata plus content maps keyed by id.
@@ -31,6 +43,8 @@ export type AppEditorState = {
   config: AppConfig;
   files: Record<string, string>; // file id -> content
   variables: Record<string, string>; // variable id -> value
+  // New/replacement repo token typed this session ("" = keep/absent).
+  sourceToken?: string;
 };
 
 let counter = 0;

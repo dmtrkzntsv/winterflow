@@ -52,6 +52,7 @@ export type AppsContextValue = {
   // createApp dispatches app.save with the full payload (config + files +
   // variables) and awaits the result.
   createApp: (body: {
+    source?: unknown;
     app: Record<string, unknown>;
     config: unknown;
     files: { name: string; content: string; encrypted: boolean }[];

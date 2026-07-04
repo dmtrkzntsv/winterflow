@@ -1,13 +1,7 @@
 "use client";
 
-import {
-  BadgeCheck,
-  Bell,
-  ChevronsUpDown,
-  CreditCard,
-  LogOut,
-  Sparkles,
-} from "lucide-react";
+import { ChevronsUpDown, KeyRound, LogOut } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -32,6 +26,7 @@ import { useTranslation } from "react-i18next";
 export function NavUser() {
   const { isMobile } = useSidebar();
   const { logout } = useAuth();
+  const navigate = useNavigate();
   const { user, loading } = useUser();
   const { t } = useTranslation();
   const displayName = user?.name ?? (loading ? "Loading..." : "Unknown user");
@@ -88,24 +83,9 @@ export function NavUser() {
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
-              <DropdownMenuItem>
-                <Sparkles />
-                Upgrade to Pro
-              </DropdownMenuItem>
-            </DropdownMenuGroup>
-            <DropdownMenuSeparator />
-            <DropdownMenuGroup>
-              <DropdownMenuItem>
-                <BadgeCheck />
-                Account
-              </DropdownMenuItem>
-              <DropdownMenuItem>
-                <CreditCard />
-                Billing
-              </DropdownMenuItem>
-              <DropdownMenuItem>
-                <Bell />
-                Notifications
+              <DropdownMenuItem onClick={() => navigate("/user/tokens")}>
+                <KeyRound />
+                API tokens
               </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />

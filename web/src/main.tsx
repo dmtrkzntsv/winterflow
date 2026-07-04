@@ -17,6 +17,7 @@ import HomePage from "@/pages/home"
 import CreateAppPage from "@/pages/create-app"
 import AppDetailsPage from "@/pages/app-details"
 import SettingsPage from "@/pages/settings"
+import UserTokensPage from "@/pages/user-tokens"
 import LoginPage from "@/pages/login"
 import "./index.css"
 
@@ -43,6 +44,10 @@ const router = createBrowserRouter([
       {
         path: "/settings",
         element: <SettingsPage />,
+      },
+      {
+        path: "/user/tokens",
+        element: <UserTokensPage />,
       },
     ],
   },

@@ -93,7 +93,7 @@ Authenticated (any role):
   has them; role from the primary org membership.
 - `POST /api/v1/user/change-password` `{current_password, new_password}` —
   verify current, store new bcrypt hash, clear `must_change_password`.
-  New password: min 8 chars. Users without local credentials (Google-only)
+  New password: min 4 chars. Users without local credentials (Google-only)
   get a 400.
 
 Admin/owner only (gated by `requireAdmin`):

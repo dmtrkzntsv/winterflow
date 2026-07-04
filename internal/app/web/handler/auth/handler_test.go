@@ -106,7 +106,7 @@ func TestRegisterValidation(t *testing.T) {
 	for _, body := range []string{
 		`{}`,
 		`{"name":"A","email":"bad","password":"longenough1"}`,
-		`{"name":"A","email":"a@b.io","password":"short"}`,
+		`{"name":"A","email":"a@b.io","password":"abc"}`,
 		`{"name":"","email":"a@b.io","password":"longenough1"}`,
 	} {
 		if w := register(h, body); w.Code != http.StatusBadRequest {

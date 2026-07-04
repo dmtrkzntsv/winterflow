@@ -49,8 +49,8 @@ export default function RegisterPage() {
     const email = String(form.get("email") ?? "").trim();
     const password = String(form.get("password") ?? "");
     const confirm = String(form.get("confirm") ?? "");
-    if (password.length < 8) {
-      toast.error("Password must be at least 8 characters");
+    if (password.length < 4) {
+      toast.error("Password must be at least 4 characters");
       return;
     }
     if (password !== confirm) {

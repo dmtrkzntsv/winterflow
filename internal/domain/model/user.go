@@ -30,6 +30,10 @@ var (
 	ErrNotBootstrap = errors.New("users already exist")
 )
 
+// MinPasswordLen is the minimum accepted password length (registration,
+// change-password, admin resets keep their generated 16-char temps).
+const MinPasswordLen = 4
+
 // Credentials is the non-secret slice of a user's local login (the hash
 // never leaves the repository layer).
 type Credentials struct {

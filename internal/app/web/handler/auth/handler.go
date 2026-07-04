@@ -86,8 +86,8 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		webutil.Error(w, "a valid email is required", nil)
 		return
 	}
-	if len(req.Password) < 8 {
-		webutil.Error(w, "password must be at least 8 characters", nil)
+	if len(req.Password) < model.MinPasswordLen {
+		webutil.Error(w, "password must be at least 4 characters", nil)
 		return
 	}
 

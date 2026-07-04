@@ -83,7 +83,6 @@ type changePasswordRequest struct {
 	NewPassword     string `json:"new_password"`
 }
 
-const minPasswordLen = 8
 
 // ChangePassword verifies the current password and stores a new bcrypt hash,
 // clearing the must-change flag. Users without local credentials get a 400.
@@ -96,8 +95,8 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if len(req.NewPassword) < minPasswordLen {
-		webutil.Error(w, "new password must be at least 8 characters", nil)
+	if len(req.NewPassword) < model.MinPasswordLen {
+		webutil.Error(w, "new password must be at least 4 characters", nil)
 		return
 	}
 	creds, err := h.users.GetCredentials(r.Context(), userID)

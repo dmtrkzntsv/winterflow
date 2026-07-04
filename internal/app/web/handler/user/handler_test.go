@@ -230,7 +230,7 @@ func TestChangePassword(t *testing.T) {
 
 	// Too-short new password → 400.
 	f.verifyErr = nil
-	r = authed(httptest.NewRequest("POST", "/x", strings.NewReader(`{"current_password":"old","new_password":"short"}`)))
+	r = authed(httptest.NewRequest("POST", "/x", strings.NewReader(`{"current_password":"old","new_password":"abc"}`)))
 	w = httptest.NewRecorder()
 	h.ChangePassword(w, r)
 	if w.Code != http.StatusBadRequest {

@@ -29,8 +29,8 @@ export default function UserPasswordPage() {
     const current = String(form.get("current") ?? "");
     const next = String(form.get("next") ?? "");
     const confirm = String(form.get("confirm") ?? "");
-    if (next.length < 8) {
-      toast.error("New password must be at least 8 characters");
+    if (next.length < 4) {
+      toast.error("New password must be at least 4 characters");
       return;
     }
     if (next !== confirm) {

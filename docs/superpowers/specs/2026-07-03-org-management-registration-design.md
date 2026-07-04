@@ -31,7 +31,7 @@ model; standalone simply pins the org count (and server count) to 1.
 ### Registration
 
 - `POST /api/v1/auth/register` (public) `{name, email, password}`:
-  - Validate: name 1–64 chars, valid email ≤255, password ≥8.
+  - Validate: name 1–64 chars, valid email ≤255, password ≥4.
   - Allowed iff: standalone → `CountUsers()==0`; distributed →
     `REGISTRATION_ENABLED` (or `CountUsers()==0`, same never-brick rule).
     Closed → 403-style error (400 envelope is fine, message "registration

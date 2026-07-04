@@ -8,6 +8,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { PasswordInput } from "@/components/ui/password-input";
 import { CodeEditor } from "@/components/code-editor";
+import { ImageTagPicker } from "@/components/image-tag-picker";
 import { IconPicker } from "@/components/icon-picker";
 import { useState } from "react";
 import {
@@ -289,6 +290,17 @@ export function AppEditor({ state, onChange }: Props) {
                 filename={f.filename}
                 placeholder="file contents (use ${VAR} for variables)"
               />
+              {isComposeFilename(f.filename) ? (
+                <ImageChips
+                  content={state.files[f.id] ?? ""}
+                  onReplace={(oldRef, newRef) =>
+                    updateFileContent(
+                      f.id,
+                      (state.files[f.id] ?? "").split(oldRef).join(newRef),
+                    )
+                  }
+                />
+              ) : null}
             </div>
           ))}
         </CardContent>
@@ -361,6 +373,48 @@ export function AppEditor({ state, onChange }: Props) {
           })}
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+// isComposeFilename gates the image-tag chips to compose files.
+function isComposeFilename(name: string): boolean {
+  const n = name.trim();
+  return (
+    n === "compose.yml" ||
+    n === "compose.yaml" ||
+    n === "docker-compose.yml" ||
+    n === "docker-compose.yaml"
+  );
+}
+
+const IMAGE_LINE = /^\s*image:\s*["']?([\w][\w./:@-]*)/gm;
+
+// ImageChips lists the image references found in a compose file, each with a
+// tag browser that rewrites the reference in place.
+function ImageChips({
+  content,
+  onReplace,
+}: {
+  content: string;
+  onReplace: (oldRef: string, newRef: string) => void;
+}) {
+  const refs = Array.from(
+    new Set(
+      Array.from(content.matchAll(IMAGE_LINE), (m) => m[1]).filter(Boolean),
+    ),
+  );
+  if (refs.length === 0) return null;
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2">
+      <span className="text-xs text-muted-foreground">Images:</span>
+      {refs.map((ref) => (
+        <ImageTagPicker
+          key={ref}
+          image={ref}
+          onSelect={(newRef) => onReplace(ref, newRef)}
+        />
+      ))}
     </div>
   );
 }

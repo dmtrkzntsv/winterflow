@@ -60,6 +60,9 @@ export type AppsContextValue = {
   }) => Promise<void>;
   // getPublicKey returns the server's ECIES public key for encrypting secrets.
   getPublicKey: () => Promise<string>;
+  // getImageTags lists the registry tags available for an image (via the
+  // agent's docker credentials).
+  getImageTags: (image: string) => Promise<string[]>;
   // getRevisions fetches the app's git history from the agent.
   getRevisions: (appId: string) => Promise<AppRevisions>;
   // rollback restores the given commit as a new revision and redeploys.

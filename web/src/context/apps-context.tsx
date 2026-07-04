@@ -285,6 +285,30 @@ export function AppsProvider({ children }: { children: ReactNode }) {
     [activeServerId, waitFor],
   );
 
+  // getImageTags lists registry tags for an image (image.tags over SSE).
+  const getImageTags = useCallback(
+    async (image: string): Promise<string[]> => {
+      if (!activeServerId) throw new Error("No active server");
+      const res = await fetch(
+        `${base}/api/v1/image/get-tags?server_id=${encodeURIComponent(
+          activeServerId,
+        )}&image=${encodeURIComponent(image)}`,
+        { credentials: "include" },
+      );
+      if (!res.ok) throw new Error(`Failed to fetch tags: ${res.status}`);
+      const accepted = (await res.json()) as AcceptedResponse;
+      const ref = accepted.data?.request_id;
+      if (!ref) throw new Error("No request id");
+      const result = await waitFor(ref);
+      if (result.status && result.status !== 0) {
+        throw new Error(result.error || "Failed to fetch tags");
+      }
+      const payload = result.payload as { tags?: string[] | null } | undefined;
+      return payload?.tags ?? [];
+    },
+    [activeServerId, waitFor],
+  );
+
   // getRevisions fetches the app's git history (app.revisions over SSE).
   const getRevisions = useCallback(
     async (appId: string): Promise<AppRevisions> => {
@@ -354,6 +378,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       createApp,
       getPublicKey,
       getApp,
+      getImageTags,
       getRevisions,
       rollback,
     }),
@@ -369,6 +394,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       createApp,
       getPublicKey,
       getApp,
+      getImageTags,
       getRevisions,
       rollback,
     ],

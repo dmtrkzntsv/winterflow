@@ -41,9 +41,3 @@ type ServerRepository interface {
 	// if the server has no such capability recorded.
 	GetCapability(ctx context.Context, serverID, name string) (value string, ok bool, err error)
 }
-
-type ServerService interface {
-	GetServers(ctx context.Context, userID string) ([]model.Server, error)
-	ClaimServer(ctx context.Context, dto dto.ClaimServerDTO) (model.Server, error)
-	PendingRegistrationCode(ctx context.Context) (string, bool, error)
-}

@@ -20,7 +20,7 @@ func (h *Handler) GetServersStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	servers, err := h.usecase.GetServers(r.Context(), userID)
+	servers, err := h.servers.GetServers(r.Context(), userID)
 	if err != nil {
 		util.Error(w, "failed to load servers", nil)
 		return

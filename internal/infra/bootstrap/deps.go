@@ -19,7 +19,6 @@ type Deps struct {
 	Cfg *config.ServerConfig
 
 	UserService         port.UserService
-	ServerService       port.ServerService
 	ServerRepository    port.ServerRepository
 	AppRepository       port.AppRepository
 	CommandDispatcher   port.CommandDispatcher

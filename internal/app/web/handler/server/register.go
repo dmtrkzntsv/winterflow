@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"winterflow/internal/app/web/util"
+	"winterflow/internal/domain/dto"
 	"winterflow/internal/domain/model"
 )
 
@@ -44,7 +45,7 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	srv, err := h.usecase.ClaimServer(r.Context(), req.Code, orgID)
+	srv, err := h.servers.ClaimServer(r.Context(), dto.ClaimServerDTO{Code: req.Code, OrganizationID: orgID})
 	if err != nil {
 		switch {
 		case errors.Is(err, model.ErrInvalidRegistrationCode):

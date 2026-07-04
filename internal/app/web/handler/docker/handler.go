@@ -4,17 +4,18 @@
 package docker
 
 import (
+	"context"
 	"net/http"
 
 	webutil "winterflow/internal/app/web/util"
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/port"
-	usedocker "winterflow/internal/domain/usecase/docker"
 	"winterflow/pkg/logger"
 )
 
 type Handler struct {
-	usecase usedocker.UseCase
+	dispatcher port.CommandDispatcher
+	log        *logger.Logger
 }
 
 type Deps struct {
@@ -23,11 +24,18 @@ type Deps struct {
 }
 
 func NewHandler(d *Deps) *Handler {
-	uc := usedocker.NewUseCase(&usedocker.Deps{
-		CommandDispatcher: d.CommandDispatcher,
-		Log:               d.Logger,
+	return &Handler{dispatcher: d.CommandDispatcher, log: d.Logger}
+}
+
+// dispatch publishes a typed command to the server's agent on behalf of the
+// user and returns the correlation id (fire-and-forward).
+func (h *Handler) dispatch(ctx context.Context, userID, serverID string, typ command.Type, payload any) (string, error) {
+	return h.dispatcher.Dispatch(ctx, port.DispatchInput{
+		AgentID: serverID,
+		UserID:  userID,
+		Type:    typ,
+		Payload: payload,
 	})
-	return &Handler{usecase: *uc}
 }
 
 func accepted(w http.ResponseWriter, msg, requestID string) {
@@ -58,7 +66,7 @@ func (h *Handler) ListRegistries(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	reqID, err := h.usecase.ListRegistries(r.Context(), userID, serverID)
+	reqID, err := h.dispatch(r.Context(), userID, serverID, command.TypeRegistryList, command.ListRegistriesRequest{})
 	if err != nil {
 		webutil.Error(w, "failed to list registries", nil)
 		return
@@ -79,7 +87,7 @@ func (h *Handler) CreateRegistry(w http.ResponseWriter, r *http.Request) {
 		webutil.Error(w, "address and username are required", nil)
 		return
 	}
-	reqID, err := h.usecase.CreateRegistry(r.Context(), userID, serverID, req)
+	reqID, err := h.dispatch(r.Context(), userID, serverID, command.TypeRegistryCreate, req)
 	if err != nil {
 		webutil.Error(w, "failed to add registry", nil)
 		return
@@ -100,7 +108,7 @@ func (h *Handler) DeleteRegistry(w http.ResponseWriter, r *http.Request) {
 		webutil.Error(w, "address is required", nil)
 		return
 	}
-	reqID, err := h.usecase.DeleteRegistry(r.Context(), userID, serverID, req.Address)
+	reqID, err := h.dispatch(r.Context(), userID, serverID, command.TypeRegistryDelete, req)
 	if err != nil {
 		webutil.Error(w, "failed to remove registry", nil)
 		return
@@ -115,7 +123,7 @@ func (h *Handler) ListNetworks(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	reqID, err := h.usecase.ListNetworks(r.Context(), userID, serverID)
+	reqID, err := h.dispatch(r.Context(), userID, serverID, command.TypeNetworkList, command.ListNetworksRequest{})
 	if err != nil {
 		webutil.Error(w, "failed to list networks", nil)
 		return
@@ -136,7 +144,7 @@ func (h *Handler) CreateNetwork(w http.ResponseWriter, r *http.Request) {
 		webutil.Error(w, "network name is required", nil)
 		return
 	}
-	reqID, err := h.usecase.CreateNetwork(r.Context(), userID, serverID, req)
+	reqID, err := h.dispatch(r.Context(), userID, serverID, command.TypeNetworkCreate, req)
 	if err != nil {
 		webutil.Error(w, "failed to create network", nil)
 		return
@@ -159,7 +167,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		webutil.Error(w, "version is required", nil)
 		return
 	}
-	reqID, err := h.usecase.UpdateAgent(r.Context(), userID, serverID, req.Version)
+	reqID, err := h.dispatch(r.Context(), userID, serverID, command.TypeAgentUpdate, req)
 	if err != nil {
 		webutil.Error(w, "failed to update agent", nil)
 		return
@@ -180,7 +188,7 @@ func (h *Handler) DeleteNetwork(w http.ResponseWriter, r *http.Request) {
 		webutil.Error(w, "network name is required", nil)
 		return
 	}
-	reqID, err := h.usecase.DeleteNetwork(r.Context(), userID, serverID, req.Name)
+	reqID, err := h.dispatch(r.Context(), userID, serverID, command.TypeNetworkDelete, req)
 	if err != nil {
 		webutil.Error(w, "failed to remove network", nil)
 		return

@@ -137,6 +137,24 @@ func (r *DbUserRepository) CreateUser(ctx context.Context, dto dto.UserDTO) (mod
 	}, nil
 }
 
+// FindOrCreateUser resolves the user for a connected account, creating the
+// user (plus their org and membership) on first login.
+func (r *DbUserRepository) FindOrCreateUser(ctx context.Context, d dto.UserDTO) (model.User, error) {
+	user, err := r.GetByConnectedAccount(ctx, d.Provider, d.AccountID)
+	if err != nil {
+		if !errors.Is(err, model.ErrorUserNotFound) {
+			return model.User{}, err
+		}
+		cu, err := r.CreateUser(ctx, d)
+		if err != nil {
+			r.log.Error("failed to create user: %v", err)
+			return model.User{}, err
+		}
+		return cu, nil
+	}
+	return user, nil
+}
+
 func (r *DbUserRepository) GetUser(ctx context.Context, userID string) (model.User, error) {
 	dbi := r.db.GetDB()
 

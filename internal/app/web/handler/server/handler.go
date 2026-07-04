@@ -3,13 +3,11 @@ package server
 import (
 	"winterflow/internal/domain/port"
 	"winterflow/internal/domain/service/status"
-	usesrv "winterflow/internal/domain/usecase/server"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
 )
 
 type Handler struct {
-	usecase usesrv.UseCase
 	users   port.UserService
 	servers port.ServerRepository
 	status  *status.Cache
@@ -19,7 +17,6 @@ type Handler struct {
 
 type Deps struct {
 	Logger           *logger.Logger
-	ServerService    port.ServerService
 	ServerRepository port.ServerRepository
 	UserService      port.UserService
 	StatusCache      *status.Cache
@@ -27,12 +24,7 @@ type Deps struct {
 }
 
 func NewHandler(d *Deps) *Handler {
-	uc := usesrv.NewUseCase(&usesrv.Deps{
-		ServerService: d.ServerService,
-		Log:           d.Logger,
-	})
 	return &Handler{
-		usecase: *uc,
 		users:   d.UserService,
 		servers: d.ServerRepository,
 		status:  d.StatusCache,

@@ -7,7 +7,6 @@ import (
 	"winterflow/internal/domain/service/status"
 	"winterflow/internal/infra/db"
 	"winterflow/internal/infra/db/repository"
-	dbservice "winterflow/internal/infra/db/service"
 	"winterflow/internal/infra/transport/bus"
 	"winterflow/internal/infra/transport/dispatch"
 	"winterflow/pkg/config"
@@ -36,8 +35,7 @@ func wireCore(ctx context.Context, b bus.Bus, dbconn *db.BunConnection, cfg *con
 	return &Deps{
 		Log:                 log,
 		Cfg:                 cfg,
-		UserService:         dbservice.NewDbUserService(log, userRepo),
-		ServerService:       dbservice.NewDbServerService(log, serverRepo),
+		UserService:         userRepo,
 		ServerRepository:    serverRepo,
 		AppRepository:       appRepo,
 		CommandDispatcher:   dispatcher,

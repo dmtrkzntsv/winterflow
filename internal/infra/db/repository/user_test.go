@@ -111,3 +111,21 @@ func TestFindByToken(t *testing.T) {
 		t.Fatalf("unknown token err = %v", err)
 	}
 }
+
+func TestFindOrCreateUserIsIdempotent(t *testing.T) {
+	repo := newUserRepo(t)
+	ctx := context.Background()
+	in := dto.UserDTO{Name: "Alice", Provider: "google", AccountID: "g-1"}
+
+	first, err := repo.FindOrCreateUser(ctx, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := repo.FindOrCreateUser(ctx, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ID != second.ID {
+		t.Fatalf("second call created a new user: %q vs %q", first.ID, second.ID)
+	}
+}

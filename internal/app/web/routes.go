@@ -61,7 +61,6 @@ func (s *Server) registerRoutes() {
 
 	serversAPI := server.NewHandler(&server.Deps{
 		Logger:           s.Logger,
-		ServerService:    s.Deps.ServerService,
 		ServerRepository: s.Deps.ServerRepository,
 		UserService:      s.Deps.UserService,
 		StatusCache:      s.Deps.StatusCache,

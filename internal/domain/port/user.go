@@ -17,10 +17,12 @@ type UserRepository interface {
 	// FindByToken resolves a personal access token to its user, enforcing
 	// expiry. Returns model.ErrInvalidToken when the token is unknown/expired.
 	FindByToken(ctx context.Context, token string) (model.User, error)
+
+	// FindOrCreateUser resolves a connected account to a user, creating the
+	// user + org on first login.
+	FindOrCreateUser(ctx context.Context, dto dto.UserDTO) (model.User, error)
 }
 
-type UserService interface {
-	FindOrCreateUser(ctx context.Context, dto dto.UserDTO) (model.User, error)
-	PrimaryOrganizationID(ctx context.Context, userID string) (string, error)
-	FindByToken(ctx context.Context, token string) (model.User, error)
-}
+// UserService is the auth-facing slice of the user repository. The DB
+// repository implements it directly; there is no separate service layer.
+type UserService = UserRepository

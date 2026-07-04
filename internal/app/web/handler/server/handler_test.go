@@ -16,7 +16,6 @@ import (
 	"winterflow/internal/domain/service/status"
 	"winterflow/internal/infra/db"
 	"winterflow/internal/infra/db/repository"
-	dbservice "winterflow/internal/infra/db/service"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
 )
@@ -31,15 +30,13 @@ func newEnv(t *testing.T) (h *Handler, userID, serverID string, cache *status.Ca
 
 	userRepo := repository.NewDbUserRepository(conn, log)
 	serverRepo := repository.NewDbServerRepository(conn, log)
-	users := dbservice.NewDbUserService(log, userRepo)
-	servers := dbservice.NewDbServerService(log, serverRepo)
 
 	ctx := context.Background()
-	u, err := users.FindOrCreateUser(ctx, dto.UserDTO{Name: "Alice", Provider: "google", AccountID: "g1"})
+	u, err := userRepo.FindOrCreateUser(ctx, dto.UserDTO{Name: "Alice", Provider: "google", AccountID: "g1"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	orgID, err := users.PrimaryOrganizationID(ctx, u.ID)
+	orgID, err := userRepo.PrimaryOrganizationID(ctx, u.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,9 +65,8 @@ func newEnv(t *testing.T) (h *Handler, userID, serverID string, cache *status.Ca
 	cache = status.NewCache(time.Minute)
 	h = NewHandler(&Deps{
 		Logger:           log,
-		ServerService:    servers,
 		ServerRepository: serverRepo,
-		UserService:      users,
+		UserService:      userRepo,
 		StatusCache:      cache,
 		Cfg:              config.NewServerConfig("standalone"),
 	})

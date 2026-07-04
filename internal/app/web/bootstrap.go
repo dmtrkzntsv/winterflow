@@ -150,7 +150,7 @@ func (s *Server) registerAuth() {
 // claimed, or — defensively — more than one), making it safe to run on every
 // login.
 func (s *Server) autoClaimStandaloneServer(ctx context.Context, userID string) {
-	code, ok, err := s.Deps.ServerService.PendingRegistrationCode(ctx)
+	code, ok, err := s.Deps.ServerRepository.PendingRegistrationCode(ctx)
 	if err != nil {
 		s.Logger.Error("auto-claim: failed to read pending registration", "error", err)
 		return
@@ -165,7 +165,7 @@ func (s *Server) autoClaimStandaloneServer(ctx context.Context, userID string) {
 		return
 	}
 
-	srv, err := s.Deps.ServerService.ClaimServer(ctx, dto.ClaimServerDTO{Code: code, OrganizationID: orgID})
+	srv, err := s.Deps.ServerRepository.ClaimServer(ctx, dto.ClaimServerDTO{Code: code, OrganizationID: orgID})
 	if err != nil {
 		s.Logger.Error("auto-claim: failed to claim server", "error", err)
 		return

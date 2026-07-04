@@ -10,6 +10,17 @@ export type App = {
   createdAt: string;
 };
 
+export type AppRevision = {
+  hash: string;
+  subject: string;
+  timestamp: number; // unix seconds
+};
+
+export type AppRevisions = {
+  current: string;
+  revisions: AppRevision[];
+};
+
 export type ControlAction = "start" | "stop" | "restart" | "update";
 
 // Container status codes mirror command.ContainerStatusCode on the backend.
@@ -48,6 +59,10 @@ export type AppsContextValue = {
   }) => Promise<void>;
   // getPublicKey returns the server's ECIES public key for encrypting secrets.
   getPublicKey: () => Promise<string>;
+  // getRevisions fetches the app's git history from the agent.
+  getRevisions: (appId: string) => Promise<AppRevisions>;
+  // rollback restores the given commit as a new revision and redeploys.
+  rollback: (appId: string, hash: string) => Promise<void>;
   // getApp fetches an app's config + files + variables from the agent (for
   // editing). Secret values are returned masked by the agent.
   getApp: (appId: string) => Promise<AppDetailPayload>;

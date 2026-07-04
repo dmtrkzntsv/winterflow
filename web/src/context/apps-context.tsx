@@ -16,6 +16,7 @@ import {
   AppsContext,
   type App,
   type AppDetailPayload,
+  type AppRevisions,
   type ControlAction,
 } from "./apps-context-base";
 
@@ -284,6 +285,42 @@ export function AppsProvider({ children }: { children: ReactNode }) {
     [activeServerId, waitFor],
   );
 
+  // getRevisions fetches the app's git history (app.revisions over SSE).
+  const getRevisions = useCallback(
+    async (appId: string): Promise<AppRevisions> => {
+      if (!activeServerId) throw new Error("No active server");
+      const res = await fetch(
+        `${base}/api/v1/app/get-revisions?server_id=${encodeURIComponent(
+          activeServerId,
+        )}&app_id=${encodeURIComponent(appId)}`,
+        { credentials: "include" },
+      );
+      if (!res.ok) throw new Error(`Failed to fetch revisions: ${res.status}`);
+      const accepted = (await res.json()) as AcceptedResponse;
+      const ref = accepted.data?.request_id;
+      if (!ref) throw new Error("No request id");
+      const result = await waitFor(ref);
+      if (result.status && result.status !== 0) {
+        throw new Error(result.error || "Failed to fetch revisions");
+      }
+      const payload = result.payload as
+        | { current?: string; revisions?: AppRevisions["revisions"] | null }
+        | undefined;
+      return {
+        current: payload?.current ?? "",
+        revisions: payload?.revisions ?? [],
+      };
+    },
+    [activeServerId, waitFor],
+  );
+
+  // rollback restores a previous commit as a new revision and redeploys.
+  const rollback = useCallback(
+    (appId: string, hash: string) =>
+      dispatchAndWait("rollback-app", { app_id: appId, hash }),
+    [dispatchAndWait],
+  );
+
   // createApp dispatches app.save with the full payload and awaits its result.
   const createApp = useCallback(
     async (body: {
@@ -315,6 +352,8 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       createApp,
       getPublicKey,
       getApp,
+      getRevisions,
+      rollback,
     }),
     [
       apps,
@@ -328,6 +367,8 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       createApp,
       getPublicKey,
       getApp,
+      getRevisions,
+      rollback,
     ],
   );
 

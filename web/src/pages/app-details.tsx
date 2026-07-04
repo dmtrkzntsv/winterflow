@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   ArrowUpCircle,
+  History,
   Play,
   RotateCw,
   Square,
@@ -14,6 +15,8 @@ import { useAppBreadcrumbs } from "@/layouts/use-app-layout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
+import { Spinner } from "@/components/ui/spinner";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -35,11 +38,11 @@ import { useApps } from "@/context/use-apps";
 import { useNotifications } from "@/context/use-notifications";
 import { useServers } from "@/context/use-servers";
 import { apiBaseUrl } from "@/config";
-import type { ControlAction } from "@/context/apps-context-base";
+import type { AppRevisions, ControlAction } from "@/context/apps-context-base";
 
 const base = apiBaseUrl.endsWith("/") ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
 
-const TABS = ["logs", "editor", "settings"] as const;
+const TABS = ["logs", "editor", "history", "settings"] as const;
 
 export default function AppDetailsPage() {
   const { appId } = useParams();
@@ -156,6 +159,7 @@ export default function AppDetailsPage() {
         <TabsList>
           <TabsTrigger value="logs">Logs</TabsTrigger>
           <TabsTrigger value="editor">Editor</TabsTrigger>
+          <TabsTrigger value="history">History</TabsTrigger>
           <TabsTrigger value="settings">Settings</TabsTrigger>
         </TabsList>
         <TabsContent value="logs">
@@ -163,6 +167,9 @@ export default function AppDetailsPage() {
         </TabsContent>
         <TabsContent value="editor">
           <AppEditorPanel appId={app.id} />
+        </TabsContent>
+        <TabsContent value="history">
+          <HistoryTab appId={app.id} />
         </TabsContent>
         <TabsContent value="settings">
           <SettingsTab
@@ -227,6 +234,118 @@ function LogsTab({ appId }: { appId: string }) {
       onTailChange={setTail}
       onRefresh={() => void fetchLogs()}
     />
+  );
+}
+
+function HistoryTab({ appId }: { appId: string }) {
+  const { getRevisions, rollback } = useApps();
+  const [data, setData] = useState<AppRevisions | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      setData(await getRevisions(appId));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load history");
+    } finally {
+      setLoading(false);
+    }
+  }, [appId, getRevisions]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const doRollback = async (hash: string) => {
+    setBusy(true);
+    try {
+      await rollback(appId, hash);
+      toast.success("Rolled back and redeployed");
+      await load();
+    } catch (e) {
+      toast.error("Rollback failed", {
+        description: e instanceof Error ? e.message : undefined,
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader className="flex-row items-center justify-between space-y-0">
+        <CardTitle>History</CardTitle>
+        <Button size="sm" variant="outline" onClick={() => void load()} disabled={loading}>
+          Refresh
+        </Button>
+      </CardHeader>
+      <CardContent>
+        {loading ? (
+          <div className="flex h-40 items-center justify-center">
+            <Spinner />
+          </div>
+        ) : error ? (
+          <p className="text-sm text-destructive">{error}</p>
+        ) : !data || data.revisions.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No history yet.</p>
+        ) : (
+          <div className="divide-y">
+            {data.revisions.map((rev) => {
+              const isCurrent = rev.hash === data.current;
+              return (
+                <div key={rev.hash} className="flex items-center gap-3 py-2.5">
+                  <code className="shrink-0 rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
+                    {rev.hash.slice(0, 8)}
+                  </code>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm">{rev.subject}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {new Date(rev.timestamp * 1000).toLocaleString()}
+                    </div>
+                  </div>
+                  {isCurrent ? (
+                    <Badge variant="secondary" className="shrink-0">
+                      Current
+                    </Badge>
+                  ) : (
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button size="sm" variant="outline" disabled={busy}>
+                          <History className="size-4" /> Rollback
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>
+                            Roll back to {rev.hash.slice(0, 8)}?
+                          </AlertDialogTitle>
+                          <AlertDialogDescription>
+                            The app's files and variables are restored to this
+                            revision as a new history entry, and the app is
+                            redeployed. Nothing is lost — you can roll forward
+                            again.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancel</AlertDialogCancel>
+                          <AlertDialogAction onClick={() => void doRollback(rev.hash)}>
+                            Rollback
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

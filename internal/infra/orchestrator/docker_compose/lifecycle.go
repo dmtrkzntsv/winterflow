@@ -48,10 +48,16 @@ func (r *Repository) RestartApp(ctx context.Context, appID string) error {
 	return r.composeRestart(ctx, appID)
 }
 
-// UpdateApp pulls the latest images and recreates the app's containers.
+// UpdateApp refreshes a git-sourced app's upstream, then pulls the latest
+// images and recreates the app's containers.
 func (r *Repository) UpdateApp(ctx context.Context, appID string) error {
 	if !r.appExists(appID) {
 		return fmt.Errorf("app %s not found", appID)
+	}
+	if r.appSourceSpec(r.appDataDir(appID)) != nil {
+		if _, _, err := r.refreshSourceWithoutDeploy(appID); err != nil {
+			return fmt.Errorf("refresh source: %w", err)
+		}
 	}
 	if err := r.composePull(ctx, appID); err != nil {
 		return fmt.Errorf("docker compose pull: %w", err)
@@ -131,6 +137,22 @@ func (r *Repository) GetApp(ctx context.Context, appID string) (command.GetAppRe
 			continue
 		}
 		payload.Files = append(payload.Files, command.ContentItem{Name: f, Content: content})
+	}
+
+	// Git-sourced app: echo the source config with the token masked, so the
+	// editor can redisplay it.
+	if spec := sourceFromConfig(func() map[string]any { c, _, _ := r.readAppConfig(dir); return c }()); spec != nil {
+		src := &command.SourcePayload{
+			RepoURL:     spec.RepoURL,
+			Branch:      spec.Branch,
+			ComposePath: spec.ComposePath,
+			AutoUpdate:  spec.AutoUpdate,
+			PollSeconds: spec.PollSeconds,
+		}
+		if store.SourceToken != "" {
+			src.Token = []byte(command.EncryptedPlaceholder)
+		}
+		payload.Source = src
 	}
 
 	resp.App = payload

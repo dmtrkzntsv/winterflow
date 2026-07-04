@@ -48,6 +48,14 @@ func (r *Repository) saveWithoutDeploy(app command.AppPayload) (string, error) {
 		return "", fmt.Errorf("write app store: %w", err)
 	}
 
+	// Git-sourced app: sync the upstream and pin its head BEFORE committing,
+	// so the lock lands inside this save's commit.
+	if spec := r.appSourceSpec(dir); spec != nil {
+		if _, err := r.ensureSource(context.Background(), dir, *spec, r.sourceTokenPlaintext(dir), ""); err != nil {
+			return "", fmt.Errorf("sync source: %w", err)
+		}
+	}
+
 	name := r.appName(dir, app.AppID)
 	hash, err := gitCommitAll(dir, "save "+name)
 	if err != nil {
@@ -107,6 +115,15 @@ func (r *Repository) rollbackWithoutDeploy(appID, hash string) (string, error) {
 	}
 	if err := gitRestore(dir, hash); err != nil {
 		return "", fmt.Errorf("restore %s: %w", hash, err)
+	}
+	// Git-sourced app: the restored lock names the SHA that was deployed at
+	// that revision — put source/ back exactly there.
+	if spec := r.appSourceSpec(dir); spec != nil {
+		if lock, ok := readSourceLock(dir); ok {
+			if _, err := r.ensureSource(context.Background(), dir, *spec, r.sourceTokenPlaintext(dir), lock.SHA); err != nil {
+				return "", fmt.Errorf("restore source: %w", err)
+			}
+		}
 	}
 	short := hash
 	if len(short) > 8 {
@@ -202,6 +219,42 @@ func (r *Repository) ListApps(ctx context.Context) ([]model.App, error) {
 	return out, nil
 }
 
+// appSourceSpec reads the app's source configuration from the committed
+// config blob; nil for editor-authored apps.
+func (r *Repository) appSourceSpec(dir string) *sourceSpec {
+	cfg, _, err := r.readAppConfig(dir)
+	if err != nil {
+		return nil
+	}
+	return sourceFromConfig(cfg)
+}
+
+// refreshSourceWithoutDeploy fetches the upstream and, when its head moved,
+// re-pins and commits. Returns whether anything changed and the new SHA.
+func (r *Repository) refreshSourceWithoutDeploy(appID string) (bool, string, error) {
+	dir := r.appDataDir(appID)
+	spec := r.appSourceSpec(dir)
+	if spec == nil {
+		return false, "", fmt.Errorf("app %s is not git-sourced", appID)
+	}
+	prev, _ := readSourceLock(dir)
+	sha, err := r.ensureSource(context.Background(), dir, *spec, r.sourceTokenPlaintext(dir), "")
+	if err != nil {
+		return false, "", err
+	}
+	if sha == prev.SHA {
+		return false, sha, nil
+	}
+	short := sha
+	if len(short) > 8 {
+		short = short[:8]
+	}
+	if _, err := gitCommitAll(dir, "update source to "+short); err != nil {
+		return false, "", fmt.Errorf("commit source update: %w", err)
+	}
+	return true, sha, nil
+}
+
 // appName reads the display name from the committed config, falling back to
 // the app id.
 func (r *Repository) appName(dir, appID string) string {
@@ -217,14 +270,40 @@ func (r *Repository) appName(dir, appID string) string {
 
 // --- compose helpers ------------------------------------------------------
 
-// composeArgs builds the common CLI prefix. When materialized secrets exist,
-// both env files are passed explicitly (an explicit --env-file disables the
-// automatic .env load, so .env must be repeated).
+// composeFile resolves the compose file for git-sourced apps: the configured
+// compose_path inside source/, else a repo-root compose file, else "" (auto-
+// detect in the app dir — the winterflow-authored root compose). Non-source
+// apps always auto-detect.
+func (r *Repository) composeFile(dir string, spec *sourceSpec) string {
+	if spec == nil {
+		return ""
+	}
+	if spec.ComposePath != "" {
+		if rel, err := safeRel(spec.ComposePath); err == nil {
+			return filepath.Join(sourceDirRel, rel)
+		}
+		return ""
+	}
+	for _, candidate := range []string{"compose.yml", "compose.yaml", "docker-compose.yml", "docker-compose.yaml"} {
+		if _, err := os.Stat(filepath.Join(dir, sourceDirRel, candidate)); err == nil {
+			return filepath.Join(sourceDirRel, candidate)
+		}
+	}
+	return ""
+}
+
+// composeArgs builds the common CLI prefix. Env files are always explicit:
+// with -f pointing into source/, compose's implicit project directory moves
+// there and would stop auto-loading the app's committed .env.
 func (r *Repository) composeArgs(appID string, verb ...string) []string {
 	args := []string{"compose", "--project-name", projectName(appID)}
 	dir := r.appDataDir(appID)
+	if f := r.composeFile(dir, r.appSourceSpec(dir)); f != "" {
+		args = append(args, "-f", f)
+	}
+	args = append(args, "--env-file", envRel)
 	if _, err := os.Stat(filepath.Join(dir, envSecretsRel)); err == nil {
-		args = append(args, "--env-file", envRel, "--env-file", envSecretsRel)
+		args = append(args, "--env-file", envSecretsRel)
 	}
 	return append(args, verb...)
 }

@@ -106,6 +106,21 @@ func (r *Repository) writeAppStore(dir string, app command.AppPayload) (secretSt
 		next.Variables[name] = string(v.Content)
 	}
 
+	// Git-sourced apps: the repo token is a secret with the same placeholder
+	// semantics; source/ itself must never enter winterflow's history.
+	if app.Source != nil {
+		switch string(app.Source.Token) {
+		case "":
+			// No token (anonymous) — drop any previously stored one only when
+			// the client explicitly sent an empty token with a source config.
+			next.SourceToken = ""
+		case command.EncryptedPlaceholder:
+			next.SourceToken = prev.SourceToken
+		default:
+			next.SourceToken = string(app.Source.Token)
+		}
+	}
+
 	// Files: plain written verbatim; secret ciphertext recorded.
 	type plainFile struct {
 		rel     string
@@ -185,6 +200,9 @@ func (r *Repository) writeAppStore(dir string, app command.AppPayload) (secretSt
 	}
 
 	ignored := []string{envSecretsRel}
+	if app.Source != nil {
+		ignored = append(ignored, sourceDirRel+"/")
+	}
 	for rel := range next.Files {
 		ignored = append(ignored, filepath.ToSlash(rel))
 	}

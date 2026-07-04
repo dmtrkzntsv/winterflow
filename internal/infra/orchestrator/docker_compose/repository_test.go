@@ -310,26 +310,6 @@ func TestControlActionsOnMissingAppFail(t *testing.T) {
 	}
 }
 
-func TestComposeArgsIncludeEnvFilesOnlyWithSecrets(t *testing.T) {
-	r := newTestRepo(t)
-	savedApp(t, r, "app-1", "demo", "x\n")
-
-	args := strings.Join(r.composeArgs("app-1", "up"), " ")
-	if strings.Contains(args, "--env-file") {
-		t.Fatalf("no secrets -> no explicit env files: %s", args)
-	}
-
-	// Materialized secrets flip the flags on.
-	dir := r.appDataDir("app-1")
-	if err := os.WriteFile(filepath.Join(dir, envSecretsRel), []byte("A=1\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	args = strings.Join(r.composeArgs("app-1", "up"), " ")
-	if !strings.Contains(args, "--env-file .env --env-file .env.secrets") {
-		t.Fatalf("secrets present -> both env files expected: %s", args)
-	}
-}
-
 func TestProjectName(t *testing.T) {
 	if projectName("abc") != "wf-abc" {
 		t.Fatal(projectName("abc"))

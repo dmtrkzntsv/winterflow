@@ -118,3 +118,38 @@ func TestDeleteForAppAndReplaceForServer(t *testing.T) {
 		t.Fatalf("after reconcile: %+v", list)
 	}
 }
+
+// TestReplaceForServerDedupsDuplicateDomain covers the reconcile-can't-heal
+// bug: a concurrent-save race can leave two apps on disk both claiming the
+// same domain (BuildConfig in internal/infra/ingress/caddy/config.go accepts
+// this and resolves it by sorted-AppID, first claim wins). Without dedup here
+// the bulk INSERT collides on the domain PK, RunInTx rolls back, and the
+// stale index can never self-heal. ReplaceForServer must mirror the agent's
+// resolution so exactly one row survives and the call still succeeds.
+func TestReplaceForServerDedupsDuplicateDomain(t *testing.T) {
+	repo, apps := newDomainRepo(t)
+	ctx := context.Background()
+	seedApp(t, apps, "app-a", "Alpha")
+	seedApp(t, apps, "app-z", "Zulu")
+
+	// Both apps claim "dup.example.com". Sorted by app ID, "app-a" sorts
+	// first, so it must be the one that keeps the domain.
+	repApps := []model.App{
+		{ID: "app-z", Name: "Zulu", Ingress: ingressOf(model.IngressDomain{Domain: "dup.example.com", UpstreamPort: 90})},
+		{ID: "app-a", Name: "Alpha", Ingress: ingressOf(model.IngressDomain{Domain: "dup.example.com", UpstreamPort: 91})},
+	}
+	if err := repo.ReplaceForServer(ctx, "srv-1", repApps); err != nil {
+		t.Fatalf("ReplaceForServer with duplicate domain returned error: %v", err)
+	}
+
+	list, err := repo.ListForServer(ctx, "srv-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list["app-z"]) != 0 {
+		t.Fatalf("later app in sort order kept the domain: %+v", list)
+	}
+	if len(list["app-a"]) != 1 || list["app-a"][0].Domain != "dup.example.com" {
+		t.Fatalf("sorted-first app did not keep the domain: %+v", list)
+	}
+}

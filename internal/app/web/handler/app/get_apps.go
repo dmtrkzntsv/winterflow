@@ -21,6 +21,11 @@ func (h *Handler) GetApps(w http.ResponseWriter, r *http.Request) {
 	domains, err := h.usecase.ListDomains(r.Context(), serverID)
 	if err != nil {
 		// Chips are decoration; the listing must not fail over the index.
+		// Still worth a log line so a stale/broken app_domains index doesn't
+		// go unnoticed.
+		if h.log != nil {
+			h.log.Warn("GetApps: list domains", "error", err, "server_id", serverID)
+		}
 		domains = nil
 	}
 	type appWithDomains struct {

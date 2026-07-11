@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"sort"
 	"time"
 
 	"winterflow/internal/domain/model"
@@ -103,10 +104,30 @@ func (r *DbAppDomainRepository) DeleteForApp(ctx context.Context, appID string) 
 	return err
 }
 
+// ReplaceForServer rebuilds the whole server's index from the agent's
+// reported apps (apps.list reconcile). The `domain` column is a PK, so two
+// apps claiming the same domain would collide on INSERT and roll back the
+// whole reconcile, leaving the table stale forever with no way to self-heal.
+// The agent can legitimately reach that state for a moment (BuildConfig in
+// internal/infra/ingress/caddy/config.go accepts a concurrent-save race and
+// resolves it by processing apps in sorted-AppID order, first claim wins).
+// Dedup here the same way so the DB index always agrees with what Caddy is
+// actually serving, and the INSERT never collides.
 func (r *DbAppDomainRepository) ReplaceForServer(ctx context.Context, serverID string, apps []model.App) error {
+	sorted := make([]model.App, len(apps))
+	copy(sorted, apps)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].ID < sorted[j].ID })
+
 	var rows []models.AppDomain
-	for _, a := range apps {
-		rows = append(rows, rowsFor(a.ID, serverID, a.Ingress)...)
+	claimed := map[string]bool{}
+	for _, a := range sorted {
+		for _, row := range rowsFor(a.ID, serverID, a.Ingress) {
+			if claimed[row.Domain] {
+				continue
+			}
+			claimed[row.Domain] = true
+			rows = append(rows, row)
+		}
 	}
 	return r.db.GetDB().RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		if _, err := tx.NewDelete().Model((*models.AppDomain)(nil)).Where("server_id = ?", serverID).Exec(ctx); err != nil {

@@ -10,6 +10,7 @@ import (
 type Handler struct {
 	usecase useapp.UseCase
 	status  *status.Cache
+	log     *logger.Logger
 }
 
 type Deps struct {
@@ -27,5 +28,5 @@ func NewHandler(d *Deps) *Handler {
 		AppDomainRepository: d.AppDomainRepository,
 		Log:                 d.Logger,
 	})
-	return &Handler{usecase: *uc, status: d.StatusCache}
+	return &Handler{usecase: *uc, status: d.StatusCache, log: d.Logger}
 }

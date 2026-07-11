@@ -276,6 +276,7 @@ func (uc *UseCase) SaveApp(ctx context.Context, userID, serverID string, app mod
 		if uc.domains != nil {
 			claims, err := uc.domains.FindClaims(ctx, ing.DomainNames(), app.ID)
 			if err != nil {
+				uc.log.Error("SaveApp: find domain claims", "error", err, "app_id", app.ID)
 				return "", err
 			}
 			if len(claims) > 0 {

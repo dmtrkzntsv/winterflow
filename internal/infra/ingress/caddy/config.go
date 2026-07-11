@@ -150,7 +150,6 @@ func BuildConfig(apps []AppIngress, opts Options) ([]byte, []string, error) {
 	httpsRoutes := []route{}
 	httpRoutes := []route{}
 	var sslSubjects []string
-	var skip []string
 
 	for _, a := range sorted {
 		if err := a.Ingress.Validate(); err != nil {
@@ -202,7 +201,6 @@ func BuildConfig(apps []AppIngress, opts Options) ([]byte, []string, error) {
 				sslSubjects = append(sslSubjects, d.Domain)
 			} else {
 				httpRoutes = append(httpRoutes, rt)
-				skip = append(skip, d.Domain)
 			}
 		}
 		for _, r := range a.Ingress.Redirects {
@@ -218,7 +216,6 @@ func BuildConfig(apps []AppIngress, opts Options) ([]byte, []string, error) {
 				sslSubjects = append(sslSubjects, r.Domain)
 			} else {
 				httpRoutes = append(httpRoutes, rt)
-				skip = append(skip, r.Domain)
 			}
 		}
 	}
@@ -241,7 +238,6 @@ func BuildConfig(apps []AppIngress, opts Options) ([]byte, []string, error) {
 			Servers:   map[string]*httpServer{"https": httpsServer, "http": httpServerCfg},
 		},
 	}
-	_ = skip // hosts on the :80-only server need no explicit skip; kept for clarity
 
 	if len(sslSubjects) > 0 {
 		issuer := map[string]any{"module": "acme"}

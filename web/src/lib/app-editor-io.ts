@@ -182,7 +182,9 @@ export function validateEditorState(state: AppEditorState): string | null {
       if (
         (target.protocol !== "http:" && target.protocol !== "https:") ||
         target.host === "" ||
-        !/^https?:\/\/[^/]/i.test(r.to.trim())
+        !/^https?:\/\/[^/]/i.test(r.to.trim()) ||
+        // WHATWG strips embedded tab/newline; Go's url.Parse rejects them.
+        /\s/.test(r.to.trim())
       )
         return `Redirect for "${r.domain}": target must be an absolute http(s) URL.`;
       if (!validRedirectCodes.has(r.code))

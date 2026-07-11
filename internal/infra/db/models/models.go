@@ -156,3 +156,23 @@ type App struct {
 
 	Server *Server `bun:"rel:belongs-to,join:server_id=server_id"`
 }
+
+type AppDomain struct {
+	bun.BaseModel `bun:"table:app_domains"`
+
+	// Domain is the PK: lowercased FQDN. The PK is the global uniqueness
+	// constraint that makes cross-app/cross-server conflicts impossible to
+	// persist, not just impolite.
+	Domain       string         `bun:"domain,pk" json:"domain"`
+	AppID        string         `bun:"app_id,notnull,type:char(36)" json:"app_id"`
+	ServerID     string         `bun:"server_id,notnull,type:char(36)" json:"server_id"`
+	Kind         string         `bun:"kind,notnull" json:"kind"` // "route" | "redirect"
+	SSL          bool           `bun:"ssl,notnull" json:"ssl"`
+	UpstreamPort int            `bun:"upstream_port,notnull,default:0" json:"upstream_port"` // routes only
+	Target       string         `bun:"target,notnull,default:''" json:"target"`              // redirects only
+	Code         int            `bun:"code,notnull,default:0" json:"code"`                   // redirects only
+	UpdatedAt    types.DateTime `bun:"updated_at,notnull" json:"updated_at"`
+
+	App    *App    `bun:"rel:belongs-to,join:app_id=app_id"`
+	Server *Server `bun:"rel:belongs-to,join:server_id=server_id"`
+}

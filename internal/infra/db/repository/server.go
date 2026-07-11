@@ -35,6 +35,7 @@ func (r *DbServerRepository) GetServers(ctx context.Context, userID string) ([]m
 	err := dbi.NewSelect().
 		Model(&servers).
 		Relation("Capabilities").
+		Relation("Features").
 		Where("organization_id IN (?)",
 			dbi.NewSelect().
 				Model((*models.OrganizationUser)(nil)).
@@ -71,6 +72,12 @@ func toDomainServer(s *models.Server) model.Server {
 			Name:  s.Capabilities[i].Name,
 			Value: s.Capabilities[i].Value,
 		})
+	}
+	if len(s.Features) > 0 {
+		srv.Features = make(map[string]bool, len(s.Features))
+		for _, f := range s.Features {
+			srv.Features[f.Name] = f.IsEnabled
+		}
 	}
 	return srv
 }

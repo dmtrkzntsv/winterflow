@@ -92,7 +92,13 @@ diffed with the app like everything else:
 - No duplicate domains within the app.
 
 Strict typing is the injection defense: user strings become typed JSON
-fields in Caddy config structs, never templated text.
+fields in Caddy config structs, never templated text. Caveat: Caddy's
+`static_response` handler expands `{...}` placeholders (e.g. `{env.*}`,
+`{http.request.*}`) in header values, including `Location`, regardless of
+how the value reached it — typed JSON does not protect against that.
+`Validate()` therefore rejects any redirect `to` or `path` containing `{`
+or `}`; the generator's own trusted `{http.request.uri}` literal is
+appended after validation, never taken from user input.
 
 The config blob stays a blob on the wire (`AppPayload.Config`). The API
 parses the `ingress` key for validation/indexing but ships the blob onward

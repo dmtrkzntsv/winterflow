@@ -57,7 +57,10 @@ var validRedirectCodes = map[int]bool{301: true, 302: true, 307: true, 308: true
 
 // Validate enforces the shared rulebook (UI, API, and agent all rely on it).
 // Strict typing here is the injection defense: every value later lands in a
-// typed JSON field of the generated Caddy config.
+// typed JSON field of the generated Caddy config. One caveat: Caddy expands
+// {...} placeholders in static_response header values (including Location)
+// at request time regardless of typed JSON, so redirect targets and paths
+// are additionally checked for braces below.
 func (i *Ingress) Validate() error {
 	seen := map[string]bool{}
 	claim := func(domain, what string) error {
@@ -84,6 +87,20 @@ func (i *Ingress) Validate() error {
 		u, err := url.Parse(r.To)
 		if err != nil || !u.IsAbs() || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 			return fmt.Errorf("redirect for %q: target %q must be an absolute http(s) URL", r.Domain, r.To)
+		}
+		// Caddy's static_response handler runs every header VALUE (including
+		// Location) through its placeholder replacer, expanding things like
+		// {env.SECRET} or {http.request.*} before the response is sent. The
+		// generator itself appends the one trusted literal
+		// {http.request.uri} to domain-level redirects (see redirectRoute in
+		// internal/infra/ingress/caddy/config.go); legitimate user input never
+		// needs braces, so both are rejected outright to close off exfiltration
+		// of process env vars or request internals via a crafted redirect target.
+		if strings.ContainsAny(r.To, "{}") {
+			return fmt.Errorf("redirect for %q: target must not contain { or }", r.Domain)
+		}
+		if strings.ContainsAny(r.Path, "{}") {
+			return fmt.Errorf("redirect for %q: path must not contain { or }", r.Domain)
 		}
 		if !validRedirectCodes[r.Code] {
 			return fmt.Errorf("redirect for %q: code %d not one of 301, 302, 307, 308", r.Domain, r.Code)

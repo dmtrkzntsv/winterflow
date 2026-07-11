@@ -187,6 +187,15 @@ export function validateEditorState(state: AppEditorState): string | null {
         /\s/.test(r.to.trim())
       )
         return `Redirect for "${r.domain}": target must be an absolute http(s) URL.`;
+      // Advisory mirror of Go's brace check (internal/domain/model/ingress.go
+      // Validate()): Caddy expands {env.*}/{http.request.*} placeholders in
+      // the Location header at request time, so braces could leak secrets to
+      // an attacker-controlled redirect target. The Go check is the actual
+      // security boundary; this just gives faster feedback in the editor.
+      if (/[{}]/.test(r.to))
+        return `Redirect for "${r.domain}": target must not contain { or }.`;
+      if (/[{}]/.test(r.path))
+        return `Redirect for "${r.domain}": path must not contain { or }.`;
       if (!validRedirectCodes.has(r.code))
         return `Redirect for "${r.domain}": code must be one of 301, 302, 307, 308.`;
       if (r.path === "") {

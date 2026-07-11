@@ -47,6 +47,12 @@ func TestValidateRejects(t *testing.T) {
 		{"bad code", func(i *Ingress) { i.Redirects[0].Code = 300 }, "code"},
 		{"path rule unknown domain", func(i *Ingress) { i.Redirects[1].Domain = "other.example.com" }, "path rule"},
 		{"path without leading slash", func(i *Ingress) { i.Redirects[1].Path = "old/*" }, "path"},
+		{"placeholder injection in redirect target", func(i *Ingress) {
+			i.Redirects[0].To = "https://attacker.com/x/{env.JWT_SECRET}"
+		}, "must not contain"},
+		{"placeholder injection in path rule", func(i *Ingress) {
+			i.Redirects[1].Path = "/old/{http.request.header.Authorization}"
+		}, "must not contain"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -12,6 +12,7 @@ import { ImageTagPicker } from "@/components/image-tag-picker";
 import { IconPicker } from "@/components/icon-picker";
 import { IngressEditor } from "@/components/ingress-editor";
 import { useState } from "react";
+import { useServers } from "@/context/use-servers";
 import {
   localId,
   type AppEditorState,
@@ -29,6 +30,7 @@ type Props = {
 // the page; the editor only manages plaintext entry + masking.
 export function AppEditor({ state, onChange }: Props) {
   const [revealed, setRevealed] = useState<Record<string, boolean>>({});
+  const { activeServer } = useServers();
 
   const setConfig = (patch: Partial<AppEditorState["config"]>) =>
     onChange({ ...state, config: { ...state.config, ...patch } });
@@ -375,11 +377,25 @@ export function AppEditor({ state, onChange }: Props) {
         </CardContent>
       </Card>
 
-      <IngressEditor
-        state={state}
-        onChange={onChange}
-        appId={state.config.id || undefined}
-      />
+      {activeServer?.features?.ingress ? (
+        <IngressEditor
+          state={state}
+          onChange={onChange}
+          appId={state.config.id || undefined}
+        />
+      ) : (
+        <Card>
+          <CardHeader>
+            <CardTitle>Domains & Routing</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground">
+              This server&apos;s agent doesn&apos;t support ingress. Update the
+              agent to configure domains.
+            </p>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

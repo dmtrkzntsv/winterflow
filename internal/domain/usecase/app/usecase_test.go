@@ -200,6 +200,18 @@ func TestRefreshAppsSyncsDomains(t *testing.T) {
 	}
 }
 
+func TestListDomainsNilRepo(t *testing.T) {
+	uc := newTestUseCase(&captureDispatcher{})
+
+	domains, err := uc.ListDomains(context.Background(), "srv-1")
+	if err != nil {
+		t.Fatalf("ListDomains: %v", err)
+	}
+	if domains != nil {
+		t.Fatalf("domains = %v, want nil", domains)
+	}
+}
+
 func TestCheckDomain(t *testing.T) {
 	repo := &fakeDomainRepo{claims: []model.DomainClaim{{Domain: "x.example.com", AppName: "Other"}}}
 	uc := newTestUseCaseWithDomains(&captureDispatcher{}, repo)

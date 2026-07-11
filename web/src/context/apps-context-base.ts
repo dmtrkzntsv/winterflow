@@ -1,5 +1,11 @@
 import { createContext } from "react";
 
+export type AppDomain = {
+  domain: string;
+  ssl: boolean;
+  kind: "route" | "redirect";
+};
+
 export type App = {
   id: string;
   serverId: string;
@@ -8,6 +14,7 @@ export type App = {
   icon: string;
   color: string;
   createdAt: string;
+  domains?: AppDomain[];
 };
 
 export type AppRevision = {

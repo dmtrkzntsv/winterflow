@@ -41,6 +41,15 @@ func (uc *UseCase) GetApps(ctx context.Context, serverID string) ([]model.App, e
 	return uc.repo.GetApps(ctx, serverID)
 }
 
+// ListDomains returns the server's indexed domains grouped by app id, for
+// decorating the DB-backed app listing without an agent round-trip.
+func (uc *UseCase) ListDomains(ctx context.Context, serverID string) (map[string][]model.AppDomainInfo, error) {
+	if uc.domains == nil {
+		return nil, nil
+	}
+	return uc.domains.ListForServer(ctx, serverID)
+}
+
 // RefreshApps dispatches apps.list to the server's agent (its filesystem is the
 // source of truth) and returns the request id. On the agent's result the DB
 // cache is reconciled (SyncApps: upsert reported, delete missing) and the

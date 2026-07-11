@@ -114,6 +114,20 @@ export function AppGrid() {
                 <span className="w-full truncate text-center text-sm font-medium">
                   {app.name}
                 </span>
+                {app.domains
+                  ?.filter((d) => d.kind === "route")
+                  .map((d) => (
+                    <a
+                      key={d.domain}
+                      href={`${d.ssl ? "https" : "http"}://${d.domain}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className="w-full truncate text-center text-xs text-muted-foreground hover:text-foreground hover:underline"
+                    >
+                      {d.domain}
+                    </a>
+                  ))}
               </div>
               {unknown ? (
                 <div className="mt-auto flex items-center justify-center">

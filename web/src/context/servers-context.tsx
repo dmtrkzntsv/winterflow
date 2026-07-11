@@ -24,6 +24,7 @@ type ServerResponse = {
   created_at: string;
   last_seen_at: string | null;
   capabilities?: { name: string; value: string }[] | null;
+  features?: Record<string, boolean> | null;
 };
 
 type GetServersResponse = {
@@ -49,6 +50,7 @@ const toServer = (s: ServerResponse): Server => ({
   capabilities: Object.fromEntries(
     (s.capabilities ?? []).map((c) => [c.name, c.value]),
   ),
+  features: s.features ?? undefined,
 });
 
 export function ServersProvider({ children }: { children: ReactNode }) {

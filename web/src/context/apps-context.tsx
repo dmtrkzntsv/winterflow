@@ -20,6 +20,12 @@ import {
   type ControlAction,
 } from "./apps-context-base";
 
+type AppDomainResponse = {
+  domain: string;
+  ssl: boolean;
+  kind: "route" | "redirect";
+};
+
 type AppResponse = {
   id: string;
   server_id: string;
@@ -28,6 +34,7 @@ type AppResponse = {
   icon: string;
   color: string;
   created_at: string;
+  domains?: AppDomainResponse[] | null;
 };
 
 type GetAppsResponse = {
@@ -58,6 +65,7 @@ const toApp = (a: AppResponse): App => ({
   icon: a.icon,
   color: a.color,
   createdAt: a.created_at,
+  domains: a.domains ?? undefined,
 });
 
 export function AppsProvider({ children }: { children: ReactNode }) {

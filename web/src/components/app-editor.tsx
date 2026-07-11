@@ -10,6 +10,7 @@ import { PasswordInput } from "@/components/ui/password-input";
 import { CodeEditor } from "@/components/code-editor";
 import { ImageTagPicker } from "@/components/image-tag-picker";
 import { IconPicker } from "@/components/icon-picker";
+import { IngressEditor } from "@/components/ingress-editor";
 import { useState } from "react";
 import {
   localId,
@@ -373,6 +374,12 @@ export function AppEditor({ state, onChange }: Props) {
           })}
         </CardContent>
       </Card>
+
+      <IngressEditor
+        state={state}
+        onChange={onChange}
+        appId={state.config.id || undefined}
+      />
     </div>
   );
 }

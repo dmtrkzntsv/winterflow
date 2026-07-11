@@ -114,19 +114,27 @@ export function AppGrid() {
                 <span className="w-full truncate text-center text-sm font-medium">
                   {app.name}
                 </span>
+                {/* Buttons, not anchors: the tile is already a Link (<a>), and
+                    nesting an <a> inside it is invalid interactive content. */}
                 {app.domains
                   ?.filter((d) => d.kind === "route")
                   .map((d) => (
-                    <a
+                    <button
                       key={d.domain}
-                      href={`${d.ssl ? "https" : "http"}://${d.domain}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      onClick={(e) => e.stopPropagation()}
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        e.preventDefault();
+                        window.open(
+                          `${d.ssl ? "https" : "http"}://${d.domain}`,
+                          "_blank",
+                          "noopener,noreferrer",
+                        );
+                      }}
                       className="w-full truncate text-center text-xs text-muted-foreground hover:text-foreground hover:underline"
                     >
                       {d.domain}
-                    </a>
+                    </button>
                   ))}
               </div>
               {unknown ? (

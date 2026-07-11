@@ -30,7 +30,7 @@ type Props = {
 // the page; the editor only manages plaintext entry + masking.
 export function AppEditor({ state, onChange }: Props) {
   const [revealed, setRevealed] = useState<Record<string, boolean>>({});
-  const { activeServer } = useServers();
+  const { activeServer, loading: serversLoading } = useServers();
 
   const setConfig = (patch: Partial<AppEditorState["config"]>) =>
     onChange({ ...state, config: { ...state.config, ...patch } });
@@ -377,7 +377,10 @@ export function AppEditor({ state, onChange }: Props) {
         </CardContent>
       </Card>
 
-      {activeServer?.features?.ingress ? (
+      {/* activeServer is null while get-servers is in flight; render neither
+          card until it resolves so supported servers don't flash the
+          unsupported fallback. */}
+      {serversLoading ? null : activeServer?.features?.ingress ? (
         <IngressEditor
           state={state}
           onChange={onChange}

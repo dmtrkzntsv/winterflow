@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	webutil "winterflow/internal/app/web/util"
 	"winterflow/internal/domain/command"
@@ -98,6 +99,10 @@ func (h *Handler) SaveApp(w http.ResponseWriter, r *http.Request) {
 
 	requestID, err := h.usecase.SaveApp(r.Context(), userID, req.ServerID, app, payload, req.Draft)
 	if err != nil {
+		if errors.Is(err, model.ErrIngressInvalid) || errors.Is(err, model.ErrDomainTaken) {
+			webutil.Error(w, err.Error(), nil)
+			return
+		}
 		webutil.Error(w, "failed to save app", nil)
 		return
 	}

@@ -24,6 +24,7 @@ func wireCore(ctx context.Context, b bus.Bus, dbconn *db.BunConnection, cfg *con
 	userRepo := repository.NewDbUserRepository(dbconn, log)
 	serverRepo := repository.NewDbServerRepository(dbconn, log)
 	appRepo := repository.NewDbAppRepository(dbconn, log)
+	appDomainRepo := repository.NewDbAppDomainRepository(dbconn, log)
 
 	nm := notificationsvc.NewNotificationManager()
 	dispatcher := dispatch.NewManager(b, nm, cfg, log)
@@ -38,6 +39,7 @@ func wireCore(ctx context.Context, b bus.Bus, dbconn *db.BunConnection, cfg *con
 		UserService:         userRepo,
 		ServerRepository:    serverRepo,
 		AppRepository:       appRepo,
+		AppDomainRepository: appDomainRepo,
 		CommandDispatcher:   dispatcher,
 		NotificationManager: nm,
 		StatusCache:         statusCache,

@@ -52,10 +52,11 @@ func (s *Server) registerRoutes() {
 	s.Router.With(authMW).Get("/api/v1/sse", notificationAPI.Stream)
 
 	appsAPI := happ.NewHandler(&happ.Deps{
-		Logger:            s.Logger,
-		CommandDispatcher: s.Deps.CommandDispatcher,
-		AppRepository:     s.Deps.AppRepository,
-		StatusCache:       s.Deps.StatusCache,
+		Logger:              s.Logger,
+		CommandDispatcher:   s.Deps.CommandDispatcher,
+		AppRepository:       s.Deps.AppRepository,
+		AppDomainRepository: s.Deps.AppDomainRepository,
+		StatusCache:         s.Deps.StatusCache,
 	})
 	s.Router.With(authMW, happ.GetAppsValidationMiddleware).Get("/api/v1/app/get-apps", appsAPI.GetApps)
 	s.Router.With(authMW, happ.GetAppsValidationMiddleware).Get("/api/v1/app/get-apps-status", appsAPI.GetAppsStatus)

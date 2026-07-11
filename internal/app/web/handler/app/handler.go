@@ -13,17 +13,19 @@ type Handler struct {
 }
 
 type Deps struct {
-	Logger            *logger.Logger
-	CommandDispatcher port.CommandDispatcher
-	AppRepository     port.AppRepository
-	StatusCache       *status.Cache
+	Logger              *logger.Logger
+	CommandDispatcher   port.CommandDispatcher
+	AppRepository       port.AppRepository
+	AppDomainRepository port.AppDomainRepository
+	StatusCache         *status.Cache
 }
 
 func NewHandler(d *Deps) *Handler {
 	uc := useapp.NewUseCase(&useapp.Deps{
-		CommandDispatcher: d.CommandDispatcher,
-		AppRepository:     d.AppRepository,
-		Log:               d.Logger,
+		CommandDispatcher:   d.CommandDispatcher,
+		AppRepository:       d.AppRepository,
+		AppDomainRepository: d.AppDomainRepository,
+		Log:                 d.Logger,
 	})
 	return &Handler{usecase: *uc, status: d.StatusCache}
 }

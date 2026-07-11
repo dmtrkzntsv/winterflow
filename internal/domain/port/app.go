@@ -39,3 +39,15 @@ type AppDomainRepository interface {
 	// ListForServer returns display rows grouped by app id.
 	ListForServer(ctx context.Context, serverID string) (map[string][]model.AppDomainInfo, error)
 }
+
+// IngressManager owns the embedded reverse proxy. Implementations must be
+// safe for concurrent use and must never let an ingress failure propagate as
+// a command failure.
+type IngressManager interface {
+	// Reload rebuilds the merged config from the apps on disk and hot-swaps
+	// it. Returned strings are warnings for the triggering command's
+	// response; a load failure keeps the previous config serving.
+	Reload(ctx context.Context) []string
+	// Enabled reports whether the proxy bound its ports at startup.
+	Enabled() bool
+}

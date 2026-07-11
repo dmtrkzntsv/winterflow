@@ -344,3 +344,45 @@ func TestIsRegistrationEnabled(t *testing.T) {
 		}
 	}
 }
+
+func TestGetIngressPorts(t *testing.T) {
+	c := NewServerConfig("standalone")
+	tests := []struct {
+		name string
+		env  string
+		get  func() int
+		val  string // "" means unset
+		want int
+	}{
+		{"http unset defaults to 80", "INGRESS_HTTP_PORT", c.GetIngressHTTPPort, "", 80},
+		{"http override", "INGRESS_HTTP_PORT", c.GetIngressHTTPPort, "8080", 8080},
+		{"http malformed falls back to 80", "INGRESS_HTTP_PORT", c.GetIngressHTTPPort, "junk", 80},
+		{"https unset defaults to 443", "INGRESS_HTTPS_PORT", c.GetIngressHTTPSPort, "", 443},
+		{"https override", "INGRESS_HTTPS_PORT", c.GetIngressHTTPSPort, "8443", 8443},
+		{"https malformed falls back to 443", "INGRESS_HTTPS_PORT", c.GetIngressHTTPSPort, "junk", 443},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.val == "" {
+				unsetenv(t, tt.env)
+			} else {
+				t.Setenv(tt.env, tt.val)
+			}
+			if got := tt.get(); got != tt.want {
+				t.Errorf("%s=%q: got %d, want %d", tt.env, tt.val, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestGetIngressACMEEmail(t *testing.T) {
+	c := NewServerConfig("standalone")
+	unsetenv(t, "INGRESS_ACME_EMAIL")
+	if got := c.GetIngressACMEEmail(); got != "" {
+		t.Fatalf("unset GetIngressACMEEmail() = %q, want empty", got)
+	}
+	t.Setenv("INGRESS_ACME_EMAIL", "ops@example.com")
+	if got := c.GetIngressACMEEmail(); got != "ops@example.com" {
+		t.Fatalf("GetIngressACMEEmail() = %q, want ops@example.com", got)
+	}
+}

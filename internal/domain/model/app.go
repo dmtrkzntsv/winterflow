@@ -16,5 +16,9 @@ type App struct {
 	Name       string    `json:"name"`
 	Icon       string    `json:"icon"`
 	Color      string    `json:"color"`
-	CreatedAt  time.Time `json:"created_at"`
+	// Ingress is parsed straight out of the committed config.json when the
+	// agent lists apps (ListApps unmarshals the raw blob into App), letting
+	// the API reconcile the app_domains index without a second command.
+	Ingress   *Ingress  `json:"ingress,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }

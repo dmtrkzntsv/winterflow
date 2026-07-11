@@ -91,8 +91,8 @@ export function stateFromDetail(
   const cfgIngress = (cfg as { ingress?: { domains?: unknown[]; redirects?: unknown[] } }).ingress;
   const ingress = cfgIngress
     ? {
-        domains: (cfgIngress.domains ?? []).map((d) => {
-          const v = d as { domain?: string; upstream_port?: number; ssl?: boolean };
+        domains: (cfgIngress.domains ?? []).map((dom) => {
+          const v = dom as { domain?: string; upstream_port?: number; ssl?: boolean };
           return {
             id: localId("dom"),
             domain: v.domain ?? "",
@@ -152,12 +152,16 @@ export function validateEditorState(state: AppEditorState): string | null {
   for (const v of state.config.variables) {
     if (!v.name.trim()) return "Every variable needs a name.";
   }
+  // Mirrors Go's Ingress.Validate() (internal/domain/model/ingress.go): strict
+  // lowercase RFC-1123 hostname, capped at 253 chars total.
   const hostnameRe = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$/;
+  const validHostname = (h: string) => h.length <= 253 && hostnameRe.test(h);
+  const validRedirectCodes = new Set([301, 302, 307, 308]);
   const ing = state.config.ingress;
   if (ing) {
     const seen = new Set<string>();
     for (const d of ing.domains) {
-      if (!hostnameRe.test(d.domain)) return `"${d.domain}" is not a valid lowercase hostname.`;
+      if (!validHostname(d.domain)) return `"${d.domain}" is not a valid lowercase hostname.`;
       if (seen.has(d.domain)) return `Duplicate domain "${d.domain}".`;
       seen.add(d.domain);
       const port = Number(d.upstream_port);
@@ -171,10 +175,20 @@ export function validateEditorState(state: AppEditorState): string | null {
       } catch {
         return `Redirect for "${r.domain}": target must be an absolute http(s) URL.`;
       }
-      if (target.protocol !== "http:" && target.protocol !== "https:")
+      // Go's net/url leaves Host empty for forms like "http:/foo" or
+      // "http:///foo" and Validate() rejects them, but WHATWG new URL()
+      // normalizes them to a non-empty host — so also require the raw value
+      // to be scheme://non-slash to match what the server will accept.
+      if (
+        (target.protocol !== "http:" && target.protocol !== "https:") ||
+        target.host === "" ||
+        !/^https?:\/\/[^/]/i.test(r.to.trim())
+      )
         return `Redirect for "${r.domain}": target must be an absolute http(s) URL.`;
+      if (!validRedirectCodes.has(r.code))
+        return `Redirect for "${r.domain}": code must be one of 301, 302, 307, 308.`;
       if (r.path === "") {
-        if (!hostnameRe.test(r.domain)) return `"${r.domain}" is not a valid lowercase hostname.`;
+        if (!validHostname(r.domain)) return `"${r.domain}" is not a valid lowercase hostname.`;
         if (seen.has(r.domain)) return `Duplicate domain "${r.domain}".`;
         seen.add(r.domain);
       } else {

@@ -199,3 +199,17 @@ func TestRefreshAppsSyncsDomains(t *testing.T) {
 		t.Fatalf("ReplaceForServer not called (synced=%q)", repo.synced)
 	}
 }
+
+func TestCheckDomain(t *testing.T) {
+	repo := &fakeDomainRepo{claims: []model.DomainClaim{{Domain: "x.example.com", AppName: "Other"}}}
+	uc := newTestUseCaseWithDomains(&captureDispatcher{}, repo)
+
+	claims, err := uc.CheckDomain(context.Background(), "x.example.com", "app-1")
+	if err != nil || len(claims) != 1 {
+		t.Fatalf("CheckDomain = %v, %v", claims, err)
+	}
+
+	if _, err := uc.CheckDomain(context.Background(), "NOT A HOST", ""); !errors.Is(err, model.ErrIngressInvalid) {
+		t.Fatalf("err = %v, want ErrIngressInvalid", err)
+	}
+}

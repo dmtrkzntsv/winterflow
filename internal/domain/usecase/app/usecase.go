@@ -217,6 +217,19 @@ func (uc *UseCase) GetLogs(ctx context.Context, userID, serverID, appID string, 
 	})
 }
 
+// CheckDomain reports which app (if any) already claims a hostname — the
+// live-typing availability check behind GET /api/v1/domains/check.
+func (uc *UseCase) CheckDomain(ctx context.Context, domain, excludeAppID string) ([]model.DomainClaim, error) {
+	probe := model.Ingress{Domains: []model.IngressDomain{{Domain: domain, UpstreamPort: 1}}}
+	if err := probe.Validate(); err != nil {
+		return nil, fmt.Errorf("%w: %v", model.ErrIngressInvalid, err)
+	}
+	if uc.domains == nil {
+		return nil, nil
+	}
+	return uc.domains.FindClaims(ctx, []string{domain}, excludeAppID)
+}
+
 // SaveApp dispatches an app.save command to the server's agent and returns
 // the request id immediately. This call does not block. It is an upsert:
 // an empty app.ID means create (the API assigns identity), a present one

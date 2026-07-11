@@ -70,6 +70,7 @@ func (s *Server) registerRoutes() {
 	s.Router.With(authMW).Post("/api/v1/app/control-app", appsAPI.ControlApp)
 	s.Router.With(authMW).Post("/api/v1/app/delete-app", appsAPI.DeleteApp)
 	s.Router.With(authMW).Post("/api/v1/app/rename-app", appsAPI.RenameApp)
+	s.Router.With(authMW).Get("/api/v1/domains/check", appsAPI.CheckDomain)
 
 	dockerAPI := hdocker.NewHandler(&hdocker.Deps{
 		Logger:            s.Logger,

@@ -127,7 +127,7 @@ func TestHubAgentRoundTripOverMTLS(t *testing.T) {
 	agent := grpcagent.NewAgent(log, cfg, "agent-e2e")
 	agent.SetCapabilities(map[string]string{"os": "linux", "version": "test"})
 	agent.SetFeatures(map[string]bool{"can_install": true})
-	agent.SetDispatcher(appagent.NewDispatcher(dockercompose.NewRepository(cfg, log), log))
+	agent.SetDispatcher(appagent.NewDispatcher(dockercompose.NewRepository(cfg, log), nil, log))
 
 	if err := agent.Connect(ctx); err != nil {
 		t.Fatal(err)

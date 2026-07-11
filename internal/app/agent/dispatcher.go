@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	"winterflow/internal/domain/command"
+	"winterflow/internal/domain/port"
 	dockercompose "winterflow/internal/infra/orchestrator/docker_compose"
 	"winterflow/internal/infra/transport/codec"
 	"winterflow/internal/infra/transport/grpc/proto"
@@ -20,16 +21,31 @@ import (
 // one registration line in newHandlers plus the orchestrator method.
 type Dispatcher struct {
 	orch     *dockercompose.Repository
+	ingress  port.IngressManager
 	log      *logger.Logger
 	handlers map[command.Type]handlerFunc
 }
 
 type handlerFunc func(ctx context.Context, agentID string, req *proto.RequestEnvelope) *proto.ResponseEnvelope
 
-func NewDispatcher(orch *dockercompose.Repository, log *logger.Logger) *Dispatcher {
-	d := &Dispatcher{orch: orch, log: log}
+func NewDispatcher(orch *dockercompose.Repository, ingress port.IngressManager, log *logger.Logger) *Dispatcher {
+	d := &Dispatcher{orch: orch, ingress: ingress, log: log}
 	d.handlers = d.newHandlers()
 	return d
+}
+
+// reloadIngress rebuilds the proxy config after a mutation. Warnings are
+// returned for responses that carry them (app.save) and logged otherwise. A
+// nil manager (tests, ingress disabled) is a no-op.
+func (d *Dispatcher) reloadIngress(ctx context.Context) []string {
+	if d.ingress == nil {
+		return nil
+	}
+	warnings := d.ingress.Reload(ctx)
+	for _, w := range warnings {
+		d.log.Warn("ingress", "warning", w)
+	}
+	return warnings
 }
 
 // Dispatch decodes the request payload by its command type, runs the matching
@@ -75,7 +91,11 @@ func (d *Dispatcher) newHandlers() map[command.Type]handlerFunc {
 				save = d.orch.SaveAppDraft
 			}
 			hash, err := save(ctx, in.App)
-			return command.SaveAppResponse{AppID: in.App.AppID, Revision: hash}, err
+			resp := command.SaveAppResponse{AppID: in.App.AppID, Revision: hash}
+			if err == nil {
+				resp.Warnings = d.reloadIngress(ctx)
+			}
+			return resp, err
 		}),
 		command.TypeAppsList: handle(d, func(ctx context.Context, _ command.ListAppsRequest) (command.ListAppsResponse, error) {
 			apps, err := d.orch.ListApps(ctx)
@@ -105,10 +125,18 @@ func (d *Dispatcher) newHandlers() map[command.Type]handlerFunc {
 			return command.ControlAppResponse{AppID: in.AppID, Action: in.Action}, err
 		}),
 		command.TypeAppDelete: handle(d, func(ctx context.Context, in command.DeleteAppRequest) (command.DeleteAppResponse, error) {
-			return command.DeleteAppResponse{AppID: in.AppID}, d.orch.DeleteApp(ctx, in.AppID)
+			if err := d.orch.DeleteApp(ctx, in.AppID); err != nil {
+				return command.DeleteAppResponse{AppID: in.AppID}, err
+			}
+			d.reloadIngress(ctx)
+			return command.DeleteAppResponse{AppID: in.AppID}, nil
 		}),
 		command.TypeAppRename: handle(d, func(ctx context.Context, in command.RenameAppRequest) (command.RenameAppResponse, error) {
-			return command.RenameAppResponse{AppID: in.AppID, Name: in.Name}, d.orch.RenameApp(ctx, in.AppID, in.Name)
+			if err := d.orch.RenameApp(ctx, in.AppID, in.Name); err != nil {
+				return command.RenameAppResponse{AppID: in.AppID, Name: in.Name}, err
+			}
+			d.reloadIngress(ctx)
+			return command.RenameAppResponse{AppID: in.AppID, Name: in.Name}, nil
 		}),
 		command.TypeAppLogs: handle(d, func(ctx context.Context, in command.GetLogsRequest) (command.GetLogsResponse, error) {
 			return d.orch.GetLogs(ctx, in)
@@ -124,7 +152,11 @@ func (d *Dispatcher) newHandlers() map[command.Type]handlerFunc {
 		}),
 		command.TypeAppRollback: handle(d, func(ctx context.Context, in command.RollbackAppRequest) (command.RollbackAppResponse, error) {
 			newHead, err := d.orch.Rollback(ctx, in.AppID, in.Hash)
-			return command.RollbackAppResponse{AppID: in.AppID, Revision: newHead}, err
+			if err != nil {
+				return command.RollbackAppResponse{AppID: in.AppID, Revision: newHead}, err
+			}
+			d.reloadIngress(ctx)
+			return command.RollbackAppResponse{AppID: in.AppID, Revision: newHead}, nil
 		}),
 
 		command.TypeRegistryList: handle(d, func(ctx context.Context, _ command.ListRegistriesRequest) (command.ListRegistriesResponse, error) {

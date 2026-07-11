@@ -18,8 +18,18 @@ func newTestDispatcher(t *testing.T) *Dispatcher {
 	t.Setenv("AGENT_DATA_DIR", t.TempDir())
 	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
 	cfg := config.NewServerConfig("standalone")
-	return NewDispatcher(dockercompose.NewRepository(cfg, log), log)
+	return NewDispatcher(dockercompose.NewRepository(cfg, log), nil, log)
 }
+
+// fakeIngress is a minimal port.IngressManager test double: it counts reloads
+// and returns canned warnings, standing in for the real Caddy manager.
+type fakeIngress struct {
+	reloads  int
+	warnings []string
+}
+
+func (f *fakeIngress) Reload(_ context.Context) []string { f.reloads++; return f.warnings }
+func (f *fakeIngress) Enabled() bool                     { return true }
 
 func envelope(typ string, payload []byte) *proto.RequestEnvelope {
 	return &proto.RequestEnvelope{
@@ -149,5 +159,71 @@ func TestDispatchDraftSaveSkipsDeploy(t *testing.T) {
 	var saved command.SaveAppResponse
 	if err := json.Unmarshal(resp.Payload, &saved); err != nil || saved.Revision == "" {
 		t.Fatalf("draft save must return the commit hash: %s (%v)", resp.Payload, err)
+	}
+}
+
+// TestDispatcherReloadsIngressAfterMutations proves reloadIngress fires only
+// on a successful mutation: a good draft save triggers exactly one reload, a
+// failed delete of a nonexistent app triggers none.
+func TestDispatcherReloadsIngressAfterMutations(t *testing.T) {
+	t.Setenv("AGENT_DATA_DIR", t.TempDir())
+	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
+	cfg := config.NewServerConfig("standalone")
+	ing := &fakeIngress{}
+	d := NewDispatcher(dockercompose.NewRepository(cfg, log), ing, log)
+
+	// Draft save never touches docker, so it succeeds cleanly and must reload.
+	body := []byte(`{"draft":true,"app":{"app_id":"a1","config":"e30=","files":[{"name":"compose.yml","content":"bm90IHZhbGlkIHlhbWw="}],"variables":[]}}`)
+	resp := d.Dispatch(context.Background(), envelope(string(command.TypeAppSave), body))
+	if resp.Base.ResponseCode != proto.ResponseCode_RESPONSE_CODE_SUCCESS {
+		t.Fatalf("draft save should succeed: %+v", resp)
+	}
+	if ing.reloads != 1 {
+		t.Fatalf("successful save must reload ingress exactly once, got %d", ing.reloads)
+	}
+
+	// Rolling back an app that was never saved fails at the orchestrator
+	// level (no such app/hash), so no reload should happen.
+	resp = d.Dispatch(context.Background(),
+		envelope(string(command.TypeAppRollback), []byte(`{"app_id":"missing","hash":"deadbeef"}`)))
+	if resp.Base.ResponseCode == proto.ResponseCode_RESPONSE_CODE_SUCCESS {
+		t.Fatalf("rollback of a nonexistent app unexpectedly succeeded: %+v", resp)
+	}
+	if ing.reloads != 1 {
+		t.Fatalf("failed rollback must not reload ingress, got %d reloads", ing.reloads)
+	}
+}
+
+// TestSaveResponseCarriesIngressWarnings proves app.save attaches the ingress
+// manager's warnings to the response payload on a successful save.
+func TestSaveResponseCarriesIngressWarnings(t *testing.T) {
+	t.Setenv("AGENT_DATA_DIR", t.TempDir())
+	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
+	cfg := config.NewServerConfig("standalone")
+	ing := &fakeIngress{warnings: []string{"w1"}}
+	d := NewDispatcher(dockercompose.NewRepository(cfg, log), ing, log)
+
+	body := []byte(`{"draft":true,"app":{"app_id":"a1","config":"e30=","files":[{"name":"compose.yml","content":"bm90IHZhbGlkIHlhbWw="}],"variables":[]}}`)
+	resp := d.Dispatch(context.Background(), envelope(string(command.TypeAppSave), body))
+	if resp.Base.ResponseCode != proto.ResponseCode_RESPONSE_CODE_SUCCESS {
+		t.Fatalf("draft save should succeed: %+v", resp)
+	}
+	var saved command.SaveAppResponse
+	if err := json.Unmarshal(resp.Payload, &saved); err != nil {
+		t.Fatalf("decode save response: %v", err)
+	}
+	if len(saved.Warnings) != 1 || saved.Warnings[0] != "w1" {
+		t.Fatalf("warnings = %v, want [w1]", saved.Warnings)
+	}
+}
+
+// TestDispatcherNilIngress proves a nil ingress manager (feature disabled, or
+// existing tests that don't care about ingress) is a safe no-op.
+func TestDispatcherNilIngress(t *testing.T) {
+	d := newTestDispatcher(t)
+	body := []byte(`{"draft":true,"app":{"app_id":"a1","config":"e30=","files":[{"name":"compose.yml","content":"bm90IHZhbGlkIHlhbWw="}],"variables":[]}}`)
+	resp := d.Dispatch(context.Background(), envelope(string(command.TypeAppSave), body))
+	if resp.Base.ResponseCode != proto.ResponseCode_RESPONSE_CODE_SUCCESS {
+		t.Fatalf("draft save with nil ingress should succeed: %+v", resp)
 	}
 }

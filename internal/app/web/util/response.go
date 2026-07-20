@@ -21,6 +21,19 @@ func Success(w http.ResponseWriter, message string, data interface{}) {
 	})
 }
 
+// Accepted responds 202 for fire-and-forward commands: the request was
+// accepted and its result will arrive asynchronously over SSE, correlated by
+// the request_id in data.
+func Accepted(w http.ResponseWriter, message string, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(APIResponse{
+		Success: true,
+		Message: message,
+		Data:    data,
+	})
+}
+
 func Error(w http.ResponseWriter, message string, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusBadRequest)
@@ -29,8 +42,4 @@ func Error(w http.ResponseWriter, message string, data interface{}) {
 		Message: message,
 		Data:    data,
 	})
-}
-
-func Failure(w http.ResponseWriter) {
-	w.WriteHeader(http.StatusInternalServerError)
 }

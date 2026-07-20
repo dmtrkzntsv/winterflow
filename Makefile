@@ -3,7 +3,7 @@ BIN_DIR := bin
 STANDALONE_BIN := $(BIN_DIR)/standalone
 API_BIN := $(BIN_DIR)/api
 
-.PHONY: build lint standalone api
+.PHONY: build lint standalone api web
 
 build:
 	$(GO) build -o $(STANDALONE_BIN) ./cmd/standalone
@@ -14,6 +14,7 @@ fmt:
 
 lint:
 	$(GO) vet ./...
+	pnpm --dir web run lint
 
 mod:
 	$(GO) mod tidy
@@ -24,6 +25,37 @@ standalone:
 api:
 	$(GO) run ./cmd/api
 
+hub:
+	$(GO) run ./cmd/hub
+
+agent:
+	$(GO) run ./cmd/agent
+
+web:
+	pnpm --dir web dev
+
 sqlc:
 	@echo "Generating SQLC code..."
 	@sqlc generate
+
+grpc:
+	@echo "Installing protoc plugins..."
+	@go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+	@go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+	@echo "Generating gRPC code..."
+	@PATH="$$PATH:$$(go env GOPATH)/bin" protoc --go_out=. --go_opt=paths=source_relative --go-grpc_out=. --go-grpc_opt=paths=source_relative internal/infra/transport/grpc/proto/hub.proto
+
+generate-hub-certs:
+	mkdir -p data/hub-certs
+	openssl ecparam -name prime256v1 -genkey -noout -out data/hub-certs/ca.key
+	openssl req -x509 -new -key data/hub-certs/ca.key -sha256 -days 36500 -out data/hub-certs/ca.crt -subj "/C=CA/O=WinterFlow.io/OU=CA/CN=WinterFlow.io CA/emailAddress=info@winterflow.io"
+	openssl ecparam -name prime256v1 -genkey -noout -out data/hub-certs/hub.key
+	openssl req -new -key data/hub-certs/hub.key -out data/hub-certs/hub.csr -subj "/C=CA/O=WinterFlow.io/OU=SERVER/CN=winterflow.io/emailAddress=info@winterflow.io"
+	openssl x509 -req -in data/hub-certs/hub.csr -CA data/hub-certs/ca.crt -CAkey data/hub-certs/ca.key -CAcreateserial -out data/hub-certs/hub.crt -days 36500 -sha256 -extfile data/hub-certs/ext.cnf -extensions v3_ext
+	cat data/hub-certs/hub.crt data/hub-certs/ca.crt > data/hub-certs/hub_fullchain.crt
+
+generate-agent-certs:
+	mkdir -p data/agent-certs
+	@openssl ecparam -name prime256v1 -genkey -noout -out data/agent-certs/agent.key
+	@openssl req -new -key data/agent-certs/agent.key -out data/agent-certs/agent.csr -subj "/C=CA/O=WinterFlow.io/OU=CLIENT/CN=winterflow-agent"
+	@openssl x509 -req -in data/agent-certs/agent.csr -CA data/hub-certs/ca.crt -CAkey data/hub-certs/ca.key -CAcreateserial -out data/agent-certs/agent.crt -days 36500 -sha256

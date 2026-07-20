@@ -13,7 +13,7 @@ import (
 
 const GoogleProvider = "google"
 
-func AddGoogleAuth(service *auth.Service, log *logger.Logger, config config.Config) {
+func AddGoogleAuth(service *auth.Service, log *logger.Logger, config config.ServerConfig) {
 	if !config.IsAuthSupported(GoogleProvider) {
 		return
 	}
@@ -36,5 +36,5 @@ func AddGoogleAuth(service *auth.Service, log *logger.Logger, config config.Conf
 			return u
 		},
 	})
-	log.Debug("Enabling Google Auth")
+	log.Debug("Enabling Google auth provider")
 }

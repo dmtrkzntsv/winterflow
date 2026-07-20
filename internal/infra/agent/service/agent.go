@@ -1,0 +1,68 @@
+package service
+
+import (
+	"context"
+	"os"
+	"time"
+	"winterflow/internal/domain/dto"
+	"winterflow/internal/domain/port"
+	"winterflow/internal/infra/cert"
+	"winterflow/pkg/logger"
+	"winterflow/pkg/util"
+)
+
+type AgentService struct {
+	log        *logger.Logger
+	cert       *cert.Manager
+	serverRepo port.ServerRepository
+}
+
+func NewAgentService(log *logger.Logger, certManager *cert.Manager, serverRepo port.ServerRepository) *AgentService {
+	return &AgentService{
+		log:        log,
+		cert:       certManager,
+		serverRepo: serverRepo,
+	}
+}
+
+func (as *AgentService) Register(ctx context.Context, code string) (string, error) {
+	serverID := util.GenerateID()
+	certificateID := util.GenerateID()
+	// The certificate's CN carries the SERVER id: a provisioned agent derives
+	// its routing identity from its own cert (see appagent.ResolveAgentID).
+	expiresAt, err := as.cert.GenerateAgent(serverID)
+	if err != nil {
+		as.log.Fatalf("Failed to generate agent certificates: %v", err)
+	}
+	cert, err := as.cert.GetAgentCertificate()
+	if err != nil {
+		as.log.Fatalf("Failed to get agent certificate: %v", err)
+		return "", err
+	}
+	err = as.serverRepo.RegisterServer(ctx, dto.ServerRegistrationDTO{
+		ServerID:      serverID,
+		CertificateID: certificateID,
+		Hostname: func() string {
+			name, _ := os.Hostname()
+			return name
+		}(),
+		Code: code,
+		// Standalone's embedded agent is not paired by a human typing the code
+		// within a short window — it is claimed automatically on first login.
+		// Give the registration a generous validity so the box stays claimable
+		// across restarts and idle periods.
+		ExpiresAt:            time.Now().AddDate(1, 0, 0),
+		Certificate:          cert,
+		CertificateExpiresAt: *expiresAt,
+	})
+	if err != nil {
+		as.log.Fatalf("Failed to register server, removing the agent certificates: %v", err)
+		err = as.cert.DeleteAgent()
+		if err != nil {
+			as.log.Fatalf("Failed to clean up agent certificates after registration failure: %v", err)
+		}
+		return "", err
+	}
+
+	return serverID, nil
+}

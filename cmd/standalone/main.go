@@ -18,7 +18,7 @@ import (
 
 func main() {
 	err := godotenv.Load()
-	cfg := config.NewConfig()
+	cfg := config.NewServerConfig("standalone")
 	log := logger.NewLogger(logger.LoggerConfiguration{
 		LogLevel: os.Getenv("LOG_LEVEL"),
 		Service:  "winterflow",
@@ -31,8 +31,8 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	container := bootstrap.BootstrapStandalone(log, cfg)
-	srv := web.NewServer(log, cfg, container.GetAppFactory())
+	deps := bootstrap.BootstrapStandalone(ctx, log, cfg)
+	srv := web.NewServer(ctx, deps)
 
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

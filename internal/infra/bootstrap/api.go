@@ -2,93 +2,44 @@ package bootstrap
 
 import (
 	"context"
-	"encoding/json"
 	"winterflow/internal/domain/model"
-	"winterflow/internal/domain/port"
-	infrafs "winterflow/internal/infra/agent/repository"
-	infradb "winterflow/internal/infra/db/repository"
-	"winterflow/internal/infra/mem/service/reply"
-	redisbus "winterflow/internal/infra/redis/bus"
-	redisappsrv "winterflow/internal/infra/redis/service/app"
+	"winterflow/internal/infra/db"
+	"winterflow/internal/infra/transport/bus"
+	"winterflow/internal/infra/transport/dispatch"
+	redisbus "winterflow/internal/infra/transport/redis/bus"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
 )
 
-type ApiContainer struct {
-	factory *ApiFactory
-}
-
-func (c *ApiContainer) GetAppFactory() *ApiFactory {
-	return c.factory
-}
-
-type ApiFactory struct {
-	bus *redisbus.Bus
-	rm  *reply.Manager
-	log *logger.Logger
-	cfg *config.Config
-}
-
-func BootstrapAPI(ctx context.Context, log *logger.Logger, cfg *config.Config) *ApiContainer {
-	addr, pass, db := cfg.GetRedisCredentials()
+// BootstrapAPI wires the distributed "brain": DB-backed user/server/app services
+// (the API owns persistence) and a fire-and-forward command dispatcher. The
+// API publishes commands to requests:<region> and drains its region's response
+// queue, routing each agent result to the originating user over SSE.
+func BootstrapAPI(ctx context.Context, log *logger.Logger, cfg *config.ServerConfig) *Deps {
+	addr, pass, redisDB := cfg.GetRedisCredentials()
 	rc := redisbus.NewClient(redisbus.Config{
 		Addr:     addr,
 		Password: pass,
-		DB:       db,
+		DB:       redisDB,
 	})
 	if redisbus.Ping(ctx, rc) != nil {
 		log.Fatalf("failed to connect to redis at %s", addr)
 	}
-	log.Debug("connected to redis", "addr", addr, "db", db)
+	log.Debug("connected to redis", "addr", addr, "db", redisDB)
 
 	b := redisbus.NewBus(rc, log)
-	rm := reply.NewReplyManager(log)
-	go func() {
-		msgs, cancel, err := b.Subscribe(ctx, cfg.GetBusResponseQueue())
-		if err != nil {
-			log.Fatalf("failed to listen bus: %v", err)
-		}
-		defer cancel()
+	dbconn := db.NewBunConnection(log, cfg.GetDbURL())
 
-		for msg := range msgs {
-			log.Debug("received message", "channel", msg.Channel)
-			ntf := model.Notification{}
-			err := json.Unmarshal([]byte(msg.Payload), &ntf)
-			if err != nil {
-				log.Error("failed to unmarshal bus message", err)
-				continue
-			}
-			rm.Publish(ntf.Ref, ntf)
-		}
-	}()
-
-	return &ApiContainer{
-		factory: &ApiFactory{
-			bus: b,
-			rm:  rm,
-			log: log,
-			cfg: cfg,
-		},
-	}
+	deps, _ := wireCore(ctx, b, dbconn, cfg, log)
+	return deps
 }
 
-func (f *ApiFactory) NewUserService() port.UserService {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (f *ApiFactory) NewServerRepository() port.ServerRepository {
-	return infradb.NewDbServerRepository()
-}
-
-func (f *ApiFactory) NewUserRepository() port.UserRepository {
-	return nil
-}
-
-func (f *ApiFactory) NewAppRepository() port.AppRepository {
-	return infrafs.NewFsAppRepository()
-}
-
-func (f *ApiFactory) NewAppService() port.AppService {
-	return redisappsrv.NewAppService(f.log, f.cfg, f.bus, f.rm)
+// startResponseSubscriber drains the region's response queue and hands each
+// result to the dispatcher, which routes it to the originating user's SSE.
+// Bus-agnostic: both topologies use it (Redis in distributed, mem in
+// standalone).
+func startResponseSubscriber(ctx context.Context, b bus.Bus, dispatcher *dispatch.Manager, cfg *config.ServerConfig, log *logger.Logger) {
+	bus.SubscribeJSON(ctx, b, cfg.GetBusResponseQueue(), log, func(ntf model.Notification) {
+		dispatcher.HandleResult(ntf)
+	})
 }

@@ -7,7 +7,12 @@ import (
 )
 
 func (h *Handler) GetServers(w http.ResponseWriter, r *http.Request) {
-	servers, err := h.serverRepo.GetServers()
+	userID, ok := util.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
+	servers, err := h.servers.GetServers(r.Context(), userID)
 	if err != nil {
 		util.Error(w, "failed to load servers", nil)
 		return

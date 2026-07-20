@@ -1,7 +1,13 @@
 package util
 
-import "github.com/google/uuid"
+import (
+	"github.com/google/uuid"
+)
 
 func GenerateID() string {
-	return uuid.New().String()
+	id, err := uuid.NewV7()
+	if err != nil {
+		panic(err)
+	}
+	return id.String()
 }

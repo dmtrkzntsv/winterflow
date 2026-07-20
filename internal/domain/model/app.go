@@ -1,6 +1,12 @@
 package model
 
-import "time"
+import (
+	"errors"
+	"time"
+)
+
+// ErrAppNotFound is returned when an app id has no matching row.
+var ErrAppNotFound = errors.New("app not found")
 
 type App struct {
 	ID         string    `json:"id"`

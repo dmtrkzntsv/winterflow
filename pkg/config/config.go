@@ -2,42 +2,50 @@ package config
 
 import (
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
-type Config struct {
+type ServerConfig struct {
+	mode string
 }
 
-func NewConfig() *Config {
-	return &Config{}
+func NewServerConfig(mode string) *ServerConfig {
+	return &ServerConfig{mode: mode}
 }
 
-func (c *Config) GetRegion() string {
+func (c *ServerConfig) GetRegion() string {
 	return os.Getenv("REGION")
 }
 
-func (c *Config) GetLogLevel() string {
+func (c *ServerConfig) GetLogLevel() string {
 	return os.Getenv("LOG_LEVEL")
 }
 
-func (c *Config) GetApiPort() string {
+func (c *ServerConfig) GetApiPort() string {
 	return os.Getenv("API_PORT")
 }
 
-func (c *Config) GetApiURL() string {
-	return os.Getenv("API_URL")
-}
-
-func (c *Config) GetWebURL() string {
+func (c *ServerConfig) GetWebURL() string {
 	return os.Getenv("WEB_URL")
 }
 
-func (c *Config) GetDbURL() string {
+// GetSecureCookies reports whether auth cookies should carry the Secure flag.
+// Secure cookies are only sent over HTTPS (browsers also treat localhost as
+// secure), so we derive this from the WEB_URL scheme: https in production,
+// off for plain-http dev (e.g. accessing the dev server over http://<host>),
+// where a Secure cookie would be silently dropped and every request 401s.
+func (c *ServerConfig) GetSecureCookies() bool {
+	return strings.HasPrefix(os.Getenv("WEB_URL"), "https://")
+}
+
+func (c *ServerConfig) GetDbURL() string {
 	return os.Getenv("DATABASE_URL")
 }
 
-func (c *Config) GetAllowedOrigins() string {
+func (c *ServerConfig) GetAllowedOrigins() string {
 	v := os.Getenv("CORS_ALLOW_ORIGINS")
 	if v == "" {
 		return "*"
@@ -45,39 +53,45 @@ func (c *Config) GetAllowedOrigins() string {
 	return v
 }
 
-func (c *Config) IsAuthSupported(a string) bool {
+// IsAuthSupported reports whether an OPTIONAL auth provider is configured.
+// The local email+password provider is always on and never consulted here.
+func (c *ServerConfig) IsAuthSupported(a string) bool {
 	result := false
-	if a == "google" {
-		gcid, gcs := c.GetGoogleAuth()
-		if gcid == "" || gcs == "" {
-			result = false
-		} else {
-			result = true
-		}
-	} else if a == "local" {
-		email, pass := c.GetLocalAuth()
-		if email == "" || pass == "" {
-			result = false
-		} else {
-			result = true
+	switch a {
+	case "google":
+		if !c.IsStandalone() {
+			gcid, gcs := c.GetGoogleAuth()
+			if gcid == "" || gcs == "" {
+				result = false
+			} else {
+				result = true
+			}
 		}
 	}
 	return result
 }
 
-func (c *Config) GetGoogleAuth() (clientID string, clientSecret string) {
-	return os.Getenv("GOOGLE_CLIENT_ID"), os.Getenv("GOOGLE_CLIENT_SECRET")
+// IsRegistrationEnabled reports whether self-signup is open. Default on;
+// set REGISTRATION_ENABLED=false to close it. The first-user claim step
+// ignores this (a fresh instance must never be unclaimable).
+func (c *ServerConfig) IsRegistrationEnabled() bool {
+	switch strings.ToLower(os.Getenv("REGISTRATION_ENABLED")) {
+	case "false", "0":
+		return false
+	default:
+		return true
+	}
 }
 
-func (c *Config) GetLocalAuth() (login string, pass string) {
-	return os.Getenv("LOCAL_AUTH_LOGIN"), os.Getenv("LOCAL_AUTH_PASS")
+func (c *ServerConfig) GetGoogleAuth() (clientID string, clientSecret string) {
+	return os.Getenv("AUTH_GOOGLE_CLIENT_ID"), os.Getenv("AUTH_GOOGLE_CLIENT_SECRET")
 }
 
-func (c *Config) GetJwtSecret() string {
+func (c *ServerConfig) GetJwtSecret() string {
 	return os.Getenv("JWT_SECRET")
 }
 
-func (c *Config) GetAvatarsStoragePath() string {
+func (c *ServerConfig) GetAvatarsStoragePath() string {
 	v := os.Getenv("AVATARS_STORAGE_PATH")
 	if v == "" {
 		dir, _ := os.Getwd()
@@ -89,7 +103,7 @@ func (c *Config) GetAvatarsStoragePath() string {
 	return v
 }
 
-func (c *Config) GetRedisCredentials() (addr, pass string, db int) {
+func (c *ServerConfig) GetRedisCredentials() (addr, pass string, db int) {
 	addr, pass = os.Getenv("REDIS_ADDR"), os.Getenv("REDIS_PASSWORD")
 	db, err := strconv.Atoi(os.Getenv("REDIS_DB"))
 	if err != nil {
@@ -98,7 +112,7 @@ func (c *Config) GetRedisCredentials() (addr, pass string, db int) {
 	return addr, pass, db
 }
 
-func (c *Config) GetBusRequestQueue() string {
+func (c *ServerConfig) GetBusRequestQueue() string {
 	v := os.Getenv("BUS_REQUEST_QUEUE")
 	if v == "" {
 		v = "requests:" + c.GetRegion()
@@ -106,10 +120,161 @@ func (c *Config) GetBusRequestQueue() string {
 	return v
 }
 
-func (c *Config) GetBusResponseQueue() string {
+func (c *ServerConfig) GetBusResponseQueue() string {
 	v := os.Getenv("BUS_RESPONSE_QUEUE")
 	if v == "" {
 		v = "responses:" + c.GetRegion()
 	}
 	return v
+}
+
+// GetBusEventsQueue is the channel agents push unsolicited events onto
+// (heartbeat liveness, app/server status). Region-scoped: a region maps to a
+// single API instance, which is the sole consumer.
+func (c *ServerConfig) GetBusEventsQueue() string {
+	v := os.Getenv("BUS_EVENTS_QUEUE")
+	if v == "" {
+		v = "events:" + c.GetRegion()
+	}
+	return v
+}
+
+// GetAgentDataDir is the root under which the agent stores app revisions and
+// rendered deployments. Defaults to "data" (relative to the working directory)
+// to match the repo layout; override with AGENT_DATA_DIR in production
+// (v1 used /opt/winterflow).
+func (c *ServerConfig) GetAgentDataDir() string {
+	if v := os.Getenv("AGENT_DATA_DIR"); v != "" {
+		return v
+	}
+	return "data"
+}
+
+// GetAppsTemplatesDir holds per-app, per-revision source templates:
+// {dataDir}/apps_templates/{appID}/{revision}/.
+func (c *ServerConfig) GetAppsTemplatesDir() string {
+	return path.Join(c.GetAgentDataDir(), "apps_templates")
+}
+
+// GetAppsDataDir holds the canonical per-app deployment folders (each one a
+// git repository): {dataDir}/apps-data/{appID}/. The sibling GetAppsDir holds
+// human-readable symlinks into it.
+func (c *ServerConfig) GetAppsDataDir() string {
+	return path.Join(c.GetAgentDataDir(), "apps-data")
+}
+
+// GetAppsDir holds the rendered, ready-to-run deployments:
+// {dataDir}/apps/{appID}/.
+func (c *ServerConfig) GetAppsDir() string {
+	return path.Join(c.GetAgentDataDir(), "apps")
+}
+
+func (c *ServerConfig) GetHubHost() string {
+	return os.Getenv("HUB_HOST")
+}
+
+func (c *ServerConfig) GetHubPort() string {
+	return os.Getenv("HUB_PORT")
+}
+
+func (c *ServerConfig) GetHubCASubject() string {
+	return os.Getenv("HUB_CA_SUBJECT")
+}
+
+func (c *ServerConfig) GetHubServerSubject() string {
+	return os.Getenv("HUB_SERVER_SUBJECT")
+}
+
+func (c *ServerConfig) GetHubCertExtPath() string {
+	return os.Getenv("HUB_CERT_EXT_PATH")
+}
+
+func (c *ServerConfig) GetHubCertDir() string {
+	return os.Getenv("HUB_CERT_DIR")
+}
+
+func (c *ServerConfig) GetHubCACertFilename() string {
+	return "ca.crt"
+}
+
+func (c *ServerConfig) GetHubCACertPath() string {
+	return path.Join(c.GetHubCertDir(), c.GetHubCACertFilename())
+}
+
+func (c *ServerConfig) GetHubCAKeyFilename() string {
+	return "ca.key"
+}
+
+func (c *ServerConfig) GetHubCAKeyPath() string {
+	return path.Join(c.GetHubCertDir(), c.GetHubCAKeyFilename())
+}
+
+func (c *ServerConfig) GetHubCertFilename() string {
+	return "hub.crt"
+}
+
+func (c *ServerConfig) GetHubCertPath() string {
+	return path.Join(c.GetHubCertDir(), c.GetHubCertFilename())
+}
+
+func (c *ServerConfig) GetHubCSRFilename() string {
+	return "hub.csr"
+}
+
+func (c *ServerConfig) GetHubFullchainFilename() string {
+	return "hub_fullchain.crt"
+}
+
+func (c *ServerConfig) GetHubKeyFilename() string {
+	return "hub.key"
+}
+
+func (c *ServerConfig) GetHubKeyPath() string {
+	return path.Join(c.GetHubCertDir(), c.GetHubKeyFilename())
+}
+
+func (c *ServerConfig) GetAgentCertFilename() string {
+	return "agent.crt"
+}
+
+func (c *ServerConfig) GetAgentCertPath() string {
+	return path.Join(c.GetHubCertDir(), c.GetAgentCertFilename())
+}
+
+func (c *ServerConfig) GetAgentKeyFilename() string {
+	return "agent.key"
+}
+
+func (c *ServerConfig) GetAgentKeyPath() string {
+	return path.Join(c.GetHubCertDir(), c.GetAgentKeyFilename())
+}
+
+func (c *ServerConfig) GetAgentCSRFilename() string {
+	return "agent.csr"
+}
+
+// GetAgentCACertPath returns the path to the CA certificate the agent uses to
+// verify the hub. It is the same CA that signs the hub's server certificate;
+// an explicit AGENT_CA_CERT_PATH overrides it for deployments that ship the CA
+// separately from the hub cert directory.
+func (c *ServerConfig) GetAgentCACertPath() string {
+	if p := os.Getenv("AGENT_CA_CERT_PATH"); p != "" {
+		return p
+	}
+	return c.GetHubCACertPath()
+}
+
+func (c *ServerConfig) IsStandalone() bool {
+	return c.mode == "standalone"
+}
+
+// GetGitHubReleasesURL is the base URL the agent downloads its self-update
+// binaries from. The expected layout is
+// {base}/{version}/winterflow-agent-{os}-{arch}. Override with
+// GITHUB_RELEASES_URL.
+func (c *ServerConfig) GetGitHubReleasesURL() string {
+	if v := os.Getenv("GITHUB_RELEASES_URL"); v != "" {
+		return v
+	}
+	return "https://github.com/winterflowio/winterflow-agent/releases/download"
 }

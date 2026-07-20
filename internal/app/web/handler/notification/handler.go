@@ -3,7 +3,7 @@ package notification
 import (
 	"fmt"
 	"net/http"
-	"time"
+	webutil "winterflow/internal/app/web/util"
 	"winterflow/internal/domain/port"
 	"winterflow/pkg/logger"
 )
@@ -26,7 +26,13 @@ func NewHandler(d *Deps) *Handler {
 }
 
 func (h *Handler) Stream(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/event-nm")
+	userID, err := webutil.GetUserID(r)
+	if err != nil || userID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
@@ -36,11 +42,6 @@ func (h *Handler) Stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// @todo: replace with real user ID from auth context
-	userID := r.Header.Get("X-User-ID")
-	if userID == "" {
-		userID = "anonymous"
-	}
 	ch := h.nm.AddChannel(userID)
 	defer h.nm.RemoveChannel(userID, ch)
 
@@ -48,10 +49,9 @@ func (h *Handler) Stream(w http.ResponseWriter, r *http.Request) {
 	for {
 		select {
 		case msg := <-ch:
-			h.log.Debug("Received a nm message", "userID", userID, "msg", msg)
-			fmt.Fprintf(w, "%s\n\n", msg)
+			h.log.Debug("sending notification", "userID", userID)
+			fmt.Fprintf(w, "data: %s\n\n", msg)
 			flusher.Flush()
-			time.Sleep(1 * time.Second)
 		case <-ctx.Done():
 			return
 		}

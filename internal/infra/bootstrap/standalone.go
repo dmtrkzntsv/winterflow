@@ -1,55 +1,144 @@
 package bootstrap
 
 import (
-	"winterflow/internal/domain/port"
+	"context"
+	"encoding/json"
+	"time"
+	appagent "winterflow/internal/app/agent"
+	agentsrv "winterflow/internal/infra/agent/service"
+	"winterflow/internal/infra/cert"
 	"winterflow/internal/infra/db"
 	"winterflow/internal/infra/db/repository"
-	"winterflow/internal/infra/db/service"
+	dockercompose "winterflow/internal/infra/orchestrator/docker_compose"
+	"winterflow/internal/infra/transport/bus"
+	membus "winterflow/internal/infra/transport/mem/bus"
 	"winterflow/pkg/config"
+	"winterflow/pkg/crypto"
 	"winterflow/pkg/logger"
+	"winterflow/pkg/util"
 )
 
-type StandaloneContainer struct {
-	factory *StandaloneFactory
-}
+// BootstrapStandalone wires the single-process topology: SQLite-backed services
+// plus a local certificate manager. On first run it generates the server
+// certificate and self-registers the embedded agent, printing the pairing code.
+//
+// The app pipeline runs entirely in-process: an in-memory bus carries the same
+// command/response messages the distributed topology uses, an in-process bridge
+// replaces the gRPC Hub, and the Docker Compose orchestrator executes commands
+// locally. This proves the layered design supports the single-server app.
+func BootstrapStandalone(ctx context.Context, log *logger.Logger, cfg *config.ServerConfig) *Deps {
+	dbconn := db.NewBunConnection(log, cfg.GetDbURL())
 
-func (c *StandaloneContainer) GetAppFactory() *StandaloneFactory {
-	return c.factory
-}
-
-type StandaloneFactory struct {
-	log *logger.Logger
-	cfg *config.Config
-	db  *db.Connection
-}
-
-func BootstrapStandalone(log *logger.Logger, cfg *config.Config) *StandaloneContainer {
-	dbconn := db.NewDbConnection(log, cfg.GetDbURL())
-	return &StandaloneContainer{
-		factory: &StandaloneFactory{
-			log: log,
-			cfg: cfg,
-			db:  dbconn,
-		},
+	certmanager, err := cert.NewManager(cfg, log)
+	if err != nil {
+		log.Fatalf("Failed to create certificate manager: %v", err)
 	}
+
+	// Identical core wiring to the distributed API; Redis is replaced by an
+	// in-memory bus.
+	b := membus.NewBus(log)
+	deps, serverRepo := wireCore(ctx, b, dbconn, cfg, log)
+
+	// In-process bridge: consumes the request queue and runs commands against
+	// the local Docker Compose orchestrator (the standalone Hub + agent).
+	orchestrator := dockercompose.NewRepository(cfg, log)
+	agentDispatcher := appagent.NewDispatcher(orchestrator, log)
+	bridge := appagent.NewInProcessBridge(b, cfg, agentDispatcher, log)
+	if err := bridge.Start(ctx); err != nil {
+		log.Fatalf("failed to start in-process bridge: %v", err)
+	}
+
+	// Report the embedded server's capabilities (specs, IP, version, public
+	// key) through the same events path a distributed agent's registration
+	// uses. Retries until the server has been claimed (no id to attach them to
+	// before that), then exits.
+	go publishEmbeddedCapabilities(ctx, b, serverRepo, cfg, log)
+
+	// Standalone has no gRPC Hub forwarding agent events; the embedded agent is
+	// the box itself. Run the same status reporter the distributed agent runs,
+	// publishing apps.status straight onto the in-process events queue — that
+	// feeds the status cache (doubling as the liveness pulse) and the SSE push.
+	// Until the embedded server is claimed there is no server id to report as,
+	// so ticks are skipped silently.
+	go appagent.RunStatusReporter(ctx, orchestrator, func(kind bus.EventKind, payload []byte) error {
+		id, ok, err := serverRepo.FirstServerID(ctx)
+		if err != nil || !ok {
+			return err
+		}
+		return b.Publish(ctx, cfg.GetBusEventsQueue(), bus.EventMessage{ServerID: id, Kind: kind, Payload: payload})
+	}, 30*time.Second, log)
+
+	// Auto-update for git-sourced apps.
+	go appagent.RunSourcePoller(ctx, orchestrator, log)
+
+	if !cert.IsServerCertificateGenerated(certmanager) {
+		certmanager.GenerateServer(true)
+	}
+
+	// Standalone keeps exactly one claimable registration for its embedded
+	// agent until a server is claimed. Gating on "is a server claimed?" (rather
+	// than "do certs exist?") means an expired or leftover registration is
+	// replaced with a fresh one on boot, so the box stays claimable. Once
+	// claimed, the first login's auto-claim materialized the server and this is
+	// skipped.
+	agentservice := agentsrv.NewAgentService(log, certmanager, serverRepo)
+	claimed, err := serverRepo.HasAnyServer(context.TODO())
+	if err != nil {
+		log.Fatalf("Failed to check server registration state: %v", err)
+	}
+	if !claimed {
+		if err := serverRepo.ClearPendingRegistrations(context.TODO()); err != nil {
+			log.Fatalf("Failed to clear stale registrations: %v", err)
+		}
+		// The code is an internal detail in standalone: the embedded server is
+		// claimed automatically on first login, so there is nothing for the
+		// user to "visit and enter". Keep registration silent (debug only) — no
+		// pairing instructions in the CLI output.
+		code := util.GenerateRandomCode(6)
+		serverID, err := agentservice.Register(context.TODO(), code)
+		if err != nil {
+			log.Fatalf("Failed to register server: %v", err)
+		}
+		log.Debug("standalone server registered", "server_id", serverID)
+	}
+
+	return deps
 }
 
-func (f *StandaloneFactory) NewUserService() port.UserService {
-	return service.NewDbUserService(f.log, repository.NewDbUserRepository(f.db, f.log))
-}
-
-func (f *StandaloneFactory) NewServerRepository() port.ServerRepository {
-	return nil
-}
-
-func (f *StandaloneFactory) NewAppRepository() port.AppRepository {
-	return nil
-}
-
-func (f *StandaloneFactory) NewUserRepository() port.UserRepository {
-	return repository.NewDbUserRepository(f.db, f.log)
-}
-
-func (f *StandaloneFactory) NewAppService() port.AppService {
-	return nil
+// publishEmbeddedCapabilities reports the standalone box's capabilities on the
+// events queue — the same EventCapabilities a distributed agent's registration
+// produces — so the DB and the UI see specs/IP/version without a hub. The
+// embedded server may not be claimed yet at boot; poll until it exists.
+func publishEmbeddedCapabilities(ctx context.Context, b bus.Bus, serverRepo *repository.DbServerRepository, cfg *config.ServerConfig, log *logger.Logger) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
+		id, ok, err := serverRepo.FirstServerID(ctx)
+		if err == nil && ok {
+			caps := appagent.HostCapabilities(cfg.GetAgentDataDir())
+			if point, err := crypto.PublicKeyPointFromCertPath(cfg.GetAgentCertPath()); err == nil {
+				caps["public_key"] = point
+			}
+			features := map[string]bool{
+				"can_install":    true,
+				"can_execute":    true,
+				"can_fetch_logs": true,
+				"can_monitor":    true,
+			}
+			body, err := json.Marshal(capabilitiesEvent{Capabilities: caps, Features: features})
+			if err != nil {
+				log.Error("marshal embedded capabilities", err)
+				return
+			}
+			if err := b.Publish(ctx, cfg.GetBusEventsQueue(), bus.EventMessage{ServerID: id, Kind: bus.EventCapabilities, Payload: body}); err != nil {
+				log.Error("publish embedded capabilities", err)
+			}
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }

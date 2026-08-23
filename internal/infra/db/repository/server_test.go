@@ -125,3 +125,27 @@ func TestGetServersIncludesCapabilities(t *testing.T) {
 		t.Fatalf("serialized server = %s", raw)
 	}
 }
+
+func TestGetServersIncludesFeatures(t *testing.T) {
+	conn := newTestDB(t)
+	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
+	repo := NewDbServerRepository(conn, log)
+
+	seedOrgWithServer(t, conn, "org-1", "srv-1")
+	seedUser(t, conn, "alice", "org-1")
+	if err := repo.SaveCapabilities(context.Background(), "srv-1",
+		nil, map[string]bool{"ingress": true}); err != nil {
+		t.Fatal(err)
+	}
+
+	servers, err := repo.GetServers(context.Background(), "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(servers) != 1 {
+		t.Fatalf("want 1 server, got %d", len(servers))
+	}
+	if servers[0].Features["ingress"] != true {
+		t.Fatalf("features = %v", servers[0].Features)
+	}
+}

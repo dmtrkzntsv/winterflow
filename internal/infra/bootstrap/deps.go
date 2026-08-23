@@ -21,6 +21,7 @@ type Deps struct {
 	UserService         port.UserService
 	ServerRepository    port.ServerRepository
 	AppRepository       port.AppRepository
+	AppDomainRepository port.AppDomainRepository
 	CommandDispatcher   port.CommandDispatcher
 	NotificationManager port.NotificationManager
 	StatusCache         *status.Cache

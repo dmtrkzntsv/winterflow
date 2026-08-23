@@ -52,10 +52,11 @@ func (s *Server) registerRoutes() {
 	s.Router.With(authMW).Get("/api/v1/sse", notificationAPI.Stream)
 
 	appsAPI := happ.NewHandler(&happ.Deps{
-		Logger:            s.Logger,
-		CommandDispatcher: s.Deps.CommandDispatcher,
-		AppRepository:     s.Deps.AppRepository,
-		StatusCache:       s.Deps.StatusCache,
+		Logger:              s.Logger,
+		CommandDispatcher:   s.Deps.CommandDispatcher,
+		AppRepository:       s.Deps.AppRepository,
+		AppDomainRepository: s.Deps.AppDomainRepository,
+		StatusCache:         s.Deps.StatusCache,
 	})
 	s.Router.With(authMW, happ.GetAppsValidationMiddleware).Get("/api/v1/app/get-apps", appsAPI.GetApps)
 	s.Router.With(authMW, happ.GetAppsValidationMiddleware).Get("/api/v1/app/get-apps-status", appsAPI.GetAppsStatus)
@@ -69,6 +70,7 @@ func (s *Server) registerRoutes() {
 	s.Router.With(authMW).Post("/api/v1/app/control-app", appsAPI.ControlApp)
 	s.Router.With(authMW).Post("/api/v1/app/delete-app", appsAPI.DeleteApp)
 	s.Router.With(authMW).Post("/api/v1/app/rename-app", appsAPI.RenameApp)
+	s.Router.With(authMW).Get("/api/v1/domains/check", appsAPI.CheckDomain)
 
 	dockerAPI := hdocker.NewHandler(&hdocker.Deps{
 		Logger:            s.Logger,

@@ -24,7 +24,7 @@ func TestInProcessBridgeRoundTrip(t *testing.T) {
 	cfg := config.NewServerConfig("standalone")
 	b := membus.NewBus(log)
 
-	d := NewDispatcher(dockercompose.NewRepository(cfg, log), log)
+	d := NewDispatcher(dockercompose.NewRepository(cfg, log), nil, log)
 	bridge := NewInProcessBridge(b, cfg, d, log)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -74,7 +74,7 @@ func TestInProcessBridgeErrorsStayCorrelated(t *testing.T) {
 	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
 	cfg := config.NewServerConfig("standalone")
 	b := membus.NewBus(log)
-	bridge := NewInProcessBridge(b, cfg, NewDispatcher(dockercompose.NewRepository(cfg, log), log), log)
+	bridge := NewInProcessBridge(b, cfg, NewDispatcher(dockercompose.NewRepository(cfg, log), nil, log), log)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

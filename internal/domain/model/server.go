@@ -26,4 +26,7 @@ type Server struct {
 	CreatedAt      time.Time    `json:"created_at"`
 	LastSeenAt     *time.Time   `json:"last_seen_at"`
 	Capabilities   []Capability `json:"capabilities,omitempty"`
+	// Features are agent-advertised booleans (can_install, ingress, ...);
+	// the UI gates capability-dependent panels on them.
+	Features map[string]bool `json:"features,omitempty"`
 }

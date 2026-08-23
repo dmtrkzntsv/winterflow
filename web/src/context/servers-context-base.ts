@@ -9,6 +9,9 @@ export type Server = {
   // Agent-reported facts (server_ip, system_cpu_cores, system_memory_total,
   // system_disk_total, version, os, arch, hostname, public_key, ...).
   capabilities: Record<string, string>;
+  // Agent-reported feature flags (e.g. ingress). Absent = unknown agent
+  // version; treat as unsupported.
+  features?: Record<string, boolean>;
 };
 
 export type ServerLiveness = "online" | "unknown";

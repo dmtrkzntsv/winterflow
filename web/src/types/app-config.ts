@@ -26,6 +26,27 @@ export type AppSourceConfig = {
   token_set?: boolean;
 };
 
+export type IngressDomain = {
+  id: string; // localId, editor-only — stripped on save
+  domain: string;
+  upstream_port: number | ""; // "" while the field is empty in the editor
+  ssl: boolean;
+};
+
+export type IngressRedirect = {
+  id: string;
+  domain: string;
+  path: string; // "" = whole-domain redirect
+  to: string;
+  code: 301 | 302 | 307 | 308;
+  ssl: boolean; // only meaningful when path === ""
+};
+
+export type AppIngress = {
+  domains: IngressDomain[];
+  redirects: IngressRedirect[];
+};
+
 export type AppConfig = {
   id: string;
   name: string;
@@ -36,6 +57,7 @@ export type AppConfig = {
   files: AppFileMeta[];
   variables: AppVariableMeta[];
   source?: AppSourceConfig;
+  ingress?: AppIngress;
 };
 
 // Editor working state: the config metadata plus content maps keyed by id.

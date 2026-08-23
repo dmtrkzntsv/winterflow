@@ -60,6 +60,9 @@ type SaveAppRequest struct {
 type SaveAppResponse struct {
 	AppID    string `json:"app_id"`
 	Revision string `json:"revision"` // git commit hash of the save
+	// Warnings are non-fatal ingress problems (config excluded, reload
+	// failed): the save itself succeeded.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // --- app.get ------------------------------------------------------------------

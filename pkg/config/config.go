@@ -177,6 +177,27 @@ func (c *ServerConfig) GetHubPort() string {
 	return os.Getenv("HUB_PORT")
 }
 
+// GetIngressHTTPPort is the embedded proxy's HTTP port (default 80).
+func (c *ServerConfig) GetIngressHTTPPort() int {
+	if v, err := strconv.Atoi(os.Getenv("INGRESS_HTTP_PORT")); err == nil && v > 0 {
+		return v
+	}
+	return 80
+}
+
+// GetIngressHTTPSPort is the embedded proxy's HTTPS port (default 443).
+func (c *ServerConfig) GetIngressHTTPSPort() int {
+	if v, err := strconv.Atoi(os.Getenv("INGRESS_HTTPS_PORT")); err == nil && v > 0 {
+		return v
+	}
+	return 443
+}
+
+// GetIngressACMEEmail is the optional ACME account email.
+func (c *ServerConfig) GetIngressACMEEmail() string {
+	return os.Getenv("INGRESS_ACME_EMAIL")
+}
+
 func (c *ServerConfig) GetHubCASubject() string {
 	return os.Getenv("HUB_CA_SUBJECT")
 }

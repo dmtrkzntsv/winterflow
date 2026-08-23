@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 	appagent "winterflow/internal/app/agent"
+	ingresscaddy "winterflow/internal/infra/ingress/caddy"
 	dockercompose "winterflow/internal/infra/orchestrator/docker_compose"
 	"winterflow/internal/infra/transport/bus"
 	grpcagent "winterflow/internal/infra/transport/grpc/agent"
@@ -54,11 +55,21 @@ func main() {
 		log.Warn("failed to export agent public key", "error", err)
 	}
 
+	// Wire the command dispatcher: incoming hub commands are executed against
+	// the Docker Compose orchestrator. The ingress manager owns the embedded
+	// reverse proxy; a start failure disables ingress but never the agent.
+	orchestrator := dockercompose.NewRepository(cfg, log)
+	ingressManager := ingresscaddy.NewManager(cfg, log)
+	if err := ingressManager.Start(ctx); err != nil {
+		log.Warn("ingress manager start", "error", err)
+	}
+
 	features := map[string]bool{
 		"can_install":    true,
 		"can_execute":    true,
 		"can_fetch_logs": true,
 		"can_monitor":    true,
+		"ingress":        ingressManager.Enabled(),
 	}
 
 	apps := []*proto.App{
@@ -74,10 +85,7 @@ func main() {
 	agent.SetFeatures(features)
 	agent.SetApps(apps)
 
-	// Wire the command dispatcher: incoming hub commands are executed against
-	// the Docker Compose orchestrator.
-	orchestrator := dockercompose.NewRepository(cfg, log)
-	agent.SetDispatcher(appagent.NewDispatcher(orchestrator, log))
+	agent.SetDispatcher(appagent.NewDispatcher(orchestrator, ingressManager, log))
 
 	// Supervise the connection: connect, register, stream, and reconnect with
 	// backoff on failure, until ctx is canceled. Runs in the background so the

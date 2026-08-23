@@ -88,6 +88,32 @@ export function stateFromDetail(
 
   const cfgSource = (cfg as { source?: import("@/types/app-config").AppSourceConfig }).source;
 
+  const cfgIngress = (cfg as { ingress?: { domains?: unknown[]; redirects?: unknown[] } }).ingress;
+  const ingress = cfgIngress
+    ? {
+        domains: (cfgIngress.domains ?? []).map((dom) => {
+          const v = dom as { domain?: string; upstream_port?: number; ssl?: boolean };
+          return {
+            id: localId("dom"),
+            domain: v.domain ?? "",
+            upstream_port: v.upstream_port ?? ("" as const),
+            ssl: v.ssl ?? false,
+          };
+        }),
+        redirects: (cfgIngress.redirects ?? []).map((r) => {
+          const v = r as { domain?: string; path?: string; to?: string; code?: number; ssl?: boolean };
+          return {
+            id: localId("red"),
+            domain: v.domain ?? "",
+            path: v.path ?? "",
+            to: v.to ?? "",
+            code: (v.code ?? 301) as 301 | 302 | 307 | 308,
+            ssl: v.ssl ?? false,
+          };
+        }),
+      }
+    : undefined;
+
   return {
     config: {
       id: appId,
@@ -98,6 +124,7 @@ export function stateFromDetail(
       files: fileMetas,
       variables: varMetas,
       source: cfgSource,
+      ingress,
     },
     files,
     variables,
@@ -124,6 +151,63 @@ export function validateEditorState(state: AppEditorState): string | null {
   }
   for (const v of state.config.variables) {
     if (!v.name.trim()) return "Every variable needs a name.";
+  }
+  // Mirrors Go's Ingress.Validate() (internal/domain/model/ingress.go): strict
+  // lowercase RFC-1123 hostname, capped at 253 chars total.
+  const hostnameRe = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$/;
+  const validHostname = (h: string) => h.length <= 253 && hostnameRe.test(h);
+  const validRedirectCodes = new Set([301, 302, 307, 308]);
+  const ing = state.config.ingress;
+  if (ing) {
+    const seen = new Set<string>();
+    for (const d of ing.domains) {
+      if (!validHostname(d.domain)) return `"${d.domain}" is not a valid lowercase hostname.`;
+      if (seen.has(d.domain)) return `Duplicate domain "${d.domain}".`;
+      seen.add(d.domain);
+      const port = Number(d.upstream_port);
+      if (!Number.isInteger(port) || port < 1 || port > 65535)
+        return `Domain "${d.domain}": upstream port must be 1-65535.`;
+    }
+    for (const r of ing.redirects) {
+      let target: URL;
+      try {
+        target = new URL(r.to);
+      } catch {
+        return `Redirect for "${r.domain}": target must be an absolute http(s) URL.`;
+      }
+      // Go's net/url leaves Host empty for forms like "http:/foo" or
+      // "http:///foo" and Validate() rejects them, but WHATWG new URL()
+      // normalizes them to a non-empty host — so also require the raw value
+      // to be scheme://non-slash to match what the server will accept.
+      if (
+        (target.protocol !== "http:" && target.protocol !== "https:") ||
+        target.host === "" ||
+        !/^https?:\/\/[^/]/i.test(r.to.trim()) ||
+        // WHATWG strips embedded tab/newline; Go's url.Parse rejects them.
+        /\s/.test(r.to.trim())
+      )
+        return `Redirect for "${r.domain}": target must be an absolute http(s) URL.`;
+      // Advisory mirror of Go's brace check (internal/domain/model/ingress.go
+      // Validate()): Caddy expands {env.*}/{http.request.*} placeholders in
+      // the Location header at request time, so braces could leak secrets to
+      // an attacker-controlled redirect target. The Go check is the actual
+      // security boundary; this just gives faster feedback in the editor.
+      if (/[{}]/.test(r.to))
+        return `Redirect for "${r.domain}": target must not contain { or }.`;
+      if (/[{}]/.test(r.path))
+        return `Redirect for "${r.domain}": path must not contain { or }.`;
+      if (!validRedirectCodes.has(r.code))
+        return `Redirect for "${r.domain}": code must be one of 301, 302, 307, 308.`;
+      if (r.path === "") {
+        if (!validHostname(r.domain)) return `"${r.domain}" is not a valid lowercase hostname.`;
+        if (seen.has(r.domain)) return `Duplicate domain "${r.domain}".`;
+        seen.add(r.domain);
+      } else {
+        if (!r.path.startsWith("/")) return `Redirect path "${r.path}" must start with /.`;
+        if (!seen.has(r.domain))
+          return `Path rule for "${r.domain}": add that domain as a route or redirect first.`;
+      }
+    }
   }
   return null;
 }
@@ -183,6 +267,24 @@ export async function buildSavePayload(
       name: v.name.trim(),
       is_encrypted: v.is_encrypted,
     })),
+    ...(state.config.ingress
+      ? {
+          ingress: {
+            domains: state.config.ingress.domains.map((d) => ({
+              domain: d.domain.trim(),
+              upstream_port: Number(d.upstream_port),
+              ssl: d.ssl,
+            })),
+            redirects: state.config.ingress.redirects.map((r) => ({
+              domain: r.domain.trim(),
+              ...(r.path ? { path: r.path.trim() } : {}),
+              to: r.to.trim(),
+              code: r.code,
+              ...(r.path ? {} : { ssl: r.ssl }),
+            })),
+          },
+        }
+      : {}),
   };
 
   const app: Record<string, unknown> = {

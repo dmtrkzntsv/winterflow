@@ -9,6 +9,7 @@ import (
 	"winterflow/internal/infra/cert"
 	"winterflow/internal/infra/db"
 	"winterflow/internal/infra/db/repository"
+	ingresscaddy "winterflow/internal/infra/ingress/caddy"
 	dockercompose "winterflow/internal/infra/orchestrator/docker_compose"
 	"winterflow/internal/infra/transport/bus"
 	membus "winterflow/internal/infra/transport/mem/bus"
@@ -40,9 +41,15 @@ func BootstrapStandalone(ctx context.Context, log *logger.Logger, cfg *config.Se
 	deps, serverRepo := wireCore(ctx, b, dbconn, cfg, log)
 
 	// In-process bridge: consumes the request queue and runs commands against
-	// the local Docker Compose orchestrator (the standalone Hub + agent).
+	// the local Docker Compose orchestrator (the standalone Hub + agent). The
+	// ingress manager owns the embedded reverse proxy; a start failure
+	// disables ingress but never the server.
 	orchestrator := dockercompose.NewRepository(cfg, log)
-	agentDispatcher := appagent.NewDispatcher(orchestrator, log)
+	ingressManager := ingresscaddy.NewManager(cfg, log)
+	if err := ingressManager.Start(ctx); err != nil {
+		log.Warn("ingress manager start", "error", err)
+	}
+	agentDispatcher := appagent.NewDispatcher(orchestrator, ingressManager, log)
 	bridge := appagent.NewInProcessBridge(b, cfg, agentDispatcher, log)
 	if err := bridge.Start(ctx); err != nil {
 		log.Fatalf("failed to start in-process bridge: %v", err)
@@ -52,7 +59,7 @@ func BootstrapStandalone(ctx context.Context, log *logger.Logger, cfg *config.Se
 	// key) through the same events path a distributed agent's registration
 	// uses. Retries until the server has been claimed (no id to attach them to
 	// before that), then exits.
-	go publishEmbeddedCapabilities(ctx, b, serverRepo, cfg, log)
+	go publishEmbeddedCapabilities(ctx, b, serverRepo, cfg, log, ingressManager.Enabled())
 
 	// Standalone has no gRPC Hub forwarding agent events; the embedded agent is
 	// the box itself. Run the same status reporter the distributed agent runs,
@@ -109,7 +116,7 @@ func BootstrapStandalone(ctx context.Context, log *logger.Logger, cfg *config.Se
 // events queue — the same EventCapabilities a distributed agent's registration
 // produces — so the DB and the UI see specs/IP/version without a hub. The
 // embedded server may not be claimed yet at boot; poll until it exists.
-func publishEmbeddedCapabilities(ctx context.Context, b bus.Bus, serverRepo *repository.DbServerRepository, cfg *config.ServerConfig, log *logger.Logger) {
+func publishEmbeddedCapabilities(ctx context.Context, b bus.Bus, serverRepo *repository.DbServerRepository, cfg *config.ServerConfig, log *logger.Logger, ingressEnabled bool) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -124,6 +131,7 @@ func publishEmbeddedCapabilities(ctx context.Context, b bus.Bus, serverRepo *rep
 				"can_execute":    true,
 				"can_fetch_logs": true,
 				"can_monitor":    true,
+				"ingress":        ingressEnabled,
 			}
 			body, err := json.Marshal(capabilitiesEvent{Capabilities: caps, Features: features})
 			if err != nil {

@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"strings"
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/port"
@@ -13,19 +15,22 @@ import (
 type UseCase struct {
 	dispatcher port.CommandDispatcher
 	repo       port.AppRepository
+	domains    port.AppDomainRepository
 	log        *logger.Logger
 }
 
 type Deps struct {
-	CommandDispatcher port.CommandDispatcher
-	AppRepository     port.AppRepository
-	Log               *logger.Logger
+	CommandDispatcher   port.CommandDispatcher
+	AppRepository       port.AppRepository
+	AppDomainRepository port.AppDomainRepository
+	Log                 *logger.Logger
 }
 
 func NewUseCase(d *Deps) *UseCase {
 	return &UseCase{
 		dispatcher: d.CommandDispatcher,
 		repo:       d.AppRepository,
+		domains:    d.AppDomainRepository,
 		log:        d.Log,
 	}
 }
@@ -34,6 +39,15 @@ func NewUseCase(d *Deps) *UseCase {
 // agent-authoritative reconcile happens separately via RefreshApps.
 func (uc *UseCase) GetApps(ctx context.Context, serverID string) ([]model.App, error) {
 	return uc.repo.GetApps(ctx, serverID)
+}
+
+// ListDomains returns the server's indexed domains grouped by app id, for
+// decorating the DB-backed app listing without an agent round-trip.
+func (uc *UseCase) ListDomains(ctx context.Context, serverID string) (map[string][]model.AppDomainInfo, error) {
+	if uc.domains == nil {
+		return nil, nil
+	}
+	return uc.domains.ListForServer(ctx, serverID)
 }
 
 // RefreshApps dispatches apps.list to the server's agent (its filesystem is the
@@ -57,6 +71,11 @@ func (uc *UseCase) RefreshApps(ctx context.Context, userID, serverID string) (st
 			}
 			if err := uc.repo.SyncApps(context.Background(), serverID, listed.Apps); err != nil {
 				uc.log.Error("RefreshApps: sync", "error", err, "server_id", serverID)
+			}
+			if uc.domains != nil {
+				if err := uc.domains.ReplaceForServer(context.Background(), serverID, listed.Apps); err != nil {
+					uc.log.Error("RefreshApps: sync domain rows", "error", err, "server_id", serverID)
+				}
 			}
 		},
 	})
@@ -87,6 +106,11 @@ func (uc *UseCase) DeleteApp(ctx context.Context, userID, serverID, appID string
 			}
 			if err := uc.repo.DeleteApp(context.Background(), appID); err != nil {
 				uc.log.Error("DeleteApp: remove row", "error", err, "app_id", appID)
+			}
+			if uc.domains != nil {
+				if err := uc.domains.DeleteForApp(context.Background(), appID); err != nil {
+					uc.log.Error("DeleteApp: remove domain rows", "error", err, "app_id", appID)
+				}
 			}
 		},
 	})
@@ -134,13 +158,50 @@ func (uc *UseCase) GetRevisions(ctx context.Context, userID, serverID, appID str
 }
 
 // RollbackApp dispatches an app.rollback: the agent restores the given commit
-// as a new revision and redeploys. The result is delivered over SSE.
+// as a new revision and redeploys. The result is delivered over SSE. On
+// success the restored config is re-fetched so the domain index follows the
+// rollback.
 func (uc *UseCase) RollbackApp(ctx context.Context, userID, serverID, appID, hash string) (string, error) {
 	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
 		AgentID: serverID,
 		UserID:  userID,
 		Type:    command.TypeAppRollback,
 		Payload: command.RollbackAppRequest{AppID: appID, Hash: hash},
+		OnResult: func(res port.CommandResult) {
+			if !res.Success || uc.domains == nil {
+				return
+			}
+			_, err := uc.dispatcher.Dispatch(context.Background(), port.DispatchInput{
+				AgentID: serverID,
+				UserID:  userID,
+				Type:    command.TypeAppGet,
+				Payload: command.GetAppRequest{AppID: appID},
+				OnResult: func(got port.CommandResult) {
+					if !got.Success || len(got.Payload) == 0 {
+						return
+					}
+					var resp command.GetAppResponse
+					if err := json.Unmarshal(got.Payload, &resp); err != nil {
+						uc.log.Error("RollbackApp: decode app.get", "error", err)
+						return
+					}
+					ing, err := model.ParseIngress(resp.App.Config)
+					if err != nil {
+						uc.log.Error("RollbackApp: parse restored config", "error", err)
+						return
+					}
+					if ing == nil {
+						return
+					}
+					if err := uc.domains.ReplaceForApp(context.Background(), appID, serverID, ing); err != nil {
+						uc.log.Error("RollbackApp: update domain index", "error", err, "app_id", appID)
+					}
+				},
+			})
+			if err != nil {
+				uc.log.Error("RollbackApp: dispatch app.get", "error", err)
+			}
+		},
 	})
 }
 
@@ -165,6 +226,19 @@ func (uc *UseCase) GetLogs(ctx context.Context, userID, serverID, appID string, 
 	})
 }
 
+// CheckDomain reports which app (if any) already claims a hostname — the
+// live-typing availability check behind GET /api/v1/domains/check.
+func (uc *UseCase) CheckDomain(ctx context.Context, domain, excludeAppID string) ([]model.DomainClaim, error) {
+	probe := model.Ingress{Domains: []model.IngressDomain{{Domain: domain, UpstreamPort: 1}}}
+	if err := probe.Validate(); err != nil {
+		return nil, fmt.Errorf("%w: %v", model.ErrIngressInvalid, err)
+	}
+	if uc.domains == nil {
+		return nil, nil
+	}
+	return uc.domains.FindClaims(ctx, []string{domain}, excludeAppID)
+}
+
 // SaveApp dispatches an app.save command to the server's agent and returns
 // the request id immediately. This call does not block. It is an upsert:
 // an empty app.ID means create (the API assigns identity), a present one
@@ -187,6 +261,34 @@ func (uc *UseCase) SaveApp(ctx context.Context, userID, serverID string, app mod
 		cfgBytes, _ := json.Marshal(app)
 		payload.Config = cfgBytes
 	}
+
+	// Ingress rides the config blob. Parse + validate + conflict-check here so
+	// a bad config is a synchronous 400, not an async agent failure. ing==nil
+	// (no "ingress" key) means the feature is untouched: skip everything.
+	ing, err := model.ParseIngress(payload.Config)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", model.ErrIngressInvalid, err)
+	}
+	if ing != nil {
+		if err := ing.Validate(); err != nil {
+			return "", fmt.Errorf("%w: %v", model.ErrIngressInvalid, err)
+		}
+		if uc.domains != nil {
+			claims, err := uc.domains.FindClaims(ctx, ing.DomainNames(), app.ID)
+			if err != nil {
+				uc.log.Error("SaveApp: find domain claims", "error", err, "app_id", app.ID)
+				return "", err
+			}
+			if len(claims) > 0 {
+				var parts []string
+				for _, c := range claims {
+					parts = append(parts, fmt.Sprintf("%s is already used by app %q on server %q", c.Domain, c.AppName, c.ServerName))
+				}
+				return "", fmt.Errorf("%w: %s", model.ErrDomainTaken, strings.Join(parts, "; "))
+			}
+		}
+	}
+
 	req := command.SaveAppRequest{App: payload, Draft: draft}
 	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
 		AgentID: serverID,
@@ -211,6 +313,12 @@ func (uc *UseCase) SaveApp(ctx context.Context, userID, serverID string, app mod
 			}
 			if err := uc.repo.SaveApp(context.Background(), persisted); err != nil {
 				uc.log.Error("SaveApp: persist", "error", err, "app_id", persisted.ID)
+			}
+			if uc.domains != nil && ing != nil {
+				if err := uc.domains.ReplaceForApp(context.Background(), persisted.ID, serverID, ing); err != nil {
+					// Index only: reconcile heals it on the next apps.list.
+					uc.log.Error("SaveApp: update domain index", "error", err, "app_id", persisted.ID)
+				}
 			}
 		},
 	})

@@ -178,12 +178,11 @@ render_env_file() {
     local jwt_secret="$1"
     cat <<EOF
 # WinterFlow standalone configuration.
-# Loaded by systemd (EnvironmentFile); see .env.dist in the repo for all options.
+# Loaded by systemd (EnvironmentFile); see .env.example in the repo for all options.
 
 LOG_LEVEL=info
 API_PORT=${API_PORT}
 WEB_URL=http://localhost:${API_PORT}
-API_URL=http://localhost:${API_PORT}
 REGION=local
 
 # Generated at install time. Rotating it invalidates all sessions.

@@ -17,7 +17,9 @@ Backend (Go 1.25):
 Frontend (`web/`, pnpm + Vite + React 19):
 - `make web` (= `pnpm --dir web dev`), `pnpm --dir web run build` (runs `tsc -b` first), `pnpm --dir web run lint`.
 
-Config comes from `.env` (loaded via `godotenv`) or the process environment. Copy `.env.dist` → `.env`. `.env`, `data/`, `bin/`, and `*.sqlite*` are gitignored.
+Config comes from `.env` (loaded via `godotenv`) or the process environment. Copy `.env.example` → `.env` (frontend build-time vars: `web/.env.example`). `.env`, `data/`, `bin/`, and `*.sqlite*` are gitignored.
+
+**`.env.example` is the canonical, commented inventory of every env var the backend reads.** Whenever you add, rename, remove, or change the default of an env var in Go (any `os.Getenv`/`os.LookupEnv`, normally via a `pkg/config` getter), update `.env.example` in the same change — variable, default, and a comment saying what it does and which topology reads it. The installer's generated config (`scripts/install.sh`) points users at it, so a stale example is user-facing. Same rule for frontend `VITE_*` vars and `web/.env.example`.
 
 ## Architecture
 

@@ -36,11 +36,13 @@ func NewManager(cfg *config.ServerConfig, log *logger.Logger) *Manager {
 
 func (m *Manager) options() Options {
 	return Options{
-		HTTPPort:   m.cfg.GetIngressHTTPPort(),
-		HTTPSPort:  m.cfg.GetIngressHTTPSPort(),
-		ACMEEmail:  m.cfg.GetIngressACMEEmail(),
-		StorageDir: filepath.Join(m.cfg.GetAgentDataDir(), "caddy"),
-		LogLevel:   m.cfg.GetLogLevel(),
+		HTTPPort:       m.cfg.GetIngressHTTPPort(),
+		HTTPSPort:      m.cfg.GetIngressHTTPSPort(),
+		ACMEEmail:      m.cfg.GetIngressACMEEmail(),
+		StorageDir:     filepath.Join(m.cfg.GetAgentDataDir(), "caddy"),
+		LogLevel:       m.cfg.GetLogLevel(),
+		RateLimitRPS:   m.cfg.GetIngressRateLimitRPS(),
+		RateLimitBurst: m.cfg.GetIngressRateLimitBurst(),
 	}
 }
 

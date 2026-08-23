@@ -25,6 +25,12 @@ type Options struct {
 	ACMEEmail  string
 	StorageDir string
 	LogLevel   string
+	// RateLimitRPS/RateLimitBurst configure the predefined per-client-IP
+	// throttle in front of every route (0 rps disables it). A ceiling on
+	// request fan-out so traffic spikes answer 429 instead of saturating the
+	// host.
+	RateLimitRPS   float64
+	RateLimitBurst int
 }
 
 // --- minimal typed mirror of Caddy's documented JSON config ---------------
@@ -60,6 +66,10 @@ type httpServer struct {
 	Listen []string        `json:"listen"`
 	Routes []route         `json:"routes"`
 	Logs   *map[string]any `json:"logs,omitempty"` // presence toggles access logs
+	// Connection hygiene: slow-header and idle connections must not pile up
+	// on a small host. Durations are Caddy duration strings.
+	ReadHeaderTimeout string `json:"read_header_timeout,omitempty"`
+	IdleTimeout       string `json:"idle_timeout,omitempty"`
 }
 
 type route struct {
@@ -220,11 +230,27 @@ func BuildConfig(apps []AppIngress, opts Options) ([]byte, []string, error) {
 		}
 	}
 
+	// Predefined throttle: a non-terminal first route on both servers — the
+	// middleware passes allowed requests through to the routes below.
+	if opts.RateLimitRPS > 0 {
+		throttle := route{Handle: []map[string]any{{
+			"handler": "winterflow_rate_limit",
+			"rps":     opts.RateLimitRPS,
+			"burst":   opts.RateLimitBurst,
+		}}}
+		httpsRoutes = append([]route{throttle}, httpsRoutes...)
+		httpRoutes = append([]route{throttle}, httpRoutes...)
+	}
+
 	httpsServer := &httpServer{Listen: []string{":" + strconv.Itoa(httpsPort)}, Routes: httpsRoutes}
 	// Servers listening only on the HTTP port are exempt from automatic
 	// HTTPS: no certs, no redirects for their hosts. Caddy appends its own
 	// HTTP->HTTPS redirects for the ssl hosts to this server.
 	httpServerCfg := &httpServer{Listen: []string{":" + strconv.Itoa(httpPort)}, Routes: httpRoutes}
+	for _, srv := range []*httpServer{httpsServer, httpServerCfg} {
+		srv.ReadHeaderTimeout = "10s"
+		srv.IdleTimeout = "5m"
+	}
 	if strings.EqualFold(opts.LogLevel, "debug") {
 		access := map[string]any{}
 		httpsServer.Logs = &access

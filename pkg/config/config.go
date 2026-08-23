@@ -192,6 +192,28 @@ func (c *ServerConfig) GetIngressACMEEmail() string {
 	return os.Getenv("INGRESS_ACME_EMAIL")
 }
 
+// GetIngressRateLimitRPS is the sustained per-client-IP request rate the
+// embedded ingress allows before answering 429 (default 50). Predefined
+// throttling so a traffic spike degrades politely instead of pinning the
+// host's CPU. Set 0 to disable.
+func (c *ServerConfig) GetIngressRateLimitRPS() float64 {
+	if v, ok := os.LookupEnv("INGRESS_RATE_LIMIT_RPS"); ok {
+		if f, err := strconv.ParseFloat(v, 64); err == nil && f >= 0 {
+			return f
+		}
+	}
+	return 50
+}
+
+// GetIngressRateLimitBurst is the short-burst allowance on top of the
+// sustained rate (default 100 requests).
+func (c *ServerConfig) GetIngressRateLimitBurst() int {
+	if v, err := strconv.Atoi(os.Getenv("INGRESS_RATE_LIMIT_BURST")); err == nil && v > 0 {
+		return v
+	}
+	return 100
+}
+
 func (c *ServerConfig) GetHubCASubject() string {
 	return os.Getenv("HUB_CA_SUBJECT")
 }

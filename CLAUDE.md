@@ -51,3 +51,26 @@ This is the **v2 monorepo** that merges the v1 `winterflow-agent` and `winterflo
 **Orchestration:** the agent deploys apps via the `docker compose` CLI (not the Docker SDK), in `internal/infra/orchestrator/docker_compose`. Each app lives in `{AGENT_DATA_DIR}/apps-data/{appID}/` — a git repository (go-git) that IS the deployment: compose runs in it directly, interpolating `${VAR}` from the committed `.env` (+ gitignored `.env.secrets`, materialized from the ECIES-encrypted committed `secrets.json` at deploy). `{AGENT_DATA_DIR}/apps/` holds human-readable `{slug}` symlinks. Every save/rename is a commit; rollback restores an old tree as a new commit and redeploys. History is unlimited. Git-sourced apps additionally clone their upstream into a gitignored `source/` (SHA pinned in the committed `source.lock`, so rollback restores the source position too), run compose against the repo's compose file, and can auto-update via an agent-side poller.
 
 **Auth:** `go-pkgz/auth`. Local email+password is the always-on default (`internal/app/web/auth/local.go`, bcrypt in `user_credentials`); login is verify-only — accounts come from `POST /api/v1/auth/register` (fresh instance = one-time claim step creating the admin + the org; distributed self-signup gated by `REGISTRATION_ENABLED`, own org per registrant) or from admins at `/org/members`. Orgs carry name/icon/color (`org/get-organization`, admin `org/update-organization`). Google OAuth is optional (client id/secret pair, distributed only). JWT-protected `/api/v1/*` routes; personal access tokens (`wfp_…`, SHA-256-hashed at rest, `pkg/pat`) accepted as `Bearer` (via `internal/app/web/middleware/patauth`) or Basic-auth password, managed at `/user/tokens`. Roles: owner/admin administer (members via `/org/members`, server registration, registry/network mutations — gated by `internal/app/web/middleware/rbac`); members keep the full app lifecycle. mTLS for hub↔agent.
+
+## Security, stability, and resource invariants
+
+Winterflow ships to small always-on home servers (reference target: a fanless-ish 4-core Intel N150). Idle CPU burn, unbounded growth, and missing authorization are bugs, not polish. A 2026-08 full audit established these rules — keep them when adding code:
+
+**Security (fail closed):**
+- A `server_id` from a request is NOT authorization. Every server-addressed route must verify org ownership before dispatching: `webutil.RequireServerAccess` (backed by `ServerRepository.UserOwnsServer`); the app handlers' `authorize` and the docker handlers' `caller` helpers do this — reuse them. The guard denies when unwired (nil), and tests assert 403 per route.
+- bcrypt-priced endpoints (login/register) sit behind the per-IP limiter in `internal/app/web/middleware/ratelimit`; put any new expensive unauthenticated endpoint behind it too.
+- Secret values never leave the agent (mask with the `<encrypted>` placeholder; secret files 0600). Docker/git CLI args are always `[]string` — never build shell strings; user-supplied paths go through `safeRel`, app ids through `filepath.Base`.
+
+**Stability (months of uptime between restarts):**
+- Every network operation needs a deadline. The standalone command pipeline is drained by ONE goroutine (`InProcessBridge`), so a single unbounded hang wedges all app management until restart — see `ensureSource`'s 5-minute timeout for the pattern.
+- Channel hygiene: close and send must be serialized by the same lock (see `mem/bus`); pump goroutines select on `ctx.Done()` for every blocking send; concurrent writes to one gRPC stream are forbidden — use the per-agent send mutex (`hub.agent.send`).
+- Per-app in-memory bookkeeping must be pruned on app deletion (`Repository.forgetApp`).
+
+**Resources (idle cost near zero):**
+- Never exec per app in polled paths — process forks (docker/compose/git) are the expensive unit on target hardware. Status collection is ONE `docker ps --all` grouped by the compose project label (`dockerPSByProject`); keep that shape.
+- App git histories are unlimited and append-only: anything derived from a history walk must be cached keyed by HEAD (see `commitCount`); source polling skips fetch/checkout work when the upstream hasn't moved and fetches only the configured branch.
+- Fan out SSE/notifications only on change (`status.Cache.SetAppStatus` returns `changed`), never unconditionally per tick.
+- The embedded ingress carries a predefined per-client-IP throttle (in-repo Caddy module `winterflow_rate_limit`, `INGRESS_RATE_LIMIT_RPS`/`_BURST`, default 50/100, 0 disables) plus header/idle timeouts — new ingress routes must stay behind it (it's prepended to both servers in `BuildConfig`).
+- `scripts/install.sh` owns operational limits: journald namespace `winterflow` with rotation caps, Docker container-log rotation, and unit `CPUQuota`/`MemoryMax`. After editing it, run `bash scripts/install_test.sh` (uses `--dry-run`, no root needed).
+
+**Frontend:** `web/src/components/ui/` is intentionally vendored shadcn/ui — never delete its components (or their package.json deps) as "dead code", even when unimported.

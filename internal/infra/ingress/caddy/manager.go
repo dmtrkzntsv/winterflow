@@ -24,6 +24,13 @@ import (
 	_ "github.com/caddyserver/caddy/v2/modules/filestorage"
 )
 
+// caddyMu serializes every caddy.Load/caddy.Stop in this package. Caddy's
+// run state is process-global while Managers are per-instance, so without
+// this a shutdown goroutine from one Manager can race another's Load —
+// caddy panics (close of closed channel) when its TLS app is stopped twice
+// concurrently.
+var caddyMu sync.Mutex
+
 // Manager owns the embedded Caddy instance. Ingress failures degrade ingress
 // only: Start never fails the agent, Reload never fails a deploy.
 type Manager struct {
@@ -127,7 +134,10 @@ func (m *Manager) Start(ctx context.Context) error {
 	if cfg == nil {
 		return nil
 	}
-	if err := caddy.Load(cfg, true); err != nil {
+	caddyMu.Lock()
+	err := caddy.Load(cfg, true)
+	caddyMu.Unlock()
+	if err != nil {
 		m.log.Warn("ingress disabled: "+m.startFailureReason(err), "error", err)
 		return nil
 	}
@@ -138,11 +148,26 @@ func (m *Manager) Start(ctx context.Context) error {
 
 	go func() {
 		<-ctx.Done()
-		if err := caddy.Stop(); err != nil {
-			m.log.Warn("ingress: caddy stop", "error", err)
-		}
+		m.Stop()
 	}()
 	return nil
+}
+
+// Stop shuts caddy down. Idempotent: the ctx goroutine and an explicit call
+// (tests, shutdown paths) can both fire — only the first one past the
+// enabled flag actually stops caddy.
+func (m *Manager) Stop() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.enabled {
+		return
+	}
+	m.enabled = false
+	caddyMu.Lock()
+	defer caddyMu.Unlock()
+	if err := caddy.Stop(); err != nil {
+		m.log.Warn("ingress: caddy stop", "error", err)
+	}
 }
 
 // Reload rebuilds from disk and hot-swaps the config. On a load failure the
@@ -158,7 +183,10 @@ func (m *Manager) Reload(ctx context.Context) []string {
 	if cfg == nil {
 		return warnings
 	}
-	if err := caddy.Load(cfg, false); err != nil {
+	caddyMu.Lock()
+	err := caddy.Load(cfg, false)
+	caddyMu.Unlock()
+	if err != nil {
 		m.log.Error("ingress: reload failed, previous config keeps serving", "error", err)
 		warnings = append(warnings, "ingress reload failed (previous routing still active): "+err.Error())
 	}

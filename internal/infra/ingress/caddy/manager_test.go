@@ -94,6 +94,7 @@ func TestManagerServesReloadsAndIsolates(t *testing.T) {
 	cfg := config.NewServerConfig("standalone")
 	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
 	m := NewManager(cfg, log)
+	t.Cleanup(m.Stop) // stop caddy before the next test touches its global state
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if err := m.Start(ctx); err != nil {
@@ -156,6 +157,7 @@ func TestManagerDisabledOnBindFailure(t *testing.T) {
 	cfg := config.NewServerConfig("standalone")
 	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
 	m := NewManager(cfg, log)
+	t.Cleanup(m.Stop) // stop caddy before the next test touches its global state
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if err := m.Start(ctx); err != nil {
@@ -181,6 +183,7 @@ func TestManagerRespectsDisableSwitch(t *testing.T) {
 	cfg := config.NewServerConfig("standalone")
 	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
 	m := NewManager(cfg, log)
+	t.Cleanup(m.Stop) // stop caddy before the next test touches its global state
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if err := m.Start(ctx); err != nil {
@@ -202,6 +205,7 @@ func TestManagerRefusesPortCollisionWithAPI(t *testing.T) {
 	cfg := config.NewServerConfig("standalone")
 	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
 	m := NewManager(cfg, log)
+	t.Cleanup(m.Stop) // stop caddy before the next test touches its global state
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if err := m.Start(ctx); err != nil {
@@ -215,6 +219,7 @@ func TestManagerRefusesPortCollisionWithAPI(t *testing.T) {
 	// on a lone agent, which never runs the API.
 	unsetAPIPort(t)
 	m2 := NewManager(config.NewServerConfig("standalone"), log)
+	t.Cleanup(m2.Stop)
 	if err := m2.Start(ctx); err != nil {
 		t.Fatal(err)
 	}

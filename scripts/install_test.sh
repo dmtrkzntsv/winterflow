@@ -36,6 +36,30 @@ bash "$INSTALL_SH" --dry-run --port abc >/dev/null 2>&1 && fail "non-numeric por
 bash "$INSTALL_SH" --dry-run --port 70000 >/dev/null 2>&1 && fail "out-of-range port rejected" "exit 0" || pass "out-of-range port rejected"
 bash "$INSTALL_SH" --dry-run --cpu-quota abc >/dev/null 2>&1 && fail "non-numeric cpu quota rejected" "exit 0" || pass "non-numeric cpu quota rejected"
 
+# --- Service user -------------------------------------------------------------
+
+bash "$INSTALL_SH" --dry-run --user root >/dev/null 2>&1 \
+    && fail "--user root rejected" "exit 0" || pass "--user root rejected"
+bash "$INSTALL_SH" --dry-run --user 'bad name' >/dev/null 2>&1 \
+    && fail "--user with invalid characters rejected" "exit 0" || pass "--user with invalid characters rejected"
+bash "$INSTALL_SH" --dry-run --user '' >/dev/null 2>&1 \
+    && fail "empty --user rejected" "exit 0" || pass "empty --user rejected"
+
+out_user="$(bash "$INSTALL_SH" --dry-run --user winterflow-svc 2>&1)" || fail "--user dry-run exits 0" "exit $?"
+assert_contains "unit: --user applied" "$out_user" "User=winterflow-svc"
+assert_contains "unit: group defaults to the user name" "$out_user" "Group=winterflow-svc"
+
+# An existing account keeps its real primary group (user-private groups are a
+# convention, not a rule) so the data dir is chgrp-able.
+me="$(id -un)"
+if [ "$me" != "root" ]; then
+    out_me="$(bash "$INSTALL_SH" --dry-run --user "$me" 2>&1)" || fail "--user <existing> dry-run exits 0" "exit $?"
+    assert_contains "unit: existing user applied" "$out_me" "User=${me}"
+    assert_contains "unit: existing user's primary group resolved" "$out_me" "Group=$(id -gn)"
+fi
+
+assert_contains "--help documents the service user prompt" "$(bash "$INSTALL_SH" --help)" "Must not be root."
+
 # --- Dry run: generated env file ---------------------------------------------
 
 out="$(bash "$INSTALL_SH" --dry-run --port 9090 --cpu-quota 250 --memory-max 1G 2>&1)" \

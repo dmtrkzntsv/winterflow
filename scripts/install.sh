@@ -4,8 +4,9 @@
 #
 # The standalone binary runs the HTTP API, the embedded web UI, the agent,
 # and the Docker Compose orchestrator in one process over SQLite. This script:
-#   - offers to create a dedicated system user (recommended) so the service
-#     does not run as root,
+#   - asks which unprivileged user the service should run as (a dedicated
+#     system user, the account you sudo'd from, or one you name) so the
+#     service does not run as root,
 #   - installs the binary to /usr/local/bin/winterflow,
 #   - writes /etc/winterflow/winterflow.env with a generated JWT secret,
 #   - creates /var/lib/winterflow for the database, certs, and app data,
@@ -23,21 +24,25 @@
 # Options:
 #   --binary PATH    Prebuilt standalone binary to install. Default: build
 #                    ./cmd/standalone from the repo this script lives in.
-#   --user NAME      Service user name (default: winterflow).
+#   --user NAME      Run the service as NAME instead of asking. Created as a
+#                    system user if it does not exist. Must not be root.
 #   --port PORT      API port (default: 8080).
 #   --cpu-quota PCT  CPU cap for the service in percent of one core (default:
 #                    (cores-1)*100, min 100). Keeps orchestration work from
 #                    saturating the box; app containers are not affected.
 #   --memory-max SZ  Hard memory cap for the service (default: half of RAM,
 #                    clamped to 512M..2G).
-#   --yes            Non-interactive: assume "yes" to all prompts.
+#   --yes            Non-interactive: assume "yes" to all prompts and keep
+#                    the default service user (winterflow) unless --user says
+#                    otherwise.
 #   --dry-run        Print the unit/config that would be written and exit
 #                    without changing anything. Does not require root.
 #   --uninstall      Stop and remove the service, binary, and unit file.
 #                    Config and data are kept; remove them manually.
 #   --purge          Like --uninstall, but also delete the config, all data
 #                    (database, certs, deployed app repos), logs, and the
-#                    service user. Irreversible; asks unless --yes.
+#                    service user — unless it is a real login account, which
+#                    is kept. Irreversible; asks unless --yes.
 #   -h, --help       Show this help.
 
 set -euo pipefail
@@ -52,6 +57,8 @@ JOURNAL_NAMESPACE="winterflow"
 JOURNAL_CONF="/etc/systemd/journald@${JOURNAL_NAMESPACE}.conf"
 
 SERVICE_USER="winterflow"
+SERVICE_GROUP="winterflow"
+USER_EXPLICIT=0
 API_PORT="8080"
 CPU_QUOTA=""
 MEMORY_MAX=""
@@ -82,10 +89,46 @@ confirm() {
     esac
 }
 
+ask() {
+    # ask "question" "default" -> echo the answer. Empty input (or --yes,
+    # or a non-interactive stdin) yields the default. read -p writes the
+    # prompt to stderr, so this is safe inside $(...).
+    local prompt="$1" default="$2" answer
+    if [ "$ASSUME_YES" -eq 1 ] || [ ! -t 0 ]; then
+        printf '%s' "$default"
+        return 0
+    fi
+    read -r -p "${prompt} [${default}] " answer || answer=""
+    printf '%s' "${answer:-$default}"
+}
+
+is_valid_user_name() {
+    # useradd's portable name rule, minus root: a typo (or a uid-0 account)
+    # must never land as "User=" in the unit.
+    [ "$1" != root ] || return 1
+    printf '%s' "$1" | grep -qE '^[a-z_][a-z0-9_-]*$' || return 1
+    ! id -u "$1" >/dev/null 2>&1 || [ "$(id -u "$1")" -ne 0 ]
+}
+
+validate_user_name() {
+    is_valid_user_name "$1" || die "invalid service user '$1': use lowercase\
+ letters, digits, '_' and '-', and not root (uid 0)"
+}
+
+# The primary group of an existing account is not always <name> (user-private
+# groups are a convention, not a rule), so resolve it instead of assuming.
+resolve_group() {
+    if id "$SERVICE_USER" >/dev/null 2>&1; then
+        SERVICE_GROUP="$(id -gn "$SERVICE_USER")"
+    else
+        SERVICE_GROUP="$SERVICE_USER"
+    fi
+}
+
 while [ $# -gt 0 ]; do
     case "$1" in
         --binary)     BINARY_SRC="${2:?--binary needs a path}"; shift 2 ;;
-        --user)       SERVICE_USER="${2:?--user needs a name}"; shift 2 ;;
+        --user)       SERVICE_USER="${2:?--user needs a name}"; USER_EXPLICIT=1; shift 2 ;;
         --port)       API_PORT="${2:?--port needs a value}"; shift 2 ;;
         --cpu-quota)  CPU_QUOTA="${2:?--cpu-quota needs a value}"; shift 2 ;;
         --memory-max) MEMORY_MAX="${2:?--memory-max needs a value}"; shift 2 ;;
@@ -97,6 +140,9 @@ while [ $# -gt 0 ]; do
         *) die "unknown option: $1 (see --help)" ;;
     esac
 done
+
+validate_user_name "$SERVICE_USER"
+resolve_group
 
 case "$API_PORT" in
     ''|*[!0-9]*) die "--port must be a number, got: ${API_PORT}" ;;
@@ -137,7 +183,7 @@ if [ "$UNINSTALL" -eq 1 ]; then
     if [ "$PURGE" -eq 1 ]; then
         echo "This will PERMANENTLY delete ${CONFIG_DIR}, ${DATA_DIR} (database,"
         echo "certs, deployed app repos), all winterflow logs, and the"
-        echo "'${SERVICE_USER}' user."
+        echo "'${SERVICE_USER}' user, if it is a dedicated service account."
         echo "Running app containers are NOT stopped; stop them first if needed."
         confirm "Purge everything?" || die "aborted"
     fi
@@ -154,9 +200,17 @@ if [ "$UNINSTALL" -eq 1 ]; then
         rm -rf /var/log/journal/*."${JOURNAL_NAMESPACE}" /run/log/journal/*."${JOURNAL_NAMESPACE}"
         rm -rf "$CONFIG_DIR" "$DATA_DIR"
         if id "$SERVICE_USER" >/dev/null 2>&1; then
-            userdel "$SERVICE_USER" 2>/dev/null || warn "could not delete user '${SERVICE_USER}'; remove it manually"
+            # Only reap a dedicated service account. If the service was
+            # installed to run as a real login user (uid >= 1000, or the
+            # account running sudo), deleting it would take the human with it.
+            purge_uid="$(id -u "$SERVICE_USER")"
+            if [ "$SERVICE_USER" = "${SUDO_USER:-}" ] || [ "$purge_uid" -ge 1000 ]; then
+                warn "keeping user '${SERVICE_USER}' (uid ${purge_uid}): looks like a login account, not a dedicated service user"
+            else
+                userdel "$SERVICE_USER" 2>/dev/null || warn "could not delete user '${SERVICE_USER}'; remove it manually"
+            fi
         fi
-        log "Purged config, data, logs, and the '${SERVICE_USER}' user."
+        log "Purged config, data, and logs."
     else
         log "Kept: ${CONFIG_DIR}, ${DATA_DIR}, logs, and the '${SERVICE_USER}' user."
         log "To remove them too, rerun with --purge."
@@ -241,7 +295,7 @@ Requires=docker.service
 [Service]
 Type=simple
 User=${SERVICE_USER}
-Group=${SERVICE_USER}
+Group=${SERVICE_GROUP}
 EnvironmentFile=${ENV_FILE}
 WorkingDirectory=${DATA_DIR}
 ExecStart=${BINARY_DEST}
@@ -368,24 +422,75 @@ if [ -z "$BINARY_SRC" ]; then
 fi
 [ -x "$BINARY_SRC" ] || die "binary is not executable: ${BINARY_SRC}"
 
-# --- Dedicated service user ---------------------------------------------------
+# --- Service user -------------------------------------------------------------
+
+# The service must not run as root. Ask which account to use, defaulting to a
+# dedicated system user; the account that invoked sudo is offered as an
+# alternative for single-user boxes where matching file ownership is handier.
+# --user NAME (or --yes) skips the question.
+INVOKING_USER="${SUDO_USER:-}"
+if [ "$INVOKING_USER" = "root" ]; then
+    INVOKING_USER=""
+fi
+
+if [ "$USER_EXPLICIT" -eq 0 ] && [ "$ASSUME_YES" -eq 0 ]; then
+    echo
+    echo "Which user should the WinterFlow service run as? It must not be root,"
+    echo "so a compromise of the service does not directly compromise the host."
+    echo
+    echo "  1) ${SERVICE_USER} - create a dedicated system user (recommended)"
+    if [ -n "$INVOKING_USER" ]; then
+        echo "  2) ${INVOKING_USER} - the account you ran sudo from"
+        echo "  3) another name - type it below"
+    else
+        echo "  2) another name - type it below"
+    fi
+    echo
+    default_user="$SERVICE_USER"
+    while :; do
+        answer="$(ask "Choice (number or user name)" "1")"
+        case "$answer" in
+            1) SERVICE_USER="$default_user"; break ;;
+            2) if [ -n "$INVOKING_USER" ]; then
+                   SERVICE_USER="$INVOKING_USER"
+               else
+                   SERVICE_USER="$(ask "User name" "$default_user")"
+               fi
+               break ;;
+            3) if [ -n "$INVOKING_USER" ]; then
+                   SERVICE_USER="$(ask "User name" "$default_user")"
+                   break
+               fi
+               warn "no such choice; pick a number from the list or type a user name"
+               ;;
+            [0-9]*) warn "no such choice; pick a number from the list or type a user name" ;;
+            *) if is_valid_user_name "$answer"; then
+                   SERVICE_USER="$answer"
+                   break
+               fi
+               warn "'${answer}' is not a usable user name (lowercase letters, digits, '_' and '-'; not root)"
+               ;;
+        esac
+    done
+    validate_user_name "$SERVICE_USER"
+fi
 
 if id "$SERVICE_USER" >/dev/null 2>&1; then
-    log "User '${SERVICE_USER}' already exists, reusing it"
+    log "User '${SERVICE_USER}' already exists, running the service as it"
 else
     echo
-    echo "WinterFlow should run as a dedicated unprivileged system user"
-    echo "('${SERVICE_USER}') instead of root, so a compromise of the service"
-    echo "does not directly compromise the host."
-    if confirm "Create dedicated system user '${SERVICE_USER}'?"; then
+    echo "'${SERVICE_USER}' does not exist yet. It will be created as an"
+    echo "unprivileged system user (no login shell, home ${DATA_DIR})."
+    if confirm "Create system user '${SERVICE_USER}'?"; then
         useradd --system --user-group \
             --home-dir "$DATA_DIR" --no-create-home \
             --shell /usr/sbin/nologin "$SERVICE_USER"
         log "Created system user '${SERVICE_USER}'"
     else
-        die "refusing to install without a dedicated user; rerun with --user NAME to use an existing account"
+        die "refusing to install without a service user; rerun with --user NAME to use an existing account"
     fi
 fi
+resolve_group
 
 # The agent drives docker compose, which needs access to the Docker socket.
 if getent group docker >/dev/null 2>&1 && ! id -nG "$SERVICE_USER" | tr ' ' '\n' | grep -qx docker; then
@@ -404,8 +509,8 @@ fi
 # --- Filesystem layout --------------------------------------------------------
 
 log "Creating ${DATA_DIR} and ${CONFIG_DIR}"
-install -d -m 750 -o "$SERVICE_USER" -g "$SERVICE_USER" "$DATA_DIR"
-install -d -m 750 -o root -g "$SERVICE_USER" "$CONFIG_DIR"
+install -d -m 750 -o "$SERVICE_USER" -g "$SERVICE_GROUP" "$DATA_DIR"
+install -d -m 750 -o root -g "$SERVICE_GROUP" "$CONFIG_DIR"
 
 log "Installing binary to ${BINARY_DEST}"
 install -m 755 -o root -g root "$BINARY_SRC" "$BINARY_DEST"
@@ -418,7 +523,7 @@ else
     log "Writing ${ENV_FILE}"
     jwt_secret="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
     render_env_file "$jwt_secret" > "$ENV_FILE"
-    chown root:"$SERVICE_USER" "$ENV_FILE"
+    chown root:"$SERVICE_GROUP" "$ENV_FILE"
     chmod 640 "$ENV_FILE"
 fi
 

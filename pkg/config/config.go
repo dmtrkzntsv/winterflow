@@ -320,7 +320,7 @@ func (c *ServerConfig) IsStandalone() bool {
 }
 
 // GetGitHubReleasesURL is the base URL self-update binaries are downloaded
-// from. The expected layout is {base}/{vX.Y.Z}/winterflow-{component}-{os}-{arch}
+// from. The expected layout is {base}/{vYYMMDD.N}/winterflow-{component}-{os}-{arch}
 // where component is "standalone" or "agent" — the asset naming produced by
 // .goreleaser.yaml and consumed by scripts/install.sh. Override with
 // GITHUB_RELEASES_URL.

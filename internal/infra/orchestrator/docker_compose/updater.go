@@ -55,7 +55,7 @@ func (r *Repository) UpdateAgent(ctx context.Context, in command.UpdateAgentRequ
 	if r.cfg.IsStandalone() {
 		component = "standalone"
 	}
-	// Release tags are v-prefixed (v1.2.3); accept a bare version too.
+	// Release tags are v-prefixed calver (v260823.1); accept a bare version too.
 	tag := in.Version
 	if !strings.HasPrefix(tag, "v") {
 		tag = "v" + tag

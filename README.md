@@ -53,7 +53,7 @@ Configuration lives in `/etc/winterflow/winterflow.env`;
 
 Rerun the install one-liner: it downloads the latest release and restarts the
 service, keeping your config and data. Pin a specific release with
-`--version v1.2.3`.
+`--version v260823.1` (versions are `vYYMMDD.{build}`; every push to main cuts one).
 
 ## Uninstall
 

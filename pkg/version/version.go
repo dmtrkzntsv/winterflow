@@ -21,6 +21,9 @@ func GetNumericVersion() int {
 }
 
 func ParseNumericVersion(semVer string) int {
+	// Calver tags (v260823.4) are two-part, so the three-part regex below
+	// never strips their v prefix — do it explicitly or Atoi zeroes the date.
+	semVer = strings.TrimPrefix(semVer, "v")
 	matches := regexp.MustCompile(versionRegex).FindStringSubmatch(semVer)
 	if len(matches) > 1 {
 		semVer = matches[1]

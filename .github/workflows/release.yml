@@ -1,15 +1,23 @@
-# Publishes a GitHub release with prebuilt binaries when a v* tag is pushed:
-#   git tag v0.1.0 && git push origin v0.1.0
+# Publishes a GitHub release with prebuilt binaries on every push to main.
+# Versions are calver: vYYMMDD.{build} (UTC date, build number counting up
+# from 1 within the day) — computed and tagged here automatically.
 # Asset naming and platforms live in .goreleaser.yaml.
 name: release
 
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
+  workflow_dispatch:
 
 permissions:
   contents: write
+
+# One release at a time: parallel runs would compute the same next build
+# number and race on the tag push.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   goreleaser:
@@ -17,7 +25,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # goreleaser derives the changelog from the full tag history.
+          # All history and tags: needed to count today's builds and for the
+          # changelog between releases.
           fetch-depth: 0
 
       - uses: pnpm/action-setup@v4
@@ -36,6 +45,17 @@ jobs:
 
       - name: Test
         run: go test ./...
+
+      - name: Tag calver release
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          today="$(date -u +%y%m%d)"
+          last="$(git tag -l "v${today}.*" | sed "s/^v${today}\.//" | sort -n | tail -1)"
+          tag="v${today}.$(( ${last:-0} + 1 ))"
+          echo "Releasing ${tag}"
+          git tag "$tag"
+          git push origin "$tag"
 
       - uses: goreleaser/goreleaser-action@v6
         with:

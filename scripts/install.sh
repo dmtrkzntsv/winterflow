@@ -31,8 +31,8 @@
 #   --binary PATH    Prebuilt standalone binary to install. Default: build
 #                    ./cmd/standalone when run from a repo checkout, otherwise
 #                    download the latest GitHub release for this OS/arch.
-#   --version TAG    Release to download instead of the latest, e.g. v1.2.3
-#                    (a bare 1.2.3 works too). Ignored with --binary or a
+#   --version TAG    Release to download instead of the latest, e.g. v260823.1
+#                    (a bare 260823.1 works too). Ignored with --binary or a
 #                    repo build.
 #   --user NAME      Run the service as NAME instead of asking. Created as a
 #                    system user if it does not exist. Must not be root.

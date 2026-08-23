@@ -23,6 +23,9 @@ before:
     # placeholder) inside the standalone binary.
     - pnpm --dir web install --frozen-lockfile
     - pnpm --dir web run build
+    # vite empties web/dist, taking the tracked .gitkeep with it — restore it
+    # or goreleaser's dirty-tree check fails the release.
+    - touch web/dist/.gitkeep
 
 builds:
   - id: standalone

@@ -28,6 +28,8 @@ func TestParseNumericVersion(t *testing.T) {
 		{"embedded in release name", "winterflow-agent-2.10.7-beta", 2010007},
 		{"multi-digit parts", "12.345.678", 12345678},
 		{"two-part version has no regex match", "1.2", 1002},
+		{"calver release tag", "260823.4", 260823004},
+		{"calver with v prefix", "v260823.4", 260823004},
 		{"garbage yields zero", "not-a-version", 0},
 		{"empty string", "", 0},
 	}
@@ -42,7 +44,9 @@ func TestParseNumericVersion(t *testing.T) {
 
 func TestParseNumericVersionOrdering(t *testing.T) {
 	// The numeric encoding must preserve semver ordering for parts < 1000.
-	ordered := []string{"0.0.1", "0.0.9", "0.1.0", "0.9.9", "1.0.0", "1.0.10", "1.2.3", "2.0.0", "10.0.0"}
+	ordered := []string{"0.0.1", "0.0.9", "0.1.0", "0.9.9", "1.0.0", "1.0.10", "1.2.3", "2.0.0", "10.0.0",
+		// calver release tags: builds within a day, then across days
+		"260823.1", "260823.2", "260823.10", "260824.1", "270101.1"}
 	for i := 1; i < len(ordered); i++ {
 		prev, cur := ParseNumericVersion(ordered[i-1]), ParseNumericVersion(ordered[i])
 		if prev >= cur {

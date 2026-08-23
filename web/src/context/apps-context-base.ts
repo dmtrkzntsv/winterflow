@@ -59,7 +59,8 @@ export type AppsContextValue = {
   rename: (appId: string, name: string) => Promise<void>;
   // saveApp dispatches app.save with the full payload (config + files +
   // variables) and awaits the result. Upsert: app.id present = edit,
-  // absent = create.
+  // absent = create. Resolves with the refreshed app list so callers can
+  // locate a freshly created app (e.g. to navigate to it).
   saveApp: (body: {
     draft?: boolean;
     source?: unknown;
@@ -67,7 +68,7 @@ export type AppsContextValue = {
     config: unknown;
     files: { name: string; content: string; encrypted: boolean }[];
     variables: { name: string; content: string; encrypted: boolean }[];
-  }) => Promise<void>;
+  }) => Promise<App[]>;
   // getPublicKey returns the server's ECIES public key for encrypting secrets.
   getPublicKey: () => Promise<string>;
   // getImageTags lists the registry tags available for an image (via the

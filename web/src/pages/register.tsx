@@ -4,6 +4,7 @@ import { Trans } from "react-i18next";
 import { toast } from "sonner";
 
 import { apiBaseUrl } from "@/config";
+import { useAuth } from "@/context/use-auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -23,6 +24,7 @@ import { LoginIllustration } from "@/components/login-illustration";
 // the login page layout.
 export default function RegisterPage() {
   const navigate = useNavigate();
+  const { login } = useAuth();
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [bootstrap, setBootstrap] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -68,8 +70,16 @@ export default function RegisterPage() {
       if (!res.ok || !body?.success) {
         throw new Error(body?.message ?? `Request failed: ${res.status}`);
       }
-      toast.success("Account created — log in to continue");
-      navigate("/login", { state: { email } });
+      // Sign the fresh account in right away; if that somehow fails, fall
+      // back to the login page with the email prefilled.
+      try {
+        await login({ username: email, password });
+        toast.success("Welcome to Winterflow!");
+        navigate("/", { replace: true });
+      } catch {
+        toast.success("Account created — log in to continue");
+        navigate("/login", { state: { email } });
+      }
     } catch (e) {
       toast.error("Registration failed", {
         description: e instanceof Error ? e.message : undefined,

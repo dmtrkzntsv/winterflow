@@ -393,8 +393,10 @@ export function AppEditor({ state, onChange }: Props) {
           </CardHeader>
           <CardContent>
             <p className="text-sm text-muted-foreground">
-              This server&apos;s agent doesn&apos;t support ingress. Update the
-              agent to configure domains.
+              Ingress isn&apos;t available on this server, so domains
+              can&apos;t be configured. Make sure the agent is up to date and
+              its built-in proxy can bind ports 80/443 (see the agent log for
+              details).
             </p>
           </CardContent>
         </Card>

@@ -324,15 +324,18 @@ func (r *DbUserRepository) CountUsers(ctx context.Context) (int, error) {
 // first login's email+password: user + personal org (owner) + local connected
 // account + credentials. Refuses when any user already exists — the count is
 // re-checked inside the transaction so a racing double-submit has one winner.
-func (r *DbUserRepository) BootstrapLocalAdmin(ctx context.Context, email, password string) (model.User, error) {
+func (r *DbUserRepository) BootstrapLocalAdmin(ctx context.Context, name, email, password string) (model.User, error) {
 	email = normalizeEmail(email)
 	hash, err := hashPassword(password)
 	if err != nil {
 		return model.User{}, err
 	}
-	name := email
-	if i := strings.IndexByte(email, '@'); i > 0 {
-		name = email[:i]
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = email
+		if i := strings.IndexByte(email, '@'); i > 0 {
+			name = email[:i]
+		}
 	}
 
 	org := &models.Organization{

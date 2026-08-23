@@ -89,14 +89,14 @@ export function AppsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // loadApps reads the DB-backed list synchronously (no agent hop).
-  const loadApps = useCallback(async () => {
+  const loadApps = useCallback(async (): Promise<App[]> => {
     if (!isAuthenticated || !activeServerId) {
       if (mounted.current) {
         setApps([]);
         setLoading(false);
         setError(null);
       }
-      return;
+      return [];
     }
     if (mounted.current) {
       setLoading(true);
@@ -111,12 +111,15 @@ export function AppsProvider({ children }: { children: ReactNode }) {
         throw new Error(`Failed to load apps: ${res.status}`);
       }
       const result = (await res.json()) as GetAppsResponse;
-      if (!mounted.current) return;
-      setApps((result.data?.apps ?? []).map(toApp));
+      if (!mounted.current) return [];
+      const list = (result.data?.apps ?? []).map(toApp);
+      setApps(list);
+      return list;
     } catch (e) {
-      if (!mounted.current) return;
+      if (!mounted.current) return [];
       setApps([]);
       setError(e instanceof Error ? e.message : "Failed to load apps");
+      return [];
     } finally {
       if (mounted.current) setLoading(false);
     }
@@ -232,25 +235,30 @@ export function AppsProvider({ children }: { children: ReactNode }) {
           throw new Error(result.error || "Operation failed");
         }
       }
-      await Promise.all([loadApps(), loadStatus()]);
+      const [list] = await Promise.all([loadApps(), loadStatus()]);
+      return list;
     },
     [activeServerId, waitFor, loadApps, loadStatus],
   );
 
   const control = useCallback(
-    (appId: string, action: ControlAction) =>
-      dispatchAndWait("control-app", { app_id: appId, action }),
+    async (appId: string, action: ControlAction) => {
+      await dispatchAndWait("control-app", { app_id: appId, action });
+    },
     [dispatchAndWait],
   );
 
   const remove = useCallback(
-    (appId: string) => dispatchAndWait("delete-app", { app_id: appId }),
+    async (appId: string) => {
+      await dispatchAndWait("delete-app", { app_id: appId });
+    },
     [dispatchAndWait],
   );
 
   const rename = useCallback(
-    (appId: string, name: string) =>
-      dispatchAndWait("rename-app", { app_id: appId, name }),
+    async (appId: string, name: string) => {
+      await dispatchAndWait("rename-app", { app_id: appId, name });
+    },
     [dispatchAndWait],
   );
 
@@ -353,8 +361,9 @@ export function AppsProvider({ children }: { children: ReactNode }) {
 
   // rollback restores a previous commit as a new revision and redeploys.
   const rollback = useCallback(
-    (appId: string, hash: string) =>
-      dispatchAndWait("rollback-app", { app_id: appId, hash }),
+    async (appId: string, hash: string) => {
+      await dispatchAndWait("rollback-app", { app_id: appId, hash });
+    },
     [dispatchAndWait],
   );
 
@@ -369,7 +378,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       files: { name: string; content: string; encrypted: boolean }[];
       variables: { name: string; content: string; encrypted: boolean }[];
     }) => {
-      await dispatchAndWait("save-app", {
+      return dispatchAndWait("save-app", {
         app: body.app,
         config: body.config,
         files: body.files,

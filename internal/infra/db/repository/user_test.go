@@ -194,12 +194,12 @@ func TestBootstrapLocalAdminCreatesOwnerOnce(t *testing.T) {
 		t.Fatalf("CountUsers = %d, %v", n, err)
 	}
 
-	admin, err := repo.BootstrapLocalAdmin(ctx, "  Admin@Example.COM ", "SuperSecret1")
+	admin, err := repo.BootstrapLocalAdmin(ctx, "Ada Admin", "  Admin@Example.COM ", "SuperSecret1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if admin.Name != "admin" {
-		t.Errorf("name = %q, want local-part 'admin'", admin.Name)
+	if admin.Name != "Ada Admin" {
+		t.Errorf("name = %q, want submitted 'Ada Admin'", admin.Name)
 	}
 	if role, err := repo.RoleOf(ctx, admin.ID); err != nil || role != "owner" {
 		t.Errorf("RoleOf = %q, %v; want owner", role, err)
@@ -212,7 +212,7 @@ func TestBootstrapLocalAdminCreatesOwnerOnce(t *testing.T) {
 	}
 
 	// Second bootstrap must refuse: users exist now.
-	if _, err := repo.BootstrapLocalAdmin(ctx, "evil@example.com", "x"); !errors.Is(err, model.ErrNotBootstrap) {
+	if _, err := repo.BootstrapLocalAdmin(ctx, "", "evil@example.com", "x"); !errors.Is(err, model.ErrNotBootstrap) {
 		t.Errorf("second bootstrap err = %v, want ErrNotBootstrap", err)
 	}
 }
@@ -220,7 +220,7 @@ func TestBootstrapLocalAdminCreatesOwnerOnce(t *testing.T) {
 func TestVerifyLocalCredentials(t *testing.T) {
 	repo := newUserRepo(t)
 	ctx := context.Background()
-	admin, err := repo.BootstrapLocalAdmin(ctx, "a@b.io", "correct-horse-1")
+	admin, err := repo.BootstrapLocalAdmin(ctx, "", "a@b.io", "correct-horse-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +239,7 @@ func TestVerifyLocalCredentials(t *testing.T) {
 func TestCreateMemberUserJoinsOrgWithoutNewOrg(t *testing.T) {
 	repo := newUserRepo(t)
 	ctx := context.Background()
-	admin, _ := repo.BootstrapLocalAdmin(ctx, "boss@x.io", "bootpass-123")
+	admin, _ := repo.BootstrapLocalAdmin(ctx, "", "boss@x.io", "bootpass-123")
 	orgID, err := repo.PrimaryOrganizationID(ctx, admin.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -277,7 +277,7 @@ func TestCreateMemberUserJoinsOrgWithoutNewOrg(t *testing.T) {
 func TestSetPasswordClearsMustChange(t *testing.T) {
 	repo := newUserRepo(t)
 	ctx := context.Background()
-	admin, _ := repo.BootstrapLocalAdmin(ctx, "boss@y.io", "bootpass-123")
+	admin, _ := repo.BootstrapLocalAdmin(ctx, "", "boss@y.io", "bootpass-123")
 	orgID, _ := repo.PrimaryOrganizationID(ctx, admin.ID)
 	m, _ := repo.CreateMemberUser(ctx, orgID, "M", "m@y.io", "member", "old-temp-pass1")
 
@@ -298,7 +298,7 @@ func TestSetPasswordClearsMustChange(t *testing.T) {
 func TestUpdateMemberRoleLastOwnerGuard(t *testing.T) {
 	repo := newUserRepo(t)
 	ctx := context.Background()
-	admin, _ := repo.BootstrapLocalAdmin(ctx, "boss@z.io", "bootpass-123")
+	admin, _ := repo.BootstrapLocalAdmin(ctx, "", "boss@z.io", "bootpass-123")
 	orgID, _ := repo.PrimaryOrganizationID(ctx, admin.ID)
 	m, _ := repo.CreateMemberUser(ctx, orgID, "M", "m@z.io", "member", "temp-password1")
 
@@ -322,7 +322,7 @@ func TestUpdateMemberRoleLastOwnerGuard(t *testing.T) {
 func TestRemoveMemberDeletesUserAndTokens(t *testing.T) {
 	repo := newUserRepo(t)
 	ctx := context.Background()
-	admin, _ := repo.BootstrapLocalAdmin(ctx, "boss@w.io", "bootpass-123")
+	admin, _ := repo.BootstrapLocalAdmin(ctx, "", "boss@w.io", "bootpass-123")
 	orgID, _ := repo.PrimaryOrganizationID(ctx, admin.ID)
 	m, _ := repo.CreateMemberUser(ctx, orgID, "M", "m@w.io", "member", "temp-password1")
 	_, patPlain, err := repo.CreateToken(ctx, m.ID, "m's token", nil)

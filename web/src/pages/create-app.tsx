@@ -34,9 +34,11 @@ export default function CreateAppPage() {
     setSaving(true);
     try {
       const payload = await buildSavePayload(state, getPublicKey);
-      await saveApp(payload);
+      const apps = await saveApp(payload);
       toast.success("App created");
-      navigate("/");
+      // Land on the new app's page so its deployment is visible right away.
+      const created = apps.find((a) => a.name === state.config.name.trim());
+      navigate(created ? `/app/${created.id}` : "/");
     } catch (e) {
       toast.error("Failed to create app", {
         description: e instanceof Error ? e.message : undefined,

@@ -21,7 +21,7 @@ import (
 // RegistrationStore is the slice of port.UserService this handler needs.
 type RegistrationStore interface {
 	CountUsers(ctx context.Context) (int, error)
-	BootstrapLocalAdmin(ctx context.Context, email, password string) (model.User, error)
+	BootstrapLocalAdmin(ctx context.Context, name, email, password string) (model.User, error)
 	RegisterLocalUser(ctx context.Context, name, email, password string) (model.User, error)
 }
 
@@ -106,13 +106,8 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		// Claim step: first account owns the (single, in standalone) org.
 		// BootstrapLocalAdmin re-checks the zero-users condition inside its
 		// transaction, so a racing double-submit has exactly one winner.
-		user, err = h.users.BootstrapLocalAdmin(r.Context(), email, req.Password)
-		if err == nil {
-			// The bootstrap derives the name from the email; honor the
-			// submitted one via the register path in distributed... keep it
-			// simple: bootstrap keeps its own naming; nothing to do here.
-			_ = user
-		} else if err == model.ErrNotBootstrap && !h.cfg.IsStandalone() && h.cfg.IsRegistrationEnabled() {
+		user, err = h.users.BootstrapLocalAdmin(r.Context(), name, email, req.Password)
+		if err == model.ErrNotBootstrap && !h.cfg.IsStandalone() && h.cfg.IsRegistrationEnabled() {
 			// Lost the claim race on distributed with open registration —
 			// fall through to a normal registration.
 			user, err = h.users.RegisterLocalUser(r.Context(), name, email, req.Password)

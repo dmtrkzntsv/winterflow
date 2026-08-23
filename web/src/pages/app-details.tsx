@@ -13,6 +13,7 @@ import { toast } from "sonner";
 
 import { useAppBreadcrumbs } from "@/layouts/use-app-layout";
 import { Button } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button-variants";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
@@ -471,7 +472,10 @@ function SettingsTab({
               </AlertDialogHeader>
               <AlertDialogFooter>
                 <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction onClick={() => void del()}>
+                <AlertDialogAction
+                  className={buttonVariants({ variant: "destructive" })}
+                  onClick={() => void del()}
+                >
                   Delete
                 </AlertDialogAction>
               </AlertDialogFooter>

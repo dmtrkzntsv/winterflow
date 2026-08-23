@@ -1,5 +1,7 @@
 "use client";
 
+import { Link, useLocation } from "react-router-dom";
+
 import {
   SidebarGroup,
   SidebarGroupLabel,
@@ -13,6 +15,7 @@ import { useApps } from "@/context/use-apps";
 // NavApps lists the active server's apps in the sidebar (v1 parity).
 export function NavApps() {
   const { apps, loading } = useApps();
+  const { pathname } = useLocation();
 
   return (
     <SidebarGroup className="group-data-[collapsible=icon]:hidden">
@@ -33,14 +36,19 @@ export function NavApps() {
         ) : (
           apps.map((app) => (
             <SidebarMenuItem key={app.id}>
-              <SidebarMenuButton>
-                <AppIcon
-                  name={app.name}
-                  icon={app.icon}
-                  color={app.color}
-                  className="size-5 text-[10px]"
-                />
-                <span className="truncate">{app.name}</span>
+              <SidebarMenuButton
+                asChild
+                isActive={pathname === `/app/${app.id}`}
+              >
+                <Link to={`/app/${app.id}`}>
+                  <AppIcon
+                    name={app.name}
+                    icon={app.icon}
+                    color={app.color}
+                    className="size-5 text-[10px]"
+                  />
+                  <span className="truncate">{app.name}</span>
+                </Link>
               </SidebarMenuButton>
             </SidebarMenuItem>
           ))

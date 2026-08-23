@@ -70,7 +70,11 @@ export function ServerCards() {
                     <div>Agent v{s.capabilities.version}</div>
                   ) : null}
                   {!online ? (
-                    <div>Last seen: {formatLastSeen(s.lastSeenAt)}</div>
+                    <div>
+                      {s.lastSeenAt
+                        ? `Last seen: ${formatLastSeen(s.lastSeenAt)}`
+                        : "Waiting for the agent to connect…"}
+                    </div>
                   ) : null}
                 </div>
               </div>

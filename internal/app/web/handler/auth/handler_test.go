@@ -20,7 +20,7 @@ type fakeReg struct {
 }
 
 func (f *fakeReg) CountUsers(context.Context) (int, error) { return f.users, nil }
-func (f *fakeReg) BootstrapLocalAdmin(_ context.Context, email, _ string) (model.User, error) {
+func (f *fakeReg) BootstrapLocalAdmin(_ context.Context, _, email, _ string) (model.User, error) {
 	if f.users > 0 {
 		return model.User{}, model.ErrNotBootstrap
 	}

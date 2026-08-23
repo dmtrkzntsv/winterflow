@@ -141,6 +141,10 @@ export function LoginForm({
                   {error}
                 </FieldDescription>
               ) : null}
+              {/* Hide the SSO block entirely when no social provider is
+                  configured — a permanently disabled button is just noise. */}
+              {socialProviders.some((p) => providerSet.has(p.id)) ? (
+                <>
               <FieldSeparator className="*:data-[slot=field-separator-content]:bg-card">
                 {t("login.ssoLabel")}
               </FieldSeparator>
@@ -180,6 +184,8 @@ export function LoginForm({
                   );
                 })}
               </div>
+                </>
+              ) : null}
             </FieldGroup>
           </form>
           <LoginIllustration className="hidden h-full md:block" />

@@ -32,8 +32,9 @@ type UserRepository interface {
 	// login bootstraps the admin).
 	CountUsers(ctx context.Context) (int, error)
 	// BootstrapLocalAdmin creates the first account (owner of a new org)
-	// from the first local login. model.ErrNotBootstrap when users exist.
-	BootstrapLocalAdmin(ctx context.Context, email, password string) (model.User, error)
+	// from the first local login. An empty name falls back to the email's
+	// local part. model.ErrNotBootstrap when users exist.
+	BootstrapLocalAdmin(ctx context.Context, name, email, password string) (model.User, error)
 	// VerifyLocalCredentials checks an email+password pair.
 	// model.ErrInvalidCredentials on any mismatch.
 	VerifyLocalCredentials(ctx context.Context, email, password string) (model.User, error)

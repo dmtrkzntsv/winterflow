@@ -44,6 +44,9 @@ func (h *Handler) ControlApp(w http.ResponseWriter, r *http.Request) {
 		webutil.Error(w, "invalid action", nil)
 		return
 	}
+	if !webutil.RequireServerAccess(w, r, h.servers, userID, req.ServerID) {
+		return
+	}
 
 	requestID, err := h.usecase.ControlApp(r.Context(), userID, req.ServerID, req.AppID, req.Action)
 	if err != nil {
@@ -72,6 +75,10 @@ func (h *Handler) DeleteApp(w http.ResponseWriter, r *http.Request) {
 		webutil.Error(w, "server_id and app_id are required", nil)
 		return
 	}
+	if !webutil.RequireServerAccess(w, r, h.servers, userID, req.ServerID) {
+		return
+	}
+
 	requestID, err := h.usecase.DeleteApp(r.Context(), userID, req.ServerID, req.AppID)
 	if err != nil {
 		webutil.Error(w, "failed to delete app", nil)
@@ -100,6 +107,10 @@ func (h *Handler) RenameApp(w http.ResponseWriter, r *http.Request) {
 		webutil.Error(w, "server_id, app_id and name are required", nil)
 		return
 	}
+	if !webutil.RequireServerAccess(w, r, h.servers, userID, req.ServerID) {
+		return
+	}
+
 	requestID, err := h.usecase.RenameApp(r.Context(), userID, req.ServerID, req.AppID, req.Name)
 	if err != nil {
 		webutil.Error(w, "failed to rename app", nil)
@@ -122,6 +133,10 @@ func (h *Handler) GetApp(w http.ResponseWriter, r *http.Request) {
 		webutil.Error(w, "server_id and app_id are required", nil)
 		return
 	}
+	if !webutil.RequireServerAccess(w, r, h.servers, userID, serverID) {
+		return
+	}
+
 	requestID, err := h.usecase.GetApp(r.Context(), userID, serverID, appID)
 	if err != nil {
 		webutil.Error(w, "failed to get app", nil)
@@ -143,6 +158,10 @@ func (h *Handler) GetRevisions(w http.ResponseWriter, r *http.Request) {
 		webutil.Error(w, "server_id and app_id are required", nil)
 		return
 	}
+	if !webutil.RequireServerAccess(w, r, h.servers, userID, serverID) {
+		return
+	}
+
 	requestID, err := h.usecase.GetRevisions(r.Context(), userID, serverID, appID)
 	if err != nil {
 		webutil.Error(w, "failed to get revisions", nil)
@@ -172,6 +191,10 @@ func (h *Handler) RollbackApp(w http.ResponseWriter, r *http.Request) {
 		webutil.Error(w, "server_id, app_id and hash are required", nil)
 		return
 	}
+	if !webutil.RequireServerAccess(w, r, h.servers, userID, req.ServerID) {
+		return
+	}
+
 	requestID, err := h.usecase.RollbackApp(r.Context(), userID, req.ServerID, req.AppID, req.Hash)
 	if err != nil {
 		webutil.Error(w, "failed to roll back app", nil)
@@ -194,6 +217,10 @@ func (h *Handler) GetImageTags(w http.ResponseWriter, r *http.Request) {
 		webutil.Error(w, "server_id and image are required", nil)
 		return
 	}
+	if !webutil.RequireServerAccess(w, r, h.servers, userID, serverID) {
+		return
+	}
+
 	requestID, err := h.usecase.GetImageTags(r.Context(), userID, serverID, image)
 	if err != nil {
 		webutil.Error(w, "failed to get image tags", nil)
@@ -227,6 +254,10 @@ func (h *Handler) GetLogs(w http.ResponseWriter, r *http.Request) {
 			tail = int32(v)
 		}
 	}
+	if !webutil.RequireServerAccess(w, r, h.servers, userID, serverID) {
+		return
+	}
+
 	requestID, err := h.usecase.GetLogs(r.Context(), userID, serverID, appID, since, tail)
 	if err != nil {
 		webutil.Error(w, "failed to get logs", nil)

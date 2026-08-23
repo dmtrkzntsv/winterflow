@@ -23,11 +23,24 @@ func (f *fakeDispatcher) Dispatch(_ context.Context, in port.DispatchInput) (str
 	return "req-9", nil
 }
 
+// fakeServerAccess owns exactly the servers in `owned` for any user.
+type fakeServerAccess struct {
+	owned map[string]bool
+}
+
+func (f *fakeServerAccess) UserOwnsServer(_ context.Context, _, serverID string) (bool, error) {
+	return f.owned[serverID], nil
+}
+
 func newHandler(t *testing.T) (*Handler, *fakeDispatcher) {
 	t.Helper()
 	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
 	fd := &fakeDispatcher{}
-	return NewHandler(&Deps{Logger: log, CommandDispatcher: fd}), fd
+	return NewHandler(&Deps{
+		Logger:            log,
+		CommandDispatcher: fd,
+		Servers:           &fakeServerAccess{owned: map[string]bool{"s1": true}},
+	}), fd
 }
 
 func authed(r *http.Request) *http.Request {
@@ -76,6 +89,22 @@ func TestDockerHandlersReturn202(t *testing.T) {
 				t.Fatalf("dispatched as %+v", fd.last)
 			}
 		})
+	}
+}
+
+// TestDockerHandlersRejectForeignServer fixates the ownership check: a
+// server_id outside the caller's organizations is refused with 403 before
+// anything is dispatched.
+func TestDockerHandlersRejectForeignServer(t *testing.T) {
+	h, fd := newHandler(t)
+	r := authed(httptest.NewRequest("GET", "/x?server_id=other", nil))
+	w := httptest.NewRecorder()
+	h.ListRegistries(w, r)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("foreign server must be 403, got %d", w.Code)
+	}
+	if fd.last.AgentID != "" {
+		t.Fatalf("command must not be dispatched, got %+v", fd.last)
 	}
 }
 

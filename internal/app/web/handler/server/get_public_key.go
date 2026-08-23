@@ -15,13 +15,18 @@ import (
 // works for both topologies), falling back to the local agent certificate
 // (standalone, where the API shares disk with the agent).
 func (h *Handler) GetPublicKey(w http.ResponseWriter, r *http.Request) {
+	userID, ok := util.RequireUser(w, r)
+	if !ok {
+		return
+	}
 	serverID := r.URL.Query().Get("server_id")
 	if serverID == "" {
 		util.Error(w, "server_id is required", nil)
 		return
 	}
-
-	// @todo check ownership of server_id by the authenticated user.
+	if !util.RequireServerAccess(w, r, h.servers, userID, serverID) {
+		return
+	}
 
 	if h.servers != nil {
 		if value, ok, err := h.servers.GetCapability(r.Context(), serverID, "public_key"); err == nil && ok && value != "" {

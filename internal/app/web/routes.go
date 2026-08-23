@@ -10,6 +10,7 @@ import (
 	"winterflow/internal/app/web/handler/server"
 	huser "winterflow/internal/app/web/handler/user"
 	"winterflow/internal/app/web/middleware/patauth"
+	"winterflow/internal/app/web/middleware/ratelimit"
 	"winterflow/internal/app/web/middleware/rbac"
 	"winterflow/internal/app/web/util"
 )
@@ -19,9 +20,13 @@ func (s *Server) registerRoutes() {
 		util.Success(w, "healthy", nil)
 	})
 
+	// Auth endpoints are the API's only bcrypt-priced requests — throttle them
+	// per client IP so credential floods answer 429 instead of burning CPU.
+	authLimiter := ratelimit.New(5, 10)
+
 	authRoutes, avaRoutes := s.Auth.Handlers()
-	s.Router.Mount("/auth", authRoutes)  // add auth handlers
-	s.Router.Mount("/avatar", avaRoutes) // add avatar handler
+	s.Router.With(authLimiter.Middleware).Mount("/auth", authRoutes) // add auth handlers
+	s.Router.Mount("/avatar", avaRoutes)                             // add avatar handler
 
 	amw := s.Auth.Middleware()
 	// authMW = PAT bearer first, JWT session otherwise. Every /api/v1 route
@@ -39,7 +44,7 @@ func (s *Server) registerRoutes() {
 		Cfg:    s.Cfg,
 		Users:  s.Deps.UserService,
 	})
-	s.Router.Post("/api/v1/auth/register", authAPI.Register)
+	s.Router.With(authLimiter.Middleware).Post("/api/v1/auth/register", authAPI.Register)
 	s.Router.Get("/api/v1/auth/state", authAPI.State)
 
 	// The NotificationManager is shared across every handler: the SSE stream
@@ -57,6 +62,7 @@ func (s *Server) registerRoutes() {
 		AppRepository:       s.Deps.AppRepository,
 		AppDomainRepository: s.Deps.AppDomainRepository,
 		StatusCache:         s.Deps.StatusCache,
+		Servers:             s.Deps.ServerRepository,
 	})
 	s.Router.With(authMW, happ.GetAppsValidationMiddleware).Get("/api/v1/app/get-apps", appsAPI.GetApps)
 	s.Router.With(authMW, happ.GetAppsValidationMiddleware).Get("/api/v1/app/get-apps-status", appsAPI.GetAppsStatus)
@@ -75,6 +81,7 @@ func (s *Server) registerRoutes() {
 	dockerAPI := hdocker.NewHandler(&hdocker.Deps{
 		Logger:            s.Logger,
 		CommandDispatcher: s.Deps.CommandDispatcher,
+		Servers:           s.Deps.ServerRepository,
 	})
 	s.Router.With(authMW).Get("/api/v1/registry/list", dockerAPI.ListRegistries)
 	s.Router.With(authMW, adminMW).Post("/api/v1/registry/create", dockerAPI.CreateRegistry)

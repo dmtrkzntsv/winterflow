@@ -132,6 +132,22 @@ func (r *DbServerRepository) GetServerUserIDs(ctx context.Context, serverID stri
 	return userIDs, nil
 }
 
+// UserOwnsServer reports whether the server belongs to one of the user's
+// organizations. Unknown server or non-member → false, no error.
+func (r *DbServerRepository) UserOwnsServer(ctx context.Context, userID, serverID string) (bool, error) {
+	dbi := r.db.GetDB()
+	return dbi.NewSelect().
+		Model((*models.Server)(nil)).
+		Where("server_id = ?", serverID).
+		Where("organization_id IN (?)",
+			dbi.NewSelect().
+				Model((*models.OrganizationUser)(nil)).
+				Column("organization_id").
+				Where("user_id = ?", userID),
+		).
+		Exists(ctx)
+}
+
 // HasAnyServer reports whether any Server has been claimed. Used by standalone
 // bootstrap to decide whether the embedded agent still needs a pending
 // registration.

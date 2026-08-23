@@ -15,16 +15,20 @@ import (
 
 type Handler struct {
 	dispatcher port.CommandDispatcher
+	servers    webutil.ServerAccess
 	log        *logger.Logger
 }
 
 type Deps struct {
 	Logger            *logger.Logger
 	CommandDispatcher port.CommandDispatcher
+	// Servers authorizes server-addressed operations: the caller's org must
+	// own the target server.
+	Servers webutil.ServerAccess
 }
 
 func NewHandler(d *Deps) *Handler {
-	return &Handler{dispatcher: d.CommandDispatcher, log: d.Logger}
+	return &Handler{dispatcher: d.CommandDispatcher, servers: d.Servers, log: d.Logger}
 }
 
 // dispatch publishes a typed command to the server's agent on behalf of the
@@ -44,9 +48,10 @@ func accepted(w http.ResponseWriter, msg, requestID string) {
 	}{RequestID: requestID})
 }
 
-// caller resolves the user id and the server_id query param, writing the error
-// response itself when either is missing.
-func caller(w http.ResponseWriter, r *http.Request) (userID, serverID string, ok bool) {
+// caller resolves the user id and the server_id query param and enforces that
+// the caller's org owns the server, writing the error response itself on any
+// failure.
+func (h *Handler) caller(w http.ResponseWriter, r *http.Request) (userID, serverID string, ok bool) {
 	userID, ok = webutil.RequireUser(w, r)
 	if !ok {
 		return "", "", false
@@ -56,13 +61,16 @@ func caller(w http.ResponseWriter, r *http.Request) (userID, serverID string, ok
 		webutil.Error(w, "server_id is required", nil)
 		return "", "", false
 	}
+	if !webutil.RequireServerAccess(w, r, h.servers, userID, serverID) {
+		return "", "", false
+	}
 	return userID, serverID, true
 }
 
 // --- registries ---
 
 func (h *Handler) ListRegistries(w http.ResponseWriter, r *http.Request) {
-	userID, serverID, ok := caller(w, r)
+	userID, serverID, ok := h.caller(w, r)
 	if !ok {
 		return
 	}
@@ -75,7 +83,7 @@ func (h *Handler) ListRegistries(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) CreateRegistry(w http.ResponseWriter, r *http.Request) {
-	userID, serverID, ok := caller(w, r)
+	userID, serverID, ok := h.caller(w, r)
 	if !ok {
 		return
 	}
@@ -96,7 +104,7 @@ func (h *Handler) CreateRegistry(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) DeleteRegistry(w http.ResponseWriter, r *http.Request) {
-	userID, serverID, ok := caller(w, r)
+	userID, serverID, ok := h.caller(w, r)
 	if !ok {
 		return
 	}
@@ -119,7 +127,7 @@ func (h *Handler) DeleteRegistry(w http.ResponseWriter, r *http.Request) {
 // --- networks ---
 
 func (h *Handler) ListNetworks(w http.ResponseWriter, r *http.Request) {
-	userID, serverID, ok := caller(w, r)
+	userID, serverID, ok := h.caller(w, r)
 	if !ok {
 		return
 	}
@@ -132,7 +140,7 @@ func (h *Handler) ListNetworks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) CreateNetwork(w http.ResponseWriter, r *http.Request) {
-	userID, serverID, ok := caller(w, r)
+	userID, serverID, ok := h.caller(w, r)
 	if !ok {
 		return
 	}
@@ -155,7 +163,7 @@ func (h *Handler) CreateNetwork(w http.ResponseWriter, r *http.Request) {
 // --- agent self-update ---
 
 func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
-	userID, serverID, ok := caller(w, r)
+	userID, serverID, ok := h.caller(w, r)
 	if !ok {
 		return
 	}
@@ -176,7 +184,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) DeleteNetwork(w http.ResponseWriter, r *http.Request) {
-	userID, serverID, ok := caller(w, r)
+	userID, serverID, ok := h.caller(w, r)
 	if !ok {
 		return
 	}

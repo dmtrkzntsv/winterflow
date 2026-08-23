@@ -20,8 +20,9 @@ func (h *Handler) RefreshApps(w http.ResponseWriter, r *http.Request) {
 		webutil.Error(w, "server_id is required", nil)
 		return
 	}
-
-	// @todo check ownership of server_id by userID
+	if !webutil.RequireServerAccess(w, r, h.servers, userID, serverID) {
+		return
+	}
 
 	requestID, err := h.usecase.RefreshApps(r.Context(), userID, serverID)
 	if err != nil {

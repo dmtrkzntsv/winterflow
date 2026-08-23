@@ -35,10 +35,19 @@ func (f *fakeAppRepo) GetApps(context.Context, string) ([]model.App, error) { re
 func (f *fakeAppRepo) GetApp(context.Context, string) (model.App, error) {
 	return model.App{}, model.ErrAppNotFound
 }
-func (f *fakeAppRepo) SaveApp(context.Context, model.App) error           { return nil }
-func (f *fakeAppRepo) DeleteApp(context.Context, string) error            { return nil }
-func (f *fakeAppRepo) RenameApp(context.Context, string, string) error    { return nil }
+func (f *fakeAppRepo) SaveApp(context.Context, model.App) error            { return nil }
+func (f *fakeAppRepo) DeleteApp(context.Context, string) error             { return nil }
+func (f *fakeAppRepo) RenameApp(context.Context, string, string) error     { return nil }
 func (f *fakeAppRepo) SyncApps(context.Context, string, []model.App) error { return nil }
+
+// fakeServerAccess owns exactly the servers in `owned` for any user.
+type fakeServerAccess struct {
+	owned map[string]bool
+}
+
+func (f *fakeServerAccess) UserOwnsServer(_ context.Context, _, serverID string) (bool, error) {
+	return f.owned[serverID], nil
+}
 
 func newHandler(t *testing.T) (*Handler, *fakeDispatcher, *status.Cache) {
 	t.Helper()
@@ -50,6 +59,7 @@ func newHandler(t *testing.T) (*Handler, *fakeDispatcher, *status.Cache) {
 		CommandDispatcher: fd,
 		AppRepository:     &fakeAppRepo{apps: []model.App{{ID: "a1", Name: "grafana"}}},
 		StatusCache:       cache,
+		Servers:           &fakeServerAccess{owned: map[string]bool{"s1": true}},
 	})
 	return h, fd, cache
 }
@@ -163,6 +173,81 @@ func TestSaveAppAccepts(t *testing.T) {
 	}
 	if fd.last.AgentID != "s1" {
 		t.Fatalf("dispatched to %q", fd.last.AgentID)
+	}
+}
+
+// TestHandlersRejectForeignServer fixates the ownership check: a server_id
+// outside the caller's organizations must be refused with 403 on EVERY
+// server-addressed route, and nothing may be dispatched to the agent.
+func TestHandlersRejectForeignServer(t *testing.T) {
+	cases := []struct {
+		name    string
+		handler func(*Handler) http.HandlerFunc
+		request func() *http.Request
+	}{
+		{"save", func(h *Handler) http.HandlerFunc { return h.SaveApp }, func() *http.Request {
+			return httptest.NewRequest("POST", "/x", strings.NewReader(`{"server_id":"other","app":{"name":"d"},"config":{}}`))
+		}},
+		{"control", func(h *Handler) http.HandlerFunc { return h.ControlApp }, func() *http.Request {
+			return httptest.NewRequest("POST", "/x", strings.NewReader(`{"server_id":"other","app_id":"a1","action":"start"}`))
+		}},
+		{"delete", func(h *Handler) http.HandlerFunc { return h.DeleteApp }, func() *http.Request {
+			return httptest.NewRequest("POST", "/x", strings.NewReader(`{"server_id":"other","app_id":"a1"}`))
+		}},
+		{"rename", func(h *Handler) http.HandlerFunc { return h.RenameApp }, func() *http.Request {
+			return httptest.NewRequest("POST", "/x", strings.NewReader(`{"server_id":"other","app_id":"a1","name":"n"}`))
+		}},
+		{"rollback", func(h *Handler) http.HandlerFunc { return h.RollbackApp }, func() *http.Request {
+			return httptest.NewRequest("POST", "/x", strings.NewReader(`{"server_id":"other","app_id":"a1","hash":"abc"}`))
+		}},
+		{"get-app", func(h *Handler) http.HandlerFunc { return h.GetApp }, func() *http.Request {
+			return httptest.NewRequest("GET", "/x?server_id=other&app_id=a1", nil)
+		}},
+		{"get-logs", func(h *Handler) http.HandlerFunc { return h.GetLogs }, func() *http.Request {
+			return httptest.NewRequest("GET", "/x?server_id=other&app_id=a1", nil)
+		}},
+		{"get-revisions", func(h *Handler) http.HandlerFunc { return h.GetRevisions }, func() *http.Request {
+			return httptest.NewRequest("GET", "/x?server_id=other&app_id=a1", nil)
+		}},
+		{"image-tags", func(h *Handler) http.HandlerFunc { return h.GetImageTags }, func() *http.Request {
+			return httptest.NewRequest("GET", "/x?server_id=other&image=nginx", nil)
+		}},
+		{"refresh", func(h *Handler) http.HandlerFunc { return h.RefreshApps }, func() *http.Request {
+			return httptest.NewRequest("POST", "/x?server_id=other", nil)
+		}},
+		{"get-apps", func(h *Handler) http.HandlerFunc { return h.GetApps }, func() *http.Request {
+			return httptest.NewRequest("GET", "/x?server_id=other", nil)
+		}},
+		{"get-apps-status", func(h *Handler) http.HandlerFunc { return h.GetAppsStatus }, func() *http.Request {
+			return httptest.NewRequest("GET", "/x?server_id=other", nil)
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, fd, _ := newHandler(t)
+			if w := do(tc.handler(h), authed(tc.request())); w.Code != http.StatusForbidden {
+				t.Fatalf("foreign server must be 403, got %d body %s", w.Code, w.Body.String())
+			}
+			if fd.last.AgentID != "" {
+				t.Fatalf("command must not be dispatched, got %+v", fd.last)
+			}
+		})
+	}
+}
+
+// TestHandlersFailClosedWithoutServerAccess: a handler wired without the
+// ownership checker must deny, not allow.
+func TestHandlersFailClosedWithoutServerAccess(t *testing.T) {
+	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
+	h := NewHandler(&Deps{
+		Logger:            log,
+		CommandDispatcher: &fakeDispatcher{},
+		AppRepository:     &fakeAppRepo{},
+		StatusCache:       status.NewCache(time.Minute),
+	})
+	r := authed(httptest.NewRequest("POST", "/x", strings.NewReader(`{"server_id":"s1","app_id":"a1","action":"start"}`)))
+	if w := do(h.ControlApp, r); w.Code != http.StatusForbidden {
+		t.Fatalf("nil ServerAccess must fail closed with 403, got %d", w.Code)
 	}
 }
 

@@ -12,8 +12,9 @@ import (
 // pushes status via events; this endpoint serves the latest snapshot.
 func (h *Handler) GetAppsStatus(w http.ResponseWriter, r *http.Request) {
 	serverID := r.URL.Query().Get(serverIDKey)
-
-	// @todo check ownership
+	if _, ok := h.authorize(w, r, serverID); !ok {
+		return
+	}
 
 	statuses := h.status.AppStatuses(serverID, time.Now())
 	if statuses == nil {

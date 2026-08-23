@@ -40,4 +40,9 @@ type ServerRepository interface {
 	// GetCapability returns a single capability value for a server. ok is false
 	// if the server has no such capability recorded.
 	GetCapability(ctx context.Context, serverID, name string) (value string, ok bool, err error)
+
+	// UserOwnsServer reports whether the server belongs to one of the user's
+	// organizations. Every server-addressed API operation must pass this check
+	// before dispatching — server ids alone are not authorization.
+	UserOwnsServer(ctx context.Context, userID, serverID string) (bool, error)
 }

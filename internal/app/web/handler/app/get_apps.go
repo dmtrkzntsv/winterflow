@@ -10,8 +10,9 @@ const serverIDKey = "server_id"
 
 func (h *Handler) GetApps(w http.ResponseWriter, r *http.Request) {
 	serverID := r.URL.Query().Get(serverIDKey)
-
-	// @todo check ownership
+	if _, ok := h.authorize(w, r, serverID); !ok {
+		return
+	}
 
 	apps, err := h.usecase.GetApps(r.Context(), serverID)
 	if err != nil {

@@ -79,11 +79,29 @@ func TestSetAppStatusReportsLivenessTransition(t *testing.T) {
 	c := NewCache(60 * time.Second)
 	now := time.Unix(1000, 0)
 
-	if !c.SetAppStatus("srv-1", nil, now) {
+	if _, transition := c.SetAppStatus("srv-1", nil, now); !transition {
 		t.Error("first status report: want transition")
 	}
-	if c.SetAppStatus("srv-1", nil, now.Add(10*time.Second)) {
+	if _, transition := c.SetAppStatus("srv-1", nil, now.Add(10*time.Second)); transition {
 		t.Error("second report within TTL: want no transition")
+	}
+}
+
+func TestSetAppStatusReportsContentChange(t *testing.T) {
+	c := NewCache(60 * time.Second)
+	now := time.Unix(1000, 0)
+	active := []command.AppStatus{{AppID: "a1", StatusCode: command.ContainerStatusActive}}
+	stopped := []command.AppStatus{{AppID: "a1", StatusCode: command.ContainerStatusStopped}}
+
+	if changed, _ := c.SetAppStatus("srv-1", active, now); !changed {
+		t.Error("first report: want changed")
+	}
+	// Identical snapshot on the next tick: no change, no fan-out needed.
+	if changed, _ := c.SetAppStatus("srv-1", active, now.Add(30*time.Second)); changed {
+		t.Error("identical report: want unchanged")
+	}
+	if changed, _ := c.SetAppStatus("srv-1", stopped, now.Add(60*time.Second)); !changed {
+		t.Error("different report: want changed")
 	}
 }
 

@@ -33,11 +33,13 @@ func (b *Bus) Publish(ctx context.Context, channel string, v any) error {
 	}
 	msg := bus.Message{Channel: channel, Payload: string(data)}
 
+	// Send while holding the read lock: cancel() closes subscriber channels
+	// under the write lock, so a send can never race a close (send on a
+	// closed channel panics the whole process). Sends are non-blocking, so
+	// holding the lock here is cheap.
 	b.mu.RLock()
-	subs := append([]chan bus.Message(nil), b.subs[channel]...)
-	b.mu.RUnlock()
-
-	for _, ch := range subs {
+	defer b.mu.RUnlock()
+	for _, ch := range b.subs[channel] {
 		select {
 		case ch <- msg:
 		default:
@@ -59,6 +61,9 @@ func (b *Bus) Subscribe(ctx context.Context, channels ...string) (<-chan bus.Mes
 	var once sync.Once
 	cancel := func() error {
 		once.Do(func() {
+			// close(out) must happen under the same write lock that removes
+			// the subscription: Publish sends under the read lock, so this
+			// ordering makes send-after-close impossible.
 			b.mu.Lock()
 			for _, c := range channels {
 				subs := b.subs[c]
@@ -69,8 +74,8 @@ func (b *Bus) Subscribe(ctx context.Context, channels ...string) (<-chan bus.Mes
 					}
 				}
 			}
-			b.mu.Unlock()
 			close(out)
+			b.mu.Unlock()
 		})
 		return nil
 	}

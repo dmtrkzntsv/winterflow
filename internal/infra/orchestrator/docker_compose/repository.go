@@ -34,6 +34,18 @@ type Repository struct {
 	// In-memory only: a restart simply re-checks everything.
 	sourceMu     sync.Mutex
 	sourceChecks map[string]time.Time
+
+	// versionCache caches each app's commit count keyed by HEAD, because app
+	// histories are append-only and unlimited — recounting from scratch on
+	// every listing would get slower for as long as the app lives.
+	versionMu    sync.Mutex
+	versionCache map[string]versionEntry
+}
+
+// versionEntry is a cached commit count, valid while HEAD is unchanged.
+type versionEntry struct {
+	head  string
+	count int
 }
 
 func NewRepository(cfg *config.ServerConfig, log *logger.Logger) *Repository {
@@ -41,5 +53,16 @@ func NewRepository(cfg *config.ServerConfig, log *logger.Logger) *Repository {
 		cfg:          cfg,
 		log:          log,
 		sourceChecks: make(map[string]time.Time),
+		versionCache: make(map[string]versionEntry),
 	}
+}
+
+// forgetApp drops an app's in-memory bookkeeping after deletion.
+func (r *Repository) forgetApp(appID string) {
+	r.sourceMu.Lock()
+	delete(r.sourceChecks, appID)
+	r.sourceMu.Unlock()
+	r.versionMu.Lock()
+	delete(r.versionCache, appID)
+	r.versionMu.Unlock()
 }

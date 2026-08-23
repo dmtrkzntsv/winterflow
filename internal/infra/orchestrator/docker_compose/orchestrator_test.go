@@ -53,41 +53,72 @@ func TestAggregateStatus(t *testing.T) {
 	}
 }
 
-func TestParseComposePS(t *testing.T) {
-	// Newline-delimited form (docker compose v2 default).
-	ndjson := `{"ID":"abc","Name":"web","State":"running","ExitCode":0}
-{"ID":"def","Name":"db","State":"exited","ExitCode":1}`
-	lines, err := parseComposePS([]byte(ndjson))
-	if err != nil {
-		t.Fatalf("parseComposePS ndjson: %v", err)
-	}
-	if len(lines) != 2 || lines[0].Name != "web" || lines[1].ExitCode != 1 {
-		t.Errorf("ndjson parse wrong: %+v", lines)
-	}
+func TestParseDockerPS(t *testing.T) {
+	// One `docker ps --format json` NDJSON stream covering two compose
+	// projects plus a non-compose container that must be skipped.
+	ndjson := `{"ID":"abc","Names":"wf-app1-web-1","State":"running","Status":"Up 2 hours","Labels":"com.docker.compose.project=wf-app1,com.docker.compose.service=web"}
+{"ID":"def","Names":"wf-app1-db-1","State":"exited","Status":"Exited (1) 3 hours ago","Labels":"com.docker.compose.service=db,com.docker.compose.project=wf-app1"}
+{"ID":"ghi","Names":"wf-app2-api-1","State":"running","Status":"Up 5 minutes (healthy)","Labels":"com.docker.compose.project=wf-app2"}
+{"ID":"zzz","Names":"standalone-nginx","State":"running","Status":"Up 1 hour","Labels":"maintainer=nginx"}`
 
-	// Array form.
-	arr := `[{"ID":"abc","Name":"web","State":"running","ExitCode":0}]`
-	lines, err = parseComposePS([]byte(arr))
+	byProject, err := parseDockerPS([]byte(ndjson))
 	if err != nil {
-		t.Fatalf("parseComposePS array: %v", err)
+		t.Fatalf("parseDockerPS: %v", err)
 	}
-	if len(lines) != 1 || lines[0].State != "running" {
-		t.Errorf("array parse wrong: %+v", lines)
+	if len(byProject) != 2 {
+		t.Fatalf("want 2 projects, got %d: %+v", len(byProject), byProject)
+	}
+	app1 := byProject["wf-app1"]
+	if len(app1) != 2 || app1[0].Name != "wf-app1-web-1" || app1[0].State != "running" {
+		t.Errorf("wf-app1 parse wrong: %+v", app1)
+	}
+	if app1[1].ExitCode != 1 {
+		t.Errorf("exit code not parsed from Status: %+v", app1[1])
+	}
+	if len(byProject["wf-app2"]) != 1 {
+		t.Errorf("wf-app2 parse wrong: %+v", byProject["wf-app2"])
 	}
 
 	// Empty output.
-	lines, err = parseComposePS([]byte("  \n "))
-	if err != nil || lines != nil {
-		t.Errorf("empty parse: lines=%v err=%v", lines, err)
+	byProject, err = parseDockerPS([]byte("  \n "))
+	if err != nil || len(byProject) != 0 {
+		t.Errorf("empty parse: %v err=%v", byProject, err)
 	}
 
-	// Malformed array form.
-	if _, err := parseComposePS([]byte("[{broken")); err == nil {
-		t.Error("expected error for malformed array output")
-	}
-
-	// Malformed line in ndjson form.
-	if _, err := parseComposePS([]byte("{\"ID\":\"abc\"}\n{broken")); err == nil {
+	// Malformed line.
+	if _, err := parseDockerPS([]byte("{\"ID\":\"abc\"}\n{broken")); err == nil {
 		t.Error("expected error for malformed ndjson line")
+	}
+}
+
+func TestExitCodeFromStatus(t *testing.T) {
+	cases := []struct {
+		status string
+		want   int
+	}{
+		{"Exited (0) 2 hours ago", 0},
+		{"Exited (137) 2 hours ago", 137},
+		{"Up 2 hours", 0},
+		{"Up 5 minutes (healthy)", 0},
+		{"Exited (broken", 0},
+		{"", 0},
+	}
+	for _, c := range cases {
+		if got := exitCodeFromStatus(c.status); got != c.want {
+			t.Errorf("exitCodeFromStatus(%q) = %d, want %d", c.status, got, c.want)
+		}
+	}
+}
+
+func TestLabelValue(t *testing.T) {
+	labels := "a=1,com.docker.compose.project=wf-x,b=2"
+	if got := labelValue(labels, "com.docker.compose.project"); got != "wf-x" {
+		t.Errorf("labelValue = %q, want wf-x", got)
+	}
+	if got := labelValue(labels, "missing"); got != "" {
+		t.Errorf("labelValue missing = %q, want empty", got)
+	}
+	if got := labelValue("", "k"); got != "" {
+		t.Errorf("labelValue empty = %q, want empty", got)
 	}
 }

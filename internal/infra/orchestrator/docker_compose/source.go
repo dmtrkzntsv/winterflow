@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/config"
@@ -90,10 +91,35 @@ func sourceAuth(repoURL, token string) *githttp.BasicAuth {
 	return &githttp.BasicAuth{Username: "x-access-token", Password: token}
 }
 
+// sourceSyncTimeout bounds every upstream git operation. A stalled remote
+// (half-open connection, misbehaving proxy) must never wedge the agent's
+// command pipeline — in standalone the whole request queue is drained by one
+// goroutine, so an unbounded hang here would silently kill app management
+// until restart.
+const sourceSyncTimeout = 5 * time.Minute
+
+// allHeadsRefSpec fetches every branch; used only as a fallback when a pinned
+// commit isn't reachable from the configured branch alone.
+const allHeadsRefSpec = config.RefSpec("+refs/heads/*:refs/remotes/origin/*")
+
+// branchRefSpec narrows fetches to the configured branch — polling a big
+// upstream must not pay for branches we never deploy.
+func branchRefSpec(branch string) config.RefSpec {
+	if branch == "" {
+		return allHeadsRefSpec
+	}
+	return config.RefSpec(fmt.Sprintf("+refs/heads/%s:refs/remotes/origin/%s", branch, branch))
+}
+
 // ensureSource makes {dir}/source a checkout of the upstream: cloned on first
 // use, fetched after. It checks out `pin` when given (rollback), else the
-// branch head, writes the lock, and returns the checked-out SHA.
+// branch head, writes the lock, and returns the checked-out SHA. When the
+// worktree already sits at the target with the lock in place it returns
+// without touching anything — the poller must be free on the idle path.
 func (r *Repository) ensureSource(ctx context.Context, dir string, spec sourceSpec, token, pin string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, sourceSyncTimeout)
+	defer cancel()
+
 	srcDir := filepath.Join(dir, sourceDirRel)
 	auth := sourceAuth(spec.RepoURL, token)
 
@@ -105,10 +131,15 @@ func (r *Repository) ensureSource(ctx context.Context, dir string, spec sourceSp
 				return "", err
 			}
 		}
-		repo, err = git.PlainCloneContext(ctx, srcDir, false, &git.CloneOptions{
+		cloneOpts := &git.CloneOptions{
 			URL:  spec.RepoURL,
 			Auth: auth,
-		})
+		}
+		if spec.Branch != "" {
+			cloneOpts.ReferenceName = plumbing.NewBranchReferenceName(spec.Branch)
+			cloneOpts.SingleBranch = true
+		}
+		repo, err = git.PlainCloneContext(ctx, srcDir, false, cloneOpts)
 		if err != nil {
 			return "", fmt.Errorf("clone %s: %w", spec.RepoURL, err)
 		}
@@ -116,7 +147,7 @@ func (r *Repository) ensureSource(ctx context.Context, dir string, spec sourceSp
 		err = repo.FetchContext(ctx, &git.FetchOptions{
 			Auth:     auth,
 			Force:    true,
-			RefSpecs: []config.RefSpec{"+refs/heads/*:refs/remotes/origin/*"},
+			RefSpecs: []config.RefSpec{branchRefSpec(spec.Branch)},
 		})
 		if err != nil && err != git.NoErrAlreadyUpToDate {
 			return "", fmt.Errorf("fetch %s: %w", spec.RepoURL, err)
@@ -132,12 +163,28 @@ func (r *Repository) ensureSource(ctx context.Context, dir string, spec sourceSp
 		target = rev.String()
 	}
 
+	// Idle fast path: nothing moved, worktree and lock already match — skip
+	// the (expensive) forced checkout and lock rewrite entirely.
+	if head, err := repo.Head(); err == nil && head.Hash().String() == target {
+		if lock, ok := readSourceLock(dir); ok && lock.SHA == target {
+			return target, nil
+		}
+	}
+
 	wt, err := repo.Worktree()
 	if err != nil {
 		return "", err
 	}
 	if err := wt.Checkout(&git.CheckoutOptions{Hash: plumbing.NewHash(target), Force: true}); err != nil {
-		return "", fmt.Errorf("checkout %s: %w", target, err)
+		// A pinned commit (rollback) can predate the branch-narrowed history —
+		// retry once after a full fetch of all branches.
+		ferr := repo.FetchContext(ctx, &git.FetchOptions{Auth: auth, Force: true, RefSpecs: []config.RefSpec{allHeadsRefSpec}})
+		if ferr != nil && ferr != git.NoErrAlreadyUpToDate {
+			return "", fmt.Errorf("checkout %s: %w", target, err)
+		}
+		if err := wt.Checkout(&git.CheckoutOptions{Hash: plumbing.NewHash(target), Force: true}); err != nil {
+			return "", fmt.Errorf("checkout %s: %w", target, err)
+		}
 	}
 
 	if err := writeSourceLock(dir, target); err != nil {

@@ -119,8 +119,12 @@ func (s *eventSink) handle(ctx context.Context, ev bus.EventMessage) {
 			s.log.Error("failed to decode apps status event", err)
 			return
 		}
-		transition := s.cache.SetAppStatus(ev.ServerID, body.Apps, now)
-		s.fan.appsStatus(ctx, ev.ServerID, body.Apps)
+		changed, transition := s.cache.SetAppStatus(ev.ServerID, body.Apps, now)
+		// The reporter pushes on a fixed timer; only actual changes are worth
+		// a DB lookup + SSE fan-out. New clients seed from the cache on load.
+		if changed {
+			s.fan.appsStatus(ctx, ev.ServerID, body.Apps)
+		}
 		if transition {
 			s.fan.serverStatus(ctx, ev.ServerID, status.LivenessOnline)
 		}

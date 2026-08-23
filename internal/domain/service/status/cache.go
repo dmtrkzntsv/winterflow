@@ -8,6 +8,7 @@
 package status
 
 import (
+	"reflect"
 	"sync"
 	"time"
 
@@ -74,14 +75,19 @@ func (c *Cache) markOnlineLocked(serverID string, now time.Time) bool {
 	return transition
 }
 
-// SetAppStatus records the latest container status for a server's apps. Like
-// MarkOnline it reports whether this doubled as a liveness transition.
-func (c *Cache) SetAppStatus(serverID string, apps []command.AppStatus, now time.Time) bool {
+// SetAppStatus records the latest container status for a server's apps. It
+// reports whether the content differs from the previous report — the reporter
+// pushes unconditionally on a timer, and unchanged snapshots should not be
+// re-fanned-out to every browser — and, like MarkOnline, whether this doubled
+// as a liveness transition.
+func (c *Cache) SetAppStatus(serverID string, apps []command.AppStatus, now time.Time) (changed, transition bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	prev, had := c.apps[serverID]
+	changed = !had || !reflect.DeepEqual(prev.apps, apps)
 	c.apps[serverID] = appEntry{apps: apps, expires: now.Add(c.ttl)}
 	// A status report is also a liveness signal.
-	return c.markOnlineLocked(serverID, now)
+	return changed, c.markOnlineLocked(serverID, now)
 }
 
 // ExpireStale removes server liveness entries whose TTL has passed and returns

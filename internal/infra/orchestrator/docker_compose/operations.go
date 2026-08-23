@@ -175,7 +175,11 @@ func (r *Repository) rollbackWithoutDeploy(appID, hash string) (string, error) {
 	return newHead, nil
 }
 
-// GetAppsStatus reports container status for every app the agent has.
+// GetAppsStatus reports container status for every app the agent has, using
+// ONE `docker ps` invocation for all of them (grouped by the compose project
+// label) — this runs on a timer forever, so per-app compose forks are off the
+// table. An exec failure fails the whole collection: the reporter skips the
+// tick rather than flooding "unknown" while Docker restarts.
 func (r *Repository) GetAppsStatus(ctx context.Context) ([]command.AppStatus, error) {
 	entries, err := os.ReadDir(r.cfg.GetAppsDataDir())
 	if err != nil {
@@ -185,19 +189,18 @@ func (r *Repository) GetAppsStatus(ctx context.Context) ([]command.AppStatus, er
 		return nil, err
 	}
 
+	byProject, err := r.dockerPSByProject(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	out := make([]command.AppStatus, 0, len(entries))
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
 		}
 		appID := e.Name()
-		containers, err := r.composePS(ctx, appID)
-		if err != nil {
-			r.log.Warn("failed to read app status", "app_id", appID, "error", err)
-			out = append(out, command.AppStatus{AppID: appID, StatusCode: command.ContainerStatusUnknown})
-			continue
-		}
-		cs := toContainerStatuses(containers)
+		cs := toContainerStatuses(byProject[projectName(appID)])
 		out = append(out, command.AppStatus{
 			AppID:      appID,
 			StatusCode: aggregateStatus(cs),
@@ -238,7 +241,7 @@ func (r *Repository) ListApps(ctx context.Context) ([]model.App, error) {
 			continue
 		}
 		app.ID = appID // dir name is authoritative
-		if n, err := gitCount(dir); err == nil {
+		if n, err := r.commitCount(appID, dir); err == nil {
 			app.Version = strconv.Itoa(n)
 		}
 		out = append(out, app)
@@ -431,49 +434,16 @@ func (r *Repository) composePull(ctx context.Context, appID string) error {
 	return r.composeRun(ctx, appID, "pull")
 }
 
-// composePS runs `docker compose ps --format json` and parses the
-// per-container lines.
-func (r *Repository) composePS(ctx context.Context, appID string) ([]composePS, error) {
-	dir := r.appDataDir(appID)
-	if _, err := os.Stat(dir); err != nil {
-		return nil, nil
-	}
-	cmd := exec.CommandContext(ctx, "docker", r.composeArgs(appID, "ps", "--format", "json", "--all")...)
-	cmd.Dir = dir
+// dockerPSByProject lists every compose-managed container on the host in one
+// `docker ps` exec and groups them by compose project name.
+func (r *Repository) dockerPSByProject(ctx context.Context) (map[string][]composePS, error) {
+	cmd := exec.CommandContext(ctx, "docker", "ps", "--all", "--no-trunc",
+		"--filter", "label="+composeProjectLabel, "--format", "json")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, err
 	}
-	return parseComposePS(out)
-}
-
-// parseComposePS handles both the newline-delimited JSON objects (newer
-// compose) and the single JSON array forms of `docker compose ps`.
-func parseComposePS(out []byte) ([]composePS, error) {
-	trimmed := strings.TrimSpace(string(out))
-	if trimmed == "" {
-		return nil, nil
-	}
-	if strings.HasPrefix(trimmed, "[") {
-		var arr []composePS
-		if err := json.Unmarshal([]byte(trimmed), &arr); err != nil {
-			return nil, err
-		}
-		return arr, nil
-	}
-	var lines []composePS
-	for _, l := range strings.Split(trimmed, "\n") {
-		l = strings.TrimSpace(l)
-		if l == "" {
-			continue
-		}
-		var c composePS
-		if err := json.Unmarshal([]byte(l), &c); err != nil {
-			return nil, err
-		}
-		lines = append(lines, c)
-	}
-	return lines, nil
+	return parseDockerPS(out)
 }
 
 // projectName derives a stable docker compose project name from an app id.

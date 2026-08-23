@@ -3,6 +3,8 @@ package redisbus
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"time"
 	"winterflow/internal/infra/transport/bus"
 	"winterflow/pkg/logger"
 
@@ -43,10 +45,28 @@ func (b *Bus) Subscribe(ctx context.Context, channels ...string) (<-chan bus.Mes
 		for {
 			msg, err := pubsub.ReceiveMessage(ctx)
 			if err != nil {
-				b.log.Error("failed to receive bus message", err)
+				// Terminal: canceled or the subscription was closed. Anything
+				// else (a Redis blip go-redis couldn't absorb) must not kill
+				// the consumer for the rest of the process lifetime — back off
+				// and retry.
+				if ctx.Err() != nil || errors.Is(err, redis.ErrClosed) {
+					return
+				}
+				b.log.Error("failed to receive bus message, retrying", err)
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(time.Second):
+				}
+				continue
+			}
+			// A send must never outlive the consumer: if the reader is gone
+			// with a full buffer, blocking here would leak this goroutine.
+			select {
+			case out <- bus.Message{Channel: msg.Channel, Payload: msg.Payload}:
+			case <-ctx.Done():
 				return
 			}
-			out <- bus.Message{Channel: msg.Channel, Payload: msg.Payload}
 		}
 	}()
 

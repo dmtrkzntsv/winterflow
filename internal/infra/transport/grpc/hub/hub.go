@@ -41,6 +41,18 @@ type agent struct {
 	streamActive bool
 	lastSeen     time.Time
 	stream       grpc.BidiStreamingServer[proto.AgentMessage, proto.ServerCommand] // Reference to the active stream
+
+	// sendMu serializes writes to the stream: gRPC forbids concurrent SendMsg
+	// on one stream, and both the bus bridge (dispatchToAgent) and the
+	// heartbeat path (AgentStream) write to it.
+	sendMu sync.Mutex
+}
+
+// send writes one command to the given stream under the agent's send mutex.
+func (a *agent) send(stream grpc.BidiStreamingServer[proto.AgentMessage, proto.ServerCommand], cmd *proto.ServerCommand) error {
+	a.sendMu.Lock()
+	defer a.sendMu.Unlock()
+	return stream.Send(cmd)
 }
 
 func NewHub(log *logger.Logger, cfg *config.ServerConfig, b bus.Bus) *Hub {
@@ -139,7 +151,7 @@ func (h *Hub) dispatchToAgent(cmd bus.CommandMessage) {
 			Request: codec.EnvelopeFromCommand(cmd),
 		},
 	}
-	if err := stream.Send(req); err != nil {
+	if err := a.send(stream, req); err != nil {
 		h.log.Error("failed to send command to agent", "error", err, "agent_id", cmd.AgentID)
 		h.publishError(cmd.RequestID, "failed to deliver command to agent")
 	}
@@ -415,7 +427,7 @@ func (h *Hub) AgentStream(stream grpc.BidiStreamingServer[proto.AgentMessage, pr
 				},
 			}
 
-			if err := stream.Send(heartbeatResponse); err != nil {
+			if err := agent.send(stream, heartbeatResponse); err != nil {
 				h.log.Error("Error sending heartbeat response", "error", err, "agent_id", agentID)
 				return err
 			}

@@ -99,13 +99,57 @@ func gitLog(dir string) ([]commitInfo, error) {
 	return out, err
 }
 
-// gitCount returns the number of commits reachable from HEAD.
+// gitCount returns the number of commits reachable from HEAD, walking without
+// materializing the log.
 func gitCount(dir string) (int, error) {
-	log, err := gitLog(dir)
+	repo, err := git.PlainOpen(dir)
 	if err != nil {
 		return 0, err
 	}
-	return len(log), nil
+	head, err := repo.Head()
+	if err != nil {
+		return 0, err
+	}
+	iter, err := repo.Log(&git.LogOptions{From: head.Hash()})
+	if err != nil {
+		return 0, err
+	}
+	defer iter.Close()
+	count := 0
+	err = iter.ForEach(func(*object.Commit) error {
+		count++
+		return nil
+	})
+	return count, err
+}
+
+// commitCount is gitCount behind the per-app HEAD-keyed cache.
+func (r *Repository) commitCount(appID, dir string) (int, error) {
+	repo, err := git.PlainOpen(dir)
+	if err != nil {
+		return 0, err
+	}
+	head, err := repo.Head()
+	if err != nil {
+		return 0, err
+	}
+	h := head.Hash().String()
+
+	r.versionMu.Lock()
+	if e, ok := r.versionCache[appID]; ok && e.head == h {
+		r.versionMu.Unlock()
+		return e.count, nil
+	}
+	r.versionMu.Unlock()
+
+	count, err := gitCount(dir)
+	if err != nil {
+		return 0, err
+	}
+	r.versionMu.Lock()
+	r.versionCache[appID] = versionEntry{head: h, count: count}
+	r.versionMu.Unlock()
+	return count, nil
 }
 
 // gitRestore makes the worktree match the tree of the given commit: files in

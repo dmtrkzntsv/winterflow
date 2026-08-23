@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"time"
 
 	"winterflow/internal/domain/command"
 	"winterflow/pkg/version"
@@ -15,6 +16,11 @@ import (
 
 // osExit is indirected so tests can intercept the process exit.
 var osExit = os.Exit
+
+// exitDelay is how long the post-update exit waits so the success response can
+// travel back through the dispatcher (and, distributed, up the gRPC stream)
+// before the process dies. Indirected for tests.
+var exitDelay = 2 * time.Second
 
 // UpdateAgent downloads the requested agent release for this OS/arch, replaces
 // the running executable, and exits so the process supervisor restarts it on the
@@ -63,7 +69,7 @@ func (r *Repository) UpdateAgent(ctx context.Context, in command.UpdateAgentRequ
 
 	// Exit after a brief delay so the response can be flushed back to the hub.
 	go func() {
-		// Best-effort: give the dispatcher time to send the success response.
+		time.Sleep(exitDelay)
 		osExit(0)
 	}()
 	return resp, nil

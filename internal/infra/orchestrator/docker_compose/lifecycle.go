@@ -87,6 +87,7 @@ func (r *Repository) DeleteApp(ctx context.Context, appID string) error {
 	if err := os.RemoveAll(r.appDataDir(appID)); err != nil {
 		return fmt.Errorf("remove app dir: %w", err)
 	}
+	r.forgetApp(appID)
 	return nil
 }
 

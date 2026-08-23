@@ -111,6 +111,10 @@ func (r *Repository) writeAppStore(dir string, app command.AppPayload) (secretSt
 		if name == "" {
 			name = v.ID
 		}
+		if name == managedEnvVar {
+			r.log.Warn("dropping reserved variable", "name", name)
+			continue
+		}
 		if !v.Encrypted {
 			plainVars = append(plainVars, resolvedItem{name: name, content: v.Content})
 			continue
@@ -215,11 +219,14 @@ func (r *Repository) writeAppStore(dir string, app command.AppPayload) (secretSt
 			return secretStore{}, err
 		}
 	}
+	// The managed project name makes a bare `docker compose up` in the app
+	// dir target the same stack winterflow manages.
+	plainVars = append(plainVars, resolvedItem{name: managedEnvVar, content: []byte(projectName(filepath.Base(dir)))})
 	if err := os.WriteFile(filepath.Join(dir, envRel), marshalEnv(plainVars), 0o644); err != nil {
 		return secretStore{}, err
 	}
 
-	ignored := []string{envSecretsRel, deployedRel}
+	ignored := []string{envSecretsRel, deployedRel, runRel}
 	if app.Source != nil {
 		ignored = append(ignored, sourceDirRel+"/")
 	}

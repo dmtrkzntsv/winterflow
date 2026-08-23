@@ -108,9 +108,9 @@ func TestWriteAppStoreLayout(t *testing.T) {
 	if got, _ := os.ReadFile(filepath.Join(dir, "compose.yml")); string(got) != "services: {}\n" {
 		t.Fatalf("compose.yml = %q", got)
 	}
-	// .env holds only the plain variable.
+	// .env holds the plain variable plus the managed project name.
 	env, _ := os.ReadFile(filepath.Join(dir, envRel))
-	if string(env) != "PORT=8080\n" {
+	if string(env) != "COMPOSE_PROJECT_NAME=wf-app-1\nPORT=8080\n" {
 		t.Fatalf(".env = %q", env)
 	}
 	// secrets.json holds ciphertext, never plaintext.

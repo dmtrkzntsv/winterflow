@@ -115,6 +115,9 @@ func (r *Repository) GetApp(ctx context.Context, appID string) (command.GetAppRe
 		envValues = parseEnv(rawEnv)
 	}
 	for name, val := range envValues {
+		if name == managedEnvVar {
+			continue
+		}
 		payload.Variables = append(payload.Variables, command.ContentItem{Name: name, Content: []byte(val)})
 	}
 	for name := range store.Variables {

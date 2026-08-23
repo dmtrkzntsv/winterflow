@@ -408,6 +408,10 @@ func (r *Repository) composeRun(ctx context.Context, appID string, verb ...strin
 }
 
 func (r *Repository) composeUp(ctx context.Context, appID string) error {
+	// Refresh the manual-run helper alongside every deploy; never fail one on it.
+	if err := r.writeRunHelper(appID); err != nil {
+		r.log.Warn("write manual-run helper", "app_id", appID, "error", err)
+	}
 	return r.composeRun(ctx, appID, "up", "-d", "--remove-orphans")
 }
 

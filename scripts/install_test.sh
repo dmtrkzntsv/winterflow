@@ -75,7 +75,17 @@ assert_not_contains "unit: never runs as root" "$out" "User=root"
 
 out_default="$(bash "$INSTALL_SH" --dry-run 2>&1)" || fail "default dry-run exits 0" "exit $?"
 assert_contains "default port 8080" "$out_default" "API_PORT=8080"
-assert_contains "default memory cap 2G" "$out_default" "MemoryMax=2G"
+# Default memory cap = half of RAM, clamped to 512M..2G (sized to the box:
+# Raspberry Pi-class boards get a real cap, big hosts don't over-reserve).
+mem_kb="$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null || echo 0)"
+if [ "${mem_kb:-0}" -gt 0 ]; then
+    half_mb=$(( mem_kb / 2048 ))
+    [ "$half_mb" -ge 512 ]  || half_mb=512
+    [ "$half_mb" -le 2048 ] || half_mb=2048
+    assert_contains "default memory cap from RAM" "$out_default" "MemoryMax=${half_mb}M"
+else
+    assert_contains "default memory cap fallback" "$out_default" "MemoryMax=1G"
+fi
 # Default CPU quota = (cores-1)*100, floored at 100.
 cores="$(nproc 2>/dev/null || echo 2)"
 want=$(( (cores - 1) * 100 )); [ "$want" -ge 100 ] || want=100

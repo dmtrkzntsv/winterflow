@@ -28,7 +28,8 @@
 #   --cpu-quota PCT  CPU cap for the service in percent of one core (default:
 #                    (cores-1)*100, min 100). Keeps orchestration work from
 #                    saturating the box; app containers are not affected.
-#   --memory-max SZ  Hard memory cap for the service (default: 2G).
+#   --memory-max SZ  Hard memory cap for the service (default: half of RAM,
+#                    clamped to 512M..2G).
 #   --yes            Non-interactive: assume "yes" to all prompts.
 #   --dry-run        Print the unit/config that would be written and exit
 #                    without changing anything. Does not require root.
@@ -53,7 +54,7 @@ JOURNAL_CONF="/etc/systemd/journald@${JOURNAL_NAMESPACE}.conf"
 SERVICE_USER="winterflow"
 API_PORT="8080"
 CPU_QUOTA=""
-MEMORY_MAX="2G"
+MEMORY_MAX=""
 BINARY_SRC=""
 ASSUME_YES=0
 DRY_RUN=0
@@ -112,6 +113,20 @@ fi
 case "$CPU_QUOTA" in
     ''|*[!0-9]*) die "--cpu-quota must be a number (percent), got: ${CPU_QUOTA}" ;;
 esac
+
+# Default memory cap: half of RAM, clamped to 512M..2G — sized to the actual
+# box, from Raspberry Pi-class boards up, instead of assuming a roomy host.
+if [ -z "$MEMORY_MAX" ]; then
+    mem_kb="$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null || echo 0)"
+    if [ "${mem_kb:-0}" -gt 0 ] 2>/dev/null; then
+        half_mb=$(( mem_kb / 2048 ))
+        [ "$half_mb" -ge 512 ]  || half_mb=512
+        [ "$half_mb" -le 2048 ] || half_mb=2048
+        MEMORY_MAX="${half_mb}M"
+    else
+        MEMORY_MAX="1G"
+    fi
+fi
 
 if [ "$DRY_RUN" -eq 0 ]; then
     [ "$(id -u)" -eq 0 ] || die "must run as root (try: sudo $0)"

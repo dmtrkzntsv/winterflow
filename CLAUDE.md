@@ -54,7 +54,7 @@ This is the **v2 monorepo** that merges the v1 `winterflow-agent` and `winterflo
 
 ## Security, stability, and resource invariants
 
-Winterflow ships to small always-on home servers (reference target: a fanless-ish 4-core Intel N150). Idle CPU burn, unbounded growth, and missing authorization are bugs, not polish. A 2026-08 full audit established these rules — keep them when adding code:
+Winterflow ships to small always-on home servers — think mini-PCs and Raspberry Pi-class boards: few cores, possibly ARM, often fanless, thermally constrained. Don't assume any particular CPU, core count, or architecture; assume the weakest plausible box. Idle CPU burn, unbounded growth, and missing authorization are bugs, not polish. A 2026-08 full audit established these rules — keep them when adding code:
 
 **Security (fail closed):**
 - A `server_id` from a request is NOT authorization. Every server-addressed route must verify org ownership before dispatching: `webutil.RequireServerAccess` (backed by `ServerRepository.UserOwnsServer`); the app handlers' `authorize` and the docker handlers' `caller` helpers do this — reuse them. The guard denies when unwired (nil), and tests assert 403 per route.

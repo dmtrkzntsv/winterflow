@@ -7,6 +7,8 @@
 #   - asks which unprivileged user the service should run as (a dedicated
 #     system user, the account you sudo'd from, or one you name) so the
 #     service does not run as root,
+#   - offers to install Docker and the compose plugin when they are missing
+#     (the agent deploys apps by shelling out to 'docker compose'),
 #   - installs the binary to /usr/local/bin/winterflow,
 #   - writes /etc/winterflow/winterflow.env with a generated JWT secret,
 #   - creates /var/lib/winterflow for the database, certs, and app data,
@@ -32,9 +34,9 @@
 #                    saturating the box; app containers are not affected.
 #   --memory-max SZ  Hard memory cap for the service (default: half of RAM,
 #                    clamped to 512M..2G).
-#   --yes            Non-interactive: assume "yes" to all prompts and keep
-#                    the default service user (winterflow) unless --user says
-#                    otherwise.
+#   --yes            Non-interactive: assume "yes" to all prompts (including
+#                    installing Docker if missing) and keep the default service
+#                    user (winterflow) unless --user says otherwise.
 #   --dry-run        Print the unit/config that would be written and exit
 #                    without changing anything. Does not require root.
 #   --uninstall      Stop and remove the service, binary, and unit file.
@@ -55,6 +57,7 @@ DATA_DIR="/var/lib/winterflow"
 UNIT_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 JOURNAL_NAMESPACE="winterflow"
 JOURNAL_CONF="/etc/systemd/journald@${JOURNAL_NAMESPACE}.conf"
+DOCKER_INSTALL_URL="https://get.docker.com"
 
 SERVICE_USER="winterflow"
 SERVICE_GROUP="winterflow"
@@ -113,6 +116,51 @@ is_valid_user_name() {
 validate_user_name() {
     is_valid_user_name "$1" || die "invalid service user '$1': use lowercase\
  letters, digits, '_' and '-', and not root (uid 0)"
+}
+
+fetch_url() {
+    # fetch_url URL DEST — HTTPS only; curl or wget, whichever is present.
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL --proto '=https' --tlsv1.2 -o "$2" "$1"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q --https-only -O "$2" "$1"
+    else
+        return 1
+    fi
+}
+
+install_docker() {
+    # Docker's official convenience script. It knows every distro layout we
+    # care about (Debian/Ubuntu/Raspberry Pi OS, Fedora, CentOS, openSUSE),
+    # wires up the package repo, and installs the compose plugin with it.
+    local script status
+    script="$(mktemp "${TMPDIR:-/tmp}/get-docker.XXXXXX")"
+    log "Downloading ${DOCKER_INSTALL_URL}"
+    if ! fetch_url "$DOCKER_INSTALL_URL" "$script"; then
+        rm -f "$script"
+        die "could not download ${DOCKER_INSTALL_URL} (curl or wget required)"
+    fi
+    log "Running Docker's installer (this can take a few minutes)"
+    status=0
+    sh "$script" || status=$?
+    rm -f "$script"
+    [ "$status" -eq 0 ] || die "Docker installation failed (exit ${status}); install it manually and rerun"
+}
+
+install_compose_plugin() {
+    # Only reachable when Docker itself is already installed, so its package
+    # repo is configured and the plugin is one package away.
+    if command -v apt-get >/dev/null 2>&1; then
+        apt-get update -qq && apt-get install -y docker-compose-plugin
+    elif command -v dnf >/dev/null 2>&1; then
+        dnf install -y docker-compose-plugin
+    elif command -v yum >/dev/null 2>&1; then
+        yum install -y docker-compose-plugin
+    elif command -v zypper >/dev/null 2>&1; then
+        zypper --non-interactive install docker-compose-plugin
+    else
+        return 1
+    fi
 }
 
 # The primary group of an existing account is not always <name> (user-private
@@ -364,10 +412,48 @@ fi
 
 # --- Preflight ----------------------------------------------------------------
 
-command -v docker >/dev/null 2>&1 \
-    || die "docker is required (the agent deploys apps via the docker compose CLI)"
-docker compose version >/dev/null 2>&1 \
-    || die "the 'docker compose' plugin is required (docker compose version failed)"
+# Docker is the runtime for every deployed app; offer to install it rather
+# than sending the user away mid-install.
+if ! command -v docker >/dev/null 2>&1; then
+    echo
+    echo "Docker is required: the agent deploys apps by shelling out to"
+    echo "'docker compose', and it is not installed on this machine."
+    echo "Docker's official install script (${DOCKER_INSTALL_URL}) sets up the"
+    echo "package repo for this distro and installs the engine, containerd and"
+    echo "the compose plugin. Review it first if you prefer:"
+    echo "  curl -fsSL ${DOCKER_INSTALL_URL} | less"
+    if confirm "Download and run Docker's official install script?"; then
+        install_docker
+    else
+        die "docker is required (the agent deploys apps via the docker compose CLI)"
+    fi
+    command -v docker >/dev/null 2>&1 \
+        || die "docker is still not on PATH after installation; install it manually and rerun"
+    log "Docker installed"
+fi
+
+# A fresh install (or a stopped unit) leaves the daemon down; compose needs it.
+if ! docker info >/dev/null 2>&1; then
+    log "Starting the docker service"
+    systemctl enable --now docker >/dev/null 2>&1 || true
+    docker info >/dev/null 2>&1 \
+        || warn "the docker daemon is not responding; app deployments will fail until it is up"
+fi
+
+if ! docker compose version >/dev/null 2>&1; then
+    echo
+    echo "Docker is installed but the compose v2 plugin ('docker compose') is"
+    echo "not, and every app is deployed with it."
+    if confirm "Install the docker-compose-plugin package?"; then
+        install_compose_plugin \
+            || die "could not install the compose plugin automatically; install docker-compose-plugin and rerun"
+        docker compose version >/dev/null 2>&1 \
+            || die "the compose plugin is still missing after installation; install it manually and rerun"
+        log "Docker compose plugin installed"
+    else
+        die "the 'docker compose' plugin is required (docker compose version failed)"
+    fi
+fi
 
 # Containers log via the json-file driver, which does NOT rotate by default:
 # one chatty app can fill the SSD. Offer daemon-wide rotation if unset.

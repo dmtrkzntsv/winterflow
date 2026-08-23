@@ -36,6 +36,19 @@ bash "$INSTALL_SH" --dry-run --port abc >/dev/null 2>&1 && fail "non-numeric por
 bash "$INSTALL_SH" --dry-run --port 70000 >/dev/null 2>&1 && fail "out-of-range port rejected" "exit 0" || pass "out-of-range port rejected"
 bash "$INSTALL_SH" --dry-run --cpu-quota abc >/dev/null 2>&1 && fail "non-numeric cpu quota rejected" "exit 0" || pass "non-numeric cpu quota rejected"
 
+# --- Docker prerequisites -----------------------------------------------------
+
+# The install path itself needs root and a Docker-less host, so assert the
+# contract that is checkable here: the offer is documented, the download is
+# HTTPS-only, and the compose plugin is handled separately from the engine.
+help_out="$(bash "$INSTALL_SH" --help)"
+assert_contains "--help documents the docker install offer" "$help_out" "offers to install Docker and the compose plugin"
+src="$(cat "$INSTALL_SH")"
+assert_contains "docker installer is fetched over https" "$src" 'DOCKER_INSTALL_URL="https://get.docker.com"'
+assert_contains "docker install is behind a confirm" "$src" "Download and run Docker's official install script?"
+assert_contains "compose plugin install is behind its own confirm" "$src" "Install the docker-compose-plugin package?"
+assert_not_contains "docker install script is never piped straight to a shell" "$src" "| sh -"
+
 # --- Service user -------------------------------------------------------------
 
 bash "$INSTALL_SH" --dry-run --user root >/dev/null 2>&1 \

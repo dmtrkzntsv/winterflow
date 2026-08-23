@@ -51,39 +51,3 @@ func (dt DateTime) String() string {
 func (dt DateTime) Time() time.Time {
 	return time.Time(dt)
 }
-
-type NullDateTime struct {
-	DateTime DateTime
-	Valid    bool
-}
-
-func (ndt NullDateTime) Value() (driver.Value, error) {
-	if !ndt.Valid {
-		return nil, nil
-	}
-	return ndt.DateTime.Value()
-}
-
-func (ndt *NullDateTime) Scan(value interface{}) error {
-	if value == nil {
-		ndt.DateTime, ndt.Valid = DateTime{}, false
-		return nil
-	}
-
-	ndt.Valid = true
-	return ndt.DateTime.Scan(value)
-}
-
-func (ndt NullDateTime) String() string {
-	if !ndt.Valid {
-		return ""
-	}
-	return ndt.DateTime.String()
-}
-
-func (ndt NullDateTime) Time() time.Time {
-	if !ndt.Valid {
-		return time.Time{}
-	}
-	return ndt.DateTime.Time()
-}

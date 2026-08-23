@@ -51,6 +51,30 @@ func newTestManager(t *testing.T) (*Manager, *config.ServerConfig, string) {
 	return m, cfg, certDir
 }
 
+// removeArtifact and artifactExists manipulate cert artifacts directly on
+// disk; the Manager intentionally exposes no per-artifact delete/exists API
+// beyond what production code needs.
+func removeArtifact(m *Manager, filename string) func() error {
+	return func() error {
+		if err := os.Remove(filepath.Join(m.cfg.GetHubCertDir(), filename)); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
+	}
+}
+
+func artifactExists(m *Manager, filename string) func() (bool, error) {
+	return func() (bool, error) {
+		if _, err := os.Stat(filepath.Join(m.cfg.GetHubCertDir(), filename)); err != nil {
+			if os.IsNotExist(err) {
+				return false, nil
+			}
+			return false, err
+		}
+		return true, nil
+	}
+}
+
 func parseCertFile(t *testing.T, path string) *x509.Certificate {
 	t.Helper()
 	data, err := os.ReadFile(path)
@@ -247,8 +271,8 @@ func TestGenerateServerRegeneratesOnlyMissingArtifacts(t *testing.T) {
 	beforeCA, _ := os.ReadFile(cfg.GetHubCACertPath())
 	beforeServer, _ := os.ReadFile(cfg.GetHubCertPath())
 
-	if err := m.DeleteServerCertificate(); err != nil {
-		t.Fatalf("DeleteServerCertificate: %v", err)
+	if err := removeArtifact(m, m.paths.ServerCert)(); err != nil {
+		t.Fatalf("remove server certificate: %v", err)
 	}
 	if IsServerCertificateGenerated(m) {
 		t.Error("IsServerCertificateGenerated should be false with the server cert missing")
@@ -295,9 +319,9 @@ func TestGenerateAgent(t *testing.T) {
 		name   string
 		exists func() (bool, error)
 	}{
-		{"agent key", m.ExistsAgentKey},
-		{"agent CSR", m.ExistsAgentCSR},
-		{"agent cert", m.ExistsAgentCertificate},
+		{"agent key", artifactExists(m, m.paths.AgentKey)},
+		{"agent CSR", artifactExists(m, m.paths.AgentCSR)},
+		{"agent cert", artifactExists(m, m.paths.AgentCert)},
 	} {
 		if exists, err := c.exists(); err != nil || !exists {
 			t.Errorf("%s exists = (%v, %v), want (true, nil)", c.name, exists, err)
@@ -362,9 +386,9 @@ func TestDeleteAgent(t *testing.T) {
 		name   string
 		exists func() (bool, error)
 	}{
-		{"agent key", m.ExistsAgentKey},
-		{"agent CSR", m.ExistsAgentCSR},
-		{"agent cert", m.ExistsAgentCertificate},
+		{"agent key", artifactExists(m, m.paths.AgentKey)},
+		{"agent CSR", artifactExists(m, m.paths.AgentCSR)},
+		{"agent cert", artifactExists(m, m.paths.AgentCert)},
 	} {
 		if exists, err := c.exists(); err != nil || exists {
 			t.Errorf("%s exists = (%v, %v) after DeleteAgent, want (false, nil)", c.name, exists, err)
@@ -391,11 +415,11 @@ func TestIsServerCertificateGeneratedPartialArtifacts(t *testing.T) {
 		name string
 		del  func() error
 	}{
-		{"CA cert", m.DeleteCACertificate},
-		{"CA key", m.DeleteCAKey},
-		{"server cert", m.DeleteServerCertificate},
-		{"server key", m.DeleteServerKey},
-		{"fullchain", m.DeleteFullchainCertificate},
+		{"CA cert", removeArtifact(m, m.paths.CACert)},
+		{"CA key", removeArtifact(m, m.paths.CAKey)},
+		{"server cert", removeArtifact(m, m.paths.ServerCert)},
+		{"server key", removeArtifact(m, m.paths.ServerKey)},
+		{"fullchain", removeArtifact(m, m.paths.ServerFullChain)},
 	}
 	for _, d := range deletes {
 		// Regenerate with override so every iteration starts from a fully
@@ -428,11 +452,11 @@ func TestGenerateServerHealsAnySingleMissingArtifact(t *testing.T) {
 		name string
 		del  func() error
 	}{
-		{"CA key", m.DeleteCAKey},
-		{"CA cert", m.DeleteCACertificate},
-		{"server key", m.DeleteServerKey},
-		{"server cert", m.DeleteServerCertificate},
-		{"fullchain", m.DeleteFullchainCertificate},
+		{"CA key", removeArtifact(m, m.paths.CAKey)},
+		{"CA cert", removeArtifact(m, m.paths.CACert)},
+		{"server key", removeArtifact(m, m.paths.ServerKey)},
+		{"server cert", removeArtifact(m, m.paths.ServerCert)},
+		{"fullchain", removeArtifact(m, m.paths.ServerFullChain)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

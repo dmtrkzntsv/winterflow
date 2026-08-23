@@ -49,28 +49,3 @@ func TestNewDateTimeIsNow(t *testing.T) {
 		t.Fatalf("NewDateTime out of range: %v", dt.Time())
 	}
 }
-
-func TestNullDateTime(t *testing.T) {
-	var ndt NullDateTime
-	if err := ndt.Scan(nil); err != nil {
-		t.Fatal(err)
-	}
-	v, err := ndt.Value()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if v != nil {
-		t.Fatalf("null Value() = %v", v)
-	}
-
-	if err := ndt.Scan("2026-07-02 12:04:05"); err != nil {
-		t.Fatal(err)
-	}
-	v, err = ndt.Value()
-	if err != nil || v == nil {
-		t.Fatalf("Value() = %v, %v", v, err)
-	}
-	if ndt.String() == "" || ndt.Time().IsZero() {
-		t.Fatal("non-null NullDateTime should render")
-	}
-}

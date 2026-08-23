@@ -64,42 +64,6 @@ func TestGenerateRandomCodeVaries(t *testing.T) {
 	}
 }
 
-func TestGenerateSecureToken(t *testing.T) {
-	tests := []struct {
-		length  int
-		wantLen int // hex of length/2 bytes => 2*(length/2) chars
-	}{
-		{0, 0},
-		{2, 2},
-		{8, 8},
-		{7, 6}, // odd lengths round down to the nearest even count
-		{64, 64},
-	}
-	for _, tt := range tests {
-		tok, err := GenerateSecureToken(tt.length)
-		if err != nil {
-			t.Fatalf("GenerateSecureToken(%d) error: %v", tt.length, err)
-		}
-		if len(tok) != tt.wantLen {
-			t.Fatalf("GenerateSecureToken(%d) = %q, len = %d, want %d", tt.length, tok, len(tok), tt.wantLen)
-		}
-		if !regexp.MustCompile(`^[0-9a-f]*$`).MatchString(tok) {
-			t.Fatalf("GenerateSecureToken(%d) = %q, want lowercase hex", tt.length, tok)
-		}
-	}
-}
-
-func TestGenerateSecureTokenVaries(t *testing.T) {
-	a, err1 := GenerateSecureToken(32)
-	b, err2 := GenerateSecureToken(32)
-	if err1 != nil || err2 != nil {
-		t.Fatalf("unexpected errors: %v, %v", err1, err2)
-	}
-	if a == b {
-		t.Fatalf("two GenerateSecureToken(32) calls returned the same value %q", a)
-	}
-}
-
 func TestRefString(t *testing.T) {
 	if got := RefString(""); got != nil {
 		t.Fatalf("RefString(\"\") = %q, want nil", *got)

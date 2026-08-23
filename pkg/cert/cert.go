@@ -3,26 +3,18 @@ package cert
 import (
 	"bytes"
 	"crypto"
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/sha256"
-	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/base64"
 	"encoding/pem"
 	"fmt"
 	"log"
 	"math/big"
-	"net"
 	"os"
 	"path/filepath"
 	"time"
-
-	"google.golang.org/grpc/credentials"
 )
 
 // GeneratePrivateKey generates a new ECDSA P-256 private key and saves it to the specified path
@@ -194,187 +186,4 @@ func SignCSR(csrData string, caCert *x509.Certificate, caKey crypto.Signer, vali
 	})
 
 	return string(certPEM), csr.Subject.CommonName, expiresAt, nil
-}
-
-// LoadTLSCredentials loads TLS credentials from certificate and private key files
-func LoadTLSCredentials(caCertPath, certPath, keyPath, host string) (credentials.TransportCredentials, error) {
-	// Load certificate and private key
-	cert, err := tls.LoadX509KeyPair(certPath, keyPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load certificate and private key: %v", err)
-	}
-
-	// Load your CA certificate
-	caCert, err := os.ReadFile(caCertPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read CA certificate: %v", err)
-	}
-	caCertPool := x509.NewCertPool()
-	if ok := caCertPool.AppendCertsFromPEM(caCert); !ok {
-		return nil, fmt.Errorf("failed to append CA certificate to pool")
-	}
-
-	// Create TLS configuration
-	tlsConfig := &tls.Config{
-		RootCAs:      caCertPool,
-		Certificates: []tls.Certificate{cert},
-		MinVersion:   tls.VersionTLS12,
-		// gRPC uses HTTP/2 under the hood, make sure we advertise it via ALPN
-		NextProtos: []string{"h2"},
-	}
-
-	// Set ServerName only if host looks like a hostname (not an IP address). This avoids issues
-	// when connecting via raw IPs that are not present in the certificateʼs SANs.
-	if parsedIP := net.ParseIP(host); parsedIP == nil && host != "" {
-		tlsConfig.ServerName = host
-	}
-
-	// Create and return credentials
-	creds := credentials.NewTLS(tlsConfig)
-	log.Printf("[DEBUG] Loaded TLS credentials from certificate: %s and key: %s", certPath, keyPath)
-	return creds, nil
-}
-
-// DecryptWithPrivateKey decrypts base64-encoded data that was encrypted in the
-// browser using the prime256v1 (P-256) ECDH + AES-GCM (256-bit) scheme.
-//
-// Encryption layout (all binary values are finally base64-encoded for
-// transport):
-//
-//	┌───────────────────┬──────────────┬────────────────────────┐
-//	│ 65 bytes          │ 12 bytes     │ remaining bytes        │
-//	│ Ephemeral pub key │ AES-GCM IV   │ Ciphertext + auth tag  │
-//	└───────────────────┴──────────────┴────────────────────────┘
-//
-// The 65-byte public key is the uncompressed form exported via
-// `crypto.subtle.exportKey('raw', tmpKeyPair.publicKey)` in the browser and is
-// always prefixed with 0x04.
-//
-// To derive the symmetric key we:
-//  1. Perform ECDH with the agent's private key and the received public key.
-//  2. Left-pad the X coordinate of the shared secret to 32 bytes (big-endian).
-//  3. Hash it with SHA-256 and use the resulting 32 bytes as the AES-256-GCM
-//     key.
-//
-// Only prime256v1 keys are supported – passing any other key type will return
-// an explicit error.
-func DecryptWithPrivateKey(privateKeyPath, encryptedBase64 string) (string, error) {
-	// Load and parse the agent's private key (must be EC prime256v1).
-	keyData, err := os.ReadFile(privateKeyPath)
-	if err != nil {
-		return "", fmt.Errorf("failed to read private key: %v", err)
-	}
-
-	block, _ := pem.Decode(keyData)
-	if block == nil {
-		return "", fmt.Errorf("failed to decode private key PEM")
-	}
-
-	if block.Type != "EC PRIVATE KEY" {
-		return "", fmt.Errorf("unsupported private key type %q – only EC (P-256) keys are supported", block.Type)
-	}
-
-	ecKey, err := x509.ParseECPrivateKey(block.Bytes)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse EC private key: %v", err)
-	}
-
-	// Decode the payload.
-	encryptedData, err := base64.StdEncoding.DecodeString(encryptedBase64)
-	if err != nil {
-		return "", fmt.Errorf("failed to decode base64 payload: %v", err)
-	}
-
-	// Validate minimum length (65-byte pub key + 12-byte IV + 16-byte tag).
-	const (
-		rawPubKeyLen = 65 // 0x04 + X + Y
-		ivLen        = 12
-		minTotalLen  = rawPubKeyLen + ivLen + 16 // at least auth tag size
-	)
-	if len(encryptedData) < minTotalLen {
-		return "", fmt.Errorf("encrypted payload too short: got %d bytes", len(encryptedData))
-	}
-
-	rawPubKey := encryptedData[:rawPubKeyLen]
-	iv := encryptedData[rawPubKeyLen : rawPubKeyLen+ivLen]
-	ciphertext := encryptedData[rawPubKeyLen+ivLen:]
-
-	// Ensure uncompressed format.
-	if rawPubKey[0] != 0x04 {
-		return "", fmt.Errorf("unexpected EC public key format: first byte is 0x%02x, want 0x04 (uncompressed)", rawPubKey[0])
-	}
-
-	// Split X / Y coordinates.
-	coordSize := 32 // for P-256
-	x := new(big.Int).SetBytes(rawPubKey[1 : 1+coordSize])
-	y := new(big.Int).SetBytes(rawPubKey[1+coordSize : 1+2*coordSize])
-
-	curve := elliptic.P256()
-	if !curve.IsOnCurve(x, y) {
-		return "", fmt.Errorf("ephemeral public key is not on the P-256 curve")
-	}
-
-	// Derive shared secret (ECDH).
-	sharedX, _ := curve.ScalarMult(x, y, ecKey.D.Bytes())
-	if sharedX == nil {
-		return "", fmt.Errorf("failed to derive shared secret")
-	}
-
-	// Left-pad X coordinate to 32 bytes.
-	sharedXBytes := sharedX.Bytes()
-	if len(sharedXBytes) < coordSize {
-		padded := make([]byte, coordSize)
-		copy(padded[coordSize-len(sharedXBytes):], sharedXBytes)
-		sharedXBytes = padded
-	}
-
-	// Hash with SHA-256 to produce the AES-256 key.
-	keyHash := sha256.Sum256(sharedXBytes)
-
-	// Create AES-GCM cipher.
-	blockCipher, err := aes.NewCipher(keyHash[:])
-	if err != nil {
-		return "", fmt.Errorf("failed to create AES cipher: %v", err)
-	}
-
-	gcm, err := cipher.NewGCM(blockCipher)
-	if err != nil {
-		return "", fmt.Errorf("failed to create AES-GCM: %v", err)
-	}
-
-	// Decrypt.
-	plaintext, err := gcm.Open(nil, iv, ciphertext, nil)
-	if err != nil {
-		return "", fmt.Errorf("failed to decrypt: %v", err)
-	}
-
-	return string(plaintext), nil
-}
-
-// SignWithPrivateKey creates an ASN.1-encoded ECDSA signature over msg using
-// the EC private key stored at keyPath.
-func SignWithPrivateKey(keyPath string, msg []byte) (string, error) {
-	keyBytes, err := os.ReadFile(keyPath)
-	if err != nil {
-		return "", fmt.Errorf("failed to read private key: %w", err)
-	}
-
-	block, _ := pem.Decode(keyBytes)
-	if block == nil {
-		return "", fmt.Errorf("failed to decode private key PEM")
-	}
-
-	privKey, err := x509.ParseECPrivateKey(block.Bytes)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse EC private key: %w", err)
-	}
-
-	hash := sha256.Sum256(msg)
-
-	sig, err := ecdsa.SignASN1(rand.Reader, privKey, hash[:])
-	if err != nil {
-		return "", fmt.Errorf("failed to sign message: %w", err)
-	}
-
-	return base64.StdEncoding.EncodeToString(sig), nil
 }

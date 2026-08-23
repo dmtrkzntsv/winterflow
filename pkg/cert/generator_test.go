@@ -406,8 +406,8 @@ func TestGenerateFullchainCertificate(t *testing.T) {
 		t.Fatalf("GenerateServerCertificate: %v", err)
 	}
 
-	if err := g.DeleteFullchainCertificate(); err != nil {
-		t.Fatalf("DeleteFullchainCertificate: %v", err)
+	if err := g.deleteArtifact(g.paths.ServerFullChain, "full-chain certificate"); err != nil {
+		t.Fatalf("delete fullchain: %v", err)
 	}
 	if exists, _ := g.ExistsFullchainCertificate(); exists {
 		t.Fatal("fullchain should be gone after delete")
@@ -424,9 +424,9 @@ func TestGenerateAgentFlow(t *testing.T) {
 	g, outDir := newTestGenerator(t)
 	generateCA(t, g)
 
-	for _, check := range []func() (bool, error){g.ExistsAgentKey, g.ExistsAgentCSR, g.ExistsAgentCertificate} {
-		if exists, err := check(); err != nil || exists {
-			t.Fatalf("agent artifact exists = (%v, %v) before generation, want (false, nil)", exists, err)
+	for _, name := range []string{"agent.key", "agent.csr", "agent.crt"} {
+		if exists, err := g.pathExists(name); err != nil || exists {
+			t.Fatalf("agent artifact %s exists = (%v, %v) before generation, want (false, nil)", name, exists, err)
 		}
 	}
 
@@ -448,9 +448,9 @@ func TestGenerateAgentFlow(t *testing.T) {
 		t.Errorf("expiresAt = %v, want ~%v", expiresAt, wantExpiry)
 	}
 
-	for _, check := range []func() (bool, error){g.ExistsAgentKey, g.ExistsAgentCSR, g.ExistsAgentCertificate} {
-		if exists, err := check(); err != nil || !exists {
-			t.Fatalf("agent artifact exists = (%v, %v) after generation, want (true, nil)", exists, err)
+	for _, name := range []string{"agent.key", "agent.csr", "agent.crt"} {
+		if exists, err := g.pathExists(name); err != nil || !exists {
+			t.Fatalf("agent artifact %s exists = (%v, %v) after generation, want (true, nil)", name, exists, err)
 		}
 	}
 
@@ -541,12 +541,6 @@ func TestGetAgentCertificateMissing(t *testing.T) {
 func TestDeleteArtifacts(t *testing.T) {
 	g, _ := newTestGenerator(t)
 	generateCA(t, g)
-	if err := g.GenerateServerKey(); err != nil {
-		t.Fatalf("GenerateServerKey: %v", err)
-	}
-	if err := g.GenerateServerCertificate(); err != nil {
-		t.Fatalf("GenerateServerCertificate: %v", err)
-	}
 	if err := g.GenerateAgentKey(); err != nil {
 		t.Fatalf("GenerateAgentKey: %v", err)
 	}
@@ -558,34 +552,24 @@ func TestDeleteArtifacts(t *testing.T) {
 	}
 
 	deletes := []struct {
-		name   string
-		del    func() error
-		exists func() (bool, error)
+		name     string
+		del      func() error
+		filename string
 	}{
-		{"CA key", g.DeleteCAKey, g.ExistsCAKey},
-		{"CA cert", g.DeleteCACertificate, g.ExistsCACertificate},
-		{"server key", g.DeleteServerKey, g.ExistsServerKey},
-		{"server cert", g.DeleteServerCertificate, g.ExistsServerCertificate},
-		{"fullchain", g.DeleteFullchainCertificate, g.ExistsFullchainCertificate},
-		{"agent key", g.DeleteAgentKey, g.ExistsAgentKey},
-		{"agent CSR", g.DeleteAgentCSR, g.ExistsAgentCSR},
-		{"agent cert", g.DeleteAgentCertificate, g.ExistsAgentCertificate},
+		{"agent key", g.DeleteAgentKey, "agent.key"},
+		{"agent CSR", g.DeleteAgentCSR, "agent.csr"},
+		{"agent cert", g.DeleteAgentCertificate, "agent.crt"},
 	}
 	for _, d := range deletes {
 		if err := d.del(); err != nil {
 			t.Errorf("delete %s: %v", d.name, err)
 		}
-		if exists, err := d.exists(); err != nil || exists {
+		if exists, err := g.pathExists(d.filename); err != nil || exists {
 			t.Errorf("%s exists = (%v, %v) after delete, want (false, nil)", d.name, exists, err)
 		}
 		// Deleting a missing artifact is a no-op, not an error.
 		if err := d.del(); err != nil {
 			t.Errorf("second delete of %s should be nil, got %v", d.name, err)
 		}
-	}
-
-	// DeleteServerCSR: the server CSR was written during GenerateServerCertificate.
-	if err := g.DeleteServerCSR(); err != nil {
-		t.Errorf("DeleteServerCSR: %v", err)
 	}
 }

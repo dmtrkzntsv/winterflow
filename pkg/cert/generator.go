@@ -355,10 +355,6 @@ func (g *Generator) GenerateAgentKey() error {
 	return nil
 }
 
-func (g *Generator) ExistsAgentKey() (bool, error) {
-	return g.pathExists(g.paths.AgentKey)
-}
-
 func (g *Generator) GenerateAgentCSR(certificateID string) error {
 	if err := g.ensureOutputDir(); err != nil {
 		return err
@@ -383,10 +379,6 @@ func (g *Generator) GenerateAgentCSR(certificateID string) error {
 	}
 
 	return nil
-}
-
-func (g *Generator) ExistsAgentCSR() (bool, error) {
-	return g.pathExists(g.paths.AgentCSR)
 }
 
 func (g *Generator) GenerateAgentCertificate() (*time.Time, error) {
@@ -426,10 +418,6 @@ func (g *Generator) GenerateAgentCertificate() (*time.Time, error) {
 	return &expiresAt, nil
 }
 
-func (g *Generator) ExistsAgentCertificate() (bool, error) {
-	return g.pathExists(g.paths.AgentCert)
-}
-
 func (g *Generator) GetAgentCertificate() ([]byte, error) {
 	agentCertPath := g.join(g.paths.AgentCert)
 	data, err := os.ReadFile(agentCertPath)
@@ -438,30 +426,6 @@ func (g *Generator) GetAgentCertificate() ([]byte, error) {
 	}
 
 	return data, nil
-}
-
-func (g *Generator) DeleteCAKey() error {
-	return g.deleteArtifact(g.paths.CAKey, "CA private key")
-}
-
-func (g *Generator) DeleteCACertificate() error {
-	return g.deleteArtifact(g.paths.CACert, "CA certificate")
-}
-
-func (g *Generator) DeleteServerKey() error {
-	return g.deleteArtifact(g.paths.ServerKey, "server private key")
-}
-
-func (g *Generator) DeleteServerCSR() error {
-	return g.deleteArtifact(g.paths.ServerCSR, "server CSR")
-}
-
-func (g *Generator) DeleteServerCertificate() error {
-	return g.deleteArtifact(g.paths.ServerCert, "server certificate")
-}
-
-func (g *Generator) DeleteFullchainCertificate() error {
-	return g.deleteArtifact(g.paths.ServerFullChain, "full-chain certificate")
 }
 
 func (g *Generator) DeleteAgentKey() error {

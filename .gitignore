@@ -6,3 +6,9 @@ bin/
 
 data/
 *.sqlite*
+
+# root-built binaries (go build ./cmd/...)
+/agent
+/api
+/hub
+/standalone

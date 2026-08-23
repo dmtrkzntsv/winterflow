@@ -2,7 +2,6 @@ package util
 
 import (
 	"crypto/rand"
-	"fmt"
 	"math/big"
 )
 
@@ -18,14 +17,4 @@ func GenerateRandomCode(length int) string {
 		b[i] = charset[n.Int64()]
 	}
 	return string(b)
-}
-
-// GenerateSecureToken generates a secure random string of the given length
-func GenerateSecureToken(length int) (string, error) {
-	b := make([]byte, length/2)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-
-	return fmt.Sprintf("%x", b), nil
 }

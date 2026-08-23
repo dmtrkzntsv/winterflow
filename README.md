@@ -1,0 +1,93 @@
+# WinterFlow
+
+Self-hosted app deployment for small always-on home servers — mini-PCs,
+Raspberry Pi-class boards, anything Linux that runs Docker. Deploy Docker
+Compose apps from a web UI: every app is a git repository under the hood, every
+change is a revision you can roll back, secrets are end-to-end encrypted, and
+an embedded reverse proxy (Caddy) serves your apps with automatic HTTPS.
+
+## Install
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/dmtrkzntsv/winterflow/main/scripts/install.sh | sudo bash
+```
+
+The installer downloads the latest prebuilt release for your machine
+(linux amd64 / arm64 / arm), verifies its checksum, and sets it up as a
+hardened systemd service. Along the way it:
+
+- offers to install Docker and the compose plugin when they are missing,
+- asks which unprivileged user the service should run as (never root),
+- writes `/etc/winterflow/winterflow.env` with a generated JWT secret,
+- keeps data (SQLite database, certs, app repos) in `/var/lib/winterflow`,
+- routes logs to a dedicated journald namespace with rotation caps, and
+- caps the service's CPU and memory so orchestration bursts cannot
+  overheat a small fanless box. Your app containers are not limited.
+
+Non-interactive install, and all other options (`--port`, `--user`,
+`--version`, resource caps, `--dry-run`, `--uninstall`, `--purge`):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/dmtrkzntsv/winterflow/main/scripts/install.sh | sudo bash -s -- --yes
+```
+
+**Requirements:** Linux with systemd. Docker is installed for you if missing.
+
+## First run
+
+Open `http://<server-ip>:8080/register` (the installer prints the exact URL)
+and create the admin account. Your server is already registered — add your
+first app from the dashboard.
+
+Useful commands:
+
+```sh
+systemctl status winterflow
+journalctl --namespace winterflow -u winterflow -f   # follow logs
+```
+
+Configuration lives in `/etc/winterflow/winterflow.env`;
+[`.env.example`](.env.example) documents every option.
+
+## Updating
+
+Rerun the install one-liner: it downloads the latest release and restarts the
+service, keeping your config and data. Pin a specific release with
+`--version v1.2.3`.
+
+## Uninstall
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/dmtrkzntsv/winterflow/main/scripts/install.sh | sudo bash -s -- --uninstall
+```
+
+`--uninstall` keeps your config and data; `--purge` deletes everything.
+
+## Build from source
+
+Requires Go 1.25+ and (for the web UI) node + pnpm:
+
+```sh
+git clone https://github.com/dmtrkzntsv/winterflow.git
+cd winterflow
+make build                  # bundles the SPA + compiles bin/standalone
+sudo ./scripts/install.sh   # picks up bin/standalone automatically
+```
+
+`make web` runs the frontend dev server; `go test ./...` and `make lint` cover
+the backend and web checks. See [AGENTS.md](AGENTS.md) for the contributor
+guide and [CLAUDE.md](CLAUDE.md) for the architecture overview.
+
+## Topologies
+
+The default **standalone** binary runs everything — HTTP API, embedded web UI,
+agent, and the Docker Compose orchestrator — in one process over SQLite.
+
+The same codebase also builds a horizontally scalable **distributed** topology
+(`api` ⇄ Redis ⇄ `hub` ⇄ `agent` over mTLS gRPC) for managing many servers
+from one control plane; see [CLAUDE.md](CLAUDE.md) for how the pieces fit.
+
+## License
+
+[The O'Saasy License](LICENSE.md) — free to use, modify, and self-host; you
+may not offer it as a competing hosted service.

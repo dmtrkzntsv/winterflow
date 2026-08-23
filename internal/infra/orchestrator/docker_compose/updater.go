@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"winterflow/internal/domain/command"
@@ -48,8 +49,19 @@ func (r *Repository) UpdateAgent(ctx context.Context, in command.UpdateAgentRequ
 		return resp, fmt.Errorf("resolve executable path: %w", err)
 	}
 
-	binaryName := fmt.Sprintf("winterflow-agent-%s-%s", runtime.GOOS, runtime.GOARCH)
-	url := fmt.Sprintf("%s/%s/%s", r.cfg.GetGitHubReleasesURL(), in.Version, binaryName)
+	// The downloaded asset must match the running binary: in standalone the
+	// executable being replaced is the standalone binary, not the agent.
+	component := "agent"
+	if r.cfg.IsStandalone() {
+		component = "standalone"
+	}
+	// Release tags are v-prefixed (v1.2.3); accept a bare version too.
+	tag := in.Version
+	if !strings.HasPrefix(tag, "v") {
+		tag = "v" + tag
+	}
+	binaryName := fmt.Sprintf("winterflow-%s-%s-%s", component, runtime.GOOS, runtime.GOARCH)
+	url := fmt.Sprintf("%s/%s/%s", r.cfg.GetGitHubReleasesURL(), tag, binaryName)
 	r.log.Info("downloading agent update", "url", url, "target", in.Version)
 
 	tmpFile, err := downloadBinary(ctx, url, execPath)

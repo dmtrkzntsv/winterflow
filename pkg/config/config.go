@@ -319,13 +319,14 @@ func (c *ServerConfig) IsStandalone() bool {
 	return c.mode == "standalone"
 }
 
-// GetGitHubReleasesURL is the base URL the agent downloads its self-update
-// binaries from. The expected layout is
-// {base}/{version}/winterflow-agent-{os}-{arch}. Override with
+// GetGitHubReleasesURL is the base URL self-update binaries are downloaded
+// from. The expected layout is {base}/{vX.Y.Z}/winterflow-{component}-{os}-{arch}
+// where component is "standalone" or "agent" — the asset naming produced by
+// .goreleaser.yaml and consumed by scripts/install.sh. Override with
 // GITHUB_RELEASES_URL.
 func (c *ServerConfig) GetGitHubReleasesURL() string {
 	if v := os.Getenv("GITHUB_RELEASES_URL"); v != "" {
 		return v
 	}
-	return "https://github.com/winterflowio/winterflow-agent/releases/download"
+	return "https://github.com/dmtrkzntsv/winterflow/releases/download"
 }

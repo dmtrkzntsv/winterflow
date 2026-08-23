@@ -2,10 +2,12 @@ package dockercompose
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"winterflow/internal/domain/command"
@@ -57,6 +59,44 @@ func TestUpdateAgentDownloadFailure(t *testing.T) {
 	}
 	if res.Scheduled {
 		t.Error("update must not be scheduled on download failure")
+	}
+}
+
+func TestUpdateAgentAssetNameMatchesTopology(t *testing.T) {
+	// The asset must match the binary being replaced: the standalone binary in
+	// standalone mode, the agent binary otherwise. The server 404s so the test
+	// executable is never actually swapped; only the requested path matters.
+	tests := []struct {
+		mode      string
+		component string
+	}{
+		{"standalone", "standalone"},
+		{"distributed", "agent"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.mode, func(t *testing.T) {
+			var gotPath string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				gotPath = req.URL.Path
+				w.WriteHeader(http.StatusNotFound)
+			}))
+			defer srv.Close()
+			t.Setenv("GITHUB_RELEASES_URL", srv.URL)
+
+			r := NewRepository(
+				config.NewServerConfig(tt.mode),
+				logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"}),
+			)
+			// Bare version: the tag in the URL must gain the v prefix.
+			_, err := r.UpdateAgent(context.Background(), command.UpdateAgentRequest{Version: "999.0.0"})
+			if err == nil {
+				t.Fatal("expected error from 404 download")
+			}
+			want := fmt.Sprintf("/v999.0.0/winterflow-%s-%s-%s", tt.component, runtime.GOOS, runtime.GOARCH)
+			if gotPath != want {
+				t.Errorf("requested asset path = %q, want %q", gotPath, want)
+			}
+		})
 	}
 }
 

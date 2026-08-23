@@ -30,6 +30,37 @@ assert_contains "--help documents --cpu-quota" "$out" "--cpu-quota"
 
 bash "$INSTALL_SH" --nonsense >/dev/null 2>&1 && fail "unknown option rejected" "exit 0" || pass "unknown option rejected"
 
+# --- Curl-pipe safety ---------------------------------------------------------
+
+# The curl | bash path: the whole script must parse before anything runs
+# (main-wrapper, so a truncated download cannot execute half a script) and
+# prompts must never consume the piped script stream.
+src="$(cat "$INSTALL_SH")"
+assert_contains "script body runs via a main wrapper" "$src" 'main "$@"'
+assert_contains "prompts fall back to /dev/tty when stdin is piped" "$src" "/dev/tty"
+
+out_pipe="$(cat "$INSTALL_SH" | bash -s -- --dry-run 2>&1)" || fail "piped dry-run exits 0" "exit $?"
+assert_contains "piped: env file rendered" "$out_pipe" "API_PORT=8080"
+assert_contains "piped: unit rendered" "$out_pipe" "User=winterflow"
+
+out_pipe_help="$(cat "$INSTALL_SH" | bash -s -- --help 2>&1)" || fail "piped --help exits 0" "exit $?"
+assert_contains "piped --help points at the repo" "$out_pipe_help" "github.com"
+
+# --- Release download ---------------------------------------------------------
+
+# The download itself needs network + a published release, so assert the
+# checkable contract: --version is documented, the asset naming matches
+# .goreleaser.yaml, every supported arch is mapped, and downloads are
+# checksum-verified.
+assert_contains "--help documents --version" "$(bash "$INSTALL_SH" --help)" "--version TAG"
+assert_contains "asset naming matches goreleaser" "$src" "winterflow-standalone-%s-%s"
+assert_contains "amd64 mapped" "$src" "x86_64"
+assert_contains "arm64 mapped" "$src" "aarch64"
+assert_contains "32-bit arm mapped" "$src" "armv7l"
+assert_contains "downloads are checksum-verified" "$src" "sha256sum -c"
+assert_contains "release download is HTTPS from the project repo" "$src" 'GITHUB_REPO="dmtrkzntsv/winterflow"'
+assert_not_contains "no stale CLI claim in the closing message" "$src" "winterflow <command>"
+
 # --- Validation ---------------------------------------------------------------
 
 bash "$INSTALL_SH" --dry-run --port abc >/dev/null 2>&1 && fail "non-numeric port rejected" "exit 0" || pass "non-numeric port rejected"

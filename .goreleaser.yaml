@@ -1,0 +1,76 @@
+# Release pipeline: builds the standalone and agent binaries for the platforms
+# winterflow targets (x86 mini-PCs and ARM boards) and publishes them as raw
+# binaries + checksums.txt on the GitHub release.
+#
+# Asset naming is a contract shared with two consumers — keep them in sync:
+#   - scripts/install.sh (release_asset_name) downloads
+#     winterflow-standalone-{os}-{arch} from releases/latest/download
+#   - the agent self-updater (internal/infra/orchestrator/docker_compose/
+#     updater.go) downloads winterflow-{standalone|agent}-{os}-{arch} for the
+#     tag it is told to update to
+#
+# CGO is off so cross-compilation works everywhere; the sqliteshim driver then
+# falls back to the pure-Go modernc.org/sqlite automatically.
+#
+# Local dry run: goreleaser release --snapshot --clean
+version: 2
+
+project_name: winterflow
+
+before:
+  hooks:
+    # Bundle the web UI first so go:embed ships the real SPA (not the committed
+    # placeholder) inside the standalone binary.
+    - pnpm --dir web install --frozen-lockfile
+    - pnpm --dir web run build
+
+builds:
+  - id: standalone
+    main: ./cmd/standalone
+    binary: winterflow-standalone
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+      - arm
+    # GOARM=6 runs on every 32-bit Raspberry Pi (Zero/1 are armv6).
+    goarm:
+      - "6"
+    ldflags:
+      - -s -w -X winterflow/pkg/version.version={{ .Version }}
+  - id: agent
+    main: ./cmd/agent
+    binary: winterflow-agent
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+      - arm
+    goarm:
+      - "6"
+    ldflags:
+      - -s -w -X winterflow/pkg/version.version={{ .Version }}
+
+archives:
+  # Raw binaries, not tarballs: install.sh and the self-updater fetch them
+  # directly. {{ .Arch }} is "arm" for the GOARM build, matching runtime.GOARCH
+  # on the devices that download it.
+  - formats: [binary]
+    name_template: "{{ .Binary }}-{{ .Os }}-{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github
+  filters:
+    exclude:
+      - "^docs"
+      - "^test"
+      - "^chore"

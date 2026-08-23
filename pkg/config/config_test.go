@@ -314,7 +314,7 @@ func TestGetAvatarsStoragePath(t *testing.T) {
 func TestGetGitHubReleasesURL(t *testing.T) {
 	c := NewServerConfig("standalone")
 	unsetenv(t, "GITHUB_RELEASES_URL")
-	want := "https://github.com/winterflowio/winterflow-agent/releases/download"
+	want := "https://github.com/dmtrkzntsv/winterflow/releases/download"
 	if got := c.GetGitHubReleasesURL(); got != want {
 		t.Fatalf("default GetGitHubReleasesURL() = %q, want %q", got, want)
 	}

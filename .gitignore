@@ -12,3 +12,6 @@ data/
 /api
 /hub
 /standalone
+
+# goreleaser output
+/dist/

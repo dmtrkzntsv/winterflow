@@ -4,6 +4,8 @@
 #
 # The standalone binary runs the HTTP API, the embedded web UI, the agent,
 # and the Docker Compose orchestrator in one process over SQLite. This script:
+#   - downloads the latest prebuilt release for this machine (or builds from
+#     source when run inside a repo checkout with Go installed),
 #   - asks which unprivileged user the service should run as (a dedicated
 #     system user, the account you sudo'd from, or one you name) so the
 #     service does not run as root,
@@ -21,11 +23,17 @@
 #   delete:  journalctl --namespace winterflow --vacuum-time=1s
 #
 # Usage:
-#   sudo ./scripts/install.sh [options]
+#   curl -fsSL https://raw.githubusercontent.com/dmtrkzntsv/winterflow/main/scripts/install.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/dmtrkzntsv/winterflow/main/scripts/install.sh | sudo bash -s -- [options]
+#   sudo ./scripts/install.sh [options]     # from a repo checkout
 #
 # Options:
 #   --binary PATH    Prebuilt standalone binary to install. Default: build
-#                    ./cmd/standalone from the repo this script lives in.
+#                    ./cmd/standalone when run from a repo checkout, otherwise
+#                    download the latest GitHub release for this OS/arch.
+#   --version TAG    Release to download instead of the latest, e.g. v1.2.3
+#                    (a bare 1.2.3 works too). Ignored with --binary or a
+#                    repo build.
 #   --user NAME      Run the service as NAME instead of asking. Created as a
 #                    system user if it does not exist. Must not be root.
 #   --port PORT      API port (default: 8080).
@@ -58,6 +66,7 @@ UNIT_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 JOURNAL_NAMESPACE="winterflow"
 JOURNAL_CONF="/etc/systemd/journald@${JOURNAL_NAMESPACE}.conf"
 DOCKER_INSTALL_URL="https://get.docker.com"
+GITHUB_REPO="dmtrkzntsv/winterflow"
 
 SERVICE_USER="winterflow"
 SERVICE_GROUP="winterflow"
@@ -66,43 +75,74 @@ API_PORT="8080"
 CPU_QUOTA=""
 MEMORY_MAX=""
 BINARY_SRC=""
+RELEASE_VERSION=""
 ASSUME_YES=0
 DRY_RUN=0
 UNINSTALL=0
 PURGE=0
 
+HAS_LOG_NAMESPACE=0
+sysd_ver=""
+
+# Temp dir for a downloaded release binary; cleaned up on exit.
+WORK_DIR=""
+trap '[ -n "$WORK_DIR" ] && rm -rf "$WORK_DIR"' EXIT
+
 log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33mwarning:\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
-# Print the header comment block (everything up to the first non-comment line).
-usage() { awk 'NR==1{next} !/^#/{exit} {sub(/^# ?/,""); print}' "$0"; }
+usage() {
+    # Print the header comment block (everything up to the first non-comment
+    # line). When piped there is no script file to read; point at the repo.
+    if [ -f "$0" ]; then
+        awk 'NR==1{next} !/^#/{exit} {sub(/^# ?/,""); print}' "$0"
+    else
+        echo "WinterFlow installer."
+        echo "Options: https://github.com/${GITHUB_REPO}/blob/main/scripts/install.sh"
+    fi
+}
+
+prompt_read() {
+    # prompt_read "prompt" -> sets REPLY. When stdin is not a terminal (curl |
+    # sudo bash pipes the script itself into stdin), read from the controlling
+    # terminal instead, so prompts still work and never consume the script
+    # stream. Fails when no terminal is available at all.
+    REPLY=""
+    if [ -t 0 ]; then
+        read -r -p "$1" REPLY
+    elif [ -e /dev/tty ]; then
+        read -r -p "$1" REPLY </dev/tty
+    else
+        return 1
+    fi
+}
 
 confirm() {
-    # confirm "question" -> 0 on yes. Defaults to yes on empty input.
-    local prompt="$1"
+    # confirm "question" -> 0 on yes. Yes on empty input, --yes, or when no
+    # terminal is available to ask (non-interactive install).
     if [ "$ASSUME_YES" -eq 1 ]; then
         return 0
     fi
-    local answer
-    read -r -p "$prompt [Y/n] " answer
-    case "$answer" in
+    local REPLY
+    prompt_read "$1 [Y/n] " || REPLY=""
+    case "$REPLY" in
         [nN]|[nN][oO]) return 1 ;;
         *) return 0 ;;
     esac
 }
 
 ask() {
-    # ask "question" "default" -> echo the answer. Empty input (or --yes,
-    # or a non-interactive stdin) yields the default. read -p writes the
-    # prompt to stderr, so this is safe inside $(...).
-    local prompt="$1" default="$2" answer
-    if [ "$ASSUME_YES" -eq 1 ] || [ ! -t 0 ]; then
+    # ask "question" "default" -> echo the answer. The default on empty input,
+    # --yes, or no terminal. The prompt goes to the terminal, not stdout, so
+    # this is safe inside $(...).
+    local prompt="$1" default="$2" REPLY
+    if [ "$ASSUME_YES" -eq 1 ]; then
         printf '%s' "$default"
         return 0
     fi
-    read -r -p "${prompt} [${default}] " answer || answer=""
-    printf '%s' "${answer:-$default}"
+    prompt_read "${prompt} [${default}] " || REPLY=""
+    printf '%s' "${REPLY:-$default}"
 }
 
 is_valid_user_name() {
@@ -127,6 +167,50 @@ fetch_url() {
     else
         return 1
     fi
+}
+
+release_asset_name() {
+    # Map this machine to a release asset. The naming is a contract with
+    # .goreleaser.yaml and the agent self-updater:
+    # winterflow-standalone-{os}-{arch}, arch as Go spells it.
+    local os arch
+    os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+    [ "$os" = "linux" ] || die "prebuilt binaries are linux-only (this is ${os}); build from source (see --help)"
+    case "$(uname -m)" in
+        x86_64|amd64)  arch=amd64 ;;
+        aarch64|arm64) arch=arm64 ;;
+        armv6l|armv7l) arch=arm ;;
+        *) die "no prebuilt binary for $(uname -m); build from source (see --help)" ;;
+    esac
+    printf 'winterflow-standalone-%s-%s' "$os" "$arch"
+}
+
+download_release() {
+    # Fetch the standalone binary (+ checksum) from GitHub releases into
+    # WORK_DIR and point BINARY_SRC at it.
+    local asset base
+    asset="$(release_asset_name)"
+    if [ -n "$RELEASE_VERSION" ]; then
+        case "$RELEASE_VERSION" in v*) ;; *) RELEASE_VERSION="v${RELEASE_VERSION}" ;; esac
+        base="https://github.com/${GITHUB_REPO}/releases/download/${RELEASE_VERSION}"
+    else
+        base="https://github.com/${GITHUB_REPO}/releases/latest/download"
+    fi
+    WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/winterflow-install.XXXXXX")"
+    log "Downloading ${base}/${asset}"
+    fetch_url "${base}/${asset}" "${WORK_DIR}/${asset}" \
+        || die "download failed: ${base}/${asset} (no such release, or no network?)"
+    fetch_url "${base}/checksums.txt" "${WORK_DIR}/checksums.txt" \
+        || die "download failed: ${base}/checksums.txt"
+    if command -v sha256sum >/dev/null 2>&1; then
+        (cd "$WORK_DIR" && grep "[[:space:]]${asset}\$" checksums.txt | sha256sum -c --quiet -) \
+            || die "checksum mismatch for ${asset}: corrupted or tampered download"
+        log "Checksum verified"
+    else
+        warn "sha256sum not found; skipping checksum verification"
+    fi
+    chmod 755 "${WORK_DIR}/${asset}"
+    BINARY_SRC="${WORK_DIR}/${asset}"
 }
 
 install_docker() {
@@ -173,108 +257,7 @@ resolve_group() {
     fi
 }
 
-while [ $# -gt 0 ]; do
-    case "$1" in
-        --binary)     BINARY_SRC="${2:?--binary needs a path}"; shift 2 ;;
-        --user)       SERVICE_USER="${2:?--user needs a name}"; USER_EXPLICIT=1; shift 2 ;;
-        --port)       API_PORT="${2:?--port needs a value}"; shift 2 ;;
-        --cpu-quota)  CPU_QUOTA="${2:?--cpu-quota needs a value}"; shift 2 ;;
-        --memory-max) MEMORY_MAX="${2:?--memory-max needs a value}"; shift 2 ;;
-        --yes)        ASSUME_YES=1; shift ;;
-        --dry-run)    DRY_RUN=1; shift ;;
-        --uninstall)  UNINSTALL=1; shift ;;
-        --purge)      UNINSTALL=1; PURGE=1; shift ;;
-        -h|--help)    usage; exit 0 ;;
-        *) die "unknown option: $1 (see --help)" ;;
-    esac
-done
-
-validate_user_name "$SERVICE_USER"
-resolve_group
-
-case "$API_PORT" in
-    ''|*[!0-9]*) die "--port must be a number, got: ${API_PORT}" ;;
-esac
-[ "$API_PORT" -ge 1 ] && [ "$API_PORT" -le 65535 ] || die "--port out of range: ${API_PORT}"
-
-# Default CPU quota: leave one core of headroom so orchestration bursts
-# (docker compose, git) cannot pin every core and spike temperatures.
-if [ -z "$CPU_QUOTA" ]; then
-    cores="$(nproc 2>/dev/null || echo 2)"
-    CPU_QUOTA=$(( (cores - 1) * 100 ))
-    [ "$CPU_QUOTA" -ge 100 ] || CPU_QUOTA=100
-fi
-case "$CPU_QUOTA" in
-    ''|*[!0-9]*) die "--cpu-quota must be a number (percent), got: ${CPU_QUOTA}" ;;
-esac
-
-# Default memory cap: half of RAM, clamped to 512M..2G — sized to the actual
-# box, from Raspberry Pi-class boards up, instead of assuming a roomy host.
-if [ -z "$MEMORY_MAX" ]; then
-    mem_kb="$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null || echo 0)"
-    if [ "${mem_kb:-0}" -gt 0 ] 2>/dev/null; then
-        half_mb=$(( mem_kb / 2048 ))
-        [ "$half_mb" -ge 512 ]  || half_mb=512
-        [ "$half_mb" -le 2048 ] || half_mb=2048
-        MEMORY_MAX="${half_mb}M"
-    else
-        MEMORY_MAX="1G"
-    fi
-fi
-
-if [ "$DRY_RUN" -eq 0 ]; then
-    [ "$(id -u)" -eq 0 ] || die "must run as root (try: sudo $0)"
-    command -v systemctl >/dev/null 2>&1 || die "systemd is required (systemctl not found)"
-fi
-
-if [ "$UNINSTALL" -eq 1 ]; then
-    if [ "$PURGE" -eq 1 ]; then
-        echo "This will PERMANENTLY delete ${CONFIG_DIR}, ${DATA_DIR} (database,"
-        echo "certs, deployed app repos), all winterflow logs, and the"
-        echo "'${SERVICE_USER}' user, if it is a dedicated service account."
-        echo "Running app containers are NOT stopped; stop them first if needed."
-        confirm "Purge everything?" || die "aborted"
-    fi
-    log "Uninstalling ${SERVICE_NAME} service"
-    systemctl disable --now "$SERVICE_NAME" 2>/dev/null || true
-    rm -f "$UNIT_FILE" "$BINARY_DEST"
-    systemctl daemon-reload
-    log "Removed service and binary."
-    if [ "$PURGE" -eq 1 ]; then
-        # Drop the dedicated journal namespace: config, its journald instance,
-        # and the on-disk journal files.
-        rm -f "$JOURNAL_CONF"
-        systemctl stop "systemd-journald@${JOURNAL_NAMESPACE}.service" 2>/dev/null || true
-        rm -rf /var/log/journal/*."${JOURNAL_NAMESPACE}" /run/log/journal/*."${JOURNAL_NAMESPACE}"
-        rm -rf "$CONFIG_DIR" "$DATA_DIR"
-        if id "$SERVICE_USER" >/dev/null 2>&1; then
-            # Only reap a dedicated service account. If the service was
-            # installed to run as a real login user (uid >= 1000, or the
-            # account running sudo), deleting it would take the human with it.
-            purge_uid="$(id -u "$SERVICE_USER")"
-            if [ "$SERVICE_USER" = "${SUDO_USER:-}" ] || [ "$purge_uid" -ge 1000 ]; then
-                warn "keeping user '${SERVICE_USER}' (uid ${purge_uid}): looks like a login account, not a dedicated service user"
-            else
-                userdel "$SERVICE_USER" 2>/dev/null || warn "could not delete user '${SERVICE_USER}'; remove it manually"
-            fi
-        fi
-        log "Purged config, data, and logs."
-    else
-        log "Kept: ${CONFIG_DIR}, ${DATA_DIR}, logs, and the '${SERVICE_USER}' user."
-        log "To remove them too, rerun with --purge."
-    fi
-    exit 0
-fi
-
 # --- Renderers (shared by install and --dry-run) ------------------------------
-
-# Journald namespaces (LogNamespace=) need systemd >= 245. Older systems fall
-# back to the shared system journal (still rotated by global journald policy).
-HAS_LOG_NAMESPACE=0
-sysd_ver="$(systemctl --version 2>/dev/null | awk 'NR==1{print $2; exit}')"
-if [ -n "${sysd_ver:-}" ] && [ "$sysd_ver" -ge 245 ] 2>/dev/null; then
-    HAS_LOG_NAMESPACE=1
-fi
 
 render_env_file() {
     local jwt_secret="$1"
@@ -339,7 +322,7 @@ render_unit() {
     cat <<EOF
 [Unit]
 Description=WinterFlow standalone (API + agent + orchestrator)
-Documentation=https://github.com/winterflowio
+Documentation=https://github.com/${GITHUB_REPO}
 After=network-online.target docker.service
 Wants=network-online.target
 Requires=docker.service
@@ -394,284 +377,395 @@ WantedBy=multi-user.target
 EOF
 }
 
-# --- Dry run ------------------------------------------------------------------
+main() {
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --binary)     BINARY_SRC="${2:?--binary needs a path}"; shift 2 ;;
+            --version)    RELEASE_VERSION="${2:?--version needs a tag}"; shift 2 ;;
+            --user)       SERVICE_USER="${2:?--user needs a name}"; USER_EXPLICIT=1; shift 2 ;;
+            --port)       API_PORT="${2:?--port needs a value}"; shift 2 ;;
+            --cpu-quota)  CPU_QUOTA="${2:?--cpu-quota needs a value}"; shift 2 ;;
+            --memory-max) MEMORY_MAX="${2:?--memory-max needs a value}"; shift 2 ;;
+            --yes)        ASSUME_YES=1; shift ;;
+            --dry-run)    DRY_RUN=1; shift ;;
+            --uninstall)  UNINSTALL=1; shift ;;
+            --purge)      UNINSTALL=1; PURGE=1; shift ;;
+            -h|--help)    usage; exit 0 ;;
+            *) die "unknown option: $1 (see --help)" ;;
+        esac
+    done
 
-if [ "$DRY_RUN" -eq 1 ]; then
-    log "Dry run: printing generated files, changing nothing."
-    echo
-    echo "### ${ENV_FILE}"
-    render_env_file "<generated-at-install-time>"
-    if [ "$HAS_LOG_NAMESPACE" -eq 1 ]; then
+    validate_user_name "$SERVICE_USER"
+    resolve_group
+
+    case "$API_PORT" in
+        ''|*[!0-9]*) die "--port must be a number, got: ${API_PORT}" ;;
+    esac
+    [ "$API_PORT" -ge 1 ] && [ "$API_PORT" -le 65535 ] || die "--port out of range: ${API_PORT}"
+
+    # Default CPU quota: leave one core of headroom so orchestration bursts
+    # (docker compose, git) cannot pin every core and spike temperatures.
+    if [ -z "$CPU_QUOTA" ]; then
+        cores="$(nproc 2>/dev/null || echo 2)"
+        CPU_QUOTA=$(( (cores - 1) * 100 ))
+        [ "$CPU_QUOTA" -ge 100 ] || CPU_QUOTA=100
+    fi
+    case "$CPU_QUOTA" in
+        ''|*[!0-9]*) die "--cpu-quota must be a number (percent), got: ${CPU_QUOTA}" ;;
+    esac
+
+    # Default memory cap: half of RAM, clamped to 512M..2G — sized to the actual
+    # box, from Raspberry Pi-class boards up, instead of assuming a roomy host.
+    if [ -z "$MEMORY_MAX" ]; then
+        mem_kb="$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null || echo 0)"
+        if [ "${mem_kb:-0}" -gt 0 ] 2>/dev/null; then
+            half_mb=$(( mem_kb / 2048 ))
+            [ "$half_mb" -ge 512 ]  || half_mb=512
+            [ "$half_mb" -le 2048 ] || half_mb=2048
+            MEMORY_MAX="${half_mb}M"
+        else
+            MEMORY_MAX="1G"
+        fi
+    fi
+
+    if [ "$DRY_RUN" -eq 0 ]; then
+        [ "$(id -u)" -eq 0 ] || die "must run as root (try: sudo $0)"
+        command -v systemctl >/dev/null 2>&1 || die "systemd is required (systemctl not found)"
+    fi
+
+    if [ "$UNINSTALL" -eq 1 ]; then
+        if [ "$PURGE" -eq 1 ]; then
+            echo "This will PERMANENTLY delete ${CONFIG_DIR}, ${DATA_DIR} (database,"
+            echo "certs, deployed app repos), all winterflow logs, and the"
+            echo "'${SERVICE_USER}' user, if it is a dedicated service account."
+            echo "Running app containers are NOT stopped; stop them first if needed."
+            confirm "Purge everything?" || die "aborted"
+        fi
+        log "Uninstalling ${SERVICE_NAME} service"
+        systemctl disable --now "$SERVICE_NAME" 2>/dev/null || true
+        rm -f "$UNIT_FILE" "$BINARY_DEST"
+        systemctl daemon-reload
+        log "Removed service and binary."
+        if [ "$PURGE" -eq 1 ]; then
+            # Drop the dedicated journal namespace: config, its journald instance,
+            # and the on-disk journal files.
+            rm -f "$JOURNAL_CONF"
+            systemctl stop "systemd-journald@${JOURNAL_NAMESPACE}.service" 2>/dev/null || true
+            rm -rf /var/log/journal/*."${JOURNAL_NAMESPACE}" /run/log/journal/*."${JOURNAL_NAMESPACE}"
+            rm -rf "$CONFIG_DIR" "$DATA_DIR"
+            if id "$SERVICE_USER" >/dev/null 2>&1; then
+                # Only reap a dedicated service account. If the service was
+                # installed to run as a real login user (uid >= 1000, or the
+                # account running sudo), deleting it would take the human with it.
+                purge_uid="$(id -u "$SERVICE_USER")"
+                if [ "$SERVICE_USER" = "${SUDO_USER:-}" ] || [ "$purge_uid" -ge 1000 ]; then
+                    warn "keeping user '${SERVICE_USER}' (uid ${purge_uid}): looks like a login account, not a dedicated service user"
+                else
+                    userdel "$SERVICE_USER" 2>/dev/null || warn "could not delete user '${SERVICE_USER}'; remove it manually"
+                fi
+            fi
+            log "Purged config, data, and logs."
+        else
+            log "Kept: ${CONFIG_DIR}, ${DATA_DIR}, logs, and the '${SERVICE_USER}' user."
+            log "To remove them too, rerun with --purge."
+        fi
+        exit 0
+    fi
+
+    # Journald namespaces (LogNamespace=) need systemd >= 245. Older systems fall
+    # back to the shared system journal (still rotated by global journald policy).
+    sysd_ver="$(systemctl --version 2>/dev/null | awk 'NR==1{print $2; exit}')"
+    if [ -n "${sysd_ver:-}" ] && [ "$sysd_ver" -ge 245 ] 2>/dev/null; then
+        HAS_LOG_NAMESPACE=1
+    fi
+
+    # --- Dry run --------------------------------------------------------------
+
+    if [ "$DRY_RUN" -eq 1 ]; then
+        log "Dry run: printing generated files, changing nothing."
         echo
-        echo "### ${JOURNAL_CONF}"
-        render_journald_conf
-    else
-        warn "systemd ${sysd_ver:-unknown} < 245: no journal namespace; logs go to the shared system journal"
+        echo "### ${ENV_FILE}"
+        render_env_file "<generated-at-install-time>"
+        if [ "$HAS_LOG_NAMESPACE" -eq 1 ]; then
+            echo
+            echo "### ${JOURNAL_CONF}"
+            render_journald_conf
+        else
+            warn "systemd ${sysd_ver:-unknown} < 245: no journal namespace; logs go to the shared system journal"
+        fi
+        echo
+        echo "### ${UNIT_FILE}"
+        render_unit
+        exit 0
     fi
-    echo
-    echo "### ${UNIT_FILE}"
-    render_unit
-    exit 0
-fi
 
-# --- Preflight ----------------------------------------------------------------
+    # --- Preflight ------------------------------------------------------------
 
-# Docker is the runtime for every deployed app; offer to install it rather
-# than sending the user away mid-install.
-if ! command -v docker >/dev/null 2>&1; then
-    echo
-    echo "Docker is required: the agent deploys apps by shelling out to"
-    echo "'docker compose', and it is not installed on this machine."
-    echo "Docker's official install script (${DOCKER_INSTALL_URL}) sets up the"
-    echo "package repo for this distro and installs the engine, containerd and"
-    echo "the compose plugin. Review it first if you prefer:"
-    echo "  curl -fsSL ${DOCKER_INSTALL_URL} | less"
-    if confirm "Download and run Docker's official install script?"; then
-        install_docker
-    else
-        die "docker is required (the agent deploys apps via the docker compose CLI)"
+    # Docker is the runtime for every deployed app; offer to install it rather
+    # than sending the user away mid-install.
+    if ! command -v docker >/dev/null 2>&1; then
+        echo
+        echo "Docker is required: the agent deploys apps by shelling out to"
+        echo "'docker compose', and it is not installed on this machine."
+        echo "Docker's official install script (${DOCKER_INSTALL_URL}) sets up the"
+        echo "package repo for this distro and installs the engine, containerd and"
+        echo "the compose plugin. Review it first if you prefer:"
+        echo "  curl -fsSL ${DOCKER_INSTALL_URL} | less"
+        if confirm "Download and run Docker's official install script?"; then
+            install_docker
+        else
+            die "docker is required (the agent deploys apps via the docker compose CLI)"
+        fi
+        command -v docker >/dev/null 2>&1 \
+            || die "docker is still not on PATH after installation; install it manually and rerun"
+        log "Docker installed"
     fi
-    command -v docker >/dev/null 2>&1 \
-        || die "docker is still not on PATH after installation; install it manually and rerun"
-    log "Docker installed"
-fi
 
-# A fresh install (or a stopped unit) leaves the daemon down; compose needs it.
-if ! docker info >/dev/null 2>&1; then
-    log "Starting the docker service"
-    systemctl enable --now docker >/dev/null 2>&1 || true
-    docker info >/dev/null 2>&1 \
-        || warn "the docker daemon is not responding; app deployments will fail until it is up"
-fi
-
-if ! docker compose version >/dev/null 2>&1; then
-    echo
-    echo "Docker is installed but the compose v2 plugin ('docker compose') is"
-    echo "not, and every app is deployed with it."
-    if confirm "Install the docker-compose-plugin package?"; then
-        install_compose_plugin \
-            || die "could not install the compose plugin automatically; install docker-compose-plugin and rerun"
-        docker compose version >/dev/null 2>&1 \
-            || die "the compose plugin is still missing after installation; install it manually and rerun"
-        log "Docker compose plugin installed"
-    else
-        die "the 'docker compose' plugin is required (docker compose version failed)"
+    # A fresh install (or a stopped unit) leaves the daemon down; compose needs it.
+    if ! docker info >/dev/null 2>&1; then
+        log "Starting the docker service"
+        systemctl enable --now docker >/dev/null 2>&1 || true
+        docker info >/dev/null 2>&1 \
+            || warn "the docker daemon is not responding; app deployments will fail until it is up"
     fi
-fi
 
-# Containers log via the json-file driver, which does NOT rotate by default:
-# one chatty app can fill the SSD. Offer daemon-wide rotation if unset.
-DOCKER_DAEMON_JSON="/etc/docker/daemon.json"
-if [ ! -f "$DOCKER_DAEMON_JSON" ]; then
-    echo
-    echo "Docker's default json-file log driver never rotates container logs."
-    echo "Recommended: cap them at 10MB x 3 files per container via"
-    echo "${DOCKER_DAEMON_JSON} (applies to containers created afterwards)."
-    if confirm "Write ${DOCKER_DAEMON_JSON} with log rotation and restart docker?"; then
-        install -d -m 755 /etc/docker
-        cat > "$DOCKER_DAEMON_JSON" <<'EOF'
+    if ! docker compose version >/dev/null 2>&1; then
+        echo
+        echo "Docker is installed but the compose v2 plugin ('docker compose') is"
+        echo "not, and every app is deployed with it."
+        if confirm "Install the docker-compose-plugin package?"; then
+            install_compose_plugin \
+                || die "could not install the compose plugin automatically; install docker-compose-plugin and rerun"
+            docker compose version >/dev/null 2>&1 \
+                || die "the compose plugin is still missing after installation; install it manually and rerun"
+            log "Docker compose plugin installed"
+        else
+            die "the 'docker compose' plugin is required (docker compose version failed)"
+        fi
+    fi
+
+    # Containers log via the json-file driver, which does NOT rotate by default:
+    # one chatty app can fill the SSD. Offer daemon-wide rotation if unset.
+    DOCKER_DAEMON_JSON="/etc/docker/daemon.json"
+    if [ ! -f "$DOCKER_DAEMON_JSON" ]; then
+        echo
+        echo "Docker's default json-file log driver never rotates container logs."
+        echo "Recommended: cap them at 10MB x 3 files per container via"
+        echo "${DOCKER_DAEMON_JSON} (applies to containers created afterwards)."
+        if confirm "Write ${DOCKER_DAEMON_JSON} with log rotation and restart docker?"; then
+            install -d -m 755 /etc/docker
+            cat > "$DOCKER_DAEMON_JSON" <<'EOF'
 {
   "log-driver": "json-file",
   "log-opts": { "max-size": "10m", "max-file": "3" }
 }
 EOF
-        systemctl restart docker || warn "docker restart failed; restart it manually to apply log rotation"
-        log "Docker container log rotation configured"
-    else
-        warn "skipping: container logs will grow unbounded until you configure log-opts"
-    fi
-elif ! grep -q 'log-opts' "$DOCKER_DAEMON_JSON"; then
-    warn "${DOCKER_DAEMON_JSON} has no log-opts: container logs grow unbounded."
-    warn "add: \"log-driver\": \"json-file\", \"log-opts\": {\"max-size\": \"10m\", \"max-file\": \"3\"}"
-fi
-
-# Locate or build the binary.
-if [ -z "$BINARY_SRC" ]; then
-    repo_root="$(cd "$(dirname "$0")/.." && pwd)"
-    if [ -x "${repo_root}/bin/standalone" ]; then
-        BINARY_SRC="${repo_root}/bin/standalone"
-        log "Using prebuilt binary ${BINARY_SRC}"
-    elif [ -f "${repo_root}/go.mod" ] && command -v go >/dev/null 2>&1; then
-        # Bundle the web UI first so go:embed ships it inside the binary.
-        # Without a bundle the binary still works, but serves the API only.
-        if command -v pnpm >/dev/null 2>&1; then
-            log "Building web UI bundle (embedded into the binary)"
-            (cd "$repo_root" && pnpm --dir web install --frozen-lockfile && pnpm --dir web run build)
-        elif [ -f "${repo_root}/web/dist/index.html" ]; then
-            log "pnpm not found; embedding the existing web/dist bundle"
+            systemctl restart docker || warn "docker restart failed; restart it manually to apply log rotation"
+            log "Docker container log rotation configured"
         else
-            warn "pnpm not found and web/dist has no build: the binary will serve the API only."
-            warn "install node+pnpm and rerun, or copy a built web/dist here first"
+            warn "skipping: container logs will grow unbounded until you configure log-opts"
         fi
-        log "Building standalone binary from ${repo_root}"
-        (cd "$repo_root" && go build -o bin/standalone ./cmd/standalone)
-        BINARY_SRC="${repo_root}/bin/standalone"
-    else
-        die "no binary found; pass --binary PATH or run from the repo with Go installed"
+    elif ! grep -q 'log-opts' "$DOCKER_DAEMON_JSON"; then
+        warn "${DOCKER_DAEMON_JSON} has no log-opts: container logs grow unbounded."
+        warn "add: \"log-driver\": \"json-file\", \"log-opts\": {\"max-size\": \"10m\", \"max-file\": \"3\"}"
     fi
-fi
-[ -x "$BINARY_SRC" ] || die "binary is not executable: ${BINARY_SRC}"
 
-# --- Service user -------------------------------------------------------------
-
-# The service must not run as root. Ask which account to use, defaulting to a
-# dedicated system user; the account that invoked sudo is offered as an
-# alternative for single-user boxes where matching file ownership is handier.
-# --user NAME (or --yes) skips the question.
-INVOKING_USER="${SUDO_USER:-}"
-if [ "$INVOKING_USER" = "root" ]; then
-    INVOKING_USER=""
-fi
-
-if [ "$USER_EXPLICIT" -eq 0 ] && [ "$ASSUME_YES" -eq 0 ]; then
-    echo
-    echo "Which user should the WinterFlow service run as? It must not be root,"
-    echo "so a compromise of the service does not directly compromise the host."
-    echo
-    echo "  1) ${SERVICE_USER} - create a dedicated system user (recommended)"
-    if [ -n "$INVOKING_USER" ]; then
-        echo "  2) ${INVOKING_USER} - the account you ran sudo from"
-        echo "  3) another name - type it below"
-    else
-        echo "  2) another name - type it below"
+    # Locate the binary: --binary PATH, a repo checkout around this script
+    # (prebuilt bin/standalone, or build it), or — the curl | bash path —
+    # download a prebuilt release from GitHub.
+    if [ -z "$BINARY_SRC" ] && [ -f "$0" ]; then
+        repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+        if [ -x "${repo_root}/bin/standalone" ]; then
+            BINARY_SRC="${repo_root}/bin/standalone"
+            log "Using prebuilt binary ${BINARY_SRC}"
+        elif [ -f "${repo_root}/go.mod" ] && command -v go >/dev/null 2>&1; then
+            # Bundle the web UI first so go:embed ships it inside the binary.
+            # Without a bundle the binary still works, but serves the API only.
+            if command -v pnpm >/dev/null 2>&1; then
+                log "Building web UI bundle (embedded into the binary)"
+                (cd "$repo_root" && pnpm --dir web install --frozen-lockfile && pnpm --dir web run build)
+            elif [ -f "${repo_root}/web/dist/index.html" ]; then
+                log "pnpm not found; embedding the existing web/dist bundle"
+            else
+                warn "pnpm not found and web/dist has no build: the binary will serve the API only."
+                warn "install node+pnpm and rerun, or copy a built web/dist here first"
+            fi
+            log "Building standalone binary from ${repo_root}"
+            (cd "$repo_root" && go build -o bin/standalone ./cmd/standalone)
+            BINARY_SRC="${repo_root}/bin/standalone"
+        fi
     fi
-    echo
-    default_user="$SERVICE_USER"
-    while :; do
-        answer="$(ask "Choice (number or user name)" "1")"
-        case "$answer" in
-            1) SERVICE_USER="$default_user"; break ;;
-            2) if [ -n "$INVOKING_USER" ]; then
-                   SERVICE_USER="$INVOKING_USER"
-               else
-                   SERVICE_USER="$(ask "User name" "$default_user")"
-               fi
-               break ;;
-            3) if [ -n "$INVOKING_USER" ]; then
-                   SERVICE_USER="$(ask "User name" "$default_user")"
-                   break
-               fi
-               warn "no such choice; pick a number from the list or type a user name"
-               ;;
-            [0-9]*) warn "no such choice; pick a number from the list or type a user name" ;;
-            *) if is_valid_user_name "$answer"; then
-                   SERVICE_USER="$answer"
-                   break
-               fi
-               warn "'${answer}' is not a usable user name (lowercase letters, digits, '_' and '-'; not root)"
-               ;;
-        esac
-    done
-    validate_user_name "$SERVICE_USER"
-fi
-
-if id "$SERVICE_USER" >/dev/null 2>&1; then
-    log "User '${SERVICE_USER}' already exists, running the service as it"
-else
-    echo
-    echo "'${SERVICE_USER}' does not exist yet. It will be created as an"
-    echo "unprivileged system user (no login shell, home ${DATA_DIR})."
-    if confirm "Create system user '${SERVICE_USER}'?"; then
-        useradd --system --user-group \
-            --home-dir "$DATA_DIR" --no-create-home \
-            --shell /usr/sbin/nologin "$SERVICE_USER"
-        log "Created system user '${SERVICE_USER}'"
-    else
-        die "refusing to install without a service user; rerun with --user NAME to use an existing account"
+    if [ -z "$BINARY_SRC" ]; then
+        download_release
     fi
-fi
-resolve_group
+    [ -x "$BINARY_SRC" ] || die "binary is not executable: ${BINARY_SRC}"
 
-# The agent drives docker compose, which needs access to the Docker socket.
-if getent group docker >/dev/null 2>&1 && ! id -nG "$SERVICE_USER" | tr ' ' '\n' | grep -qx docker; then
+    # --- Service user ---------------------------------------------------------
+
+    # The service must not run as root. Ask which account to use, defaulting to a
+    # dedicated system user; the account that invoked sudo is offered as an
+    # alternative for single-user boxes where matching file ownership is handier.
+    # --user NAME (or --yes) skips the question.
+    INVOKING_USER="${SUDO_USER:-}"
+    if [ "$INVOKING_USER" = "root" ]; then
+        INVOKING_USER=""
+    fi
+
+    if [ "$USER_EXPLICIT" -eq 0 ] && [ "$ASSUME_YES" -eq 0 ]; then
+        echo
+        echo "Which user should the WinterFlow service run as? It must not be root,"
+        echo "so a compromise of the service does not directly compromise the host."
+        echo
+        echo "  1) ${SERVICE_USER} - create a dedicated system user (recommended)"
+        if [ -n "$INVOKING_USER" ]; then
+            echo "  2) ${INVOKING_USER} - the account you ran sudo from"
+            echo "  3) another name - type it below"
+        else
+            echo "  2) another name - type it below"
+        fi
+        echo
+        default_user="$SERVICE_USER"
+        while :; do
+            answer="$(ask "Choice (number or user name)" "1")"
+            case "$answer" in
+                1) SERVICE_USER="$default_user"; break ;;
+                2) if [ -n "$INVOKING_USER" ]; then
+                       SERVICE_USER="$INVOKING_USER"
+                   else
+                       SERVICE_USER="$(ask "User name" "$default_user")"
+                   fi
+                   break ;;
+                3) if [ -n "$INVOKING_USER" ]; then
+                       SERVICE_USER="$(ask "User name" "$default_user")"
+                       break
+                   fi
+                   warn "no such choice; pick a number from the list or type a user name"
+                   ;;
+                [0-9]*) warn "no such choice; pick a number from the list or type a user name" ;;
+                *) if is_valid_user_name "$answer"; then
+                       SERVICE_USER="$answer"
+                       break
+                   fi
+                   warn "'${answer}' is not a usable user name (lowercase letters, digits, '_' and '-'; not root)"
+                   ;;
+            esac
+        done
+        validate_user_name "$SERVICE_USER"
+    fi
+
+    if id "$SERVICE_USER" >/dev/null 2>&1; then
+        log "User '${SERVICE_USER}' already exists, running the service as it"
+    else
+        echo
+        echo "'${SERVICE_USER}' does not exist yet. It will be created as an"
+        echo "unprivileged system user (no login shell, home ${DATA_DIR})."
+        if confirm "Create system user '${SERVICE_USER}'?"; then
+            useradd --system --user-group \
+                --home-dir "$DATA_DIR" --no-create-home \
+                --shell /usr/sbin/nologin "$SERVICE_USER"
+            log "Created system user '${SERVICE_USER}'"
+        else
+            die "refusing to install without a service user; rerun with --user NAME to use an existing account"
+        fi
+    fi
+    resolve_group
+
+    # The agent drives docker compose, which needs access to the Docker socket.
+    if getent group docker >/dev/null 2>&1 && ! id -nG "$SERVICE_USER" | tr ' ' '\n' | grep -qx docker; then
+        echo
+        echo "The service deploys apps via 'docker compose', which requires access"
+        echo "to the Docker socket. Note: docker group membership is effectively"
+        echo "root-equivalent on the host — this is inherent to driving Docker."
+        if confirm "Add '${SERVICE_USER}' to the 'docker' group?"; then
+            usermod -aG docker "$SERVICE_USER"
+            log "Added '${SERVICE_USER}' to the docker group"
+        else
+            warn "skipping docker group; app deployments will fail until '${SERVICE_USER}' can reach the Docker socket"
+        fi
+    fi
+
+    # --- Filesystem layout ----------------------------------------------------
+
+    log "Creating ${DATA_DIR} and ${CONFIG_DIR}"
+    install -d -m 750 -o "$SERVICE_USER" -g "$SERVICE_GROUP" "$DATA_DIR"
+    install -d -m 750 -o root -g "$SERVICE_GROUP" "$CONFIG_DIR"
+
+    log "Installing binary to ${BINARY_DEST}"
+    install -m 755 -o root -g root "$BINARY_SRC" "$BINARY_DEST"
+
+    # --- Config ---------------------------------------------------------------
+
+    if [ -f "$ENV_FILE" ]; then
+        log "Keeping existing config ${ENV_FILE}"
+    else
+        log "Writing ${ENV_FILE}"
+        jwt_secret="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+        render_env_file "$jwt_secret" > "$ENV_FILE"
+        chown root:"$SERVICE_GROUP" "$ENV_FILE"
+        chmod 640 "$ENV_FILE"
+    fi
+
+    # --- Log rotation (journald namespace) ------------------------------------
+
+    if [ "$HAS_LOG_NAMESPACE" -eq 1 ]; then
+        if [ -f "$JOURNAL_CONF" ]; then
+            log "Keeping existing journal rotation policy ${JOURNAL_CONF}"
+        else
+            log "Writing ${JOURNAL_CONF} (log rotation: 200M cap, 1 month retention)"
+            render_journald_conf > "$JOURNAL_CONF"
+        fi
+        # Pick up policy changes if the namespaced journald is already running.
+        systemctl try-restart "systemd-journald@${JOURNAL_NAMESPACE}.service" 2>/dev/null || true
+    else
+        warn "systemd ${sysd_ver:-unknown} < 245: journal namespaces unavailable;"
+        warn "logs go to the shared system journal (rotated by global journald policy)"
+    fi
+
+    # --- systemd unit ---------------------------------------------------------
+
+    log "Writing ${UNIT_FILE}"
+    render_unit > "$UNIT_FILE"
+
+    # --- Enable + start -------------------------------------------------------
+
+    log "Enabling and starting ${SERVICE_NAME}.service"
+    systemctl daemon-reload
+    systemctl enable --now "$SERVICE_NAME"
+
+    journal_flags=""
+    if [ "$HAS_LOG_NAMESPACE" -eq 1 ]; then
+        journal_flags="--namespace ${JOURNAL_NAMESPACE} "
+    fi
+
+    sleep 2
+    if systemctl is-active --quiet "$SERVICE_NAME"; then
+        log "Service is running."
+    else
+        warn "service did not come up; inspect with: journalctl ${journal_flags}-u ${SERVICE_NAME} -e"
+        exit 1
+    fi
+
+    # The user is usually on another machine (this is a home server), so print
+    # a reachable address, not just localhost.
+    lan_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+
     echo
-    echo "The service deploys apps via 'docker compose', which requires access"
-    echo "to the Docker socket. Note: docker group membership is effectively"
-    echo "root-equivalent on the host — this is inherent to driving Docker."
-    if confirm "Add '${SERVICE_USER}' to the 'docker' group?"; then
-        usermod -aG docker "$SERVICE_USER"
-        log "Added '${SERVICE_USER}' to the docker group"
-    else
-        warn "skipping docker group; app deployments will fail until '${SERVICE_USER}' can reach the Docker socket"
+    log "Done. Useful commands:"
+    echo "  systemctl status ${SERVICE_NAME}"
+    echo "  journalctl ${journal_flags}-u ${SERVICE_NAME} -f     # follow logs"
+    if [ "$HAS_LOG_NAMESPACE" -eq 1 ]; then
+        echo "  journalctl --namespace ${JOURNAL_NAMESPACE} --vacuum-time=1s   # delete all winterflow logs"
+        echo "  (rotation policy: ${JOURNAL_CONF})"
     fi
-fi
-
-# --- Filesystem layout --------------------------------------------------------
-
-log "Creating ${DATA_DIR} and ${CONFIG_DIR}"
-install -d -m 750 -o "$SERVICE_USER" -g "$SERVICE_GROUP" "$DATA_DIR"
-install -d -m 750 -o root -g "$SERVICE_GROUP" "$CONFIG_DIR"
-
-log "Installing binary to ${BINARY_DEST}"
-install -m 755 -o root -g root "$BINARY_SRC" "$BINARY_DEST"
-
-# --- Config -------------------------------------------------------------------
-
-if [ -f "$ENV_FILE" ]; then
-    log "Keeping existing config ${ENV_FILE}"
-else
-    log "Writing ${ENV_FILE}"
-    jwt_secret="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
-    render_env_file "$jwt_secret" > "$ENV_FILE"
-    chown root:"$SERVICE_GROUP" "$ENV_FILE"
-    chmod 640 "$ENV_FILE"
-fi
-
-# --- Log rotation (journald namespace) ----------------------------------------
-
-if [ "$HAS_LOG_NAMESPACE" -eq 1 ]; then
-    if [ -f "$JOURNAL_CONF" ]; then
-        log "Keeping existing journal rotation policy ${JOURNAL_CONF}"
+    echo "  config: ${ENV_FILE}, data: ${DATA_DIR}"
+    echo
+    echo "First run: open http://${lan_ip:-localhost}:${API_PORT}/register"
+    if [ -n "$lan_ip" ]; then
+        echo "(or http://localhost:${API_PORT}/register on this machine) and create"
+        echo "the admin account."
     else
-        log "Writing ${JOURNAL_CONF} (log rotation: 200M cap, 1 month retention)"
-        render_journald_conf > "$JOURNAL_CONF"
+        echo "and create the admin account."
     fi
-    # Pick up policy changes if the namespaced journald is already running.
-    systemctl try-restart "systemd-journald@${JOURNAL_NAMESPACE}.service" 2>/dev/null || true
-else
-    warn "systemd ${sysd_ver:-unknown} < 245: journal namespaces unavailable;"
-    warn "logs go to the shared system journal (rotated by global journald policy)"
-fi
+}
 
-# --- systemd unit -------------------------------------------------------------
-
-log "Writing ${UNIT_FILE}"
-render_unit > "$UNIT_FILE"
-
-# --- Enable + start -----------------------------------------------------------
-
-log "Enabling and starting ${SERVICE_NAME}.service"
-systemctl daemon-reload
-systemctl enable --now "$SERVICE_NAME"
-
-journal_flags=""
-if [ "$HAS_LOG_NAMESPACE" -eq 1 ]; then
-    journal_flags="--namespace ${JOURNAL_NAMESPACE} "
-fi
-
-sleep 2
-if systemctl is-active --quiet "$SERVICE_NAME"; then
-    log "Service is running."
-else
-    warn "service did not come up; inspect with: journalctl ${journal_flags}-u ${SERVICE_NAME} -e"
-    exit 1
-fi
-
-echo
-log "Done. Useful commands:"
-echo "  systemctl status ${SERVICE_NAME}"
-echo "  journalctl ${journal_flags}-u ${SERVICE_NAME} -f     # follow logs"
-if [ "$HAS_LOG_NAMESPACE" -eq 1 ]; then
-    echo "  journalctl --namespace ${JOURNAL_NAMESPACE} --vacuum-time=1s   # delete all winterflow logs"
-    echo "  (rotation policy: ${JOURNAL_CONF})"
-fi
-echo "  API: http://localhost:${API_PORT}  (config: ${ENV_FILE}, data: ${DATA_DIR})"
-echo
-echo "The 'winterflow' CLI is on PATH and auto-loads ${ENV_FILE}."
-echo "Run commands that touch the data dir as the service user:"
-echo "  sudo -u ${SERVICE_USER} winterflow <command>"
-echo
-echo "First run: open http://localhost:${API_PORT}/register and create the"
-echo "admin account. The binary serves the web UI itself when it was built"
-echo "with a web/dist bundle present (a prebuilt release always is; a source"
-echo "build needs pnpm — this script bundles it automatically when found)."
+main "$@"

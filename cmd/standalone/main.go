@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"net/http"
 	"os"
 	"os/signal"
@@ -16,15 +17,31 @@ import (
 	"github.com/joho/godotenv"
 )
 
+// systemEnvFile is the config written by scripts/install.sh. Loading it as a
+// fallback lets the installed `winterflow` CLI run from any directory, not
+// just one containing a .env.
+const systemEnvFile = "/etc/winterflow/winterflow.env"
+
 func main() {
-	err := godotenv.Load()
+	envFile := flag.String("env-file", "", "env file to load (default: ./.env, then "+systemEnvFile+")")
+	flag.Parse()
+
+	var err error
+	if *envFile != "" {
+		err = godotenv.Load(*envFile)
+	} else if err = godotenv.Load(); err != nil {
+		err = godotenv.Load(systemEnvFile)
+	}
 	cfg := config.NewServerConfig("standalone")
 	log := logger.NewLogger(logger.LoggerConfiguration{
 		LogLevel: os.Getenv("LOG_LEVEL"),
 		Service:  "winterflow",
 	})
 	if err != nil {
-		log.Info(".env not found, using system environment variables")
+		if *envFile != "" {
+			log.Fatalf("failed to load env file %s: %v", *envFile, err)
+		}
+		log.Info("no .env or " + systemEnvFile + " found, using system environment variables")
 	}
 	log.Info("Service starting", "pid", os.Getpid())
 

@@ -163,9 +163,6 @@ func TestAgentDataDirs(t *testing.T) {
 	if got := c.GetAgentDataDir(); got != "data" {
 		t.Fatalf("default GetAgentDataDir() = %q, want data", got)
 	}
-	if got := c.GetAppsTemplatesDir(); got != "data/apps_templates" {
-		t.Fatalf("default GetAppsTemplatesDir() = %q, want data/apps_templates", got)
-	}
 	if got := c.GetAppsDir(); got != "data/apps" {
 		t.Fatalf("default GetAppsDir() = %q, want data/apps", got)
 	}
@@ -173,9 +170,6 @@ func TestAgentDataDirs(t *testing.T) {
 	t.Setenv("AGENT_DATA_DIR", "/opt/winterflow")
 	if got := c.GetAgentDataDir(); got != "/opt/winterflow" {
 		t.Fatalf("GetAgentDataDir() = %q, want /opt/winterflow", got)
-	}
-	if got := c.GetAppsTemplatesDir(); got != "/opt/winterflow/apps_templates" {
-		t.Fatalf("GetAppsTemplatesDir() = %q, want /opt/winterflow/apps_templates", got)
 	}
 	if got := c.GetAppsDir(); got != "/opt/winterflow/apps" {
 		t.Fatalf("GetAppsDir() = %q, want /opt/winterflow/apps", got)

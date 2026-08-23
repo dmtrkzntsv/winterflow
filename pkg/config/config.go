@@ -150,12 +150,6 @@ func (c *ServerConfig) GetAgentDataDir() string {
 	return "data"
 }
 
-// GetAppsTemplatesDir holds per-app, per-revision source templates:
-// {dataDir}/apps_templates/{appID}/{revision}/.
-func (c *ServerConfig) GetAppsTemplatesDir() string {
-	return path.Join(c.GetAgentDataDir(), "apps_templates")
-}
-
 // GetAppsDataDir holds the canonical per-app deployment folders (each one a
 // git repository): {dataDir}/apps-data/{appID}/. The sibling GetAppsDir holds
 // human-readable symlinks into it.

@@ -168,3 +168,65 @@ func TestManagerDisabledOnBindFailure(t *testing.T) {
 		t.Fatalf("disabled manager Reload must no-op, got %v", w)
 	}
 }
+
+func TestManagerRespectsDisableSwitch(t *testing.T) {
+	// A free port proves the switch, not a bind failure, is what stops caddy:
+	// were it ignored, the manager would come up enabled here.
+	t.Setenv("AGENT_DATA_DIR", t.TempDir())
+	t.Setenv("INGRESS_ENABLED", "false")
+	t.Setenv("INGRESS_HTTP_PORT", fmt.Sprint(freePort(t)))
+	t.Setenv("INGRESS_HTTPS_PORT", fmt.Sprint(freePort(t)))
+	t.Setenv("LOG_LEVEL", "error")
+
+	cfg := config.NewServerConfig("standalone")
+	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
+	m := NewManager(cfg, log)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := m.Start(ctx); err != nil {
+		t.Fatalf("disabled ingress must not error: %v", err)
+	}
+	if m.Enabled() {
+		t.Fatal("INGRESS_ENABLED=false but manager reports enabled")
+	}
+}
+
+func TestManagerRefusesPortCollisionWithAPI(t *testing.T) {
+	shared := freePort(t)
+	t.Setenv("AGENT_DATA_DIR", t.TempDir())
+	t.Setenv("API_PORT", fmt.Sprint(shared))
+	t.Setenv("INGRESS_HTTP_PORT", fmt.Sprint(shared))
+	t.Setenv("INGRESS_HTTPS_PORT", fmt.Sprint(freePort(t)))
+	t.Setenv("LOG_LEVEL", "error")
+
+	cfg := config.NewServerConfig("standalone")
+	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
+	m := NewManager(cfg, log)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := m.Start(ctx); err != nil {
+		t.Fatalf("collision must degrade, not error: %v", err)
+	}
+	if m.Enabled() {
+		t.Fatal("ingress started on the API's port")
+	}
+
+	// The same ports with API_PORT unset are fine — the guard must not fire
+	// on a lone agent, which never runs the API.
+	unsetAPIPort(t)
+	m2 := NewManager(config.NewServerConfig("standalone"), log)
+	if err := m2.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !m2.Enabled() {
+		t.Fatal("ingress refused to start with API_PORT unset")
+	}
+}
+
+// unsetAPIPort removes API_PORT for the test's duration (t.Setenv registers
+// the restore, then Unsetenv makes it genuinely absent rather than empty).
+func unsetAPIPort(t *testing.T) {
+	t.Helper()
+	t.Setenv("API_PORT", "")
+	_ = os.Unsetenv("API_PORT")
+}

@@ -299,7 +299,11 @@ HUB_CERT_EXT_PATH=${DATA_DIR}/data/ext.cnf
 HUB_CA_SUBJECT="/C=CA/O=WinterFlow.io/OU=CA/CN=WinterFlow.io CA/emailAddress=info@winterflow.io"
 HUB_SERVER_SUBJECT="/C=CA/O=WinterFlow.io/OU=SERVER/CN=WinterFlow.io/emailAddress=info@winterflow.io"
 
-# Embedded ingress (Caddy). 80/443 work via CAP_NET_BIND_SERVICE in the unit.
+# Embedded ingress (Caddy) — the reverse proxy for your deployed apps, on its
+# own ports; winterflow itself stays on API_PORT above. 80/443 work via
+# CAP_NET_BIND_SERVICE in the unit. Set INGRESS_ENABLED=false to leave those
+# ports to another proxy; overrides must not equal API_PORT.
+#INGRESS_ENABLED=true
 #INGRESS_HTTP_PORT=80
 #INGRESS_HTTPS_PORT=443
 #INGRESS_ACME_EMAIL=you@example.com

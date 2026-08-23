@@ -2,8 +2,12 @@ package caddy
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 
 	"winterflow/internal/domain/model"
@@ -96,12 +100,25 @@ func (m *Manager) buildConfig() ([]byte, []string) {
 }
 
 // Start builds the initial config and starts Caddy synchronously so callers
-// can read Enabled() for the agent's feature map. A start failure (typically
-// binding 80/443 without CAP_NET_BIND_SERVICE) logs, leaves the manager
-// disabled, and returns nil: the agent runs on without ingress.
+// can read Enabled() for the agent's feature map. Ingress is skipped outright
+// when INGRESS_ENABLED=false or its ports collide with the API's; a genuine
+// start failure logs, leaves the manager disabled, and returns nil. All three
+// paths keep the agent running — only ingress goes away.
 func (m *Manager) Start(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if !m.cfg.IsIngressEnabled() {
+		m.log.Info("ingress disabled by config (INGRESS_ENABLED=false); its ports are left to another proxy",
+			"http_port", m.cfg.GetIngressHTTPPort(),
+			"https_port", m.cfg.GetIngressHTTPSPort())
+		return nil
+	}
+	if err := m.checkPortSeparation(); err != nil {
+		m.log.Warn("ingress disabled: "+err.Error(),
+			"hint", "the reverse proxy and the winterflow API must own different ports")
+		return nil
+	}
 
 	cfg, warnings := m.buildConfig()
 	for _, w := range warnings {
@@ -111,7 +128,7 @@ func (m *Manager) Start(ctx context.Context) error {
 		return nil
 	}
 	if err := caddy.Load(cfg, true); err != nil {
-		m.log.Warn("ingress disabled: caddy failed to start (need CAP_NET_BIND_SERVICE for ports 80/443?)", "error", err)
+		m.log.Warn("ingress disabled: "+m.startFailureReason(err), "error", err)
 		return nil
 	}
 	m.enabled = true
@@ -152,4 +169,45 @@ func (m *Manager) Enabled() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.enabled
+}
+
+// checkPortSeparation rejects a config where the proxy would fight the
+// winterflow API for a port. In standalone both listen in ONE process, so an
+// overlap is not a race to lose but a guaranteed silent half-start: caddy
+// takes whichever it binds first and the failure surfaces as a confusing
+// address-in-use much later. API_PORT is only set where the API actually
+// runs (standalone), so this is a no-op for a lone agent.
+func (m *Manager) checkPortSeparation() error {
+	apiPort, err := strconv.Atoi(strings.TrimSpace(m.cfg.GetApiPort()))
+	if err != nil || apiPort <= 0 {
+		return nil
+	}
+	for _, p := range []struct {
+		name string
+		port int
+	}{
+		{"INGRESS_HTTP_PORT", m.cfg.GetIngressHTTPPort()},
+		{"INGRESS_HTTPS_PORT", m.cfg.GetIngressHTTPSPort()},
+	} {
+		if p.port == apiPort {
+			return fmt.Errorf("%s (%d) collides with API_PORT (%d)", p.name, p.port, apiPort)
+		}
+	}
+	return nil
+}
+
+// startFailureReason turns caddy's load error into the diagnosis an operator
+// can act on. A taken port and a missing capability both surface as a listen
+// error, but the fixes are opposite — blaming capabilities for an occupied
+// port sends people down the wrong path.
+func (m *Manager) startFailureReason(err error) string {
+	if strings.Contains(err.Error(), "address already in use") {
+		return fmt.Sprintf("port %d or %d is already taken by another process",
+			m.cfg.GetIngressHTTPPort(), m.cfg.GetIngressHTTPSPort())
+	}
+	if errors.Is(err, os.ErrPermission) || strings.Contains(err.Error(), "permission denied") {
+		return fmt.Sprintf("no permission to bind ports %d/%d (privileged ports need CAP_NET_BIND_SERVICE; the systemd unit grants it)",
+			m.cfg.GetIngressHTTPPort(), m.cfg.GetIngressHTTPSPort())
+	}
+	return "caddy failed to start"
 }

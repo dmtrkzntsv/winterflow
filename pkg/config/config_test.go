@@ -339,6 +339,21 @@ func TestIsRegistrationEnabled(t *testing.T) {
 	}
 }
 
+func TestIsIngressEnabled(t *testing.T) {
+	c := NewServerConfig("standalone")
+	cases := map[string]bool{"": true, "true": true, "1": true, "false": false, "0": false, "FALSE": false}
+	for val, want := range cases {
+		if val == "" {
+			unsetenv(t, "INGRESS_ENABLED")
+		} else {
+			t.Setenv("INGRESS_ENABLED", val)
+		}
+		if got := c.IsIngressEnabled(); got != want {
+			t.Errorf("INGRESS_ENABLED=%q: got %v, want %v", val, got, want)
+		}
+	}
+}
+
 func TestGetIngressPorts(t *testing.T) {
 	c := NewServerConfig("standalone")
 	tests := []struct {

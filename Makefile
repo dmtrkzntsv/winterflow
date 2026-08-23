@@ -3,11 +3,21 @@ BIN_DIR := bin
 STANDALONE_BIN := $(BIN_DIR)/standalone
 API_BIN := $(BIN_DIR)/api
 
-.PHONY: build lint standalone api web
+.PHONY: build lint standalone api web web-build
 
-build:
+# Release build: bundle the SPA first so go:embed picks up a fresh web/dist,
+# then compile. The binaries are fully self-contained (API + web UI).
+build: web-build
 	$(GO) build -o $(STANDALONE_BIN) ./cmd/standalone
 	$(GO) build -o $(API_BIN) ./cmd/api
+
+# Production SPA bundle into web/dist (what go:embed ships). web/.env.production
+# pins the bundle to same-origin + standalone mode; override via shell env, e.g.
+# `VITE_APP_MODE=distributed make web-build`. The .gitkeep placeholder is
+# restored because vite empties the output dir.
+web-build:
+	pnpm --dir web run build
+	@touch web/dist/.gitkeep
 
 fmt:
 	$(GO) fmt ./...

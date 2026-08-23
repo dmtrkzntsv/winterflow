@@ -2,8 +2,8 @@
 #
 # Install the WinterFlow standalone binary as a systemd service.
 #
-# The standalone binary runs the HTTP API, the embedded agent, and the Docker
-# Compose orchestrator in one process over SQLite. This script:
+# The standalone binary runs the HTTP API, the embedded web UI, the agent,
+# and the Docker Compose orchestrator in one process over SQLite. This script:
 #   - offers to create a dedicated system user (recommended) so the service
 #     does not run as root,
 #   - installs the binary to /usr/local/bin/winterflow,
@@ -348,6 +348,17 @@ if [ -z "$BINARY_SRC" ]; then
         BINARY_SRC="${repo_root}/bin/standalone"
         log "Using prebuilt binary ${BINARY_SRC}"
     elif [ -f "${repo_root}/go.mod" ] && command -v go >/dev/null 2>&1; then
+        # Bundle the web UI first so go:embed ships it inside the binary.
+        # Without a bundle the binary still works, but serves the API only.
+        if command -v pnpm >/dev/null 2>&1; then
+            log "Building web UI bundle (embedded into the binary)"
+            (cd "$repo_root" && pnpm --dir web install --frozen-lockfile && pnpm --dir web run build)
+        elif [ -f "${repo_root}/web/dist/index.html" ]; then
+            log "pnpm not found; embedding the existing web/dist bundle"
+        else
+            warn "pnpm not found and web/dist has no build: the binary will serve the API only."
+            warn "install node+pnpm and rerun, or copy a built web/dist here first"
+        fi
         log "Building standalone binary from ${repo_root}"
         (cd "$repo_root" && go build -o bin/standalone ./cmd/standalone)
         BINARY_SRC="${repo_root}/bin/standalone"
@@ -465,6 +476,7 @@ echo "The 'winterflow' CLI is on PATH and auto-loads ${ENV_FILE}."
 echo "Run commands that touch the data dir as the service user:"
 echo "  sudo -u ${SERVICE_USER} winterflow <command>"
 echo
-echo "First run: register the admin account via the web UI /register page."
-echo "Note: the standalone binary serves the API only — build the web UI"
-echo "(pnpm --dir web run build) and host it, or front both with the ingress."
+echo "First run: open http://localhost:${API_PORT}/register and create the"
+echo "admin account. The binary serves the web UI itself when it was built"
+echo "with a web/dist bundle present (a prebuilt release always is; a source"
+echo "build needs pnpm — this script bundles it automatically when found)."

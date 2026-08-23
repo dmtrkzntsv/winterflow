@@ -8,7 +8,10 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
-dist
+# dist itself stays tracked via the .gitkeep placeholder (go:embed needs the
+# directory to exist on a fresh checkout); build output is ignored.
+dist/*
+!dist/.gitkeep
 dist-ssr
 *.local
 

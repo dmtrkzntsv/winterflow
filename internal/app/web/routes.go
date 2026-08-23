@@ -2,6 +2,9 @@ package web
 
 import (
 	"net/http"
+	"winterflow/internal/app/web/spa"
+	webdist "winterflow/web"
+
 	happ "winterflow/internal/app/web/handler/app"
 	hauth "winterflow/internal/app/web/handler/auth"
 	hdocker "winterflow/internal/app/web/handler/docker"
@@ -125,4 +128,14 @@ func (s *Server) registerRoutes() {
 	s.Router.With(authMW, adminMW).Post("/api/v1/org/reset-member-password", orgAPI.ResetMemberPassword)
 	s.Router.With(authMW).Get("/api/v1/org/get-organization", orgAPI.GetOrganization)
 	s.Router.With(authMW, adminMW).Post("/api/v1/org/update-organization", orgAPI.UpdateOrganization)
+
+	// Serve the embedded SPA for everything the API doesn't claim (history-mode
+	// fallback). A source build without `make web-build` embeds only the
+	// committed placeholder; the server then stays API-only.
+	if distFS, ok := webdist.DistFS(); ok {
+		s.Router.NotFound(spa.Handler(distFS).ServeHTTP)
+		s.Logger.Info("serving embedded web UI")
+	} else {
+		s.Logger.Info("no embedded web UI build; serving API only (run `make web-build` before building the binary)")
+	}
 }

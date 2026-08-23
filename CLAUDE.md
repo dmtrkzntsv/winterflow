@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 Backend (Go 1.25):
-- `make build` — compiles `standalone` + `api` into `bin/`. Note: `hub` and `agent` are NOT in this target; build them with `go build ./cmd/hub ./cmd/agent`.
+- `make build` — bundles the SPA (`make web-build` → `web/dist`, embedded via `go:embed`) then compiles `standalone` + `api` into `bin/`. Note: `hub` and `agent` are NOT in this target; build them with `go build ./cmd/hub ./cmd/agent`. A bare `go build` embeds whatever is in `web/dist` — the committed placeholder on a fresh checkout, i.e. an API-only binary.
 - `make standalone | api | hub | agent` — `go run` the chosen binary.
 - `make lint` — `go vet ./...` plus the web ESLint suite.
 - `go test ./...` — all tests. Single package: `go test ./internal/infra/transport/codec/`. Single test: `go test ./internal/infra/orchestrator/docker_compose/ -run TestAggregateStatus`.
@@ -16,6 +16,8 @@ Backend (Go 1.25):
 
 Frontend (`web/`, pnpm + Vite + React 19):
 - `make web` (= `pnpm --dir web dev`), `pnpm --dir web run build` (runs `tsc -b` first), `pnpm --dir web run lint`.
+
+**The web UI ships inside the Go binary** (econumo-style): `web/embed.go` does `go:embed all:dist` and `internal/app/web/spa` serves it as the router's NotFound handler with SPA history-mode fallback (reserved prefixes `/api`, `/auth`, `/avatar`, `/_` still 404; missing extensioned paths 404 instead of returning the shell). Production bundles are same-origin: `web/.env.production` pins empty `VITE_*_BASE_URL`s (→ `window.location.origin` in `web/src/config.ts`) and `VITE_APP_MODE=standalone`; the api Dockerfile builds with `VITE_APP_MODE=distributed`. Keep `web/dist/.gitkeep` committed — the placeholder is what makes a frontend-free checkout compile (and `DistFS()` report "no build").
 
 Config comes from `.env` (loaded via `godotenv`) or the process environment. Copy `.env.example` → `.env` (frontend build-time vars: `web/.env.example`). `.env`, `data/`, `bin/`, and `*.sqlite*` are gitignored.
 

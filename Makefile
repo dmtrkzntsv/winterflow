@@ -30,7 +30,7 @@ mod:
 	$(GO) mod tidy
 
 standalone:
-	$(GO) run ./cmd/standalone
+	$(GO) run ./cmd/standalone serve
 
 api:
 	$(GO) run ./cmd/api

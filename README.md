@@ -58,7 +58,12 @@ Useful commands:
 ```sh
 systemctl status winterflow
 journalctl --namespace winterflow -u winterflow -f   # follow logs
+winterflow version                                   # installed version
+winterflow help                                      # CLI commands
 ```
+
+The service runs `winterflow serve`; more subcommands will land under the
+same CLI.
 
 Configuration lives in `/etc/winterflow/winterflow.env`;
 [`.env.example`](.env.example) documents every option.

@@ -343,7 +343,7 @@ User=${SERVICE_USER}
 Group=${SERVICE_GROUP}
 EnvironmentFile=${ENV_FILE}
 WorkingDirectory=${DATA_DIR}
-ExecStart=${BINARY_DEST}
+ExecStart=${BINARY_DEST} serve
 Restart=on-failure
 RestartSec=5
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -13,6 +14,7 @@ import (
 	"winterflow/internal/infra/bootstrap"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
+	"winterflow/pkg/version"
 
 	"github.com/joho/godotenv"
 )
@@ -22,9 +24,47 @@ import (
 // just one containing a .env.
 const systemEnvFile = "/etc/winterflow/winterflow.env"
 
+func usage() {
+	fmt.Fprintf(os.Stderr, `WinterFlow standalone — API, web UI, agent and orchestrator in one process.
+
+Usage:
+  winterflow <command> [flags]
+
+Commands:
+  serve     run the server (flags: -env-file PATH)
+  version   print the build version
+  help      show this help
+`)
+}
+
 func main() {
-	envFile := flag.String("env-file", "", "env file to load (default: ./.env, then "+systemEnvFile+")")
-	flag.Parse()
+	args := os.Args[1:]
+	cmd := ""
+	if len(args) > 0 {
+		cmd = args[0]
+		args = args[1:]
+	}
+	switch cmd {
+	case "serve":
+		serve(args)
+	case "version", "-v", "--version":
+		fmt.Println(version.GetVersion())
+	case "help", "-h", "--help":
+		usage()
+	case "":
+		usage()
+		os.Exit(2)
+	default:
+		fmt.Fprintf(os.Stderr, "winterflow: unknown command %q\n\n", cmd)
+		usage()
+		os.Exit(2)
+	}
+}
+
+func serve(args []string) {
+	flags := flag.NewFlagSet("serve", flag.ExitOnError)
+	envFile := flags.String("env-file", "", "env file to load (default: ./.env, then "+systemEnvFile+")")
+	_ = flags.Parse(args)
 
 	var err error
 	if *envFile != "" {
@@ -43,7 +83,7 @@ func main() {
 		}
 		log.Info("no .env or " + systemEnvFile + " found, using system environment variables")
 	}
-	log.Info("Service starting", "pid", os.Getpid())
+	log.Info("Service starting", "pid", os.Getpid(), "version", version.GetVersion())
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

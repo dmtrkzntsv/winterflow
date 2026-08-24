@@ -147,6 +147,7 @@ assert_contains "unit: fd limit" "$out" "LimitNOFILE="
 
 # --- Dry run: unit — hardening survives the rework ----------------------------
 
+assert_contains "unit: starts via the serve subcommand" "$out" "ExecStart=/usr/local/bin/winterflow serve"
 assert_contains "unit: runs as service user" "$out" "User=winterflow"
 assert_contains "unit: strict protect system" "$out" "ProtectSystem=strict"
 assert_contains "unit: no new privileges" "$out" "NoNewPrivileges=true"

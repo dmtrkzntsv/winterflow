@@ -33,11 +33,14 @@ bash "$INSTALL_SH" --nonsense >/dev/null 2>&1 && fail "unknown option rejected" 
 # --- Curl-pipe safety ---------------------------------------------------------
 
 # The curl | bash path: the whole script must parse before anything runs
-# (main-wrapper, so a truncated download cannot execute half a script) and
-# prompts must never consume the piped script stream.
+# (main-wrapper, so a truncated download cannot execute half a script), and
+# piped runs must never prompt — sudo's use_pty relays the pipe, not the
+# keyboard, so any tty read would hang with no way to type or Ctrl-C out.
 src="$(cat "$INSTALL_SH")"
 assert_contains "script body runs via a main wrapper" "$src" 'main "$@"'
-assert_contains "prompts fall back to /dev/tty when stdin is piped" "$src" "/dev/tty"
+assert_not_contains "piped runs never read /dev/tty (hangs under sudo use_pty)" "$src" "</dev/tty"
+assert_contains "piped install announces non-interactive defaults" "$src" "using defaults, no questions"
+assert_contains "piped --purge refuses to default to yes" "$src" "refusing to purge without a terminal to confirm on"
 
 out_pipe="$(cat "$INSTALL_SH" | bash -s -- --dry-run 2>&1)" || fail "piped dry-run exits 0" "exit $?"
 assert_contains "piped: env file rendered" "$out_pipe" "API_PORT=8080"

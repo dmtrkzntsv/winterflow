@@ -13,25 +13,37 @@ automatic HTTPS (off by default — enable with `INGRESS_ENABLED=true`).
 curl -fsSL https://raw.githubusercontent.com/dmtrkzntsv/winterflow/main/scripts/install.sh | sudo bash
 ```
 
-The installer downloads the latest prebuilt release for your machine
-(linux amd64 / arm64 / arm), verifies its checksum, and sets it up as a
-hardened systemd service. Along the way it:
+The one-liner is **non-interactive**: it installs with sane defaults (web UI
+on port 8080, a dedicated `winterflow` service user, Docker installed if
+missing) — piped scripts can't prompt, so it never asks and never hangs.
+Customize with flags:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/dmtrkzntsv/winterflow/main/scripts/install.sh | sudo bash -s -- --port 9090
+```
+
+Prefer to be asked? Download first, then run — the installer prompts for the
+port and the service user when it has a real terminal:
+
+```sh
+curl -fsSLO https://raw.githubusercontent.com/dmtrkzntsv/winterflow/main/scripts/install.sh
+sudo bash install.sh
+```
+
+Either way, the installer downloads the latest prebuilt release for your
+machine (linux amd64 / arm64 / arm), verifies its checksum, and sets it up
+as a hardened systemd service:
 
 - offers to install Docker and the compose plugin when they are missing,
-- asks which port the web UI should listen on (default 8080),
-- asks which unprivileged user the service should run as (never root),
+- runs as an unprivileged service user (never root),
 - writes `/etc/winterflow/winterflow.env` with a generated JWT secret,
 - keeps data (SQLite database, certs, app repos) in `/var/lib/winterflow`,
 - routes logs to a dedicated journald namespace with rotation caps, and
 - caps the service's CPU and memory so orchestration bursts cannot
   overheat a small fanless box. Your app containers are not limited.
 
-Non-interactive install, and all other options (`--port`, `--user`,
-`--version`, resource caps, `--dry-run`, `--uninstall`, `--purge`):
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/dmtrkzntsv/winterflow/main/scripts/install.sh | sudo bash -s -- --yes
-```
+All options: `--port`, `--user`, `--version`, resource caps, `--dry-run`,
+`--uninstall`, `--purge` — see `bash install.sh --help`.
 
 **Requirements:** Linux with systemd. Docker is installed for you if missing.
 

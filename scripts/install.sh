@@ -24,8 +24,16 @@
 #   delete:  journalctl --namespace winterflow --vacuum-time=1s
 #
 # Usage:
+#   # Piped: NON-INTERACTIVE with sane defaults — sudo cannot forward the
+#   # keyboard to a piped script (use_pty), so nothing is ever asked. Pass
+#   # options to customize:
 #   curl -fsSL https://raw.githubusercontent.com/dmtrkzntsv/winterflow/main/scripts/install.sh | sudo bash
-#   curl -fsSL https://raw.githubusercontent.com/dmtrkzntsv/winterflow/main/scripts/install.sh | sudo bash -s -- [options]
+#   curl -fsSL https://raw.githubusercontent.com/dmtrkzntsv/winterflow/main/scripts/install.sh | sudo bash -s -- --port 9090
+#
+#   # Interactive (asks port + service user): download first, then run.
+#   curl -fsSLO https://raw.githubusercontent.com/dmtrkzntsv/winterflow/main/scripts/install.sh
+#   sudo bash install.sh
+#
 #   sudo ./scripts/install.sh [options]     # from a repo checkout
 #
 # Options:
@@ -106,15 +114,14 @@ usage() {
 }
 
 prompt_read() {
-    # prompt_read "prompt" -> sets REPLY. When stdin is not a terminal (curl |
-    # sudo bash pipes the script itself into stdin), read from the controlling
-    # terminal instead, so prompts still work and never consume the script
-    # stream. Fails when no terminal is available at all.
+    # prompt_read "prompt" -> sets REPLY. Only reads when stdin is a real
+    # terminal. Piped runs (curl | sudo bash) get NO prompts: sudo's use_pty
+    # (default on modern distros) relays the pipe, not the keyboard, so a
+    # /dev/tty read would hang with no way to type OR Ctrl-C out. Callers
+    # fall back to their defaults instead.
     REPLY=""
     if [ -t 0 ]; then
         read -r -p "$1" REPLY
-    elif [ -e /dev/tty ]; then
-        read -r -p "$1" REPLY </dev/tty
     else
         return 1
     fi
@@ -438,6 +445,11 @@ main() {
 
     if [ "$UNINSTALL" -eq 1 ]; then
         if [ "$PURGE" -eq 1 ]; then
+            # Piped stdin means the confirm below cannot actually ask anyone —
+            # never let an irreversible purge default to yes.
+            if [ "$ASSUME_YES" -eq 0 ] && [ ! -t 0 ]; then
+                die "refusing to purge without a terminal to confirm on; rerun with --yes to proceed"
+            fi
             echo "This will PERMANENTLY delete ${CONFIG_DIR}, ${DATA_DIR} (database,"
             echo "certs, deployed app repos), all winterflow logs, and the"
             echo "'${SERVICE_USER}' user, if it is a dedicated service account."
@@ -500,6 +512,22 @@ main() {
         echo "### ${UNIT_FILE}"
         render_unit
         exit 0
+    fi
+
+    # --- Piped install is non-interactive -------------------------------------
+
+    # curl | sudo bash cannot prompt (see prompt_read); say what will happen
+    # instead of silently choosing, and how to choose differently.
+    if [ ! -t 0 ] && [ "$ASSUME_YES" -eq 0 ]; then
+        echo
+        log "Piped install (no terminal on stdin): using defaults, no questions."
+        echo "    port ${API_PORT}, service user '${SERVICE_USER}', Docker installed if missing"
+        echo
+        echo "    To customize:            ... | sudo bash -s -- --port 9090 --user me"
+        echo "    For interactive prompts: curl -fsSLO https://raw.githubusercontent.com/${GITHUB_REPO}/main/scripts/install.sh"
+        echo "                             sudo bash install.sh"
+        echo
+        ASSUME_YES=1
     fi
 
     # --- Preflight ------------------------------------------------------------

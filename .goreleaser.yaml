@@ -26,6 +26,11 @@ before:
     # vite empties web/dist, taking the tracked .gitkeep with it — restore it
     # or goreleaser's dirty-tree check fails the release.
     - touch web/dist/.gitkeep
+    # Attribution notices for everything compiled into the binaries; published
+    # as a release asset below (release.extra_files). Needs web/node_modules,
+    # so it must run after the pnpm install hook. The output is gitignored,
+    # so the dirty-tree check stays clean.
+    - bash scripts/third_party_licenses.sh
 
 builds:
   - id: standalone
@@ -69,6 +74,13 @@ archives:
 
 checksum:
   name_template: checksums.txt
+
+release:
+  extra_files:
+    # The MIT/BSD/Apache dependencies require their notices to accompany
+    # binary distribution; the raw-binary assets can't carry them, so the
+    # notices file sits next to them on the release page.
+    - glob: THIRD_PARTY_LICENSES.txt
 
 changelog:
   use: github

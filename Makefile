@@ -3,7 +3,7 @@ BIN_DIR := bin
 STANDALONE_BIN := $(BIN_DIR)/standalone
 API_BIN := $(BIN_DIR)/api
 
-.PHONY: build lint standalone api web web-build
+.PHONY: build lint standalone api web web-build third-party-licenses
 
 # Release build: bundle the SPA first so go:embed picks up a fresh web/dist,
 # then compile. The binaries are fully self-contained (API + web UI).
@@ -18,6 +18,11 @@ build: web-build
 web-build:
 	pnpm --dir web run build
 	@touch web/dist/.gitkeep
+
+# Attribution notices for every Go module and bundled npm package; goreleaser
+# regenerates and attaches this to each release (see .goreleaser.yaml).
+third-party-licenses:
+	bash scripts/third_party_licenses.sh
 
 fmt:
 	$(GO) fmt ./...

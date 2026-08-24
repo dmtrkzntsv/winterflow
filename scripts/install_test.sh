@@ -112,6 +112,19 @@ out="$(bash "$INSTALL_SH" --dry-run --port 9090 --cpu-quota 250 --memory-max 1G 
 assert_contains "env: api port applied" "$out" "API_PORT=9090"
 assert_contains "env: sqlite database" "$out" "DATABASE_URL=sqlite:///var/lib/winterflow/winterflow.sqlite"
 assert_contains "env: jwt secret placeholder (not generated in dry-run)" "$out" "JWT_SECRET=<generated-at-install-time>"
+assert_contains "env: ingress documented as off by default" "$out" "#INGRESS_ENABLED=false"
+# The installer must never write an active (uncommented) enable line.
+if grep -qE '^INGRESS_ENABLED=true' <<<"$out"; then
+    fail "env: ingress is never enabled by the installer" "found uncommented INGRESS_ENABLED=true"
+else
+    pass "env: ingress is never enabled by the installer"
+fi
+
+# --- Port prompt --------------------------------------------------------------
+
+assert_contains "--help documents the port question" "$help_out" "asks which port"
+assert_contains "interactive port question exists" "$src" "Which port should the WinterFlow web UI listen on?"
+assert_contains "port question skipped with --port/--yes" "$src" 'if [ "$PORT_EXPLICIT" -eq 0 ] && [ "$ASSUME_YES" -eq 0 ]; then'
 
 # --- Dry run: unit — logging must be rotatable & deletable --------------------
 

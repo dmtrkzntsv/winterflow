@@ -341,7 +341,8 @@ func TestIsRegistrationEnabled(t *testing.T) {
 
 func TestIsIngressEnabled(t *testing.T) {
 	c := NewServerConfig("standalone")
-	cases := map[string]bool{"": true, "true": true, "1": true, "false": false, "0": false, "FALSE": false}
+	// Opt-in: only an explicit true/1 turns the embedded proxy on.
+	cases := map[string]bool{"": false, "true": true, "1": true, "TRUE": true, "false": false, "0": false, "yes": false}
 	for val, want := range cases {
 		if val == "" {
 			unsetenv(t, "INGRESS_ENABLED")

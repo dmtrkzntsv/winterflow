@@ -69,6 +69,7 @@ func TestManagerServesReloadsAndIsolates(t *testing.T) {
 	httpPort := freePort(t)
 	httpsPort := freePort(t)
 	t.Setenv("AGENT_DATA_DIR", dataDir)
+	t.Setenv("INGRESS_ENABLED", "true")
 	t.Setenv("INGRESS_HTTP_PORT", fmt.Sprint(httpPort))
 	t.Setenv("INGRESS_HTTPS_PORT", fmt.Sprint(httpsPort))
 	t.Setenv("LOG_LEVEL", "error")
@@ -150,6 +151,7 @@ func TestManagerDisabledOnBindFailure(t *testing.T) {
 	taken := l.Addr().(*net.TCPAddr).Port
 
 	t.Setenv("AGENT_DATA_DIR", t.TempDir())
+	t.Setenv("INGRESS_ENABLED", "true")
 	t.Setenv("INGRESS_HTTP_PORT", fmt.Sprint(taken))
 	t.Setenv("INGRESS_HTTPS_PORT", fmt.Sprint(freePort(t)))
 	t.Setenv("LOG_LEVEL", "error")
@@ -197,6 +199,7 @@ func TestManagerRespectsDisableSwitch(t *testing.T) {
 func TestManagerRefusesPortCollisionWithAPI(t *testing.T) {
 	shared := freePort(t)
 	t.Setenv("AGENT_DATA_DIR", t.TempDir())
+	t.Setenv("INGRESS_ENABLED", "true")
 	t.Setenv("API_PORT", fmt.Sprint(shared))
 	t.Setenv("INGRESS_HTTP_PORT", fmt.Sprint(shared))
 	t.Setenv("INGRESS_HTTPS_PORT", fmt.Sprint(freePort(t)))

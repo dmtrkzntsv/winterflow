@@ -172,16 +172,16 @@ func (c *ServerConfig) GetHubPort() string {
 }
 
 // IsIngressEnabled reports whether the embedded reverse proxy should run.
-// Default on; set INGRESS_ENABLED=false to keep the process off ports 80/443
-// entirely (unprivileged dev runs, or a host where another proxy owns them).
-// Disabled means Caddy is never loaded — the agent reports ingress:false and
-// the UI hides per-app domain editing.
+// Default off — many home servers already have a proxy (or a tunnel) owning
+// 80/443, so Caddy is opt-in: set INGRESS_ENABLED=true to serve app domains
+// from this process. Disabled means Caddy is never loaded — the agent
+// reports ingress:false and the UI hides per-app domain editing.
 func (c *ServerConfig) IsIngressEnabled() bool {
 	switch strings.ToLower(os.Getenv("INGRESS_ENABLED")) {
-	case "false", "0":
-		return false
-	default:
+	case "true", "1":
 		return true
+	default:
+		return false
 	}
 }
 

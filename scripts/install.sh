@@ -6,6 +6,7 @@
 # and the Docker Compose orchestrator in one process over SQLite. This script:
 #   - downloads the latest prebuilt release for this machine (or builds from
 #     source when run inside a repo checkout with Go installed),
+#   - asks which port the web UI should listen on (default 8080),
 #   - asks which unprivileged user the service should run as (a dedicated
 #     system user, the account you sudo'd from, or one you name) so the
 #     service does not run as root,
@@ -72,6 +73,7 @@ SERVICE_USER="winterflow"
 SERVICE_GROUP="winterflow"
 USER_EXPLICIT=0
 API_PORT="8080"
+PORT_EXPLICIT=0
 CPU_QUOTA=""
 MEMORY_MAX=""
 BINARY_SRC=""
@@ -282,11 +284,12 @@ HUB_CERT_EXT_PATH=${DATA_DIR}/data/ext.cnf
 HUB_CA_SUBJECT="/C=CA/O=WinterFlow.io/OU=CA/CN=WinterFlow.io CA/emailAddress=info@winterflow.io"
 HUB_SERVER_SUBJECT="/C=CA/O=WinterFlow.io/OU=SERVER/CN=WinterFlow.io/emailAddress=info@winterflow.io"
 
-# Embedded ingress (Caddy) — the reverse proxy for your deployed apps, on its
-# own ports; winterflow itself stays on API_PORT above. 80/443 work via
-# CAP_NET_BIND_SERVICE in the unit. Set INGRESS_ENABLED=false to leave those
-# ports to another proxy; overrides must not equal API_PORT.
-#INGRESS_ENABLED=true
+# Embedded ingress (Caddy) — an optional reverse proxy for your deployed
+# apps, off by default so it never fights another proxy or tunnel for
+# 80/443. Set INGRESS_ENABLED=true to serve per-app domains from winterflow
+# itself (the unit already grants CAP_NET_BIND_SERVICE for 80/443);
+# winterflow stays on API_PORT above, and overrides must not equal it.
+#INGRESS_ENABLED=false
 #INGRESS_HTTP_PORT=80
 #INGRESS_HTTPS_PORT=443
 #INGRESS_ACME_EMAIL=you@example.com
@@ -383,7 +386,7 @@ main() {
             --binary)     BINARY_SRC="${2:?--binary needs a path}"; shift 2 ;;
             --version)    RELEASE_VERSION="${2:?--version needs a tag}"; shift 2 ;;
             --user)       SERVICE_USER="${2:?--user needs a name}"; USER_EXPLICIT=1; shift 2 ;;
-            --port)       API_PORT="${2:?--port needs a value}"; shift 2 ;;
+            --port)       API_PORT="${2:?--port needs a value}"; PORT_EXPLICIT=1; shift 2 ;;
             --cpu-quota)  CPU_QUOTA="${2:?--cpu-quota needs a value}"; shift 2 ;;
             --memory-max) MEMORY_MAX="${2:?--memory-max needs a value}"; shift 2 ;;
             --yes)        ASSUME_YES=1; shift ;;
@@ -599,6 +602,27 @@ EOF
         download_release
     fi
     [ -x "$BINARY_SRC" ] || die "binary is not executable: ${BINARY_SRC}"
+
+    # --- Port -----------------------------------------------------------------
+
+    # --port (or --yes) skips the question.
+    if [ "$PORT_EXPLICIT" -eq 0 ] && [ "$ASSUME_YES" -eq 0 ]; then
+        echo
+        echo "Which port should the WinterFlow web UI listen on? You will open"
+        echo "http://<this-machine>:<port> in the browser to manage your apps."
+        while :; do
+            answer="$(ask "Port" "$API_PORT")"
+            case "$answer" in
+                ''|*[!0-9]*) warn "'${answer}' is not a port number (1-65535)" ;;
+                *) if [ "$answer" -ge 1 ] && [ "$answer" -le 65535 ]; then
+                       API_PORT="$answer"
+                       break
+                   fi
+                   warn "port out of range (1-65535): ${answer}"
+                   ;;
+            esac
+        done
+    fi
 
     # --- Service user ---------------------------------------------------------
 

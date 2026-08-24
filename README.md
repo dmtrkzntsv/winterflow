@@ -4,7 +4,8 @@ Self-hosted app deployment for small always-on home servers — mini-PCs,
 Raspberry Pi-class boards, anything Linux that runs Docker. Deploy Docker
 Compose apps from a web UI: every app is a git repository under the hood, every
 change is a revision you can roll back, secrets are end-to-end encrypted, and
-an embedded reverse proxy (Caddy) serves your apps with automatic HTTPS.
+an optional embedded reverse proxy (Caddy) can serve your apps with
+automatic HTTPS (off by default — enable with `INGRESS_ENABLED=true`).
 
 ## Install
 
@@ -17,6 +18,7 @@ The installer downloads the latest prebuilt release for your machine
 hardened systemd service. Along the way it:
 
 - offers to install Docker and the compose plugin when they are missing,
+- asks which port the web UI should listen on (default 8080),
 - asks which unprivileged user the service should run as (never root),
 - writes `/etc/winterflow/winterflow.env` with a generated JWT secret,
 - keeps data (SQLite database, certs, app repos) in `/var/lib/winterflow`,

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -22,13 +22,18 @@ export function AppEditorPanel({ appId }: { appId: string }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // baseline is the loaded state serialized, so "unsaved changes" is a plain
+  // comparison rather than per-field tracking.
+  const [baseline, setBaseline] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const detail = await getApp(appId);
-      setState(stateFromDetail(appId, detail));
+      const loaded = stateFromDetail(appId, detail);
+      setState(loaded);
+      setBaseline(JSON.stringify(loaded));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load app");
     } finally {
@@ -62,6 +67,11 @@ export function AppEditorPanel({ appId }: { appId: string }) {
     }
   };
 
+  const dirty = useMemo(
+    () => baseline !== "" && JSON.stringify(state) !== baseline,
+    [state, baseline],
+  );
+
   if (loading) {
     return (
       <div className="flex min-h-60 items-center justify-center">
@@ -82,23 +92,37 @@ export function AppEditorPanel({ appId }: { appId: string }) {
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex justify-end gap-2">
+    <div>
+      <div className="sticky top-0 z-10 -mx-4 mb-6 flex flex-wrap items-center gap-2 border-b bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+        <p className="mr-auto text-sm text-muted-foreground">
+          {dirty ? (
+            <span className="inline-flex items-center gap-2 text-foreground">
+              <span className="size-2 rounded-full bg-amber-400" aria-hidden />
+              Unsaved changes
+            </span>
+          ) : (
+            "Every save is kept in History, so you can roll back."
+          )}
+        </p>
         <Button
-          variant="outline"
+          variant="ghost"
           onClick={() => void load()}
-          disabled={saving}
+          disabled={saving || !dirty}
         >
-          Discard changes
+          Discard
         </Button>
         <Button
-          variant="secondary"
+          variant="outline"
           onClick={() => void handleSave(true)}
-          disabled={saving}
+          disabled={saving || !dirty}
+          title="Save a new revision without redeploying"
         >
           Save draft
         </Button>
-        <Button onClick={() => void handleSave(false)} disabled={saving}>
+        <Button
+          onClick={() => void handleSave(false)}
+          disabled={saving || !dirty}
+        >
           {saving ? "Saving…" : "Save & redeploy"}
         </Button>
       </div>

@@ -2,11 +2,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   ArrowUpCircle,
+  ExternalLink,
   History,
   Play,
+  RefreshCw,
   RotateCw,
   Square,
-  SquarePen,
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -14,12 +15,9 @@ import { toast } from "sonner";
 import { useAppBreadcrumbs } from "@/layouts/use-app-layout";
 import { Button } from "@/components/ui/button";
 import { buttonVariants } from "@/components/ui/button-variants";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Badge } from "@/components/ui/badge";
 import { Spinner } from "@/components/ui/spinner";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -34,16 +32,24 @@ import {
 import { AppIcon } from "@/components/app-icon";
 import { LogsView, type LogLine } from "@/components/logs-view";
 import { AppEditorPanel } from "@/components/app-editor-panel";
-import { AppStatusBadge } from "@/components/app-status-badge";
+import { AppStatusIndicator } from "@/components/app-status-badge";
 import { useApps } from "@/context/use-apps";
 import { useNotifications } from "@/context/use-notifications";
 import { useServers } from "@/context/use-servers";
 import { apiBaseUrl } from "@/config";
-import type { AppRevisions, ControlAction } from "@/context/apps-context-base";
+import {
+  AppStatusCode,
+  type AppRevisions,
+  type ControlAction,
+} from "@/context/apps-context-base";
+import { cn } from "@/lib/utils";
 
 const base = apiBaseUrl.endsWith("/") ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
 
 const TABS = ["logs", "editor", "history", "settings"] as const;
+
+const tabTriggerClass =
+  "-mb-px rounded-none border-b-2 border-transparent px-1 pt-1 pb-2.5 text-muted-foreground shadow-none hover:text-foreground data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none";
 
 export default function AppDetailsPage() {
   const { appId } = useParams();
@@ -67,20 +73,20 @@ export default function AppDetailsPage() {
   );
   useAppBreadcrumbs(breadcrumbs);
 
-  const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState<ControlAction | null>(null);
 
   const runControl = async (action: ControlAction) => {
     if (!appId) return;
-    setBusy(true);
+    setPending(action);
     try {
       await control(appId, action);
-      toast.success(`${action} succeeded`);
+      toast.success(CONTROL_DONE[action]);
     } catch (e) {
-      toast.error(`${action} failed`, {
+      toast.error(`Couldn't ${action} the app`, {
         description: e instanceof Error ? e.message : undefined,
       });
     } finally {
-      setBusy(false);
+      setPending(null);
     }
   };
 
@@ -92,87 +98,106 @@ export default function AppDetailsPage() {
     );
   }
 
+  const status = statusByApp[app.id];
+  // Unknown status offers Start too: we never infer "down" from missing data,
+  // but starting an already-running stack is harmless.
+  const canStop =
+    status !== undefined &&
+    status !== AppStatusCode.Stopped &&
+    status !== AppStatusCode.Unknown;
+  const routes = (app.domains ?? []).filter((d) => d.kind === "route");
+
+  const controlButton = (
+    action: ControlAction,
+    label: string,
+    Icon: typeof Play,
+    title?: string,
+  ) => (
+    <Button
+      variant="outline"
+      size="sm"
+      disabled={pending !== null}
+      title={title}
+      onClick={() => void runControl(action)}
+    >
+      {pending === action ? (
+        <Spinner className="size-4" />
+      ) : (
+        <Icon className="size-4" />
+      )}
+      {label}
+    </Button>
+  );
+
   return (
     <div className="space-y-6">
-      {/* Header: icon + name/description/status + controls */}
-      <div className="flex flex-col gap-6 md:flex-row md:items-start">
+      <header className="flex flex-wrap items-center gap-x-4 gap-y-3">
         <AppIcon
           name={app.name}
           icon={app.icon}
           color={app.color}
-          className="size-28 shrink-0 rounded-xl shadow-md"
+          className="size-14 shrink-0 rounded-xl text-xl"
         />
         <div className="min-w-0 flex-1">
-          <h1 className="text-2xl font-bold">{app.name}</h1>
-          <div className="mt-2 flex items-center gap-3">
-            <AppStatusBadge status={statusByApp[app.id]} />
-            {app.version ? (
-              <span className="text-sm text-muted-foreground">
-                v{app.version}
-              </span>
-            ) : null}
-          </div>
-          <div className="mt-4 flex flex-wrap gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={busy}
-              onClick={() => void runControl("start")}
-            >
-              <Play className="size-4" /> Start
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={busy}
-              onClick={() => void runControl("stop")}
-            >
-              <Square className="size-4" /> Stop
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={busy}
-              onClick={() => void runControl("restart")}
-            >
-              <RotateCw className="size-4" /> Restart
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={busy}
-              onClick={() => void runControl("update")}
-            >
-              <ArrowUpCircle className="size-4" /> Update
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setTab("editor")}
-            >
-              <SquarePen className="size-4" /> Edit
-            </Button>
+          <h1 className="truncate text-2xl font-semibold tracking-tight">
+            {app.name}
+          </h1>
+          <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
+            <AppStatusIndicator status={status} />
+            {app.version ? <span>Revision {app.version}</span> : null}
+            {routes.slice(0, 2).map((d) => (
+              <a
+                key={d.domain}
+                href={`${d.ssl ? "https" : "http"}://${d.domain}`}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 hover:text-foreground hover:underline"
+              >
+                {d.domain}
+                <ExternalLink className="size-3" />
+              </a>
+            ))}
           </div>
         </div>
-      </div>
+        <div className="flex flex-wrap gap-2">
+          {canStop
+            ? controlButton("stop", "Stop", Square)
+            : controlButton("start", "Start", Play)}
+          {controlButton("restart", "Restart", RotateCw)}
+          {controlButton(
+            "update",
+            "Update",
+            ArrowUpCircle,
+            "Pull newer images and recreate the containers",
+          )}
+        </div>
+      </header>
 
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList>
-          <TabsTrigger value="logs">Logs</TabsTrigger>
-          <TabsTrigger value="editor">Editor</TabsTrigger>
-          <TabsTrigger value="history">History</TabsTrigger>
-          <TabsTrigger value="settings">Settings</TabsTrigger>
+        <TabsList className="h-auto w-full justify-start gap-6 rounded-none border-b bg-transparent p-0">
+          <TabsTrigger value="logs" className={tabTriggerClass}>
+            Logs
+          </TabsTrigger>
+          <TabsTrigger value="editor" className={tabTriggerClass}>
+            Configuration
+          </TabsTrigger>
+          <TabsTrigger value="history" className={tabTriggerClass}>
+            History
+          </TabsTrigger>
+          <TabsTrigger value="settings" className={tabTriggerClass}>
+            Settings
+          </TabsTrigger>
         </TabsList>
-        <TabsContent value="logs">
+        <TabsContent value="logs" className="mt-6">
           <LogsTab appId={app.id} />
         </TabsContent>
-        <TabsContent value="editor">
+        <TabsContent value="editor" className="mt-0">
           <AppEditorPanel appId={app.id} />
         </TabsContent>
-        <TabsContent value="history">
+        <TabsContent value="history" className="mt-6">
           <HistoryTab appId={app.id} />
         </TabsContent>
-        <TabsContent value="settings">
+        <TabsContent value="settings" className="mt-6">
           <SettingsTab
             appId={app.id}
             name={app.name}
@@ -187,6 +212,13 @@ export default function AppDetailsPage() {
     </div>
   );
 }
+
+const CONTROL_DONE: Record<ControlAction, string> = {
+  start: "App started",
+  stop: "App stopped",
+  restart: "App restarted",
+  update: "App updated",
+};
 
 function LogsTab({ appId }: { appId: string }) {
   const { activeServerId } = useServers();
@@ -268,7 +300,7 @@ function HistoryTab({ appId }: { appId: string }) {
       toast.success("Rolled back and redeployed");
       await load();
     } catch (e) {
-      toast.error("Rollback failed", {
+      toast.error("Roll back failed", {
         description: e instanceof Error ? e.message : undefined,
       });
     } finally {
@@ -293,94 +325,156 @@ function HistoryTab({ appId }: { appId: string }) {
     }
   };
 
-  return (
-    <Card>
-      <CardHeader className="flex-row items-center justify-between space-y-0">
-        <CardTitle>History</CardTitle>
-        <Button size="sm" variant="outline" onClick={() => void load()} disabled={loading}>
-          Refresh
+  if (loading && !data) {
+    return (
+      <div className="flex h-40 items-center justify-center">
+        <Spinner />
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div className="flex h-40 flex-col items-center justify-center gap-3">
+        <p className="text-sm text-destructive">{error}</p>
+        <Button size="sm" variant="outline" onClick={() => void load()}>
+          Try again
         </Button>
-      </CardHeader>
-      <CardContent>
-        {loading ? (
-          <div className="flex h-40 items-center justify-center">
-            <Spinner />
-          </div>
-        ) : error ? (
-          <p className="text-sm text-destructive">{error}</p>
-        ) : !data || data.revisions.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No history yet.</p>
-        ) : (
-          <div className="divide-y">
-            {data.revisions.map((rev) => {
-              const isCurrent = rev.hash === data.current;
-              const isDeployed = data.deployed !== "" && rev.hash === data.deployed;
-              const isUndeployedDraft = isCurrent && data.deployed !== "" && !isDeployed;
-              return (
-                <div key={rev.hash} className="flex items-center gap-3 py-2.5">
-                  <code className="shrink-0 rounded bg-muted px-1.5 py-0.5 font-mono text-xs">
-                    {rev.hash.slice(0, 8)}
-                  </code>
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm">{rev.subject}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {new Date(rev.timestamp * 1000).toLocaleString()}
-                    </div>
+      </div>
+    );
+  }
+  if (!data || data.revisions.length === 0) {
+    return (
+      <p className="py-10 text-center text-sm text-muted-foreground">
+        No history yet. Every save of the configuration shows up here.
+      </p>
+    );
+  }
+
+  return (
+    <div className="max-w-4xl">
+      <div className="mb-4 flex items-center justify-between">
+        <p className="text-sm text-muted-foreground">
+          {data.revisions.length === 1
+            ? "1 revision"
+            : `${data.revisions.length} revisions`}
+          , newest first. Rolling back adds a new revision; nothing is lost.
+        </p>
+        <Button
+          size="icon"
+          variant="ghost"
+          className="size-8 text-muted-foreground"
+          aria-label="Refresh history"
+          title="Refresh history"
+          onClick={() => void load()}
+          disabled={loading}
+        >
+          <RefreshCw className={cn("size-4", loading && "animate-spin")} />
+        </Button>
+      </div>
+      <ol>
+        {data.revisions.map((rev, i) => {
+          const isCurrent = rev.hash === data.current;
+          const isDeployed = data.deployed !== "" && rev.hash === data.deployed;
+          const isUndeployedDraft = isCurrent && data.deployed !== "" && !isDeployed;
+          const isLast = i === data.revisions.length - 1;
+          const when = new Date(rev.timestamp * 1000);
+          return (
+            <li key={rev.hash} className="relative flex gap-4 pb-6 last:pb-0">
+              {/* The rail: a dot per revision joined by a line. */}
+              {!isLast ? (
+                <span
+                  className="absolute top-4 bottom-0 left-[7px] w-px bg-border"
+                  aria-hidden
+                />
+              ) : null}
+              <span
+                className={cn(
+                  "relative mt-1 size-[15px] shrink-0 rounded-full border-2 bg-background",
+                  isDeployed
+                    ? "border-emerald-500 bg-emerald-500 ring-4 ring-emerald-500/15"
+                    : isUndeployedDraft
+                      ? "border-amber-400"
+                      : "border-muted-foreground/40",
+                )}
+                aria-hidden
+              />
+              <div className="flex min-w-0 flex-1 flex-wrap items-start gap-x-4 gap-y-2">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="truncate text-sm font-medium">
+                      {rev.subject}
+                    </span>
+                    {isDeployed ? (
+                      <span className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
+                        Live
+                      </span>
+                    ) : null}
+                    {isUndeployedDraft ? (
+                      <span className="text-xs font-medium text-amber-700 dark:text-amber-400">
+                        Draft, not deployed
+                      </span>
+                    ) : null}
                   </div>
-                  {isDeployed ? (
-                    <Badge className="shrink-0">Deployed</Badge>
-                  ) : null}
-                  {isCurrent ? (
-                    isUndeployedDraft ? (
-                      <>
-                        <Badge variant="outline" className="shrink-0">
-                          Draft
-                        </Badge>
-                        <Button size="sm" onClick={() => void doDeploy()} disabled={busy}>
-                          Deploy
-                        </Button>
-                      </>
-                    ) : (
-                      <Badge variant="secondary" className="shrink-0">
-                        Current
-                      </Badge>
-                    )
-                  ) : (
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <Button size="sm" variant="outline" disabled={busy}>
-                          <History className="size-4" /> Rollback
-                        </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>
-                            Roll back to {rev.hash.slice(0, 8)}?
-                          </AlertDialogTitle>
-                          <AlertDialogDescription>
-                            The app's files and variables are restored to this
-                            revision as a new history entry, and the app is
-                            redeployed. Nothing is lost — you can roll forward
-                            again.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>Cancel</AlertDialogCancel>
-                          <AlertDialogAction onClick={() => void doRollback(rev.hash)}>
-                            Rollback
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
-                  )}
+                  <div className="mt-0.5 flex items-center gap-3 text-xs text-muted-foreground">
+                    <code className="font-mono">{rev.hash.slice(0, 8)}</code>
+                    <time dateTime={when.toISOString()} title={when.toLocaleString()}>
+                      {relativeTime(when)}
+                    </time>
+                  </div>
                 </div>
-              );
-            })}
-          </div>
-        )}
-      </CardContent>
-    </Card>
+                {isUndeployedDraft ? (
+                  <Button size="sm" onClick={() => void doDeploy()} disabled={busy}>
+                    Deploy draft
+                  </Button>
+                ) : !isCurrent ? (
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button size="sm" variant="ghost" disabled={busy}>
+                        <History className="size-4" /> Roll back
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>
+                          Roll back to {rev.hash.slice(0, 8)}?
+                        </AlertDialogTitle>
+                        <AlertDialogDescription>
+                          The app's files and variables are restored to this
+                          revision as a new history entry, and the app is
+                          redeployed. Nothing is lost — you can roll forward
+                          again.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction onClick={() => void doRollback(rev.hash)}>
+                          Roll back
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                ) : null}
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
   );
+}
+
+const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+
+// relativeTime renders "5 minutes ago"-style labels, falling back to the date
+// once a revision is more than a week old.
+function relativeTime(d: Date): string {
+  const secs = Math.round((d.getTime() - Date.now()) / 1000);
+  const abs = Math.abs(secs);
+  if (abs < 60) return rtf.format(secs, "second");
+  if (abs < 3600) return rtf.format(Math.round(secs / 60), "minute");
+  if (abs < 86400) return rtf.format(Math.round(secs / 3600), "hour");
+  if (abs < 7 * 86400) return rtf.format(Math.round(secs / 86400), "day");
+  return d.toLocaleDateString();
 }
 
 function SettingsTab({
@@ -426,40 +520,49 @@ function SettingsTab({
   };
 
   return (
-    <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>Rename</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex items-end gap-2">
-            <div className="grid flex-1 gap-1.5">
-              <Label htmlFor="app-name">Name</Label>
-              <Input
-                id="app-name"
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-              />
-            </div>
-            <Button
-              onClick={() => void save()}
-              disabled={busy || !newName.trim() || newName === name}
-            >
-              Save
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+    <div className="max-w-4xl divide-y rounded-lg border">
+      <div className="grid gap-4 p-5 md:grid-cols-[14rem_minmax(0,1fr)] md:gap-8">
+        <div className="space-y-1">
+          <h2 className="text-sm font-semibold">Name</h2>
+          <p className="text-sm text-muted-foreground">
+            Shown in the sidebar and app list. The app's containers keep running.
+          </p>
+        </div>
+        <form
+          className="flex items-center gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void save();
+          }}
+        >
+          <Input
+            id="app-name"
+            aria-label="App name"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+          />
+          <Button
+            type="submit"
+            disabled={busy || !newName.trim() || newName === name}
+          >
+            Rename
+          </Button>
+        </form>
+      </div>
 
-      <Card className="border-destructive/40">
-        <CardHeader>
-          <CardTitle className="text-destructive">Danger zone</CardTitle>
-        </CardHeader>
-        <CardContent>
+      <div className="grid gap-4 p-5 md:grid-cols-[14rem_minmax(0,1fr)] md:gap-8">
+        <div className="space-y-1">
+          <h2 className="text-sm font-semibold text-destructive">Delete app</h2>
+          <p className="text-sm text-muted-foreground">
+            Stops the containers and removes the deployment and its history.
+            Named Docker volumes are kept.
+          </p>
+        </div>
+        <div>
           <AlertDialog>
             <AlertDialogTrigger asChild>
-              <Button variant="destructive" disabled={busy}>
-                <Trash2 className="size-4" /> Delete app
+              <Button variant="outline" className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive" disabled={busy}>
+                <Trash2 className="size-4" /> Delete {name}
               </Button>
             </AlertDialogTrigger>
             <AlertDialogContent>
@@ -481,8 +584,8 @@ function SettingsTab({
               </AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>
-        </CardContent>
-      </Card>
+        </div>
+      </div>
     </div>
   );
 }

@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import {
   Select,
@@ -13,6 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { EditorSection } from "@/components/editor-section";
 import { apiBaseUrl } from "@/config";
 import {
   localId,
@@ -150,11 +150,11 @@ export function IngressEditor({ state, onChange, appId }: Props) {
     });
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Domains & Routing</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-6">
+    <EditorSection
+      title="Domains & Routing"
+      description="Serve the app on your own domains through the built-in proxy, with optional automatic HTTPS."
+    >
+      <div className="space-y-6">
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <Label className="text-sm font-medium">Domains</Label>
@@ -163,7 +163,7 @@ export function IngressEditor({ state, onChange, appId }: Props) {
             </Button>
           </div>
           {ing.domains.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
+            <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
               Add a domain to route external traffic to this app.
             </p>
           ) : null}
@@ -227,7 +227,7 @@ export function IngressEditor({ state, onChange, appId }: Props) {
             </Button>
           </div>
           {ing.redirects.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
+            <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
               Redirect a domain (or a path on it) to another URL.
             </p>
           ) : null}
@@ -298,7 +298,7 @@ export function IngressEditor({ state, onChange, appId }: Props) {
             </div>
           ))}
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </EditorSection>
   );
 }

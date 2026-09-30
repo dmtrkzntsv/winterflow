@@ -1,9 +1,8 @@
-import { Eye, EyeOff, Plus, Trash2 } from "lucide-react";
+import { Eye, EyeOff, FileText, Lock, LockOpen, Plus, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { PasswordInput } from "@/components/ui/password-input";
@@ -11,6 +10,8 @@ import { CodeEditor } from "@/components/code-editor";
 import { ImageTagPicker } from "@/components/image-tag-picker";
 import { IconPicker } from "@/components/icon-picker";
 import { IngressEditor } from "@/components/ingress-editor";
+import { EditorSection } from "@/components/editor-section";
+import { cn } from "@/lib/utils";
 import { useState } from "react";
 import { useServers } from "@/context/use-servers";
 import {
@@ -113,63 +114,64 @@ export function AppEditor({ state, onChange }: Props) {
     });
   };
 
-  return (
-    <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>Details</CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-2">
-          <div className="flex items-end gap-3 sm:col-span-2">
-            <div className="grid gap-2">
-              <Label>Icon</Label>
-              <IconPicker
-                value={state.config.icon}
-                color={state.config.color}
-                onChange={(icon) => setConfig({ icon })}
-              />
-            </div>
-            <div className="grid flex-1 gap-2">
-              <Label htmlFor="app-name">Name</Label>
-              <Input
-                id="app-name"
-                value={state.config.name}
-                placeholder="my-app"
-                onChange={(e) => setConfig({ name: e.target.value })}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="app-color">Color</Label>
-              <Input
-                id="app-color"
-                type="color"
-                className="h-9 w-16 p-1"
-                value={state.config.color || "#64748b"}
-                onChange={(e) => setConfig({ color: e.target.value })}
-              />
-            </div>
-          </div>
-          <div className="grid gap-2 sm:col-span-2">
-            <Label htmlFor="app-desc">Description</Label>
-            <Input
-              id="app-desc"
-              value={state.config.description || ""}
-              placeholder="Optional"
-              onChange={(e) => setConfig({ description: e.target.value })}
-            />
-          </div>
-        </CardContent>
-      </Card>
+  const source = state.config.source;
+  const setSource = (patch: Partial<NonNullable<typeof source>>) =>
+    setConfig({ source: { ...source!, ...patch } });
 
-      <Card>
-        <CardHeader className="flex-row items-center justify-between space-y-0">
-          <CardTitle>Deploy from Git</CardTitle>
+  return (
+    <div>
+      <EditorSection
+        title="Details"
+        description="How the app appears in the sidebar and app list."
+      >
+        {/* Labels on one row, controls on the next, so the taller icon
+            button centers against the inputs instead of hanging below. */}
+        <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2">
+          <Label>Icon</Label>
+          <Label htmlFor="app-name">Name</Label>
+          <Label htmlFor="app-color">Color</Label>
+          <IconPicker
+            value={state.config.icon}
+            color={state.config.color}
+            onChange={(icon) => setConfig({ icon })}
+          />
+          <Input
+            id="app-name"
+            value={state.config.name}
+            placeholder="my-app"
+            onChange={(e) => setConfig({ name: e.target.value })}
+          />
+          <Input
+            id="app-color"
+            type="color"
+            className="h-9 w-14 cursor-pointer p-1"
+            value={state.config.color || "#64748b"}
+            onChange={(e) => setConfig({ color: e.target.value })}
+          />
+        </div>
+        <div className="grid gap-2">
+          <Label htmlFor="app-desc">Description</Label>
+          <Input
+            id="app-desc"
+            value={state.config.description || ""}
+            placeholder="Optional"
+            onChange={(e) => setConfig({ description: e.target.value })}
+          />
+        </div>
+      </EditorSection>
+
+      <EditorSection
+        title="Deploy from Git"
+        description="Clone a repository and run its compose file. When off, the files below are the whole app."
+        inlineAction
+        action={
           <Switch
-            checked={Boolean(state.config.source)}
+            aria-label="Deploy from Git"
+            checked={Boolean(source)}
             onCheckedChange={(on) =>
               setConfig({
                 source: on
-                  ? state.config.source ?? {
+                  ? source ?? {
                       repo_url: "",
                       branch: "main",
                       compose_path: "",
@@ -180,43 +182,38 @@ export function AppEditor({ state, onChange }: Props) {
               })
             }
           />
-        </CardHeader>
-        {state.config.source ? (
-          <CardContent className="grid gap-4 sm:grid-cols-2">
+        }
+      >
+        {source ? (
+          <div className="grid gap-4 sm:grid-cols-2">
             <div className="grid gap-2 sm:col-span-2">
               <Label htmlFor="src-url">Repository URL</Label>
               <Input
                 id="src-url"
-                value={state.config.source.repo_url}
+                value={source.repo_url}
                 placeholder="https://github.com/org/app"
                 className="font-mono"
-                onChange={(e) =>
-                  setConfig({ source: { ...state.config.source!, repo_url: e.target.value } })
-                }
+                onChange={(e) => setSource({ repo_url: e.target.value })}
               />
             </div>
             <div className="grid gap-2">
               <Label htmlFor="src-branch">Branch</Label>
               <Input
                 id="src-branch"
-                value={state.config.source.branch}
+                value={source.branch}
                 placeholder="main"
                 className="font-mono"
-                onChange={(e) =>
-                  setConfig({ source: { ...state.config.source!, branch: e.target.value } })
-                }
+                onChange={(e) => setSource({ branch: e.target.value })}
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="src-compose">Compose file path (optional)</Label>
+              <Label htmlFor="src-compose">Compose file path</Label>
               <Input
                 id="src-compose"
-                value={state.config.source.compose_path || ""}
-                placeholder="deploy/compose.yml — repo root by default"
+                value={source.compose_path || ""}
+                placeholder="Repository root by default"
                 className="font-mono"
-                onChange={(e) =>
-                  setConfig({ source: { ...state.config.source!, compose_path: e.target.value } })
-                }
+                onChange={(e) => setSource({ compose_path: e.target.value })}
               />
             </div>
             <div className="grid gap-2 sm:col-span-2">
@@ -224,161 +221,169 @@ export function AppEditor({ state, onChange }: Props) {
               <PasswordInput
                 id="src-token"
                 value={state.sourceToken || ""}
-                placeholder={state.config.source.token_set ? "•••••• (stored — leave blank to keep)" : "optional"}
+                placeholder={source.token_set ? "Stored — leave blank to keep" : "Optional"}
                 onChange={(e) => onChange({ ...state, sourceToken: e.target.value })}
               />
             </div>
             <label className="flex items-center gap-2 text-sm sm:col-span-2">
               <Checkbox
-                checked={state.config.source.auto_update}
-                onCheckedChange={(c) =>
-                  setConfig({ source: { ...state.config.source!, auto_update: c === true } })
-                }
+                checked={source.auto_update}
+                onCheckedChange={(c) => setSource({ auto_update: c === true })}
               />
-              Auto-update: poll the repository and redeploy on new commits
+              Redeploy automatically when the branch gets new commits
             </label>
             <p className="text-xs text-muted-foreground sm:col-span-2">
-              If the repository has no compose file, add a root <code>compose.yml</code> below —
-              the cloned repo is available at <code>./source</code>.
+              No compose file in the repository? Add a root <code>compose.yml</code> under
+              Files — the clone is available at <code>./source</code>.
             </p>
-          </CardContent>
+          </div>
         ) : null}
-      </Card>
+      </EditorSection>
 
-      <Card>
-        <CardHeader className="flex-row items-center justify-between space-y-0">
-          <CardTitle>Files</CardTitle>
+      <EditorSection
+        title="Files"
+        description={
+          <>
+            Written into the app directory. Mark a file secret to encrypt it for
+            this server only.
+          </>
+        }
+        action={
           <Button size="sm" variant="outline" onClick={addFile}>
             <Plus className="size-4" /> Add file
           </Button>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {state.config.files.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              Add at least a <code>compose.yml</code>.
-            </p>
-          ) : null}
-          {state.config.files.map((f) => (
-            <div key={f.id} className="rounded-md border p-3">
-              <div className="mb-2 flex items-center gap-2">
-                <Input
-                  value={f.filename}
-                  placeholder="compose.yml"
-                  className="font-mono"
-                  onChange={(e) =>
-                    updateFileMeta(f.id, { filename: e.target.value })
-                  }
-                />
-                <label className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-                  <Checkbox
-                    checked={f.is_encrypted}
-                    onCheckedChange={(c) =>
-                      updateFileMeta(f.id, { is_encrypted: c === true })
-                    }
-                  />
-                  Secret
-                </label>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="size-8 shrink-0"
-                  onClick={() => removeFile(f.id)}
-                >
-                  <Trash2 className="size-4" />
-                </Button>
-              </div>
-              <CodeEditor
-                value={state.files[f.id] ?? ""}
-                onChange={(content) => updateFileContent(f.id, content)}
-                filename={f.filename}
-                placeholder="file contents (use ${VAR} for variables)"
+        }
+      >
+        {state.config.files.length === 0 ? (
+          <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+            Add at least a <code>compose.yml</code>.
+          </p>
+        ) : null}
+        {state.config.files.map((f) => (
+          <div key={f.id} className="overflow-hidden rounded-md border">
+            <div className="flex items-center gap-1 border-b bg-muted/40 py-1 pr-1 pl-1">
+              <FileText className="ml-2 size-4 shrink-0 text-muted-foreground" />
+              <Input
+                aria-label="File name"
+                value={f.filename}
+                placeholder="compose.yml"
+                className="h-8 border-transparent bg-transparent font-mono shadow-none focus-visible:border-input focus-visible:bg-background"
+                onChange={(e) => updateFileMeta(f.id, { filename: e.target.value })}
               />
-              {isComposeFilename(f.filename) ? (
-                <ImageChips
-                  content={state.files[f.id] ?? ""}
-                  onReplace={(oldRef, newRef) =>
-                    updateFileContent(
-                      f.id,
-                      (state.files[f.id] ?? "").split(oldRef).join(newRef),
-                    )
-                  }
-                />
-              ) : null}
+              <SecretToggle
+                on={f.is_encrypted}
+                onChange={(on) => updateFileMeta(f.id, { is_encrypted: on })}
+              />
+              <Button
+                size="icon"
+                variant="ghost"
+                className="size-8 shrink-0 text-muted-foreground hover:text-destructive"
+                aria-label={`Remove ${f.filename || "file"}`}
+                onClick={() => removeFile(f.id)}
+              >
+                <Trash2 className="size-4" />
+              </Button>
             </div>
-          ))}
-        </CardContent>
-      </Card>
+            <CodeEditor
+              value={state.files[f.id] ?? ""}
+              onChange={(content) => updateFileContent(f.id, content)}
+              filename={f.filename}
+              placeholder="file contents (use ${VAR} for variables)"
+              className="rounded-none border-0"
+            />
+            {isComposeFilename(f.filename) ? (
+              <ImageChips
+                content={state.files[f.id] ?? ""}
+                onReplace={(oldRef, newRef) =>
+                  updateFileContent(
+                    f.id,
+                    (state.files[f.id] ?? "").split(oldRef).join(newRef),
+                  )
+                }
+              />
+            ) : null}
+          </div>
+        ))}
+      </EditorSection>
 
-      <Card>
-        <CardHeader className="flex-row items-center justify-between space-y-0">
-          <CardTitle>Variables</CardTitle>
+      <EditorSection
+        title="Variables"
+        description={
+          <>
+            Substituted into files as <code>{"${NAME}"}</code>. Secret values
+            are encrypted in your browser.
+          </>
+        }
+        action={
           <Button size="sm" variant="outline" onClick={addVar}>
             <Plus className="size-4" /> Add variable
           </Button>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {state.config.variables.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              Variables are substituted into files as <code>{"${NAME}"}</code>.
-            </p>
-          ) : null}
-          {state.config.variables.map((v) => {
-            const isRevealed = revealed[v.id] || !v.is_encrypted;
-            return (
-              <div key={v.id} className="flex items-center gap-2">
-                <Input
-                  value={v.name}
-                  placeholder="VAR_NAME"
-                  className="font-mono sm:max-w-56"
-                  onChange={(e) => updateVarMeta(v.id, { name: e.target.value })}
-                />
-                <Input
-                  value={state.variables[v.id] ?? ""}
-                  type={isRevealed ? "text" : "password"}
-                  placeholder="value"
-                  onChange={(e) => updateVarValue(v.id, e.target.value)}
-                />
-                {v.is_encrypted ? (
+        }
+      >
+        {state.config.variables.length === 0 ? (
+          <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+            No variables yet.
+          </p>
+        ) : (
+          <div className="divide-y rounded-md border">
+            {state.config.variables.map((v) => {
+              const isRevealed = revealed[v.id] || !v.is_encrypted;
+              return (
+                <div key={v.id} className="flex items-center gap-1 p-1">
+                  <Input
+                    aria-label="Variable name"
+                    value={v.name}
+                    placeholder="VAR_NAME"
+                    className="h-8 w-32 shrink-0 border-transparent font-mono shadow-none focus-visible:border-input sm:w-56"
+                    onChange={(e) => updateVarMeta(v.id, { name: e.target.value })}
+                  />
+                  <Input
+                    aria-label={`Value of ${v.name || "variable"}`}
+                    value={state.variables[v.id] ?? ""}
+                    type={isRevealed ? "text" : "password"}
+                    placeholder="value"
+                    className="h-8 border-transparent font-mono shadow-none focus-visible:border-input"
+                    onChange={(e) => updateVarValue(v.id, e.target.value)}
+                  />
+                  {v.is_encrypted ? (
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="size-8 shrink-0 text-muted-foreground"
+                      aria-label={isRevealed ? "Hide value" : "Show value"}
+                      onClick={() =>
+                        setRevealed((r) => ({ ...r, [v.id]: !r[v.id] }))
+                      }
+                    >
+                      {isRevealed ? (
+                        <EyeOff className="size-4" />
+                      ) : (
+                        <Eye className="size-4" />
+                      )}
+                    </Button>
+                  ) : null}
+                  <SecretToggle
+                    on={v.is_encrypted}
+                    onChange={(on) => updateVarMeta(v.id, { is_encrypted: on })}
+                  />
                   <Button
                     size="icon"
                     variant="ghost"
-                    className="size-8 shrink-0"
-                    onClick={() =>
-                      setRevealed((r) => ({ ...r, [v.id]: !r[v.id] }))
-                    }
+                    className="size-8 shrink-0 text-muted-foreground hover:text-destructive"
+                    aria-label={`Remove ${v.name || "variable"}`}
+                    onClick={() => removeVar(v.id)}
                   >
-                    {isRevealed ? (
-                      <EyeOff className="size-4" />
-                    ) : (
-                      <Eye className="size-4" />
-                    )}
+                    <Trash2 className="size-4" />
                   </Button>
-                ) : null}
-                <label className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-                  <Checkbox
-                    checked={v.is_encrypted}
-                    onCheckedChange={(c) =>
-                      updateVarMeta(v.id, { is_encrypted: c === true })
-                    }
-                  />
-                  Secret
-                </label>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="size-8 shrink-0"
-                  onClick={() => removeVar(v.id)}
-                >
-                  <Trash2 className="size-4" />
-                </Button>
-              </div>
-            );
-          })}
-        </CardContent>
-      </Card>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </EditorSection>
 
       {/* activeServer is null while get-servers is in flight; render neither
-          card until it resolves so supported servers don't flash the
+          section until it resolves so supported servers don't flash the
           unsupported fallback. */}
       {serversLoading ? null : activeServer?.features?.ingress ? (
         <IngressEditor
@@ -387,21 +392,41 @@ export function AppEditor({ state, onChange }: Props) {
           appId={state.config.id || undefined}
         />
       ) : (
-        <Card>
-          <CardHeader>
-            <CardTitle>Domains & Routing</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground">
-              Ingress isn&apos;t available on this server, so domains
-              can&apos;t be configured. Make sure the agent is up to date and
-              its built-in proxy can bind ports 80/443 (see the agent log for
-              details).
-            </p>
-          </CardContent>
-        </Card>
+        <EditorSection
+          title="Domains & Routing"
+          description="Ingress isn't enabled on this server, so domains can't be configured here. Enable the built-in proxy (it needs ports 80/443) or route traffic with your own proxy or tunnel."
+        />
       )}
     </div>
+  );
+}
+
+// SecretToggle marks a file or variable as secret (encrypted end to end).
+function SecretToggle({
+  on,
+  onChange,
+}: {
+  on: boolean;
+  onChange: (on: boolean) => void;
+}) {
+  return (
+    <Button
+      type="button"
+      size="sm"
+      variant="ghost"
+      aria-pressed={on}
+      title={on ? "Secret: encrypted for this server" : "Mark as secret"}
+      className={cn(
+        "h-8 shrink-0 gap-1.5 px-2 text-xs",
+        on
+          ? "bg-amber-500/10 text-amber-700 hover:bg-amber-500/15 hover:text-amber-800 dark:text-amber-400"
+          : "text-muted-foreground",
+      )}
+      onClick={() => onChange(!on)}
+    >
+      {on ? <Lock className="size-3.5" /> : <LockOpen className="size-3.5" />}
+      <span className="sr-only sm:not-sr-only">Secret</span>
+    </Button>
   );
 }
 
@@ -434,8 +459,8 @@ function ImageChips({
   );
   if (refs.length === 0) return null;
   return (
-    <div className="mt-2 flex flex-wrap items-center gap-2">
-      <span className="text-xs text-muted-foreground">Images:</span>
+    <div className="flex flex-wrap items-center gap-2 border-t bg-muted/20 px-3 py-2">
+      <span className="text-xs text-muted-foreground">Images</span>
       {refs.map((ref) => (
         <ImageTagPicker
           key={ref}

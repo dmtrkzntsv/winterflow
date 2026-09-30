@@ -10,9 +10,12 @@ import (
 // so a manual run controls the same stack.
 const runRel = ".winterflow/run.sh"
 
-// managedEnvVar is written into the committed .env so a bare `docker compose`
-// run in the app dir resolves to winterflow's project. Reserved: user
-// variables with this name are dropped at save.
+// managedEnvVar is reserved: the project name only ever travels as the
+// --project-name flag (winterflow's invocations and run.sh), never through the
+// committed .env, which belongs to the user and is often loaded into
+// containers via `env_file: .env`. User variables with this name are dropped
+// at save; apps saved by older agents still carry it in .env, so GetApp hides
+// it until their next save rewrites the file.
 const managedEnvVar = "COMPOSE_PROJECT_NAME"
 
 // runHelperScript renders the helper for a project. composeFile is "" when

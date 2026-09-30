@@ -10,14 +10,15 @@ import (
 	"winterflow/internal/domain/command"
 )
 
-func TestWriteAppStoreEnvProjectName(t *testing.T) {
+func TestWriteAppStoreEnvOmitsProjectName(t *testing.T) {
 	r, pub := newSecretRepo(t)
 	dir := filepath.Join(r.cfg.GetAppsDataDir(), "app-1")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
-	// A user variable colliding with the managed name must not win.
+	// The project name travels as --project-name only; a user variable with
+	// the reserved name is dropped rather than written.
 	p := storePayload(pub, t)
 	p.Variables = append(p.Variables, command.ContentItem{Name: "COMPOSE_PROJECT_NAME", Content: []byte("sneaky")})
 	if _, err := r.writeAppStore(dir, p); err != nil {
@@ -25,11 +26,8 @@ func TestWriteAppStoreEnvProjectName(t *testing.T) {
 	}
 
 	env, _ := os.ReadFile(filepath.Join(dir, envRel))
-	if !strings.Contains(string(env), "COMPOSE_PROJECT_NAME=wf-app-1\n") {
-		t.Fatalf(".env missing managed project name: %q", env)
-	}
-	if strings.Contains(string(env), "sneaky") {
-		t.Fatalf("user-supplied COMPOSE_PROJECT_NAME overrode the managed one: %q", env)
+	if strings.Contains(string(env), "COMPOSE_PROJECT_NAME") {
+		t.Fatalf(".env must not carry COMPOSE_PROJECT_NAME: %q", env)
 	}
 	// The manual-run helper is derived state, not history.
 	gi, _ := os.ReadFile(filepath.Join(dir, gitignoreRel))
@@ -47,7 +45,7 @@ func TestGetAppHidesManagedProjectName(t *testing.T) {
 	if _, err := r.writeAppStore(dir, storePayload(pub, t)); err != nil {
 		t.Fatal(err)
 	}
-	// Simulate the post-save .env regardless of what writeAppStore does today.
+	// Simulate a .env written by an older agent that still managed the name.
 	env := "COMPOSE_PROJECT_NAME=wf-app-1\nPORT=8080\n"
 	if err := os.WriteFile(filepath.Join(dir, envRel), []byte(env), 0o644); err != nil {
 		t.Fatal(err)

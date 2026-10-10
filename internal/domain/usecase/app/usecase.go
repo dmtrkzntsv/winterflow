@@ -94,12 +94,12 @@ func (uc *UseCase) ControlApp(ctx context.Context, userID, serverID, appID strin
 
 // DeleteApp dispatches an app.delete to the agent and, on success, removes the
 // app from the DB cache.
-func (uc *UseCase) DeleteApp(ctx context.Context, userID, serverID, appID string) (string, error) {
+func (uc *UseCase) DeleteApp(ctx context.Context, userID, serverID, appID string, deleteVolumes bool) (string, error) {
 	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
 		AgentID: serverID,
 		UserID:  userID,
 		Type:    command.TypeAppDelete,
-		Payload: command.DeleteAppRequest{AppID: appID},
+		Payload: command.DeleteAppRequest{AppID: appID, DeleteVolumes: deleteVolumes},
 		OnResult: func(res port.CommandResult) {
 			if !res.Success {
 				return

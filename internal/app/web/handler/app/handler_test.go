@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-pkgz/auth/v2/token"
 
+	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/port"
 	"winterflow/internal/domain/service/status"
@@ -158,6 +159,28 @@ func TestAgentBoundHandlersReturn202WithRequestID(t *testing.T) {
 			}
 			if fd.last.UserID != "u1" || fd.last.AgentID != "s1" {
 				t.Fatalf("dispatched as %+v", fd.last)
+			}
+		})
+	}
+}
+
+func TestDeleteAppPassesDeleteVolumes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want command.DeleteAppRequest
+	}{
+		{"set", `{"server_id":"s1","app_id":"a1","delete_volumes":true}`, command.DeleteAppRequest{AppID: "a1", DeleteVolumes: true}},
+		{"omitted", `{"server_id":"s1","app_id":"a1"}`, command.DeleteAppRequest{AppID: "a1"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, fd, _ := newHandler(t)
+			r := authed(httptest.NewRequest("POST", "/x", strings.NewReader(tc.body)))
+			if w := do(h.DeleteApp, r); w.Code != http.StatusAccepted {
+				t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
+			}
+			if got, ok := fd.last.Payload.(command.DeleteAppRequest); !ok || got != tc.want {
+				t.Fatalf("payload = %#v, want %#v", fd.last.Payload, tc.want)
 			}
 		})
 	}

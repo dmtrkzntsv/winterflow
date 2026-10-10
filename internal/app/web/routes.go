@@ -92,6 +92,9 @@ func (s *Server) registerRoutes() {
 	s.Router.With(authMW).Get("/api/v1/network/list", dockerAPI.ListNetworks)
 	s.Router.With(authMW, adminMW).Post("/api/v1/network/create", dockerAPI.CreateNetwork)
 	s.Router.With(authMW, adminMW).Post("/api/v1/network/delete", dockerAPI.DeleteNetwork)
+	s.Router.With(authMW).Get("/api/v1/volume/list", dockerAPI.ListVolumes)
+	s.Router.With(authMW, adminMW).Post("/api/v1/volume/create", dockerAPI.CreateVolume)
+	s.Router.With(authMW, adminMW).Post("/api/v1/volume/delete", dockerAPI.DeleteVolume)
 	s.Router.With(authMW, adminMW).Post("/api/v1/agent/update", dockerAPI.UpdateAgent)
 
 	serversAPI := server.NewHandler(&server.Deps{

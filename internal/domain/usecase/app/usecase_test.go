@@ -175,13 +175,27 @@ func TestDeleteAppRemovesDomainRows(t *testing.T) {
 	repo := &fakeDomainRepo{}
 	uc := newTestUseCaseWithDomains(disp, repo)
 
-	_, err := uc.DeleteApp(context.Background(), "u", "s", "app-7")
+	_, err := uc.DeleteApp(context.Background(), "u", "s", "app-7", false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	disp.last.OnResult(port.CommandResult{Success: true})
 	if repo.deleted != "app-7" {
 		t.Fatalf("DeleteForApp = %q, want app-7", repo.deleted)
+	}
+}
+
+func TestDeleteAppPassesDeleteVolumes(t *testing.T) {
+	disp := &captureDispatcher{}
+	repo := &fakeDomainRepo{}
+	uc := newTestUseCaseWithDomains(disp, repo)
+
+	if _, err := uc.DeleteApp(context.Background(), "u", "s", "app-7", true); err != nil {
+		t.Fatal(err)
+	}
+	want := command.DeleteAppRequest{AppID: "app-7", DeleteVolumes: true}
+	if got, ok := disp.last.Payload.(command.DeleteAppRequest); !ok || got != want {
+		t.Fatalf("payload = %#v, want %#v", disp.last.Payload, want)
 	}
 }
 

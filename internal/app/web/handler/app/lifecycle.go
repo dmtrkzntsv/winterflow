@@ -57,8 +57,9 @@ func (h *Handler) ControlApp(w http.ResponseWriter, r *http.Request) {
 }
 
 type deleteAppRequest struct {
-	ServerID string `json:"server_id"`
-	AppID    string `json:"app_id"`
+	ServerID      string `json:"server_id"`
+	AppID         string `json:"app_id"`
+	DeleteVolumes bool   `json:"delete_volumes"`
 }
 
 // DeleteApp dispatches an app.delete to the agent. Returns 202 + request_id.
@@ -79,7 +80,7 @@ func (h *Handler) DeleteApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	requestID, err := h.usecase.DeleteApp(r.Context(), userID, req.ServerID, req.AppID)
+	requestID, err := h.usecase.DeleteApp(r.Context(), userID, req.ServerID, req.AppID, req.DeleteVolumes)
 	if err != nil {
 		webutil.Error(w, "failed to delete app", nil)
 		return

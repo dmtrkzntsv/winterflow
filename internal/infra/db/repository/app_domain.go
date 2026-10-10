@@ -51,7 +51,7 @@ func rowsFor(appID, serverID string, ing *model.Ingress) []models.AppDomain {
 	return rows
 }
 
-func (r *DbAppDomainRepository) FindClaims(ctx context.Context, domains []string, excludeAppID string) ([]model.DomainClaim, error) {
+func (r *DbAppDomainRepository) FindClaims(ctx context.Context, serverID string, domains []string, excludeAppID string) ([]model.DomainClaim, error) {
 	if len(domains) == 0 {
 		return nil, nil
 	}
@@ -60,6 +60,7 @@ func (r *DbAppDomainRepository) FindClaims(ctx context.Context, domains []string
 		Model(&rows).
 		Relation("App").
 		Relation("Server").
+		Where("app_domain.server_id = ?", serverID).
 		Where("app_domain.domain IN (?)", bun.In(domains))
 	if excludeAppID != "" {
 		q = q.Where("app_domain.app_id != ?", excludeAppID)
@@ -105,7 +106,7 @@ func (r *DbAppDomainRepository) DeleteForApp(ctx context.Context, appID string) 
 }
 
 // ReplaceForServer rebuilds the whole server's index from the agent's
-// reported apps (apps.list reconcile). The `domain` column is a PK, so two
+// reported apps (apps.list reconcile). (server_id, domain) is the PK, so two
 // apps claiming the same domain would collide on INSERT and roll back the
 // whole reconcile, leaving the table stale forever with no way to self-heal.
 // The agent can legitimately reach that state for a moment (BuildConfig in

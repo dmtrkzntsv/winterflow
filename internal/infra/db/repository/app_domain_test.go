@@ -46,7 +46,7 @@ func TestReplaceAndFindClaims(t *testing.T) {
 	}
 
 	// Another app asking for a held domain conflicts, with names attached.
-	claims, err := repo.FindClaims(ctx, []string{"blog.example.com", "free.example.com"}, "app-2")
+	claims, err := repo.FindClaims(ctx, "srv-1", []string{"blog.example.com", "free.example.com"}, "app-2")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func TestReplaceAndFindClaims(t *testing.T) {
 	}
 
 	// The owner re-saving is not a conflict.
-	claims, _ = repo.FindClaims(ctx, []string{"blog.example.com"}, "app-1")
+	claims, _ = repo.FindClaims(ctx, "srv-1", []string{"blog.example.com"}, "app-1")
 	if len(claims) != 0 {
 		t.Fatalf("own claims reported as conflicts: %+v", claims)
 	}
@@ -64,7 +64,7 @@ func TestReplaceAndFindClaims(t *testing.T) {
 	if err := repo.ReplaceForApp(ctx, "app-1", "srv-1", ingressOf(model.IngressDomain{Domain: "blog.example.com", UpstreamPort: 8088, SSL: true})); err != nil {
 		t.Fatal(err)
 	}
-	claims, _ = repo.FindClaims(ctx, []string{"www.example.com"}, "app-2")
+	claims, _ = repo.FindClaims(ctx, "srv-1", []string{"www.example.com"}, "app-2")
 	if len(claims) != 0 {
 		t.Fatalf("stale row survived replace: %+v", claims)
 	}
@@ -151,5 +151,37 @@ func TestReplaceForServerDedupsDuplicateDomain(t *testing.T) {
 	}
 	if len(list["app-a"]) != 1 || list["app-a"][0].Domain != "dup.example.com" {
 		t.Fatalf("sorted-first app did not keep the domain: %+v", list)
+	}
+}
+
+// TestHostnamesAreUniquePerServer: two servers may index the same hostname
+// (DNS round robin); claims are looked up on one server only.
+func TestHostnamesAreUniquePerServer(t *testing.T) {
+	repo, apps := newDomainRepo(t)
+	ctx := context.Background()
+	seedOrgWithServer(t, repo.db, "org-2", "srv-2")
+	seedApp(t, apps, "app-1", "One")
+	if err := apps.SaveApp(ctx, model.App{ID: "app-2", ServerID: "srv-2", Name: "Two", Icon: "i", Color: "#000000"}); err != nil {
+		t.Fatal(err)
+	}
+	shared := ingressOf(model.IngressDomain{Domain: "shop.example.com", UpstreamPort: 80})
+	if err := repo.ReplaceForApp(ctx, "app-1", "srv-1", shared); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.ReplaceForApp(ctx, "app-2", "srv-2", shared); err != nil {
+		t.Fatalf("second server could not index the same hostname: %v", err)
+	}
+	for server, owner := range map[string]string{"srv-1": "One", "srv-2": "Two"} {
+		claims, err := repo.FindClaims(ctx, server, []string{"shop.example.com"}, "app-new")
+		if err != nil || len(claims) != 1 || claims[0].AppName != owner || claims[0].ServerID != server {
+			t.Fatalf("%s claims = %+v, %v", server, claims, err)
+		}
+	}
+	// A reconcile of one server leaves the other's row alone.
+	if err := repo.ReplaceForServer(ctx, "srv-1", nil); err != nil {
+		t.Fatal(err)
+	}
+	if claims, _ := repo.FindClaims(ctx, "srv-2", []string{"shop.example.com"}, ""); len(claims) != 1 {
+		t.Fatalf("srv-2 row lost: %+v", claims)
 	}
 }

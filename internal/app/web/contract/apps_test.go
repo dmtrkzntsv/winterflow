@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	happ "winterflow/internal/app/web/handler/app"
+	"winterflow/internal/app/web/handler/server"
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
 	"winterflow/internal/infra/transport/bus"
@@ -57,14 +58,17 @@ func TestAppLifecycle(t *testing.T) {
 
 	t.Run("domain check sees the claim", func(t *testing.T) {
 		var d happ.CheckDomainResponse
-		owner.get(t, "/api/v1/domains/check", url.Values{"domain": {"web.example.test"}}).expect(t, http.StatusOK).data(t, &d)
+		owner.get(t, "/api/v1/domains/check", url.Values{"server_id": {sid}, "domain": {"web.example.test"}}).expect(t, http.StatusOK).data(t, &d)
 		if d.Available || len(d.Claims) != 1 || d.Claims[0].AppName != "web" {
 			t.Fatalf("check = %+v", d)
 		}
-		owner.get(t, "/api/v1/domains/check", url.Values{"domain": {"free.example.test"}}).expect(t, http.StatusOK).data(t, &d)
+		owner.get(t, "/api/v1/domains/check", url.Values{"server_id": {sid}, "domain": {"free.example.test"}}).expect(t, http.StatusOK).data(t, &d)
 		if !d.Available {
 			t.Fatalf("free domain = %+v", d)
 		}
+	})
+	t.Run("the check rejects a malformed hostname", func(t *testing.T) {
+		owner.get(t, "/api/v1/domains/check", url.Values{"server_id": {sid}, "domain": {"not a domain"}}).expect(t, http.StatusBadRequest)
 	})
 	t.Run("a second app cannot take the domain", func(t *testing.T) {
 		owner.do(t, call{Method: http.MethodPost, Path: "/api/v1/app/save-app", Body: happ.SaveAppRequest{
@@ -132,7 +136,7 @@ func TestAppLifecycle(t *testing.T) {
 			t.Fatalf("after delete: %+v", apps)
 		}
 		var d happ.CheckDomainResponse
-		owner.get(t, "/api/v1/domains/check", url.Values{"domain": {"web.example.test"}}).expect(t, http.StatusOK).data(t, &d)
+		owner.get(t, "/api/v1/domains/check", url.Values{"server_id": {sid}, "domain": {"web.example.test"}}).expect(t, http.StatusOK).data(t, &d)
 		if !d.Available {
 			t.Fatalf("domain still claimed: %+v", d)
 		}
@@ -165,4 +169,38 @@ func TestAppAgentErrors(t *testing.T) {
 	if apps := listApps(t, owner, sid); len(apps) != 1 || apps[0].Name != "web" {
 		t.Fatalf("failed commands changed the DB: %+v", apps)
 	}
+}
+
+// registerServer claims one more pending server into c's org and returns
+// its id.
+func (c *client) registerServer(t *testing.T) string {
+	t.Helper()
+	var reg server.RegisterServerResponse
+	c.post(t, "/api/v1/server/register", server.RegisterServerRequest{Code: c.e.seedPendingServer(t)}).
+		expect(t, http.StatusOK).data(t, &reg)
+	return reg.Server.ID
+}
+
+// TestHostnameUniquePerServer: apps on different servers may serve the same
+// hostname (DNS round robin); on one server it stays exclusive.
+func TestHostnameUniquePerServer(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	owner := e.claim(t)
+	first := owner.serverID(t)
+	second := owner.registerServer(t)
+	shop := json.RawMessage(`{"ingress":{"domains":[{"domain":"shop.example.test","upstream_port":8080}]}}`)
+
+	saveApp(t, owner, first, "shop-a", shop)
+	saveApp(t, owner, second, "shop-b", shop)
+
+	var d happ.CheckDomainResponse
+	owner.get(t, "/api/v1/domains/check", url.Values{"server_id": {second}, "domain": {"shop.example.test"}}).
+		expect(t, http.StatusOK).data(t, &d)
+	if d.Available || len(d.Claims) != 1 || d.Claims[0].AppName != "shop-b" || d.Claims[0].ServerID != second {
+		t.Fatalf("claims on the second server = %+v", d)
+	}
+	owner.do(t, call{Method: http.MethodPost, Path: "/api/v1/app/save-app", Body: happ.SaveAppRequest{
+		ServerID: first, App: model.App{Name: "shop-c", Icon: "box", Color: "#112233"}, Config: shop,
+	}}).expect(t, http.StatusBadRequest)
 }

@@ -160,12 +160,12 @@ type App struct {
 type AppDomain struct {
 	bun.BaseModel `bun:"table:app_domains"`
 
-	// Domain is the PK: lowercased FQDN. The PK is the global uniqueness
-	// constraint that makes cross-app/cross-server conflicts impossible to
-	// persist, not just impolite.
+	// (ServerID, Domain) is the PK: a hostname is unique per server, so two
+	// apps on one agent can never both persist it, while apps on different
+	// servers may share it (DNS round robin).
 	Domain       string         `bun:"domain,pk" json:"domain"`
 	AppID        string         `bun:"app_id,notnull,type:char(36)" json:"app_id"`
-	ServerID     string         `bun:"server_id,notnull,type:char(36)" json:"server_id"`
+	ServerID     string         `bun:"server_id,pk,type:char(36)" json:"server_id"`
 	Kind         string         `bun:"kind,notnull" json:"kind"` // "route" | "redirect"
 	SSL          bool           `bun:"ssl,notnull" json:"ssl"`
 	UpstreamPort int            `bun:"upstream_port,notnull,default:0" json:"upstream_port"` // routes only

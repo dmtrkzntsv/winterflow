@@ -29,8 +29,9 @@ type ImageTagsQuery struct {
 
 // CheckDomainQuery is the query of GET /api/v1/domains/check.
 type CheckDomainQuery struct {
-	Domain string `query:"domain" description:"Hostname to check."`
-	AppID  string `query:"app_id" description:"App being edited; its own claims don't count."`
+	ServerID string `query:"server_id" required:"true" description:"Server the hostname would be served on."`
+	Domain   string `query:"domain" description:"Hostname to check."`
+	AppID    string `query:"app_id" description:"App being edited; its own claims don't count."`
 }
 
 // Routes is the app handler's slice of the route table.
@@ -104,8 +105,8 @@ func (h *Handler) Routes(api.Guards) []api.Route {
 		},
 		{
 			Method: http.MethodGet, Path: "/api/v1/domains/check", Handler: h.CheckDomain, Auth: api.User,
-			Summary: "Check whether a hostname is free", Tag: "apps",
-			Query: CheckDomainQuery{}, Response: CheckDomainResponse{}, Errors: []int{http.StatusBadRequest},
+			Summary: "Check whether a hostname is free on a server", Tag: "apps",
+			Query: CheckDomainQuery{}, Response: CheckDomainResponse{}, Errors: server,
 		},
 	}
 }

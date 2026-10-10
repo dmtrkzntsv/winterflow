@@ -90,11 +90,13 @@ type fakeDomainRepo struct {
 		serverID string
 		ing      *model.Ingress
 	}
-	deleted string
-	synced  string
+	deleted     string
+	synced      string
+	claimServer string // serverID of the last FindClaims
 }
 
-func (f *fakeDomainRepo) FindClaims(_ context.Context, _ []string, _ string) ([]model.DomainClaim, error) {
+func (f *fakeDomainRepo) FindClaims(_ context.Context, serverID string, _ []string, _ string) ([]model.DomainClaim, error) {
+	f.claimServer = serverID
 	return f.claims, nil
 }
 func (f *fakeDomainRepo) ReplaceForApp(_ context.Context, appID, serverID string, ing *model.Ingress) error {
@@ -146,6 +148,9 @@ func TestSaveAppRejectsTakenDomain(t *testing.T) {
 	_, err := uc.SaveApp(context.Background(), "u", "s", model.App{Name: "demo"}, command.AppPayload{Config: []byte(ingressConfig)}, false)
 	if !errors.Is(err, model.ErrDomainTaken) {
 		t.Fatalf("err = %v, want ErrDomainTaken", err)
+	}
+	if repo.claimServer != "s" {
+		t.Fatalf("claims looked up on server %q, want the target server s", repo.claimServer)
 	}
 	for _, part := range []string{"blog.example.com", "Ghost", "hetzner-1"} {
 		if !strings.Contains(err.Error(), part) {
@@ -230,12 +235,12 @@ func TestCheckDomain(t *testing.T) {
 	repo := &fakeDomainRepo{claims: []model.DomainClaim{{Domain: "x.example.com", AppName: "Other"}}}
 	uc := newTestUseCaseWithDomains(&captureDispatcher{}, repo)
 
-	claims, err := uc.CheckDomain(context.Background(), "x.example.com", "app-1")
-	if err != nil || len(claims) != 1 {
-		t.Fatalf("CheckDomain = %v, %v", claims, err)
+	claims, err := uc.CheckDomain(context.Background(), "srv-1", "x.example.com", "app-1")
+	if err != nil || len(claims) != 1 || repo.claimServer != "srv-1" {
+		t.Fatalf("CheckDomain = %v, %v (server %q)", claims, err, repo.claimServer)
 	}
 
-	if _, err := uc.CheckDomain(context.Background(), "NOT A HOST", ""); !errors.Is(err, model.ErrIngressInvalid) {
+	if _, err := uc.CheckDomain(context.Background(), "srv-1", "NOT A HOST", ""); !errors.Is(err, model.ErrIngressInvalid) {
 		t.Fatalf("err = %v, want ErrIngressInvalid", err)
 	}
 }

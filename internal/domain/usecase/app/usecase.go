@@ -226,9 +226,10 @@ func (uc *UseCase) GetLogs(ctx context.Context, userID, serverID, appID string, 
 	})
 }
 
-// CheckDomain reports which app (if any) already claims a hostname — the
-// live-typing availability check behind GET /api/v1/domains/check.
-func (uc *UseCase) CheckDomain(ctx context.Context, domain, excludeAppID string) ([]model.DomainClaim, error) {
+// CheckDomain reports which app (if any) on serverID already claims a
+// hostname — the live-typing availability check behind GET
+// /api/v1/domains/check. A hostname is unique per server only.
+func (uc *UseCase) CheckDomain(ctx context.Context, serverID, domain, excludeAppID string) ([]model.DomainClaim, error) {
 	probe := model.Ingress{Domains: []model.IngressDomain{{Domain: domain, UpstreamPort: 1}}}
 	if err := probe.Validate(); err != nil {
 		return nil, fmt.Errorf("%w: %v", model.ErrIngressInvalid, err)
@@ -236,7 +237,7 @@ func (uc *UseCase) CheckDomain(ctx context.Context, domain, excludeAppID string)
 	if uc.domains == nil {
 		return nil, nil
 	}
-	return uc.domains.FindClaims(ctx, []string{domain}, excludeAppID)
+	return uc.domains.FindClaims(ctx, serverID, []string{domain}, excludeAppID)
 }
 
 // SaveApp dispatches an app.save command to the server's agent and returns
@@ -274,7 +275,7 @@ func (uc *UseCase) SaveApp(ctx context.Context, userID, serverID string, app mod
 			return "", fmt.Errorf("%w: %v", model.ErrIngressInvalid, err)
 		}
 		if uc.domains != nil {
-			claims, err := uc.domains.FindClaims(ctx, ing.DomainNames(), app.ID)
+			claims, err := uc.domains.FindClaims(ctx, serverID, ing.DomainNames(), app.ID)
 			if err != nil {
 				uc.log.Error("SaveApp: find domain claims", "error", err, "app_id", app.ID)
 				return "", err

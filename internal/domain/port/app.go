@@ -25,10 +25,11 @@ type AppRepository interface {
 // claims. The repository reconciles app config blobs via ReplaceForApp or
 // ReplaceForServer; external APIs query for domain conflicts via FindClaims.
 type AppDomainRepository interface {
-	// FindClaims returns rows holding any of the given domains, excluding the
-	// app being saved (its own claims are not conflicts). Claims carry app and
-	// server names for the error message.
-	FindClaims(ctx context.Context, domains []string, excludeAppID string) ([]model.DomainClaim, error)
+	// FindClaims returns rows on serverID holding any of the given domains,
+	// excluding the app being saved (its own claims are not conflicts). A
+	// hostname is unique per server, so other servers' claims never count.
+	// Claims carry app and server names for the error message.
+	FindClaims(ctx context.Context, serverID string, domains []string, excludeAppID string) ([]model.DomainClaim, error)
 	// ReplaceForApp makes the index mirror the app's ingress: delete the
 	// app's rows, insert the new set, one transaction. nil ingress = no-op
 	// (old clients); empty ingress = rows removed.

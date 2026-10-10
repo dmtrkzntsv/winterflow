@@ -820,6 +820,13 @@ paths:
     get:
       operationId: domainsCheck
       parameters:
+      - description: Server the hostname would be served on.
+        in: query
+        name: server_id
+        required: true
+        schema:
+          description: Server the hostname would be served on.
+          type: string
       - description: Hostname to check.
         in: query
         name: domain
@@ -865,10 +872,16 @@ paths:
               schema:
                 type: string
           description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
       security:
       - bearer: []
       - cookie: []
-      summary: Check whether a hostname is free
+      summary: Check whether a hostname is free on a server
       tags:
       - apps
   /api/v1/image/get-tags:

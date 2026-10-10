@@ -32,9 +32,10 @@ lint:
 	pnpm --dir web run lint
 
 # Go tests exactly as CI runs them; coverage.out feeds `make cover` and
-# `make diffcov`.
+# `make diffcov`. -coverpkg=./... lets the API contract suite
+# (internal/app/web/contract, test-only) count toward the code it drives.
 test:
-	$(GO) test -race -covermode=atomic -coverprofile=coverage.out ./...
+	$(GO) test -race -covermode=atomic -coverpkg=./... -coverprofile=coverage.out ./...
 
 # The API contract suite against a throwaway postgres:16 container (Docker).
 # Plain `go test ./...` stays on SQLite. Extra go test flags:

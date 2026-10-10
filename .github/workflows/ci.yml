@@ -41,8 +41,10 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      # -coverpkg=./... so the API contract suite (a test-only package) counts
+      # toward the handlers, usecases and repositories it drives.
       - name: go test
-        run: go test -race -covermode=atomic -coverprofile=coverage.out ./...
+        run: go test -race -covermode=atomic -coverpkg=./... -coverprofile=coverage.out ./...
 
       - uses: actions/upload-artifact@v4
         with:
@@ -92,8 +94,51 @@ jobs:
       - name: install.sh dry-run suite
         run: bash scripts/install_test.sh
 
+  # The API contract suite against both databases. Each leg must match
+  # testdata/parity.golden.json. The postgres leg's profile is merged into
+  # the coverage gates: Postgres-only branches run nowhere else.
+  contract:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        db: [sqlite, postgres]
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -h 127.0.0.1"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      # Empty selects SQLite (one temp file per test).
+      WF_TEST_DATABASE_URL: ${{ matrix.db == 'postgres' && 'postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable' || '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Contract suite (${{ matrix.db }})
+        run: >-
+          go test -race -count=1 -covermode=atomic -coverpkg=./...
+          -coverprofile=contract-${{ matrix.db }}.out ./internal/app/web/contract/
+
+      - uses: actions/upload-artifact@v4
+        if: matrix.db == 'postgres'
+        with:
+          name: contract-postgres-coverage
+          path: contract-postgres.out
+          if-no-files-found: error
+
   coverage:
-    needs: [go, web]
+    needs: [go, web, contract]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -114,6 +159,14 @@ jobs:
         with:
           name: web-coverage
           path: web/coverage
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: contract-postgres-coverage
+
+      # Duplicate blocks are fine: diffcov keeps the highest count per block.
+      - name: Merge Postgres contract coverage
+        run: tail -n +2 contract-postgres.out >> coverage.out
 
       - name: Diff coverage (changed lines >= 80%)
         if: github.event_name == 'pull_request'

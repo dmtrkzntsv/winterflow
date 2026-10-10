@@ -13,8 +13,10 @@ import (
 	"winterflow/internal/domain/model"
 )
 
-// resultTimeout bounds awaitResult (spec: 5 s).
-const resultTimeout = 5 * time.Second
+// resultTimeout bounds awaitResult and eventually. It only elapses on a
+// failure; it is generous because CI runs the whole repo in parallel under
+// -race and -coverpkg on a 4-core runner (a cold run once exceeded 5 s).
+const resultTimeout = 20 * time.Second
 
 // event is one decoded SSE notification plus its raw JSON.
 type event struct {

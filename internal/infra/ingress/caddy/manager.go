@@ -61,6 +61,7 @@ func (m *Manager) options() Options {
 		LogLevel:       m.cfg.GetLogLevel(),
 		RateLimitRPS:   m.cfg.GetIngressRateLimitRPS(),
 		RateLimitBurst: m.cfg.GetIngressRateLimitBurst(),
+		TrustedProxies: m.cfg.GetIngressTrustedProxies(),
 	}
 }
 

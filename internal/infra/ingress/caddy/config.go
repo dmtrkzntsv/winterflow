@@ -36,6 +36,10 @@ type Options struct {
 	// host.
 	RateLimitRPS   float64
 	RateLimitBurst int
+	// TrustedProxies (INGRESS_TRUSTED_PROXIES) are the CIDRs whose
+	// CF-Connecting-IP / X-Forwarded-For headers name the client the
+	// throttle keys on. Invalid entries are dropped with a warning.
+	TrustedProxies []string
 }
 
 // --- minimal typed mirror of Caddy's documented JSON config ---------------
@@ -311,11 +315,23 @@ func BuildConfig(apps []AppIngress, regs []domains.Registration, opts Options) (
 	// Predefined throttle: a non-terminal first route on both servers — the
 	// middleware passes allowed requests through to the routes below.
 	if opts.RateLimitRPS > 0 {
-		throttle := route{Handle: []map[string]any{{
+		handler := map[string]any{
 			"handler": "winterflow_rate_limit",
 			"rps":     opts.RateLimitRPS,
 			"burst":   opts.RateLimitBurst,
-		}}}
+		}
+		trusted, bad := ParseTrustedProxies(opts.TrustedProxies)
+		for _, b := range bad {
+			warnings = append(warnings, fmt.Sprintf("INGRESS_TRUSTED_PROXIES: ignoring %q: not an IP or CIDR", b))
+		}
+		if len(trusted) > 0 {
+			cidrs := make([]string, len(trusted))
+			for i, p := range trusted {
+				cidrs[i] = p.String()
+			}
+			handler["trusted_proxies"] = cidrs
+		}
+		throttle := route{Handle: []map[string]any{handler}}
 		httpsRoutes = append([]route{throttle}, httpsRoutes...)
 		httpRoutes = append([]route{throttle}, httpRoutes...)
 	}

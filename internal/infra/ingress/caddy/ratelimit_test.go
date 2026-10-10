@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,6 +24,15 @@ type nextCounter struct{ calls int }
 func (n *nextCounter) ServeHTTP(http.ResponseWriter, *http.Request) error {
 	n.calls++
 	return nil
+}
+
+func netipMust(t *testing.T, s string) netip.Addr {
+	t.Helper()
+	a, err := netip.ParseAddr(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return a
 }
 
 func newTestLimiter(rps float64, burst int) *RateLimit {
@@ -165,6 +177,7 @@ func TestBuildConfigValidatesWithCaddy(t *testing.T) {
 	raw, warnings, err := BuildConfig(apps, regs, Options{
 		RateLimitRPS:   50,
 		RateLimitBurst: 100,
+		TrustedProxies: []string{"172.16.0.0/12", "2400:cb00::/32"},
 		StorageDir:     t.TempDir(),
 	})
 	if err != nil || len(warnings) != 0 {
@@ -234,5 +247,127 @@ func TestBuildConfigIncludesThrottle(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// trustingLimiter is a 1-request limiter that trusts the given proxies.
+func trustingLimiter(t *testing.T, proxies ...string) *RateLimit {
+	t.Helper()
+	rl := newTestLimiter(1, 1)
+	trusted, bad := ParseTrustedProxies(proxies)
+	if len(bad) > 0 {
+		t.Fatalf("bad proxies %v", bad)
+	}
+	rl.trusted = trusted
+	return rl
+}
+
+func keyOf(rl *RateLimit, remote string, headers map[string]string) string {
+	r := httptest.NewRequest("GET", "/", nil)
+	r.RemoteAddr = remote
+	for k, v := range headers {
+		r.Header.Set(k, v)
+	}
+	return rl.clientIP(r)
+}
+
+func TestRateLimitClientIPFromTrustedProxies(t *testing.T) {
+	rl := trustingLimiter(t, "172.16.0.0/12", "10.0.0.1")
+	tunnel := "172.17.0.2:40000" // cloudflared on the docker bridge
+	for _, tt := range []struct {
+		name    string
+		remote  string
+		headers map[string]string
+		want    string
+	}{
+		{"untrusted peer: spoofed headers ignored", "203.0.113.7:1",
+			map[string]string{"CF-Connecting-IP": "198.51.100.1", "X-Forwarded-For": "198.51.100.2"}, "203.0.113.7"},
+		{"trusted peer: CF-Connecting-IP", tunnel,
+			map[string]string{"CF-Connecting-IP": " 198.51.100.1 ", "X-Forwarded-For": "198.51.100.2"}, "198.51.100.1"},
+		{"bare-IP trusted proxy", "10.0.0.1:5", map[string]string{"CF-Connecting-IP": "2001:db8::1"}, "2001:db8::1"},
+		{"IPv4-mapped trusted peer", "[::ffff:172.17.0.2]:1", map[string]string{"CF-Connecting-IP": "198.51.100.1"}, "198.51.100.1"},
+		{"bad CF-Connecting-IP: rightmost untrusted XFF hop", tunnel,
+			map[string]string{"CF-Connecting-IP": "not-an-ip", "X-Forwarded-For": "1.1.1.1, 198.51.100.2, 172.18.0.9"}, "198.51.100.2"},
+		{"malformed rightmost XFF hop: the peer", tunnel, map[string]string{"X-Forwarded-For": "198.51.100.2, garbage"}, "172.17.0.2"},
+		{"XFF of trusted hops only: the peer", tunnel, map[string]string{"X-Forwarded-For": "172.20.0.1"}, "172.17.0.2"},
+		{"no headers: the peer", tunnel, nil, "172.17.0.2"},
+		{"peer without a port", "172.17.0.2", map[string]string{"CF-Connecting-IP": "198.51.100.1"}, "198.51.100.1"},
+	} {
+		if got := keyOf(rl, tt.remote, tt.headers); got != tt.want {
+			t.Errorf("%s: keyed on %q, want %q", tt.name, got, tt.want)
+		}
+	}
+	// Without trusted proxies the headers are never read.
+	if got := keyOf(newTestLimiter(1, 1), tunnel, map[string]string{"CF-Connecting-IP": "198.51.100.1"}); got != "172.17.0.2" {
+		t.Fatalf("no trusted proxies: keyed on %q", got)
+	}
+}
+
+// Behind a trusted tunnel, two visitors get their own buckets; a direct
+// client cannot borrow a fresh bucket by forging the header.
+func TestRateLimitBehindTrustedProxyIsPerClient(t *testing.T) {
+	rl := trustingLimiter(t, "172.16.0.0/12")
+	next := &nextCounter{}
+	send := func(remote, cf string) int {
+		r := httptest.NewRequest("GET", "/", nil)
+		r.RemoteAddr = remote
+		r.Header.Set("CF-Connecting-IP", cf)
+		w := httptest.NewRecorder()
+		if err := rl.ServeHTTP(w, r, next); err != nil {
+			t.Fatal(err)
+		}
+		return w.Code
+	}
+	if send("172.17.0.2:1", "198.51.100.1") != http.StatusOK || send("172.17.0.2:2", "198.51.100.2") != http.StatusOK {
+		t.Fatal("distinct visitors behind the tunnel share a bucket")
+	}
+	if send("172.17.0.2:3", "198.51.100.1") != http.StatusTooManyRequests {
+		t.Fatal("a visitor behind the tunnel escaped its bucket")
+	}
+	if send("203.0.113.7:1", "198.51.100.3") != http.StatusOK || send("203.0.113.7:1", "198.51.100.4") != http.StatusTooManyRequests {
+		t.Fatal("an untrusted client dodged the limit with a forged header")
+	}
+}
+
+func TestParseTrustedProxiesAndProvision(t *testing.T) {
+	valid, bad := ParseTrustedProxies([]string{" 172.17.0.1/16 ", "", "10.0.0.1", "::ffff:192.0.2.1", "2400:cb00::/32", "nope", "10.0.0.0/33"})
+	var got []string
+	for _, p := range valid {
+		got = append(got, p.String())
+	}
+	want := []string{"172.17.0.0/16", "10.0.0.1/32", "192.0.2.1/32", "2400:cb00::/32"}
+	if !reflect.DeepEqual(got, want) || !reflect.DeepEqual(bad, []string{"nope", "10.0.0.0/33"}) {
+		t.Fatalf("valid %v bad %v", got, bad)
+	}
+
+	rl := &RateLimit{RPS: 1, TrustedProxies: []string{"nope"}}
+	if err := rl.Provision(caddy.Context{}); err == nil || !strings.Contains(err.Error(), "nope") {
+		t.Fatalf("Provision with a bad proxy = %v", err)
+	}
+	rl = &RateLimit{RPS: 1, TrustedProxies: []string{"172.16.0.0/12"}}
+	if err := rl.Provision(caddy.Context{}); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rl.Cleanup() }()
+	if len(rl.trusted) != 1 || !rl.isTrusted(netipMust(t, "172.31.255.255")) {
+		t.Fatalf("trusted = %v", rl.trusted)
+	}
+}
+
+func TestBuildConfigPassesTrustedProxies(t *testing.T) {
+	raw, warnings, err := BuildConfig(nil, nil, Options{RateLimitRPS: 50, RateLimitBurst: 100,
+		TrustedProxies: []string{"172.16.0.0/12", "bogus"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], `INGRESS_TRUSTED_PROXIES: ignoring "bogus"`) {
+		t.Fatalf("warnings = %v", warnings)
+	}
+	if !strings.Contains(string(raw), `"trusted_proxies":["172.16.0.0/12"]`) {
+		t.Fatalf("config lacks the trusted proxies: %s", raw)
+	}
+	raw, _, _ = BuildConfig(nil, nil, Options{RateLimitRPS: 50, RateLimitBurst: 100})
+	if strings.Contains(string(raw), "trusted_proxies") {
+		t.Fatal("trusted_proxies emitted without any configured")
 	}
 }

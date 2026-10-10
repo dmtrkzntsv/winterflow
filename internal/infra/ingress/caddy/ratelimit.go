@@ -1,9 +1,12 @@
 package caddy
 
 import (
+	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -27,7 +30,15 @@ type RateLimit struct {
 	RPS float64 `json:"rps,omitempty"`
 	// Burst is the short-burst allowance (defaults to max(1, RPS)).
 	Burst int `json:"burst,omitempty"`
+	// TrustedProxies are the CIDRs (or bare IPs) of proxies in front of the
+	// ingress — a Cloudflare tunnel's docker bridge, Cloudflare's edge.
+	// Only a request whose TCP peer is inside one has its client IP taken
+	// from CF-Connecting-IP / X-Forwarded-For; anyone else's headers are
+	// ignored, so they can't be spoofed to dodge the limit. Empty: always
+	// the TCP peer.
+	TrustedProxies []string `json:"trusted_proxies,omitempty"`
 
+	trusted  []netip.Prefix
 	mu       sync.Mutex
 	visitors map[string]*visitor
 	done     chan struct{}
@@ -58,6 +69,11 @@ func (*RateLimit) CaddyModule() caddy.ModuleInfo {
 // Provision initializes state and starts the idle-bucket janitor, which stops
 // when this config generation is torn down (Cleanup).
 func (rl *RateLimit) Provision(ctx caddy.Context) error {
+	trusted, bad := ParseTrustedProxies(rl.TrustedProxies)
+	if len(bad) > 0 {
+		return fmt.Errorf("trusted_proxies: not an IP or CIDR: %s", strings.Join(bad, ", "))
+	}
+	rl.trusted = trusted
 	rl.visitors = make(map[string]*visitor)
 	rl.done = make(chan struct{})
 	if rl.Burst <= 0 {
@@ -132,11 +148,7 @@ func (rl *RateLimit) ServeHTTP(w http.ResponseWriter, r *http.Request, next cadd
 	if rl.RPS <= 0 {
 		return next.ServeHTTP(w, r)
 	}
-	ip, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		ip = r.RemoteAddr
-	}
-	lim := rl.limiterFor(ip, time.Now())
+	lim := rl.limiterFor(rl.clientIP(r), time.Now())
 	if lim != nil && !lim.Allow() {
 		w.Header().Set("Retry-After", strconv.Itoa(1))
 		w.WriteHeader(http.StatusTooManyRequests)
@@ -144,6 +156,68 @@ func (rl *RateLimit) ServeHTTP(w http.ResponseWriter, r *http.Request, next cadd
 		return nil
 	}
 	return next.ServeHTTP(w, r)
+}
+
+// ParseTrustedProxies parses CIDRs or bare IPs (a host prefix), returning the
+// valid ones and the entries that are neither.
+func ParseTrustedProxies(entries []string) (valid []netip.Prefix, bad []string) {
+	for _, e := range entries {
+		e = strings.TrimSpace(e)
+		if e == "" {
+			continue
+		}
+		if p, err := netip.ParsePrefix(e); err == nil {
+			valid = append(valid, p.Masked())
+			continue
+		}
+		if a, err := netip.ParseAddr(e); err == nil {
+			a = a.Unmap()
+			valid = append(valid, netip.PrefixFrom(a, a.BitLen()))
+			continue
+		}
+		bad = append(bad, e)
+	}
+	return valid, bad
+}
+
+func (rl *RateLimit) isTrusted(a netip.Addr) bool {
+	a = a.Unmap()
+	for _, p := range rl.trusted {
+		if p.Contains(a) {
+			return true
+		}
+	}
+	return false
+}
+
+// clientIP is the address a request is throttled under: the TCP peer, unless
+// that peer is a trusted proxy — then CF-Connecting-IP when it holds a valid
+// IP, else the rightmost X-Forwarded-For entry that is not itself a trusted
+// proxy (entries left of it are client-supplied and could be forged), else
+// the peer. Headers from an untrusted peer are never read.
+func (rl *RateLimit) clientIP(r *http.Request) string {
+	peer, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		peer = r.RemoteAddr
+	}
+	peerAddr, err := netip.ParseAddr(peer)
+	if err != nil || len(rl.trusted) == 0 || !rl.isTrusted(peerAddr) {
+		return peer
+	}
+	if a, err := netip.ParseAddr(strings.TrimSpace(r.Header.Get("CF-Connecting-IP"))); err == nil {
+		return a.Unmap().String()
+	}
+	hops := strings.Split(strings.Join(r.Header.Values("X-Forwarded-For"), ","), ",")
+	for i := len(hops) - 1; i >= 0; i-- {
+		a, err := netip.ParseAddr(strings.TrimSpace(hops[i]))
+		if err != nil {
+			break // a malformed hop: nothing left of it can be trusted
+		}
+		if !rl.isTrusted(a) {
+			return a.Unmap().String()
+		}
+	}
+	return peer
 }
 
 // Interface guards.

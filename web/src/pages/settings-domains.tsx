@@ -147,6 +147,16 @@ function DomainDialog({
     !busy &&
     (!needsPair || (certificate.trim() !== "" && key.trim() !== ""));
 
+  // The PEM material must not outlive the dialog: wipe it on every close
+  // (save, Cancel, Escape, overlay).
+  const changeOpen = (next: boolean) => {
+    if (!next) {
+      setCertificate("");
+      setKey("");
+    }
+    onOpenChange(next);
+  };
+
   const save = async () => {
     setBusy(true);
     try {
@@ -156,7 +166,7 @@ function DomainDialog({
         needsPair ? { certificate: certificate.trim(), key: key.trim() } : undefined,
       );
       toast.success(replace ? "Domain updated" : "Domain registered");
-      onOpenChange(false);
+      changeOpen(false);
       await onSaved();
     } catch (e) {
       toast.error(replace ? "Couldn't update domain" : "Couldn't register domain", {
@@ -168,7 +178,7 @@ function DomainDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={changeOpen}>
       <DialogContent className="sm:max-w-xl">
         <form
           className="grid gap-4"
@@ -178,7 +188,7 @@ function DomainDialog({
           }}
         >
           <DialogHeader>
-            <DialogTitle>{replace ? "Replace certificate" : "Register domain"}</DialogTitle>
+            <DialogTitle>{replace ? "Edit domain" : "Register domain"}</DialogTitle>
             <DialogDescription>
               Apps on this server can only use hostnames under a registered domain.
             </DialogDescription>
@@ -255,11 +265,11 @@ function DomainDialog({
             </>
           ) : null}
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            <Button type="button" variant="outline" onClick={() => changeOpen(false)}>
               Cancel
             </Button>
             <Button type="submit" disabled={!canSave}>
-              {busy ? "Saving…" : replace ? "Replace" : "Register"}
+              {busy ? "Saving…" : replace ? "Save" : "Register"}
             </Button>
           </DialogFooter>
         </form>

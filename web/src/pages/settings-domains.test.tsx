@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -126,12 +126,76 @@ describe("DomainsCard", () => {
     expect(within(dialog).getByRole("radio", { name: "Certificate" })).toBeChecked();
     await user.type(within(dialog).getByLabelText("Certificate (PEM)"), "NEW");
     await user.type(within(dialog).getByLabelText("Private key (PEM)"), "KEY");
-    await user.click(within(dialog).getByRole("button", { name: "Replace" }));
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
 
     expect(docker.createDomain).toHaveBeenCalledWith("*.twillingate.app", "certificate", {
       certificate: "NEW",
       key: "KEY",
     });
+  });
+
+  it("wipes the certificate and key when the dialog closes", async () => {
+    const user = userEvent.setup();
+    const docker = fakeDocker();
+    renderCard(docker);
+    const replaceBtn = { name: "Replace certificate for *.twillingate.app" };
+
+    // Cancel after typing.
+    await user.click(await screen.findByRole("button", replaceBtn));
+    let dialog = await screen.findByRole("dialog");
+    await user.type(within(dialog).getByLabelText("Certificate (PEM)"), "CERT");
+    await user.type(within(dialog).getByLabelText("Private key (PEM)"), "SECRET");
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await user.click(screen.getByRole("button", replaceBtn));
+    dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByLabelText("Certificate (PEM)")).toHaveValue("");
+    expect(within(dialog).getByLabelText("Private key (PEM)")).toHaveValue("");
+
+    // Escape after typing.
+    await user.type(within(dialog).getByLabelText("Private key (PEM)"), "SECRET");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await user.click(screen.getByRole("button", replaceBtn));
+    dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByLabelText("Private key (PEM)")).toHaveValue("");
+
+    // A successful save.
+    await user.type(within(dialog).getByLabelText("Certificate (PEM)"), "NEW");
+    await user.type(within(dialog).getByLabelText("Private key (PEM)"), "KEY");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await user.click(screen.getByRole("button", replaceBtn));
+    dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByLabelText("Certificate (PEM)")).toHaveValue("");
+    expect(within(dialog).getByLabelText("Private key (PEM)")).toHaveValue("");
+  });
+
+  it("keeps the dialog open with the name and mode when saving fails", async () => {
+    const user = userEvent.setup();
+    const docker = fakeDocker({
+      createDomain: vi.fn().mockRejectedValue(new Error("certificate does not cover the name")),
+    });
+    renderCard(docker);
+
+    await user.click(await screen.findByRole("button", { name: /Register domain/ }));
+    const dialog = await screen.findByRole("dialog");
+    await user.type(within(dialog).getByLabelText("Name"), "*.secure.app");
+    await user.click(within(dialog).getByRole("radio", { name: "Certificate" }));
+    await user.type(within(dialog).getByLabelText("Certificate (PEM)"), "CERT");
+    await user.type(within(dialog).getByLabelText("Private key (PEM)"), "KEY");
+    await user.click(within(dialog).getByRole("button", { name: "Register" }));
+
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith("Couldn't register domain", {
+        description: "certificate does not cover the name",
+      }),
+    );
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("Name")).toHaveValue("*.secure.app");
+    expect(within(dialog).getByRole("radio", { name: "Certificate" })).toBeChecked();
+    // The inputs stay so the user can correct and retry.
+    expect(within(dialog).getByLabelText("Private key (PEM)")).toHaveValue("KEY");
   });
 
   it("removes a domain after confirmation and shows a refusal", async () => {

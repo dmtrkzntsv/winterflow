@@ -518,9 +518,9 @@ function SettingsTab({
       });
       if (withVolumes && !volumesDeleted) {
         // An agent that predates volume deletion ignores the flag.
-        toast.warning("App deleted, volumes were not removed", {
+        toast.warning("App deleted, but its volumes were kept", {
           description:
-            "The server's agent did not delete volumes — update the agent and remove them from Server Settings → Volumes.",
+            "This server's agent is too old to delete volumes. Update the agent, then remove them in Server Settings → Volumes.",
         });
       } else if (warnings.length) {
         toast.warning("App deleted with cleanup warnings", {
@@ -575,6 +575,7 @@ function SettingsTab({
           <h2 className="text-sm font-semibold text-destructive">Delete app</h2>
           <p className="text-sm text-muted-foreground">
             Stops the containers and removes the deployment and its history.
+            Volumes are kept unless you choose otherwise.
           </p>
         </div>
         <div>
@@ -588,23 +589,44 @@ function SettingsTab({
               <AlertDialogHeader>
                 <AlertDialogTitle>Delete {name}?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  This stops the app's containers and removes its deployment and
-                  stored revisions. This cannot be undone.
+                  Its containers are stopped and removed, along with the
+                  deployment and every stored revision. This cannot be undone.
                 </AlertDialogDescription>
               </AlertDialogHeader>
-              <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-3">
+              {/* Neutral until ticked, then unmistakably destructive: the
+                  safe choice (keep the data) is the default. */}
+              <div
+                className={cn(
+                  "flex items-start gap-3 rounded-md border p-3 transition-colors",
+                  withVolumes && "border-destructive/50 bg-destructive/5",
+                )}
+              >
                 <Checkbox
                   id="delete-volumes"
+                  className="mt-px data-[state=checked]:border-destructive data-[state=checked]:bg-destructive data-[state=checked]:text-destructive-foreground"
+                  aria-describedby="delete-volumes-hint"
                   checked={withVolumes}
                   onCheckedChange={(v) => setWithVolumes(v === true)}
                 />
-                <Label
-                  htmlFor="delete-volumes"
-                  className="text-sm font-normal leading-snug"
-                >
-                  Also delete this app's Docker volumes. This permanently erases
-                  their data.
-                </Label>
+                <div className="grid gap-1">
+                  <Label
+                    htmlFor="delete-volumes"
+                    className={cn(
+                      "cursor-pointer leading-snug",
+                      withVolumes && "text-destructive",
+                    )}
+                  >
+                    Also delete its volumes
+                  </Label>
+                  <p
+                    id="delete-volumes-hint"
+                    className="text-sm leading-snug text-muted-foreground"
+                  >
+                    Permanently erases the data in this app's Docker volumes.
+                    Unticked, the volumes are kept; you can delete them later
+                    in Server Settings → Volumes.
+                  </p>
+                </div>
               </div>
               <AlertDialogFooter>
                 <AlertDialogCancel>Cancel</AlertDialogCancel>
@@ -612,7 +634,7 @@ function SettingsTab({
                   className={buttonVariants({ variant: "destructive" })}
                   onClick={() => void del()}
                 >
-                  Delete
+                  {withVolumes ? "Delete app and volumes" : "Delete app"}
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>

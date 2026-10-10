@@ -5,7 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
+	"winterflow/internal/infra/ingress/domains"
 )
 
 func opts() Options {
@@ -34,6 +36,15 @@ func decode(t *testing.T, raw []byte) map[string]any {
 	return m
 }
 
+// sampleRegs covers sampleApps: the example.com hosts on auto TLS, the plain
+// host with TLS off.
+func sampleRegs() []domains.Registration {
+	return []domains.Registration{
+		{Name: "*.example.com", TLS: command.DomainTLSAuto},
+		{Name: "plain.example.com", TLS: command.DomainTLSOff},
+	}
+}
+
 func sampleApps() []AppIngress {
 	return []AppIngress{
 		{AppID: "app-b", Ingress: model.Ingress{
@@ -50,7 +61,7 @@ func sampleApps() []AppIngress {
 }
 
 func TestBuildConfigShape(t *testing.T) {
-	raw, warnings, err := BuildConfig(sampleApps(), opts())
+	raw, warnings, err := BuildConfig(sampleApps(), sampleRegs(), opts())
 	if err != nil || len(warnings) != 0 {
 		t.Fatalf("BuildConfig: %v, warnings %v", err, warnings)
 	}
@@ -107,7 +118,7 @@ func TestBuildConfigIsolatesBadFragmentsAndDups(t *testing.T) {
 			Domains: []model.IngressDomain{{Domain: "blog.example.com", UpstreamPort: 7000, SSL: true}},
 		}},
 	)
-	raw, warnings, err := BuildConfig(apps, opts())
+	raw, warnings, err := BuildConfig(apps, sampleRegs(), opts())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +136,7 @@ func TestBuildConfigIsolatesBadFragmentsAndDups(t *testing.T) {
 
 func TestBuildConfigEmptyAndNoSSL(t *testing.T) {
 	// No apps: still a valid config with empty servers (Caddy runs, serves nothing).
-	raw, warnings, err := BuildConfig(nil, opts())
+	raw, warnings, err := BuildConfig(nil, nil, opts())
 	if err != nil || len(warnings) != 0 {
 		t.Fatalf("empty: %v %v", err, warnings)
 	}
@@ -137,11 +148,11 @@ func TestBuildConfigEmptyAndNoSSL(t *testing.T) {
 	// Debug level turns access logs on.
 	o := opts()
 	o.LogLevel = "debug"
-	raw, _, _ = BuildConfig(sampleApps(), o)
+	raw, _, _ = BuildConfig(sampleApps(), sampleRegs(), o)
 	if !strings.Contains(string(raw), `"logs"`) {
 		t.Error("debug level did not enable access logs")
 	}
-	raw, _, _ = BuildConfig(sampleApps(), opts())
+	raw, _, _ = BuildConfig(sampleApps(), sampleRegs(), opts())
 	cfg = decode(t, raw)
 	srv := dig(t, cfg, "apps", "http", "servers", "https").(map[string]any)
 	if _, ok := srv["logs"]; ok {

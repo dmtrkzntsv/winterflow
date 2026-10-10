@@ -2,8 +2,10 @@ package caddy
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +15,9 @@ import (
 	"testing"
 	"time"
 
+	"winterflow/internal/domain/command"
+	"winterflow/internal/infra/ingress/domains"
+	"winterflow/internal/infra/ingress/domains/certtest"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
 )
@@ -36,6 +41,14 @@ func writeApp(t *testing.T, dataDir, appID, configJSON string) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(configJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// registerDomain stores a registration the way domain.create does.
+func registerDomain(t *testing.T, dataDir, name string, mode command.DomainTLS) {
+	t.Helper()
+	if err := domains.NewStore(filepath.Join(dataDir, "domains")).Put(name, mode, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -89,6 +102,7 @@ func TestManagerServesReloadsAndIsolates(t *testing.T) {
 		return string(raw)
 	}
 	writeApp(t, dataDir, "app-1", appCfg(upstreamPort))
+	registerDomain(t, dataDir, "*.test", command.DomainTLSOff)
 	// A second app with a broken config must not affect app-1.
 	writeApp(t, dataDir, "app-2", `{"name":"broken","ingress":{"domains":[{"domain":"BAD HOST","upstream_port":1}]}}`)
 
@@ -237,4 +251,68 @@ func unsetAPIPort(t *testing.T) {
 	t.Helper()
 	t.Setenv("API_PORT", "")
 	_ = os.Unsetenv("API_PORT")
+}
+
+// TestManagerServesUploadedCertificateAndCatchAll runs real Caddy with a
+// certificate-mode wildcard and an off-mode wildcard: HTTPS for any host
+// under the wildcard presents the uploaded certificate (no ACME involved),
+// and hosts no app claims answer the catch-all 404 on both servers.
+func TestManagerServesUploadedCertificateAndCatchAll(t *testing.T) {
+	dataDir := t.TempDir()
+	httpPort, httpsPort := freePort(t), freePort(t)
+	t.Setenv("AGENT_DATA_DIR", dataDir)
+	t.Setenv("INGRESS_ENABLED", "true")
+	t.Setenv("INGRESS_HTTP_PORT", fmt.Sprint(httpPort))
+	t.Setenv("INGRESS_HTTPS_PORT", fmt.Sprint(httpsPort))
+	t.Setenv("LOG_LEVEL", "error")
+
+	cert, key := certtest.Issue(t, time.Now().Add(90*24*time.Hour), "*.cert.test")
+	store := domains.NewStore(filepath.Join(dataDir, "domains"))
+	if err := store.Put("*.cert.test", command.DomainTLSCertificate, cert, key); err != nil {
+		t.Fatal(err)
+	}
+	registerDomain(t, dataDir, "*.tunnel.test", command.DomainTLSOff)
+
+	m := NewManager(config.NewServerConfig("standalone"), logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"}))
+	t.Cleanup(m.Stop)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := m.Start(ctx); err != nil || !m.Enabled() {
+		t.Fatalf("start: %v, enabled %v", err, m.Enabled())
+	}
+
+	// Off mode: plain HTTP, unknown host under the wildcard is a clean 404.
+	resp := getVia(t, httpPort, "nope.tunnel.test", "/")
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound || !strings.Contains(string(body), "no app is served on this hostname") {
+		t.Fatalf("off catch-all: %d %q", resp.StatusCode, body)
+	}
+
+	// Certificate mode: the TLS handshake presents the uploaded leaf.
+	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{
+		ServerName:         "nope.cert.test",
+		InsecureSkipVerify: true, // the test CA is not in the system pool; the leaf is checked below
+	}}}
+	req, _ := http.NewRequest("GET", fmt.Sprintf("https://127.0.0.1:%d/", httpsPort), nil)
+	req.Host = "nope.cert.test"
+	var tlsResp *http.Response
+	var err error
+	for i := 0; i < 50; i++ {
+		if tlsResp, err = client.Do(req); err == nil {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("https via caddy: %v", err)
+	}
+	defer tlsResp.Body.Close()
+	leaf := tlsResp.TLS.PeerCertificates[0]
+	if len(leaf.DNSNames) != 1 || leaf.DNSNames[0] != "*.cert.test" || leaf.Issuer.CommonName != certtest.Issuer {
+		t.Fatalf("served certificate = %v issued by %q", leaf.DNSNames, leaf.Issuer.CommonName)
+	}
+	if tlsResp.StatusCode != http.StatusNotFound {
+		t.Fatalf("certificate catch-all: %d", tlsResp.StatusCode)
+	}
 }

@@ -25,8 +25,11 @@ type Ingress struct {
 }
 
 // IngressDomain maps a hostname to a host port the app's compose file
-// publishes (ideally bound to 127.0.0.1). SSL=true means an ACME cert plus
-// the automatic HTTP->HTTPS redirect; false means plain HTTP on port 80 only.
+// publishes (ideally bound to 127.0.0.1). SSL no longer decides anything for
+// the proxy: TLS follows the registered domain covering the hostname (see
+// RegisteredDomain). It still loads from old configs, picks the auto/off
+// mode when the agent first registers existing hostnames, and picks the
+// link scheme on app cards.
 type IngressDomain struct {
 	Domain       string `json:"domain"`
 	UpstreamPort int    `json:"upstream_port"`
@@ -34,9 +37,10 @@ type IngressDomain struct {
 }
 
 // IngressRedirect is either a domain-level redirect (Path == "", preserves the
-// request URI, needs its own SSL choice because serving https://source
-// requires a cert) or a path rule (Path != "", scoped to a domain the app
-// already claims, redirects the matched prefix to the exact To URL).
+// request URI; its source hostname must be covered by a registered domain
+// like a route's, and SSL is legacy as on IngressDomain) or a path rule
+// (Path != "", scoped to a domain the app already claims, redirects the
+// matched prefix to the exact To URL).
 type IngressRedirect struct {
 	Domain string `json:"domain"`
 	Path   string `json:"path,omitempty"`

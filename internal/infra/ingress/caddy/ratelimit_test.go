@@ -9,7 +9,10 @@ import (
 
 	caddy "github.com/caddyserver/caddy/v2"
 
+	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
+	"winterflow/internal/infra/ingress/domains"
+	"winterflow/internal/infra/ingress/domains/certtest"
 )
 
 // nextCounter counts how many requests pass through the middleware.
@@ -121,16 +124,45 @@ func TestRateLimitCapsVisitorMap(t *testing.T) {
 }
 
 // TestBuildConfigValidatesWithCaddy runs the full emitted config — throttle
-// module, timeouts, proxy routes — through Caddy's own validator, so a schema
-// mistake or an unregistered module fails here instead of at agent startup.
+// module, timeouts, proxy routes, all three TLS modes with an uploaded
+// certificate loaded from disk, the wildcard catch-all's "not" matcher and
+// skip_certificates — through Caddy's own validator, so a schema mistake,
+// an unloadable certificate or an unregistered module fails here instead of
+// at agent startup.
 func TestBuildConfigValidatesWithCaddy(t *testing.T) {
+	dir := t.TempDir()
+	store := domains.NewStore(dir)
+	cert, key := certtest.Issue(t, time.Now().Add(90*24*time.Hour), "*.cert.test")
+	for _, r := range []struct {
+		name      string
+		mode      command.DomainTLS
+		cert, key []byte
+	}{
+		{"*.cert.test", command.DomainTLSCertificate, cert, key},
+		{"x.cert.test", command.DomainTLSOff, nil, nil},
+		{"example.test", command.DomainTLSAuto, nil, nil},
+		{"*.auto.test", command.DomainTLSAuto, nil, nil},
+		{"*.tunnel.test", command.DomainTLSOff, nil, nil},
+	} {
+		if err := store.Put(r.name, r.mode, r.cert, r.key); err != nil {
+			t.Fatal(err)
+		}
+	}
+	regs, err := store.List()
+	if err != nil {
+		t.Fatal(err)
+	}
 	apps := []AppIngress{{
 		AppID: "app1",
 		Ingress: model.Ingress{
-			Domains: []model.IngressDomain{{Domain: "example.test", UpstreamPort: 8080}},
+			Domains: []model.IngressDomain{
+				{Domain: "example.test", UpstreamPort: 8080},
+				{Domain: "a.cert.test", UpstreamPort: 8081},
+				{Domain: "b.tunnel.test", UpstreamPort: 8082},
+			},
 		},
 	}}
-	raw, warnings, err := BuildConfig(apps, Options{
+	raw, warnings, err := BuildConfig(apps, regs, Options{
 		RateLimitRPS:   50,
 		RateLimitBurst: 100,
 		StorageDir:     t.TempDir(),
@@ -150,7 +182,7 @@ func TestBuildConfigValidatesWithCaddy(t *testing.T) {
 // TestBuildConfigIncludesThrottle fixates that the predefined throttle sits in
 // front of every route on both servers, and that connection timeouts are set.
 func TestBuildConfigIncludesThrottle(t *testing.T) {
-	raw, warnings, err := BuildConfig(nil, Options{RateLimitRPS: 50, RateLimitBurst: 100})
+	raw, warnings, err := BuildConfig(nil, nil, Options{RateLimitRPS: 50, RateLimitBurst: 100})
 	if err != nil || len(warnings) != 0 {
 		t.Fatalf("BuildConfig: err=%v warnings=%v", err, warnings)
 	}
@@ -187,7 +219,7 @@ func TestBuildConfigIncludesThrottle(t *testing.T) {
 	}
 
 	// Disabled: no throttle route.
-	raw, _, err = BuildConfig(nil, Options{})
+	raw, _, err = BuildConfig(nil, nil, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

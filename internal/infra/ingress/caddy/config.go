@@ -11,11 +11,16 @@ import (
 	"strconv"
 	"strings"
 
+	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
+	"winterflow/internal/infra/ingress/domains"
 )
 
+// AppIngress is one app's committed ingress plus its display name (from the
+// same config.json), used to name apps in the domain delete refusal.
 type AppIngress struct {
 	AppID   string
+	Name    string
 	Ingress model.Ingress
 }
 
@@ -66,10 +71,16 @@ type httpServer struct {
 	Listen []string        `json:"listen"`
 	Routes []route         `json:"routes"`
 	Logs   *map[string]any `json:"logs,omitempty"` // presence toggles access logs
+	// AutomaticHTTPS lists catch-all names Caddy must not order certs for.
+	AutomaticHTTPS *autoHTTPS `json:"automatic_https,omitempty"`
 	// Connection hygiene: slow-header and idle connections must not pile up
 	// on a small host. Durations are Caddy duration strings.
 	ReadHeaderTimeout string `json:"read_header_timeout,omitempty"`
 	IdleTimeout       string `json:"idle_timeout,omitempty"`
+}
+
+type autoHTTPS struct {
+	SkipCertificates []string `json:"skip_certificates,omitempty"`
 }
 
 type route struct {
@@ -80,10 +91,24 @@ type route struct {
 type matcher struct {
 	Host []string `json:"host,omitempty"`
 	Path []string `json:"path,omitempty"`
+	// Not excludes requests any of these matcher sets match.
+	Not []matcher `json:"not,omitempty"`
 }
 
 type tlsApp struct {
-	Automation tlsAutomation `json:"automation"`
+	Automation   *tlsAutomation   `json:"automation,omitempty"`
+	Certificates *tlsCertificates `json:"certificates,omitempty"`
+}
+
+// tlsCertificates loads uploaded (certificate-mode) PEM pairs from disk.
+// Automatic HTTPS skips every name a loaded certificate covers.
+type tlsCertificates struct {
+	LoadFiles []certKeyFiles `json:"load_files"`
+}
+
+type certKeyFiles struct {
+	Certificate string `json:"certificate"`
+	Key         string `json:"key"`
 }
 
 type tlsAutomation struct {
@@ -136,12 +161,29 @@ func redirectRoute(host, path, location string, code int) route {
 	}
 }
 
-// BuildConfig merges per-app ingress fragments into one Caddy config.
-// Fragment validation failures and cross-app duplicate domains produce
-// warnings and exclusions, never errors: one app's bad routing must not take
-// down another's. Apps are processed in sorted-AppID order so duplicate
-// resolution is deterministic.
-func BuildConfig(apps []AppIngress, opts Options) ([]byte, []string, error) {
+// notFoundRoute answers 404 for every host under a registration that no app
+// route claimed (it sits after all app routes on its server).
+func notFoundRoute(m matcher) route {
+	return route{
+		Match: []matcher{m},
+		Handle: []map[string]any{{
+			"handler":     "static_response",
+			"status_code": "404",
+			"headers":     http.Header{"Content-Type": []string{"text/plain; charset=utf-8"}},
+			"body":        "404 not found: no app is served on this hostname\n",
+		}},
+	}
+}
+
+// BuildConfig merges per-app ingress fragments into one Caddy config, placing
+// each hostname by the TLS mode of the registration that wins it (exact over
+// wildcard): auto and certificate on the HTTPS server, off on the HTTP
+// server; only auto hosts are ACME subjects. A hostname no registration
+// covers is excluded with a warning (fail closed). Fragment validation
+// failures and cross-app duplicates are warnings too, never errors: one
+// app's bad routing must not take down another's. Apps are processed in
+// sorted-AppID order so duplicate resolution is deterministic.
+func BuildConfig(apps []AppIngress, regs []domains.Registration, opts Options) ([]byte, []string, error) {
 	httpPort, httpsPort := opts.HTTPPort, opts.HTTPSPort
 	if httpPort == 0 {
 		httpPort = 80
@@ -157,6 +199,13 @@ func BuildConfig(apps []AppIngress, opts Options) ([]byte, []string, error) {
 	var warnings []string
 	claimed := map[string]string{} // domain -> appID that won it
 
+	names := make([]string, len(regs))
+	modes := map[string]command.DomainTLS{}
+	for i, r := range regs {
+		names[i] = r.Name
+		modes[r.Name] = r.TLS
+	}
+
 	httpsRoutes := []route{}
 	httpRoutes := []route{}
 	var sslSubjects []string
@@ -166,66 +215,95 @@ func BuildConfig(apps []AppIngress, opts Options) ([]byte, []string, error) {
 			warnings = append(warnings, fmt.Sprintf("app %s: ingress excluded: %v", a.AppID, err))
 			continue
 		}
-		// Claim this app's hostnames; on cross-app duplicates the app keeps
-		// its other domains — only the contested hostname is dropped.
-		mine := map[string]bool{}
+		// Claim this app's covered hostnames; on cross-app duplicates the
+		// app keeps its other domains — only the contested hostname is
+		// dropped. modeOf doubles as "mine": the TLS mode of each claimed
+		// host's winning registration.
+		modeOf := map[string]command.DomainTLS{}
 		for _, d := range a.Ingress.DomainNames() {
+			win, ok := model.WinningDomain(names, d)
+			if !ok {
+				warnings = append(warnings, fmt.Sprintf("app %s: domain %s is not covered by a registered domain, skipping", a.AppID, d))
+				continue
+			}
 			if owner, taken := claimed[d]; taken {
 				warnings = append(warnings, fmt.Sprintf("app %s: domain %s already claimed by app %s, skipping", a.AppID, d, owner))
 				continue
 			}
 			claimed[d] = a.AppID
-			mine[d] = true
+			modeOf[d] = modes[win]
+		}
+		// place puts a route on the server its host's mode selects; auto
+		// hosts also become ACME subjects.
+		place := func(host string, rt route, subject bool) {
+			switch modeOf[host] {
+			case command.DomainTLSOff:
+				httpRoutes = append(httpRoutes, rt)
+			case command.DomainTLSAuto:
+				httpsRoutes = append(httpsRoutes, rt)
+				if subject {
+					sslSubjects = append(sslSubjects, host)
+				}
+			default: // certificate
+				httpsRoutes = append(httpsRoutes, rt)
+			}
 		}
 
-		// Path rules first (must match before their domain's main route);
-		// group them per target list depending on the parent domain's SSL.
-		sslOf := map[string]bool{}
-		for _, d := range a.Ingress.Domains {
-			sslOf[d.Domain] = d.SSL
-		}
+		// Path rules first: they must match before their domain's main route.
 		for _, r := range a.Ingress.Redirects {
-			if r.Path == "" {
-				sslOf[r.Domain] = r.SSL
+			if _, mine := modeOf[r.Domain]; r.Path == "" || !mine {
 				continue
 			}
-		}
-		for _, r := range a.Ingress.Redirects {
-			if r.Path == "" || !mine[r.Domain] {
-				continue
-			}
-			rt := redirectRoute(r.Domain, r.Path, r.To, r.Code)
-			if sslOf[r.Domain] {
-				httpsRoutes = append(httpsRoutes, rt)
-			} else {
-				httpRoutes = append(httpRoutes, rt)
-			}
+			place(r.Domain, redirectRoute(r.Domain, r.Path, r.To, r.Code), false)
 		}
 		for _, d := range a.Ingress.Domains {
-			if !mine[d.Domain] {
+			if _, mine := modeOf[d.Domain]; !mine {
 				continue
 			}
-			rt := proxyRoute(d.Domain, d.UpstreamPort)
-			if d.SSL {
-				httpsRoutes = append(httpsRoutes, rt)
-				sslSubjects = append(sslSubjects, d.Domain)
-			} else {
-				httpRoutes = append(httpRoutes, rt)
-			}
+			place(d.Domain, proxyRoute(d.Domain, d.UpstreamPort), true)
 		}
 		for _, r := range a.Ingress.Redirects {
-			if r.Path != "" || !mine[r.Domain] {
+			if _, mine := modeOf[r.Domain]; r.Path != "" || !mine {
 				continue
 			}
 			// Domain-level redirect preserves the request URI. The
 			// {http.request.uri} placeholder is a fixed literal appended to a
 			// validated absolute URL — not user templating.
-			rt := redirectRoute(r.Domain, "", r.To+"{http.request.uri}", r.Code)
-			if r.SSL {
-				httpsRoutes = append(httpsRoutes, rt)
-				sslSubjects = append(sslSubjects, r.Domain)
-			} else {
-				httpRoutes = append(httpRoutes, rt)
+			place(r.Domain, redirectRoute(r.Domain, "", r.To+"{http.request.uri}", r.Code), true)
+		}
+	}
+
+	// Catch-all 404 per registration, after every app route. A wildcard's
+	// catch-all leaves out the exact registrations under it: those win
+	// their host and may sit on the other server. Auto catch-alls must not
+	// make Caddy order a certificate (a wildcard can't pass HTTP-01, an
+	// unused name may not even point here), so their names are skipped for
+	// certificates unless an app route serves that very host.
+	var skipCerts []string
+	var loadFiles []certKeyFiles
+	for _, r := range regs {
+		m := matcher{Host: []string{r.Name}}
+		if model.IsWildcardDomain(r.Name) {
+			var exact []string
+			for _, n := range names {
+				if !model.IsWildcardDomain(n) && model.DomainCovers(r.Name, n) {
+					exact = append(exact, n)
+				}
+			}
+			if len(exact) > 0 {
+				m.Not = []matcher{{Host: exact}}
+			}
+		}
+		switch r.TLS {
+		case command.DomainTLSOff:
+			httpRoutes = append(httpRoutes, notFoundRoute(m))
+		case command.DomainTLSCertificate:
+			httpsRoutes = append(httpsRoutes, notFoundRoute(m))
+			loadFiles = append(loadFiles, certKeyFiles{Certificate: r.CertFile, Key: r.KeyFile})
+		default: // auto
+			httpsRoutes = append(httpsRoutes, notFoundRoute(m))
+			if _, served := claimed[r.Name]; !served {
+				skipCerts = append(skipCerts, r.Name)
 			}
 		}
 	}
@@ -243,6 +321,9 @@ func BuildConfig(apps []AppIngress, opts Options) ([]byte, []string, error) {
 	}
 
 	httpsServer := &httpServer{Listen: []string{":" + strconv.Itoa(httpsPort)}, Routes: httpsRoutes}
+	if len(skipCerts) > 0 {
+		httpsServer.AutomaticHTTPS = &autoHTTPS{SkipCertificates: skipCerts}
+	}
 	// Servers listening only on the HTTP port are exempt from automatic
 	// HTTPS: no certs, no redirects for their hosts. Caddy appends its own
 	// HTTP->HTTPS redirects for the ssl hosts to this server.
@@ -265,15 +346,22 @@ func BuildConfig(apps []AppIngress, opts Options) ([]byte, []string, error) {
 		},
 	}
 
+	var tlsCfg tlsApp
 	if len(sslSubjects) > 0 {
 		issuer := map[string]any{"module": "acme"}
 		if opts.ACMEEmail != "" {
 			issuer["email"] = opts.ACMEEmail
 		}
-		appsCfg["tls"] = tlsApp{Automation: tlsAutomation{Policies: []tlsPolicy{{
+		tlsCfg.Automation = &tlsAutomation{Policies: []tlsPolicy{{
 			Subjects: sslSubjects,
 			Issuers:  []map[string]any{issuer},
-		}}}}
+		}}}
+	}
+	if len(loadFiles) > 0 {
+		tlsCfg.Certificates = &tlsCertificates{LoadFiles: loadFiles}
+	}
+	if tlsCfg.Automation != nil || tlsCfg.Certificates != nil {
+		appsCfg["tls"] = tlsCfg
 	}
 
 	cfg := caddyConfig{

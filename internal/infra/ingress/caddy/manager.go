@@ -2,6 +2,7 @@ package caddy
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"sync"
 
 	"winterflow/internal/domain/model"
+	"winterflow/internal/infra/ingress/domains"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
 
@@ -34,15 +36,20 @@ var caddyMu sync.Mutex
 // Manager owns the embedded Caddy instance. Ingress failures degrade ingress
 // only: Start never fails the agent, Reload never fails a deploy.
 type Manager struct {
-	cfg *config.ServerConfig
-	log *logger.Logger
+	cfg     *config.ServerConfig
+	log     *logger.Logger
+	domains *domains.Store
 
 	mu      sync.Mutex
 	enabled bool
 }
 
 func NewManager(cfg *config.ServerConfig, log *logger.Logger) *Manager {
-	return &Manager{cfg: cfg, log: log}
+	return &Manager{
+		cfg:     cfg,
+		log:     log,
+		domains: domains.NewStore(filepath.Join(cfg.GetAgentDataDir(), "domains")),
+	}
 }
 
 func (m *Manager) options() Options {
@@ -88,15 +95,25 @@ func (m *Manager) scanApps() ([]AppIngress, []string) {
 		if ing == nil {
 			continue
 		}
-		out = append(out, AppIngress{AppID: appID, Ingress: *ing})
+		var meta struct {
+			Name string `json:"name"`
+		}
+		_ = json.Unmarshal(raw, &meta) // ParseIngress already proved it is JSON
+		out = append(out, AppIngress{AppID: appID, Name: meta.Name, Ingress: *ing})
 	}
 	return out, warnings
 }
 
 func (m *Manager) buildConfig() ([]byte, []string) {
-	apps, scanWarnings := m.scanApps()
-	cfg, buildWarnings, err := BuildConfig(apps, m.options())
-	warnings := append(scanWarnings, buildWarnings...)
+	apps, warnings := m.scanApps()
+	regs, err := m.domains.List()
+	if err != nil {
+		// Unreadable domains dir: no registration covers anything, so
+		// every host is excluded (fail closed) and the warning says why.
+		warnings = append(warnings, "ingress: "+err.Error())
+	}
+	cfg, buildWarnings, err := BuildConfig(apps, regs, m.options())
+	warnings = append(warnings, buildWarnings...)
 	if err != nil {
 		// Marshal failure of our own structs: effectively impossible, but
 		// degrade rather than propagate.

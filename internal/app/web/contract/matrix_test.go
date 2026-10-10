@@ -3,6 +3,7 @@ package contract_test
 import (
 	"net/http"
 	"net/url"
+	"reflect"
 	"testing"
 
 	"winterflow/internal/app/web/api"
@@ -14,14 +15,12 @@ type probe struct {
 	// routes that are not server-addressed.
 	valid func(serverID string) call
 	// malformed is one call the route must answer 400 (bad body, missing
-	// parameter); the zero value means the route takes no input to break.
+	// parameter). Every route with input must set it (TestProbesCoverTable).
 	malformed call
 }
 
-func sq(id string) url.Values { return url.Values{"server_id": {id}} }
-func aq(id string) url.Values {
-	return url.Values{"server_id": {id}, "app_id": {"00000000-0000-0000-0000-000000000001"}}
-}
+func sq(id string) url.Values            { return url.Values{"server_id": {id}} }
+func aq(id string) url.Values            { return url.Values{"server_id": {id}, "app_id": {anApp}} }
 func post(path string, body any) call    { return call{Method: http.MethodPost, Path: path, Body: body} }
 func get(path string, q url.Values) call { return call{Method: http.MethodGet, Path: path, Query: q} }
 func bad(method, path string) call {
@@ -104,8 +103,41 @@ var probes = map[string]probe{
 	"POST /api/v1/org/update-organization":   {malformed: post("/api/v1/org/update-organization", map[string]any{"name": ""})},
 }
 
+// carriesServerID reports whether t, or a struct nested in it by embedding,
+// has a field bound to server_id by a query or json tag.
+func carriesServerID(t reflect.Type) bool {
+	for t != nil && t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if t == nil || t.Kind() != reflect.Struct {
+		return false
+	}
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if f.Tag.Get("query") == "server_id" || f.Tag.Get("json") == "server_id" {
+			return true
+		}
+		if f.Anonymous && carriesServerID(f.Type) {
+			return true
+		}
+	}
+	return false
+}
+
+// serverAddressed reports whether the route takes a server_id, in its
+// query or its body: the routes the org-ownership guard must protect.
+func serverAddressed(rt api.Route) bool {
+	for _, v := range []any{rt.Query, rt.Request} {
+		if v != nil && carriesServerID(reflect.TypeOf(v)) {
+			return true
+		}
+	}
+	return false
+}
+
 // TestProbesCoverTable: every non-Mounted route with input (query or body)
-// has a probe with a malformed call, and every probe names a real route.
+// has a probe with a malformed call, every server-addressed route has a
+// valid call for TestForeignServer, and every probe names a real route.
 func TestProbesCoverTable(t *testing.T) {
 	t.Parallel()
 	known := map[string]bool{}
@@ -117,6 +149,9 @@ func TestProbesCoverTable(t *testing.T) {
 		}
 		if p, ok := probes[key]; !ok || p.malformed.Path == "" {
 			t.Errorf("%s takes input but has no malformed probe", key)
+		}
+		if serverAddressed(rt) && probes[key].valid == nil {
+			t.Errorf("%s is server-addressed but has no valid probe, so TestForeignServer would skip its ownership check", key)
 		}
 	}
 	for key := range probes {
@@ -148,6 +183,7 @@ func TestForeignServer(t *testing.T) {
 	e := newEnv(t)
 	owner := e.claim(t)
 	foreign := e.foreignServer(t)
+	own := owner.serverID(t)
 	for key, p := range probes {
 		if p.valid == nil {
 			continue
@@ -158,6 +194,19 @@ func TestForeignServer(t *testing.T) {
 	}
 	if n := e.agent.count(); n != 0 {
 		t.Fatalf("%d command(s) reached the agent for a foreign server", n)
+	}
+	// Positive control: the same calls against the caller's own server are
+	// not refused, so the 403s above come from ownership and not from, say,
+	// a request the route rejects for another reason.
+	for key, p := range probes {
+		if p.valid == nil {
+			continue
+		}
+		t.Run("own "+key, func(t *testing.T) {
+			if r := owner.do(t, p.valid(own)); r.Status == http.StatusForbidden || r.Status == http.StatusUnauthorized {
+				t.Fatalf("own server answered %d: %s", r.Status, r.Body)
+			}
+		})
 	}
 }
 

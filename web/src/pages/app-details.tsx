@@ -43,6 +43,7 @@ import {
   AppStatusCode,
   type AppRevisions,
   type ControlAction,
+  type DeleteAppResult,
 } from "@/context/apps-context-base";
 import { cn } from "@/lib/utils";
 
@@ -205,9 +206,9 @@ export default function AppDetailsPage() {
             name={app.name}
             onRename={rename}
             onDelete={async (opts) => {
-              const warnings = await remove(app.id, opts);
+              const result = await remove(app.id, opts);
               navigate("/");
-              return warnings;
+              return result;
             }}
           />
         </TabsContent>
@@ -489,7 +490,7 @@ function SettingsTab({
   appId: string;
   name: string;
   onRename: (appId: string, name: string) => Promise<void>;
-  onDelete: (opts: { deleteVolumes: boolean }) => Promise<string[]>;
+  onDelete: (opts: { deleteVolumes: boolean }) => Promise<DeleteAppResult>;
 }) {
   const [newName, setNewName] = useState(name);
   const [busy, setBusy] = useState(false);
@@ -512,10 +513,19 @@ function SettingsTab({
   const del = async () => {
     setBusy(true);
     try {
-      const warnings = await onDelete({ deleteVolumes: withVolumes });
-      if (warnings.length) {
-        toast.warning("App deleted, some volumes were kept", {
+      const { warnings, volumesDeleted } = await onDelete({
+        deleteVolumes: withVolumes,
+      });
+      if (withVolumes && !volumesDeleted) {
+        // An agent that predates volume deletion ignores the flag.
+        toast.warning("App deleted, volumes were not removed", {
+          description:
+            "The server's agent did not delete volumes — update the agent and remove them from Server Settings → Volumes.",
+        });
+      } else if (warnings.length) {
+        toast.warning("App deleted with cleanup warnings", {
           description: warnings.join("\n"),
+          classNames: { description: "whitespace-pre-line" },
         });
       } else {
         toast.success(withVolumes ? "App and volumes deleted" : "App deleted");

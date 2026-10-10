@@ -46,6 +46,11 @@ export type AppStatus = {
   statusCode: number;
 };
 
+export type DeleteAppResult = {
+  warnings: string[];
+  volumesDeleted: boolean;
+};
+
 export type AppsContextValue = {
   apps: App[];
   // statusByApp maps app id -> latest container status code (live, in-memory).
@@ -55,11 +60,13 @@ export type AppsContextValue = {
   refresh: () => Promise<void>;
   // Lifecycle actions: dispatch the command, await its SSE result, then refresh.
   control: (appId: string, action: ControlAction) => Promise<void>;
-  // remove resolves with warnings (e.g. volumes kept because still in use).
+  // remove resolves with cleanup warnings (e.g. a volume still in use) and
+  // whether the agent honoured deleteVolumes — an older agent ignores the
+  // flag, so volumesDeleted stays false and the caller must not claim success.
   remove: (
     appId: string,
     opts?: { deleteVolumes?: boolean },
-  ) => Promise<string[]>;
+  ) => Promise<DeleteAppResult>;
   rename: (appId: string, name: string) => Promise<void>;
   // saveApp dispatches app.save with the full payload (config + files +
   // variables) and awaits the result. Upsert: app.id present = edit,

@@ -510,9 +510,9 @@ function VolumesCard({ docker }: { docker: Docker }) {
 
   return (
     <Card>
-      <CardHeader className="flex-row items-center justify-between space-y-0">
+      <CardHeader className="flex-row flex-wrap items-center justify-between gap-2 space-y-0">
         <CardTitle>Volumes</CardTitle>
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-4">
           <div className="flex items-center gap-2">
             <Switch
               id="vol-show-anon"
@@ -524,7 +524,13 @@ function VolumesCard({ docker }: { docker: Docker }) {
             </Label>
           </div>
           {isAdmin && (
-            <Dialog open={open} onOpenChange={setOpen}>
+            <Dialog
+              open={open}
+              onOpenChange={(o) => {
+                setOpen(o);
+                if (!o) setName("");
+              }}
+            >
               <DialogTrigger asChild>
                 <Button size="sm">
                   <Plus className="size-4" /> Create volume
@@ -544,7 +550,8 @@ function VolumesCard({ docker }: { docker: Docker }) {
                   />
                   <p className="text-xs text-muted-foreground">
                     Letters, digits, <code>_</code>, <code>.</code> and{" "}
-                    <code>-</code>; must start with a letter or digit.
+                    <code>-</code>; must start with a letter or digit; at most 255
+                    characters.
                   </p>
                 </div>
                 <DialogFooter>

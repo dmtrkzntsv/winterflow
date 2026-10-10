@@ -17,6 +17,7 @@ import {
   type App,
   type AppDetailPayload,
   type AppRevisions,
+  type DeleteAppResult,
   type ControlAction,
 } from "./apps-context-base";
 
@@ -262,12 +263,18 @@ export function AppsProvider({ children }: { children: ReactNode }) {
     async (
       appId: string,
       opts?: { deleteVolumes?: boolean },
-    ): Promise<string[]> => {
+    ): Promise<DeleteAppResult> => {
       const { payload } = await dispatchAndWaitPayload("delete-app", {
         app_id: appId,
         delete_volumes: opts?.deleteVolumes ?? false,
       });
-      return (payload as { warnings?: string[] } | undefined)?.warnings ?? [];
+      const res = payload as
+        | { warnings?: string[]; volumes_deleted?: boolean }
+        | undefined;
+      return {
+        warnings: res?.warnings ?? [],
+        volumesDeleted: res?.volumes_deleted ?? false,
+      };
     },
     [dispatchAndWaitPayload],
   );

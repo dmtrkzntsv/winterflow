@@ -23,8 +23,12 @@ func appDomainsPerServerKey(ctx context.Context, db *bun.DB) error {
 			`ALTER TABLE app_domains DROP CONSTRAINT app_domains_pkey, ADD PRIMARY KEY (server_id, domain)`)
 		return err
 	}
-	// SQLite cannot alter a primary key: rebuild the table.
+	// SQLite cannot alter a primary key: rebuild the table. bun records a
+	// migration as applied before running it, so a failure between DROP and
+	// RENAME would lose app_domains for good: the whole rebuild is one
+	// transaction (tx, not db: SQLite runs on a single connection).
 	stmts := []string{
+		`DROP TABLE IF EXISTS app_domains_new`,
 		`CREATE TABLE app_domains_new (
 			domain VARCHAR(253) NOT NULL,
 			app_id CHAR(36) NOT NULL,
@@ -44,12 +48,14 @@ func appDomainsPerServerKey(ctx context.Context, db *bun.DB) error {
 		"CREATE INDEX idx_app_domains_app_id ON app_domains (app_id)",
 		"CREATE INDEX idx_app_domains_server_id ON app_domains (server_id)",
 	}
-	for _, s := range stmts {
-		if _, err := db.ExecContext(ctx, s); err != nil {
-			return fmt.Errorf("app_domains per-server key: %w", err)
+	return db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		for _, s := range stmts {
+			if _, err := tx.ExecContext(ctx, s); err != nil {
+				return fmt.Errorf("app_domains per-server key: %w", err)
+			}
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 // appDomainsPerServerKeyDown is a no-op: the global key cannot be restored

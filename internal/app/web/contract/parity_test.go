@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"testing"
 
@@ -38,14 +39,16 @@ var (
 )
 
 // normalizer replaces volatile values with stable placeholders: the n-th
-// distinct UUID becomes <id-n>, every timestamp <time>, every PAT <token>.
+// distinct UUID becomes <id-n>, every timestamp <time> followed by its zone
+// (so a Z on one database and -04:00 on the other still differ), every PAT
+// <token>.
 // Re-decoding into any and re-encoding sorts object keys.
 type normalizer struct{ ids map[string]string }
 
 func (n *normalizer) body(t *testing.T, raw []byte) any {
 	t.Helper()
 	s := tokenRE.ReplaceAllString(string(raw), "<token>")
-	s = timeRE.ReplaceAllString(s, "<time>")
+	s = timeRE.ReplaceAllString(s, "<time>${2}")
 	s = uuidRE.ReplaceAllStringFunc(s, func(id string) string {
 		if p, ok := n.ids[id]; ok {
 			return p
@@ -59,6 +62,15 @@ func (n *normalizer) body(t *testing.T, raw []byte) any {
 		t.Fatalf("normalize %s: %v", raw, err)
 	}
 	return v
+}
+
+func TestNormalizerKeepsTimeZone(t *testing.T) {
+	t.Parallel()
+	n := &normalizer{ids: map[string]string{}}
+	got := n.body(t, []byte(`["2026-10-10T12:00:00Z","2026-10-10T08:00:00.123-04:00"]`))
+	if want := []any{"<time>Z", "<time>-04:00"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("normalized = %v, want %v", got, want)
+	}
 }
 
 // TestParity runs one fixed scenario and compares the normalized transcript

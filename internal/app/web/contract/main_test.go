@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"testing"
+	"time"
 )
 
 // TestMain sets the process-wide environment the server reads (every test
@@ -18,6 +19,11 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+	// Responses built from time.Now() rather than read back (register-server's
+	// created_at) carry the host's zone. Pin it to UTC, as on CI runners, so
+	// the parity transcript, which keeps each timestamp's zone, does not
+	// depend on the developer's machine.
+	time.Local = time.UTC
 	for k, v := range map[string]string{
 		"JWT_SECRET":           "contract-secret",
 		"WEB_URL":              "http://127.0.0.1",

@@ -20,7 +20,7 @@
     "body": {
       "data": {
         "server": {
-          "created_at": "<time>",
+          "created_at": "<time>Z",
           "id": "<id-2>",
           "last_seen_at": null,
           "name": "contract",
@@ -55,7 +55,7 @@
         "apps": [
           {
             "color": "#112233",
-            "created_at": "<time>",
+            "created_at": "<time>Z",
             "icon": "box",
             "id": "<id-4>",
             "name": "alpha",
@@ -65,7 +65,7 @@
           },
           {
             "color": "#112233",
-            "created_at": "<time>",
+            "created_at": "<time>Z",
             "icon": "box",
             "id": "<id-5>",
             "name": "beta",
@@ -101,7 +101,7 @@
         "apps": [
           {
             "color": "#112233",
-            "created_at": "<time>",
+            "created_at": "<time>Z",
             "icon": "box",
             "id": "<id-4>",
             "name": "alpha-2",
@@ -121,10 +121,10 @@
       "data": [
         {
           "avatar_url": "",
-          "created_at": "<time>",
+          "created_at": "<time>Z",
           "email": "owner@example.test",
           "id": "<id-6>",
-          "last_seen_at": "<time>",
+          "last_seen_at": "<time>Z",
           "name": "Owner",
           "provider": "local",
           "role": "owner"

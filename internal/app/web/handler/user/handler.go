@@ -83,7 +83,6 @@ type changePasswordRequest struct {
 	NewPassword     string `json:"new_password"`
 }
 
-
 // ChangePassword verifies the current password and stores a new bcrypt hash,
 // clearing the must-change flag. Users without local credentials get a 400.
 func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {

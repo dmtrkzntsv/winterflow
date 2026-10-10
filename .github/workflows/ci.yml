@@ -1,0 +1,129 @@
+# CI for every pull request and every push to main: gofmt, vet, race-enabled
+# Go tests, web lint/tests/build, the installer's dry-run suite, and the
+# coverage gates (tools/diffcov). release.yml waits for this workflow's
+# success on main before it publishes anything.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  # PRs: a newer push to the branch cancels the run in progress. main: one
+  # group per commit, so every push finishes and can trigger its release.
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l $(git ls-files '*.go'))"
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt -w these files:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test -race -covermode=atomic -coverprofile=coverage.out ./...
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: go-coverage
+          path: coverage.out
+          if-no-files-found: error
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: Install
+        run: pnpm --dir web install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm --dir web run lint
+
+      - name: Test
+        run: pnpm --dir web run test:coverage
+
+      - name: Build
+        run: pnpm --dir web run build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-coverage
+          path: web/coverage/lcov.info
+          if-no-files-found: error
+
+  installer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install.sh dry-run suite
+        run: bash scripts/install_test.sh
+
+  coverage:
+    needs: [go, web]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The diff gate runs `git diff <base>...HEAD`, which needs the
+          # merge base in the clone.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: go-coverage
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-coverage
+          path: web/coverage
+
+      - name: Diff coverage (changed lines >= 80%)
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: >-
+          go run ./tools/diffcov --base "$BASE_SHA" --min 80 --github
+          --go coverage.out --lcov web/coverage/lcov.info
+
+      - name: Coverage ratchet (totals vs coverage-baseline.json)
+        if: ${{ !cancelled() }}
+        run: >-
+          go run ./tools/diffcov ratchet --baseline coverage-baseline.json
+          --go coverage.out --lcov web/coverage/lcov.info

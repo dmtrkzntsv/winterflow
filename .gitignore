@@ -6,6 +6,8 @@ bin/
 
 data/
 *.sqlite*
+# coverage reports (make test)
+/coverage.out
 
 # root-built binaries (go build ./cmd/...)
 /agent

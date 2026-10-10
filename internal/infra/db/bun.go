@@ -137,6 +137,13 @@ func utcDSN(connStr string) string {
 		return connStr
 	}
 	q := u.Query()
+	for k := range q {
+		// Unknown parameters become startup parameters: a user's
+		// differently-cased "TimeZone=" must not be sent alongside ours.
+		if strings.EqualFold(k, "timezone") {
+			q.Del(k)
+		}
+	}
 	q.Set("timezone", "UTC")
 	u.RawQuery = q.Encode()
 	return u.String()

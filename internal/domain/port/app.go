@@ -74,6 +74,7 @@ type IngressManager interface {
 	// CreateDomain registers or replaces a name (certificate mode: the
 	// ECIES-encrypted key is decrypted and the pair checked first).
 	CreateDomain(ctx context.Context, in command.CreateDomainRequest) (command.Domain, error)
-	// DeleteDomain removes a registration no app uses.
+	// DeleteDomain removes a registration unless an app has a hostname
+	// only that registration covers.
 	DeleteDomain(ctx context.Context, name string) error
 }

@@ -154,8 +154,35 @@ func (m *Manager) CreateDomain(_ context.Context, in command.CreateDomainRequest
 	return command.Domain{Name: in.Name, TLS: in.TLS, Apps: []string{}}, nil
 }
 
-// DeleteDomain removes a registration, refusing while any app uses a
-// hostname this registration wins (the error names those apps).
+// orphanedBy returns the apps (in scan order) with a hostname that name wins
+// and no other registration in regs covers — the hosts deleting name would
+// drop out of ingress. A host a remaining registration (e.g. a wildcard next
+// to a seeded exact name) still covers just moves over to it.
+func orphanedBy(apps []AppIngress, regs []domains.Registration, name string) []AppIngress {
+	var all, rest []string
+	for _, r := range regs {
+		all = append(all, r.Name)
+		if r.Name != name {
+			rest = append(rest, r.Name)
+		}
+	}
+	var out []AppIngress
+	for _, a := range apps {
+		for _, h := range a.Ingress.DomainNames() {
+			if win, ok := model.WinningDomain(all, h); !ok || win != name {
+				continue
+			}
+			if _, ok := model.WinningDomain(rest, h); !ok {
+				out = append(out, a)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// DeleteDomain removes a registration, refusing while an app uses a hostname
+// only this registration covers (the error names those apps).
 func (m *Manager) DeleteDomain(_ context.Context, name string) error {
 	if !m.cfg.IsIngressEnabled() {
 		return ErrIngressDisabled
@@ -165,7 +192,7 @@ func (m *Manager) DeleteDomain(_ context.Context, name string) error {
 		return err
 	}
 	apps, _ := m.scanApps()
-	if users := domainUsers(apps, regs)[name]; len(users) > 0 {
+	if users := orphanedBy(apps, regs, name); len(users) > 0 {
 		labels := make([]string, 0, len(users))
 		for _, a := range users {
 			if a.Name != "" {
@@ -174,7 +201,7 @@ func (m *Manager) DeleteDomain(_ context.Context, name string) error {
 				labels = append(labels, a.AppID)
 			}
 		}
-		return fmt.Errorf("%s is used by %s: remove its hostnames from those apps first", name, strings.Join(labels, ", "))
+		return fmt.Errorf("%s is used by %s and no other registered domain covers those hostnames: remove them from those apps (or register a covering domain) first", name, strings.Join(labels, ", "))
 	}
 	existed, err := m.domains.Delete(name)
 	if err != nil {

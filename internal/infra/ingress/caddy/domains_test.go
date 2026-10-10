@@ -153,3 +153,39 @@ func TestDomainMutationsNeedIngress(t *testing.T) {
 		t.Fatalf("list = %+v, %v", doms, err)
 	}
 }
+
+// TestDeleteDomainRefusesOnlyOrphanedHosts is the upgrade path: a seeded
+// exact name can be deleted once a wildcard covers its host too (the app
+// moves to the wildcard), while the sole cover of a host stays refused.
+func TestDeleteDomainRefusesOnlyOrphanedHosts(t *testing.T) {
+	m, dataDir := testManager(t, true)
+	writeApp(t, dataDir, "app-1", `{"name":"Shop","ingress":{"domains":[{"domain":"shop.example.com","upstream_port":1}]}}`)
+	writeApp(t, dataDir, "app-2", `{"ingress":{"redirects":[{"domain":"old.example.com","to":"https://shop.example.com","code":301}]}}`)
+	writeApp(t, dataDir, "app-3", `{"name":"Other","ingress":{"domains":[{"domain":"other.example.org","upstream_port":3}]}}`)
+	ctx := context.Background()
+	for _, name := range []string{"shop.example.com", "old.example.com", "*.example.com", "other.example.org"} {
+		registerDomain(t, dataDir, name, command.DomainTLSOff)
+	}
+
+	// The exact names win their hosts, but the wildcard still covers them.
+	if err := m.DeleteDomain(ctx, "shop.example.com"); err != nil {
+		t.Fatalf("delete exact name a wildcard also covers: %v", err)
+	}
+	if err := m.DeleteDomain(ctx, "old.example.com"); err != nil {
+		t.Fatalf("delete exact redirect source a wildcard also covers: %v", err)
+	}
+	// Now the wildcard is the only cover: refused, naming both apps.
+	err := m.DeleteDomain(ctx, "*.example.com")
+	if err == nil || !strings.Contains(err.Error(), "Shop (app-1)") || !strings.Contains(err.Error(), "app-2") ||
+		strings.Contains(err.Error(), "app-3") {
+		t.Fatalf("delete sole cover = %v", err)
+	}
+	// An exact sole cover is refused too.
+	if err := m.DeleteDomain(ctx, "other.example.org"); err == nil || !strings.Contains(err.Error(), "Other (app-3)") {
+		t.Fatalf("delete sole exact cover = %v", err)
+	}
+	doms, _ := m.ListDomains(ctx)
+	if len(doms) != 2 {
+		t.Fatalf("registrations = %+v, want the wildcard and other.example.org", doms)
+	}
+}

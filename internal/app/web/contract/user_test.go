@@ -2,6 +2,7 @@ package contract_test
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"winterflow/internal/app/web/handler/user"
@@ -15,9 +16,13 @@ func TestUserRoutes(t *testing.T) {
 
 	t.Run("profile", func(t *testing.T) {
 		var p user.Profile
-		owner.get(t, "/api/v1/user/get-profile", nil).expect(t, http.StatusOK).data(t, &p)
-		if p.UserID != owner.userID || p.Email != owner.email || p.Role != "owner" || p.MustChangePassword {
+		r := owner.get(t, "/api/v1/user/get-profile", nil).expect(t, http.StatusOK)
+		r.data(t, &p)
+		if p.UserID != owner.userID || p.Email != owner.email || p.MustChangePassword {
 			t.Fatalf("profile = %+v", p)
+		}
+		if strings.Contains(string(r.Body), `"role"`) {
+			t.Fatalf("profile still carries a role: %s", r.Body)
 		}
 	})
 

@@ -126,8 +126,7 @@
           "id": "<id-6>",
           "last_seen_at": "<time>Z",
           "name": "Owner",
-          "provider": "local",
-          "role": "owner"
+          "provider": "local"
         }
       ],
       "message": "members",

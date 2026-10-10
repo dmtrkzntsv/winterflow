@@ -9,19 +9,20 @@ type Organization struct {
 	Color string `json:"color"`
 }
 
+// OrganizationRole is the value stored in organization_users.role. Winterflow
+// has no roles (every member may do everything) and nothing reads the
+// column. It is still written explicitly, rather than left to its 'member'
+// default, so that an older, role-aware binary run against this database
+// treats every new account as an administrator.
 type OrganizationRole string
 
 const (
-	RoleOwner  OrganizationRole = "owner"
-	RoleAdmin  OrganizationRole = "admin"
-	RoleMember OrganizationRole = "member"
+	// RoleOwner marks the account that created the org (claim, self-signup,
+	// first OAuth login).
+	RoleOwner OrganizationRole = "owner"
+	// RoleAdmin marks an account created inside an existing org.
+	RoleAdmin OrganizationRole = "admin"
 )
-
-// IsAdmin reports whether the role may administer the organization
-// (manage members, servers, and infrastructure settings).
-func (or OrganizationRole) IsAdmin() bool {
-	return or == RoleOwner || or == RoleAdmin
-}
 
 func (or OrganizationRole) Value() string {
 	return string(or)

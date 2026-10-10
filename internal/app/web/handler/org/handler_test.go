@@ -27,11 +27,11 @@ type fakeOrgStore struct {
 func (f *fakeOrgStore) PrimaryOrganizationID(context.Context, string) (string, error) {
 	return "org-1", nil
 }
-func (f *fakeOrgStore) CreateMemberUser(_ context.Context, orgID, name, email, role, tempPassword string) (model.User, error) {
+func (f *fakeOrgStore) CreateMemberUser(_ context.Context, orgID, name, email, tempPassword string) (model.User, error) {
 	if email == f.takenEmail {
 		return model.User{}, model.ErrEmailTaken
 	}
-	f.created = append(f.created, email+"|"+role+"|"+tempPassword)
+	f.created = append(f.created, email+"|"+tempPassword)
 	return model.User{ID: "new-1", Name: name}, nil
 }
 func (f *fakeOrgStore) ListMembers(context.Context, string) ([]model.Member, error) {
@@ -85,7 +85,7 @@ func post(h http.HandlerFunc, body string) *httptest.ResponseRecorder {
 
 func TestCreateUserReturnsTempPasswordOnce(t *testing.T) {
 	h, f := newHandler()
-	w := post(h.CreateUser, `{"name":"Bob","email":"Bob@X.io","role":"member"}`)
+	w := post(h.CreateUser, `{"name":"Bob","email":"Bob@X.io"}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
 	}
@@ -104,8 +104,26 @@ func TestCreateUserReturnsTempPasswordOnce(t *testing.T) {
 	if len(resp.Data.TempPassword) != 16 {
 		t.Errorf("temp password len = %d, want 16", len(resp.Data.TempPassword))
 	}
-	if len(f.created) != 1 || !strings.HasPrefix(f.created[0], "bob@x.io|member|") {
+	if len(f.created) != 1 || f.created[0] != "bob@x.io|"+resp.Data.TempPassword {
 		t.Errorf("created = %v", f.created)
+	}
+	if strings.Contains(w.Body.String(), `"role"`) {
+		t.Errorf("response still carries a role: %s", w.Body.String())
+	}
+}
+
+// A client that still sends a role (a browser tab opened before the
+// upgrade) creates the user anyway: the field is ignored, whatever it says.
+func TestCreateUserIgnoresStaleRole(t *testing.T) {
+	h, f := newHandler()
+	for i, role := range []string{"member", "admin", "owner", "weird"} {
+		body := `{"name":"B","email":"b` + string(rune('0'+i)) + `@x.io","role":"` + role + `"}`
+		if w := post(h.CreateUser, body); w.Code != http.StatusOK {
+			t.Errorf("role %q: code = %d, want 200", role, w.Code)
+		}
+	}
+	if len(f.created) != 4 {
+		t.Errorf("created = %v, want 4 accounts", f.created)
 	}
 }
 
@@ -114,11 +132,9 @@ func TestCreateUserValidation(t *testing.T) {
 	f.takenEmail = "taken@x.io"
 	for _, body := range []string{
 		`{}`,
-		`{"name":"B","email":"","role":"member"}`,
-		`{"name":"B","email":"not-an-email","role":"member"}`,
-		`{"name":"B","email":"b@x.io","role":"owner"}`,
-		`{"name":"B","email":"b@x.io","role":"weird"}`,
-		`{"name":"B","email":"taken@x.io","role":"member"}`,
+		`{"name":"B","email":""}`,
+		`{"name":"B","email":"not-an-email"}`,
+		`{"name":"B","email":"taken@x.io"}`,
 	} {
 		if w := post(h.CreateUser, body); w.Code != http.StatusBadRequest {
 			t.Errorf("body %s: code = %d, want 400", body, w.Code)
@@ -174,12 +190,15 @@ func TestResetMemberPassword(t *testing.T) {
 
 func TestGetMembers(t *testing.T) {
 	h, f := newHandler()
-	f.members = []model.Member{{Role: "owner"}}
+	f.members = []model.Member{{User: model.User{ID: "u-1", Name: "Ann"}, Email: "ann@x.io", Provider: "local"}}
 	r := authed(httptest.NewRequest("GET", "/x", nil))
 	w := httptest.NewRecorder()
 	h.GetMembers(w, r)
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "owner") {
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "ann@x.io") {
 		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), `"role"`) {
+		t.Errorf("members still carry a role: %s", w.Body.String())
 	}
 }
 

@@ -28,7 +28,7 @@ func (h *Handler) Routes(api.Guards) []api.Route {
 		},
 		{
 			Method: http.MethodGet, Path: "/api/v1/user/get-profile", Handler: h.GetProfile, Auth: api.User,
-			Summary: "The caller's profile and role", Tag: "user",
+			Summary: "The caller's profile", Tag: "user",
 			Response: Profile{}, Errors: bad,
 		},
 		{

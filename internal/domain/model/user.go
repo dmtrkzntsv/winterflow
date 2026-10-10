@@ -44,7 +44,6 @@ type Credentials struct {
 type Member struct {
 	User
 	Email    string `json:"email"`
-	Role     string `json:"role"`
 	Provider string `json:"provider"`
 }
 

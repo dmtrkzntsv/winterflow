@@ -38,7 +38,7 @@ func TestOrgRoutes(t *testing.T) {
 		m.post(t, "/api/v1/org/update-organization", org.UpdateOrganizationRequest{Name: "Acme 2"}).
 			expect(t, http.StatusOK)
 		var created org.CreateUserResponse
-		m.post(t, "/api/v1/org/create-user", org.CreateUserRequest{Name: "Carol", Email: "carol@example.test", Role: "member"}).
+		m.post(t, "/api/v1/org/create-user", org.CreateUserRequest{Name: "Carol", Email: "carol@example.test"}).
 			expect(t, http.StatusOK).data(t, &created)
 		m.post(t, "/api/v1/org/reset-member-password", org.MemberRequest{UserID: created.UserID}).
 			expect(t, http.StatusOK)

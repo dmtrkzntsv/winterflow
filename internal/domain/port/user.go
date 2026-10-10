@@ -40,7 +40,7 @@ type UserRepository interface {
 	VerifyLocalCredentials(ctx context.Context, email, password string) (model.User, error)
 	// CreateMemberUser provisions an account inside an existing org with a
 	// must-change temp password. model.ErrEmailTaken on duplicates.
-	CreateMemberUser(ctx context.Context, orgID, name, email, role, tempPassword string) (model.User, error)
+	CreateMemberUser(ctx context.Context, orgID, name, email, tempPassword string) (model.User, error)
 	// SetPassword replaces the user's password hash and must-change flag.
 	SetPassword(ctx context.Context, userID, password string, mustChange bool) error
 	// GetCredentials returns the non-secret credential info (email,
@@ -52,8 +52,6 @@ type UserRepository interface {
 	// credentials, accounts, PATs). model.ErrorUserNotFound when the user is
 	// not a member of orgID.
 	RemoveMember(ctx context.Context, orgID, userID string) error
-	// RoleOf returns the user's role in their primary organization.
-	RoleOf(ctx context.Context, userID string) (string, error)
 
 	// RegisterLocalUser is open self-signup: user + their own organization
 	// (owner) + credentials. model.ErrEmailTaken on duplicates.

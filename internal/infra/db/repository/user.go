@@ -410,10 +410,11 @@ func (r *DbUserRepository) VerifyLocalCredentials(ctx context.Context, email, pa
 	return r.GetUser(ctx, creds.UserID)
 }
 
-// CreateMemberUser creates an admin-provisioned account inside an existing
-// organization: user + credentials (must-change temp password) + local
-// connected account + membership with the given role. No personal org.
-func (r *DbUserRepository) CreateMemberUser(ctx context.Context, orgID, name, email, role, tempPassword string) (model.User, error) {
+// CreateMemberUser creates an account inside an existing organization:
+// user + credentials (must-change temp password) + local connected account +
+// membership. No personal org. The stored role is model.RoleAdmin (see
+// model.OrganizationRole).
+func (r *DbUserRepository) CreateMemberUser(ctx context.Context, orgID, name, email, tempPassword string) (model.User, error) {
 	email = normalizeEmail(email)
 	hash, err := hashPassword(tempPassword)
 	if err != nil {
@@ -456,7 +457,7 @@ func (r *DbUserRepository) CreateMemberUser(ctx context.Context, orgID, name, em
 		_, err = tx.NewInsert().Model(&models.OrganizationUser{
 			OrganizationID: orgID,
 			UserID:         user.UserID,
-			Role:           role,
+			Role:           model.RoleAdmin.Value(),
 			CreatedAt:      types.NewDateTime(),
 		}).Exec(ctx)
 		return err
@@ -512,7 +513,7 @@ func (r *DbUserRepository) ListMembers(ctx context.Context, orgID string) ([]mod
 	}
 	out := make([]model.Member, 0, len(rows))
 	for _, row := range rows {
-		m := model.Member{Role: row.Role}
+		var m model.Member
 		if row.User != nil {
 			m.User = model.User{
 				ID:         row.User.UserID,
@@ -558,23 +559,6 @@ func (r *DbUserRepository) RemoveMember(ctx context.Context, orgID, userID strin
 			Exec(ctx)
 		return err
 	})
-}
-
-// RoleOf returns the caller's role in their primary organization.
-func (r *DbUserRepository) RoleOf(ctx context.Context, userID string) (string, error) {
-	var row models.OrganizationUser
-	err := r.db.GetDB().NewSelect().Model(&row).
-		Where("user_id = ?", userID).
-		Order("created_at ASC").
-		Limit(1).
-		Scan(ctx)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return "", model.ErrorUserNotFound
-		}
-		return "", err
-	}
-	return row.Role, nil
 }
 
 // RegisterLocalUser is open self-signup (distributed topology): user + their

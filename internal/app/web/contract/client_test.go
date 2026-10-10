@@ -228,7 +228,7 @@ func (c *client) member(t *testing.T) *client {
 		TempPassword string `json:"temp_password"`
 	}
 	c.post(t, "/api/v1/org/create-user", map[string]string{
-		"name": "Member", "email": "member@example.test", "role": "member",
+		"name": "Member", "email": "member@example.test",
 	}).expect(t, http.StatusOK).data(t, &created)
 	m := c.e.newClient()
 	m.userID, m.email = created.UserID, "member@example.test"

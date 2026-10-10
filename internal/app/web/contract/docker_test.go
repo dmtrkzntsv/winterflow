@@ -35,9 +35,11 @@ func TestDockerRoutes(t *testing.T) {
 		})
 	}
 
-	// No roles: a member runs every docker route the owner does.
+	// No roles: a member runs every docker route the owner does, even one
+	// whose stored role is still "member" from before the upgrade.
 	t.Run("members mutate infrastructure", func(t *testing.T) {
 		m := owner.member(t)
+		e.setStoredRole(t, m.userID, "member")
 		for _, tc := range cases {
 			m.succeed(t, call{Method: tc.method, Path: tc.path, Query: q, Body: tc.body}, nil)
 		}

@@ -1974,7 +1974,7 @@ paths:
       security:
       - bearer: []
       - cookie: []
-      summary: The caller's profile and role
+      summary: The caller's profile
       tags:
       - user
   /api/v1/user/get-tokens:
@@ -2734,16 +2734,12 @@ components:
           type: string
         name:
           type: string
-        role:
-          type: string
       type: object
     CreateUserResponse:
       properties:
         email:
           type: string
         name:
-          type: string
-        role:
           type: string
         temp_password:
           type: string
@@ -2753,7 +2749,6 @@ components:
       - user_id
       - name
       - email
-      - role
       - temp_password
       type: object
     CreateVolumeRequest:
@@ -3153,8 +3148,6 @@ components:
           type: string
         provider:
           type: string
-        role:
-          type: string
       required:
       - id
       - name
@@ -3162,7 +3155,6 @@ components:
       - created_at
       - last_seen_at
       - email
-      - role
       - provider
       type: object
     MemberRequest:
@@ -3252,15 +3244,12 @@ components:
           type: boolean
         name:
           type: string
-        role:
-          type: string
         user_id:
           type: string
       required:
       - user_id
       - name
       - email
-      - role
       - must_change_password
       type: object
     PublicKeyResponse:

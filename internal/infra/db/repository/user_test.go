@@ -19,6 +19,18 @@ func newUserRepo(t *testing.T) *DbUserRepository {
 	return NewDbUserRepository(newTestDB(t), log)
 }
 
+// storedRole reads organization_users.role straight from the table: the app
+// no longer reads it, but it is still written (see model.OrganizationRole).
+func storedRole(t *testing.T, repo *DbUserRepository, userID string) string {
+	t.Helper()
+	var row models.OrganizationUser
+	if err := repo.db.GetDB().NewSelect().Model(&row).
+		Where("user_id = ?", userID).Scan(context.Background()); err != nil {
+		t.Fatalf("read role of %s: %v", userID, err)
+	}
+	return row.Role
+}
+
 func TestCreateUserCreatesOrgMembershipAndAccount(t *testing.T) {
 	repo := newUserRepo(t)
 	ctx := context.Background()
@@ -201,8 +213,8 @@ func TestBootstrapLocalAdminCreatesOwnerOnce(t *testing.T) {
 	if admin.Name != "Ada Admin" {
 		t.Errorf("name = %q, want submitted 'Ada Admin'", admin.Name)
 	}
-	if role, err := repo.RoleOf(ctx, admin.ID); err != nil || role != "owner" {
-		t.Errorf("RoleOf = %q, %v; want owner", role, err)
+	if role := storedRole(t, repo, admin.ID); role != "owner" {
+		t.Errorf("stored role = %q, want owner", role)
 	}
 
 	// Email was normalized on write; verify with normalized form.
@@ -245,15 +257,17 @@ func TestCreateMemberUserJoinsOrgWithoutNewOrg(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	member, err := repo.CreateMemberUser(ctx, orgID, "Bob", "Bob@X.io", "member", "temp-pass-16char")
+	member, err := repo.CreateMemberUser(ctx, orgID, "Bob", "Bob@X.io", "temp-pass-16char")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got, err := repo.PrimaryOrganizationID(ctx, member.ID); err != nil || got != orgID {
 		t.Errorf("member org = %q, %v; want admin's org %q", got, err, orgID)
 	}
-	if role, _ := repo.RoleOf(ctx, member.ID); role != "member" {
-		t.Errorf("role = %q", role)
+	// Admin, not the column default 'member': an older binary run against
+	// this database must not demote accounts created without roles.
+	if role := storedRole(t, repo, member.ID); role != "admin" {
+		t.Errorf("stored role = %q, want admin", role)
 	}
 	if u, err := repo.VerifyLocalCredentials(ctx, "bob@x.io", "temp-pass-16char"); err != nil || u.ID != member.ID {
 		t.Errorf("temp password login: %v", err)
@@ -263,7 +277,7 @@ func TestCreateMemberUserJoinsOrgWithoutNewOrg(t *testing.T) {
 	}
 
 	// Duplicate email refused.
-	if _, err := repo.CreateMemberUser(ctx, orgID, "Bob2", "bob@x.io", "member", "zz"); !errors.Is(err, model.ErrEmailTaken) {
+	if _, err := repo.CreateMemberUser(ctx, orgID, "Bob2", "bob@x.io", "zz"); !errors.Is(err, model.ErrEmailTaken) {
 		t.Errorf("dup email err = %v, want ErrEmailTaken", err)
 	}
 
@@ -279,7 +293,7 @@ func TestSetPasswordClearsMustChange(t *testing.T) {
 	ctx := context.Background()
 	admin, _ := repo.BootstrapLocalAdmin(ctx, "", "boss@y.io", "bootpass-123")
 	orgID, _ := repo.PrimaryOrganizationID(ctx, admin.ID)
-	m, _ := repo.CreateMemberUser(ctx, orgID, "M", "m@y.io", "member", "old-temp-pass1")
+	m, _ := repo.CreateMemberUser(ctx, orgID, "M", "m@y.io", "old-temp-pass1")
 
 	if err := repo.SetPassword(ctx, m.ID, "brand-new-pass1", false); err != nil {
 		t.Fatal(err)
@@ -300,7 +314,7 @@ func TestRemoveMemberAnyMemberOnlyInOrg(t *testing.T) {
 	ctx := context.Background()
 	creator, _ := repo.BootstrapLocalAdmin(ctx, "", "boss@z.io", "bootpass-123")
 	orgID, _ := repo.PrimaryOrganizationID(ctx, creator.ID)
-	m, _ := repo.CreateMemberUser(ctx, orgID, "M", "m@z.io", "member", "temp-password1")
+	m, _ := repo.CreateMemberUser(ctx, orgID, "M", "m@z.io", "temp-password1")
 	outsider, err := repo.RegisterLocalUser(ctx, "Eve", "eve@z.io", "evepass-1234")
 	if err != nil {
 		t.Fatal(err)
@@ -333,7 +347,7 @@ func TestRemoveMemberDeletesUserAndTokens(t *testing.T) {
 	ctx := context.Background()
 	admin, _ := repo.BootstrapLocalAdmin(ctx, "", "boss@w.io", "bootpass-123")
 	orgID, _ := repo.PrimaryOrganizationID(ctx, admin.ID)
-	m, _ := repo.CreateMemberUser(ctx, orgID, "M", "m@w.io", "member", "temp-password1")
+	m, _ := repo.CreateMemberUser(ctx, orgID, "M", "m@w.io", "temp-password1")
 	_, patPlain, err := repo.CreateToken(ctx, m.ID, "m's token", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -373,8 +387,8 @@ func TestRegisterLocalUserCreatesOwnOrg(t *testing.T) {
 	if orgA == "" || orgA == orgB {
 		t.Errorf("orgs not distinct: %q vs %q", orgA, orgB)
 	}
-	if role, _ := repo.RoleOf(ctx, a.ID); role != "owner" {
-		t.Errorf("role = %q", role)
+	if role := storedRole(t, repo, a.ID); role != "owner" {
+		t.Errorf("stored role = %q, want owner", role)
 	}
 	if u, err := repo.VerifyLocalCredentials(ctx, "alice@x.io", "alicepass-123"); err != nil || u.ID != a.ID {
 		t.Errorf("login after register: %v", err)

@@ -18,7 +18,7 @@ import (
 // OrgStore is the slice of port.UserService this handler needs.
 type OrgStore interface {
 	PrimaryOrganizationID(ctx context.Context, userID string) (string, error)
-	CreateMemberUser(ctx context.Context, orgID, name, email, role, tempPassword string) (model.User, error)
+	CreateMemberUser(ctx context.Context, orgID, name, email, tempPassword string) (model.User, error)
 	ListMembers(ctx context.Context, orgID string) ([]model.Member, error)
 	RemoveMember(ctx context.Context, orgID, userID string) error
 	SetPassword(ctx context.Context, userID, password string, mustChange bool) error
@@ -79,12 +79,10 @@ func validEmail(email string) bool {
 	return at > 0 && at < len(email)-1 && !strings.ContainsAny(email, " \t")
 }
 
-// CreateUserRequest is the body of POST /api/v1/org/create-user. Role is
-// "admin" or "member".
+// CreateUserRequest is the body of POST /api/v1/org/create-user.
 type CreateUserRequest struct {
 	Name  string `json:"name"`
 	Email string `json:"email"`
-	Role  string `json:"role"`
 }
 
 // CreateUserResponse is the data of POST /api/v1/org/create-user.
@@ -93,7 +91,6 @@ type CreateUserResponse struct {
 	UserID       string `json:"user_id"`
 	Name         string `json:"name"`
 	Email        string `json:"email"`
-	Role         string `json:"role"`
 	TempPassword string `json:"temp_password"`
 }
 
@@ -118,16 +115,12 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		webutil.Error(w, "a valid email is required", nil)
 		return
 	}
-	if req.Role != model.RoleAdmin.Value() && req.Role != model.RoleMember.Value() {
-		webutil.Error(w, "role must be admin or member", nil)
-		return
-	}
 	tempPassword, err := randomPassword()
 	if err != nil {
 		webutil.Error(w, "failed to generate password", nil)
 		return
 	}
-	user, err := h.users.CreateMemberUser(r.Context(), orgID, name, email, req.Role, tempPassword)
+	user, err := h.users.CreateMemberUser(r.Context(), orgID, name, email, tempPassword)
 	if err != nil {
 		if err == model.ErrEmailTaken {
 			webutil.Error(w, "email already in use", nil)
@@ -141,7 +134,6 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		UserID:       user.ID,
 		Name:         user.Name,
 		Email:        email,
-		Role:         req.Role,
 		TempPassword: tempPassword,
 	})
 }

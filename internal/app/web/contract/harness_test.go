@@ -15,6 +15,7 @@ import (
 	"winterflow/internal/domain/dto"
 	"winterflow/internal/infra/bootstrap"
 	"winterflow/internal/infra/db"
+	"winterflow/internal/infra/db/models"
 	"winterflow/internal/infra/transport/bus"
 	membus "winterflow/internal/infra/transport/mem/bus"
 	"winterflow/pkg/config"
@@ -32,6 +33,7 @@ type env struct {
 	srv   *httptest.Server
 	bus   *membus.Bus
 	cfg   *config.ServerConfig
+	conn  *db.BunConnection
 
 	mu       sync.Mutex
 	requests map[string]string // request_id -> "METHOD /path" that dispatched it
@@ -94,9 +96,19 @@ func newEnv(t *testing.T) *env {
 	t.Cleanup(srv.Close)
 	t.Cleanup(cancel) // runs before srv.Close (LIFO)
 
-	e := &env{ctx: ctx, deps: deps, agent: agent, srv: srv, bus: b, cfg: cfg, requests: map[string]string{}}
+	e := &env{ctx: ctx, deps: deps, agent: agent, srv: srv, bus: b, cfg: cfg, conn: conn, requests: map[string]string{}}
 	e.seedPendingServer(t)
 	return e
+}
+
+// setStoredRole overwrites a user's organization_users.role, to stand in for
+// an account created before roles were removed (stored role "member").
+func (e *env) setStoredRole(t *testing.T, userID, role string) {
+	t.Helper()
+	if _, err := e.conn.GetDB().NewUpdate().Model((*models.OrganizationUser)(nil)).
+		Set("role = ?", role).Where("user_id = ?", userID).Exec(e.ctx); err != nil {
+		t.Fatalf("set stored role: %v", err)
+	}
 }
 
 // seedPendingServer leaves one claimable registration, as BootstrapStandalone

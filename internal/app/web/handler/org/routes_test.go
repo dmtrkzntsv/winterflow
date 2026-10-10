@@ -14,7 +14,6 @@ func TestRoutes(t *testing.T) {
 	want := []string{
 		"POST /api/v1/org/create-user",
 		"GET /api/v1/org/get-members",
-		"POST /api/v1/org/update-member",
 		"POST /api/v1/org/remove-member",
 		"POST /api/v1/org/reset-member-password",
 		"GET /api/v1/org/get-organization",

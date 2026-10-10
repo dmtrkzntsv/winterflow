@@ -48,13 +48,6 @@ func TestOrgRoutes(t *testing.T) {
 			expect(t, http.StatusBadRequest)
 	})
 
-	owner.post(t, "/api/v1/org/update-member", org.UpdateMemberRequest{UserID: m.userID, Role: "admin"}).expect(t, http.StatusOK)
-	m.get(t, "/api/v1/org/get-members", nil).expect(t, http.StatusOK)
-	t.Run("the last owner cannot be demoted", func(t *testing.T) {
-		owner.post(t, "/api/v1/org/update-member", org.UpdateMemberRequest{UserID: owner.userID, Role: "member"}).
-			expect(t, http.StatusBadRequest)
-	})
-
 	var reset org.ResetMemberPasswordResponse
 	owner.post(t, "/api/v1/org/reset-member-password", org.MemberRequest{UserID: m.userID}).
 		expect(t, http.StatusOK).data(t, &reset)
@@ -67,5 +60,19 @@ func TestOrgRoutes(t *testing.T) {
 	}
 	t.Run("cannot remove yourself", func(t *testing.T) {
 		owner.post(t, "/api/v1/org/remove-member", org.MemberRequest{UserID: owner.userID}).expect(t, http.StatusBadRequest)
+	})
+	// No owner rule: a member may remove the org's creator, and the org
+	// carries on with the member.
+	t.Run("a member removes the org's creator", func(t *testing.T) {
+		m2 := owner.member(t)
+		m2.post(t, "/api/v1/org/remove-member", org.MemberRequest{UserID: owner.userID}).expect(t, http.StatusOK)
+		m2.get(t, "/api/v1/org/get-members", nil).expect(t, http.StatusOK).data(t, &members)
+		if len(members) != 1 || members[0].ID != m2.userID {
+			t.Fatalf("members after removing the creator = %+v", members)
+		}
+		// The creator's account is gone: their password no longer logs in.
+		e.anon().do(t, call{Method: http.MethodPost, Path: "/auth/local/login", Body: map[string]string{
+			"user": owner.email, "passwd": ownerPassword, "aud": "contract",
+		}}).expect(t, http.StatusForbidden)
 	})
 }

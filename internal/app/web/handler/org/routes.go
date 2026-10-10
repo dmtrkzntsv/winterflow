@@ -23,11 +23,6 @@ func (h *Handler) Routes(api.Guards) []api.Route {
 			Response: []model.Member{}, Errors: bad,
 		},
 		{
-			Method: http.MethodPost, Path: "/api/v1/org/update-member", Handler: h.UpdateMember, Auth: api.User,
-			Summary: "Change a member's role", Tag: "org",
-			Request: UpdateMemberRequest{}, Errors: bad,
-		},
-		{
 			Method: http.MethodPost, Path: "/api/v1/org/remove-member", Handler: h.RemoveMember, Auth: api.User,
 			Summary: "Remove a member and their account", Tag: "org",
 			Request: MemberRequest{}, Errors: bad,

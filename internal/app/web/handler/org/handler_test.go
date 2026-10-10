@@ -19,11 +19,9 @@ type fakeOrgStore struct {
 	updatedOrg string
 	members    []model.Member
 	created    []string
-	updated    map[string]string
 	removed    []string
 	resetPw    []string
 	takenEmail string
-	lastOwner  string
 }
 
 func (f *fakeOrgStore) PrimaryOrganizationID(context.Context, string) (string, error) {
@@ -39,19 +37,9 @@ func (f *fakeOrgStore) CreateMemberUser(_ context.Context, orgID, name, email, r
 func (f *fakeOrgStore) ListMembers(context.Context, string) ([]model.Member, error) {
 	return f.members, nil
 }
-func (f *fakeOrgStore) UpdateMemberRole(_ context.Context, _, userID, role string) error {
-	if userID == f.lastOwner {
-		return model.ErrLastOwner
-	}
-	if f.updated == nil {
-		f.updated = map[string]string{}
-	}
-	f.updated[userID] = role
-	return nil
-}
 func (f *fakeOrgStore) RemoveMember(_ context.Context, _, userID string) error {
-	if userID == f.lastOwner {
-		return model.ErrLastOwner
+	if userID == "not-in-org" {
+		return model.ErrorUserNotFound
 	}
 	f.removed = append(f.removed, userID)
 	return nil
@@ -138,25 +126,25 @@ func TestCreateUserValidation(t *testing.T) {
 	}
 }
 
-func TestUpdateMemberLastOwnerGuard(t *testing.T) {
+func TestRemoveMember(t *testing.T) {
 	h, f := newHandler()
-	f.lastOwner = "owner-1"
-	if w := post(h.UpdateMember, `{"user_id":"owner-1","role":"member"}`); w.Code != http.StatusBadRequest {
-		t.Errorf("last owner demote: code = %d, want 400", w.Code)
-	}
-	if w := post(h.UpdateMember, `{"user_id":"m-1","role":"admin"}`); w.Code != http.StatusOK {
-		t.Errorf("promote: code = %d", w.Code)
-	}
-}
-
-func TestRemoveMemberSelfForbidden(t *testing.T) {
-	h, _ := newHandler()
-	// Caller is admin-1; removing self is refused.
+	// Caller is admin-1; removing self is refused (it would lock them out).
 	if w := post(h.RemoveMember, `{"user_id":"admin-1"}`); w.Code != http.StatusBadRequest {
 		t.Errorf("self-remove: code = %d, want 400", w.Code)
 	}
+	if w := post(h.RemoveMember, `{"user_id":""}`); w.Code != http.StatusBadRequest {
+		t.Errorf("empty user_id: code = %d, want 400", w.Code)
+	}
+	// A user outside the caller's org is a 400, not a removal.
+	if w := post(h.RemoveMember, `{"user_id":"not-in-org"}`); w.Code != http.StatusBadRequest {
+		t.Errorf("foreign user: code = %d, want 400", w.Code)
+	}
+	// Any other member goes, whoever created the org: there is no owner.
 	if w := post(h.RemoveMember, `{"user_id":"m-1"}`); w.Code != http.StatusOK {
 		t.Errorf("remove member: code = %d", w.Code)
+	}
+	if len(f.removed) != 1 || f.removed[0] != "m-1" {
+		t.Errorf("removed = %v, want [m-1]", f.removed)
 	}
 }
 

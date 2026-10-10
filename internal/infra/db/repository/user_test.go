@@ -295,27 +295,36 @@ func TestSetPasswordClearsMustChange(t *testing.T) {
 	}
 }
 
-func TestUpdateMemberRoleLastOwnerGuard(t *testing.T) {
+func TestRemoveMemberAnyMemberOnlyInOrg(t *testing.T) {
 	repo := newUserRepo(t)
 	ctx := context.Background()
-	admin, _ := repo.BootstrapLocalAdmin(ctx, "", "boss@z.io", "bootpass-123")
-	orgID, _ := repo.PrimaryOrganizationID(ctx, admin.ID)
+	creator, _ := repo.BootstrapLocalAdmin(ctx, "", "boss@z.io", "bootpass-123")
+	orgID, _ := repo.PrimaryOrganizationID(ctx, creator.ID)
 	m, _ := repo.CreateMemberUser(ctx, orgID, "M", "m@z.io", "member", "temp-password1")
-
-	// Demoting the only owner is refused.
-	if err := repo.UpdateMemberRole(ctx, orgID, admin.ID, "member"); !errors.Is(err, model.ErrLastOwner) {
-		t.Errorf("demote last owner err = %v, want ErrLastOwner", err)
-	}
-	// Promote member to admin: fine.
-	if err := repo.UpdateMemberRole(ctx, orgID, m.ID, "admin"); err != nil {
+	outsider, err := repo.RegisterLocalUser(ctx, "Eve", "eve@z.io", "evepass-1234")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if role, _ := repo.RoleOf(ctx, m.ID); role != "admin" {
-		t.Errorf("role = %q", role)
+
+	// A user of another org is not a member here: refused, and untouched.
+	if err := repo.RemoveMember(ctx, orgID, outsider.ID); !errors.Is(err, model.ErrorUserNotFound) {
+		t.Errorf("remove outsider err = %v, want ErrorUserNotFound", err)
 	}
-	// Removing the only owner is refused too.
-	if err := repo.RemoveMember(ctx, orgID, admin.ID); !errors.Is(err, model.ErrLastOwner) {
-		t.Errorf("remove last owner err = %v, want ErrLastOwner", err)
+	if _, err := repo.VerifyLocalCredentials(ctx, "eve@z.io", "evepass-1234"); err != nil {
+		t.Errorf("outsider lost their account: %v", err)
+	}
+
+	// No owner rule: the org's creator can be removed like anyone else, and
+	// the org lives on with the remaining member.
+	if err := repo.RemoveMember(ctx, orgID, creator.ID); err != nil {
+		t.Fatalf("remove creator: %v", err)
+	}
+	members, err := repo.ListMembers(ctx, orgID)
+	if err != nil || len(members) != 1 || members[0].ID != m.ID {
+		t.Fatalf("members after removing the creator = %+v, %v", members, err)
+	}
+	if got, err := repo.PrimaryOrganizationID(ctx, m.ID); err != nil || got != orgID {
+		t.Errorf("remaining member's org = %q, %v; want %q", got, err, orgID)
 	}
 }
 

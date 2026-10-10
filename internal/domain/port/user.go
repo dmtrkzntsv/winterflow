@@ -48,11 +48,9 @@ type UserRepository interface {
 	GetCredentials(ctx context.Context, userID string) (model.Credentials, error)
 	// ListMembers returns the org's memberships joined with their users.
 	ListMembers(ctx context.Context, orgID string) ([]model.Member, error)
-	// UpdateMemberRole changes a member's role. model.ErrLastOwner guards
-	// demoting the only owner.
-	UpdateMemberRole(ctx context.Context, orgID, userID, role string) error
 	// RemoveMember deletes the member's user row outright (cascades to
-	// credentials, accounts, PATs). model.ErrLastOwner guards the only owner.
+	// credentials, accounts, PATs). model.ErrorUserNotFound when the user is
+	// not a member of orgID.
 	RemoveMember(ctx context.Context, orgID, userID string) error
 	// RoleOf returns the user's role in their primary organization.
 	RoleOf(ctx context.Context, userID string) (string, error)

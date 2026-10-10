@@ -1347,53 +1347,6 @@ paths:
       summary: Issue a member a new temp password
       tags:
       - org
-  /api/v1/org/update-member:
-    post:
-      operationId: orgUpdateMember
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UpdateMemberRequest'
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                properties:
-                  data:
-                    type: "null"
-                  message:
-                    type: string
-                  success:
-                    const: true
-                    type: boolean
-                required:
-                - success
-                - data
-                type: object
-          description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Bad Request
-        "401":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
-          description: Unauthorized
-      security:
-      - bearer: []
-      - cookie: []
-      summary: Change a member's role
-      tags:
-      - org
   /api/v1/org/update-organization:
     post:
       operationId: orgUpdateOrganization
@@ -3597,13 +3550,6 @@ components:
       - from_version
       - to_version
       - scheduled
-      type: object
-    UpdateMemberRequest:
-      properties:
-        role:
-          type: string
-        user_id:
-          type: string
       type: object
     UpdateOrganizationRequest:
       properties:

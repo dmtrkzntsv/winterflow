@@ -1,7 +1,7 @@
 // Package org serves organization member management: create accounts with
-// temp passwords, list members, change roles, reset passwords, remove.
-// Every member may call every route; handlers scope all operations to the
-// caller's own organization.
+// temp passwords, list members, reset passwords, remove. There are no roles:
+// every member of an org may do all of it. Handlers scope every operation
+// to the caller's own organization.
 package org
 
 import (
@@ -20,7 +20,6 @@ type OrgStore interface {
 	PrimaryOrganizationID(ctx context.Context, userID string) (string, error)
 	CreateMemberUser(ctx context.Context, orgID, name, email, role, tempPassword string) (model.User, error)
 	ListMembers(ctx context.Context, orgID string) ([]model.Member, error)
-	UpdateMemberRole(ctx context.Context, orgID, userID, role string) error
 	RemoveMember(ctx context.Context, orgID, userID string) error
 	SetPassword(ctx context.Context, userID, password string, mustChange bool) error
 	GetCredentials(ctx context.Context, userID string) (model.Credentials, error)
@@ -162,41 +161,6 @@ func (h *Handler) GetMembers(w http.ResponseWriter, r *http.Request) {
 	webutil.Success(w, "members", members)
 }
 
-// UpdateMemberRequest is the body of POST /api/v1/org/update-member.
-type UpdateMemberRequest struct {
-	UserID string `json:"user_id"`
-	Role   string `json:"role"`
-}
-
-// UpdateMember changes a member's role within the caller's org.
-func (h *Handler) UpdateMember(w http.ResponseWriter, r *http.Request) {
-	_, orgID, ok := h.callerOrg(w, r)
-	if !ok {
-		return
-	}
-	req, ok := webutil.DecodeBody[UpdateMemberRequest](w, r)
-	if !ok {
-		return
-	}
-	if req.UserID == "" {
-		webutil.Error(w, "user_id is required", nil)
-		return
-	}
-	if req.Role != model.RoleAdmin.Value() && req.Role != model.RoleMember.Value() && req.Role != model.RoleOwner.Value() {
-		webutil.Error(w, "invalid role", nil)
-		return
-	}
-	if err := h.users.UpdateMemberRole(r.Context(), orgID, req.UserID, req.Role); err != nil {
-		if err == model.ErrLastOwner {
-			webutil.Error(w, "cannot demote the last owner", nil)
-			return
-		}
-		webutil.Error(w, "failed to update member", nil)
-		return
-	}
-	webutil.Success(w, "member updated", nil)
-}
-
 // MemberRequest names one member: the body of remove-member and
 // reset-member-password.
 type MemberRequest struct {
@@ -204,7 +168,8 @@ type MemberRequest struct {
 }
 
 // RemoveMember deletes a member (and their user account) from the caller's
-// org. Self-removal is refused — hand ownership over first.
+// org. Self-removal is refused, so an org always keeps the member who
+// removed the others.
 func (h *Handler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 	callerID, orgID, ok := h.callerOrg(w, r)
 	if !ok {
@@ -223,10 +188,6 @@ func (h *Handler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.users.RemoveMember(r.Context(), orgID, req.UserID); err != nil {
-		if err == model.ErrLastOwner {
-			webutil.Error(w, "cannot remove the last owner", nil)
-			return
-		}
 		webutil.Error(w, "failed to remove member", nil)
 		return
 	}
@@ -277,7 +238,7 @@ func (h *Handler) ResetMemberPassword(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetOrganization returns the caller's org identity (name, icon, color).
-// Visible to every member — only updates are admin-gated.
+// Visible to every member.
 func (h *Handler) GetOrganization(w http.ResponseWriter, r *http.Request) {
 	_, orgID, ok := h.callerOrg(w, r)
 	if !ok {
@@ -299,7 +260,7 @@ type UpdateOrganizationRequest struct {
 	Color string `json:"color"`
 }
 
-// UpdateOrganization sets the org's name/icon/color (admin-only via route).
+// UpdateOrganization sets the org's name/icon/color.
 func (h *Handler) UpdateOrganization(w http.ResponseWriter, r *http.Request) {
 	_, orgID, ok := h.callerOrg(w, r)
 	if !ok {

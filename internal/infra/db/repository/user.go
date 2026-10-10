@@ -537,67 +537,21 @@ func (r *DbUserRepository) ListMembers(ctx context.Context, orgID string) ([]mod
 	return out, nil
 }
 
-// ownerCount reports how many owners the org has (for last-owner guards).
-func ownerCount(ctx context.Context, tx bun.IDB, orgID string) (int, error) {
-	return tx.NewSelect().Model((*models.OrganizationUser)(nil)).
-		Where("organization_id = ? AND role = ?", orgID, model.RoleOwner.Value()).
-		Count(ctx)
-}
-
-func (r *DbUserRepository) memberRole(ctx context.Context, tx bun.IDB, orgID, userID string) (string, error) {
-	var row models.OrganizationUser
-	err := tx.NewSelect().Model(&row).
-		Where("organization_id = ? AND user_id = ?", orgID, userID).
-		Scan(ctx)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return "", model.ErrorUserNotFound
-		}
-		return "", err
-	}
-	return row.Role, nil
-}
-
-func (r *DbUserRepository) UpdateMemberRole(ctx context.Context, orgID, userID, role string) error {
-	return r.db.Transaction(ctx, func(tx bun.IDB) error {
-		current, err := r.memberRole(ctx, tx, orgID, userID)
-		if err != nil {
-			return err
-		}
-		if current == model.RoleOwner.Value() && role != model.RoleOwner.Value() {
-			n, err := ownerCount(ctx, tx, orgID)
-			if err != nil {
-				return err
-			}
-			if n <= 1 {
-				return model.ErrLastOwner
-			}
-		}
-		_, err = tx.NewUpdate().Model((*models.OrganizationUser)(nil)).
-			Set("role = ?", role).
-			Where("organization_id = ? AND user_id = ?", orgID, userID).
-			Exec(ctx)
-		return err
-	})
-}
-
 // RemoveMember deletes the member's user row outright (memberships,
 // credentials, connected accounts, and PATs go with it via FK cascade).
-// Safe because every non-owner member is an admin-provisioned account.
+// Only a member of orgID can be removed: anyone else is
+// model.ErrorUserNotFound and stays untouched. Safe to delete the user
+// itself because an account belongs to exactly one org.
 func (r *DbUserRepository) RemoveMember(ctx context.Context, orgID, userID string) error {
 	return r.db.Transaction(ctx, func(tx bun.IDB) error {
-		current, err := r.memberRole(ctx, tx, orgID, userID)
+		member, err := tx.NewSelect().Model((*models.OrganizationUser)(nil)).
+			Where("organization_id = ? AND user_id = ?", orgID, userID).
+			Exists(ctx)
 		if err != nil {
 			return err
 		}
-		if current == model.RoleOwner.Value() {
-			n, err := ownerCount(ctx, tx, orgID)
-			if err != nil {
-				return err
-			}
-			if n <= 1 {
-				return model.ErrLastOwner
-			}
+		if !member {
+			return model.ErrorUserNotFound
 		}
 		_, err = tx.NewDelete().Model((*models.User)(nil)).
 			Where("user_id = ?", userID).

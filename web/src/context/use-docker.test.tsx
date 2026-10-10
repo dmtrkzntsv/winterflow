@@ -50,6 +50,29 @@ describe("useDocker domain calls", () => {
     expect(sent[1].url).toContain("/api/v1/domain/delete?server_id=srv-1");
   });
 
+  it("resolves create and delete with the reload warnings", async () => {
+    const { result } = renderHook(() => useDocker());
+    waitFor.mockResolvedValueOnce({ status: 0, payload: { domain: { name: "x.app" }, warnings: ["reload failed"] } });
+    expect(await result.current.createDomain("x.app", "off")).toEqual(["reload failed"]);
+    waitFor.mockResolvedValueOnce({ status: 0, payload: { name: "x.app" } });
+    expect(await result.current.deleteDomain("x.app")).toEqual([]);
+    waitFor.mockResolvedValueOnce({ status: 0, payload: null });
+    expect(await result.current.deleteDomain("x.app")).toEqual([]);
+  });
+
+  it("surfaces the API's refusal message", async () => {
+    const { result } = renderHook(() => useDocker());
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ success: false, message: '"*.*.x" is not a valid domain' }), { status: 400 }),
+    );
+    await expect(result.current.createDomain("*.*.x", "off")).rejects.toThrow('"*.*.x" is not a valid domain');
+    // A body without a message (or not JSON) falls back to the status.
+    fetchMock.mockResolvedValueOnce(new Response("upstream down", { status: 502 }));
+    await expect(result.current.deleteDomain("x.app")).rejects.toThrow("Request failed: 502");
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ success: false, message: "  " }), { status: 403 }));
+    await expect(result.current.listDomains()).rejects.toThrow("Request failed: 403");
+  });
+
   it("lists domains from the result payload", async () => {
     const { result } = renderHook(() => useDocker());
     waitFor.mockResolvedValueOnce({ status: 0, payload: { domains: null } });

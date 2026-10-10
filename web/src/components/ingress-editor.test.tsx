@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { MemoryRouter } from "react-router-dom";
@@ -56,7 +56,7 @@ describe("IngressEditor", () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it("suggests registrations; a wildcard pre-fills the suffix with the caret before it", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     render(<Harness ingress={oneDomain("")} />);
 
     await user.click(await screen.findByRole("button", { name: "*.twillingate.app" }));
@@ -73,7 +73,7 @@ describe("IngressEditor", () => {
   });
 
   it("fills an exact registration as is and checks it on this server", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     render(<Harness ingress={oneDomain("")} />);
 
     await user.click(await screen.findByRole("button", { name: "example.com" }));
@@ -87,7 +87,7 @@ describe("IngressEditor", () => {
   });
 
   it("explains an uncovered hostname with a link to the Domains tab", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     checks["shop.other.app"] = { available: true, covered: false, claims: null };
     render(<Harness ingress={oneDomain("")} />);
 
@@ -97,7 +97,7 @@ describe("IngressEditor", () => {
   });
 
   it("names the app that already takes the hostname", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     checks["shop.twillingate.app"] = { available: false, covered: true, claims: [{ app_name: "Shop" }] };
     render(<Harness ingress={oneDomain("")} />);
 
@@ -106,7 +106,7 @@ describe("IngressEditor", () => {
   });
 
   it("checks domain-level redirect sources and shows their mode", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     checks["old.other.app"] = { available: true, covered: false, claims: null };
     render(
       <Harness
@@ -127,8 +127,17 @@ describe("IngressEditor", () => {
 
   it("works without registrations", async () => {
     listDomainsMock.mockRejectedValueOnce(new Error("agent offline"));
+    const user = userEvent.setup({ delay: null });
     render(<Harness ingress={oneDomain("")} />);
     await waitFor(() => expect(listDomainsMock).toHaveBeenCalled());
+    // Let the rejection settle (and the editor handle it) before asserting.
+    await act(async () => {
+      await listDomainsMock.mock.results[0].value.catch(() => undefined);
+    });
     expect(screen.queryByText("Use:")).not.toBeInTheDocument();
+    // The hostname field still works, just without suggestions or a badge.
+    await user.type(screen.getByLabelText("Hostname"), "shop.example.com");
+    expect(screen.getByLabelText("Hostname")).toHaveValue("shop.example.com");
+    expect(screen.queryByText("Auto TLS")).not.toBeInTheDocument();
   });
 });

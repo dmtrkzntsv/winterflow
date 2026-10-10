@@ -52,7 +52,12 @@ export function useDocker() {
         headers: opts.body ? { "Content-Type": "application/json" } : undefined,
         body: opts.body ? JSON.stringify(opts.body) : undefined,
       });
-      if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+      if (!res.ok) {
+        // The API explains a refusal (e.g. an invalid domain) in `message`.
+        const body = (await res.json().catch(() => null)) as { message?: unknown } | null;
+        const message = typeof body?.message === "string" ? body.message.trim() : "";
+        throw new Error(message || `Request failed: ${res.status}`);
+      }
       const accepted = (await res.json()) as Accepted;
       const ref = accepted.data?.request_id;
       if (!ref) throw new Error("No request id");
@@ -161,26 +166,37 @@ export function useDocker() {
 
   // createDomain registers (or replaces) a name. In certificate mode the key
   // is a secret: it is encrypted with the server key, like registry passwords.
+  // It resolves with the proxy reload's warnings (the change itself applied).
   const createDomain = useCallback(
     async (
       name: string,
       tls: DomainTLS,
       cert?: { certificate: string; key: string },
-    ) => {
+    ): Promise<string[]> => {
       const body: Record<string, string> = { name, tls };
       if (tls === "certificate" && cert) {
         const key = await getPublicKey();
         body.certificate = cert.certificate;
         body.key = await encryptSecret(cert.key, key);
       }
-      await dispatch("/api/v1/domain/create", { method: "POST", body });
+      const res = await dispatch<{ warnings?: string[] } | null>("/api/v1/domain/create", {
+        method: "POST",
+        body,
+      });
+      return res?.warnings ?? [];
     },
     [dispatch, getPublicKey],
   );
 
+  // deleteDomain resolves with the proxy reload's warnings.
   const deleteDomain = useCallback(
-    (name: string) =>
-      dispatch("/api/v1/domain/delete", { method: "POST", body: { name } }),
+    async (name: string): Promise<string[]> => {
+      const res = await dispatch<{ warnings?: string[] } | null>("/api/v1/domain/delete", {
+        method: "POST",
+        body: { name },
+      });
+      return res?.warnings ?? [];
+    },
     [dispatch],
   );
 

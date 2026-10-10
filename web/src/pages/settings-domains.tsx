@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { KeyRound, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -116,10 +116,22 @@ function UsedBy({ ids, names }: { ids: string[]; names: Map<string, string> }) {
   );
 }
 
+// toastResult reports a domain mutation: success, or a warning when the proxy
+// reload that applied it reported problems (the change itself is stored).
+function toastResult(done: string, warnings: string[]) {
+  if (warnings.length > 0) {
+    toast.warning(`${done}, but the proxy reported a problem`, {
+      description: warnings.join("\n"),
+    });
+  } else {
+    toast.success(done);
+  }
+}
+
 // DomainDialog adds a registration, or (replace set) swaps the TLS mode or
 // certificate of an existing one — the agent replaces a name on create. The
 // parent remounts it (key) per opening, so state starts from replace.
-function DomainDialog({
+export function DomainDialog({
   docker,
   open,
   replace,
@@ -133,7 +145,7 @@ function DomainDialog({
   onSaved: () => Promise<void>;
 }) {
   const [name, setName] = useState(replace?.name ?? "");
-  const [tls, setTLS] = useState<DomainTLS>(replace ? "certificate" : "auto");
+  const [tls, setTLS] = useState<DomainTLS>(replace?.tls ?? "auto");
   const [certificate, setCertificate] = useState("");
   const [key, setKey] = useState("");
   const [busy, setBusy] = useState(false);
@@ -160,12 +172,12 @@ function DomainDialog({
   const save = async () => {
     setBusy(true);
     try {
-      await docker.createDomain(
+      const warnings = await docker.createDomain(
         trimmed,
         tls,
         needsPair ? { certificate: certificate.trim(), key: key.trim() } : undefined,
       );
-      toast.success(replace ? "Domain updated" : "Domain registered");
+      toastResult(replace ? "Domain updated" : "Domain registered", warnings);
       changeOpen(false);
       await onSaved();
     } catch (e) {
@@ -190,7 +202,9 @@ function DomainDialog({
           <DialogHeader>
             <DialogTitle>{replace ? "Edit domain" : "Register domain"}</DialogTitle>
             <DialogDescription>
-              Apps on this server can only use hostnames under a registered domain.
+              {replace
+                ? "Change how TLS works for this name. Certificate mode always takes a new certificate and key."
+                : "Apps on this server can only use hostnames under a registered domain."}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-1.5">
@@ -261,6 +275,10 @@ function DomainDialog({
                 <p className="text-xs text-muted-foreground">
                   Encrypted in your browser with this server's key; only the server can read it.
                 </p>
+                <p className="text-xs text-muted-foreground">
+                  The certificate also serves any Auto TLS hostname it matches: no Let's Encrypt
+                  certificate is requested for those.
+                </p>
               </div>
             </>
           ) : null}
@@ -306,10 +324,9 @@ export function DomainsCard({ docker }: { docker: Docker }) {
 
   const remove = async (name: string) => {
     try {
-      await docker.deleteDomain(name);
-      toast.success("Domain removed");
+      toastResult("Domain removed", await docker.deleteDomain(name));
     } catch (e) {
-      // In use: the agent's message names the apps.
+      // A host only this name covers: the agent's message names the apps.
       toast.error("Couldn't remove domain", {
         description: e instanceof Error ? e.message : undefined,
       });
@@ -386,18 +403,16 @@ export function DomainsCard({ docker }: { docker: Docker }) {
                     <UsedBy ids={d.apps ?? []} names={names} />
                   </TableCell>
                   <TableCell className="py-0.5 text-right">
-                    {d.tls === "certificate" ? (
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="size-8 text-muted-foreground"
-                        aria-label={`Replace certificate for ${d.name}`}
-                        title="Replace certificate"
-                        onClick={() => openDialog(d)}
-                      >
-                        <KeyRound className="size-4" />
-                      </Button>
-                    ) : null}
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="size-8 text-muted-foreground"
+                      aria-label={`Edit domain ${d.name}`}
+                      title={d.tls === "certificate" ? "Change TLS mode or replace certificate" : "Change TLS mode"}
+                      onClick={() => openDialog(d)}
+                    >
+                      <Pencil className="size-4" />
+                    </Button>
                     <Button
                       size="icon"
                       variant="ghost"
@@ -429,7 +444,8 @@ export function DomainsCard({ docker }: { docker: Docker }) {
             <AlertDialogTitle>Remove this domain?</AlertDialogTitle>
             <AlertDialogDescription>
               <code className="break-all font-mono text-foreground">{toDelete?.name}</code> will no
-              longer be accepted on this server. A domain still used by an app can't be removed.
+              longer be accepted on this server. It can't be removed while an app uses a hostname no
+              other registered domain covers.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

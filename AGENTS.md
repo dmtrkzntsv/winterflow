@@ -51,7 +51,7 @@ Use PascalCase for components (`AgentList`) and kebab-case for filenames (`agent
 ## Testing Guidelines
 Unit and integration coverage rely on the standard Go toolchain: run `go test ./...` from the repo root. 
 Add table-driven tests beside the code they exercise (`*_test.go` in the same package) when adding logic in `internal/` or `pkg/` — favour testing pure helpers and message/transport correlation (see `internal/infra/transport/codec`, `internal/infra/transport/grpc/hub`, and `internal/infra/orchestrator/docker_compose` for examples). 
-The frontend currently relies on type safety plus ESLint; if you introduce Vitest or Playwright, add scripts to `web/package.json` and document fixtures in this guide. 
+Frontend unit tests use Vitest + Testing Library on jsdom (`pnpm --dir web test`; `test:coverage` also writes `web/coverage/lcov.info`). Put `*.test.ts(x)` beside the code, keep pure helpers in `web/src/lib/` and test them directly, and render components inside their real context providers (`ProfileContext`, `AppsContext`, `MemoryRouter`) with fake objects for agent-bound APIs — see `web/src/pages/settings-volumes.test.tsx`. 
 Always mention which suites you executed in PR descriptions.
 
 ## Commit & Pull Request Guidelines

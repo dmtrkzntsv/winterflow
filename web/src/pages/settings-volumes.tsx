@@ -48,32 +48,11 @@ import { type Docker, type Volume } from "@/context/use-docker";
 import { useApps } from "@/context/use-apps";
 import { useProfile } from "@/context/use-profile";
 import { cn } from "@/lib/utils";
-
-const VOLUME_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/;
-
-// volumeNameError mirrors the agent's ValidateVolumeName so the dialog can say
-// what's wrong before a round-trip; "" means valid.
-function volumeNameError(name: string): string {
-  if (name.length > 255) return "Use at most 255 characters.";
-  if (!VOLUME_NAME_RE.test(name)) {
-    return "Start with a letter or digit; use only letters, digits, dots, dashes and underscores.";
-  }
-  return "";
-}
-
-// shortVolumeName drops the compose project prefix ("wf-<id>_data" → "data"):
-// the App column already names the owner, so the key is what tells rows
-// apart. Callers keep the full name in a title and in confirmations.
-function shortVolumeName(v: Volume): string {
-  // Anonymous volumes are 64-hex hashes; 12 chars is Docker's own short id.
-  if (v.anonymous && /^[0-9a-f]{64}$/.test(v.name)) {
-    return `${v.name.slice(0, 12)}…`;
-  }
-  const prefix = v.app_id && v.project ? `${v.project}_` : "";
-  return prefix && v.name.startsWith(prefix)
-    ? v.name.slice(prefix.length)
-    : v.name;
-}
+import {
+  groupVolumes,
+  shortVolumeName,
+  volumeNameError,
+} from "@/lib/volumes";
 
 // Same dot + label language as AppStatusIndicator: the normal state stays
 // quiet, only Orphaned (data nobody owns any more) draws the eye.
@@ -314,15 +293,7 @@ export function VolumesCard({ docker }: { docker: Docker }) {
   const all = items ?? [];
   const anonCount = all.filter((v) => v.anonymous).length;
   const visible = all.filter((v) => showAnon || !v.anonymous);
-  // The backend sorts by name; group here so Winterflow's volumes don't
-  // drown in whatever else runs on the host.
-  const groups = (
-    [
-      ["Winterflow apps", visible.filter((v) => v.app_id)],
-      ["Other volumes", visible.filter((v) => !v.app_id && !v.anonymous)],
-      ["Anonymous", visible.filter((v) => !v.app_id && v.anonymous)],
-    ] as const
-  ).filter(([, list]) => list.length > 0);
+  const groups = groupVolumes(visible);
   const orphanCount = visible.filter((v) => v.orphan).length;
   const cols = isAdmin ? 4 : 3;
 
@@ -484,10 +455,10 @@ export function VolumesCard({ docker }: { docker: Docker }) {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {groups.map(([label, list]) => (
+                  {groups.map(({ label, volumes }) => (
                     <Fragment key={label}>
                       {groups.length > 1 && groupRow(label)}
-                      {rows(list)}
+                      {rows(volumes)}
                     </Fragment>
                   ))}
                 </TableBody>

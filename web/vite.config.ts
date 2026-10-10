@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { fileURLToPath, URL } from "node:url";
 
 import { defineConfig } from "vite";
@@ -18,6 +19,19 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
+    },
+  },
+  // Vitest (pnpm test / test:coverage). Coverage feeds CI's diff gate and
+  // ratchet through coverage/lcov.info; vendored shadcn/ui is excluded.
+  test: {
+    environment: "jsdom",
+    setupFiles: ["./src/test/setup.ts"],
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "lcov"],
+      reportsDirectory: "./coverage",
+      include: ["src/**"],
+      exclude: ["src/components/ui/**", "src/main.tsx", "**/*.d.ts"],
     },
   },
 });

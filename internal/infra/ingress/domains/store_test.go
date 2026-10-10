@@ -209,3 +209,125 @@ func TestCertInfo(t *testing.T) {
 		t.Error("missing file must error")
 	}
 }
+
+func dirEntries(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		t.Fatal(err)
+	}
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	return names
+}
+
+func TestStoreRejectsInvalidNamesWithoutTouchingDisk(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "domains")
+	s := NewStore(dir)
+	if err := s.Put("../x", command.DomainTLSOff, nil, nil); err == nil {
+		t.Error("Put accepted ../x")
+	}
+	if err := s.Put("ok.app", "manual", nil, nil); err == nil {
+		t.Error("Put accepted an unknown mode")
+	}
+	if _, err := s.Delete("a/b"); err == nil {
+		t.Error("Delete accepted a/b")
+	}
+	if seeded, err := s.Seed([]Registration{{Name: "ok.app", TLS: command.DomainTLSOff}, {Name: "../evil", TLS: command.DomainTLSOff}}); err == nil || seeded {
+		t.Errorf("Seed accepted a bad name: %v, %v", seeded, err)
+	}
+	if _, err := s.Seed([]Registration{{Name: "ok.app", TLS: "manual"}}); err == nil {
+		t.Error("Seed accepted an unknown mode")
+	}
+	if got := dirEntries(t, root); len(got) != 0 {
+		t.Fatalf("rejected calls touched disk: %v", got)
+	}
+}
+
+func TestStoreListSkipsMismatchedCertificatePair(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "domains")
+	s := NewStore(dir)
+	cert, key := certtest.Issue(t, time.Now().Add(24*time.Hour), "a.app")
+	if err := s.Put("a.app", command.DomainTLSCertificate, cert, key); err != nil {
+		t.Fatal(err)
+	}
+	if regs, _ := s.List(); len(regs) != 1 {
+		t.Fatalf("good pair not listed: %+v", regs)
+	}
+	// A crash between the two renames of a renewal leaves cert and key from
+	// different pairs.
+	_, otherKey := certtest.Issue(t, time.Now().Add(24*time.Hour), "a.app")
+	if err := os.WriteFile(filepath.Join(dir, "a.app.key"), otherKey, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if regs, _ := s.List(); len(regs) != 0 {
+		t.Fatalf("mismatched pair must be skipped: %+v", regs)
+	}
+}
+
+func TestStorePutRenewalReplacesPairAndLeavesNoTemp(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "domains")
+	s := NewStore(dir)
+	c1, k1 := certtest.Issue(t, time.Now().Add(24*time.Hour), "a.app")
+	c2, k2 := certtest.Issue(t, time.Now().Add(48*time.Hour), "a.app")
+	for _, p := range [][2][]byte{{c1, k1}, {c2, k2}} {
+		if err := s.Put("a.app", command.DomainTLSCertificate, p[0], p[1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, _ := os.ReadFile(filepath.Join(dir, "a.app.crt")); string(got) != string(c2) {
+		t.Error("renewal did not replace the certificate")
+	}
+	for _, n := range dirEntries(t, dir) {
+		if strings.HasSuffix(n, ".tmp") {
+			t.Errorf("temp file left behind: %s", n)
+		}
+	}
+	if regs, _ := s.List(); len(regs) != 1 {
+		t.Fatalf("renewed pair not listed: %+v", regs)
+	}
+}
+
+func TestStorePutCleansTempWhenWriteFails(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "domains")
+	s := NewStore(dir)
+	cert, key := certtest.Issue(t, time.Now().Add(24*time.Hour), "a.app")
+	// A directory squatting on the key's temp path makes the second stage fail.
+	if err := os.MkdirAll(filepath.Join(dir, "a.app.key.tmp"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Put("a.app", command.DomainTLSCertificate, cert, key); err == nil {
+		t.Fatal("expected a write error")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "a.app.crt.tmp")); !os.IsNotExist(err) {
+		t.Error("certificate temp file left behind")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "a.app.crt")); !os.IsNotExist(err) {
+		t.Error("certificate was installed although the key could not be written")
+	}
+}
+
+func TestCertInfoSkipsNonCertificateBlocks(t *testing.T) {
+	notAfter := time.Now().Add(48 * time.Hour).Truncate(time.Second)
+	cert, key := certtest.Issue(t, notAfter, "x.app")
+	path := filepath.Join(t.TempDir(), "x.pem")
+	if err := os.WriteFile(path, append(append([]byte{}, key...), cert...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, issuer, err := CertInfo(path)
+	if err != nil || !got.Equal(notAfter) || issuer != certtest.Issuer {
+		t.Fatalf("CertInfo = %v, %q, %v", got, issuer, err)
+	}
+	if err := os.WriteFile(path, key, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := CertInfo(path); err == nil {
+		t.Error("a file with no CERTIFICATE block must error")
+	}
+}

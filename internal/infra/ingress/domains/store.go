@@ -12,6 +12,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -93,6 +94,12 @@ func (s *Store) List() ([]Registration, error) {
 		}
 		if r.TLS == command.DomainTLSCertificate {
 			r.CertFile, r.KeyFile = s.path(r.Name, ".crt"), s.path(r.Name, ".key")
+			// A renewal replaces two files; a crash between the renames
+			// leaves a mismatched pair. Fail closed rather than serve it.
+			if _, err := tls.LoadX509KeyPair(r.CertFile, r.KeyFile); err != nil {
+				slog.Warn("skipping domain registration with an unusable certificate pair", "domain", r.Name, "error", err)
+				continue
+			}
 		}
 		out = append(out, r)
 	}
@@ -105,17 +112,36 @@ func (s *Store) List() ([]Registration, error) {
 // them. The .json is written last so a crash never leaves a registration
 // pointing at missing files.
 func (s *Store) Put(name string, mode command.DomainTLS, certPEM, keyPEM []byte) error {
+	if err := model.ValidateDomainName(name); err != nil {
+		return err
+	}
+	if !mode.Valid() {
+		return fmt.Errorf("unknown tls mode %q", mode)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := os.MkdirAll(s.dir, 0o755); err != nil {
 		return fmt.Errorf("create domains dir: %w", err)
 	}
 	if mode == command.DomainTLSCertificate {
-		if err := writeAtomic(s.path(name, ".crt"), certPEM, 0o644); err != nil {
+		// Stage both files first, then rename back-to-back, so a failure
+		// while writing never touches the working pair.
+		crt, key := s.path(name, ".crt"), s.path(name, ".key")
+		if err := stage(crt+".tmp", certPEM, 0o644); err != nil {
 			return err
 		}
-		if err := writeAtomic(s.path(name, ".key"), keyPEM, 0o600); err != nil {
+		if err := stage(key+".tmp", keyPEM, 0o600); err != nil {
+			_ = os.Remove(crt + ".tmp")
 			return err
+		}
+		if err := os.Rename(crt+".tmp", crt); err != nil {
+			_ = os.Remove(crt + ".tmp")
+			_ = os.Remove(key + ".tmp")
+			return fmt.Errorf("write %s: %w", filepath.Base(crt), err)
+		}
+		if err := os.Rename(key+".tmp", key); err != nil {
+			_ = os.Remove(key + ".tmp")
+			return fmt.Errorf("write %s: %w", filepath.Base(key), err)
 		}
 	}
 	raw, _ := json.Marshal(Registration{Name: name, TLS: mode})
@@ -132,6 +158,9 @@ func (s *Store) Put(name string, mode command.DomainTLS, certPEM, keyPEM []byte)
 // Delete removes a registration and its certificate files. It reports
 // whether the registration existed.
 func (s *Store) Delete(name string) (bool, error) {
+	if err := model.ValidateDomainName(name); err != nil {
+		return false, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	err := os.Remove(s.path(name, ".json"))
@@ -151,6 +180,14 @@ func (s *Store) Delete(name string) (bool, error) {
 // directory renamed into place, so a crash mid-way leaves no half-seeded
 // directory that would stop the next start from seeding.
 func (s *Store) Seed(regs []Registration) (bool, error) {
+	for _, r := range regs {
+		if err := model.ValidateDomainName(r.Name); err != nil {
+			return false, err
+		}
+		if !r.TLS.Valid() {
+			return false, fmt.Errorf("unknown tls mode %q for %s", r.TLS, r.Name)
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, err := os.Stat(s.dir); err == nil {
@@ -173,10 +210,19 @@ func (s *Store) Seed(regs []Registration) (bool, error) {
 	return true, nil
 }
 
+// stage writes data to tmp, removing the partial file if the write fails.
+func stage(tmp string, data []byte, perm os.FileMode) error {
+	if err := os.WriteFile(tmp, data, perm); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("write %s: %w", filepath.Base(tmp), err)
+	}
+	return nil
+}
+
 func writeAtomic(path string, data []byte, perm os.FileMode) error {
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, perm); err != nil {
-		return fmt.Errorf("write %s: %w", filepath.Base(path), err)
+	if err := stage(tmp, data, perm); err != nil {
+		return err
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		_ = os.Remove(tmp)
@@ -231,9 +277,15 @@ func CertInfo(certFile string) (time.Time, string, error) {
 	if err != nil {
 		return time.Time{}, "", err
 	}
-	block, _ := pem.Decode(raw)
-	if block == nil {
-		return time.Time{}, "", errors.New("no PEM certificate")
+	var block *pem.Block
+	for {
+		block, raw = pem.Decode(raw)
+		if block == nil {
+			return time.Time{}, "", errors.New("no PEM certificate")
+		}
+		if block.Type == "CERTIFICATE" {
+			break
+		}
 	}
 	leaf, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {

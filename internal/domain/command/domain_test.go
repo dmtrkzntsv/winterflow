@@ -1,6 +1,7 @@
 package command
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -45,5 +46,19 @@ func TestDeleteDomainRequestValidate(t *testing.T) {
 		if err := (DeleteDomainRequest{Name: n}).Validate(); err == nil {
 			t.Errorf("%q should be rejected", n)
 		}
+	}
+}
+
+func TestDomainAppsMarshalsAsEmptyArray(t *testing.T) {
+	raw, err := json.Marshal(Domain{Name: "x.app", TLS: DomainTLSOff})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"apps":[]`) {
+		t.Errorf("nil Apps must marshal as []: %s", raw)
+	}
+	raw, _ = json.Marshal(ListDomainsResponse{Domains: []Domain{{Name: "x.app", TLS: DomainTLSOff, Apps: []string{"a1"}}}})
+	if !strings.Contains(string(raw), `"apps":["a1"]`) {
+		t.Errorf("apps lost: %s", raw)
 	}
 }

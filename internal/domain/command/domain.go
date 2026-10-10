@@ -1,6 +1,7 @@
 package command
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -37,6 +38,15 @@ type Domain struct {
 	NotAfter *time.Time `json:"not_after,omitempty"` // certificate mode
 	Issuer   string     `json:"issuer,omitempty"`    // certificate mode, CN of the issuer
 	Apps     []string   `json:"apps"`                // app ids using a covered host on this agent
+}
+
+// MarshalJSON renders a nil Apps as [] so clients can iterate it unconditionally.
+func (d Domain) MarshalJSON() ([]byte, error) {
+	type plain Domain
+	if d.Apps == nil {
+		d.Apps = []string{}
+	}
+	return json.Marshal(plain(d))
 }
 
 type ListDomainsRequest struct{}

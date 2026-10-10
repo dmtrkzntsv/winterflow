@@ -9,9 +9,15 @@ import (
 	"winterflow/internal/domain/model"
 )
 
-type registerServerRequest struct {
+// RegisterServerRequest is the body of POST /api/v1/server/register.
+type RegisterServerRequest struct {
 	Code           string `json:"code"`
 	OrganizationID string `json:"organization_id,omitempty"`
+}
+
+// RegisterServerResponse is the data of POST /api/v1/server/register.
+type RegisterServerResponse struct {
+	Server model.Server `json:"server"`
 }
 
 // Register claims a pending server registration by its pairing code into the
@@ -24,7 +30,7 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req registerServerRequest
+	var req RegisterServerRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		util.Error(w, "invalid request body", nil)
 		return
@@ -59,7 +65,5 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	util.Success(w, "server added", struct {
-		Server model.Server `json:"server"`
-	}{Server: srv})
+	util.Success(w, "server added", RegisterServerResponse{Server: srv})
 }

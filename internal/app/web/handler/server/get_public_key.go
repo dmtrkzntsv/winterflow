@@ -30,7 +30,7 @@ func (h *Handler) GetPublicKey(w http.ResponseWriter, r *http.Request) {
 
 	if h.servers != nil {
 		if value, ok, err := h.servers.GetCapability(r.Context(), serverID, "public_key"); err == nil && ok && value != "" {
-			util.Success(w, "ok", publicKeyResponse{PublicKey: value})
+			util.Success(w, "ok", PublicKeyResponse{PublicKey: value})
 			return
 		}
 	}
@@ -38,7 +38,7 @@ func (h *Handler) GetPublicKey(w http.ResponseWriter, r *http.Request) {
 	// Standalone fallback: read the embedded agent's certificate from disk.
 	if h.cfg != nil {
 		if point, err := crypto.PublicKeyPointFromCertPath(h.cfg.GetAgentCertPath()); err == nil {
-			util.Success(w, "ok", publicKeyResponse{PublicKey: point})
+			util.Success(w, "ok", PublicKeyResponse{PublicKey: point})
 			return
 		} else {
 			h.log.Debug("public key from cert failed", "error", err)
@@ -48,6 +48,8 @@ func (h *Handler) GetPublicKey(w http.ResponseWriter, r *http.Request) {
 	util.Error(w, "public key unavailable for this server", nil)
 }
 
-type publicKeyResponse struct {
+// PublicKeyResponse is the data of GET /api/v1/server/get-public-key: the
+// agent's P-256 public point, base64.
+type PublicKeyResponse struct {
 	PublicKey string `json:"public_key"`
 }

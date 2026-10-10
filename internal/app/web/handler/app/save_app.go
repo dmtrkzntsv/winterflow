@@ -9,18 +9,18 @@ import (
 	"winterflow/internal/domain/model"
 )
 
-// contentItemRequest is the browser's form of a file/variable. content is a
+// ContentItemRequest is the browser's form of a file/variable. content is a
 // plain string for non-secrets, or an ECIES base64 payload (or the
 // "<encrypted>" sentinel) when encrypted is true.
-type contentItemRequest struct {
+type ContentItemRequest struct {
 	Name      string `json:"name"`
 	Content   string `json:"content"`
 	Encrypted bool   `json:"encrypted"`
 }
 
-// sourceRequest configures a git-sourced app. token is an ECIES base64
+// SourceRequest configures a git-sourced app. token is an ECIES base64
 // payload, the "<encrypted>" sentinel, or empty for anonymous access.
-type sourceRequest struct {
+type SourceRequest struct {
 	RepoURL     string `json:"repo_url"`
 	Branch      string `json:"branch"`
 	ComposePath string `json:"compose_path"`
@@ -29,18 +29,19 @@ type sourceRequest struct {
 	Token       string `json:"token"`
 }
 
-type saveAppRequest struct {
+// SaveAppRequest is the body of POST /api/v1/app/save-app.
+type SaveAppRequest struct {
 	ServerID  string               `json:"server_id"`
 	App       model.App            `json:"app"`
 	Config    json.RawMessage      `json:"config"`
-	Files     []contentItemRequest `json:"files"`
-	Variables []contentItemRequest `json:"variables"`
-	Source    *sourceRequest       `json:"source,omitempty"`
+	Files     []ContentItemRequest `json:"files"`
+	Variables []ContentItemRequest `json:"variables"`
+	Source    *SourceRequest       `json:"source,omitempty"`
 	// Draft saves the changes as a commit without deploying.
 	Draft bool `json:"draft,omitempty"`
 }
 
-func toContentItems(items []contentItemRequest) []command.ContentItem {
+func toContentItems(items []ContentItemRequest) []command.ContentItem {
 	out := make([]command.ContentItem, 0, len(items))
 	for _, it := range items {
 		out = append(out, command.ContentItem{
@@ -63,7 +64,7 @@ func (h *Handler) SaveApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req, ok := webutil.DecodeBody[saveAppRequest](w, r)
+	req, ok := webutil.DecodeBody[SaveAppRequest](w, r)
 	if !ok {
 		return
 	}
@@ -113,7 +114,5 @@ func (h *Handler) SaveApp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	webutil.Accepted(w, "app save dispatched", struct {
-		RequestID string `json:"request_id"`
-	}{RequestID: requestID})
+	accepted(w, "app save dispatched", requestID)
 }

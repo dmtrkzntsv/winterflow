@@ -20,7 +20,5 @@ func (h *Handler) GetAppsStatus(w http.ResponseWriter, r *http.Request) {
 	if statuses == nil {
 		statuses = []command.AppStatus{}
 	}
-	util.Success(w, "ok", struct {
-		Apps []command.AppStatus `json:"apps"`
-	}{Apps: statuses})
+	util.Success(w, "ok", command.GetAppsStatusResponse{Apps: statuses})
 }

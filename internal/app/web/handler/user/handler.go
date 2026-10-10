@@ -46,6 +46,16 @@ func NewHandler(d *Deps) *Handler {
 	return &Handler{log: d.Logger, tokens: d.Tokens, users: d.Users}
 }
 
+// Profile is the data of GET /api/v1/user/get-profile. Email and
+// must_change_password are empty/false for accounts without local credentials.
+type Profile struct {
+	UserID             string `json:"user_id"`
+	Name               string `json:"name"`
+	Email              string `json:"email"`
+	Role               string `json:"role"`
+	MustChangePassword bool   `json:"must_change_password"`
+}
+
 // GetProfile returns the caller's identity as the UI needs it: role (drives
 // admin-only navigation) and, for local accounts, email + the must-change
 // flag (drives the forced password-change redirect).
@@ -64,13 +74,7 @@ func (h *Handler) GetProfile(w http.ResponseWriter, r *http.Request) {
 		h.log.Error("GetProfile: role", "error", err, "user_id", userID)
 		role = ""
 	}
-	profile := struct {
-		UserID             string `json:"user_id"`
-		Name               string `json:"name"`
-		Email              string `json:"email"`
-		Role               string `json:"role"`
-		MustChangePassword bool   `json:"must_change_password"`
-	}{UserID: u.ID, Name: u.Name, Role: role}
+	profile := Profile{UserID: u.ID, Name: u.Name, Role: role}
 	if creds, err := h.users.GetCredentials(r.Context(), userID); err == nil {
 		profile.Email = creds.Email
 		profile.MustChangePassword = creds.MustChangePassword
@@ -78,7 +82,8 @@ func (h *Handler) GetProfile(w http.ResponseWriter, r *http.Request) {
 	webutil.Success(w, "profile", profile)
 }
 
-type changePasswordRequest struct {
+// ChangePasswordRequest is the body of POST /api/v1/user/change-password.
+type ChangePasswordRequest struct {
 	CurrentPassword string `json:"current_password"`
 	NewPassword     string `json:"new_password"`
 }
@@ -90,7 +95,7 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	req, ok := webutil.DecodeBody[changePasswordRequest](w, r)
+	req, ok := webutil.DecodeBody[ChangePasswordRequest](w, r)
 	if !ok {
 		return
 	}
@@ -115,9 +120,21 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	webutil.Success(w, "password changed", nil)
 }
 
-type createTokenRequest struct {
+// CreateTokenRequest is the body of POST /api/v1/user/create-token.
+// expires_in_days <= 0 means the token never expires.
+type CreateTokenRequest struct {
 	Name          string `json:"name"`
 	ExpiresInDays int    `json:"expires_in_days"`
+}
+
+// CreateTokenResponse is the data of POST /api/v1/user/create-token. Token is
+// the plaintext PAT, returned only here.
+type CreateTokenResponse struct {
+	TokenID   string     `json:"token_id"`
+	Token     string     `json:"token"`
+	Prefix    string     `json:"prefix"`
+	Name      string     `json:"name"`
+	ExpiresAt *time.Time `json:"expires_at"`
 }
 
 // CreateToken mints a PAT. The response carries the plaintext — the only
@@ -127,7 +144,7 @@ func (h *Handler) CreateToken(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	req, ok := webutil.DecodeBody[createTokenRequest](w, r)
+	req, ok := webutil.DecodeBody[CreateTokenRequest](w, r)
 	if !ok {
 		return
 	}
@@ -147,13 +164,13 @@ func (h *Handler) CreateToken(w http.ResponseWriter, r *http.Request) {
 		webutil.Error(w, "failed to create token", nil)
 		return
 	}
-	webutil.Success(w, "token created", struct {
-		TokenID   string     `json:"token_id"`
-		Token     string     `json:"token"`
-		Prefix    string     `json:"prefix"`
-		Name      string     `json:"name"`
-		ExpiresAt *time.Time `json:"expires_at"`
-	}{rec.ID, plaintext, rec.Prefix, rec.Name, rec.ExpiresAt})
+	webutil.Success(w, "token created", CreateTokenResponse{
+		TokenID:   rec.ID,
+		Token:     plaintext,
+		Prefix:    rec.Prefix,
+		Name:      rec.Name,
+		ExpiresAt: rec.ExpiresAt,
+	})
 }
 
 // GetTokens lists the caller's tokens — never any plaintext.
@@ -171,7 +188,8 @@ func (h *Handler) GetTokens(w http.ResponseWriter, r *http.Request) {
 	webutil.Success(w, "tokens", list)
 }
 
-type deleteTokenRequest struct {
+// DeleteTokenRequest is the body of POST /api/v1/user/delete-token.
+type DeleteTokenRequest struct {
 	TokenID string `json:"token_id"`
 }
 
@@ -182,7 +200,7 @@ func (h *Handler) DeleteToken(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	req, ok := webutil.DecodeBody[deleteTokenRequest](w, r)
+	req, ok := webutil.DecodeBody[DeleteTokenRequest](w, r)
 	if !ok {
 		return
 	}

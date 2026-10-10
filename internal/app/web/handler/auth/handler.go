@@ -62,17 +62,24 @@ func validEmail(email string) bool {
 	return at > 0 && at < len(email)-1 && !strings.ContainsAny(email, " \t")
 }
 
-type registerRequest struct {
+// RegisterRequest is the body of POST /api/v1/auth/register.
+type RegisterRequest struct {
 	Name     string `json:"name"`
 	Email    string `json:"email"`
 	Password string `json:"password"`
+}
+
+// RegisterResponse is the data of POST /api/v1/auth/register.
+type RegisterResponse struct {
+	UserID string `json:"user_id"`
+	Email  string `json:"email"`
 }
 
 // Register creates an account. Fresh instance → claim step (owner of a new
 // org, standalone's only org). Distributed → own org per registrant. Never
 // issues a session: the client logs in afterwards.
 func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
-	req, ok := webutil.DecodeBody[registerRequest](w, r)
+	req, ok := webutil.DecodeBody[RegisterRequest](w, r)
 	if !ok {
 		return
 	}
@@ -128,10 +135,14 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	webutil.Success(w, "registered", struct {
-		UserID string `json:"user_id"`
-		Email  string `json:"email"`
-	}{user.ID, email})
+	webutil.Success(w, "registered", RegisterResponse{UserID: user.ID, Email: email})
+}
+
+// StateResponse is the data of GET /api/v1/auth/state: bootstrap is true on
+// a fresh (unclaimed) instance.
+type StateResponse struct {
+	Bootstrap           bool `json:"bootstrap"`
+	RegistrationEnabled bool `json:"registration_enabled"`
 }
 
 // State reports what the login/register pages need: whether this is a
@@ -142,8 +153,5 @@ func (h *Handler) State(w http.ResponseWriter, r *http.Request) {
 		webutil.Error(w, "failed to read auth state", nil)
 		return
 	}
-	webutil.Success(w, "auth state", struct {
-		Bootstrap           bool `json:"bootstrap"`
-		RegistrationEnabled bool `json:"registration_enabled"`
-	}{Bootstrap: fresh, RegistrationEnabled: open})
+	webutil.Success(w, "auth state", StateResponse{Bootstrap: fresh, RegistrationEnabled: open})
 }

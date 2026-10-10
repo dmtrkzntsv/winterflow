@@ -1,9 +1,15 @@
 package contract_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
+	"os"
 	"testing"
+
+	"github.com/go-pkgz/auth/v2/avatar"
+
+	"winterflow/pkg/util"
 )
 
 func TestAuthClaimFlow(t *testing.T) {
@@ -62,4 +68,21 @@ func TestAuthClaimFlow(t *testing.T) {
 		owner.get(t, "/auth/logout", nil).expect(t, http.StatusOK)
 		owner.get(t, "/api/v1/user/get-profile", nil).expect(t, http.StatusUnauthorized)
 	})
+}
+
+// TestAvatar fetches a stored avatar through GET /avatar/{avatar}. The
+// store is the one the server reads (AVATARS_STORAGE_PATH, shared by every
+// test), so the avatar is put under a fresh id.
+func TestAvatar(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	img := []byte{0x00, 0x01, 0x02, 0x03, 0xfe, 0xff} // sniffs as octet-stream: served as image/*
+	id, err := avatar.NewLocalFS(os.Getenv("AVATARS_STORAGE_PATH")).Put(util.GenerateID(), bytes.NewReader(img))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := e.anon().get(t, "/avatar/"+id, nil).expect(t, http.StatusOK)
+	if !bytes.Equal(r.Body, img) || r.Header.Get("Content-Type") != "image/*" {
+		t.Fatalf("avatar = %q (%s), want %q", r.Body, r.Header.Get("Content-Type"), img)
+	}
 }

@@ -56,6 +56,8 @@ func freshDB(t *testing.T) string {
 	}
 	q := u.Query()
 	q.Set("search_path", schema)
+	// A non-UTC session zone: the server must pin UTC itself (db.utcDSN).
+	q.Set("timezone", "America/New_York")
 	u.RawQuery = q.Encode()
 	return fmt.Sprint(u)
 }

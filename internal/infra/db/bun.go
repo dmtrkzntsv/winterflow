@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -125,8 +126,24 @@ func setupSQLite(connStr string, log *logger.Logger) (*sql.DB, error) {
 	return sqldb, nil
 }
 
+// utcDSN pins the session time zone to UTC. types.DateTime writes naive
+// UTC wall-clock strings ("2006-01-02 15:04:05"); a TIMESTAMPTZ column
+// reads those in the session zone, so any other server/role time zone would
+// shift every stored timestamp by its offset. An unparsable DSN is
+// returned unchanged for pgdriver to reject with its own error.
+func utcDSN(connStr string) string {
+	u, err := url.Parse(connStr)
+	if err != nil {
+		return connStr
+	}
+	q := u.Query()
+	q.Set("timezone", "UTC")
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
 func setupPostgreSQL(connStr string, log *logger.Logger) (*sql.DB, error) {
-	sqldb := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(connStr)))
+	sqldb := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(utcDSN(connStr))))
 
 	// Set connection pool settings optimized for PostgreSQL
 	sqldb.SetMaxOpenConns(25)                 // Maximum number of open connections

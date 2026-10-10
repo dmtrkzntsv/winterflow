@@ -37,7 +37,8 @@ func NewDispatcher(orch *dockercompose.Repository, ingress port.IngressManager, 
 }
 
 // reloadIngress rebuilds the proxy config after a mutation. Warnings are
-// returned for responses that carry them (app.save) and logged otherwise. A
+// returned for responses that carry them (app.save, domain.create/delete)
+// and logged either way. A
 // nil manager (tests, ingress disabled) is a no-op.
 func (d *Dispatcher) reloadIngress(ctx context.Context) []string {
 	return d.reload(ctx, false)
@@ -233,20 +234,19 @@ func (d *Dispatcher) newHandlers() map[command.Type]handlerFunc {
 				return command.CreateDomainResponse{}, errNoIngress
 			}
 			dom, err := d.ingress.CreateDomain(ctx, in)
-			if err == nil {
-				d.reload(ctx, true)
+			if err != nil {
+				return command.CreateDomainResponse{}, err
 			}
-			return command.CreateDomainResponse{Domain: dom}, err
+			return command.CreateDomainResponse{Domain: dom, Warnings: d.reload(ctx, true)}, nil
 		}),
 		command.TypeDomainDelete: handle(d, func(ctx context.Context, in command.DeleteDomainRequest) (command.DeleteDomainResponse, error) {
 			if d.ingress == nil {
 				return command.DeleteDomainResponse{}, errNoIngress
 			}
-			err := d.ingress.DeleteDomain(ctx, in.Name)
-			if err == nil {
-				d.reloadIngress(ctx)
+			if err := d.ingress.DeleteDomain(ctx, in.Name); err != nil {
+				return command.DeleteDomainResponse{}, err
 			}
-			return command.DeleteDomainResponse{Name: in.Name}, err
+			return command.DeleteDomainResponse{Name: in.Name, Warnings: d.reloadIngress(ctx)}, nil
 		}),
 
 		command.TypeImageTags: handle(d, func(ctx context.Context, in command.ImageTagsRequest) (command.ImageTagsResponse, error) {

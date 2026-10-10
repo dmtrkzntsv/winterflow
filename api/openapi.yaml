@@ -2886,6 +2886,10 @@ components:
       properties:
         domain:
           $ref: '#/components/schemas/Domain'
+        warnings:
+          items:
+            type: string
+          type: array
       required:
       - domain
       type: object
@@ -3016,6 +3020,10 @@ components:
       properties:
         name:
           type: string
+        warnings:
+          items:
+            type: string
+          type: array
       required:
       - name
       type: object

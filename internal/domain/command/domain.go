@@ -86,6 +86,9 @@ func (r CreateDomainRequest) Validate() error {
 
 type CreateDomainResponse struct {
 	Domain Domain `json:"domain"`
+	// Warnings are non-fatal ingress problems from the reload that applied
+	// the change (a load failure keeps the previous routing serving).
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 type DeleteDomainRequest struct {
@@ -96,4 +99,7 @@ func (r DeleteDomainRequest) Validate() error { return model.ValidateDomainName(
 
 type DeleteDomainResponse struct {
 	Name string `json:"name"`
+	// Warnings are non-fatal ingress problems from the reload that applied
+	// the change (a load failure keeps the previous routing serving).
+	Warnings []string `json:"warnings,omitempty"`
 }

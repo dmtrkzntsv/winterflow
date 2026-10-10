@@ -47,15 +47,21 @@ func TestDispatchDomainCommands(t *testing.T) {
 		t.Fatal("a read must not reload ingress")
 	}
 
+	// The reload's warnings ride along in both mutation responses.
+	ing.warnings = []string{"ingress reload failed (previous routing still active): boom"}
 	resp = dispatchJSON(t, d, command.TypeDomainCreate, command.CreateDomainRequest{Name: "*.x.app", TLS: command.DomainTLSAuto})
 	var created command.CreateDomainResponse
-	if resp.Base.ResponseCode != ok || json.Unmarshal(resp.Payload, &created) != nil || created.Domain.Name != "*.x.app" {
+	if resp.Base.ResponseCode != ok || json.Unmarshal(resp.Payload, &created) != nil || created.Domain.Name != "*.x.app" ||
+		len(created.Warnings) != 1 || created.Warnings[0] != ing.warnings[0] {
 		t.Fatalf("domain.create = %+v %s", resp.Base, resp.Payload)
 	}
 	resp = dispatchJSON(t, d, command.TypeDomainDelete, command.DeleteDomainRequest{Name: "*.x.app"})
-	if resp.Base.ResponseCode != ok {
-		t.Fatalf("domain.delete = %+v", resp.Base)
+	var deleted command.DeleteDomainResponse
+	if resp.Base.ResponseCode != ok || json.Unmarshal(resp.Payload, &deleted) != nil || deleted.Name != "*.x.app" ||
+		len(deleted.Warnings) != 1 || deleted.Warnings[0] != ing.warnings[0] {
+		t.Fatalf("domain.delete = %+v %s", resp.Base, resp.Payload)
 	}
+	ing.warnings = nil
 	if ing.reloads != 2 {
 		t.Fatalf("reloads = %d, want one per successful mutation", ing.reloads)
 	}

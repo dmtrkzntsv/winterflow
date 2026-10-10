@@ -1,6 +1,23 @@
 package command
 
-import "winterflow/internal/domain/model"
+import (
+	"strings"
+
+	"winterflow/internal/domain/model"
+)
+
+// ValidAppID reports whether id is safe to use as a single path element under
+// the agent's apps-data dir. It is the one rule shared by the API handlers
+// (reject early with 400) and the agent orchestrator (fail closed): a legit id
+// is a generated UUID, so anything empty, "."/"..", or containing a path
+// separator (or NUL) is refused rather than normalised.
+func ValidAppID(id string) bool {
+	switch id {
+	case "", ".", "..":
+		return false
+	}
+	return !strings.ContainsAny(id, "/\\\x00")
+}
 
 // AppPayload is the on-the-wire form of an app to deploy. It mirrors v1's AppV1:
 // a JSON config blob plus the variable and file contents the agent renders into

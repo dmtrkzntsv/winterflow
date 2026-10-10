@@ -2,8 +2,10 @@ package dockercompose
 
 import (
 	"context"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -179,17 +181,6 @@ func TestDeleteAppMissingNeverSweeps(t *testing.T) {
 	}
 }
 
-func TestValidAppID(t *testing.T) {
-	for id, want := range map[string]bool{
-		"app-1": true, "a": true, "..foo": true,
-		"": false, ".": false, "..": false, "/": false, "a/..": false, "../..": false,
-	} {
-		if got := validAppID(id); got != want {
-			t.Errorf("validAppID(%q) = %v, want %v", id, got, want)
-		}
-	}
-}
-
 // "." and ".." survive filepath.Base and would make RemoveAll wipe the whole
 // apps-data dir (or the data dir itself, certs included).
 func TestDeleteAppRejectsTraversalIDs(t *testing.T) {
@@ -220,4 +211,62 @@ func TestSweepErrorsIncludeStderr(t *testing.T) {
 	if _, err := r.ListVolumes(context.Background()); err == nil || !strings.Contains(err.Error(), "daemon is down") {
 		t.Fatalf("ListVolumes error must carry stderr: %v", err)
 	}
+}
+
+// Every orchestrator entry point that takes an app id from a command payload
+// must refuse a path-like id before touching disk: filepath.Base("..") is
+// "..", so appDataDir("..") is the agent data dir itself.
+func TestEntryPointsRejectPathLikeAppIDs(t *testing.T) {
+	ctx := context.Background()
+	for _, id := range []string{"", ".", "..", "/", "a/..", "x/../..", "a/b"} {
+		r := newTestRepo(t)
+		dataDir := filepath.Dir(r.cfg.GetAppsDataDir())
+		before := dirListing(t, dataDir)
+
+		calls := map[string]func() error{
+			"SaveApp": func() error {
+				_, err := r.SaveApp(ctx, command.AppPayload{AppID: id, Config: []byte(`{"name":"x"}`)})
+				return err
+			},
+			"SaveAppDraft": func() error {
+				_, err := r.SaveAppDraft(ctx, command.AppPayload{AppID: id, Config: []byte(`{"name":"x"}`)})
+				return err
+			},
+			"RenameApp":  func() error { return r.RenameApp(ctx, id, "n") },
+			"StartApp":   func() error { return r.StartApp(ctx, id) },
+			"StopApp":    func() error { return r.StopApp(ctx, id) },
+			"RestartApp": func() error { return r.RestartApp(ctx, id) },
+			"UpdateApp":  func() error { return r.UpdateApp(ctx, id) },
+			"Rollback":   func() error { _, err := r.Rollback(ctx, id, "abc"); return err },
+			"Revisions":  func() error { _, _, err := r.Revisions(ctx, id); return err },
+			"GetApp":     func() error { _, err := r.GetApp(ctx, id); return err },
+			"GetLogs":    func() error { _, err := r.GetLogs(ctx, command.GetLogsRequest{AppID: id}); return err },
+		}
+		for name, call := range calls {
+			if err := call(); err == nil {
+				t.Errorf("%s(%q) must fail", name, id)
+			}
+		}
+		if r.DeployedRevision(id) != "" {
+			t.Errorf("DeployedRevision(%q) must be empty", id)
+		}
+		if after := dirListing(t, dataDir); after != before {
+			t.Errorf("id %q touched disk outside apps-data:\nbefore:\n%s\nafter:\n%s", id, before, after)
+		}
+	}
+}
+
+// dirListing is a recursive name listing of dir (relative, sorted).
+func dirListing(t *testing.T, dir string) string {
+	t.Helper()
+	var out []string
+	_ = filepath.WalkDir(dir, func(p string, _ fs.DirEntry, err error) error {
+		if err == nil {
+			rel, _ := filepath.Rel(dir, p)
+			out = append(out, rel)
+		}
+		return nil
+	})
+	sort.Strings(out)
+	return strings.Join(out, "\n")
 }

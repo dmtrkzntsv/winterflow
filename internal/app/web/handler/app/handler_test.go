@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -187,16 +188,49 @@ func TestDeleteAppPassesDeleteVolumes(t *testing.T) {
 	}
 }
 
-func TestDeleteAppRejectsTraversalIDs(t *testing.T) {
-	for _, id := range []string{".", "..", "/", "a/..", "../.."} {
-		h, fd, _ := newHandler(t)
-		body := `{"server_id":"s1","app_id":` + strconv.Quote(id) + `,"delete_volumes":true}`
-		r := authed(httptest.NewRequest("POST", "/x", strings.NewReader(body)))
-		if w := do(h.DeleteApp, r); w.Code != http.StatusBadRequest {
-			t.Errorf("app_id %q: status = %d, want 400", id, w.Code)
-		}
-		if fd.last.Payload != nil {
-			t.Errorf("app_id %q must not be dispatched", id)
+// Every route that names an app must refuse a path-like id with 400 before
+// dispatching (the agent re-checks, but a command that can only be refused
+// should never leave the API).
+func TestAppRoutesRejectPathLikeIDs(t *testing.T) {
+	routes := []struct {
+		name string
+		fn   func(*Handler) http.HandlerFunc
+		req  func(id string) *http.Request
+	}{
+		{"delete", func(h *Handler) http.HandlerFunc { return h.DeleteApp }, func(id string) *http.Request {
+			return httptest.NewRequest("POST", "/x", strings.NewReader(`{"server_id":"s1","app_id":`+strconv.Quote(id)+`,"delete_volumes":true}`))
+		}},
+		{"control", func(h *Handler) http.HandlerFunc { return h.ControlApp }, func(id string) *http.Request {
+			return httptest.NewRequest("POST", "/x", strings.NewReader(`{"server_id":"s1","app_id":`+strconv.Quote(id)+`,"action":"start"}`))
+		}},
+		{"rename", func(h *Handler) http.HandlerFunc { return h.RenameApp }, func(id string) *http.Request {
+			return httptest.NewRequest("POST", "/x", strings.NewReader(`{"server_id":"s1","app_id":`+strconv.Quote(id)+`,"name":"n"}`))
+		}},
+		{"rollback", func(h *Handler) http.HandlerFunc { return h.RollbackApp }, func(id string) *http.Request {
+			return httptest.NewRequest("POST", "/x", strings.NewReader(`{"server_id":"s1","app_id":`+strconv.Quote(id)+`,"hash":"abc"}`))
+		}},
+		{"get-app", func(h *Handler) http.HandlerFunc { return h.GetApp }, func(id string) *http.Request {
+			return httptest.NewRequest("GET", "/x?server_id=s1&app_id="+url.QueryEscape(id), nil)
+		}},
+		{"get-revisions", func(h *Handler) http.HandlerFunc { return h.GetRevisions }, func(id string) *http.Request {
+			return httptest.NewRequest("GET", "/x?server_id=s1&app_id="+url.QueryEscape(id), nil)
+		}},
+		{"get-logs", func(h *Handler) http.HandlerFunc { return h.GetLogs }, func(id string) *http.Request {
+			return httptest.NewRequest("GET", "/x?server_id=s1&app_id="+url.QueryEscape(id), nil)
+		}},
+		{"save-app", func(h *Handler) http.HandlerFunc { return h.SaveApp }, func(id string) *http.Request {
+			return httptest.NewRequest("POST", "/x", strings.NewReader(`{"server_id":"s1","app":{"id":`+strconv.Quote(id)+`,"name":"demo"},"config":{"name":"demo"}}`))
+		}},
+	}
+	for _, rt := range routes {
+		for _, id := range []string{".", "..", "/", "a/..", "../..", "x/../..", "a/b"} {
+			h, fd, _ := newHandler(t)
+			if w := do(rt.fn(h), authed(rt.req(id))); w.Code != http.StatusBadRequest {
+				t.Errorf("%s app_id %q: status = %d, want 400", rt.name, id, w.Code)
+			}
+			if fd.last.Payload != nil {
+				t.Errorf("%s app_id %q must not be dispatched", rt.name, id)
+			}
 		}
 	}
 }

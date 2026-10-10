@@ -25,6 +25,9 @@ var ansiRegexp = regexp.MustCompile("\x1b\\[[0-9;]*[A-Za-z]")
 func (r *Repository) GetLogs(ctx context.Context, in command.GetLogsRequest) (command.GetLogsResponse, error) {
 	resp := command.GetLogsResponse{AppID: in.AppID, Logs: []command.LogEntry{}}
 
+	if err := checkAppID(in.AppID); err != nil {
+		return resp, err
+	}
 	runDir := r.appDataDir(in.AppID)
 	if _, err := os.Stat(runDir); err != nil {
 		// Not deployed: no logs, not an error.

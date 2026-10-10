@@ -39,6 +39,9 @@ func (r *Repository) SaveAppDraft(ctx context.Context, app command.AppPayload) (
 // DeployedRevision returns the last successfully deployed commit ("" when
 // unknown — the app predates the mark or has never been deployed).
 func (r *Repository) DeployedRevision(appID string) string {
+	if checkAppID(appID) != nil {
+		return ""
+	}
 	sha, _ := readDeployedMark(r.appDataDir(appID))
 	return sha
 }
@@ -63,8 +66,8 @@ func (r *Repository) markDeployed(appID, sha string) {
 // commit, materialize secrets, and fix the symlink. Split out so the full
 // persistence path is testable without Docker.
 func (r *Repository) saveWithoutDeploy(app command.AppPayload) (string, error) {
-	if app.AppID == "" {
-		return "", fmt.Errorf("app_id is required")
+	if err := checkAppID(app.AppID); err != nil {
+		return "", err
 	}
 	dir := r.appDataDir(app.AppID)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -104,6 +107,9 @@ func (r *Repository) saveWithoutDeploy(app command.AppPayload) (string, error) {
 
 // Revisions returns the app's git history (newest first) and the current HEAD.
 func (r *Repository) Revisions(ctx context.Context, appID string) ([]command.RevisionInfo, string, error) {
+	if err := checkAppID(appID); err != nil {
+		return nil, "", err
+	}
 	dir := r.appDataDir(appID)
 	if _, err := os.Stat(dir); err != nil {
 		return nil, "", fmt.Errorf("app %s not found", appID)
@@ -141,6 +147,9 @@ func (r *Repository) Rollback(ctx context.Context, appID, hash string) (string, 
 // rollbackWithoutDeploy restores the commit, commits the restored tree, and
 // re-materializes secrets — everything except bringing containers up.
 func (r *Repository) rollbackWithoutDeploy(appID, hash string) (string, error) {
+	if err := checkAppID(appID); err != nil {
+		return "", err
+	}
 	dir := r.appDataDir(appID)
 	if _, err := os.Stat(dir); err != nil {
 		return "", fmt.Errorf("app %s not found", appID)

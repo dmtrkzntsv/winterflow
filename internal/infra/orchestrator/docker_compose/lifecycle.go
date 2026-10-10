@@ -33,6 +33,9 @@ func (r *Repository) deploy(ctx context.Context, appID string) error {
 
 // StartApp brings an app up.
 func (r *Repository) StartApp(ctx context.Context, appID string) error {
+	if err := checkAppID(appID); err != nil {
+		return err
+	}
 	if !r.appExists(appID) {
 		return fmt.Errorf("app %s not found", appID)
 	}
@@ -42,11 +45,17 @@ func (r *Repository) StartApp(ctx context.Context, appID string) error {
 // StopApp stops all containers of the app (compose down). Missing app is a
 // no-op.
 func (r *Repository) StopApp(ctx context.Context, appID string) error {
+	if err := checkAppID(appID); err != nil {
+		return err
+	}
 	return r.composeDown(ctx, appID, false)
 }
 
 // RestartApp restarts the app's containers in place.
 func (r *Repository) RestartApp(ctx context.Context, appID string) error {
+	if err := checkAppID(appID); err != nil {
+		return err
+	}
 	if !r.appExists(appID) {
 		return fmt.Errorf("app %s not found", appID)
 	}
@@ -56,6 +65,9 @@ func (r *Repository) RestartApp(ctx context.Context, appID string) error {
 // UpdateApp refreshes a git-sourced app's upstream, then pulls the latest
 // images and recreates the app's containers.
 func (r *Repository) UpdateApp(ctx context.Context, appID string) error {
+	if err := checkAppID(appID); err != nil {
+		return err
+	}
 	if !r.appExists(appID) {
 		return fmt.Errorf("app %s not found", appID)
 	}
@@ -81,8 +93,8 @@ func (r *Repository) UpdateApp(ctx context.Context, appID string) error {
 // does not have, so a delete request cannot be used to destroy orphan volumes
 // an admin deliberately kept (those go through the volume registry).
 func (r *Repository) DeleteApp(ctx context.Context, appID string, deleteVolumes bool) (warnings []string, volumesDeleted bool, err error) {
-	if !validAppID(appID) {
-		return nil, false, fmt.Errorf("invalid app id %q", appID)
+	if err := checkAppID(appID); err != nil {
+		return nil, false, err
 	}
 	existed := r.appExists(appID)
 	if err := r.composeDown(ctx, appID, deleteVolumes); err != nil {
@@ -110,6 +122,9 @@ func (r *Repository) DeleteApp(ctx context.Context, appID string, deleteVolumes 
 // the stored ciphertext is preserved.
 func (r *Repository) GetApp(ctx context.Context, appID string) (command.GetAppResponse, error) {
 	var resp command.GetAppResponse
+	if err := checkAppID(appID); err != nil {
+		return resp, err
+	}
 	dir := r.appDataDir(appID)
 	if !r.appExists(appID) {
 		return resp, fmt.Errorf("app %s not found", appID)
@@ -235,6 +250,9 @@ func encryptedNames(cfg []byte) (vars map[string]bool, files map[string]bool) {
 // commit) and swaps the symlink. The compose project name is id-based, so no
 // restart is needed.
 func (r *Repository) RenameApp(ctx context.Context, appID, newName string) error {
+	if err := checkAppID(appID); err != nil {
+		return err
+	}
 	dir := r.appDataDir(appID)
 	cfg, _, err := r.readAppConfig(dir)
 	if err != nil {

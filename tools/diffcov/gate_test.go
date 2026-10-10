@@ -37,8 +37,8 @@ func TestEvaluate(t *testing.T) {
 	}
 	got := Evaluate(changed, testReports(t))
 	want := []Result{
-		{Lang: LangGo, Covered: 2, Total: 3, Uncovered: []string{"internal/a.go:14"}, NoData: []string{"internal/new.go"}},
-		{Lang: LangWeb, Covered: 1, Total: 2, Uncovered: []string{"web/src/x.tsx:2"}},
+		{Lang: LangGo, Covered: 2, Total: 3, WithData: 1, Uncovered: []string{"internal/a.go:14"}, NoData: []string{"internal/new.go"}},
+		{Lang: LangWeb, Covered: 1, Total: 2, WithData: 1, Uncovered: []string{"web/src/x.tsx:2"}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got  %+v\nwant %+v", got, want)
@@ -102,5 +102,19 @@ func TestReport(t *testing.T) {
 	}
 	if strings.Contains(buf.String(), "::warning") {
 		t.Error("annotations printed without github flag")
+	}
+}
+
+func TestNoDataLangs(t *testing.T) {
+	results := []Result{
+		{Lang: LangGo, NoData: []string{"a.go"}},                   // every changed file unknown
+		{Lang: LangWeb, WithData: 1, NoData: []string{"web/x.ts"}}, // mixed: fine
+	}
+	got := NoDataLangs(results)
+	if !reflect.DeepEqual(got, []string{LangGo}) {
+		t.Fatalf("got %v, want [go]", got)
+	}
+	if got := NoDataLangs([]Result{{Lang: LangGo}, {Lang: LangWeb, WithData: 2}}); len(got) != 0 {
+		t.Fatalf("got %v, want none", got)
 	}
 }

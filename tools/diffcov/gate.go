@@ -18,6 +18,7 @@ type Result struct {
 	Lang      string
 	Covered   int      // executable changed lines that ran
 	Total     int      // executable changed lines
+	WithData  int      // changed files the report knows
 	Uncovered []string // "file:line", sorted
 	NoData    []string // changed files the report doesn't know, sorted
 }
@@ -56,6 +57,7 @@ func Evaluate(changed map[string][]int, reports map[string]Coverage) []Result {
 			res.NoData = append(res.NoData, f)
 			continue
 		}
+		res.WithData++
 		lines := append([]int(nil), changed[f]...)
 		sort.Ints(lines)
 		for _, n := range lines {
@@ -72,6 +74,20 @@ func Evaluate(changed map[string][]int, reports map[string]Coverage) []Result {
 		}
 	}
 	return []Result{*results[LangGo], *results[LangWeb]}
+}
+
+// NoDataLangs lists the languages that have changed files in scope but where
+// the report knows none of them. That means the report is unusable for the
+// diff (wrong --lcov-root, absolute paths, a different checkout), not that
+// the change is untested, so the gate must not pass it.
+func NoDataLangs(results []Result) []string {
+	var langs []string
+	for _, r := range results {
+		if r.WithData == 0 && len(r.NoData) > 0 {
+			langs = append(langs, r.Lang)
+		}
+	}
+	return langs
 }
 
 // Report prints the gate summary and returns true when every language

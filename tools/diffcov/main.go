@@ -1,10 +1,15 @@
-// Command diffcov is CI's diff-coverage gate:
+// Command diffcov is CI's coverage gate. It has two modes:
 //
 //	diffcov --base <ref> --go coverage.out --lcov web/coverage/lcov.info [--min 80] [--github]
 //
 // checks that the lines added since <ref> (git diff <ref>...HEAD) are at
-// least --min percent covered, per language. Stdlib only. Exit status:
-// 0 pass, 1 coverage below the bar, 2 usage or input error.
+// least --min percent covered, per language, and
+//
+//	diffcov ratchet --go coverage.out --lcov web/coverage/lcov.info [--baseline coverage-baseline.json]
+//
+// checks the total Go and web coverage against the committed baseline.
+// Stdlib only. Exit status: 0 pass, 1 coverage below the bar, 2 usage or
+// input error.
 package main
 
 import (
@@ -21,6 +26,9 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "ratchet" {
+		return runRatchet(args[1:], stdout, stderr)
+	}
 	return runGate(args, stdout, stderr)
 }
 
@@ -57,7 +65,15 @@ func runGate(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "diffcov:", err)
 		return 2
 	}
-	if !Report(stdout, Evaluate(changed, reports), *min, *github) {
+	results := Evaluate(changed, reports)
+	ok := Report(stdout, results, *min, *github)
+	if langs := NoDataLangs(results); len(langs) > 0 {
+		for _, lang := range langs {
+			fmt.Fprintf(stderr, "diffcov: no coverage data for any changed %s file — check report paths / --lcov-root\n", lang)
+		}
+		return 2
+	}
+	if !ok {
 		return 1
 	}
 	return 0

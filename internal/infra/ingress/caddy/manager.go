@@ -132,6 +132,10 @@ func (m *Manager) Start(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// Before the enabled check: an install that turns ingress on later
+	// still finds its old hostnames registered.
+	m.seedDomains()
+
 	if !m.cfg.IsIngressEnabled() {
 		m.log.Info("ingress disabled by config (INGRESS_ENABLED=false); its ports are left to another proxy",
 			"http_port", m.cfg.GetIngressHTTPPort(),

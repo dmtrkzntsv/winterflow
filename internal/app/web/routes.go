@@ -5,6 +5,8 @@ import (
 	"winterflow/internal/app/web/spa"
 	webdist "winterflow/web"
 
+	"winterflow/internal/app/web/api"
+	authprvd "winterflow/internal/app/web/auth"
 	happ "winterflow/internal/app/web/handler/app"
 	hauth "winterflow/internal/app/web/handler/auth"
 	hdocker "winterflow/internal/app/web/handler/docker"
@@ -16,13 +18,13 @@ import (
 	"winterflow/internal/app/web/middleware/ratelimit"
 	"winterflow/internal/app/web/middleware/rbac"
 	"winterflow/internal/app/web/util"
+	"winterflow/internal/infra/bootstrap"
 )
 
 func (s *Server) registerRoutes() {
-	s.Router.Get("/_/health", health)
-
 	// Auth endpoints are the API's only bcrypt-priced requests — throttle them
 	// per client IP so credential floods answer 429 instead of burning CPU.
+	// One limiter is shared by the go-pkgz /auth mount and /api/v1/auth/register.
 	authLimiter := ratelimit.New(5, 10)
 
 	authRoutes, avaRoutes := s.Auth.Handlers()
@@ -30,105 +32,17 @@ func (s *Server) registerRoutes() {
 	s.Router.Mount("/avatar", avaRoutes)                             // add avatar handler
 
 	amw := s.Auth.Middleware()
-	// authMW = PAT bearer first, JWT session otherwise. Every /api/v1 route
+	// authMW = PAT bearer first, JWT session otherwise. Every User route
 	// uses this so tokens work everywhere a browser session does.
 	authMW := patauth.Middleware(s.Deps.UserService, amw.Auth)
-	// adminMW gates administration (member management, server registration,
-	// infrastructure mutations) to owners/admins. Members keep the full app
-	// lifecycle.
-	adminMW := rbac.RequireAdmin(s.Deps.UserService)
-
-	// Public auth surface: registration (accounts are only created here or
-	// by an admin) and the state the login/register pages render from.
-	authAPI := hauth.NewHandler(&hauth.Deps{
-		Logger: s.Logger,
-		Cfg:    s.Cfg,
-		Users:  s.Deps.UserService,
-	})
-	s.Router.With(authLimiter.Middleware).Post("/api/v1/auth/register", authAPI.Register)
-	s.Router.Get("/api/v1/auth/state", authAPI.State)
-
-	// The NotificationManager is shared across every handler: the SSE stream
-	// subscribes to it and the usecases publish to it, so async results reach
-	// the browser. Each handler MUST receive the same instance from Deps.
-	notificationAPI := notification.NewHandler(&notification.Deps{
-		Logger:              s.Logger,
-		NotificationManager: s.Deps.NotificationManager,
-	})
-	s.Router.With(authMW).Get("/api/v1/sse", notificationAPI.Stream)
-
-	appsAPI := happ.NewHandler(&happ.Deps{
-		Logger:              s.Logger,
-		CommandDispatcher:   s.Deps.CommandDispatcher,
-		AppRepository:       s.Deps.AppRepository,
-		AppDomainRepository: s.Deps.AppDomainRepository,
-		StatusCache:         s.Deps.StatusCache,
-		Servers:             s.Deps.ServerRepository,
-	})
-	s.Router.With(authMW, happ.GetAppsValidationMiddleware).Get("/api/v1/app/get-apps", appsAPI.GetApps)
-	s.Router.With(authMW, happ.GetAppsValidationMiddleware).Get("/api/v1/app/get-apps-status", appsAPI.GetAppsStatus)
-	s.Router.With(authMW, happ.GetAppsValidationMiddleware).Post("/api/v1/app/refresh-apps", appsAPI.RefreshApps)
-	s.Router.With(authMW).Post("/api/v1/app/save-app", appsAPI.SaveApp)
-	s.Router.With(authMW).Get("/api/v1/app/get-app", appsAPI.GetApp)
-	s.Router.With(authMW).Get("/api/v1/app/get-logs", appsAPI.GetLogs)
-	s.Router.With(authMW).Get("/api/v1/app/get-revisions", appsAPI.GetRevisions)
-	s.Router.With(authMW).Post("/api/v1/app/rollback-app", appsAPI.RollbackApp)
-	s.Router.With(authMW).Get("/api/v1/image/get-tags", appsAPI.GetImageTags)
-	s.Router.With(authMW).Post("/api/v1/app/control-app", appsAPI.ControlApp)
-	s.Router.With(authMW).Post("/api/v1/app/delete-app", appsAPI.DeleteApp)
-	s.Router.With(authMW).Post("/api/v1/app/rename-app", appsAPI.RenameApp)
-	s.Router.With(authMW).Get("/api/v1/domains/check", appsAPI.CheckDomain)
-
-	dockerAPI := hdocker.NewHandler(&hdocker.Deps{
-		Logger:            s.Logger,
-		CommandDispatcher: s.Deps.CommandDispatcher,
-		Servers:           s.Deps.ServerRepository,
-	})
-	s.Router.With(authMW).Get("/api/v1/registry/list", dockerAPI.ListRegistries)
-	s.Router.With(authMW, adminMW).Post("/api/v1/registry/create", dockerAPI.CreateRegistry)
-	s.Router.With(authMW, adminMW).Post("/api/v1/registry/delete", dockerAPI.DeleteRegistry)
-	s.Router.With(authMW).Get("/api/v1/network/list", dockerAPI.ListNetworks)
-	s.Router.With(authMW, adminMW).Post("/api/v1/network/create", dockerAPI.CreateNetwork)
-	s.Router.With(authMW, adminMW).Post("/api/v1/network/delete", dockerAPI.DeleteNetwork)
-	s.Router.With(authMW).Get("/api/v1/volume/list", dockerAPI.ListVolumes)
-	s.Router.With(authMW, adminMW).Post("/api/v1/volume/create", dockerAPI.CreateVolume)
-	s.Router.With(authMW, adminMW).Post("/api/v1/volume/delete", dockerAPI.DeleteVolume)
-	s.Router.With(authMW, adminMW).Post("/api/v1/agent/update", dockerAPI.UpdateAgent)
-
-	serversAPI := server.NewHandler(&server.Deps{
-		Logger:           s.Logger,
-		ServerRepository: s.Deps.ServerRepository,
-		UserService:      s.Deps.UserService,
-		StatusCache:      s.Deps.StatusCache,
-		Cfg:              s.Deps.Cfg,
-	})
-	s.Router.With(authMW).Get("/api/v1/server/get-servers", serversAPI.GetServers)
-	s.Router.With(authMW).Get("/api/v1/server/get-servers-status", serversAPI.GetServersStatus)
-	s.Router.With(authMW).Get("/api/v1/server/get-public-key", serversAPI.GetPublicKey)
-	s.Router.With(authMW, adminMW).Post("/api/v1/server/register", serversAPI.Register)
-
-	usersAPI := huser.NewHandler(&huser.Deps{
-		Logger: s.Logger,
-		Tokens: s.Deps.UserService,
-		Users:  s.Deps.UserService,
-	})
-	s.Router.With(authMW).Post("/api/v1/user/create-token", usersAPI.CreateToken)
-	s.Router.With(authMW).Get("/api/v1/user/get-tokens", usersAPI.GetTokens)
-	s.Router.With(authMW).Post("/api/v1/user/delete-token", usersAPI.DeleteToken)
-	s.Router.With(authMW).Get("/api/v1/user/get-profile", usersAPI.GetProfile)
-	s.Router.With(authMW).Post("/api/v1/user/change-password", usersAPI.ChangePassword)
-
-	orgAPI := horg.NewHandler(&horg.Deps{
-		Logger: s.Logger,
-		Users:  s.Deps.UserService,
-	})
-	s.Router.With(authMW, adminMW).Post("/api/v1/org/create-user", orgAPI.CreateUser)
-	s.Router.With(authMW, adminMW).Get("/api/v1/org/get-members", orgAPI.GetMembers)
-	s.Router.With(authMW, adminMW).Post("/api/v1/org/update-member", orgAPI.UpdateMember)
-	s.Router.With(authMW, adminMW).Post("/api/v1/org/remove-member", orgAPI.RemoveMember)
-	s.Router.With(authMW, adminMW).Post("/api/v1/org/reset-member-password", orgAPI.ResetMemberPassword)
-	s.Router.With(authMW).Get("/api/v1/org/get-organization", orgAPI.GetOrganization)
-	s.Router.With(authMW, adminMW).Post("/api/v1/org/update-organization", orgAPI.UpdateOrganization)
+	guards := api.Guards{
+		// Admin gates administration (member management, server
+		// registration, infrastructure mutations) to owners/admins. Members
+		// keep the full app lifecycle.
+		Admin:     rbac.RequireAdmin(s.Deps.UserService),
+		AuthLimit: authLimiter.Middleware,
+	}
+	api.Register(s.Router, routeTable(s.Deps, guards), authMW)
 
 	// Serve the embedded SPA for everything the API doesn't claim (history-mode
 	// fallback). A source build without `make web-build` embeds only the
@@ -139,6 +53,65 @@ func (s *Server) registerRoutes() {
 	} else {
 		s.Logger.Info("no embedded web UI build; serving API only (run `make web-build` before building the binary)")
 	}
+}
+
+// APIRoutes is the full route table for documentation (cmd/openapi): the
+// handlers are built over zero dependencies and the guards are nil, so it
+// must never be passed to api.Register.
+func APIRoutes() []api.Route {
+	return routeTable(&bootstrap.Deps{}, api.Guards{})
+}
+
+// routeTable collects every handler package's routes, plus the health probe
+// and the go-pkgz mounts (documented only). The NotificationManager is shared
+// across handlers: the SSE stream subscribes to it and the usecases publish
+// to it, so every handler MUST receive the same instance from d.
+func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
+	authAPI := hauth.NewHandler(&hauth.Deps{Logger: d.Log, Cfg: d.Cfg, Users: d.UserService})
+	notificationAPI := notification.NewHandler(&notification.Deps{
+		Logger:              d.Log,
+		NotificationManager: d.NotificationManager,
+	})
+	appsAPI := happ.NewHandler(&happ.Deps{
+		Logger:              d.Log,
+		CommandDispatcher:   d.CommandDispatcher,
+		AppRepository:       d.AppRepository,
+		AppDomainRepository: d.AppDomainRepository,
+		StatusCache:         d.StatusCache,
+		Servers:             d.ServerRepository,
+	})
+	dockerAPI := hdocker.NewHandler(&hdocker.Deps{
+		Logger:            d.Log,
+		CommandDispatcher: d.CommandDispatcher,
+		Servers:           d.ServerRepository,
+	})
+	serversAPI := server.NewHandler(&server.Deps{
+		Logger:           d.Log,
+		ServerRepository: d.ServerRepository,
+		UserService:      d.UserService,
+		StatusCache:      d.StatusCache,
+		Cfg:              d.Cfg,
+	})
+	usersAPI := huser.NewHandler(&huser.Deps{Logger: d.Log, Tokens: d.UserService, Users: d.UserService})
+	orgAPI := horg.NewHandler(&horg.Deps{Logger: d.Log, Users: d.UserService})
+
+	routes := []api.Route{{
+		Method: http.MethodGet, Path: "/_/health", Handler: health, Auth: api.Public,
+		Summary: "Liveness probe", Tag: "system",
+	}}
+	for _, table := range [][]api.Route{
+		authAPI.Routes(g),
+		notificationAPI.Routes(g),
+		appsAPI.Routes(g),
+		dockerAPI.Routes(g),
+		serversAPI.Routes(g),
+		usersAPI.Routes(g),
+		orgAPI.Routes(g),
+		authprvd.Routes(),
+	} {
+		routes = append(routes, table...)
+	}
+	return routes
 }
 
 // health is the liveness probe: always 200 {"success":true,"message":"healthy"}.

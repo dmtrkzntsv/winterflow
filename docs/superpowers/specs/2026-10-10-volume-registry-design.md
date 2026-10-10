@@ -128,8 +128,9 @@ the dispatcher's `newHandlers`.
     skipped, as `ListNetworks` does.
   - Sort order: winterflow-owned first (by app id), then other named
     volumes, then anonymous ones, each group by name.
-- **`CreateVolume`** validates the name against Docker's rule
-  `^[a-zA-Z0-9][a-zA-Z0-9_.-]*$` (≤ 255 characters). That rule also blocks
+- **`CreateVolume`** validates the name with `command.ValidateVolumeName`
+  (defined next to the payloads, so the web handler and the agent share it).
+  It applies Docker's rule `^[a-zA-Z0-9][a-zA-Z0-9_.-]*$` (≤ 255 characters). That rule also blocks
   any value beginning with `-` from being read as a flag. It then runs
   `docker volume create <name>`.
 - **`DeleteVolume`** applies the same validation, then runs
@@ -150,8 +151,8 @@ Routes go in `routes.go`, next to networks:
 
 This matches the network routes (`routes.go:92-94`): `server_id` comes from
 the query through `caller`, and the body is decoded with `webutil.DecodeBody`.
-The create and delete handlers also check the volume name with the shared
-validator and return 400 before dispatching. The agent checks it again. All
+The create and delete handlers also check the volume name with
+`command.ValidateVolumeName` and return 400 before dispatching. The agent checks it again. All
 three routes are agent-bound and answer 202 + `request_id`, with the result
 over SSE.
 

@@ -2,10 +2,9 @@ package dockercompose
 
 import (
 	"context"
-	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"testing"
 
@@ -25,10 +24,17 @@ const volumeLSOut = `{"Driver":"local","Labels":"com.docker.compose.project=wf-a
 not json
 `
 
-const psOut = `{"Names":"a","Mounts":"wf-app-1_data,/srv/host"}
-{"Names":"b","Mounts":"plain"}
-{"Names":"c","Mounts":""}
-`
+// danglingOut is `docker volume ls -q --filter dangling=true`: volumes no
+// container (running or stopped) references.
+const danglingOut = "wf-gone_db\ntwillingate-cloud_pgdata\n0f9c6dc6d5ad\n"
+
+func danglingSet(out string) map[string]bool {
+	m := map[string]bool{}
+	for _, n := range strings.Fields(out) {
+		m[n] = true
+	}
+	return m
+}
 
 func TestParseVolumeLS(t *testing.T) {
 	vols := parseVolumeLS([]byte(volumeLSOut), testLog())
@@ -53,19 +59,9 @@ func TestParseVolumeLS(t *testing.T) {
 	}
 }
 
-func TestParseMountedVolumes(t *testing.T) {
-	m := parseMountedVolumes([]byte(psOut))
-	if !m["wf-app-1_data"] || !m["plain"] {
-		t.Fatalf("mounted = %v", m)
-	}
-	if m[""] {
-		t.Fatal("empty Mounts must not produce an empty name")
-	}
-}
-
 func TestAnnotateVolumes(t *testing.T) {
 	vols := parseVolumeLS([]byte(volumeLSOut), testLog())
-	annotateVolumes(vols, parseMountedVolumes([]byte(psOut)), func(id string) bool { return id == "app-1" })
+	annotateVolumes(vols, danglingSet(danglingOut), func(id string) bool { return id == "app-1" })
 	by := map[string]command.Volume{}
 	for _, v := range vols {
 		by[v.Name] = v
@@ -80,7 +76,10 @@ func TestAnnotateVolumes(t *testing.T) {
 		t.Errorf("non-winterflow project is never orphan: %+v", v)
 	}
 	if v := by["plain"]; !v.InUse {
-		t.Errorf("plain is mounted by a non-compose container: %+v", v)
+		t.Errorf("plain is not dangling, so it is in use: %+v", v)
+	}
+	if v := by["0f9c6dc6d5ad"]; v.InUse {
+		t.Errorf("dangling anonymous volume is not in use: %+v", v)
 	}
 }
 
@@ -97,23 +96,8 @@ func TestSortVolumes(t *testing.T) {
 	for _, v := range vols {
 		got = append(got, v.Name)
 	}
-	want := []string{"y", "x", "a-plain", "b-plain", "z-anon"}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("order = %v, want %v", got, want)
-		}
-	}
-}
-
-func TestCreateDeleteVolumeRejectBadNames(t *testing.T) {
-	r := newTestRepo(t)
-	for _, n := range []string{"", "-rf", "../x"} {
-		if err := r.CreateVolume(t.Context(), n); err == nil {
-			t.Errorf("create %q must fail validation", n)
-		}
-		if err := r.DeleteVolume(t.Context(), n); err == nil {
-			t.Errorf("delete %q must fail validation", n)
-		}
+	if want := []string{"a-plain", "b-plain", "x", "y", "z-anon"}; !slices.Equal(got, want) {
+		t.Fatalf("order = %v, want %v", got, want)
 	}
 }
 
@@ -152,14 +136,14 @@ func TestDeleteAppWithVolumesNeverFailsOnCleanup(t *testing.T) {
 	r := newTestRepo(t)
 	savedApp(t, r, "app-1", "demo", "x\n")
 	t.Setenv("PATH", t.TempDir()) // no docker binary → every exec fails
-	warnings, swept, err := r.DeleteApp(context.Background(), "app-1", true)
+	res, err := r.DeleteApp(context.Background(), "app-1", true)
 	if err != nil {
 		t.Fatalf("delete must not fail on cleanup errors: %v", err)
 	}
-	if len(warnings) == 0 {
+	if len(res.Warnings) == 0 {
 		t.Fatal("failed cleanup must be reported as warnings")
 	}
-	if !swept {
+	if !res.VolumesDeleted {
 		t.Fatal("the sweep ran, so volumesDeleted must be reported")
 	}
 	if r.appExists("app-1") {
@@ -172,27 +156,12 @@ func TestDeleteAppWithVolumesNeverFailsOnCleanup(t *testing.T) {
 func TestDeleteAppMissingNeverSweeps(t *testing.T) {
 	r := newTestRepo(t)
 	t.Setenv("PATH", t.TempDir()) // any docker exec would yield a warning
-	warnings, swept, err := r.DeleteApp(context.Background(), "missing", true)
+	res, err := r.DeleteApp(context.Background(), "missing", true)
 	if err != nil {
 		t.Fatalf("deleting a missing app is a no-op: %v", err)
 	}
-	if len(warnings) != 0 || swept {
-		t.Fatalf("no sweep must run for a missing app: warnings=%v swept=%v", warnings, swept)
-	}
-}
-
-// "." and ".." survive filepath.Base and would make RemoveAll wipe the whole
-// apps-data dir (or the data dir itself, certs included).
-func TestDeleteAppRejectsTraversalIDs(t *testing.T) {
-	r := newTestRepo(t)
-	savedApp(t, r, "app-1", "demo", "x\n")
-	for _, id := range []string{"", ".", "..", "/", "a/.."} {
-		if _, _, err := r.DeleteApp(context.Background(), id, false); err == nil {
-			t.Errorf("DeleteApp(%q) must fail", id)
-		}
-	}
-	if !r.appExists("app-1") {
-		t.Fatal("other apps must survive a rejected delete")
+	if len(res.Warnings) != 0 || res.VolumesDeleted {
+		t.Fatalf("no sweep must run for a missing app: %+v", res)
 	}
 }
 
@@ -204,7 +173,7 @@ func TestSweepErrorsIncludeStderr(t *testing.T) {
 	}
 	t.Setenv("PATH", bin)
 	r := newTestRepo(t)
-	warnings := r.sweepAppVolumes(context.Background(), "app-1")
+	warnings := r.sweepAppVolumes(context.Background(), "app-1", true)
 	if len(warnings) == 0 || !strings.Contains(strings.Join(warnings, "\n"), "daemon is down") {
 		t.Fatalf("warnings must carry stderr: %v", warnings)
 	}
@@ -213,60 +182,55 @@ func TestSweepErrorsIncludeStderr(t *testing.T) {
 	}
 }
 
-// Every orchestrator entry point that takes an app id from a command payload
-// must refuse a path-like id before touching disk: filepath.Base("..") is
-// "..", so appDataDir("..") is the agent data dir itself.
-func TestEntryPointsRejectPathLikeAppIDs(t *testing.T) {
-	ctx := context.Background()
-	for _, id := range []string{"", ".", "..", "/", "a/..", "x/../..", "a/b"} {
-		r := newTestRepo(t)
-		dataDir := filepath.Dir(r.cfg.GetAppsDataDir())
-		before := dirListing(t, dataDir)
-
-		calls := map[string]func() error{
-			"SaveApp": func() error {
-				_, err := r.SaveApp(ctx, command.AppPayload{AppID: id, Config: []byte(`{"name":"x"}`)})
-				return err
-			},
-			"SaveAppDraft": func() error {
-				_, err := r.SaveAppDraft(ctx, command.AppPayload{AppID: id, Config: []byte(`{"name":"x"}`)})
-				return err
-			},
-			"RenameApp":  func() error { return r.RenameApp(ctx, id, "n") },
-			"StartApp":   func() error { return r.StartApp(ctx, id) },
-			"StopApp":    func() error { return r.StopApp(ctx, id) },
-			"RestartApp": func() error { return r.RestartApp(ctx, id) },
-			"UpdateApp":  func() error { return r.UpdateApp(ctx, id) },
-			"Rollback":   func() error { _, err := r.Rollback(ctx, id, "abc"); return err },
-			"Revisions":  func() error { _, _, err := r.Revisions(ctx, id); return err },
-			"GetApp":     func() error { _, err := r.GetApp(ctx, id); return err },
-			"GetLogs":    func() error { _, err := r.GetLogs(ctx, command.GetLogsRequest{AppID: id}); return err },
-		}
-		for name, call := range calls {
-			if err := call(); err == nil {
-				t.Errorf("%s(%q) must fail", name, id)
-			}
-		}
-		if r.DeployedRevision(id) != "" {
-			t.Errorf("DeployedRevision(%q) must be empty", id)
-		}
-		if after := dirListing(t, dataDir); after != before {
-			t.Errorf("id %q touched disk outside apps-data:\nbefore:\n%s\nafter:\n%s", id, before, after)
-		}
+// fakeDocker installs a docker stub that appends its argv to a log and
+// prints canned output for `volume ls` / `ps`; it returns the log path.
+func fakeDocker(t *testing.T) string {
+	t.Helper()
+	bin := t.TempDir()
+	log := filepath.Join(bin, "calls")
+	script := "#!/bin/sh\necho \"$*\" >> " + log + "\n" +
+		"case \"$1 $2\" in\n" +
+		"  \"volume ls\") printf 'wf-app-1_data\\nwf-app-1_old\\n' ;;\n" +
+		"  \"ps -aq\") echo c1 ;;\n" +
+		"esac\n"
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
 	}
+	t.Setenv("PATH", bin)
+	return log
 }
 
-// dirListing is a recursive name listing of dir (relative, sorted).
-func dirListing(t *testing.T, dir string) string {
+func dockerCalls(t *testing.T, log string) []string {
 	t.Helper()
-	var out []string
-	_ = filepath.WalkDir(dir, func(p string, _ fs.DirEntry, err error) error {
-		if err == nil {
-			rel, _ := filepath.Rel(dir, p)
-			out = append(out, rel)
-		}
-		return nil
-	})
-	sort.Strings(out)
-	return strings.Join(out, "\n")
+	raw, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Split(strings.TrimSpace(string(raw)), "\n")
+}
+
+// After a clean `compose down` no container can hold the volumes, so the
+// sweep skips the container probe and removes all labelled volumes in one
+// exec. Only a failed down triggers the leftover-container cleanup.
+func TestSweepAppVolumesExecs(t *testing.T) {
+	r := newTestRepo(t)
+	filter := projectLabelFilter("app-1")
+	rmVolumes := "volume rm wf-app-1_data wf-app-1_old"
+
+	log := fakeDocker(t)
+	if w := r.sweepAppVolumes(context.Background(), "app-1", false); len(w) != 0 {
+		t.Fatalf("warnings: %v", w)
+	}
+	if got, want := dockerCalls(t, log), []string{"volume ls -q --filter " + filter, rmVolumes}; !slices.Equal(got, want) {
+		t.Fatalf("down ok: calls = %q, want %q", got, want)
+	}
+
+	log = fakeDocker(t)
+	if w := r.sweepAppVolumes(context.Background(), "app-1", true); len(w) != 0 {
+		t.Fatalf("warnings: %v", w)
+	}
+	want := []string{"ps -aq --filter " + filter, "rm -f c1", "volume ls -q --filter " + filter, rmVolumes}
+	if got := dockerCalls(t, log); !slices.Equal(got, want) {
+		t.Fatalf("down failed: calls = %q, want %q", got, want)
+	}
 }

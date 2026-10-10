@@ -69,13 +69,6 @@ func TestSecondSaveGrowsHistory(t *testing.T) {
 	}
 }
 
-func TestSaveAppRequiresAppID(t *testing.T) {
-	r := newTestRepo(t)
-	if _, err := r.saveWithoutDeploy(command.AppPayload{}); err == nil {
-		t.Fatal("expected app_id validation error")
-	}
-}
-
 func TestListAppsReadsNewLayoutAndHealsSymlinks(t *testing.T) {
 	r := newTestRepo(t)
 	savedApp(t, r, "app-1", "grafana", "x\n")
@@ -278,7 +271,7 @@ func TestDeleteAppRemovesDirAndSymlink(t *testing.T) {
 	r := newTestRepo(t)
 	savedApp(t, r, "app-1", "demo", "x\n")
 
-	if _, _, err := r.DeleteApp(context.Background(), "app-1", false); err != nil {
+	if _, err := r.DeleteApp(context.Background(), "app-1", false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(r.appDataDir("app-1")); !os.IsNotExist(err) {

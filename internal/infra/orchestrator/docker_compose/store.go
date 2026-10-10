@@ -59,18 +59,10 @@ func newSecretStore() secretStore {
 	return secretStore{Variables: map[string]string{}, Files: map[string]string{}}
 }
 
-// checkAppID is the fail-closed guard for every entry point that takes an app
-// id from a command payload. filepath.Base alone is not enough ("." and ".."
-// survive it, and appDataDir("..") is the agent data dir, certs included), so
-// an invalid id is refused up front instead of being normalised.
-func checkAppID(id string) error {
-	if !command.ValidAppID(id) {
-		return fmt.Errorf("invalid app id %q", id)
-	}
-	return nil
-}
-
 // appDataDir is the canonical folder for an app: {data}/apps-data/{appID}.
+// filepath.Base alone does not make a payload id safe ("." and ".." survive
+// it); ids from command payloads are refused up front by the dispatcher
+// (command.ValidAppID via the requests' Validate methods).
 func (r *Repository) appDataDir(appID string) string {
 	return filepath.Join(r.cfg.GetAppsDataDir(), filepath.Base(appID))
 }

@@ -65,14 +65,25 @@ func (d *Dispatcher) Dispatch(ctx context.Context, req *proto.RequestEnvelope) *
 	return h(ctx, agentID, req)
 }
 
+// validator is implemented by requests that carry ids the orchestrator turns
+// into paths or CLI args (app ids, volume names).
+type validator interface{ Validate() error }
+
 // handle adapts a typed orchestrator call into a handlerFunc: decode the
-// request into Req, run fn, encode Resp. All per-command boilerplate lives
-// here exactly once.
+// request into Req, validate it, run fn, encode Resp. All per-command
+// boilerplate lives here exactly once — including the agent's single
+// fail-closed check on payload ids, so no orchestrator entry point sees an
+// unvalidated one.
 func handle[Req any, Resp any](d *Dispatcher, fn func(context.Context, Req) (Resp, error)) handlerFunc {
 	return func(ctx context.Context, agentID string, req *proto.RequestEnvelope) *proto.ResponseEnvelope {
 		var in Req
 		if err := codec.DecodePayload(req.Payload, &in); err != nil {
 			return d.errResponse(agentID, req, "invalid payload: "+err.Error())
+		}
+		if v, ok := any(in).(validator); ok {
+			if err := v.Validate(); err != nil {
+				return d.errResponse(agentID, req, "invalid payload: "+err.Error())
+			}
 		}
 		out, err := fn(ctx, in)
 		if err != nil {
@@ -126,11 +137,12 @@ func (d *Dispatcher) newHandlers() map[command.Type]handlerFunc {
 			return command.ControlAppResponse{AppID: in.AppID, Action: in.Action}, err
 		}),
 		command.TypeAppDelete: handle(d, func(ctx context.Context, in command.DeleteAppRequest) (command.DeleteAppResponse, error) {
-			warnings, volumesDeleted, err := d.orch.DeleteApp(ctx, in.AppID, in.DeleteVolumes)
-			resp := command.DeleteAppResponse{AppID: in.AppID, Warnings: warnings, VolumesDeleted: volumesDeleted}
+			res, err := d.orch.DeleteApp(ctx, in.AppID, in.DeleteVolumes)
+			resp := command.DeleteAppResponse{AppID: in.AppID, Warnings: res.Warnings, VolumesDeleted: res.VolumesDeleted}
 			if err != nil {
-				if len(warnings) > 0 {
-					err = fmt.Errorf("%w (cleanup: %s)", err, strings.Join(warnings, "; "))
+				// handle drops the body on error, so fold the warnings in.
+				if len(res.Warnings) > 0 {
+					err = fmt.Errorf("%w (cleanup: %s)", err, strings.Join(res.Warnings, "; "))
 				}
 				return resp, err
 			}

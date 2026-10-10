@@ -3,7 +3,11 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"io/fs"
 	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 
 	"winterflow/internal/domain/command"
@@ -265,10 +269,81 @@ func TestDispatchAppDeleteEchoesVolumesDeleted(t *testing.T) {
 	}
 }
 
-func TestDispatchAppDeleteRejectsTraversalID(t *testing.T) {
+// Every command that turns a payload id into a path or a docker CLI arg must
+// be refused at the dispatcher before the orchestrator sees it:
+// filepath.Base("..") is "..", so appDataDir("..") is the agent data dir
+// itself, and a volume name like "-rf" would parse as a flag.
+func TestDispatchRejectsPathLikeIDsAndBadVolumeNames(t *testing.T) {
 	d := newTestDispatcher(t)
-	resp := d.Dispatch(context.Background(), envelope(string(command.TypeAppDelete), []byte(`{"app_id":".."}`)))
-	if resp.Base.ResponseCode == proto.ResponseCode_RESPONSE_CODE_SUCCESS {
-		t.Fatalf("app.delete of %q must fail: %+v", "..", resp)
+	ctx := context.Background()
+	dataDir := os.Getenv("AGENT_DATA_DIR")
+	// A real app that a traversal id could reach (delete "a/.." would wipe
+	// the whole data dir).
+	body := []byte(`{"draft":true,"app":{"app_id":"app-1","config":"e30=","files":[{"name":"compose.yml","content":"eDogMQo="}],"variables":[]}}`)
+	if resp := d.Dispatch(ctx, envelope(string(command.TypeAppSave), body)); resp.Base.ResponseCode != proto.ResponseCode_RESPONSE_CODE_SUCCESS {
+		t.Fatalf("seed save: %+v", resp)
 	}
+	t.Setenv("PATH", t.TempDir()) // no docker: nothing may reach the daemon either
+	before := dirListing(t, dataDir)
+
+	appRequests := map[command.Type]func(id string) any{
+		command.TypeAppSave: func(id string) any {
+			return command.SaveAppRequest{App: command.AppPayload{AppID: id, Config: []byte(`{"name":"x"}`)}}
+		},
+		command.TypeAppGet:       func(id string) any { return command.GetAppRequest{AppID: id} },
+		command.TypeAppRevisions: func(id string) any { return command.GetRevisionsRequest{AppID: id} },
+		command.TypeAppRollback:  func(id string) any { return command.RollbackAppRequest{AppID: id, Hash: "abc"} },
+		command.TypeAppControl: func(id string) any {
+			return command.ControlAppRequest{AppID: id, Action: command.ControlStop}
+		},
+		command.TypeAppDelete: func(id string) any { return command.DeleteAppRequest{AppID: id, DeleteVolumes: true} },
+		command.TypeAppRename: func(id string) any { return command.RenameAppRequest{AppID: id, Name: "n"} },
+		command.TypeAppLogs:   func(id string) any { return command.GetLogsRequest{AppID: id} },
+	}
+	volumeRequests := map[command.Type]func(name string) any{
+		command.TypeVolumeCreate: func(n string) any { return command.CreateVolumeRequest{Name: n} },
+		command.TypeVolumeDelete: func(n string) any { return command.DeleteVolumeRequest{Name: n} },
+	}
+
+	expectRejected := func(typ command.Type, req any) {
+		t.Helper()
+		payload, err := json.Marshal(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp := d.Dispatch(ctx, envelope(string(typ), payload))
+		if resp.Base.ResponseCode == proto.ResponseCode_RESPONSE_CODE_SUCCESS {
+			t.Errorf("%s %s must fail", typ, payload)
+		} else if !strings.HasPrefix(resp.Base.Detail, "invalid payload: ") {
+			t.Errorf("%s %s must fail validation, got %q", typ, payload, resp.Base.Detail)
+		}
+	}
+	for typ, mk := range appRequests {
+		for _, id := range []string{"", ".", "..", "/", "a/..", "x/../..", "a/b", `a\b`} {
+			expectRejected(typ, mk(id))
+		}
+	}
+	for typ, mk := range volumeRequests {
+		for _, name := range []string{"", "-rf", "--all", "../x", "a/b", ".x"} {
+			expectRejected(typ, mk(name))
+		}
+	}
+	if after := dirListing(t, dataDir); after != before {
+		t.Errorf("rejected requests touched the data dir:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
+// dirListing is a recursive name listing of dir (relative, sorted).
+func dirListing(t *testing.T, dir string) string {
+	t.Helper()
+	var out []string
+	_ = filepath.WalkDir(dir, func(p string, _ fs.DirEntry, err error) error {
+		if err == nil {
+			rel, _ := filepath.Rel(dir, p)
+			out = append(out, rel)
+		}
+		return nil
+	})
+	sort.Strings(out)
+	return strings.Join(out, "\n")
 }

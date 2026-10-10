@@ -35,7 +35,7 @@ func TestDeleteAppWithVolumes(t *testing.T) {
 	appID := "itg-vol-app"
 	// Safety net if an assertion fails before the explicit delete below.
 	t.Cleanup(func() {
-		_, _, _ = repo.DeleteApp(context.Background(), appID, true)
+		_, _ = repo.DeleteApp(context.Background(), appID, true)
 		_ = exec.Command("docker", "volume", "rm", "-f", projectName(appID)+"_data").Run()
 	})
 	compose := "services:\n  s:\n    image: alpine:3.20\n    command: [\"sleep\", \"300\"]\n" +
@@ -54,9 +54,12 @@ func TestDeleteAppWithVolumes(t *testing.T) {
 		t.Fatalf("owned volume %s not created", owned)
 	}
 
-	warnings, _, err := repo.DeleteApp(ctx, appID, true)
+	res, err := repo.DeleteApp(ctx, appID, true)
 	if err != nil {
-		t.Fatalf("DeleteApp: %v (warnings %v)", err, warnings)
+		t.Fatalf("DeleteApp: %v (warnings %v)", err, res.Warnings)
+	}
+	if len(res.Warnings) > 0 {
+		t.Fatalf("clean delete must not warn: %v", res.Warnings)
 	}
 	if volumeExists(t, owned) {
 		t.Fatalf("owned volume %s must be removed", owned)

@@ -104,6 +104,8 @@ type CreateVolumeRequest struct {
 	Name string `json:"name"`
 }
 
+func (r CreateVolumeRequest) Validate() error { return ValidateVolumeName(r.Name) }
+
 type CreateVolumeResponse struct {
 	Name string `json:"name"`
 }
@@ -111,6 +113,8 @@ type CreateVolumeResponse struct {
 type DeleteVolumeRequest struct {
 	Name string `json:"name"`
 }
+
+func (r DeleteVolumeRequest) Validate() error { return ValidateVolumeName(r.Name) }
 
 type DeleteVolumeResponse struct {
 	Name string `json:"name"`

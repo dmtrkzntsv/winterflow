@@ -3,11 +3,10 @@ package dockercompose
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"os/exec"
-	"sort"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"winterflow/internal/domain/command"
@@ -15,9 +14,8 @@ import (
 )
 
 const (
-	composeProjectKey = "com.docker.compose.project"
-	anonymousVolKey   = "com.docker.volume.anonymous"
-	wfProjectPrefix   = "wf-"
+	anonymousVolKey = "com.docker.volume.anonymous"
+	wfProjectPrefix = "wf-"
 
 	// volumeOpTimeout bounds every volume exec sequence: the standalone
 	// pipeline is drained by one goroutine, so a hung docker call must not
@@ -25,40 +23,10 @@ const (
 	volumeOpTimeout = 2 * time.Minute
 )
 
-// execOutput runs a command and returns stdout. On failure the error carries
-// the trimmed stderr, so warnings say why ("daemon is down"), not just
-// "exit status 1".
-func execOutput(ctx context.Context, name string, args ...string) ([]byte, error) {
-	out, err := exec.CommandContext(ctx, name, args...).Output()
-	if err != nil {
-		var ee *exec.ExitError
-		if errors.As(err, &ee) {
-			if msg := strings.TrimSpace(string(ee.Stderr)); msg != "" {
-				return out, fmt.Errorf("%w: %s", err, msg)
-			}
-		}
-		return out, err
-	}
-	return out, nil
-}
-
 type dockerVolume struct {
 	Name   string `json:"Name"`
 	Driver string `json:"Driver"`
 	Labels string `json:"Labels"`
-}
-
-// parseLabels splits docker's "k=v,k=v" label string.
-func parseLabels(s string) map[string]string {
-	out := map[string]string{}
-	for _, kv := range strings.Split(s, ",") {
-		if kv == "" {
-			continue
-		}
-		k, v, _ := strings.Cut(kv, "=")
-		out[k] = v
-	}
-	return out
 }
 
 func parseVolumeLS(out []byte, log *logger.Logger) []command.Volume {
@@ -73,116 +41,82 @@ func parseVolumeLS(out []byte, log *logger.Logger) []command.Volume {
 			log.Warn("parse volume line", "error", err)
 			continue
 		}
-		labels := parseLabels(dv.Labels)
-		v := command.Volume{Name: dv.Name, Driver: dv.Driver, Project: labels[composeProjectKey]}
+		v := command.Volume{
+			Name:      dv.Name,
+			Driver:    dv.Driver,
+			Project:   labelValue(dv.Labels, composeProjectLabel),
+			Anonymous: hasLabel(dv.Labels, anonymousVolKey),
+		}
 		if id, ok := strings.CutPrefix(v.Project, wfProjectPrefix); ok && id != "" {
 			v.AppID = id
 		}
-		_, v.Anonymous = labels[anonymousVolKey]
 		vols = append(vols, v)
 	}
 	return vols
 }
 
-// parseMountedVolumes returns the set of mount sources named in `docker ps`
-// output. Bind sources (host paths) land in the set too; they never collide
-// with volume names, which cannot contain '/'.
-func parseMountedVolumes(out []byte) map[string]bool {
-	mounted := map[string]bool{}
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		var c struct {
-			Mounts string `json:"Mounts"`
-		}
-		if json.Unmarshal([]byte(strings.TrimSpace(line)), &c) != nil {
-			continue
-		}
-		for _, m := range strings.Split(c.Mounts, ",") {
-			if m = strings.TrimSpace(m); m != "" {
-				mounted[m] = true
-			}
-		}
-	}
-	return mounted
-}
-
-func annotateVolumes(vols []command.Volume, mounted map[string]bool, appExists func(string) bool) {
+// annotateVolumes marks usage and orphanhood. A volume is in use unless
+// Docker reports it dangling — referenced by no container, running or
+// stopped.
+func annotateVolumes(vols []command.Volume, dangling map[string]bool, appExists func(string) bool) {
 	for i := range vols {
-		vols[i].InUse = mounted[vols[i].Name]
+		vols[i].InUse = !dangling[vols[i].Name]
 		vols[i].Orphan = vols[i].AppID != "" && !appExists(vols[i].AppID)
 	}
 }
 
-// sortVolumes: winterflow-owned (by app id, then name), other named, anonymous.
+// sortVolumes orders by name; grouping is the UI's job.
 func sortVolumes(vols []command.Volume) {
-	rank := func(v command.Volume) int {
-		switch {
-		case v.AppID != "":
-			return 0
-		case v.Anonymous:
-			return 2
-		default:
-			return 1
-		}
-	}
-	sort.SliceStable(vols, func(i, j int) bool {
-		a, b := vols[i], vols[j]
-		if rank(a) != rank(b) {
-			return rank(a) < rank(b)
-		}
-		if a.AppID != b.AppID {
-			return a.AppID < b.AppID
-		}
-		return a.Name < b.Name
-	})
+	slices.SortFunc(vols, func(a, b command.Volume) int { return strings.Compare(a.Name, b.Name) })
 }
 
 // ListVolumes returns every Docker volume with its owning app, whether any
 // container (running or stopped) mounts it, and whether it is orphaned.
-// Exactly two execs; called only on request, never polled.
+// Exactly two concurrent execs; called only on request, never polled.
 func (r *Repository) ListVolumes(ctx context.Context) ([]command.Volume, error) {
 	ctx, cancel := context.WithTimeout(ctx, volumeOpTimeout)
 	defer cancel()
-	lsOut, err := execOutput(ctx, "docker", "volume", "ls", "--format", "json")
-	if err != nil {
-		return nil, fmt.Errorf("docker volume ls: %w", err)
+	var (
+		wg                 sync.WaitGroup
+		lsOut, danglingOut []byte
+		lsErr, danglingErr error
+	)
+	wg.Go(func() { lsOut, lsErr = execOutput(ctx, "docker", "volume", "ls", "--format", "json") })
+	wg.Go(func() {
+		danglingOut, danglingErr = execOutput(ctx, "docker", "volume", "ls", "-q", "--filter", "dangling=true")
+	})
+	wg.Wait()
+	if lsErr != nil {
+		return nil, fmt.Errorf("docker volume ls: %w", lsErr)
 	}
-	psOut, err := execOutput(ctx, "docker", "ps", "--all", "--no-trunc", "--format", "json")
-	if err != nil {
-		return nil, fmt.Errorf("docker ps: %w", err)
+	if danglingErr != nil {
+		return nil, fmt.Errorf("docker volume ls dangling: %w", danglingErr)
+	}
+	dangling := map[string]bool{}
+	for _, name := range strings.Fields(string(danglingOut)) {
+		dangling[name] = true
 	}
 	vols := parseVolumeLS(lsOut, r.log)
-	annotateVolumes(vols, parseMountedVolumes(psOut), r.appExists)
+	annotateVolumes(vols, dangling, r.appExists)
 	sortVolumes(vols)
 	return vols, nil
 }
 
-// CreateVolume creates a local Docker volume.
+// CreateVolume creates a local Docker volume. The name was validated by the
+// dispatcher (command.ValidateVolumeName), so it cannot be parsed as a flag.
 func (r *Repository) CreateVolume(ctx context.Context, name string) error {
-	if err := command.ValidateVolumeName(name); err != nil {
-		return err
-	}
 	ctx, cancel := context.WithTimeout(ctx, volumeOpTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "docker", "volume", "create", name).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("docker volume create: %w: %s", err, strings.TrimSpace(string(out)))
-	}
-	return nil
+	return dockerCombined(ctx, "volume", "create", name)
 }
 
 // DeleteVolume removes a Docker volume. No --force: Docker refuses a volume
-// in use and that reason is returned to the caller.
+// in use and that reason is returned to the caller. The name was validated by
+// the dispatcher (command.ValidateVolumeName).
 func (r *Repository) DeleteVolume(ctx context.Context, name string) error {
-	if err := command.ValidateVolumeName(name); err != nil {
-		return err
-	}
 	ctx, cancel := context.WithTimeout(ctx, volumeOpTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "docker", "volume", "rm", name).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("docker volume rm: %w: %s", err, strings.TrimSpace(string(out)))
-	}
-	return nil
+	return dockerCombined(ctx, "volume", "rm", name)
 }
 
 // composeDownVerb is the `compose down` verb; -v also removes the named
@@ -195,14 +129,16 @@ func composeDownVerb(volumes bool) []string {
 }
 
 func projectLabelFilter(appID string) string {
-	return "label=" + composeProjectKey + "=" + projectName(appID)
+	return "label=" + composeProjectLabel + "=" + projectName(appID)
 }
 
-// sweepAppVolumes force-removes any container still labelled with the app's
-// project (left behind when `compose down` failed) and then every volume
-// carrying that label — including volumes earlier revisions declared. Every
-// failure becomes a warning; the caller deletes the app regardless.
-func (r *Repository) sweepAppVolumes(ctx context.Context, appID string) []string {
+// sweepAppVolumes removes every volume carrying the app's compose project
+// label — including volumes earlier revisions declared — in one `docker
+// volume rm`. Only when `compose down` failed (downFailed) can containers
+// still hold them, so only then are leftover project containers force-removed
+// first. Every failure becomes a warning; the caller deletes the app
+// regardless.
+func (r *Repository) sweepAppVolumes(ctx context.Context, appID string, downFailed bool) []string {
 	ctx, cancel := context.WithTimeout(ctx, volumeOpTimeout)
 	defer cancel()
 	var warnings []string
@@ -212,12 +148,13 @@ func (r *Repository) sweepAppVolumes(ctx context.Context, appID string) []string
 	}
 	filter := projectLabelFilter(appID)
 
-	if out, err := execOutput(ctx, "docker", "ps", "-aq", "--filter", filter); err != nil {
-		warn("could not list leftover containers", err)
-	} else if ids := strings.Fields(string(out)); len(ids) > 0 {
-		args := append([]string{"rm", "-f"}, ids...)
-		if out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput(); err != nil {
-			warn("could not remove leftover containers", fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out))))
+	if downFailed {
+		if out, err := execOutput(ctx, "docker", "ps", "-aq", "--filter", filter); err != nil {
+			warn("could not list leftover containers", err)
+		} else if ids := strings.Fields(string(out)); len(ids) > 0 {
+			if err := dockerCombined(ctx, append([]string{"rm", "-f"}, ids...)...); err != nil {
+				warn("could not remove leftover containers", err)
+			}
 		}
 	}
 
@@ -226,9 +163,9 @@ func (r *Repository) sweepAppVolumes(ctx context.Context, appID string) []string
 		warn("could not list volumes", err)
 		return warnings
 	}
-	for _, name := range strings.Fields(string(out)) {
-		if out, err := exec.CommandContext(ctx, "docker", "volume", "rm", name).CombinedOutput(); err != nil {
-			warn("volume "+name+" not removed", fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out))))
+	if names := strings.Fields(string(out)); len(names) > 0 {
+		if err := dockerCombined(ctx, append([]string{"volume", "rm"}, names...)...); err != nil {
+			warn("could not remove volumes", err)
 		}
 	}
 	return warnings

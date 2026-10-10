@@ -33,9 +33,6 @@ func (r *Repository) deploy(ctx context.Context, appID string) error {
 
 // StartApp brings an app up.
 func (r *Repository) StartApp(ctx context.Context, appID string) error {
-	if err := checkAppID(appID); err != nil {
-		return err
-	}
 	if !r.appExists(appID) {
 		return fmt.Errorf("app %s not found", appID)
 	}
@@ -45,17 +42,11 @@ func (r *Repository) StartApp(ctx context.Context, appID string) error {
 // StopApp stops all containers of the app (compose down). Missing app is a
 // no-op.
 func (r *Repository) StopApp(ctx context.Context, appID string) error {
-	if err := checkAppID(appID); err != nil {
-		return err
-	}
 	return r.composeDown(ctx, appID, false)
 }
 
 // RestartApp restarts the app's containers in place.
 func (r *Repository) RestartApp(ctx context.Context, appID string) error {
-	if err := checkAppID(appID); err != nil {
-		return err
-	}
 	if !r.appExists(appID) {
 		return fmt.Errorf("app %s not found", appID)
 	}
@@ -65,9 +56,6 @@ func (r *Repository) RestartApp(ctx context.Context, appID string) error {
 // UpdateApp refreshes a git-sourced app's upstream, then pulls the latest
 // images and recreates the app's containers.
 func (r *Repository) UpdateApp(ctx context.Context, appID string) error {
-	if err := checkAppID(appID); err != nil {
-		return err
-	}
 	if !r.appExists(appID) {
 		return fmt.Errorf("app %s not found", appID)
 	}
@@ -85,35 +73,41 @@ func (r *Repository) UpdateApp(ctx context.Context, appID string) error {
 	return nil
 }
 
+// DeleteResult is the outcome of DeleteApp. Warnings are cleanup steps that
+// failed (never an error); VolumesDeleted reports whether the volume sweep
+// actually ran.
+type DeleteResult struct {
+	Warnings       []string
+	VolumesDeleted bool
+}
+
 // DeleteApp stops the app's containers and removes its folder and symlink.
 // The git history goes with the folder — deletion is final. With
 // deleteVolumes it also removes the app's compose-owned volumes; cleanup
-// failures come back as warnings, never as an error. volumesDeleted reports
-// whether the volume sweep actually ran: it is skipped for an app this agent
-// does not have, so a delete request cannot be used to destroy orphan volumes
-// an admin deliberately kept (those go through the volume registry).
-func (r *Repository) DeleteApp(ctx context.Context, appID string, deleteVolumes bool) (warnings []string, volumesDeleted bool, err error) {
-	if err := checkAppID(appID); err != nil {
-		return nil, false, err
-	}
-	existed := r.appExists(appID)
-	if err := r.composeDown(ctx, appID, deleteVolumes); err != nil {
+// failures come back as warnings, never as an error. The sweep is skipped for
+// an app this agent does not have, so a delete request cannot be used to
+// destroy orphan volumes an admin deliberately kept (those go through the
+// volume registry).
+func (r *Repository) DeleteApp(ctx context.Context, appID string, deleteVolumes bool) (DeleteResult, error) {
+	// Decided before anything is removed: sweep only an app this agent has.
+	res := DeleteResult{VolumesDeleted: deleteVolumes && r.appExists(appID)}
+	downErr := r.composeDown(ctx, appID, deleteVolumes)
+	if downErr != nil {
 		// Best-effort stop; continue with removal so a broken deployment can
 		// still be deleted.
-		r.log.Warn("delete: compose down failed, continuing", "app_id", appID, "error", err)
+		r.log.Warn("delete: compose down failed, continuing", "app_id", appID, "error", downErr)
 	}
-	if deleteVolumes && existed {
-		warnings = r.sweepAppVolumes(ctx, appID)
-		volumesDeleted = true
+	if res.VolumesDeleted {
+		res.Warnings = r.sweepAppVolumes(ctx, appID, downErr != nil)
 	}
 	if err := removeAppSymlink(r.cfg.GetAppsDir(), appID); err != nil {
 		r.log.Warn("delete: symlink removal failed, continuing", "app_id", appID, "error", err)
 	}
 	if err := os.RemoveAll(r.appDataDir(appID)); err != nil {
-		return warnings, volumesDeleted, fmt.Errorf("remove app dir: %w", err)
+		return res, fmt.Errorf("remove app dir: %w", err)
 	}
 	r.forgetApp(appID)
-	return warnings, volumesDeleted, nil
+	return res, nil
 }
 
 // GetApp reconstructs the deployable payload from the app's folder. Secret
@@ -122,9 +116,6 @@ func (r *Repository) DeleteApp(ctx context.Context, appID string, deleteVolumes 
 // the stored ciphertext is preserved.
 func (r *Repository) GetApp(ctx context.Context, appID string) (command.GetAppResponse, error) {
 	var resp command.GetAppResponse
-	if err := checkAppID(appID); err != nil {
-		return resp, err
-	}
 	dir := r.appDataDir(appID)
 	if !r.appExists(appID) {
 		return resp, fmt.Errorf("app %s not found", appID)
@@ -250,9 +241,6 @@ func encryptedNames(cfg []byte) (vars map[string]bool, files map[string]bool) {
 // commit) and swaps the symlink. The compose project name is id-based, so no
 // restart is needed.
 func (r *Repository) RenameApp(ctx context.Context, appID, newName string) error {
-	if err := checkAppID(appID); err != nil {
-		return err
-	}
 	dir := r.appDataDir(appID)
 	cfg, _, err := r.readAppConfig(dir)
 	if err != nil {

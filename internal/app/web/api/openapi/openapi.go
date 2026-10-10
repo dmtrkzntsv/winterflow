@@ -379,7 +379,11 @@ func addError(oc oapi.OperationContext, code int, raw bool) {
 	case code == http.StatusTooManyRequests:
 		oc.AddRespStructure("", oapi.WithContentType("text/plain"), oapi.WithHTTPStatus(code))
 	case raw:
+		// go-pkgz sometimes calls WriteHeader before rest.RenderJSON sets
+		// the Content-Type (/auth/user 401, unknown provider 400), so the
+		// same {"error": "..."} also arrives as sniffed text/plain.
 		oc.AddRespStructure(LibraryError{}, oapi.WithHTTPStatus(code))
+		oc.AddRespStructure("", oapi.WithContentType("text/plain"), oapi.WithHTTPStatus(code))
 	case code == http.StatusUnauthorized:
 		oc.AddRespStructure(Error{}, oapi.WithHTTPStatus(code))
 		oc.AddRespStructure("", oapi.WithContentType("text/plain"), oapi.WithHTTPStatus(code))

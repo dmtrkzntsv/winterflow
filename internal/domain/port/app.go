@@ -62,8 +62,10 @@ type ServerDomainRepository interface {
 type IngressManager interface {
 	// Reload rebuilds the merged config from the apps on disk and hot-swaps
 	// it. Returned strings are warnings for the triggering command's
-	// response; a load failure keeps the previous config serving.
-	Reload(ctx context.Context) []string
+	// response; a load failure keeps the previous config serving. force
+	// reloads even when the config is unchanged — needed after replacing a
+	// certificate, whose file paths (and so the config) stay the same.
+	Reload(ctx context.Context, force bool) []string
 	// Enabled reports whether the proxy bound its ports at startup.
 	Enabled() bool
 	// ListDomains reports the domain registrations with the apps using

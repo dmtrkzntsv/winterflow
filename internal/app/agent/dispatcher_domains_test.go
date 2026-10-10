@@ -2,8 +2,11 @@ package agent
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -55,6 +58,9 @@ func TestDispatchDomainCommands(t *testing.T) {
 	}
 	if ing.reloads != 2 {
 		t.Fatalf("reloads = %d, want one per successful mutation", ing.reloads)
+	}
+	if ing.forced != 1 {
+		t.Fatalf("forced reloads = %d, want 1 (domain.create forces; delete does not)", ing.forced)
 	}
 
 	// Invalid payloads never reach the manager.
@@ -133,4 +139,92 @@ func TestDispatchDomainCreateWithRealManager(t *testing.T) {
 		list.Domains[0].NotAfter == nil || list.Domains[0].Issuer != certtest.Issuer {
 		t.Fatalf("list = %s (%v)", resp.Payload, err)
 	}
+}
+
+// servedNotAfter dials the HTTPS listener with SNI host and returns the
+// NotAfter of the leaf the server presents, retrying briefly while Caddy
+// (re)starts its listeners.
+func servedNotAfter(t *testing.T, port int, host string) time.Time {
+	t.Helper()
+	var lastErr error
+	for i := 0; i < 50; i++ {
+		conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 2 * time.Second}, "tcp",
+			fmt.Sprintf("127.0.0.1:%d", port), &tls.Config{
+				ServerName:         host,
+				InsecureSkipVerify: true, // the test CA is not in the system pool; only the leaf matters
+			})
+		if err == nil {
+			leaf := conn.ConnectionState().PeerCertificates[0]
+			_ = conn.Close()
+			return leaf.NotAfter
+		}
+		lastErr = err
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("tls handshake via caddy never succeeded: %v", lastErr)
+	return time.Time{}
+}
+
+func freeTCPPort(t *testing.T) int {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port
+}
+
+// TestDomainCreateReplacingCertificateReloadsCaddy is the renewal regression:
+// replacing a certificate keeps the same file paths, so the generated Caddy
+// config is byte-identical and an unforced reload is a no-op. domain.create
+// must still make the running proxy present the new certificate.
+func TestDomainCreateReplacingCertificateReloadsCaddy(t *testing.T) {
+	dataDir, certDir := t.TempDir(), t.TempDir()
+	httpPort, httpsPort := freeTCPPort(t), freeTCPPort(t)
+	t.Setenv("AGENT_DATA_DIR", dataDir)
+	t.Setenv("HUB_CERT_DIR", certDir)
+	t.Setenv("INGRESS_ENABLED", "true")
+	t.Setenv("INGRESS_HTTP_PORT", fmt.Sprint(httpPort))
+	t.Setenv("INGRESS_HTTPS_PORT", fmt.Sprint(httpsPort))
+	t.Setenv("LOG_LEVEL", "error")
+	pub := certtest.AgentKey(t, certDir)
+	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
+	cfg := config.NewServerConfig("standalone")
+	m := ingresscaddy.NewManager(cfg, log)
+	t.Cleanup(m.Stop)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := m.Start(ctx); err != nil || !m.Enabled() {
+		t.Fatalf("start: %v, enabled %v", err, m.Enabled())
+	}
+	d := NewDispatcher(dockercompose.NewRepository(cfg, log), m, log)
+
+	// Caddy's certificate cache is process-global and survives caddy.Stop,
+	// so a fixed name would let a previous run's (-count=N) certificate
+	// answer the handshake. A per-run name keeps the assertion honest.
+	zone := fmt.Sprintf("r%d.renew.test", time.Now().UnixNano())
+	name, host := "*."+zone, "app."+zone
+	upload := func(notAfter time.Time) time.Time {
+		t.Helper()
+		cert, key := certtest.Issue(t, notAfter, name)
+		resp := dispatchJSON(t, d, command.TypeDomainCreate, command.CreateDomainRequest{
+			Name: name, TLS: command.DomainTLSCertificate,
+			Certificate: string(cert), Key: certtest.Encrypt(t, pub, string(key)),
+		})
+		if resp.Base.ResponseCode != proto.ResponseCode_RESPONSE_CODE_SUCCESS {
+			t.Fatalf("create: %+v", resp.Base)
+		}
+		return notAfter.UTC().Truncate(time.Second)
+	}
+
+	first := upload(time.Now().Add(30 * 24 * time.Hour))
+	if got := servedNotAfter(t, httpsPort, host); !got.Equal(first) {
+		t.Fatalf("first certificate: served NotAfter %s, want %s", got, first)
+	}
+	second := upload(time.Now().Add(90 * 24 * time.Hour))
+	if got := servedNotAfter(t, httpsPort, host); !got.Equal(second) {
+		t.Fatalf("after replacing the certificate Caddy still serves NotAfter %s, want %s (first was %s)", got, second, first)
+	}
+	t.Logf("served NotAfter: first %s, after replacement %s", first, second)
 }

@@ -145,7 +145,7 @@ func TestManagerServesReloadsAndIsolates(t *testing.T) {
 	// Hot reload: change the app's domain, Reload, old gone / new serving.
 	newCfg := strings.ReplaceAll(appCfg(upstreamPort), "app.test", "app2.test")
 	writeApp(t, dataDir, "app-1", newCfg)
-	if warnings := m.Reload(ctx); len(warnings) != 1 { // app-2's bad fragment still warns
+	if warnings := m.Reload(ctx, false); len(warnings) != 1 { // app-2's bad fragment still warns
 		t.Fatalf("reload warnings = %v, want exactly the app-2 exclusion", warnings)
 	}
 	resp = getVia(t, httpPort, "app2.test", "/")
@@ -182,7 +182,7 @@ func TestManagerDisabledOnBindFailure(t *testing.T) {
 	if m.Enabled() {
 		t.Fatal("manager claims enabled despite bind failure")
 	}
-	if w := m.Reload(ctx); w != nil {
+	if w := m.Reload(ctx, false); w != nil {
 		t.Fatalf("disabled manager Reload must no-op, got %v", w)
 	}
 }

@@ -30,6 +30,7 @@ func newTestDispatcher(t *testing.T) *Dispatcher {
 // domain methods record calls and answer from fields.
 type fakeIngress struct {
 	reloads  int
+	forced   int // reloads requested with force=true
 	warnings []string
 
 	domains   []command.Domain
@@ -38,8 +39,14 @@ type fakeIngress struct {
 	deleted   []string
 }
 
-func (f *fakeIngress) Reload(_ context.Context) []string { f.reloads++; return f.warnings }
-func (f *fakeIngress) Enabled() bool                     { return true }
+func (f *fakeIngress) Reload(_ context.Context, force bool) []string {
+	f.reloads++
+	if force {
+		f.forced++
+	}
+	return f.warnings
+}
+func (f *fakeIngress) Enabled() bool { return true }
 func (f *fakeIngress) ListDomains(context.Context) ([]command.Domain, error) {
 	return f.domains, nil
 }

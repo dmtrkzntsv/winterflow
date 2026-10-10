@@ -40,10 +40,16 @@ func NewDispatcher(orch *dockercompose.Repository, ingress port.IngressManager, 
 // returned for responses that carry them (app.save) and logged otherwise. A
 // nil manager (tests, ingress disabled) is a no-op.
 func (d *Dispatcher) reloadIngress(ctx context.Context) []string {
+	return d.reload(ctx, false)
+}
+
+// reload is reloadIngress with the force switch exposed: domain.create forces
+// it, since a replaced certificate leaves the generated config unchanged.
+func (d *Dispatcher) reload(ctx context.Context, force bool) []string {
 	if d.ingress == nil {
 		return nil
 	}
-	warnings := d.ingress.Reload(ctx)
+	warnings := d.ingress.Reload(ctx, force)
 	for _, w := range warnings {
 		d.log.Warn("ingress", "warning", w)
 	}
@@ -228,7 +234,7 @@ func (d *Dispatcher) newHandlers() map[command.Type]handlerFunc {
 			}
 			dom, err := d.ingress.CreateDomain(ctx, in)
 			if err == nil {
-				d.reloadIngress(ctx)
+				d.reload(ctx, true)
 			}
 			return command.CreateDomainResponse{Domain: dom}, err
 		}),

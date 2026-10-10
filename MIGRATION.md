@@ -302,9 +302,9 @@ API routes (all `/api/v1`):
   `server/get-public-key`, `app/get-apps`, `app/get-apps-status`,
   `user/create-token`, `user/get-tokens`, `user/delete-token`,
   `user/get-profile`, `user/change-password`, `auth/state` +
-  `auth/register` (public), `org/get-organization` (any member), and
-  admin-only `org/{create-user,get-members,update-member,remove-member,
-  reset-member-password,update-organization}`.
+  `auth/register` (public), `org/get-organization` and
+  `org/{create-user,get-members,remove-member,reset-member-password,
+  update-organization}` (any member; there are no roles).
 - Agent-bound (202 + SSE): `app/save-app` (upsert: create + edit), `app/get-app`, `app/get-logs`,
   `app/get-revisions`, `app/rollback-app`, `image/get-tags`, `app/control-app`,
   `app/delete-app`, `app/rename-app`, `app/refresh-apps`,
@@ -318,23 +318,24 @@ API routes (all `/api/v1`):
 Web pages (`web/src/pages/`): `home` (`/`), `app-details` (`/app/:appId`,
 tabs Logs/Editor/History/Settings via `?tab=`), `create-app` (`/create-app`,
 create-only), `settings`, `user-tokens` (`/user/tokens`), `user-password`
-(`/user/password`), `org-members` (`/org/members`, admins, incl. the
+(`/user/password`), `org-members` (`/org/members`, every member, incl. the
 organization identity card), `login`, `register` (`/register`).
 
 Authentication (post-migration): local email+password is the always-on
 default. Accounts are created ONLY via `POST /api/v1/auth/register` (the
-`/register` page) or by an admin: on a fresh instance the first
+`/register` page) or by any member of an org: on a fresh instance the first
 registration claims it (owner of the org — standalone's single one);
 afterwards standalone self-signup is closed and distributed follows
 REGISTRATION_ENABLED (own org per registrant; the claim step ignores the
 toggle so an instance can never be bricked). Login is verify-only. Google
 OAuth optional; when registration is closed its first-login account
 creation is disabled too (ClaimsUpd find-only + GetUserID requires the
-user_id claim attr). Organizations carry name/icon/color, editable by
-admins on `/org/members`; admins manage members there (temp passwords
-shown once, forced change on first login); rbac middleware gates org
-management, server registration, agent update, and registry/network
-mutations to owner/admin.
+user_id claim attr). Organizations carry name/icon/color, editable on
+`/org/members`, where members are managed too (temp passwords shown
+once, forced change on first login). There are no roles: every member
+may do everything, including server registration, agent update and
+registry/network/volume mutations (the rbac middleware and
+`org/update-member` were removed).
 
 Personal access tokens (post-migration): `wfp_`-prefixed, SHA-256-hashed at
 rest (plaintext shown once at creation), sent as `Authorization: Bearer

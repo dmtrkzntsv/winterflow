@@ -390,6 +390,7 @@ export function AppEditor({ state, onChange }: Props) {
           state={state}
           onChange={onChange}
           appId={state.config.id || undefined}
+          serverId={activeServer.id}
         />
       ) : (
         <EditorSection

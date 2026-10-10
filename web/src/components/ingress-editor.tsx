@@ -1,10 +1,11 @@
 import { Plus, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -14,6 +15,13 @@ import {
 } from "@/components/ui/select";
 import { EditorSection } from "@/components/editor-section";
 import { apiBaseUrl } from "@/config";
+import { useDocker } from "@/context/use-docker";
+import {
+  isWildcard,
+  TLS_LABELS,
+  winningDomain,
+  type RegisteredDomain,
+} from "@/lib/domains";
 import {
   localId,
   type AppEditorState,
@@ -26,23 +34,119 @@ type Props = {
   state: AppEditorState;
   onChange: (next: AppEditorState) => void;
   appId?: string;
+  serverId: string;
 };
+
+// Issue is the live check's verdict on one hostname: another app on this
+// server claims it, or no registered domain covers it.
+type Issue = { kind: "taken"; app: string } | { kind: "uncovered" };
+
+// HostHints shows, under a hostname input, the live check's problem (with a
+// way to fix it) or the TLS mode the covering registration gives the host.
+function HostHints({
+  host,
+  issue,
+  registrations,
+}: {
+  host: string;
+  issue?: Issue;
+  registrations: RegisteredDomain[];
+}) {
+  if (!host) return null;
+  if (issue?.kind === "taken") {
+    return (
+      <p className="mt-2 text-xs text-destructive">
+        Taken by app "{issue.app}" on this server.
+      </p>
+    );
+  }
+  if (issue?.kind === "uncovered") {
+    return (
+      <p className="mt-2 text-xs text-destructive">
+        Not covered by a domain registered on this server.{" "}
+        <Link to="/settings?tab=domains" className="font-medium underline underline-offset-4">
+          Register a domain
+        </Link>
+      </p>
+    );
+  }
+  const win = winningDomain(
+    registrations.map((r) => r.name),
+    host,
+  );
+  const reg = registrations.find((r) => r.name === win);
+  if (!reg) return null;
+  return (
+    <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+      <Badge variant={reg.tls === "off" ? "outline" : "secondary"}>{TLS_LABELS[reg.tls]}</Badge>
+      via <code className="font-mono">{reg.name}</code>
+    </p>
+  );
+}
+
+// Suggestions offers the server's registrations for an empty hostname:
+// an exact name fills the field; a wildcard fills ".suffix" and puts the
+// caret before it, ready for the label.
+function Suggestions({
+  registrations,
+  onPick,
+}: {
+  registrations: RegisteredDomain[];
+  onPick: (value: string, caretAtStart: boolean) => void;
+}) {
+  if (registrations.length === 0) return null;
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+      <span>Use:</span>
+      {registrations.map((r) => (
+        <Button
+          key={r.name}
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-6 px-2 font-mono text-xs"
+          onClick={() =>
+            isWildcard(r.name) ? onPick(r.name.slice(1), true) : onPick(r.name, false)
+          }
+        >
+          {r.name}
+        </Button>
+      ))}
+    </div>
+  );
+}
 
 const emptyIngress = (): AppIngress => ({ domains: [], redirects: [] });
 
 const REDIRECT_CODES = [301, 302, 307, 308] as const;
 
-// IngressEditor edits an app's domains (host -> upstream port, optional
-// Let's-Encrypt HTTPS) and redirect rules. It matches the Files/Variables
-// card idiom in app-editor.tsx: local rows keyed by localId, patched via
-// map/filter over the config array.
-export function IngressEditor({ state, onChange, appId }: Props) {
-  // taken[domain] = inline error string ("" or absent = not flagged) from the
-  // live availability check. Keyed by the domain text itself, so editing a
-  // domain to a different string naturally stops showing the old error —
-  // there's nothing extra to clear.
-  const [taken, setTaken] = useState<Record<string, string>>({});
+// IngressEditor edits an app's domains (host -> upstream port) and redirect
+// rules. Hostnames must sit under a domain registered on the server; TLS
+// follows that registration's mode (shown as a badge). It matches the
+// Files/Variables card idiom in app-editor.tsx: local rows keyed by localId,
+// patched via map/filter over the config array.
+export function IngressEditor({ state, onChange, appId, serverId }: Props) {
+  // issues[domain] = the live check's verdict (absent = fine or unchecked).
+  // Keyed by the domain text itself, so editing a domain to a different
+  // string naturally stops showing the old error — nothing extra to clear.
+  const [issues, setIssues] = useState<Record<string, Issue | undefined>>({});
   const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const inputs = useRef<Record<string, HTMLInputElement | null>>({});
+  const [registrations, setRegistrations] = useState<RegisteredDomain[]>([]);
+  const { listDomains } = useDocker();
+
+  // The server's registrations drive suggestions and the TLS badges.
+  useEffect(() => {
+    let live = true;
+    listDomains()
+      .then((list) => live && setRegistrations(list))
+      .catch(() => {
+        // Advisory only: without them the editor just offers no suggestions.
+      });
+    return () => {
+      live = false;
+    };
+  }, [listDomains, serverId]);
 
   // Cancel any in-flight debounce timers if the editor unmounts (e.g. the
   // user navigates away mid-check) so a stale check never calls setState.
@@ -62,29 +166,49 @@ export function IngressEditor({ state, onChange, appId }: Props) {
     if (!domain) return;
     timers.current[id] = setTimeout(async () => {
       try {
-        const qs = new URLSearchParams({ domain });
+        const qs = new URLSearchParams({ server_id: serverId, domain });
         if (appId) qs.set("app_id", appId);
         const res = await fetch(`${apiBaseUrl}/api/v1/domains/check?${qs}`, {
           credentials: "include",
         });
+        if (!res.ok) return; // e.g. not a hostname yet: the form validation says so
         const body = (await res.json()) as {
           data?: {
             available?: boolean;
-            claims?: { app_name: string; server_name: string }[];
+            covered?: boolean;
+            claims?: { app_name: string }[] | null;
           };
         };
         const claim = body.data?.claims?.[0];
-        setTaken((prev) => ({
-          ...prev,
-          [domain]:
-            body.data?.available === false && claim
-              ? `Already used by app "${claim.app_name}" on server "${claim.server_name}".`
-              : "",
-        }));
+        const issue: Issue | undefined =
+          body.data?.available === false && claim
+            ? { kind: "taken", app: claim.app_name }
+            : body.data?.covered === false
+              ? { kind: "uncovered" }
+              : undefined;
+        setIssues((prev) => ({ ...prev, [domain]: issue }));
       } catch {
-        // Availability is advisory; the save-time check is authoritative.
+        // Advisory; the save-time check is authoritative.
       }
     }, 400);
+  };
+
+  // pick fills a hostname from a suggestion; a wildcard's ".suffix" gets
+  // the caret at its start so the label can be typed straight away.
+  const pick = (
+    id: string,
+    set: (value: string) => void,
+    value: string,
+    caretAtStart: boolean,
+  ) => {
+    set(value);
+    if (!caretAtStart) checkDomain(id, value);
+    requestAnimationFrame(() => {
+      const el = inputs.current[id];
+      if (!el) return;
+      el.focus();
+      if (caretAtStart) el.setSelectionRange(0, 0);
+    });
   };
 
   // --- domains ---
@@ -108,7 +232,7 @@ export function IngressEditor({ state, onChange, appId }: Props) {
     delete timers.current[id];
     const removed = ing.domains.find((d) => d.id === id);
     if (removed) {
-      setTaken((prev) => {
+      setIssues((prev) => {
         if (!(removed.domain in prev)) return prev;
         const next = { ...prev };
         delete next[removed.domain];
@@ -143,16 +267,19 @@ export function IngressEditor({ state, onChange, appId }: Props) {
       ],
     });
 
-  const removeRedirect = (id: string) =>
+  const removeRedirect = (id: string) => {
+    clearTimeout(timers.current[id]);
+    delete timers.current[id];
     setIngress({
       ...ing,
       redirects: ing.redirects.filter((r) => r.id !== id),
     });
+  };
 
   return (
     <EditorSection
       title="Domains & Routing"
-      description="Serve the app on your own domains through the built-in proxy, with optional automatic HTTPS."
+      description="Serve the app through the built-in proxy on hostnames under the domains registered on this server. TLS follows each domain's mode."
     >
       <div className="space-y-6">
         <div className="space-y-3">
@@ -171,8 +298,12 @@ export function IngressEditor({ state, onChange, appId }: Props) {
             <div key={d.id} className="rounded-md border p-3">
               <div className="flex items-center gap-2">
                 <Input
+                  ref={(el) => {
+                    inputs.current[d.id] = el;
+                  }}
                   value={d.domain}
                   placeholder="app.example.com"
+                  aria-label="Hostname"
                   className="font-mono"
                   onChange={(e) => {
                     const domain = e.target.value.trim().toLowerCase();
@@ -184,6 +315,7 @@ export function IngressEditor({ state, onChange, appId }: Props) {
                   value={d.upstream_port}
                   type="number"
                   placeholder="8088"
+                  aria-label="Upstream port"
                   className="w-28 shrink-0"
                   onChange={(e) =>
                     updateDomain(d.id, {
@@ -192,25 +324,26 @@ export function IngressEditor({ state, onChange, appId }: Props) {
                     })
                   }
                 />
-                <label className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-                  <Switch
-                    checked={d.ssl}
-                    onCheckedChange={(c) => updateDomain(d.id, { ssl: c })}
-                  />
-                  HTTPS via Let's Encrypt
-                </label>
                 <Button
                   size="icon"
                   variant="ghost"
                   className="size-8 shrink-0"
+                  aria-label="Remove domain"
                   onClick={() => removeDomain(d.id)}
                 >
                   <Trash2 className="size-4" />
                 </Button>
               </div>
-              {taken[d.domain] ? (
-                <p className="mt-2 text-xs text-destructive">{taken[d.domain]}</p>
-              ) : null}
+              {d.domain === "" ? (
+                <Suggestions
+                  registrations={registrations}
+                  onPick={(value, caret) =>
+                    pick(d.id, (domain) => updateDomain(d.id, { domain }), value, caret)
+                  }
+                />
+              ) : (
+                <HostHints host={d.domain} issue={issues[d.domain]} registrations={registrations} />
+              )}
               <p className="mt-2 text-xs text-muted-foreground">
                 The compose file must publish this port on 127.0.0.1, e.g.{" "}
                 <code>127.0.0.1:8088:80</code>.
@@ -235,14 +368,20 @@ export function IngressEditor({ state, onChange, appId }: Props) {
             <div key={r.id} className="rounded-md border p-3">
               <div className="flex flex-wrap items-center gap-2">
                 <Input
+                  ref={(el) => {
+                    inputs.current[r.id] = el;
+                  }}
                   value={r.domain}
                   placeholder="old.example.com"
+                  aria-label="Redirect hostname"
                   className="font-mono sm:max-w-56"
-                  onChange={(e) =>
-                    updateRedirect(r.id, {
-                      domain: e.target.value.trim().toLowerCase(),
-                    })
-                  }
+                  onChange={(e) => {
+                    const domain = e.target.value.trim().toLowerCase();
+                    updateRedirect(r.id, { domain });
+                    // Path rules ride a domain checked above; only a
+                    // domain-level redirect claims its hostname.
+                    if (r.path === "") checkDomain(r.id, domain);
+                  }}
                 />
                 <Input
                   value={r.path}
@@ -277,24 +416,26 @@ export function IngressEditor({ state, onChange, appId }: Props) {
                     ))}
                   </SelectContent>
                 </Select>
-                {r.path === "" ? (
-                  <label className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-                    <Switch
-                      checked={r.ssl}
-                      onCheckedChange={(c) => updateRedirect(r.id, { ssl: c })}
-                    />
-                    HTTPS via Let's Encrypt
-                  </label>
-                ) : null}
                 <Button
                   size="icon"
                   variant="ghost"
                   className="size-8 shrink-0"
+                  aria-label="Remove redirect"
                   onClick={() => removeRedirect(r.id)}
                 >
                   <Trash2 className="size-4" />
                 </Button>
               </div>
+              {r.path !== "" ? null : r.domain === "" ? (
+                <Suggestions
+                  registrations={registrations}
+                  onPick={(value, caret) =>
+                    pick(r.id, (domain) => updateRedirect(r.id, { domain }), value, caret)
+                  }
+                />
+              ) : (
+                <HostHints host={r.domain} issue={issues[r.domain]} registrations={registrations} />
+              )}
             </div>
           ))}
         </div>

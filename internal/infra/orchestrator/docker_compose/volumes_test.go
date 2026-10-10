@@ -1,7 +1,9 @@
 package dockercompose
 
 import (
+	"context"
 	"os"
+	"strings"
 	"testing"
 
 	"winterflow/internal/domain/command"
@@ -119,5 +121,38 @@ func TestAppExistsUsesAppDir(t *testing.T) {
 	}
 	if !r.appExists("app-1") || r.appExists("nope") {
 		t.Fatal("appExists must reflect apps-data dirs")
+	}
+}
+
+func TestComposeDownVerb(t *testing.T) {
+	if got := strings.Join(composeDownVerb(false), " "); got != "down --remove-orphans" {
+		t.Fatalf("keep volumes: %q", got)
+	}
+	if got := strings.Join(composeDownVerb(true), " "); got != "down -v --remove-orphans" {
+		t.Fatalf("delete volumes: %q", got)
+	}
+}
+
+func TestProjectLabelFilter(t *testing.T) {
+	if got := projectLabelFilter("app-1"); got != "label=com.docker.compose.project=wf-app-1" {
+		t.Fatalf("filter = %q", got)
+	}
+	// app ids are path-cleaned like projectName
+	if got := projectLabelFilter("../evil"); got != "label=com.docker.compose.project=wf-evil" {
+		t.Fatalf("filter must use filepath.Base: %q", got)
+	}
+}
+
+// Without Docker the sweep commands fail; delete must still succeed, remove
+// the dir, and report what it could not clean up as warnings, not errors.
+func TestDeleteAppWithVolumesNeverFailsOnCleanup(t *testing.T) {
+	r := newTestRepo(t)
+	savedApp(t, r, "app-1", "demo", "x\n")
+	t.Setenv("PATH", t.TempDir()) // no docker binary → every exec fails
+	if _, err := r.DeleteApp(context.Background(), "app-1", true); err != nil {
+		t.Fatalf("delete must not fail on cleanup errors: %v", err)
+	}
+	if r.appExists("app-1") {
+		t.Fatal("app dir must be removed")
 	}
 }

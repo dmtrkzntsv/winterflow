@@ -125,11 +125,12 @@ func (d *Dispatcher) newHandlers() map[command.Type]handlerFunc {
 			return command.ControlAppResponse{AppID: in.AppID, Action: in.Action}, err
 		}),
 		command.TypeAppDelete: handle(d, func(ctx context.Context, in command.DeleteAppRequest) (command.DeleteAppResponse, error) {
-			if err := d.orch.DeleteApp(ctx, in.AppID); err != nil {
-				return command.DeleteAppResponse{AppID: in.AppID}, err
+			warnings, err := d.orch.DeleteApp(ctx, in.AppID, in.DeleteVolumes)
+			if err != nil {
+				return command.DeleteAppResponse{AppID: in.AppID, Warnings: warnings}, err
 			}
 			d.reloadIngress(ctx)
-			return command.DeleteAppResponse{AppID: in.AppID}, nil
+			return command.DeleteAppResponse{AppID: in.AppID, Warnings: warnings}, nil
 		}),
 		command.TypeAppRename: handle(d, func(ctx context.Context, in command.RenameAppRequest) (command.RenameAppResponse, error) {
 			if err := d.orch.RenameApp(ctx, in.AppID, in.Name); err != nil {
@@ -179,6 +180,17 @@ func (d *Dispatcher) newHandlers() map[command.Type]handlerFunc {
 		}),
 		command.TypeNetworkDelete: handle(d, func(ctx context.Context, in command.DeleteNetworkRequest) (command.DeleteNetworkResponse, error) {
 			return command.DeleteNetworkResponse{Name: in.Name}, d.orch.DeleteNetwork(ctx, in.Name)
+		}),
+
+		command.TypeVolumeList: handle(d, func(ctx context.Context, _ command.ListVolumesRequest) (command.ListVolumesResponse, error) {
+			vols, err := d.orch.ListVolumes(ctx)
+			return command.ListVolumesResponse{Volumes: vols}, err
+		}),
+		command.TypeVolumeCreate: handle(d, func(ctx context.Context, in command.CreateVolumeRequest) (command.CreateVolumeResponse, error) {
+			return command.CreateVolumeResponse{Name: in.Name}, d.orch.CreateVolume(ctx, in.Name)
+		}),
+		command.TypeVolumeDelete: handle(d, func(ctx context.Context, in command.DeleteVolumeRequest) (command.DeleteVolumeResponse, error) {
+			return command.DeleteVolumeResponse{Name: in.Name}, d.orch.DeleteVolume(ctx, in.Name)
 		}),
 
 		command.TypeImageTags: handle(d, func(ctx context.Context, in command.ImageTagsRequest) (command.ImageTagsResponse, error) {

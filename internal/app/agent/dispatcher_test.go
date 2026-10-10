@@ -64,6 +64,9 @@ func TestDispatchMalformedPayloadsReturnCorrelatedErrors(t *testing.T) {
 		command.TypeRegistryDelete,
 		command.TypeNetworkCreate,
 		command.TypeNetworkDelete,
+		command.TypeVolumeList,
+		command.TypeVolumeCreate,
+		command.TypeVolumeDelete,
 		command.TypeAgentUpdate,
 	} {
 		resp := d.Dispatch(context.Background(), envelope(string(typ), bad))

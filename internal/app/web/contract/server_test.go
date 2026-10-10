@@ -61,4 +61,21 @@ func TestServerRoutes(t *testing.T) {
 			}
 		}
 	})
+	// No roles: a member claims a server into the shared org, and the
+	// owner sees it.
+	t.Run("a member registers a server", func(t *testing.T) {
+		m := owner.member(t)
+		var reg server.RegisterServerResponse
+		m.post(t, "/api/v1/server/register", server.RegisterServerRequest{Code: e.seedPendingServer(t)}).
+			expect(t, http.StatusOK).data(t, &reg)
+		var list server.GetServersResponse
+		owner.get(t, "/api/v1/server/get-servers", nil).expect(t, http.StatusOK).data(t, &list)
+		found := false
+		for _, s := range list.Servers {
+			found = found || s.ID == reg.Server.ID
+		}
+		if !found {
+			t.Fatalf("owner's servers %+v lack the member's %s", list.Servers, reg.Server.ID)
+		}
+	})
 }

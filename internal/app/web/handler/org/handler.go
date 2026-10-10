@@ -1,7 +1,7 @@
 // Package org serves organization member management: create accounts with
 // temp passwords, list members, change roles, reset passwords, remove.
-// Every route here sits behind the rbac.RequireAdmin middleware; handlers
-// additionally scope all operations to the caller's own organization.
+// Every member may call every route; handlers scope all operations to the
+// caller's own organization.
 package org
 
 import (

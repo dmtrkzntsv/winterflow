@@ -3,37 +3,36 @@ package org
 import (
 	"net/http"
 	"reflect"
+	"slices"
 	"testing"
 
 	"winterflow/internal/app/web/api"
 )
 
-func adminGuard(next http.Handler) http.Handler { return next }
-
 func TestRoutes(t *testing.T) {
-	routes := NewHandler(&Deps{}).Routes(api.Guards{Admin: adminGuard})
-	want := map[string]bool{ // "METHOD path" -> behind the admin guard
-		"POST /api/v1/org/create-user":           true,
-		"GET /api/v1/org/get-members":            true,
-		"POST /api/v1/org/update-member":         true,
-		"POST /api/v1/org/remove-member":         true,
-		"POST /api/v1/org/reset-member-password": true,
-		"GET /api/v1/org/get-organization":       false,
-		"POST /api/v1/org/update-organization":   true,
+	routes := NewHandler(&Deps{}).Routes(api.Guards{})
+	want := []string{
+		"POST /api/v1/org/create-user",
+		"GET /api/v1/org/get-members",
+		"POST /api/v1/org/update-member",
+		"POST /api/v1/org/remove-member",
+		"POST /api/v1/org/reset-member-password",
+		"GET /api/v1/org/get-organization",
+		"POST /api/v1/org/update-organization",
 	}
-	got := map[string]bool{}
+	var got []string
 	for _, rt := range routes {
 		key := rt.Method + " " + rt.Path
+		got = append(got, key)
 		if rt.Handler == nil || rt.Auth != api.User || rt.Accepted {
 			t.Errorf("%s: want a synchronous User route with a handler", key)
 		}
-		admin := false
-		for _, mw := range rt.Middleware {
-			admin = admin || reflect.ValueOf(mw).Pointer() == reflect.ValueOf(adminGuard).Pointer()
+		// No role gate, so nothing answers 403: every member administers.
+		if len(rt.Middleware) != 0 || slices.Contains(rt.Errors, http.StatusForbidden) {
+			t.Errorf("%s: middleware %d, errors %v; want none and no 403", key, len(rt.Middleware), rt.Errors)
 		}
-		got[key] = admin
 	}
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("routes (path -> admin) = %v\nwant %v", got, want)
+		t.Errorf("routes = %v\nwant %v", got, want)
 	}
 }

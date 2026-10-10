@@ -35,6 +35,21 @@ func TestDockerRoutes(t *testing.T) {
 		})
 	}
 
+	// No roles: a member runs every docker route the owner does.
+	t.Run("members mutate infrastructure", func(t *testing.T) {
+		m := owner.member(t)
+		for _, tc := range cases {
+			m.succeed(t, call{Method: tc.method, Path: tc.path, Query: q, Body: tc.body}, nil)
+		}
+		// Org ownership still holds: another org's server stays 403.
+		n := e.agent.count()
+		m.do(t, call{Method: http.MethodPost, Path: "/api/v1/network/create", Query: sq(e.foreignServer(t)),
+			Body: command.CreateNetworkRequest{Name: "x"}}).expect(t, http.StatusForbidden)
+		if e.agent.count() != n {
+			t.Fatal("a command for a foreign server reached the agent")
+		}
+	})
+
 	t.Run("agent errors", func(t *testing.T) {
 		e.agent.fail(command.TypeRegistryCreate, "login failed")
 		owner.failWith(t, call{Method: http.MethodPost, Path: "/api/v1/registry/create", Query: q,
@@ -47,12 +62,5 @@ func TestDockerRoutes(t *testing.T) {
 		e.agent.fail(command.TypeAgentUpdate, "no such release")
 		owner.failWith(t, call{Method: http.MethodPost, Path: "/api/v1/agent/update", Query: q,
 			Body: command.UpdateAgentRequest{Version: "v0"}}, "no such release")
-	})
-
-	t.Run("members cannot mutate infrastructure", func(t *testing.T) {
-		m := owner.member(t)
-		m.do(t, call{Method: http.MethodPost, Path: "/api/v1/network/create", Query: q,
-			Body: command.CreateNetworkRequest{Name: "x"}}).expect(t, http.StatusForbidden)
-		m.succeed(t, call{Method: http.MethodGet, Path: "/api/v1/volume/list", Query: q}, nil)
 	})
 }

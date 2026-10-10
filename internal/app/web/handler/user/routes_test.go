@@ -1,17 +1,14 @@
 package user
 
 import (
-	"net/http"
 	"reflect"
 	"testing"
 
 	"winterflow/internal/app/web/api"
 )
 
-func adminGuard(next http.Handler) http.Handler { return next }
-
 func TestRoutes(t *testing.T) {
-	routes := NewHandler(&Deps{}).Routes(api.Guards{Admin: adminGuard})
+	routes := NewHandler(&Deps{}).Routes(api.Guards{})
 	want := []string{
 		"POST /api/v1/user/create-token",
 		"GET /api/v1/user/get-tokens",

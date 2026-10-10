@@ -1,20 +1,16 @@
 package server
 
 import (
-	"net/http"
 	"reflect"
 	"testing"
 
 	"winterflow/internal/app/web/api"
 )
 
-func adminGuard(next http.Handler) http.Handler { return next }
-
 func TestRoutes(t *testing.T) {
-	routes := NewHandler(&Deps{}).Routes(api.Guards{Admin: adminGuard})
+	routes := NewHandler(&Deps{}).Routes(api.Guards{})
 	validate := reflect.ValueOf(GetAppsValidationMiddleware).Pointer()
-	// "METHOD path" -> runs GetAppsValidationMiddleware. No app route is
-	// admin-only: members keep the full app lifecycle.
+	// "METHOD path" -> runs GetAppsValidationMiddleware.
 	want := map[string]bool{
 		"GET /api/v1/app/get-apps":        true,
 		"GET /api/v1/app/get-apps-status": true,
@@ -41,11 +37,7 @@ func TestRoutes(t *testing.T) {
 		}
 		validated := false
 		for _, mw := range rt.Middleware {
-			p := reflect.ValueOf(mw).Pointer()
-			if p == reflect.ValueOf(adminGuard).Pointer() {
-				t.Errorf("%s: app routes must not be admin-only", key)
-			}
-			validated = validated || p == validate
+			validated = validated || reflect.ValueOf(mw).Pointer() == validate
 		}
 		got[key] = validated
 	}

@@ -32,9 +32,20 @@ func TestOrgRoutes(t *testing.T) {
 		t.Fatalf("members = %+v", members)
 	}
 
-	t.Run("members cannot administer", func(t *testing.T) {
-		m.get(t, "/api/v1/org/get-members", nil).expect(t, http.StatusForbidden)
-		m.get(t, "/api/v1/org/get-organization", nil).expect(t, http.StatusOK)
+	// No roles: a member administers the org exactly like its creator.
+	t.Run("members administer", func(t *testing.T) {
+		m.get(t, "/api/v1/org/get-members", nil).expect(t, http.StatusOK)
+		m.post(t, "/api/v1/org/update-organization", org.UpdateOrganizationRequest{Name: "Acme 2"}).
+			expect(t, http.StatusOK)
+		var created org.CreateUserResponse
+		m.post(t, "/api/v1/org/create-user", org.CreateUserRequest{Name: "Carol", Email: "carol@example.test", Role: "member"}).
+			expect(t, http.StatusOK).data(t, &created)
+		m.post(t, "/api/v1/org/reset-member-password", org.MemberRequest{UserID: created.UserID}).
+			expect(t, http.StatusOK)
+		m.post(t, "/api/v1/org/remove-member", org.MemberRequest{UserID: created.UserID}).
+			expect(t, http.StatusOK)
+		m.post(t, "/api/v1/org/remove-member", org.MemberRequest{UserID: m.userID}).
+			expect(t, http.StatusBadRequest)
 	})
 
 	owner.post(t, "/api/v1/org/update-member", org.UpdateMemberRequest{UserID: m.userID, Role: "admin"}).expect(t, http.StatusOK)

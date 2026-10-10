@@ -3,7 +3,7 @@ BIN_DIR := bin
 STANDALONE_BIN := $(BIN_DIR)/standalone
 API_BIN := $(BIN_DIR)/api
 
-.PHONY: build lint standalone api web web-build third-party-licenses test web-test cover diffcov openapi
+.PHONY: build lint standalone api web web-build third-party-licenses test web-test cover diffcov openapi test-pg
 
 # Release build: bundle the SPA first so go:embed picks up a fresh web/dist,
 # then compile. The binaries are fully self-contained (API + web UI).
@@ -35,6 +35,12 @@ lint:
 # `make diffcov`.
 test:
 	$(GO) test -race -covermode=atomic -coverprofile=coverage.out ./...
+
+# The API contract suite against a throwaway postgres:16 container (Docker).
+# Plain `go test ./...` stays on SQLite. Extra go test flags:
+# make test-pg TEST_PG_ARGS='-run TestParity -v'
+test-pg:
+	GO=$(GO) bash scripts/test-pg.sh $(TEST_PG_ARGS)
 
 # Web unit tests (Vitest) with coverage into web/coverage/lcov.info.
 web-test:

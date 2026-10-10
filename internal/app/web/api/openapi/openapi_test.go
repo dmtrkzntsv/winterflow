@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -18,6 +19,32 @@ type thing struct {
 
 type thingResult struct {
 	ID string `json:"id"`
+}
+
+// thingList exercises the response-side rules: required non-omitempty
+// fields, null for nil-able kinds, omitempty fields optional.
+type thingList struct {
+	Items  []thing           `json:"items"`
+	Blob   []byte            `json:"blob"`
+	Ptr    *thing            `json:"ptr"`
+	Tags   map[string]string `json:"tags"`
+	Note   string            `json:"note,omitempty"`
+	Later  *thing            `json:"later,omitempty"`
+	Hidden string            `json:"-"`
+}
+
+// saveThing is request-only: it keeps its plain name, while thing, which
+// is also a response type, is documented request-side as thingInput.
+type saveThing struct {
+	Thing  thing           `json:"thing"`
+	Config json.RawMessage `json:"config"`
+}
+
+// event is an SSE envelope keyed by type, like model.Notification.
+type event struct {
+	Type    string `json:"type"`
+	Ref     string `json:"ref"`
+	Payload any    `json:"payload,omitempty"`
 }
 
 type thingForm struct {
@@ -42,13 +69,16 @@ func sample() []api.Route {
 			Summary: "get", Tag: "things", Query: thingQuery{}, Response: thing{},
 			Errors: []int{http.StatusBadRequest, http.StatusForbidden, http.StatusBadRequest}},
 		{Method: http.MethodPost, Path: "/api/v1/thing/save-thing", Handler: noop, Auth: api.User,
-			Summary: "save", Tag: "things", Request: thing{}, Accepted: true, Result: thingResult{},
+			Summary: "save", Tag: "things", Request: saveThing{}, Accepted: true, Result: thingResult{},
 			Errors: []int{http.StatusBadRequest}},
 		// A second operation with the same Result reuses the component.
 		{Method: http.MethodPost, Path: "/api/v1/thing/copy-thing", Handler: noop, Auth: api.User,
 			Summary: "copy", Tag: "things", Accepted: true, Result: thingResult{}},
+		{Method: http.MethodGet, Path: "/api/v1/thing/list-things", Handler: noop, Auth: api.User,
+			Summary: "list", Tag: "things", Response: thingList{}},
 		{Method: http.MethodGet, Path: "/api/v1/sse", Handler: noop, Auth: api.User,
-			Summary: "events", Tag: "system", Events: thing{}},
+			Summary: "events", Description: "Subscribe before dispatching.", Tag: "system", Events: event{},
+			EventPayloads: []api.EventPayload{{Type: "op"}, {Type: "thing", Payload: thing{}}}},
 		{Method: http.MethodPost, Path: "/auth/local/login", Mounted: true, Raw: true,
 			Summary: "login", Tag: "auth", Request: thing{}, Form: thingForm{}, Response: thingResult{},
 			Errors: []int{http.StatusForbidden, http.StatusTooManyRequests}},
@@ -114,8 +144,14 @@ func TestBuildValidDocument(t *testing.T) {
 			t.Errorf("missing security scheme %q", name)
 		}
 	}
-	if got := len(doc.Paths.Map()); got != 7 {
-		t.Errorf("paths = %d, want 7", got)
+	if got := len(doc.Paths.Map()); got != 8 {
+		t.Errorf("paths = %d, want 8", got)
+	}
+	if !strings.Contains(doc.Info.Description, "BEFORE dispatching") {
+		t.Errorf("info.description does not document SSE delivery: %q", doc.Info.Description)
+	}
+	if d := doc.Paths.Find("/api/v1/sse").Get.Description; d != "Subscribe before dispatching." {
+		t.Errorf("route description = %q", d)
 	}
 }
 
@@ -131,6 +167,19 @@ func TestEnvelopeSchemas(t *testing.T) {
 		{"null data, no message", "GET", "/_/health", 200, "application/json", `{"success":true,"data":null}`, true},
 		{"null data rejects payload", "GET", "/_/health", 200, "application/json", `{"success":true,"data":{"x":1}}`, false},
 		{"typed data", "GET", "/api/v1/thing/get-thing", 200, "application/json", `{"success":true,"data":{"name":"n"}}`, true},
+		{"typed data missing field", "GET", "/api/v1/thing/get-thing", 200, "application/json", `{"success":true,"data":{}}`, false},
+		{"list", "GET", "/api/v1/thing/list-things", 200, "application/json",
+			`{"success":true,"data":{"items":[{"name":"n"}],"blob":"AQ==","ptr":{"name":"p"},"tags":{"a":"b"},"note":"x","later":{"name":"l"}}}`, true},
+		{"list nil kinds are null", "GET", "/api/v1/thing/list-things", 200, "application/json",
+			`{"success":true,"data":{"items":null,"blob":null,"ptr":null,"tags":null}}`, true},
+		{"list item missing field", "GET", "/api/v1/thing/list-things", 200, "application/json",
+			`{"success":true,"data":{"items":[{"whatever":1}],"blob":null,"ptr":null,"tags":null}}`, false},
+		{"list missing items", "GET", "/api/v1/thing/list-things", 200, "application/json",
+			`{"success":true,"data":{"blob":null,"ptr":null,"tags":null}}`, false},
+		{"omitempty pointer is not null", "GET", "/api/v1/thing/list-things", 200, "application/json",
+			`{"success":true,"data":{"items":null,"blob":null,"ptr":null,"tags":null,"later":null}}`, false},
+		{"unknown fields stay allowed", "GET", "/api/v1/thing/list-things", 200, "application/json",
+			`{"success":true,"data":{"items":null,"blob":null,"ptr":null,"tags":null,"new":1}}`, true},
 		{"typed data wrong type", "GET", "/api/v1/thing/get-thing", 200, "application/json", `{"success":true,"data":{"name":1}}`, false},
 		{"success must be true", "GET", "/api/v1/thing/get-thing", 200, "application/json", `{"success":false,"data":{"name":"n"}}`, false},
 		{"data required", "GET", "/api/v1/thing/get-thing", 200, "application/json", `{"success":true}`, false},
@@ -144,7 +193,11 @@ func TestEnvelopeSchemas(t *testing.T) {
 		{"raw body", "POST", "/auth/local/login", 200, "application/json", `{"id":"u1"}`, true},
 		{"library error", "POST", "/auth/local/login", 403, "application/json", `{"error":"incorrect user or password"}`, true},
 		{"429 text", "POST", "/auth/local/login", 429, "text/plain", `"too many requests\n"`, true},
-		{"sse event", "GET", "/api/v1/sse", 200, "text/event-stream", `{"name":"n"}`, true},
+		{"sse event", "GET", "/api/v1/sse", 200, "text/event-stream", `{"type":"thing","ref":"","payload":{"name":"n"}}`, true},
+		{"sse event needs ref", "GET", "/api/v1/sse", 200, "text/event-stream", `{"type":"thing","payload":{"name":"n"}}`, false},
+		{"sse payload follows type", "GET", "/api/v1/sse", 200, "text/event-stream", `{"type":"thing","ref":"","payload":{"name":1}}`, false},
+		{"sse payload of result is open", "GET", "/api/v1/sse", 200, "text/event-stream", `{"type":"op","ref":"r","payload":{"name":1}}`, true},
+		{"sse unknown type", "GET", "/api/v1/sse", 200, "text/event-stream", `{"type":"other","ref":""}`, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -185,8 +238,8 @@ func TestErrorStatuses(t *testing.T) {
 func TestRequestBodies(t *testing.T) {
 	doc := load(t, sample())
 	body := doc.Paths.Find("/auth/local/login").Post.RequestBody.Value.Content
-	if mt := body.Get("application/json"); mt == nil || mt.Schema.Ref != "#/components/schemas/thing" {
-		t.Errorf("login JSON body = %+v, want $ref thing", mt)
+	if mt := body.Get("application/json"); mt == nil || mt.Schema.Ref != "#/components/schemas/thingInput" {
+		t.Errorf("login JSON body = %+v, want $ref thingInput", mt)
 	}
 	if mt := body.Get("application/x-www-form-urlencoded"); mt == nil || mt.Schema.Ref != "#/components/schemas/FormDatathingForm" {
 		t.Errorf("login form body = %+v, want $ref FormDatathingForm", mt)
@@ -197,6 +250,39 @@ func TestRequestBodies(t *testing.T) {
 	}
 	if avatar.Responses.Status(http.StatusOK).Value.Content.Get("image/*") == nil {
 		t.Error("avatar must document an image/* body")
+	}
+}
+
+// TestRequestSchemasLenient pins that request bodies keep the handlers'
+// leniency: a type that is also a response type gets a separate Input
+// component without the response-side required list.
+func TestRequestSchemasLenient(t *testing.T) {
+	doc := load(t, sample())
+	mt := doc.Paths.Find("/api/v1/thing/save-thing").Post.RequestBody.Value.Content.Get("application/json")
+	if mt == nil || mt.Schema.Ref != "#/components/schemas/saveThing" {
+		t.Fatalf("save-thing body = %+v, want $ref saveThing (request-only types keep their name)", mt)
+	}
+	for _, body := range []string{`{}`, `{"thing":{}}`, `{"config":null}`, `{"config":{"a":1}}`} {
+		if err := visit(mt.Schema.Value, body); err != nil {
+			t.Errorf("request %s: %v", body, err)
+		}
+	}
+	if got := doc.Components.Schemas["thingInput"].Value.Required; len(got) != 0 {
+		t.Errorf("thingInput.required = %v, want none", got)
+	}
+	if got := doc.Components.Schemas["thing"].Value.Required; len(got) != 1 || got[0] != "name" {
+		t.Errorf("thing.required = %v, want [name]", got)
+	}
+}
+
+func TestEventPayloads(t *testing.T) {
+	doc := load(t, sample())
+	n := doc.Components.Schemas["event"].Value
+	d := n.Properties["payload"].Value.Description
+	for _, want := range []string{"op:", "x-operation-result", "thing: #/components/schemas/thing"} {
+		if !strings.Contains(d, want) {
+			t.Errorf("payload description %q lacks %q", d, want)
+		}
 	}
 }
 
@@ -223,6 +309,12 @@ func TestOperationResultExtension(t *testing.T) {
 	if s == nil || s.Value.Properties["id"] == nil {
 		t.Fatalf("result component missing or wrong: %+v", s)
 	}
+	if err := visit(s.Value, `{}`); err == nil {
+		t.Error("result without id validates; non-omitempty result fields must be required")
+	}
+	if err := visit(s.Value, `{"id":"x"}`); err != nil {
+		t.Errorf("result with id: %v", err)
+	}
 	if _, ok := doc.Paths.Find("/api/v1/thing/get-thing").Get.Extensions[ResultExtension]; ok {
 		t.Error("synchronous route carries x-operation-result")
 	}
@@ -231,6 +323,10 @@ func TestOperationResultExtension(t *testing.T) {
 func TestBuildErrors(t *testing.T) {
 	type other struct {
 		Name int `json:"name"`
+	}
+	// thingInput would collide with the request-side name of thing.
+	type thingInput struct {
+		X int `json:"x"`
 	}
 	type unsupported struct {
 		C chan int `json:"c"`
@@ -257,9 +353,26 @@ func TestBuildErrors(t *testing.T) {
 			{Method: "GET", Path: "/a", Response: thing{}},
 			{Method: "GET", Path: "/b", Response: collide()},
 		}, `schema name "thing"`},
+		{"input name clash", []api.Route{
+			{Method: "GET", Path: "/a", Response: thing{}},
+			{Method: "POST", Path: "/b", Request: thing{}},
+			{Method: "POST", Path: "/c", Request: thingInput{}},
+		}, `schema name "thingInput"`},
 		{"unsupported result field", []api.Route{
 			{Method: "POST", Path: "/a", Accepted: true, Result: unsupported{}},
 		}, "type is not supported"},
+		{"event payloads without events", []api.Route{
+			{Method: "GET", Path: "/a", EventPayloads: []api.EventPayload{{Type: "x"}}},
+		}, "EventPayloads without Events"},
+		{"event payloads on a shapeless event", []api.Route{
+			{Method: "GET", Path: "/a", Events: thing{}, EventPayloads: []api.EventPayload{{Type: "x", Payload: thingResult{}}}},
+		}, `no "payload" property`},
+		{"unnamed event payload", []api.Route{
+			{Method: "GET", Path: "/a", Events: event{}, EventPayloads: []api.EventPayload{{Type: "x", Payload: struct{ A int }{}}}},
+		}, "not a named type"},
+		{"unnamed events", []api.Route{
+			{Method: "GET", Path: "/a", Events: struct{ A int }{}, EventPayloads: []api.EventPayload{{Type: "x"}}},
+		}, "not a named type"},
 		{"duplicate operation", []api.Route{
 			{Method: "GET", Path: "/a", Response: other{}},
 			{Method: "GET", Path: "/a", Response: other{}},
@@ -307,5 +420,30 @@ func TestYAMLDeterministic(t *testing.T) {
 	}
 	if string(a) != string(b) {
 		t.Fatal("two runs over the same routes differ")
+	}
+}
+
+// things is a named slice: a named type in its own right.
+type things []thing
+
+type cyclic struct {
+	Next *cyclic   `json:"next"`
+	Skip saveThing `json:"-"`
+}
+
+func TestResponseTypes(t *testing.T) {
+	got := responseTypes([]api.Route{
+		{Response: things{}},
+		{Result: cyclic{}},
+		{Request: saveThing{}, Response: map[string]thingResult{}},
+		{Events: event{}, EventPayloads: []api.EventPayload{{Type: "op"}, {Type: "list", Payload: thingList{}}}},
+	})
+	for _, v := range []any{things{}, thing{}, cyclic{}, thingResult{}, event{}, thingList{}} {
+		if !got[reflect.TypeOf(v)] {
+			t.Errorf("%T is reachable from a response but not collected", v)
+		}
+	}
+	if got[reflect.TypeOf(saveThing{})] {
+		t.Error("saveThing is request-only (and json:\"-\" in cyclic) but was collected")
 	}
 }

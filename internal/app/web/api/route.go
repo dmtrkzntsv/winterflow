@@ -46,7 +46,9 @@ type Route struct {
 	Middleware []Middleware
 
 	Summary string
-	Tag     string // "apps", "docker", "server", "user", "org", "auth", "system"
+	// Description is optional longer prose for the operation (CommonMark).
+	Description string
+	Tag         string // "apps", "docker", "server", "user", "org", "auth", "system"
 
 	Query    any // struct with `query:"..."` tags, or nil
 	Request  any // JSON body type, or nil
@@ -57,6 +59,9 @@ type Route struct {
 	Result   any
 	// Events marks a text/event-stream route; each event's data is Events.
 	Events any
+	// EventPayloads documents, per event type, the payload an Events value
+	// carries. Events must then have "type" and "payload" JSON properties.
+	EventPayloads []EventPayload
 	// Raw marks a library route whose body is Response itself, not the
 	// webutil envelope; its errors are the library's {"error": "..."}.
 	Raw bool
@@ -70,6 +75,14 @@ type Route struct {
 	// Mounted routes are served by a library mounted elsewhere (go-pkgz
 	// /auth, /avatar). They are documented but Register skips them.
 	Mounted bool
+}
+
+// EventPayload names the payload of one event type on an Events route.
+type EventPayload struct {
+	Type string // the event's "type" value, e.g. "server_status"
+	// Payload is a value of the payload's named type. Nil means the payload
+	// is the x-operation-result of the route that dispatched the event.
+	Payload any
 }
 
 // Register adds every non-Mounted route to r. User routes get authMW first,

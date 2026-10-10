@@ -3,7 +3,16 @@ info:
   description: |-
     Generated from the route tables in internal/app/web by `make openapi`; do not edit.
 
-    JSON responses use the envelope {success, message, data}. 202 responses carry data.request_id; the outcome arrives on GET /api/v1/sse as an operation_result Notification whose ref is that request_id and whose payload matches the operation's x-operation-result schema.
+    JSON responses use the envelope {success, message, data}. Response schemas list every field the server always writes as required; request schemas require only what the handler rejects without. Unknown properties are allowed everywhere, so new response fields are not a breaking change.
+
+    ## Asynchronous operations and GET /api/v1/sse
+
+    A 202 response means the command was dispatched to the server's agent; its data.request_id names the outcome, which arrives only over the event stream:
+
+    1. Open GET /api/v1/sse BEFORE dispatching. Results are best-effort: they are not buffered or replayed, so a result produced while no stream is open, or while the client is not reading, is lost.
+    2. A result is delivered only to the open streams of the user who dispatched the command (all of them, if that user has several).
+    3. Each event is `data: <Notification JSON>`. Match type == "operation_result" and ref == request_id; status 1 with error means it failed, otherwise payload matches the operation's x-operation-result schema.
+    4. Other event types (server_status, apps_status) interleave on the same stream, sent to every member of the server's organization; ignore types you do not handle.
   title: Winterflow API
   version: "1"
 paths:
@@ -1847,6 +1856,10 @@ paths:
       - server
   /api/v1/sse:
     get:
+      description: |-
+        Server-sent events, each `data: <Notification JSON>`.
+
+        Subscribe BEFORE dispatching a 202 operation: results are best-effort, not buffered or replayed. A result produced while no stream is open, or while this stream is not being read, is dropped. An operation_result is delivered only to the open streams of the user who dispatched it; match it on ref == the 202's data.request_id. server_status and apps_status events go to every member of the server's organization and interleave with results; ignore types you do not handle.
       operationId: sse
       responses:
         "200":
@@ -2477,6 +2490,15 @@ components:
           type: string
         version:
           type: string
+      required:
+      - id
+      - server_id
+      - version
+      - template_id
+      - name
+      - icon
+      - color
+      - created_at
       type: object
     AppDomainInfo:
       properties:
@@ -2486,6 +2508,32 @@ components:
           type: string
         ssl:
           type: boolean
+      required:
+      - domain
+      - ssl
+      - kind
+      type: object
+    AppInput:
+      properties:
+        color:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        icon:
+          type: string
+        id:
+          type: string
+        ingress:
+          $ref: '#/components/schemas/IngressInput'
+        name:
+          type: string
+        server_id:
+          type: string
+        template_id:
+          type: string
+        version:
+          type: string
       type: object
     AppPayload:
       properties:
@@ -2493,7 +2541,9 @@ components:
           type: string
         config:
           format: base64
-          type: string
+          type:
+          - string
+          - "null"
         files:
           items:
             $ref: '#/components/schemas/ContentItem'
@@ -2508,6 +2558,11 @@ components:
           type:
           - array
           - "null"
+      required:
+      - app_id
+      - config
+      - variables
+      - files
       type: object
     AppStatus:
       properties:
@@ -2521,6 +2576,10 @@ components:
           - "null"
         status_code:
           type: integer
+      required:
+      - app_id
+      - status_code
+      - containers
       type: object
     AppWithDomains:
       properties:
@@ -2547,6 +2606,29 @@ components:
           type: string
         version:
           type: string
+      required:
+      - id
+      - server_id
+      - version
+      - template_id
+      - name
+      - icon
+      - color
+      - created_at
+      type: object
+    AppsStatusPayload:
+      properties:
+        apps:
+          items:
+            $ref: '#/components/schemas/AppStatus'
+          type:
+          - array
+          - "null"
+        server_id:
+          type: string
+      required:
+      - server_id
+      - apps
       type: object
     AuthStatus:
       properties:
@@ -2557,6 +2639,8 @@ components:
           type: string
         user:
           type: string
+      required:
+      - status
       type: object
     Capability:
       properties:
@@ -2564,6 +2648,9 @@ components:
           type: string
         value:
           type: string
+      required:
+      - name
+      - value
       type: object
     ChangePasswordRequest:
       properties:
@@ -2582,6 +2669,9 @@ components:
           type:
           - array
           - "null"
+      required:
+      - available
+      - claims
       type: object
     ContainerStatus:
       properties:
@@ -2596,18 +2686,29 @@ components:
           type: string
         status_code:
           type: integer
+      required:
+      - container_id
+      - name
+      - status_code
+      - exit_code
       type: object
     ContentItem:
       properties:
         content:
           format: base64
-          type: string
+          type:
+          - string
+          - "null"
         encrypted:
           type: boolean
         id:
           type: string
         name:
           type: string
+      required:
+      - id
+      - name
+      - content
       type: object
     ContentItemRequest:
       properties:
@@ -2633,6 +2734,9 @@ components:
           type: string
         app_id:
           type: string
+      required:
+      - app_id
+      - action
       type: object
     CreateNetworkRequest:
       properties:
@@ -2645,6 +2749,8 @@ components:
       properties:
         name:
           type: string
+      required:
+      - name
       type: object
     CreateRegistryRequest:
       properties:
@@ -2661,6 +2767,8 @@ components:
       properties:
         address:
           type: string
+      required:
+      - address
       type: object
     CreateTokenRequest:
       properties:
@@ -2684,6 +2792,12 @@ components:
           type: string
         token_id:
           type: string
+      required:
+      - token_id
+      - token
+      - prefix
+      - name
+      - expires_at
       type: object
     CreateUserRequest:
       properties:
@@ -2706,6 +2820,12 @@ components:
           type: string
         user_id:
           type: string
+      required:
+      - user_id
+      - name
+      - email
+      - role
+      - temp_password
       type: object
     CreateVolumeRequest:
       properties:
@@ -2716,6 +2836,8 @@ components:
       properties:
         name:
           type: string
+      required:
+      - name
       type: object
     DeleteAppRequest:
       properties:
@@ -2736,6 +2858,8 @@ components:
           items:
             type: string
           type: array
+      required:
+      - app_id
       type: object
     DeleteNetworkRequest:
       properties:
@@ -2746,6 +2870,8 @@ components:
       properties:
         name:
           type: string
+      required:
+      - name
       type: object
     DeleteRegistryRequest:
       properties:
@@ -2756,6 +2882,8 @@ components:
       properties:
         address:
           type: string
+      required:
+      - address
       type: object
     DeleteTokenRequest:
       properties:
@@ -2771,6 +2899,8 @@ components:
       properties:
         name:
           type: string
+      required:
+      - name
       type: object
     DomainClaim:
       properties:
@@ -2784,6 +2914,12 @@ components:
           type: string
         server_name:
           type: string
+      required:
+      - domain
+      - app_id
+      - app_name
+      - server_id
+      - server_name
       type: object
     Error:
       properties:
@@ -2812,6 +2948,8 @@ components:
       properties:
         app:
           $ref: '#/components/schemas/AppPayload'
+      required:
+      - app
       type: object
     GetAppsResponse:
       properties:
@@ -2821,6 +2959,8 @@ components:
           type:
           - array
           - "null"
+      required:
+      - apps
       type: object
     GetAppsStatusResponse:
       properties:
@@ -2830,6 +2970,8 @@ components:
           type:
           - array
           - "null"
+      required:
+      - apps
       type: object
     GetLogsResponse:
       properties:
@@ -2841,6 +2983,9 @@ components:
           type:
           - array
           - "null"
+      required:
+      - app_id
+      - logs
       type: object
     GetRevisionsResponse:
       properties:
@@ -2856,6 +3001,11 @@ components:
           type:
           - array
           - "null"
+      required:
+      - app_id
+      - current
+      - deployed
+      - revisions
       type: object
     GetServersResponse:
       properties:
@@ -2865,6 +3015,8 @@ components:
           type:
           - array
           - "null"
+      required:
+      - servers
       type: object
     GetServersStatusResponse:
       properties:
@@ -2874,6 +3026,8 @@ components:
           type:
           - array
           - "null"
+      required:
+      - servers
       type: object
     ImageTagsResponse:
       properties:
@@ -2885,6 +3039,9 @@ components:
           type:
           - array
           - "null"
+      required:
+      - image
+      - tags
       type: object
     Ingress:
       properties:
@@ -2900,6 +3057,9 @@ components:
           type:
           - array
           - "null"
+      required:
+      - domains
+      - redirects
       type: object
     IngressDomain:
       properties:
@@ -2909,8 +3069,53 @@ components:
           type: boolean
         upstream_port:
           type: integer
+      required:
+      - domain
+      - upstream_port
+      - ssl
+      type: object
+    IngressDomainInput:
+      properties:
+        domain:
+          type: string
+        ssl:
+          type: boolean
+        upstream_port:
+          type: integer
+      type: object
+    IngressInput:
+      properties:
+        domains:
+          items:
+            $ref: '#/components/schemas/IngressDomainInput'
+          type:
+          - array
+          - "null"
+        redirects:
+          items:
+            $ref: '#/components/schemas/IngressRedirectInput'
+          type:
+          - array
+          - "null"
       type: object
     IngressRedirect:
+      properties:
+        code:
+          type: integer
+        domain:
+          type: string
+        path:
+          type: string
+        ssl:
+          type: boolean
+        to:
+          type: string
+      required:
+      - domain
+      - to
+      - code
+      type: object
+    IngressRedirectInput:
       properties:
         code:
           type: integer
@@ -2938,6 +3143,8 @@ components:
           type:
           - array
           - "null"
+      required:
+      - apps
       type: object
     ListNetworksResponse:
       properties:
@@ -2947,6 +3154,8 @@ components:
           type:
           - array
           - "null"
+      required:
+      - networks
       type: object
     ListRegistriesResponse:
       properties:
@@ -2956,6 +3165,8 @@ components:
           type:
           - array
           - "null"
+      required:
+      - registries
       type: object
     ListVolumesResponse:
       properties:
@@ -2965,6 +3176,8 @@ components:
           type:
           - array
           - "null"
+      required:
+      - volumes
       type: object
     LogEntry:
       properties:
@@ -2979,6 +3192,10 @@ components:
         timestamp:
           format: int64
           type: integer
+      required:
+      - timestamp
+      - level
+      - message
       type: object
     LoginRequest:
       properties:
@@ -3009,6 +3226,15 @@ components:
           type: string
         role:
           type: string
+      required:
+      - id
+      - name
+      - avatar_url
+      - created_at
+      - last_seen_at
+      - email
+      - role
+      - provider
       type: object
     MemberRequest:
       properties:
@@ -3025,12 +3251,40 @@ components:
           type: string
         scope:
           type: string
+      required:
+      - name
       type: object
     Notification:
+      allOf:
+      - anyOf:
+        - not:
+            properties:
+              type:
+                const: server_status
+            required:
+            - type
+        - properties:
+            payload:
+              $ref: '#/components/schemas/ServerStatusPayload'
+      - anyOf:
+        - not:
+            properties:
+              type:
+                const: apps_status
+            required:
+            - type
+        - properties:
+            payload:
+              $ref: '#/components/schemas/AppsStatusPayload'
       properties:
         error:
           type: string
-        payload: {}
+        payload:
+          description: |-
+            Depends on type:
+            - operation_result: the x-operation-result schema of the operation whose request_id equals ref (absent when the operation failed)
+            - server_status: #/components/schemas/ServerStatusPayload
+            - apps_status: #/components/schemas/AppsStatusPayload
         ref:
           type: string
         status:
@@ -3040,6 +3294,10 @@ components:
           type: string
         type:
           type: string
+      required:
+      - type
+      - ref
+      - timestamp
       type: object
     Organization:
       properties:
@@ -3051,6 +3309,11 @@ components:
           type: string
         org_id:
           type: string
+      required:
+      - org_id
+      - name
+      - icon
+      - color
       type: object
     Profile:
       properties:
@@ -3064,11 +3327,19 @@ components:
           type: string
         user_id:
           type: string
+      required:
+      - user_id
+      - name
+      - email
+      - role
+      - must_change_password
       type: object
     PublicKeyResponse:
       properties:
         public_key:
           type: string
+      required:
+      - public_key
       type: object
     RegisterRequest:
       properties:
@@ -3085,6 +3356,9 @@ components:
           type: string
         user_id:
           type: string
+      required:
+      - user_id
+      - email
       type: object
     RegisterServerRequest:
       properties:
@@ -3097,11 +3371,15 @@ components:
       properties:
         server:
           $ref: '#/components/schemas/Server'
+      required:
+      - server
       type: object
     Registry:
       properties:
         address:
           type: string
+      required:
+      - address
       type: object
     RenameAppRequest:
       properties:
@@ -3118,6 +3396,9 @@ components:
           type: string
         name:
           type: string
+      required:
+      - app_id
+      - name
       type: object
     ResetMemberPasswordResponse:
       properties:
@@ -3125,6 +3406,9 @@ components:
           type: string
         user_id:
           type: string
+      required:
+      - user_id
+      - temp_password
       type: object
     RevisionInfo:
       properties:
@@ -3135,6 +3419,10 @@ components:
         timestamp:
           format: int64
           type: integer
+      required:
+      - hash
+      - subject
+      - timestamp
       type: object
     RollbackAppRequest:
       properties:
@@ -3151,12 +3439,18 @@ components:
           type: string
         revision:
           type: string
+      required:
+      - app_id
+      - revision
       type: object
     SaveAppRequest:
       properties:
         app:
-          $ref: '#/components/schemas/App'
-        config: {}
+          $ref: '#/components/schemas/AppInput'
+        config:
+          anyOf:
+          - type: "null"
+          - {}
         draft:
           type: boolean
         files:
@@ -3186,6 +3480,9 @@ components:
           items:
             type: string
           type: array
+      required:
+      - app_id
+      - revision
       type: object
     Server:
       properties:
@@ -3211,6 +3508,12 @@ components:
           type: string
         organization_id:
           type: string
+      required:
+      - id
+      - organization_id
+      - name
+      - created_at
+      - last_seen_at
       type: object
     ServerStatus:
       properties:
@@ -3218,6 +3521,19 @@ components:
           type: string
         server_id:
           type: string
+      required:
+      - server_id
+      - liveness
+      type: object
+    ServerStatusPayload:
+      properties:
+        liveness:
+          type: string
+        server_id:
+          type: string
+      required:
+      - server_id
+      - liveness
       type: object
     SessionUser:
       properties:
@@ -3238,6 +3554,10 @@ components:
           type: string
         role:
           type: string
+      required:
+      - name
+      - id
+      - picture
       type: object
     SourcePayload:
       properties:
@@ -3254,6 +3574,10 @@ components:
         token:
           format: base64
           type: string
+      required:
+      - repo_url
+      - branch
+      - auto_update
       type: object
     SourceRequest:
       properties:
@@ -3276,6 +3600,9 @@ components:
           type: boolean
         registration_enabled:
           type: boolean
+      required:
+      - bootstrap
+      - registration_enabled
       type: object
     UpdateAgentRequest:
       properties:
@@ -3290,6 +3617,10 @@ components:
           type: boolean
         to_version:
           type: string
+      required:
+      - from_version
+      - to_version
+      - scheduled
       type: object
     UpdateMemberRequest:
       properties:
@@ -3328,6 +3659,13 @@ components:
           type: string
         token_id:
           type: string
+      required:
+      - token_id
+      - name
+      - prefix
+      - expires_at
+      - last_used_at
+      - created_at
       type: object
     Volume:
       properties:
@@ -3345,6 +3683,11 @@ components:
           type: boolean
         project:
           type: string
+      required:
+      - name
+      - in_use
+      - orphan
+      - anonymous
       type: object
   securitySchemes:
     bearer:

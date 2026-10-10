@@ -2,12 +2,31 @@
 // (api/openapi.yaml, written by cmd/openapi). It is the one place that knows
 // the wire envelope: every JSON response is wrapped exactly the way
 // internal/app/web/util writes it.
+//
+// Response and request schemas follow different rules, because Go's
+// encoder and decoder differ:
+//
+//   - Response side (200/202 data, raw library bodies, SSE events,
+//     x-operation-result): every JSON field without omitempty/omitzero is
+//     required, since encoding/json always writes it, and a nil-able field
+//     (slice, map, pointer, []byte, interface) without omitempty also allows
+//     null, since Go encodes nil as null.
+//   - Request side (bodies, query, form): only fields tagged
+//     `required:"true"` are required; handlers accept missing fields.
+//
+// A Go type used on both sides gets two components: "<Name>" for the
+// response shape and "<Name>Input" for the request shape. A type used on
+// one side only keeps its bare name. No schema sets additionalProperties,
+// so adding a response field stays a compatible change.
 package openapi
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 
@@ -77,6 +96,44 @@ func envelope(data any) any {
 	return reflect.New(t).Elem().Interface()
 }
 
+// InputSuffix names the request-side component of a type that is also
+// used in responses.
+const InputSuffix = "Input"
+
+// Description is the document's info.description.
+const Description = "Generated from the route tables in internal/app/web by `make openapi`; do not edit.\n\n" +
+	"JSON responses use the envelope {success, message, data}. Response schemas list every field the " +
+	"server always writes as required; request schemas require only what the handler rejects without. " +
+	"Unknown properties are allowed everywhere, so new response fields are not a breaking change.\n\n" +
+	"## Asynchronous operations and GET /api/v1/sse\n\n" +
+	"A 202 response means the command was dispatched to the server's agent; its data.request_id names " +
+	"the outcome, which arrives only over the event stream:\n\n" +
+	"1. Open GET /api/v1/sse BEFORE dispatching. Results are best-effort: they are not buffered or " +
+	"replayed, so a result produced while no stream is open, or while the client is not reading, is lost.\n" +
+	"2. A result is delivered only to the open streams of the user who dispatched the command (all of " +
+	"them, if that user has several).\n" +
+	"3. Each event is `data: <Notification JSON>`. Match type == \"operation_result\" and ref == request_id; " +
+	"status 1 with error means it failed, otherwise payload matches the operation's x-operation-result schema.\n" +
+	"4. Other event types (server_status, apps_status) interleave on the same stream, sent to every member " +
+	"of the server's organization; ignore types you do not handle."
+
+// sideKey marks a reflection that produces a response-side schema outside
+// an operation (x-operation-result and event payload components).
+type sideKey struct{}
+
+func responseSide(rc *jsonschema.ReflectContext) {
+	rc.Context = context.WithValue(rc.Context, sideKey{}, true)
+}
+
+// isResponse reports whether rc reflects a response body.
+func isResponse(rc *jsonschema.ReflectContext) bool {
+	if v, _ := rc.Value(sideKey{}).(bool); v {
+		return true
+	}
+	oc, ok := oapi.OperationCtx(rc)
+	return ok && oc.IsProcessingResponse() && oc.ProcessingIn() == oapi.InBody
+}
+
 // builder holds one generation run.
 type builder struct {
 	r *openapi31.Reflector
@@ -84,21 +141,34 @@ type builder struct {
 	// types with the same name fail loudly instead of one silently
 	// shadowing the other.
 	names map[string]reflect.Type
-	err   error
+	// responseTypes holds every named type reachable from a response, so
+	// its request-side component can take the Input suffix.
+	responseTypes map[reflect.Type]bool
+	err           error
 }
 
 // Build renders routes into an OpenAPI 3.1 document.
 func Build(routes []api.Route) (*openapi31.Spec, error) {
-	b := &builder{r: openapi31.NewReflector(), names: map[string]reflect.Type{}}
-	b.r.DefaultOptions = append(b.r.DefaultOptions, jsonschema.InterceptDefName(b.defName))
+	b := &builder{
+		r:             openapi31.NewReflector(),
+		names:         map[string]reflect.Type{},
+		responseTypes: responseTypes(routes),
+	}
+	b.r.DefaultOptions = append(b.r.DefaultOptions,
+		func(rc *jsonschema.ReflectContext) {
+			// Installed per reflection so the name can depend on which
+			// side rc reflects.
+			jsonschema.InterceptDefName(func(t reflect.Type, _ string) string {
+				return b.defName(t, isResponse(rc))
+			})(rc)
+		},
+		jsonschema.InterceptProp(interceptProp),
+	)
 
 	s := b.r.SpecEns()
 	s.SetTitle("Winterflow API")
 	s.SetVersion("1")
-	s.SetDescription("Generated from the route tables in internal/app/web by `make openapi`; do not edit.\n\n" +
-		"JSON responses use the envelope {success, message, data}. 202 responses carry data.request_id; " +
-		"the outcome arrives on GET /api/v1/sse as an operation_result Notification whose ref is that " +
-		"request_id and whose payload matches the operation's x-operation-result schema.")
+	s.SetDescription(Description)
 	s.SetHTTPBearerTokenSecurity(SchemeBearer, "wfp_ personal access token",
 		"Personal access token (wfp_…) as `Authorization: Bearer`. It is also accepted as the Basic-auth password.")
 	s.SetAPIKeySecurity(SchemeCookie, "JWT", oapi.InCookie,
@@ -116,15 +186,114 @@ func Build(routes []api.Route) (*openapi31.Spec, error) {
 }
 
 // defName names components after the bare Go type ("SaveAppRequest", not
-// the package-prefixed "ServerSaveAppRequest") and records clashes. The
+// the package-prefixed "ServerSaveAppRequest"), adds InputSuffix to the
+// request side of a type that responses use too, and records clashes. The
 // reflector adds its own "FormData" prefix for form bodies afterwards.
-func (b *builder) defName(t reflect.Type, _ string) string {
+func (b *builder) defName(t reflect.Type, response bool) string {
 	name := t.Name()
+	b.claim(name, t)
+	if !response && b.responseTypes[t] {
+		name += InputSuffix
+		b.claim(name, t)
+	}
+	return name
+}
+
+func (b *builder) claim(name string, t reflect.Type) {
 	if prev, ok := b.names[name]; ok && prev != t && b.err == nil {
 		b.err = fmt.Errorf("schema name %q used by both %s and %s", name, prev, t)
 	}
 	b.names[name] = t
-	return name
+}
+
+// responseTypes walks every response-side root (Response, Result, Events
+// and EventPayloads) and returns the named types reachable from them.
+func responseTypes(routes []api.Route) map[reflect.Type]bool {
+	seen := map[reflect.Type]bool{}
+	var walk func(t reflect.Type)
+	walk = func(t reflect.Type) {
+		for t.Kind() == reflect.Pointer || t.Kind() == reflect.Slice || t.Kind() == reflect.Array || t.Kind() == reflect.Map {
+			if t.Name() != "" {
+				seen[t] = true
+			}
+			t = t.Elem()
+		}
+		if seen[t] {
+			return
+		}
+		if t.Name() != "" {
+			seen[t] = true
+		}
+		if t.Kind() != reflect.Struct {
+			return
+		}
+		for i := range t.NumField() {
+			if f := t.Field(i); f.IsExported() && f.Tag.Get("json") != "-" {
+				walk(f.Type)
+			}
+		}
+	}
+	for _, rt := range routes {
+		roots := []any{rt.Response, rt.Result, rt.Events}
+		for _, ep := range rt.EventPayloads {
+			roots = append(roots, ep.Payload)
+		}
+		for _, v := range roots {
+			if v != nil {
+				walk(reflect.TypeOf(v))
+			}
+		}
+	}
+	return seen
+}
+
+// interceptProp applies the response-side rules from the package comment,
+// plus one rule for both sides: an open-ended field (interface or
+// json.RawMessage) without omitempty documents null explicitly, because
+// kin-openapi, unlike JSON Schema, rejects null against {}.
+func interceptProp(p jsonschema.InterceptPropParams) error {
+	if !p.Processed {
+		return nil
+	}
+	omitted := omittable(p.Field)
+	s := p.PropertySchema
+	open := s.Type == nil && s.Ref == nil && len(s.AnyOf) == 0 && len(s.OneOf) == 0 && len(s.AllOf) == 0
+	if open && !omitted && (p.Field.Type.Kind() == reflect.Interface || p.Field.Type == rawMessage) {
+		s.AnyOf = []jsonschema.SchemaOrBool{jsonschema.Null.ToSchemaOrBool(), (&jsonschema.Schema{}).ToSchemaOrBool()}
+	}
+	if !isResponse(p.Context) || omitted {
+		return nil
+	}
+	if !slices.Contains(p.ParentSchema.Required, p.Name) {
+		p.ParentSchema.Required = append(p.ParentSchema.Required, p.Name)
+	}
+	switch p.Field.Type.Kind() {
+	case reflect.Pointer, reflect.Slice, reflect.Map:
+	default:
+		return nil
+	}
+	switch {
+	case s.Ref != nil:
+		ref := jsonschema.Schema{Ref: s.Ref}
+		s.Ref = nil
+		s.AnyOf = []jsonschema.SchemaOrBool{jsonschema.Null.ToSchemaOrBool(), ref.ToSchemaOrBool()}
+	case s.Type != nil && !s.HasType(jsonschema.Null):
+		s.AddType(jsonschema.Null)
+	}
+	return nil
+}
+
+var rawMessage = reflect.TypeOf(json.RawMessage(nil))
+
+// omittable reports whether encoding/json may leave the field out.
+func omittable(f reflect.StructField) bool {
+	_, opts, _ := strings.Cut(f.Tag.Get("json"), ",")
+	for _, o := range strings.Split(opts, ",") {
+		if o == "omitempty" || o == "omitzero" {
+			return true
+		}
+	}
+	return false
 }
 
 func (b *builder) addRoute(rt api.Route) error {
@@ -134,6 +303,9 @@ func (b *builder) addRoute(rt api.Route) error {
 	}
 	oc.SetID(operationID(rt.Path))
 	oc.SetSummary(rt.Summary)
+	if rt.Description != "" {
+		oc.SetDescription(rt.Description)
+	}
 	if rt.Tag != "" {
 		oc.SetTags(rt.Tag)
 	}
@@ -149,6 +321,10 @@ func (b *builder) addRoute(rt api.Route) error {
 	}
 	if rt.Form != nil {
 		oc.AddReqStructure(rt.Form, oapi.WithContentType("application/x-www-form-urlencoded"))
+	}
+
+	if err := b.eventPayloads(rt); err != nil {
+		return err
 	}
 
 	switch {
@@ -212,9 +388,61 @@ func addError(oc oapi.OperationContext, code int, raw bool) {
 	}
 }
 
-// component reflects v into components/schemas and returns its $ref.
+// eventPayloads documents rt.EventPayloads on the Events component: the
+// payload property's description lists the payload of each type, and one
+// allOf entry per typed payload lets a validator check it.
+func (b *builder) eventPayloads(rt api.Route) error {
+	if len(rt.EventPayloads) == 0 {
+		return nil
+	}
+	if rt.Events == nil {
+		return fmt.Errorf("EventPayloads without Events")
+	}
+	ref, err := b.component(rt.Events)
+	if err != nil {
+		return err
+	}
+	ev := b.r.SpecEns().ComponentsEns().Schemas[strings.TrimPrefix(ref, componentsSchemas)]
+	props, _ := ev["properties"].(map[string]any)
+	payload, _ := props["payload"].(map[string]any)
+	if payload == nil || props["type"] == nil {
+		return fmt.Errorf("events type %T has no \"payload\" property or no \"type\" property", rt.Events)
+	}
+	lines := []string{"Depends on type:"}
+	var conds []any
+	for _, ep := range rt.EventPayloads {
+		if ep.Payload == nil {
+			lines = append(lines, fmt.Sprintf("- %s: the x-operation-result schema of the operation whose "+
+				"request_id equals ref (absent when the operation failed)", ep.Type))
+			continue
+		}
+		pref, err := b.component(ep.Payload)
+		if err != nil {
+			return err
+		}
+		lines = append(lines, fmt.Sprintf("- %s: %s", ep.Type, pref))
+		// "type is not X, or payload matches P": the implication an
+		// if/then states, spelled with keywords kin-openapi enforces.
+		conds = append(conds, map[string]any{"anyOf": []any{
+			map[string]any{"not": map[string]any{
+				"properties": map[string]any{"type": map[string]any{"const": ep.Type}},
+				"required":   []any{"type"},
+			}},
+			map[string]any{"properties": map[string]any{"payload": map[string]any{"$ref": pref}}},
+		}})
+	}
+	payload["description"] = strings.Join(lines, "\n")
+	if len(conds) > 0 {
+		ev["allOf"] = conds
+	}
+	return nil
+}
+
+// component reflects v, response-side, into components/schemas and returns
+// its $ref.
 func (b *builder) component(v any) (string, error) {
 	s, err := b.r.Reflect(v,
+		responseSide,
 		jsonschema.RootRef,
 		jsonschema.DefinitionsPrefix(componentsSchemas),
 		jsonschema.CollectDefinitions(func(name string, schema jsonschema.Schema) {

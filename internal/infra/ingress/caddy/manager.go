@@ -68,13 +68,24 @@ func (m *Manager) options() Options {
 // parsed ingress fragments. Unreadable/unparseable apps are skipped with a
 // warning — one broken app must not stop the scan.
 func (m *Manager) scanApps() ([]AppIngress, []string) {
+	apps, warnings, err := m.readApps()
+	if err != nil {
+		m.log.Warn("ingress: scan apps-data", "error", err)
+	}
+	return apps, warnings
+}
+
+// readApps is scanApps that reports an unreadable apps-data dir as an error
+// (a missing one is simply no apps), for callers that must not mistake it
+// for an install without apps.
+func (m *Manager) readApps() ([]AppIngress, []string, error) {
 	appsDir := m.cfg.GetAppsDataDir()
 	entries, err := os.ReadDir(appsDir)
 	if err != nil {
-		if !os.IsNotExist(err) {
-			m.log.Warn("ingress: scan apps-data", "error", err)
+		if os.IsNotExist(err) {
+			return nil, nil, nil
 		}
-		return nil, nil
+		return nil, nil, err
 	}
 	var out []AppIngress
 	var warnings []string
@@ -101,7 +112,7 @@ func (m *Manager) scanApps() ([]AppIngress, []string) {
 		_ = json.Unmarshal(raw, &meta) // ParseIngress already proved it is JSON
 		out = append(out, AppIngress{AppID: appID, Name: meta.Name, Ingress: *ing})
 	}
-	return out, warnings
+	return out, warnings, nil
 }
 
 func (m *Manager) buildConfig() ([]byte, []string) {

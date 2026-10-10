@@ -189,3 +189,36 @@ func TestDeleteDomainRefusesOnlyOrphanedHosts(t *testing.T) {
 		t.Fatalf("registrations = %+v, want the wildcard and other.example.org", doms)
 	}
 }
+
+// TestSeedDomainsRetriesWhenAppsUnreadable: an apps-data that can't be read
+// must not seed an empty domains/ (that would run once and strand every
+// existing hostname); the next start seeds once it is readable.
+func TestSeedDomainsRetriesWhenAppsUnreadable(t *testing.T) {
+	m, dataDir := testManager(t, false)
+	appsData := filepath.Join(dataDir, "apps-data")
+	// A file where the directory should be: ReadDir fails with something
+	// other than not-exist, whatever user runs the test.
+	if err := os.WriteFile(appsData, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "domains")); !os.IsNotExist(err) {
+		t.Fatalf("domains/ created from an unreadable apps-data: %v", err)
+	}
+
+	if err := os.Remove(appsData); err != nil {
+		t.Fatal(err)
+	}
+	writeApp(t, dataDir, "app-1", `{"name":"Blog","ingress":{"domains":[{"domain":"blog.example.com","upstream_port":1,"ssl":true}]}}`)
+	writeApp(t, dataDir, "app-2", `{"name":"Broken"`) // a warning, not a reason to skip
+	m2 := NewManager(config.NewServerConfig("standalone"), m.log)
+	if err := m2.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	doms, err := m2.ListDomains(context.Background())
+	if err != nil || len(doms) != 1 || doms[0].Name != "blog.example.com" || doms[0].TLS != command.DomainTLSAuto {
+		t.Fatalf("seeded on retry = %+v, %v", doms, err)
+	}
+}

@@ -21,12 +21,21 @@ var ErrIngressDisabled = errors.New("ingress is disabled on this server")
 // seedDomains is the upgrade path: on the first start without a domains/
 // dir, register every hostname existing apps use as an exact registration —
 // auto where its ingress entry had ssl:true, off otherwise — so routing
-// keeps working under the coverage rule. Creating the dir makes it run once.
+// keeps working under the coverage rule. Creating the dir makes it run once,
+// so an apps-data dir that can't be read skips seeding (nothing is created)
+// and the next start retries, rather than seeding nothing for good.
 func (m *Manager) seedDomains() {
 	if m.domains.Exists() {
 		return
 	}
-	apps, _ := m.scanApps()
+	apps, warnings, err := m.readApps()
+	if err != nil {
+		m.log.Warn("ingress: apps-data unreadable, domain registrations not seeded (retried on the next start)", "error", err)
+		return
+	}
+	for _, w := range warnings {
+		m.log.Warn("ingress: seed domain registrations", "warning", w)
+	}
 	regs := seedRegistrations(apps)
 	seeded, err := m.domains.Seed(regs)
 	if err != nil {

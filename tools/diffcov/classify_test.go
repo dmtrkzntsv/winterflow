@@ -24,6 +24,8 @@ func TestLanguage(t *testing.T) {
 		"cmd/standalone/serve.go":                            LangGo,
 		"tools/diffcov/main.go":                              "",
 		"web/src/main.tsx":                                   "",
+		"web/src/test/setup.ts":                              "", // Vitest setup, never in coverage
+		"web/src/test/helpers/render.tsx":                    "",
 		"src/lib/volumes.ts":                                 "", // TS outside web/
 	}
 	for p, want := range cases {

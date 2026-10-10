@@ -30,7 +30,7 @@ func Language(p string) string {
 }
 
 // Excluded reports whether a path is exempt from the diff-coverage gate:
-// tests, generated protobuf code, vendored shadcn/ui, binary entry points,
+// tests (and the Vitest setup under web/src/test/), generated protobuf code, vendored shadcn/ui, binary entry points,
 // the coverage tooling itself, and the SPA bootstrap.
 func Excluded(p string) bool {
 	switch {
@@ -41,6 +41,7 @@ func Excluded(p string) bool {
 		strings.HasPrefix(p, "web/src/components/ui/"),
 		strings.HasPrefix(p, "tools/"),
 		p == "web/src/main.tsx",
+		strings.HasPrefix(p, "web/src/test/"), // Vitest setup, never in coverage
 		strings.HasPrefix(p, "cmd/") && path.Base(p) == "main.go":
 		return true
 	}

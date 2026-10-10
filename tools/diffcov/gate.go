@@ -60,6 +60,18 @@ func Evaluate(changed map[string][]int, reports map[string]Coverage) []Result {
 			continue
 		}
 		res := results[lang]
+		// Comment and blank lines inside a statement block are reported by
+		// go cover as part of it but are not executable. If the source can't
+		// be read, fall back to the profile's view.
+		var skip map[int]bool
+		if lang == LangGo {
+			if src, err := readSource(f); err == nil {
+				if isGenerated(src) {
+					continue
+				}
+				skip = nonCodeLines(src)
+			}
+		}
 		if !rep.Has(f) {
 			res.NoData = append(res.NoData, f)
 			// Listed as no-data, but a file whose package the report knows is
@@ -73,6 +85,9 @@ func Evaluate(changed map[string][]int, reports map[string]Coverage) []Result {
 		lines := append([]int(nil), changed[f]...)
 		sort.Ints(lines)
 		for _, n := range lines {
+			if skip[n] {
+				continue
+			}
 			exec, cov := rep.Line(f, n)
 			if !exec {
 				continue

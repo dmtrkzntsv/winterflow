@@ -44,10 +44,12 @@ web-test:
 cover: test web-test
 	$(GO) run ./tools/diffcov ratchet --go coverage.out --lcov web/coverage/lcov.info
 
-# CI's diff-coverage gate: lines changed since origin/main must be at least
-# 80% covered, per language. `git fetch origin main` first if it is stale.
+# CI's diff-coverage gate: lines changed since $(DIFFCOV_BASE) must be at
+# least 80% covered, per language. `git fetch origin main` first if it is
+# stale; override the base for stacked branches (make diffcov DIFFCOV_BASE=...).
+DIFFCOV_BASE ?= origin/main
 diffcov: test web-test
-	$(GO) run ./tools/diffcov --base origin/main --min 80 --go coverage.out --lcov web/coverage/lcov.info
+	$(GO) run ./tools/diffcov --base $(DIFFCOV_BASE) --min 80 --go coverage.out --lcov web/coverage/lcov.info
 
 mod:
 	$(GO) mod tidy

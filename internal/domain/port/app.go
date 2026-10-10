@@ -2,6 +2,7 @@ package port
 
 import (
 	"context"
+	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
 )
 
@@ -50,4 +51,12 @@ type IngressManager interface {
 	Reload(ctx context.Context) []string
 	// Enabled reports whether the proxy bound its ports at startup.
 	Enabled() bool
+	// ListDomains reports the domain registrations with the apps using
+	// each; it works with ingress disabled.
+	ListDomains(ctx context.Context) ([]command.Domain, error)
+	// CreateDomain registers or replaces a name (certificate mode: the
+	// ECIES-encrypted key is decrypted and the pair checked first).
+	CreateDomain(ctx context.Context, in command.CreateDomainRequest) (command.Domain, error)
+	// DeleteDomain removes a registration no app uses.
+	DeleteDomain(ctx context.Context, name string) error
 }

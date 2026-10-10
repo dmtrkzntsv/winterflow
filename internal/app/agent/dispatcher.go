@@ -6,6 +6,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -48,6 +49,10 @@ func (d *Dispatcher) reloadIngress(ctx context.Context) []string {
 	}
 	return warnings
 }
+
+// errNoIngress answers domain commands on a dispatcher built without an
+// ingress manager (tests); production always wires one.
+var errNoIngress = errors.New("ingress is not available on this agent")
 
 // Dispatch decodes the request payload by its command type, runs the matching
 // handler, and returns the response envelope. Decode/handler errors become an
@@ -208,6 +213,34 @@ func (d *Dispatcher) newHandlers() map[command.Type]handlerFunc {
 		}),
 		command.TypeVolumeDelete: handle(d, func(ctx context.Context, in command.DeleteVolumeRequest) (command.DeleteVolumeResponse, error) {
 			return command.DeleteVolumeResponse{Name: in.Name}, d.orch.DeleteVolume(ctx, in.Name)
+		}),
+
+		command.TypeDomainList: handle(d, func(ctx context.Context, _ command.ListDomainsRequest) (command.ListDomainsResponse, error) {
+			if d.ingress == nil {
+				return command.ListDomainsResponse{}, errNoIngress
+			}
+			doms, err := d.ingress.ListDomains(ctx)
+			return command.ListDomainsResponse{Domains: doms}, err
+		}),
+		command.TypeDomainCreate: handle(d, func(ctx context.Context, in command.CreateDomainRequest) (command.CreateDomainResponse, error) {
+			if d.ingress == nil {
+				return command.CreateDomainResponse{}, errNoIngress
+			}
+			dom, err := d.ingress.CreateDomain(ctx, in)
+			if err == nil {
+				d.reloadIngress(ctx)
+			}
+			return command.CreateDomainResponse{Domain: dom}, err
+		}),
+		command.TypeDomainDelete: handle(d, func(ctx context.Context, in command.DeleteDomainRequest) (command.DeleteDomainResponse, error) {
+			if d.ingress == nil {
+				return command.DeleteDomainResponse{}, errNoIngress
+			}
+			err := d.ingress.DeleteDomain(ctx, in.Name)
+			if err == nil {
+				d.reloadIngress(ctx)
+			}
+			return command.DeleteDomainResponse{Name: in.Name}, err
 		}),
 
 		command.TypeImageTags: handle(d, func(ctx context.Context, in command.ImageTagsRequest) (command.ImageTagsResponse, error) {

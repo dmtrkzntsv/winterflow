@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 
 	happ "winterflow/internal/app/web/handler/app"
@@ -47,6 +48,20 @@ func TestAppLifecycle(t *testing.T) {
 	sid := owner.serverID(t)
 	ingress := json.RawMessage(`{"ingress":{"domains":[{"domain":"web.example.test","upstream_port":8080}]}}`)
 
+	t.Run("an uncovered hostname is refused", func(t *testing.T) {
+		r := owner.do(t, call{Method: http.MethodPost, Path: "/api/v1/app/save-app", Body: happ.SaveAppRequest{
+			ServerID: sid, App: model.App{Name: "web", Icon: "box", Color: "#112233"}, Config: ingress,
+		}}).expect(t, http.StatusBadRequest)
+		const want = "web.example.test is not covered by a domain registered on this server — register web.example.test or *.example.test"
+		if !strings.Contains(string(r.Body), want) {
+			t.Fatalf("body = %s", r.Body)
+		}
+		if n := len(e.agent.seen(command.TypeAppSave)); n != 0 {
+			t.Fatalf("%d uncovered save(s) reached the agent", n)
+		}
+	})
+	registerDomain(t, owner, sid, "*.example.test", command.DomainTLSAuto)
+
 	appID := saveApp(t, owner, sid, "web", ingress)
 	apps := listApps(t, owner, sid)
 	if len(apps) != 1 || apps[0].ID != appID || apps[0].Name != "web" || len(apps[0].Domains) != 1 {
@@ -59,8 +74,14 @@ func TestAppLifecycle(t *testing.T) {
 	t.Run("domain check sees the claim", func(t *testing.T) {
 		var d happ.CheckDomainResponse
 		owner.get(t, "/api/v1/domains/check", url.Values{"server_id": {sid}, "domain": {"web.example.test"}}).expect(t, http.StatusOK).data(t, &d)
-		if d.Available || len(d.Claims) != 1 || d.Claims[0].AppName != "web" {
+		if d.Available || len(d.Claims) != 1 || d.Claims[0].AppName != "web" ||
+			!d.Covered || d.Registration == nil || d.Registration.Name != "*.example.test" || d.Registration.TLS != "auto" {
 			t.Fatalf("check = %+v", d)
+		}
+		var deep happ.CheckDomainResponse
+		owner.get(t, "/api/v1/domains/check", url.Values{"server_id": {sid}, "domain": {"a.web.example.test"}}).expect(t, http.StatusOK).data(t, &deep)
+		if !deep.Available || deep.Covered || deep.Registration != nil {
+			t.Fatalf("two labels under the wildcard = %+v", deep)
 		}
 		owner.get(t, "/api/v1/domains/check", url.Values{"server_id": {sid}, "domain": {"free.example.test"}}).expect(t, http.StatusOK).data(t, &d)
 		if !d.Available {
@@ -190,6 +211,9 @@ func TestHostnameUniquePerServer(t *testing.T) {
 	first := owner.serverID(t)
 	second := owner.registerServer(t)
 	shop := json.RawMessage(`{"ingress":{"domains":[{"domain":"shop.example.test","upstream_port":8080}]}}`)
+	// The same registration may exist on any number of servers.
+	registerDomain(t, owner, first, "*.example.test", command.DomainTLSOff)
+	registerDomain(t, owner, second, "*.example.test", command.DomainTLSAuto)
 
 	saveApp(t, owner, first, "shop-a", shop)
 	saveApp(t, owner, second, "shop-b", shop)

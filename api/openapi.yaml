@@ -2797,8 +2797,13 @@ components:
           type:
           - array
           - "null"
+        covered:
+          type: boolean
+        registration:
+          $ref: '#/components/schemas/RegisteredDomain'
       required:
       - available
+      - covered
       - claims
       type: object
     ContainerStatus:
@@ -3555,6 +3560,23 @@ components:
           $ref: '#/components/schemas/Server'
       required:
       - server
+      type: object
+    RegisteredDomain:
+      properties:
+        issuer:
+          type: string
+        name:
+          type: string
+        not_after:
+          format: date-time
+          type:
+          - "null"
+          - string
+        tls:
+          type: string
+      required:
+      - name
+      - tls
       type: object
     Registry:
       properties:

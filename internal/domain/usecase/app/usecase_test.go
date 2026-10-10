@@ -235,9 +235,9 @@ func TestCheckDomain(t *testing.T) {
 	repo := &fakeDomainRepo{claims: []model.DomainClaim{{Domain: "x.example.com", AppName: "Other"}}}
 	uc := newTestUseCaseWithDomains(&captureDispatcher{}, repo)
 
-	claims, err := uc.CheckDomain(context.Background(), "srv-1", "x.example.com", "app-1")
-	if err != nil || len(claims) != 1 || repo.claimServer != "srv-1" {
-		t.Fatalf("CheckDomain = %v, %v (server %q)", claims, err, repo.claimServer)
+	check, err := uc.CheckDomain(context.Background(), "srv-1", "x.example.com", "app-1")
+	if err != nil || len(check.Claims) != 1 || repo.claimServer != "srv-1" || check.Registration != nil {
+		t.Fatalf("CheckDomain = %+v, %v (server %q)", check, err, repo.claimServer)
 	}
 
 	if _, err := uc.CheckDomain(context.Background(), "srv-1", "NOT A HOST", ""); !errors.Is(err, model.ErrIngressInvalid) {

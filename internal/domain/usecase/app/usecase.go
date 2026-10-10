@@ -236,18 +236,57 @@ func (uc *UseCase) GetLogs(ctx context.Context, userID, serverID, appID string, 
 	})
 }
 
-// CheckDomain reports which app (if any) on serverID already claims a
-// hostname — the live-typing availability check behind GET
-// /api/v1/domains/check. A hostname is unique per server only.
-func (uc *UseCase) CheckDomain(ctx context.Context, serverID, domain, excludeAppID string) ([]model.DomainClaim, error) {
+// DomainCheck answers GET /api/v1/domains/check: the apps on the server
+// already claiming the hostname, and the registration covering it (nil when
+// none does).
+type DomainCheck struct {
+	Claims       []model.DomainClaim
+	Registration *model.RegisteredDomain
+}
+
+// CheckDomain reports whether a hostname is free and covered on serverID —
+// the live-typing check behind GET /api/v1/domains/check. A hostname is
+// unique per server only.
+func (uc *UseCase) CheckDomain(ctx context.Context, serverID, domain, excludeAppID string) (DomainCheck, error) {
 	probe := model.Ingress{Domains: []model.IngressDomain{{Domain: domain, UpstreamPort: 1}}}
 	if err := probe.Validate(); err != nil {
-		return nil, fmt.Errorf("%w: %v", model.ErrIngressInvalid, err)
+		return DomainCheck{}, fmt.Errorf("%w: %v", model.ErrIngressInvalid, err)
 	}
-	if uc.domains == nil {
-		return nil, nil
+	var out DomainCheck
+	if uc.serverDomains != nil {
+		regs, err := uc.serverDomains.ListForServer(ctx, serverID)
+		if err != nil {
+			return DomainCheck{}, err
+		}
+		out.Registration = winningRegistration(regs, domain)
 	}
-	return uc.domains.FindClaims(ctx, serverID, []string{domain}, excludeAppID)
+	if uc.domains != nil {
+		claims, err := uc.domains.FindClaims(ctx, serverID, []string{domain}, excludeAppID)
+		if err != nil {
+			return DomainCheck{}, err
+		}
+		out.Claims = claims
+	}
+	return out, nil
+}
+
+// winningRegistration is the registration among regs covering host (exact
+// over wildcard), or nil.
+func winningRegistration(regs []model.RegisteredDomain, host string) *model.RegisteredDomain {
+	names := make([]string, len(regs))
+	for i, r := range regs {
+		names[i] = r.Name
+	}
+	win, ok := model.WinningDomain(names, host)
+	if !ok {
+		return nil
+	}
+	for i := range regs {
+		if regs[i].Name == win {
+			return &regs[i]
+		}
+	}
+	return nil
 }
 
 // SaveApp dispatches an app.save command to the server's agent and returns
@@ -283,6 +322,20 @@ func (uc *UseCase) SaveApp(ctx context.Context, userID, serverID string, app mod
 	if ing != nil {
 		if err := ing.Validate(); err != nil {
 			return "", fmt.Errorf("%w: %v", model.ErrIngressInvalid, err)
+		}
+		// Every hostname must sit under a domain registered on this
+		// server; the agent drops uncovered hosts again in BuildConfig.
+		if uc.serverDomains != nil {
+			regs, err := uc.serverDomains.ListForServer(ctx, serverID)
+			if err != nil {
+				uc.log.Error("SaveApp: list registered domains", "error", err, "server_id", serverID)
+				return "", err
+			}
+			for _, host := range ing.DomainNames() {
+				if winningRegistration(regs, host) == nil {
+					return "", model.NotCoveredError(host)
+				}
+			}
 		}
 		if uc.domains != nil {
 			claims, err := uc.domains.FindClaims(ctx, serverID, ing.DomainNames(), app.ID)

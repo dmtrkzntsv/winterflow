@@ -101,7 +101,7 @@ export default function RegisterPage() {
                     Registration is disabled
                   </h1>
                   <p className="text-muted-foreground text-balance">
-                    Ask an administrator to create an account for you.
+                    Ask someone in your organization to create an account for you.
                   </p>
                   <Button asChild variant="outline">
                     <Link to="/login">Back to login</Link>
@@ -121,7 +121,7 @@ export default function RegisterPage() {
                       </h1>
                       <p className="text-muted-foreground text-balance">
                         {bootstrap
-                          ? "This account administers the instance"
+                          ? "This first account creates your organization."
                           : "Sign up for your Winterflow account"}
                       </p>
                     </div>

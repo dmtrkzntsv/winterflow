@@ -76,25 +76,32 @@ func (r *Repository) UpdateApp(ctx context.Context, appID string) error {
 // DeleteApp stops the app's containers and removes its folder and symlink.
 // The git history goes with the folder — deletion is final. With
 // deleteVolumes it also removes the app's compose-owned volumes; cleanup
-// failures come back as warnings, never as an error.
-func (r *Repository) DeleteApp(ctx context.Context, appID string, deleteVolumes bool) ([]string, error) {
-	var warnings []string
+// failures come back as warnings, never as an error. volumesDeleted reports
+// whether the volume sweep actually ran: it is skipped for an app this agent
+// does not have, so a delete request cannot be used to destroy orphan volumes
+// an admin deliberately kept (those go through the volume registry).
+func (r *Repository) DeleteApp(ctx context.Context, appID string, deleteVolumes bool) (warnings []string, volumesDeleted bool, err error) {
+	if !validAppID(appID) {
+		return nil, false, fmt.Errorf("invalid app id %q", appID)
+	}
+	existed := r.appExists(appID)
 	if err := r.composeDown(ctx, appID, deleteVolumes); err != nil {
 		// Best-effort stop; continue with removal so a broken deployment can
 		// still be deleted.
 		r.log.Warn("delete: compose down failed, continuing", "app_id", appID, "error", err)
 	}
-	if deleteVolumes {
+	if deleteVolumes && existed {
 		warnings = r.sweepAppVolumes(ctx, appID)
+		volumesDeleted = true
 	}
 	if err := removeAppSymlink(r.cfg.GetAppsDir(), appID); err != nil {
 		r.log.Warn("delete: symlink removal failed, continuing", "app_id", appID, "error", err)
 	}
 	if err := os.RemoveAll(r.appDataDir(appID)); err != nil {
-		return warnings, fmt.Errorf("remove app dir: %w", err)
+		return warnings, volumesDeleted, fmt.Errorf("remove app dir: %w", err)
 	}
 	r.forgetApp(appID)
-	return warnings, nil
+	return warnings, volumesDeleted, nil
 }
 
 // GetApp reconstructs the deployable payload from the app's folder. Secret

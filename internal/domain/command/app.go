@@ -189,6 +189,10 @@ type DeleteAppResponse struct {
 	// Warnings lists cleanup steps that failed after the app was removed
 	// (e.g. a volume still in use).
 	Warnings []string `json:"warnings,omitempty"`
+	// VolumesDeleted is true only when the agent honoured delete_volumes
+	// (the volume sweep ran). An agent that predates the flag never sets it,
+	// which lets the UI tell "volumes removed" from "request ignored".
+	VolumesDeleted bool `json:"volumes_deleted,omitempty"`
 }
 
 // --- app.rename ---------------------------------------------------------------

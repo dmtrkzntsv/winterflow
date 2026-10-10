@@ -13,7 +13,8 @@ import (
 	"winterflow/pkg/crypto"
 )
 
-// Docker resource operations (registries + networks) via the `docker` CLI.
+// Docker resource operations (registries + networks; volumes live in
+// volumes.go) via the `docker` CLI.
 // v1 used the Docker SDK for networks; v2 stays CLI-only to match the rest of
 // the orchestrator.
 

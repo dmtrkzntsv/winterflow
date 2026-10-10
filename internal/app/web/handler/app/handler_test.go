@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -183,6 +184,20 @@ func TestDeleteAppPassesDeleteVolumes(t *testing.T) {
 				t.Fatalf("payload = %#v, want %#v", fd.last.Payload, tc.want)
 			}
 		})
+	}
+}
+
+func TestDeleteAppRejectsTraversalIDs(t *testing.T) {
+	for _, id := range []string{".", "..", "/", "a/..", "../.."} {
+		h, fd, _ := newHandler(t)
+		body := `{"server_id":"s1","app_id":` + strconv.Quote(id) + `,"delete_volumes":true}`
+		r := authed(httptest.NewRequest("POST", "/x", strings.NewReader(body)))
+		if w := do(h.DeleteApp, r); w.Code != http.StatusBadRequest {
+			t.Errorf("app_id %q: status = %d, want 400", id, w.Code)
+		}
+		if fd.last.Payload != nil {
+			t.Errorf("app_id %q must not be dispatched", id)
+		}
 	}
 }
 

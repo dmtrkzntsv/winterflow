@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"path/filepath"
 	"strconv"
 
 	webutil "winterflow/internal/app/web/util"
@@ -62,6 +63,17 @@ type deleteAppRequest struct {
 	DeleteVolumes bool   `json:"delete_volumes"`
 }
 
+// validAppID rejects ids that resolve to no folder or to a parent of the
+// app's data dir ("." and ".." survive filepath.Base). The agent re-checks;
+// failing early here avoids dispatching a command that can only be refused.
+func validAppID(id string) bool {
+	switch filepath.Base(id) {
+	case "", ".", "..", "/":
+		return false
+	}
+	return true
+}
+
 // DeleteApp dispatches an app.delete to the agent. Returns 202 + request_id.
 func (h *Handler) DeleteApp(w http.ResponseWriter, r *http.Request) {
 	userID, ok := webutil.RequireUser(w, r)
@@ -74,6 +86,10 @@ func (h *Handler) DeleteApp(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ServerID == "" || req.AppID == "" {
 		webutil.Error(w, "server_id and app_id are required", nil)
+		return
+	}
+	if !validAppID(req.AppID) {
+		webutil.Error(w, "invalid app_id", nil)
 		return
 	}
 	if !webutil.RequireServerAccess(w, r, h.servers, userID, req.ServerID) {

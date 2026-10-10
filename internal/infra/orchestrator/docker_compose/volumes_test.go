@@ -3,6 +3,7 @@ package dockercompose
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -149,10 +150,74 @@ func TestDeleteAppWithVolumesNeverFailsOnCleanup(t *testing.T) {
 	r := newTestRepo(t)
 	savedApp(t, r, "app-1", "demo", "x\n")
 	t.Setenv("PATH", t.TempDir()) // no docker binary → every exec fails
-	if _, err := r.DeleteApp(context.Background(), "app-1", true); err != nil {
+	warnings, swept, err := r.DeleteApp(context.Background(), "app-1", true)
+	if err != nil {
 		t.Fatalf("delete must not fail on cleanup errors: %v", err)
+	}
+	if len(warnings) == 0 {
+		t.Fatal("failed cleanup must be reported as warnings")
+	}
+	if !swept {
+		t.Fatal("the sweep ran, so volumesDeleted must be reported")
 	}
 	if r.appExists("app-1") {
 		t.Fatal("app dir must be removed")
+	}
+}
+
+// A delete for an app the agent does not have must not sweep: otherwise a
+// member could destroy orphan volumes an admin deliberately kept.
+func TestDeleteAppMissingNeverSweeps(t *testing.T) {
+	r := newTestRepo(t)
+	t.Setenv("PATH", t.TempDir()) // any docker exec would yield a warning
+	warnings, swept, err := r.DeleteApp(context.Background(), "missing", true)
+	if err != nil {
+		t.Fatalf("deleting a missing app is a no-op: %v", err)
+	}
+	if len(warnings) != 0 || swept {
+		t.Fatalf("no sweep must run for a missing app: warnings=%v swept=%v", warnings, swept)
+	}
+}
+
+func TestValidAppID(t *testing.T) {
+	for id, want := range map[string]bool{
+		"app-1": true, "a": true, "..foo": true,
+		"": false, ".": false, "..": false, "/": false, "a/..": false, "../..": false,
+	} {
+		if got := validAppID(id); got != want {
+			t.Errorf("validAppID(%q) = %v, want %v", id, got, want)
+		}
+	}
+}
+
+// "." and ".." survive filepath.Base and would make RemoveAll wipe the whole
+// apps-data dir (or the data dir itself, certs included).
+func TestDeleteAppRejectsTraversalIDs(t *testing.T) {
+	r := newTestRepo(t)
+	savedApp(t, r, "app-1", "demo", "x\n")
+	for _, id := range []string{"", ".", "..", "/", "a/.."} {
+		if _, _, err := r.DeleteApp(context.Background(), id, false); err == nil {
+			t.Errorf("DeleteApp(%q) must fail", id)
+		}
+	}
+	if !r.appExists("app-1") {
+		t.Fatal("other apps must survive a rejected delete")
+	}
+}
+
+func TestSweepErrorsIncludeStderr(t *testing.T) {
+	bin := t.TempDir()
+	script := "#!/bin/sh\necho 'daemon is down' >&2\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	r := newTestRepo(t)
+	warnings := r.sweepAppVolumes(context.Background(), "app-1")
+	if len(warnings) == 0 || !strings.Contains(strings.Join(warnings, "\n"), "daemon is down") {
+		t.Fatalf("warnings must carry stderr: %v", warnings)
+	}
+	if _, err := r.ListVolumes(context.Background()); err == nil || !strings.Contains(err.Error(), "daemon is down") {
+		t.Fatalf("ListVolumes error must carry stderr: %v", err)
 	}
 }

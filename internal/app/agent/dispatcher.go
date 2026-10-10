@@ -7,6 +7,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/port"
@@ -125,12 +126,16 @@ func (d *Dispatcher) newHandlers() map[command.Type]handlerFunc {
 			return command.ControlAppResponse{AppID: in.AppID, Action: in.Action}, err
 		}),
 		command.TypeAppDelete: handle(d, func(ctx context.Context, in command.DeleteAppRequest) (command.DeleteAppResponse, error) {
-			warnings, err := d.orch.DeleteApp(ctx, in.AppID, in.DeleteVolumes)
+			warnings, volumesDeleted, err := d.orch.DeleteApp(ctx, in.AppID, in.DeleteVolumes)
+			resp := command.DeleteAppResponse{AppID: in.AppID, Warnings: warnings, VolumesDeleted: volumesDeleted}
 			if err != nil {
-				return command.DeleteAppResponse{AppID: in.AppID, Warnings: warnings}, err
+				if len(warnings) > 0 {
+					err = fmt.Errorf("%w (cleanup: %s)", err, strings.Join(warnings, "; "))
+				}
+				return resp, err
 			}
 			d.reloadIngress(ctx)
-			return command.DeleteAppResponse{AppID: in.AppID, Warnings: warnings}, nil
+			return resp, nil
 		}),
 		command.TypeAppRename: handle(d, func(ctx context.Context, in command.RenameAppRequest) (command.RenameAppResponse, error) {
 			if err := d.orch.RenameApp(ctx, in.AppID, in.Name); err != nil {

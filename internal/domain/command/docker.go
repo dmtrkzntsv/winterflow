@@ -5,8 +5,8 @@ import (
 	"regexp"
 )
 
-// Docker resource payloads: registries (docker login/logout) and networks
-// (docker network ls/create/rm). These are agent operations — the agent's
+// Docker resource payloads: registries (docker login/logout), networks
+// (docker network ls/create/rm) and volumes (docker volume ls/create/rm). These are agent operations — the agent's
 // Docker daemon is the source of truth — so list operations also round-trip to
 // the agent and return over SSE.
 

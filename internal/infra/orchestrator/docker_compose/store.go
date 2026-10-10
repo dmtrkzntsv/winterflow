@@ -59,6 +59,18 @@ func newSecretStore() secretStore {
 	return secretStore{Variables: map[string]string{}, Files: map[string]string{}}
 }
 
+// validAppID reports whether an app id maps to a folder strictly inside
+// apps-data. filepath.Base alone is not enough: "." and ".." survive it, and
+// RemoveAll on them would wipe every app (or the agent data dir, certs
+// included).
+func validAppID(id string) bool {
+	switch filepath.Base(id) {
+	case "", ".", "..", "/":
+		return false
+	}
+	return true
+}
+
 // appDataDir is the canonical folder for an app: {data}/apps-data/{appID}.
 func (r *Repository) appDataDir(appID string) string {
 	return filepath.Join(r.cfg.GetAppsDataDir(), filepath.Base(appID))

@@ -230,3 +230,45 @@ func TestDispatcherNilIngress(t *testing.T) {
 		t.Fatalf("draft save with nil ingress should succeed: %+v", resp)
 	}
 }
+
+func TestDispatchAppDeleteEchoesVolumesDeleted(t *testing.T) {
+	d := newTestDispatcher(t)
+	t.Setenv("PATH", t.TempDir()) // no docker: the sweep runs and only warns
+	if err := os.MkdirAll(os.Getenv("AGENT_DATA_DIR")+"/apps-data/app-1", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	resp := d.Dispatch(ctx, envelope(string(command.TypeAppDelete), []byte(`{"app_id":"app-1","delete_volumes":true}`)))
+	if resp.Base.ResponseCode != proto.ResponseCode_RESPONSE_CODE_SUCCESS {
+		t.Fatalf("app.delete: %+v", resp)
+	}
+	var out command.DeleteAppResponse
+	if err := json.Unmarshal(resp.Payload, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !out.VolumesDeleted || len(out.Warnings) == 0 {
+		t.Fatalf("honoured volume deletion must be echoed with warnings: %+v", out)
+	}
+
+	// Not requested, or nothing to sweep: never claimed.
+	for name, body := range map[string]string{
+		"not requested": `{"app_id":"app-2"}`,
+		"missing app":   `{"app_id":"ghost","delete_volumes":true}`,
+	} {
+		_ = os.MkdirAll(os.Getenv("AGENT_DATA_DIR")+"/apps-data/app-2", 0o755)
+		resp = d.Dispatch(ctx, envelope(string(command.TypeAppDelete), []byte(body)))
+		out = command.DeleteAppResponse{}
+		if err := json.Unmarshal(resp.Payload, &out); err != nil || out.VolumesDeleted {
+			t.Fatalf("%s: volumes_deleted must be false: %s (%v)", name, resp.Payload, err)
+		}
+	}
+}
+
+func TestDispatchAppDeleteRejectsTraversalID(t *testing.T) {
+	d := newTestDispatcher(t)
+	resp := d.Dispatch(context.Background(), envelope(string(command.TypeAppDelete), []byte(`{"app_id":".."}`)))
+	if resp.Base.ResponseCode == proto.ResponseCode_RESPONSE_CODE_SUCCESS {
+		t.Fatalf("app.delete of %q must fail: %+v", "..", resp)
+	}
+}

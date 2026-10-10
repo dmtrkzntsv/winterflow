@@ -3,6 +3,7 @@ package dockercompose
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"sort"
@@ -23,6 +24,23 @@ const (
 	// wedge all app management.
 	volumeOpTimeout = 2 * time.Minute
 )
+
+// execOutput runs a command and returns stdout. On failure the error carries
+// the trimmed stderr, so warnings say why ("daemon is down"), not just
+// "exit status 1".
+func execOutput(ctx context.Context, name string, args ...string) ([]byte, error) {
+	out, err := exec.CommandContext(ctx, name, args...).Output()
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			if msg := strings.TrimSpace(string(ee.Stderr)); msg != "" {
+				return out, fmt.Errorf("%w: %s", err, msg)
+			}
+		}
+		return out, err
+	}
+	return out, nil
+}
 
 type dockerVolume struct {
 	Name   string `json:"Name"`
@@ -124,11 +142,11 @@ func sortVolumes(vols []command.Volume) {
 func (r *Repository) ListVolumes(ctx context.Context) ([]command.Volume, error) {
 	ctx, cancel := context.WithTimeout(ctx, volumeOpTimeout)
 	defer cancel()
-	lsOut, err := exec.CommandContext(ctx, "docker", "volume", "ls", "--format", "json").Output()
+	lsOut, err := execOutput(ctx, "docker", "volume", "ls", "--format", "json")
 	if err != nil {
 		return nil, fmt.Errorf("docker volume ls: %w", err)
 	}
-	psOut, err := exec.CommandContext(ctx, "docker", "ps", "--all", "--no-trunc", "--format", "json").Output()
+	psOut, err := execOutput(ctx, "docker", "ps", "--all", "--no-trunc", "--format", "json")
 	if err != nil {
 		return nil, fmt.Errorf("docker ps: %w", err)
 	}
@@ -194,7 +212,7 @@ func (r *Repository) sweepAppVolumes(ctx context.Context, appID string) []string
 	}
 	filter := projectLabelFilter(appID)
 
-	if out, err := exec.CommandContext(ctx, "docker", "ps", "-aq", "--filter", filter).Output(); err != nil {
+	if out, err := execOutput(ctx, "docker", "ps", "-aq", "--filter", filter); err != nil {
 		warn("could not list leftover containers", err)
 	} else if ids := strings.Fields(string(out)); len(ids) > 0 {
 		args := append([]string{"rm", "-f"}, ids...)
@@ -203,7 +221,7 @@ func (r *Repository) sweepAppVolumes(ctx context.Context, appID string) []string
 		}
 	}
 
-	out, err := exec.CommandContext(ctx, "docker", "volume", "ls", "-q", "--filter", filter).Output()
+	out, err := execOutput(ctx, "docker", "volume", "ls", "-q", "--filter", filter)
 	if err != nil {
 		warn("could not list volumes", err)
 		return warnings

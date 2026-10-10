@@ -179,10 +179,16 @@ type ControlAppResponse struct {
 
 type DeleteAppRequest struct {
 	AppID string `json:"app_id"`
+	// DeleteVolumes also removes the app's compose-owned Docker volumes
+	// (never external ones). False keeps them, as before.
+	DeleteVolumes bool `json:"delete_volumes,omitempty"`
 }
 
 type DeleteAppResponse struct {
 	AppID string `json:"app_id"`
+	// Warnings lists cleanup steps that failed after the app was removed
+	// (e.g. a volume still in use).
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // --- app.rename ---------------------------------------------------------------

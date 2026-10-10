@@ -44,6 +44,11 @@ const (
 	TypeNetworkCreate Type = "network.create"
 	TypeNetworkDelete Type = "network.delete"
 
+	// Docker volumes.
+	TypeVolumeList   Type = "volume.list"
+	TypeVolumeCreate Type = "volume.create"
+	TypeVolumeDelete Type = "volume.delete"
+
 	// Container images.
 	TypeImageTags Type = "image.tags" // list available registry tags for an image
 

@@ -472,13 +472,19 @@ function VolumesCard({ docker }: { docker: Docker }) {
     void load();
   }, [load]);
 
+  // Single close path: Radix fires onOpenChange only for its own dismissals,
+  // so the Cancel button must go through here to reset the name too.
+  const changeOpen = (o: boolean) => {
+    setOpen(o);
+    if (!o) setName("");
+  };
+
   const add = async () => {
     setBusy(true);
     try {
       await docker.createVolume(name.trim());
       toast.success("Volume created");
-      setOpen(false);
-      setName("");
+      changeOpen(false);
       await load();
     } catch (e) {
       toast.error("Failed to create volume", {
@@ -524,13 +530,7 @@ function VolumesCard({ docker }: { docker: Docker }) {
             </Label>
           </div>
           {isAdmin && (
-            <Dialog
-              open={open}
-              onOpenChange={(o) => {
-                setOpen(o);
-                if (!o) setName("");
-              }}
-            >
+            <Dialog open={open} onOpenChange={changeOpen}>
               <DialogTrigger asChild>
                 <Button size="sm">
                   <Plus className="size-4" /> Create volume
@@ -555,7 +555,7 @@ function VolumesCard({ docker }: { docker: Docker }) {
                   </p>
                 </div>
                 <DialogFooter>
-                  <Button variant="outline" onClick={() => setOpen(false)}>
+                  <Button variant="outline" onClick={() => changeOpen(false)}>
                     Cancel
                   </Button>
                   <Button

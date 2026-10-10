@@ -5,6 +5,7 @@ import (
 
 	"winterflow/internal/infra/transport/bus"
 	"winterflow/internal/infra/transport/codec"
+	"winterflow/internal/infra/transport/grpc/proto"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
 )
@@ -18,11 +19,21 @@ import (
 type InProcessBridge struct {
 	bus        bus.Bus
 	cfg        *config.ServerConfig
-	dispatcher *Dispatcher
+	dispatcher CommandRunner
 	log        *logger.Logger
 }
 
-func NewInProcessBridge(b bus.Bus, cfg *config.ServerConfig, d *Dispatcher, log *logger.Logger) *InProcessBridge {
+// CommandRunner executes one command envelope and returns its correlated
+// reply. *Dispatcher is the production implementation; the API contract
+// suite plugs in a scripted fake agent. Same method set as the gRPC agent's
+// transport Dispatcher interface.
+type CommandRunner interface {
+	Dispatch(ctx context.Context, req *proto.RequestEnvelope) *proto.ResponseEnvelope
+}
+
+var _ CommandRunner = (*Dispatcher)(nil)
+
+func NewInProcessBridge(b bus.Bus, cfg *config.ServerConfig, d CommandRunner, log *logger.Logger) *InProcessBridge {
 	return &InProcessBridge{bus: b, cfg: cfg, dispatcher: d, log: log}
 }
 

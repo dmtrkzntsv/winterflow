@@ -270,6 +270,23 @@ func (uc *UseCase) CheckDomain(ctx context.Context, serverID, domain, excludeApp
 	return out, nil
 }
 
+// heldHostnames is the set of hostnames appID already holds on serverID per
+// the app_domains index (empty for a new app or without the index).
+func (uc *UseCase) heldHostnames(ctx context.Context, serverID, appID string) (map[string]bool, error) {
+	held := map[string]bool{}
+	if uc.domains == nil || appID == "" {
+		return held, nil
+	}
+	byApp, err := uc.domains.ListForServer(ctx, serverID)
+	if err != nil {
+		return nil, err
+	}
+	for _, d := range byApp[appID] {
+		held[d.Domain] = true
+	}
+	return held, nil
+}
+
 // winningRegistration is the registration among regs covering host (exact
 // over wildcard), or nil.
 func winningRegistration(regs []model.RegisteredDomain, host string) *model.RegisteredDomain {
@@ -331,7 +348,20 @@ func (uc *UseCase) SaveApp(ctx context.Context, userID, serverID string, app mod
 				uc.log.Error("SaveApp: list registered domains", "error", err, "server_id", serverID)
 				return "", err
 			}
+			held, err := uc.heldHostnames(ctx, serverID, app.ID)
+			if err != nil {
+				uc.log.Error("SaveApp: list held hostnames", "error", err, "app_id", app.ID)
+				return "", err
+			}
 			for _, host := range ing.DomainNames() {
+				// Hostnames the app already holds are grandfathered: the
+				// registration index may still be empty after an upgrade
+				// until the first domain.list reconcile, and domain.delete is
+				// refused while an app uses a covered hostname. New or
+				// changed hostnames still need coverage.
+				if held[host] {
+					continue
+				}
 				if winningRegistration(regs, host) == nil {
 					return "", model.NotCoveredError(host)
 				}

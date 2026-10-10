@@ -93,11 +93,14 @@ type fakeDomainRepo struct {
 	deleted     string
 	synced      string
 	claimServer string // serverID of the last FindClaims
+	held        map[string][]model.AppDomainInfo
+	heldErr     error
+	claimErr    error
 }
 
 func (f *fakeDomainRepo) FindClaims(_ context.Context, serverID string, _ []string, _ string) ([]model.DomainClaim, error) {
 	f.claimServer = serverID
-	return f.claims, nil
+	return f.claims, f.claimErr
 }
 func (f *fakeDomainRepo) ReplaceForApp(_ context.Context, appID, serverID string, ing *model.Ingress) error {
 	f.replaced.appID, f.replaced.serverID, f.replaced.ing = appID, serverID, ing
@@ -112,7 +115,7 @@ func (f *fakeDomainRepo) ReplaceForServer(_ context.Context, serverID string, _ 
 	return nil
 }
 func (f *fakeDomainRepo) ListForServer(_ context.Context, _ string) (map[string][]model.AppDomainInfo, error) {
-	return nil, nil
+	return f.held, f.heldErr
 }
 
 const ingressConfig = `{"name":"demo","ingress":{"domains":[{"domain":"blog.example.com","upstream_port":8088,"ssl":true}],"redirects":[]}}`

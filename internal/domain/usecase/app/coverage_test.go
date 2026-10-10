@@ -8,6 +8,7 @@ import (
 
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
+	"winterflow/pkg/logger"
 )
 
 // ingressWith is an app config whose ingress routes host and redirects
@@ -96,5 +97,105 @@ func TestCheckDomainReportsTheWinningRegistration(t *testing.T) {
 		if got != want {
 			t.Errorf("%s: registration %q, want %q", host, got, want)
 		}
+	}
+}
+
+// errServerDomains fails every ListForServer.
+type errServerDomains struct{ *fakeServerDomains }
+
+func (errServerDomains) ListForServer(context.Context, string) ([]model.RegisteredDomain, error) {
+	return nil, errors.New("db down")
+}
+
+func TestSaveAppGrandfathersHeldHostnames(t *testing.T) {
+	ctx := context.Background()
+	// Right after an upgrade the registration index is still empty, but the
+	// app_domains index already lists what existing apps serve.
+	held := &fakeDomainRepo{held: map[string][]model.AppDomainInfo{
+		"app-1": {{Domain: "shop.example.com", Kind: "route"}},
+	}}
+	newUC := func(disp *recordingDispatcher, claims []model.DomainClaim) *UseCase {
+		held.claims = claims
+		return NewUseCase(&Deps{
+			CommandDispatcher:      disp,
+			AppRepository:          noopAppRepo{},
+			AppDomainRepository:    held,
+			ServerDomainRepository: newFakeServerDomains(),
+			Log:                    logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"}),
+		})
+	}
+	save := func(uc *UseCase, appID string, cfg []byte) error {
+		_, err := uc.SaveApp(ctx, "u", "srv-1", model.App{ID: appID, Name: "demo"}, command.AppPayload{Config: cfg}, false)
+		return err
+	}
+
+	// The unchanged hostname passes.
+	disp := &recordingDispatcher{}
+	if err := save(newUC(disp, nil), "app-1", ingressWith("shop.example.com", "")); err != nil || len(disp.all) != 1 {
+		t.Fatalf("unchanged host: err %v, dispatches %d", err, len(disp.all))
+	}
+	// A new hostname on the same app still needs coverage.
+	disp = &recordingDispatcher{}
+	err := save(newUC(disp, nil), "app-1", ingressWith("shop.example.com", "www.example.com"))
+	if !errors.Is(err, model.ErrDomainNotCovered) || len(disp.all) != 0 {
+		t.Fatalf("new host: err %v, dispatches %d", err, len(disp.all))
+	}
+	// Another app cannot take the held hostname this way: it holds nothing,
+	// so the hostname still needs coverage.
+	disp = &recordingDispatcher{}
+	claim := []model.DomainClaim{{Domain: "shop.example.com", AppName: "Shop", ServerName: "s"}}
+	err = save(newUC(disp, claim), "app-2", ingressWith("shop.example.com", ""))
+	if !errors.Is(err, model.ErrDomainNotCovered) || len(disp.all) != 0 {
+		t.Fatalf("other app: err %v", err)
+	}
+	// Even a holder is still refused when someone else claims the hostname.
+	err = save(newUC(disp, claim), "app-1", ingressWith("shop.example.com", ""))
+	if !errors.Is(err, model.ErrDomainTaken) || len(disp.all) != 0 {
+		t.Fatalf("claimed host: err %v", err)
+	}
+}
+
+func TestSaveAppSurfacesIndexErrors(t *testing.T) {
+	ctx := context.Background()
+	cfg := command.AppPayload{Config: ingressWith("shop.example.com", "")}
+	base := Deps{
+		AppRepository: noopAppRepo{},
+		Log:           logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"}),
+	}
+	cases := map[string]Deps{
+		"registrations": func() Deps {
+			d := base
+			d.ServerDomainRepository = errServerDomains{newFakeServerDomains()}
+			return d
+		}(),
+		"held hostnames": func() Deps {
+			d := base
+			d.ServerDomainRepository = newFakeServerDomains()
+			d.AppDomainRepository = &fakeDomainRepo{heldErr: errors.New("db down")}
+			return d
+		}(),
+	}
+	for name, d := range cases {
+		disp := &recordingDispatcher{}
+		d.CommandDispatcher = disp
+		_, err := NewUseCase(&d).SaveApp(ctx, "u", "srv-1", model.App{ID: "app-1", Name: "demo"}, cfg, false)
+		if err == nil || errors.Is(err, model.ErrDomainNotCovered) || len(disp.all) != 0 {
+			t.Errorf("%s: err %v, dispatches %d", name, err, len(disp.all))
+		}
+	}
+}
+
+func TestCheckDomainSurfacesIndexErrors(t *testing.T) {
+	ctx := context.Background()
+	logr := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
+	regErr := NewUseCase(&Deps{AppRepository: noopAppRepo{}, Log: logr,
+		ServerDomainRepository: errServerDomains{newFakeServerDomains()}})
+	if _, err := regErr.CheckDomain(ctx, "srv-1", "shop.example.com", ""); err == nil {
+		t.Error("registration list error swallowed")
+	}
+	claimErr := NewUseCase(&Deps{AppRepository: noopAppRepo{}, Log: logr,
+		AppDomainRepository: &fakeDomainRepo{claimErr: errors.New("db down")}})
+	if _, err := claimErr.CheckDomain(ctx, "srv-1", "shop.example.com", ""); err == nil {
+		t.Error("claim lookup error swallowed")
 	}
 }

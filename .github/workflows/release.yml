@@ -1,11 +1,17 @@
-# Publishes a GitHub release with prebuilt binaries on every push to main.
+# Publishes a GitHub release with prebuilt binaries for every push to main
+# that passed CI: it runs when the `ci` workflow (ci.yml) completes
+# successfully for a push to main, and releases exactly the commit CI tested.
 # Versions are calver: vYYMMDD.{build} (UTC date, build number counting up
 # from 1 within the day) — computed and tagged here automatically.
 # Asset naming and platforms live in .goreleaser.yaml.
 name: release
 
 on:
-  push:
+  workflow_run:
+    workflows:
+      - ci
+    types:
+      - completed
     branches:
       - main
   workflow_dispatch:
@@ -21,10 +27,20 @@ concurrency:
 
 jobs:
   goreleaser:
+    # Only a green CI run of a push to main releases. The event check matters:
+    # a pull request whose head branch is also named "main" (e.g. from a
+    # fork) completes ci with head_branch == main too.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
+          # The commit CI tested (workflow_run runs on the default branch's
+          # latest commit otherwise); a manual dispatch uses the chosen ref.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           # All history and tags: needed to count today's builds and for the
           # changelog between releases.
           fetch-depth: 0
@@ -42,9 +58,6 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-
-      - name: Test
-        run: go test ./...
 
       - name: Tag calver release
         run: |

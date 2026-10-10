@@ -8,7 +8,8 @@ import (
 )
 
 // TestMain sets the process-wide environment the server reads (every test
-// shares it, so tests can run in parallel), then runs the suite.
+// shares it, so tests can run in parallel), runs the suite, then enforces
+// the coverage guard: every route in the table must have been called.
 func TestMain(m *testing.M) {
 	flag.Parse()
 	tmp, err := os.MkdirTemp("", "wf-contract-")
@@ -28,5 +29,11 @@ func TestMain(m *testing.M) {
 	}
 	code := m.Run()
 	os.RemoveAll(tmp)
+	if code == 0 && guardApplies() {
+		if missing := missingRoutes(); len(missing) > 0 {
+			fmt.Fprintln(os.Stderr, coverageReport(missing))
+			code = 1
+		}
+	}
 	os.Exit(code)
 }

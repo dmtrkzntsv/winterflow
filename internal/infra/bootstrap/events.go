@@ -29,12 +29,6 @@ type capabilitiesEvent struct {
 	Features     map[string]bool   `json:"features"`
 }
 
-// appsStatusPayload is the apps_status notification body pushed to browsers.
-type appsStatusPayload struct {
-	ServerID string              `json:"server_id"`
-	Apps     []command.AppStatus `json:"apps"`
-}
-
 // eventStore is the slice of the server repository the event sink needs.
 type eventStore interface {
 	TouchLastSeen(ctx context.Context, serverID string) error
@@ -75,7 +69,7 @@ func (f *statusFanout) serverStatus(ctx context.Context, serverID string, livene
 func (f *statusFanout) appsStatus(ctx context.Context, serverID string, apps []command.AppStatus) {
 	f.send(ctx, serverID, model.Notification{
 		Type:      model.NotificationAppsStatus,
-		Payload:   appsStatusPayload{ServerID: serverID, Apps: apps},
+		Payload:   command.AppsStatusPayload{ServerID: serverID, Apps: apps},
 		Timestamp: time.Now(),
 	})
 }

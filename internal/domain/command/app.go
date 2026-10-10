@@ -177,6 +177,14 @@ type GetAppsStatusResponse struct {
 	Apps []AppStatus `json:"apps"`
 }
 
+// AppsStatusPayload is the payload of an apps_status SSE notification
+// (model.NotificationAppsStatus): one server's latest container status,
+// pushed to the org's members when it changes.
+type AppsStatusPayload struct {
+	ServerID string      `json:"server_id"`
+	Apps     []AppStatus `json:"apps"`
+}
+
 // --- apps.list ----------------------------------------------------------------
 
 // ListAppsRequest asks the agent for the apps it actually has deployed (its

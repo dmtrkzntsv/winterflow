@@ -12,7 +12,7 @@ const (
 	// server (Ref is empty; Payload is ServerStatusPayload).
 	NotificationServerStatus NotificationType = "server_status"
 	// NotificationAppsStatus is an unsolicited container-status report for a
-	// server's apps (Ref is empty; Payload is {server_id, apps}).
+	// server's apps (Ref is empty; Payload is command.AppsStatusPayload).
 	NotificationAppsStatus NotificationType = "apps_status"
 )
 

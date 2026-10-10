@@ -104,7 +104,7 @@ func TestAppsStatusEventFansOutAppsAndLiveness(t *testing.T) {
 		if n.Type != model.NotificationAppsStatus {
 			continue
 		}
-		p, ok := n.Payload.(appsStatusPayload)
+		p, ok := n.Payload.(command.AppsStatusPayload)
 		if !ok || p.ServerID != "srv-1" || len(p.Apps) != 1 || p.Apps[0].AppID != "app-1" {
 			t.Fatalf("apps payload = %#v", n.Payload)
 		}

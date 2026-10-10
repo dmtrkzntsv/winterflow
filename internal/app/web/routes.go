@@ -68,12 +68,13 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 		NotificationManager: d.NotificationManager,
 	})
 	appsAPI := happ.NewHandler(&happ.Deps{
-		Logger:              d.Log,
-		CommandDispatcher:   d.CommandDispatcher,
-		AppRepository:       d.AppRepository,
-		AppDomainRepository: d.AppDomainRepository,
-		StatusCache:         d.StatusCache,
-		Servers:             d.ServerRepository,
+		Logger:                 d.Log,
+		CommandDispatcher:      d.CommandDispatcher,
+		AppRepository:          d.AppRepository,
+		AppDomainRepository:    d.AppDomainRepository,
+		ServerDomainRepository: d.ServerDomainRepository,
+		StatusCache:            d.StatusCache,
+		Servers:                d.ServerRepository,
 	})
 	dockerAPI := hdocker.NewHandler(&hdocker.Deps{
 		Logger:            d.Log,

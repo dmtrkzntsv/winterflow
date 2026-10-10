@@ -176,3 +176,16 @@ type AppDomain struct {
 	App    *App    `bun:"rel:belongs-to,join:app_id=app_id"`
 	Server *Server `bun:"rel:belongs-to,join:server_id=server_id"`
 }
+
+// ServerDomain is one row of the server_domains index: a domain registered on
+// an agent, mirrored from domain.list / domain.create / domain.delete.
+type ServerDomain struct {
+	bun.BaseModel `bun:"table:server_domains"`
+
+	ServerID  string          `bun:"server_id,pk" json:"server_id"`
+	Name      string          `bun:"name,pk" json:"name"`
+	TLS       string          `bun:"tls,notnull" json:"tls"`
+	NotAfter  *types.DateTime `bun:"not_after,nullzero" json:"not_after"`
+	Issuer    string          `bun:"issuer,notnull" json:"issuer"`
+	UpdatedAt types.DateTime  `bun:"updated_at,notnull" json:"updated_at"`
+}

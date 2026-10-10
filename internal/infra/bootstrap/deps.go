@@ -22,7 +22,9 @@ type Deps struct {
 	ServerRepository    port.ServerRepository
 	AppRepository       port.AppRepository
 	AppDomainRepository port.AppDomainRepository
-	CommandDispatcher   port.CommandDispatcher
-	NotificationManager port.NotificationManager
-	StatusCache         *status.Cache
+	// ServerDomainRepository indexes each server's domain registrations.
+	ServerDomainRepository port.ServerDomainRepository
+	CommandDispatcher      port.CommandDispatcher
+	NotificationManager    port.NotificationManager
+	StatusCache            *status.Cache
 }

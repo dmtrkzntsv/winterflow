@@ -104,6 +104,25 @@ func (h *Handler) Routes(api.Guards) []api.Route {
 			Request: RenameAppRequest{}, Accepted: true, Result: command.RenameAppResponse{}, Errors: server,
 		},
 		{
+			Method: http.MethodGet, Path: "/api/v1/domain/list", Handler: h.ListRegisteredDomains, Auth: api.User,
+			Summary: "List the domains registered on a server, with the apps using each", Tag: "domains",
+			Query: api.ServerQuery{}, Accepted: true, Result: command.ListDomainsResponse{}, Errors: server,
+		},
+		{
+			Method: http.MethodPost, Path: "/api/v1/domain/create", Handler: h.CreateDomain, Auth: api.User,
+			Summary: "Register a domain, or replace its TLS mode or certificate", Tag: "domains",
+			Description: "In certificate mode `certificate` is the PEM chain and `key` the PEM private key " +
+				"ECIES-encrypted with the server's public key (GET /api/v1/server/get-public-key).",
+			Query: api.ServerQuery{}, Request: command.CreateDomainRequest{},
+			Accepted: true, Result: command.CreateDomainResponse{}, Errors: server,
+		},
+		{
+			Method: http.MethodPost, Path: "/api/v1/domain/delete", Handler: h.DeleteDomain, Auth: api.User,
+			Summary: "Remove a registered domain no app uses", Tag: "domains",
+			Query: api.ServerQuery{}, Request: command.DeleteDomainRequest{},
+			Accepted: true, Result: command.DeleteDomainResponse{}, Errors: server,
+		},
+		{
 			Method: http.MethodGet, Path: "/api/v1/domains/check", Handler: h.CheckDomain, Auth: api.User,
 			Summary: "Check whether a hostname is free on a server", Tag: "apps",
 			Query: CheckDomainQuery{}, Response: CheckDomainResponse{}, Errors: server,

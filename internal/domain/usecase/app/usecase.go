@@ -13,25 +13,28 @@ import (
 )
 
 type UseCase struct {
-	dispatcher port.CommandDispatcher
-	repo       port.AppRepository
-	domains    port.AppDomainRepository
-	log        *logger.Logger
+	dispatcher    port.CommandDispatcher
+	repo          port.AppRepository
+	domains       port.AppDomainRepository
+	serverDomains port.ServerDomainRepository
+	log           *logger.Logger
 }
 
 type Deps struct {
-	CommandDispatcher   port.CommandDispatcher
-	AppRepository       port.AppRepository
-	AppDomainRepository port.AppDomainRepository
-	Log                 *logger.Logger
+	CommandDispatcher      port.CommandDispatcher
+	AppRepository          port.AppRepository
+	AppDomainRepository    port.AppDomainRepository
+	ServerDomainRepository port.ServerDomainRepository
+	Log                    *logger.Logger
 }
 
 func NewUseCase(d *Deps) *UseCase {
 	return &UseCase{
-		dispatcher: d.CommandDispatcher,
-		repo:       d.AppRepository,
-		domains:    d.AppDomainRepository,
-		log:        d.Log,
+		dispatcher:    d.CommandDispatcher,
+		repo:          d.AppRepository,
+		domains:       d.AppDomainRepository,
+		serverDomains: d.ServerDomainRepository,
+		log:           d.Log,
 	}
 }
 
@@ -75,6 +78,13 @@ func (uc *UseCase) RefreshApps(ctx context.Context, userID, serverID string) (st
 			if uc.domains != nil {
 				if err := uc.domains.ReplaceForServer(context.Background(), serverID, listed.Apps); err != nil {
 					uc.log.Error("RefreshApps: sync domain rows", "error", err, "server_id", serverID)
+				}
+			}
+			// Registrations change with the apps' agent (upgrade seeding,
+			// another API replica): re-read them with every reconcile.
+			if uc.serverDomains != nil {
+				if _, err := uc.ListServerDomains(context.Background(), userID, serverID); err != nil {
+					uc.log.Error("RefreshApps: dispatch domain.list", "error", err, "server_id", serverID)
 				}
 			}
 		},

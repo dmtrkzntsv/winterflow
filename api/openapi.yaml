@@ -816,6 +816,192 @@ paths:
       summary: Whether the instance is fresh and registration is open
       tags:
       - auth
+  /api/v1/domain/create:
+    post:
+      description: In certificate mode `certificate` is the PEM chain and `key` the
+        PEM private key ECIES-encrypted with the server's public key (GET /api/v1/server/get-public-key).
+      operationId: domainCreate
+      parameters:
+      - description: Target server id.
+        in: query
+        name: server_id
+        required: true
+        schema:
+          description: Target server id.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDomainRequest'
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Register a domain, or replace its TLS mode or certificate
+      tags:
+      - domains
+      x-operation-result:
+        $ref: '#/components/schemas/CreateDomainResponse'
+  /api/v1/domain/delete:
+    post:
+      operationId: domainDelete
+      parameters:
+      - description: Target server id.
+        in: query
+        name: server_id
+        required: true
+        schema:
+          description: Target server id.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteDomainRequest'
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Remove a registered domain no app uses
+      tags:
+      - domains
+      x-operation-result:
+        $ref: '#/components/schemas/DeleteDomainResponse'
+  /api/v1/domain/list:
+    get:
+      operationId: domainList
+      parameters:
+      - description: Target server id.
+        in: query
+        name: server_id
+        required: true
+        schema:
+          description: Target server id.
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: List the domains registered on a server, with the apps using each
+      tags:
+      - domains
+      x-operation-result:
+        $ref: '#/components/schemas/ListDomainsResponse'
   /api/v1/domains/check:
     get:
       operationId: domainsCheck
@@ -2680,6 +2866,24 @@ components:
       - app_id
       - action
       type: object
+    CreateDomainRequest:
+      properties:
+        certificate:
+          type: string
+        key:
+          type: string
+        name:
+          type: string
+        tls:
+          type: string
+      type: object
+    CreateDomainResponse:
+      properties:
+        domain:
+          $ref: '#/components/schemas/Domain'
+      required:
+      - domain
+      type: object
     CreateNetworkRequest:
       properties:
         driver:
@@ -2798,6 +3002,18 @@ components:
       required:
       - app_id
       type: object
+    DeleteDomainRequest:
+      properties:
+        name:
+          type: string
+      type: object
+    DeleteDomainResponse:
+      properties:
+        name:
+          type: string
+      required:
+      - name
+      type: object
     DeleteNetworkRequest:
       properties:
         name:
@@ -2838,6 +3054,30 @@ components:
           type: string
       required:
       - name
+      type: object
+    Domain:
+      properties:
+        apps:
+          items:
+            type: string
+          type:
+          - array
+          - "null"
+        issuer:
+          type: string
+        name:
+          type: string
+        not_after:
+          format: date-time
+          type:
+          - "null"
+          - string
+        tls:
+          type: string
+      required:
+      - name
+      - tls
+      - apps
       type: object
     DomainClaim:
       properties:
@@ -3082,6 +3322,17 @@ components:
           - "null"
       required:
       - apps
+      type: object
+    ListDomainsResponse:
+      properties:
+        domains:
+          items:
+            $ref: '#/components/schemas/Domain'
+          type:
+          - array
+          - "null"
+      required:
+      - domains
       type: object
     ListNetworksResponse:
       properties:

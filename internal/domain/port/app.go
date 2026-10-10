@@ -42,6 +42,20 @@ type AppDomainRepository interface {
 	ListForServer(ctx context.Context, serverID string) (map[string][]model.AppDomainInfo, error)
 }
 
+// ServerDomainRepository is the DB-backed index of each server's domain
+// registrations (the agent's domains/ dir is the source of truth): what
+// save-app checks ingress hostnames against.
+type ServerDomainRepository interface {
+	// ListForServer returns the server's registrations sorted by name.
+	ListForServer(ctx context.Context, serverID string) ([]model.RegisteredDomain, error)
+	// Upsert records a registration the agent confirmed creating.
+	Upsert(ctx context.Context, serverID string, d model.RegisteredDomain) error
+	// Delete drops a registration the agent confirmed deleting.
+	Delete(ctx context.Context, serverID, name string) error
+	// ReplaceForServer makes the index mirror a domain.list answer.
+	ReplaceForServer(ctx context.Context, serverID string, ds []model.RegisteredDomain) error
+}
+
 // IngressManager owns the embedded reverse proxy. Implementations must be
 // safe for concurrent use and must never let an ingress failure propagate as
 // a command failure.

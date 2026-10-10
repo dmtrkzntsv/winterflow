@@ -19,9 +19,7 @@ import (
 )
 
 func (s *Server) registerRoutes() {
-	s.Router.Get("/_/health", func(w http.ResponseWriter, r *http.Request) {
-		util.Success(w, "healthy", nil)
-	})
+	s.Router.Get("/_/health", health)
 
 	// Auth endpoints are the API's only bcrypt-priced requests — throttle them
 	// per client IP so credential floods answer 429 instead of burning CPU.
@@ -141,4 +139,9 @@ func (s *Server) registerRoutes() {
 	} else {
 		s.Logger.Info("no embedded web UI build; serving API only (run `make web-build` before building the binary)")
 	}
+}
+
+// health is the liveness probe: always 200 {"success":true,"message":"healthy"}.
+func health(w http.ResponseWriter, _ *http.Request) {
+	util.Success(w, "healthy", nil)
 }

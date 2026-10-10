@@ -50,8 +50,10 @@ type UserRepository interface {
 	ListMembers(ctx context.Context, orgID string) ([]model.Member, error)
 	// RemoveMember deletes the member's user row outright (cascades to
 	// credentials, accounts, PATs). model.ErrorUserNotFound when the user is
-	// not a member of orgID.
-	RemoveMember(ctx context.Context, orgID, userID string) error
+	// not a member of orgID, or when callerID (the member removing them) no
+	// longer is: that is checked under a lock so concurrent mutual removals
+	// cannot empty the org.
+	RemoveMember(ctx context.Context, orgID, callerID, userID string) error
 
 	// RegisterLocalUser is open self-signup: user + their own organization
 	// (owner) + credentials. model.ErrEmailTaken on duplicates.

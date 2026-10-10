@@ -20,7 +20,7 @@ type OrgStore interface {
 	PrimaryOrganizationID(ctx context.Context, userID string) (string, error)
 	CreateMemberUser(ctx context.Context, orgID, name, email, tempPassword string) (model.User, error)
 	ListMembers(ctx context.Context, orgID string) ([]model.Member, error)
-	RemoveMember(ctx context.Context, orgID, userID string) error
+	RemoveMember(ctx context.Context, orgID, callerID, userID string) error
 	SetPassword(ctx context.Context, userID, password string, mustChange bool) error
 	GetCredentials(ctx context.Context, userID string) (model.Credentials, error)
 	GetOrganization(ctx context.Context, orgID string) (model.Organization, error)
@@ -44,8 +44,9 @@ func NewHandler(d *Deps) *Handler {
 const tempPasswordLen = 16
 const passwordAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
-// randomPassword returns a crypto/rand temp password (shown to the admin
-// once; stored only as a bcrypt hash with must_change_password set).
+// randomPassword returns a crypto/rand temp password (shown once to the
+// member who created it; stored only as a bcrypt hash with
+// must_change_password set).
 func randomPassword() (string, error) {
 	buf := make([]byte, tempPasswordLen)
 	if _, err := rand.Read(buf); err != nil {
@@ -179,7 +180,7 @@ func (h *Handler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 		webutil.Error(w, "you cannot remove yourself", nil)
 		return
 	}
-	if err := h.users.RemoveMember(r.Context(), orgID, req.UserID); err != nil {
+	if err := h.users.RemoveMember(r.Context(), orgID, callerID, req.UserID); err != nil {
 		webutil.Error(w, "failed to remove member", nil)
 		return
 	}

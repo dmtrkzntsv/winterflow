@@ -20,6 +20,7 @@ type fakeOrgStore struct {
 	members    []model.Member
 	created    []string
 	removed    []string
+	removedBy  []string
 	resetPw    []string
 	takenEmail string
 }
@@ -37,11 +38,12 @@ func (f *fakeOrgStore) CreateMemberUser(_ context.Context, orgID, name, email, t
 func (f *fakeOrgStore) ListMembers(context.Context, string) ([]model.Member, error) {
 	return f.members, nil
 }
-func (f *fakeOrgStore) RemoveMember(_ context.Context, _, userID string) error {
+func (f *fakeOrgStore) RemoveMember(_ context.Context, _, callerID, userID string) error {
 	if userID == "not-in-org" {
 		return model.ErrorUserNotFound
 	}
 	f.removed = append(f.removed, userID)
+	f.removedBy = append(f.removedBy, callerID)
 	return nil
 }
 func (f *fakeOrgStore) SetPassword(_ context.Context, userID, _ string, mustChange bool) error {
@@ -161,6 +163,10 @@ func TestRemoveMember(t *testing.T) {
 	}
 	if len(f.removed) != 1 || f.removed[0] != "m-1" {
 		t.Errorf("removed = %v, want [m-1]", f.removed)
+	}
+	// The caller is handed to the store so it can re-verify them under lock.
+	if len(f.removedBy) != 1 || f.removedBy[0] != "admin-1" {
+		t.Errorf("removedBy = %v, want [admin-1]", f.removedBy)
 	}
 }
 

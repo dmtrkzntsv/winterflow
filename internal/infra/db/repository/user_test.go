@@ -321,7 +321,7 @@ func TestRemoveMemberAnyMemberOnlyInOrg(t *testing.T) {
 	}
 
 	// A user of another org is not a member here: refused, and untouched.
-	if err := repo.RemoveMember(ctx, orgID, outsider.ID); !errors.Is(err, model.ErrorUserNotFound) {
+	if err := repo.RemoveMember(ctx, orgID, creator.ID, outsider.ID); !errors.Is(err, model.ErrorUserNotFound) {
 		t.Errorf("remove outsider err = %v, want ErrorUserNotFound", err)
 	}
 	if _, err := repo.VerifyLocalCredentials(ctx, "eve@z.io", "evepass-1234"); err != nil {
@@ -330,7 +330,7 @@ func TestRemoveMemberAnyMemberOnlyInOrg(t *testing.T) {
 
 	// No owner rule: the org's creator can be removed like anyone else, and
 	// the org lives on with the remaining member.
-	if err := repo.RemoveMember(ctx, orgID, creator.ID); err != nil {
+	if err := repo.RemoveMember(ctx, orgID, m.ID, creator.ID); err != nil {
 		t.Fatalf("remove creator: %v", err)
 	}
 	members, err := repo.ListMembers(ctx, orgID)
@@ -339,6 +339,33 @@ func TestRemoveMemberAnyMemberOnlyInOrg(t *testing.T) {
 	}
 	if got, err := repo.PrimaryOrganizationID(ctx, m.ID); err != nil || got != orgID {
 		t.Errorf("remaining member's org = %q, %v; want %q", got, err, orgID)
+	}
+}
+
+// Two members removing each other concurrently must not empty the org: once
+// the caller itself has been removed, its pending removal is refused.
+func TestRemoveMemberRefusesRemovedCaller(t *testing.T) {
+	repo := newUserRepo(t)
+	ctx := context.Background()
+	a, _ := repo.BootstrapLocalAdmin(ctx, "", "a@r.io", "bootpass-123")
+	orgID, _ := repo.PrimaryOrganizationID(ctx, a.ID)
+	b, _ := repo.CreateMemberUser(ctx, orgID, "B", "b@r.io", "temp-password1")
+
+	// B removes A first; A's in-flight request to remove B then arrives.
+	if err := repo.RemoveMember(ctx, orgID, b.ID, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.RemoveMember(ctx, orgID, a.ID, b.ID); !errors.Is(err, model.ErrorUserNotFound) {
+		t.Fatalf("removal by a removed caller err = %v, want ErrorUserNotFound", err)
+	}
+	members, err := repo.ListMembers(ctx, orgID)
+	if err != nil || len(members) != 1 || members[0].ID != b.ID {
+		t.Fatalf("members = %+v, %v; want only B", members, err)
+	}
+	// A caller from another org is not a member here either.
+	other, _ := repo.RegisterLocalUser(ctx, "Eve", "eve@r.io", "evepass-1234")
+	if err := repo.RemoveMember(ctx, orgID, other.ID, b.ID); !errors.Is(err, model.ErrorUserNotFound) {
+		t.Errorf("foreign caller err = %v, want ErrorUserNotFound", err)
 	}
 }
 
@@ -353,7 +380,7 @@ func TestRemoveMemberDeletesUserAndTokens(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := repo.RemoveMember(ctx, orgID, m.ID); err != nil {
+	if err := repo.RemoveMember(ctx, orgID, admin.ID, m.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repo.VerifyLocalCredentials(ctx, "m@w.io", "temp-password1"); !errors.Is(err, model.ErrInvalidCredentials) {

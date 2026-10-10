@@ -16,6 +16,7 @@ import (
 	"winterflow/pkg/util"
 
 	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/dialect"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -543,8 +544,26 @@ func (r *DbUserRepository) ListMembers(ctx context.Context, orgID string) ([]mod
 // Only a member of orgID can be removed: anyone else is
 // model.ErrorUserNotFound and stays untouched. Safe to delete the user
 // itself because an account belongs to exactly one org.
-func (r *DbUserRepository) RemoveMember(ctx context.Context, orgID, userID string) error {
+//
+// callerID is the member doing the removing. Their own membership row is
+// locked and re-verified inside the transaction, so two members removing
+// each other concurrently cannot empty the org: the second removal finds its
+// caller gone and is refused with model.ErrorUserNotFound.
+func (r *DbUserRepository) RemoveMember(ctx context.Context, orgID, callerID, userID string) error {
 	return r.db.Transaction(ctx, func(tx bun.IDB) error {
+		var caller models.OrganizationUser
+		callerQ := tx.NewSelect().Model(&caller).
+			Where("organization_id = ? AND user_id = ?", orgID, callerID)
+		// SQLite has no row locks (its writers are serialized instead).
+		if tx.Dialect().Name() == dialect.PG {
+			callerQ = callerQ.For("UPDATE")
+		}
+		if err := callerQ.Scan(ctx); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return model.ErrorUserNotFound
+			}
+			return err
+		}
 		member, err := tx.NewSelect().Model((*models.OrganizationUser)(nil)).
 			Where("organization_id = ? AND user_id = ?", orgID, userID).
 			Exists(ctx)

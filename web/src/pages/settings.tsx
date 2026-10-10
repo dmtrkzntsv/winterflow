@@ -504,8 +504,11 @@ function VolumeOwner({ volume, appName }: { volume: Volume; appName?: string }) 
   }
   if (volume.orphan) {
     return (
-      <span className="text-muted-foreground" title={volume.project}>
-        Deleted app
+      <span
+        className="text-muted-foreground"
+        title={`No app ${volume.app_id} on this server`}
+      >
+        Not found
       </span>
     );
   }
@@ -807,8 +810,9 @@ function VolumesCard({ docker }: { docker: Docker }) {
             </div>
             {orphanCount > 0 && (
               <p className="mb-3 text-xs text-muted-foreground">
-                Orphaned volumes were created by a Winterflow app that no longer
-                exists on this server. Their data stays until you delete them.
+                Orphaned volumes carry a Winterflow app label, but that app isn't on
+                this server — it was deleted, or the volume belongs to another
+                Winterflow install on the same Docker host. Check before deleting.
               </p>
             )}
             {visible.length === 0 ? (

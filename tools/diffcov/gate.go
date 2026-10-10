@@ -13,12 +13,19 @@ type Coverage interface {
 	Has(file string) bool
 }
 
+// packageAware is implemented by reports that can tell whether a file's
+// package is covered even when the file itself has no data. Go needs it: a
+// file with no statements (types, consts, interfaces) yields no blocks.
+type packageAware interface {
+	HasPackage(file string) bool
+}
+
 // Result is one language's diff-coverage outcome.
 type Result struct {
 	Lang      string
 	Covered   int      // executable changed lines that ran
 	Total     int      // executable changed lines
-	WithData  int      // changed files the report knows
+	WithData  int      // changed files the report knows (Go: or whose package it knows)
 	Uncovered []string // "file:line", sorted
 	NoData    []string // changed files the report doesn't know, sorted
 }
@@ -55,6 +62,11 @@ func Evaluate(changed map[string][]int, reports map[string]Coverage) []Result {
 		res := results[lang]
 		if !rep.Has(f) {
 			res.NoData = append(res.NoData, f)
+			// Listed as no-data, but a file whose package the report knows is
+			// merely statement-free, not evidence of a path mismatch.
+			if pa, ok := rep.(packageAware); ok && pa.HasPackage(f) {
+				res.WithData++
+			}
 			continue
 		}
 		res.WithData++

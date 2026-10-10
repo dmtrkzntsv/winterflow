@@ -30,7 +30,7 @@ func git(t *testing.T, dir string, args ...string) {
 	cmd.Env = append(os.Environ(),
 		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com",
 		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com",
-		"GIT_CONFIG_NOSYSTEM=1")
+		"GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
@@ -136,7 +136,7 @@ func TestRunGateAllNoData(t *testing.T) {
 	gateRepo(t)
 	// The report knows neither changed file (e.g. a wrong --lcov-root or
 	// absolute lcov paths): that is an input error, not a pass.
-	write(t, ".", "cover.out", "mode: atomic\nexample.com/m/other.go:1.1,2.2 1 1\n")
+	write(t, ".", "cover.out", "mode: atomic\nexample.com/m/sub/other.go:1.1,2.2 1 1\n")
 	write(t, ".", "lcov.info", "SF:/abs/elsewhere/y.ts\nDA:1,1\nend_of_record\n")
 	for name, args := range map[string][]string{
 		"go":  {"--base", "base", "--go", "cover.out"},
@@ -151,10 +151,25 @@ func TestRunGateAllNoData(t *testing.T) {
 		}
 	}
 
-	// Some changed files with data, others without: today's behaviour.
-	write(t, ".", "cover.out", "mode: atomic\nexample.com/m/a.go:3.14,5.2 1 1\n")
+	// A changed Go file with no statements (types only) has no blocks, but
+	// its package is in the profile: not a path mismatch.
+	write(t, ".", "cover.out", "mode: atomic\nexample.com/m/b.go:1.1,2.2 1 1\n")
 	var out, errb bytes.Buffer
 	if code := run([]string{"--base", "base", "--go", "cover.out"}, &out, &errb); code != 0 {
-		t.Fatalf("exit %d, want 0\n%s%s", code, out.String(), errb.String())
+		t.Fatalf("type-only: exit %d, want 0\n%s%s", code, out.String(), errb.String())
+	}
+
+	// Mixed: a.go has data, the new pkg/b.go does not. Today's behaviour.
+	write(t, ".", "pkg/b.go", "package pkg\n")
+	git(t, ".", "add", ".")
+	git(t, ".", "commit", "-q", "-m", "more")
+	write(t, ".", "cover.out", "mode: atomic\nexample.com/m/a.go:3.14,5.2 1 1\n")
+	out.Reset()
+	errb.Reset()
+	if code := run([]string{"--base", "base", "--go", "cover.out"}, &out, &errb); code != 0 {
+		t.Fatalf("mixed: exit %d, want 0\n%s%s", code, out.String(), errb.String())
+	}
+	if !strings.Contains(out.String(), "pkg/b.go") {
+		t.Errorf("mixed: pkg/b.go should be listed as no data:\n%s", out.String())
 	}
 }

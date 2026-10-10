@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -96,6 +97,19 @@ func (p GoProfile) Line(file string, line int) (executable, covered bool) {
 
 // Has reports whether the profile has any block for file.
 func (p GoProfile) Has(file string) bool { return len(p[file]) > 0 }
+
+// HasPackage reports whether the profile has blocks for any file in file's
+// directory, i.e. its package was tested. A changed file with no statements
+// (only types or consts) has no blocks of its own but still passes this.
+func (p GoProfile) HasPackage(file string) bool {
+	dir := path.Dir(file)
+	for f, blocks := range p {
+		if len(blocks) > 0 && path.Dir(f) == dir {
+			return true
+		}
+	}
+	return false
+}
 
 // Total returns covered and total statements across the profile — the same
 // figure `go tool cover -func` prints as "total:".

@@ -37,7 +37,7 @@ func TestEvaluate(t *testing.T) {
 	}
 	got := Evaluate(changed, testReports(t))
 	want := []Result{
-		{Lang: LangGo, Covered: 2, Total: 3, WithData: 1, Uncovered: []string{"internal/a.go:14"}, NoData: []string{"internal/new.go"}},
+		{Lang: LangGo, Covered: 2, Total: 3, WithData: 2, Uncovered: []string{"internal/a.go:14"}, NoData: []string{"internal/new.go"}},
 		{Lang: LangWeb, Covered: 1, Total: 2, WithData: 1, Uncovered: []string{"web/src/x.tsx:2"}},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -116,5 +116,21 @@ func TestNoDataLangs(t *testing.T) {
 	}
 	if got := NoDataLangs([]Result{{Lang: LangGo}, {Lang: LangWeb, WithData: 2}}); len(got) != 0 {
 		t.Fatalf("got %v, want none", got)
+	}
+}
+
+func TestEvaluateTypeOnlyGoFile(t *testing.T) {
+	// internal/types.go has no statements, so no blocks, but its package is
+	// in the profile: listed as no-data, yet it must not count as a path
+	// mismatch. A file in a package the profile never saw does.
+	got := Evaluate(map[string][]int{"internal/types.go": {1}, "pkg/new/x.go": {1}}, testReports(t))
+	if got[0].WithData != 1 || !reflect.DeepEqual(got[0].NoData, []string{"internal/types.go", "pkg/new/x.go"}) {
+		t.Fatalf("got %+v", got[0])
+	}
+	if got := NoDataLangs(Evaluate(map[string][]int{"pkg/new/x.go": {1}}, testReports(t))); !reflect.DeepEqual(got, []string{LangGo}) {
+		t.Fatalf("unknown package: got %v, want [go]", got)
+	}
+	if got := NoDataLangs(Evaluate(map[string][]int{"internal/types.go": {1}}, testReports(t))); len(got) != 0 {
+		t.Fatalf("known package: got %v, want none", got)
 	}
 }

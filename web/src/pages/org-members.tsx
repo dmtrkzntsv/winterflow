@@ -40,7 +40,6 @@ type Member = {
   id: string;
   name: string;
   email: string;
-  role: string;
   provider: string;
   last_seen_at: string;
   created_at: string;
@@ -116,15 +115,16 @@ function Reveal({ value }: { value: string }) {
   );
 }
 
-// OrgMembersPage: admins manage the organization's users — create accounts
-// with one-time temp passwords, change roles, reset passwords, remove.
+// OrgMembersPage: any member manages the organization — its name/icon/color
+// and its users: create accounts with one-time temp passwords, reset
+// passwords, remove (anyone but yourself). There are no roles.
 export default function OrgMembersPage() {
   const breadcrumbs = useMemo(
     () => [{ label: "Organization" }, { label: "Members" }],
     [],
   );
   useAppBreadcrumbs(breadcrumbs);
-  const { profile, isAdmin } = useProfile();
+  const { profile } = useProfile();
 
   const [org, setOrg] = useState<Organization | null>(null);
   const [orgEditOpen, setOrgEditOpen] = useState(false);
@@ -140,7 +140,6 @@ export default function OrgMembersPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
-  const [role, setRole] = useState("member");
   const [busy, setBusy] = useState(false);
   const [created, setCreated] = useState<{
     email: string;
@@ -211,7 +210,6 @@ export default function OrgMembersPage() {
   const openAdd = () => {
     setName("");
     setEmail("");
-    setRole("member");
     setCreated(null);
     setAddOpen(true);
   };
@@ -225,7 +223,7 @@ export default function OrgMembersPage() {
     try {
       const data = await postJSON<{ email: string; temp_password: string }>(
         "/api/v1/org/create-user",
-        { name: name.trim(), email: email.trim(), role },
+        { name: name.trim(), email: email.trim() },
       );
       setCreated(data);
       void refresh();
@@ -235,21 +233,6 @@ export default function OrgMembersPage() {
       });
     } finally {
       setBusy(false);
-    }
-  };
-
-  const handleRole = async (m: Member, newRole: string) => {
-    try {
-      await postJSON("/api/v1/org/update-member", {
-        user_id: m.id,
-        role: newRole,
-      });
-      toast.success(`${m.name} is now ${newRole}`);
-      void refresh();
-    } catch (e) {
-      toast.error("Failed to update role", {
-        description: e instanceof Error ? e.message : undefined,
-      });
     }
   };
 
@@ -290,11 +273,9 @@ export default function OrgMembersPage() {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Organization</CardTitle>
-          {isAdmin ? (
-            <Button size="sm" variant="outline" onClick={openOrgEdit}>
-              <Pencil /> Edit
-            </Button>
-          ) : null}
+          <Button size="sm" variant="outline" onClick={openOrgEdit}>
+            <Pencil /> Edit
+          </Button>
         </CardHeader>
         <CardContent>
           {org ? (
@@ -331,7 +312,6 @@ export default function OrgMembersPage() {
                 <TableRow>
                   <TableHead>Name</TableHead>
                   <TableHead>Email</TableHead>
-                  <TableHead>Role</TableHead>
                   <TableHead>Provider</TableHead>
                   <TableHead />
                 </TableRow>
@@ -348,20 +328,6 @@ export default function OrgMembersPage() {
                         ) : null}
                       </TableCell>
                       <TableCell>{m.email || "—"}</TableCell>
-                      <TableCell>
-                        {m.role === "owner" || isSelf ? (
-                          <span className="capitalize">{m.role}</span>
-                        ) : (
-                          <select
-                            className="bg-transparent text-sm"
-                            value={m.role}
-                            onChange={(e) => void handleRole(m, e.target.value)}
-                          >
-                            <option value="admin">admin</option>
-                            <option value="member">member</option>
-                          </select>
-                        )}
-                      </TableCell>
                       <TableCell>{m.provider || "—"}</TableCell>
                       <TableCell className="text-right">
                         {!isSelf && m.email ? (
@@ -438,22 +404,6 @@ export default function OrgMembersPage() {
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                   />
-                </div>
-                <div className="space-y-2">
-                  <Label>Role</Label>
-                  <div className="flex gap-2">
-                    {["member", "admin"].map((r) => (
-                      <Button
-                        key={r}
-                        type="button"
-                        size="sm"
-                        variant={role === r ? "default" : "outline"}
-                        onClick={() => setRole(r)}
-                      >
-                        {r}
-                      </Button>
-                    ))}
-                  </div>
                 </div>
               </div>
               <DialogFooter>

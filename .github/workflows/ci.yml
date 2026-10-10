@@ -31,7 +31,7 @@ jobs:
 
       - name: gofmt
         run: |
-          unformatted="$(gofmt -l $(git ls-files '*.go'))"
+          unformatted="$(git ls-files -z '*.go' | xargs -0 gofmt -l)"
           if [ -n "$unformatted" ]; then
             echo "::error::gofmt -w these files:"
             echo "$unformatted"
@@ -41,9 +41,14 @@ jobs:
       - name: go vet
         run: go vet ./...
 
-      # -coverpkg=./... so the API contract suite (a test-only package) counts
-      # toward the handlers, usecases and repositories it drives.
+      # Includes the API contract suite on SQLite. -coverpkg=./... so that
+      # test-only package counts toward the handlers, usecases and
+      # repositories it drives; WF_CONTRACT_GUARD=require turns a stray
+      # -run/-skip/-short, which would skip its route-coverage guard, into a
+      # failure.
       - name: go test
+        env:
+          WF_CONTRACT_GUARD: require
         run: go test -race -covermode=atomic -coverpkg=./... -coverprofile=coverage.out ./...
 
       - uses: actions/upload-artifact@v4
@@ -94,15 +99,12 @@ jobs:
       - name: install.sh dry-run suite
         run: bash scripts/install_test.sh
 
-  # The API contract suite against both databases. Each leg must match
-  # testdata/parity.golden.json. The postgres leg's profile is merged into
-  # the coverage gates: Postgres-only branches run nowhere else.
+  # The API contract suite on Postgres (the go job already runs it on
+  # SQLite). It must match testdata/parity.golden.json like the SQLite run,
+  # and its coverage profile is merged into the gates: Postgres-only
+  # branches run nowhere else.
   contract:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        db: [sqlite, postgres]
     services:
       postgres:
         image: postgres:16
@@ -116,8 +118,8 @@ jobs:
           --health-timeout 5s
           --health-retries 30
     env:
-      # Empty selects SQLite (one temp file per test).
-      WF_TEST_DATABASE_URL: ${{ matrix.db == 'postgres' && 'postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable' || '' }}
+      WF_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
+      WF_CONTRACT_GUARD: require
     steps:
       - uses: actions/checkout@v4
 
@@ -125,13 +127,12 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Contract suite (${{ matrix.db }})
+      - name: Contract suite (Postgres)
         run: >-
           go test -race -count=1 -covermode=atomic -coverpkg=./...
-          -coverprofile=contract-${{ matrix.db }}.out ./internal/app/web/contract/
+          -coverprofile=contract-postgres.out ./internal/app/web/contract/
 
       - uses: actions/upload-artifact@v4
-        if: matrix.db == 'postgres'
         with:
           name: contract-postgres-coverage
           path: contract-postgres.out

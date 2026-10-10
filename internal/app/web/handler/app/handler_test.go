@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/go-pkgz/auth/v2/token"
 
+	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/port"
 	"winterflow/internal/domain/service/status"
@@ -160,6 +163,75 @@ func TestAgentBoundHandlersReturn202WithRequestID(t *testing.T) {
 				t.Fatalf("dispatched as %+v", fd.last)
 			}
 		})
+	}
+}
+
+func TestDeleteAppPassesDeleteVolumes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+		want command.DeleteAppRequest
+	}{
+		{"set", `{"server_id":"s1","app_id":"a1","delete_volumes":true}`, command.DeleteAppRequest{AppID: "a1", DeleteVolumes: true}},
+		{"omitted", `{"server_id":"s1","app_id":"a1"}`, command.DeleteAppRequest{AppID: "a1"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, fd, _ := newHandler(t)
+			r := authed(httptest.NewRequest("POST", "/x", strings.NewReader(tc.body)))
+			if w := do(h.DeleteApp, r); w.Code != http.StatusAccepted {
+				t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
+			}
+			if got, ok := fd.last.Payload.(command.DeleteAppRequest); !ok || got != tc.want {
+				t.Fatalf("payload = %#v, want %#v", fd.last.Payload, tc.want)
+			}
+		})
+	}
+}
+
+// Every route that names an app must refuse a path-like id with 400 before
+// dispatching (the agent re-checks, but a command that can only be refused
+// should never leave the API).
+func TestAppRoutesRejectPathLikeIDs(t *testing.T) {
+	routes := []struct {
+		name string
+		fn   func(*Handler) http.HandlerFunc
+		req  func(id string) *http.Request
+	}{
+		{"delete", func(h *Handler) http.HandlerFunc { return h.DeleteApp }, func(id string) *http.Request {
+			return httptest.NewRequest("POST", "/x", strings.NewReader(`{"server_id":"s1","app_id":`+strconv.Quote(id)+`,"delete_volumes":true}`))
+		}},
+		{"control", func(h *Handler) http.HandlerFunc { return h.ControlApp }, func(id string) *http.Request {
+			return httptest.NewRequest("POST", "/x", strings.NewReader(`{"server_id":"s1","app_id":`+strconv.Quote(id)+`,"action":"start"}`))
+		}},
+		{"rename", func(h *Handler) http.HandlerFunc { return h.RenameApp }, func(id string) *http.Request {
+			return httptest.NewRequest("POST", "/x", strings.NewReader(`{"server_id":"s1","app_id":`+strconv.Quote(id)+`,"name":"n"}`))
+		}},
+		{"rollback", func(h *Handler) http.HandlerFunc { return h.RollbackApp }, func(id string) *http.Request {
+			return httptest.NewRequest("POST", "/x", strings.NewReader(`{"server_id":"s1","app_id":`+strconv.Quote(id)+`,"hash":"abc"}`))
+		}},
+		{"get-app", func(h *Handler) http.HandlerFunc { return h.GetApp }, func(id string) *http.Request {
+			return httptest.NewRequest("GET", "/x?server_id=s1&app_id="+url.QueryEscape(id), nil)
+		}},
+		{"get-revisions", func(h *Handler) http.HandlerFunc { return h.GetRevisions }, func(id string) *http.Request {
+			return httptest.NewRequest("GET", "/x?server_id=s1&app_id="+url.QueryEscape(id), nil)
+		}},
+		{"get-logs", func(h *Handler) http.HandlerFunc { return h.GetLogs }, func(id string) *http.Request {
+			return httptest.NewRequest("GET", "/x?server_id=s1&app_id="+url.QueryEscape(id), nil)
+		}},
+		{"save-app", func(h *Handler) http.HandlerFunc { return h.SaveApp }, func(id string) *http.Request {
+			return httptest.NewRequest("POST", "/x", strings.NewReader(`{"server_id":"s1","app":{"id":`+strconv.Quote(id)+`,"name":"demo"},"config":{"name":"demo"}}`))
+		}},
+	}
+	for _, rt := range routes {
+		for _, id := range []string{".", "..", "/", "a/..", "../..", "x/../..", "a/b"} {
+			h, fd, _ := newHandler(t)
+			if w := do(rt.fn(h), authed(rt.req(id))); w.Code != http.StatusBadRequest {
+				t.Errorf("%s app_id %q: status = %d, want 400", rt.name, id, w.Code)
+			}
+			if fd.last.Payload != nil {
+				t.Errorf("%s app_id %q must not be dispatched", rt.name, id)
+			}
+		}
 	}
 }
 

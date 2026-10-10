@@ -3,6 +3,7 @@ package dockercompose
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,9 +14,39 @@ import (
 	"winterflow/pkg/crypto"
 )
 
-// Docker resource operations (registries + networks) via the `docker` CLI.
+// Docker resource operations (registries + networks; volumes live in
+// volumes.go) via the `docker` CLI.
 // v1 used the Docker SDK for networks; v2 stays CLI-only to match the rest of
 // the orchestrator.
+
+// execOutput runs a command and returns stdout. On failure the error carries
+// the trimmed stderr, so warnings say why ("daemon is down"), not just
+// "exit status 1".
+func execOutput(ctx context.Context, name string, args ...string) ([]byte, error) {
+	out, err := exec.CommandContext(ctx, name, args...).Output()
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			if msg := strings.TrimSpace(string(ee.Stderr)); msg != "" {
+				return out, fmt.Errorf("%w: %s", err, msg)
+			}
+		}
+		return out, err
+	}
+	return out, nil
+}
+
+// dockerCombined runs a docker command whose output only matters on failure:
+// the error names the verb ("docker volume rm") and carries docker's trimmed
+// combined output.
+func dockerCombined(ctx context.Context, args ...string) error {
+	out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput()
+	if err != nil {
+		verb := strings.Join(args[:min(2, len(args))], " ")
+		return fmt.Errorf("docker %s: %w: %s", verb, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
 
 // --- registries ---------------------------------------------------------------
 
@@ -96,8 +127,7 @@ type dockerNetwork struct {
 
 // ListNetworks returns the Docker networks on the agent.
 func (r *Repository) ListNetworks(ctx context.Context) ([]command.Network, error) {
-	cmd := exec.CommandContext(ctx, "docker", "network", "ls", "--format", "json")
-	out, err := cmd.Output()
+	out, err := execOutput(ctx, "docker", "network", "ls", "--format", "json")
 	if err != nil {
 		return nil, fmt.Errorf("docker network ls: %w", err)
 	}
@@ -126,13 +156,7 @@ func (r *Repository) CreateNetwork(ctx context.Context, in command.CreateNetwork
 	if in.Driver != "" {
 		args = append(args, "--driver", in.Driver)
 	}
-	args = append(args, in.Name)
-	cmd := exec.CommandContext(ctx, "docker", args...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("docker network create: %w: %s", err, strings.TrimSpace(string(out)))
-	}
-	return nil
+	return dockerCombined(ctx, append(args, in.Name)...)
 }
 
 // DeleteNetwork removes a Docker network.
@@ -140,12 +164,7 @@ func (r *Repository) DeleteNetwork(ctx context.Context, name string) error {
 	if name == "" {
 		return fmt.Errorf("network name is required")
 	}
-	cmd := exec.CommandContext(ctx, "docker", "network", "rm", name)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("docker network rm: %w: %s", err, strings.TrimSpace(string(out)))
-	}
-	return nil
+	return dockerCombined(ctx, "network", "rm", name)
 }
 
 // dockerConfigPath resolves ~/.docker/config.json, honoring DOCKER_CONFIG.

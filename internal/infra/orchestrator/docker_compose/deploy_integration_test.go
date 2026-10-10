@@ -48,7 +48,7 @@ func TestSaveAppDeploysContainer(t *testing.T) {
 	defer cancel()
 
 	t.Cleanup(func() {
-		_ = repo.DeleteApp(context.Background(), appID)
+		_, _ = repo.DeleteApp(context.Background(), appID, false)
 	})
 
 	h1, err := repo.SaveApp(ctx, app)

@@ -34,26 +34,43 @@ const DOT_CLASS: Record<number, string> = {
   [AppStatusCode.Unknown]: "bg-muted-foreground/30",
 };
 
+// StatusDot is a colored dot plus a label — the quiet inline status form
+// shared by app and volume status.
+export function StatusDot({
+  label,
+  dotClassName,
+  className,
+}: {
+  label: string;
+  dotClassName: string;
+  className?: string;
+}) {
+  return (
+    <span className={cn("inline-flex items-center gap-1.5", className)}>
+      <span
+        className={cn("size-2 shrink-0 rounded-full", dotClassName)}
+        aria-hidden
+      />
+      {label}
+    </span>
+  );
+}
+
 // AppStatusIndicator is the quieter inline form of AppStatusBadge: a colored
 // dot plus the label, for headers where a filled pill would shout.
 export function AppStatusIndicator({ status }: { status?: number }) {
   const code = status ?? AppStatusCode.Unknown;
   const meta = STATUS_META[code] ?? STATUS_META[0];
   return (
-    <span className="inline-flex shrink-0 items-center gap-1.5 text-sm">
-      <span
-        className={cn("size-2 rounded-full", DOT_CLASS[code] ?? DOT_CLASS[0])}
-        aria-hidden
-      />
-      <span
-        className={
-          code === AppStatusCode.Problematic
-            ? "font-medium text-red-600 dark:text-red-400"
-            : "text-foreground"
-        }
-      >
-        {meta.label}
-      </span>
-    </span>
+    <StatusDot
+      label={meta.label}
+      dotClassName={DOT_CLASS[code] ?? DOT_CLASS[0]}
+      className={cn(
+        "shrink-0 text-sm",
+        code === AppStatusCode.Problematic
+          ? "font-medium text-red-600 dark:text-red-400"
+          : "text-foreground",
+      )}
+    />
   );
 }

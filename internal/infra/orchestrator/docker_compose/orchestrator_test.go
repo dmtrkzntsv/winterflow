@@ -122,3 +122,18 @@ func TestLabelValue(t *testing.T) {
 		t.Errorf("labelValue empty = %q, want empty", got)
 	}
 }
+
+func TestHasLabel(t *testing.T) {
+	labels := "a=1,com.docker.volume.anonymous=,b"
+	for key, want := range map[string]bool{
+		"a": true, "com.docker.volume.anonymous": true, "b": true,
+		"missing": false, "com.docker.volume": false,
+	} {
+		if got := hasLabel(labels, key); got != want {
+			t.Errorf("hasLabel(%q) = %v, want %v", key, got, want)
+		}
+	}
+	if hasLabel("", "k") {
+		t.Error("hasLabel on empty labels must be false")
+	}
+}

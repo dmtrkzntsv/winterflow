@@ -41,6 +41,17 @@ func labelValue(labels, key string) string {
 	return ""
 }
 
+// hasLabel reports whether key is set (with any value, even empty) in docker's
+// comma-joined label string.
+func hasLabel(labels, key string) bool {
+	for _, kv := range strings.Split(labels, ",") {
+		if k, _, _ := strings.Cut(kv, "="); k == key {
+			return true
+		}
+	}
+	return false
+}
+
 // exitCodeFromStatus parses the code out of docker ps's human status,
 // e.g. "Exited (137) 2 hours ago". 0 when absent or unparsable.
 func exitCodeFromStatus(status string) int {

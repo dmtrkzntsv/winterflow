@@ -1,7 +1,12 @@
 package command
 
-// Docker resource payloads: registries (docker login/logout) and networks
-// (docker network ls/create/rm). These are agent operations — the agent's
+import (
+	"errors"
+	"regexp"
+)
+
+// Docker resource payloads: registries (docker login/logout), networks
+// (docker network ls/create/rm) and volumes (docker volume ls/create/rm). These are agent operations — the agent's
 // Docker daemon is the source of truth — so list operations also round-trip to
 // the agent and return over SSE.
 
@@ -72,6 +77,64 @@ type DeleteNetworkRequest struct {
 
 type DeleteNetworkResponse struct {
 	Name string `json:"name"`
+}
+
+// --- volumes ------------------------------------------------------------------
+
+// Volume is a Docker volume as seen by the agent. AppID is derived from the
+// compose project label wf-<appID>; Orphan means that label names an app that
+// no longer exists on the agent.
+type Volume struct {
+	Name      string `json:"name"`
+	Driver    string `json:"driver,omitempty"`
+	AppID     string `json:"app_id,omitempty"`
+	Project   string `json:"project,omitempty"`
+	InUse     bool   `json:"in_use"`
+	Orphan    bool   `json:"orphan"`
+	Anonymous bool   `json:"anonymous"`
+}
+
+type ListVolumesRequest struct{}
+
+type ListVolumesResponse struct {
+	Volumes []Volume `json:"volumes"`
+}
+
+type CreateVolumeRequest struct {
+	Name string `json:"name"`
+}
+
+func (r CreateVolumeRequest) Validate() error { return ValidateVolumeName(r.Name) }
+
+type CreateVolumeResponse struct {
+	Name string `json:"name"`
+}
+
+type DeleteVolumeRequest struct {
+	Name string `json:"name"`
+}
+
+func (r DeleteVolumeRequest) Validate() error { return ValidateVolumeName(r.Name) }
+
+type DeleteVolumeResponse struct {
+	Name string `json:"name"`
+}
+
+var volumeNameRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`)
+
+// ValidateVolumeName applies Docker's volume-name rule. Because the first
+// character must be alphanumeric, a name can never be parsed as a CLI flag.
+func ValidateVolumeName(name string) error {
+	if name == "" {
+		return errors.New("volume name is required")
+	}
+	if len(name) > 255 {
+		return errors.New("volume name is too long (max 255)")
+	}
+	if !volumeNameRe.MatchString(name) {
+		return errors.New("volume name must start with a letter or digit and contain only letters, digits, '_', '.' or '-'")
+	}
+	return nil
 }
 
 // --- image.tags -------------------------------------------------------------

@@ -1,5 +1,5 @@
-// Package docker exposes HTTP handlers for Docker resources (registries and
-// networks). All operations are agent-bound: handlers validate, dispatch, and
+// Package docker exposes HTTP handlers for Docker resources (registries,
+// networks and volumes). All operations are agent-bound: handlers validate, dispatch, and
 // return 202 {request_id}; results arrive over SSE.
 package docker
 
@@ -202,4 +202,61 @@ func (h *Handler) DeleteNetwork(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	accepted(w, "remove network dispatched", reqID)
+}
+
+// --- volumes ---
+
+func (h *Handler) ListVolumes(w http.ResponseWriter, r *http.Request) {
+	userID, serverID, ok := h.caller(w, r)
+	if !ok {
+		return
+	}
+	reqID, err := h.dispatch(r.Context(), userID, serverID, command.TypeVolumeList, command.ListVolumesRequest{})
+	if err != nil {
+		webutil.Error(w, "failed to list volumes", nil)
+		return
+	}
+	accepted(w, "list volumes dispatched", reqID)
+}
+
+func (h *Handler) CreateVolume(w http.ResponseWriter, r *http.Request) {
+	userID, serverID, ok := h.caller(w, r)
+	if !ok {
+		return
+	}
+	req, ok := webutil.DecodeBody[command.CreateVolumeRequest](w, r)
+	if !ok {
+		return
+	}
+	if err := command.ValidateVolumeName(req.Name); err != nil {
+		webutil.Error(w, err.Error(), nil)
+		return
+	}
+	reqID, err := h.dispatch(r.Context(), userID, serverID, command.TypeVolumeCreate, req)
+	if err != nil {
+		webutil.Error(w, "failed to create volume", nil)
+		return
+	}
+	accepted(w, "create volume dispatched", reqID)
+}
+
+func (h *Handler) DeleteVolume(w http.ResponseWriter, r *http.Request) {
+	userID, serverID, ok := h.caller(w, r)
+	if !ok {
+		return
+	}
+	req, ok := webutil.DecodeBody[command.DeleteVolumeRequest](w, r)
+	if !ok {
+		return
+	}
+	if err := command.ValidateVolumeName(req.Name); err != nil {
+		webutil.Error(w, err.Error(), nil)
+		return
+	}
+	reqID, err := h.dispatch(r.Context(), userID, serverID, command.TypeVolumeDelete, req)
+	if err != nil {
+		webutil.Error(w, "failed to delete volume", nil)
+		return
+	}
+	accepted(w, "delete volume dispatched", reqID)
 }

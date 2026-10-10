@@ -60,6 +60,9 @@ func newSecretStore() secretStore {
 }
 
 // appDataDir is the canonical folder for an app: {data}/apps-data/{appID}.
+// filepath.Base alone does not make a payload id safe ("." and ".." survive
+// it); ids from command payloads are refused up front by the dispatcher
+// (command.ValidAppID via the requests' Validate methods).
 func (r *Repository) appDataDir(appID string) string {
 	return filepath.Join(r.cfg.GetAppsDataDir(), filepath.Base(appID))
 }

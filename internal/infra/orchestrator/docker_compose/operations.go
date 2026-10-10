@@ -63,9 +63,6 @@ func (r *Repository) markDeployed(appID, sha string) {
 // commit, materialize secrets, and fix the symlink. Split out so the full
 // persistence path is testable without Docker.
 func (r *Repository) saveWithoutDeploy(app command.AppPayload) (string, error) {
-	if app.AppID == "" {
-		return "", fmt.Errorf("app_id is required")
-	}
 	dir := r.appDataDir(app.AppID)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
@@ -418,12 +415,13 @@ func (r *Repository) composeUp(ctx context.Context, appID string) error {
 	return r.composeRun(ctx, appID, "up", "-d", "--remove-orphans")
 }
 
-// composeDown is a no-op (nil) if the app dir does not exist.
-func (r *Repository) composeDown(ctx context.Context, appID string) error {
+// composeDown is a no-op (nil) if the app dir does not exist. volumes=true
+// adds -v (see composeDownVerb).
+func (r *Repository) composeDown(ctx context.Context, appID string, volumes bool) error {
 	if _, err := os.Stat(r.appDataDir(appID)); err != nil {
 		return nil
 	}
-	return r.composeRun(ctx, appID, "down", "--remove-orphans")
+	return r.composeRun(ctx, appID, composeDownVerb(volumes)...)
 }
 
 func (r *Repository) composeRestart(ctx context.Context, appID string) error {
@@ -448,5 +446,5 @@ func (r *Repository) dockerPSByProject(ctx context.Context) (map[string][]compos
 
 // projectName derives a stable docker compose project name from an app id.
 func projectName(appID string) string {
-	return "wf-" + filepath.Base(appID)
+	return wfProjectPrefix + filepath.Base(appID)
 }

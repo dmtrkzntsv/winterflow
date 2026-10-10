@@ -7,6 +7,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/port"
@@ -64,14 +65,25 @@ func (d *Dispatcher) Dispatch(ctx context.Context, req *proto.RequestEnvelope) *
 	return h(ctx, agentID, req)
 }
 
+// validator is implemented by requests that carry ids the orchestrator turns
+// into paths or CLI args (app ids, volume names).
+type validator interface{ Validate() error }
+
 // handle adapts a typed orchestrator call into a handlerFunc: decode the
-// request into Req, run fn, encode Resp. All per-command boilerplate lives
-// here exactly once.
+// request into Req, validate it, run fn, encode Resp. All per-command
+// boilerplate lives here exactly once — including the agent's single
+// fail-closed check on payload ids, so no orchestrator entry point sees an
+// unvalidated one.
 func handle[Req any, Resp any](d *Dispatcher, fn func(context.Context, Req) (Resp, error)) handlerFunc {
 	return func(ctx context.Context, agentID string, req *proto.RequestEnvelope) *proto.ResponseEnvelope {
 		var in Req
 		if err := codec.DecodePayload(req.Payload, &in); err != nil {
 			return d.errResponse(agentID, req, "invalid payload: "+err.Error())
+		}
+		if v, ok := any(in).(validator); ok {
+			if err := v.Validate(); err != nil {
+				return d.errResponse(agentID, req, "invalid payload: "+err.Error())
+			}
 		}
 		out, err := fn(ctx, in)
 		if err != nil {
@@ -125,11 +137,17 @@ func (d *Dispatcher) newHandlers() map[command.Type]handlerFunc {
 			return command.ControlAppResponse{AppID: in.AppID, Action: in.Action}, err
 		}),
 		command.TypeAppDelete: handle(d, func(ctx context.Context, in command.DeleteAppRequest) (command.DeleteAppResponse, error) {
-			if err := d.orch.DeleteApp(ctx, in.AppID); err != nil {
-				return command.DeleteAppResponse{AppID: in.AppID}, err
+			res, err := d.orch.DeleteApp(ctx, in.AppID, in.DeleteVolumes)
+			resp := command.DeleteAppResponse{AppID: in.AppID, Warnings: res.Warnings, VolumesDeleted: res.VolumesDeleted}
+			if err != nil {
+				// handle drops the body on error, so fold the warnings in.
+				if len(res.Warnings) > 0 {
+					err = fmt.Errorf("%w (cleanup: %s)", err, strings.Join(res.Warnings, "; "))
+				}
+				return resp, err
 			}
 			d.reloadIngress(ctx)
-			return command.DeleteAppResponse{AppID: in.AppID}, nil
+			return resp, nil
 		}),
 		command.TypeAppRename: handle(d, func(ctx context.Context, in command.RenameAppRequest) (command.RenameAppResponse, error) {
 			if err := d.orch.RenameApp(ctx, in.AppID, in.Name); err != nil {
@@ -179,6 +197,17 @@ func (d *Dispatcher) newHandlers() map[command.Type]handlerFunc {
 		}),
 		command.TypeNetworkDelete: handle(d, func(ctx context.Context, in command.DeleteNetworkRequest) (command.DeleteNetworkResponse, error) {
 			return command.DeleteNetworkResponse{Name: in.Name}, d.orch.DeleteNetwork(ctx, in.Name)
+		}),
+
+		command.TypeVolumeList: handle(d, func(ctx context.Context, _ command.ListVolumesRequest) (command.ListVolumesResponse, error) {
+			vols, err := d.orch.ListVolumes(ctx)
+			return command.ListVolumesResponse{Volumes: vols}, err
+		}),
+		command.TypeVolumeCreate: handle(d, func(ctx context.Context, in command.CreateVolumeRequest) (command.CreateVolumeResponse, error) {
+			return command.CreateVolumeResponse{Name: in.Name}, d.orch.CreateVolume(ctx, in.Name)
+		}),
+		command.TypeVolumeDelete: handle(d, func(ctx context.Context, in command.DeleteVolumeRequest) (command.DeleteVolumeResponse, error) {
+			return command.DeleteVolumeResponse{Name: in.Name}, d.orch.DeleteVolume(ctx, in.Name)
 		}),
 
 		command.TypeImageTags: handle(d, func(ctx context.Context, in command.ImageTagsRequest) (command.ImageTagsResponse, error) {

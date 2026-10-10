@@ -17,6 +17,17 @@ func accepted(w http.ResponseWriter, msg, requestID string) {
 	webutil.Accepted(w, msg, acceptedRequestID{RequestID: requestID})
 }
 
+// requireValidAppID answers 400 for an app id that is not a single safe path
+// element (command.ValidAppID — the same rule the agent enforces). Failing
+// here avoids dispatching a command that can only be refused.
+func requireValidAppID(w http.ResponseWriter, appID string) bool {
+	if !command.ValidAppID(appID) {
+		webutil.Error(w, "invalid app_id", nil)
+		return false
+	}
+	return true
+}
+
 type controlAppRequest struct {
 	ServerID string                `json:"server_id"`
 	AppID    string                `json:"app_id"`
@@ -38,6 +49,9 @@ func (h *Handler) ControlApp(w http.ResponseWriter, r *http.Request) {
 		webutil.Error(w, "server_id and app_id are required", nil)
 		return
 	}
+	if !requireValidAppID(w, req.AppID) {
+		return
+	}
 	switch req.Action {
 	case command.ControlStart, command.ControlStop, command.ControlRestart, command.ControlUpdate:
 	default:
@@ -57,8 +71,9 @@ func (h *Handler) ControlApp(w http.ResponseWriter, r *http.Request) {
 }
 
 type deleteAppRequest struct {
-	ServerID string `json:"server_id"`
-	AppID    string `json:"app_id"`
+	ServerID      string `json:"server_id"`
+	AppID         string `json:"app_id"`
+	DeleteVolumes bool   `json:"delete_volumes"`
 }
 
 // DeleteApp dispatches an app.delete to the agent. Returns 202 + request_id.
@@ -75,11 +90,14 @@ func (h *Handler) DeleteApp(w http.ResponseWriter, r *http.Request) {
 		webutil.Error(w, "server_id and app_id are required", nil)
 		return
 	}
+	if !requireValidAppID(w, req.AppID) {
+		return
+	}
 	if !webutil.RequireServerAccess(w, r, h.servers, userID, req.ServerID) {
 		return
 	}
 
-	requestID, err := h.usecase.DeleteApp(r.Context(), userID, req.ServerID, req.AppID)
+	requestID, err := h.usecase.DeleteApp(r.Context(), userID, req.ServerID, req.AppID, req.DeleteVolumes)
 	if err != nil {
 		webutil.Error(w, "failed to delete app", nil)
 		return
@@ -105,6 +123,9 @@ func (h *Handler) RenameApp(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ServerID == "" || req.AppID == "" || req.Name == "" {
 		webutil.Error(w, "server_id, app_id and name are required", nil)
+		return
+	}
+	if !requireValidAppID(w, req.AppID) {
 		return
 	}
 	if !webutil.RequireServerAccess(w, r, h.servers, userID, req.ServerID) {
@@ -133,6 +154,9 @@ func (h *Handler) GetApp(w http.ResponseWriter, r *http.Request) {
 		webutil.Error(w, "server_id and app_id are required", nil)
 		return
 	}
+	if !requireValidAppID(w, appID) {
+		return
+	}
 	if !webutil.RequireServerAccess(w, r, h.servers, userID, serverID) {
 		return
 	}
@@ -156,6 +180,9 @@ func (h *Handler) GetRevisions(w http.ResponseWriter, r *http.Request) {
 	appID := r.URL.Query().Get("app_id")
 	if serverID == "" || appID == "" {
 		webutil.Error(w, "server_id and app_id are required", nil)
+		return
+	}
+	if !requireValidAppID(w, appID) {
 		return
 	}
 	if !webutil.RequireServerAccess(w, r, h.servers, userID, serverID) {
@@ -189,6 +216,9 @@ func (h *Handler) RollbackApp(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ServerID == "" || req.AppID == "" || req.Hash == "" {
 		webutil.Error(w, "server_id, app_id and hash are required", nil)
+		return
+	}
+	if !requireValidAppID(w, req.AppID) {
 		return
 	}
 	if !webutil.RequireServerAccess(w, r, h.servers, userID, req.ServerID) {
@@ -240,6 +270,9 @@ func (h *Handler) GetLogs(w http.ResponseWriter, r *http.Request) {
 	appID := r.URL.Query().Get("app_id")
 	if serverID == "" || appID == "" {
 		webutil.Error(w, "server_id and app_id are required", nil)
+		return
+	}
+	if !requireValidAppID(w, appID) {
 		return
 	}
 	var since int64

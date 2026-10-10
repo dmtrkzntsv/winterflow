@@ -28,14 +28,16 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import {
   useDocker,
+  type Docker,
   type Network,
   type Registry,
 } from "@/context/use-docker";
+import { VolumesCard } from "@/pages/settings-volumes";
 
-const TABS = ["registries", "networks", "agent"] as const;
+const TABS = ["registries", "networks", "volumes", "agent"] as const;
 
 // SettingsPage is the server-level settings view (v1 "Server Settings"):
-// Docker registries and networks, plus agent self-update — one tab per
+// Docker registries, networks and volumes, plus agent self-update — one tab per
 // section, synced to ?tab= like the app details page.
 export default function SettingsPage() {
   const breadcrumbs = useMemo(
@@ -70,6 +72,7 @@ export default function SettingsPage() {
       <TabsList>
         <TabsTrigger value="registries">Registries</TabsTrigger>
         <TabsTrigger value="networks">Networks</TabsTrigger>
+        <TabsTrigger value="volumes">Volumes</TabsTrigger>
         <TabsTrigger value="agent">Agent</TabsTrigger>
       </TabsList>
       <TabsContent value="registries">
@@ -77,6 +80,9 @@ export default function SettingsPage() {
       </TabsContent>
       <TabsContent value="networks">
         <NetworksCard docker={docker} />
+      </TabsContent>
+      <TabsContent value="volumes">
+        <VolumesCard docker={docker} />
       </TabsContent>
       <TabsContent value="agent">
         <AgentCard docker={docker} />
@@ -134,8 +140,6 @@ function AgentCard({ docker }: { docker: Docker }) {
     </Card>
   );
 }
-
-type Docker = ReturnType<typeof useDocker>;
 
 function RegistriesCard({ docker }: { docker: Docker }) {
   const [items, setItems] = useState<Registry[]>([]);

@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-pkgz/auth/v2/token"
 
+	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/port"
 	"winterflow/pkg/logger"
 )
@@ -64,6 +65,9 @@ func TestDockerHandlersReturn202(t *testing.T) {
 			`{"name":"net1"}`},
 		{"delete-network", func(h *Handler) http.HandlerFunc { return h.DeleteNetwork }, "POST",
 			`{"name":"net1"}`},
+		{"list-volumes", func(h *Handler) http.HandlerFunc { return h.ListVolumes }, "GET", ""},
+		{"create-volume", func(h *Handler) http.HandlerFunc { return h.CreateVolume }, "POST", `{"name":"data"}`},
+		{"delete-volume", func(h *Handler) http.HandlerFunc { return h.DeleteVolume }, "POST", `{"name":"data"}`},
 		{"update-agent", func(h *Handler) http.HandlerFunc { return h.UpdateAgent }, "POST",
 			`{"version":"1.2.3"}`},
 	}
@@ -141,5 +145,55 @@ func TestDockerHandlersValidate(t *testing.T) {
 	h.CreateNetwork(w, r)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("malformed create-network body: %d", w.Code)
+	}
+}
+
+func TestVolumeHandlersRejectForeignServer(t *testing.T) {
+	for name, hf := range map[string]func(*Handler) http.HandlerFunc{
+		"list":   func(h *Handler) http.HandlerFunc { return h.ListVolumes },
+		"create": func(h *Handler) http.HandlerFunc { return h.CreateVolume },
+		"delete": func(h *Handler) http.HandlerFunc { return h.DeleteVolume },
+	} {
+		t.Run(name, func(t *testing.T) {
+			h, fd := newHandler(t)
+			r := authed(httptest.NewRequest("POST", "/x?server_id=other", strings.NewReader(`{"name":"data"}`)))
+			w := httptest.NewRecorder()
+			hf(h)(w, r)
+			if w.Code != http.StatusForbidden {
+				t.Fatalf("foreign server must be 403, got %d", w.Code)
+			}
+			if fd.last.AgentID != "" {
+				t.Fatalf("must not dispatch, got %+v", fd.last)
+			}
+		})
+	}
+}
+
+func TestVolumeHandlersRejectBadNames(t *testing.T) {
+	for _, body := range []string{`{}`, `{"name":"-rf"}`, `{"name":"../x"}`, `{"name":"a b"}`} {
+		for name, hf := range map[string]func(*Handler) http.HandlerFunc{
+			"create": func(h *Handler) http.HandlerFunc { return h.CreateVolume },
+			"delete": func(h *Handler) http.HandlerFunc { return h.DeleteVolume },
+		} {
+			h, fd := newHandler(t)
+			r := authed(httptest.NewRequest("POST", "/x?server_id=s1", strings.NewReader(body)))
+			w := httptest.NewRecorder()
+			hf(h)(w, r)
+			if w.Code != http.StatusBadRequest || fd.last.AgentID != "" {
+				t.Fatalf("%s %s: status %d, dispatched %+v", name, body, w.Code, fd.last)
+			}
+		}
+	}
+}
+
+func TestVolumeHandlersDispatchTypes(t *testing.T) {
+	h, fd := newHandler(t)
+	r := authed(httptest.NewRequest("POST", "/x?server_id=s1", strings.NewReader(`{"name":"data"}`)))
+	h.DeleteVolume(httptest.NewRecorder(), r)
+	if fd.last.Type != command.TypeVolumeDelete {
+		t.Fatalf("type = %q", fd.last.Type)
+	}
+	if p, ok := fd.last.Payload.(command.DeleteVolumeRequest); !ok || p.Name != "data" {
+		t.Fatalf("payload = %#v", fd.last.Payload)
 	}
 }

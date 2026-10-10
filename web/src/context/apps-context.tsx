@@ -17,6 +17,7 @@ import {
   type App,
   type AppDetailPayload,
   type AppRevisions,
+  type DeleteAppResult,
   type ControlAction,
 } from "./apps-context-base";
 
@@ -215,10 +216,14 @@ export function AppsProvider({ children }: { children: ReactNode }) {
     });
   }, [subscribe, activeServerId]);
 
-  // dispatchAndWait POSTs a fire-and-forward command, awaits its SSE result by
-  // request_id, then refreshes the list and status.
+  // dispatchAndWait POSTs a fire-and-forward command, awaits its SSE result
+  // by request_id, refreshes the list and status, and returns the refreshed
+  // list together with the result payload.
   const dispatchAndWait = useCallback(
-    async (path: string, body: Record<string, unknown>) => {
+    async (
+      path: string,
+      body: Record<string, unknown>,
+    ): Promise<{ list: App[]; payload: unknown }> => {
       if (!activeServerId) throw new Error("No active server");
       const res = await fetch(`${base}/api/v1/app/${path}`, {
         method: "POST",
@@ -229,14 +234,16 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       if (!res.ok) throw new Error(`Request failed: ${res.status}`);
       const accepted = (await res.json()) as AcceptedResponse;
       const ref = accepted.data?.request_id;
+      let payload: unknown;
       if (ref) {
         const result = await waitFor(ref);
         if (result.status && result.status !== 0) {
           throw new Error(result.error || "Operation failed");
         }
+        payload = result.payload;
       }
       const [list] = await Promise.all([loadApps(), loadStatus()]);
-      return list;
+      return { list, payload };
     },
     [activeServerId, waitFor, loadApps, loadStatus],
   );
@@ -249,8 +256,21 @@ export function AppsProvider({ children }: { children: ReactNode }) {
   );
 
   const remove = useCallback(
-    async (appId: string) => {
-      await dispatchAndWait("delete-app", { app_id: appId });
+    async (
+      appId: string,
+      opts?: { deleteVolumes?: boolean },
+    ): Promise<DeleteAppResult> => {
+      const { payload } = await dispatchAndWait("delete-app", {
+        app_id: appId,
+        delete_volumes: opts?.deleteVolumes ?? false,
+      });
+      const res = payload as
+        | { warnings?: string[]; volumes_deleted?: boolean }
+        | undefined;
+      return {
+        warnings: res?.warnings ?? [],
+        volumesDeleted: res?.volumes_deleted ?? false,
+      };
     },
     [dispatchAndWait],
   );
@@ -378,7 +398,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       files: { name: string; content: string; encrypted: boolean }[];
       variables: { name: string; content: string; encrypted: boolean }[];
     }) => {
-      return dispatchAndWait("save-app", {
+      const { list } = await dispatchAndWait("save-app", {
         app: body.app,
         config: body.config,
         files: body.files,
@@ -386,6 +406,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
         ...(body.source ? { source: body.source } : {}),
         ...(body.draft ? { draft: true } : {}),
       });
+      return list;
     },
     [dispatchAndWait],
   );

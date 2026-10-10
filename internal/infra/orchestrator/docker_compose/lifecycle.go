@@ -42,7 +42,7 @@ func (r *Repository) StartApp(ctx context.Context, appID string) error {
 // StopApp stops all containers of the app (compose down). Missing app is a
 // no-op.
 func (r *Repository) StopApp(ctx context.Context, appID string) error {
-	return r.composeDown(ctx, appID)
+	return r.composeDown(ctx, appID, false)
 }
 
 // RestartApp restarts the app's containers in place.
@@ -73,22 +73,41 @@ func (r *Repository) UpdateApp(ctx context.Context, appID string) error {
 	return nil
 }
 
+// DeleteResult is the outcome of DeleteApp. Warnings are cleanup steps that
+// failed (never an error); VolumesDeleted reports whether the volume sweep
+// actually ran.
+type DeleteResult struct {
+	Warnings       []string
+	VolumesDeleted bool
+}
+
 // DeleteApp stops the app's containers and removes its folder and symlink.
-// The git history goes with the folder — deletion is final.
-func (r *Repository) DeleteApp(ctx context.Context, appID string) error {
-	if err := r.composeDown(ctx, appID); err != nil {
+// The git history goes with the folder — deletion is final. With
+// deleteVolumes it also removes the app's compose-owned volumes; cleanup
+// failures come back as warnings, never as an error. The sweep is skipped for
+// an app this agent does not have, so a delete request cannot be used to
+// destroy orphan volumes an admin deliberately kept (those go through the
+// volume registry).
+func (r *Repository) DeleteApp(ctx context.Context, appID string, deleteVolumes bool) (DeleteResult, error) {
+	// Decided before anything is removed: sweep only an app this agent has.
+	res := DeleteResult{VolumesDeleted: deleteVolumes && r.appExists(appID)}
+	downErr := r.composeDown(ctx, appID, deleteVolumes)
+	if downErr != nil {
 		// Best-effort stop; continue with removal so a broken deployment can
 		// still be deleted.
-		r.log.Warn("delete: compose down failed, continuing", "app_id", appID, "error", err)
+		r.log.Warn("delete: compose down failed, continuing", "app_id", appID, "error", downErr)
+	}
+	if res.VolumesDeleted {
+		res.Warnings = r.sweepAppVolumes(ctx, appID, downErr != nil)
 	}
 	if err := removeAppSymlink(r.cfg.GetAppsDir(), appID); err != nil {
 		r.log.Warn("delete: symlink removal failed, continuing", "app_id", appID, "error", err)
 	}
 	if err := os.RemoveAll(r.appDataDir(appID)); err != nil {
-		return fmt.Errorf("remove app dir: %w", err)
+		return res, fmt.Errorf("remove app dir: %w", err)
 	}
 	r.forgetApp(appID)
-	return nil
+	return res, nil
 }
 
 // GetApp reconstructs the deployable payload from the app's folder. Secret

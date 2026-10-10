@@ -1,6 +1,34 @@
 package command
 
-import "winterflow/internal/domain/model"
+import (
+	"fmt"
+	"strings"
+
+	"winterflow/internal/domain/model"
+)
+
+// ValidAppID reports whether id is safe to use as a single path element under
+// the agent's apps-data dir. It is the one rule shared by the API handlers
+// (reject early with 400) and the agent dispatcher (fail closed): a legit id
+// is a generated UUID, so anything empty, "."/"..", or containing a path
+// separator (or NUL) is refused rather than normalised.
+func ValidAppID(id string) bool {
+	switch id {
+	case "", ".", "..":
+		return false
+	}
+	return !strings.ContainsAny(id, "/\\\x00")
+}
+
+// validateAppID is ValidAppID as an error, shared by the app-scoped requests'
+// Validate methods (the agent dispatcher calls Validate on every decoded
+// request before it reaches the orchestrator).
+func validateAppID(id string) error {
+	if !ValidAppID(id) {
+		return fmt.Errorf("invalid app id %q", id)
+	}
+	return nil
+}
 
 // AppPayload is the on-the-wire form of an app to deploy. It mirrors v1's AppV1:
 // a JSON config blob plus the variable and file contents the agent renders into
@@ -57,6 +85,8 @@ type SaveAppRequest struct {
 	Draft bool `json:"draft,omitempty"`
 }
 
+func (r SaveAppRequest) Validate() error { return validateAppID(r.App.AppID) }
+
 type SaveAppResponse struct {
 	AppID    string `json:"app_id"`
 	Revision string `json:"revision"` // git commit hash of the save
@@ -70,6 +100,8 @@ type SaveAppResponse struct {
 type GetAppRequest struct {
 	AppID string `json:"app_id"`
 }
+
+func (r GetAppRequest) Validate() error { return validateAppID(r.AppID) }
 
 type GetAppResponse struct {
 	App AppPayload `json:"app"`
@@ -88,6 +120,8 @@ type GetRevisionsRequest struct {
 	AppID string `json:"app_id"`
 }
 
+func (r GetRevisionsRequest) Validate() error { return validateAppID(r.AppID) }
+
 type GetRevisionsResponse struct {
 	AppID     string         `json:"app_id"`
 	Current   string         `json:"current"`  // HEAD hash
@@ -101,6 +135,8 @@ type RollbackAppRequest struct {
 	AppID string `json:"app_id"`
 	Hash  string `json:"hash"`
 }
+
+func (r RollbackAppRequest) Validate() error { return validateAppID(r.AppID) }
 
 type RollbackAppResponse struct {
 	AppID    string `json:"app_id"`
@@ -170,6 +206,8 @@ type ControlAppRequest struct {
 	Action ControlAction `json:"action"`
 }
 
+func (r ControlAppRequest) Validate() error { return validateAppID(r.AppID) }
+
 type ControlAppResponse struct {
 	AppID  string        `json:"app_id"`
 	Action ControlAction `json:"action"`
@@ -179,10 +217,22 @@ type ControlAppResponse struct {
 
 type DeleteAppRequest struct {
 	AppID string `json:"app_id"`
+	// DeleteVolumes also removes the app's compose-owned Docker volumes
+	// (never external ones). False keeps them, as before.
+	DeleteVolumes bool `json:"delete_volumes,omitempty"`
 }
+
+func (r DeleteAppRequest) Validate() error { return validateAppID(r.AppID) }
 
 type DeleteAppResponse struct {
 	AppID string `json:"app_id"`
+	// Warnings lists cleanup steps that failed after the app was removed
+	// (e.g. a volume still in use).
+	Warnings []string `json:"warnings,omitempty"`
+	// VolumesDeleted is true only when the agent honoured delete_volumes
+	// (the volume sweep ran). An agent that predates the flag never sets it,
+	// which lets the UI tell "volumes removed" from "request ignored".
+	VolumesDeleted bool `json:"volumes_deleted,omitempty"`
 }
 
 // --- app.rename ---------------------------------------------------------------
@@ -191,6 +241,8 @@ type RenameAppRequest struct {
 	AppID string `json:"app_id"`
 	Name  string `json:"name"`
 }
+
+func (r RenameAppRequest) Validate() error { return validateAppID(r.AppID) }
 
 type RenameAppResponse struct {
 	AppID string `json:"app_id"`
@@ -225,6 +277,8 @@ type GetLogsRequest struct {
 	Since int64  `json:"since,omitempty"` // unix seconds; 0 = no lower bound
 	Tail  int32  `json:"tail,omitempty"`  // 0 = all
 }
+
+func (r GetLogsRequest) Validate() error { return validateAppID(r.AppID) }
 
 type GetLogsResponse struct {
 	AppID string     `json:"app_id"`

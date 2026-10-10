@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 
 import { useNotifications } from "@/context/use-notifications";
 import { useServers } from "@/context/use-servers";
@@ -15,9 +15,19 @@ export type Network = {
   scope?: string;
 };
 
+export type Volume = {
+  name: string;
+  driver?: string;
+  app_id?: string;
+  project?: string;
+  in_use: boolean;
+  orphan: boolean;
+  anonymous: boolean;
+};
+
 type Accepted = { data?: { request_id?: string } };
 
-// useDocker exposes registry/network operations. Each dispatches an agent
+// useDocker exposes registry/network/volume operations. Each dispatches an agent
 // command and awaits its SSE result (the agent's Docker daemon is the source of
 // truth, so even list reads round-trip).
 export function useDocker() {
@@ -120,20 +130,62 @@ export function useDocker() {
     [dispatch],
   );
 
+  const listVolumes = useCallback(
+    () =>
+      dispatch<{ volumes: Volume[] | null }>("/api/v1/volume/list", {}).then(
+        (p) => p.volumes ?? [],
+      ),
+    [dispatch],
+  );
+
+  const createVolume = useCallback(
+    (name: string) =>
+      dispatch("/api/v1/volume/create", { method: "POST", body: { name } }),
+    [dispatch],
+  );
+
+  const deleteVolume = useCallback(
+    (name: string) =>
+      dispatch("/api/v1/volume/delete", { method: "POST", body: { name } }),
+    [dispatch],
+  );
+
   const updateAgent = useCallback(
     (version: string) =>
       dispatch("/api/v1/agent/update", { method: "POST", body: { version } }),
     [dispatch],
   );
 
-  return {
-    hasServer: Boolean(serverId),
-    listRegistries,
-    createRegistry,
-    deleteRegistry,
-    listNetworks,
-    createNetwork,
-    deleteNetwork,
-    updateAgent,
-  };
+  // Memoized so consumers can depend on the object (or its callbacks)
+  // without refetching on every parent re-render.
+  return useMemo(
+    () => ({
+      hasServer: Boolean(serverId),
+      listRegistries,
+      createRegistry,
+      deleteRegistry,
+      listNetworks,
+      createNetwork,
+      deleteNetwork,
+      listVolumes,
+      createVolume,
+      deleteVolume,
+      updateAgent,
+    }),
+    [
+      serverId,
+      listRegistries,
+      createRegistry,
+      deleteRegistry,
+      listNetworks,
+      createNetwork,
+      deleteNetwork,
+      listVolumes,
+      createVolume,
+      deleteVolume,
+      updateAgent,
+    ],
+  );
 }
+
+export type Docker = ReturnType<typeof useDocker>;

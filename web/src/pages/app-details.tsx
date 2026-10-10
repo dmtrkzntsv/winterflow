@@ -18,6 +18,8 @@ import { buttonVariants } from "@/components/ui/button-variants";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Spinner } from "@/components/ui/spinner";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -41,6 +43,7 @@ import {
   AppStatusCode,
   type AppRevisions,
   type ControlAction,
+  type DeleteAppResult,
 } from "@/context/apps-context-base";
 import { cn } from "@/lib/utils";
 
@@ -202,9 +205,10 @@ export default function AppDetailsPage() {
             appId={app.id}
             name={app.name}
             onRename={rename}
-            onDelete={async () => {
-              await remove(app.id);
+            onDelete={async (opts) => {
+              const result = await remove(app.id, opts);
               navigate("/");
+              return result;
             }}
           />
         </TabsContent>
@@ -486,7 +490,7 @@ function SettingsTab({
   appId: string;
   name: string;
   onRename: (appId: string, name: string) => Promise<void>;
-  onDelete: () => Promise<void>;
+  onDelete: (opts: { deleteVolumes: boolean }) => Promise<DeleteAppResult>;
 }) {
   const [newName, setNewName] = useState(name);
   const [busy, setBusy] = useState(false);
@@ -505,11 +509,26 @@ function SettingsTab({
     }
   };
 
-  const del = async () => {
+  const del = async (withVolumes: boolean) => {
     setBusy(true);
     try {
-      await onDelete();
-      toast.success("App deleted");
+      const { warnings, volumesDeleted } = await onDelete({
+        deleteVolumes: withVolumes,
+      });
+      if (withVolumes && !volumesDeleted) {
+        // An agent that predates volume deletion ignores the flag.
+        toast.warning("App deleted, but its volumes were kept", {
+          description:
+            "This server's agent is too old to delete volumes. Update the agent, then remove them in Server Settings → Volumes.",
+        });
+      } else if (warnings.length) {
+        toast.warning("App deleted with cleanup warnings", {
+          description: warnings.join("\n"),
+          classNames: { description: "whitespace-pre-line" },
+        });
+      } else {
+        toast.success(withVolumes ? "App and volumes deleted" : "App deleted");
+      }
     } catch (e) {
       toast.error("Delete failed", {
         description: e instanceof Error ? e.message : undefined,
@@ -555,37 +574,108 @@ function SettingsTab({
           <h2 className="text-sm font-semibold text-destructive">Delete app</h2>
           <p className="text-sm text-muted-foreground">
             Stops the containers and removes the deployment and its history.
-            Named Docker volumes are kept.
+            Volumes are kept unless you choose otherwise.
           </p>
         </div>
         <div>
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button variant="outline" className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive" disabled={busy}>
-                <Trash2 className="size-4" /> Delete {name}
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Delete {name}?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  This stops the app's containers and removes its deployment and
-                  stored revisions. This cannot be undone.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction
-                  className={buttonVariants({ variant: "destructive" })}
-                  onClick={() => void del()}
-                >
-                  Delete
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+          <DeleteAppDialog
+            name={name}
+            disabled={busy}
+            onConfirm={(withVolumes) => void del(withVolumes)}
+          />
         </div>
       </div>
     </div>
+  );
+}
+
+// DeleteAppDialog confirms deleting the app and, opt-in, its volumes.
+function DeleteAppDialog({
+  name,
+  disabled,
+  onConfirm,
+}: {
+  name: string;
+  disabled: boolean;
+  onConfirm: (withVolumes: boolean) => void;
+}) {
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <Button variant="outline" className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive" disabled={disabled}>
+          <Trash2 className="size-4" /> Delete {name}
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <DeleteAppConfirm name={name} onConfirm={onConfirm} />
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+// DeleteAppConfirm owns the volumes choice. AlertDialogContent unmounts it on
+// close, so every opening starts with the safe default (unticked).
+function DeleteAppConfirm({
+  name,
+  onConfirm,
+}: {
+  name: string;
+  onConfirm: (withVolumes: boolean) => void;
+}) {
+  const [withVolumes, setWithVolumes] = useState(false);
+  return (
+    <>
+      <AlertDialogHeader>
+        <AlertDialogTitle>Delete {name}?</AlertDialogTitle>
+        <AlertDialogDescription>
+          Its containers are stopped and removed, along with the
+          deployment and every stored revision. This cannot be undone.
+        </AlertDialogDescription>
+      </AlertDialogHeader>
+      {/* Neutral until ticked, then unmistakably destructive: the
+          safe choice (keep the data) is the default. */}
+      <div
+        className={cn(
+          "flex items-start gap-3 rounded-md border p-3 transition-colors",
+          withVolumes && "border-destructive/50 bg-destructive/5",
+        )}
+      >
+        <Checkbox
+          id="delete-volumes"
+          className="mt-px data-[state=checked]:border-destructive data-[state=checked]:bg-destructive data-[state=checked]:text-destructive-foreground"
+          aria-describedby="delete-volumes-hint"
+          checked={withVolumes}
+          onCheckedChange={(v) => setWithVolumes(v === true)}
+        />
+        <div className="grid gap-1">
+          <Label
+            htmlFor="delete-volumes"
+            className={cn(
+              "cursor-pointer leading-snug",
+              withVolumes && "text-destructive",
+            )}
+          >
+            Also delete its volumes
+          </Label>
+          <p
+            id="delete-volumes-hint"
+            className="text-sm leading-snug text-muted-foreground"
+          >
+            Permanently erases the data in this app's Docker volumes.
+            Unticked, the volumes are kept; you can delete them later
+            in Server Settings → Volumes.
+          </p>
+        </div>
+      </div>
+      <AlertDialogFooter>
+        <AlertDialogCancel>Cancel</AlertDialogCancel>
+        <AlertDialogAction
+          className={buttonVariants({ variant: "destructive" })}
+          onClick={() => onConfirm(withVolumes)}
+        >
+          {withVolumes ? "Delete app and volumes" : "Delete app"}
+        </AlertDialogAction>
+      </AlertDialogFooter>
+    </>
   );
 }

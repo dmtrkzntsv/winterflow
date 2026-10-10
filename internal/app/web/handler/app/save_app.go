@@ -71,6 +71,11 @@ func (h *Handler) SaveApp(w http.ResponseWriter, r *http.Request) {
 		webutil.Error(w, "server_id is required", nil)
 		return
 	}
+	// A client-supplied id means "edit this app" and becomes a folder name on
+	// the agent; an empty id is a create and gets a generated one.
+	if req.App.ID != "" && !requireValidAppID(w, req.App.ID) {
+		return
+	}
 	if !webutil.RequireServerAccess(w, r, h.servers, userID, req.ServerID) {
 		return
 	}

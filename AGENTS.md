@@ -19,7 +19,7 @@ web/src/
 
 
 `cmd/` hosts the Go entrypoints (standalone, API, hub, agent), while shared business logic lives under `internal/` and helper packages under `pkg/`. 
-Frontend code resides in `web/`, a Vite + React 19 workspace that uses pnpm, Tailwind 4, and shadcn/ui; assets, hooks, and UI components are co-located under `web/src/`. 
+Frontend code resides in `web/`, a Vite + React 19 workspace that uses pnpm (version pinned by `packageManager` in `web/package.json`; CI reads it too), Tailwind 4, and shadcn/ui; assets, hooks, and UI components are co-located under `web/src/`. 
 Persistent artifacts such as SQLite files and local certificates live in `data/`. 
 Keep tests beside the code they exercise (e.g., `internal/agents/agent_test.go`) to simplify package imports.
 

@@ -13,10 +13,11 @@ import (
 	"winterflow/internal/domain/model"
 )
 
-// resultTimeout bounds awaitResult and eventually. It only elapses on a
-// failure; it is generous because CI runs the whole repo in parallel under
-// -race and -coverpkg on a 4-core runner (a cold run once exceeded 5 s).
-const resultTimeout = 20 * time.Second
+// resultTimeout bounds awaitResult, awaitEvent and eventually. It only
+// elapses on a failure: a result is normally on the stream within
+// milliseconds. (Results that never arrived used to be dropped by the
+// notification manager's 1-slot stream buffer, not slow CI.)
+const resultTimeout = 10 * time.Second
 
 // event is one decoded SSE notification plus its raw JSON.
 type event struct {
@@ -98,14 +99,15 @@ func (c *client) subscribe(t *testing.T) {
 	}()
 }
 
-// awaitResult waits for the operation_result correlated to requestID,
-// validates the event against the Notification schema and, on success, its
-// payload against the dispatching route's x-operation-result.
-func awaitResult(t *testing.T, c *client, requestID string) event {
+// awaitEvent waits for the first event of c's stream that match accepts
+// and returns it. On timeout (or a closed stream) it fails, listing every
+// event the stream did carry, so a lost notification is told apart from a
+// late one.
+func awaitEvent(t *testing.T, c *client, what string, match func(event) bool) event {
 	t.Helper()
 	s := c.stream
 	if s == nil {
-		t.Fatal("awaitResult on a client without an SSE stream")
+		t.Fatal("awaiting an event on a client without an SSE stream")
 	}
 	deadline := time.Now().Add(resultTimeout)
 	timer := time.AfterFunc(resultTimeout, func() {
@@ -118,25 +120,45 @@ func awaitResult(t *testing.T, c *client, requestID string) event {
 	defer s.mu.Unlock()
 	for {
 		for _, ev := range s.events {
-			if ev.Type == model.NotificationOperationResult && ev.Ref == requestID {
-				validateSchema(t, "Notification", ev.Raw)
-				if ev.Status == model.NotificationStatusSuccess {
-					key := c.e.routeOfRequest(requestID)
-					method, path, _ := strings.Cut(key, " ")
-					rt, _, ok := routeFor(method, path)
-					if !ok {
-						t.Fatalf("request %s was not dispatched through client.accepted", requestID)
-					}
-					validateSchema(t, resultSchema(t, rt), ev.Payload)
-				}
+			if match(ev) {
 				return ev
 			}
 		}
 		if s.done || time.Now().After(deadline) {
-			t.Fatalf("no operation_result for %s within %s", requestID, resultTimeout)
+			received := make([]string, 0, len(s.events))
+			for _, ev := range s.events {
+				desc := string(ev.Type)
+				if ev.Ref != "" {
+					desc += "(" + ev.Ref + ")"
+				}
+				received = append(received, desc)
+			}
+			t.Fatalf("no %s within %s (stream closed: %v); received %d event(s): %v",
+				what, resultTimeout, s.done, len(received), received)
 		}
 		s.cond.Wait()
 	}
+}
+
+// awaitResult waits for the operation_result correlated to requestID,
+// validates the event against the Notification schema and, on success, its
+// payload against the dispatching route's x-operation-result.
+func awaitResult(t *testing.T, c *client, requestID string) event {
+	t.Helper()
+	ev := awaitEvent(t, c, "operation_result for "+requestID, func(ev event) bool {
+		return ev.Type == model.NotificationOperationResult && ev.Ref == requestID
+	})
+	validateSchema(t, "Notification", ev.Raw)
+	if ev.Status == model.NotificationStatusSuccess {
+		key := c.e.routeOfRequest(requestID)
+		method, path, _ := strings.Cut(key, " ")
+		rt, _, ok := routeFor(method, path)
+		if !ok {
+			t.Fatalf("request %s was not dispatched through client.accepted", requestID)
+		}
+		validateSchema(t, resultSchema(t, rt), ev.Payload)
+	}
+	return ev
 }
 
 // succeed dispatches k, awaits its result and requires success; the result

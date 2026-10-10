@@ -101,6 +101,15 @@ func TestAppLifecycle(t *testing.T) {
 	t.Run("status comes from the events queue", func(t *testing.T) {
 		body, _ := json.Marshal(command.GetAppsStatusResponse{Apps: []command.AppStatus{{AppID: appID, StatusCode: 1, Containers: []command.ContainerStatus{}}}})
 		e.publishEvent(t, bus.EventMessage{ServerID: sid, Kind: bus.EventAppsStatus, Payload: body})
+		// The fan-out reaches the owner's stream before the next dispatch,
+		// so its operation_result cannot race the status burst.
+		ev := awaitEvent(t, owner, "apps_status", func(ev event) bool {
+			return ev.Type == model.NotificationAppsStatus
+		})
+		var pushed command.AppsStatusPayload
+		if err := json.Unmarshal(ev.Payload, &pushed); err != nil || pushed.ServerID != sid || len(pushed.Apps) != 1 || pushed.Apps[0].AppID != appID {
+			t.Fatalf("apps_status payload = %s (%v)", ev.Payload, err)
+		}
 		var st command.GetAppsStatusResponse
 		eventually(t, func() bool {
 			owner.get(t, "/api/v1/app/get-apps-status", url.Values{"server_id": {sid}}).expect(t, http.StatusOK).data(t, &st)

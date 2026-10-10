@@ -1,0 +1,3361 @@
+openapi: 3.1.0
+info:
+  description: |-
+    Generated from the route tables in internal/app/web by `make openapi`; do not edit.
+
+    JSON responses use the envelope {success, message, data}. 202 responses carry data.request_id; the outcome arrives on GET /api/v1/sse as an operation_result Notification whose ref is that request_id and whose payload matches the operation's x-operation-result schema.
+  title: Winterflow API
+  version: "1"
+paths:
+  /_/health:
+    get:
+      operationId: health
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    type: "null"
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+      summary: Liveness probe
+      tags:
+      - system
+  /api/v1/agent/update:
+    post:
+      operationId: agentUpdate
+      parameters:
+      - description: Target server id.
+        in: query
+        name: server_id
+        required: true
+        schema:
+          description: Target server id.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAgentRequest'
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Self-update the agent binary
+      tags:
+      - docker
+      x-operation-result:
+        $ref: '#/components/schemas/UpdateAgentResponse'
+  /api/v1/app/control-app:
+    post:
+      operationId: appControlApp
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControlAppRequest'
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Start, stop, restart or update an app
+      tags:
+      - apps
+      x-operation-result:
+        $ref: '#/components/schemas/ControlAppResponse'
+  /api/v1/app/delete-app:
+    post:
+      operationId: appDeleteApp
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteAppRequest'
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Delete an app (optionally its volumes)
+      tags:
+      - apps
+      x-operation-result:
+        $ref: '#/components/schemas/DeleteAppResponse'
+  /api/v1/app/get-app:
+    get:
+      operationId: appGetApp
+      parameters:
+      - in: query
+        name: server_id
+        required: true
+        schema:
+          type: string
+      - in: query
+        name: app_id
+        required: true
+        schema:
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Fetch an app's config, variables and files
+      tags:
+      - apps
+      x-operation-result:
+        $ref: '#/components/schemas/GetAppResponse'
+  /api/v1/app/get-apps:
+    get:
+      operationId: appGetApps
+      parameters:
+      - description: Target server id.
+        in: query
+        name: server_id
+        required: true
+        schema:
+          description: Target server id.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/GetAppsResponse'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: List a server's apps (DB cache) with their domains
+      tags:
+      - apps
+  /api/v1/app/get-apps-status:
+    get:
+      operationId: appGetAppsStatus
+      parameters:
+      - description: Target server id.
+        in: query
+        name: server_id
+        required: true
+        schema:
+          description: Target server id.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/GetAppsStatusResponse'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Latest cached container status of a server's apps
+      tags:
+      - apps
+  /api/v1/app/get-logs:
+    get:
+      operationId: appGetLogs
+      parameters:
+      - in: query
+        name: server_id
+        required: true
+        schema:
+          type: string
+      - in: query
+        name: app_id
+        required: true
+        schema:
+          type: string
+      - description: Unix seconds; 0 or absent = no lower bound.
+        in: query
+        name: since
+        schema:
+          description: Unix seconds; 0 or absent = no lower bound.
+          format: int64
+          type: integer
+      - description: Last N lines; default 200.
+        in: query
+        name: tail
+        schema:
+          description: Last N lines; default 200.
+          format: int32
+          type: integer
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Fetch an app's container logs
+      tags:
+      - apps
+      x-operation-result:
+        $ref: '#/components/schemas/GetLogsResponse'
+  /api/v1/app/get-revisions:
+    get:
+      operationId: appGetRevisions
+      parameters:
+      - in: query
+        name: server_id
+        required: true
+        schema:
+          type: string
+      - in: query
+        name: app_id
+        required: true
+        schema:
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: List an app's revision history
+      tags:
+      - apps
+      x-operation-result:
+        $ref: '#/components/schemas/GetRevisionsResponse'
+  /api/v1/app/refresh-apps:
+    post:
+      operationId: appRefreshApps
+      parameters:
+      - description: Target server id.
+        in: query
+        name: server_id
+        required: true
+        schema:
+          description: Target server id.
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Re-list apps from the agent and reconcile the DB cache
+      tags:
+      - apps
+      x-operation-result:
+        $ref: '#/components/schemas/ListAppsResponse'
+  /api/v1/app/rename-app:
+    post:
+      operationId: appRenameApp
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RenameAppRequest'
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Rename an app
+      tags:
+      - apps
+      x-operation-result:
+        $ref: '#/components/schemas/RenameAppResponse'
+  /api/v1/app/rollback-app:
+    post:
+      operationId: appRollbackApp
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RollbackAppRequest'
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Restore a revision as a new commit and redeploy
+      tags:
+      - apps
+      x-operation-result:
+        $ref: '#/components/schemas/RollbackAppResponse'
+  /api/v1/app/save-app:
+    post:
+      operationId: appSaveApp
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaveAppRequest'
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Create or edit an app (new revision, redeploy unless draft)
+      tags:
+      - apps
+      x-operation-result:
+        $ref: '#/components/schemas/SaveAppResponse'
+  /api/v1/auth/register:
+    post:
+      operationId: authRegister
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/RegisterResponse'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "429":
+          content:
+            text/plain:
+              schema:
+                type: string
+          description: Too Many Requests
+      summary: Create an account (first call claims a fresh instance)
+      tags:
+      - auth
+  /api/v1/auth/state:
+    get:
+      operationId: authState
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/StateResponse'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+      summary: Whether the instance is fresh and registration is open
+      tags:
+      - auth
+  /api/v1/domains/check:
+    get:
+      operationId: domainsCheck
+      parameters:
+      - description: Hostname to check.
+        in: query
+        name: domain
+        schema:
+          description: Hostname to check.
+          type: string
+      - description: App being edited; its own claims don't count.
+        in: query
+        name: app_id
+        schema:
+          description: App being edited; its own claims don't count.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/CheckDomainResponse'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Check whether a hostname is free
+      tags:
+      - apps
+  /api/v1/image/get-tags:
+    get:
+      operationId: imageGetTags
+      parameters:
+      - in: query
+        name: server_id
+        required: true
+        schema:
+          type: string
+      - description: Image reference, e.g. nginx or ghcr.io/org/app.
+        in: query
+        name: image
+        required: true
+        schema:
+          description: Image reference, e.g. nginx or ghcr.io/org/app.
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: List registry tags for an image (agent credentials)
+      tags:
+      - apps
+      x-operation-result:
+        $ref: '#/components/schemas/ImageTagsResponse'
+  /api/v1/network/create:
+    post:
+      operationId: networkCreate
+      parameters:
+      - description: Target server id.
+        in: query
+        name: server_id
+        required: true
+        schema:
+          description: Target server id.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateNetworkRequest'
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Create a Docker network
+      tags:
+      - docker
+      x-operation-result:
+        $ref: '#/components/schemas/CreateNetworkResponse'
+  /api/v1/network/delete:
+    post:
+      operationId: networkDelete
+      parameters:
+      - description: Target server id.
+        in: query
+        name: server_id
+        required: true
+        schema:
+          description: Target server id.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteNetworkRequest'
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Delete a Docker network
+      tags:
+      - docker
+      x-operation-result:
+        $ref: '#/components/schemas/DeleteNetworkResponse'
+  /api/v1/network/list:
+    get:
+      operationId: networkList
+      parameters:
+      - description: Target server id.
+        in: query
+        name: server_id
+        required: true
+        schema:
+          description: Target server id.
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: List Docker networks
+      tags:
+      - docker
+      x-operation-result:
+        $ref: '#/components/schemas/ListNetworksResponse'
+  /api/v1/org/create-user:
+    post:
+      operationId: orgCreateUser
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/CreateUserResponse'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Create an account in the caller's org (temp password)
+      tags:
+      - org
+  /api/v1/org/get-members:
+    get:
+      operationId: orgGetMembers
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    items:
+                      $ref: '#/components/schemas/Member'
+                    type:
+                    - array
+                    - "null"
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: List the caller's org members
+      tags:
+      - org
+  /api/v1/org/get-organization:
+    get:
+      operationId: orgGetOrganization
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Organization'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+      security:
+      - bearer: []
+      - cookie: []
+      summary: The caller's org name, icon and color
+      tags:
+      - org
+  /api/v1/org/remove-member:
+    post:
+      operationId: orgRemoveMember
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MemberRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    type: "null"
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Remove a member and their account
+      tags:
+      - org
+  /api/v1/org/reset-member-password:
+    post:
+      operationId: orgResetMemberPassword
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MemberRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ResetMemberPasswordResponse'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Issue a member a new temp password
+      tags:
+      - org
+  /api/v1/org/update-member:
+    post:
+      operationId: orgUpdateMember
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateMemberRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    type: "null"
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Change a member's role
+      tags:
+      - org
+  /api/v1/org/update-organization:
+    post:
+      operationId: orgUpdateOrganization
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateOrganizationRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    type: "null"
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Rename or restyle the caller's org
+      tags:
+      - org
+  /api/v1/registry/create:
+    post:
+      operationId: registryCreate
+      parameters:
+      - description: Target server id.
+        in: query
+        name: server_id
+        required: true
+        schema:
+          description: Target server id.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRegistryRequest'
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Log the agent in to a registry
+      tags:
+      - docker
+      x-operation-result:
+        $ref: '#/components/schemas/CreateRegistryResponse'
+  /api/v1/registry/delete:
+    post:
+      operationId: registryDelete
+      parameters:
+      - description: Target server id.
+        in: query
+        name: server_id
+        required: true
+        schema:
+          description: Target server id.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteRegistryRequest'
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Log the agent out of a registry
+      tags:
+      - docker
+      x-operation-result:
+        $ref: '#/components/schemas/DeleteRegistryResponse'
+  /api/v1/registry/list:
+    get:
+      operationId: registryList
+      parameters:
+      - description: Target server id.
+        in: query
+        name: server_id
+        required: true
+        schema:
+          description: Target server id.
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: List the agent's Docker registry logins
+      tags:
+      - docker
+      x-operation-result:
+        $ref: '#/components/schemas/ListRegistriesResponse'
+  /api/v1/server/get-public-key:
+    get:
+      operationId: serverGetPublicKey
+      parameters:
+      - description: Target server id.
+        in: query
+        name: server_id
+        required: true
+        schema:
+          description: Target server id.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/PublicKeyResponse'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: The agent's public key for encrypting secrets
+      tags:
+      - server
+  /api/v1/server/get-servers:
+    get:
+      operationId: serverGetServers
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/GetServersResponse'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+      security:
+      - bearer: []
+      - cookie: []
+      summary: List the caller's servers
+      tags:
+      - server
+  /api/v1/server/get-servers-status:
+    get:
+      operationId: serverGetServersStatus
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/GetServersStatusResponse'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Live liveness of the caller's servers
+      tags:
+      - server
+  /api/v1/server/register:
+    post:
+      operationId: serverRegister
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterServerRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/RegisterServerResponse'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Claim a pending server by its pairing code
+      tags:
+      - server
+  /api/v1/sse:
+    get:
+      operationId: sse
+      responses:
+        "200":
+          content:
+            text/event-stream:
+              schema:
+                $ref: '#/components/schemas/Notification'
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Notification stream (operation results, status changes)
+      tags:
+      - system
+  /api/v1/user/change-password:
+    post:
+      operationId: userChangePassword
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    type: "null"
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Change the caller's local password
+      tags:
+      - user
+  /api/v1/user/create-token:
+    post:
+      operationId: userCreateToken
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTokenRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/CreateTokenResponse'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Mint a personal access token
+      tags:
+      - user
+  /api/v1/user/delete-token:
+    post:
+      operationId: userDeleteToken
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteTokenRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    type: "null"
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Revoke a personal access token
+      tags:
+      - user
+  /api/v1/user/get-profile:
+    get:
+      operationId: userGetProfile
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Profile'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+      security:
+      - bearer: []
+      - cookie: []
+      summary: The caller's profile and role
+      tags:
+      - user
+  /api/v1/user/get-tokens:
+    get:
+      operationId: userGetTokens
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    items:
+                      $ref: '#/components/schemas/UserToken'
+                    type:
+                    - array
+                    - "null"
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+      security:
+      - bearer: []
+      - cookie: []
+      summary: List the caller's personal access tokens
+      tags:
+      - user
+  /api/v1/volume/create:
+    post:
+      operationId: volumeCreate
+      parameters:
+      - description: Target server id.
+        in: query
+        name: server_id
+        required: true
+        schema:
+          description: Target server id.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateVolumeRequest'
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Create a Docker volume
+      tags:
+      - docker
+      x-operation-result:
+        $ref: '#/components/schemas/CreateVolumeResponse'
+  /api/v1/volume/delete:
+    post:
+      operationId: volumeDelete
+      parameters:
+      - description: Target server id.
+        in: query
+        name: server_id
+        required: true
+        schema:
+          description: Target server id.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteVolumeRequest'
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Delete a Docker volume
+      tags:
+      - docker
+      x-operation-result:
+        $ref: '#/components/schemas/DeleteVolumeResponse'
+  /api/v1/volume/list:
+    get:
+      operationId: volumeList
+      parameters:
+      - description: Target server id.
+        in: query
+        name: server_id
+        required: true
+        schema:
+          description: Target server id.
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: List Docker volumes
+      tags:
+      - docker
+      x-operation-result:
+        $ref: '#/components/schemas/ListVolumesResponse'
+  /auth/list:
+    get:
+      operationId: authList
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  type: string
+                type: array
+          description: OK
+        "429":
+          content:
+            text/plain:
+              schema:
+                type: string
+          description: Too Many Requests
+      summary: Names of the enabled login providers
+      tags:
+      - auth
+  /auth/local/login:
+    post:
+      operationId: authLocalLogin
+      parameters:
+      - in: query
+        name: sess
+        schema:
+          enum:
+          - "0"
+          - "1"
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/FormDataLoginForm'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionUser'
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LibraryError'
+          description: Bad Request
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LibraryError'
+          description: Forbidden
+        "429":
+          content:
+            text/plain:
+              schema:
+                type: string
+          description: Too Many Requests
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LibraryError'
+          description: Internal Server Error
+      summary: Email+password login; sets the JWT cookie
+      tags:
+      - auth
+  /auth/logout:
+    get:
+      operationId: authLogout
+      responses:
+        "200":
+          description: OK
+        "429":
+          content:
+            text/plain:
+              schema:
+                type: string
+          description: Too Many Requests
+      summary: Clear the JWT cookie
+      tags:
+      - auth
+  /auth/status:
+    get:
+      operationId: authStatus
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthStatus'
+          description: OK
+        "429":
+          content:
+            text/plain:
+              schema:
+                type: string
+          description: Too Many Requests
+      summary: Whether the request carries a valid session
+      tags:
+      - auth
+  /auth/user:
+    get:
+      operationId: authUser
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionUser'
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LibraryError'
+          description: Unauthorized
+        "429":
+          content:
+            text/plain:
+              schema:
+                type: string
+          description: Too Many Requests
+      summary: The session's user record
+      tags:
+      - auth
+  /avatar/{avatar}:
+    get:
+      operationId: avatar
+      parameters:
+      - in: path
+        name: avatar
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            image/*:
+              schema:
+                type: string
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LibraryError'
+          description: Bad Request
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LibraryError'
+          description: Forbidden
+      summary: A stored avatar image
+      tags:
+      - auth
+components:
+  schemas:
+    AcceptedData:
+      properties:
+        request_id:
+          type: string
+      required:
+      - request_id
+      type: object
+    App:
+      properties:
+        color:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        icon:
+          type: string
+        id:
+          type: string
+        ingress:
+          $ref: '#/components/schemas/Ingress'
+        name:
+          type: string
+        server_id:
+          type: string
+        template_id:
+          type: string
+        version:
+          type: string
+      type: object
+    AppDomainInfo:
+      properties:
+        domain:
+          type: string
+        kind:
+          type: string
+        ssl:
+          type: boolean
+      type: object
+    AppPayload:
+      properties:
+        app_id:
+          type: string
+        config:
+          format: base64
+          type: string
+        files:
+          items:
+            $ref: '#/components/schemas/ContentItem'
+          type:
+          - array
+          - "null"
+        source:
+          $ref: '#/components/schemas/SourcePayload'
+        variables:
+          items:
+            $ref: '#/components/schemas/ContentItem'
+          type:
+          - array
+          - "null"
+      type: object
+    AppStatus:
+      properties:
+        app_id:
+          type: string
+        containers:
+          items:
+            $ref: '#/components/schemas/ContainerStatus'
+          type:
+          - array
+          - "null"
+        status_code:
+          type: integer
+      type: object
+    AppWithDomains:
+      properties:
+        color:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        domains:
+          items:
+            $ref: '#/components/schemas/AppDomainInfo'
+          type: array
+        icon:
+          type: string
+        id:
+          type: string
+        ingress:
+          $ref: '#/components/schemas/Ingress'
+        name:
+          type: string
+        server_id:
+          type: string
+        template_id:
+          type: string
+        version:
+          type: string
+      type: object
+    AuthStatus:
+      properties:
+        status:
+          enum:
+          - logged in
+          - not logged in
+          type: string
+        user:
+          type: string
+      type: object
+    Capability:
+      properties:
+        name:
+          type: string
+        value:
+          type: string
+      type: object
+    ChangePasswordRequest:
+      properties:
+        current_password:
+          type: string
+        new_password:
+          type: string
+      type: object
+    CheckDomainResponse:
+      properties:
+        available:
+          type: boolean
+        claims:
+          items:
+            $ref: '#/components/schemas/DomainClaim'
+          type:
+          - array
+          - "null"
+      type: object
+    ContainerStatus:
+      properties:
+        container_id:
+          type: string
+        error:
+          type: string
+        exit_code:
+          format: int32
+          type: integer
+        name:
+          type: string
+        status_code:
+          type: integer
+      type: object
+    ContentItem:
+      properties:
+        content:
+          format: base64
+          type: string
+        encrypted:
+          type: boolean
+        id:
+          type: string
+        name:
+          type: string
+      type: object
+    ContentItemRequest:
+      properties:
+        content:
+          type: string
+        encrypted:
+          type: boolean
+        name:
+          type: string
+      type: object
+    ControlAppRequest:
+      properties:
+        action:
+          type: string
+        app_id:
+          type: string
+        server_id:
+          type: string
+      type: object
+    ControlAppResponse:
+      properties:
+        action:
+          type: string
+        app_id:
+          type: string
+      type: object
+    CreateNetworkRequest:
+      properties:
+        driver:
+          type: string
+        name:
+          type: string
+      type: object
+    CreateNetworkResponse:
+      properties:
+        name:
+          type: string
+      type: object
+    CreateRegistryRequest:
+      properties:
+        address:
+          type: string
+        encrypted:
+          type: boolean
+        password:
+          type: string
+        username:
+          type: string
+      type: object
+    CreateRegistryResponse:
+      properties:
+        address:
+          type: string
+      type: object
+    CreateTokenRequest:
+      properties:
+        expires_in_days:
+          type: integer
+        name:
+          type: string
+      type: object
+    CreateTokenResponse:
+      properties:
+        expires_at:
+          format: date-time
+          type:
+          - "null"
+          - string
+        name:
+          type: string
+        prefix:
+          type: string
+        token:
+          type: string
+        token_id:
+          type: string
+      type: object
+    CreateUserRequest:
+      properties:
+        email:
+          type: string
+        name:
+          type: string
+        role:
+          type: string
+      type: object
+    CreateUserResponse:
+      properties:
+        email:
+          type: string
+        name:
+          type: string
+        role:
+          type: string
+        temp_password:
+          type: string
+        user_id:
+          type: string
+      type: object
+    CreateVolumeRequest:
+      properties:
+        name:
+          type: string
+      type: object
+    CreateVolumeResponse:
+      properties:
+        name:
+          type: string
+      type: object
+    DeleteAppRequest:
+      properties:
+        app_id:
+          type: string
+        delete_volumes:
+          type: boolean
+        server_id:
+          type: string
+      type: object
+    DeleteAppResponse:
+      properties:
+        app_id:
+          type: string
+        volumes_deleted:
+          type: boolean
+        warnings:
+          items:
+            type: string
+          type: array
+      type: object
+    DeleteNetworkRequest:
+      properties:
+        name:
+          type: string
+      type: object
+    DeleteNetworkResponse:
+      properties:
+        name:
+          type: string
+      type: object
+    DeleteRegistryRequest:
+      properties:
+        address:
+          type: string
+      type: object
+    DeleteRegistryResponse:
+      properties:
+        address:
+          type: string
+      type: object
+    DeleteTokenRequest:
+      properties:
+        token_id:
+          type: string
+      type: object
+    DeleteVolumeRequest:
+      properties:
+        name:
+          type: string
+      type: object
+    DeleteVolumeResponse:
+      properties:
+        name:
+          type: string
+      type: object
+    DomainClaim:
+      properties:
+        app_id:
+          type: string
+        app_name:
+          type: string
+        domain:
+          type: string
+        server_id:
+          type: string
+        server_name:
+          type: string
+      type: object
+    Error:
+      properties:
+        data:
+          type: "null"
+        message:
+          type: string
+        success:
+          const: false
+          type: boolean
+      required:
+      - success
+      - message
+      - data
+      type: object
+    FormDataLoginForm:
+      properties:
+        aud:
+          type: string
+        passwd:
+          type: string
+        user:
+          type: string
+      type: object
+    GetAppResponse:
+      properties:
+        app:
+          $ref: '#/components/schemas/AppPayload'
+      type: object
+    GetAppsResponse:
+      properties:
+        apps:
+          items:
+            $ref: '#/components/schemas/AppWithDomains'
+          type:
+          - array
+          - "null"
+      type: object
+    GetAppsStatusResponse:
+      properties:
+        apps:
+          items:
+            $ref: '#/components/schemas/AppStatus'
+          type:
+          - array
+          - "null"
+      type: object
+    GetLogsResponse:
+      properties:
+        app_id:
+          type: string
+        logs:
+          items:
+            $ref: '#/components/schemas/LogEntry'
+          type:
+          - array
+          - "null"
+      type: object
+    GetRevisionsResponse:
+      properties:
+        app_id:
+          type: string
+        current:
+          type: string
+        deployed:
+          type: string
+        revisions:
+          items:
+            $ref: '#/components/schemas/RevisionInfo'
+          type:
+          - array
+          - "null"
+      type: object
+    GetServersResponse:
+      properties:
+        servers:
+          items:
+            $ref: '#/components/schemas/Server'
+          type:
+          - array
+          - "null"
+      type: object
+    GetServersStatusResponse:
+      properties:
+        servers:
+          items:
+            $ref: '#/components/schemas/ServerStatus'
+          type:
+          - array
+          - "null"
+      type: object
+    ImageTagsResponse:
+      properties:
+        image:
+          type: string
+        tags:
+          items:
+            type: string
+          type:
+          - array
+          - "null"
+      type: object
+    Ingress:
+      properties:
+        domains:
+          items:
+            $ref: '#/components/schemas/IngressDomain'
+          type:
+          - array
+          - "null"
+        redirects:
+          items:
+            $ref: '#/components/schemas/IngressRedirect'
+          type:
+          - array
+          - "null"
+      type: object
+    IngressDomain:
+      properties:
+        domain:
+          type: string
+        ssl:
+          type: boolean
+        upstream_port:
+          type: integer
+      type: object
+    IngressRedirect:
+      properties:
+        code:
+          type: integer
+        domain:
+          type: string
+        path:
+          type: string
+        ssl:
+          type: boolean
+        to:
+          type: string
+      type: object
+    LibraryError:
+      properties:
+        error:
+          type: string
+      required:
+      - error
+      type: object
+    ListAppsResponse:
+      properties:
+        apps:
+          items:
+            $ref: '#/components/schemas/App'
+          type:
+          - array
+          - "null"
+      type: object
+    ListNetworksResponse:
+      properties:
+        networks:
+          items:
+            $ref: '#/components/schemas/Network'
+          type:
+          - array
+          - "null"
+      type: object
+    ListRegistriesResponse:
+      properties:
+        registries:
+          items:
+            $ref: '#/components/schemas/Registry'
+          type:
+          - array
+          - "null"
+      type: object
+    ListVolumesResponse:
+      properties:
+        volumes:
+          items:
+            $ref: '#/components/schemas/Volume'
+          type:
+          - array
+          - "null"
+      type: object
+    LogEntry:
+      properties:
+        container:
+          type: string
+        container_id:
+          type: string
+        level:
+          type: integer
+        message:
+          type: string
+        timestamp:
+          format: int64
+          type: integer
+      type: object
+    LoginRequest:
+      properties:
+        aud:
+          type: string
+        passwd:
+          type: string
+        user:
+          type: string
+      type: object
+    Member:
+      properties:
+        avatar_url:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        email:
+          type: string
+        id:
+          type: string
+        last_seen_at:
+          format: date-time
+          type: string
+        name:
+          type: string
+        provider:
+          type: string
+        role:
+          type: string
+      type: object
+    MemberRequest:
+      properties:
+        user_id:
+          type: string
+      type: object
+    Network:
+      properties:
+        driver:
+          type: string
+        id:
+          type: string
+        name:
+          type: string
+        scope:
+          type: string
+      type: object
+    Notification:
+      properties:
+        error:
+          type: string
+        payload: {}
+        ref:
+          type: string
+        status:
+          type: integer
+        timestamp:
+          format: date-time
+          type: string
+        type:
+          type: string
+      type: object
+    Organization:
+      properties:
+        color:
+          type: string
+        icon:
+          type: string
+        name:
+          type: string
+        org_id:
+          type: string
+      type: object
+    Profile:
+      properties:
+        email:
+          type: string
+        must_change_password:
+          type: boolean
+        name:
+          type: string
+        role:
+          type: string
+        user_id:
+          type: string
+      type: object
+    PublicKeyResponse:
+      properties:
+        public_key:
+          type: string
+      type: object
+    RegisterRequest:
+      properties:
+        email:
+          type: string
+        name:
+          type: string
+        password:
+          type: string
+      type: object
+    RegisterResponse:
+      properties:
+        email:
+          type: string
+        user_id:
+          type: string
+      type: object
+    RegisterServerRequest:
+      properties:
+        code:
+          type: string
+        organization_id:
+          type: string
+      type: object
+    RegisterServerResponse:
+      properties:
+        server:
+          $ref: '#/components/schemas/Server'
+      type: object
+    Registry:
+      properties:
+        address:
+          type: string
+      type: object
+    RenameAppRequest:
+      properties:
+        app_id:
+          type: string
+        name:
+          type: string
+        server_id:
+          type: string
+      type: object
+    RenameAppResponse:
+      properties:
+        app_id:
+          type: string
+        name:
+          type: string
+      type: object
+    ResetMemberPasswordResponse:
+      properties:
+        temp_password:
+          type: string
+        user_id:
+          type: string
+      type: object
+    RevisionInfo:
+      properties:
+        hash:
+          type: string
+        subject:
+          type: string
+        timestamp:
+          format: int64
+          type: integer
+      type: object
+    RollbackAppRequest:
+      properties:
+        app_id:
+          type: string
+        hash:
+          type: string
+        server_id:
+          type: string
+      type: object
+    RollbackAppResponse:
+      properties:
+        app_id:
+          type: string
+        revision:
+          type: string
+      type: object
+    SaveAppRequest:
+      properties:
+        app:
+          $ref: '#/components/schemas/App'
+        config: {}
+        draft:
+          type: boolean
+        files:
+          items:
+            $ref: '#/components/schemas/ContentItemRequest'
+          type:
+          - array
+          - "null"
+        server_id:
+          type: string
+        source:
+          $ref: '#/components/schemas/SourceRequest'
+        variables:
+          items:
+            $ref: '#/components/schemas/ContentItemRequest'
+          type:
+          - array
+          - "null"
+      type: object
+    SaveAppResponse:
+      properties:
+        app_id:
+          type: string
+        revision:
+          type: string
+        warnings:
+          items:
+            type: string
+          type: array
+      type: object
+    Server:
+      properties:
+        capabilities:
+          items:
+            $ref: '#/components/schemas/Capability'
+          type: array
+        created_at:
+          format: date-time
+          type: string
+        features:
+          additionalProperties:
+            type: boolean
+          type: object
+        id:
+          type: string
+        last_seen_at:
+          format: date-time
+          type:
+          - "null"
+          - string
+        name:
+          type: string
+        organization_id:
+          type: string
+      type: object
+    ServerStatus:
+      properties:
+        liveness:
+          type: string
+        server_id:
+          type: string
+      type: object
+    SessionUser:
+      properties:
+        attrs:
+          additionalProperties: {}
+          type: object
+        aud:
+          type: string
+        email:
+          type: string
+        id:
+          type: string
+        ip:
+          type: string
+        name:
+          type: string
+        picture:
+          type: string
+        role:
+          type: string
+      type: object
+    SourcePayload:
+      properties:
+        auto_update:
+          type: boolean
+        branch:
+          type: string
+        compose_path:
+          type: string
+        poll_seconds:
+          type: integer
+        repo_url:
+          type: string
+        token:
+          format: base64
+          type: string
+      type: object
+    SourceRequest:
+      properties:
+        auto_update:
+          type: boolean
+        branch:
+          type: string
+        compose_path:
+          type: string
+        poll_seconds:
+          type: integer
+        repo_url:
+          type: string
+        token:
+          type: string
+      type: object
+    StateResponse:
+      properties:
+        bootstrap:
+          type: boolean
+        registration_enabled:
+          type: boolean
+      type: object
+    UpdateAgentRequest:
+      properties:
+        version:
+          type: string
+      type: object
+    UpdateAgentResponse:
+      properties:
+        from_version:
+          type: string
+        scheduled:
+          type: boolean
+        to_version:
+          type: string
+      type: object
+    UpdateMemberRequest:
+      properties:
+        role:
+          type: string
+        user_id:
+          type: string
+      type: object
+    UpdateOrganizationRequest:
+      properties:
+        color:
+          type: string
+        icon:
+          type: string
+        name:
+          type: string
+      type: object
+    UserToken:
+      properties:
+        created_at:
+          format: date-time
+          type: string
+        expires_at:
+          format: date-time
+          type:
+          - "null"
+          - string
+        last_used_at:
+          format: date-time
+          type:
+          - "null"
+          - string
+        name:
+          type: string
+        prefix:
+          type: string
+        token_id:
+          type: string
+      type: object
+    Volume:
+      properties:
+        anonymous:
+          type: boolean
+        app_id:
+          type: string
+        driver:
+          type: string
+        in_use:
+          type: boolean
+        name:
+          type: string
+        orphan:
+          type: boolean
+        project:
+          type: string
+      type: object
+  securitySchemes:
+    bearer:
+      bearerFormat: wfp_ personal access token
+      description: 'Personal access token (wfp_…) as `Authorization: Bearer`. It is
+        also accepted as the Basic-auth password.'
+      scheme: bearer
+      type: http
+    cookie:
+      description: JWT session cookie set by POST /auth/local/login (the X-JWT header
+        is accepted too).
+      in: cookie
+      name: JWT
+      type: apiKey

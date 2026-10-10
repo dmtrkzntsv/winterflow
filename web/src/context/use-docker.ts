@@ -15,9 +15,19 @@ export type Network = {
   scope?: string;
 };
 
+export type Volume = {
+  name: string;
+  driver?: string;
+  app_id?: string;
+  project?: string;
+  in_use: boolean;
+  orphan: boolean;
+  anonymous: boolean;
+};
+
 type Accepted = { data?: { request_id?: string } };
 
-// useDocker exposes registry/network operations. Each dispatches an agent
+// useDocker exposes registry/network/volume operations. Each dispatches an agent
 // command and awaits its SSE result (the agent's Docker daemon is the source of
 // truth, so even list reads round-trip).
 export function useDocker() {
@@ -120,6 +130,26 @@ export function useDocker() {
     [dispatch],
   );
 
+  const listVolumes = useCallback(
+    () =>
+      dispatch<{ volumes: Volume[] | null }>("/api/v1/volume/list", {}).then(
+        (p) => p.volumes ?? [],
+      ),
+    [dispatch],
+  );
+
+  const createVolume = useCallback(
+    (name: string) =>
+      dispatch("/api/v1/volume/create", { method: "POST", body: { name } }),
+    [dispatch],
+  );
+
+  const deleteVolume = useCallback(
+    (name: string) =>
+      dispatch("/api/v1/volume/delete", { method: "POST", body: { name } }),
+    [dispatch],
+  );
+
   const updateAgent = useCallback(
     (version: string) =>
       dispatch("/api/v1/agent/update", { method: "POST", body: { version } }),
@@ -134,6 +164,9 @@ export function useDocker() {
     listNetworks,
     createNetwork,
     deleteNetwork,
+    listVolumes,
+    createVolume,
+    deleteVolume,
     updateAgent,
   };
 }

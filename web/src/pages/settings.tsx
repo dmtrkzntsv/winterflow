@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -8,6 +8,19 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { buttonVariants } from "@/components/ui/button-variants";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table,
@@ -30,9 +43,12 @@ import {
   useDocker,
   type Network,
   type Registry,
+  type Volume,
 } from "@/context/use-docker";
+import { useApps } from "@/context/use-apps";
+import { useProfile } from "@/context/use-profile";
 
-const TABS = ["registries", "networks", "agent"] as const;
+const TABS = ["registries", "networks", "volumes", "agent"] as const;
 
 // SettingsPage is the server-level settings view (v1 "Server Settings"):
 // Docker registries and networks, plus agent self-update — one tab per
@@ -70,6 +86,7 @@ export default function SettingsPage() {
       <TabsList>
         <TabsTrigger value="registries">Registries</TabsTrigger>
         <TabsTrigger value="networks">Networks</TabsTrigger>
+        <TabsTrigger value="volumes">Volumes</TabsTrigger>
         <TabsTrigger value="agent">Agent</TabsTrigger>
       </TabsList>
       <TabsContent value="registries">
@@ -77,6 +94,9 @@ export default function SettingsPage() {
       </TabsContent>
       <TabsContent value="networks">
         <NetworksCard docker={docker} />
+      </TabsContent>
+      <TabsContent value="volumes">
+        <VolumesCard docker={docker} />
       </TabsContent>
       <TabsContent value="agent">
         <AgentCard docker={docker} />
@@ -418,6 +438,230 @@ function NetworksCard({ docker }: { docker: Docker }) {
           </Table>
         )}
       </CardContent>
+    </Card>
+  );
+}
+
+const VOLUME_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/;
+
+function VolumesCard({ docker }: { docker: Docker }) {
+  const { isAdmin } = useProfile();
+  const { apps } = useApps();
+  const [items, setItems] = useState<Volume[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [name, setName] = useState("");
+  const [showAnon, setShowAnon] = useState(false);
+  const [toDelete, setToDelete] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      setItems(await docker.listVolumes());
+    } catch (e) {
+      toast.error("Failed to load volumes", {
+        description: e instanceof Error ? e.message : undefined,
+      });
+    } finally {
+      setLoading(false);
+    }
+  }, [docker]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const add = async () => {
+    setBusy(true);
+    try {
+      await docker.createVolume(name.trim());
+      toast.success("Volume created");
+      setOpen(false);
+      setName("");
+      await load();
+    } catch (e) {
+      toast.error("Failed to create volume", {
+        description: e instanceof Error ? e.message : undefined,
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (n: string) => {
+    try {
+      await docker.deleteVolume(n);
+      toast.success("Volume deleted");
+      await load();
+    } catch (e) {
+      toast.error("Failed to delete volume", {
+        description: e instanceof Error ? e.message : undefined,
+      });
+    }
+  };
+
+  const appNames = useMemo(
+    () => new Map(apps.map((a) => [a.id, a.name])),
+    [apps],
+  );
+  const visible = items.filter((v) => showAnon || !v.anonymous);
+  const nameValid = VOLUME_NAME_RE.test(name.trim()) && name.trim().length <= 255;
+
+  return (
+    <Card>
+      <CardHeader className="flex-row items-center justify-between space-y-0">
+        <CardTitle>Volumes</CardTitle>
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            <Switch
+              id="vol-show-anon"
+              checked={showAnon}
+              onCheckedChange={setShowAnon}
+            />
+            <Label htmlFor="vol-show-anon" className="text-sm font-normal">
+              Show anonymous
+            </Label>
+          </div>
+          {isAdmin && (
+            <Dialog open={open} onOpenChange={setOpen}>
+              <DialogTrigger asChild>
+                <Button size="sm">
+                  <Plus className="size-4" /> Create volume
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Create volume</DialogTitle>
+                </DialogHeader>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="vol-name">Name</Label>
+                  <Input
+                    id="vol-name"
+                    placeholder="my-volume"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Letters, digits, <code>_</code>, <code>.</code> and{" "}
+                    <code>-</code>; must start with a letter or digit.
+                  </p>
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setOpen(false)}>
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={() => void add()}
+                    disabled={busy || !nameValid}
+                  >
+                    {busy ? "Creating…" : "Create"}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent>
+        {loading ? (
+          <Spinner />
+        ) : visible.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            {items.length > 0
+              ? 'Only anonymous volumes — toggle "Show anonymous".'
+              : "No volumes."}
+          </p>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>App</TableHead>
+                <TableHead>Status</TableHead>
+                {isAdmin && <TableHead className="w-12" />}
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {visible.map((v) => {
+                const appName = v.app_id ? appNames.get(v.app_id) : undefined;
+                return (
+                  <TableRow key={v.name}>
+                    <TableCell className="font-mono">{v.name}</TableCell>
+                    <TableCell>
+                      {v.app_id && appName ? (
+                        <Link
+                          to={`/app/${v.app_id}`}
+                          className="underline-offset-4 hover:underline"
+                        >
+                          {appName}
+                        </Link>
+                      ) : v.project ? (
+                        <span className="text-muted-foreground">
+                          {v.project}
+                        </span>
+                      ) : (
+                        "—"
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {v.in_use ? (
+                        <Badge variant="secondary">In use</Badge>
+                      ) : v.orphan ? (
+                        <Badge
+                          variant="outline"
+                          className="text-amber-600 dark:text-amber-400"
+                        >
+                          Orphan
+                        </Badge>
+                      ) : (
+                        <span className="text-muted-foreground">Unused</span>
+                      )}
+                    </TableCell>
+                    {isAdmin && (
+                      <TableCell>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="size-8"
+                          aria-label={`Delete volume ${v.name}`}
+                          onClick={() => setToDelete(v.name)}
+                        >
+                          <Trash2 className="size-4" />
+                        </Button>
+                      </TableCell>
+                    )}
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        )}
+      </CardContent>
+      <AlertDialog
+        open={toDelete !== null}
+        onOpenChange={(o) => !o && setToDelete(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete volume {toDelete}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Its data is erased permanently.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className={buttonVariants({ variant: "destructive" })}
+              onClick={() => {
+                if (toDelete) void remove(toDelete);
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   );
 }

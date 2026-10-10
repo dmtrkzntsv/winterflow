@@ -55,7 +55,11 @@ export type AppsContextValue = {
   refresh: () => Promise<void>;
   // Lifecycle actions: dispatch the command, await its SSE result, then refresh.
   control: (appId: string, action: ControlAction) => Promise<void>;
-  remove: (appId: string) => Promise<void>;
+  // remove resolves with warnings (e.g. volumes kept because still in use).
+  remove: (
+    appId: string,
+    opts?: { deleteVolumes?: boolean },
+  ) => Promise<string[]>;
   rename: (appId: string, name: string) => Promise<void>;
   // saveApp dispatches app.save with the full payload (config + files +
   // variables) and awaits the result. Upsert: app.id present = edit,

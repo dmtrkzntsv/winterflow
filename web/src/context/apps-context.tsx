@@ -215,9 +215,10 @@ export function AppsProvider({ children }: { children: ReactNode }) {
     });
   }, [subscribe, activeServerId]);
 
-  // dispatchAndWait POSTs a fire-and-forward command, awaits its SSE result by
-  // request_id, then refreshes the list and status.
-  const dispatchAndWait = useCallback(
+  // dispatchAndWaitPayload POSTs a fire-and-forward command, awaits its SSE
+  // result by request_id, refreshes the list and status, and returns the list
+  // together with the result payload.
+  const dispatchAndWaitPayload = useCallback(
     async (path: string, body: Record<string, unknown>) => {
       if (!activeServerId) throw new Error("No active server");
       const res = await fetch(`${base}/api/v1/app/${path}`, {
@@ -229,16 +230,25 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       if (!res.ok) throw new Error(`Request failed: ${res.status}`);
       const accepted = (await res.json()) as AcceptedResponse;
       const ref = accepted.data?.request_id;
+      let payload: unknown;
       if (ref) {
         const result = await waitFor(ref);
         if (result.status && result.status !== 0) {
           throw new Error(result.error || "Operation failed");
         }
+        payload = result.payload;
       }
       const [list] = await Promise.all([loadApps(), loadStatus()]);
-      return list;
+      return { list, payload };
     },
     [activeServerId, waitFor, loadApps, loadStatus],
+  );
+
+  // dispatchAndWait is dispatchAndWaitPayload resolving with the refreshed list.
+  const dispatchAndWait = useCallback(
+    async (path: string, body: Record<string, unknown>) =>
+      (await dispatchAndWaitPayload(path, body)).list,
+    [dispatchAndWaitPayload],
   );
 
   const control = useCallback(
@@ -249,10 +259,17 @@ export function AppsProvider({ children }: { children: ReactNode }) {
   );
 
   const remove = useCallback(
-    async (appId: string) => {
-      await dispatchAndWait("delete-app", { app_id: appId });
+    async (
+      appId: string,
+      opts?: { deleteVolumes?: boolean },
+    ): Promise<string[]> => {
+      const { payload } = await dispatchAndWaitPayload("delete-app", {
+        app_id: appId,
+        delete_volumes: opts?.deleteVolumes ?? false,
+      });
+      return (payload as { warnings?: string[] } | undefined)?.warnings ?? [];
     },
-    [dispatchAndWait],
+    [dispatchAndWaitPayload],
   );
 
   const rename = useCallback(

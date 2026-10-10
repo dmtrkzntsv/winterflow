@@ -77,11 +77,47 @@ upstream port to the app's published host port. The card shows the
 **TLS off** badge it inherits from the registration. An unknown hostname
 under the wildcard answers a plain 404.
 
+## 6. Let the rate limiter see real visitors
+
+The ingress throttles per client IP (`INGRESS_RATE_LIMIT_RPS`/`_BURST`). Behind
+the tunnel every request reaches Caddy from the cloudflared container, so all
+visitors would share that one IP — and one bucket. Tell the agent to trust the
+tunnel's client-IP header by listing the docker bridge range cloudflared
+connects from, in the agent's environment (`.env`):
+
+```
+INGRESS_TRUSTED_PROXIES=172.16.0.0/12
+```
+
+`172.16.0.0/12` holds Docker's default bridge and compose networks; if your
+daemon allocates from another pool, use the subnet `docker network inspect`
+shows for the cloudflared app's network. Requests from a trusted peer are keyed on `CF-Connecting-IP` (falling back to
+the rightmost untrusted `X-Forwarded-For` hop, then the peer). Requests from
+any other address are keyed on that address and their headers are ignored, so
+a direct client can't forge its way past the limit. Restart the agent after
+changing it.
+
+Using the Cloudflare **proxy** (orange cloud, an A record to this server,
+usually with a Cloudflare Origin certificate in **Certificate** mode) instead
+of a tunnel? Trust Cloudflare's edge ranges instead — the current list is at
+<https://www.cloudflare.com/ips/>; at the time of writing:
+
+```
+INGRESS_TRUSTED_PROXIES=173.245.48.0/20,103.21.244.0/22,103.22.200.0/22,103.31.4.0/22,141.101.64.0/18,108.162.192.0/18,190.93.240.0/20,188.114.96.0/20,197.234.240.0/22,198.41.128.0/17,162.158.0.0/15,104.16.0.0/13,104.24.0.0/14,172.64.0.0/13,131.0.72.0/22,2400:cb00::/32,2606:4700::/32,2803:f800::/32,2405:b500::/32,2405:8100::/32,2a06:98c0::/29,2c0f:f248::/32
+```
+
 ## Notes
 
 - Because nothing binds public 80/443, winterflow can run unprivileged:
   set `INGRESS_HTTP_PORT=8081` (for example — `8080` is taken by the UI's
   `API_PORT` default) and point the tunnel there.
+- Other TLS modes, for hosts that don't go through the tunnel: a loaded
+  certificate (Certificate mode) also serves any **Auto TLS** hostname it
+  matches — Caddy requests no Let's Encrypt certificate for a host a loaded
+  certificate already covers. And with Auto TLS an unknown host under a
+  wildcard fails the TLS handshake (there is no certificate for it) rather
+  than answering the 404, which only plain-HTTP (TLS off) and Certificate
+  hosts get.
 - cloudflared reconnects on its own and winterflow restarts it like any
   app. If winterflow itself is down, the tunnel app is still a plain
   compose project: `apps/cloudflared/.winterflow/run.sh up -d` brings it

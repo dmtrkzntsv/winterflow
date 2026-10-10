@@ -33,7 +33,7 @@ A **registration** is a name plus a TLS mode, stored per server (agent).
   | Mode | Meaning | Caddy behaviour |
   |---|---|---|
   | `auto` | winterflow manages certs | Each concrete app hostname under the registration is an ACME subject (one cert per host, HTTP-01). A wildcard in `auto` means "accept any single label here". |
-  | `certificate` | an uploaded PEM cert + key | Loaded via `tls.certificates.load_files`. Caddy's automatic HTTPS skips names covered by a loaded cert, so there is no ACME traffic. Routes sit on the HTTPS server. |
+  | `certificate` | an uploaded PEM cert + key | Loaded via `tls.certificates.load_files`. Caddy's automatic HTTPS skips names covered by a loaded cert, so there is no ACME traffic. Routes sit on the HTTPS server. That skip applies to *any* host the cert covers, so the cert also serves sibling `auto` hosts it matches (e.g. an `auto` exact name under a certificate-mode wildcard) — documented, not prevented. |
   | `off` | TLS terminated in front (tunnel or proxy) | Routes sit on the plain-HTTP server. Nothing listens on 443 for these names. |
 
 ### Coverage
@@ -78,9 +78,15 @@ type CreateDomainRequest struct {
     Certificate string    `json:"certificate,omitempty"` // PEM chain, certificate mode
     Key         string    `json:"key,omitempty"`         // ECIES ciphertext of the PEM key, certificate mode
 }
-type CreateDomainResponse struct{ Domain Domain `json:"domain"` }
+type CreateDomainResponse struct {
+    Domain   Domain   `json:"domain"`
+    Warnings []string `json:"warnings,omitempty"` // from the proxy reload
+}
 type DeleteDomainRequest struct{ Name string `json:"name"` }
-type DeleteDomainResponse struct{ Name string `json:"name"` }
+type DeleteDomainResponse struct {
+    Name     string   `json:"name"`
+    Warnings []string `json:"warnings,omitempty"` // from the proxy reload
+}
 ```
 
 - Types are `domain.list`, `domain.create` and `domain.delete`.
@@ -88,7 +94,10 @@ type DeleteDomainResponse struct{ Name string `json:"name"` }
   and `Key` are present iff the mode is `certificate`. It runs in the dispatcher
   hook (PR #4's pattern), with one dispatcher line per type.
 - `domain.create` on an existing name replaces it, which is how a certificate is
-  renewed.
+  renewed. The cert files keep their paths, so the generated config is
+  byte-identical and Caddy would skip the load as unchanged: `domain.create`
+  therefore forces the reload (`Reload(ctx, force=true)`), which re-provisions
+  the TLS app and evicts the old certificate. Other reloads stay unforced.
 
 ### Storage (`{AGENT_DATA_DIR}/domains/`)
 
@@ -104,8 +113,10 @@ type DeleteDomainResponse struct{ Name string `json:"name"` }
   - the leaf must not be expired.
 
   Each failure returns a clear error.
-- **Delete** is refused while any app on the agent uses a hostname whose
-  winning registration is this one. The error names the apps.
+- **Delete** is refused while any app on the agent uses a hostname that this
+  registration wins and no remaining registration would cover. A host another
+  registration still covers (a seeded exact name next to a new wildcard) just
+  moves to it. The error names the apps.
 
 ### Upgrade path
 
@@ -129,10 +140,15 @@ type DeleteDomainResponse struct{ Name string `json:"name"` }
 - **Catch-all:** after all app routes, every registration gets a route matching
   its name (or `*.s`) that answers **404** with a small text body. It is on the
   HTTPS server for `auto`/`certificate` and the HTTP server for `off`. Unknown
-  `xyz.twillingate.app` therefore gets a clean 404. (A 410 for stopped apps is
-  sub-project D.)
+  `xyz.twillingate.app` therefore gets a clean 404 under `off` and
+  `certificate` (the loaded cert completes the handshake). Under `auto` an
+  unknown host has no certificate — it is not an ACME subject — so the client
+  sees a TLS handshake failure, not the 404; only its plain-HTTP request would
+  reach the catch-all. (A 410 for stopped apps is sub-project D.)
 - The rate-limit route stays first on both servers. Read-header and idle
-  timeouts are unchanged.
+  timeouts are unchanged. It keys on the TCP peer unless that peer is in
+  `INGRESS_TRUSTED_PROXIES` (CIDRs, default empty); then on `CF-Connecting-IP`,
+  else the rightmost untrusted `X-Forwarded-For` hop, else the peer.
 - **Reload triggers:** `app.save`, `app.delete`, `app.rename`, `rollback`
   (all as today), plus `domain.create` and `domain.delete`.
 
@@ -204,9 +220,14 @@ A **Domains** tab in Server Settings, shown when the server reports the
   - In certificate mode, textareas for the certificate PEM and the key PEM. The
     key is encrypted in the browser with the server's public key, the same flow
     as registry passwords.
-  - "Replace certificate" reuses the dialog for an existing name.
-- **Delete:** a confirm dialog. The refusal (in use) is shown with the app
-  names.
+  - In certificate mode, a hint that the certificate also serves the Auto TLS
+    hostnames it matches.
+  - Every row's edit action reuses the dialog for an existing name (switch the
+    mode, or replace the certificate).
+  - A create/delete whose proxy reload reported problems shows them in a
+    warning toast.
+- **Delete:** a confirm dialog. The refusal (a host only this name covers) is
+  shown with the app names.
 
 ### App ingress editor
 

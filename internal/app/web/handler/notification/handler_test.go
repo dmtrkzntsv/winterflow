@@ -28,8 +28,9 @@ func asUser(id string, next http.Handler) http.Handler {
 // right after subscribing, so a client that has its 200 cannot miss a
 // notification published afterwards.
 func TestStreamIsSubscribedWhenHeadersArrive(t *testing.T) {
-	nm := notificationsvc.NewNotificationManager()
-	h := NewHandler(&Deps{Logger: logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error"}), NotificationManager: nm})
+	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error"})
+	nm := notificationsvc.NewNotificationManager(log)
+	h := NewHandler(&Deps{Logger: log, NotificationManager: nm})
 	srv := httptest.NewServer(asUser("u1", http.HandlerFunc(h.Stream)))
 	defer srv.Close()
 
@@ -56,7 +57,8 @@ func TestStreamIsSubscribedWhenHeadersArrive(t *testing.T) {
 }
 
 func TestStreamRequiresUser(t *testing.T) {
-	h := NewHandler(&Deps{Logger: logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error"}), NotificationManager: notificationsvc.NewNotificationManager()})
+	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error"})
+	h := NewHandler(&Deps{Logger: log, NotificationManager: notificationsvc.NewNotificationManager(log)})
 	rec := httptest.NewRecorder()
 	h.Stream(rec, httptest.NewRequest(http.MethodGet, "/api/v1/sse", nil))
 	if rec.Code != http.StatusUnauthorized {

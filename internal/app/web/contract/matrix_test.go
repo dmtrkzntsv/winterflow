@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/url"
 	"reflect"
+	"strings"
 	"testing"
 
 	"winterflow/internal/app/web/api"
@@ -114,7 +115,7 @@ func carriesServerID(t reflect.Type) bool {
 	}
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
-		if f.Tag.Get("query") == "server_id" || f.Tag.Get("json") == "server_id" {
+		if tagName(f.Tag, "query") == "server_id" || tagName(f.Tag, "json") == "server_id" {
 			return true
 		}
 		if f.Anonymous && carriesServerID(f.Type) {
@@ -122,6 +123,42 @@ func carriesServerID(t reflect.Type) bool {
 		}
 	}
 	return false
+}
+
+// tagName is the name part of a struct tag, without options such as
+// ",omitempty".
+func tagName(tag reflect.StructTag, key string) string {
+	name, _, _ := strings.Cut(tag.Get(key), ",")
+	return name
+}
+
+func TestCarriesServerID(t *testing.T) {
+	t.Parallel()
+	type embedded struct {
+		ServerID string `query:"server_id"`
+	}
+	cases := []struct {
+		name string
+		v    any
+		want bool
+	}{
+		{"json", struct {
+			ID string `json:"server_id"`
+		}{}, true},
+		{"json omitempty", &struct {
+			ID string `json:"server_id,omitempty"`
+		}{}, true},
+		{"query via embedding", struct{ embedded }{}, true},
+		{"other field", struct {
+			ID string `json:"server_ids,omitempty"`
+		}{}, false},
+		{"not a struct", "server_id", false},
+	}
+	for _, tc := range cases {
+		if got := carriesServerID(reflect.TypeOf(tc.v)); got != tc.want {
+			t.Errorf("%s: carriesServerID = %v, want %v", tc.name, got, tc.want)
+		}
+	}
 }
 
 // serverAddressed reports whether the route takes a server_id, in its

@@ -58,5 +58,8 @@ func TestUserRoutes(t *testing.T) {
 			CurrentPassword: ownerPassword, NewPassword: "new-password",
 		}).expect(t, http.StatusOK)
 		e.anon().login(t, owner.email, "new-password")
+		e.anon().do(t, call{Method: http.MethodPost, Path: "/auth/local/login", Body: map[string]string{
+			"user": owner.email, "passwd": ownerPassword, "aud": "contract",
+		}}).expect(t, http.StatusForbidden)
 	})
 }

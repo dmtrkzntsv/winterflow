@@ -17,7 +17,7 @@ import (
 // migration over an install whose ids are CHAR(36) and include a row that is
 // not a UUID: the migration must drop it instead of aborting startup.
 func TestAppDomainsUUIDMigrationSurvivesJunkRows(t *testing.T) {
-	if dialect() != "postgres" {
+	if dialect(t) != "postgres" {
 		t.Skip("the UUID retype is Postgres-only")
 	}
 	t.Parallel()

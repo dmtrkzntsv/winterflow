@@ -96,7 +96,9 @@ func TestParity(t *testing.T) {
 			ServerID: sid, App: model.App{Name: name, Icon: "box", Color: "#112233"}, Config: json.RawMessage(`{}`),
 		}})
 		var saved command.SaveAppResponse
-		_ = json.Unmarshal(raw, &saved)
+		if err := json.Unmarshal(raw, &saved); err != nil {
+			t.Fatalf("save %s result: %v", name, err)
+		}
 		ids = append(ids, saved.AppID)
 	}
 	q := url.Values{"server_id": {sid}}
@@ -127,6 +129,6 @@ func TestParity(t *testing.T) {
 		t.Fatalf("read %s: %v (run go test ./internal/app/web/contract -run TestParity -update)", goldenPath, err)
 	}
 	if string(got) != string(want) {
-		t.Fatalf("%s transcript differs from %s (dialect %s):\n%s", dialect(), goldenPath, dialect(), lineDiff(string(want), string(got)))
+		t.Fatalf("%s transcript differs from %s (dialect %s):\n%s", dialect(t), goldenPath, dialect(t), lineDiff(string(want), string(got)))
 	}
 }

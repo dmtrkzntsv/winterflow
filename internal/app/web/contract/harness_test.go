@@ -42,8 +42,10 @@ type env struct {
 // function-local), while minting a token on login reads it through
 // golang-jwt's ClaimStrings.MarshalJSON. Parallel tests therefore take the
 // write lock around web.NewServer and a read lock around each /auth/ request
-// (see serializeAuth). Production builds one server per process, so this is a
-// test-only hazard.
+// (see serializeAuth). The only other reader is go-pkgz's refreshExpiredToken
+// path, which re-mints a token that is past its 5-minute TokenDuration; no
+// test env lives that long, so it never runs here. Production builds one
+// server per process, so this is a test-only hazard.
 var newServerMu sync.RWMutex
 
 // serializeAuth holds newServerMu's read lock for the duration of every

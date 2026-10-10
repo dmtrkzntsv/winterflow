@@ -2,6 +2,7 @@ package contract_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 // client is one caller of the API: anonymous, a JWT-cookie session, or a
@@ -48,9 +50,18 @@ type envelope struct {
 	Data    json.RawMessage `json:"data"`
 }
 
+// requestTimeout bounds one non-streaming request, so a handler that hangs
+// fails its test instead of the whole run's -timeout.
+const requestTimeout = 30 * time.Second
+
 func (e *env) newClient() *client {
 	jar, _ := cookiejar.New(nil)
-	return &client{e: e, http: &http.Client{Jar: jar}}
+	return &client{e: e, http: &http.Client{
+		Jar: jar,
+		// A redirect is part of the contract: validate the 3xx itself
+		// rather than whatever it points to.
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}}
 }
 
 // anon is an unauthenticated client.
@@ -74,7 +85,9 @@ func (c *client) do(t *testing.T, k call) *response {
 		}
 		body = bytes.NewReader(raw)
 	}
-	req, err := http.NewRequestWithContext(c.e.ctx, k.Method, u, body)
+	ctx, cancel := context.WithTimeout(c.e.ctx, requestTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, k.Method, u, body)
 	if err != nil {
 		t.Fatal(err)
 	}

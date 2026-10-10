@@ -19,12 +19,47 @@ import (
 // SQLite: one temp file per test.
 const dbEnv = "WF_TEST_DATABASE_URL"
 
-// dialect reports which database this run exercises ("sqlite" or "postgres").
-func dialect() string {
-	if strings.HasPrefix(os.Getenv(dbEnv), "postgres://") {
-		return "postgres"
+// dialect reports which database this run exercises ("sqlite" or
+// "postgres"); a WF_TEST_DATABASE_URL it cannot use fails the test rather
+// than silently falling back to SQLite.
+func dialect(t testing.TB) string {
+	t.Helper()
+	d, err := dialectOf(os.Getenv(dbEnv))
+	if err != nil {
+		t.Fatal(err)
 	}
-	return "sqlite"
+	return d
+}
+
+// dialectOf maps a WF_TEST_DATABASE_URL to its dialect: empty is SQLite,
+// postgres:// and postgresql:// are Postgres, anything else is an error.
+func dialectOf(dsn string) (string, error) {
+	if dsn == "" {
+		return "sqlite", nil
+	}
+	scheme, _, _ := strings.Cut(dsn, "://")
+	switch scheme {
+	case "postgres", "postgresql":
+		return "postgres", nil
+	}
+	return "", fmt.Errorf("%s: unsupported scheme %q (want postgres:// or postgresql://, or unset for SQLite)", dbEnv, scheme)
+}
+
+func TestDialectOf(t *testing.T) {
+	t.Parallel()
+	for dsn, want := range map[string]string{
+		"":                      "sqlite",
+		"postgres://u:p@h/db":   "postgres",
+		"postgresql://u:p@h/db": "postgres",
+		"mysql://u:p@h/db":      "",
+		"sqlite:///tmp/x":       "",
+		"localhost:5432":        "",
+	} {
+		got, err := dialectOf(dsn)
+		if got != want || (err != nil) != (want == "") {
+			t.Errorf("dialectOf(%q) = %q, %v; want %q", dsn, got, err, want)
+		}
+	}
 }
 
 // freshDB returns a connection string for an empty database owned by t.
@@ -33,7 +68,7 @@ func dialect() string {
 func freshDB(t *testing.T) string {
 	t.Helper()
 	base := os.Getenv(dbEnv)
-	if dialect() == "sqlite" {
+	if dialect(t) == "sqlite" {
 		return "sqlite://" + filepath.Join(t.TempDir(), "wf.sqlite")
 	}
 	var b [6]byte
@@ -54,6 +89,7 @@ func freshDB(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("parse %s: %v", dbEnv, err)
 	}
+	u.Scheme = "postgres" // the server accepts only postgres:// (db.setupBun)
 	q := u.Query()
 	q.Set("search_path", schema)
 	// A non-UTC session zone: the server must pin UTC itself (db.utcDSN).

@@ -32,13 +32,16 @@ import {
   type Network,
   type Registry,
 } from "@/context/use-docker";
+import { useServers } from "@/context/use-servers";
+import { DomainsCard } from "@/pages/settings-domains";
 import { VolumesCard } from "@/pages/settings-volumes";
 
-const TABS = ["registries", "networks", "volumes", "agent"] as const;
+const TABS = ["registries", "networks", "volumes", "domains", "agent"] as const;
 
 // SettingsPage is the server-level settings view (v1 "Server Settings"):
-// Docker registries, networks and volumes, plus agent self-update — one tab per
-// section, synced to ?tab= like the app details page.
+// Docker registries, networks and volumes, registered domains (servers with
+// ingress only), plus agent self-update — one tab per section, synced to
+// ?tab= like the app details page.
 export default function SettingsPage() {
   const breadcrumbs = useMemo(
     () => [{ label: "Server" }, { label: "Settings" }],
@@ -47,12 +50,17 @@ export default function SettingsPage() {
   useAppBreadcrumbs(breadcrumbs);
 
   const docker = useDocker();
+  const { activeServer } = useServers();
+  // Domains configure the embedded ingress: only servers running it.
+  const hasIngress = Boolean(activeServer?.features?.ingress);
   const [searchParams, setSearchParams] = useSearchParams();
 
   const tabParam = searchParams.get("tab") ?? "registries";
-  const tab = (TABS as readonly string[]).includes(tabParam)
-    ? tabParam
-    : "registries";
+  const tab =
+    (TABS as readonly string[]).includes(tabParam) &&
+    (tabParam !== "domains" || hasIngress)
+      ? tabParam
+      : "registries";
   const setTab = (next: string) => {
     setSearchParams(next === "registries" ? {} : { tab: next }, {
       replace: true,
@@ -73,6 +81,7 @@ export default function SettingsPage() {
         <TabsTrigger value="registries">Registries</TabsTrigger>
         <TabsTrigger value="networks">Networks</TabsTrigger>
         <TabsTrigger value="volumes">Volumes</TabsTrigger>
+        {hasIngress ? <TabsTrigger value="domains">Domains</TabsTrigger> : null}
         <TabsTrigger value="agent">Agent</TabsTrigger>
       </TabsList>
       <TabsContent value="registries">
@@ -84,6 +93,11 @@ export default function SettingsPage() {
       <TabsContent value="volumes">
         <VolumesCard docker={docker} />
       </TabsContent>
+      {hasIngress ? (
+        <TabsContent value="domains">
+          <DomainsCard docker={docker} />
+        </TabsContent>
+      ) : null}
       <TabsContent value="agent">
         <AgentCard docker={docker} />
       </TabsContent>

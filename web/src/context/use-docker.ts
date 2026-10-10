@@ -3,6 +3,7 @@ import { useCallback, useMemo } from "react";
 import { useNotifications } from "@/context/use-notifications";
 import { useServers } from "@/context/use-servers";
 import { encryptSecret } from "@/lib/ecies";
+import type { DomainTLS, RegisteredDomain } from "@/lib/domains";
 import { apiBaseUrl } from "@/config";
 
 const base = apiBaseUrl.endsWith("/") ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
@@ -150,6 +151,39 @@ export function useDocker() {
     [dispatch],
   );
 
+  const listDomains = useCallback(
+    () =>
+      dispatch<{ domains: RegisteredDomain[] | null }>("/api/v1/domain/list", {}).then(
+        (p) => p.domains ?? [],
+      ),
+    [dispatch],
+  );
+
+  // createDomain registers (or replaces) a name. In certificate mode the key
+  // is a secret: it is encrypted with the server key, like registry passwords.
+  const createDomain = useCallback(
+    async (
+      name: string,
+      tls: DomainTLS,
+      cert?: { certificate: string; key: string },
+    ) => {
+      const body: Record<string, string> = { name, tls };
+      if (tls === "certificate" && cert) {
+        const key = await getPublicKey();
+        body.certificate = cert.certificate;
+        body.key = await encryptSecret(cert.key, key);
+      }
+      await dispatch("/api/v1/domain/create", { method: "POST", body });
+    },
+    [dispatch, getPublicKey],
+  );
+
+  const deleteDomain = useCallback(
+    (name: string) =>
+      dispatch("/api/v1/domain/delete", { method: "POST", body: { name } }),
+    [dispatch],
+  );
+
   const updateAgent = useCallback(
     (version: string) =>
       dispatch("/api/v1/agent/update", { method: "POST", body: { version } }),
@@ -170,6 +204,9 @@ export function useDocker() {
       listVolumes,
       createVolume,
       deleteVolume,
+      listDomains,
+      createDomain,
+      deleteDomain,
       updateAgent,
     }),
     [
@@ -183,6 +220,9 @@ export function useDocker() {
       listVolumes,
       createVolume,
       deleteVolume,
+      listDomains,
+      createDomain,
+      deleteDomain,
       updateAgent,
     ],
   );

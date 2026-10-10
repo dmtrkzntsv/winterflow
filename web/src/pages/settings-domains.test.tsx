@@ -1,0 +1,168 @@
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { AppsContext, type AppsContextValue } from "@/context/apps-context-base";
+import type { Docker } from "@/context/use-docker";
+import type { RegisteredDomain } from "@/lib/domains";
+import { DomainsCard } from "@/pages/settings-domains";
+
+const toastError = vi.fn();
+vi.mock("sonner", () => ({
+  toast: { success: vi.fn(), error: (...args: unknown[]) => toastError(...args) },
+}));
+
+const day = 24 * 60 * 60 * 1000;
+const inDays = (n: number) => new Date(Date.now() + n * day).toISOString();
+
+const DOMAINS: RegisteredDomain[] = [
+  { name: "*.twillingate.app", tls: "certificate", not_after: inDays(10), issuer: "CF Origin", apps: ["a1", "a2"] },
+  { name: "old.example.com", tls: "certificate", not_after: inDays(-1), apps: [] },
+  { name: "tunnel.example.com", tls: "off", apps: [] },
+  { name: "example.com", tls: "auto", apps: ["a1"] },
+];
+
+function fakeDocker(over: Partial<Docker> = {}): Docker {
+  return {
+    listDomains: vi.fn().mockResolvedValue(DOMAINS),
+    createDomain: vi.fn().mockResolvedValue(undefined),
+    deleteDomain: vi.fn().mockResolvedValue(undefined),
+    ...over,
+  } as unknown as Docker;
+}
+
+function renderCard(docker: Docker) {
+  const apps = {
+    apps: [
+      { id: "a1", name: "Shop" },
+      { id: "a2", name: "Blog" },
+    ],
+  } as unknown as AppsContextValue;
+  return render(
+    <MemoryRouter>
+      <AppsContext.Provider value={apps}>
+        <DomainsCard docker={docker} />
+      </AppsContext.Provider>
+    </MemoryRouter>,
+  );
+}
+
+describe("DomainsCard", () => {
+  beforeEach(() => toastError.mockReset());
+
+  it("lists names, modes, expiry and the apps using each", async () => {
+    renderCard(fakeDocker());
+
+    expect(await screen.findByText("*.twillingate.app")).toHaveClass("font-mono");
+    expect(screen.getAllByText("Certificate").length).toBeGreaterThan(0);
+    expect(screen.getByText("TLS off")).toBeInTheDocument();
+    expect(screen.getByText("Auto TLS")).toBeInTheDocument();
+    // Under 30 days is a warning; past is destructive.
+    expect(screen.getByText(/^Expires /)).toHaveClass("text-amber-700");
+    expect(screen.getByText(/^Expired /)).toHaveClass("text-destructive");
+    expect(screen.getByText(/^Expires /)).toHaveAttribute("title", "Issued by CF Origin");
+    expect(screen.getByText(/2 apps:/)).toBeInTheDocument();
+    expect(screen.getAllByRole("link", { name: "Shop" })[0]).toHaveAttribute("href", "/app/a1");
+    expect(screen.getByRole("link", { name: "Blog" })).toHaveAttribute("href", "/app/a2");
+    expect(screen.getAllByText("Not used")).toHaveLength(2);
+  });
+
+  it("registers a domain with TLS off", async () => {
+    const user = userEvent.setup();
+    const docker = fakeDocker();
+    renderCard(docker);
+
+    await user.click(await screen.findByRole("button", { name: /Register domain/ }));
+    const dialog = await screen.findByRole("dialog");
+    const submit = within(dialog).getByRole("button", { name: "Register" });
+    expect(submit).toBeDisabled();
+
+    await user.type(within(dialog).getByLabelText("Name"), "*.*.bad");
+    expect(within(dialog).getByText(/Use a lowercase hostname/)).toBeInTheDocument();
+    expect(submit).toBeDisabled();
+
+    await user.clear(within(dialog).getByLabelText("Name"));
+    await user.type(within(dialog).getByLabelText("Name"), "*.Tunnel.Example.com");
+    await user.click(within(dialog).getByRole("radio", { name: "TLS off" }));
+    await user.click(submit);
+
+    expect(docker.createDomain).toHaveBeenCalledWith("*.tunnel.example.com", "off", undefined);
+    expect(docker.listDomains).toHaveBeenCalledTimes(2);
+  });
+
+  it("asks for a certificate and key in certificate mode", async () => {
+    const user = userEvent.setup();
+    const docker = fakeDocker();
+    renderCard(docker);
+
+    await user.click(await screen.findByRole("button", { name: /Register domain/ }));
+    const dialog = await screen.findByRole("dialog");
+    await user.type(within(dialog).getByLabelText("Name"), "*.secure.app");
+    expect(within(dialog).queryByLabelText("Certificate (PEM)")).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole("radio", { name: "Certificate" }));
+
+    const submit = within(dialog).getByRole("button", { name: "Register" });
+    await user.type(within(dialog).getByLabelText("Certificate (PEM)"), "CERT");
+    expect(submit).toBeDisabled(); // the key is still missing
+    await user.type(within(dialog).getByLabelText("Private key (PEM)"), "KEY");
+    await user.click(submit);
+
+    expect(docker.createDomain).toHaveBeenCalledWith("*.secure.app", "certificate", {
+      certificate: "CERT",
+      key: "KEY",
+    });
+  });
+
+  it("replaces a certificate for an existing name", async () => {
+    const user = userEvent.setup();
+    const docker = fakeDocker();
+    renderCard(docker);
+
+    await user.click(await screen.findByRole("button", { name: "Replace certificate for *.twillingate.app" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByLabelText("Name")).toHaveValue("*.twillingate.app");
+    expect(within(dialog).getByLabelText("Name")).toHaveAttribute("readonly");
+    expect(within(dialog).getByRole("radio", { name: "Certificate" })).toBeChecked();
+    await user.type(within(dialog).getByLabelText("Certificate (PEM)"), "NEW");
+    await user.type(within(dialog).getByLabelText("Private key (PEM)"), "KEY");
+    await user.click(within(dialog).getByRole("button", { name: "Replace" }));
+
+    expect(docker.createDomain).toHaveBeenCalledWith("*.twillingate.app", "certificate", {
+      certificate: "NEW",
+      key: "KEY",
+    });
+  });
+
+  it("removes a domain after confirmation and shows a refusal", async () => {
+    const user = userEvent.setup();
+    const docker = fakeDocker({
+      deleteDomain: vi
+        .fn()
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(new Error("example.com is used by Shop (a1)")),
+    });
+    renderCard(docker);
+
+    await user.click(await screen.findByRole("button", { name: "Remove domain tunnel.example.com" }));
+    await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Remove domain" }));
+    expect(docker.deleteDomain).toHaveBeenCalledWith("tunnel.example.com");
+
+    await user.click(screen.getByRole("button", { name: "Remove domain example.com" }));
+    await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Remove domain" }));
+    expect(toastError).toHaveBeenCalledWith("Couldn't remove domain", {
+      description: "example.com is used by Shop (a1)",
+    });
+  });
+
+  it("says so when the list can't be loaded, or is empty", async () => {
+    const { unmount } = renderCard(
+      fakeDocker({ listDomains: vi.fn().mockRejectedValue(new Error("agent offline")) }),
+    );
+    expect(await screen.findByText("Couldn't load domains.")).toBeInTheDocument();
+    unmount();
+
+    renderCard(fakeDocker({ listDomains: vi.fn().mockResolvedValue([]) }));
+    expect(await screen.findByText(/No domains yet/)).toBeInTheDocument();
+  });
+});

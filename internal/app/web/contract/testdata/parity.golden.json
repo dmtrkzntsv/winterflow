@@ -1,0 +1,137 @@
+[
+  {
+    "name": "create token",
+    "status": 200,
+    "body": {
+      "data": {
+        "expires_at": null,
+        "name": "parity",
+        "prefix": "<token>",
+        "token": "<token>",
+        "token_id": "<id-1>"
+      },
+      "message": "token created",
+      "success": true
+    }
+  },
+  {
+    "name": "register server",
+    "status": 200,
+    "body": {
+      "data": {
+        "server": {
+          "created_at": "<time>",
+          "id": "<id-2>",
+          "last_seen_at": null,
+          "name": "contract",
+          "organization_id": "<id-3>"
+        }
+      },
+      "message": "server added",
+      "success": true
+    }
+  },
+  {
+    "name": "save alpha (result)",
+    "status": 0,
+    "body": {
+      "app_id": "<id-4>",
+      "revision": "rev-1"
+    }
+  },
+  {
+    "name": "save beta (result)",
+    "status": 0,
+    "body": {
+      "app_id": "<id-5>",
+      "revision": "rev-1"
+    }
+  },
+  {
+    "name": "list apps",
+    "status": 200,
+    "body": {
+      "data": {
+        "apps": [
+          {
+            "color": "#112233",
+            "created_at": "<time>",
+            "icon": "box",
+            "id": "<id-4>",
+            "name": "alpha",
+            "server_id": "<id-2>",
+            "template_id": "",
+            "version": ""
+          },
+          {
+            "color": "#112233",
+            "created_at": "<time>",
+            "icon": "box",
+            "id": "<id-5>",
+            "name": "beta",
+            "server_id": "<id-2>",
+            "template_id": "",
+            "version": ""
+          }
+        ]
+      },
+      "success": true
+    }
+  },
+  {
+    "name": "rename alpha (result)",
+    "status": 0,
+    "body": {
+      "app_id": "<id-4>",
+      "name": "alpha-2"
+    }
+  },
+  {
+    "name": "delete beta (result)",
+    "status": 0,
+    "body": {
+      "app_id": "<id-5>"
+    }
+  },
+  {
+    "name": "list apps again",
+    "status": 200,
+    "body": {
+      "data": {
+        "apps": [
+          {
+            "color": "#112233",
+            "created_at": "<time>",
+            "icon": "box",
+            "id": "<id-4>",
+            "name": "alpha-2",
+            "server_id": "<id-2>",
+            "template_id": "",
+            "version": ""
+          }
+        ]
+      },
+      "success": true
+    }
+  },
+  {
+    "name": "list members",
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "avatar_url": "",
+          "created_at": "<time>",
+          "email": "owner@example.test",
+          "id": "<id-6>",
+          "last_seen_at": "<time>",
+          "name": "Owner",
+          "provider": "local",
+          "role": "owner"
+        }
+      ],
+      "message": "members",
+      "success": true
+    }
+  }
+]

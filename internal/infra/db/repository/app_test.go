@@ -3,7 +3,9 @@ package repository
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	"winterflow/internal/domain/model"
 	"winterflow/pkg/logger"
@@ -111,5 +113,29 @@ func TestSyncAppsEmptyReportDeletesAll(t *testing.T) {
 	list, _ := repo.GetApps(ctx, "srv-1")
 	if len(list) != 0 {
 		t.Fatalf("want empty after empty sync, got %v", list)
+	}
+}
+
+// GetApps breaks created_at ties (second precision) by app id, so both
+// databases list apps saved in the same second in the same order.
+func TestGetAppsOrdersTiesByID(t *testing.T) {
+	repo := newAppRepo(t)
+	ctx := context.Background()
+	at := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	for _, id := range []string{"app-b", "app-a", "app-c"} {
+		if err := repo.SaveApp(ctx, model.App{ID: id, ServerID: "srv-1", Name: id, Icon: "i", Color: "#000000", CreatedAt: at}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	list, err := repo.GetApps(ctx, "srv-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, a := range list {
+		got = append(got, a.ID)
+	}
+	if strings.Join(got, ",") != "app-a,app-b,app-c" {
+		t.Fatalf("order = %v, want app-a,app-b,app-c", got)
 	}
 }

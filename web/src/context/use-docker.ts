@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 
 import { useNotifications } from "@/context/use-notifications";
 import { useServers } from "@/context/use-servers";
@@ -156,17 +156,36 @@ export function useDocker() {
     [dispatch],
   );
 
-  return {
-    hasServer: Boolean(serverId),
-    listRegistries,
-    createRegistry,
-    deleteRegistry,
-    listNetworks,
-    createNetwork,
-    deleteNetwork,
-    listVolumes,
-    createVolume,
-    deleteVolume,
-    updateAgent,
-  };
+  // Memoized so consumers can depend on the object (or its callbacks)
+  // without refetching on every parent re-render.
+  return useMemo(
+    () => ({
+      hasServer: Boolean(serverId),
+      listRegistries,
+      createRegistry,
+      deleteRegistry,
+      listNetworks,
+      createNetwork,
+      deleteNetwork,
+      listVolumes,
+      createVolume,
+      deleteVolume,
+      updateAgent,
+    }),
+    [
+      serverId,
+      listRegistries,
+      createRegistry,
+      deleteRegistry,
+      listNetworks,
+      createNetwork,
+      deleteNetwork,
+      listVolumes,
+      createVolume,
+      deleteVolume,
+      updateAgent,
+    ],
+  );
 }
+
+export type Docker = ReturnType<typeof useDocker>;

@@ -216,11 +216,14 @@ export function AppsProvider({ children }: { children: ReactNode }) {
     });
   }, [subscribe, activeServerId]);
 
-  // dispatchAndWaitPayload POSTs a fire-and-forward command, awaits its SSE
-  // result by request_id, refreshes the list and status, and returns the list
-  // together with the result payload.
-  const dispatchAndWaitPayload = useCallback(
-    async (path: string, body: Record<string, unknown>) => {
+  // dispatchAndWait POSTs a fire-and-forward command, awaits its SSE result
+  // by request_id, refreshes the list and status, and returns the refreshed
+  // list together with the result payload.
+  const dispatchAndWait = useCallback(
+    async (
+      path: string,
+      body: Record<string, unknown>,
+    ): Promise<{ list: App[]; payload: unknown }> => {
       if (!activeServerId) throw new Error("No active server");
       const res = await fetch(`${base}/api/v1/app/${path}`, {
         method: "POST",
@@ -245,13 +248,6 @@ export function AppsProvider({ children }: { children: ReactNode }) {
     [activeServerId, waitFor, loadApps, loadStatus],
   );
 
-  // dispatchAndWait is dispatchAndWaitPayload resolving with the refreshed list.
-  const dispatchAndWait = useCallback(
-    async (path: string, body: Record<string, unknown>) =>
-      (await dispatchAndWaitPayload(path, body)).list,
-    [dispatchAndWaitPayload],
-  );
-
   const control = useCallback(
     async (appId: string, action: ControlAction) => {
       await dispatchAndWait("control-app", { app_id: appId, action });
@@ -264,7 +260,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       appId: string,
       opts?: { deleteVolumes?: boolean },
     ): Promise<DeleteAppResult> => {
-      const { payload } = await dispatchAndWaitPayload("delete-app", {
+      const { payload } = await dispatchAndWait("delete-app", {
         app_id: appId,
         delete_volumes: opts?.deleteVolumes ?? false,
       });
@@ -276,7 +272,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
         volumesDeleted: res?.volumes_deleted ?? false,
       };
     },
-    [dispatchAndWaitPayload],
+    [dispatchAndWait],
   );
 
   const rename = useCallback(
@@ -402,7 +398,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       files: { name: string; content: string; encrypted: boolean }[];
       variables: { name: string; content: string; encrypted: boolean }[];
     }) => {
-      return dispatchAndWait("save-app", {
+      const { list } = await dispatchAndWait("save-app", {
         app: body.app,
         config: body.config,
         files: body.files,
@@ -410,6 +406,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
         ...(body.source ? { source: body.source } : {}),
         ...(body.draft ? { draft: true } : {}),
       });
+      return list;
     },
     [dispatchAndWait],
   );

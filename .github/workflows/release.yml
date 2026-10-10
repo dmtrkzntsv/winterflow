@@ -29,11 +29,14 @@ jobs:
   goreleaser:
     # Only a green CI run of a push to main releases. The event check matters:
     # a pull request whose head branch is also named "main" (e.g. from a
-    # fork) completes ci with head_branch == main too.
+    # fork) completes ci with head_branch == main too; the repository check
+    # rejects runs from forks outright. A manual dispatch must target main.
     if: >-
-      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_dispatch' &&
+       github.ref == 'refs/heads/main') ||
       (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'push')
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -45,9 +48,25 @@ jobs:
           # changelog between releases.
           fetch-depth: 0
 
+      # Skip commits that are already released. CI runs for several pushes
+      # can finish out of order, or be re-run; this workflow then sees a
+      # commit that carries a release tag itself (duplicate) or that an
+      # already-released newer commit contains (out of order). Releasing it
+      # would publish a stale build under a newer version number.
+      - name: Check whether this commit is already released
+        id: released
+        run: |
+          if [ -n "$(git tag --contains HEAD -l 'v*')" ]; then
+            echo "HEAD is already covered by a release tag; skipping."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The pnpm version comes from "packageManager" in web/package.json.
       - uses: pnpm/action-setup@v4
         with:
-          version: 10
+          package_json_file: web/package.json
 
       - uses: actions/setup-node@v4
         with:
@@ -60,6 +79,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Tag calver release
+        if: steps.released.outputs.skip != 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -71,6 +91,7 @@ jobs:
           git push origin "$tag"
 
       - uses: goreleaser/goreleaser-action@v6
+        if: steps.released.outputs.skip != 'true'
         with:
           version: "~> v2"
           args: release --clean

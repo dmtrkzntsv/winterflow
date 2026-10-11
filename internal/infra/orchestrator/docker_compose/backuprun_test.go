@@ -1,0 +1,415 @@
+package dockercompose
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/klauspost/compress/zstd"
+
+	"winterflow/internal/domain/backup/recipe"
+	"winterflow/internal/domain/command"
+	"winterflow/internal/domain/model"
+	"winterflow/internal/infra/backup/helper"
+	"winterflow/internal/infra/backup/layout"
+	"winterflow/internal/infra/backup/store"
+)
+
+// fakeHelper stands in for `docker run` of the helper: it records the
+// arguments and answers with a dump of payload whose fingerprint is fp
+// (exit 3 when --since already is fp), or with exit/stderr when set.
+type fakeHelper struct {
+	mu      sync.Mutex
+	calls   [][]string
+	payload string
+	fp      string
+	exit    int
+	stderr  string
+	err     error
+}
+
+func (f *fakeHelper) run(_ context.Context, _ string, args []string, out io.Writer) (int, []byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, args)
+	if f.err != nil || f.exit != 0 {
+		return f.exit, []byte(f.stderr), f.err
+	}
+	if i := slices.Index(args, "--since"); i >= 0 && args[i+1] == f.fp {
+		return helper.ExitUnchanged, []byte(`{"unchanged":true}` + "\n"), nil
+	}
+	if _, err := io.WriteString(out, f.payload); err != nil {
+		return 1, nil, err
+	}
+	res, _ := json.Marshal(helper.Result{Fingerprint: f.fp, RawSize: int64(len(f.payload)), Warnings: []string{"a note"}})
+	return 0, append([]byte("progress\n"), res...), nil
+}
+
+func (f *fakeHelper) last() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls[len(f.calls)-1]
+}
+
+// backupRepo is an app with backupCompose, its database and media backups
+// on the local storage "disk", a fake helper, compose config and docker, and
+// a clock at now.
+type backupRepo struct {
+	*Repository
+	disk   string
+	helper *fakeHelper
+	docker []string
+	clock  time.Time
+}
+
+func newBackupRepo(t *testing.T) *backupRepo {
+	t.Helper()
+	r := newTestRepo(t)
+	b := &backupRepo{Repository: r, disk: t.TempDir(), helper: &fakeHelper{payload: "SQLITE-SNAPSHOT", fp: "sqlite:1"},
+		clock: time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)}
+	if err := r.storages.Save(localStorage("disk", b.disk), nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := saveConfig(t, r, "app-1", backupCompose, withBackups(
+		`[{"name":"database","enabled":true,"storage":"disk"},{"name":"media","enabled":true,"storage":"disk","exclude":["*.tmp"]}]`)); err != nil {
+		t.Fatal(err)
+	}
+	(&fakeComposeConfig{out: configJSON}).install(r)
+	r.runHelper = b.helper.run
+	r.docker = func(_ context.Context, args ...string) error {
+		b.docker = append(b.docker, strings.Join(args, " "))
+		return nil
+	}
+	r.helperBinary = func() (string, error) { return "/usr/local/bin/winterflow", nil }
+	r.now = func() time.Time { return b.clock }
+	return b
+}
+
+func (b *backupRepo) run(t *testing.T, name string, kind command.PointKind) (BackupResult, error) {
+	t.Helper()
+	return b.RunBackup(context.Background(), BackupJob{AppID: "app-1", Backup: name, Kind: kind})
+}
+
+// stored lists the disk's object keys.
+func (b *backupRepo) stored(t *testing.T) []string {
+	t.Helper()
+	var out []string
+	_ = filepath.WalkDir(b.disk, func(p string, d os.DirEntry, _ error) error {
+		if !d.IsDir() {
+			rel, _ := filepath.Rel(b.disk, p)
+			out = append(out, filepath.ToSlash(rel))
+		}
+		return nil
+	})
+	return out
+}
+
+func TestRunBackupStoresAPoint(t *testing.T) {
+	b := newBackupRepo(t)
+	res, err := b.run(t, "database", command.PointScheduled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := "20261011T120000Z-scheduled"
+	if res.Unchanged || res.Point == nil || res.Point.ID != id || res.Fingerprint != "sqlite:1" ||
+		len(res.Warnings) != 1 || res.Warnings[0] != "a note" {
+		t.Fatalf("result = %+v", res)
+	}
+	want := []string{"app-1/database/" + id + ".db.zst", "app-1/database/" + id + ".json"}
+	if got := b.stored(t); !slices.Equal(got, want) {
+		t.Fatalf("stored = %v", got)
+	}
+	data, _ := os.ReadFile(filepath.Join(b.disk, want[0]))
+	dec, _ := zstd.NewReader(bytes.NewReader(data))
+	plain, err := io.ReadAll(dec)
+	if err != nil || string(plain) != "SQLITE-SNAPSHOT" {
+		t.Fatalf("stored copy = %q, %v", plain, err)
+	}
+	var m layout.Manifest
+	raw, _ := os.ReadFile(filepath.Join(b.disk, want[1]))
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(data)
+	if m.SHA256 != hex.EncodeToString(sum[:]) || m.Size != int64(len(data)) || m.RawSize != 15 || m.Fingerprint != "sqlite:1" ||
+		m.Type != recipe.TypeSQLite || m.Kind != command.PointScheduled || m.AppID != "app-1" || m.Backup != "database" || m.AgentVersion == "" {
+		t.Fatalf("manifest = %+v", m)
+	}
+	if res.Size != m.Size || res.Point.Size != m.Size || res.Point.Expires != b.clock.Add(180*24*time.Hour).Unix() {
+		t.Fatalf("point = %+v", res.Point)
+	}
+	args := strings.Join(b.helper.last(), " ")
+	for _, part := range []string{
+		"run --rm --name wf-backup-",
+		"--network none --memory 256m --cpu-shares 256 --cap-drop ALL --cap-add DAC_OVERRIDE --cap-add SETUID --cap-add SETGID --security-opt no-new-privileges",
+		"--label winterflow.role=backup-helper --label winterflow.app=app-1",
+		"--mount type=volume,source=wf-app-1_data,target=/src/0 --mount type=bind,source=/usr/local/bin/winterflow,target=/wf,readonly",
+		"alpine:3.20 /wf backup dump sqlite /src/0/app.db",
+	} {
+		if !strings.Contains(args, part) {
+			t.Errorf("args lack %q:\n%s", part, args)
+		}
+	}
+	if strings.Contains(args, "--since") {
+		t.Fatal("the first copy compared with nothing")
+	}
+	if !slices.Contains(b.docker, "image inspect --format {{.Id}} alpine:3.20") || !slices.Contains(b.docker, "volume inspect --format {{.Name}} wf-app-1_data") {
+		t.Fatalf("docker calls = %v", b.docker)
+	}
+
+	// Unchanged data: compared with the newest copy, nothing uploaded, and
+	// the image is not looked up again.
+	b.docker = nil
+	b.clock = b.clock.Add(time.Hour)
+	res, err = b.run(t, "database", command.PointScheduled)
+	if err != nil || !res.Unchanged || res.Point != nil || res.Fingerprint != "sqlite:1" {
+		t.Fatalf("unchanged = %+v, %v", res, err)
+	}
+	if !strings.HasSuffix(strings.Join(b.helper.last(), " "), "--since sqlite:1") || len(b.stored(t)) != 2 {
+		t.Fatalf("args = %v, stored = %v", b.helper.last(), b.stored(t))
+	}
+	if slices.Contains(b.docker, "image inspect --format {{.Id}} alpine:3.20") {
+		t.Fatal("the image was looked up twice")
+	}
+	// A pre-restore copy is always made.
+	if res, err := b.run(t, "database", command.PointPreRestore); err != nil || res.Unchanged {
+		t.Fatalf("pre-restore = %+v, %v", res, err)
+	}
+	// Every copy deleted by hand: the next run compares with nothing, so
+	// unchanged data is uploaded again.
+	if err := os.RemoveAll(filepath.Join(b.disk, "app-1")); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := b.run(t, "database", command.PointScheduled); err != nil || res.Unchanged || slices.Contains(b.helper.last(), "--since") {
+		t.Fatalf("after deleting every copy: %+v, %v", res, err)
+	}
+}
+
+func TestRunBackupFiles(t *testing.T) {
+	b := newBackupRepo(t)
+	if _, err := b.run(t, "media", command.PointManual); err != nil {
+		t.Fatal(err)
+	}
+	args := strings.Join(b.helper.last(), " ")
+	if !strings.Contains(args, "--mount type=bind,source=/data/apps-data/app-1/media,target=/src/0,readonly") ||
+		!strings.HasSuffix(args, "/wf backup dump files --path /src/0=app/media --exclude *.tmp") {
+		t.Fatalf("args = %s", args)
+	}
+	if got := b.stored(t); len(got) != 2 || got[1] != "app-1/media/20261011T120000Z-manual.tar.zst" {
+		t.Fatalf("stored = %v", got)
+	}
+}
+
+// When the newest scheduled copy is older than half the ceiling, the run
+// uploads even unchanged data, so an idle backup keeps a copy.
+func TestRunBackupRefreshesBeforeTheCeiling(t *testing.T) {
+	b := newBackupRepo(t)
+	t.Setenv("BACKUP_RETENTION_DAYS", "10")
+	if _, err := b.run(t, "database", command.PointScheduled); err != nil {
+		t.Fatal(err)
+	}
+	b.clock = b.clock.Add(4 * 24 * time.Hour)
+	if res, _ := b.run(t, "database", command.PointScheduled); !res.Unchanged {
+		t.Fatal("4 days old: unchanged")
+	}
+	b.clock = b.clock.Add(2 * 24 * time.Hour)
+	res, err := b.run(t, "database", command.PointScheduled)
+	if err != nil || res.Unchanged || slices.Contains(b.helper.last(), "--since") {
+		t.Fatalf("6 days old: %+v, %v, %v", res, err, b.helper.last())
+	}
+}
+
+// After a run, retention prunes: here the tiers keep only the newest copy.
+func TestRunBackupPrunes(t *testing.T) {
+	b := newBackupRepo(t)
+	if _, err := saveConfig(t, b.Repository, "app-1", backupCompose, withBackups(
+		`[{"name":"database","enabled":true,"storage":"disk","keep":{"recent":"1h","daily":0,"monthly":0}}]`)); err != nil {
+		t.Fatal(err)
+	}
+	b.Repository.forgetApp("app-1")
+	for i := range 3 {
+		b.helper.fp = "sqlite:" + string(rune('a'+i))
+		if _, err := b.run(t, "database", command.PointScheduled); err != nil {
+			t.Fatal(err)
+		}
+		b.clock = b.clock.Add(2 * time.Hour)
+	}
+	if got := b.stored(t); len(got) != 2 || !strings.HasPrefix(got[0], "app-1/database/20261011T160000Z") {
+		t.Fatalf("stored = %v", got)
+	}
+}
+
+func TestRunBackupFailures(t *testing.T) {
+	b := newBackupRepo(t)
+	// Missing database: the helper's reason, no object left behind.
+	b.helper.exit, b.helper.stderr = helper.ExitMissing, `{"error":"database file not found: /src/0/app.db"}`
+	if _, err := b.run(t, "database", command.PointScheduled); err == nil || err.Error() != "database file not found: /src/0/app.db" {
+		t.Fatalf("missing: %v", err)
+	}
+	// Docker failing before the helper ran: its own words.
+	b.helper.exit, b.helper.stderr = 125, "docker: Error response from daemon: mount denied"
+	if _, err := b.run(t, "database", command.PointScheduled); err == nil || !strings.Contains(err.Error(), "exited with 125: docker: Error response from daemon: mount denied") {
+		t.Fatalf("docker error: %v", err)
+	}
+	b.helper.exit, b.helper.err = -1, errors.New("stopped after its time limit: context deadline exceeded")
+	if _, err := b.run(t, "database", command.PointScheduled); err == nil || !strings.Contains(err.Error(), "the backup helper: stopped after its time limit") {
+		t.Fatalf("killed: %v", err)
+	}
+	if got := b.stored(t); len(got) != 0 {
+		t.Fatalf("a failed run left %v", got)
+	}
+	b.helper.exit, b.helper.err = 0, nil
+
+	// Not runnable.
+	for _, tc := range []struct{ name, want string }{
+		{"replica", "the backup replica is off"},
+		{"nope", "the app has no backup nope"},
+	} {
+		if _, err := b.run(t, tc.name, command.PointManual); !errors.Is(err, ErrNotRunnable) || err.Error() != tc.want {
+			t.Errorf("%s: %v", tc.name, err)
+		}
+	}
+	if _, err := saveConfig(t, b.Repository, "app-1", backupCompose, withBackups(`[{"name":"replica","enabled":true,"storage":"disk"}]`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.run(t, "replica", command.PointManual); err == nil || !strings.Contains(err.Error(), "is a custom backup") {
+		t.Fatalf("custom: %v", err)
+	}
+	if _, err := b.RunBackup(context.Background(), BackupJob{AppID: "gone", Backup: "database"}); !errors.Is(err, ErrNotRunnable) {
+		t.Fatalf("a missing app: %v", err)
+	}
+}
+
+func TestRunBackupDockerChecks(t *testing.T) {
+	b := newBackupRepo(t)
+	pulls := 0
+	b.Repository.docker = func(_ context.Context, args ...string) error {
+		switch {
+		case args[0] == "image":
+			return errors.New("no such image")
+		case args[0] == "pull":
+			if pulls++; pulls > 1 {
+				return nil
+			}
+			return errors.New("network unreachable")
+		case args[0] == "volume":
+			return errors.New("no such volume")
+		}
+		return nil
+	}
+	if _, err := b.run(t, "database", command.PointManual); err == nil || !strings.Contains(err.Error(), "pull the backup helper image alpine:3.20: network unreachable") {
+		t.Fatalf("pull: %v", err)
+	}
+	if _, err := b.run(t, "database", command.PointManual); err == nil || !strings.Contains(err.Error(), "the volume wf-app-1_data does not exist") {
+		t.Fatalf("volume: %v", err)
+	}
+	// A storage the server lost.
+	if _, err := b.storages.Delete("disk"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.run(t, "database", command.PointManual); err == nil || err.Error() != "there is no storage disk on this server" {
+		t.Fatalf("storage: %v", err)
+	}
+}
+
+// failingPut is a store whose uploads are refused.
+type failingPut struct{ store.Store }
+
+func (failingPut) Put(context.Context, string, io.Reader) error { return errors.New("Access Denied") }
+
+// An upload that fails is the reported cause (not the helper it stopped).
+func TestRunBackupUploadFails(t *testing.T) {
+	b := newBackupRepo(t)
+	b.Repository.openStorage = func(s model.Storage, secret string) (store.Store, error) {
+		st, err := store.Open(s, secret)
+		return failingPut{st}, err
+	}
+	if _, err := b.run(t, "database", command.PointManual); err == nil || err.Error() != "upload the copy: Access Denied" {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestHelperArgsQuoteMountFields(t *testing.T) {
+	plan := helperPlan{Mounts: []helperMount{{Bind: `/srv/a,b"c`}}, Paths: []helperPath{{Sub: "x", Entry: "x"}}}
+	args := helperArgs("n", "app-1", "/opt/wf,1/winterflow", plan, recipe.EffectiveBackup{Type: recipe.TypeFiles}, "")
+	joined := strings.Join(args, " ")
+	if !strings.Contains(joined, `--mount type=bind,"source=/srv/a,b""c",target=/src/0,readonly`) ||
+		!strings.Contains(joined, `--mount type=bind,"source=/opt/wf,1/winterflow",target=/wf,readonly`) {
+		t.Fatalf("args = %s", joined)
+	}
+}
+
+func TestRestorePoints(t *testing.T) {
+	b := newBackupRepo(t)
+	for i := range 2 {
+		b.helper.fp = "sqlite:" + string(rune('a'+i))
+		if _, err := b.run(t, "database", command.PointManual); err != nil {
+			t.Fatal(err)
+		}
+		b.clock = b.clock.Add(time.Minute)
+	}
+	// An incomplete point (no manifest) is not listed.
+	if err := os.WriteFile(filepath.Join(b.disk, "app-1/database/20261011T130000Z-scheduled.db.zst"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	points, err := b.ListRestorePoints(context.Background(), "app-1", "database")
+	if err != nil || len(points) != 2 || points[0].ID != "20261011T120100Z-manual" || points[0].Kind != command.PointManual {
+		t.Fatalf("points = %+v, %v", points, err)
+	}
+	if err := b.DeleteRestorePoint(context.Background(), "app-1", "database", points[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.DeleteRestorePoint(context.Background(), "app-1", "database", "20261011T130000Z-scheduled"); err != nil {
+		t.Fatalf("an incomplete point can be deleted too: %v", err)
+	}
+	points, _ = b.ListRestorePoints(context.Background(), "app-1", "database")
+	if len(points) != 1 || len(b.stored(t)) != 2 {
+		t.Fatalf("after delete: %+v, %v", points, b.stored(t))
+	}
+	if err := b.DeleteRestorePoint(context.Background(), "app-1", "database", "20200101T000000Z-manual"); err == nil ||
+		!strings.Contains(err.Error(), "has no restore point 20200101T000000Z-manual") {
+		t.Fatalf("missing point: %v", err)
+	}
+	for _, tc := range []struct{ app, name, want string }{
+		{"app-1", "replica", "is a custom backup"},
+		{"app-1", "nope", "the app has no backup nope"},
+		{"gone", "database", "app gone not found"},
+	} {
+		if _, err := b.ListRestorePoints(context.Background(), tc.app, tc.name); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s/%s: %v", tc.app, tc.name, err)
+		}
+	}
+	if _, err := saveConfig(t, b.Repository, "app-1", backupCompose, withBackups(`[]`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.ListRestorePoints(context.Background(), "app-1", "database"); err == nil || !strings.Contains(err.Error(), "has no storage") {
+		t.Fatalf("no storage: %v", err)
+	}
+}
+
+// A storage that never answers fails the listing at its deadline instead of
+// holding the command pipeline.
+func TestWithDeadlineAbandonsAHungCall(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+	err := withDeadline(context.Background(), 20*time.Millisecond, "list", func(context.Context) error { <-release; return nil })
+	if err == nil || !strings.Contains(err.Error(), "the storage did not answer within 20ms") {
+		t.Fatalf("err = %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := withDeadline(ctx, time.Second, "list", func(context.Context) error { <-release; return nil }); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled: %v", err)
+	}
+}

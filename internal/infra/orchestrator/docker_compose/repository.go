@@ -21,8 +21,10 @@ package dockercompose
 
 import (
 	"context"
+	"io"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"winterflow/internal/domain/model"
@@ -69,6 +71,16 @@ type Repository struct {
 	// keyed by HEAD and the derived env files (see appComposeModel).
 	mountMu    sync.Mutex
 	mountCache map[string]mountCacheEntry
+
+	// Backup runs: the helper image is pulled once; runHelper runs one
+	// helper container, docker one short docker command, helperBinary
+	// finds the binary the helper runs, now is the clock (all replaced in
+	// tests).
+	helperImageReady atomic.Bool
+	runHelper        func(ctx context.Context, name string, args []string, stdout io.Writer) (exit int, stderr []byte, err error)
+	docker           func(ctx context.Context, args ...string) error
+	helperBinary     func() (string, error)
+	now              func() time.Time
 }
 
 // versionEntry is a cached commit count, valid while HEAD is unchanged.
@@ -89,6 +101,10 @@ func NewRepository(cfg *config.ServerConfig, log *logger.Logger) *Repository {
 		runCompose:    dockerIn,
 		composeOutput: dockerOutputIn,
 		mountCache:    make(map[string]mountCacheEntry),
+		runHelper:     runDockerHelper,
+		docker:        dockerCombined,
+		helperBinary:  agentExecutable,
+		now:           time.Now,
 	}
 	r.runningProjects = r.composeProjectsUp
 	r.redeploy = r.deploy

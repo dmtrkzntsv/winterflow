@@ -324,6 +324,9 @@ type dumpOutcome struct {
 // the storage. The upload runs on a context detached from the run's deadline,
 // so that when a run is cut short the storage driver can abort cleanly (an S3
 // multipart abort needs a live context); it is cancelled only after a grace.
+// When the run's own context ends, the pipe is closed at once (a helper's
+// output copier blocked in Write on a stalled storage must be released), and
+// the upload context is cancelled after the same grace.
 type lazyUpload struct {
 	st  store.Store
 	key string
@@ -338,11 +341,23 @@ type lazyUpload struct {
 	pr      *io.PipeReader
 	pw      *io.PipeWriter
 	done    chan error
+	stop    func() bool // detaches the run-context hook
 }
 
-func newLazyUpload(ctx context.Context, st store.Store, key string) *lazyUpload {
-	pctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	return &lazyUpload{st: st, key: key, ctx: pctx, cancel: cancel, done: make(chan error, 1)}
+func newLazyUpload(runCtx context.Context, st store.Store, key string) *lazyUpload {
+	pctx, cancel := context.WithCancel(context.WithoutCancel(runCtx))
+	u := &lazyUpload{st: st, key: key, ctx: pctx, cancel: cancel, done: make(chan error, 1)}
+	u.stop = context.AfterFunc(runCtx, func() {
+		u.mu.Lock()
+		u.aborted = true
+		pw := u.pw
+		u.mu.Unlock()
+		if pw != nil {
+			pw.CloseWithError(runCtx.Err()) // releases a Write blocked on a stalled upload
+		}
+		time.AfterFunc(putAbortGrace, cancel)
+	})
+	return u
 }
 
 func (u *lazyUpload) Write(p []byte) (int, error) {
@@ -420,6 +435,7 @@ func (u *lazyUpload) abort() error {
 func (r *Repository) dumpAndUpload(ctx context.Context, st store.Store, key, name string, args []string) (dumpOutcome, error) {
 	up := newLazyUpload(ctx, st, key)
 	defer up.cancel()
+	defer up.stop()
 	sum := sha256.New()
 	stored := &countWriter{}
 	enc, _ := zstd.NewWriter(io.MultiWriter(up, sum, stored), zstd.WithEncoderConcurrency(1))

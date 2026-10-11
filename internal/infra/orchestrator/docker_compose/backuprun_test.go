@@ -597,3 +597,68 @@ func TestRunBackupCarriesNestedMountsAndReportsSkippedOnes(t *testing.T) {
 		t.Fatalf("warnings = %q", res.Warnings)
 	}
 }
+
+// blockingStore's uploads read a little and then stall on their context, as a
+// network write to a hung endpoint does.
+type blockingStore struct {
+	store.Store
+	cancelled chan time.Time
+}
+
+func (b blockingStore) Put(ctx context.Context, _ string, r io.Reader) error {
+	_, _ = io.ReadFull(r, make([]byte, 1024))
+	<-ctx.Done()
+	b.cancelled <- time.Now()
+	return ctx.Err()
+}
+
+// A stalled upload does not hold the run past its deadline: the helper's
+// output copier (which ignores the context) is released at once, and the
+// upload's own context is cancelled after the grace.
+func TestRunBackupStalledUploadIsBoundedByTheRunDeadline(t *testing.T) {
+	b := newBackupRepo(t)
+	old := putAbortGrace
+	putAbortGrace = 200 * time.Millisecond
+	t.Cleanup(func() { putAbortGrace = old })
+	cancelled := make(chan time.Time, 1)
+	st := blockingStore{cancelled: cancelled}
+	b.runHelper = func(_ context.Context, _ string, _ []string, out io.Writer) (int, []byte, error) {
+		buf := make([]byte, 1<<20)
+		rand.New(rand.NewSource(2)).Read(buf)
+		for { // like the os/exec copier: ignores the context, ends on a write error
+			if _, err := out.Write(buf); err != nil {
+				return -1, nil, err
+			}
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	done := make(chan error, 1)
+	go func() {
+		_, err := b.dumpAndUpload(ctx, st, "app-1/database/x.db.zst", "n", nil)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("a stalled run succeeded")
+		}
+		if d := time.Since(started); d > time.Second {
+			t.Fatalf("returned %s after the start, deadline was 100ms", d)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the run is still blocked 5s after its deadline")
+	}
+	select {
+	case at := <-cancelled:
+		if at.Sub(started) < 250*time.Millisecond {
+			t.Fatalf("the upload was cancelled at %s, before the grace", at.Sub(started))
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the upload's context was never cancelled")
+	}
+	if got := b.stored(t); len(got) != 0 {
+		t.Fatalf("left %v", got)
+	}
+}

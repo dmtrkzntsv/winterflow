@@ -353,6 +353,10 @@ func (r *Repository) redeployStorageUsers(ctx context.Context, ids []string) (re
 			continue
 		}
 		name := r.appName(r.appDataDir(id), id)
+		if r.restoreRunning(id) {
+			warnings = append(warnings, name+" is being restored and was not redeployed: deploy it afterwards to use the new storage settings")
+			continue
+		}
 		if r.hasDraft(id) {
 			warnings = append(warnings, name+" has undeployed changes and was not redeployed: deploy it to use the new storage settings")
 			continue

@@ -54,6 +54,17 @@ type Repository struct {
 	versionMu    sync.Mutex
 	versionCache map[string]versionEntry
 
+	// restores holds the apps a restore is running on (see beginRestore):
+	// each entry's channel is closed when that restore ends.
+	restoreMu sync.Mutex
+	restores  map[string]chan struct{}
+	// restoreWait bounds how long DeleteApp waits for a restore of its app
+	// to end (replaced in tests).
+	restoreWait time.Duration
+	// diskFree is the room left on the file system holding a path (replaced
+	// in tests).
+	diskFree func(path string) (uint64, error)
+
 	// storages is the agent's storage registry ({data}/storages/): what
 	// storage.* commands manage and WF_STORAGE_ variables resolve against.
 	storages      *storages.Registry
@@ -119,6 +130,8 @@ func NewRepository(cfg *config.ServerConfig, log *logger.Logger) *Repository {
 		docker:           dockerCombined,
 		helperBinary:     agentExecutable,
 		now:              time.Now,
+		restoreWait:      restoreWaitForDelete,
+		diskFree:         statfsFree,
 	}
 	r.runningProjects = r.composeProjectsUp
 	r.redeploy = r.deploy
@@ -136,4 +149,7 @@ func (r *Repository) forgetApp(appID string) {
 	r.mountMu.Lock()
 	delete(r.mountCache, appID)
 	r.mountMu.Unlock()
+	r.restoreMu.Lock()
+	delete(r.restores, appID)
+	r.restoreMu.Unlock()
 }

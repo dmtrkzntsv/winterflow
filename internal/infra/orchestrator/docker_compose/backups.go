@@ -134,6 +134,9 @@ func (r *Repository) UpdateBackups(ctx context.Context, appID string, overrides 
 	ctx, cancel := context.WithTimeout(ctx, backupUpdateBudget)
 	defer cancel()
 	resp := command.UpdateBackupsResponse{AppID: appID}
+	if err := r.refuseDuringRestore(appID); err != nil {
+		return resp, err
+	}
 	if !r.appExists(appID) {
 		return resp, fmt.Errorf("app %s not found", appID)
 	}

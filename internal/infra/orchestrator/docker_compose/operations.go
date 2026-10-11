@@ -35,6 +35,9 @@ func (r *Repository) SaveAppDraft(ctx context.Context, app command.AppPayload) (
 // SaveAppResult is SaveApp (or, draft, SaveAppDraft) with the save's
 // warnings.
 func (r *Repository) SaveAppResult(ctx context.Context, app command.AppPayload, draft bool) (string, []string, error) {
+	if err := r.refuseDuringRestore(app.AppID); err != nil {
+		return "", nil, err
+	}
 	hash, warnings, err := r.save(app)
 	if err != nil || draft {
 		return hash, warnings, err
@@ -207,6 +210,9 @@ func (r *Repository) Revisions(ctx context.Context, appID string) ([]command.Rev
 // linear), re-materializes secrets from the restored store, and redeploys.
 // Returns the new HEAD hash.
 func (r *Repository) Rollback(ctx context.Context, appID, hash string) (string, error) {
+	if err := r.refuseDuringRestore(appID); err != nil {
+		return "", err
+	}
 	newHead, err := r.rollbackWithoutDeploy(appID, hash)
 	if err != nil {
 		return "", err
@@ -391,6 +397,9 @@ func (r *Repository) RefreshDueSources(ctx context.Context) []string {
 			continue
 		}
 		appID := e.Name()
+		if r.restoreRunning(appID) {
+			continue // polled again once the restore is over
+		}
 		spec := r.appSourceSpec(filepath.Join(r.cfg.GetAppsDataDir(), appID))
 		if spec == nil || !spec.AutoUpdate {
 			continue

@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/klauspost/compress/zstd"
@@ -33,10 +34,99 @@ var ErrAppDeleted = errors.New("the app is being deleted")
 // of its own (the restore's may be over).
 const restartTimeout = 2 * time.Minute
 
+// restoreMinBudget is the least of a restore's time budget that must remain
+// before the app is stopped: the pre-restore copy and the helper still have
+// to run, and a helper cut short by the budget leaves the data in doubt.
+const restoreMinBudget = 10 * time.Minute
+
+// restoreDownloadMargin is the room beyond a download's size the disk must
+// have free: the agent's own database and logs live on it too.
+const restoreDownloadMargin = 64 << 20
+
+// restoreWaitForDelete is how long DeleteApp waits for a restore of its app
+// to end.
+const restoreWaitForDelete = 2 * time.Minute
+
+// ErrRestoring is why an operation on an app is refused while a restore is
+// putting its data back.
+var ErrRestoring = errors.New("a restore of this app is in progress")
+
 // restoreLimits are a restore helper's: a dump's, plus what putting files
 // back needs (give them their owner; set the mode and times of files it
 // doesn't own; keep a folder's setgid bit when its group is set).
 var restoreLimits = append(slices.Clone(helperLimits), "--cap-add", "CHOWN", "--cap-add", "FOWNER", "--cap-add", "FSETID")
+
+// statfsFree is the room left on the file system holding path.
+func statfsFree(path string) (uint64, error) {
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(path, &st); err != nil {
+		return 0, err
+	}
+	return st.Bavail * uint64(st.Bsize), nil
+}
+
+// beginRestore marks the app as being restored, from just before it is
+// stopped until end is called: lifecycle operations on it (start, stop,
+// restart, update, save, rollback, rename, backup settings, source polls,
+// storage redeploys) are refused with ErrRestoring meanwhile, so nothing
+// starts containers on the data the helper is replacing. It refuses a second
+// restore of the same app.
+func (r *Repository) beginRestore(appID string) (end func(), err error) {
+	r.restoreMu.Lock()
+	defer r.restoreMu.Unlock()
+	if _, busy := r.restores[appID]; busy {
+		return nil, ErrRestoring
+	}
+	if r.restores == nil {
+		r.restores = map[string]chan struct{}{}
+	}
+	done := make(chan struct{})
+	r.restores[appID] = done
+	return func() {
+		r.restoreMu.Lock()
+		defer r.restoreMu.Unlock()
+		if r.restores[appID] == done {
+			delete(r.restores, appID)
+		}
+		close(done)
+	}, nil
+}
+
+// restoreRunning reports whether a restore of the app is running.
+func (r *Repository) restoreRunning(appID string) bool {
+	r.restoreMu.Lock()
+	defer r.restoreMu.Unlock()
+	_, busy := r.restores[appID]
+	return busy
+}
+
+// refuseDuringRestore is nil unless a restore of the app is running.
+func (r *Repository) refuseDuringRestore(appID string) error {
+	if r.restoreRunning(appID) {
+		return ErrRestoring
+	}
+	return nil
+}
+
+// waitForRestore waits for a restore of the app to end, for at most
+// restoreWait and ctx; it then fails with ErrRestoring.
+func (r *Repository) waitForRestore(ctx context.Context, appID string) error {
+	r.restoreMu.Lock()
+	done, busy := r.restores[appID]
+	r.restoreMu.Unlock()
+	if !busy {
+		return nil
+	}
+	t := time.NewTimer(r.restoreWait)
+	defer t.Stop()
+	select {
+	case <-done:
+		return nil
+	case <-t.C:
+	case <-ctx.Done():
+	}
+	return ErrRestoring
+}
 
 // RestoreJob is one restore: Point of the app's backup.
 type RestoreJob struct {
@@ -133,11 +223,21 @@ func (r *Repository) RestoreBackup(ctx context.Context, job RestoreJob) (command
 	defer os.Remove(local)
 	var needs map[int]uint64
 	if b.Type == recipe.TypeFiles {
-		if needs, err = archiveNeeds(local, plan); err != nil {
+		if needs, err = archiveNeeds(ctx, local, plan); err != nil {
 			return resp, err
 		}
 	}
 
+	// Too little time left could cut the helper short, which leaves the
+	// data in doubt: refuse before anything is changed.
+	if dl, ok := ctx.Deadline(); ok && time.Until(dl) < restoreMinBudget {
+		return resp, fmt.Errorf("too little time is left to restore safely (%s; at least %s are needed): nothing was changed", time.Until(dl).Round(time.Second), restoreMinBudget)
+	}
+	end, err := r.beginRestore(job.AppID)
+	if err != nil {
+		return resp, err
+	}
+	defer end()
 	psCtx, cancel := context.WithTimeout(ctx, dockerCallTimeout)
 	up, err := r.runningProjects(psCtx)
 	cancel()
@@ -145,6 +245,12 @@ func (r *Repository) RestoreBackup(ctx context.Context, job RestoreJob) (command
 		return resp, fmt.Errorf("check whether the app is running: %w", err)
 	}
 	running := up[projectName(job.AppID)]
+	// Compose stops the services of HEAD's compose files: with undeployed
+	// changes, a container of a service HEAD no longer has would keep
+	// running beside the swap.
+	if running && r.hasDraft(job.AppID) {
+		return resp, errors.New("the app has undeployed changes: deploy them (or roll back) before restoring, so that stopping the app stops all of its containers")
+	}
 	if running {
 		if err := r.composeRun(ctx, job.AppID, "stop"); err != nil {
 			return resp, r.startAgain(ctx, job.AppID, fmt.Errorf("stop the app: %w", err))
@@ -159,7 +265,9 @@ func (r *Repository) RestoreBackup(ctx context.Context, job RestoreJob) (command
 		return err
 	}
 
-	pre, err := r.RunBackup(ctx, BackupJob{AppID: job.AppID, Backup: b.Name, Kind: command.PointPreRestore})
+	// The pre-restore run's retention must not delete the point being
+	// restored (a retry after a failure would find it gone).
+	pre, err := r.RunBackup(ctx, BackupJob{AppID: job.AppID, Backup: b.Name, Kind: command.PointPreRestore, Protect: job.Point})
 	switch {
 	case errors.Is(err, ErrNothingToBackUp):
 		resp.Warnings = append(resp.Warnings, "nothing was saved before the restore: "+err.Error())
@@ -177,22 +285,31 @@ func (r *Repository) RestoreBackup(ctx context.Context, job RestoreJob) (command
 	exit, stderr, err := r.runZstdRestore(ctx, name, args, local)
 	res, parsed := helper.ParseResult(stderr)
 	resp.Warnings = append(resp.Warnings, res.Warnings...)
-	back := "the copy saved before it"
+	// Where to go back to, for the errors that leave the app stopped.
+	back := "no copy was saved before the restore (there was nothing to save), so there is nothing to go back to"
 	if resp.PreRestorePoint != "" {
-		back = "the pre-restore point " + resp.PreRestorePoint
+		back = "restore the pre-restore point " + resp.PreRestorePoint + " to go back"
 	}
+	// Only a helper that failed cleanly (exit 1) or never ran (docker's own
+	// 125-127) leaves the data as it was. Anything else — a crash, a kill,
+	// a swap that failed, a "success" with no result — may have left it
+	// partly replaced (a files swap; a database's WAL set aside), and the
+	// app stays stopped.
+	unchanged := err == nil && (exit == helper.ExitFailed || exit == 125 || exit == 126 || exit == 127)
+	stopped := func(e error) error { return r.leaveStopped(ctx, job.AppID, running, e) }
 	switch {
 	case err == nil && exit == helper.ExitOK && parsed:
-	case err == nil && exit == helper.ExitPartial:
-		return resp, fmt.Errorf("the restore stopped half-way: %s. The app was left stopped; restore %s to go back", reason(res, stderr, exit), back)
-	case err != nil && b.Type == recipe.TypeFiles:
-		// Stopped from outside (its time limit): it may have been swapping.
-		return resp, fmt.Errorf("the restore helper was stopped (%w), so the paths may be partly replaced. The app was left stopped; restore %s to go back", err, back)
-	case err != nil:
-		// A database is swapped by one rename: it is the old or the restored one.
-		return resp, fail(fmt.Errorf("the restore helper was stopped (%w): the database is the old one or the restored one", err))
-	default:
+	case unchanged:
 		return resp, fail(fmt.Errorf("the restore failed, the app's data is unchanged: %s", reason(res, stderr, exit)))
+	case err != nil && b.Type == recipe.TypeSQLite:
+		// Stopped from outside (its time limit, the app's deletion).
+		return resp, stopped(fmt.Errorf("the restore helper was stopped (%w), so the database file may be partly replaced. The app was left stopped; %s", err, back))
+	case err != nil:
+		return resp, stopped(fmt.Errorf("the restore helper was stopped (%w), so the paths may be partly replaced. The app was left stopped; %s", err, back))
+	case exit == helper.ExitPartial:
+		return resp, stopped(fmt.Errorf("the restore stopped half-way: %s. The app was left stopped; %s", reason(res, stderr, exit), back))
+	default:
+		return resp, stopped(fmt.Errorf("the restore helper ended unexpectedly (%s), so the data may be partly replaced. The app was left stopped; %s", reason(res, stderr, exit), back))
 	}
 	if running {
 		if err := r.startAgain(ctx, job.AppID, nil); err != nil {
@@ -209,6 +326,24 @@ func reason(res helper.Result, stderr []byte, exit int) string {
 		return res.Error
 	}
 	return fmt.Sprintf("the helper exited with %d: %s", exit, lastLines(stderr, 3))
+}
+
+// leaveStopped makes "left stopped" last: the app's containers (stopped, not
+// removed) would be started again by a redeploy, or by Docker's restart
+// policy after a daemon or host restart, on data that may be half replaced.
+// compose down (never -v) removes them, on a context of its own bounded by
+// restartTimeout; an app being deleted, or one that was not running, is left
+// alone. It returns cause, with the failure of the removal joined to it.
+func (r *Repository) leaveStopped(ctx context.Context, appID string, running bool, cause error) error {
+	if !running || errors.Is(context.Cause(ctx), ErrAppDeleted) {
+		return cause
+	}
+	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), restartTimeout)
+	defer cancel()
+	if err := r.composeDown(dctx, appID, false); err != nil {
+		return fmt.Errorf("%w (and removing the app's containers failed, so Docker may start them again on this data: %v)", cause, err)
+	}
+	return cause
 }
 
 // startAgain starts a stopped app again (compose start) on a context of its
@@ -238,6 +373,13 @@ func (r *Repository) downloadPoint(ctx context.Context, st store.Store, p layout
 	if err := os.MkdirAll(r.restoreTmpDir(), 0o700); err != nil {
 		return "", err
 	}
+	free, err := r.diskFree(r.restoreTmpDir())
+	if err != nil {
+		return "", fmt.Errorf("check the free space for the download: %w", err)
+	}
+	if need := uint64(max(m.Size, 0)) + restoreDownloadMargin; free < need {
+		return "", fmt.Errorf("not enough free space to download the restore point: it takes %d bytes and %d bytes are free in %s (%d are kept spare)", m.Size, free, r.restoreTmpDir(), uint64(restoreDownloadMargin))
+	}
 	var rnd [6]byte
 	_, _ = rand.Read(rnd[:])
 	local := filepath.Join(r.restoreTmpDir(), p.ID+"-"+hex.EncodeToString(rnd[:])+".zst")
@@ -257,7 +399,9 @@ func (r *Repository) downloadPoint(ctx context.Context, st store.Store, p layout
 		return "", fmt.Errorf("download the restore point: %w", err)
 	}
 	sum := sha256.New()
-	n, err := io.Copy(io.MultiWriter(f, sum), rc)
+	// One byte past the manifest's size is enough to see the object is
+	// bigger; a local folder's file ignores ctx, hence the reader.
+	n, err := io.Copy(io.MultiWriter(f, sum), io.LimitReader(ctxReader{ctx, rc}, m.Size+1))
 	rc.Close()
 	if cerr := f.Close(); err == nil {
 		err = cerr
@@ -276,13 +420,13 @@ func (r *Repository) downloadPoint(ctx context.Context, st store.Store, p layout
 // helper mount, the room its entries take once extracted (each file rounded
 // up to 4 KiB blocks, each folder one block). The helper refuses to start a
 // restore a mount has no room for.
-func archiveNeeds(local string, plan helperPlan) (map[int]uint64, error) {
+func archiveNeeds(ctx context.Context, local string, plan helperPlan) (map[int]uint64, error) {
 	f, err := os.Open(local)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	dec, err := zstd.NewReader(f, zstd.WithDecoderConcurrency(1))
+	dec, err := zstd.NewReader(ctxReader{ctx, f}, zstd.WithDecoderConcurrency(1))
 	if err != nil {
 		return nil, err
 	}
@@ -293,6 +437,9 @@ func archiveNeeds(local string, plan helperPlan) (map[int]uint64, error) {
 		h, err := tr.Next()
 		if errors.Is(err, io.EOF) {
 			return needs, nil
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
 		}
 		if err != nil {
 			return nil, fmt.Errorf("the restore point's archive can't be read: %w", err)
@@ -366,4 +513,17 @@ func (r *Repository) runZstdRestore(ctx context.Context, name string, args []str
 	}
 	defer dec.Close()
 	return r.runRestoreHelper(ctx, name, args, dec)
+}
+
+// ctxReader stops a copy once ctx is done.
+type ctxReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (c ctxReader) Read(p []byte) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.r.Read(p)
 }

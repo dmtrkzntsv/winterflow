@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -58,6 +59,9 @@ type BackupJob struct {
 	AppID  string
 	Backup string
 	Kind   command.PointKind
+	// Protect is a point the run's retention must not delete: the one a
+	// restore is putting back.
+	Protect string
 }
 
 // BackupResult is the outcome of a run: a new point, or Unchanged (nothing
@@ -180,7 +184,8 @@ func (r *Repository) RunBackup(ctx context.Context, job BackupJob) (BackupResult
 		points = append([]layout.Point{p}, points...)
 	}
 	policy := layout.Policy{Keep: b.Keep.Retention(), CeilingDays: ceiling}
-	if err := deletePoints(ctx, st, layout.Prune(points, policy, now)); err != nil {
+	doomed := slices.DeleteFunc(layout.Prune(points, policy, now), func(p layout.Point) bool { return job.Protect != "" && p.ID == job.Protect })
+	if err := deletePoints(ctx, st, doomed); err != nil {
 		res.Warnings = append(res.Warnings, "retention: "+err.Error())
 	}
 	return res, nil

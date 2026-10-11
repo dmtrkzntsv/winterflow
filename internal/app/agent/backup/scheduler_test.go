@@ -748,8 +748,50 @@ func TestStopAnswersQueuedRequests(t *testing.T) {
 	if o := <-queued; !errors.Is(o.Err, errStopped) {
 		t.Fatalf("queued = %+v", o)
 	}
-	if o := <-running; o.Err == nil {
+	if o := <-running; !errors.Is(o.Err, errStopped) {
 		t.Fatalf("running = %+v", o)
+	}
+}
+
+// An agent shutdown or self-update mid-run is not a failed backup: the state
+// is left alone (not failing, not held off until the next interval), so the
+// backup runs again on start; a waiting Back up now gets the stopped error.
+func TestShutdownMidRunIsNotRecorded(t *testing.T) {
+	e := newEngine(planned("app-1", "db", recipe.TypeSQLite, true, "5m"))
+	dir := t.TempDir()
+	s := New(e, dir, quietLog())
+	clock := newClock()
+	s.clock = clock
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { s.Run(ctx); close(done) }()
+	idle(t, clock)
+	// First a successful scheduled run, so there is a state to keep intact.
+	clock.Advance(10 * time.Minute)
+	ran(t, e)
+	idle(t, clock)
+	before := *s.state["app-1/db"]
+	e.mu.Lock()
+	e.block = make(chan struct{})
+	e.mu.Unlock()
+	clock.Advance(10 * time.Minute)
+	ran(t, e)
+	waiter := s.RunNow("app-1", "db") // refused: the backup is running
+	if o := <-waiter; o.Err == nil {
+		t.Fatalf("duplicate = %+v", o)
+	}
+	cancel()
+	<-done
+	after := *s.state["app-1/db"]
+	if !after.LastAttempt.Equal(before.LastAttempt) || after.LastError != "" || !after.LastSuccess.Equal(before.LastSuccess) {
+		t.Fatalf("state changed by a shutdown: before %+v, after %+v", before, after)
+	}
+	if h := s.Health("app-1", clock.Now(), nil); h[0].State == command.BackupFailing {
+		t.Fatalf("health = %+v", h)
+	}
+	// A new scheduler over the same data dir reads no failure either.
+	if again := New(e, dir, quietLog()); again.state["app-1/db"].LastError != "" {
+		t.Fatalf("reloaded = %+v", again.state["app-1/db"])
 	}
 }
 

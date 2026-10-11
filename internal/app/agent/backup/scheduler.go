@@ -313,7 +313,7 @@ func (s *Scheduler) Run(ctx context.Context) {
 		s.refresh()
 		now := s.clock.Now()
 		if j := s.next(ctx, now); j != nil {
-			s.execute(j)
+			s.execute(ctx, j)
 			continue
 		}
 		select {
@@ -508,8 +508,9 @@ func (s *Scheduler) untilDue(now time.Time) time.Duration {
 // execute runs one job within its time limit and records the outcome. A
 // run that doesn't stop at its deadline is abandoned after the grace: it is
 // recorded as failed, the global slot is released, but its app stays blocked
-// until the engine call really returns.
-func (s *Scheduler) execute(j *job) {
+// until the engine call really returns. A run cut short because the agent is
+// stopping (parent is done) is not recorded: see record.
+func (s *Scheduler) execute(parent context.Context, j *job) {
 	defer j.cancel()
 	start := s.clock.Now()
 	type done struct {
@@ -551,7 +552,7 @@ func (s *Scheduler) execute(j *job) {
 	if d.err == nil && j.ctx.Err() != nil {
 		d.err = fmt.Errorf("the run was stopped: %w", j.ctx.Err())
 	}
-	s.record(j, start, d.res, d.err)
+	s.record(j, start, d.res, d.err, d.err != nil && parent.Err() != nil)
 }
 
 // markStuck blocks the job's app until its abandoned RunBackup returns (it
@@ -570,12 +571,19 @@ func (s *Scheduler) markStuck(j *job) {
 // an app deleted meanwhile) and answers its waiters. A run refused before
 // it started means the plan is stale (an app changed without a Reload, say
 // by its upstream): the plan is reread, and only a scheduled run counts as
-// an attempt, so it isn't picked again at once.
-func (s *Scheduler) record(j *job, start time.Time, res dockercompose.BackupResult, err error) {
+// an attempt, so it isn't picked again at once. A run that failed because
+// the agent is stopping (an update restarts it, say) leaves the state
+// alone, so the backup isn't marked failing or held off until its next
+// interval: it runs again on start. Its waiters get errStopped.
+func (s *Scheduler) record(j *job, start time.Time, res dockercompose.BackupResult, err error, stopping bool) {
 	resp := command.RunBackupResponse{AppID: j.key.app, Backup: j.key.name, Unchanged: res.Unchanged, Point: res.Point, Warnings: res.Warnings}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.running = nil
+	if stopping {
+		finish(j, Outcome{Result: resp, Err: errStopped})
+		return
+	}
 	if errors.Is(err, dockercompose.ErrNotRunnable) {
 		s.dirty = true
 		if st := s.state[j.key.String()]; st != nil && j.kind == command.PointScheduled {

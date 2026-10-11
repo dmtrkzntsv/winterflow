@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -188,10 +189,18 @@ func runProbe(ctx context.Context, open func(model.Storage, string) (store.Store
 	return nil
 }
 
-// explainWrite turns a refused local write into advice: outside /mnt and
-// /media the systemd unit (ProtectSystem=strict) keeps the folder read-only
+// explainWrite turns a failed probe write into advice. A bucket addressed
+// virtual-host style (bucket.endpoint) whose hostname doesn't resolve — any
+// endpoint given as an IP address or localhost, and most self-hosted stores
+// (MinIO, Garage) — needs path-style addressing. Outside /mnt and /media
+// the systemd unit (ProtectSystem=strict) keeps a local folder read-only
 // for the agent; inside them it is plain file permissions.
 func explainWrite(s model.Storage, err error) error {
+	var dnsErr *net.DNSError
+	if s.Type == model.StorageS3 && s.S3 != nil && !s.S3.PathStyle && errors.As(err, &dnsErr) &&
+		strings.HasPrefix(dnsErr.Name, s.S3.Bucket+".") {
+		return fmt.Errorf("the bucket's hostname %s doesn't resolve — try path-style addressing (write a test file: %w)", dnsErr.Name, err)
+	}
 	if s.Type != model.StorageLocal || !(errors.Is(err, fs.ErrPermission) || errors.Is(err, syscall.EROFS)) {
 		return fmt.Errorf("write a test file: %w", err)
 	}

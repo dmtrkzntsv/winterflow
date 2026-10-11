@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"net"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -293,6 +295,10 @@ func TestDeleteStorageFailsClosed(t *testing.T) {
 }
 
 func TestExplainWrite(t *testing.T) {
+	noHost := &net.OpError{Op: "dial", Net: "tcp", Err: &net.DNSError{Err: "no such host", Name: "wf-backups.127.0.0.1", IsNotFound: true}}
+	vhost := func(pathStyle bool) model.Storage {
+		return model.Storage{Type: model.StorageS3, S3: &model.S3Storage{Endpoint: "http://127.0.0.1:9000", Bucket: "wf-backups", PathStyle: pathStyle}}
+	}
 	denied := &fs.PathError{Op: "open", Path: "x", Err: syscall.EACCES}
 	readOnly := &fs.PathError{Op: "open", Path: "x", Err: syscall.EROFS}
 	cases := []struct {
@@ -306,6 +312,11 @@ func TestExplainWrite(t *testing.T) {
 		{localStorage("d", "/media/disk"), readOnly, "writable by the user winterflow runs as"},
 		{localStorage("d", "/srv/backups"), errors.New("disk full"), "write a test file: disk full"},
 		{model.Storage{Type: model.StorageS3}, denied, "write a test file"},
+		// Virtual-host addressing on an endpoint without wildcard DNS.
+		{vhost(false), &url.Error{Op: "Post", URL: "http://wf-backups.127.0.0.1:9000/", Err: noHost},
+			"the bucket's hostname wf-backups.127.0.0.1 doesn't resolve — try path-style addressing (write a test file: Post"},
+		{vhost(true), &url.Error{Op: "Post", URL: "http://127.0.0.1:9000/", Err: noHost}, "write a test file: Post"},
+		{vhost(false), &net.DNSError{Err: "no such host", Name: "s3.example.test", IsNotFound: true}, "write a test file: lookup s3.example.test"},
 	}
 	for _, tc := range cases {
 		if got := explainWrite(tc.s, tc.err).Error(); !strings.Contains(got, tc.want) {

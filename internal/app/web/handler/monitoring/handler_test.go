@@ -277,7 +277,7 @@ func TestOverview(t *testing.T) {
 // the repository.
 func TestDisabledServesEmpty(t *testing.T) {
 	repo := &fakeRepo{err: errors.New("must not be called")}
-	h, _, _ := newHandler(repo, fakeServers{})
+	h, cache, latest := newHandler(repo, fakeServers{})
 	h.disabled = true
 
 	w := get(h.ServerSeries, "/x?server_id=srv-1&range=24h", "u1")
@@ -295,12 +295,25 @@ func TestDisabledServesEmpty(t *testing.T) {
 	if ap := decode[SeriesResponse](t, w); ap.Points == nil || len(ap.Points) != 0 || ap.IntervalSeconds != 7200 {
 		t.Fatalf("app = %+v", ap)
 	}
+	cache.SetAppStatus("srv-1", []command.AppStatus{
+		{AppID: "a", StatusCode: command.ContainerStatusActive},
+		{AppID: "c", StatusCode: command.ContainerStatusStopped},
+		{AppID: "d", StatusCode: command.ContainerStatusProblematic},
+	}, now)
+	cpu := 10.0
+	latest.Set("srv-1", metrics.Latest{At: now, Server: metrics.ServerSample{CPU: &cpu}})
 	w = get(h.Overview, "/x", "u1")
 	if w.Code != http.StatusOK {
 		t.Fatalf("overview: %d", w.Code)
 	}
-	if ov := decode[OverviewResponse](t, w); ov.Servers == nil || len(ov.Servers) != 0 {
+	ov := decode[OverviewResponse](t, w)
+	if len(ov.Servers) != 1 {
 		t.Fatalf("overview = %+v", ov)
+	}
+	if s := ov.Servers[0]; s.ServerID != "srv-1" || s.Liveness != status.LivenessOnline ||
+		s.Apps != (AppCounts{Running: 1, Stopped: 1, Problematic: 1}) ||
+		s.Latest != nil || s.Sparkline == nil || len(s.Sparkline) != 0 {
+		t.Fatalf("disabled overview = %+v", s)
 	}
 	if len(repo.calls) != 0 {
 		t.Fatalf("repository called: %+v", repo.calls)

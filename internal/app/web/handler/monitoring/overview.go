@@ -60,10 +60,6 @@ func (h *Handler) Overview(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if h.disabled {
-		util.Success(w, "ok", OverviewResponse{Servers: []ServerOverview{}})
-		return
-	}
 	servers, err := h.servers.GetServers(r.Context(), userID)
 	if err != nil {
 		util.Error(w, "failed to load servers", nil)
@@ -77,6 +73,12 @@ func (h *Handler) Overview(w http.ResponseWriter, r *http.Request) {
 			Liveness:  h.status.ServerLiveness(s.ID, now),
 			Sparkline: []metrics.Point{},
 			Apps:      countApps(h.status.AppStatuses(s.ID, now)),
+		}
+		if h.disabled {
+			// Nothing is stored: keep liveness and app counts, skip the
+			// latest store and the repository.
+			out = append(out, o)
+			continue
 		}
 		if l, ok := h.latest.Get(s.ID); ok {
 			o.Latest = &l

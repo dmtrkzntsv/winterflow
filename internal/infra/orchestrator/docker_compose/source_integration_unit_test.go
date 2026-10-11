@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -83,31 +84,47 @@ func TestComposeFileResolution(t *testing.T) {
 	r := newTestRepo(t)
 	dir := filepath.Join(r.cfg.GetAppsDataDir(), "app-x")
 	_ = os.MkdirAll(filepath.Join(dir, "source", "deploy"), 0o755)
+	one := func(f string) []string { return []string{f} }
 
 	// compose_path explicitly set.
 	writeFileT(t, dir, "source/deploy/stack.yml", "x")
-	if got := r.composeFile(dir, &sourceSpec{ComposePath: "deploy/stack.yml"}); got != filepath.Join("source", "deploy", "stack.yml") {
+	if got := r.composeFiles(dir, &sourceSpec{ComposePath: "deploy/stack.yml"}); !reflect.DeepEqual(got, one(filepath.Join("source", "deploy", "stack.yml"))) {
 		t.Fatalf("compose_path resolution = %q", got)
 	}
 	// Repo-root compose.yml auto-detected.
 	writeFileT(t, dir, "source/compose.yml", "x")
-	if got := r.composeFile(dir, &sourceSpec{}); got != filepath.Join("source", "compose.yml") {
+	if got := r.composeFiles(dir, &sourceSpec{}); !reflect.DeepEqual(got, one(filepath.Join("source", "compose.yml"))) {
 		t.Fatalf("root compose.yml resolution = %q", got)
 	}
 	// docker-compose.yml fallback.
 	_ = os.Remove(filepath.Join(dir, "source", "compose.yml"))
 	writeFileT(t, dir, "source/docker-compose.yml", "x")
-	if got := r.composeFile(dir, &sourceSpec{}); got != filepath.Join("source", "docker-compose.yml") {
+	if got := r.composeFiles(dir, &sourceSpec{}); !reflect.DeepEqual(got, one(filepath.Join("source", "docker-compose.yml"))) {
 		t.Fatalf("docker-compose.yml resolution = %q", got)
 	}
-	// Nothing in the repo: fall back to the winterflow-authored root file.
+	// Nothing in the repo: the winterflow-authored file in the app folder.
 	_ = os.Remove(filepath.Join(dir, "source", "docker-compose.yml"))
-	if got := r.composeFile(dir, &sourceSpec{}); got != "" {
-		t.Fatalf("fallback should use auto-detect in app dir, got %q", got)
+	if got := r.composeFiles(dir, &sourceSpec{}); got != nil {
+		t.Fatalf("no compose file anywhere = %q", got)
 	}
-	// Non-source apps never get -f.
-	if got := r.composeFile(dir, nil); got != "" {
+	writeFileT(t, dir, "compose.yaml", "x")
+	if got := r.composeFiles(dir, &sourceSpec{}); !reflect.DeepEqual(got, one("compose.yaml")) {
+		t.Fatalf("fallback to the app folder = %q", got)
+	}
+	// An invalid compose_path falls back to the app folder too.
+	if got := r.composeFiles(dir, &sourceSpec{ComposePath: "../etc/x.yml"}); !reflect.DeepEqual(got, one("compose.yaml")) {
+		t.Fatalf("invalid compose_path = %q", got)
+	}
+	// Non-source apps name their file explicitly now, plus an override.
+	writeFileT(t, dir, "compose.override.yml", "x")
+	if got := r.composeFiles(dir, nil); !reflect.DeepEqual(got, []string{"compose.yaml", "compose.override.yml"}) {
 		t.Fatalf("non-source app resolution = %q", got)
+	}
+	// A folder named like a compose file is not one.
+	_ = os.Remove(filepath.Join(dir, "compose.yaml"))
+	_ = os.MkdirAll(filepath.Join(dir, "compose.yaml"), 0o755)
+	if got := r.composeFiles(dir, nil); got != nil {
+		t.Fatalf("a folder counted as a compose file: %q", got)
 	}
 }
 
@@ -116,11 +133,15 @@ func TestComposeArgsAlwaysIncludeEnvFile(t *testing.T) {
 	savedApp(t, r, "app-1", "demo", "x\n")
 
 	args := strings.Join(r.composeArgs("app-1", "up"), " ")
-	if !strings.Contains(args, "--env-file .env") {
-		t.Fatalf(".env must always be explicit now: %s", args)
+	if args != "compose --project-name wf-app-1 -f compose.yml --env-file .env up" {
+		t.Fatalf("args = %s", args)
 	}
-	if strings.Contains(args, ".env.secrets") {
-		t.Fatalf("no secrets -> no secrets env file: %s", args)
+	dir := r.appDataDir("app-1")
+	writeFileT(t, dir, envSecretsRel, "")
+	writeFileT(t, dir, storageEnvRel, "")
+	args = strings.Join(r.composeArgs("app-1", "up"), " ")
+	if !strings.HasSuffix(args, "-f compose.yml --env-file .env --env-file .winterflow/storage.env --env-file .env.secrets up") {
+		t.Fatalf("env files in order: %s", args)
 	}
 }
 

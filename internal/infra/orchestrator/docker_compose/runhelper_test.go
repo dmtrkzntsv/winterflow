@@ -3,6 +3,7 @@ package dockercompose
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -68,25 +69,60 @@ func TestGetAppHidesManagedProjectName(t *testing.T) {
 }
 
 func TestRunHelperScript(t *testing.T) {
-	got := string(runHelperScript("wf-app-1", ""))
+	got := string(runHelperScript("wf-app-1", []string{"compose.yml", "compose.override.yml"}))
 	for _, want := range []string{
 		"#!/bin/sh\n",
 		`cd "$(dirname "$0")/.." || exit 1`,
-		"if [ -f .env.secrets ]; then",
-		`exec docker compose --project-name wf-app-1 --env-file .env --env-file .env.secrets "$@"`,
-		`exec docker compose --project-name wf-app-1 --env-file .env "$@"`,
+		`if [ -f .env.secrets ]; then set -- --env-file .env.secrets "$@"; fi`,
+		`if [ -f .winterflow/storage.env ]; then set -- --env-file .winterflow/storage.env "$@"; fi`,
+		`exec docker compose --project-name wf-app-1 -f 'compose.yml' -f 'compose.override.yml' --env-file .env "$@"`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("script missing %q:\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, ` -f "`) {
-		t.Fatalf("no compose file expected:\n%s", got)
+	// The env files are prepended last-first, so compose sees .env,
+	// storage.env, .env.secrets in that order (later ones win).
+	if strings.Index(got, ".env.secrets \"$@\"; fi") > strings.Index(got, "storage.env \"$@\"; fi") {
+		t.Fatalf("storage.env must be prepended after .env.secrets:\n%s", got)
 	}
 
-	withFile := string(runHelperScript("wf-app-1", "source/compose.yml"))
-	if !strings.Contains(withFile, `-f "source/compose.yml" --env-file .env`) {
-		t.Fatalf("script missing -f flag:\n%s", withFile)
+	// A compose path is quoted for the shell, whatever it contains.
+	odd := string(runHelperScript("wf-app-1", []string{"source/it's $(here).yml"}))
+	if !strings.Contains(odd, `-f 'source/it'\''s $(here).yml' --env-file .env`) {
+		t.Fatalf("path not quoted:\n%s", odd)
+	}
+}
+
+// TestRunHelperScriptRuns executes the script with a fake docker on PATH:
+// it must pass exactly winterflow's flags, env files included.
+func TestRunHelperScriptRuns(t *testing.T) {
+	dir := t.TempDir()
+	bin := t.TempDir()
+	writeFileT(t, bin, "docker", "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done\n")
+	if err := os.Chmod(filepath.Join(bin, "docker"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFileT(t, dir, runRel, string(runHelperScript("wf-x", []string{"compose.yml"})))
+	if err := os.Chmod(filepath.Join(dir, runRel), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run := func() string {
+		cmd := exec.Command(filepath.Join(dir, runRel), "up", "-d")
+		cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"))
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("run.sh: %v: %s", err, out)
+		}
+		return strings.ReplaceAll(strings.TrimSpace(string(out)), "\n", " ")
+	}
+	if got := run(); got != "compose --project-name wf-x -f compose.yml --env-file .env up -d" {
+		t.Fatalf("without extra env files: %s", got)
+	}
+	writeFileT(t, dir, envSecretsRel, "")
+	writeFileT(t, dir, storageEnvRel, "")
+	if got := run(); got != "compose --project-name wf-x -f compose.yml --env-file .env --env-file .winterflow/storage.env --env-file .env.secrets up -d" {
+		t.Fatalf("with env files: %s", got)
 	}
 }
 

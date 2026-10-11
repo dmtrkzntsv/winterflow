@@ -226,7 +226,7 @@ func (r *Repository) writeAppStore(dir string, app command.AppPayload) (secretSt
 		return secretStore{}, err
 	}
 
-	ignored := []string{envSecretsRel, deployedRel, runRel}
+	ignored := []string{envSecretsRel, deployedRel, runRel, storageEnvRel}
 	if app.Source != nil {
 		ignored = append(ignored, sourceDirRel+"/")
 	}

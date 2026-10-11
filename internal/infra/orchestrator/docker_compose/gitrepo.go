@@ -10,6 +10,7 @@ import (
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/filemode"
+	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
 	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
@@ -37,9 +38,15 @@ func gitEnsure(dir string) error {
 	return err
 }
 
-// gitCommitAll stages everything (honoring .gitignore) and commits. A clean
-// worktree is a no-op that returns the current HEAD hash, so callers can
-// commit unconditionally after a save.
+// neverCommitted are derived files holding plaintext secrets that must stay
+// out of an app's history whatever its .gitignore says: a rollback restores
+// an old .gitignore that may not list them. (go-git does not read
+// .git/info/exclude, so the patterns ride on every commit's worktree.)
+var neverCommitted = []gitignore.Pattern{gitignore.ParsePattern("/"+storageEnvRel, nil)}
+
+// gitCommitAll stages everything (honoring .gitignore and neverCommitted)
+// and commits. A clean worktree is a no-op that returns the current HEAD
+// hash, so callers can commit unconditionally after a save.
 func gitCommitAll(dir, subject string) (string, error) {
 	repo, err := git.PlainOpen(dir)
 	if err != nil {
@@ -49,6 +56,7 @@ func gitCommitAll(dir, subject string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	wt.Excludes = append(wt.Excludes, neverCommitted...)
 	if err := wt.AddWithOptions(&git.AddOptions{All: true}); err != nil {
 		return "", err
 	}

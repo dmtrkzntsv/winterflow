@@ -12,15 +12,19 @@
 //	  compose.yml, <files...>    --   committed verbatim
 //	  .env                       --   committed plain variables
 //	  .env.secrets, source/      --   gitignored deploy artifacts
+//	  .winterflow/storage.env    --   gitignored: referenced WF_STORAGE_ values
+//	storages/{name}.json         -- registered storages (0600, secret encrypted)
 //
 // The folder IS the deployment: compose runs in it directly, every save is a
 // commit, and rollbacks restore old trees as new commits.
 package dockercompose
 
 import (
+	"path/filepath"
 	"sync"
 	"time"
 
+	"winterflow/internal/infra/backup/storages"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
 )
@@ -40,6 +44,10 @@ type Repository struct {
 	// every listing would get slower for as long as the app lives.
 	versionMu    sync.Mutex
 	versionCache map[string]versionEntry
+
+	// storages is the agent's storage registry ({data}/storages/): what
+	// storage.* commands manage and WF_STORAGE_ variables resolve against.
+	storages *storages.Registry
 }
 
 // versionEntry is a cached commit count, valid while HEAD is unchanged.
@@ -54,6 +62,7 @@ func NewRepository(cfg *config.ServerConfig, log *logger.Logger) *Repository {
 		log:          log,
 		sourceChecks: make(map[string]time.Time),
 		versionCache: make(map[string]versionEntry),
+		storages:     storages.NewRegistry(filepath.Join(cfg.GetAgentDataDir(), "storages")),
 	}
 }
 

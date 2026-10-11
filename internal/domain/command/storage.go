@@ -51,11 +51,14 @@ type TestStorageResponse struct {
 	Error string `json:"error,omitempty"`
 }
 
-// SaveStorageRequest adds or replaces a storage. The agent tests it first and
-// stores nothing when the test fails. "<encrypted>" as the secret keeps the
-// stored one (editing without re-entering it). Renaming is not supported.
+// SaveStorageRequest adds (Create) or edits a storage. The agent tests it
+// first and stores nothing when the test fails. Create refuses a name the
+// server already has; an edit refuses a name it doesn't have and a change of
+// type (apps reference the type's fields). "<encrypted>" as the secret keeps
+// the stored one (editing without re-entering it). Renaming is not supported.
 type SaveStorageRequest struct {
 	model.Storage
+	Create bool `json:"create"`
 }
 
 func (r SaveStorageRequest) Validate() error { return r.Storage.Validate() }

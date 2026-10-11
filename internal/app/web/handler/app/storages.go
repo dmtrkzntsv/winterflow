@@ -68,8 +68,9 @@ func (h *Handler) TestStorage(w http.ResponseWriter, r *http.Request) {
 	accepted(w, "test storage dispatched", reqID)
 }
 
-// SaveStorage adds or replaces a storage; the agent tests it first and
-// redeploys the running apps that reference it.
+// SaveStorage adds (create) or edits a storage; the agent refuses an add
+// over an existing name, an edit of a missing one or of its type, tests it,
+// and redeploys the running apps that reference it.
 func (h *Handler) SaveStorage(w http.ResponseWriter, r *http.Request) {
 	userID, serverID, ok := h.serverFromQuery(w, r)
 	if !ok {

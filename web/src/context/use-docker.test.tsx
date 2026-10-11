@@ -124,27 +124,28 @@ describe("useDocker storage calls", () => {
   it("keeps the stored secret when none is typed, and sends no key for a folder", async () => {
     const { result } = renderHook(() => useDocker());
     waitFor.mockResolvedValueOnce({ status: 0, payload: { storage: { name: "hetzner" } } });
-    expect(await result.current.saveStorage({ ...s3Draft, secret: "" })).toEqual({
+    expect(await result.current.saveStorage({ ...s3Draft, secret: "" }, false)).toEqual({
       storage: { name: "hetzner" },
       redeployed: [],
       warnings: [],
     });
     expect(sent).toHaveLength(1); // no public key fetched
-    expect(sent[0].body).toMatchObject({ s3: { secret_access_key: "<encrypted>" } });
+    expect(sent[0].body).toMatchObject({ s3: { secret_access_key: "<encrypted>" }, create: false });
 
     waitFor.mockResolvedValueOnce({ status: 0, payload: { storage: { name: "disk" }, redeployed: ["a1"], warnings: ["w"] } });
-    expect(await result.current.saveStorage({ ...s3Draft, name: "disk", type: "local", path: "/mnt/usb" })).toEqual({
+    expect(await result.current.saveStorage({ ...s3Draft, name: "disk", type: "local", path: "/mnt/usb" }, true)).toEqual({
       storage: { name: "disk" },
       redeployed: ["a1"],
       warnings: ["w"],
     });
-    expect(sent[1].body).toEqual({ name: "disk", type: "local", local: { path: "/mnt/usb" } });
+    // An add says so: the agent refuses it over an existing storage.
+    expect(sent[1].body).toEqual({ name: "disk", type: "local", local: { path: "/mnt/usb" }, create: true });
   });
 
   it("waits as long as the agent may take for a save or a test", async () => {
     const { result } = renderHook(() => useDocker());
     waitFor.mockResolvedValueOnce({ status: 0, payload: { storage: { name: "hetzner" } } });
-    await result.current.saveStorage({ ...s3Draft, secret: "" });
+    await result.current.saveStorage({ ...s3Draft, secret: "" }, false);
     // storage.save may run up to 8 minutes (probe + redeploys).
     expect(waitFor).toHaveBeenLastCalledWith("r1", 9 * 60_000);
     waitFor.mockResolvedValueOnce({ status: 0, payload: { ok: true } });

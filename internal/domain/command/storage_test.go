@@ -15,10 +15,10 @@ func TestStorageRequestsValidate(t *testing.T) {
 	if err := (TestStorageRequest{good}).Validate(); err != nil {
 		t.Fatal(err)
 	}
-	if err := (SaveStorageRequest{good}).Validate(); err != nil {
+	if err := (SaveStorageRequest{Storage: good}).Validate(); err != nil {
 		t.Fatal(err)
 	}
-	if (TestStorageRequest{bad}).Validate() == nil || (SaveStorageRequest{bad}).Validate() == nil {
+	if (TestStorageRequest{bad}).Validate() == nil || (SaveStorageRequest{Storage: bad}).Validate() == nil {
 		t.Fatal("an invalid storage must be refused")
 	}
 	if err := (DeleteStorageRequest{Name: "disk"}).Validate(); err != nil {
@@ -32,8 +32,8 @@ func TestStorageRequestsValidate(t *testing.T) {
 // The request bodies are the storage itself, not a wrapper object.
 func TestStorageRequestIsFlat(t *testing.T) {
 	var req SaveStorageRequest
-	raw := `{"name":"hetzner","type":"s3","s3":{"endpoint":"https://s3.example.com","bucket":"b","access_key_id":"A","secret_access_key":"CT"}}`
-	if err := json.Unmarshal([]byte(raw), &req); err != nil || req.Name != "hetzner" || req.S3.SecretAccessKey != "CT" {
+	raw := `{"name":"hetzner","type":"s3","create":true,"s3":{"endpoint":"https://s3.example.com","bucket":"b","access_key_id":"A","secret_access_key":"CT"}}`
+	if err := json.Unmarshal([]byte(raw), &req); err != nil || req.Name != "hetzner" || req.S3.SecretAccessKey != "CT" || !req.Create {
 		t.Fatalf("decoded = %+v, %v", req, err)
 	}
 }

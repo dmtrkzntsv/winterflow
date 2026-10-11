@@ -21,6 +21,8 @@ test is not saved.
 | Path-style | on for MinIO | leave off for providers that use `bucket.endpoint` hostnames |
 
 To edit a storage without re-entering the secret, leave the secret empty.
+A storage's name and type can't change: remove it and add it again. Adding a
+storage under a name the server already has is refused.
 
 ## A local folder
 

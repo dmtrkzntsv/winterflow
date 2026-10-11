@@ -51,7 +51,7 @@ func (f *fakeComposeHooks) install(r *Repository) {
 func TestSaveStorageLocal(t *testing.T) {
 	r := newTestRepo(t)
 	dir := t.TempDir()
-	resp, err := r.SaveStorage(context.Background(), localStorage("disk", dir+"/"))
+	resp, err := r.SaveStorage(context.Background(), localStorage("disk", dir+"/"), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func TestSaveStorageLocal(t *testing.T) {
 func TestSaveStorageRefusesWhatFailsItsTest(t *testing.T) {
 	r := newTestRepo(t)
 	missing := filepath.Join(t.TempDir(), "usb")
-	_, err := r.SaveStorage(context.Background(), localStorage("disk", missing))
+	_, err := r.SaveStorage(context.Background(), localStorage("disk", missing), true)
 	if err == nil || !strings.Contains(err.Error(), "the connection test failed, nothing was saved") || !strings.Contains(err.Error(), "is the disk mounted") {
 		t.Fatalf("err = %v", err)
 	}
@@ -79,12 +79,58 @@ func TestSaveStorageRefusesWhatFailsItsTest(t *testing.T) {
 		t.Fatalf("stored after a failed test: %+v", list)
 	}
 	// Inside the agent's own data folder: refused before any write.
-	_, err = r.SaveStorage(context.Background(), localStorage("disk", filepath.Join(r.cfg.GetAgentDataDir(), "backups")))
+	_, err = r.SaveStorage(context.Background(), localStorage("disk", filepath.Join(r.cfg.GetAgentDataDir(), "backups")), true)
 	if err == nil || !strings.Contains(err.Error(), "inside winterflow's data folder") {
 		t.Fatalf("data dir: %v", err)
 	}
-	if _, err := r.SaveStorage(context.Background(), localStorage("Bad", t.TempDir())); err == nil {
+	if _, err := r.SaveStorage(context.Background(), localStorage("Bad", t.TempDir()), true); err == nil {
 		t.Fatal("an invalid storage must be refused")
+	}
+}
+
+// An add never replaces a storage (nor its secret), an edit never creates
+// one, and an edit can't change the type the apps' references rely on.
+func TestSaveStorageCreateAndEditModes(t *testing.T) {
+	r := newTestRepo(t)
+	docker := &fakeComposeHooks{up: map[string]bool{"wf-a-shop": true}}
+	docker.install(r)
+	storageApp(t, r, "a-shop", "Shop", "disk", false)
+	first, second := t.TempDir(), t.TempDir()
+	ctx := context.Background()
+
+	if _, err := r.SaveStorage(ctx, localStorage("disk", first), false); err == nil ||
+		err.Error() != "there is no storage disk on this server" {
+		t.Fatalf("edit of a missing storage: %v", err)
+	}
+	if list, _ := r.storages.List(); len(list) != 0 {
+		t.Fatalf("an edit created %+v", list)
+	}
+	if _, err := r.SaveStorage(ctx, localStorage("disk", first), true); err != nil {
+		t.Fatal(err)
+	}
+	docker.redeploys = nil
+	if _, err := r.SaveStorage(ctx, localStorage("disk", second), true); err == nil ||
+		err.Error() != "a storage named disk already exists on this server" {
+		t.Fatalf("add over an existing storage: %v", err)
+	}
+	s3 := model.Storage{Name: "disk", Type: model.StorageS3, S3: &model.S3Storage{
+		Endpoint: "https://s3.example.test", Bucket: "backups", AccessKeyID: "AKIA", SecretAccessKey: model.EncryptedSecret,
+	}}
+	if _, err := r.SaveStorage(ctx, s3, false); err == nil ||
+		err.Error() != "the type of an existing storage can't change — delete it and add it again" {
+		t.Fatalf("type change: %v", err)
+	}
+	if s, _, _ := r.storages.Get("disk"); s.Type != model.StorageLocal || s.Local.Path != first {
+		t.Fatalf("a refused save replaced the storage: %+v", s)
+	}
+	if len(docker.redeploys) != 0 {
+		t.Fatalf("a refused save redeployed %v", docker.redeploys)
+	}
+	if _, err := r.SaveStorage(ctx, localStorage("disk", second), false); err != nil {
+		t.Fatal(err)
+	}
+	if s, _, _ := r.storages.Get("disk"); s.Local.Path != second {
+		t.Fatalf("edit not stored: %+v", s)
 	}
 }
 
@@ -124,7 +170,7 @@ func TestSaveStorageS3KeepsTheStoredSecret(t *testing.T) {
 		t.Fatalf("placeholder without a stored secret = %+v", res)
 	}
 	ct := cryptotest.Encrypt(t, pub, "s3-plain")
-	resp, err := r.SaveStorage(ctx, s3(ct))
+	resp, err := r.SaveStorage(ctx, s3(ct), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,20 +187,20 @@ func TestSaveStorageS3KeepsTheStoredSecret(t *testing.T) {
 	}
 	edited := s3(model.EncryptedSecret)
 	edited.S3.Prefix = "tenants/"
-	if _, err := r.SaveStorage(ctx, edited); err != nil {
+	if _, err := r.SaveStorage(ctx, edited, false); err != nil {
 		t.Fatal(err)
 	}
 	if s, _, _ := r.storages.Get("minio"); s.S3.SecretAccessKey != ct || s.S3.Prefix != "tenants/" {
 		t.Fatalf("after edit = %+v", s.S3)
 	}
 	// Garbage instead of ciphertext fails before anything is written.
-	if _, err := r.SaveStorage(ctx, s3("not-ciphertext")); err == nil || !strings.Contains(err.Error(), "decrypt the secret access key") {
+	if _, err := r.SaveStorage(ctx, s3("not-ciphertext"), false); err == nil || !strings.Contains(err.Error(), "decrypt the secret access key") {
 		t.Fatalf("garbage secret: %v", err)
 	}
 	// A wrong bucket fails the test and keeps the stored storage.
 	bad := s3(model.EncryptedSecret)
 	bad.S3.Bucket = "missing"
-	if _, err := r.SaveStorage(ctx, bad); err == nil {
+	if _, err := r.SaveStorage(ctx, bad, false); err == nil {
 		t.Fatal("a missing bucket must fail the save")
 	}
 	if s, _, _ := r.storages.Get("minio"); s.S3.Bucket != "backups" {
@@ -192,7 +238,7 @@ func TestSaveStorageRedeploysRunningUsers(t *testing.T) {
 	}
 	docker.install(r)
 
-	resp, err := r.SaveStorage(context.Background(), localStorage("disk", t.TempDir()))
+	resp, err := r.SaveStorage(context.Background(), localStorage("disk", t.TempDir()), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +260,7 @@ func TestSaveStorageRedeploysRunningUsers(t *testing.T) {
 
 	// docker ps failing redeploys nothing and says so.
 	docker.psErr, docker.redeploys = errors.New("daemon down"), nil
-	resp, err = r.SaveStorage(context.Background(), localStorage("disk", t.TempDir()))
+	resp, err = r.SaveStorage(context.Background(), localStorage("disk", t.TempDir()), false)
 	if err != nil || len(resp.Redeployed) != 0 || len(docker.redeploys) != 0 ||
 		len(resp.Warnings) != 1 || !strings.Contains(resp.Warnings[0], "none was redeployed: daemon down") {
 		t.Fatalf("ps failure: %+v, %v, %v", resp, err, docker.redeploys)
@@ -395,7 +441,7 @@ func TestProbeStorageDoesNotWaitForAHungMount(t *testing.T) {
 	if d := time.Since(start); d > 5*time.Second {
 		t.Fatalf("took %v", d)
 	}
-	if _, err := r.SaveStorage(context.Background(), localStorage("disk", t.TempDir())); err == nil ||
+	if _, err := r.SaveStorage(context.Background(), localStorage("disk", t.TempDir()), true); err == nil ||
 		!strings.Contains(err.Error(), "nothing was saved") || !strings.Contains(err.Error(), "did not answer") {
 		t.Fatalf("save: %v", err)
 	}
@@ -423,7 +469,7 @@ func TestSaveStorageBudgetSkipsLaterRedeploys(t *testing.T) {
 	t.Cleanup(func() { storageSaveBudget, storageRedeployMinBudget = old, oldMin })
 
 	start := time.Now()
-	resp, err := r.SaveStorage(context.Background(), localStorage("disk", t.TempDir()))
+	resp, err := r.SaveStorage(context.Background(), localStorage("disk", t.TempDir()), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -462,7 +508,7 @@ func TestSaveStorageStartsNoRedeployWithoutEnoughBudget(t *testing.T) {
 	storageSaveBudget, storageRedeployMinBudget = 30*time.Second, 29*time.Second
 	t.Cleanup(func() { storageSaveBudget, storageRedeployMinBudget = old, oldMin })
 
-	resp, err := r.SaveStorage(context.Background(), localStorage("disk", t.TempDir()))
+	resp, err := r.SaveStorage(context.Background(), localStorage("disk", t.TempDir()), true)
 	if err != nil {
 		t.Fatal(err)
 	}

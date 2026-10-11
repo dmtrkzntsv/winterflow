@@ -256,7 +256,7 @@ func (d *Dispatcher) newHandlers() map[command.Type]handlerFunc {
 			return d.orch.TestStorage(ctx, in.Storage)
 		}),
 		command.TypeStorageSave: handle(d, func(ctx context.Context, in command.SaveStorageRequest) (command.SaveStorageResponse, error) {
-			return d.orch.SaveStorage(ctx, in.Storage)
+			return d.orch.SaveStorage(ctx, in.Storage, in.Create)
 		}),
 		command.TypeStorageDelete: handle(d, func(ctx context.Context, in command.DeleteStorageRequest) (command.DeleteStorageResponse, error) {
 			return command.DeleteStorageResponse{Name: in.Name}, d.orch.DeleteStorage(ctx, in.Name)

@@ -228,11 +228,27 @@ func (r *Repository) TestStorage(ctx context.Context, in model.Storage) (command
 }
 
 // SaveStorage tests a storage, stores it, and redeploys the running apps
-// that reference it so they read the new values. Nothing is stored when the
-// test fails. Redeploy problems are warnings: the storage is saved.
-func (r *Repository) SaveStorage(ctx context.Context, in model.Storage) (command.SaveStorageResponse, error) {
+// that reference it so they read the new values. create adds a storage and
+// refuses a name the server already has (an add must never replace one,
+// secret and all); otherwise it edits one and refuses an unknown name or a
+// change of type. Nothing is stored when the test fails. Redeploy problems
+// are warnings: the storage is saved.
+func (r *Repository) SaveStorage(ctx context.Context, in model.Storage, create bool) (command.SaveStorageResponse, error) {
 	ctx, cancel := context.WithTimeout(ctx, storageSaveBudget)
 	defer cancel()
+	check := func(prev model.Storage, exists bool) error {
+		return checkSaveMode(in.Normalized(), prev, exists, create)
+	}
+	// Checked before the probe (fail fast, and an edit's "<encrypted>"
+	// secret must not resolve against a storage of another type) and again
+	// under the registry's lock when storing.
+	prev, exists, err := r.storages.Get(in.Normalized().Name)
+	if err != nil {
+		return command.SaveStorageResponse{}, err
+	}
+	if err := check(prev, exists); err != nil {
+		return command.SaveStorageResponse{}, err
+	}
 	s, secret, err := r.resolveStorage(in)
 	if err != nil {
 		return command.SaveStorageResponse{}, err
@@ -240,7 +256,7 @@ func (r *Repository) SaveStorage(ctx context.Context, in model.Storage) (command
 	if err := probeStorage(ctx, s, secret); err != nil {
 		return command.SaveStorageResponse{}, fmt.Errorf("the connection test failed, nothing was saved: %w", err)
 	}
-	if err := r.storages.Put(s); err != nil {
+	if err := r.storages.Save(s, check); err != nil {
 		return command.SaveStorageResponse{}, err
 	}
 	users, err := r.storageUsers()
@@ -252,6 +268,22 @@ func (r *Repository) SaveStorage(ctx context.Context, in model.Storage) (command
 	resp.Redeployed = redeployed
 	resp.Warnings = append(resp.Warnings, warnings...)
 	return resp, nil
+}
+
+// checkSaveMode refuses an add over an existing storage, an edit of a
+// storage that doesn't exist, and an edit that changes the type: the apps
+// using a storage reference its type's fields, which another type resolves
+// to empty values.
+func checkSaveMode(s, prev model.Storage, exists, create bool) error {
+	switch {
+	case create && exists:
+		return fmt.Errorf("a storage named %s already exists on this server", s.Name)
+	case !create && !exists:
+		return fmt.Errorf("there is no storage %s on this server", s.Name)
+	case !create && prev.Type != s.Type:
+		return errors.New("the type of an existing storage can't change — delete it and add it again")
+	}
+	return nil
 }
 
 // redeployStorageUsers brings the running apps among ids up again so they

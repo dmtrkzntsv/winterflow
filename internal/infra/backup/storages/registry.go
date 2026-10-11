@@ -103,7 +103,13 @@ func (r *Registry) Get(name string) (model.Storage, bool, error) {
 
 // Put writes (or replaces) a storage as given: callers resolve the
 // "<encrypted>" placeholder first, so the stored secret is ciphertext.
-func (r *Registry) Put(s model.Storage) error {
+func (r *Registry) Put(s model.Storage) error { return r.Save(s, nil) }
+
+// Save is Put guarded by check, which sees the storage currently stored
+// under the same name (exists false when there is none) and refuses the
+// write by returning an error. The check and the write happen under one
+// lock, so two saves can't both pass a "the name is free" check.
+func (r *Registry) Save(s model.Storage, check func(prev model.Storage, exists bool) error) error {
 	s = s.Normalized()
 	if err := s.Validate(); err != nil {
 		return err
@@ -117,6 +123,16 @@ func (r *Registry) Put(s model.Storage) error {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if check != nil {
+		prev, err := r.read(s.Name)
+		exists := err == nil
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("read storage %s: %w", s.Name, err)
+		}
+		if err := check(prev, exists); err != nil {
+			return err
+		}
+	}
 	if err := os.MkdirAll(r.dir, 0o700); err != nil {
 		return fmt.Errorf("create storages dir: %w", err)
 	}

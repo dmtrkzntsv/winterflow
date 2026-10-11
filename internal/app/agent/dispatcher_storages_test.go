@@ -25,10 +25,19 @@ func TestDispatchStorageCommands(t *testing.T) {
 	if resp.Base.ResponseCode != ok || json.Unmarshal(resp.Payload, &tested) != nil || !tested.OK {
 		t.Fatalf("storage.test = %+v %s", resp.Base, resp.Payload)
 	}
-	resp = dispatchJSON(t, d, command.TypeStorageSave, command.SaveStorageRequest{Storage: disk})
+	resp = dispatchJSON(t, d, command.TypeStorageSave, command.SaveStorageRequest{Storage: disk, Create: true})
 	var saved command.SaveStorageResponse
 	if resp.Base.ResponseCode != ok || json.Unmarshal(resp.Payload, &saved) != nil || saved.Storage.Name != "disk" {
 		t.Fatalf("storage.save = %+v %s", resp.Base, resp.Payload)
+	}
+	// The create flag reaches the orchestrator: a second add is refused, an
+	// edit goes through.
+	resp = dispatchJSON(t, d, command.TypeStorageSave, command.SaveStorageRequest{Storage: disk, Create: true})
+	if resp.Base.ResponseCode == ok || resp.Base.Detail != "a storage named disk already exists on this server" {
+		t.Fatalf("second add = %+v", resp.Base)
+	}
+	if resp = dispatchJSON(t, d, command.TypeStorageSave, command.SaveStorageRequest{Storage: disk}); resp.Base.ResponseCode != ok {
+		t.Fatalf("edit = %+v", resp.Base)
 	}
 	resp = dispatchJSON(t, d, command.TypeStorageList, command.ListStoragesRequest{})
 	var listed command.ListStoragesResponse
@@ -44,7 +53,7 @@ func TestDispatchStorageCommands(t *testing.T) {
 	// A failed save is a command error carrying the reason.
 	missing := disk
 	missing.Local = &model.LocalStorage{Path: disk.Local.Path + "/gone"}
-	resp = dispatchJSON(t, d, command.TypeStorageSave, command.SaveStorageRequest{Storage: missing})
+	resp = dispatchJSON(t, d, command.TypeStorageSave, command.SaveStorageRequest{Storage: missing, Create: true})
 	if resp.Base.ResponseCode == ok || !strings.Contains(resp.Base.Detail, "is the disk mounted") {
 		t.Fatalf("failed save = %+v", resp.Base)
 	}

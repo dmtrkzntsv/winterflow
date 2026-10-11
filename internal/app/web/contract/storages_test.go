@@ -31,7 +31,7 @@ func (e *env) storagesIndexed(t *testing.T, serverID string) map[string]model.St
 func addStorage(t *testing.T, c *client, serverID string, s model.Storage) {
 	t.Helper()
 	c.succeed(t, call{Method: http.MethodPost, Path: "/api/v1/storage/save", Query: sq(serverID),
-		Body: command.SaveStorageRequest{Storage: s}}, nil)
+		Body: command.SaveStorageRequest{Storage: s, Create: true}}, nil)
 }
 
 func hetzner(secret string) model.Storage {
@@ -70,7 +70,7 @@ func TestStorageRoutes(t *testing.T) {
 	t.Run("save enters the index without its secret", func(t *testing.T) {
 		var saved command.SaveStorageResponse
 		owner.succeed(t, call{Method: http.MethodPost, Path: "/api/v1/storage/save", Query: q,
-			Body: command.SaveStorageRequest{Storage: hetzner("BASE64CIPHERTEXT")}}, &saved)
+			Body: command.SaveStorageRequest{Storage: hetzner("BASE64CIPHERTEXT"), Create: true}}, &saved)
 		if saved.Storage.Name != "hetzner" || saved.Storage.S3.SecretAccessKey != model.EncryptedSecret ||
 			saved.Storage.Location != "https://fsn1.example.test/tenants/wf/" {
 			t.Fatalf("saved = %+v", saved.Storage)
@@ -82,6 +82,24 @@ func TestStorageRoutes(t *testing.T) {
 		idx := e.storagesIndexed(t, sid)
 		if idx["hetzner"] != (model.StorageSummary{Name: "hetzner", Type: model.StorageS3, Location: "https://fsn1.example.test/tenants/wf/"}) {
 			t.Fatalf("index = %+v", idx)
+		}
+	})
+	t.Run("an add never replaces and an edit never creates", func(t *testing.T) {
+		owner.failWith(t, call{Method: http.MethodPost, Path: "/api/v1/storage/save", Query: q,
+			Body: command.SaveStorageRequest{Storage: hetzner("OTHER"), Create: true}}, "a storage named hetzner already exists on this server")
+		owner.failWith(t, call{Method: http.MethodPost, Path: "/api/v1/storage/save", Query: q,
+			Body: command.SaveStorageRequest{Storage: model.Storage{Name: "nope", Type: model.StorageLocal, Local: &model.LocalStorage{Path: "/mnt/nope"}}}},
+			"there is no storage nope on this server")
+		// The flag travels as "create"; an edit omits it or sends false.
+		got := e.agent.seen(command.TypeStorageSave)
+		if !strings.Contains(string(got[len(got)-2].Payload), `"create":true`) || !strings.Contains(string(got[len(got)-1].Payload), `"create":false`) {
+			t.Fatalf("payloads = %s / %s", got[len(got)-2].Payload, got[len(got)-1].Payload)
+		}
+		var saved command.SaveStorageResponse
+		owner.succeed(t, call{Method: http.MethodPost, Path: "/api/v1/storage/save", Query: q,
+			Body: command.SaveStorageRequest{Storage: hetzner(model.EncryptedSecret)}}, &saved)
+		if saved.Storage.Name != "hetzner" || len(e.storagesIndexed(t, sid)) != 1 {
+			t.Fatalf("edit = %+v", saved)
 		}
 	})
 	t.Run("list reports the agent's registry and reconciles", func(t *testing.T) {

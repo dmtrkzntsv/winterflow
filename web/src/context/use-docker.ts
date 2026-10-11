@@ -252,17 +252,19 @@ export function useDocker() {
     [dispatch, storageRequest],
   );
 
-  // saveStorage resolves with the stored storage, the apps redeployed with
-  // it and the redeploy warnings (the storage itself was saved).
+  // saveStorage adds (create) or edits a storage and resolves with the
+  // stored storage, the apps redeployed with it and the redeploy warnings
+  // (the storage itself was saved). The agent refuses an add over an
+  // existing name, and an edit of a missing one.
   const saveStorage = useCallback(
-    async (draft: StorageDraft): Promise<StorageSaved> => {
+    async (draft: StorageDraft, create: boolean): Promise<StorageSaved> => {
       const res = await dispatch<{
         storage: Storage;
         redeployed?: string[] | null;
         warnings?: string[] | null;
       }>("/api/v1/storage/save", {
         method: "POST",
-        body: await storageRequest(draft),
+        body: { ...(await storageRequest(draft)), create },
         timeoutMs: STORAGE_SAVE_TIMEOUT_MS,
       });
       return { storage: res.storage, redeployed: res.redeployed ?? [], warnings: res.warnings ?? [] };

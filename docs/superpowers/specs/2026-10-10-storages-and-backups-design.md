@@ -82,7 +82,7 @@ type S3Storage struct {
 |---|---|---|
 | `storage.list` | — | `[]StorageInfo{Storage (secret masked), Location, Apps []string}`, where `Apps` lists the app ids that use the storage through compose variables (C2: also through a backup) |
 | `storage.test` | `Storage` (secret ciphertext, or `<encrypted>` plus the name of an existing storage to reuse its secret) | `{ok, error}`; writes and deletes `<prefix>.winterflow-probe-<rand>` with a 30s deadline |
-| `storage.save` | `Storage` | runs `test` first and refuses if it fails; then writes; then redeploys the apps whose compose files reference `WF_STORAGE_<name>_*` (C2: `WF_BACKUP_*` on a backup using it); returns `{redeployed []string, warnings []string}` |
+| `storage.save` | `Storage` + `create` | `create: true` refuses a name that exists, an edit (`create: false`) refuses a missing name or a type change; runs `test` first and refuses if it fails; then writes; then redeploys the apps whose compose files reference `WF_STORAGE_<name>_*` (C2: `WF_BACKUP_*` on a backup using it); returns `{redeployed []string, warnings []string}` |
 | `storage.delete` | `{name}` | refused while `Apps` is non-empty, with an error naming them |
 
 - On save, `<encrypted>` as the secret keeps the stored value. That's how

@@ -87,7 +87,19 @@ func (a *fakeAgent) storageScript(typ command.Type, agentID string) (script, boo
 		return func(json.RawMessage) reply { return reply{Payload: command.TestStorageResponse{OK: true}} }, true
 	case command.TypeStorageSave:
 		return func(raw json.RawMessage) reply {
-			in := decode[command.SaveStorageRequest](raw).Storage.Normalized()
+			req := decode[command.SaveStorageRequest](raw)
+			in := req.Storage.Normalized()
+			a.mu.Lock()
+			prev, exists := a.storages[agentID][in.Name]
+			a.mu.Unlock()
+			switch {
+			case req.Create && exists:
+				return reply{Err: "a storage named " + in.Name + " already exists on this server"}
+			case !req.Create && !exists:
+				return reply{Err: "there is no storage " + in.Name + " on this server"}
+			case !req.Create && prev.Type != in.Type:
+				return reply{Err: "the type of an existing storage can't change — delete it and add it again"}
+			}
 			info := command.StorageInfo{Storage: in.Masked(), Location: in.Location(), Apps: []string{}}
 			a.addStorage(agentID, info)
 			return reply{Payload: command.SaveStorageResponse{Storage: info}}
@@ -335,7 +347,11 @@ func TestFakeAgentAnswersEveryCommandType(t *testing.T) {
 		command.TypeDomainList, command.TypeDomainCreate, command.TypeDomainDelete,
 		command.TypeStorageList, command.TypeStorageTest, command.TypeStorageSave, command.TypeStorageDelete,
 	} {
-		resp := a.Dispatch(context.Background(), &proto.RequestEnvelope{Type: string(typ), RequestId: "r", Payload: []byte(`{}`)})
+		payload := []byte(`{}`)
+		if typ == command.TypeStorageSave {
+			payload = []byte(`{"create":true}`) // an edit of a storage the fake doesn't have is refused
+		}
+		resp := a.Dispatch(context.Background(), &proto.RequestEnvelope{Type: string(typ), RequestId: "r", Payload: payload})
 		if resp.Base.ResponseCode != proto.ResponseCode_RESPONSE_CODE_SUCCESS {
 			t.Errorf("%s: default answer is %v %q", typ, resp.Base.ResponseCode, resp.Base.Detail)
 		}

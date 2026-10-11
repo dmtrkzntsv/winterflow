@@ -148,8 +148,9 @@ func (h *Handler) Routes(api.Guards) []api.Route {
 		},
 		{
 			Method: http.MethodPost, Path: "/api/v1/storage/save", Handler: h.SaveStorage, Auth: api.User,
-			Summary: "Add or replace a storage (tested first; redeploys the running apps that use it)", Tag: "storages",
-			Description: "`s3.secret_access_key` is ECIES-encrypted with the server's public key, or `<encrypted>` " +
+			Summary: "Add or edit a storage (tested first; redeploys the running apps that use it)", Tag: "storages",
+			Description: "`create: true` adds a storage and fails when the name exists; otherwise the storage must exist " +
+				"and keep its type. `s3.secret_access_key` is ECIES-encrypted with the server's public key, or `<encrypted>` " +
 				"to keep the stored one. Nothing is saved when the connection test fails.",
 			Query: api.ServerQuery{}, Request: command.SaveStorageRequest{},
 			Accepted: true, Result: command.SaveStorageResponse{}, Errors: server,

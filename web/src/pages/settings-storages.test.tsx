@@ -151,7 +151,7 @@ describe("StoragesCard", () => {
     expect(docker.testStorage).toHaveBeenCalledWith(expect.objectContaining({ name: "backup-disk", type: "local", path: "/mnt/backup/winterflow" }));
 
     await user.click(save);
-    expect(docker.saveStorage).toHaveBeenCalledWith(expect.objectContaining({ name: "backup-disk", path: "/mnt/backup/winterflow" }));
+    expect(docker.saveStorage).toHaveBeenCalledWith(expect.objectContaining({ name: "backup-disk", path: "/mnt/backup/winterflow" }), true);
     // The answer goes straight into the list, in name order.
     const row = (await screen.findByText("backup-disk")).closest("tr");
     expect(row?.nextElementSibling).toHaveTextContent("disk");
@@ -213,7 +213,7 @@ describe("StoragesCard", () => {
     expect(within(dialog).getByLabelText("Bucket")).toHaveValue("tenants");
 
     await user.click(within(dialog).getByRole("button", { name: "Save" }));
-    expect(docker.saveStorage).toHaveBeenCalledWith(expect.objectContaining({ name: "hetzner", secret: "", bucket: "tenants" }));
+    expect(docker.saveStorage).toHaveBeenCalledWith(expect.objectContaining({ name: "hetzner", secret: "", bucket: "tenants" }), false);
     await waitFor(() =>
       expect(toastWarning).toHaveBeenCalledWith("Storage saved, but not every app was redeployed", {
         description: "Redeployed Shop.\nBlog has undeployed changes",

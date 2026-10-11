@@ -2228,9 +2228,10 @@ paths:
         $ref: '#/components/schemas/ListStoragesResponse'
   /api/v1/storage/save:
     post:
-      description: '`s3.secret_access_key` is ECIES-encrypted with the server''s public
-        key, or `<encrypted>` to keep the stored one. Nothing is saved when the connection
-        test fails.'
+      description: '`create: true` adds a storage and fails when the name exists;
+        otherwise the storage must exist and keep its type. `s3.secret_access_key`
+        is ECIES-encrypted with the server''s public key, or `<encrypted>` to keep
+        the stored one. Nothing is saved when the connection test fails.'
       operationId: storageSave
       parameters:
       - description: Target server id.
@@ -2287,8 +2288,8 @@ paths:
       security:
       - bearer: []
       - cookie: []
-      summary: Add or replace a storage (tested first; redeploys the running apps
-        that use it)
+      summary: Add or edit a storage (tested first; redeploys the running apps that
+        use it)
       tags:
       - storages
       x-operation-result:
@@ -4165,6 +4166,8 @@ components:
       type: object
     SaveStorageRequest:
       properties:
+        create:
+          type: boolean
         local:
           $ref: '#/components/schemas/LocalStorageInput'
         name:

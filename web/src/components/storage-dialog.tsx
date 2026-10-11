@@ -103,7 +103,7 @@ export function StorageDialog({
     const opened = session.current;
     setBusy(true);
     try {
-      const saved = await docker.saveStorage(draft);
+      const saved = await docker.saveStorage(draft, !editing);
       if (mounted.current && opened === session.current) changeOpen(false);
       onSaved(saved);
     } catch (e) {

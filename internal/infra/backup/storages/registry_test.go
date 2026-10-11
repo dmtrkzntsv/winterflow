@@ -138,3 +138,31 @@ func TestRegistryUnreadableDir(t *testing.T) {
 		t.Fatal("Dir")
 	}
 }
+
+func TestRegistrySaveChecksUnderTheLock(t *testing.T) {
+	r := NewRegistry(filepath.Join(t.TempDir(), "storages"))
+	var seen []bool
+	check := func(prev model.Storage, exists bool) error {
+		seen = append(seen, exists)
+		if exists && prev.S3.SecretAccessKey != "ONE" {
+			t.Errorf("prev = %+v", prev)
+		}
+		return nil
+	}
+	if err := r.Save(s3("hetzner", "ONE"), check); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Save(s3("hetzner", "TWO"), check); err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) != 2 || seen[0] || !seen[1] {
+		t.Fatalf("exists seen = %v", seen)
+	}
+	refuse := func(model.Storage, bool) error { return os.ErrExist }
+	if err := r.Save(s3("hetzner", "THREE"), refuse); err != os.ErrExist {
+		t.Fatalf("refused save = %v", err)
+	}
+	if s, _, _ := r.Get("hetzner"); s.S3.SecretAccessKey != "TWO" {
+		t.Fatalf("a refused save wrote %+v", s.S3)
+	}
+}

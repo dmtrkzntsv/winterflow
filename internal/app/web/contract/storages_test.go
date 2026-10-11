@@ -157,10 +157,10 @@ func TestStorageRoutes(t *testing.T) {
 		}
 	})
 	t.Run("a failed save changes nothing", func(t *testing.T) {
-		e.agent.fail(command.TypeStorageSave, "the connection test failed, nothing was saved: the folder /mnt/gone does not exist (is the disk mounted?)")
+		e.agent.fail(command.TypeStorageSave, "the connection test failed, nothing was saved: the storage folder /mnt/gone is missing (is the disk mounted?)")
 		owner.failWith(t, call{Method: http.MethodPost, Path: "/api/v1/storage/save", Query: q,
 			Body: command.SaveStorageRequest{Storage: model.Storage{Name: "gone", Type: model.StorageLocal, Local: &model.LocalStorage{Path: "/mnt/gone"}}}},
-			"the connection test failed, nothing was saved: the folder /mnt/gone does not exist (is the disk mounted?)")
+			"the connection test failed, nothing was saved: the storage folder /mnt/gone is missing (is the disk mounted?)")
 		if _, ok := e.storagesIndexed(t, sid)["gone"]; ok {
 			t.Fatal("a failed save entered the index")
 		}

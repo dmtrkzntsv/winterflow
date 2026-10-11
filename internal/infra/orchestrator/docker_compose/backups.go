@@ -102,8 +102,14 @@ func (r *Repository) ListRestorePoints(ctx context.Context, appID, name string) 
 }
 
 // DeleteRestorePoint deletes one restore point (any kind, complete or not)
-// and its manifest (30 seconds).
+// and its manifest (30 seconds); it is refused while a restore of the app
+// runs.
 func (r *Repository) DeleteRestorePoint(ctx context.Context, appID, name, id string) error {
+	// Not the pre-restore copy a running restore may name in its error, or the
+	// point it is putting back.
+	if err := r.refuseDuringRestore(appID); err != nil {
+		return err
+	}
 	return withDeadline(ctx, storageCallTimeout, "delete the restore point", func(ctx context.Context) error {
 		st, folder, err := r.backupStorage(appID, name)
 		if err != nil {

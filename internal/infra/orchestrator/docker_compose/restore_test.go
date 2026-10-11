@@ -1045,3 +1045,23 @@ func TestRestoreRefusesACopyOfAnotherLocation(t *testing.T) {
 		t.Fatalf("old manifest: %v", err)
 	}
 }
+
+// A restore point can't be deleted (from another browser, say) while a
+// restore of the app runs: the one it names in its error is among them.
+func TestDeleteRestorePointIsRefusedDuringARestore(t *testing.T) {
+	rr := newRestoreRepo(t)
+	id := rr.point(t, "database")
+	var during error
+	rr.restorer.onRun = func() {
+		during = rr.DeleteRestorePoint(context.Background(), "app-1", "database", id)
+	}
+	if _, err := rr.restore(context.Background(), "database", id); err != nil {
+		t.Fatal(err)
+	}
+	if !errors.Is(during, ErrRestoring) {
+		t.Fatalf("delete during a restore: %v", during)
+	}
+	if err := rr.DeleteRestorePoint(context.Background(), "app-1", "database", id); err != nil {
+		t.Fatalf("delete after the restore: %v", err)
+	}
+}

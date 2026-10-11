@@ -49,3 +49,22 @@ func TestNewDateTimeIsNow(t *testing.T) {
 		t.Fatalf("NewDateTime out of range: %v", dt.Time())
 	}
 }
+
+// Drivers return timestamps in the session's or host's zone (pgx: a fixed
+// +00:00 zone, or time.Local); Scan normalizes to UTC so JSON always says Z.
+func TestDateTimeScanNormalizesToUTC(t *testing.T) {
+	for _, v := range []any{
+		time.Date(2026, 7, 2, 15, 4, 5, 0, time.FixedZone("UTC+3", 3*3600)),
+		time.Date(2026, 7, 2, 12, 4, 5, 0, time.FixedZone("", 0)),
+		"2026-07-02T15:04:05+03:00",
+		"2026-07-02 12:04:05",
+	} {
+		var dt DateTime
+		if err := dt.Scan(v); err != nil {
+			t.Fatal(err)
+		}
+		if dt.Time().Location() != time.UTC || !dt.Time().Equal(time.Date(2026, 7, 2, 12, 4, 5, 0, time.UTC)) {
+			t.Errorf("Scan(%v) = %v (%v), want 12:04:05 UTC", v, dt.Time(), dt.Time().Location())
+		}
+	}
+}

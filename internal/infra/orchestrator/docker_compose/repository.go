@@ -60,8 +60,15 @@ type Repository struct {
 	runningProjects func(ctx context.Context) (map[string]bool, error)
 	redeploy        func(ctx context.Context, appID string) error
 	// runCompose runs one docker compose command in an app's folder
-	// (replaced in tests to record the arguments).
-	runCompose func(ctx context.Context, dir string, args []string) error
+	// (replaced in tests to record the arguments); composeOutput runs one
+	// and returns its stdout (docker compose config).
+	runCompose    func(ctx context.Context, dir string, args []string) error
+	composeOutput func(ctx context.Context, dir string, args []string) ([]byte, error)
+
+	// mountCache holds each app's resolved compose model for backups,
+	// keyed by HEAD and the derived env files (see appComposeModel).
+	mountMu    sync.Mutex
+	mountCache map[string]mountCacheEntry
 }
 
 // versionEntry is a cached commit count, valid while HEAD is unchanged.
@@ -80,6 +87,8 @@ func NewRepository(cfg *config.ServerConfig, log *logger.Logger) *Repository {
 		storageLimits: defaultStorageLimits,
 		openStorage:   store.Open,
 		runCompose:    dockerIn,
+		composeOutput: dockerOutputIn,
+		mountCache:    make(map[string]mountCacheEntry),
 	}
 	r.runningProjects = r.composeProjectsUp
 	r.redeploy = r.deploy
@@ -94,4 +103,7 @@ func (r *Repository) forgetApp(appID string) {
 	r.versionMu.Lock()
 	delete(r.versionCache, appID)
 	r.versionMu.Unlock()
+	r.mountMu.Lock()
+	delete(r.mountCache, appID)
+	r.mountMu.Unlock()
 }

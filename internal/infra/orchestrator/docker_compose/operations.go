@@ -494,6 +494,11 @@ func (r *Repository) composeUp(ctx context.Context, appID string) error {
 	if err := r.materializeStorageEnv(ctx, dir, files, cfg.backups); err != nil {
 		return err
 	}
+	// Every enabled sqlite and files backup must reach its data through the
+	// app's own mounts.
+	if _, err := r.resolveBackups(ctx, appID, files, cfg.backups); err != nil {
+		return err
+	}
 	profiles := r.composeProfiles(dir, cfg.backups)
 	// Refresh the manual-run helper alongside every deploy; never fail one on it.
 	if err := r.writeRunHelper(appID, files, profiles); err != nil {

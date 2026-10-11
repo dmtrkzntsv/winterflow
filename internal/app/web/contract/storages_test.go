@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	happ "winterflow/internal/app/web/handler/app"
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
 	"winterflow/internal/infra/transport/bus"
@@ -159,4 +160,41 @@ func TestStorageRoutes(t *testing.T) {
 			t.Fatal("an invalid storage reached the agent")
 		}
 	})
+}
+
+func TestSaveAppStorageVariables(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	owner := e.claim(t)
+	sid := owner.serverID(t)
+	save := func(compose string, vars ...happ.ContentItemRequest) *response {
+		return owner.do(t, call{Method: http.MethodPost, Path: "/api/v1/app/save-app", Body: happ.SaveAppRequest{
+			ServerID: sid, App: model.App{Name: "litestream", Icon: "box", Color: "#112233"}, Config: json.RawMessage(`{}`),
+			Files:     []happ.ContentItemRequest{{Name: "compose.yml", Content: compose}},
+			Variables: vars,
+		}})
+	}
+	const compose = "services:\n  ls:\n    environment:\n      BUCKET: ${WF_STORAGE_HETZNER_BUCKET}\n"
+
+	r := save(compose).expect(t, http.StatusBadRequest)
+	if !strings.Contains(string(r.Body), `${WF_STORAGE_HETZNER_BUCKET}: there is no storage \"hetzner\" on this server`) {
+		t.Fatalf("body = %s", r.Body)
+	}
+	r = save("services: {}\n", happ.ContentItemRequest{Name: "WF_STORAGE_HETZNER_BUCKET", Content: "mine"}).expect(t, http.StatusBadRequest)
+	if !strings.Contains(string(r.Body), "variables starting with WF_STORAGE_ or WF_BACKUP_ are provided by the server's storages") {
+		t.Fatalf("body = %s", r.Body)
+	}
+	r = save("x: ${WF_BACKUP_DB_PATH}\n").expect(t, http.StatusBadRequest)
+	if !strings.Contains(string(r.Body), `there is no backup \"db\" in this app`) {
+		t.Fatalf("body = %s", r.Body)
+	}
+	if n := len(e.agent.seen(command.TypeAppSave)); n != 0 {
+		t.Fatalf("%d refused save(s) reached the agent", n)
+	}
+
+	addStorage(t, owner, sid, hetzner("BASE64CIPHERTEXT"))
+	owner.succeed(t, call{Method: http.MethodPost, Path: "/api/v1/app/save-app", Body: happ.SaveAppRequest{
+		ServerID: sid, App: model.App{Name: "litestream", Icon: "box", Color: "#112233"}, Config: json.RawMessage(`{}`),
+		Files: []happ.ContentItemRequest{{Name: "compose.yml", Content: compose}},
+	}}, nil)
 }

@@ -353,6 +353,12 @@ func (uc *UseCase) SaveApp(ctx context.Context, userID, serverID string, app mod
 		payload.Config = cfgBytes
 	}
 
+	for _, v := range payload.Variables {
+		if err := model.ReservedVariableError(v.Name); err != nil {
+			return "", err
+		}
+	}
+
 	// Ingress rides the config blob. Parse + validate + conflict-check here so
 	// a bad config is a synchronous 400, not an async agent failure. ing==nil
 	// (no "ingress" key) means the feature is untouched: skip everything.
@@ -381,6 +387,10 @@ func (uc *UseCase) SaveApp(ctx context.Context, userID, serverID string, app mod
 				return "", fmt.Errorf("%w: %s", model.ErrDomainTaken, strings.Join(parts, "; "))
 			}
 		}
+	}
+
+	if err := uc.requireStorageRefs(ctx, serverID, payload); err != nil {
+		return "", err
 	}
 
 	req := command.SaveAppRequest{App: payload, Draft: draft}

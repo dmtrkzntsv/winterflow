@@ -9,6 +9,47 @@ import (
 	"winterflow/internal/domain/port"
 )
 
+// requireStorageRefs refuses a save whose compose file (in the request)
+// references a WF_STORAGE_ variable of a storage the server doesn't have,
+// or any WF_BACKUP_ variable. The compose files are picked the way the
+// agent picks them (model.DetectComposeFiles). A git-sourced app's compose
+// file is not in the request: the agent checks it at deploy. Without the
+// index (old wiring) the agent's check is the only one.
+func (uc *UseCase) requireStorageRefs(ctx context.Context, serverID string, p command.AppPayload) error {
+	if p.Source != nil || uc.serverStorages == nil {
+		return nil
+	}
+	files := map[string][]byte{}
+	for _, f := range p.Files {
+		name := f.Name
+		if name == "" {
+			name = f.ID
+		}
+		if !f.Encrypted {
+			files[name] = f.Content
+		}
+	}
+	var contents [][]byte
+	for _, name := range model.DetectComposeFiles(func(n string) bool { _, ok := files[n]; return ok }) {
+		contents = append(contents, files[name])
+	}
+	refs := model.ScanStorageRefs(contents...)
+	if len(refs) == 0 {
+		return nil
+	}
+	list, err := uc.serverStorages.ListForServer(ctx, serverID)
+	if err != nil {
+		uc.log.Error("SaveApp: list storages", "error", err, "server_id", serverID)
+		return err
+	}
+	have := make(map[string]bool, len(list))
+	for _, s := range list {
+		have[s.Name] = true
+	}
+	_, err = model.CheckStorageRefs(refs, func(name string) bool { return have[name] })
+	return err
+}
+
 // ServerStorages reads the server's storages from the server_storages index
 // (no agent round-trip).
 func (uc *UseCase) ServerStorages(ctx context.Context, serverID string) ([]model.StorageSummary, error) {

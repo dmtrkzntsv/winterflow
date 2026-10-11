@@ -42,7 +42,7 @@ func (uc *UseCase) requireStorageRefs(ctx context.Context, serverID string, p co
 	for _, s := range list {
 		have[s.Name] = true
 	}
-	_, err = model.CheckStorageRefs(refs, func(name string) bool { return have[name] })
+	_, err = model.CheckStorageRefs(refs, func(name string) bool { return have[name] }, nil)
 	return err
 }
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"winterflow/internal/domain/backup/recipe"
 	"winterflow/internal/domain/model"
 )
 
@@ -128,6 +129,10 @@ type GetAppResponse struct {
 	// StorageVariables are the WF_STORAGE_ variables the app's compose files
 	// reference: shown read-only in the Variables panel, never with values.
 	StorageVariables []StorageVariable `json:"storage_variables,omitempty"`
+	// Backups are the app's effective backups (recipe + overrides);
+	// BackupsError says why they could not be read (an invalid recipe).
+	Backups      []recipe.EffectiveBackup `json:"backups,omitempty"`
+	BackupsError string                   `json:"backups_error,omitempty"`
 }
 
 // --- app.revisions --------------------------------------------------------
@@ -192,6 +197,9 @@ type AppStatus struct {
 	AppID      string              `json:"app_id"`
 	StatusCode ContainerStatusCode `json:"status_code"`
 	Containers []ContainerStatus   `json:"containers"`
+	// Backups is the health of each of the app's backups (none: omitted).
+	// It never changes StatusCode.
+	Backups []BackupHealth `json:"backups,omitempty"`
 }
 
 type GetAppsStatusRequest struct{}

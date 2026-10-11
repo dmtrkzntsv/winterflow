@@ -60,12 +60,24 @@ const (
 	TypeStorageSave   Type = "storage.save"
 	TypeStorageDelete Type = "storage.delete"
 
+	// Backups.
+	TypeBackupUpdate      Type = "backup.update"       // replace an app's backups list (overrides)
+	TypeBackupPoints      Type = "backup.points"       // list a backup's restore points
+	TypeBackupRun         Type = "backup.run"          // run a backup now; answers when the run ends
+	TypeBackupDeletePoint Type = "backup.delete-point" // delete one restore point
+
 	// Container images.
 	TypeImageTags Type = "image.tags" // list available registry tags for an image
 
 	// Agent self-management.
 	TypeAgentUpdate Type = "agent.update"
 )
+
+// Detached reports whether a command's answer waits for long work that runs
+// elsewhere (backup.run waits for its run on the backup scheduler). Such a
+// command is dispatched off the standalone bridge's single goroutine, so it
+// never holds up other commands.
+func (t Type) Detached() bool { return t == TypeBackupRun }
 
 // ContentTypeJSON is the envelope content type used for every command payload.
 const ContentTypeJSON = "application/json"

@@ -179,6 +179,7 @@ func TestGetAppReportsStorageVariables(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []command.StorageVariable{
+		{Name: "WF_BACKUP_DB_PATH", Backup: "db"},
 		{Name: "WF_STORAGE_BACKUP_DISK_PATH", Storage: "backup-disk"},
 		{Name: "WF_STORAGE_HETZNER_ACCESS_KEY_ID", Storage: "hetzner"},
 		{Name: "WF_STORAGE_HETZNER_BUCKET", Storage: "hetzner"},

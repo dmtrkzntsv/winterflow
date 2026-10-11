@@ -82,7 +82,7 @@ func (r *Repository) materializeStorageEnv(ctx context.Context, dir string, file
 			byName[name] = s
 		}
 		return ok
-	})
+	}, nil)
 	if readErr != nil {
 		return readErr
 	}
@@ -217,7 +217,7 @@ func storageVariables(refs []string) []command.StorageVariable {
 		if err != nil {
 			continue
 		}
-		out = append(out, command.StorageVariable{Name: ref.Var, Storage: ref.Storage, Secret: ref.Secret()})
+		out = append(out, command.StorageVariable{Name: ref.Var, Storage: ref.Storage, Backup: ref.Backup, Secret: ref.Secret()})
 	}
 	return out
 }

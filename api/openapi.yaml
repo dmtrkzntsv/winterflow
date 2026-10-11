@@ -3064,6 +3064,10 @@ components:
       properties:
         app_id:
           type: string
+        backups:
+          items:
+            $ref: '#/components/schemas/BackupHealth'
+          type: array
         containers:
           items:
             $ref: '#/components/schemas/ContainerStatus'
@@ -3137,6 +3141,21 @@ components:
           type: string
       required:
       - status
+      type: object
+    BackupHealth:
+      properties:
+        last_error:
+          type: string
+        last_success:
+          format: int64
+          type: integer
+        name:
+          type: string
+        state:
+          type: string
+      required:
+      - name
+      - state
       type: object
     Capability:
       properties:
@@ -3488,6 +3507,50 @@ components:
       - app_name
       - server_id
       type: object
+    EffectiveBackup:
+      properties:
+        enabled:
+          type: boolean
+        every:
+          type: string
+        exclude:
+          items:
+            type: string
+          type: array
+        from_recipe:
+          additionalProperties:
+            type: boolean
+          type:
+          - object
+          - "null"
+        in_recipe:
+          type: boolean
+        keep:
+          $ref: '#/components/schemas/Keep'
+        name:
+          type: string
+        path:
+          type: string
+        paths:
+          items:
+            type: string
+          type: array
+        service:
+          type: string
+        storage:
+          type: string
+        type:
+          type: string
+        volume:
+          type: string
+      required:
+      - name
+      - type
+      - enabled
+      - storage
+      - in_recipe
+      - from_recipe
+      type: object
     Error:
       properties:
         data:
@@ -3515,6 +3578,12 @@ components:
       properties:
         app:
           $ref: '#/components/schemas/AppPayload'
+        backups:
+          items:
+            $ref: '#/components/schemas/EffectiveBackup'
+          type: array
+        backups_error:
+          type: string
         storage_variables:
           items:
             $ref: '#/components/schemas/StorageVariable'
@@ -3719,6 +3788,19 @@ components:
         ssl:
           type: boolean
         to:
+          type: string
+      type: object
+    Keep:
+      properties:
+        daily:
+          type:
+          - "null"
+          - integer
+        monthly:
+          type:
+          - "null"
+          - integer
+        recent:
           type: string
       type: object
     LibraryError:
@@ -4354,6 +4436,8 @@ components:
       type: object
     StorageVariable:
       properties:
+        backup:
+          type: string
         name:
           type: string
         secret:

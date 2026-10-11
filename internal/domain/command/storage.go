@@ -84,10 +84,13 @@ type DeleteStorageResponse struct {
 	Name string `json:"name"`
 }
 
-// StorageVariable is a WF_STORAGE_ variable an app's compose file references,
-// as app.get reports it for the Variables panel: never with a value.
+// StorageVariable is a WF_STORAGE_ or WF_BACKUP_ variable an app's compose
+// file references, as app.get reports it for the Variables panel: never
+// with a value. Backup names the backup of a WF_BACKUP_ variable (Storage
+// is then the storage that backup uses, "" while it has none).
 type StorageVariable struct {
 	Name    string `json:"name"`
 	Storage string `json:"storage"`
+	Backup  string `json:"backup,omitempty"`
 	Secret  bool   `json:"secret"`
 }

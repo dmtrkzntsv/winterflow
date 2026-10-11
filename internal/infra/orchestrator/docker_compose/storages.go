@@ -122,7 +122,7 @@ func (r *Repository) storageUsers() (map[string][]string, error) {
 		seen := map[string]bool{}
 		for _, v := range refs {
 			ref, err := model.ParseStorageRef(v)
-			if err != nil || seen[ref.Storage] {
+			if err != nil || ref.Storage == "" || seen[ref.Storage] {
 				continue
 			}
 			seen[ref.Storage] = true

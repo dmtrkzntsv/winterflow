@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 	appagent "winterflow/internal/app/agent"
+	backupcli "winterflow/internal/app/backup/cli"
 	ingresscaddy "winterflow/internal/infra/ingress/caddy"
 	dockercompose "winterflow/internal/infra/orchestrator/docker_compose"
 	"winterflow/internal/infra/transport/bus"
@@ -22,6 +23,11 @@ import (
 )
 
 func main() {
+	// Hidden: what the agent runs inside a backup helper container (the
+	// binary is mounted there at /wf), before anything reads config or logs.
+	if len(os.Args) > 1 && os.Args[1] == "backup" {
+		os.Exit(backupcli.Main(os.Args[2:], os.Stdout, os.Stderr))
+	}
 	err := godotenv.Load()
 	cfg := config.NewServerConfig("distributed")
 	log := logger.NewLogger(logger.LoggerConfiguration{

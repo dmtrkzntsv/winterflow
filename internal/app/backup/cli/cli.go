@@ -1,0 +1,135 @@
+// Package cli is the hidden `backup` subcommand of the standalone and agent
+// binaries. The agent runs it inside a short-lived helper container
+// (alpine, --network none, the app's mounts under /src/<n>, the binary
+// itself mounted read-only at /wf): it can reach the data in Docker volumes
+// that the agent's own user cannot open. A dump writes the copy to stdout
+// and, as stderr's last line, a JSON Result.
+//
+//	backup dump sqlite <path> [--since <fingerprint>]
+//	backup dump files --path <src>=<entry name>... [--exclude <pattern>...] [--since <fingerprint>]
+//
+// Exit codes: 0 done, 3 unchanged since --since (nothing written), 4 nothing
+// to back up (the database file or every path is missing), 2 bad usage,
+// 1 any other failure.
+package cli
+
+import (
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+
+	"winterflow/internal/infra/backup/helper"
+)
+
+// Exit codes (helper.Exit*), re-exported for this package's readers.
+const (
+	ExitOK        = helper.ExitOK
+	ExitFailed    = helper.ExitFailed
+	ExitUsage     = helper.ExitUsage
+	ExitUnchanged = helper.ExitUnchanged
+	ExitMissing   = helper.ExitMissing
+)
+
+// Result is the JSON line a dump ends stderr with.
+type Result = helper.Result
+
+// errMissing is a dump with nothing to back up (exit 4).
+var errMissing = errors.New("missing")
+
+// errUnchanged is a dump whose source matches --since (exit 3).
+var errUnchanged = errors.New("unchanged")
+
+// maxWarnings caps the warnings a Result carries.
+const maxWarnings = 20
+
+// Main runs `backup <args>` and returns the exit code.
+func Main(args []string, stdout, stderr io.Writer) int {
+	if len(args) < 2 || args[0] != "dump" {
+		return usage(stderr)
+	}
+	var (
+		res Result
+		err error
+	)
+	switch args[1] {
+	case "sqlite":
+		res, err = dumpSQLiteCmd(args[2:], stdout)
+	case "files":
+		res, err = dumpFilesCmd(args[2:], stdout)
+	default:
+		return usage(stderr)
+	}
+	code := ExitOK
+	switch {
+	case errors.Is(err, errUsage):
+		fmt.Fprintln(stderr, err)
+		return usage(stderr)
+	case errors.Is(err, errUnchanged):
+		res, code = Result{Unchanged: true}, ExitUnchanged
+	case errors.Is(err, errMissing):
+		res.Error, code = strings.TrimSuffix(err.Error(), ": "+errMissing.Error()), ExitMissing
+	case err != nil:
+		res.Error, code = err.Error(), ExitFailed
+	}
+	if len(res.Warnings) > maxWarnings {
+		more := len(res.Warnings) - maxWarnings
+		res.Warnings = append(res.Warnings[:maxWarnings], fmt.Sprintf("and %d more", more))
+	}
+	line, _ := json.Marshal(res)
+	fmt.Fprintln(stderr, string(line))
+	return code
+}
+
+var errUsage = errors.New("usage")
+
+func usage(stderr io.Writer) int {
+	fmt.Fprintln(stderr, `usage:
+  backup dump sqlite <path> [--since <fingerprint>]
+  backup dump files --path <src>=<entry name>... [--exclude <pattern>...] [--since <fingerprint>]`)
+	return ExitUsage
+}
+
+// list is a repeatable string flag.
+type list []string
+
+func (l *list) String() string     { return strings.Join(*l, ",") }
+func (l *list) Set(v string) error { *l = append(*l, v); return nil }
+
+func dumpSQLiteCmd(args []string, stdout io.Writer) (Result, error) {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return Result{}, fmt.Errorf("%w: the database path comes first", errUsage)
+	}
+	path := args[0]
+	fs := flag.NewFlagSet("dump sqlite", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	since := fs.String("since", "", "")
+	if err := fs.Parse(args[1:]); err != nil || fs.NArg() > 0 {
+		return Result{}, fmt.Errorf("%w: dump sqlite takes <path> [--since <fingerprint>]", errUsage)
+	}
+	return dumpSQLite(path, *since, os.TempDir(), stdout)
+}
+
+func dumpFilesCmd(args []string, stdout io.Writer) (Result, error) {
+	fs := flag.NewFlagSet("dump files", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	var paths, exclude list
+	fs.Var(&paths, "path", "")
+	fs.Var(&exclude, "exclude", "")
+	since := fs.String("since", "", "")
+	if err := fs.Parse(args); err != nil || fs.NArg() > 0 || len(paths) == 0 {
+		return Result{}, fmt.Errorf("%w: dump files takes --path <src>=<entry name>...", errUsage)
+	}
+	sources := make([]source, 0, len(paths))
+	for _, p := range paths {
+		src, entry, ok := strings.Cut(p, "=")
+		if !ok || !strings.HasPrefix(src, "/") {
+			return Result{}, fmt.Errorf("%w: --path %q: use <absolute source>=<entry name>", errUsage, p)
+		}
+		sources = append(sources, source{path: src, entry: strings.Trim(entry, "/")})
+	}
+	return dumpFiles(sources, exclude, *since, stdout)
+}

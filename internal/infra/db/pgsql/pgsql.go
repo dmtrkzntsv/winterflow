@@ -1,5 +1,11 @@
 // Package pgsql opens Postgres databases with jackc/pgx/v5 behind
 // database/sql.
+//
+// PgBouncer must run in session pooling mode for the process that
+// migrates (every API replica, at startup): the migration runner holds a
+// session-level pg_advisory_lock across the run, which transaction pooling
+// does not support. Point DATABASE_URL at Postgres directly or at a
+// session-mode pool.
 package pgsql
 
 import (
@@ -18,18 +24,18 @@ import (
 const Scheme = "postgres://"
 
 // Open connects to a postgres:// URL with the session time zone pinned to
-// UTC, sets the pool limits and pings within 10 s. It does not migrate.
+// UTC, bounds connection setup and silent peers (see bound), sets the pool
+// limits and pings within 10 s. It does not migrate.
 //
 // pgx runs in simple-protocol mode: arguments are interpolated client-side
-// as Bun's driver did, nothing is prepared server-side (so PgBouncer in
-// transaction mode keeps working), and a types.DateTime travels as its
-// "2006-01-02 15:04:05" text, which the UTC session reads as UTC.
+// as Bun's driver did, nothing is prepared server-side, and a
+// types.DateTime travels as its "2006-01-02 15:04:05" text, which the UTC
+// session reads as UTC.
 func Open(ctx context.Context, dsn string) (*sql.DB, error) {
-	cfg, err := pgx.ParseConfig(utcDSN(dsn))
+	cfg, err := parseConfig(dsn)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse PostgreSQL connection string: %w", err)
+		return nil, err
 	}
-	cfg.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
 	db := stdlib.OpenDB(*cfg)
 	db.SetMaxOpenConns(25)
 	db.SetMaxIdleConns(10)
@@ -42,6 +48,18 @@ func Open(ctx context.Context, dsn string) (*sql.DB, error) {
 		return nil, fmt.Errorf("failed to ping PostgreSQL database: %w", err)
 	}
 	return db, nil
+}
+
+// parseConfig parses dsn into the pgx configuration Open uses: UTC
+// session, simple protocol, bounded connect and dial.
+func parseConfig(dsn string) (*pgx.ConnConfig, error) {
+	cfg, err := pgx.ParseConfig(utcDSN(dsn))
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse PostgreSQL connection string: %w", err)
+	}
+	cfg.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
+	bound(cfg)
+	return cfg, nil
 }
 
 // utcDSN pins the session time zone to UTC. types.DateTime writes naive

@@ -214,3 +214,45 @@ func TestCreatedAtStorage(t *testing.T) {
 		t.Fatalf("read back %v (%v)", got.CreatedAt, got.CreatedAt.Location())
 	}
 }
+
+// seedSample writes one tier-1 metric row straight into metric_samples.
+func seedSample(t *testing.T, d *db.DB, serverID, appID string) {
+	t.Helper()
+	dbtest.Exec(t, d, `INSERT INTO metric_samples (server_id, app_id, tier, bucket_start, samples, data) VALUES (?, ?, 1, ?, 1, '{}')`,
+		serverID, appID, "2026-10-11 00:00:00")
+}
+
+func samples(t *testing.T, d *db.DB, appID string) string {
+	t.Helper()
+	return dbtest.QueryString(t, d, `SELECT CAST(COUNT(*) AS TEXT) FROM metric_samples WHERE app_id = ?`, appID)
+}
+
+func TestDeleteAppRemovesItsMetricSamples(t *testing.T) {
+	repo, d := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	for _, id := range []string{appA, appB} {
+		if err := repo.SaveApp(ctx, model.App{ID: id, ServerID: srv1, Name: id}); err != nil {
+			t.Fatal(err)
+		}
+		seedSample(t, d, srv1, id)
+	}
+	seedSample(t, d, srv1, "") // the server's own row
+
+	if err := repo.DeleteApp(ctx, appA); err != nil {
+		t.Fatal(err)
+	}
+	if got := samples(t, d, appA); got != "0" {
+		t.Fatalf("deleted app keeps %s samples", got)
+	}
+	if samples(t, d, appB) != "1" || samples(t, d, "") != "1" {
+		t.Fatal("other targets' samples touched")
+	}
+
+	// A reconcile that no longer lists appB drops its samples too.
+	if err := repo.SyncApps(ctx, srv1, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := samples(t, d, appB); got != "0" {
+		t.Fatalf("reconciled-away app keeps %s samples", got)
+	}
+}

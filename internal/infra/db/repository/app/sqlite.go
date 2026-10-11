@@ -34,3 +34,7 @@ func (sqliteQuerier) DeleteApp(ctx context.Context, db backend.DBTX, appID strin
 func (sqliteQuerier) RenameApp(ctx context.Context, db backend.DBTX, p renameParams) error {
 	return sqlitegen.New(db).RenameApp(ctx, p)
 }
+
+func (sqliteQuerier) DeleteMetricSamplesByApp(ctx context.Context, db backend.DBTX, appID string) error {
+	return sqlitegen.New(db).DeleteMetricSamplesByApp(ctx, appID)
+}

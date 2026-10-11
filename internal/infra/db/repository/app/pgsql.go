@@ -43,3 +43,7 @@ func (pgsqlQuerier) DeleteApp(ctx context.Context, db backend.DBTX, appID string
 func (pgsqlQuerier) RenameApp(ctx context.Context, db backend.DBTX, p renameParams) error {
 	return pgsqlgen.New(db).RenameApp(ctx, pgsqlgen.RenameAppParams(p))
 }
+
+func (pgsqlQuerier) DeleteMetricSamplesByApp(ctx context.Context, db backend.DBTX, appID string) error {
+	return pgsqlgen.New(db).DeleteMetricSamplesByApp(ctx, appID)
+}

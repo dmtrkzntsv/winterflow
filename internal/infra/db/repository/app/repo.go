@@ -30,6 +30,7 @@ type querier interface {
 	UpsertApp(ctx context.Context, db backend.DBTX, p upsertParams) error
 	DeleteApp(ctx context.Context, db backend.DBTX, appID string) error
 	RenameApp(ctx context.Context, db backend.DBTX, p renameParams) error
+	DeleteMetricSamplesByApp(ctx context.Context, db backend.DBTX, appID string) error
 }
 
 // Repo is the apps repository.
@@ -84,8 +85,20 @@ func (r *Repo) SaveApp(ctx context.Context, a model.App) error {
 	return r.q.UpsertApp(ctx, r.tx.Querier(ctx), upsertFor(a))
 }
 
-// DeleteApp removes the app row (no error when it does not exist).
+// DeleteApp removes the app row and its monitoring samples in one
+// transaction (no error when it does not exist).
 func (r *Repo) DeleteApp(ctx context.Context, appID string) error {
+	return r.tx.WithTx(ctx, func(ctx context.Context) error {
+		return r.deleteApp(ctx, appID)
+	})
+}
+
+// deleteApp drops the app's samples, then the row; ctx must carry the
+// caller's transaction.
+func (r *Repo) deleteApp(ctx context.Context, appID string) error {
+	if err := r.q.DeleteMetricSamplesByApp(ctx, r.tx.Querier(ctx), appID); err != nil {
+		return err
+	}
 	return r.q.DeleteApp(ctx, r.tx.Querier(ctx), appID)
 }
 
@@ -115,7 +128,7 @@ func (r *Repo) SyncApps(ctx context.Context, serverID string, apps []model.App) 
 			if keep[id] {
 				continue
 			}
-			if err := r.q.DeleteApp(ctx, r.tx.Querier(ctx), id); err != nil {
+			if err := r.deleteApp(ctx, id); err != nil {
 				return err
 			}
 		}

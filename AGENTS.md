@@ -19,7 +19,7 @@ web/src/
 
 
 `cmd/` hosts the Go entrypoints (standalone, API, hub, agent), while shared business logic lives under `internal/` and helper packages under `pkg/`. 
-Frontend code resides in `web/`, a Vite + React 19 workspace that uses pnpm, Tailwind 4, and shadcn/ui; assets, hooks, and UI components are co-located under `web/src/`. 
+Frontend code resides in `web/`, a Vite + React 19 workspace that uses pnpm (version pinned by `packageManager` in `web/package.json`; CI reads it too), Tailwind 4, and shadcn/ui; assets, hooks, and UI components are co-located under `web/src/`. 
 Persistent artifacts such as SQLite files and local certificates live in `data/`. 
 Keep tests beside the code they exercise (e.g., `internal/agents/agent_test.go`) to simplify package imports.
 
@@ -40,6 +40,8 @@ Layering is hexagonal: `internal/domain/{model,port,usecase,service}` (business 
 - `make web` – starts the Vite dev server via `pnpm --dir web dev`.
 - `pnpm --dir web run build` – type-checks (`tsc -b`) and produces a production bundle.
 - `pnpm --dir web run lint` – runs the ESLint suite configured for React 19.
+- `make test` – Go tests exactly as CI runs them (`-race`, coverage into `coverage.out`); `make web-test` – Vitest with coverage into `web/coverage/lcov.info`.
+- `make cover` – total Go and web coverage against `coverage-baseline.json` (CI's ratchet); `make diffcov` – CI's gate: lines changed since `$(DIFFCOV_BASE)` (default `origin/main`; override for stacked branches) must be ≥80% covered per language.
 - `make generate-hub-certs` / `make generate-agent-certs` – bootstrap local mTLS material for hub↔agent testing.
 
 ## Coding Style & Naming Conventions
@@ -51,7 +53,8 @@ Use PascalCase for components (`AgentList`) and kebab-case for filenames (`agent
 ## Testing Guidelines
 Unit and integration coverage rely on the standard Go toolchain: run `go test ./...` from the repo root. 
 Add table-driven tests beside the code they exercise (`*_test.go` in the same package) when adding logic in `internal/` or `pkg/` — favour testing pure helpers and message/transport correlation (see `internal/infra/transport/codec`, `internal/infra/transport/grpc/hub`, and `internal/infra/orchestrator/docker_compose` for examples). 
-The frontend currently relies on type safety plus ESLint; if you introduce Vitest or Playwright, add scripts to `web/package.json` and document fixtures in this guide. 
+Frontend unit tests use Vitest + Testing Library on jsdom (`pnpm --dir web test`; `test:coverage` also writes `web/coverage/lcov.info`). Put `*.test.ts(x)` beside the code, keep pure helpers in `web/src/lib/` and test them directly, and render components inside their real context providers (`ProfileContext`, `AppsContext`, `MemoryRouter`) with fake objects for agent-bound APIs — see `web/src/pages/settings-volumes.test.tsx`. 
+CI (`.github/workflows/ci.yml`, run by every PR) enforces gofmt, `go vet`, `go test -race`, web lint/test/build and `scripts/install_test.sh`, plus two coverage gates from `tools/diffcov`: changed lines must be ≥80% covered per language (tests, `*.pb.go`, `cmd/*/main.go`, `tools/`, `web/src/components/ui/`, `web/src/test/` and `web/src/main.tsx` are exempt; so are Go files with a `// Code generated … DO NOT EDIT.` header, and comment/blank lines inside Go statement blocks are ignored), and total coverage may not fall more than 0.1 below `coverage-baseline.json`. When CI prints `::notice::raise coverage-baseline.json …`, bump the file in the same PR. 
 Always mention which suites you executed in PR descriptions.
 
 ## Commit & Pull Request Guidelines

@@ -3,7 +3,7 @@ BIN_DIR := bin
 STANDALONE_BIN := $(BIN_DIR)/standalone
 API_BIN := $(BIN_DIR)/api
 
-.PHONY: build lint standalone api web web-build third-party-licenses
+.PHONY: build lint standalone api web web-build third-party-licenses test web-test cover diffcov
 
 # Release build: bundle the SPA first so go:embed picks up a fresh web/dist,
 # then compile. The binaries are fully self-contained (API + web UI).
@@ -30,6 +30,26 @@ fmt:
 lint:
 	$(GO) vet ./...
 	pnpm --dir web run lint
+
+# Go tests exactly as CI runs them; coverage.out feeds `make cover` and
+# `make diffcov`.
+test:
+	$(GO) test -race -covermode=atomic -coverprofile=coverage.out ./...
+
+# Web unit tests (Vitest) with coverage into web/coverage/lcov.info.
+web-test:
+	pnpm --dir web run test:coverage
+
+# Total Go and web coverage against coverage-baseline.json (CI's ratchet).
+cover: test web-test
+	$(GO) run ./tools/diffcov ratchet --go coverage.out --lcov web/coverage/lcov.info
+
+# CI's diff-coverage gate: lines changed since $(DIFFCOV_BASE) must be at
+# least 80% covered, per language. `git fetch origin main` first if it is
+# stale; override the base for stacked branches (make diffcov DIFFCOV_BASE=...).
+DIFFCOV_BASE ?= origin/main
+diffcov: test web-test
+	$(GO) run ./tools/diffcov --base $(DIFFCOV_BASE) --min 80 --go coverage.out --lcov web/coverage/lcov.info
 
 mod:
 	$(GO) mod tidy

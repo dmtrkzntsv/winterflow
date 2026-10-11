@@ -13,6 +13,8 @@ node_modules
 dist/*
 !dist/.gitkeep
 dist-ssr
+# vitest --coverage output (lcov.info feeds CI's coverage gate)
+coverage
 *.local
 
 # Editor directories and files

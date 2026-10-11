@@ -19,8 +19,8 @@ import (
 type local struct{ root string }
 
 // openLocal requires root to be an existing folder: winterflow never creates
-// it, so an unmounted disk fails here instead of filling the root
-// filesystem.
+// it, so an unmounted disk fails here (for a folder on the disk) instead of
+// filling the root filesystem.
 func openLocal(root string) (*local, error) {
 	info, err := os.Stat(root)
 	if err != nil {

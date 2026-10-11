@@ -42,8 +42,8 @@ type Storage struct {
 
 // LocalStorage is a folder on the server: absolute, cleaned, not "/", and
 // (checked on the agent) not under AGENT_DATA_DIR. The folder must exist —
-// winterflow never creates it, so an unmounted disk fails instead of filling
-// the root filesystem.
+// winterflow never creates it, so an unmounted disk fails (for a folder on
+// the disk) instead of filling the root filesystem.
 type LocalStorage struct {
 	Path string `json:"path"`
 }

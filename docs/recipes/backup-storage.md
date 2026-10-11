@@ -33,8 +33,8 @@ not be inside winterflow's own data folder.
 itself.** Create it after mounting, e.g. `/mnt/usb/winterflow` for a disk
 mounted on `/mnt/usb`. When the disk isn't mounted (after a reboot, or
 unplugged), the mount point is still there as an empty folder on the system
-disk, and every check winterflow makes accepts it: backups and apps would
-then quietly fill the system disk. A folder created on the disk disappears
+disk, and every check winterflow makes can accept it: backups and apps
+would then quietly fill the system disk. A folder created on the disk disappears
 with it, so the test, deploys and writes fail instead.
 
 The installer's systemd unit runs winterflow with `ProtectSystem=strict`:
@@ -51,9 +51,8 @@ sudo chown winterflow:winterflow /mnt/backup/winterflow
 
 The last two lines run with the disk mounted, so `winterflow` is a folder
 on the disk. Then add `/mnt/backup/winterflow` (not `/mnt/backup`) as a
-local storage. If the test says the
-folder isn't writable by the user winterflow runs as, fix the ownership as
-above.
+local storage. If the check says the folder isn't writable by the user
+winterflow runs as, fix the ownership as above.
 
 ### A folder outside /mnt and /media
 

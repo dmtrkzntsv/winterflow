@@ -72,7 +72,8 @@ func TestOpenLocalNeedsAnExistingFolder(t *testing.T) {
 }
 
 // A disk unplugged after Open leaves its mount point behind: the driver must
-// refuse instead of recreating the folder on the system disk.
+// refuse (for a folder on the disk) instead of recreating the folder on the
+// system disk.
 func TestLocalStoreRootVanished(t *testing.T) {
 	ctx := context.Background()
 	root := filepath.Join(t.TempDir(), "usb")

@@ -17,7 +17,8 @@ type Backups interface {
 	Reload()
 	// Forget drops a deleted app's bookkeeping.
 	Forget(appID string)
-	// RunNow queues (or joins) a manual run; its outcome arrives when the
+	// RunNow queues a manual run (it fails at once while the same backup is
+	// queued or running); its outcome arrives when the
 	// run ends.
 	RunNow(appID, name string) <-chan backup.Outcome
 	// Decorate adds each app's backup health to its status.

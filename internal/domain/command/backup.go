@@ -129,8 +129,8 @@ type ListRestorePointsResponse struct {
 
 // --- backup.run -------------------------------------------------------------
 
-// RunBackupRequest runs a backup now (a manual copy). It joins a run of the
-// same backup that is already running or queued.
+// RunBackupRequest runs a backup now (a manual copy). It fails while the
+// same backup is already queued or running.
 type RunBackupRequest struct {
 	AppID  string `json:"app_id"`
 	Backup string `json:"backup"`

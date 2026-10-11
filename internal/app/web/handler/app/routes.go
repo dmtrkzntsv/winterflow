@@ -119,8 +119,8 @@ func (h *Handler) Routes(api.Guards) []api.Route {
 		},
 		{
 			Method: http.MethodPost, Path: "/api/v1/app/run-backup", Handler: h.RunBackup, Auth: api.User,
-			Summary: "Back up now (joins a run of the same backup already running or queued)", Tag: "backups",
-			Description: "The result arrives when the run ends, which can take up to 30 minutes after it starts.",
+			Summary: "Back up now (refused while the same backup is queued or running)", Tag: "backups",
+			Description: "The result arrives when the run ends, which can take up to 30 minutes after it starts. A second request while the same backup is queued or running fails at once (its result is an error).",
 			Request:     RunBackupRequest{}, Accepted: true, Result: command.RunBackupResponse{}, Errors: server,
 		},
 		{

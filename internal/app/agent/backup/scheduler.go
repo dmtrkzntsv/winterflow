@@ -86,7 +86,7 @@ type tomb struct {
 	until time.Time
 }
 
-// job is one run, waited for by the requests that joined it. Once it is the
+// job is one run, waited for by the request that queued it. Once it is the
 // running job its context is bound to run's deadline, and cancel and exited
 // are set, all under the scheduler's lock: a Forget either sees the job as
 // running (and can stop and await it) or the job has not started.

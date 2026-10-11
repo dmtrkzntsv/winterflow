@@ -479,8 +479,8 @@ manifest. Any kind can be deleted by hand.
 
 `backup.run {app_id, backup}` queues a `manual` run at the front of the
 scheduler. It works at any time on any enabled backup, scheduled or
-`every: manual`; a request while the same backup is already running or queued
-joins that run instead of adding another. The command returns once the run is queued; the outcome arrives as
+`every: manual`; a second request while the same backup is already queued or
+running is refused (an error result), so waiters never pile up behind one run. The command returns once the run is queued; the outcome arrives as
 SSE `operation_result` when the run ends. Further pushes are not needed beyond
 the existing health change.
 

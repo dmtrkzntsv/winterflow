@@ -255,7 +255,7 @@ func TestStateIsRecordedAndReloaded(t *testing.T) {
 
 // Back up now goes ahead of the schedule; a request for a backup already
 // running or queued fails at once instead of waiting behind it.
-func TestRunNowJoinsAndGoesFirst(t *testing.T) {
+func TestRunNowGoesFirstAndDuplicatesFail(t *testing.T) {
 	e := newEngine(planned("app-1", "db", recipe.TypeSQLite, true, "5m"), planned("app-1", "media", recipe.TypeFiles, true, recipe.Manual))
 	e.block = make(chan struct{})
 	s, clock, _ := start(t, e)

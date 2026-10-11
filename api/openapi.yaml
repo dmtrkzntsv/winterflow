@@ -816,7 +816,8 @@ paths:
   /api/v1/app/run-backup:
     post:
       description: The result arrives when the run ends, which can take up to 30 minutes
-        after it starts.
+        after it starts. A second request while the same backup is queued or running
+        fails at once (its result is an error).
       operationId: appRunBackup
       requestBody:
         content:
@@ -865,7 +866,7 @@ paths:
       security:
       - bearer: []
       - cookie: []
-      summary: Back up now (joins a run of the same backup already running or queued)
+      summary: Back up now (refused while the same backup is queued or running)
       tags:
       - backups
       x-operation-result:

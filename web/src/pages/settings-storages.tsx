@@ -176,7 +176,19 @@ export function StoragesCard({ docker }: { docker: Docker }) {
                 const used = s.apps ?? [];
                 return (
                   <TableRow key={s.name}>
-                    <TableCell className="font-mono">{s.name}</TableCell>
+                    <TableCell>
+                      <div className="font-mono [overflow-wrap:anywhere]">{s.name}</div>
+                      {/* Phones drop the Location and Used by columns;
+                          keep both visible inline. */}
+                      <div className="mt-1 font-mono text-xs text-muted-foreground [overflow-wrap:anywhere] md:hidden">
+                        {s.location}
+                      </div>
+                      {used.length > 0 ? (
+                        <div className="mt-1 sm:hidden">
+                          <UsedBy ids={used} names={names} />
+                        </div>
+                      ) : null}
+                    </TableCell>
                     <TableCell>
                       <Badge variant="outline" className="whitespace-nowrap">
                         {STORAGE_TYPES[s.type]}

@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AppsContext, type AppsContextValue } from "@/context/apps-context-base";
 import type { Docker } from "@/context/use-docker";
 import type { Storage, StorageDraft } from "@/lib/storages";
+import { StorageDialog } from "@/components/storage-dialog";
 import { StoragesCard } from "@/pages/settings-storages";
 
 const toastError = vi.fn();
@@ -90,10 +91,23 @@ describe("StoragesCard", () => {
     expect(await screen.findByText("hetzner")).toHaveClass("font-mono");
     expect(screen.getByText("S3-compatible")).toBeInTheDocument();
     expect(screen.getByText("Local folder")).toBeInTheDocument();
-    expect(screen.getByText("https://fsn1.example.com/tenants/wf/")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Shop" })).toHaveAttribute("href", "/app/a1");
-    expect(screen.getByRole("link", { name: "Blog" })).toHaveAttribute("href", "/app/a2");
+    // Once in the Location column, once in the small-screen summary.
+    expect(screen.getAllByText("https://fsn1.example.com/tenants/wf/")).toHaveLength(2);
+    expect(screen.getAllByRole("link", { name: "Shop" })[0]).toHaveAttribute("href", "/app/a1");
+    expect(screen.getAllByRole("link", { name: "Blog" })[0]).toHaveAttribute("href", "/app/a2");
     expect(screen.getByText("Not used")).toBeInTheDocument();
+  });
+
+  it("keeps the location and the apps visible under the name on small screens", async () => {
+    renderCard(fakeDocker());
+    const cell = (await screen.findByText("hetzner")).closest("td")!;
+    expect(within(cell).getByText("https://fsn1.example.com/tenants/wf/")).toHaveClass("md:hidden");
+    expect(within(cell).getByRole("link", { name: "Shop" }).closest(".sm\\:hidden")).not.toBeNull();
+    expect(within(cell).getByRole("link", { name: "Blog" })).toHaveAttribute("href", "/app/a2");
+    // A storage nobody uses gets no apps line, only its location.
+    const idle = screen.getByText("disk").closest("td")!;
+    expect(within(idle).getByText("/mnt/usb")).toBeInTheDocument();
+    expect(within(idle).queryByText("Not used")).not.toBeInTheDocument();
   });
 
   it("shows an empty state", async () => {
@@ -211,16 +225,18 @@ describe("StoragesCard", () => {
 
   it("wipes a typed secret when the dialog closes", async () => {
     const user = setupUser();
-    renderCard(fakeDocker());
-    await user.click(await screen.findByRole("button", { name: "Edit storage hetzner" }));
-    let dialog = await screen.findByRole("dialog");
-    await user.type(within(dialog).getByLabelText("Secret key"), "TYPED");
-    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
-    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    expect(document.body.innerHTML).not.toContain("TYPED");
-    await user.click(screen.getByRole("button", { name: "Edit storage hetzner" }));
-    dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByLabelText("Secret key")).toHaveValue("");
+    const hetzner = STORAGES[0];
+    const dialog = (open: boolean) => (
+      <StorageDialog docker={fakeDocker()} open={open} edit={hetzner} onOpenChange={() => {}} onSaved={() => {}} />
+    );
+    // The same instance throughout (no remount): only the wipe can empty it.
+    const { rerender } = render(dialog(true));
+    await user.type(await screen.findByLabelText("Secret key"), "TYPED");
+    expect(screen.getByLabelText("Secret key")).toHaveValue("TYPED");
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    rerender(dialog(false));
+    rerender(dialog(true));
+    expect(await screen.findByLabelText("Secret key")).toHaveValue("");
   });
 
   it("blocks removing a storage in use and confirms otherwise", async () => {

@@ -111,3 +111,52 @@ func TestBackupCommands(t *testing.T) {
 		t.Fatalf("no index: %v", err)
 	}
 }
+
+// catalogRepo is an AppRepository that knows the apps in byID.
+type catalogRepo struct {
+	noopAppRepo
+	byID map[string]model.App
+	err  error
+}
+
+func (c catalogRepo) GetApp(_ context.Context, id string) (model.App, error) {
+	if c.err != nil {
+		return model.App{}, c.err
+	}
+	if a, ok := c.byID[id]; ok {
+		return a, nil
+	}
+	return model.App{}, model.ErrAppNotFound
+}
+
+// An orphan's folder of an app that is live on another server is refused
+// before it reaches the agent (which only knows its own server's apps); an
+// unknown app, or one the catalog puts on this server, goes to the agent.
+func TestDeleteOrphanRefusesAnAppLiveElsewhere(t *testing.T) {
+	repo := catalogRepo{byID: map[string]model.App{
+		"elsewhere": {ID: "elsewhere", ServerID: "srv-2", Name: "Shop"},
+		"here":      {ID: "here", ServerID: "srv-1"},
+	}}
+	for app, wantRejected := range map[string]bool{"elsewhere": true, "here": false, "gone": false} {
+		disp := &recordingDispatcher{}
+		uc := NewUseCase(&Deps{CommandDispatcher: disp, AppRepository: repo})
+		_, err := uc.DeleteOrphan(context.Background(), "u", "srv-1", command.DeleteOrphanRequest{Name: "disk", AppID: app})
+		if wantRejected {
+			if !errors.Is(err, model.ErrRejected) || !strings.Contains(err.Error(), "live on another server") || len(disp.all) != 0 {
+				t.Errorf("%s: err %v, dispatches %d", app, err, len(disp.all))
+			}
+			if strings.Contains(err.Error(), "Shop") {
+				t.Errorf("the refusal names the other app: %v", err)
+			}
+			continue
+		}
+		if err != nil || len(disp.all) != 1 {
+			t.Errorf("%s: err %v, dispatches %d", app, err, len(disp.all))
+		}
+	}
+	// A failing catalog stops the request instead of letting it through.
+	uc := NewUseCase(&Deps{CommandDispatcher: &recordingDispatcher{}, AppRepository: catalogRepo{err: errors.New("db down")}})
+	if _, err := uc.DeleteOrphan(context.Background(), "u", "srv-1", command.DeleteOrphanRequest{Name: "disk", AppID: "x"}); err == nil {
+		t.Error("a catalog error let the delete through")
+	}
+}

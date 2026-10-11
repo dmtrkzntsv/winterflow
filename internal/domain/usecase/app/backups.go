@@ -3,11 +3,13 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
 	"winterflow/internal/domain/backup/recipe"
 	"winterflow/internal/domain/command"
+	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/port"
 )
 
@@ -140,8 +142,18 @@ func (uc *UseCase) ListOrphans(ctx context.Context, userID, serverID string, req
 	})
 }
 
-// DeleteOrphan dispatches storage.delete-orphan.
+// DeleteOrphan dispatches storage.delete-orphan. The agent only knows its own
+// server's apps; the API's catalog knows the others', so a folder of an app
+// that is live on another server (the usual way storages are shared) is
+// refused here: its backups are not orphans.
 func (uc *UseCase) DeleteOrphan(ctx context.Context, userID, serverID string, req command.DeleteOrphanRequest) (string, error) {
+	switch app, err := uc.repo.GetApp(ctx, req.AppID); {
+	case errors.Is(err, model.ErrAppNotFound):
+	case err != nil:
+		return "", err
+	case app.ID != "" && app.ServerID != serverID:
+		return "", model.Rejected("that app is live on another server: its backups are not orphans, and are deleted with the app")
+	}
 	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
 		AgentID: serverID, UserID: userID, Type: command.TypeStorageDeleteOrphan, Payload: req,
 	})

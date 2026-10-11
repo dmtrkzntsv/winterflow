@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type ServerConfig struct {
@@ -183,6 +184,43 @@ func (c *ServerConfig) IsIngressEnabled() bool {
 	default:
 		return false
 	}
+}
+
+// IsMetricsEnabled reports whether resource metrics are collected and sent
+// (agent, standalone) and stored (API). Default on; METRICS_ENABLED=false
+// (or 0) turns the whole pipeline off.
+func (c *ServerConfig) IsMetricsEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("METRICS_ENABLED"))) {
+	case "false", "0", "no", "off":
+		return false
+	default:
+		return true
+	}
+}
+
+// minMetricsDiskInterval keeps the disk scan (one `docker system df -v`,
+// ~45 s of daemon work on a busy box) from being scheduled back to back.
+const minMetricsDiskInterval = 5 * time.Minute
+
+// GetMetricsDiskInterval is how often the agent measures per-app disk usage
+// (default 1h). "0" disables the scan; an unparsable value falls back to 1h
+// and anything shorter than 5m is raised to 5m.
+func (c *ServerConfig) GetMetricsDiskInterval() time.Duration {
+	v := strings.TrimSpace(os.Getenv("METRICS_DISK_INTERVAL"))
+	if v == "" {
+		return time.Hour
+	}
+	if v == "0" {
+		return 0
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d < 0 {
+		return time.Hour
+	}
+	if d == 0 {
+		return 0
+	}
+	return max(d, minMetricsDiskInterval)
 }
 
 // GetIngressHTTPPort is the embedded proxy's HTTP port (default 80).

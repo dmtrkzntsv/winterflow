@@ -25,7 +25,9 @@ func (dt *DateTime) Scan(value interface{}) error {
 
 	switch v := value.(type) {
 	case time.Time:
-		*dt = DateTime(v)
+		// Drivers hand back the session's or the host's zone (pgx: a fixed
+		// +00 offset or time.Local); the API always reports UTC.
+		*dt = DateTime(v.UTC())
 	case string:
 		// Try parsing with the expected format first
 		t, err := time.ParseInLocation("2006-01-02 15:04:05", v, time.UTC)
@@ -36,7 +38,7 @@ func (dt *DateTime) Scan(value interface{}) error {
 				return fmt.Errorf("failed to parse datetime: %w", err)
 			}
 		}
-		*dt = DateTime(t)
+		*dt = DateTime(t.UTC())
 	default:
 		return fmt.Errorf("unsupported type for DateTime: %T", value)
 	}

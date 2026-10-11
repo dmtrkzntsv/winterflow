@@ -13,7 +13,7 @@ import (
 // indexed is the API's server_domains index for serverID, as names.
 func (e *env) indexed(t *testing.T, serverID string) map[string]string {
 	t.Helper()
-	rows, err := e.deps.ServerDomainRepository.ListForServer(e.ctx, serverID)
+	rows, err := e.deps.ServerDomainRepository.ListForServer(e.dbCtx(t), serverID)
 	if err != nil {
 		t.Fatal(err)
 	}

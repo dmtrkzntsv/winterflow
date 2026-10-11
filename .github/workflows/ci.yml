@@ -99,10 +99,25 @@ jobs:
       - name: install.sh dry-run suite
         run: bash scripts/install_test.sh
 
-  # The API contract suite on Postgres (the go job already runs it on
-  # SQLite). It must match testdata/parity.golden.json like the SQLite run,
-  # and its coverage profile is merged into the gates: Postgres-only
-  # branches run nowhere else.
+  # Generated sqlc code (internal/infra/db/sqlc/gen) must match the queries
+  # and migrations it is built from.
+  sqlc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: make sqlc-check
+        run: make sqlc-check
+
+  # The API contract suite and the internal/infra/db packages (migration
+  # runner, repositories) on Postgres (the go job already runs them on
+  # SQLite). The contract suite must match testdata/parity.golden.json like
+  # the SQLite run, and this job's coverage profile is merged into the
+  # gates: Postgres-only branches run nowhere else.
   contract:
     runs-on: ubuntu-latest
     services:
@@ -127,10 +142,10 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Contract suite (Postgres)
+      - name: Contract suite and DB packages (Postgres)
         run: >-
           go test -race -count=1 -covermode=atomic -coverpkg=./...
-          -coverprofile=contract-postgres.out ./internal/app/web/contract/
+          -coverprofile=contract-postgres.out ./internal/app/web/contract/ ./internal/infra/db/...
 
       - uses: actions/upload-artifact@v4
         with:

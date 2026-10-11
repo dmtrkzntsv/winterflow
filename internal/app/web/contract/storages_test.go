@@ -16,7 +16,7 @@ import (
 // storagesIndexed is the API's server_storages index for serverID.
 func (e *env) storagesIndexed(t *testing.T, serverID string) map[string]model.StorageSummary {
 	t.Helper()
-	rows, err := e.deps.ServerStorageRepository.ListForServer(e.ctx, serverID)
+	rows, err := e.deps.ServerStorageRepository.ListForServer(e.dbCtx(t), serverID)
 	if err != nil {
 		t.Fatal(err)
 	}

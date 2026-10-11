@@ -125,7 +125,8 @@ changing the unit.
 
 - **Index:** table `server_storages(server_id, name, type, location,
   updated_at)`, primary key `(server_id, name)`, never holding a secret.
-  Migration `20261011000001`.
+  Migration `0010_server_storages.sql` (both engines; sqlc repository
+  `internal/infra/db/repository/serverstorage`).
 - **Sync** works like `server_domains`:
   - `storage.list`'s result replaces the server's rows;
   - `save` upserts a row and `delete` removes it;

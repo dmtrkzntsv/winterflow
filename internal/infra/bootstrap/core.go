@@ -6,7 +6,12 @@ import (
 	notificationsvc "winterflow/internal/domain/service/notification"
 	"winterflow/internal/domain/service/status"
 	"winterflow/internal/infra/db"
-	"winterflow/internal/infra/db/repository"
+	apprepo "winterflow/internal/infra/db/repository/app"
+	appdomainrepo "winterflow/internal/infra/db/repository/appdomain"
+	serverrepo "winterflow/internal/infra/db/repository/server"
+	serverdomainrepo "winterflow/internal/infra/db/repository/serverdomain"
+	serverstoragerepo "winterflow/internal/infra/db/repository/serverstorage"
+	userrepo "winterflow/internal/infra/db/repository/user"
 	"winterflow/internal/infra/transport/bus"
 	"winterflow/internal/infra/transport/dispatch"
 	"winterflow/pkg/config"
@@ -20,35 +25,68 @@ import (
 // (standalone: certs, in-process bridge, self-registration; api: nothing).
 // The concrete server repository is returned alongside Deps for standalone's
 // registration flow, which needs methods beyond the port.
-func WireCore(ctx context.Context, b bus.Bus, dbconn *db.BunConnection, cfg *config.ServerConfig, log *logger.Logger) (*Deps, *repository.DbServerRepository) {
-	userRepo := repository.NewDbUserRepository(dbconn, log)
-	serverRepo := repository.NewDbServerRepository(dbconn, log)
-	appRepo := repository.NewDbAppRepository(dbconn, log)
-	appDomainRepo := repository.NewDbAppDomainRepository(dbconn, log)
-	serverDomainRepo := repository.NewDbServerDomainRepository(dbconn, log)
-	serverStorageRepo := repository.NewDbServerStorageRepository(dbconn, log)
+func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerConfig, log *logger.Logger) (*Deps, *serverrepo.Repo) {
+	r, err := newRepos(conn, log)
+	if err != nil {
+		// Only an unknown driver name fails, which db.Open never returns.
+		log.Fatalf("wire repositories: %v", err)
+	}
 
 	nm := notificationsvc.NewNotificationManager(log)
 	dispatcher := dispatch.NewManager(b, nm, cfg, log)
 	statusCache := status.NewCache(statusTTL)
 
 	startResponseSubscriber(ctx, b, dispatcher, cfg, log)
-	startEventsSubscriber(ctx, b, statusCache, serverRepo, nm, cfg, log, indexSyncs{
-		newDomainSync(ctx, dispatcher, serverDomainRepo, log),
-		newStorageSync(ctx, dispatcher, serverStorageRepo, log),
+	startEventsSubscriber(ctx, b, statusCache, r.server, nm, cfg, log, indexSyncs{
+		newDomainSync(ctx, dispatcher, r.serverDomain, log),
+		newStorageSync(ctx, dispatcher, r.serverStorage, log),
 	})
 
 	return &Deps{
 		Log:                     log,
 		Cfg:                     cfg,
-		UserService:             userRepo,
-		ServerRepository:        serverRepo,
-		AppRepository:           appRepo,
-		AppDomainRepository:     appDomainRepo,
-		ServerDomainRepository:  serverDomainRepo,
-		ServerStorageRepository: serverStorageRepo,
+		UserService:             r.user,
+		ServerRepository:        r.server,
+		AppRepository:           r.app,
+		AppDomainRepository:     r.appDomain,
+		ServerDomainRepository:  r.serverDomain,
+		ServerStorageRepository: r.serverStorage,
 		CommandDispatcher:       dispatcher,
 		NotificationManager:     nm,
 		StatusCache:             statusCache,
-	}, serverRepo
+	}, r.server
+}
+
+// repos are the six DB repositories, built for the connection's driver.
+type repos struct {
+	user          *userrepo.Repo
+	server        *serverrepo.Repo
+	app           *apprepo.Repo
+	appDomain     *appdomainrepo.Repo
+	serverDomain  *serverdomainrepo.Repo
+	serverStorage *serverstoragerepo.Repo
+}
+
+func newRepos(conn *db.DB, log *logger.Logger) (repos, error) {
+	var (
+		r   repos
+		err error
+	)
+	if r.user, err = userrepo.New(conn.Tx, conn.Driver, log); err != nil {
+		return r, err
+	}
+	if r.server, err = serverrepo.New(conn.Tx, conn.Driver, log); err != nil {
+		return r, err
+	}
+	if r.app, err = apprepo.New(conn.Tx, conn.Driver, log); err != nil {
+		return r, err
+	}
+	if r.appDomain, err = appdomainrepo.New(conn.Tx, conn.Driver, log); err != nil {
+		return r, err
+	}
+	if r.serverDomain, err = serverdomainrepo.New(conn.Tx, conn.Driver, log); err != nil {
+		return r, err
+	}
+	r.serverStorage, err = serverstoragerepo.New(conn.Tx, conn.Driver, log)
+	return r, err
 }

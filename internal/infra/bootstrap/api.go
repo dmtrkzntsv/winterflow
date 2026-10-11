@@ -28,7 +28,10 @@ func BootstrapAPI(ctx context.Context, log *logger.Logger, cfg *config.ServerCon
 	log.Debug("connected to redis", "addr", addr, "db", redisDB)
 
 	b := redisbus.NewBus(rc, log)
-	dbconn := db.NewBunConnection(log, cfg.GetDbURL())
+	dbconn, err := db.Open(log, cfg.GetDbURL())
+	if err != nil {
+		log.Fatalf("failed to open database: %v", err)
+	}
 
 	deps, _ := WireCore(ctx, b, dbconn, cfg, log)
 	return deps

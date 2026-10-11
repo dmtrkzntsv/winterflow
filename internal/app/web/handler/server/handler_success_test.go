@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -19,12 +18,13 @@ import (
 	"time"
 
 	"winterflow/internal/domain/dto"
+	"winterflow/internal/infra/db/dbtest"
 )
 
 // publicKeyOf calls GetPublicKey for serverID and returns data.public_key.
 func publicKeyOf(t *testing.T, h *Handler, userID, serverID string) string {
 	t.Helper()
-	r := authedAs(httptest.NewRequest("GET", "/api/v1/server/get-public-key?server_id="+serverID, nil), userID)
+	r := authedAs(t, httptest.NewRequest("GET", "/api/v1/server/get-public-key?server_id="+serverID, nil), userID)
 	w := httptest.NewRecorder()
 	h.GetPublicKey(w, r)
 	if w.Code != http.StatusOK {
@@ -41,7 +41,7 @@ func publicKeyOf(t *testing.T, h *Handler, userID, serverID string) string {
 
 func TestGetPublicKeyFromCapability(t *testing.T) {
 	h, userID, serverID, _ := newEnv(t)
-	if err := h.servers.SaveCapabilities(context.Background(), serverID, map[string]string{"public_key": "BASE64POINT"}, nil); err != nil {
+	if err := h.servers.SaveCapabilities(dbtest.Ctx(t), serverID, map[string]string{"public_key": "BASE64POINT"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	if got := publicKeyOf(t, h, userID, serverID); got != "BASE64POINT" {
@@ -79,7 +79,7 @@ func TestGetPublicKeyFallsBackToAgentCert(t *testing.T) {
 
 func TestRegisterClaimsPendingServer(t *testing.T) {
 	h, userID, _, _ := newEnv(t)
-	err := h.servers.RegisterServer(context.Background(), dto.ServerRegistrationDTO{
+	err := h.servers.RegisterServer(dbtest.Ctx(t), dto.ServerRegistrationDTO{
 		ServerID:             "srv-2",
 		CertificateID:        "cert-2",
 		Hostname:             "box2",
@@ -92,7 +92,7 @@ func TestRegisterClaimsPendingServer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	r := authedAs(httptest.NewRequest("POST", "/api/v1/server/register", strings.NewReader(`{"code":"654321"}`)), userID)
+	r := authedAs(t, httptest.NewRequest("POST", "/api/v1/server/register", strings.NewReader(`{"code":"654321"}`)), userID)
 	w := httptest.NewRecorder()
 	h.Register(w, r)
 	if w.Code != http.StatusOK {

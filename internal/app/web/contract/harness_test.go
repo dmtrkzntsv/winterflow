@@ -15,7 +15,8 @@ import (
 	"winterflow/internal/domain/dto"
 	"winterflow/internal/infra/bootstrap"
 	"winterflow/internal/infra/db"
-	"winterflow/internal/infra/db/models"
+	"winterflow/internal/infra/db/backend"
+	"winterflow/internal/infra/db/dbtest"
 	"winterflow/internal/infra/transport/bus"
 	membus "winterflow/internal/infra/transport/mem/bus"
 	"winterflow/pkg/config"
@@ -33,7 +34,7 @@ type env struct {
 	srv   *httptest.Server
 	bus   *membus.Bus
 	cfg   *config.ServerConfig
-	conn  *db.BunConnection
+	conn  *db.DB
 
 	mu       sync.Mutex
 	requests map[string]string // request_id -> "METHOD /path" that dispatched it
@@ -70,9 +71,14 @@ var testLog = logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Ser
 func newEnv(t *testing.T) *env {
 	t.Helper()
 	cfg := config.NewServerConfig("standalone")
-	conn := db.NewBunConnection(testLog, freshDB(t))
+	conn, err := db.Open(testLog, freshDB(t))
+	if err != nil {
+		t.Fatal(err)
+	}
 	// Parallel tests share one Postgres; keep each test's pool small.
-	conn.GetDB().SetMaxOpenConns(4)
+	if conn.Driver == backend.Postgres {
+		conn.SQL.SetMaxOpenConns(4)
+	}
 	t.Cleanup(func() { _ = conn.Shutdown() })
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -105,18 +111,26 @@ func newEnv(t *testing.T) *env {
 // an account created before roles were removed (stored role "member").
 func (e *env) setStoredRole(t *testing.T, userID, role string) {
 	t.Helper()
-	if _, err := e.conn.GetDB().NewUpdate().Model((*models.OrganizationUser)(nil)).
-		Set("role = ?", role).Where("user_id = ?", userID).Exec(e.ctx); err != nil {
-		t.Fatalf("set stored role: %v", err)
-	}
+	dbtest.Exec(t, e.conn, `UPDATE organization_users SET role = ? WHERE user_id = ?`, role, userID)
+}
+
+// dbCtx bounds a test's direct repository calls: SQLite runs on one
+// connection, so a deadlock must fail the test instead of hanging it. It
+// still ends with e.ctx.
+func (e *env) dbCtx(t *testing.T) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(e.ctx, 30*time.Second)
+	t.Cleanup(cancel)
+	return ctx
 }
 
 // seedPendingServer leaves one claimable registration, as BootstrapStandalone
 // does at boot; the first login auto-claims it.
 func (e *env) seedPendingServer(t *testing.T) string {
 	t.Helper()
+	ctx := e.dbCtx(t)
 	code := util.GenerateRandomCode(6)
-	err := e.deps.ServerRepository.RegisterServer(e.ctx, dto.ServerRegistrationDTO{
+	err := e.deps.ServerRepository.RegisterServer(ctx, dto.ServerRegistrationDTO{
 		ServerID: util.GenerateID(), CertificateID: util.GenerateID(), Hostname: "contract",
 		Code: code, ExpiresAt: time.Now().Add(time.Hour), Certificate: []byte("cert"),
 		CertificateExpiresAt: time.Now().Add(time.Hour),
@@ -131,16 +145,17 @@ func (e *env) seedPendingServer(t *testing.T) string {
 // returns that server's id: the 403 probe for server-addressed routes.
 func (e *env) foreignServer(t *testing.T) string {
 	t.Helper()
-	u, err := e.deps.UserService.RegisterLocalUser(e.ctx, "Mallory", "mallory@other.test", "password")
+	ctx := e.dbCtx(t)
+	u, err := e.deps.UserService.RegisterLocalUser(ctx, "Mallory", "mallory@other.test", "password")
 	if err != nil {
 		t.Fatalf("foreign user: %v", err)
 	}
-	orgID, err := e.deps.UserService.PrimaryOrganizationID(e.ctx, u.ID)
+	orgID, err := e.deps.UserService.PrimaryOrganizationID(ctx, u.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	code := e.seedPendingServer(t)
-	srv, err := e.deps.ServerRepository.ClaimServer(e.ctx, dto.ClaimServerDTO{Code: code, OrganizationID: orgID})
+	srv, err := e.deps.ServerRepository.ClaimServer(ctx, dto.ClaimServerDTO{Code: code, OrganizationID: orgID})
 	if err != nil {
 		t.Fatalf("foreign claim: %v", err)
 	}

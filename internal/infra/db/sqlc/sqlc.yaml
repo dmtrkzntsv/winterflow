@@ -1,0 +1,94 @@
+# sqlc: one typed query package per engine (make sqlc; make sqlc-check in CI).
+#
+# Each engine reads its schema straight from the migrations the runner
+# applies, so a query against a dropped or renamed column fails to generate.
+# Repositories are written against sqlitegen and convert pgsqlgen values with
+# plain Go struct conversions, so the overrides below make every generated
+# type identical across engines (shapes_test.go proves it):
+#   - timestamps -> types.DateTime (*types.DateTime when nullable): the
+#     Bun-era storage format, naive UTC "2006-01-02 15:04:05";
+#   - Postgres uuid -> string, nullable text/varchar -> *string
+#     (emit_pointers_for_null_types does not cover Postgres with database/sql);
+#   - Postgres int4 -> int64 (SQLite INTEGER).
+# Postgres catalogs TIMESTAMPTZ as "timestamptz" (unqualified) and TIMESTAMP
+# as "pg_catalog.timestamp"; both spellings of timestamptz are listed.
+version: "2"
+sql:
+  - engine: "sqlite"
+    schema: "../migrations/sqlite"
+    queries: "./query/sqlite"
+    gen:
+      go:
+        package: "sqlitegen"
+        out: "gen/sqlite"
+        emit_interface: true
+        emit_json_tags: false
+        emit_empty_slices: true
+        emit_pointers_for_null_types: true
+        overrides:
+          - db_type: "TIMESTAMP"
+            go_type: "winterflow/internal/infra/db/types.DateTime"
+          - db_type: "TIMESTAMP"
+            nullable: true
+            go_type:
+              import: "winterflow/internal/infra/db/types"
+              type: "DateTime"
+              pointer: true
+          # app_domains.app_id/server_id; unmapped it becomes interface{}.
+          - db_type: "CHAR(36)"
+            go_type: "string"
+  - engine: "postgresql"
+    schema: "../migrations/pgsql"
+    queries: "./query/pgsql"
+    gen:
+      go:
+        package: "pgsqlgen"
+        out: "gen/pgsql"
+        emit_interface: true
+        emit_json_tags: false
+        emit_empty_slices: true
+        emit_pointers_for_null_types: true
+        overrides:
+          - db_type: "timestamptz"
+            go_type: "winterflow/internal/infra/db/types.DateTime"
+          - db_type: "timestamptz"
+            nullable: true
+            go_type:
+              import: "winterflow/internal/infra/db/types"
+              type: "DateTime"
+              pointer: true
+          - db_type: "pg_catalog.timestamptz"
+            go_type: "winterflow/internal/infra/db/types.DateTime"
+          - db_type: "pg_catalog.timestamptz"
+            nullable: true
+            go_type:
+              import: "winterflow/internal/infra/db/types"
+              type: "DateTime"
+              pointer: true
+          - db_type: "pg_catalog.timestamp"
+            go_type: "winterflow/internal/infra/db/types.DateTime"
+          - db_type: "pg_catalog.timestamp"
+            nullable: true
+            go_type:
+              import: "winterflow/internal/infra/db/types"
+              type: "DateTime"
+              pointer: true
+          - db_type: "uuid"
+            go_type: "string"
+          - db_type: "uuid"
+            nullable: true
+            go_type:
+              type: "string"
+              pointer: true
+          - db_type: "pg_catalog.varchar"
+            nullable: true
+            go_type:
+              type: "string"
+              pointer: true
+          - db_type: "text"
+            nullable: true
+            go_type:
+              type: "string"
+              pointer: true
+          - db_type: "pg_catalog.int4"
+            go_type: "int64"

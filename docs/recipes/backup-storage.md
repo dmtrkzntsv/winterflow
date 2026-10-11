@@ -74,20 +74,52 @@ case with `-` replaced by `_`:
 | `ENDPOINT`, `REGION`, `BUCKET`, `ACCESS_KEY_ID`, `SECRET_ACCESS_KEY` | S3 buckets |
 
 For example, Litestream replicating a SQLite database to a storage named
-`hetzner`:
+`hetzner`. Litestream reads its replica settings from a config file, and
+expands `${VAR}` in it from its own environment, so the compose file passes
+the storage variables in with `environment:` and mounts the config, an app
+file next to the compose file:
 
 ```yaml
+# compose.yml
 services:
-  litestream:
-    image: litestream/litestream:0.3
-    command: replicate /data/app.db s3://${WF_STORAGE_HETZNER_BUCKET}/${WF_STORAGE_HETZNER_PREFIX}app.db
-    environment:
-      LITESTREAM_ACCESS_KEY_ID: ${WF_STORAGE_HETZNER_ACCESS_KEY_ID}
-      LITESTREAM_SECRET_ACCESS_KEY: ${WF_STORAGE_HETZNER_SECRET_ACCESS_KEY}
-      LITESTREAM_ENDPOINT: ${WF_STORAGE_HETZNER_ENDPOINT}
+  app:
+    image: ghcr.io/example/app
     volumes:
       - data:/data
+  litestream:
+    image: litestream/litestream:0.3
+    command: replicate
+    environment:
+      WF_STORAGE_HETZNER_ENDPOINT: ${WF_STORAGE_HETZNER_ENDPOINT}
+      WF_STORAGE_HETZNER_REGION: ${WF_STORAGE_HETZNER_REGION}
+      WF_STORAGE_HETZNER_BUCKET: ${WF_STORAGE_HETZNER_BUCKET}
+      WF_STORAGE_HETZNER_PREFIX: ${WF_STORAGE_HETZNER_PREFIX}
+      LITESTREAM_ACCESS_KEY_ID: ${WF_STORAGE_HETZNER_ACCESS_KEY_ID}
+      LITESTREAM_SECRET_ACCESS_KEY: ${WF_STORAGE_HETZNER_SECRET_ACCESS_KEY}
+    volumes:
+      - data:/data
+      - ./litestream.yml:/etc/litestream.yml:ro
+
+volumes:
+  data:
 ```
+
+```yaml
+# litestream.yml
+dbs:
+  - path: /data/app.db
+    replicas:
+      - type: s3
+        endpoint: ${WF_STORAGE_HETZNER_ENDPOINT}
+        region: ${WF_STORAGE_HETZNER_REGION}
+        bucket: ${WF_STORAGE_HETZNER_BUCKET}
+        path: ${WF_STORAGE_HETZNER_PREFIX}app.db
+```
+
+Litestream itself only reads the keys from the environment
+(`LITESTREAM_ACCESS_KEY_ID`, `LITESTREAM_SECRET_ACCESS_KEY`); the endpoint
+has to be in the config, or it talks to AWS. Add `force-path-style: true`
+to the replica for a path-style storage (MinIO).
 
 - Only the variables the compose file mentions are passed to the app, so an
   app never receives credentials for a storage it doesn't use.
@@ -99,3 +131,28 @@ services:
 - Saving a storage redeploys the running apps that reference it, so they
   pick up the new values. A storage can't be removed while an app
   references it.
+
+### A local folder as a bind mount
+
+Mount a local storage with the long volume syntax and
+`create_host_path: false`:
+
+```yaml
+services:
+  app:
+    image: ghcr.io/example/app
+    volumes:
+      - type: bind
+        source: ${WF_STORAGE_BACKUP_DISK_PATH}
+        target: /backup
+        bind:
+          create_host_path: false
+```
+
+With the short syntax (`- ${WF_STORAGE_BACKUP_DISK_PATH}:/backup`) Docker
+creates a missing folder, empty, on the system disk: when the USB disk
+isn't mounted (after a reboot, or unplugged), the app's writes then fill
+the system disk instead of failing. Winterflow refuses a deploy while the
+folder of a storage the compose file references is missing, but Docker
+also restarts containers on its own after a reboot, possibly before the
+disk is mounted — `create_host_path: false` makes that start fail instead.

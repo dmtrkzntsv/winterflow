@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -112,7 +113,7 @@ func (e *fakeEngine) RestoreBackup(ctx context.Context, job dockercompose.Restor
 		e.restores <- restoreCall{job: job, deadline: deadline}
 		if ignore {
 			<-block
-			return resp, nil
+			return resp, rerr
 		}
 		select {
 		case <-block:
@@ -1107,7 +1108,7 @@ func TestDailySweep(t *testing.T) {
 // A restore that waited too long behind other runs is refused instead of
 // started, so queue wait + restore stays under command.BackupRunWait.
 func TestRestoreRefusedAfterQueueWait(t *testing.T) {
-	if RestoreTimeout+restoreQueueWait+2*abandonAfter >= command.BackupRunWait {
+	if RestoreTimeout+restoreQueueWait+restoreGrace+abandonAfter+sweepTimeout >= command.BackupRunWait {
 		t.Fatalf("restore bound %s + %s exceeds %s", restoreQueueWait, RestoreTimeout, command.BackupRunWait)
 	}
 	e := newEngine(planned("app-2", "db", recipe.TypeSQLite, true, recipe.Manual))
@@ -1158,7 +1159,7 @@ func TestStoppedRestoreKeepsItsError(t *testing.T) {
 func TestAbandonedRestoreHoldsItsApp(t *testing.T) {
 	e := newEngine(planned("app-1", "db", recipe.TypeSQLite, true, recipe.Manual))
 	e.block, e.ignore = make(chan struct{}), true
-	s, clock, _ := start(t, e, func(s *Scheduler) { s.restoreTimeout, s.grace = 20*time.Millisecond, 20*time.Millisecond })
+	s, clock, _ := start(t, e, func(s *Scheduler) { s.restoreTimeout, s.restoreGrace = 20*time.Millisecond, 20*time.Millisecond })
 	idle(t, clock)
 	res := s.Restore("app-1", "db", "20261011T120000Z-manual")
 	restored(t, e)
@@ -1209,5 +1210,116 @@ func TestRestoreIsNoRunningBackup(t *testing.T) {
 	e.block <- struct{}{}
 	if o := outcome(t, run); o.Err != nil {
 		t.Fatal(o.Err)
+	}
+}
+
+// A restore gets as long past its deadline as its engine needs to wind down
+// (kill the helper, compose down or start), or the scheduler would give up
+// on it before the outcome that names the pre-restore point exists; and the
+// request as a whole still ends under command.BackupRunWait.
+func TestRestoreGraceCoversTheEngineWindDown(t *testing.T) {
+	// 3 helper removals (30s), the output drain (10s), the daemon's second
+	// (1s), compose down or start (2m).
+	if want := 3*30*time.Second + 10*time.Second + time.Second + 2*time.Minute; restoreGrace < want {
+		t.Fatalf("restore grace %s is shorter than the engine's wind-down %s", restoreGrace, want)
+	}
+	if restoreGrace <= abandonAfter {
+		t.Fatalf("restore grace %s, run grace %s", restoreGrace, abandonAfter)
+	}
+	worst := restoreQueueWait + abandonAfter + sweepTimeout + RestoreTimeout + restoreGrace
+	if worst >= command.BackupRunWait {
+		t.Fatalf("queue wait %s + run ahead %s + sweep %s + restore %s + grace %s = %s, not under %s",
+			restoreQueueWait, abandonAfter, sweepTimeout, RestoreTimeout, restoreGrace, worst, command.BackupRunWait)
+	}
+	if restoreQueueWait < 30*time.Minute {
+		t.Fatalf("a restore may wait only %s behind other runs", restoreQueueWait)
+	}
+}
+
+// lockedBuffer is a log sink the test reads while the scheduler writes.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf strings.Builder
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// A restore abandoned past its grace still reports what it did when its
+// engine finally returns: logged, and the backup's last_error (so it reaches
+// health), since only that outcome names the pre-restore point.
+func TestAbandonedRestoreReportsItsFinalOutcome(t *testing.T) {
+	e := newEngine(planned("app-1", "db", recipe.TypeSQLite, true, recipe.Manual))
+	e.block, e.ignore = make(chan struct{}), true
+	e.restoreErr = errors.New("the app was left stopped; restore the pre-restore point pre to go back")
+	logs := &lockedBuffer{}
+	s, clock, dir := start(t, e, func(s *Scheduler) {
+		s.restoreTimeout, s.restoreGrace = 20*time.Millisecond, 20*time.Millisecond
+		s.log = &logger.Logger{Logger: slog.New(slog.NewJSONHandler(logs, nil))}
+	})
+	idle(t, clock)
+	res := s.Restore("app-1", "db", "20261011T120000Z-manual")
+	restored(t, e)
+	if o := outcome(t, res); o.Err == nil || !strings.Contains(o.Err.Error(), "did not stop") {
+		t.Fatalf("outcome = %+v", o)
+	}
+	if h := s.Health("app-1", clock.Now(), nil); h[0].LastError != "" {
+		t.Fatalf("health before the engine returned = %+v", h)
+	}
+	close(e.block)
+	deadline := time.Now().Add(5 * time.Second)
+	var h []command.BackupHealth
+	for {
+		if h = s.Health("app-1", clock.Now(), nil); h[0].LastError != "" || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if h[0].State != command.BackupFailing || !strings.Contains(h[0].LastError, "restore the pre-restore point pre to go back") ||
+		!strings.Contains(h[0].LastError, "20261011T120000Z-manual") {
+		t.Fatalf("health = %+v", h)
+	}
+	if out := logs.String(); !strings.Contains(out, "abandoned backup restore ended") || !strings.Contains(out, "pre-restore point pre to go back") {
+		t.Fatalf("log = %s", out)
+	}
+	raw, _ := os.ReadFile(filepath.Join(dir, "backups", "state.json"))
+	if !strings.Contains(string(raw), "pre-restore point pre to go back") {
+		t.Fatalf("state.json = %s", raw)
+	}
+}
+
+// An abandoned restore that turns out fine is logged, and marks nothing
+// failing.
+func TestAbandonedRestoreThatSucceededLaterIsNoFailure(t *testing.T) {
+	e := newEngine(planned("app-1", "db", recipe.TypeSQLite, true, recipe.Manual))
+	e.block, e.ignore = make(chan struct{}), true
+	logs := &lockedBuffer{}
+	s, clock, _ := start(t, e, func(s *Scheduler) {
+		s.restoreTimeout, s.restoreGrace = 20*time.Millisecond, 20*time.Millisecond
+		s.log = &logger.Logger{Logger: slog.New(slog.NewJSONHandler(logs, nil))}
+	})
+	idle(t, clock)
+	res := s.Restore("app-1", "db", "20261011T120000Z-manual")
+	restored(t, e)
+	outcome(t, res)
+	close(e.block)
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(logs.String(), "abandoned backup restore ended") && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !strings.Contains(logs.String(), "abandoned backup restore ended") {
+		t.Fatalf("log = %s", logs.String())
+	}
+	if h := s.Health("app-1", clock.Now(), nil); h[0].LastError != "" {
+		t.Fatalf("health = %+v", h)
 	}
 }

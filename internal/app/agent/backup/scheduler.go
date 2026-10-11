@@ -54,13 +54,19 @@ const (
 	// RestoreTimeout bounds a restore: the download, the pre-restore copy
 	// (itself a run) and putting the data back.
 	RestoreTimeout = time.Hour
+	// restoreGrace is how long past its deadline a restore gets to stop
+	// before it is abandoned: its engine's own wind-down (killing the
+	// helper, then compose down or start) takes that long on a slow box,
+	// and only the engine's outcome names the pre-restore point.
+	restoreGrace = dockercompose.RestoreStopBudget
 	// restoreQueueWait is how long a restore may wait for the requests
 	// ahead of it before it is refused instead of started. With the
-	// restore's own limit and the abandon grace it keeps the whole request
+	// restore's own limit and its abandon grace it keeps the whole request
 	// (queue wait + run) under command.BackupRunWait, which the API's
-	// longer wait builds on.
-	// A due sweep runs before the queue is looked at again, so it counts.
-	restoreQueueWait = command.BackupRunWait - RestoreTimeout - 2*abandonAfter - sweepTimeout - 5*time.Minute
+	// longer wait builds on. abandonAfter is the room for the run ahead of
+	// it (its own grace); a due sweep runs before the queue is looked at
+	// again, so it counts.
+	restoreQueueWait = command.BackupRunWait - RestoreTimeout - restoreGrace - abandonAfter - sweepTimeout - 5*time.Minute
 	// sweepEvery is how often deleted apps' backups are swept, the first
 	// time one interval after start; sweepTimeout bounds one sweep.
 	sweepEvery   = 24 * time.Hour
@@ -123,6 +129,10 @@ type job struct {
 	// such an app alone instead of starting it).
 	forget  func()
 	awaited bool // a Forget already waited out its grace on this job
+	// abandoned is set (under the lock) when execute gave up on the job at
+	// its grace: its waiters got a time-limit failure, and the engine's real
+	// outcome, when it comes, is logged and recorded instead.
+	abandoned bool
 	// exited is closed (under the lock) when the engine's RunBackup call
 	// has returned, however long after the run was abandoned.
 	exited chan struct{}
@@ -137,7 +147,8 @@ type Scheduler struct {
 	clock          Clock
 	runTimeout     time.Duration
 	restoreTimeout time.Duration
-	grace          time.Duration
+	grace          time.Duration // past a run's deadline, before it is abandoned
+	restoreGrace   time.Duration // the same for a restore
 	// nextSweep is when deleted apps' backups are swept next (Run only).
 	nextSweep time.Time
 
@@ -170,7 +181,7 @@ type Scheduler struct {
 func New(engine Engine, dataDir string, log *logger.Logger) *Scheduler {
 	s := &Scheduler{
 		engine: engine, path: filepath.Join(dataDir, "backups", "state.json"), log: log,
-		clock: realClock{}, runTimeout: RunTimeout, restoreTimeout: RestoreTimeout, grace: abandonAfter,
+		clock: realClock{}, runTimeout: RunTimeout, restoreTimeout: RestoreTimeout, grace: abandonAfter, restoreGrace: restoreGrace,
 		wake: make(chan struct{}, 1), state: map[string]*State{}, dirty: true,
 		stuck: map[string]*job{}, forgotten: map[string]uint64{}, deleting: map[string]tomb{},
 	}
@@ -599,22 +610,30 @@ func (s *Scheduler) untilDue(now time.Time) time.Duration {
 	return wait
 }
 
+// outcomeOf is what the engine returned for one job.
+type outcomeOf struct {
+	res     dockercompose.BackupResult
+	restore command.RestoreBackupResponse
+	err     error
+}
+
 // execute runs one job within its time limit and records the outcome. A
-// run that doesn't stop at its deadline is abandoned after the grace: it is
-// recorded as failed, the global slot is released, but its app stays blocked
-// until the engine call really returns. A run cut short because the agent is
-// stopping (parent is done) is not recorded: see record.
+// run that doesn't stop at its deadline is abandoned after the grace (a
+// restore's is longer: see restoreGrace): it is recorded as failed, the
+// global slot is released, but its app stays blocked until the engine call
+// really returns, and what it finally returns is logged (see lateLocked). A
+// run cut short because the agent is stopping (parent is done) is not
+// recorded: see record.
 func (s *Scheduler) execute(parent context.Context, j *job) {
 	defer j.cancel()
 	start := s.clock.Now()
-	type done struct {
-		res     dockercompose.BackupResult
-		restore command.RestoreBackupResponse
-		err     error
+	grace := s.grace
+	if j.point != "" {
+		grace = s.restoreGrace
 	}
-	ch := make(chan done, 1)
+	ch := make(chan outcomeOf, 1)
 	go func() {
-		var d done
+		var d outcomeOf
 		if j.point != "" {
 			d.restore, d.err = s.engine.RestoreBackup(j.ctx, dockercompose.RestoreJob{AppID: j.key.app, Backup: j.key.name, Point: j.point})
 		} else {
@@ -627,26 +646,24 @@ func (s *Scheduler) execute(parent context.Context, j *job) {
 			delete(s.stuck, j.key.app)
 		}
 		close(j.exited)
+		if j.abandoned {
+			s.lateLocked(j, d)
+		}
 		s.mu.Unlock()
 		if wasStuck {
 			s.signal() // the app's scheduled backups may run again
 		}
 	}()
-	var d done
+	var d outcomeOf
 	select {
 	case d = <-ch:
 	case <-j.ctx.Done():
-		grace := time.NewTimer(s.grace)
-		defer grace.Stop()
+		timer := time.NewTimer(grace)
+		defer timer.Stop()
 		select {
 		case d = <-ch:
-		case <-grace.C:
-			select {
-			case d = <-ch:
-			default:
-				d.err = fmt.Errorf("the %s did not stop after its time limit of %s", j.noun(), j.limit)
-				s.markStuck(j)
-			}
+		case <-timer.C:
+			d = s.abandon(j, ch)
 		}
 	}
 	// A restore its engine reported done is done (the data is back and the
@@ -660,6 +677,63 @@ func (s *Scheduler) execute(parent context.Context, j *job) {
 		return
 	}
 	s.record(j, start, d.res, d.err, stopping)
+}
+
+// abandon gives up on a job that did not stop within its grace: its app is
+// blocked until the engine call returns, which then reports what it did (see
+// lateLocked). The engine may have returned just now, in which case its
+// outcome is used. Deciding under the lock the engine's goroutine takes
+// after it returns leaves no outcome neither side reports.
+func (s *Scheduler) abandon(j *job, ch <-chan outcomeOf) outcomeOf {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	select {
+	case d := <-ch:
+		return d
+	default:
+	}
+	j.abandoned = true
+	s.stuck[j.key.app] = j
+	return outcomeOf{err: fmt.Errorf("the %s did not stop after its time limit of %s", j.noun(), j.limit)}
+}
+
+// lateLocked reports what an abandoned job's engine call finally returned,
+// whose waiters were long told it had not stopped. It is always logged; a
+// restore that failed is also the backup's last_error, which reaches health,
+// because it is the one that says the app was left stopped and which
+// pre-restore point to go back to. The caller holds mu.
+func (s *Scheduler) lateLocked(j *job, d outcomeOf) {
+	if j.point == "" {
+		if d.err != nil {
+			s.log.Warn("abandoned backup run ended", "app_id", j.key.app, "backup", j.key.name, "error", d.err)
+		} else {
+			s.log.Info("abandoned backup run ended", "app_id", j.key.app, "backup", j.key.name)
+		}
+		return
+	}
+	if d.err == nil {
+		s.log.Info("abandoned backup restore ended", "app_id", j.key.app, "backup", j.key.name,
+			"restored_point", d.restore.RestoredPoint, "pre_restore_point", d.restore.PreRestorePoint)
+		return
+	}
+	s.log.Warn("abandoned backup restore ended", "app_id", j.key.app, "backup", j.key.name, "point", j.point,
+		"pre_restore_point", d.restore.PreRestorePoint, "error", d.err)
+	s.noteErrorLocked(j.key, fmt.Sprintf("the restore of %s did not stop in time and ended later: %v", j.point, d.err))
+}
+
+// noteErrorLocked makes msg the backup's last_error (no attempt is recorded)
+// when the backup is planned. The caller holds mu.
+func (s *Scheduler) noteErrorLocked(k key, msg string) {
+	if !s.plannedLocked(k) {
+		return
+	}
+	st := s.state[k.String()]
+	if st == nil {
+		st = &State{}
+		s.state[k.String()] = st
+	}
+	st.LastError = msg
+	s.saveLocked()
 }
 
 // recordRestore answers a restore's waiter. A restore is no backup attempt:
@@ -700,18 +774,6 @@ func (j *job) noun() string {
 		return "restore"
 	}
 	return "run"
-}
-
-// markStuck blocks the job's app until its abandoned RunBackup returns (it
-// may have returned already).
-func (s *Scheduler) markStuck(j *job) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	select {
-	case <-j.exited:
-	default:
-		s.stuck[j.key.app] = j
-	}
 }
 
 // record stores a run's outcome as the backup's attempt at start (not for

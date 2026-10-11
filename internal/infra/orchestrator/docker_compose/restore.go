@@ -34,6 +34,15 @@ var ErrAppDeleted = errors.New("the app is being deleted")
 // of its own (the restore's may be over).
 const restartTimeout = 2 * time.Minute
 
+// RestoreStopBudget is the longest a restore takes to wind down after its
+// context ends, in the engine's own bounded steps: the kill of the helper
+// (docker rm -f, the wait for its output, two more removals and the second
+// the daemon is given) and then compose down or compose start. The scheduler
+// gives a restore at least this long past its deadline before it gives up on
+// it, so the engine's real outcome (the app left stopped, the pre-restore
+// point to go back to) is the one that gets recorded.
+const RestoreStopBudget = 3*dockerCallTimeout + helperStopGrace + time.Second + restartTimeout
+
 // restoreMinBudget is the least of a restore's time budget that must remain
 // before the app is stopped: the pre-restore copy and the helper still have
 // to run, and a helper cut short by the budget leaves the data in doubt.

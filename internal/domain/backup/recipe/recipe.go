@@ -241,6 +241,14 @@ func validate(c BackupConfig, comp Compose, field string) error {
 		}
 		seen[p] = true
 	}
+	// A path inside another listed one would be archived twice.
+	for i, p := range paths {
+		for _, q := range paths {
+			if p != q && strings.HasPrefix(p, q+"/") {
+				return invalid(fmt.Sprintf("%s.paths[%d]", field, i), "%q is inside %q, which is listed too: list it once", p, q)
+			}
+		}
+	}
 	for i, p := range exclude {
 		if err := validatePattern(fmt.Sprintf("%s.exclude[%d]", field, i), p); err != nil {
 			return err

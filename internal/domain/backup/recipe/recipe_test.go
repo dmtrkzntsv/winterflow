@@ -164,6 +164,9 @@ func TestValidateErrors(t *testing.T) {
 		{"{name: a, type: files, volume: data, path: a}", "x-winterflow.backups[0].path: a files backup takes paths"},
 		{"{name: a, type: files, service: web}", "x-winterflow.backups[0].paths: a files backup addressed by service needs paths"},
 		{"{name: a, type: files, service: web, paths: [/a, /a]}", `x-winterflow.backups[0].paths[1]: "/a" is listed twice`},
+		{"{name: a, type: files, service: web, paths: [/app/media, /app/media/cache]}", `x-winterflow.backups[0].paths[1]: "/app/media/cache" is inside "/app/media"`},
+		{"{name: a, type: files, service: web, paths: [/app/media/cache, /app/media]}", `x-winterflow.backups[0].paths[0]: "/app/media/cache" is inside "/app/media"`},
+		{"{name: a, type: files, volume: data, paths: [uploads, uploads/tmp]}", `paths[1]: "uploads/tmp" is inside "uploads"`},
 		{"{name: a, type: files, volume: data, exclude: ['[']}", `x-winterflow.backups[0].exclude[0]: "[" is not a valid pattern`},
 		{"{name: a, type: files, volume: data, exclude: ['']}", `x-winterflow.backups[0].exclude[0]: "" is not a pattern`},
 		{"{name: a, type: custom}", "x-winterflow.backups[0].service: a custom backup needs service"},
@@ -456,5 +459,23 @@ x-winterflow:
 	eff, _ = Effective(c, []BackupConfig{{Name: "media"}})
 	if !reflect.DeepEqual(eff[0].Paths, []string{"uploads"}) || !reflect.DeepEqual(eff[0].Exclude, []string{"*.tmp"}) {
 		t.Fatalf("inherited = %+v", eff[0])
+	}
+}
+
+// A sibling that merely shares a name prefix is not inside the path.
+func TestSiblingPathsAreNotNested(t *testing.T) {
+	c := parse(t, `
+services:
+  web:
+    image: example/web
+    volumes: [data:/data]
+volumes:
+  data:
+x-winterflow:
+  backups:
+    - {name: a, type: files, volume: data, paths: [media, media2, media-old/x]}
+`)
+	if _, err := Effective(c, nil); err != nil {
+		t.Fatal(err)
 	}
 }

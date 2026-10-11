@@ -9,7 +9,7 @@ merged). It ships as two stacked PRs: **C1 storages**, **C2 backups**.
 A twillingate tenant is one SQLite database in a named volume. twillingate-cloud
 replicates every tenant database with one host-level Litestream service. On
 winterflow, backups must work for any app, not just SQLite. C2 ships SQLite
-and whole-volume backups; Postgres and MySQL come later behind the same
+and files (folders or whole volumes, on named volumes or bind mounts); Postgres and MySQL come later behind the same
 interface. Today winterflow has no
 object-storage code, no settings store, and never touches the user's compose
 file beyond `-f` for git-sourced apps.
@@ -214,42 +214,75 @@ Rules:
 x-winterflow:
   backups:
     - name: database          # backup name: ^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$, unique in the app
-      type: sqlite            # sqlite | volume | custom  (postgres, mysql: later)
-      volume: data            # sqlite, volume: a key under top-level `volumes:` of this compose file
-      path: twillingate.db    # sqlite: relative path inside the volume (safeRel)
-      every: 1h               # sqlite, volume: Go duration >= 5m, or `manual` (no schedule); default 1h
-      keep:                   # sqlite, volume: default shown
+      type: sqlite            # sqlite | files | custom  (postgres, mysql: later)
+      volume: data            # where the data lives — see "Addressing data"
+      path: twillingate.db    # sqlite: the database file
+      every: 1h               # sqlite, files: Go duration >= 5m, or `manual` (no schedule); default 1h
+      keep:                   # sqlite, files: default shown
         recent: 24h           #   keep every copy younger than this
         daily: 14             #   then the newest copy of each of the last N UTC days
         monthly: 6            #   then the newest copy of each of the last N UTC months
-    - name: uploads
-      type: volume            # the whole volume, as an archive
-      volume: uploads
+    - name: media
+      type: files             # an archive of folders and files
+      service: web            # addressed through a service's mounts (volume or bind mount)
+      paths: [/app/media, /app/config]
+      exclude: [/app/media/cache/, "*.tmp"]   # files: optional glob patterns
       every: 24h
-      exclude: [cache/, "*.tmp"]   # volume: optional, relative glob patterns
     - name: replica
       type: custom
-      service: litestream     # custom: a service of this compose file
+      service: litestream     # custom: the service that runs the backup tool
 ```
+
+### Addressing data (`sqlite` and `files`)
+
+A backup names exactly one of `volume` or `service`:
+
+| Form | Paths are | Reaches |
+|---|---|---|
+| `volume: <key>`, a key under the top-level `volumes:` | relative to the volume root (`safeRel`) | named volumes |
+| `service: <name>` | absolute paths inside that service's container | every mount of that service: named volumes and bind mounts (`./data:/data`, `/srv/x:/data`), with relative binds resolved against the app directory, or `source/` for git-sourced apps |
+
+- **`sqlite`** takes one `path`: the database file. Its directory must be on
+  the mount too, because the WAL files live beside it.
+- **`files`** takes `paths`, a list of folders and files.
+  - In the `volume` form `paths` is optional; omitted means the whole volume.
+  - In the `service` form it is required.
+  - A `files` backup may span several mounts.
+- **Resolution.** At save and deploy, `docker compose config --format json`
+  maps each path to a mount source (a Docker volume name or an absolute host
+  path) plus a sub-path. It runs once per save or deploy, never in a polled
+  path, and honors `name:`, `external:` and the project prefix.
+- **Errors at save:**
+  - a path that isn't on a mount of the service (the container's own
+    filesystem is lost on every recreate, so it can't be backed up);
+  - a path inside a single-file bind mount (`./settings.json:/app/settings.json`),
+    which can't be replaced from another container: "mount its directory
+    instead";
+  - a path on a tmpfs mount.
+- **No new privilege.** The helper only ever mounts sources the app's own
+  compose file already mounts.
+- **Archive entry names** are relative to the volume root (`volume` form) or
+  the container path without its leading `/` (`service` form). `exclude`
+  patterns are matched against the same names.
+
+### Validation
 
 - **Parsing** lives in one package, `internal/domain/backup/recipe`, used by
   both sides: the API (400 at save when the compose file is in the request) and
   the agent (at save and deploy, which covers git-sourced apps, whose compose
-  file comes from `source/`).
+  file comes from `source/`). Mount resolution runs agent-side only.
 - **Errors** fail the save with the field path, e.g.
   `x-winterflow.backups[0].volume: "dat" is not a volume of this compose file`.
-  These are errors:
+  These are errors, besides the addressing errors above:
   - unknown keys or types;
   - duplicate names;
+  - both or neither of `volume` and `service` (for `sqlite` and `files`);
   - dangling `volume` or `service` references;
   - `every` below 5m, or neither a duration nor `manual`;
   - an unparsable `keep`.
 - **A `custom` service must list the profile `wf-backup-<backup name>`** in its
   `profiles:`. Otherwise it would run with backups off, so its absence is an
   error too.
-- **The resolved Docker volume name** comes from `docker compose config
-  --format json`, run once per save or deploy, never in a polled path. It
-  honors `name:`, `external:` and the project prefix.
 
 ## Overrides (`.winterflow/config.json` → `backups`)
 
@@ -264,8 +297,8 @@ x-winterflow:
 - **The same list shape as the recipe,** matched to it by `name`. Only fields
   that differ from the recipe are saved, and `enabled` is omitted when false.
 - **An entry whose name is in the recipe is an override.** It may set
-  `enabled`, `storage`, `every`, `keep`, `volume` and `path` (and `service`
-  for custom), but not `type`.
+  `enabled`, `storage`, `every`, `keep`, `volume`, `service`, `path`, `paths`
+  and `exclude`, but not `type`.
 - **An entry whose name is not in the recipe is a backup added in the UI.** It
   must be complete: `type` plus that type's required fields.
 - **The effective backup** is the recipe, then the override field by field.
@@ -330,19 +363,21 @@ duration of one run.
 - **On start** the agent removes leftover helpers with one call:
   `docker rm -f $(docker ps -aq --filter label=winterflow.role=backup-helper)`.
 
-### One run (types `sqlite` and `volume`)
+### One run (types `sqlite` and `files`)
 
 1. **Start the helper:**
 
    ```
    docker run --rm --network none --memory 256m --cpu-shares 256
      --label winterflow.role=backup-helper --label winterflow.app=<app-id>
-     -v <docker volume>:/data -v <agent executable>:/wf:ro
-     alpine:3.20 /wf backup dump sqlite /data/<path> --since <fingerprint>
+     -v <mount source>:/src/0 -v <agent executable>:/wf:ro
+     alpine:3.20 /wf backup dump sqlite /src/0/<sub-path> --since <fingerprint>
    ```
 
-   For `volume` the mount is read-only (`-v <docker volume>:/data:ro`) and the
-   command is `/wf backup dump volume /data --exclude <pattern>… --since <fingerprint>`.
+   - A mount source is a Docker volume name or an absolute host path. Each
+     distinct source is mounted at `/src/<n>`.
+   - For `files`, the mounts are read-only and the command is
+     `/wf backup dump files --path /src/<n>/<sub-path>=<entry name>… --exclude <pattern>… --since <fingerprint>`.
 
    - The image is the constant `alpine:3.20`, hard-coded.
    - The agent executable is `os.Executable()` with symlinks resolved. It is
@@ -362,10 +397,12 @@ duration of one run.
    - **Output:** write the snapshot to stdout, and the new fingerprint plus raw
      size as JSON on stderr's last line.
 
-   For `volume`, the helper:
-   - **Unchanged check:** walks the volume once. The fingerprint is a hash of
-     every entry's relative path, size, mode and mtime. If it matches
+   For `files`, the helper:
+   - **Unchanged check:** walks the backup's paths once. The fingerprint is a
+     hash of every entry's name, size, mode and mtime. If it matches
      `--since`, exit 3.
+   - **Missing paths:** a path that doesn't exist is a warning in the result.
+     If none exist, exit 4.
    - **Archive:** writes a tar stream to stdout using Go's `archive/tar`.
      The stream records uid, gid, mode, mtime and symlinks (as links, never
      followed). Sockets, devices and FIFOs are skipped with a note, and
@@ -454,8 +491,8 @@ as SSE `operation_result` with the same `request_id`.
 2. `compose stop`.
 3. Run a `pre-restore` backup of the current file (a normal run with kind
    `pre-restore`, ignoring the unchanged check). **If it fails, abort**:
-   `compose start`, and report. A missing database file, or an empty volume,
-   skips this step.
+   `compose start`, and report. A missing database file, or `files` paths
+   that don't exist yet, skip this step.
 4. Run the helper `/wf backup restore sqlite /data/<path>` with the
    decompressed copy on stdin. The helper:
    - writes `<path>.restore-tmp`;
@@ -467,21 +504,27 @@ as SSE `operation_result` with the same `request_id`.
 
    Any failure before the rename leaves the original in place.
 
-   For `volume`, the helper runs `/wf backup restore volume /data` with the
-   volume read-write and the decompressed tar on stdin:
-   - **Extract** into `/data/.wf-restore-<id>/` in full. Entries with absolute
-     paths or `..` are refused. Nothing is written through a symlink.
+   For `files`, the helper runs `/wf backup restore files` with the same
+   mounts read-write and the decompressed tar on stdin. **Only the backup's
+   paths are replaced; everything else on the mounts is left alone.** In the
+   whole-volume form, the backup's path is the volume root.
+   - **Extract** in full into `.wf-restore-<id>/` at the root of each mount the
+     entries belong to. Refused:
+     - entries outside the backup's paths, with an absolute path or with `..`;
+     - writing through a symlink.
+
      Ownership, modes and mtimes are restored.
-   - **A failure during extraction** removes the temp directory and leaves
-     the volume untouched.
-   - **Swap:** remove every top-level entry except the temp directory, move
-     the temp directory's entries up, then remove it.
-   - **A failure during the swap** leaves the volume partly replaced. The
-     report says so and names the `pre-restore` point to restore from.
+   - **A failure during extraction** removes the temp directories and leaves
+     every mount untouched.
+   - **Swap:** for each backup path, remove what's there and move the restored
+     entry in. For the whole-volume form, that means every top-level entry
+     except the temp directory. Then remove the temp directories.
+   - **A failure during the swap** leaves the paths partly replaced. The report
+     says so and names the `pre-restore` point to restore from.
    - **Disk space:** a restore temporarily needs room for the old and new
-     contents side by side. The agent checks the archive's raw size against
-     the volume's free space first (`df` inside the same helper run) and
-     refuses with a clear error if it doesn't fit.
+     contents side by side. The helper checks the archive's raw size per mount
+     against that mount's free space before extracting anything, and refuses
+     with a clear error if it doesn't fit.
 5. `compose start`. Report `{pre_restore_point, restored_point}`.
 
 ### Delete
@@ -536,14 +579,15 @@ with the result as SSE `operation_result`.
     a link to Settings → Storages when there are none.
   - **Edit:** schedule (Manual, or an interval), retention (with the note
     "capped at N days on this server" when tiers reach past the ceiling),
-    volume and path. Each field is badged "from
+    location (volume or service) and paths. Each field is badged "from
     template" or "changed", with *Reset to template*.
   - **Back up now.**
   - **Restore:** a points list (time, kind, size, with a Delete action per
     point), then a confirmation stating that the app stops and the current
     database is first saved as a `pre-restore` point.
-  - **Add backup:** a UI-added `sqlite` or `volume` entry (a volume picker
-    lists the compose file's volumes).
+  - **Add backup:** a UI-added `sqlite` or `files` entry. A picker lists the
+    compose file's volumes and each service's mounts (volumes and bind
+    mounts), then takes the path or paths.
 - **App grid:** a small warning dot on cards with a `late` or `failing`
   backup.
 - **Delete app dialog:** an "Also delete backups" checkbox, unchecked, under
@@ -587,12 +631,21 @@ contract suite on SQLite and Postgres, and `api/openapi.yaml` up to date.
   - restore refuses corrupt, empty and non-SQLite input;
   - ownership and mode are preserved;
   - exit codes 3 and 4;
-  - `volume`: a round trip preserving ownership, modes, mtimes and symlinks;
-    `exclude` patterns; the unchanged fingerprint; extraction refuses `..`,
-    absolute paths and writing through symlinks; a failed extraction leaves
-    the volume untouched; refusal when free space is short.
-- **Docker integration:** a dump and restore round trip through a real
-  `docker run`, skipped when Docker is unavailable. It runs in CI.
+  - `files`:
+    - a round trip preserving ownership, modes, mtimes and symlinks;
+    - partial `paths`, where restore leaves sibling files alone;
+    - several mounts in one backup;
+    - `exclude` patterns and the unchanged fingerprint;
+    - extraction refuses `..`, absolute paths, entries outside the paths and
+      writing through symlinks;
+    - a failed extraction leaves the mounts untouched;
+    - refusal when free space is short.
+- **Mount resolution:** table tests over `docker compose config` JSON:
+  named, external and prefixed volumes; relative and absolute binds;
+  git-sourced apps; and the errors (a path not on a mount, a single-file bind,
+  tmpfs).
+- **Docker integration:** dump and restore round trips through a real
+  `docker run`, for `sqlite` on a named volume and `files` on a bind mount, skipped when Docker is unavailable. It runs in CI.
 - **Contract suite:** every new route gets a happy path plus `probes`
   (401, foreign-org 403, 400), with SSE results checked end to end. The fake
   agent learns `storage.*` and `backup.*`, and `server_storages` joins the

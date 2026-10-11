@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -74,7 +75,12 @@ type fakeEngine struct {
 	runs   chan dockercompose.BackupJob
 	block  chan struct{}
 	ignore bool // keep blocking past the context
-	result func(dockercompose.BackupJob) (dockercompose.BackupResult, error)
+	// blockOnly limits block to one app's runs; exitDelay is how long a run
+	// takes to return once its context is done; exits counts returned runs.
+	blockOnly string
+	exitDelay time.Duration
+	exits     atomic.Int32
+	result    func(dockercompose.BackupJob) (dockercompose.BackupResult, error)
 }
 
 func newEngine(plan ...dockercompose.PlannedBackup) *fakeEngine {
@@ -94,17 +100,19 @@ func (e *fakeEngine) setPlan(plan ...dockercompose.PlannedBackup) {
 }
 
 func (e *fakeEngine) RunBackup(ctx context.Context, job dockercompose.BackupJob) (dockercompose.BackupResult, error) {
+	defer e.exits.Add(1)
 	e.runs <- job
 	e.mu.Lock()
-	block, ignore, result := e.block, e.ignore, e.result
+	block, ignore, result, only, delay := e.block, e.ignore, e.result, e.blockOnly, e.exitDelay
 	e.mu.Unlock()
-	if block != nil {
+	if block != nil && (only == "" || only == job.AppID) {
 		if ignore {
 			<-block
 		} else {
 			select {
 			case <-block:
 			case <-ctx.Done():
+				time.Sleep(delay)
 				return dockercompose.BackupResult{}, ctx.Err()
 			}
 		}
@@ -509,5 +517,268 @@ func TestRunNowAfterStop(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("RunNow after Run returned never answered")
+	}
+}
+
+func quietLog() *logger.Logger {
+	return logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
+}
+
+// startOn runs a scheduler over an existing data dir.
+func startOn(t *testing.T, e Engine, dir string, opts ...func(*Scheduler)) (*Scheduler, *fakeClock) {
+	t.Helper()
+	s := New(e, dir, quietLog())
+	clock := newClock()
+	s.clock = clock
+	for _, o := range opts {
+		o(s)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { s.Run(ctx); close(done) }()
+	t.Cleanup(func() { cancel(); <-done })
+	return s, clock
+}
+
+// Forget returns only once the run it stopped has returned, so the caller
+// can remove the app's volumes; the wait is bounded when the run never does.
+func TestForgetWaitsForTheRun(t *testing.T) {
+	e := newEngine(planned("app-1", "db", recipe.TypeSQLite, true, recipe.Manual))
+	e.block, e.exitDelay = make(chan struct{}), 150*time.Millisecond
+	s, clock, _ := start(t, e)
+	idle(t, clock)
+	out := s.RunNow("app-1", "db")
+	ran(t, e)
+	s.Forget("app-1")
+	if got := e.exits.Load(); got != 1 {
+		t.Fatalf("Forget returned before the run did (exits = %d)", got)
+	}
+	if o := <-out; o.Err == nil {
+		t.Fatalf("outcome = %+v", o)
+	}
+}
+
+func TestForgetWaitIsBounded(t *testing.T) {
+	e := newEngine(planned("app-1", "db", recipe.TypeSQLite, true, recipe.Manual))
+	e.block, e.ignore = make(chan struct{}), true
+	defer close(e.block)
+	s, clock, _ := start(t, e, func(s *Scheduler) { s.grace = 50 * time.Millisecond })
+	idle(t, clock)
+	s.RunNow("app-1", "db")
+	ran(t, e)
+	begin := time.Now()
+	s.Forget("app-1")
+	if d := time.Since(begin); d > 5*time.Second || e.exits.Load() != 0 {
+		t.Fatalf("Forget took %s, exits = %d", d, e.exits.Load())
+	}
+}
+
+// A run that has just become the running job already has its cancel, so a
+// Forget landing between next and the engine call cannot miss it.
+func TestForgetCancelsAJobThatJustStarted(t *testing.T) {
+	e := newEngine(planned("app-1", "db", recipe.TypeSQLite, true, recipe.Manual))
+	s := New(e, t.TempDir(), quietLog())
+	s.grace = 10 * time.Millisecond
+	s.RunNow("app-1", "db")
+	j := s.next(context.Background(), t0)
+	if j == nil || j.ctx == nil || j.cancel == nil {
+		t.Fatalf("job = %+v", j)
+	}
+	s.Forget("app-1")
+	if j.ctx.Err() == nil {
+		t.Fatal("Forget did not cancel the job that had just started")
+	}
+}
+
+// A run that outlives its grace blocks its own app until it returns: Back up
+// now fails at once and nothing is scheduled for the app, while other apps
+// run on.
+func TestAbandonedRunBlocksItsApp(t *testing.T) {
+	e := newEngine(
+		planned("app-1", "db", recipe.TypeSQLite, true, recipe.Manual),
+		planned("app-1", "other", recipe.TypeFiles, true, recipe.Manual),
+		planned("app-2", "db", recipe.TypeSQLite, true, recipe.Manual))
+	e.block, e.ignore, e.blockOnly = make(chan struct{}), true, "app-1"
+	s, clock, _ := start(t, e, func(s *Scheduler) { s.runTimeout, s.grace = 20*time.Millisecond, 20*time.Millisecond })
+	idle(t, clock)
+	if o := <-s.RunNow("app-1", "db"); o.Err == nil || !strings.Contains(o.Err.Error(), "did not stop") {
+		t.Fatalf("abandoned = %+v", o)
+	}
+	ran(t, e)
+	if o := <-s.RunNow("app-1", "other"); !errors.Is(o.Err, errStillStopping) || !strings.Contains(o.Err.Error(), "still stopping") {
+		t.Fatalf("blocked = %+v", o)
+	}
+	noRun(t, e)
+	if o := <-s.RunNow("app-2", "db"); o.Err != nil {
+		t.Fatalf("another app = %+v", o)
+	}
+	ran(t, e)
+	close(e.block)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		o := <-s.RunNow("app-1", "other")
+		if o.Err == nil {
+			break
+		}
+		if !errors.Is(o.Err, errStillStopping) || time.Now().After(deadline) {
+			t.Fatalf("after the run returned: %+v", o)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// A scheduled backup of an app with a stuck run waits for it to return.
+func TestAbandonedRunHoldsScheduledBackups(t *testing.T) {
+	e := newEngine(planned("app-1", "db", recipe.TypeSQLite, true, "5m"))
+	e.block, e.ignore = make(chan struct{}), true
+	s, clock, _ := start(t, e, func(s *Scheduler) { s.runTimeout, s.grace = 20*time.Millisecond, 20*time.Millisecond })
+	idle(t, clock)
+	clock.Advance(5 * time.Minute)
+	ran(t, e)
+	if wait := idle(t, clock); wait != idleWait {
+		t.Fatalf("wait with the app stuck = %s", wait)
+	}
+	s.mu.Lock()
+	_, due := s.dueLocked(s.plan[0], clock.Now().Add(time.Hour))
+	s.mu.Unlock()
+	if due {
+		t.Fatal("a stuck app's backup is still scheduled")
+	}
+	close(e.block)
+	if wait := idle(t, clock); wait != 5*time.Minute {
+		t.Fatalf("wait after the run returned = %s", wait)
+	}
+}
+
+// gateEngine holds one plan read open so a Forget can land inside it.
+type gateEngine struct {
+	*fakeEngine
+	gate    atomic.Bool
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (g *gateEngine) BackupPlan() ([]dockercompose.PlannedBackup, error) {
+	plan, err := g.fakeEngine.BackupPlan()
+	if g.gate.Load() {
+		g.entered <- struct{}{}
+		<-g.release
+	}
+	return plan, err
+}
+
+// A Forget during a plan read sticks: the stale plan read does not bring the
+// deleted app, or its state, back.
+func TestForgetDuringPlanRead(t *testing.T) {
+	e := &gateEngine{fakeEngine: newEngine(planned("app-1", "db", recipe.TypeSQLite, true, "5m")),
+		entered: make(chan struct{}), release: make(chan struct{})}
+	dir := t.TempDir()
+	s, clock := startOn(t, e, dir)
+	idle(t, clock)
+	e.gate.Store(true)
+	s.Reload()
+	<-e.entered
+	e.setPlan() // the app is gone by the next read
+	s.Forget("app-1")
+	e.gate.Store(false)
+	e.release <- struct{}{}
+	idle(t, clock)
+	idle(t, clock)
+	s.mu.Lock()
+	state, plan, forgotten := len(s.state), len(s.plan), len(s.forgotten)
+	s.mu.Unlock()
+	raw, _ := os.ReadFile(filepath.Join(dir, "backups", "state.json"))
+	if state != 0 || plan != 0 || forgotten != 0 || strings.Contains(string(raw), "app-1") {
+		t.Fatalf("state %d, plan %d, forgotten %d, file %s", state, plan, forgotten, raw)
+	}
+}
+
+// A recorded time after now (the clock stepped back) counts as now: the
+// backup is not held off until the clock catches up.
+func TestFutureTimestampsCountAsNow(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "backups"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	future := t0.Add(1000 * time.Hour)
+	raw, _ := json.Marshal(map[string]State{
+		"app-1/db":    {LastAttempt: future, LastSuccess: future, EnabledAt: t0},
+		"app-1/files": {EnabledAt: future},
+	})
+	if err := os.WriteFile(filepath.Join(dir, "backups", "state.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	e := newEngine(planned("app-1", "db", recipe.TypeSQLite, true, "5m"))
+	_, clock := startOn(t, e, dir)
+	if wait := idle(t, clock); wait != 5*time.Minute {
+		t.Fatalf("wait = %s, want 5m from now", wait)
+	}
+	clock.Advance(5 * time.Minute)
+	ran(t, e)
+
+	f := newEngine(planned("app-1", "files", recipe.TypeFiles, true, "1h"))
+	_, clock = startOn(t, f, dir)
+	if wait, max := idle(t, clock), Offset("app-1", "files", time.Hour); wait != max {
+		t.Fatalf("never-run wait = %s, want the offset %s from now", wait, max)
+	}
+}
+
+// Run's exit answers the requests still queued.
+func TestStopAnswersQueuedRequests(t *testing.T) {
+	e := newEngine(planned("app-1", "db", recipe.TypeSQLite, true, recipe.Manual), planned("app-2", "db", recipe.TypeSQLite, true, recipe.Manual))
+	e.block = make(chan struct{})
+	s := New(e, t.TempDir(), quietLog())
+	clock := newClock()
+	s.clock = clock
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { s.Run(ctx); close(done) }()
+	idle(t, clock)
+	running := s.RunNow("app-1", "db")
+	ran(t, e)
+	queued := s.RunNow("app-2", "db")
+	cancel()
+	<-done
+	if o := <-queued; !errors.Is(o.Err, errStopped) {
+		t.Fatalf("queued = %+v", o)
+	}
+	if o := <-running; o.Err == nil {
+		t.Fatalf("running = %+v", o)
+	}
+}
+
+// Forgetting one app leaves the other apps' queued requests alone.
+func TestForgetKeepsOtherAppsQueued(t *testing.T) {
+	e := newEngine(planned("app-1", "db", recipe.TypeSQLite, true, recipe.Manual), planned("app-2", "db", recipe.TypeSQLite, true, recipe.Manual))
+	e.block, e.blockOnly = make(chan struct{}), "app-1"
+	s, clock, _ := start(t, e)
+	idle(t, clock)
+	s.RunNow("app-1", "db")
+	ran(t, e)
+	other := s.RunNow("app-2", "db")
+	s.Forget("app-1")
+	if j := ran(t, e); j.AppID != "app-2" {
+		t.Fatalf("run = %+v", j)
+	}
+	if o := <-other; o.Err != nil {
+		t.Fatalf("other app's request = %+v", o)
+	}
+}
+
+// A custom backup is running when its own service is, not a service whose
+// name merely starts with it.
+func TestCustomHealthMatchesTheExactService(t *testing.T) {
+	e := newEngine(planned("app-1", "replica", recipe.TypeCustom, true, ""))
+	e.plan[0].Service = "db"
+	s, clock, _ := start(t, e)
+	idle(t, clock)
+	apps := []command.AppStatus{{AppID: "app-1", Containers: []command.ContainerStatus{
+		{Name: "wf-app-1-db-replica-1", StatusCode: command.ContainerStatusActive}}}}
+	if got := s.Decorate(apps, clock.Now()); got[0].Backups[0].State != command.BackupOff {
+		t.Fatalf("db-replica counted as db: %+v", got[0].Backups)
+	}
+	apps[0].Containers = append(apps[0].Containers, command.ContainerStatus{Name: "wf-app-1-db-2", StatusCode: command.ContainerStatusActive})
+	if got := s.Decorate(apps, clock.Now()); got[0].Backups[0].State != command.BackupOK {
+		t.Fatalf("db not counted: %+v", got[0].Backups)
 	}
 }

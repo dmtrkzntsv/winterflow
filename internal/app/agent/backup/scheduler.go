@@ -75,12 +75,19 @@ type key struct{ app, name string }
 
 func (k key) String() string { return k.app + "/" + k.name }
 
-// job is one run, waited for by the requests that joined it.
+// job is one run, waited for by the requests that joined it. Once it is the
+// running job its context is bound to run's deadline, and cancel and exited
+// are set, all under the scheduler's lock: a Forget either sees the job as
+// running (and can stop and await it) or the job has not started.
 type job struct {
 	key     key
 	kind    command.PointKind
 	waiters []chan Outcome
+	ctx     context.Context
 	cancel  context.CancelFunc
+	// exited is closed (under the lock) when the engine's RunBackup call
+	// has returned, however long after the run was abandoned.
+	exited chan struct{}
 }
 
 // Scheduler runs backups. Its methods are safe for concurrent use; Run is
@@ -101,7 +108,18 @@ type Scheduler struct {
 	dirty   bool // the plan must be reread
 	queue   []*job
 	running *job
-	stopped bool // Run has returned: nothing answers a queued request any more
+	// stuck holds, per app, a run that was abandoned past its grace and whose
+	// RunBackup call has not returned yet. The app starts no other run
+	// until it does (a hung storage call can still be holding its volumes or
+	// helper), which also bounds the stuck goroutines to one per app. The
+	// global one-run-at-a-time slot is released on abandon, so one dead
+	// storage cannot wedge every other app's backups.
+	stuck map[string]*job
+	// gen counts Forgets; forgotten maps an app to the gen of its last one,
+	// so a plan read that began before it cannot bring the app back.
+	gen       uint64
+	forgotten map[string]uint64
+	stopped   bool // Run has returned: nothing answers a queued request any more
 }
 
 // New makes a scheduler keeping its state in dataDir/backups/state.json.
@@ -110,6 +128,7 @@ func New(engine Engine, dataDir string, log *logger.Logger) *Scheduler {
 		engine: engine, path: filepath.Join(dataDir, "backups", "state.json"), log: log,
 		clock: realClock{}, runTimeout: RunTimeout, grace: abandonAfter,
 		wake: make(chan struct{}, 1), state: map[string]*State{}, dirty: true,
+		stuck: map[string]*job{}, forgotten: map[string]uint64{},
 	}
 	s.load()
 	return s
@@ -164,10 +183,12 @@ func (s *Scheduler) Reload() {
 }
 
 // Forget drops a deleted app: its queued requests fail, a run in progress is
-// stopped, and its state is pruned.
+// stopped, and its state is pruned. It returns once the stopped run (or one
+// abandoned earlier) has really returned, so the caller can remove the app's
+// volumes without racing the backup helper; the wait is bounded by the
+// abandon grace, as the caller is the single command goroutine.
 func (s *Scheduler) Forget(appID string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	kept := s.queue[:0]
 	for _, j := range s.queue {
 		if j.key.app == appID {
@@ -177,8 +198,13 @@ func (s *Scheduler) Forget(appID string) {
 		kept = append(kept, j)
 	}
 	s.queue = kept
-	if s.running != nil && s.running.key.app == appID && s.running.cancel != nil {
-		s.running.cancel()
+	var wait []*job
+	if r := s.running; r != nil && r.key.app == appID {
+		r.cancel()
+		wait = append(wait, r)
+	}
+	if j := s.stuck[appID]; j != nil {
+		wait = append(wait, j)
 	}
 	plan := s.plan[:0]
 	for _, p := range s.plan {
@@ -187,6 +213,8 @@ func (s *Scheduler) Forget(appID string) {
 		}
 	}
 	s.plan = plan
+	s.gen++
+	s.forgotten[appID] = s.gen
 	changed := false
 	for k := range s.state {
 		if app, _, _ := strings.Cut(k, "/"); app == appID {
@@ -198,7 +226,21 @@ func (s *Scheduler) Forget(appID string) {
 		s.saveLocked()
 	}
 	s.dirty = true
+	s.mu.Unlock()
 	s.signal()
+
+	if len(wait) == 0 {
+		return
+	}
+	timer := time.NewTimer(s.grace)
+	defer timer.Stop()
+	for _, j := range wait {
+		select {
+		case <-j.exited:
+		case <-timer.C:
+			return
+		}
+	}
 }
 
 // RunNow queues a manual run of an app's backup ahead of the scheduled ones
@@ -212,6 +254,10 @@ func (s *Scheduler) RunNow(appID, name string) <-chan Outcome {
 	defer s.mu.Unlock()
 	if s.stopped {
 		ch <- Outcome{Err: errStopped}
+		return ch
+	}
+	if s.stuck[appID] != nil {
+		ch <- Outcome{Err: errStillStopping}
 		return ch
 	}
 	if s.running != nil && s.running.key == k {
@@ -234,8 +280,8 @@ func (s *Scheduler) Run(ctx context.Context) {
 	for ctx.Err() == nil {
 		s.refresh()
 		now := s.clock.Now()
-		if j := s.next(now); j != nil {
-			s.execute(ctx, j)
+		if j := s.next(ctx, now); j != nil {
+			s.execute(j)
 			continue
 		}
 		select {
@@ -253,8 +299,13 @@ func (s *Scheduler) Run(ctx context.Context) {
 	s.mu.Unlock()
 }
 
-// errStopped answers a request once Run has returned.
-var errStopped = errors.New("the agent is stopping")
+var (
+	// errStopped answers a request once Run has returned.
+	errStopped = errors.New("the agent is stopping")
+	// errStillStopping answers a request for an app whose earlier run did
+	// not stop within its time limit and has not returned yet.
+	errStillStopping = errors.New("a previous backup of this app is still stopping (its storage or Docker is not answering)")
+)
 
 // refresh rereads the plan when asked to, and records when each backup was
 // turned on (its first run is offset from then).
@@ -262,6 +313,7 @@ func (s *Scheduler) refresh() {
 	s.mu.Lock()
 	dirty := s.dirty
 	s.dirty = false
+	readGen := s.gen
 	s.mu.Unlock()
 	if !dirty {
 		return
@@ -273,6 +325,19 @@ func (s *Scheduler) refresh() {
 	now := s.clock.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// An app forgotten while the plan was being read is not in it again.
+	kept := make([]dockercompose.PlannedBackup, 0, len(plan))
+	for _, p := range plan {
+		if g, ok := s.forgotten[p.AppID]; !ok || g <= readGen {
+			kept = append(kept, p)
+		}
+	}
+	plan = kept
+	for app, g := range s.forgotten {
+		if g <= readGen {
+			delete(s.forgotten, app)
+		}
+	}
 	s.plan = plan
 	changed := false
 	for _, p := range plan {
@@ -295,22 +360,26 @@ func (s *Scheduler) refresh() {
 }
 
 // next is the job to run now: the oldest Back up now request, else the
-// scheduled backup most overdue.
-func (s *Scheduler) next(now time.Time) *job {
+// scheduled backup most overdue. An app with a stuck (abandoned) run is
+// skipped: its requests fail, its scheduled backups wait.
+func (s *Scheduler) next(parent context.Context, now time.Time) *job {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.queue) > 0 {
+	for len(s.queue) > 0 {
 		j := s.queue[0]
 		s.queue = s.queue[1:]
-		s.running = j
-		return j
+		if s.stuck[j.key.app] != nil {
+			finish(j, Outcome{Err: errStillStopping})
+			continue
+		}
+		return s.startLocked(parent, j)
 	}
 	var (
 		best    *dockercompose.PlannedBackup
 		bestDue time.Time
 	)
 	for i, p := range s.plan {
-		due, ok := s.dueLocked(p)
+		due, ok := s.dueLocked(p, now)
 		if ok && !due.After(now) && (best == nil || due.Before(bestDue)) {
 			best, bestDue = &s.plan[i], due
 		}
@@ -318,27 +387,48 @@ func (s *Scheduler) next(now time.Time) *job {
 	if best == nil {
 		return nil
 	}
-	s.running = &job{key: key{best.AppID, best.Name}, kind: command.PointScheduled}
-	return s.running
+	return s.startLocked(parent, &job{key: key{best.AppID, best.Name}, kind: command.PointScheduled})
+}
+
+// startLocked makes j the running job: its context and cancel exist from
+// this moment, under the same lock Forget takes.
+func (s *Scheduler) startLocked(parent context.Context, j *job) *job {
+	j.ctx, j.cancel = context.WithTimeout(parent, s.runTimeout)
+	j.exited = make(chan struct{})
+	s.running = j
+	return j
 }
 
 // dueLocked is when a scheduled backup runs next: its last attempt plus
 // every; never run, the time it was turned on plus a stable offset (so
 // backups enabled together spread out). ok is false for backups that are
-// off, manual or custom.
-func (s *Scheduler) dueLocked(p dockercompose.PlannedBackup) (time.Time, bool) {
+// off, manual or custom, and for apps with a stuck run. A recorded time
+// after now (the clock stepped back) is taken as now.
+func (s *Scheduler) dueLocked(p dockercompose.PlannedBackup, now time.Time) (time.Time, bool) {
 	every := p.Interval()
-	if !p.Enabled || !p.Builtin() || every <= 0 {
+	if !p.Enabled || !p.Builtin() || every <= 0 || s.stuck[p.AppID] != nil {
 		return time.Time{}, false
 	}
 	st := s.state[key{p.AppID, p.Name}.String()]
 	if st == nil {
 		return time.Time{}, false
 	}
+	st.clamp(now)
 	if !st.LastAttempt.IsZero() {
 		return st.LastAttempt.Add(every), true
 	}
 	return st.EnabledAt.Add(Offset(p.AppID, p.Name, every)), true
+}
+
+// clamp pulls a recorded time after now (the clock stepped back) down to
+// now, for good: left alone it would hold the backup off until the clock
+// caught up, and the health would read the future as fine.
+func (st *State) clamp(now time.Time) {
+	for _, t := range []*time.Time{&st.LastAttempt, &st.LastSuccess, &st.EnabledAt} {
+		if t.After(now) {
+			*t = now
+		}
+	}
 }
 
 // Offset is a backup's stable delay within its interval: a hash of
@@ -355,7 +445,7 @@ func (s *Scheduler) untilDue(now time.Time) time.Duration {
 	defer s.mu.Unlock()
 	wait := idleWait
 	for _, p := range s.plan {
-		if due, ok := s.dueLocked(p); ok {
+		if due, ok := s.dueLocked(p, now); ok {
 			wait = min(wait, max(due.Sub(now), 0))
 		}
 	}
@@ -363,40 +453,64 @@ func (s *Scheduler) untilDue(now time.Time) time.Duration {
 }
 
 // execute runs one job within its time limit and records the outcome. A
-// run that doesn't stop at its deadline is abandoned after the grace.
-func (s *Scheduler) execute(parent context.Context, j *job) {
-	ctx, cancel := context.WithTimeout(parent, s.runTimeout)
-	defer cancel()
+// run that doesn't stop at its deadline is abandoned after the grace: it is
+// recorded as failed, the global slot is released, but its app stays blocked
+// until the engine call really returns.
+func (s *Scheduler) execute(j *job) {
+	defer j.cancel()
 	start := s.clock.Now()
-	s.mu.Lock()
-	j.cancel = cancel
-	s.mu.Unlock()
-
 	type done struct {
 		res dockercompose.BackupResult
 		err error
 	}
 	ch := make(chan done, 1)
 	go func() {
-		res, err := s.engine.RunBackup(ctx, dockercompose.BackupJob{AppID: j.key.app, Backup: j.key.name, Kind: j.kind})
+		res, err := s.engine.RunBackup(j.ctx, dockercompose.BackupJob{AppID: j.key.app, Backup: j.key.name, Kind: j.kind})
 		ch <- done{res, err}
+		s.mu.Lock()
+		wasStuck := s.stuck[j.key.app] == j
+		if wasStuck {
+			delete(s.stuck, j.key.app)
+		}
+		close(j.exited)
+		s.mu.Unlock()
+		if wasStuck {
+			s.signal() // the app's scheduled backups may run again
+		}
 	}()
 	var d done
 	select {
 	case d = <-ch:
-	case <-ctx.Done():
+	case <-j.ctx.Done():
 		grace := time.NewTimer(s.grace)
 		defer grace.Stop()
 		select {
 		case d = <-ch:
 		case <-grace.C:
-			d.err = fmt.Errorf("the run did not stop after its time limit of %s", s.runTimeout)
+			select {
+			case d = <-ch:
+			default:
+				d.err = fmt.Errorf("the run did not stop after its time limit of %s", s.runTimeout)
+				s.markStuck(j)
+			}
 		}
 	}
-	if d.err == nil && ctx.Err() != nil {
-		d.err = fmt.Errorf("the run was stopped: %w", ctx.Err())
+	if d.err == nil && j.ctx.Err() != nil {
+		d.err = fmt.Errorf("the run was stopped: %w", j.ctx.Err())
 	}
 	s.record(j, start, d.res, d.err)
+}
+
+// markStuck blocks the job's app until its abandoned RunBackup returns (it
+// may have returned already).
+func (s *Scheduler) markStuck(j *job) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	select {
+	case <-j.exited:
+	default:
+		s.stuck[j.key.app] = j
+	}
 }
 
 // record stores a run's outcome as the backup's attempt at start (not for
@@ -468,6 +582,9 @@ func (s *Scheduler) Health(appID string, now time.Time, running func(service str
 		}
 		h := command.BackupHealth{Name: p.Name}
 		st := s.state[key{p.AppID, p.Name}.String()]
+		if st != nil {
+			st.clamp(now)
+		}
 		if st != nil && !st.LastSuccess.IsZero() {
 			h.LastSuccess = st.LastSuccess.Unix()
 		}
@@ -515,9 +632,10 @@ func (s *Scheduler) Decorate(apps []command.AppStatus, now time.Time) []command.
 	for i := range apps {
 		a := &apps[i]
 		running := func(service string) bool {
+			// <prefix><n> exactly: db-replica's containers are not db's.
 			prefix := dockercompose.ServiceContainerPrefix(a.AppID, service)
 			for _, c := range a.Containers {
-				if strings.HasPrefix(c.Name, prefix) && c.StatusCode == command.ContainerStatusActive {
+				if c.StatusCode == command.ContainerStatusActive && isReplicaOf(c.Name, prefix) {
 					return true
 				}
 			}
@@ -526,4 +644,18 @@ func (s *Scheduler) Decorate(apps []command.AppStatus, now time.Time) []command.
 		a.Backups = s.Health(a.AppID, now, running)
 	}
 	return apps
+}
+
+// isReplicaOf reports whether name is prefix followed by a replica number.
+func isReplicaOf(name, prefix string) bool {
+	n, ok := strings.CutPrefix(name, prefix)
+	if !ok || n == "" {
+		return false
+	}
+	for _, r := range n {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }

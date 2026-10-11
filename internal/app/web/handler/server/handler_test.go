@@ -15,7 +15,8 @@ import (
 	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/service/status"
 	"winterflow/internal/infra/db"
-	"winterflow/internal/infra/db/repository"
+	serverrepo "winterflow/internal/infra/db/repository/server"
+	userrepo "winterflow/internal/infra/db/repository/user"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
 )
@@ -25,11 +26,20 @@ import (
 func newEnv(t *testing.T) (h *Handler, userID, serverID string, cache *status.Cache) {
 	t.Helper()
 	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
-	conn := db.NewBunConnection(log, "sqlite://"+filepath.Join(t.TempDir(), "test.sqlite"))
+	// SQLite on purpose: the ids below ("srv-1") are not UUIDs.
+	conn, err := db.Open(log, "sqlite://"+filepath.Join(t.TempDir(), "test.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { _ = conn.Shutdown() })
-
-	userRepo := repository.NewDbUserRepository(conn, log)
-	serverRepo := repository.NewDbServerRepository(conn, log)
+	userRepo, err := userrepo.New(conn.Tx, conn.Driver, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverRepo, err := serverrepo.New(conn.Tx, conn.Driver, log)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	ctx := context.Background()
 	u, err := userRepo.FindOrCreateUser(ctx, dto.UserDTO{Name: "Alice", Provider: "google", AccountID: "g1"})

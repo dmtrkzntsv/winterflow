@@ -15,7 +15,8 @@ import (
 	"winterflow/internal/domain/dto"
 	"winterflow/internal/infra/bootstrap"
 	"winterflow/internal/infra/db"
-	"winterflow/internal/infra/db/models"
+	"winterflow/internal/infra/db/backend"
+	"winterflow/internal/infra/db/dbtest"
 	"winterflow/internal/infra/transport/bus"
 	membus "winterflow/internal/infra/transport/mem/bus"
 	"winterflow/pkg/config"
@@ -33,7 +34,7 @@ type env struct {
 	srv   *httptest.Server
 	bus   *membus.Bus
 	cfg   *config.ServerConfig
-	conn  *db.BunConnection
+	conn  *db.DB
 
 	mu       sync.Mutex
 	requests map[string]string // request_id -> "METHOD /path" that dispatched it
@@ -70,9 +71,14 @@ var testLog = logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Ser
 func newEnv(t *testing.T) *env {
 	t.Helper()
 	cfg := config.NewServerConfig("standalone")
-	conn := db.NewBunConnection(testLog, freshDB(t))
+	conn, err := db.Open(testLog, freshDB(t))
+	if err != nil {
+		t.Fatal(err)
+	}
 	// Parallel tests share one Postgres; keep each test's pool small.
-	conn.GetDB().SetMaxOpenConns(4)
+	if conn.Driver == backend.Postgres {
+		conn.SQL.SetMaxOpenConns(4)
+	}
 	t.Cleanup(func() { _ = conn.Shutdown() })
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -105,10 +111,7 @@ func newEnv(t *testing.T) *env {
 // an account created before roles were removed (stored role "member").
 func (e *env) setStoredRole(t *testing.T, userID, role string) {
 	t.Helper()
-	if _, err := e.conn.GetDB().NewUpdate().Model((*models.OrganizationUser)(nil)).
-		Set("role = ?", role).Where("user_id = ?", userID).Exec(e.ctx); err != nil {
-		t.Fatalf("set stored role: %v", err)
-	}
+	dbtest.Exec(t, e.conn, `UPDATE organization_users SET role = ? WHERE user_id = ?`, role, userID)
 }
 
 // seedPendingServer leaves one claimable registration, as BootstrapStandalone

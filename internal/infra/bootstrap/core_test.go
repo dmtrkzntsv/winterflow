@@ -26,7 +26,10 @@ func TestWireCoreWiresResponsePipeline(t *testing.T) {
 	defer cancel()
 
 	b := membus.NewBus(log)
-	conn := db.NewBunConnection(log, cfg.GetDbURL())
+	conn, err := db.Open(log, cfg.GetDbURL())
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { _ = conn.Shutdown() })
 
 	deps, serverRepo := WireCore(ctx, b, conn, cfg, log)
@@ -67,5 +70,12 @@ func TestWireCoreWiresResponsePipeline(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("response never reached the user channel")
+	}
+}
+
+func TestNewReposRejectsUnknownDriver(t *testing.T) {
+	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
+	if _, err := newRepos(&db.DB{Driver: "mysql"}, log); err == nil {
+		t.Fatal("unknown driver accepted")
 	}
 }

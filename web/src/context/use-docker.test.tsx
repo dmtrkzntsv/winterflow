@@ -141,6 +141,21 @@ describe("useDocker storage calls", () => {
     expect(sent[1].body).toEqual({ name: "disk", type: "local", local: { path: "/mnt/usb" } });
   });
 
+  it("waits as long as the agent may take for a save or a test", async () => {
+    const { result } = renderHook(() => useDocker());
+    waitFor.mockResolvedValueOnce({ status: 0, payload: { storage: { name: "hetzner" } } });
+    await result.current.saveStorage({ ...s3Draft, secret: "" });
+    // storage.save may run up to 8 minutes (probe + redeploys).
+    expect(waitFor).toHaveBeenLastCalledWith("r1", 9 * 60_000);
+    waitFor.mockResolvedValueOnce({ status: 0, payload: { ok: true } });
+    await result.current.testStorage({ ...s3Draft, secret: "" });
+    expect(waitFor).toHaveBeenLastCalledWith("r1", 2 * 60_000);
+    // Everything else keeps the default.
+    waitFor.mockResolvedValueOnce({ status: 0, payload: { storages: [] } });
+    await result.current.listStorages();
+    expect(waitFor).toHaveBeenLastCalledWith("r1", undefined);
+  });
+
   it("lists and deletes storages", async () => {
     const { result } = renderHook(() => useDocker());
     waitFor.mockResolvedValueOnce({ status: 0, payload: { storages: null } });

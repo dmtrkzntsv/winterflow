@@ -90,6 +90,18 @@ export function storageBody(d: StorageDraft, secret: string) {
   };
 }
 
+// Length caps in UTF-8 bytes (Go's len), as model.storage.go: they keep a
+// storage's location inside the API index's VARCHAR(1024).
+const MAX_PATH_BYTES = 512;
+const MAX_ENDPOINT_BYTES = 255;
+const MAX_PREFIX_BYTES = 512;
+
+const byteLength = (s: string) => new TextEncoder().encode(s).length;
+
+// hasControl mirrors model.hasControl: a C0 control character or DEL.
+// eslint-disable-next-line no-control-regex
+const hasControl = (s: string) => /[\u0000-\u001f\u007f]/.test(s);
+
 const NAME_RE = /^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$/;
 const BUCKET_RE = /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/;
 
@@ -111,9 +123,11 @@ function privateHost(host: string): boolean {
 
 // endpointError mirrors model.validateEndpoint; "" means valid.
 export function endpointError(endpoint: string): string {
+  const normalized = endpoint.trim().replace(/\/+$/, "");
+  if (byteLength(normalized) > MAX_ENDPOINT_BYTES) return `The endpoint can be at most ${MAX_ENDPOINT_BYTES} bytes long.`;
   let u: URL;
   try {
-    u = new URL(endpoint.trim().replace(/\/+$/, ""));
+    u = new URL(normalized);
   } catch {
     return "Use a URL like https://s3.example.com.";
   }
@@ -135,17 +149,23 @@ export function draftError(d: StorageDraft, editing: boolean): string {
   if (d.type === "local") {
     const p = d.path.trim();
     if (!p.startsWith("/")) return "Use an absolute folder path, like /mnt/backup.";
+    if (hasControl(p)) return "The folder path cannot contain control characters (newline, tab, …).";
     if (/^\/+$/.test(p)) return "The folder cannot be / itself.";
+    if (byteLength(p) > MAX_PATH_BYTES) return `The folder path can be at most ${MAX_PATH_BYTES} bytes long.`;
     return "";
   }
   const endErr = endpointError(d.endpoint);
   if (endErr) return endErr;
   if (!BUCKET_RE.test(d.bucket.trim()) || d.bucket.includes("..")) return "Enter a valid bucket name.";
   const prefix = d.prefix.trim();
-  if (prefix.startsWith("/") || prefix.split("/").some((seg, i, all) => (seg === "" && i < all.length - 1) || seg === "." || seg === "..")) {
+  // The agent stores the prefix ending in "/": measure that form.
+  const storedPrefix = prefix && !prefix.endsWith("/") ? `${prefix}/` : prefix;
+  if (byteLength(storedPrefix) > MAX_PREFIX_BYTES || ["\\", "\u0000", "\r", "\n", "\t"].some((c) => prefix.includes(c)) || prefix.startsWith("/") || prefix.split("/").some((seg, i, all) => (seg === "" && i < all.length - 1) || seg === "." || seg === "..")) {
     return "Use folder names separated by /, like winterflow/.";
   }
-  if (!d.accessKeyId.trim() || /\s/.test(d.accessKeyId.trim())) return "Enter the access key.";
+  const keyId = d.accessKeyId.trim();
+  if (hasControl(keyId)) return "The access key cannot contain control characters (newline, tab, …).";
+  if (!keyId || keyId.includes(" ") || byteLength(keyId) > 128) return "Enter the access key.";
   if (!editing && !d.secret) return "Enter the secret key.";
   return "";
 }

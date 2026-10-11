@@ -63,6 +63,19 @@ function fakeDocker(over: Partial<Docker> = {}): Docker {
   } as unknown as Docker;
 }
 
+const draftFor = (name: string): StorageDraft => ({
+  name,
+  type: "local",
+  path: "",
+  endpoint: "",
+  region: "",
+  bucket: "",
+  prefix: "",
+  accessKeyId: "",
+  secret: "",
+  pathStyle: false,
+});
+
 function renderCard(docker: Docker) {
   const apps = {
     apps: [
@@ -194,7 +207,7 @@ describe("StoragesCard", () => {
     // Name and type are the storage's identity: shown, not offered.
     expect(within(dialog).queryByLabelText("Name")).not.toBeInTheDocument();
     expect(within(dialog).queryByRole("tab")).not.toBeInTheDocument();
-    expect(within(dialog).getByText("2 apps will be redeployed.")).toBeInTheDocument();
+    expect(within(dialog).getByText("Up to 2 running apps will be redeployed.")).toBeInTheDocument();
     expect(within(dialog).getByText("Leave empty to keep.")).toBeInTheDocument();
     expect(within(dialog).getByLabelText("Secret key")).toHaveValue("");
     expect(within(dialog).getByLabelText("Bucket")).toHaveValue("tenants");
@@ -223,6 +236,19 @@ describe("StoragesCard", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
+  it("counts one running app in the singular", async () => {
+    render(
+      <StorageDialog
+        docker={fakeDocker()}
+        open
+        edit={{ ...STORAGES[1], apps: ["a1"] }}
+        onOpenChange={() => {}}
+        onSaved={() => {}}
+      />,
+    );
+    expect(await screen.findByText("Up to 1 running app will be redeployed.")).toBeInTheDocument();
+  });
+
   it("wipes a typed secret when the dialog closes", async () => {
     const user = setupUser();
     const hetzner = STORAGES[0];
@@ -239,14 +265,104 @@ describe("StoragesCard", () => {
     expect(await screen.findByLabelText("Secret key")).toHaveValue("");
   });
 
+  it("lets a save that answers after the dialog was closed and reopened leave the new dialog alone", async () => {
+    const user = setupUser();
+    let finish: (v: ReturnType<typeof saved>) => void = () => {};
+    const docker = fakeDocker({
+      saveStorage: vi.fn(() => new Promise<ReturnType<typeof saved>>((resolve) => (finish = resolve))),
+    });
+    renderCard(docker);
+
+    await user.click(await screen.findByRole("button", { name: /Add storage/ }));
+    let dialog = await screen.findByRole("dialog");
+    await user.type(within(dialog).getByLabelText("Name"), "usb");
+    await user.type(within(dialog).getByLabelText("Folder"), "/mnt/usb2");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    expect(within(dialog).getByRole("button", { name: "Saving…" })).toBeDisabled();
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    // A new dialog, for another storage.
+    await user.click(screen.getByRole("button", { name: "Edit storage disk" }));
+    dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Edit storage")).toBeInTheDocument();
+
+    finish(saved({ ...draftFor("usb"), path: "/mnt/usb2" }));
+    // The save still lands in the list, reported as the add it was...
+    expect(await screen.findByText("usb")).toBeInTheDocument();
+    expect(toastSuccess).toHaveBeenCalledWith("Storage added", { description: undefined });
+    // ...but the dialog open now stays open.
+    expect(screen.getByRole("dialog")).toBe(dialog);
+    expect(within(dialog).getByText("Edit storage")).toBeInTheDocument();
+  });
+
+  it("does not close a reopened dialog (same instance) when an old save answers", async () => {
+    const user = setupUser();
+    let finish: (v: ReturnType<typeof saved>) => void = () => {};
+    const docker = fakeDocker({
+      saveStorage: vi.fn(() => new Promise<ReturnType<typeof saved>>((resolve) => (finish = resolve))),
+    });
+    const onOpenChange = vi.fn();
+    const onSaved = vi.fn();
+    const dialog = (open: boolean) => (
+      <StorageDialog docker={docker} open={open} edit={STORAGES[1]} onOpenChange={onOpenChange} onSaved={onSaved} />
+    );
+    const { rerender } = render(dialog(true));
+    await user.click(await screen.findByRole("button", { name: "Save" }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onOpenChange).toHaveBeenCalledTimes(1);
+    rerender(dialog(false));
+    rerender(dialog(true));
+
+    finish(saved(draftFor("disk")));
+    await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
+    expect(onOpenChange).toHaveBeenCalledTimes(1);
+  });
+
+  it("never lets an older test result overwrite a newer one", async () => {
+    const user = setupUser();
+    const answers: ((v: { ok: boolean; error?: string }) => void)[] = [];
+    const docker = fakeDocker({
+      testStorage: vi.fn(() => new Promise<{ ok: boolean; error?: string }>((resolve) => answers.push(resolve))),
+    });
+    renderCard(docker);
+
+    await user.click(await screen.findByRole("button", { name: "Edit storage disk" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Test connection" }));
+    // Editing a field makes the running test stale; test again.
+    await user.clear(within(dialog).getByLabelText("Folder"));
+    await user.type(within(dialog).getByLabelText("Folder"), "/mnt/usb3");
+    await user.click(within(dialog).getByRole("button", { name: "Test connection" }));
+    expect(answers).toHaveLength(2);
+
+    answers[1]({ ok: true });
+    expect(await within(dialog).findByText("Connection works")).toBeInTheDocument();
+    answers[0]({ ok: false, error: "the folder /mnt/usb does not exist" });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(within(dialog).queryByText("the folder /mnt/usb does not exist")).not.toBeInTheDocument();
+    expect(within(dialog).getByText("Connection works")).toBeInTheDocument();
+  });
+
   it("blocks removing a storage in use and confirms otherwise", async () => {
     const user = setupUser();
     const docker = fakeDocker();
     renderCard(docker);
 
     const inUse = await screen.findByRole("button", { name: "Remove storage hetzner" });
-    expect(inUse).toBeDisabled();
-    expect(inUse.parentElement).toHaveAttribute("title", "Used by 2 apps: remove its WF_STORAGE_ variables first");
+    expect(inUse).toHaveAttribute("aria-disabled", "true");
+    expect(inUse).toHaveAttribute("title", "Used by 2 apps: remove its WF_STORAGE_ variables first");
+    // The reason reaches keyboard and screen reader users too: the button
+    // stays focusable and describes itself.
+    expect(inUse).toHaveAccessibleDescription("Used by 2 apps: remove its WF_STORAGE_ variables first");
+    inUse.focus();
+    expect(inUse).toHaveFocus();
+    await user.click(inUse);
+    await user.keyboard("{Enter}");
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    const free = screen.getByRole("button", { name: "Remove storage disk" });
+    expect(free).not.toHaveAttribute("aria-disabled");
+    expect(free).not.toHaveAttribute("aria-describedby");
 
     await user.click(screen.getByRole("button", { name: "Remove storage disk" }));
     const confirm = await screen.findByRole("alertdialog");

@@ -174,6 +174,11 @@ export function StoragesCard({ docker }: { docker: Docker }) {
             <TableBody>
               {items.map((s) => {
                 const used = s.apps ?? [];
+                // Why the storage can't be removed (null: it can).
+                const blocked =
+                  used.length > 0
+                    ? `Used by ${used.length === 1 ? "1 app" : `${used.length} apps`}: remove its WF_STORAGE_ variables first`
+                    : null;
                 return (
                   <TableRow key={s.name}>
                     <TableCell>
@@ -211,27 +216,28 @@ export function StoragesCard({ docker }: { docker: Docker }) {
                       >
                         <Pencil className="size-4" />
                       </Button>
-                      {/* A disabled button gets no hover events: the
-                          tooltip sits on a wrapper. */}
-                      <span
-                        className="inline-block"
-                        title={
-                          used.length > 0
-                            ? `Used by ${used.length === 1 ? "1 app" : `${used.length} apps`}: remove its WF_STORAGE_ variables first`
-                            : "Remove storage"
-                        }
+                      {/* In use: aria-disabled rather than disabled, so the
+                          button keeps hover (title) and focus, and keyboard
+                          and screen reader users hear why (aria-describedby). */}
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="size-8 text-muted-foreground hover:text-destructive aria-disabled:cursor-not-allowed aria-disabled:opacity-50 aria-disabled:hover:text-muted-foreground"
+                        aria-label={`Remove storage ${s.name}`}
+                        aria-disabled={blocked ? true : undefined}
+                        aria-describedby={blocked ? `storage-in-use-${s.name}` : undefined}
+                        title={blocked ?? "Remove storage"}
+                        onClick={() => {
+                          if (!blocked) setToDelete(s);
+                        }}
                       >
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="size-8 text-muted-foreground hover:text-destructive"
-                          aria-label={`Remove storage ${s.name}`}
-                          disabled={used.length > 0}
-                          onClick={() => setToDelete(s)}
-                        >
-                          <Trash2 className="size-4" />
-                        </Button>
-                      </span>
+                        <Trash2 className="size-4" />
+                      </Button>
+                      {blocked ? (
+                        <span id={`storage-in-use-${s.name}`} className="sr-only">
+                          {blocked}
+                        </span>
+                      ) : null}
                     </TableCell>
                   </TableRow>
                 );

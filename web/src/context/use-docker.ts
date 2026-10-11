@@ -41,6 +41,13 @@ export type DomainCreated = { domain: Domain; warnings: string[] };
 
 type Accepted = { data?: { request_id?: string } };
 
+// How long to wait for a storage command's result. storage.save may run up
+// to 8 minutes on the agent (the probe, docker ps, then redeploys of the
+// apps using the storage); storage.test up to 30 seconds. Waiting less
+// reports "Timed out" for a save that then succeeds.
+export const STORAGE_SAVE_TIMEOUT_MS = 9 * 60_000;
+export const STORAGE_TEST_TIMEOUT_MS = 2 * 60_000;
+
 // useDocker exposes registry/network/volume operations. Each dispatches an agent
 // command and awaits its SSE result (the agent's Docker daemon is the source of
 // truth, so even list reads round-trip).
@@ -50,11 +57,12 @@ export function useDocker() {
 
   const serverId = activeServerId;
 
-  // dispatch sends a request, awaits its SSE result, and returns the payload.
+  // dispatch sends a request, awaits its SSE result (for timeoutMs, else the
+  // notifications default), and returns the payload.
   const dispatch = useCallback(
     async <T>(
       path: string,
-      opts: { method?: string; body?: unknown; query?: boolean },
+      opts: { method?: string; body?: unknown; query?: boolean; timeoutMs?: number },
     ): Promise<T> => {
       if (!serverId) throw new Error("No active server");
       const sep = path.includes("?") ? "&" : "?";
@@ -70,7 +78,7 @@ export function useDocker() {
       const accepted = (await res.json()) as Accepted;
       const ref = accepted.data?.request_id;
       if (!ref) throw new Error("No request id");
-      const result = await waitFor(ref);
+      const result = await waitFor(ref, opts.timeoutMs);
       if (result.status && result.status !== 0) {
         throw new Error(result.error || "Operation failed");
       }
@@ -239,6 +247,7 @@ export function useDocker() {
       dispatch<StorageTest>("/api/v1/storage/test", {
         method: "POST",
         body: await storageRequest(draft),
+        timeoutMs: STORAGE_TEST_TIMEOUT_MS,
       }),
     [dispatch, storageRequest],
   );
@@ -251,7 +260,11 @@ export function useDocker() {
         storage: Storage;
         redeployed?: string[] | null;
         warnings?: string[] | null;
-      }>("/api/v1/storage/save", { method: "POST", body: await storageRequest(draft) });
+      }>("/api/v1/storage/save", {
+        method: "POST",
+        body: await storageRequest(draft),
+        timeoutMs: STORAGE_SAVE_TIMEOUT_MS,
+      });
       return { storage: res.storage, redeployed: res.redeployed ?? [], warnings: res.warnings ?? [] };
     },
     [dispatch, storageRequest],

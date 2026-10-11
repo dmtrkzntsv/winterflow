@@ -102,6 +102,29 @@ describe("storages", () => {
     expect(draftError({ ...ok, secret: "" }, true)).toBe("");
   });
 
+  it("caps lengths in bytes like the agent", () => {
+    // 512 bytes is the cap of a folder path, counted in UTF-8 like Go's len.
+    expect(draftError(draft({ path: "/" + "a".repeat(511) }), false)).toBe("");
+    expect(draftError(draft({ path: "/" + "a".repeat(512) }), false)).toMatch(/at most 512 bytes/);
+    expect(draftError(draft({ path: "/" + "é".repeat(256) }), false)).toMatch(/at most 512 bytes/);
+    const ok = { ...draftFrom(s3), secret: "s3cret" };
+    const host = (n: number) => `https://${"a".repeat(n - 12)}.com`;
+    expect(draftError({ ...ok, endpoint: host(255) }, false)).toBe("");
+    expect(draftError({ ...ok, endpoint: `${host(255)}/` }, false)).toBe("");
+    expect(draftError({ ...ok, endpoint: host(256) }, false)).toMatch(/at most 255 bytes/);
+    expect(draftError({ ...ok, prefix: "p/".repeat(256) }, false)).toBe("");
+    expect(draftError({ ...ok, prefix: "p/".repeat(256) + "x" }, false)).toMatch(/folder names/);
+    // 512 as typed, 513 once the agent adds the trailing "/".
+    expect(draftError({ ...ok, prefix: "p/".repeat(255) + "pp" }, false)).toMatch(/folder names/);
+  });
+
+  it("refuses control characters like the agent", () => {
+    for (const c of ["\u0000", "\n", "\t", "\u001b", "\u007f"]) {
+      expect(draftError(draft({ path: `/mnt/a${c}b` }), false)).toMatch(/control characters/);
+      expect(draftError({ ...draftFrom(s3), secret: "s3cret", accessKeyId: `AK${c}IA` }, false)).toMatch(/control characters/);
+    }
+  });
+
   it("names compose variables like the agent", () => {
     expect(storageVar("backup-disk", "PATH")).toBe("WF_STORAGE_BACKUP_DISK_PATH");
   });

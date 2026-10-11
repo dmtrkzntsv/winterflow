@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CircleCheck, CircleX } from "lucide-react";
 import { toast } from "sonner";
 
@@ -51,36 +51,60 @@ export function StorageDialog({
   const [probe, setProbe] = useState<Probe>({ state: "idle" });
   const [busy, setBusy] = useState(false);
 
+  // Answers can arrive after the dialog moved on. A save may run for
+  // minutes: when it answers after this dialog closed (or unmounted, the
+  // parent remounting a new one), it still reports the save but must not
+  // close whatever dialog is open now. A test answer counts only while no
+  // newer test or edit superseded it.
+  const mounted = useRef(true);
+  const session = useRef(0); // bumped on every close
+  const probeSeq = useRef(0); // bumped on every test start, edit and close
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
   const editing = edit !== null;
   const error = draftError(draft, editing);
   const users = edit?.apps?.length ?? 0;
 
   // Any change makes the last test result stale.
   const set = (patch: Partial<StorageDraft>) => {
+    probeSeq.current++;
     setDraft((d) => ({ ...d, ...patch }));
     setProbe({ state: "idle" });
   };
 
   const changeOpen = (next: boolean) => {
-    if (!next) setDraft((d) => ({ ...d, secret: "" }));
+    if (!next) {
+      session.current++;
+      probeSeq.current++;
+      setDraft((d) => ({ ...d, secret: "" }));
+      setProbe({ state: "idle" });
+    }
     onOpenChange(next);
   };
 
   const test = async () => {
+    const seq = ++probeSeq.current;
+    const current = () => mounted.current && seq === probeSeq.current;
     setProbe({ state: "testing" });
     try {
       const res = await docker.testStorage(draft);
-      setProbe(res.ok ? { state: "ok" } : { state: "failed", error: res.error || "The test failed." });
+      if (current()) setProbe(res.ok ? { state: "ok" } : { state: "failed", error: res.error || "The test failed." });
     } catch (e) {
-      setProbe({ state: "failed", error: e instanceof Error ? e.message : "The test failed." });
+      if (current()) setProbe({ state: "failed", error: e instanceof Error ? e.message : "The test failed." });
     }
   };
 
   const save = async () => {
+    const opened = session.current;
     setBusy(true);
     try {
       const saved = await docker.saveStorage(draft);
-      changeOpen(false);
+      if (mounted.current && opened === session.current) changeOpen(false);
       onSaved(saved);
     } catch (e) {
       toast.error(editing ? "Couldn't save storage" : "Couldn't add storage", {
@@ -199,7 +223,7 @@ export function StorageDialog({
 
           {editing && users > 0 ? (
             <p className="rounded-md bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">
-              {users === 1 ? "1 app" : `${users} apps`} will be redeployed.
+              Up to {users === 1 ? "1 running app" : `${users} running apps`} will be redeployed.
             </p>
           ) : null}
 

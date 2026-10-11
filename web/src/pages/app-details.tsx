@@ -180,7 +180,7 @@ export default function AppDetailsPage() {
       <AppMetricBlocks serverId={app.serverId} appId={app.id} />
 
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="h-auto w-full justify-start gap-6 rounded-none border-b bg-transparent p-0">
+        <TabsList className="h-auto w-full justify-start gap-6 overflow-x-auto overflow-y-hidden rounded-none border-b bg-transparent p-0">
           <TabsTrigger value="logs" className={tabTriggerClass}>
             Logs
           </TabsTrigger>

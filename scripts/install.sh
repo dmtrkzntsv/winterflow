@@ -626,7 +626,8 @@ EOF
                 warn "install node+pnpm and rerun, or copy a built web/dist here first"
             fi
             log "Building standalone binary from ${repo_root}"
-            (cd "$repo_root" && go build -o bin/standalone ./cmd/standalone)
+            # CGO off: the backup helper runs this binary inside alpine (no glibc).
+            (cd "$repo_root" && CGO_ENABLED=0 go build -o bin/standalone ./cmd/standalone)
             BINARY_SRC="${repo_root}/bin/standalone"
         fi
     fi

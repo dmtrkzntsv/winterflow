@@ -3,6 +3,7 @@ package dockercompose
 import (
 	"context"
 	"crypto/sha256"
+	"debug/elf"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -130,15 +131,15 @@ func (r *Repository) RunBackup(ctx context.Context, job BackupJob) (BackupResult
 			since = m.Fingerprint
 		}
 	}
+	exe, err := r.helperBinary()
+	if err != nil {
+		return BackupResult{}, fmt.Errorf("find the agent executable: %w", err)
+	}
 	if err := r.ensureHelperImage(ctx); err != nil {
 		return BackupResult{}, err
 	}
 	if err := r.checkHelperVolumes(ctx, plan); err != nil {
 		return BackupResult{}, err
-	}
-	exe, err := r.helperBinary()
-	if err != nil {
-		return BackupResult{}, fmt.Errorf("find the agent executable: %w", err)
 	}
 	id := layout.PointID(now, job.Kind)
 	name := "wf-backup-" + strconv.FormatInt(now.UnixNano(), 36)
@@ -605,12 +606,49 @@ func (r *Repository) RemoveHelpers(ctx context.Context) error {
 	return nil
 }
 
+// errNotStatic is why backups can't run from a dynamically linked binary.
+var errNotStatic = errors.New("this winterflow binary is not static (build with CGO_ENABLED=0): backups need it")
+
+// staticVerdict caches the one-time check of the running executable.
+var staticVerdict struct {
+	once sync.Once
+	exe  string
+	err  error
+}
+
 // agentExecutable is the binary the helper runs: this process's own,
-// symlinks resolved.
+// symlinks resolved. The helper runs it inside alpine (no glibc loader), so
+// it must be statically linked; the check runs once per process.
 func agentExecutable() (string, error) {
-	exe, err := os.Executable()
+	staticVerdict.once.Do(func() {
+		exe, err := os.Executable()
+		if err == nil {
+			exe, err = filepath.EvalSymlinks(exe)
+		}
+		if err == nil {
+			err = checkStatic(exe)
+		}
+		staticVerdict.exe, staticVerdict.err = exe, err
+	})
+	return staticVerdict.exe, staticVerdict.err
+}
+
+// checkStatic refuses an executable that is not a static ELF: one with a
+// program interpreter (PT_INTERP) can't start in the helper image.
+func checkStatic(path string) error {
+	f, err := elf.Open(path)
 	if err != nil {
-		return "", err
+		var fe *elf.FormatError
+		if errors.As(err, &fe) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			return fmt.Errorf("%s is not a Linux executable: backups need a Linux build", path)
+		}
+		return err
 	}
-	return filepath.EvalSymlinks(exe)
+	defer f.Close()
+	for _, p := range f.Progs {
+		if p.Type == elf.PT_INTERP {
+			return errNotStatic
+		}
+	}
+	return nil
 }

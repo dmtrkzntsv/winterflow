@@ -85,7 +85,7 @@ func TestOrgMemberRoutesRefuseOtherOrgUsers(t *testing.T) {
 	owner := e.claim(t)
 
 	const otherEmail, otherPassword = "mallory@other.test", "password"
-	other, err := e.deps.UserService.RegisterLocalUser(e.ctx, "Mallory", otherEmail, otherPassword)
+	other, err := e.deps.UserService.RegisterLocalUser(e.dbCtx(t), "Mallory", otherEmail, otherPassword)
 	if err != nil {
 		t.Fatal(err)
 	}

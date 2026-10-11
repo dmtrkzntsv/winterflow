@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +14,7 @@ import (
 	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/service/status"
 	"winterflow/internal/infra/db"
+	"winterflow/internal/infra/db/dbtest"
 	serverrepo "winterflow/internal/infra/db/repository/server"
 	userrepo "winterflow/internal/infra/db/repository/user"
 	"winterflow/pkg/config"
@@ -41,7 +41,7 @@ func newEnv(t *testing.T) (h *Handler, userID, serverID string, cache *status.Ca
 		t.Fatal(err)
 	}
 
-	ctx := context.Background()
+	ctx := dbtest.Ctx(t)
 	u, err := userRepo.FindOrCreateUser(ctx, dto.UserDTO{Name: "Alice", Provider: "google", AccountID: "g1"})
 	if err != nil {
 		t.Fatal(err)
@@ -83,14 +83,18 @@ func newEnv(t *testing.T) (h *Handler, userID, serverID string, cache *status.Ca
 	return h, u.ID, srv.ID, cache
 }
 
-func authedAs(r *http.Request, userID string) *http.Request {
+// authedAs authenticates r as userID and bounds its context (the handlers
+// reach the single-connection SQLite pool) with a 30 s deadline.
+func authedAs(t *testing.T, r *http.Request, userID string) *http.Request {
+	t.Helper()
+	r = r.WithContext(dbtest.Ctx(t))
 	return token.SetUserInfo(r, token.User{ID: "p_" + userID, Attributes: map[string]any{"user_id": userID}})
 }
 
 func TestGetServersReturnsClaimedServerWithCapabilities(t *testing.T) {
 	h, userID, serverID, _ := newEnv(t)
 
-	r := authedAs(httptest.NewRequest("GET", "/api/v1/server/get-servers", nil), userID)
+	r := authedAs(t, httptest.NewRequest("GET", "/api/v1/server/get-servers", nil), userID)
 	w := httptest.NewRecorder()
 	h.GetServers(w, r)
 	if w.Code != http.StatusOK {
@@ -117,7 +121,7 @@ func TestGetServersStatusReflectsCache(t *testing.T) {
 	h, userID, serverID, cache := newEnv(t)
 
 	get := func() map[string]string {
-		r := authedAs(httptest.NewRequest("GET", "/api/v1/server/get-servers-status", nil), userID)
+		r := authedAs(t, httptest.NewRequest("GET", "/api/v1/server/get-servers-status", nil), userID)
 		w := httptest.NewRecorder()
 		h.GetServersStatus(w, r)
 		if w.Code != http.StatusOK {
@@ -153,7 +157,7 @@ func TestGetServersStatusReflectsCache(t *testing.T) {
 func TestGetServersRequiresAuth(t *testing.T) {
 	h, _, _, _ := newEnv(t)
 	w := httptest.NewRecorder()
-	h.GetServers(w, httptest.NewRequest("GET", "/x", nil))
+	h.GetServers(w, httptest.NewRequest("GET", "/x", nil).WithContext(dbtest.Ctx(t)))
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated must be 401, got %d", w.Code)
 	}

@@ -107,6 +107,7 @@ func TestAppDomainsUUIDMigrationSurvivesJunkRows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer rows.Close()
 	var domains []string
 	for rows.Next() {
 		var d string
@@ -115,7 +116,9 @@ func TestAppDomainsUUIDMigrationSurvivesJunkRows(t *testing.T) {
 		}
 		domains = append(domains, d)
 	}
-	rows.Close()
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
 	if strings.Join(domains, ",") != "keep.test" {
 		t.Fatalf("rows after migration = %v, want only keep.test", domains)
 	}

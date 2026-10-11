@@ -33,7 +33,7 @@ func TestServerRoutes(t *testing.T) {
 	t.Run("public key comes from the capability", func(t *testing.T) {
 		q := url.Values{"server_id": {sid}}
 		owner.get(t, "/api/v1/server/get-public-key", q).expect(t, http.StatusBadRequest)
-		if err := e.deps.ServerRepository.SaveCapabilities(e.ctx, sid, map[string]string{"public_key": "BASE64POINT"}, nil); err != nil {
+		if err := e.deps.ServerRepository.SaveCapabilities(e.dbCtx(t), sid, map[string]string{"public_key": "BASE64POINT"}, nil); err != nil {
 			t.Fatal(err)
 		}
 		var pk server.PublicKeyResponse

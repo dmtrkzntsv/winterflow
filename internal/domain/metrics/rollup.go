@@ -14,9 +14,14 @@ type Bucket struct {
 	Data    Values
 }
 
+// UnavailableField is the app flag set when container metrics cannot be
+// read on the host. Rollup averages it over every row (absent = 0), so a
+// rolled-up value is the flagged fraction of the bucket.
+const UnavailableField = "unavailable"
+
 // Rollup merges the rows of one target that fall into the destination bucket
 // starting at start. Every field gets its average weighted by the rows'
-// sample counts (over the rows that carry the field) and field+"_max": the
+// sample counts (over the rows that carry the field; UnavailableField over all rows) and field+"_max": the
 // largest of the rows' peaks, where a row without a peak (tier 1) counts its
 // value. Samples is the sum of the rows' counts.
 func Rollup(start time.Time, rows []Bucket) Bucket {
@@ -49,6 +54,9 @@ func Rollup(start time.Time, rows []Bucket) Bucket {
 	}
 	out := Values{}
 	for k, a := range accs {
+		if k == UnavailableField {
+			a.weight = float64(total) // a flag: absent means 0
+		}
 		out.put(k, a.sum/a.weight)
 		out.put(k+MaxSuffix, a.max)
 	}

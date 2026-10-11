@@ -26,9 +26,18 @@ func (h *fakeHost) Collect(time.Time) metrics.ServerSample {
 }
 
 type fakeContainers struct {
-	mu    sync.Mutex
-	stats map[string]sysmetrics.ContainerStat
-	asked [][]string
+	mu       sync.Mutex
+	stats    map[string]sysmetrics.ContainerStat
+	asked    [][]string
+	noLayout bool // the host has no known cgroup layout
+	probes   int
+}
+
+func (c *fakeContainers) LayoutKnown() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.probes++
+	return !c.noLayout
 }
 
 func (c *fakeContainers) Collect(_ time.Time, ids []string) map[string]sysmetrics.ContainerStat {
@@ -64,7 +73,7 @@ func TestBuildSampleSumsContainersPerApp(t *testing.T) {
 		Docker: metrics.DockerDF{Images: 9},
 		Apps:   map[string]metrics.AppDisk{"web": {Disk: 300, Image: 40}},
 	}
-	s := buildSample(time.Unix(1000, 0), metrics.ServerSample{}, apps, stats, scan)
+	s := buildSample(time.Unix(1000, 0), metrics.ServerSample{}, apps, stats, func() bool { return false }, scan)
 	if s.TS != 1000 || s.Server.DockerDF == nil || s.Server.DockerDF.Images != 9 {
 		t.Fatalf("sample = %+v", s)
 	}
@@ -92,9 +101,61 @@ func TestBuildSampleSumsContainersPerApp(t *testing.T) {
 }
 
 func TestBuildSampleWithoutScan(t *testing.T) {
-	s := buildSample(time.Unix(1, 0), metrics.ServerSample{}, []command.AppStatus{{AppID: "a"}}, nil, nil)
+	s := buildSample(time.Unix(1, 0), metrics.ServerSample{}, []command.AppStatus{{AppID: "a"}}, nil, nil, nil)
 	if s.Server.DockerDF != nil || s.Apps[0].Disk != nil {
 		t.Fatalf("no scan yet must mean no disk fields: %+v", s)
+	}
+}
+
+// A redeploy leaves the status snapshot holding container ids whose cgroups
+// are gone; on a host whose layout is known that is "not running this
+// tick", not "unavailable on this host".
+func TestBuildSampleStaleContainerIDsAreNotUnavailable(t *testing.T) {
+	apps := []command.AppStatus{
+		{AppID: "redeployed", Containers: []command.ContainerStatus{ctr("old1", command.ContainerStatusActive)}},
+		{AppID: "crashloop", Containers: []command.ContainerStatus{ctr("r1", command.ContainerStatusRestarting)}},
+		{AppID: "ok", Containers: []command.ContainerStatus{ctr("k1", command.ContainerStatusActive), ctr("old2", command.ContainerStatusActive)}},
+	}
+	stats := map[string]sysmetrics.ContainerStat{"k1": {MemUsed: 7, MemLimit: fp(10)}}
+	probes := 0
+	known := func() bool { probes++; return true }
+	s := buildSample(time.Unix(1, 0), metrics.ServerSample{}, apps, stats, known, nil)
+	by := map[string]metrics.AppSample{}
+	for _, a := range s.Apps {
+		by[a.AppID] = a
+	}
+	for _, id := range []string{"redeployed", "crashloop"} {
+		if a := by[id]; a.ContainersUnavailable || a.MemUsed != nil || a.CPU != nil {
+			t.Fatalf("%s = %+v, want no flag and no container fields", id, a)
+		}
+	}
+	ok := by["ok"]
+	if ok.ContainersUnavailable || ok.MemUsed == nil || *ok.MemUsed != 7 || ok.MemLimit == nil || *ok.MemLimit != 10 {
+		t.Fatalf("ok = %+v (the unresolved stale id must not count)", ok)
+	}
+	if probes == 0 {
+		t.Fatal("layout never probed")
+	}
+	if buildSample(time.Unix(1, 0), metrics.ServerSample{}, apps[2:], stats, func() bool { t.Fatal("probed with every app resolved"); return false }, nil).Apps[0].MemUsed == nil {
+		t.Fatal("resolved app lost its fields")
+	}
+}
+
+func TestMetricsReporterFlagsOnlyUnknownLayouts(t *testing.T) {
+	snap := NewStatusSnapshot(&fakeStatus{apps: []command.AppStatus{{AppID: "a", Containers: []command.ContainerStatus{
+		ctr("c1", command.ContainerStatusActive),
+	}}}})
+	if _, err := snap.GetAppsStatus(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	cs := &fakeContainers{}
+	m := NewMetricsReporter(&fakeHost{}, cs, snap)
+	if m.Sample(time.Unix(1, 0)).Apps[0].ContainersUnavailable {
+		t.Fatal("known layout flagged unavailable")
+	}
+	cs.noLayout = true
+	if !m.Sample(time.Unix(2, 0)).Apps[0].ContainersUnavailable {
+		t.Fatal("unknown layout not flagged")
 	}
 }
 

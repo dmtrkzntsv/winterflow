@@ -1,6 +1,8 @@
 package sysmetrics
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -138,5 +140,39 @@ func TestContainersUnknownLayoutAndPruning(t *testing.T) {
 	c.Collect(time.Unix(1060, 0), nil)
 	if len(c.prev) != 0 {
 		t.Fatalf("delta state kept for vanished containers: %v", c.prev)
+	}
+}
+
+func TestContainersLayoutKnown(t *testing.T) {
+	for name, files := range map[string]map[string]string{
+		"v2 systemd":     {"sys/fs/cgroup/system.slice/docker-" + ctrB + ".scope/": ""},
+		"v2 cgroupfs":    {"sys/fs/cgroup/docker/": ""},
+		"v1 cgroupfs":    {"sys/fs/cgroup/memory/docker/": ""},
+		"v1 systemd":     {"sys/fs/cgroup/memory/system.slice/docker-" + ctrB + ".scope/": ""},
+		"unknown layout": {"sys/fs/cgroup/system.slice/ssh.service/": "", "sys/fs/cgroup/kubepods/": ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := NewContainers(tree(t, files), 1)
+			if got, want := c.LayoutKnown(), name != "unknown layout"; got != want {
+				t.Fatalf("LayoutKnown = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
+// Once a container resolved, the layout stays known even when every id of a
+// tick is stale (a redeploy replaced them all), without probing again.
+func TestContainersLayoutKnownStaysKnownAfterAResolve(t *testing.T) {
+	root := tree(t, v2Systemd("1", "1", "1"))
+	c := NewContainers(root, 1)
+	c.Collect(time.Unix(1000, 0), []string{ctrA})
+	if err := os.RemoveAll(filepath.Join(root, "sys")); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Collect(time.Unix(1060, 0), []string{ctrA}); len(got) != 0 {
+		t.Fatalf("vanished cgroup read: %v", got)
+	}
+	if !c.LayoutKnown() {
+		t.Fatal("layout forgotten after a successful resolve")
 	}
 }

@@ -57,8 +57,11 @@ type HostCollector interface {
 }
 
 // ContainerCollector reads per-container usage (sysmetrics.Containers).
+// LayoutKnown reports whether the host has a cgroup layout container
+// metrics can be read from at all.
 type ContainerCollector interface {
 	Collect(now time.Time, ids []string) map[string]sysmetrics.ContainerStat
+	LayoutKnown() bool
 }
 
 // DiskScanner measures disk usage (the Docker Compose orchestrator).
@@ -113,14 +116,18 @@ func (m *MetricsReporter) Sample(now time.Time) metrics.Sample {
 	}
 	host := m.host.Collect(now)
 	stats := m.containers.Collect(now, ids)
-	return buildSample(now, host, apps, stats, m.diskScan())
+	return buildSample(now, host, apps, stats, m.containers.LayoutKnown, m.diskScan())
 }
 
 // buildSample sums container stats per app and attaches the disk scan.
-// An app whose running containers all failed to resolve is flagged
-// containers_unavailable; mem_limit is summed only when every running
+// A running container whose cgroup did not resolve is skipped for the tick:
+// the status snapshot is up to 30 s old, so after a redeploy it still holds
+// the replaced containers, and a crash-looping one has no cgroup between
+// attempts. Only when the host has no known cgroup layout at all
+// (layoutKnown, probed lazily) is an app with nothing resolved flagged
+// containers_unavailable. mem_limit is summed only when every resolved
 // container has one; rate fields stay nil when no container has a rate.
-func buildSample(now time.Time, host metrics.ServerSample, apps []command.AppStatus, stats map[string]sysmetrics.ContainerStat, scan *metrics.DiskScan) metrics.Sample {
+func buildSample(now time.Time, host metrics.ServerSample, apps []command.AppStatus, stats map[string]sysmetrics.ContainerStat, layoutKnown func() bool, scan *metrics.DiskScan) metrics.Sample {
 	if scan != nil {
 		df := scan.Docker
 		host.DockerDF = &df
@@ -158,10 +165,10 @@ func buildSample(now time.Time, host metrics.ServerSample, apps []command.AppSta
 		}
 		switch {
 		case live > 0 && resolved == 0:
-			s.ContainersUnavailable = true
+			s.ContainersUnavailable = layoutKnown != nil && !layoutKnown()
 		case resolved > 0:
 			s.MemUsed = &mem
-			if limited == live {
+			if limited == resolved {
 				s.MemLimit = &limit
 			}
 			if haveCPU {

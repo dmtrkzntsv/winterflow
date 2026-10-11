@@ -146,6 +146,25 @@ func TestRollupFromTier1UsesValuesAsPeaksAndSkipsMissingFields(t *testing.T) {
 	}
 }
 
+// unavailable is a flag absent from healthy rows: it averages over every row
+// of the bucket (absent = 0), so one flagged minute out of 20 is 0.05, not 1.
+func TestRollupAveragesTheUnavailableFlagOverAllRows(t *testing.T) {
+	start := time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)
+	rows := []Bucket{{Start: start, Samples: 1, Data: Values{"unavailable": 1}}}
+	for i := 1; i < 20; i++ {
+		rows = append(rows, Bucket{Start: start.Add(time.Duration(i) * time.Minute), Samples: 1, Data: Values{"mem_used": 5}})
+	}
+	b := Rollup(start, rows)
+	if b.Data[UnavailableField] != 0.05 || b.Data[UnavailableField+MaxSuffix] != 1 {
+		t.Fatalf("unavailable = %v max = %v", b.Data[UnavailableField], b.Data[UnavailableField+MaxSuffix])
+	}
+	// Rolling the rollup up again keeps the fraction.
+	again := Rollup(start, []Bucket{b, {Start: start.Add(20 * time.Minute), Samples: 20, Data: Values{"mem_used": 5}}})
+	if math.Abs(again.Data[UnavailableField]-0.025) > 1e-9 {
+		t.Fatalf("re-rolled unavailable = %v", again.Data[UnavailableField])
+	}
+}
+
 func TestRollupIsIdempotentOverItsOwnOutput(t *testing.T) {
 	start := time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)
 	once := Rollup(start, []Bucket{{Start: start, Samples: 4, Data: Values{"cpu": 10, "cpu_max": 12}}})

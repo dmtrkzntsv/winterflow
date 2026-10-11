@@ -50,6 +50,7 @@ type Containers struct {
 	root string
 	ncpu int
 	prev map[string]*containerPrev
+	seen bool // some container resolved once: the layout is known
 }
 
 // NewContainers reads cgroupfs and procfs under root; ncpu turns cgroup CPU
@@ -96,6 +97,26 @@ func (c *Containers) resolve(id string) (cgroupLayout, bool) {
 	return cgroupLayout{}, false
 }
 
+// LayoutKnown reports whether container cgroups can be found on this host:
+// true once any container resolved, otherwise when a Docker cgroup parent of
+// a known layout exists (resolve's four places). False means container
+// metrics are unavailable here, as opposed to one container's cgroup being
+// gone this tick (replaced by a redeploy, or between crash-loop attempts).
+func (c *Containers) LayoutKnown() bool {
+	if c.seen {
+		return true
+	}
+	for _, base := range [][]string{{}, {"memory"}} {
+		if exists(c.cg(append(base, "docker")...)) {
+			return true
+		}
+		if m, _ := filepath.Glob(c.cg(append(base, "system.slice", "docker-*.scope")...)); len(m) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // Collect reads every container in ids. The result holds only the ids whose
 // cgroup was found; a container missing from it (stopped, or an unknown
 // layout) contributes nothing. Delta state of ids not passed is dropped.
@@ -113,6 +134,7 @@ func (c *Containers) Collect(now time.Time, ids []string) map[string]ContainerSt
 			}
 			p = &containerPrev{layout: layout}
 			c.prev[id] = p
+			c.seen = true
 		}
 		st, ok := c.read(now, p)
 		if ok {

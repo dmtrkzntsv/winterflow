@@ -163,7 +163,7 @@ func (a AppSample) Values() Values {
 	v.putPtr("disk", a.Disk)
 	v.putPtr("image", a.Image)
 	if a.ContainersUnavailable {
-		v["unavailable"] = 1
+		v[UnavailableField] = 1
 	}
 	return v
 }

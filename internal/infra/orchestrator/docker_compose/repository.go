@@ -58,6 +58,9 @@ type Repository struct {
 	// each entry's channel is closed when that restore ends.
 	restoreMu sync.Mutex
 	restores  map[string]chan struct{}
+	// ops counts the operations in flight per app (see beginOp): a restore
+	// does not begin while one runs.
+	ops map[string]int
 	// restoreWait bounds how long DeleteApp waits for a restore of its app
 	// to end (replaced in tests).
 	restoreWait time.Duration
@@ -151,5 +154,6 @@ func (r *Repository) forgetApp(appID string) {
 	r.mountMu.Unlock()
 	r.restoreMu.Lock()
 	delete(r.restores, appID)
+	delete(r.ops, appID)
 	r.restoreMu.Unlock()
 }

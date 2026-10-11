@@ -20,9 +20,11 @@ func (r *Repository) appExists(appID string) bool {
 // deploy (re)materializes secrets and brings the app up — the folder is the
 // deployment, so nothing needs rendering.
 func (r *Repository) deploy(ctx context.Context, appID string) error {
-	if err := r.refuseDuringRestore(appID); err != nil {
+	end, err := r.beginOp(appID)
+	if err != nil {
 		return err
 	}
+	defer end()
 	dir := r.appDataDir(appID)
 	if err := r.materializeSecrets(dir, loadSecretStore(dir)); err != nil {
 		return fmt.Errorf("materialize secrets: %w", err)
@@ -37,9 +39,11 @@ func (r *Repository) deploy(ctx context.Context, appID string) error {
 
 // StartApp brings an app up.
 func (r *Repository) StartApp(ctx context.Context, appID string) error {
-	if err := r.refuseDuringRestore(appID); err != nil {
+	end, err := r.beginOp(appID)
+	if err != nil {
 		return err
 	}
+	defer end()
 	if !r.appExists(appID) {
 		return fmt.Errorf("app %s not found", appID)
 	}
@@ -57,9 +61,11 @@ func (r *Repository) StopApp(ctx context.Context, appID string) error {
 
 // RestartApp restarts the app's containers in place.
 func (r *Repository) RestartApp(ctx context.Context, appID string) error {
-	if err := r.refuseDuringRestore(appID); err != nil {
+	end, err := r.beginOp(appID)
+	if err != nil {
 		return err
 	}
+	defer end()
 	if !r.appExists(appID) {
 		return fmt.Errorf("app %s not found", appID)
 	}
@@ -69,9 +75,11 @@ func (r *Repository) RestartApp(ctx context.Context, appID string) error {
 // UpdateApp refreshes a git-sourced app's upstream, then pulls the latest
 // images and recreates the app's containers.
 func (r *Repository) UpdateApp(ctx context.Context, appID string) error {
-	if err := r.refuseDuringRestore(appID); err != nil {
+	end, err := r.beginOp(appID)
+	if err != nil {
 		return err
 	}
+	defer end()
 	if !r.appExists(appID) {
 		return fmt.Errorf("app %s not found", appID)
 	}
@@ -285,6 +293,12 @@ func (r *Repository) RenameApp(ctx context.Context, appID, newName string) error
 	if err != nil {
 		return fmt.Errorf("read config: %w", err)
 	}
+	// A rename changes nothing that runs: an app deployed at the previous
+	// HEAD stays deployed at the new one (it would otherwise read as having
+	// undeployed changes).
+	prevHead, _ := gitHead(dir)
+	mark, marked := readDeployedMark(dir)
+	wasDeployed := marked && mark == prevHead
 	cfg["name"] = newName
 	updated, err := json.Marshal(cfg)
 	if err != nil {
@@ -293,8 +307,12 @@ func (r *Repository) RenameApp(ctx context.Context, appID, newName string) error
 	if err := fsutil.WriteFile(filepath.Join(dir, configRel), updated, 0o644); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
-	if _, err := gitCommitAll(dir, "rename to "+newName); err != nil {
+	hash, err := gitCommitAll(dir, "rename to "+newName)
+	if err != nil {
 		return fmt.Errorf("commit rename: %w", err)
+	}
+	if wasDeployed {
+		r.markDeployed(appID, hash)
 	}
 	if _, err := ensureAppSymlink(r.cfg.GetAppsDir(), "apps-data", appID, newName); err != nil {
 		r.log.Warn("failed to update app symlink", "app_id", appID, "error", err)

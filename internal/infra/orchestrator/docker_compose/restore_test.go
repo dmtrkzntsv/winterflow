@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -534,7 +535,8 @@ func TestRestoreRefusesLifecycleOperations(t *testing.T) {
 			"start": rr.StartApp(ctx, "app-1"), "stop": rr.StopApp(ctx, "app-1"), "restart": rr.RestartApp(ctx, "app-1"),
 			"update": rr.UpdateApp(ctx, "app-1"), "save": saveErr, "rollback": rollbackErr,
 			"rename": rr.RenameApp(ctx, "app-1", "x"), "backups": backupsErr, "delete": deleteErr,
-			"deploy": rr.deploy(ctx, "app-1"), "restore": func() error { _, err := rr.restore(ctx, "database", id); return err }(),
+			"deploy": rr.deploy(ctx, "app-1"), "composeUp": rr.composeUp(ctx, "app-1"), "composeRestart": rr.composeRestart(ctx, "app-1"),
+			"restore": func() error { _, err := rr.restore(ctx, "database", id); return err }(),
 		}
 	}
 	if _, err := rr.restore(ctx, "database", id); err != nil {
@@ -545,7 +547,7 @@ func TestRestoreRefusesLifecycleOperations(t *testing.T) {
 			t.Errorf("%s during a restore: %v", name, err)
 		}
 	}
-	if len(inside) != 11 {
+	if len(inside) != 13 {
 		t.Fatalf("operations checked: %d", len(inside))
 	}
 	if !rr.appExists("app-1") {
@@ -756,5 +758,149 @@ func TestRestoreRefusesARunningAppWithADraft(t *testing.T) {
 	rr.up = false
 	if _, err := rr.restore(context.Background(), "database", id); err != nil {
 		t.Fatalf("stopped app: %v", err)
+	}
+}
+
+// A restore does not begin while an operation that may start containers is
+// running (it passed its check before the restore's mark existed); the
+// restore is refused cleanly and works once the operation is over.
+func TestRestoreRefusedWhileAnOperationRuns(t *testing.T) {
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		verb string
+		op   func(rr *restoreRepo) error
+	}{
+		"start":   {"up", func(rr *restoreRepo) error { return rr.StartApp(ctx, "app-1") }},
+		"restart": {"restart", func(rr *restoreRepo) error { return rr.RestartApp(ctx, "app-1") }},
+		"save": {"up", func(rr *restoreRepo) error {
+			_, _, err := rr.SaveAppResult(ctx, command.AppPayload{AppID: "app-1", Config: []byte(plainConfig),
+				Files: []command.ContentItem{{Name: "compose.yml", Content: []byte(backupCompose)}}}, false)
+			return err
+		}},
+	} {
+		rr := newRestoreRepo(t)
+		id := rr.point(t, "database")
+		inside, release := make(chan struct{}), make(chan struct{})
+		rr.runCompose = func(_ context.Context, _ string, args []string) error {
+			if composeVerb(args) == tc.verb || slices.Contains(args, tc.verb) {
+				select {
+				case <-inside:
+				default:
+					close(inside)
+				}
+				<-release
+			}
+			rr.compose = append(rr.compose, composeVerb(args))
+			return nil
+		}
+		done := make(chan error, 1)
+		go func() { done <- tc.op(rr) }()
+		select {
+		case <-inside:
+		case err := <-done:
+			t.Fatalf("%s ended before reaching compose: %v", name, err)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s never reached compose", name)
+		}
+		_, err := rr.restore(ctx, "database", id)
+		if !errors.Is(err, ErrAppBusy) || !strings.Contains(err.Error(), "the app is busy (an operation on it, such as a deploy, is still running); try again") ||
+			len(rr.restorer.calls) != 0 || rr.restoreRunning("app-1") {
+			t.Errorf("%s: err = %v, helper calls %d", name, err, len(rr.restorer.calls))
+		}
+		close(release)
+		<-done
+		rr.compose = nil
+		if _, err := rr.restore(ctx, "database", id); err != nil {
+			t.Errorf("%s: after the operation: %v", name, err)
+		}
+	}
+}
+
+// A left-stopped app is removed with compose down and never with -v: its
+// volumes are the data the user may go back to.
+func TestRestoreLeftStoppedNeverRemovesVolumes(t *testing.T) {
+	rr := newRestoreRepo(t)
+	id := rr.point(t, "database")
+	var down []string
+	rr.runCompose = func(_ context.Context, _ string, args []string) error {
+		rr.compose = append(rr.compose, composeVerb(args))
+		if composeVerb(args) == "down" {
+			down = args
+		}
+		return nil
+	}
+	rr.restorer.exit, rr.restorer.stderr = 137, "killed\n"
+	if _, err := rr.restore(context.Background(), "database", id); err == nil {
+		t.Fatal("no error")
+	}
+	if down == nil {
+		t.Fatalf("no compose down: %v", rr.compose)
+	}
+	for _, a := range down {
+		if a == "-v" || a == "--volumes" {
+			t.Fatalf("down removes volumes: %v", down)
+		}
+	}
+}
+
+// A rename changes nothing that runs: a deployed app stays deployed (so a
+// restore is not refused for "undeployed changes"), a draft stays a draft.
+func TestRenameKeepsADeployedAppDeployed(t *testing.T) {
+	rr := newRestoreRepo(t)
+	rr.markDeployed("app-1", "")
+	if rr.hasDraft("app-1") {
+		t.Fatal("a deployed app has a draft")
+	}
+	if err := rr.RenameApp(context.Background(), "app-1", "renamed"); err != nil {
+		t.Fatal(err)
+	}
+	if rr.hasDraft("app-1") {
+		t.Fatal("the rename made the app a draft")
+	}
+	id := rr.point(t, "database")
+	if _, err := rr.restore(context.Background(), "database", id); err != nil {
+		t.Fatalf("restore after a rename: %v", err)
+	}
+	rr.markDeployed("app-1", "0000000000000000000000000000000000000000")
+	if err := rr.RenameApp(context.Background(), "app-1", "again"); err != nil {
+		t.Fatal(err)
+	}
+	if !rr.hasDraft("app-1") {
+		t.Fatal("the rename deployed a draft")
+	}
+}
+
+// A helper that could not even start (the download can't be opened, docker
+// can't be run) changed nothing: the app is started again.
+func TestRestoreHelperNeverStarted(t *testing.T) {
+	rr := newRestoreRepo(t)
+	id := rr.point(t, "database")
+	rr.runHelper = func(ctx context.Context, name string, args []string, out io.Writer) (int, []byte, error) {
+		_ = os.RemoveAll(rr.restoreTmpDir()) // the pre-restore copy ran; the download is gone
+		return rr.helper.run(ctx, name, args, out)
+	}
+	_, err := rr.restore(context.Background(), "database", id)
+	if err == nil || !strings.Contains(err.Error(), "the restore could not start, the app's data is unchanged") ||
+		!slices.Equal(rr.compose, []string{"stop", "start"}) || len(rr.restorer.calls) != 0 {
+		t.Fatalf("err = %v, compose %v", err, rr.compose)
+	}
+
+	rr = newRestoreRepo(t)
+	id = rr.point(t, "database")
+	rr.runRestoreHelper = func(context.Context, string, []string, io.Reader) (int, []byte, error) {
+		return -1, nil, fmt.Errorf("%w: fork/exec: out of memory", errHelperNotStarted)
+	}
+	_, err = rr.restore(context.Background(), "database", id)
+	if err == nil || !strings.Contains(err.Error(), "the restore could not start, the app's data is unchanged: the helper did not start: fork/exec") ||
+		!slices.Equal(rr.compose, []string{"stop", "start"}) {
+		t.Fatalf("err = %v, compose %v", err, rr.compose)
+	}
+}
+
+func TestRunDockerIOWithoutDocker(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	exit, _, err := runDockerIO(context.Background(), "wf-restore-x", []string{"run"}, nil, io.Discard)
+	if !errors.Is(err, errHelperNotStarted) || exit != -1 {
+		t.Fatalf("exit %d, err %v", exit, err)
 	}
 }

@@ -35,9 +35,11 @@ func (r *Repository) SaveAppDraft(ctx context.Context, app command.AppPayload) (
 // SaveAppResult is SaveApp (or, draft, SaveAppDraft) with the save's
 // warnings.
 func (r *Repository) SaveAppResult(ctx context.Context, app command.AppPayload, draft bool) (string, []string, error) {
-	if err := r.refuseDuringRestore(app.AppID); err != nil {
+	end, err := r.beginOp(app.AppID)
+	if err != nil {
 		return "", nil, err
 	}
+	defer end()
 	hash, warnings, err := r.save(app)
 	if err != nil || draft {
 		return hash, warnings, err
@@ -210,9 +212,11 @@ func (r *Repository) Revisions(ctx context.Context, appID string) ([]command.Rev
 // linear), re-materializes secrets from the restored store, and redeploys.
 // Returns the new HEAD hash.
 func (r *Repository) Rollback(ctx context.Context, appID, hash string) (string, error) {
-	if err := r.refuseDuringRestore(appID); err != nil {
+	end, err := r.beginOp(appID)
+	if err != nil {
 		return "", err
 	}
+	defer end()
 	newHead, err := r.rollbackWithoutDeploy(appID, hash)
 	if err != nil {
 		return "", err
@@ -551,6 +555,11 @@ func dockerIn(ctx context.Context, dir string, args []string) error {
 }
 
 func (r *Repository) composeUp(ctx context.Context, appID string) error {
+	// The last line of defence: a restore's own start goes through
+	// composeRun, so this refuses only other callers.
+	if err := r.refuseDuringRestore(appID); err != nil {
+		return err
+	}
 	dir := r.appDataDir(appID)
 	files := r.appComposeFiles(dir)
 	// The backups are validated on every deploy: a git-sourced app's compose
@@ -594,6 +603,9 @@ func (r *Repository) composeDown(ctx context.Context, appID string, volumes bool
 }
 
 func (r *Repository) composeRestart(ctx context.Context, appID string) error {
+	if err := r.refuseDuringRestore(appID); err != nil {
+		return err
+	}
 	return r.composeRun(ctx, appID, "restart")
 }
 

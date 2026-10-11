@@ -542,6 +542,11 @@ func runDockerRestoreHelper(ctx context.Context, name string, args []string, in 
 	return runDockerIO(ctx, name, args, in, io.Discard)
 }
 
+// errHelperNotStarted marks a helper run that failed before its container
+// could exist (docker could not be executed): nothing it would change was
+// touched.
+var errHelperNotStarted = errors.New("the helper did not start")
+
 // runDockerIO runs a helper's `docker run` with stdin in (nil: none) and
 // stdout out.
 func runDockerIO(ctx context.Context, name string, args []string, in io.Reader, out io.Writer) (int, []byte, error) {
@@ -553,7 +558,14 @@ func runDockerIO(ctx context.Context, name string, args []string, in io.Reader, 
 		return cmd.Process.Kill()
 	}
 	cmd.WaitDelay = helperStopGrace
-	err := cmd.Run()
+	err := cmd.Start()
+	if err != nil && ctx.Err() == nil {
+		// docker itself could not be started: no container exists.
+		return -1, nil, fmt.Errorf("%w: %w", errHelperNotStarted, err)
+	}
+	if err == nil {
+		err = cmd.Wait()
+	}
 	if ctx.Err() != nil {
 		// The container may still have been being created when the CLI was
 		// killed: remove it again once the daemon has had time to finish.

@@ -51,6 +51,10 @@ const restoreWaitForDelete = 2 * time.Minute
 // putting its data back.
 var ErrRestoring = errors.New("a restore of this app is in progress")
 
+// ErrAppBusy is why a restore does not begin: operations on the app are
+// still running.
+var ErrAppBusy = errors.New("the app is busy")
+
 // restoreLimits are a restore helper's: a dump's, plus what putting files
 // back needs (give them their owner; set the mode and times of files it
 // doesn't own; keep a folder's setgid bit when its group is set).
@@ -77,6 +81,9 @@ func (r *Repository) beginRestore(appID string) (end func(), err error) {
 	if _, busy := r.restores[appID]; busy {
 		return nil, ErrRestoring
 	}
+	if r.ops[appID] > 0 {
+		return nil, fmt.Errorf("%w (an operation on it, such as a deploy, is still running); try again", ErrAppBusy)
+	}
 	if r.restores == nil {
 		r.restores = map[string]chan struct{}{}
 	}
@@ -89,6 +96,33 @@ func (r *Repository) beginRestore(appID string) (end func(), err error) {
 			delete(r.restores, appID)
 		}
 		close(done)
+	}, nil
+}
+
+// beginOp registers an operation that may start containers (start, restart,
+// update, save, rollback, a deploy) on the app, until end is called: it is
+// refused with ErrRestoring while a restore runs, and a restore does not
+// begin while one is registered (ErrAppBusy), so an operation that passed
+// its check can never run beside the swap. Operations nest (Start calls
+// deploy).
+func (r *Repository) beginOp(appID string) (end func(), err error) {
+	r.restoreMu.Lock()
+	defer r.restoreMu.Unlock()
+	if _, busy := r.restores[appID]; busy {
+		return nil, ErrRestoring
+	}
+	if r.ops == nil {
+		r.ops = map[string]int{}
+	}
+	r.ops[appID]++
+	return func() {
+		r.restoreMu.Lock()
+		defer r.restoreMu.Unlock()
+		if n := r.ops[appID]; n > 1 {
+			r.ops[appID] = n - 1
+		} else {
+			delete(r.ops, appID)
+		}
 	}, nil
 }
 
@@ -150,21 +184,30 @@ func (r *Repository) removeRestoreDownloads() {
 
 // RestoreBackup puts a restore point back in place:
 //
-//  1. the point is downloaded and its sha256 checked against its manifest
-//     (a mismatch aborts before anything is stopped);
-//  2. a running app is stopped (compose stop);
+//  1. the point is downloaded (size and free space checked first) and its
+//     sha256 checked against its manifest; a mismatch, an unreadable archive,
+//     a manifest of another type, or too little of the time budget left
+//     aborts before anything is stopped;
+//  2. the app is marked as being restored (other operations on it are
+//     refused with ErrRestoring, and the restore itself is refused with
+//     ErrAppBusy while one is running), and a running app is stopped
+//     (compose stop); a running app with undeployed changes is refused;
 //  3. the current data is saved as a pre-restore point (a normal run of
-//     kind pre-restore); when that fails the app is started again and
-//     nothing is restored (nothing to save — no database file, none of the
-//     paths — skips it);
+//     kind pre-restore, which never prunes the point being restored); when
+//     that fails the app is started again and nothing is restored (nothing
+//     to save — no database file, none of the paths — only warns);
 //  4. the helper puts the copy back (sqlite: replaces the file; files:
 //     extracts beside the data, checking free space, then swaps);
 //  5. the app is started again.
 //
-// On any failure that leaves the data as it was, the app is started again
-// (unless the restore was stopped because the app is being deleted). A
-// files restore that failed half-way through its swap leaves the app
-// stopped, and the error names the pre-restore point to go back to. ctx
+// The data is left as it was, and the app started again (unless the
+// restore was stopped because the app is being deleted), only when the
+// helper never ran or failed cleanly (exit 1, docker's own 125-127, a
+// helper that did not start). Any other end — a crash, a kill, a swap that
+// failed half-way, a "success" with no result, the agent stopping the
+// helper — may have left the data partly replaced: the app is left stopped
+// and removed (compose down, never -v, so nothing can start it on that
+// data), and the error names the pre-restore point to go back to. ctx
 // bounds the whole restore.
 func (r *Repository) RestoreBackup(ctx context.Context, job RestoreJob) (command.RestoreBackupResponse, error) {
 	resp := command.RestoreBackupResponse{AppID: job.AppID, Backup: job.Backup, RestoredPoint: job.Point}
@@ -249,7 +292,7 @@ func (r *Repository) RestoreBackup(ctx context.Context, job RestoreJob) (command
 	// changes, a container of a service HEAD no longer has would keep
 	// running beside the swap.
 	if running && r.hasDraft(job.AppID) {
-		return resp, errors.New("the app has undeployed changes: deploy them (or roll back) before restoring, so that stopping the app stops all of its containers")
+		return resp, errors.New("the app has undeployed changes: deploy them (or roll back, or stop the app first) before restoring, so that stopping the app stops all of its containers")
 	}
 	if running {
 		if err := r.composeRun(ctx, job.AppID, "stop"); err != nil {
@@ -300,11 +343,14 @@ func (r *Repository) RestoreBackup(ctx context.Context, job RestoreJob) (command
 	// partly replaced (a files swap; a database's WAL set aside), and the
 	// app stays stopped.
 	unchanged := err == nil && (exit == helper.ExitFailed || exit == 125 || exit == 126 || exit == 127)
+	notStarted := errors.Is(err, errHelperNotStarted)
 	stopped := func(e error) error { return r.leaveStopped(ctx, job.AppID, running, e) }
 	switch {
 	case err == nil && exit == helper.ExitOK && parsed:
 	case unchanged:
 		return resp, fail(fmt.Errorf("the restore failed, the app's data is unchanged: %s", reason(res, stderr, exit)))
+	case notStarted:
+		return resp, fail(fmt.Errorf("the restore could not start, the app's data is unchanged: %w", err))
 	case err != nil && b.Type == recipe.TypeSQLite:
 		// Stopped from outside (its time limit, the app's deletion).
 		return resp, stopped(fmt.Errorf("the restore helper was stopped (%w), so the database file may be partly replaced. The app was left stopped; %s", err, back))
@@ -508,12 +554,12 @@ func restoreArgs(name, appID, exe string, plan helperPlan, b recipe.EffectiveBac
 func (r *Repository) runZstdRestore(ctx context.Context, name string, args []string, local string) (int, []byte, error) {
 	f, err := os.Open(local)
 	if err != nil {
-		return -1, nil, err
+		return -1, nil, fmt.Errorf("%w: %w", errHelperNotStarted, err)
 	}
 	defer f.Close()
 	dec, err := zstd.NewReader(f, zstd.WithDecoderConcurrency(1))
 	if err != nil {
-		return -1, nil, err
+		return -1, nil, fmt.Errorf("%w: %w", errHelperNotStarted, err)
 	}
 	defer dec.Close()
 	return r.runRestoreHelper(ctx, name, args, dec)

@@ -26,6 +26,12 @@ func TestBackupRoutesDispatch(t *testing.T) {
 			httptest.NewRequest("POST", "/x", strings.NewReader(`{"server_id":"s1","app_id":"a1","backup":"db"}`)), command.TypeBackupRun},
 		{"delete point", func(h *Handler) http.HandlerFunc { return h.DeleteRestorePoint },
 			httptest.NewRequest("POST", "/x", strings.NewReader(`{"server_id":"s1","app_id":"a1","backup":"db","point":"20261011T120000Z-manual"}`)), command.TypeBackupDeletePoint},
+		{"restore", func(h *Handler) http.HandlerFunc { return h.RestoreBackup },
+			httptest.NewRequest("POST", "/x", strings.NewReader(`{"server_id":"s1","app_id":"a1","backup":"db","point":"20261011T120000Z-manual"}`)), command.TypeBackupRestore},
+		{"orphans", func(h *Handler) http.HandlerFunc { return h.ListOrphans },
+			httptest.NewRequest("GET", "/x?server_id=s1&name=disk", nil), command.TypeStorageOrphans},
+		{"delete orphan", func(h *Handler) http.HandlerFunc { return h.DeleteOrphan },
+			httptest.NewRequest("POST", "/x", strings.NewReader(`{"server_id":"s1","name":"disk","app_id":"gone"}`)), command.TypeStorageDeleteOrphan},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h, fd, _ := newHandler(t)
@@ -46,6 +52,9 @@ func TestBackupRoutesRejectBadInput(t *testing.T) {
 	points := route(func(h *Handler) http.HandlerFunc { return h.ListRestorePoints })
 	run := route(func(h *Handler) http.HandlerFunc { return h.RunBackup })
 	del := route(func(h *Handler) http.HandlerFunc { return h.DeleteRestorePoint })
+	restore := route(func(h *Handler) http.HandlerFunc { return h.RestoreBackup })
+	orphans := route(func(h *Handler) http.HandlerFunc { return h.ListOrphans })
+	delOrphan := route(func(h *Handler) http.HandlerFunc { return h.DeleteOrphan })
 	for _, tc := range []struct {
 		name    string
 		handler route
@@ -69,6 +78,12 @@ func TestBackupRoutesRejectBadInput(t *testing.T) {
 		{"points no server", points, "GET", "/x?app_id=a1&backup=db", "", http.StatusBadRequest, "server_id is required"},
 		{"points foreign server", points, "GET", "/x?server_id=other&app_id=a1&backup=db", "", http.StatusForbidden, ""},
 		{"points no backup", points, "GET", "/x?server_id=s1&app_id=a1", "", http.StatusBadRequest, "is not a valid backup name"},
+		{"restore bad point", restore, "POST", "/x", `{"server_id":"s1","app_id":"a1","backup":"db","point":"latest"}`, http.StatusBadRequest, "invalid restore point id"},
+		{"restore foreign server", restore, "POST", "/x", `{"server_id":"other","app_id":"a1","backup":"db","point":"20261011T120000Z-manual"}`, http.StatusForbidden, ""},
+		{"orphans bad name", orphans, "GET", "/x?server_id=s1&name=Disk", "", http.StatusBadRequest, "is not a valid storage name"},
+		{"orphans foreign server", orphans, "GET", "/x?server_id=other&name=disk", "", http.StatusForbidden, ""},
+		{"delete orphan bad app", delOrphan, "POST", "/x", `{"server_id":"s1","name":"disk","app_id":"a/b"}`, http.StatusBadRequest, "invalid app id"},
+		{"delete orphan foreign server", delOrphan, "POST", "/x", `{"server_id":"other","name":"disk","app_id":"gone"}`, http.StatusForbidden, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h, fd, _ := newHandler(t)
@@ -98,7 +113,10 @@ func TestBackupRoutesReportFailures(t *testing.T) {
 	for want, w := range map[string]*httptest.ResponseRecorder{
 		"failed to run backup": do(failing.RunBackup, authed(httptest.NewRequest("POST", "/x",
 			strings.NewReader(`{"server_id":"s1","app_id":"a1","backup":"db"}`)))),
-		"failed to list restore points": do(failing.ListRestorePoints, authed(httptest.NewRequest("GET", "/x?server_id=s1&app_id=a1&backup=db", nil))),
+		"failed to list restore points":   do(failing.ListRestorePoints, authed(httptest.NewRequest("GET", "/x?server_id=s1&app_id=a1&backup=db", nil))),
+		"failed to list orphaned backups": do(failing.ListOrphans, authed(httptest.NewRequest("GET", "/x?server_id=s1&name=disk", nil))),
+		"failed to restore backup": do(failing.RestoreBackup, authed(httptest.NewRequest("POST", "/x",
+			strings.NewReader(`{"server_id":"s1","app_id":"a1","backup":"db","point":"20261011T120000Z-manual"}`)))),
 	} {
 		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), want) {
 			t.Errorf("%s: %d %s", want, w.Code, w.Body.String())

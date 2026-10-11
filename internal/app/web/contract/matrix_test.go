@@ -80,6 +80,15 @@ var probes = map[string]probe{
 	"POST /api/v1/app/delete-restore-point": {valid: func(s string) call {
 		return post("/api/v1/app/delete-restore-point", map[string]any{"server_id": s, "app_id": anApp, "backup": "database", "point": "20261011T120000Z-scheduled"})
 	}, malformed: bad("POST", "/api/v1/app/delete-restore-point")},
+	"POST /api/v1/app/restore-backup": {valid: func(s string) call {
+		return post("/api/v1/app/restore-backup", map[string]any{"server_id": s, "app_id": anApp, "backup": "database", "point": "20261011T120000Z-scheduled"})
+	}, malformed: bad("POST", "/api/v1/app/restore-backup")},
+	"GET /api/v1/storage/list-orphans": {valid: func(s string) call {
+		return get("/api/v1/storage/list-orphans", url.Values{"server_id": {s}, "name": {"disk"}})
+	}, malformed: bad("GET", "/api/v1/storage/list-orphans")},
+	"POST /api/v1/storage/delete-orphan": {valid: func(s string) call {
+		return post("/api/v1/storage/delete-orphan", map[string]any{"server_id": s, "name": "disk", "app_id": "gone-app"})
+	}, malformed: bad("POST", "/api/v1/storage/delete-orphan")},
 	"GET /api/v1/domain/get-domains": {valid: func(s string) call { return get("/api/v1/domain/get-domains", sq(s)) }, malformed: bad("GET", "/api/v1/domain/get-domains")},
 	"GET /api/v1/domain/list":        {valid: func(s string) call { return get("/api/v1/domain/list", sq(s)) }, malformed: bad("GET", "/api/v1/domain/list")},
 	"POST /api/v1/domain/create": {valid: func(s string) call {

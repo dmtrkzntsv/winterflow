@@ -347,6 +347,22 @@ func defaultScript(typ command.Type) script {
 			in := decode[command.DeleteRestorePointRequest](raw)
 			return reply{Payload: command.DeleteRestorePointResponse{AppID: in.AppID, Backup: in.Backup, Point: in.Point}}
 		}
+	case command.TypeBackupRestore:
+		return func(raw json.RawMessage) reply {
+			in := decode[command.RestoreBackupRequest](raw)
+			return reply{Payload: command.RestoreBackupResponse{AppID: in.AppID, Backup: in.Backup, RestoredPoint: in.Point,
+				PreRestorePoint: "20261011T140000Z-pre-restore"}}
+		}
+	case command.TypeStorageOrphans:
+		return func(raw json.RawMessage) reply {
+			return reply{Payload: command.ListOrphansResponse{Name: decode[command.ListOrphansRequest](raw).Name, Orphans: []command.Orphan{
+				{AppID: "gone-app", AppName: "Shop", DeletedAt: 1790812800, PurgeAt: 1806364800, Copies: 3, Bytes: 4096, Newest: 1790812000}}}}
+		}
+	case command.TypeStorageDeleteOrphan:
+		return func(raw json.RawMessage) reply {
+			in := decode[command.DeleteOrphanRequest](raw)
+			return reply{Payload: command.DeleteOrphanResponse{Name: in.Name, AppID: in.AppID, Deleted: 6}}
+		}
 	case command.TypeAgentUpdate:
 		return func(raw json.RawMessage) reply {
 			return reply{Payload: command.UpdateAgentResponse{FromVersion: "v1", ToVersion: decode[command.UpdateAgentRequest](raw).Version, Scheduled: true}}
@@ -370,6 +386,7 @@ func TestFakeAgentAnswersEveryCommandType(t *testing.T) {
 		command.TypeDomainList, command.TypeDomainCreate, command.TypeDomainDelete,
 		command.TypeStorageList, command.TypeStorageTest, command.TypeStorageSave, command.TypeStorageDelete,
 		command.TypeBackupUpdate, command.TypeBackupPoints, command.TypeBackupRun, command.TypeBackupDeletePoint,
+		command.TypeBackupRestore, command.TypeStorageOrphans, command.TypeStorageDeleteOrphan,
 	} {
 		payload := []byte(`{}`)
 		if typ == command.TypeStorageSave {

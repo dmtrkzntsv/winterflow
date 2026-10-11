@@ -124,3 +124,25 @@ func (uc *UseCase) DeleteRestorePoint(ctx context.Context, userID, serverID stri
 		AgentID: serverID, UserID: userID, Type: command.TypeBackupDeletePoint, Payload: req,
 	})
 }
+
+// RestoreBackup dispatches backup.restore; its result arrives when the
+// restore ends (it runs on the backup scheduler, after any run ahead of it).
+func (uc *UseCase) RestoreBackup(ctx context.Context, userID, serverID string, req command.RestoreBackupRequest) (string, error) {
+	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
+		AgentID: serverID, UserID: userID, Type: command.TypeBackupRestore, Payload: req, Wait: backupRunWait,
+	})
+}
+
+// ListOrphans dispatches storage.orphans.
+func (uc *UseCase) ListOrphans(ctx context.Context, userID, serverID string, req command.ListOrphansRequest) (string, error) {
+	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
+		AgentID: serverID, UserID: userID, Type: command.TypeStorageOrphans, Payload: req,
+	})
+}
+
+// DeleteOrphan dispatches storage.delete-orphan.
+func (uc *UseCase) DeleteOrphan(ctx context.Context, userID, serverID string, req command.DeleteOrphanRequest) (string, error) {
+	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
+		AgentID: serverID, UserID: userID, Type: command.TypeStorageDeleteOrphan, Payload: req,
+	})
+}

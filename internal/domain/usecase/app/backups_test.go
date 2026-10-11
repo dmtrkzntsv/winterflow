@@ -92,6 +92,10 @@ func TestBackupCommands(t *testing.T) {
 	if len(disp.all) != 1 {
 		t.Fatal("a refused update reached the agent")
 	}
+	if _, err := uc.RestoreBackup(ctx, "u", "srv-1", command.RestoreBackupRequest{AppID: "a1", Backup: "db", Point: "20261011T120000Z-manual"}); err != nil ||
+		disp.last().Wait != backupRunWait || disp.last().Type != command.TypeBackupRestore {
+		t.Fatalf("restore = %+v, %v", disp.last(), err)
+	}
 	if _, err := uc.RunBackup(ctx, "u", "srv-1", command.RunBackupRequest{AppID: "a1", Backup: "db"}); err != nil || disp.last().Wait != backupRunWait || disp.last().Type != command.TypeBackupRun {
 		t.Fatalf("run = %+v, %v", disp.last(), err)
 	}

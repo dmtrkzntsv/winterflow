@@ -50,9 +50,29 @@ type RestorePointsQuery struct {
 	Backup   string `query:"backup" required:"true" description:"Backup name."`
 }
 
+// RestoreBackupRequest is the body of POST /api/v1/app/restore-backup.
+type RestoreBackupRequest struct {
+	ServerID string `json:"server_id"`
+	command.RestoreBackupRequest
+}
+
+// DeleteOrphanRequest is the body of POST /api/v1/storage/delete-orphan.
+type DeleteOrphanRequest struct {
+	ServerID string `json:"server_id"`
+	command.DeleteOrphanRequest
+}
+
+// OrphansQuery is the query of GET /api/v1/storage/list-orphans.
+type OrphansQuery struct {
+	ServerID string `query:"server_id" required:"true"`
+	Name     string `query:"name" required:"true" description:"Storage name."`
+}
+
 func (r UpdateBackupsRequest) server() string      { return r.ServerID }
 func (r RunBackupRequest) server() string          { return r.ServerID }
 func (r DeleteRestorePointRequest) server() string { return r.ServerID }
+func (r RestoreBackupRequest) server() string      { return r.ServerID }
+func (r DeleteOrphanRequest) server() string       { return r.ServerID }
 
 // serverBody is a JSON body naming its server: server_id plus the agent
 // request.
@@ -141,4 +161,39 @@ func (h *Handler) ListRestorePoints(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	accepted(w, "list restore points dispatched", reqID)
+}
+
+// RestoreBackup restores a restore point in place; the outcome arrives over
+// SSE when the restore ends.
+func (h *Handler) RestoreBackup(w http.ResponseWriter, r *http.Request) {
+	dispatchServerBody(h, w, r, "restore backup", func(ctx context.Context, userID, serverID string, req RestoreBackupRequest) (string, error) {
+		return h.usecase.RestoreBackup(ctx, userID, serverID, req.RestoreBackupRequest)
+	})
+}
+
+// ListOrphans lists the backups in a storage whose app is not on the
+// server; they arrive over SSE.
+func (h *Handler) ListOrphans(w http.ResponseWriter, r *http.Request) {
+	req := command.ListOrphansRequest{Name: r.URL.Query().Get("name")}
+	userID, serverID, ok := h.serverFromQuery(w, r)
+	if !ok {
+		return
+	}
+	if err := req.Validate(); err != nil {
+		webutil.Error(w, err.Error(), nil)
+		return
+	}
+	reqID, err := h.usecase.ListOrphans(r.Context(), userID, serverID, req)
+	if err != nil {
+		webutil.Error(w, "failed to list orphaned backups", nil)
+		return
+	}
+	accepted(w, "list orphaned backups dispatched", reqID)
+}
+
+// DeleteOrphan deletes an orphan's backups from a storage.
+func (h *Handler) DeleteOrphan(w http.ResponseWriter, r *http.Request) {
+	dispatchServerBody(h, w, r, "delete orphaned backups", func(ctx context.Context, userID, serverID string, req DeleteOrphanRequest) (string, error) {
+		return h.usecase.DeleteOrphan(ctx, userID, serverID, req.DeleteOrphanRequest)
+	})
 }

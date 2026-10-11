@@ -95,7 +95,9 @@ func (h *Handler) Routes(api.Guards) []api.Route {
 		},
 		{
 			Method: http.MethodPost, Path: "/api/v1/app/delete-app", Handler: h.DeleteApp, Auth: api.User,
-			Summary: "Delete an app (optionally its volumes)", Tag: "apps",
+			Summary: "Delete an app (optionally its volumes and its backups)", Tag: "apps",
+			Description: "Without `delete_backups` the app's backups are kept, marked as a deleted app's: the agent's daily sweep " +
+				"deletes them once older than its BACKUP_RETENTION_DAYS.",
 			Request: DeleteAppRequest{}, Accepted: true, Result: command.DeleteAppResponse{}, Errors: server,
 		},
 		{
@@ -122,6 +124,13 @@ func (h *Handler) Routes(api.Guards) []api.Route {
 			Summary: "Back up now (refused while the same backup is queued or running)", Tag: "backups",
 			Description: "The result arrives when the run ends, which can take up to 30 minutes after it starts. A second request while the same backup is queued or running fails at once (its result is an error).",
 			Request:     RunBackupRequest{}, Accepted: true, Result: command.RunBackupResponse{}, Errors: server,
+		},
+		{
+			Method: http.MethodPost, Path: "/api/v1/app/restore-backup", Handler: h.RestoreBackup, Auth: api.User,
+			Summary: "Restore a restore point in place (the app is stopped, its data saved as a pre-restore point first)", Tag: "backups",
+			Description: "The result arrives when the restore ends. On a failure that leaves the data as it was, the app is " +
+				"started again; a files restore that fails half-way leaves the app stopped and names the pre-restore point to restore.",
+			Request: RestoreBackupRequest{}, Accepted: true, Result: command.RestoreBackupResponse{}, Errors: server,
 		},
 		{
 			Method: http.MethodPost, Path: "/api/v1/app/delete-restore-point", Handler: h.DeleteRestorePoint, Auth: api.User,
@@ -185,6 +194,16 @@ func (h *Handler) Routes(api.Guards) []api.Route {
 			Summary: "Remove a storage no app uses", Tag: "storages",
 			Query: api.ServerQuery{}, Request: command.DeleteStorageRequest{},
 			Accepted: true, Result: command.DeleteStorageResponse{}, Errors: server,
+		},
+		{
+			Method: http.MethodGet, Path: "/api/v1/storage/list-orphans", Handler: h.ListOrphans, Auth: api.User,
+			Summary: "List the backups in a storage whose app is not on this server", Tag: "storages",
+			Query: OrphansQuery{}, Accepted: true, Result: command.ListOrphansResponse{}, Errors: server,
+		},
+		{
+			Method: http.MethodPost, Path: "/api/v1/storage/delete-orphan", Handler: h.DeleteOrphan, Auth: api.User,
+			Summary: "Delete the backups of an app that is not on this server from a storage", Tag: "storages",
+			Request: DeleteOrphanRequest{}, Accepted: true, Result: command.DeleteOrphanResponse{}, Errors: server,
 		},
 		{
 			Method: http.MethodGet, Path: "/api/v1/domains/check", Handler: h.CheckDomain, Auth: api.User,

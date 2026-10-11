@@ -138,8 +138,13 @@ func (s Storage) Validate() error {
 }
 
 func (l LocalStorage) validate() error {
-	if !filepath.IsAbs(l.Path) || strings.ContainsRune(l.Path, 0) {
+	if !filepath.IsAbs(l.Path) {
 		return fmt.Errorf("the folder must be an absolute path like /mnt/backup, got %q", l.Path)
+	}
+	// A control character would break the storage.env line (and every deploy
+	// that references the storage), so refuse it at save time.
+	if strings.ContainsFunc(l.Path, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
+		return fmt.Errorf("the folder path cannot contain control characters (newline, tab, NUL, ...), got %q", l.Path)
 	}
 	if l.Path == "/" {
 		return errors.New("the folder cannot be / itself")

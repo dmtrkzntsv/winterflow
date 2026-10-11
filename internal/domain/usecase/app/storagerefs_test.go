@@ -92,3 +92,12 @@ func TestSaveAppStorageCheckIndexError(t *testing.T) {
 		t.Fatalf("err = %v, dispatches %d", err, len(disp.all))
 	}
 }
+
+func TestSaveAppRefusesNonObjectConfig(t *testing.T) {
+	disp := &recordingDispatcher{}
+	_, err := newStoragesUseCase(disp, nil).SaveApp(context.Background(), "u", "srv-1", model.App{Name: "demo"},
+		command.AppPayload{Config: []byte(`null`)}, false)
+	if !errors.Is(err, model.ErrConfigInvalid) || !errors.Is(err, model.ErrRejected) || len(disp.all) != 0 {
+		t.Fatalf("err = %v, dispatches %d", err, len(disp.all))
+	}
+}

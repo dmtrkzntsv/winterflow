@@ -187,3 +187,20 @@ func TestUpdateBackupsRestoresTheConfigWhenTheCommitFails(t *testing.T) {
 		t.Fatalf("config.json = %s, want %s", after, before)
 	}
 }
+
+// A config.json of `null` (older saves could write one) must not crash
+// backup.update: the backups list is written into a fresh object.
+func TestUpdateBackupsOnNullConfig(t *testing.T) {
+	r, _ := updateRepo(t)
+	dir := r.appDataDir("app-1")
+	if err := os.WriteFile(filepath.Join(dir, configRel), []byte("null"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.UpdateBackups(context.Background(), "app-1", []recipe.BackupConfig{{Name: "database", Every: "2h"}}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.readOverrides(dir)
+	if err != nil || len(got) != 1 || got[0].Every != "2h" {
+		t.Fatalf("stored = %+v, %v", got, err)
+	}
+}

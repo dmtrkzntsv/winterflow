@@ -81,6 +81,9 @@ func (r *Repository) writeOverrides(dir string, overrides []recipe.BackupConfig)
 	if err != nil {
 		return err
 	}
+	if cfg == nil { // a config.json of `null`
+		cfg = map[string]any{}
+	}
 	if len(overrides) == 0 {
 		delete(cfg, backupsKey)
 	} else {

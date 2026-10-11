@@ -57,3 +57,19 @@ func TestDetached(t *testing.T) {
 		t.Fatal("only backup.run waits for long work")
 	}
 }
+
+// A config blob that is not a JSON object is refused: the agent keeps keys
+// in it (a `null` one crashed backup.update).
+func TestSaveAppRequestRefusesNonObjectConfig(t *testing.T) {
+	for _, cfg := range []string{"null", "[]", "5", `"x"`, "{", " null "} {
+		err := SaveAppRequest{App: AppPayload{AppID: "a1", Config: []byte(cfg)}}.Validate()
+		if err == nil || !strings.Contains(err.Error(), "JSON object") {
+			t.Errorf("config %q: err = %v", cfg, err)
+		}
+	}
+	for _, cfg := range []string{"", "{}", ` {"name":"x"} `} {
+		if err := (SaveAppRequest{App: AppPayload{AppID: "a1", Config: []byte(cfg)}}).Validate(); err != nil {
+			t.Errorf("config %q: %v", cfg, err)
+		}
+	}
+}

@@ -94,10 +94,14 @@ type SaveAppRequest struct {
 	Draft bool `json:"draft,omitempty"`
 }
 
-// Validate checks the app id and refuses user variables named like storage
-// variables (WF_STORAGE_, WF_BACKUP_): those only come from storages.
+// Validate checks the app id, that the config blob is a JSON object, and
+// refuses user variables named like storage variables (WF_STORAGE_,
+// WF_BACKUP_): those only come from storages.
 func (r SaveAppRequest) Validate() error {
 	if err := validateAppID(r.App.AppID); err != nil {
+		return err
+	}
+	if err := model.CheckConfigObject(r.App.Config); err != nil {
 		return err
 	}
 	for _, v := range r.App.Variables {

@@ -1,6 +1,8 @@
 package model
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -23,6 +25,25 @@ var ErrStorageRef = rejected("unresolved storage variable")
 // ErrReservedVariable marks a user variable whose name a storage provides.
 // It matches ErrRejected.
 var ErrReservedVariable = rejected("reserved variable name")
+
+// ErrConfigInvalid marks an app config blob that is not a JSON object. It
+// matches ErrRejected.
+var ErrConfigInvalid = rejected("invalid app config")
+
+// CheckConfigObject refuses an app config blob that is not a JSON object
+// (`null`, an array, a number): the agent keeps keys in it and would crash
+// on a nil map. An empty blob is fine (no config).
+func CheckConfigObject(raw []byte) error {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 {
+		return nil
+	}
+	var obj map[string]json.RawMessage
+	if raw[0] != '{' || json.Unmarshal(raw, &obj) != nil {
+		return fmt.Errorf("%w: config must be a JSON object", ErrConfigInvalid)
+	}
+	return nil
+}
 
 // StorageType is the kind of a storage.
 type StorageType string

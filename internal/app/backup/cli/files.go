@@ -12,6 +12,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 // source is one --path: an absolute path in the helper (a mount, /src/<n>,
@@ -30,51 +31,84 @@ type entry struct {
 	link string // a symlink's target
 }
 
-// dumpFiles walks the sources once (the fingerprint: every entry's name,
-// size, mode and mtime), then writes a tar stream of them to stdout. Symlinks
+// warner collects a Result's warnings, keeping the first maxWarnings and
+// counting the rest, so a tree full of special files costs no memory.
+type warner struct {
+	list  []string
+	extra int
+}
+
+func (w *warner) add(msg string) {
+	if len(w.list) < maxWarnings {
+		w.list = append(w.list, msg)
+		return
+	}
+	w.extra++
+}
+
+func (w *warner) result() []string {
+	if w.extra == 0 {
+		return w.list
+	}
+	return append(w.list, fmt.Sprintf("and %d more", w.extra))
+}
+
+// dumpFiles walks the sources twice, so memory stays proportional to the
+// tree's depth, not to its number of files. The first, streaming walk hashes
+// every entry's name, size, mode and mtime into the fingerprint (and exits
+// when it equals since); the second writes a tar stream to stdout. Symlinks
 // are stored as links, never followed; sockets, devices and FIFOs are
 // skipped with a warning; files are read while the app runs.
 func dumpFiles(sources []source, exclude []string, since string, stdout io.Writer) (Result, error) {
 	var (
-		res     Result
-		entries []entry
-		found   int
+		res   Result
+		warns warner
+		found int
 	)
+	h := sha256.New()
 	for _, s := range sources {
-		got, warnings, err := walk(s, exclude)
+		err := walk(s, exclude, warns.add, func(e entry) error {
+			fmt.Fprintf(h, "%s\x00%d\x00%o\x00%d\x00%s\n", e.name, e.info.Size(), uint32(e.info.Mode()), e.info.ModTime().UnixNano(), e.link)
+			return nil
+		})
 		if errors.Is(err, fs.ErrNotExist) {
-			res.Warnings = append(res.Warnings, fmt.Sprintf("%s: not found", displayName(s.entry)))
+			warns.add(fmt.Sprintf("%s: not found", displayName(s.entry)))
 			continue
 		}
 		if err != nil {
 			return Result{}, err
 		}
 		found++
-		entries = append(entries, got...)
-		res.Warnings = append(res.Warnings, warnings...)
 	}
 	if found == 0 {
+		res.Warnings = warns.result()
 		return res, fmt.Errorf("none of the backup's paths exist: %w", errMissing)
 	}
-	res.Fingerprint = filesFingerprint(entries)
+	res.Fingerprint = "files:" + hex.EncodeToString(h.Sum(nil)[:16])
 	if since != "" && res.Fingerprint == since {
-		return Result{}, errUnchanged
+		return Result{Warnings: warns.result()}, errUnchanged
 	}
 	cw := &countWriter{w: stdout}
 	tw := tar.NewWriter(cw)
-	for _, e := range entries {
-		warning, err := writeEntry(tw, e)
-		if err != nil {
+	for _, s := range sources {
+		// The first walk already reported what it found; this one only
+		// archives (a source that vanished since is skipped).
+		err := walk(s, exclude, func(string) {}, func(e entry) error {
+			warning, err := writeEntry(tw, e)
+			if warning != "" {
+				warns.add(warning)
+			}
+			return err
+		})
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return Result{}, err
-		}
-		if warning != "" {
-			res.Warnings = append(res.Warnings, warning)
 		}
 	}
 	if err := tw.Close(); err != nil {
 		return Result{}, fmt.Errorf("write the archive: %w", err)
 	}
 	res.RawSize = cw.n
+	res.Warnings = warns.result()
 	return res, nil
 }
 
@@ -85,24 +119,21 @@ func displayName(entry string) string {
 	return "/" + entry
 }
 
-// walk lists a source: the path itself (unless it is the archive root) and,
-// for a folder, everything below it in lexical order. Excluded entries are
-// left out (a folder with its contents); special files become warnings.
-func walk(s source, exclude []string) ([]entry, []string, error) {
+// walk streams a source to fn: the path itself (unless it is the archive
+// root) and, for a folder, everything below it in lexical order. Excluded
+// entries are left out (a folder with its contents); special files and
+// unreadable folders are reported to warn. An error from fn stops the walk.
+func walk(s source, exclude []string, warn func(string), fn func(entry) error) error {
 	if _, err := os.Lstat(s.path); err != nil {
-		return nil, nil, err
+		return err
 	}
-	var (
-		out      []entry
-		warnings []string
-	)
-	err := filepath.WalkDir(s.path, func(p string, d fs.DirEntry, err error) error {
+	return filepath.WalkDir(s.path, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			if errors.Is(err, fs.ErrNotExist) && p != s.path {
 				return nil // removed meanwhile
 			}
 			if p != s.path {
-				warnings = append(warnings, fmt.Sprintf("%s: %v", p, err))
+				warn(fmt.Sprintf("%s: %v", p, err))
 				if d != nil && d.IsDir() {
 					return filepath.SkipDir
 				}
@@ -136,13 +167,11 @@ func walk(s source, exclude []string) ([]entry, []string, error) {
 				return nil
 			}
 		default:
-			warnings = append(warnings, fmt.Sprintf("/%s: skipped (%s)", name, kindOf(m)))
+			warn(fmt.Sprintf("/%s: skipped (%s)", name, kindOf(m)))
 			return nil
 		}
-		out = append(out, e)
-		return nil
+		return fn(e)
 	})
-	return out, warnings, err
 }
 
 func kindOf(m fs.FileMode) string {
@@ -179,25 +208,24 @@ func excluded(name string, dir bool, patterns []string) bool {
 	return false
 }
 
-// filesFingerprint hashes every entry's name, size, mode and mtime.
-func filesFingerprint(entries []entry) string {
-	h := sha256.New()
-	for _, e := range entries {
-		fmt.Fprintf(h, "%s\x00%d\x00%o\x00%d\x00%s\n", e.name, e.info.Size(), uint32(e.info.Mode()), e.info.ModTime().UnixNano(), e.link)
-	}
-	return "files:" + hex.EncodeToString(h.Sum(nil)[:16])
-}
-
-// writeEntry archives one entry with its owner, mode and mtime. A file that
-// vanished is skipped, one that shrank is padded, both with a warning.
+// writeEntry archives one entry with its owner, mode and mtime, copying
+// exactly the size recorded in its header. A file that vanished or is no
+// longer a regular file is skipped, one that shrank is padded so the archive
+// stays readable, both with a warning.
 func writeEntry(tw *tar.Writer, e entry) (string, error) {
 	var f *os.File
 	if e.info.Mode().IsRegular() {
 		var err error
-		if f, err = os.Open(e.path); err != nil {
+		// The entry was a regular file when walked; it may have been swapped
+		// for a FIFO (open would block) or a symlink (open would follow it)
+		// since, so refuse both and check what was really opened.
+		if f, err = os.OpenFile(e.path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0); err != nil {
 			return fmt.Sprintf("/%s: skipped: %v", e.name, err), nil
 		}
 		defer f.Close()
+		if st, err := f.Stat(); err != nil || !st.Mode().IsRegular() {
+			return fmt.Sprintf("/%s: skipped (changed while it was archived)", e.name), nil
+		}
 	}
 	hdr, err := tar.FileInfoHeader(e.info, e.link)
 	if err != nil {

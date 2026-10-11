@@ -6,7 +6,7 @@
 // and, as stderr's last line, a JSON Result.
 //
 //	backup dump sqlite <path> [--since <fingerprint>]
-//	backup dump files --path <src>=<entry name>... [--exclude <pattern>...] [--since <fingerprint>]
+//	backup dump files (--src <source> --entry <entry name>)... [--exclude <pattern>...] [--since <fingerprint>]
 //
 // Exit codes: 0 done, 3 unchanged since --since (nothing written), 4 nothing
 // to back up (the database file or every path is missing), 2 bad usage,
@@ -75,10 +75,6 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	case err != nil:
 		res.Error, code = err.Error(), ExitFailed
 	}
-	if len(res.Warnings) > maxWarnings {
-		more := len(res.Warnings) - maxWarnings
-		res.Warnings = append(res.Warnings[:maxWarnings], fmt.Sprintf("and %d more", more))
-	}
 	line, _ := json.Marshal(res)
 	fmt.Fprintln(stderr, string(line))
 	return code
@@ -89,7 +85,7 @@ var errUsage = errors.New("usage")
 func usage(stderr io.Writer) int {
 	fmt.Fprintln(stderr, `usage:
   backup dump sqlite <path> [--since <fingerprint>]
-  backup dump files --path <src>=<entry name>... [--exclude <pattern>...] [--since <fingerprint>]`)
+  backup dump files (--src <source> --entry <entry name>)... [--exclude <pattern>...] [--since <fingerprint>]`)
 	return ExitUsage
 }
 
@@ -116,20 +112,20 @@ func dumpSQLiteCmd(args []string, stdout io.Writer) (Result, error) {
 func dumpFilesCmd(args []string, stdout io.Writer) (Result, error) {
 	fs := flag.NewFlagSet("dump files", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	var paths, exclude list
-	fs.Var(&paths, "path", "")
+	var srcs, entries, exclude list
+	fs.Var(&srcs, "src", "")
+	fs.Var(&entries, "entry", "")
 	fs.Var(&exclude, "exclude", "")
 	since := fs.String("since", "", "")
-	if err := fs.Parse(args); err != nil || fs.NArg() > 0 || len(paths) == 0 {
-		return Result{}, fmt.Errorf("%w: dump files takes --path <src>=<entry name>...", errUsage)
+	if err := fs.Parse(args); err != nil || fs.NArg() > 0 || len(srcs) == 0 || len(srcs) != len(entries) {
+		return Result{}, fmt.Errorf("%w: dump files takes --src <source> --entry <entry name> pairs", errUsage)
 	}
-	sources := make([]source, 0, len(paths))
-	for _, p := range paths {
-		src, entry, ok := strings.Cut(p, "=")
-		if !ok || !strings.HasPrefix(src, "/") {
-			return Result{}, fmt.Errorf("%w: --path %q: use <absolute source>=<entry name>", errUsage, p)
+	sources := make([]source, 0, len(srcs))
+	for i, src := range srcs {
+		if !strings.HasPrefix(src, "/") {
+			return Result{}, fmt.Errorf("%w: --src %q: use an absolute path", errUsage, src)
 		}
-		sources = append(sources, source{path: src, entry: strings.Trim(entry, "/")})
+		sources = append(sources, source{path: src, entry: strings.Trim(entries[i], "/")})
 	}
 	return dumpFiles(sources, exclude, *since, stdout)
 }

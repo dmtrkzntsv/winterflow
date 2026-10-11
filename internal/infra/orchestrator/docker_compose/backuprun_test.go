@@ -203,7 +203,7 @@ func TestRunBackupFiles(t *testing.T) {
 	}
 	args := strings.Join(b.helper.last(), " ")
 	if !strings.Contains(args, "--mount type=bind,source=/data/apps-data/app-1/media,target=/src/0,readonly") ||
-		!strings.HasSuffix(args, "/wf backup dump files --path /src/0=app/media --exclude *.tmp") {
+		!strings.HasSuffix(args, "/wf backup dump files --src /src/0 --entry app/media --exclude *.tmp") {
 		t.Fatalf("args = %s", args)
 	}
 	if got := b.stored(t); len(got) != 2 || got[1] != "app-1/media/20261011T120000Z-manual.tar.zst" {

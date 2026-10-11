@@ -280,7 +280,7 @@ func helperArgs(name, appID, exe string, plan helperPlan, b recipe.EffectiveBack
 	} else {
 		args = append(args, "files")
 		for _, p := range plan.Paths {
-			args = append(args, "--path", p.Src()+"="+p.Entry)
+			args = append(args, "--src", p.Src(), "--entry", p.Entry)
 		}
 		for _, e := range b.Exclude {
 			args = append(args, "--exclude", e)

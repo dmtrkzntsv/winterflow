@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -215,7 +216,7 @@ func readTar(t *testing.T, raw []byte) map[string]*tar.Header {
 func TestDumpFiles(t *testing.T) {
 	src0, src1 := filesTree(t)
 	args := []string{"dump", "files",
-		"--path", src0 + "/media=app/media", "--path", src1 + "/config=data/config",
+		"--src", src0 + "/media", "--entry", "app/media", "--src", src1 + "/config", "--entry", "data/config",
 		"--exclude", "/app/media/cache/", "--exclude", "*.tmp"}
 	code, out, res := run(t, args...)
 	if code != ExitOK || res.RawSize != int64(len(out)) || !strings.HasPrefix(res.Fingerprint, "files:") {
@@ -276,7 +277,7 @@ func TestDumpFiles(t *testing.T) {
 // A whole volume (entry "") archives names relative to the volume root.
 func TestDumpFilesWholeVolume(t *testing.T) {
 	src0, _ := filesTree(t)
-	code, out, res := run(t, "dump", "files", "--path", src0+"=", "--exclude", "media/")
+	code, out, res := run(t, "dump", "files", "--src", src0, "--entry", "", "--exclude", "media/")
 	if code != ExitOK {
 		t.Fatalf("%d %+v", code, res)
 	}
@@ -288,14 +289,14 @@ func TestDumpFilesWholeVolume(t *testing.T) {
 
 func TestDumpFilesMissingPaths(t *testing.T) {
 	src0, _ := filesTree(t)
-	code, out, res := run(t, "dump", "files", "--path", src0+"/media/a.jpg=app/media/a.jpg", "--path", src0+"/gone=app/gone")
+	code, out, res := run(t, "dump", "files", "--src", src0+"/media/a.jpg", "--entry", "app/media/a.jpg", "--src", src0+"/gone", "--entry", "app/gone")
 	if code != ExitOK || len(res.Warnings) != 1 || res.Warnings[0] != "/app/gone: not found" {
 		t.Fatalf("partly missing: %d %+v", code, res)
 	}
 	if got := readTar(t, out); len(got) != 1 || got["app/media/a.jpg"] == nil {
 		t.Fatalf("archive = %v", got)
 	}
-	code, _, res = run(t, "dump", "files", "--path", src0+"/gone=app/gone", "--path", src0+"/nope=")
+	code, _, res = run(t, "dump", "files", "--src", src0+"/gone", "--entry", "app/gone", "--src", src0+"/nope", "--entry", "")
 	if code != ExitMissing || res.Error != "none of the backup's paths exist" || len(res.Warnings) != 2 || res.Warnings[1] != "the volume: not found" {
 		t.Fatalf("all missing: %d %+v", code, res)
 	}
@@ -326,7 +327,7 @@ func TestUsage(t *testing.T) {
 	for _, args := range [][]string{
 		nil, {"dump"}, {"restore", "sqlite"}, {"dump", "postgres"},
 		{"dump", "sqlite"}, {"dump", "sqlite", "--since", "x"}, {"dump", "sqlite", "/a", "extra"},
-		{"dump", "files"}, {"dump", "files", "--path", "relative=x"}, {"dump", "files", "--path", "/a"},
+		{"dump", "files"}, {"dump", "files", "--src", "relative", "--entry", "x"}, {"dump", "files", "--src", "/a"}, {"dump", "files", "--entry", "x"}, {"dump", "files", "--src", "/a", "--entry", "x", "--entry", "y"},
 	} {
 		var stderr bytes.Buffer
 		if code := Main(args, io.Discard, &stderr); code != ExitUsage || !strings.Contains(stderr.String(), "usage:") {
@@ -345,7 +346,7 @@ func TestWarningsAreCapped(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "f"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, _, res := run(t, "dump", "files", "--path", dir+"=")
+	_, _, res := run(t, "dump", "files", "--src", dir, "--entry", "")
 	if len(res.Warnings) != maxWarnings+1 || res.Warnings[maxWarnings] != "and 5 more" {
 		t.Fatalf("warnings = %d: %v", len(res.Warnings), res.Warnings[len(res.Warnings)-1])
 	}
@@ -379,5 +380,102 @@ func TestWriteEntryPadsAShrunkFile(t *testing.T) {
 	}
 	if warning, err := writeEntry(tw, entry{name: "f", path: p, info: info}); err != nil || !strings.Contains(warning, "skipped") {
 		t.Fatalf("vanished: %q %v", warning, err)
+	}
+}
+
+// Any character of a path survives the protocol: "=" and spaces are legal in
+// recipe paths and must not split or lose a source.
+func TestDumpFilesPathWithEqualsAndSpace(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "date=2026-01-01 and more")
+	if err := os.MkdirAll(src, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "f=1 x.txt"), []byte("hi"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, out, res := run(t, "dump", "files", "--src", src, "--entry", "app/a=b c")
+	if code != ExitOK || len(res.Warnings) != 0 {
+		t.Fatalf("%d %+v", code, res)
+	}
+	got := readTar(t, out)
+	if got["app/a=b c/f=1 x.txt"] == nil || got["app/a=b c/"] == nil {
+		t.Fatalf("archive = %v", got)
+	}
+}
+
+// The walk streams: a big tree is fingerprinted and archived without
+// keeping its entries (the helper has 256 MiB), and the second run is
+// recognized as unchanged.
+func TestDumpFilesManyFiles(t *testing.T) {
+	root := t.TempDir()
+	const dirs, perDir = 20, 1000
+	for d := range dirs {
+		dir := filepath.Join(root, "d"+strings.Repeat("x", d))
+		if err := os.Mkdir(dir, 0o750); err != nil {
+			t.Fatal(err)
+		}
+		for i := range perDir {
+			if err := os.WriteFile(filepath.Join(dir, "f"+strconv.Itoa(i)), []byte{'x'}, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	code, out, res := run(t, "dump", "files", "--src", root, "--entry", "")
+	if code != ExitOK || res.RawSize != int64(len(out)) {
+		t.Fatalf("%d %+v", code, res)
+	}
+	n := 0
+	for tr := tar.NewReader(bytes.NewReader(out)); ; n++ {
+		if _, err := tr.Next(); err != nil {
+			break
+		}
+	}
+	if n != dirs*(perDir+1) {
+		t.Fatalf("%d entries archived", n)
+	}
+	if code, _, _ := run(t, "dump", "files", "--src", root, "--entry", "", "--since", res.Fingerprint); code != ExitUnchanged {
+		t.Fatalf("second run: %d", code)
+	}
+}
+
+// A file swapped for a FIFO or a symlink between the walk and its copy is
+// skipped, never opened blocking or followed.
+func TestWriteEntrySkipsASwappedFile(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "f")
+	if err := os.WriteFile(p, []byte("data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, _ := os.Lstat(p)
+	for name, swap := range map[string]func() error{
+		"fifo":    func() error { return syscall.Mkfifo(p, 0o600) },
+		"symlink": func() error { return os.Symlink("/etc/hostname", p) },
+	} {
+		if err := os.Remove(p); err != nil {
+			t.Fatal(err)
+		}
+		if err := swap(); err != nil {
+			t.Fatal(err)
+		}
+		var buf bytes.Buffer
+		tw := tar.NewWriter(&buf)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			warning, err := writeEntry(tw, entry{name: "f", path: p, info: info})
+			if err != nil || !strings.Contains(warning, "skipped") {
+				t.Errorf("%s: %q %v", name, warning, err)
+			}
+		}()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s: writeEntry blocked", name)
+		}
+		_ = tw.Close()
+		if got := readTar(t, buf.Bytes()); len(got) != 0 {
+			t.Fatalf("%s: archived %v", name, got)
+		}
 	}
 }

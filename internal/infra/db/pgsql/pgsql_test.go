@@ -70,17 +70,19 @@ func TestOpenPinsUTCSession(t *testing.T) {
 	q := u.Query()
 	q.Set("TimeZone", "America/New_York")
 	u.RawQuery = q.Encode()
-	db, err := Open(context.Background(), u.String())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	db, err := Open(ctx, u.String())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
 	var tz string
-	if err := db.QueryRow(`SHOW timezone`).Scan(&tz); err != nil || tz != "UTC" {
+	if err := db.QueryRowContext(ctx, `SHOW timezone`).Scan(&tz); err != nil || tz != "UTC" {
 		t.Fatalf("session timezone = %q, %v", tz, err)
 	}
 	var got time.Time
-	if err := db.QueryRow(`SELECT $1::timestamptz`, "2026-07-02 12:04:05").Scan(&got); err != nil {
+	if err := db.QueryRowContext(ctx, `SELECT $1::timestamptz`, "2026-07-02 12:04:05").Scan(&got); err != nil {
 		t.Fatal(err)
 	}
 	if !got.Equal(time.Date(2026, 7, 2, 12, 4, 5, 0, time.UTC)) {

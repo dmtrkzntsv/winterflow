@@ -62,7 +62,9 @@ func (m *TxManager) WithTx(ctx context.Context, fn func(ctx context.Context) err
 	}
 	defer func() {
 		if p := recover(); p != nil {
-			_ = tx.Rollback()
+			if rbErr := tx.Rollback(); rbErr != nil {
+				m.log.Error("Failed to rollback transaction after panic", "error", rbErr)
+			}
 			panic(p)
 		}
 	}()
@@ -79,25 +81,39 @@ func (m *TxManager) WithTx(ctx context.Context, fn func(ctx context.Context) err
 	return nil
 }
 
+// savepointTimeout bounds ROLLBACK TO SAVEPOINT, which must still run when
+// the caller's context is already done.
+const savepointTimeout = 10 * time.Second
+
 func (m *TxManager) nested(ctx context.Context, st *txState, fn func(ctx context.Context) error) error {
 	st.savepoint++
 	name := fmt.Sprintf("sp_%d", st.savepoint)
 	if _, err := st.tx.ExecContext(ctx, "SAVEPOINT "+name); err != nil {
+		m.log.Error("Failed to create savepoint", "savepoint", name, "error", err)
 		return fmt.Errorf("failed to create savepoint %s: %w", name, err)
+	}
+	rollbackTo := func() error {
+		rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), savepointTimeout)
+		defer cancel()
+		_, err := st.tx.ExecContext(rbCtx, "ROLLBACK TO SAVEPOINT "+name)
+		return err
 	}
 	defer func() {
 		if p := recover(); p != nil {
-			_, _ = st.tx.ExecContext(context.WithoutCancel(ctx), "ROLLBACK TO SAVEPOINT "+name)
+			if rbErr := rollbackTo(); rbErr != nil {
+				m.log.Error("Failed to rollback to savepoint after panic", "savepoint", name, "error", rbErr)
+			}
 			panic(p)
 		}
 	}()
 	if err := fn(ctx); err != nil {
-		if _, rbErr := st.tx.ExecContext(context.WithoutCancel(ctx), "ROLLBACK TO SAVEPOINT "+name); rbErr != nil {
+		if rbErr := rollbackTo(); rbErr != nil {
 			m.log.Error("Failed to rollback to savepoint", "savepoint", name, "error", rbErr)
 		}
 		return err
 	}
 	if _, err := st.tx.ExecContext(ctx, "RELEASE SAVEPOINT "+name); err != nil {
+		m.log.Error("Failed to release savepoint", "savepoint", name, "error", err)
 		return fmt.Errorf("failed to release savepoint %s: %w", name, err)
 	}
 	return nil

@@ -20,7 +20,7 @@ func TestOpenMigratesAndShutsDown(t *testing.T) {
 		t.Fatal(err)
 	}
 	var n int
-	if err := d.SQL.QueryRow(`SELECT count(*) FROM schema_migrations`).Scan(&n); err != nil || n == 0 {
+	if err := d.SQL.QueryRowContext(dbtest.Ctx(t), `SELECT count(*) FROM schema_migrations`).Scan(&n); err != nil || n == 0 {
 		t.Fatalf("schema_migrations rows = %d, %v", n, err)
 	}
 	if err := d.Shutdown(); err != nil {

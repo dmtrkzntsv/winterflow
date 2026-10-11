@@ -3,12 +3,12 @@ package backend_test
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"strings"
 	"testing"
-	"time"
 
 	"winterflow/internal/infra/db"
 	"winterflow/internal/infra/db/backend"
@@ -174,7 +174,7 @@ func TestDebugSQLLogsAndDelegates(t *testing.T) {
 	ctx := dbtest.Ctx(t)
 	q := m.Querier(ctx)
 
-	const secret = 7777
+	const secret = 918273645 // implausible inside a duration or timestamp
 	insertSQL := dbtest.Rebind(d.Driver, `INSERT INTO tx_probe (n) VALUES (?)`)
 	if _, err := q.ExecContext(ctx, insertSQL, secret); err != nil {
 		t.Fatal(err)
@@ -221,8 +221,13 @@ func TestDebugSQLLogsAndDelegates(t *testing.T) {
 	if records[0]["error"] != nil || records[4]["error"] == nil {
 		t.Errorf("error fields: first = %v, last = %v", records[0]["error"], records[4]["error"])
 	}
-	if strings.Contains(buf.String(), "7777") {
+	if strings.Contains(buf.String(), "918273645") {
 		t.Errorf("arguments leaked into the log:\n%s", buf.String())
+	}
+	for i, rec := range records {
+		if _, ok := rec["args"]; ok {
+			t.Errorf("record %d carries an args field: %v", i, rec)
+		}
 	}
 
 	// Without debug the manager hands out the bare pool: nothing is logged.
@@ -233,20 +238,29 @@ func TestDebugSQLLogsAndDelegates(t *testing.T) {
 	}
 }
 
-// A rollback that fails after fn already failed (here: the context died and
-// database/sql rolled the transaction back itself) is logged; the caller
-// still gets fn's error.
+// commitBehindItsBack ends the transaction the manager handed to fn, so every
+// later rollback on it fails with sql.ErrTxDone.
+func commitBehindItsBack(t *testing.T, ctx context.Context, m *backend.TxManager) {
+	t.Helper()
+	if err := m.Querier(ctx).(*sql.Tx).Commit(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func logCapture() (*bytes.Buffer, *logger.Logger) {
+	var buf bytes.Buffer
+	return &buf, &logger.Logger{Logger: slog.New(slog.NewJSONHandler(&buf, nil))}
+}
+
+// A rollback that fails after fn already failed is logged; the caller still
+// gets fn's error.
 func TestWithTxReturnsFnErrorWhenRollbackFails(t *testing.T) {
 	d := newTable(t)
-	var buf bytes.Buffer
-	log := &logger.Logger{Logger: slog.New(slog.NewJSONHandler(&buf, nil))}
+	buf, log := logCapture()
 	m := backend.NewTxManager(d.SQL, log, false)
-	ctx, cancel := context.WithCancel(dbtest.Ctx(t))
-	defer cancel()
 	boom := errors.New("boom")
-	err := m.WithTx(ctx, func(context.Context) error {
-		cancel()
-		time.Sleep(100 * time.Millisecond) // let database/sql finish its own rollback
+	err := m.WithTx(dbtest.Ctx(t), func(ctx context.Context) error {
+		commitBehindItsBack(t, ctx, m)
 		return boom
 	})
 	if !errors.Is(err, boom) {
@@ -254,5 +268,52 @@ func TestWithTxReturnsFnErrorWhenRollbackFails(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "Failed to rollback transaction") {
 		t.Fatalf("rollback failure not logged: %q", buf.String())
+	}
+}
+
+// On the panic path a failing rollback is logged and the panic still rises.
+func TestWithTxLogsRollbackFailureOnPanic(t *testing.T) {
+	d := newTable(t)
+	buf, log := logCapture()
+	m := backend.NewTxManager(d.SQL, log, false)
+	func() {
+		defer func() {
+			if recover() != "boom" {
+				t.Error("panic was swallowed or replaced")
+			}
+		}()
+		_ = m.WithTx(dbtest.Ctx(t), func(ctx context.Context) error {
+			commitBehindItsBack(t, ctx, m)
+			panic("boom")
+		})
+	}()
+	if !strings.Contains(buf.String(), "Failed to rollback transaction after panic") {
+		t.Fatalf("rollback failure not logged: %q", buf.String())
+	}
+}
+
+// Savepoint failures are logged too: ROLLBACK TO on a finished transaction
+// after fn failed, and RELEASE after fn succeeded.
+func TestNestedWithTxLogsSavepointFailures(t *testing.T) {
+	d := newTable(t)
+	buf, log := logCapture()
+	m := backend.NewTxManager(d.SQL, log, false)
+	boom := errors.New("boom")
+	_ = m.WithTx(dbtest.Ctx(t), func(ctx context.Context) error {
+		if err := m.WithTx(ctx, func(ctx context.Context) error {
+			commitBehindItsBack(t, ctx, m)
+			return boom
+		}); !errors.Is(err, boom) {
+			t.Errorf("rollback-to case: err = %v, want boom", err)
+		}
+		if err := m.WithTx(ctx, func(context.Context) error { return nil }); err == nil {
+			t.Error("savepoint on a finished transaction succeeded")
+		}
+		return nil
+	})
+	for _, want := range []string{"Failed to rollback to savepoint", "Failed to create savepoint"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("log lacks %q:\n%s", want, buf.String())
+		}
 	}
 }

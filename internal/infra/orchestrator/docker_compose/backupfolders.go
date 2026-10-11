@@ -69,6 +69,42 @@ func (r *Repository) appBackupStorages(appID string) ([]string, error) {
 	return out, nil
 }
 
+// storagesHoldingBackups names the registered storages, beyond known, that
+// hold objects under <app-id>/: copies from a storage the app used earlier (a
+// switch of storage, a backup removed from the tab) that its current backups
+// no longer name. App ids are unique, so the folder is the app's. The probes
+// are bounded together (orphanListTimeout); one that fails is a warning, as
+// the copies may still be there.
+func (r *Repository) storagesHoldingBackups(ctx context.Context, appID string, known []string) (names, warnings []string) {
+	all, err := r.storages.List()
+	if err != nil {
+		return nil, []string{"backups: the storages can't be listed, so earlier copies of the app in other storages are not looked for: " + err.Error()}
+	}
+	ctx, cancel := context.WithTimeout(ctx, orphanListTimeout)
+	defer cancel()
+	for _, s := range all {
+		if slices.Contains(known, s.Name) {
+			continue
+		}
+		found, err := withDeadlineValue(ctx, storageCallTimeout, "look for the app's backups", func(ctx context.Context) (bool, error) {
+			st, err := r.openBackupStorage(s.Name)
+			if err != nil {
+				return false, err
+			}
+			objs, err := st.List(ctx, appID+"/")
+			return len(objs) > 0, err
+		})
+		switch {
+		case err != nil:
+			warnings = append(warnings, fmt.Sprintf("backups in %s: %v; copies of the app may be left there", s.Name, err))
+		case found:
+			names = append(names, s.Name)
+		}
+	}
+	sort.Strings(names)
+	return names, warnings
+}
+
 // settleBackups marks a deleted app's backup folder in each storage with its
 // .deleted marker and, with purge, deletes what is in it and then the marker.
 // The marker goes first and last, so a failure or a timeout leaves the folder

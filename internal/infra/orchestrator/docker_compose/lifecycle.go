@@ -137,6 +137,12 @@ func (r *Repository) DeleteApp(ctx context.Context, appID string, deleteVolumes,
 		if backupStorages, err = r.appBackupStorages(appID); err != nil {
 			res.BackupsDeleted = false
 			res.Warnings = append(res.Warnings, "backups: the app's backup settings can't be read, so its backup folders are left as they are: "+err.Error())
+		} else {
+			// Copies in a storage the app's backups no longer name are its
+			// copies too: settled with the rest, instead of left as orphans.
+			extra, warns := r.storagesHoldingBackups(ctx, appID, backupStorages)
+			backupStorages = append(backupStorages, extra...)
+			res.Warnings = append(res.Warnings, warns...)
 		}
 		appName = r.appName(r.appDataDir(appID), appID)
 	}

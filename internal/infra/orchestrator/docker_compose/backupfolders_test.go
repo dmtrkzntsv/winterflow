@@ -496,3 +496,39 @@ func TestRunBackupClearsAStaleMarker(t *testing.T) {
 		t.Fatalf("stored = %v", b.stored(t))
 	}
 }
+
+// Copies in a storage the app's backups no longer name (the app used it
+// earlier) are settled with the rest: purged with the backups, marked
+// without them. A storage without the app's folder is not touched.
+func TestDeleteAppSettlesCopiesInAStorageItNoLongerUses(t *testing.T) {
+	for _, purge := range []bool{true, false} {
+		b := newBackupRepo(t)
+		b.runCompose = func(context.Context, string, []string) error { return nil }
+		old, empty := t.TempDir(), t.TempDir()
+		for name, dir := range map[string]string{"old": old, "empty": empty} {
+			if err := b.storages.Save(localStorage(name, dir), nil); err != nil {
+				t.Fatal(err)
+			}
+		}
+		putPoint(t, old, "app-1", "database", b.clock, command.PointManual)
+		putObject(t, old, "someone-else/x", "x", b.clock)
+		res, err := b.DeleteApp(context.Background(), "app-1", false, purge)
+		if err != nil || len(res.Warnings) != 0 {
+			t.Fatalf("purge=%v: %+v, %v", purge, res, err)
+		}
+		_, markerErr := os.Stat(filepath.Join(old, "app-1", DeletedMarkerName))
+		_, pointErr := os.Stat(filepath.Join(old, "app-1", "database", "20261011T120000Z-manual.json"))
+		if purge && (!errors.Is(markerErr, os.ErrNotExist) || !errors.Is(pointErr, os.ErrNotExist)) {
+			t.Fatalf("the old storage still holds the app's copies: marker %v, point %v", markerErr, pointErr)
+		}
+		if !purge && (markerErr != nil || pointErr != nil) {
+			t.Fatalf("the old storage's folder is not marked: marker %v, point %v", markerErr, pointErr)
+		}
+		if _, err := os.Stat(filepath.Join(old, "someone-else", "x")); err != nil {
+			t.Fatalf("another app's object was touched: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(empty, "app-1")); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("a storage without the app got a folder: %v", err)
+		}
+	}
+}

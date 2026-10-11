@@ -14,7 +14,8 @@
 // Exit codes: 0 done, 3 unchanged since --since (nothing written), 4 nothing
 // to back up (the database file or every path is missing), 5 a files
 // restore failed while swapping (the paths are partly replaced), 2 bad
-// usage, 1 any other failure (a restore then changed nothing).
+// usage, 1 any other failure (a restore then changed nothing: a sqlite restore
+// puts the old -wal and -journal files back).
 package cli
 
 import (

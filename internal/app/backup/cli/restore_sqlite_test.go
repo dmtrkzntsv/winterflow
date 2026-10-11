@@ -2,12 +2,14 @@ package cli
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 )
 
@@ -38,14 +40,16 @@ type chownLog struct {
 func recordChowns(t *testing.T) *chownLog {
 	t.Helper()
 	log := &chownLog{calls: map[string][2]int{}}
-	prev := lchown
-	lchown = func(p string, uid, gid int) error {
+	record := func(p string, uid, gid int) error {
 		log.mu.Lock()
 		log.calls[filepath.Base(p)] = [2]int{uid, gid}
 		log.mu.Unlock()
 		return nil
 	}
-	t.Cleanup(func() { lchown = prev })
+	prevL, prevF := lchown, fchown
+	lchown = record
+	fchown = func(f *os.File, uid, gid int) error { return record(f.Name(), uid, gid) }
+	t.Cleanup(func() { lchown, fchown = prevL, prevF })
 	return log
 }
 
@@ -56,51 +60,93 @@ func (l *chownLog) of(name string) ([2]int, bool) {
 	return c, ok
 }
 
-// A copy dumped while the app writes restores over a newer database: the
-// rows are the copy's, the old -wal and -shm are gone, and the file keeps
-// the owner and mode of the one it replaced.
-func TestRestoreSQLite(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "app.db")
-	db := openDB(t, path)
+// walFixture leaves a database at path whose rows (first+more) live partly in
+// its -wal (never checkpointed, as after a killed app) and returns a dump
+// taken when it had first rows.
+func walFixture(t *testing.T, path string, first, more int) []byte {
+	t.Helper()
+	db, err := sql.Open("sqlite", "file:"+path+"?_pragma=journal_mode(WAL)&_pragma=wal_autocheckpoint(0)&_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.SetMaxOpenConns(1)
+	insert := func(n int, body string) {
+		for range n {
+			if _, err := db.Exec("INSERT INTO items (body) VALUES (?)", body); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	if _, err := db.Exec("CREATE TABLE items (id INTEGER PRIMARY KEY, body TEXT)"); err != nil {
 		t.Fatal(err)
 	}
-	for range 50 {
-		if _, err := db.Exec("INSERT INTO items (body) VALUES ('x')"); err != nil {
-			t.Fatal(err)
-		}
-	}
+	insert(first, "x")
 	code, copied, res := run(t, "dump", "sqlite", path)
 	if code != ExitOK {
 		t.Fatalf("dump: %d %+v", code, res)
 	}
-	for range 25 {
-		if _, err := db.Exec("INSERT INTO items (body) VALUES ('y')"); err != nil {
-			t.Fatal(err)
-		}
+	insert(more, "y")
+	// Closing would checkpoint and delete the -wal: read both files first.
+	main, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wal, err := os.ReadFile(path + "-wal")
+	if err != nil {
+		t.Fatal(err)
 	}
 	db.Close()
+	for _, ext := range []string{"-wal", "-shm"} {
+		_ = os.Remove(path + ext)
+	}
+	if err := os.WriteFile(path, main, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path+"-wal", wal, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Chmod(path, 0o640); err != nil {
 		t.Fatal(err)
 	}
-	for _, ext := range []string{"-wal", "-shm"} {
-		if err := os.WriteFile(path+ext, []byte("stale"), 0o600); err != nil {
-			t.Fatal(err)
-		}
+	return copied
+}
+
+// A copy dumped while the app writes restores over a newer database that
+// still has its (real, uncheckpointed) -wal: the rows are the copy's, the
+// old -wal and -shm are gone (SQLite would replay them onto the new file),
+// and the file keeps the owner and mode of the one it replaced.
+func TestRestoreSQLite(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "app.db")
+	copied := walFixture(t, path, 50, 25)
+	if err := os.WriteFile(path+"-shm", []byte("stale"), 0o600); err != nil {
+		t.Fatal(err)
 	}
 	chowns := recordChowns(t)
-	code, res = restore(t, copied, "sqlite", path)
+	// What the check left beside the copy is seen before the cleanup.
+	t.Cleanup(func() { beforeSwap = nil })
+	beforeSwap = func() {
+		for _, ext := range []string{"-wal", "-shm", "-journal"} {
+			if _, err := os.Stat(path + ".restore-tmp" + ext); !os.IsNotExist(err) {
+				t.Errorf("checking the copy left %s", ext)
+			}
+		}
+	}
+	code, res := restore(t, copied, "sqlite", path)
 	if code != ExitOK || res.RawSize != int64(len(copied)) {
 		t.Fatalf("restore: %d %+v", code, res)
+	}
+	for _, ext := range []string{"-wal", "-shm", "-journal", ".restore-tmp", ".restore-old", "-wal.restore-old", "-shm.restore-old"} {
+		if _, err := os.Stat(path + ext); !os.IsNotExist(err) {
+			t.Fatalf("%s left behind", ext)
+		}
 	}
 	if n := count(t, path); n != 50 {
 		t.Fatalf("restored database has %d rows, want 50", n)
 	}
-	for _, ext := range []string{".restore-tmp", ".restore-tmp-wal", ".restore-tmp-shm"} {
-		if _, err := os.Stat(path + ext); !os.IsNotExist(err) {
-			t.Fatalf("%s left behind", ext)
-		}
+	var check string
+	if err := openDB(t, path).QueryRow("PRAGMA quick_check").Scan(&check); err != nil || check != "ok" {
+		t.Fatalf("quick_check = %q, %v", check, err)
 	}
 	info, _ := os.Stat(path)
 	if info.Mode().Perm() != 0o640 {
@@ -108,6 +154,120 @@ func TestRestoreSQLite(t *testing.T) {
 	}
 	if c, ok := chowns.of("app.db.restore-tmp"); !ok || c != [2]int{os.Getuid(), os.Getgid()} {
 		t.Fatalf("owner given = %v (%v)", c, ok)
+	}
+}
+
+// A swap that fails puts the old -wal back: the original still reads every
+// row, including those only its -wal holds, and nothing is left aside.
+func TestRestoreSQLiteFailedSwapKeepsTheWAL(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "app.db")
+	copied := walFixture(t, path, 50, 25)
+	if err := os.WriteFile(path+"-journal", nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mainBefore, _ := os.ReadFile(path)
+	walBefore, _ := os.ReadFile(path + "-wal")
+	recordChowns(t)
+	prev := rename
+	t.Cleanup(func() { rename = prev })
+	rename = func(from, to string) error {
+		if to == path {
+			return &os.LinkError{Op: "rename", Old: from, New: to, Err: syscall.EPERM}
+		}
+		return prev(from, to)
+	}
+	code, res := restore(t, copied, "sqlite", path)
+	if code != ExitFailed || !strings.HasPrefix(res.Error, "put the copy in place: ") || strings.Contains(res.Error, dir) {
+		t.Fatalf("%d %+v", code, res)
+	}
+	if now, _ := os.ReadFile(path); !bytes.Equal(now, mainBefore) {
+		t.Fatal("the database changed")
+	}
+	if now, _ := os.ReadFile(path + "-wal"); !bytes.Equal(now, walBefore) {
+		t.Fatal("the -wal did not come back")
+	}
+	if _, err := os.Stat(path + "-journal"); err != nil {
+		t.Fatalf("the -journal did not come back: %v", err)
+	}
+	for _, ext := range []string{"-wal.restore-old", "-journal.restore-old", ".restore-tmp"} {
+		if _, err := os.Stat(path + ext); !os.IsNotExist(err) {
+			t.Fatalf("%s left behind", ext)
+		}
+	}
+	if err := os.Remove(path + "-journal"); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, path); n != 75 {
+		t.Fatalf("the original reads %d rows, want 75", n)
+	}
+}
+
+// A leftover .restore-old of a killed run is replaced by the live file and
+// removed after a successful restore.
+func TestRestoreSQLiteClearsLeftoverAsides(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "app.db")
+	copied := walFixture(t, path, 10, 5)
+	for _, ext := range []string{"-wal.restore-old", "-shm.restore-old", "-journal.restore-old"} {
+		if err := os.WriteFile(path+ext, []byte("old"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	recordChowns(t)
+	if code, res := restore(t, copied, "sqlite", path); code != ExitOK {
+		t.Fatalf("%d %+v", code, res)
+	}
+	if left, _ := filepath.Glob(path + "*restore-old"); len(left) != 0 {
+		t.Fatalf("left %v", left)
+	}
+	if n := count(t, path); n != 10 {
+		t.Fatalf("%d rows", n)
+	}
+}
+
+// The temp file swapped for a symlink after it was written is never chmodded,
+// chowned or moved into place: the target keeps its mode, the database is
+// untouched.
+func TestRestoreSQLiteRefusesASwappedCopy(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "app.db")
+	copied := walFixture(t, path, 10, 5)
+	mainBefore, _ := os.ReadFile(path)
+	walBefore, _ := os.ReadFile(path + "-wal")
+	target := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(target, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	chowns := recordChowns(t)
+	t.Cleanup(func() { beforeSwap = nil })
+	beforeSwap = func() {
+		tmp := path + ".restore-tmp"
+		if err := os.Remove(tmp); err != nil {
+			t.Error(err)
+		}
+		if err := os.Symlink(target, tmp); err != nil {
+			t.Error(err)
+		}
+	}
+	code, res := restore(t, copied, "sqlite", path)
+	if code != ExitFailed || !strings.HasPrefix(res.Error, "the copy changed while it was checked") {
+		t.Fatalf("%d %+v", code, res)
+	}
+	if info, _ := os.Stat(target); info.Mode().Perm() != 0o600 {
+		t.Fatalf("the target's mode became %v", info.Mode())
+	}
+	if _, ok := chowns.of("secret"); ok {
+		t.Fatal("the target was chowned")
+	}
+	if now, _ := os.ReadFile(path); !bytes.Equal(now, mainBefore) {
+		t.Fatal("the database changed")
+	}
+	if now, _ := os.ReadFile(path + "-wal"); !bytes.Equal(now, walBefore) {
+		t.Fatal("the -wal changed")
+	}
+	if _, err := os.Lstat(path + ".restore-tmp"); !os.IsNotExist(err) {
+		t.Fatal("the swapped-in file was left")
 	}
 }
 

@@ -12,9 +12,13 @@ import (
 	"syscall"
 )
 
-// lchown changes an owner without following a symlink (replaced in tests,
-// which can't give files away).
-var lchown = os.Lchown
+// lchown changes an owner without following a symlink; fchown changes the
+// owner of an open file (both replaced in tests, which can't give files
+// away).
+var (
+	lchown = os.Lchown
+	fchown = func(f *os.File, uid, gid int) error { return f.Chown(uid, gid) }
+)
 
 func restoreSQLiteCmd(args []string, stdin io.Reader) (Result, error) {
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
@@ -32,11 +36,14 @@ func restoreSQLiteCmd(args []string, stdin io.Reader) (Result, error) {
 // restoreSQLite replaces the database at path with the copy read from in.
 // The copy is written beside it as <path>.restore-tmp and must pass
 // quick_check with a non-empty schema; it takes the owner and mode of the
-// file it replaces (of the folder, when there is none), the old -wal, -shm
-// and -journal files are removed (SQLite would otherwise replay them onto
-// the new file), and a rename puts it in place. Any failure before the
-// rename leaves the original untouched. entry is the database's name in the
-// backup, which messages use instead of the helper's /src/<n> path.
+// file it replaces (of the folder, when there is none), through the open
+// descriptor, so a file swapped in at its path is never touched. The old
+// -wal, -shm and -journal files are moved aside as <file>.restore-old (SQLite
+// would otherwise replay them onto the new file), a rename puts the copy in
+// place, and the moved files are removed only after it. Any failure puts them
+// back: the original, with its WAL, is as it was. (A helper killed in between
+// leaves them aside, not lost.) entry is the database's name in the backup,
+// which messages use instead of the helper's /src/<n> path.
 func restoreSQLite(path, entry string, in io.Reader) (Result, error) {
 	shown := path
 	if entry != "" {
@@ -61,36 +68,121 @@ func restoreSQLite(path, entry string, in io.Reader) (Result, error) {
 	tmp := path + ".restore-tmp"
 	removeSQLiteFiles(tmp)
 	defer removeSQLiteFiles(tmp)
-	n, err := writeNew(tmp, in)
+	f, n, err := writeNew(tmp, in)
 	if err != nil {
 		return Result{}, err
 	}
+	defer f.Close()
 	if n == 0 {
 		return Result{}, errors.New("the copy is empty")
+	}
+	// The owner and mode go on through the descriptor (fchown, fchmod):
+	// they never follow whatever has since appeared at the path.
+	if st, ok := owner.Sys().(*syscall.Stat_t); ok {
+		if err := fchown(f, int(st.Uid), int(st.Gid)); err != nil {
+			return Result{}, fmt.Errorf("give the copy its owner: %w", scrub(err))
+		}
+	}
+	if err := f.Chmod(perm); err != nil {
+		return Result{}, fmt.Errorf("give the copy its mode: %w", scrub(err))
+	}
+	if err := f.Sync(); err != nil {
+		return Result{}, fmt.Errorf("write the copy: %w", scrub(err))
 	}
 	// immutable: SQLite opens it without locks and never creates a -wal or
 	// -shm beside it (as root).
 	if err := checkSnapshot(tmp, "immutable=1"); err != nil {
 		return Result{}, fmt.Errorf("the copy can't be restored: %w", err)
 	}
-	if st, ok := owner.Sys().(*syscall.Stat_t); ok {
-		if err := lchown(tmp, int(st.Uid), int(st.Gid)); err != nil {
-			return Result{}, fmt.Errorf("give the copy its owner: %w", scrub(err))
+	if beforeSwap != nil {
+		beforeSwap()
+	}
+	// What is at the path must still be the file written and checked.
+	if err := sameFile(f, tmp); err != nil {
+		return Result{}, fmt.Errorf("the copy changed while it was checked: %w", err)
+	}
+	asides, err := moveAside(path)
+	if err != nil {
+		return Result{}, err
+	}
+	if err := rename(tmp, path); err != nil {
+		err = fmt.Errorf("put the copy in place: %w", scrub(err))
+		if rerr := putBack(path, asides); rerr != nil {
+			err = fmt.Errorf("%w; %v", err, rerr)
 		}
+		return Result{}, err
 	}
-	if err := os.Chmod(tmp, perm); err != nil {
-		return Result{}, scrub(err)
-	}
-	for _, ext := range []string{"-wal", "-shm", "-journal"} {
-		if err := os.Remove(path + ext); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return Result{}, fmt.Errorf("remove the old %s file: %w", ext, scrub(err))
-		}
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		return Result{}, fmt.Errorf("put the copy in place: %w", scrub(err))
+	for _, ext := range restoreOldExts {
+		_ = os.Remove(path + ext + restoreOld) // also the leftovers of a killed run
 	}
 	syncDir(filepath.Dir(path))
 	return Result{RawSize: n}, nil
+}
+
+// restoreOld is the suffix of an old -wal, -shm or -journal file set aside
+// while a restore swaps the database. A leftover of a killed run is never
+// read by SQLite and goes with the next successful restore.
+const restoreOld = ".restore-old"
+
+var restoreOldExts = []string{"-wal", "-shm", "-journal"}
+
+// Test seams: beforeSwap runs between the copy's check and the swap; rename
+// is os.Rename.
+var (
+	beforeSwap func()
+	rename     = os.Rename
+)
+
+// moveAside renames each existing <path>-wal, -shm and -journal to
+// <file>.restore-old (replacing a leftover one) and returns the extensions it
+// moved. On failure it puts back what it had moved.
+func moveAside(path string) ([]string, error) {
+	var moved []string
+	for _, ext := range restoreOldExts {
+		err := os.Rename(path+ext, path+ext+restoreOld)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			err = fmt.Errorf("set the old %s file aside: %w", ext, scrub(err))
+			if rerr := putBack(path, moved); rerr != nil {
+				err = fmt.Errorf("%w; %v", err, rerr)
+			}
+			return nil, err
+		}
+		moved = append(moved, ext)
+	}
+	return moved, nil
+}
+
+// putBack undoes moveAside for the extensions in moved.
+func putBack(path string, moved []string) error {
+	var failed []string
+	for _, ext := range moved {
+		if err := os.Rename(path+ext+restoreOld, path+ext); err != nil {
+			failed = append(failed, ext)
+		}
+	}
+	if len(failed) > 0 {
+		return fmt.Errorf("the old %s files stay set aside as *%s", strings.Join(failed, ", "), restoreOld)
+	}
+	return nil
+}
+
+// sameFile requires path to be the regular file f is open on.
+func sameFile(f *os.File, path string) error {
+	want, err := f.Stat()
+	if err != nil {
+		return scrub(err)
+	}
+	got, err := os.Lstat(path)
+	if err != nil {
+		return scrub(err)
+	}
+	if !got.Mode().IsRegular() || !os.SameFile(want, got) {
+		return errors.New("it was replaced")
+	}
+	return nil
 }
 
 // removeSQLiteFiles removes a database file and the files SQLite keeps
@@ -102,23 +194,19 @@ func removeSQLiteFiles(path string) {
 }
 
 // writeNew creates path (it must not exist; a symlink there is refused)
-// with in's bytes, synced to disk.
-func writeNew(path string, in io.Reader) (int64, error) {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
+// with in's bytes and returns the file, still open (the caller closes it and
+// syncs it once it has its owner and mode).
+func writeNew(path string, in io.Reader) (*os.File, int64, error) {
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
-		return 0, fmt.Errorf("write the copy: %w", scrub(err))
+		return nil, 0, fmt.Errorf("write the copy: %w", scrub(err))
 	}
 	n, err := io.Copy(f, in)
-	if err == nil {
-		err = f.Sync()
-	}
-	if cerr := f.Close(); err == nil {
-		err = cerr
-	}
 	if err != nil {
-		return n, fmt.Errorf("write the copy: %w", scrub(err))
+		f.Close()
+		return nil, n, fmt.Errorf("write the copy: %w", scrub(err))
 	}
-	return n, nil
+	return f, n, nil
 }
 
 // syncDir makes a rename in dir durable (best effort).

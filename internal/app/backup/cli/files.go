@@ -57,8 +57,12 @@ func (w *warner) result() []string {
 // backup's own path (see source.display), not a helper-internal /src/<n>.
 func scrub(err error) error {
 	var pe *fs.PathError
-	if errors.As(err, &pe) {
+	var le *os.LinkError
+	switch {
+	case errors.As(err, &pe):
 		return pe.Err
+	case errors.As(err, &le):
+		return le.Err
 	}
 	return err
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	neturl "net/url"
 	"os"
 	"strings"
 	"sync"
@@ -57,7 +58,7 @@ func Open(log *logger.Logger, url string) (*DB, error) {
 			return nil, fmt.Errorf("failed to setup PostgreSQL: %w", err)
 		}
 	default:
-		return nil, fmt.Errorf("unsupported database type in connection string: %s", url)
+		return nil, fmt.Errorf("unsupported database type in connection string: %s", redactURL(url))
 	}
 
 	if err := migrate.Migrate(ctx, sqldb, driver); err != nil {
@@ -70,6 +71,36 @@ func Open(log *logger.Logger, url string) (*DB, error) {
 		Driver: driver,
 		Tx:     backend.NewTxManager(sqldb, log, os.Getenv("DEBUG_SQL") == "true"),
 	}, nil
+}
+
+// redactURL renders a connection string for an error message that ends up
+// in the logs: the password is masked and the query (which may carry one,
+// e.g. password=) dropped; anything that is not a hierarchical URL is shown
+// as its scheme at most.
+func redactURL(s string) string {
+	u, err := neturl.Parse(s)
+	if err == nil && u.Scheme != "" && u.Opaque == "" {
+		u.RawQuery, u.ForceQuery, u.Fragment, u.RawFragment = "", false, "", ""
+		return u.Redacted()
+	}
+	if scheme, _, ok := strings.Cut(s, "://"); ok && validScheme(scheme) {
+		return scheme + "://<unparsable>"
+	}
+	return "<unparsable>"
+}
+
+// validScheme reports whether s is a URL scheme (RFC 3986: a letter, then
+// letters, digits, '+', '-' or '.').
+func validScheme(s string) bool {
+	for i, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z':
+		case i > 0 && (r >= '0' && r <= '9' || r == '+' || r == '-' || r == '.'):
+		default:
+			return false
+		}
+	}
+	return s != ""
 }
 
 // HealthCheck pings the database within 5 s.

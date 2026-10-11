@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -75,9 +76,9 @@ func TestPragmasSurviveAConnectionReplacedAfterInterrupt(t *testing.T) {
 	}
 }
 
-// A path with URI metacharacters is a path, not a query or a fragment.
-func TestOpenPathWithURIMetacharacters(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "a?b#c%d", "wf.sqlite")
+// A '%' in the path is a literal character, not a URI escape.
+func TestOpenPathWithPercent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "a%20b%d", "wf.sqlite")
 	db, err := Open(context.Background(), Scheme+path)
 	if err != nil {
 		t.Fatal(err)
@@ -88,6 +89,27 @@ func TestOpenPathWithURIMetacharacters(t *testing.T) {
 	}
 	if got, err := pragmaValue(db, "foreign_keys"); err != nil || got != "1" {
 		t.Fatalf("foreign_keys = %q, %v", got, err)
+	}
+}
+
+// '?' or '#' in a sqlite:// URL fails closed. An older build passed
+// "...winterflow.sqlite?_pragma=..." on to the driver as a query; taking it
+// as part of the file name instead would open a new, empty (unclaimed)
+// database next to the real one.
+func TestOpenRejectsQueryAndFragment(t *testing.T) {
+	dir := t.TempDir()
+	for _, path := range []string{
+		filepath.Join(dir, "wf.sqlite?_pragma=busy_timeout(5000)"),
+		filepath.Join(dir, "wf.sqlite#frag"),
+		filepath.Join(dir, "a?b", "wf.sqlite"),
+	} {
+		_, err := Open(context.Background(), Scheme+path)
+		if err == nil || !strings.Contains(err.Error(), "must not contain '?' or '#'") || !strings.Contains(err.Error(), path) {
+			t.Errorf("%s: err = %v, want the '?'/'#' rejection naming the path", path, err)
+		}
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Fatalf("rejected paths created %d entries", len(entries))
 	}
 }
 

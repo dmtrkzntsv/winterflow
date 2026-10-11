@@ -34,10 +34,23 @@ func TestOpenMigratesAndShutsDown(t *testing.T) {
 	}
 }
 
+// The error reaches the logs (journald), so the URL's password must not.
 func TestOpenRejectsUnknownScheme(t *testing.T) {
-	_, err := db.Open(dbtest.Log, "mysql://u:p@h/db")
-	if err == nil || !strings.Contains(err.Error(), "unsupported database type") {
-		t.Fatalf("err = %v", err)
+	for in, want := range map[string]string{
+		"mysql://u:s3cret@h/db":        "unsupported database type in connection string: mysql://u:xxxxx@h/db",
+		"mysql://u:s3cret@h/db\x7f":    "unsupported database type in connection string: mysql://<unparsable>",
+		"mysql://h/db?password=s3cret": "unsupported database type in connection string: mysql://h/db",
+		"mysql:u:s3cret@h":             "unsupported database type in connection string: <unparsable>",
+		"host=h password=s3cret":       "unsupported database type in connection string: <unparsable>",
+		"s3cret":                       "unsupported database type in connection string: <unparsable>",
+	} {
+		_, err := db.Open(dbtest.Log, in)
+		if err == nil || err.Error() != want {
+			t.Errorf("%q: err = %v, want %q", in, err, want)
+		}
+		if err != nil && strings.Contains(err.Error(), "s3cret") {
+			t.Errorf("%q: err = %v leaks the password", in, err)
+		}
 	}
 }
 

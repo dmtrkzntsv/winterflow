@@ -31,26 +31,36 @@ var pragmas = []string{
 	"mmap_size(268435456)", // 256MB
 }
 
-// dsn builds the modernc.org/sqlite connection string for a database file:
-// a file: URI (the path's '?', '#' and '%' escaped, so none of them is taken
-// for the query) followed by the pragmas.
+// dsn builds the modernc.org/sqlite connection string for a (cleaned)
+// database file path: a file: URI (the path's '%', and defensively '?' and
+// '#', escaped, so none of them is taken for an escape, the query or a
+// fragment) followed by the pragmas.
 func dsn(path string) string {
 	q := url.Values{}
 	for _, p := range pragmas {
 		q.Add("_pragma", p)
 	}
-	escaped := strings.NewReplacer("%", "%25", "?", "%3f", "#", "%23").Replace(filepath.Clean(path))
+	escaped := strings.NewReplacer("%", "%25", "?", "%3f", "#", "%23").Replace(path)
 	return "file:" + escaped + "?" + q.Encode()
 }
 
 // Open opens the database file named by a sqlite:// URL, creating its
 // directory, and pins the pool to one connection (one writer). Every
 // connection the pool ever opens gets the pragmas. It does not migrate.
+//
+// A path containing '?' or '#' is rejected: an older build handed
+// "sqlite://...wf.sqlite?_pragma=..." to the driver, which applied the
+// query; reading it as a file name instead would silently open a new, empty
+// database (an unclaimed instance) next to the real one.
 func Open(ctx context.Context, url string) (*sql.DB, error) {
-	path := strings.TrimPrefix(url, Scheme)
-	if path == "" {
+	raw := strings.TrimPrefix(url, Scheme)
+	if raw == "" {
 		return nil, fmt.Errorf("invalid connection string: path is empty")
 	}
+	if strings.ContainsAny(raw, "?#") {
+		return nil, fmt.Errorf("sqlite path must not contain '?' or '#' (query parameters are not supported): %s", raw)
+	}
+	path := filepath.Clean(raw)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return nil, fmt.Errorf("failed to create database directory: %w", err)
 	}

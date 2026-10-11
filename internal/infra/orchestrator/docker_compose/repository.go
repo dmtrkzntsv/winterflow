@@ -20,6 +20,7 @@
 package dockercompose
 
 import (
+	"context"
 	"path/filepath"
 	"sync"
 	"time"
@@ -48,6 +49,11 @@ type Repository struct {
 	// storages is the agent's storage registry ({data}/storages/): what
 	// storage.* commands manage and WF_STORAGE_ variables resolve against.
 	storages *storages.Registry
+
+	// The Docker-touching steps of storage.save (which compose projects
+	// are up; bringing an app up again), replaced in tests.
+	runningProjects func(ctx context.Context) (map[string]bool, error)
+	redeploy        func(ctx context.Context, appID string) error
 }
 
 // versionEntry is a cached commit count, valid while HEAD is unchanged.
@@ -57,13 +63,16 @@ type versionEntry struct {
 }
 
 func NewRepository(cfg *config.ServerConfig, log *logger.Logger) *Repository {
-	return &Repository{
+	r := &Repository{
 		cfg:          cfg,
 		log:          log,
 		sourceChecks: make(map[string]time.Time),
 		versionCache: make(map[string]versionEntry),
 		storages:     storages.NewRegistry(filepath.Join(cfg.GetAgentDataDir(), "storages")),
 	}
+	r.runningProjects = r.composeProjectsUp
+	r.redeploy = r.deploy
+	return r
 }
 
 // forgetApp drops an app's in-memory bookkeeping after deletion.

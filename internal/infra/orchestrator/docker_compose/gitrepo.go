@@ -80,6 +80,19 @@ func gitCommitAll(dir, subject string) (string, error) {
 	return hash.String(), nil
 }
 
+// gitHead returns the hash HEAD points at.
+func gitHead(dir string) (string, error) {
+	repo, err := git.PlainOpen(dir)
+	if err != nil {
+		return "", err
+	}
+	head, err := repo.Head()
+	if err != nil {
+		return "", err
+	}
+	return head.Hash().String(), nil
+}
+
 // gitLog returns the app's history, newest first.
 func gitLog(dir string) ([]commitInfo, error) {
 	repo, err := git.PlainOpen(dir)

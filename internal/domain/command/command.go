@@ -54,6 +54,12 @@ const (
 	TypeDomainCreate Type = "domain.create"
 	TypeDomainDelete Type = "domain.delete"
 
+	// Storages (local folders and S3-compatible buckets).
+	TypeStorageList   Type = "storage.list"
+	TypeStorageTest   Type = "storage.test"
+	TypeStorageSave   Type = "storage.save"
+	TypeStorageDelete Type = "storage.delete"
+
 	// Container images.
 	TypeImageTags Type = "image.tags" // list available registry tags for an image
 

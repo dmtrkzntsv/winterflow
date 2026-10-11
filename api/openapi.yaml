@@ -3191,6 +3191,10 @@ components:
       properties:
         app:
           $ref: '#/components/schemas/AppPayload'
+        storage_variables:
+          items:
+            $ref: '#/components/schemas/StorageVariable'
+          type: array
       required:
       - app
       type: object
@@ -3879,6 +3883,19 @@ components:
       required:
       - bootstrap
       - registration_enabled
+      type: object
+    StorageVariable:
+      properties:
+        name:
+          type: string
+        secret:
+          type: boolean
+        storage:
+          type: string
+      required:
+      - name
+      - storage
+      - secret
       type: object
     UpdateAgentRequest:
       properties:

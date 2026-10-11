@@ -120,6 +120,9 @@ func TestParity(t *testing.T) {
 	result("delete beta", p, call{Method: http.MethodPost, Path: "/api/v1/app/delete-app",
 		Body: happ.DeleteAppRequest{ServerID: sid, AppID: ids[1]}})
 	rec("list apps again", p.get(t, "/api/v1/app/get-apps", q)).expect(t, http.StatusOK)
+	result("save storage", p, call{Method: http.MethodPost, Path: "/api/v1/storage/save", Query: q,
+		Body: command.SaveStorageRequest{Storage: model.Storage{Name: "disk", Type: model.StorageLocal, Local: &model.LocalStorage{Path: "/mnt/usb/"}}}})
+	rec("list storages", p.get(t, "/api/v1/storage/get-storages", q)).expect(t, http.StatusOK)
 	rec("list members", p.get(t, "/api/v1/org/get-members", nil)).expect(t, http.StatusOK)
 
 	var buf bytes.Buffer

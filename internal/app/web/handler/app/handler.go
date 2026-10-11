@@ -24,7 +24,9 @@ type Deps struct {
 	AppDomainRepository port.AppDomainRepository
 	// ServerDomainRepository indexes each server's domain registrations.
 	ServerDomainRepository port.ServerDomainRepository
-	StatusCache            *status.Cache
+	// ServerStorageRepository indexes each server's storages.
+	ServerStorageRepository port.ServerStorageRepository
+	StatusCache             *status.Cache
 	// Servers authorizes server-addressed operations: every handler that takes
 	// a server_id verifies the caller's org owns it before acting.
 	Servers webutil.ServerAccess
@@ -32,11 +34,12 @@ type Deps struct {
 
 func NewHandler(d *Deps) *Handler {
 	uc := useapp.NewUseCase(&useapp.Deps{
-		CommandDispatcher:      d.CommandDispatcher,
-		AppRepository:          d.AppRepository,
-		AppDomainRepository:    d.AppDomainRepository,
-		ServerDomainRepository: d.ServerDomainRepository,
-		Log:                    d.Logger,
+		CommandDispatcher:       d.CommandDispatcher,
+		AppRepository:           d.AppRepository,
+		AppDomainRepository:     d.AppDomainRepository,
+		ServerDomainRepository:  d.ServerDomainRepository,
+		ServerStorageRepository: d.ServerStorageRepository,
+		Log:                     d.Logger,
 	})
 	return &Handler{usecase: *uc, status: d.StatusCache, servers: d.Servers, log: d.Logger}
 }

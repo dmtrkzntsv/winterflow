@@ -42,10 +42,66 @@ type fakeAgent struct {
 	// domains is each agent's registry (agentID -> name -> domain): the
 	// domain.* defaults read and write it, so a list after a create sees it.
 	domains map[string]map[string]command.Domain
+	// storages is each agent's storage registry, the same way for storage.*.
+	storages map[string]map[string]command.StorageInfo
 }
 
 func newFakeAgent() *fakeAgent {
-	return &fakeAgent{overrides: map[command.Type]script{}, domains: map[string]map[string]command.Domain{}}
+	return &fakeAgent{
+		overrides: map[command.Type]script{},
+		domains:   map[string]map[string]command.Domain{},
+		storages:  map[string]map[string]command.StorageInfo{},
+	}
+}
+
+// addStorage puts a storage straight into agentID's registry, the way one
+// added before the API saw it would be.
+func (a *fakeAgent) addStorage(agentID string, s command.StorageInfo) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.storages[agentID] == nil {
+		a.storages[agentID] = map[string]command.StorageInfo{}
+	}
+	if s.Apps == nil {
+		s.Apps = []string{}
+	}
+	a.storages[agentID][s.Name] = s
+}
+
+// storageScript answers storage.* from agentID's registry, masking the
+// secret the way the agent does.
+func (a *fakeAgent) storageScript(typ command.Type, agentID string) (script, bool) {
+	switch typ {
+	case command.TypeStorageList:
+		return func(json.RawMessage) reply {
+			a.mu.Lock()
+			defer a.mu.Unlock()
+			out := []command.StorageInfo{}
+			for _, s := range a.storages[agentID] {
+				out = append(out, s)
+			}
+			sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+			return reply{Payload: command.ListStoragesResponse{Storages: out}}
+		}, true
+	case command.TypeStorageTest:
+		return func(json.RawMessage) reply { return reply{Payload: command.TestStorageResponse{OK: true}} }, true
+	case command.TypeStorageSave:
+		return func(raw json.RawMessage) reply {
+			in := decode[command.SaveStorageRequest](raw).Storage.Normalized()
+			info := command.StorageInfo{Storage: in.Masked(), Location: in.Location(), Apps: []string{}}
+			a.addStorage(agentID, info)
+			return reply{Payload: command.SaveStorageResponse{Storage: info}}
+		}, true
+	case command.TypeStorageDelete:
+		return func(raw json.RawMessage) reply {
+			in := decode[command.DeleteStorageRequest](raw)
+			a.mu.Lock()
+			delete(a.storages[agentID], in.Name)
+			a.mu.Unlock()
+			return reply{Payload: command.DeleteStorageResponse{Name: in.Name}}
+		}, true
+	}
+	return nil, false
 }
 
 // register puts a domain straight into agentID's registry, the way the
@@ -142,6 +198,8 @@ func (a *fakeAgent) Dispatch(_ context.Context, req *proto.RequestEnvelope) *pro
 	if !ok {
 		if ds, isDomain := a.domainScript(typ, agentID); isDomain {
 			s = ds
+		} else if ss, isStorage := a.storageScript(typ, agentID); isStorage {
+			s = ss
 		} else {
 			s = defaultScript(typ)
 		}
@@ -275,6 +333,7 @@ func TestFakeAgentAnswersEveryCommandType(t *testing.T) {
 		command.TypeNetworkCreate, command.TypeNetworkDelete, command.TypeVolumeList,
 		command.TypeVolumeCreate, command.TypeVolumeDelete, command.TypeImageTags, command.TypeAgentUpdate,
 		command.TypeDomainList, command.TypeDomainCreate, command.TypeDomainDelete,
+		command.TypeStorageList, command.TypeStorageTest, command.TypeStorageSave, command.TypeStorageDelete,
 	} {
 		resp := a.Dispatch(context.Background(), &proto.RequestEnvelope{Type: string(typ), RequestId: "r", Payload: []byte(`{}`)})
 		if resp.Base.ResponseCode != proto.ResponseCode_RESPONSE_CODE_SUCCESS {

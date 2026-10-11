@@ -33,6 +33,9 @@ func bad(method, path string) call {
 
 const anApp = "00000000-0000-0000-0000-000000000001"
 
+// diskProbe is a valid local storage body.
+var diskProbe = map[string]any{"name": "disk", "type": "local", "local": map[string]any{"path": "/mnt/usb"}}
+
 // probes covers every route that takes input or is server-addressed.
 // TestProbesCoverTable keeps it in step with the route table.
 var probes = map[string]probe{
@@ -70,6 +73,17 @@ var probes = map[string]probe{
 	"POST /api/v1/domain/delete": {valid: func(s string) call {
 		return call{Method: http.MethodPost, Path: "/api/v1/domain/delete", Query: sq(s), Body: map[string]any{"name": "*.example.test"}}
 	}, malformed: bad("POST", "/api/v1/domain/delete")},
+	"GET /api/v1/storage/get-storages": {valid: func(s string) call { return get("/api/v1/storage/get-storages", sq(s)) }, malformed: bad("GET", "/api/v1/storage/get-storages")},
+	"GET /api/v1/storage/list":         {valid: func(s string) call { return get("/api/v1/storage/list", sq(s)) }, malformed: bad("GET", "/api/v1/storage/list")},
+	"POST /api/v1/storage/test": {valid: func(s string) call {
+		return call{Method: http.MethodPost, Path: "/api/v1/storage/test", Query: sq(s), Body: diskProbe}
+	}, malformed: bad("POST", "/api/v1/storage/test")},
+	"POST /api/v1/storage/save": {valid: func(s string) call {
+		return call{Method: http.MethodPost, Path: "/api/v1/storage/save", Query: sq(s), Body: diskProbe}
+	}, malformed: bad("POST", "/api/v1/storage/save")},
+	"POST /api/v1/storage/delete": {valid: func(s string) call {
+		return call{Method: http.MethodPost, Path: "/api/v1/storage/delete", Query: sq(s), Body: map[string]any{"name": "disk"}}
+	}, malformed: bad("POST", "/api/v1/storage/delete")},
 	"GET /api/v1/domains/check": {valid: func(s string) call {
 		return get("/api/v1/domains/check", url.Values{"server_id": {s}, "domain": {"free.example.test"}})
 	}, malformed: bad("GET", "/api/v1/domains/check")},

@@ -362,6 +362,10 @@ type dumpOutcome struct {
 type lazyUpload struct {
 	st  store.Store
 	key string
+	// grace is putAbortGrace as it was when the upload was made: the
+	// callbacks and abort run on other goroutines, which must not read the
+	// package variable (a test replaces it, and restores it at its end).
+	grace time.Duration
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -378,7 +382,7 @@ type lazyUpload struct {
 
 func newLazyUpload(runCtx context.Context, st store.Store, key string) *lazyUpload {
 	pctx, cancel := context.WithCancel(context.WithoutCancel(runCtx))
-	u := &lazyUpload{st: st, key: key, ctx: pctx, cancel: cancel, done: make(chan error, 1)}
+	u := &lazyUpload{st: st, key: key, grace: putAbortGrace, ctx: pctx, cancel: cancel, done: make(chan error, 1)}
 	u.stop = context.AfterFunc(runCtx, func() {
 		u.mu.Lock()
 		u.aborted = true
@@ -387,7 +391,7 @@ func newLazyUpload(runCtx context.Context, st store.Store, key string) *lazyUplo
 		if pw != nil {
 			pw.CloseWithError(runCtx.Err()) // releases a Write blocked on a stalled upload
 		}
-		time.AfterFunc(putAbortGrace, cancel)
+		time.AfterFunc(u.grace, cancel)
 	})
 	return u
 }
@@ -452,7 +456,7 @@ func (u *lazyUpload) abort() error {
 		pw.CloseWithError(errNotBackedUp)
 		select {
 		case <-u.done:
-		case <-time.After(putAbortGrace):
+		case <-time.After(u.grace):
 		}
 	}
 	u.cancel()

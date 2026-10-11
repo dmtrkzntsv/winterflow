@@ -69,7 +69,7 @@ func TestGetAppHidesManagedProjectName(t *testing.T) {
 }
 
 func TestRunHelperScript(t *testing.T) {
-	got := string(runHelperScript("wf-app-1", []string{"compose.yml", "compose.override.yml"}))
+	got := string(runHelperScript("wf-app-1", []string{"compose.yml", "compose.override.yml"}, nil))
 	for _, want := range []string{
 		"#!/bin/sh\n",
 		`cd "$(dirname "$0")/.." || exit 1`,
@@ -88,7 +88,7 @@ func TestRunHelperScript(t *testing.T) {
 	}
 
 	// A compose path is quoted for the shell, whatever it contains.
-	odd := string(runHelperScript("wf-app-1", []string{"source/it's $(here).yml"}))
+	odd := string(runHelperScript("wf-app-1", []string{"source/it's $(here).yml"}, nil))
 	if !strings.Contains(odd, `-f 'source/it'\''s $(here).yml' --env-file .env`) {
 		t.Fatalf("path not quoted:\n%s", odd)
 	}
@@ -103,7 +103,7 @@ func TestRunHelperScriptRuns(t *testing.T) {
 	if err := os.Chmod(filepath.Join(bin, "docker"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeFileT(t, dir, runRel, string(runHelperScript("wf-x", []string{"compose.yml"})))
+	writeFileT(t, dir, runRel, string(runHelperScript("wf-x", []string{"compose.yml"}, nil)))
 	if err := os.Chmod(filepath.Join(dir, runRel), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +136,7 @@ func TestWriteRunHelper(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := r.writeRunHelper("app-1", r.appComposeFiles(dir)); err != nil {
+	if err := r.writeRunHelper("app-1", r.appComposeFiles(dir), nil); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(filepath.Join(dir, runRel))

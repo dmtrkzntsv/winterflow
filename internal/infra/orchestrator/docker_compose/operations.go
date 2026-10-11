@@ -19,21 +19,29 @@ import (
 // deployment up. The folder IS the deployment: compose runs in it directly.
 // Every save is a commit; the commit hash is returned as the revision.
 func (r *Repository) SaveApp(ctx context.Context, app command.AppPayload) (string, error) {
-	hash, err := r.saveWithoutDeploy(app)
-	if err != nil {
-		return "", err
-	}
-	if err := r.composeUp(ctx, app.AppID); err != nil {
-		return "", fmt.Errorf("docker compose up: %w", err)
-	}
-	r.markDeployed(app.AppID, hash)
-	return hash, nil
+	hash, _, err := r.SaveAppResult(ctx, app, false)
+	return hash, err
 }
 
 // SaveAppDraft persists and commits without deploying: the commit becomes a
 // draft sitting ahead of the deployed mark until the user deploys it.
 func (r *Repository) SaveAppDraft(ctx context.Context, app command.AppPayload) (string, error) {
-	return r.saveWithoutDeploy(app)
+	hash, _, err := r.SaveAppResult(ctx, app, true)
+	return hash, err
+}
+
+// SaveAppResult is SaveApp (or, draft, SaveAppDraft) with the save's
+// warnings.
+func (r *Repository) SaveAppResult(ctx context.Context, app command.AppPayload, draft bool) (string, []string, error) {
+	hash, warnings, err := r.save(app)
+	if err != nil || draft {
+		return hash, warnings, err
+	}
+	if err := r.composeUp(ctx, app.AppID); err != nil {
+		return "", warnings, fmt.Errorf("docker compose up: %w", err)
+	}
+	r.markDeployed(app.AppID, hash)
+	return hash, warnings, nil
 }
 
 // DeployedRevision returns the last successfully deployed commit ("" when
@@ -63,40 +71,71 @@ func (r *Repository) markDeployed(appID, sha string) {
 // commit, materialize secrets, and fix the symlink. Split out so the full
 // persistence path is testable without Docker.
 func (r *Repository) saveWithoutDeploy(app command.AppPayload) (string, error) {
+	hash, _, err := r.save(app)
+	return hash, err
+}
+
+// save is saveWithoutDeploy with the warnings of the save: backup settings
+// dropped because the compose file no longer has their backup.
+func (r *Repository) save(app command.AppPayload) (string, []string, error) {
 	dir := r.appDataDir(app.AppID)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if err := gitEnsure(dir); err != nil {
-		return "", fmt.Errorf("init app repo: %w", err)
+		return "", nil, fmt.Errorf("init app repo: %w", err)
 	}
 
 	store, err := r.writeAppStore(dir, app)
 	if err != nil {
-		return "", fmt.Errorf("write app store: %w", err)
+		return "", nil, fmt.Errorf("write app store: %w", err)
 	}
 
 	// Git-sourced app: sync the upstream and pin its head BEFORE committing,
 	// so the lock lands inside this save's commit.
 	if spec := r.appSourceSpec(dir); spec != nil {
 		if _, err := r.ensureSource(context.Background(), dir, *spec, r.sourceTokenPlaintext(dir), ""); err != nil {
-			return "", fmt.Errorf("sync source: %w", err)
+			return "", nil, fmt.Errorf("sync source: %w", err)
 		}
+	}
+
+	// The backups must be valid against the compose file being saved (for
+	// a git-sourced app, the one just pulled); nothing is committed if not.
+	warnings, err := r.cleanBackups(dir)
+	if err != nil {
+		r.undoSave(dir)
+		return "", nil, err
 	}
 
 	name := r.appName(dir, app.AppID)
 	hash, err := gitCommitAll(dir, "save "+name)
 	if err != nil {
-		return "", fmt.Errorf("commit: %w", err)
+		return "", nil, fmt.Errorf("commit: %w", err)
 	}
 
 	if err := r.materializeSecrets(dir, store); err != nil {
-		return "", fmt.Errorf("materialize secrets: %w", err)
+		return "", nil, fmt.Errorf("materialize secrets: %w", err)
 	}
 	if _, err := ensureAppSymlink(r.cfg.GetAppsDir(), "apps-data", app.AppID, name); err != nil {
 		r.log.Warn("failed to update app symlink", "app_id", app.AppID, "error", err)
 	}
-	return hash, nil
+	return hash, warnings, nil
+}
+
+// undoSave puts an app's folder back the way its last commit left it after
+// a save that was refused before committing; a new app (no commit yet) is
+// removed, so no half-saved app is ever listed.
+func (r *Repository) undoSave(dir string) {
+	head, err := gitHead(dir)
+	if err != nil {
+		if rmErr := os.RemoveAll(dir); rmErr != nil {
+			r.log.Warn("undo a refused save", "dir", dir, "error", rmErr)
+		}
+		return
+	}
+	if err := gitRestore(dir, head); err != nil {
+		r.log.Warn("undo a refused save", "dir", dir, "error", err)
+	}
 }
 
 // Revisions returns the app's git history (newest first) and the current HEAD.
@@ -397,12 +436,13 @@ func fileIn(dir string) func(name string) bool {
 // Env files load in order — .env, storage.env, .env.secrets — later ones
 // winning.
 func (r *Repository) composeArgs(appID string, verb ...string) []string {
-	return r.composeArgsFor(appID, r.appComposeFiles(r.appDataDir(appID)), verb...)
+	return r.composeArgsFor(appID, r.appComposeFiles(r.appDataDir(appID)), nil, verb...)
 }
 
 // composeArgsFor is composeArgs with the app's compose files already
-// resolved.
-func (r *Repository) composeArgsFor(appID string, files []string, verb ...string) []string {
+// resolved and the profiles to activate (--profile; none: compose's own
+// COMPOSE_PROFILES handling).
+func (r *Repository) composeArgsFor(appID string, files, profiles []string, verb ...string) []string {
 	args := []string{"compose", "--project-name", projectName(appID)}
 	dir := r.appDataDir(appID)
 	for _, f := range files {
@@ -414,6 +454,9 @@ func (r *Repository) composeArgsFor(appID string, files []string, verb ...string
 			args = append(args, "--env-file", rel)
 		}
 	}
+	for _, p := range profiles {
+		args = append(args, "--profile", p)
+	}
 	return append(args, verb...)
 }
 
@@ -423,8 +466,13 @@ func (r *Repository) composeRun(ctx context.Context, appID string, verb ...strin
 
 // composeExec runs docker with args in the app's folder.
 func (r *Repository) composeExec(ctx context.Context, appID string, args []string) error {
+	return r.runCompose(ctx, r.appDataDir(appID), args)
+}
+
+// dockerIn runs docker with args in dir; the error carries its output.
+func dockerIn(ctx context.Context, dir string, args []string) error {
 	cmd := exec.CommandContext(ctx, "docker", args...)
-	cmd.Dir = r.appDataDir(appID)
+	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
@@ -435,16 +483,26 @@ func (r *Repository) composeExec(ctx context.Context, appID string, args []strin
 func (r *Repository) composeUp(ctx context.Context, appID string) error {
 	dir := r.appDataDir(appID)
 	files := r.appComposeFiles(dir)
-	// The storage variables are resolved on every deploy: a storage removed
-	// or changed since the last one must not be served stale.
-	if err := r.materializeStorageEnv(ctx, dir, files); err != nil {
+	// The backups are validated on every deploy: a git-sourced app's compose
+	// file changes upstream.
+	cfg, err := r.appBackups(dir, files)
+	if err != nil {
 		return err
 	}
+	// The storage variables are resolved on every deploy: a storage removed
+	// or changed since the last one must not be served stale.
+	if err := r.materializeStorageEnv(ctx, dir, files, cfg.backups); err != nil {
+		return err
+	}
+	profiles := r.composeProfiles(dir, cfg.backups)
 	// Refresh the manual-run helper alongside every deploy; never fail one on it.
-	if err := r.writeRunHelper(appID, files); err != nil {
+	if err := r.writeRunHelper(appID, files, profiles); err != nil {
 		r.log.Warn("write manual-run helper", "app_id", appID, "error", err)
 	}
-	return r.composeExec(ctx, appID, r.composeArgsFor(appID, files, "up", "-d", "--remove-orphans"))
+	if err := r.composeExec(ctx, appID, r.composeArgsFor(appID, files, profiles, "up", "-d", "--remove-orphans")); err != nil {
+		return err
+	}
+	return r.stopOffServices(ctx, appID, files, cfg, profiles)
 }
 
 // composeDown is a no-op (nil) if the app dir does not exist. volumes=true

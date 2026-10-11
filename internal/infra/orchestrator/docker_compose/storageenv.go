@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"winterflow/internal/domain/backup/recipe"
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
 )
@@ -51,72 +52,23 @@ func (r *Repository) storageRefs(dir string, files []string) ([]string, error) {
 // materializeStorageEnv writes storage.env with exactly the variables the
 // compose files reference — an app never receives credentials for a
 // storage it doesn't mention — or removes it when they reference none. A
-// reference to a storage this server doesn't have (deleted, or added to a
-// git-sourced compose file upstream) fails the deploy, and so does a
-// referenced local storage whose folder is missing (see checkStorageFolders).
-// An unchanged storage.env is not rewritten.
-func (r *Repository) materializeStorageEnv(ctx context.Context, dir string, files []string) error {
-	refs, err := r.storageRefs(dir, files)
+// WF_BACKUP_ variable takes its value from the storage of one of the app's
+// backups (backups), or is empty while that backup is off. A reference to a
+// storage this server doesn't have (deleted, or added to a git-sourced
+// compose file upstream) or to a backup the app doesn't declare fails the
+// deploy, and so does a referenced local storage whose folder is missing
+// (see checkStorageFolders). An unchanged storage.env is not rewritten.
+func (r *Repository) materializeStorageEnv(ctx context.Context, dir string, files []string, backups []recipe.EffectiveBackup) error {
+	content, err := r.renderStorageEnv(ctx, dir, files, backups, true)
 	if err != nil {
 		return err
 	}
 	path := filepath.Join(dir, storageEnvRel)
-	if len(refs) == 0 {
+	if content == nil {
 		if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
 		return nil
-	}
-	// Only the referenced registrations are read.
-	byName := map[string]model.Storage{}
-	var readErr error
-	parsed, err := model.CheckStorageRefs(refs, func(name string) bool {
-		if _, ok := byName[name]; ok {
-			return true
-		}
-		s, ok, err := r.storages.Get(name)
-		if err != nil && readErr == nil {
-			readErr = err
-		}
-		if ok {
-			byName[name] = s
-		}
-		return ok
-	}, nil)
-	if readErr != nil {
-		return readErr
-	}
-	if err != nil {
-		return err
-	}
-	var folders []model.Storage
-	for _, s := range byName {
-		if s.Type == model.StorageLocal && s.Local != nil {
-			folders = append(folders, s)
-		}
-	}
-	sort.Slice(folders, func(i, j int) bool { return folders[i].Name < folders[j].Name })
-	if err := r.checkStorageFolders(ctx, folders); err != nil {
-		return err
-	}
-	secrets := map[string]string{} // each storage's secret decrypted once
-	vars := make([]resolvedItem, 0, len(parsed))
-	for _, ref := range parsed {
-		s := byName[ref.Storage]
-		secret := ""
-		if ref.Secret() && s.S3 != nil {
-			if _, done := secrets[s.Name]; !done {
-				if secrets[s.Name], err = r.storageSecret(s); err != nil {
-					return err
-				}
-			}
-			secret = secrets[s.Name]
-		}
-		vars = append(vars, resolvedItem{name: ref.Var, content: []byte(model.StorageFieldValue(s, ref.Field, secret))})
-	}
-	content, err := marshalStorageEnv(vars)
-	if err != nil {
-		return err
 	}
 	if old, err := os.ReadFile(path); err != nil || !bytes.Equal(old, content) {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -128,6 +80,90 @@ func (r *Repository) materializeStorageEnv(ctx context.Context, dir string, file
 	}
 	// WriteFile's perm only applies on create.
 	return os.Chmod(path, 0o600)
+}
+
+// renderStorageEnv is the content materializeStorageEnv writes (nil: no
+// references). checkFolders also checks the referenced local storages'
+// folders.
+func (r *Repository) renderStorageEnv(ctx context.Context, dir string, files []string, backups []recipe.EffectiveBackup, checkFolders bool) ([]byte, error) {
+	refs, err := r.storageRefs(dir, files)
+	if err != nil || len(refs) == 0 {
+		return nil, err
+	}
+	declared := recipe.Declared(backups)
+	// Only the referenced registrations are read.
+	byName := map[string]model.Storage{}
+	var readErr error
+	lookup := func(name string) bool {
+		if _, ok := byName[name]; ok {
+			return true
+		}
+		s, ok, err := r.storages.Get(name)
+		if err != nil && readErr == nil {
+			readErr = err
+		}
+		if ok {
+			byName[name] = s
+		}
+		return ok
+	}
+	parsed, err := model.CheckStorageRefs(refs, lookup, func(name string) bool { _, ok := declared[name]; return ok })
+	if readErr != nil {
+		return nil, readErr
+	}
+	if err != nil {
+		return nil, err
+	}
+	// A backup that is on resolves to its storage, which must exist.
+	for _, ref := range parsed {
+		if b := declared[ref.Backup]; ref.Backup != "" && b.Enabled && !lookup(b.Storage) {
+			if readErr != nil {
+				return nil, readErr
+			}
+			return nil, fmt.Errorf("%w: ${%s}: the backup %s uses the storage %q, which this server doesn't have", model.ErrStorageRef, ref.Var, b.Name, b.Storage)
+		}
+	}
+	if checkFolders {
+		var folders []model.Storage
+		for _, s := range byName {
+			if s.Type == model.StorageLocal && s.Local != nil {
+				folders = append(folders, s)
+			}
+		}
+		sort.Slice(folders, func(i, j int) bool { return folders[i].Name < folders[j].Name })
+		if err := r.checkStorageFolders(ctx, folders); err != nil {
+			return nil, err
+		}
+	}
+	appID := filepath.Base(dir)
+	secrets := map[string]string{} // each storage's secret decrypted once
+	vars := make([]resolvedItem, 0, len(parsed))
+	for _, ref := range parsed {
+		name, b := ref.Storage, declared[ref.Backup]
+		if ref.Backup != "" {
+			if !b.Enabled {
+				vars = append(vars, resolvedItem{name: ref.Var}) // off: empty
+				continue
+			}
+			name = b.Storage
+		}
+		s := byName[name]
+		secret := ""
+		if ref.Secret() && s.S3 != nil {
+			if _, done := secrets[s.Name]; !done {
+				if secrets[s.Name], err = r.storageSecret(s); err != nil {
+					return nil, err
+				}
+			}
+			secret = secrets[s.Name]
+		}
+		value := model.StorageFieldValue(s, ref.Field, secret)
+		if ref.Backup != "" {
+			value = model.BackupFieldValue(s, ref.Field, secret, appID, ref.Backup)
+		}
+		vars = append(vars, resolvedItem{name: ref.Var, content: []byte(value)})
+	}
+	return marshalStorageEnv(vars)
 }
 
 // checkStorageFolders refuses a deploy whose compose file references a
@@ -208,16 +244,22 @@ func quoteEnvValue(val string) string {
 	}
 }
 
-// storageVariables describes the referenced WF_STORAGE_ variables for the
-// Variables panel: names and storages, never values.
-func storageVariables(refs []string) []command.StorageVariable {
+// storageVariables describes the referenced WF_STORAGE_ and WF_BACKUP_
+// variables for the Variables panel: names and storages (a backup's: the
+// one it uses while on), never values.
+func storageVariables(refs []string, backups []recipe.EffectiveBackup) []command.StorageVariable {
+	declared := recipe.Declared(backups)
 	var out []command.StorageVariable
 	for _, v := range refs {
 		ref, err := model.ParseStorageRef(v)
 		if err != nil {
 			continue
 		}
-		out = append(out, command.StorageVariable{Name: ref.Var, Storage: ref.Storage, Backup: ref.Backup, Secret: ref.Secret()})
+		storage := ref.Storage
+		if b, ok := declared[ref.Backup]; ok && b.Enabled {
+			storage = b.Storage
+		}
+		out = append(out, command.StorageVariable{Name: ref.Var, Storage: storage, Backup: ref.Backup, Secret: ref.Secret()})
 	}
 	return out
 }

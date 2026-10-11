@@ -184,10 +184,17 @@ func (r *Repository) GetApp(ctx context.Context, appID string) (command.GetAppRe
 	}
 
 	resp.App = payload
-	// The WF_STORAGE_ variables the compose files reference: read-only rows
-	// in the editor. An unreadable compose file just shows none.
-	if refs, err := r.storageRefs(dir, r.appComposeFiles(dir)); err == nil {
-		resp.StorageVariables = storageVariables(refs)
+	files := r.appComposeFiles(dir)
+	cfg, err := r.appBackups(dir, files)
+	if err != nil {
+		resp.BackupsError = err.Error()
+	}
+	resp.Backups = cfg.backups
+	// The WF_STORAGE_ / WF_BACKUP_ variables the compose files reference:
+	// read-only rows in the editor. An unreadable compose file just shows
+	// none.
+	if refs, err := r.storageRefs(dir, files); err == nil {
+		resp.StorageVariables = storageVariables(refs, cfg.backups)
 	}
 	return resp, nil
 }

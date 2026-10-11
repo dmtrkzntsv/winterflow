@@ -59,6 +59,9 @@ type Repository struct {
 	openStorage     func(s model.Storage, secret string) (store.Store, error)
 	runningProjects func(ctx context.Context) (map[string]bool, error)
 	redeploy        func(ctx context.Context, appID string) error
+	// runCompose runs one docker compose command in an app's folder
+	// (replaced in tests to record the arguments).
+	runCompose func(ctx context.Context, dir string, args []string) error
 }
 
 // versionEntry is a cached commit count, valid while HEAD is unchanged.
@@ -76,6 +79,7 @@ func NewRepository(cfg *config.ServerConfig, log *logger.Logger) *Repository {
 		storages:      storages.NewRegistry(filepath.Join(cfg.GetAgentDataDir(), "storages")),
 		storageLimits: defaultStorageLimits,
 		openStorage:   store.Open,
+		runCompose:    dockerIn,
 	}
 	r.runningProjects = r.composeProjectsUp
 	r.redeploy = r.deploy

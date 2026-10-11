@@ -336,7 +336,7 @@ func TestDeleteStorage(t *testing.T) {
 	storageApp(t, r, "app-2", "Blog", "disk", false)
 
 	err := r.DeleteStorage(context.Background(), "disk")
-	if err == nil || err.Error() != "disk is used by Shop, Blog: remove its WF_STORAGE_ variables from those apps first" {
+	if err == nil || err.Error() != "disk is used by Shop, Blog: remove its WF_STORAGE_ variables from those apps and turn off their backups to it first" {
 		t.Fatalf("in use: %v", err)
 	}
 	if err := r.DeleteStorage(context.Background(), "spare"); err != nil {

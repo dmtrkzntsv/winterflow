@@ -95,10 +95,10 @@ func describeStorage(s model.Storage, apps []string) command.StorageInfo {
 }
 
 // storageUsers maps each storage name to the ids of the apps (in id order)
-// whose compose files reference it. File reads only, on request — never
-// polled. An app whose compose files can't be read is reported in the error
-// while the map keeps every app read; callers that must not miss a user
-// refuse on the error.
+// whose compose files reference it or whose enabled backups use it. File
+// reads only, on request — never polled. An app whose compose files can't
+// be read is reported in the error while the map keeps every app read;
+// callers that must not miss a user refuse on the error.
 func (r *Repository) storageUsers() (map[string][]string, error) {
 	users := map[string][]string{}
 	entries, err := os.ReadDir(r.cfg.GetAppsDataDir())
@@ -114,19 +114,33 @@ func (r *Repository) storageUsers() (map[string][]string, error) {
 			continue
 		}
 		dir := filepath.Join(r.cfg.GetAppsDataDir(), e.Name())
-		refs, err := r.storageRefs(dir, r.appComposeFiles(dir))
+		files := r.appComposeFiles(dir)
+		refs, err := r.storageRefs(dir, files)
 		if err != nil {
 			problems = append(problems, e.Name()+": "+err.Error())
 			continue
 		}
-		seen := map[string]bool{}
+		var used []string
 		for _, v := range refs {
-			ref, err := model.ParseStorageRef(v)
-			if err != nil || ref.Storage == "" || seen[ref.Storage] {
-				continue
+			if ref, err := model.ParseStorageRef(v); err == nil && ref.Storage != "" {
+				used = append(used, ref.Storage)
 			}
-			seen[ref.Storage] = true
-			users[ref.Storage] = append(users[ref.Storage], e.Name())
+		}
+		cfg, err := r.appBackups(dir, files)
+		if err != nil {
+			problems = append(problems, e.Name()+": "+err.Error())
+		}
+		for _, b := range cfg.backups {
+			if b.Enabled {
+				used = append(used, b.Storage)
+			}
+		}
+		seen := map[string]bool{}
+		for _, name := range used {
+			if !seen[name] {
+				seen[name] = true
+				users[name] = append(users[name], e.Name())
+			}
 		}
 	}
 	if len(problems) > 0 {
@@ -401,7 +415,7 @@ func (r *Repository) DeleteStorage(_ context.Context, name string) error {
 		for _, id := range ids {
 			names = append(names, r.appName(r.appDataDir(id), id))
 		}
-		return fmt.Errorf("%s is used by %s: remove its WF_STORAGE_ variables from those apps first", name, strings.Join(names, ", "))
+		return fmt.Errorf("%s is used by %s: remove its WF_STORAGE_ variables from those apps and turn off their backups to it first", name, strings.Join(names, ", "))
 	}
 	existed, err := r.storages.Delete(name)
 	if err != nil {

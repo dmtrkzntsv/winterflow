@@ -118,14 +118,10 @@ func handle[Req any, Resp any](d *Dispatcher, fn func(context.Context, Req) (Res
 func (d *Dispatcher) newHandlers() map[command.Type]handlerFunc {
 	return map[command.Type]handlerFunc{
 		command.TypeAppSave: handle(d, func(ctx context.Context, in command.SaveAppRequest) (command.SaveAppResponse, error) {
-			save := d.orch.SaveApp
-			if in.Draft {
-				save = d.orch.SaveAppDraft
-			}
-			hash, err := save(ctx, in.App)
-			resp := command.SaveAppResponse{AppID: in.App.AppID, Revision: hash}
+			hash, warnings, err := d.orch.SaveAppResult(ctx, in.App, in.Draft)
+			resp := command.SaveAppResponse{AppID: in.App.AppID, Revision: hash, Warnings: warnings}
 			if err == nil {
-				resp.Warnings = d.reloadIngress(ctx)
+				resp.Warnings = append(resp.Warnings, d.reloadIngress(ctx)...)
 			}
 			return resp, err
 		}),

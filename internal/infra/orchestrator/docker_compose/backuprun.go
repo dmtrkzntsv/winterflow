@@ -177,6 +177,13 @@ func (r *Repository) RunBackup(ctx context.Context, job BackupJob) (BackupResult
 		res.Unchanged = true
 		res.Fingerprint = since
 	default:
+		// An app deleted while this run was stuck (abandoned past its grace)
+		// has had its backups settled already: a point landing now would be
+		// left behind, unmarked.
+		if !r.appExists(job.AppID) {
+			r.discardUpload(ctx, st, dataKey)
+			return res, ErrAppDeleted
+		}
 		m := layout.Manifest{
 			AppID: job.AppID, Backup: b.Name, Type: b.Type, Kind: job.Kind, Created: now,
 			SHA256: dump.sha256, Size: dump.size, RawSize: dump.result.RawSize,
@@ -191,6 +198,10 @@ func (r *Repository) RunBackup(ctx context.Context, job BackupJob) (BackupResult
 		res.Point, res.Fingerprint, res.Size = &info, m.Fingerprint, dump.size
 		points = append([]layout.Point{p}, points...)
 	}
+	if !r.appExists(job.AppID) {
+		// Same: the delete's marker (or purge) must stand.
+		return res, ErrAppDeleted
+	}
 	if err := clearDeletedMarker(ctx, st, job.AppID); err != nil {
 		// Only logged: a storage that refuses deletes already warns about
 		// retention below, and the sweep ignores a marker older than a point.
@@ -202,6 +213,16 @@ func (r *Repository) RunBackup(ctx context.Context, job BackupJob) (BackupResult
 		res.Warnings = append(res.Warnings, "retention: "+err.Error())
 	}
 	return res, nil
+}
+
+// discardUpload removes a data object whose point will not be completed (best
+// effort, bounded, on a context of its own: the run's may be over).
+func (r *Repository) discardUpload(ctx context.Context, st store.Store, key string) {
+	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), storageCallTimeout)
+	defer cancel()
+	if err := st.Delete(dctx, key); err != nil {
+		r.log.Warn("backup: the upload of a deleted app could not be removed", "key", key, "error", err)
+	}
 }
 
 // clearDeletedMarker removes a stale <app-id>/.deleted marker: the app is

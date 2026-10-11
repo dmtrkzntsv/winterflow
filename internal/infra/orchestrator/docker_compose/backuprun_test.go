@@ -705,3 +705,45 @@ func TestRunBackupsInTheSameSecondKeepBothCopies(t *testing.T) {
 		t.Fatalf("the first copy now holds %q", plain)
 	}
 }
+
+// A run that finishes after its app was deleted (it was stuck past its grace)
+// leaves nothing behind: its upload is removed, no manifest is written, and
+// the delete's marker stands.
+func TestRunBackupOfADeletedAppLeavesNothing(t *testing.T) {
+	b := newBackupRepo(t)
+	putObject(t, b.disk, "app-1/"+DeletedMarkerName, `{"deleted_at":"2026-10-11T11:00:00Z","app_name":"demo"}`, b.clock)
+	inner := b.helper.run
+	b.runHelper = func(ctx context.Context, name string, args []string, out io.Writer) (int, []byte, error) {
+		if err := os.RemoveAll(b.appDataDir("app-1")); err != nil { // the delete lands during the dump
+			t.Error(err)
+		}
+		return inner(ctx, name, args, out)
+	}
+	_, err := b.run(t, "database", command.PointScheduled)
+	if !errors.Is(err, ErrAppDeleted) {
+		t.Fatalf("err = %v", err)
+	}
+	if got := b.stored(t); !slices.Equal(got, []string{"app-1/" + DeletedMarkerName}) {
+		t.Fatalf("stored = %v", got)
+	}
+}
+
+// Unchanged data and a deleted app: the marker is not cleared either.
+func TestRunBackupUnchangedOfADeletedAppKeepsTheMarker(t *testing.T) {
+	b := newBackupRepo(t)
+	if _, err := b.run(t, "database", command.PointScheduled); err != nil {
+		t.Fatal(err)
+	}
+	putObject(t, b.disk, "app-1/"+DeletedMarkerName, `{"deleted_at":"2026-10-11T11:00:00Z","app_name":"demo"}`, b.clock)
+	inner := b.helper.run
+	b.runHelper = func(ctx context.Context, name string, args []string, out io.Writer) (int, []byte, error) {
+		_ = os.RemoveAll(b.appDataDir("app-1"))
+		return inner(ctx, name, args, out)
+	}
+	if _, err := b.run(t, "database", command.PointManual); !errors.Is(err, ErrAppDeleted) {
+		t.Fatalf("err = %v", err)
+	}
+	if !slices.Contains(b.stored(t), "app-1/"+DeletedMarkerName) {
+		t.Fatalf("stored = %v", b.stored(t))
+	}
+}

@@ -15,6 +15,7 @@ import (
 	"hash/fnv"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -53,6 +54,10 @@ const (
 	abandonAfter = time.Minute
 	// idleWait is the timer when nothing is scheduled.
 	idleWait = 24 * time.Hour
+	// tombstoneTTL is how long a Forget keeps its app blocked if no plan
+	// read has dropped the app by then (a delete that failed and left the
+	// app in place).
+	tombstoneTTL = 10 * time.Minute
 )
 
 // State is one backup's record in state.json.
@@ -75,6 +80,12 @@ type key struct{ app, name string }
 
 func (k key) String() string { return k.app + "/" + k.name }
 
+// tomb marks an app being deleted: the Forget it came from, and when it lapses.
+type tomb struct {
+	gen   uint64
+	until time.Time
+}
+
 // job is one run, waited for by the requests that joined it. Once it is the
 // running job its context is bound to run's deadline, and cancel and exited
 // are set, all under the scheduler's lock: a Forget either sees the job as
@@ -85,6 +96,7 @@ type job struct {
 	waiters []chan Outcome
 	ctx     context.Context
 	cancel  context.CancelFunc
+	awaited bool // a Forget already waited out its grace on this job
 	// exited is closed (under the lock) when the engine's RunBackup call
 	// has returned, however long after the run was abandoned.
 	exited chan struct{}
@@ -119,7 +131,10 @@ type Scheduler struct {
 	// so a plan read that began before it cannot bring the app back.
 	gen       uint64
 	forgotten map[string]uint64
-	stopped   bool // Run has returned: nothing answers a queued request any more
+	// deleting blocks a Forgotten app (no run, scheduled or requested) from
+	// the first Forget until a plan read no longer lists it, or the TTL.
+	deleting map[string]tomb
+	stopped  bool // Run has returned: nothing answers a queued request any more
 }
 
 // New makes a scheduler keeping its state in dataDir/backups/state.json.
@@ -128,7 +143,7 @@ func New(engine Engine, dataDir string, log *logger.Logger) *Scheduler {
 		engine: engine, path: filepath.Join(dataDir, "backups", "state.json"), log: log,
 		clock: realClock{}, runTimeout: RunTimeout, grace: abandonAfter,
 		wake: make(chan struct{}, 1), state: map[string]*State{}, dirty: true,
-		stuck: map[string]*job{}, forgotten: map[string]uint64{},
+		stuck: map[string]*job{}, forgotten: map[string]uint64{}, deleting: map[string]tomb{},
 	}
 	s.load()
 	return s
@@ -203,9 +218,9 @@ func (s *Scheduler) Forget(appID string) {
 		r.cancel()
 		wait = append(wait, r)
 	}
-	if j := s.stuck[appID]; j != nil {
-		wait = append(wait, j)
-	}
+	// A job already stuck (or waited out by an earlier Forget) has had its
+	// grace: waiting again would only stall the caller.
+	wait = slices.DeleteFunc(wait, func(j *job) bool { return j.awaited })
 	plan := s.plan[:0]
 	for _, p := range s.plan {
 		if p.AppID != appID {
@@ -215,6 +230,7 @@ func (s *Scheduler) Forget(appID string) {
 	s.plan = plan
 	s.gen++
 	s.forgotten[appID] = s.gen
+	s.deleting[appID] = tomb{gen: s.gen, until: s.clock.Now().Add(tombstoneTTL)}
 	changed := false
 	for k := range s.state {
 		if app, _, _ := strings.Cut(k, "/"); app == appID {
@@ -238,9 +254,26 @@ func (s *Scheduler) Forget(appID string) {
 		select {
 		case <-j.exited:
 		case <-timer.C:
+			s.mu.Lock()
+			for _, w := range wait {
+				w.awaited = true
+			}
+			s.mu.Unlock()
 			return
 		}
 	}
+}
+
+// blockedLocked is why an app can start no run now: it is being deleted, or
+// an earlier run of it has not stopped. nil when it can.
+func (s *Scheduler) blockedLocked(appID string, now time.Time) error {
+	if t, ok := s.deleting[appID]; ok && t.until.After(now) {
+		return errDeleting
+	}
+	if s.stuck[appID] != nil {
+		return errStillStopping
+	}
+	return nil
 }
 
 // RunNow queues a manual run of an app's backup ahead of the scheduled ones
@@ -257,8 +290,8 @@ func (s *Scheduler) RunNow(appID, name string) <-chan Outcome {
 		ch <- Outcome{Err: errStopped}
 		return ch
 	}
-	if s.stuck[appID] != nil {
-		ch <- Outcome{Err: errStillStopping}
+	if err := s.blockedLocked(appID, s.clock.Now()); err != nil {
+		ch <- Outcome{Err: err}
 		return ch
 	}
 	dup := s.running != nil && s.running.key == k
@@ -304,6 +337,8 @@ var (
 	// errStillStopping answers a request for an app whose earlier run did
 	// not stop within its time limit and has not returned yet.
 	errStillStopping = errors.New("a previous backup of this app is still stopping (its storage or Docker is not answering)")
+	// errDeleting answers a request for an app that is being deleted.
+	errDeleting = errors.New("the app is being deleted")
 )
 
 // refresh rereads the plan when asked to, and records when each backup was
@@ -324,6 +359,17 @@ func (s *Scheduler) refresh() {
 	now := s.clock.Now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// A Forget's block ends once a read begun after it no longer lists the
+	// app (or at its TTL); a read begun before it proves nothing.
+	listed := make(map[string]bool, len(plan))
+	for _, p := range plan {
+		listed[p.AppID] = true
+	}
+	for app, t := range s.deleting {
+		if t.gen <= readGen && !listed[app] || !t.until.After(now) {
+			delete(s.deleting, app)
+		}
+	}
 	// An app forgotten while the plan was being read is not in it again.
 	kept := make([]dockercompose.PlannedBackup, 0, len(plan))
 	for _, p := range plan {
@@ -367,8 +413,8 @@ func (s *Scheduler) next(parent context.Context, now time.Time) *job {
 	for len(s.queue) > 0 {
 		j := s.queue[0]
 		s.queue = s.queue[1:]
-		if s.stuck[j.key.app] != nil {
-			finish(j, Outcome{Err: errStillStopping})
+		if err := s.blockedLocked(j.key.app, now); err != nil {
+			finish(j, Outcome{Err: err})
 			continue
 		}
 		return s.startLocked(parent, j)
@@ -401,11 +447,12 @@ func (s *Scheduler) startLocked(parent context.Context, j *job) *job {
 // dueLocked is when a scheduled backup runs next: its last attempt plus
 // every; never run, the time it was turned on plus a stable offset (so
 // backups enabled together spread out). ok is false for backups that are
-// off, manual or custom, and for apps with a stuck run. A recorded time
+// off, manual or custom, and for apps that are blocked (being deleted, or
+// with a stuck run). A recorded time
 // after now (the clock stepped back) is taken as now.
 func (s *Scheduler) dueLocked(p dockercompose.PlannedBackup, now time.Time) (time.Time, bool) {
 	every := p.Interval()
-	if !p.Enabled || !p.Builtin() || every <= 0 || s.stuck[p.AppID] != nil {
+	if !p.Enabled || !p.Builtin() || every <= 0 || s.blockedLocked(p.AppID, now) != nil {
 		return time.Time{}, false
 	}
 	st := s.state[key{p.AppID, p.Name}.String()]
@@ -443,6 +490,13 @@ func (s *Scheduler) untilDue(now time.Time) time.Duration {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	wait := idleWait
+	for app, t := range s.deleting {
+		if t.until.After(now) {
+			wait = min(wait, t.until.Sub(now))
+		} else {
+			delete(s.deleting, app)
+		}
+	}
 	for _, p := range s.plan {
 		if due, ok := s.dueLocked(p, now); ok {
 			wait = min(wait, max(due.Sub(now), 0))

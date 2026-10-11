@@ -788,3 +788,120 @@ func TestCustomHealthMatchesTheExactService(t *testing.T) {
 		t.Fatalf("db not counted: %+v", got[0].Backups)
 	}
 }
+
+// abandon runs app-1's db backup on a scheduler whose engine ignores the
+// context, until the run is abandoned and the app is stuck.
+func abandon(t *testing.T, grace time.Duration) (*Scheduler, *fakeEngine, *fakeClock) {
+	t.Helper()
+	e := newEngine(planned("app-1", "db", recipe.TypeSQLite, true, recipe.Manual), planned("app-1", "other", recipe.TypeFiles, true, recipe.Manual))
+	e.block, e.ignore = make(chan struct{}), true
+	t.Cleanup(func() { close(e.block) })
+	s, clock, _ := start(t, e, func(s *Scheduler) { s.runTimeout, s.grace = 20*time.Millisecond, 20*time.Millisecond })
+	idle(t, clock)
+	if o := <-s.RunNow("app-1", "db"); o.Err == nil || !strings.Contains(o.Err.Error(), "did not stop") {
+		t.Fatalf("abandoned = %+v", o)
+	}
+	ran(t, e)
+	s.mu.Lock()
+	s.grace = grace
+	s.mu.Unlock()
+	return s, e, clock
+}
+
+// Forget on an app whose run is already stuck has nothing to wait for.
+func TestForgetOnAStuckRunDoesNotWait(t *testing.T) {
+	s, e, _ := abandon(t, 5*time.Second)
+	begin := time.Now()
+	s.Forget("app-1")
+	if d := time.Since(begin); d > time.Second || e.exits.Load() != 0 {
+		t.Fatalf("Forget took %s (exits %d)", d, e.exits.Load())
+	}
+}
+
+// The delete's second Forget does not wait out a run the first one already
+// waited for.
+func TestSecondForgetDoesNotWaitAgain(t *testing.T) {
+	e := newEngine(planned("app-1", "db", recipe.TypeSQLite, true, recipe.Manual))
+	e.block, e.ignore = make(chan struct{}), true
+	defer close(e.block)
+	s, clock, _ := start(t, e, func(s *Scheduler) { s.grace = 300 * time.Millisecond })
+	idle(t, clock)
+	s.RunNow("app-1", "db")
+	ran(t, e)
+	begin := time.Now()
+	s.Forget("app-1")
+	if d := time.Since(begin); d < 250*time.Millisecond {
+		t.Fatalf("first Forget took %s: it did not wait", d)
+	}
+	begin = time.Now()
+	s.Forget("app-1")
+	if d := time.Since(begin); d > 150*time.Millisecond {
+		t.Fatalf("second Forget took %s", d)
+	}
+}
+
+// A request queued before its app became stuck is failed when its turn comes.
+func TestQueuedRequestFailsWhenItsAppGetsStuck(t *testing.T) {
+	e := newEngine(planned("app-1", "db", recipe.TypeSQLite, true, recipe.Manual), planned("app-1", "other", recipe.TypeFiles, true, recipe.Manual))
+	e.block, e.ignore = make(chan struct{}), true
+	defer close(e.block)
+	s, clock, _ := start(t, e, func(s *Scheduler) { s.runTimeout, s.grace = 20*time.Millisecond, 20*time.Millisecond })
+	idle(t, clock)
+	running := s.RunNow("app-1", "db")
+	ran(t, e)
+	queued := s.RunNow("app-1", "other")
+	if o := <-running; o.Err == nil {
+		t.Fatalf("running = %+v", o)
+	}
+	if o := <-queued; !errors.Is(o.Err, errStillStopping) {
+		t.Fatalf("queued = %+v", o)
+	}
+	noRun(t, e)
+}
+
+// From the first Forget the app takes no run, scheduled or requested, even
+// while plan reads still list it; the block ends when a read drops it.
+func TestDeletingAppIsBlockedUntilUnlisted(t *testing.T) {
+	e := newEngine(planned("app-1", "db", recipe.TypeSQLite, true, "5m"), planned("app-1", "media", recipe.TypeFiles, true, recipe.Manual))
+	s, clock, _ := start(t, e)
+	idle(t, clock)
+	s.Forget("app-1")
+	if o := <-s.RunNow("app-1", "media"); !errors.Is(o.Err, errDeleting) {
+		t.Fatalf("RunNow during the delete = %+v", o)
+	}
+	// The read after the Forget still lists the app; it is not scheduled.
+	if wait := idle(t, clock); wait != tombstoneTTL {
+		t.Fatalf("wait = %s, want the tombstone's %s", wait, tombstoneTTL)
+	}
+	clock.Advance(5 * time.Minute)
+	noRun(t, e)
+	if o := <-s.RunNow("app-1", "media"); !errors.Is(o.Err, errDeleting) {
+		t.Fatalf("RunNow after a refresh = %+v", o)
+	}
+	// Deleted: the next read no longer lists it; a re-created app id runs.
+	e.setPlan()
+	s.Reload()
+	idle(t, clock)
+	e.setPlan(planned("app-1", "db", recipe.TypeSQLite, true, "5m"))
+	s.Reload()
+	idle(t, clock)
+	clock.Advance(5 * time.Minute)
+	if j := ran(t, e); j.AppID != "app-1" {
+		t.Fatalf("run = %+v", j)
+	}
+}
+
+// A delete that failed leaves the app in place: the block lapses by itself.
+func TestDeletingBlockLapses(t *testing.T) {
+	e := newEngine(planned("app-1", "db", recipe.TypeSQLite, true, "5m"))
+	s, clock, _ := start(t, e)
+	idle(t, clock)
+	s.Forget("app-1")
+	if wait := idle(t, clock); wait != tombstoneTTL {
+		t.Fatalf("wait = %s", wait)
+	}
+	clock.Advance(tombstoneTTL)
+	if j := ran(t, e); j.AppID != "app-1" || j.Kind != command.PointScheduled {
+		t.Fatalf("run = %+v", j)
+	}
+}

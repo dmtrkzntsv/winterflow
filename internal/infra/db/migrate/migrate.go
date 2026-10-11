@@ -1,12 +1,14 @@
 // Package migrate is winterflow's forward-only migration runner. Migrations
 // are per-engine SQL files (internal/infra/db/migrations/{sqlite,pgsql}),
-// named <version>_<name>.sql. Each pending one runs in one transaction
+// named <version>_<name>.sql with a 4-digit sequence version (0001, 0002,
+// ...). Each pending one runs in one transaction
 // together with the insert of its version into schema_migrations, so a
 // failure leaves neither its effects nor its bookkeeping behind.
 //
 // A database last run by a Bun-era build (bun_migrations present,
-// schema_migrations absent) is adopted first: the versions Bun applied are
-// copied into schema_migrations without re-running them.
+// schema_migrations absent) is adopted first: the migrations Bun applied are
+// recorded in schema_migrations under their sequence versions (bunVersions)
+// without re-running them.
 package migrate
 
 import (
@@ -38,10 +40,24 @@ const pgLockKey int64 = 0x77666d6967726174
 // unlockTimeout bounds the release of the advisory lock.
 const unlockTimeout = 10 * time.Second
 
+// bunVersions maps the timestamp version of every migration Bun-era builds
+// shipped to the sequence version of its SQL port. Frozen: Bun is gone, so
+// no entry is ever added.
+var bunVersions = map[int64]int64{
+	20241113120001: 1, // initial_schema
+	20260703000001: 2, // pat_tokens
+	20260703000002: 3, // user_credentials
+	20260703000003: 4, // org_identity
+	20260711000001: 5, // app_domains
+	20261010000001: 6, // app_domains_uuid
+	20261010000002: 7, // app_domains_per_server
+	20261010000003: 8, // server_domains
+}
+
 // Migration is one parsed migration file.
 type Migration struct {
 	Version int64
-	Name    string // file name without .sql, e.g. 20241113120001_initial_schema
+	Name    string // file name without .sql, e.g. 0001_initial_schema
 	SQL     string
 	FKOff   bool
 }
@@ -225,8 +241,8 @@ func columnExists(ctx context.Context, q querier, driverName, table, column stri
 }
 
 // adopt creates schema_migrations. On a Bun-era database (bun_migrations
-// present, schema_migrations absent) it first copies the version of every
-// migration Bun applied, in the same transaction.
+// present, schema_migrations absent) it first records every migration Bun
+// applied under its sequence version (bunVersions), in the same transaction.
 func adopt(ctx context.Context, c *sql.Conn, driverName string, known map[int64]bool) error {
 	hasSchema, err := tableExists(ctx, c, driverName, "schema_migrations")
 	if err != nil {
@@ -278,11 +294,12 @@ func adopt(ctx context.Context, c *sql.Conn, driverName string, known map[int64]
 	}
 	seen := map[int64]bool{}
 	for _, name := range names {
-		v, err := bunVersion(name)
+		bv, err := bunVersion(name)
 		if err != nil {
 			return err
 		}
-		if !known[v] {
+		v, ok := bunVersions[bv]
+		if !ok || !known[v] {
 			return fmt.Errorf("migrate: bun_migrations records %q, which has no SQL migration in this build", name)
 		}
 		if seen[v] {

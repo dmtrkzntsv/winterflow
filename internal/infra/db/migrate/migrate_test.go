@@ -1,6 +1,7 @@
 package migrate
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -28,6 +29,61 @@ func TestEnginesShareVersions(t *testing.T) {
 	if len(lists[0]) == 0 || !reflect.DeepEqual(lists[0], lists[1]) {
 		t.Fatalf("sqlite versions %v != pgsql versions %v", lists[0], lists[1])
 	}
+}
+
+// TestVersionsAreASequence pins the naming scheme: 0001_<name>.sql,
+// 0002_<name>.sql, ... with no gaps, on both engines.
+func TestVersionsAreASequence(t *testing.T) {
+	for _, d := range []string{backend.SQLite, backend.Postgres} {
+		migs := load(t, d)
+		for i, m := range migs {
+			if want := fmt.Sprintf("%04d_", i+1); m.Version != int64(i+1) || !strings.HasPrefix(m.Name, want) {
+				t.Errorf("%s: migration %d is %s (version %d), want %s<name>", d, i, m.Name, m.Version, want)
+			}
+		}
+	}
+}
+
+// TestBunVersionsMapToTheirPorts checks bunVersions against the Bun-era
+// migration names: each one must land on the SQL file that ports it.
+func TestBunVersionsMapToTheirPorts(t *testing.T) {
+	ports := map[int64]string{
+		20241113120001: "0001_initial_schema",
+		20260703000001: "0002_pat_tokens",
+		20260703000002: "0003_user_credentials",
+		20260703000003: "0004_org_identity",
+		20260711000001: "0005_app_domains",
+		20261010000001: "0006_app_domains_uuid",
+		20261010000002: "0007_app_domains_per_server",
+		20261010000003: "0008_server_domains",
+	}
+	if len(bunVersions) != len(ports) {
+		t.Fatalf("bunVersions has %d entries, want %d", len(bunVersions), len(ports))
+	}
+	for _, d := range []string{backend.SQLite, backend.Postgres} {
+		names := map[int64]string{}
+		for _, m := range load(t, d) {
+			names[m.Version] = m.Name
+		}
+		for bun, want := range ports {
+			if got := names[bunVersions[bun]]; got != want {
+				t.Errorf("%s: Bun %d maps to %q, want %q", d, bun, got, want)
+			}
+		}
+	}
+}
+
+func load(t *testing.T, driver string) []Migration {
+	t.Helper()
+	fsys, err := migrations.FS(driver)
+	if err != nil {
+		t.Fatal(err)
+	}
+	migs, err := Load(fsys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return migs
 }
 
 func TestFSRejectsUnknownDriver(t *testing.T) {
@@ -77,14 +133,14 @@ func TestMigrateToStopsAtVersion(t *testing.T) {
 		t.Run(d, func(t *testing.T) {
 			ctx := tctx(t)
 			db := openEmpty(t, d)
-			if err := MigrateTo(ctx, db, d, 20260711000001); err != nil {
+			if err := MigrateTo(ctx, db, d, 5); err != nil {
 				t.Fatal(err)
 			}
 			got := versions(t, db)
-			if got[len(got)-1] != 20260711000001 {
+			if got[len(got)-1] != 5 {
 				t.Fatalf("versions = %v", got)
 			}
-			if err := MigrateTo(ctx, db, d, 1); err == nil {
+			if err := MigrateTo(ctx, db, d, 999); err == nil {
 				t.Fatal("unknown target accepted")
 			}
 		})
@@ -181,7 +237,7 @@ func TestForeignKeysOffRebuildToleratesPreexistingOrphans(t *testing.T) {
 	if n := count(t, db, backend.SQLite, `SELECT count(*) FROM server_capabilities WHERE name = 'orphan'`); n != 1 {
 		t.Fatalf("orphan rows = %d, want 1", n)
 	}
-	if n := count(t, db, backend.SQLite, `SELECT count(*) FROM schema_migrations WHERE version = 20261010000002`); n != 1 {
+	if n := count(t, db, backend.SQLite, `SELECT count(*) FROM schema_migrations WHERE version = 7`); n != 1 {
 		t.Fatal("the app_domains rebuild was not recorded")
 	}
 }
@@ -227,13 +283,13 @@ func TestForeignKeysOffIsSQLiteOnly(t *testing.T) {
 	}
 }
 
-// The real app_domains rebuild (20261010000002) under a child table that
+// The real app_domains rebuild (0007_app_domains_per_server) under a child table that
 // references app_domains(domain): the new key no longer makes domain unique,
 // so the check fails and nothing is half-applied.
 func TestAppDomainsRebuildIsAtomic(t *testing.T) {
 	ctx := tctx(t)
 	db := openEmpty(t, backend.SQLite)
-	if err := MigrateTo(ctx, db, backend.SQLite, 20261010000001); err != nil {
+	if err := MigrateTo(ctx, db, backend.SQLite, 6); err != nil {
 		t.Fatal(err)
 	}
 	for _, dom := range []string{"keep.test", "also.test"} {

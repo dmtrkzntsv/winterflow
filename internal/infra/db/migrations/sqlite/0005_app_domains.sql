@@ -1,6 +1,6 @@
 -- The rebuildable ingress index: one row per hostname an app claims (routes
 -- plus domain-level redirect sources). The key is the hostname alone here;
--- 20261010000002 moves it to (server_id, domain).
+-- 0007_app_domains_per_server moves it to (server_id, domain).
 
 CREATE TABLE app_domains (
     domain VARCHAR(253) NOT NULL PRIMARY KEY,

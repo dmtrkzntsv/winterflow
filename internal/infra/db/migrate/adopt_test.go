@@ -73,7 +73,7 @@ func TestAdoptionIsNotRepeated(t *testing.T) {
 			ctx := tctx(t)
 			db := openEmpty(t, d)
 			loadDump(t, db, d, "bun_20260711000001.sql")
-			if err := MigrateTo(ctx, db, d, 20260711000001); err != nil {
+			if err := MigrateTo(ctx, db, d, 5); err != nil {
 				t.Fatal(err)
 			}
 			if got := versions(t, db); len(got) != 5 {

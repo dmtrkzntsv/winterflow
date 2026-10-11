@@ -45,7 +45,7 @@ func openRaw(t *testing.T) (context.Context, *sql.DB, string) {
 func TestAppDomainsPerServerKeyMigration(t *testing.T) {
 	t.Parallel()
 	ctx, raw, driver := openRaw(t)
-	if err := migrate.MigrateTo(ctx, raw, driver, 20261010000001); err != nil {
+	if err := migrate.MigrateTo(ctx, raw, driver, 6); err != nil {
 		t.Fatal(err)
 	}
 
@@ -89,7 +89,7 @@ func TestAppDomainsUUIDMigrationSurvivesJunkRows(t *testing.T) {
 	}
 	t.Parallel()
 	ctx, raw, driver := openRaw(t)
-	if err := migrate.MigrateTo(ctx, raw, driver, 20260711000001); err != nil {
+	if err := migrate.MigrateTo(ctx, raw, driver, 5); err != nil {
 		t.Fatal(err)
 	}
 	const good, other = "0192A3B4-C5D6-7E8F-9A0B-1C2D3E4F5A6B", "0192a3b4-c5d6-7e8f-9a0b-1c2d3e4f5a6c"

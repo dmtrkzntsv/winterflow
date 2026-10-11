@@ -178,7 +178,7 @@ func TestAgentDataDirs(t *testing.T) {
 
 func TestGetBackupRetentionDays(t *testing.T) {
 	c := NewServerConfig("standalone")
-	for v, want := range map[string]int{"": 180, "30": 30, "0": 0, "-1": 180, "a year": 180} {
+	for v, want := range map[string]int{"": 180, "30": 30, "0": 0, "-1": 180, "a year": 180, "36500": 36500, "36501": 36500, "213504": 36500, "99999999": 36500} {
 		t.Setenv("BACKUP_RETENTION_DAYS", v)
 		if got := c.GetBackupRetentionDays(); got != want {
 			t.Errorf("BACKUP_RETENTION_DAYS=%q: %d, want %d", v, got, want)

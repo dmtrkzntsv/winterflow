@@ -192,8 +192,24 @@ func TestNeedsRefresh(t *testing.T) {
 	if NeedsRefresh(old, 400, now) {
 		t.Fatal("younger than half the ceiling")
 	}
-	if NeedsRefresh(old[1:], 180, now) {
-		t.Fatal("no scheduled copy: nothing to refresh")
+	if !NeedsRefresh(old[1:], 180, now) {
+		t.Fatal("only a manual copy under a ceiling: a scheduled copy is due")
+	}
+	if !NeedsRefresh(nil, 180, now) {
+		t.Fatal("no copies under a ceiling: a scheduled copy is due")
+	}
+	if NeedsRefresh(nil, 0, now) || NeedsRefresh(old[1:], 0, now) {
+		t.Fatal("no ceiling, no refresh")
+	}
+	// A ceiling beyond the cap behaves as the cap (no duration overflow).
+	if NeedsRefresh(old, 213504, now) || NeedsRefresh(old, 365000, now) {
+		t.Fatal("a huge ceiling refreshed a young copy")
+	}
+	if e := Expires(old[0], 365000); !e.Equal(old[0].Time.Add(36500 * 24 * time.Hour)) {
+		t.Fatalf("huge ceiling expires %v", e)
+	}
+	if got := Prune(old, Policy{CeilingDays: 213504}, now); len(got) != 0 {
+		t.Fatalf("a huge ceiling pruned %v", ids(got))
 	}
 	if e := Expires(old[0], 0); !e.IsZero() {
 		t.Fatal("no ceiling never expires")

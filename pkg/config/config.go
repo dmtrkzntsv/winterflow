@@ -157,13 +157,18 @@ func (c *ServerConfig) GetAppsDataDir() string {
 	return path.Join(c.GetAgentDataDir(), "apps-data")
 }
 
+// MaxBackupRetentionDays caps BACKUP_RETENTION_DAYS (100 years).
+const MaxBackupRetentionDays = 36500
+
 // GetBackupRetentionDays is the ceiling on the age of every backup copy
 // (BACKUP_RETENTION_DAYS, default 180): no copy of any kind, of any app, is
 // kept longer. 0 means no ceiling; a negative or unparsable value is the
-// default. Read by standalone and agent.
+// default. Values above MaxBackupRetentionDays (100 years, so "forever" can
+// be typed as a big number without overflowing durations) are capped to it.
+// Read by standalone and agent.
 func (c *ServerConfig) GetBackupRetentionDays() int {
 	if v, err := strconv.Atoi(os.Getenv("BACKUP_RETENTION_DAYS")); err == nil && v >= 0 {
-		return v
+		return min(v, MaxBackupRetentionDays)
 	}
 	return 180
 }

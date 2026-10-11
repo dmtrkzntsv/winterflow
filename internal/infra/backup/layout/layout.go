@@ -107,9 +107,9 @@ func (p Point) Keys() []string {
 }
 
 // Info is the point as the API lists it, with when the ceiling deletes it.
-func (p Point) Info(ceilingDays int) command.RestorePoint {
+func (p Point) Info(ceiling int) command.RestorePoint {
 	info := command.RestorePoint{ID: p.ID, Time: p.Time.Unix(), Kind: p.Kind, Size: p.Size}
-	if e := Expires(p, ceilingDays); !e.IsZero() {
+	if e := Expires(p, ceiling); !e.IsZero() {
 		info.Expires = e.Unix()
 	}
 	return info
@@ -196,8 +196,18 @@ type Policy struct {
 	CeilingDays int
 }
 
+// maxCeilingDays bounds a ceiling so the duration math below can never
+// overflow time.Duration (config caps BACKUP_RETENTION_DAYS at the same 100
+// years; this guards callers that skip it).
+const maxCeilingDays = 36500
+
+// ceilingDays clamps days to [0, maxCeilingDays].
+func ceilingDays(days int) int { return max(0, min(days, maxCeilingDays)) }
+
 // ceiling is the age past which every copy goes (0 = none).
-func (p Policy) ceiling() time.Duration { return time.Duration(p.CeilingDays) * 24 * time.Hour }
+func (p Policy) ceiling() time.Duration {
+	return time.Duration(ceilingDays(p.CeilingDays)) * 24 * time.Hour
+}
 
 // Prune returns the points retention deletes at now:
 //   - any point older than the ceiling, whatever its kind (the ceiling
@@ -266,20 +276,23 @@ func monthsBetween(t, now time.Time) int {
 // NeedsRefresh reports whether a run must upload a copy even when nothing
 // changed: the newest complete scheduled copy is older than half the
 // ceiling, so an idle backup's only copy is replaced before the ceiling
-// deletes it. Never with no ceiling, or with no scheduled copy yet (the run
-// uploads anyway: there is nothing to compare with).
-func NeedsRefresh(points []Point, ceilingDays int, now time.Time) bool {
-	if ceilingDays <= 0 {
+// deletes it. With a ceiling set and no complete scheduled copy at all (only
+// manual ones, or none) it is always true, so a scheduled copy is made before
+// the ceiling removes the manual ones. Never with no ceiling.
+func NeedsRefresh(points []Point, ceiling int, now time.Time) bool {
+	days := ceilingDays(ceiling)
+	if days == 0 {
 		return false
 	}
 	p, ok := Newest(points, command.PointScheduled)
-	return ok && now.Sub(p.Time) > time.Duration(ceilingDays)*12*time.Hour
+	return !ok || now.Sub(p.Time) > time.Duration(days)*12*time.Hour
 }
 
 // Expires is when a point reaches the ceiling (zero time: never).
-func Expires(p Point, ceilingDays int) time.Time {
-	if ceilingDays <= 0 {
+func Expires(p Point, ceiling int) time.Time {
+	days := ceilingDays(ceiling)
+	if days == 0 {
 		return time.Time{}
 	}
-	return p.Time.Add(time.Duration(ceilingDays) * 24 * time.Hour)
+	return p.Time.Add(time.Duration(days) * 24 * time.Hour)
 }

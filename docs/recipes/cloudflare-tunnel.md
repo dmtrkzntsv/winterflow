@@ -100,10 +100,22 @@ can't forge its way past the limit. Restart the agent after changing it.
 
 The trusted range must contain only proxies that overwrite
 `CF-Connecting-IP` with the visitor's address, as cloudflared and
-Cloudflare's edge do: a trusted peer can name any client. `172.16.0.0/12`
-trusts every container on the default docker networks, so don't run another
-proxy there that passes a client's own `CF-Connecting-IP` header through —
-narrow the range to the cloudflared network's subnet if you do.
+Cloudflare's edge do: a trusted peer can name any client. Caddy also passes
+a trusted peer's `X-Forwarded-For`, `X-Forwarded-Proto` and
+`X-Forwarded-Host` on to your apps as-is (an untrusted peer's are replaced),
+so anything an app decides from them — the client address it logs, whether
+the request was HTTPS, the host it builds links for — is only as honest as
+every address in the range. `172.16.0.0/12` trusts every container on the
+default docker networks, any of which could send its own headers, so don't
+run anything there that you don't control or that passes a client's own
+`CF-Connecting-IP` through — narrow the range to the cloudflared network's
+subnet if you do.
+
+The client-IP lookup is strict: a `CF-Connecting-IP` that itself lies inside
+a trusted range is treated as one more proxy hop and skipped, and the client
+becomes the next `X-Forwarded-For` hop (else the peer). Visitors whose
+address is inside a trusted range therefore share a bucket — another reason
+to keep the range narrow.
 
 Using the Cloudflare **proxy** (orange cloud, an A record to this server,
 usually with a Cloudflare Origin certificate in **Certificate** mode) instead

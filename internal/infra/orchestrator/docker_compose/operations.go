@@ -518,10 +518,22 @@ func (r *Repository) composeExec(ctx context.Context, appID string, args []strin
 	return r.runCompose(ctx, r.appDataDir(appID), args)
 }
 
-// dockerIn runs docker with args in dir; the error carries its output.
-func dockerIn(ctx context.Context, dir string, args []string) error {
+// dockerWaitDelay is how long a docker command's pipes may stay open after
+// its context ended: `docker compose` runs a plugin as a child that keeps
+// the pipes of a killed CLI open, which would hold Wait past the deadline.
+const dockerWaitDelay = 5 * time.Second
+
+// dockerCommand is docker with args in dir, bound to ctx.
+func dockerCommand(ctx context.Context, dir string, args []string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Dir = dir
+	cmd.WaitDelay = dockerWaitDelay
+	return cmd
+}
+
+// dockerIn runs docker with args in dir; the error carries its output.
+func dockerIn(ctx context.Context, dir string, args []string) error {
+	cmd := dockerCommand(ctx, dir, args)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))

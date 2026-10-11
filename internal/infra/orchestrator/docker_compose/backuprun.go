@@ -119,7 +119,7 @@ func (r *Repository) RunBackup(ctx context.Context, job BackupJob) (BackupResult
 	}
 	ceiling := r.cfg.GetBackupRetentionDays()
 	now := r.now().UTC()
-	var res BackupResult
+	res := BackupResult{Warnings: plan.Warnings}
 	since := ""
 	if job.Kind != command.PointPreRestore && !layout.NeedsRefresh(points, ceiling, now) {
 		if p, ok := layout.Newest(points, command.PointScheduled, command.PointManual); ok {

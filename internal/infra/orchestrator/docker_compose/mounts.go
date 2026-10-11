@@ -5,11 +5,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -67,6 +69,9 @@ func (p helperPath) Src() string {
 type helperPlan struct {
 	Mounts []helperMount
 	Paths  []helperPath
+	// Warnings are mounts left out of the copy (a nested tmpfs, a
+	// single-file bind): the run reports them.
+	Warnings []string
 }
 
 // mountCacheEntry is an app's composeModel, valid while key (HEAD and the
@@ -100,42 +105,90 @@ func resolveBackup(m composeModel, b recipe.EffectiveBackup, isFile func(string)
 		return helperPlan{}, fmt.Errorf("backup %s: compose has no service %q", b.Name, b.Service)
 	}
 	index := map[helperMount]int{}
-	for _, p := range backupPaths(b) {
-		mnt, ok := mountOf(svc.Volumes, p)
-		if !ok {
-			return helperPlan{}, fmt.Errorf("backup %s: %s is not on a mount of service %s: the container's own files are lost whenever it is recreated, so mount a volume or a folder there", b.Name, p, b.Service)
-		}
-		var hm helperMount
-		switch mnt.Type {
-		case "volume":
-			v, ok := m.Volumes[mnt.Source]
-			if mnt.Source == "" || !ok || v.Name == "" {
-				return helperPlan{}, fmt.Errorf("backup %s: %s is on an anonymous volume of service %s, which can't be backed up: give the volume a name", b.Name, p, b.Service)
-			}
-			hm.Volume = v.Name
-		case "bind":
-			if isFile(mnt.Source) {
-				return helperPlan{}, fmt.Errorf("backup %s: %s is a single-file bind mount of service %s (%s), which can't be replaced from another container: mount its directory instead", b.Name, p, b.Service, mnt.Source)
-			}
-			hm.Bind = mnt.Source
-		case "tmpfs":
-			return helperPlan{}, fmt.Errorf("backup %s: %s is on a tmpfs mount of service %s, which keeps nothing to back up", b.Name, p, b.Service)
-		default:
-			return helperPlan{}, fmt.Errorf("backup %s: %s is on a %s mount of service %s, which can't be backed up", b.Name, p, mnt.Type, b.Service)
-		}
-		sub := strings.TrimPrefix(strings.TrimPrefix(p, mnt.Target), "/")
-		if b.Type == recipe.TypeSQLite && sub == "" {
-			return helperPlan{}, fmt.Errorf("backup %s: %s is the mount itself, not the database file inside it", b.Name, p)
-		}
+	mountIndex := func(hm helperMount) int {
 		n, seen := index[hm]
 		if !seen {
 			n = len(plan.Mounts)
 			index[hm] = n
 			plan.Mounts = append(plan.Mounts, hm)
 		}
-		plan.Paths = append(plan.Paths, helperPath{Mount: n, Sub: sub, Entry: strings.TrimPrefix(p, "/")})
+		return n
+	}
+	listed := map[string]bool{}
+	for _, p := range backupPaths(b) {
+		listed[p] = true
+	}
+	added := map[string]bool{} // nested mounts already in the plan
+	for _, p := range backupPaths(b) {
+		mnt, ok := mountOf(svc.Volumes, p)
+		if !ok {
+			return helperPlan{}, fmt.Errorf("backup %s: %s is not on a mount of service %s: the container's own files are lost whenever it is recreated, so mount a volume or a folder there", b.Name, p, b.Service)
+		}
+		hm, err := classifyMount(m, b, p, mnt, isFile)
+		if err != nil {
+			return helperPlan{}, err
+		}
+		sub := strings.TrimPrefix(strings.TrimPrefix(p, mnt.Target), "/")
+		if b.Type == recipe.TypeSQLite && sub == "" {
+			return helperPlan{}, fmt.Errorf("backup %s: %s is the mount itself, not the database file inside it", b.Name, p)
+		}
+		plan.Paths = append(plan.Paths, helperPath{Mount: mountIndex(hm), Sub: sub, Entry: strings.TrimPrefix(p, "/")})
+		if b.Type != recipe.TypeFiles {
+			continue
+		}
+		// A mount nested below p is a separate source: archiving p through
+		// its own mount would leave the nested mount's data out.
+		for _, nm := range svc.Volumes {
+			t := path.Clean(nm.Target)
+			if !strings.HasPrefix(t, "/") || t == p || listed[t] || added[t] ||
+				!(p == "/" || strings.HasPrefix(t, p+"/")) {
+				continue
+			}
+			added[t] = true
+			nested := nm
+			nested.Target = t
+			nhm, err := classifyMount(m, b, t, nested, isFile)
+			var skip skippedMount
+			switch {
+			case errors.As(err, &skip):
+				plan.Warnings = append(plan.Warnings, fmt.Sprintf("%s: skipped, it lies below %s", skip.Error(), p))
+				continue
+			case err != nil:
+				return helperPlan{}, err
+			}
+			plan.Paths = append(plan.Paths, helperPath{Mount: mountIndex(nhm), Entry: strings.TrimPrefix(t, "/")})
+		}
 	}
 	return plan, nil
+}
+
+// skippedMount is the error of a mount a nested path may leave out (it
+// holds nothing to back up, or can't be replaced); a path the user listed
+// is refused with it.
+type skippedMount struct{ msg string }
+
+func (e skippedMount) Error() string { return e.msg }
+
+// classifyMount maps the service mount mnt holding the container path p to
+// the source the helper mounts.
+func classifyMount(m composeModel, b recipe.EffectiveBackup, p string, mnt composeMount, isFile func(string) bool) (helperMount, error) {
+	switch mnt.Type {
+	case "volume":
+		v, ok := m.Volumes[mnt.Source]
+		if mnt.Source == "" || !ok || v.Name == "" {
+			return helperMount{}, skippedMount{fmt.Sprintf("backup %s: %s is on an anonymous volume of service %s, which can't be backed up: give the volume a name", b.Name, p, b.Service)}
+		}
+		return helperMount{Volume: v.Name}, nil
+	case "bind":
+		if isFile(mnt.Source) {
+			return helperMount{}, skippedMount{fmt.Sprintf("backup %s: %s is a single-file bind mount of service %s (%s), which can't be replaced from another container: mount its directory instead", b.Name, p, b.Service, mnt.Source)}
+		}
+		return helperMount{Bind: mnt.Source}, nil
+	case "tmpfs":
+		return helperMount{}, skippedMount{fmt.Sprintf("backup %s: %s is on a tmpfs mount of service %s, which keeps nothing to back up", b.Name, p, b.Service)}
+	default:
+		return helperMount{}, fmt.Errorf("backup %s: %s is on a %s mount of service %s, which can't be backed up", b.Name, p, mnt.Type, b.Service)
+	}
 }
 
 // backupPaths is a backup's path (sqlite) or paths (files).
@@ -162,13 +215,6 @@ func mountOf(mounts []composeMount, p string) (composeMount, bool) {
 		}
 	}
 	return best, found
-}
-
-// isRegularFile reports whether a host path is a regular file; anything it
-// can't stat counts as a folder.
-func isRegularFile(p string) bool {
-	info, err := os.Stat(p)
-	return err == nil && info.Mode().IsRegular()
 }
 
 // appComposeModel is the app's composeModel, from one `docker compose
@@ -223,20 +269,32 @@ func (r *Repository) composeModelKey(dir string) string {
 // resolveBackups maps every enabled sqlite and files backup of the app to
 // its helper plan. Without such a backup it runs nothing.
 func (r *Repository) resolveBackups(ctx context.Context, appID string, files []string, backups []recipe.EffectiveBackup) (map[string]helperPlan, error) {
-	out := map[string]helperPlan{}
-	var m *composeModel
+	var enabled []recipe.EffectiveBackup
 	for _, b := range backups {
-		if !b.Enabled || !b.Builtin() {
-			continue
+		if b.Enabled && b.Builtin() {
+			enabled = append(enabled, b)
 		}
-		if m == nil {
-			got, err := r.appComposeModel(ctx, appID, files)
-			if err != nil {
-				return nil, err
-			}
-			m = &got
-		}
-		plan, err := resolveBackup(*m, b, isRegularFile)
+	}
+	out := map[string]helperPlan{}
+	if len(enabled) == 0 {
+		return out, nil
+	}
+	m, err := r.appComposeModel(ctx, appID, files)
+	if err != nil {
+		return nil, err
+	}
+	// A first pass learns which bind sources the plans look at, so only
+	// those are stat'ed (bounded: they may sit on a dead share).
+	touched := map[string]bool{}
+	for _, b := range enabled {
+		_, _ = resolveBackup(m, b, func(p string) bool { touched[p] = true; return false })
+	}
+	isFile, err := r.statRegularFiles(ctx, touched)
+	if err != nil {
+		return nil, err
+	}
+	for _, b := range enabled {
+		plan, err := resolveBackup(m, b, func(p string) bool { return isFile[p] })
 		if err != nil {
 			return nil, err
 		}
@@ -245,11 +303,50 @@ func (r *Repository) resolveBackups(ctx context.Context, appID string, files []s
 	return out, nil
 }
 
+// statRegularFiles reports which of the host paths are regular files
+// (anything it can't stat counts as a folder). The paths are stat'ed
+// concurrently, in goroutines abandoned (see detached) after one shared
+// folder limit: a hung NFS/CIFS mount must not wedge the (standalone:
+// single) command pipeline.
+func (r *Repository) statRegularFiles(parent context.Context, paths map[string]bool) (map[string]bool, error) {
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	list := make([]string, 0, len(paths))
+	for p := range paths {
+		list = append(list, p)
+	}
+	sort.Strings(list)
+	ctx, cancel := context.WithTimeout(parent, r.storageLimits.folder)
+	defer cancel()
+	regular := make([]bool, len(list))
+	results := make([]<-chan error, len(list))
+	for i, p := range list {
+		results[i] = detached(func() error {
+			info, err := r.hostStat(p)
+			regular[i] = err == nil && info.Mode().IsRegular()
+			return nil
+		})
+	}
+	out := make(map[string]bool, len(list))
+	for i, p := range list {
+		select {
+		case <-results[i]:
+			out[p] = regular[i]
+		case <-ctx.Done():
+			if err := parent.Err(); err != nil {
+				return nil, fmt.Errorf("the folder %s was not checked: %w", p, err)
+			}
+			return nil, fmt.Errorf("the folder %s did not answer within %s (is the share reachable?)", p, r.storageLimits.folder)
+		}
+	}
+	return out, nil
+}
+
 // dockerOutputIn runs docker with args in dir and returns stdout; the error
 // carries stderr.
 func dockerOutputIn(ctx context.Context, dir string, args []string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "docker", args...)
-	cmd.Dir = dir
+	cmd := dockerCommand(ctx, dir, args)
 	out, err := cmd.Output()
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {

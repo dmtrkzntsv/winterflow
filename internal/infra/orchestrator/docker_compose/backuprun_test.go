@@ -573,3 +573,27 @@ func TestWithDeadlineValue(t *testing.T) {
 		t.Fatalf("hung: %v, %v", v, err)
 	}
 }
+
+// A folder backup also carries the mounts nested below it, with the excludes
+// applying to the whole copy; a nested mount left out is reported in the
+// result.
+func TestRunBackupCarriesNestedMountsAndReportsSkippedOnes(t *testing.T) {
+	b := newBackupRepo(t)
+	nested := `{"type": "bind", "source": "/data/apps-data/app-1/media", "target": "/app/media", "bind": {}},
+        {"type": "bind", "source": "/mnt/nas/thumbs", "target": "/app/media/thumbs", "bind": {}},
+        {"type": "tmpfs", "target": "/app/media/cache"},`
+	(&fakeComposeConfig{out: strings.Replace(configJSON,
+		`{"type": "bind", "source": "/data/apps-data/app-1/media", "target": "/app/media", "bind": {}},`, nested, 1)}).install(b.Repository)
+	res, err := b.run(t, "media", command.PointManual)
+	if err != nil {
+		t.Fatal(err)
+	}
+	args := strings.Join(b.helper.last(), " ")
+	if !strings.Contains(args, "target=/src/1,readonly") ||
+		!strings.HasSuffix(args, "/wf backup dump files --src /src/0 --entry app/media --src /src/1 --entry app/media/thumbs --exclude *.tmp") {
+		t.Fatalf("args = %s", args)
+	}
+	if len(res.Warnings) != 2 || !strings.Contains(res.Warnings[0], "/app/media/cache is on a tmpfs mount") || res.Warnings[1] != "a note" {
+		t.Fatalf("warnings = %q", res.Warnings)
+	}
+}

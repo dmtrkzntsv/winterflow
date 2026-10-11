@@ -22,6 +22,8 @@ package dockercompose
 import (
 	"context"
 	"io"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -72,6 +74,9 @@ type Repository struct {
 	mountMu    sync.Mutex
 	mountCache map[string]mountCacheEntry
 
+	// hostStat stats a bind source on the host (replaced in tests).
+	hostStat func(path string) (fs.FileInfo, error)
+
 	// Backup runs: the helper image is pulled once; runHelper runs one
 	// helper container, docker one short docker command, helperBinary
 	// finds the binary the helper runs, now is the clock (all replaced in
@@ -101,6 +106,7 @@ func NewRepository(cfg *config.ServerConfig, log *logger.Logger) *Repository {
 		runCompose:    dockerIn,
 		composeOutput: dockerOutputIn,
 		mountCache:    make(map[string]mountCacheEntry),
+		hostStat:      os.Stat,
 		runHelper:     runDockerHelper,
 		docker:        dockerCombined,
 		helperBinary:  agentExecutable,

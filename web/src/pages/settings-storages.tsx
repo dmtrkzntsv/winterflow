@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
 import { Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -32,34 +31,18 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { AppLinks } from "@/components/app-links";
 import { StorageDialog } from "@/components/storage-dialog";
 import { type Docker } from "@/context/use-docker";
 import { useApps } from "@/context/use-apps";
+import { returnFocusTo } from "@/lib/focus";
 import { STORAGE_TYPES, type Storage, type StorageSaved } from "@/lib/storages";
 import { cn } from "@/lib/utils";
 
-// UsedBy lists the apps whose compose files reference a storage, as chips
-// linking to each app.
-function UsedBy({ ids, names }: { ids: string[]; names: Map<string, string> }) {
-  if (ids.length === 0) return <span className="text-muted-foreground">Not used</span>;
-  return (
-    <span className="flex flex-wrap gap-1">
-      {ids.map((id) => (
-        <Badge key={id} variant="secondary" className="whitespace-nowrap font-medium">
-          <Link to={`/app/${id}`} className="underline-offset-4 hover:underline">
-            {names.get(id) ?? id}
-          </Link>
-        </Badge>
-      ))}
-    </span>
-  );
-}
-
-const byName = (a: Storage, b: Storage) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+const byName = (a: Storage, b: Storage) => a.name.localeCompare(b.name);
 
 // listed joins names for a sentence: "A", "A and B", "A, B and C".
-const listed = (names: string[]) =>
-  names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+const listed = (names: string[]) => new Intl.ListFormat("en-GB", { type: "conjunction" }).format(names);
 
 export function StoragesCard({ docker }: { docker: Docker }) {
   const { apps } = useApps();
@@ -105,10 +88,8 @@ export function StoragesCard({ docker }: { docker: Docker }) {
       // It asks for action (each warning names its app): it stays until
       // dismissed.
       toast.warning(`${done}, but not every app was redeployed`, {
-        // One line each: sonner's description doesn't keep newlines.
-        description: (
-          <span className="whitespace-pre-line">{[description, ...warnings].filter(Boolean).join("\n")}</span>
-        ),
+        // One line each (toast descriptions keep newlines: index.css).
+        description: [description, ...warnings].filter(Boolean).join("\n"),
         duration: Infinity,
         closeButton: true,
       });
@@ -218,7 +199,7 @@ export function StoragesCard({ docker }: { docker: Docker }) {
                       </div>
                       {used.length > 0 ? (
                         <div className="mt-1 sm:hidden">
-                          <UsedBy ids={used} names={names} />
+                          <AppLinks ids={used} names={names} chips />
                         </div>
                       ) : null}
                     </TableCell>
@@ -227,7 +208,7 @@ export function StoragesCard({ docker }: { docker: Docker }) {
                       {s.location}
                     </TableCell>
                     <TableCell className="hidden sm:table-cell">
-                      <UsedBy ids={used} names={names} />
+                      <AppLinks ids={used} names={names} chips />
                     </TableCell>
                     <TableCell className="whitespace-nowrap py-0.5 text-right">
                       <Button
@@ -288,15 +269,7 @@ export function StoragesCard({ docker }: { docker: Docker }) {
         onSaved={saved}
       />
       <AlertDialog open={toDelete !== null} onOpenChange={(o) => !o && setToDelete(null)}>
-        <AlertDialogContent
-          onCloseAutoFocus={(e) => {
-            const back = opener.current?.isConnected ? opener.current : addButton.current;
-            if (back) {
-              e.preventDefault();
-              back.focus();
-            }
-          }}
-        >
+        <AlertDialogContent onCloseAutoFocus={returnFocusTo(opener, addButton)}>
           <AlertDialogHeader>
             <AlertDialogTitle>Remove this storage?</AlertDialogTitle>
             <AlertDialogDescription>

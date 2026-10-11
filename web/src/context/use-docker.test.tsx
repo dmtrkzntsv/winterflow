@@ -6,7 +6,8 @@ import { useDocker } from "@/context/use-docker";
 vi.mock("@/context/use-servers", () => ({ useServers: () => ({ activeServerId: "srv-1" }) }));
 const waitFor = vi.fn();
 vi.mock("@/context/use-notifications", () => ({ useNotifications: () => ({ waitFor }) }));
-vi.mock("@/lib/ecies", () => ({
+vi.mock("@/lib/ecies", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/ecies")>()),
   encryptSecret: vi.fn(async (plain: string, key: string) => `enc(${plain}|${key})`),
 }));
 
@@ -119,6 +120,20 @@ describe("useDocker storage calls", () => {
     expect(test?.url).toContain("server_id=srv-1");
     expect(test?.body).toMatchObject({ name: "hetzner", type: "s3", s3: { secret_access_key: "enc(S3-PLAIN|PUB)", bucket: "tenants" } });
     expect(JSON.stringify(sent)).not.toContain('"S3-PLAIN"');
+  });
+
+  it("fetches the server's key once, but again after a failed fetch", async () => {
+    const { result } = renderHook(() => useDocker());
+    const keyFetches = () => fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/v1/server/get-public-key")).length;
+    const before = keyFetches();
+    fetchMock.mockResolvedValueOnce(new Response("down", { status: 502 }));
+    await expect(result.current.testStorage(s3Draft)).rejects.toThrow("Failed to fetch public key: 502");
+    waitFor.mockResolvedValueOnce({ status: 0, payload: { ok: true } });
+    await result.current.testStorage(s3Draft);
+    waitFor.mockResolvedValueOnce({ status: 0, payload: { storage: { name: "hetzner" } } });
+    await result.current.saveStorage(s3Draft, true);
+    expect(keyFetches() - before).toBe(2);
+    expect(sent.at(-1)?.body).toMatchObject({ s3: { secret_access_key: "enc(S3-PLAIN|PUB)" }, create: true });
   });
 
   it("keeps the stored secret when none is typed, and sends no key for a folder", async () => {

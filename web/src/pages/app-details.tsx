@@ -525,7 +525,6 @@ function SettingsTab({
       } else if (warnings.length) {
         toast.warning("App deleted with cleanup warnings", {
           description: warnings.join("\n"),
-          classNames: { description: "whitespace-pre-line" },
         });
       } else {
         toast.success(withVolumes ? "App and volumes deleted" : "App deleted");

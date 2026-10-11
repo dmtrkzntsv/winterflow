@@ -11,6 +11,7 @@ import { ImageTagPicker } from "@/components/image-tag-picker";
 import { IconPicker } from "@/components/icon-picker";
 import { IngressEditor } from "@/components/ingress-editor";
 import { EditorSection } from "@/components/editor-section";
+import { ENCRYPTED } from "@/lib/ecies";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
 import { useServers } from "@/context/use-servers";
@@ -115,7 +116,7 @@ export function AppEditor({ state, onChange }: Props) {
     });
   };
 
-  const storageVars = state.storageVariables ?? [];
+  const storageVars = state.storageVariables;
 
   const source = state.config.source;
   const setSource = (patch: Partial<NonNullable<typeof source>>) =>
@@ -420,7 +421,7 @@ function StorageVariableRows({ vars }: { vars: StorageVariable[] }) {
           <code className="font-mono [overflow-wrap:anywhere]">{v.name}</code>
           {v.secret ? (
             <span className="flex items-center gap-1 font-mono text-xs text-muted-foreground">
-              <Lock className="size-3" /> {"<encrypted>"}
+              <Lock className="size-3" /> {ENCRYPTED}
             </span>
           ) : null}
           <span className="ml-auto text-xs text-muted-foreground">

@@ -1,6 +1,5 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -22,9 +21,6 @@ vi.mock("sonner", () => ({
 }));
 
 const setupUser = () => userEvent.setup({ delay: null });
-
-// renderedText renders a toast's description node on its own.
-const renderedText = (node: ReactNode) => render(<>{node}</>).container.firstElementChild as HTMLElement;
 
 const STORAGES: Storage[] = [
   {
@@ -181,8 +177,8 @@ describe("StoragesCard", () => {
     const dialog = await screen.findByRole("dialog");
     await user.click(within(dialog).getByRole("radio", { name: "S3-compatible" }));
     await user.type(within(dialog).getByLabelText("Name"), "hetzner2");
-    await user.type(within(dialog).getByLabelText("Endpoint"), "http://s3.example.com");
-    expect(within(dialog).getByText(/plain http is only allowed/)).toBeInTheDocument();
+    await user.type(within(dialog).getByLabelText("Endpoint"), "s3.example.com");
+    expect(within(dialog).getByText("Use a URL like https://s3.example.com.")).toBeInTheDocument();
     await user.clear(within(dialog).getByLabelText("Endpoint"));
     await user.type(within(dialog).getByLabelText("Endpoint"), "https://s3.example.com");
     await user.type(within(dialog).getByLabelText("Region"), "fsn1");
@@ -238,10 +234,8 @@ describe("StoragesCard", () => {
         expect.objectContaining({ duration: Infinity, closeButton: true }),
       ),
     );
-    // One line per warning: the description keeps its newlines.
-    const shown = renderedText(toastWarning.mock.calls[0][1].description);
-    expect(shown).toHaveClass("whitespace-pre-line");
-    expect(shown).toHaveTextContent("Redeployed Shop.\nBlog has undeployed changes", { normalizeWhitespace: false });
+    // One line per warning (toast descriptions keep newlines).
+    expect(toastWarning.mock.calls[0][1].description).toBe("Redeployed Shop.\nBlog has undeployed changes");
   });
 
   it("reports a refused save inside the dialog, which stays open", async () => {
@@ -522,6 +516,27 @@ describe("StorageDialog form", () => {
     expect(save).toBeEnabled();
     await user.click(save);
     expect(docker.saveStorage).toHaveBeenCalledWith(expect.objectContaining({ name: "offsite", secret: "S3-PLAIN" }), true);
+  });
+
+  it("says what is missing when the test meets a field the user never reached", async () => {
+    const user = setupUser();
+    const docker = fakeDocker();
+    const dialog = await openAdd(user, docker);
+    await user.type(within(dialog).getByLabelText("Name"), "usb");
+    // The folder was never focused: its problem is hidden, the check is not.
+    const check = within(dialog).getByRole("button", { name: "Check folder" });
+    expect(check).toBeEnabled();
+    await user.click(check);
+    expect(docker.testStorage).not.toHaveBeenCalled();
+    const folder = within(dialog).getByLabelText("Folder");
+    expect(within(dialog).getByText("Use an absolute folder path, like /mnt/backup/winterflow.")).toBeInTheDocument();
+    expect(folder).toHaveFocus();
+    // Now on screen, the problem disables the check until it is fixed.
+    expect(check).toBeDisabled();
+    await user.type(folder, "/mnt/usb");
+    expect(check).toBeEnabled();
+    await user.click(check);
+    expect(docker.testStorage).toHaveBeenCalledWith(expect.objectContaining({ name: "usb", path: "/mnt/usb" }));
   });
 
   it("keeps an edit's stored path-style when an IP endpoint is typed", async () => {

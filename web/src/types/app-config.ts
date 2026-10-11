@@ -78,7 +78,7 @@ export type AppEditorState = {
   sourceToken?: string;
   // Read-only rows from the last app.get: provided by the server's
   // storages, never saved with the app's variables.
-  storageVariables?: StorageVariable[];
+  storageVariables: StorageVariable[];
 };
 
 let counter = 0;

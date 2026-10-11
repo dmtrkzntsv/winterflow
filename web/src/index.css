@@ -232,3 +232,9 @@
         transform: none;
     }
 }
+
+/* Toast descriptions keep their line breaks: a multi-warning toast puts one
+   warning per line. (The Toaster itself is vendored in components/ui/.) */
+[data-sonner-toast] [data-description] {
+    white-space: pre-line;
+}

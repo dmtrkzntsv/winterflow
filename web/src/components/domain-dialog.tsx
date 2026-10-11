@@ -15,6 +15,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { Docker, DomainCreated } from "@/context/use-docker";
+import { returnFocusTo } from "@/lib/focus";
 import { domainNameError, TLS_MODES, type Domain, type DomainTLS } from "@/lib/domains";
 import { cn } from "@/lib/utils";
 
@@ -92,13 +93,7 @@ export function DomainDialog({
       {/* Certificate mode is taller than a phone screen: scroll inside. */}
       <DialogContent
         className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl"
-        onCloseAutoFocus={(e) => {
-          const back = returnFocus?.current;
-          if (back?.isConnected) {
-            e.preventDefault();
-            back.focus();
-          }
-        }}
+        onCloseAutoFocus={returnFocusTo(returnFocus)}
       >
         <form
           className="grid gap-4"

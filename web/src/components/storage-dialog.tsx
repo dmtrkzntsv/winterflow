@@ -16,7 +16,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { Docker } from "@/context/use-docker";
+import { returnFocusTo } from "@/lib/focus";
 import {
+  DRAFT_FIELDS,
   draftFrom,
   draftProblem,
   pathStyleDefault,
@@ -31,16 +33,13 @@ import {
 
 type Probe = { state: "idle" | "testing" } | { state: "ok" } | { state: "failed"; error: string };
 
-// The validated fields in form order, and their inputs' ids.
-const FIELD_ORDER: DraftField[] = ["name", "path", "endpoint", "bucket", "prefix", "accessKeyId", "secret"];
-const FIELD_ID: Record<DraftField, string> = {
-  name: "st-name",
-  path: "st-path",
-  endpoint: "st-endpoint",
-  bucket: "st-bucket",
-  prefix: "st-prefix",
-  accessKeyId: "st-key",
-  secret: "st-secret",
+// fieldId is the id of a field's input.
+const fieldId = (field: DraftField) => `st-${field}`;
+
+// COPY is the wording that differs by type.
+const COPY: Record<StorageType, { namePlaceholder: string; test: string; testing: string; ok: string }> = {
+  local: { namePlaceholder: "e.g. backup-disk", test: "Check folder", testing: "Checking…", ok: "Folder is writable" },
+  s3: { namePlaceholder: "e.g. offsite", test: "Test connection", testing: "Testing…", ok: "Connection works" },
 };
 
 const errorOf = (e: unknown) => (e instanceof Error ? e.message : "");
@@ -77,42 +76,46 @@ export function StorageDialog({
   const [probe, setProbe] = useState<Probe>({ state: "idle" });
   const [busy, setBusy] = useState(false);
   const [saveError, setSaveError] = useState("");
-  // Fields the user changed or left: their problems show from then on.
-  const [touched, setTouched] = useState<ReadonlySet<DraftField>>(() => new Set());
-  // Once the user sets path-style, the endpoint no longer decides it.
-  const pathStyleSet = useRef(false);
+  // The furthest field (DRAFT_FIELDS index) the user changed or left: a
+  // problem shows once the user reached its field.
+  const [reached, setReached] = useState(-1);
 
   // Answers can arrive after the dialog moved on. A save may run for
   // minutes: when it answers after this dialog closed (or unmounted, the
   // parent remounting a new one), it still reports the save but must not
   // close whatever dialog is open now. A test answer counts only while no
   // newer test or edit superseded it.
-  const mounted = useRef(true);
-  const session = useRef(0); // bumped on every close
+  const generation = useRef(0); // bumped on every close and on unmount
   const probeSeq = useRef(0); // bumped on every test start, edit and close
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
+  useEffect(
+    () => () => {
+      generation.current++;
+    },
+    [],
+  );
 
   const editing = edit !== null;
   const problem = draftProblem(draft, editing, editing ? [] : existing);
   const apps = usedBy ?? edit?.apps ?? [];
   const local = draft.type === "local";
+  const copy = COPY[draft.type];
   // An edit that changes nothing has nothing to save (nor apps to redeploy).
   const dirty = !editing || JSON.stringify(draft) !== JSON.stringify(initial);
 
   // A problem shows under its field once the user touched that field or
   // moved past it to a later one — never for a field not reached yet.
-  const shown = (field: DraftField) => {
-    if (problem?.field !== field) return false;
-    const at = FIELD_ORDER.indexOf(field);
-    return FIELD_ORDER.some((f, i) => i >= at && touched.has(f));
+  const shown = (field: DraftField) => problem?.field === field && reached >= DRAFT_FIELDS.indexOf(field);
+  const hidden = problem !== null && !shown(problem.field);
+  const touch = (field: DraftField) => setReached((r) => Math.max(r, DRAFT_FIELDS.indexOf(field)));
+
+  // A problem the user hasn't reached yet (e.g. a secret never focused):
+  // Save and Test reveal every problem and go to it, sending nothing.
+  const reveal = () => {
+    if (!problem) return false;
+    setReached(DRAFT_FIELDS.length - 1);
+    document.getElementById(fieldId(problem.field))?.focus();
+    return true;
   };
-  const touch = (field: DraftField) =>
-    setTouched((t) => (t.has(field) ? t : new Set(t).add(field)));
 
   // Any change makes the last test result and save failure stale.
   const set = (patch: Partial<StorageDraft>, field?: DraftField) => {
@@ -125,7 +128,7 @@ export function StorageDialog({
 
   const changeOpen = (next: boolean) => {
     if (!next) {
-      session.current++;
+      generation.current++;
       probeSeq.current++;
       setDraft((d) => ({ ...d, secret: "" }));
       setProbe({ state: "idle" });
@@ -136,7 +139,7 @@ export function StorageDialog({
 
   const test = async () => {
     const seq = ++probeSeq.current;
-    const current = () => mounted.current && seq === probeSeq.current;
+    const current = () => seq === probeSeq.current;
     setProbe({ state: "testing" });
     try {
       const res = await docker.testStorage(draft);
@@ -147,8 +150,8 @@ export function StorageDialog({
   };
 
   const save = async () => {
-    const opened = session.current;
-    const stillOpen = () => mounted.current && opened === session.current;
+    const opened = generation.current;
+    const stillOpen = () => opened === generation.current;
     setBusy(true);
     setSaveError("");
     try {
@@ -167,19 +170,19 @@ export function StorageDialog({
         toast.error(title, { description: reason });
       }
     } finally {
-      if (mounted.current) setBusy(false);
+      setBusy(false);
     }
   };
 
   const field = (
-    key: DraftField | "region",
+    key: DraftField,
     label: string,
     value: string,
     onChange: (v: string) => void,
     props: { placeholder?: string; hint?: string; type?: string } = {},
   ) => {
-    const id = key === "region" ? "st-region" : FIELD_ID[key];
-    const invalid = key !== "region" && shown(key);
+    const id = fieldId(key);
+    const invalid = shown(key);
     const describedBy = [props.hint ? `${id}-hint` : "", invalid ? `${id}-error` : ""].filter(Boolean).join(" ");
     return (
       <div className="grid gap-1.5">
@@ -194,7 +197,7 @@ export function StorageDialog({
           aria-describedby={describedBy || undefined}
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          onBlur={key === "region" ? undefined : () => touch(key)}
+          onBlur={() => touch(key)}
         />
         {props.hint ? (
           <p id={`${id}-hint`} className="text-xs text-muted-foreground">
@@ -220,32 +223,19 @@ export function StorageDialog({
           // Add: the name comes first. Edit: the caret goes to the end of
           // the first field, its text not selected (one stray key would
           // replace it).
-          const first = document.getElementById(editing ? FIELD_ID[local ? "path" : "endpoint"] : FIELD_ID.name);
+          const first = document.getElementById(fieldId(editing ? (local ? "path" : "endpoint") : "name"));
           if (!(first instanceof HTMLInputElement)) return;
           e.preventDefault();
           first.focus();
           first.setSelectionRange(first.value.length, first.value.length);
         }}
-        onCloseAutoFocus={(e) => {
-          const back = returnFocus?.current;
-          if (back?.isConnected) {
-            e.preventDefault();
-            back.focus();
-          }
-        }}
+        onCloseAutoFocus={returnFocusTo(returnFocus)}
       >
         <form
           className="grid gap-4"
           onSubmit={(e) => {
             e.preventDefault();
-            if (busy || !dirty) return;
-            // A problem the user hasn't reached yet (e.g. a secret never
-            // focused): reveal every problem and go to it, send nothing.
-            if (problem) {
-              setTouched(new Set(FIELD_ORDER));
-              document.getElementById(FIELD_ID[problem.field])?.focus();
-              return;
-            }
+            if (busy || !dirty || reveal()) return;
             void save();
           }}
         >
@@ -286,7 +276,7 @@ export function StorageDialog({
                   </RadioGroup>
                 </div>
                 {field("name", "Name", draft.name, (v) => set({ name: v.toLowerCase() }, "name"), {
-                  placeholder: local ? "e.g. backup-disk" : "e.g. offsite",
+                  placeholder: copy.namePlaceholder,
                   hint: name
                     ? `Compose files use it as \${${storageVar(name, "…")}}.`
                     : "Lowercase letters, digits and hyphens.",
@@ -306,16 +296,19 @@ export function StorageDialog({
                   "Endpoint",
                   draft.endpoint,
                   (v) =>
-                    // An IP address or localhost has no bucket.host names:
-                    // path-style follows the endpoint until the user sets it.
+                    // An IP address or localhost has no bucket.host names: on
+                    // an add, path-style follows the endpoint while it still
+                    // has the endpoint's default (the user didn't set it).
                     set(
-                      editing || pathStyleSet.current ? { endpoint: v } : { endpoint: v, pathStyle: pathStyleDefault(v) },
+                      !editing && draft.pathStyle === pathStyleDefault(draft.endpoint)
+                        ? { endpoint: v, pathStyle: pathStyleDefault(v) }
+                        : { endpoint: v },
                       "endpoint",
                     ),
                   { placeholder: "https://s3.example.com" },
                 )}
                 <div className="grid gap-4 sm:grid-cols-2">
-                  {field("region", "Region", draft.region, (v) => set({ region: v }), { placeholder: "e.g. auto" })}
+                  {field("region", "Region", draft.region, (v) => set({ region: v }, "region"), { placeholder: "e.g. auto" })}
                   {field("bucket", "Bucket", draft.bucket, (v) => set({ bucket: v }, "bucket"))}
                 </div>
                 {field("prefix", "Prefix", draft.prefix, (v) => set({ prefix: v }, "prefix"), {
@@ -332,10 +325,7 @@ export function StorageDialog({
                 <label className="flex items-center gap-2 text-sm">
                   <Checkbox
                     checked={draft.pathStyle}
-                    onCheckedChange={(v) => {
-                      pathStyleSet.current = true;
-                      set({ pathStyle: v === true });
-                    }}
+                    onCheckedChange={(v) => set({ pathStyle: v === true })}
                     aria-label="Path-style addressing"
                   />
                   Path-style addressing (MinIO and some providers)
@@ -354,25 +344,22 @@ export function StorageDialog({
             ) : null}
 
             <div className="flex min-h-9 flex-wrap items-center gap-3">
+              {/* Enabled while a problem is still hidden, like Save. */}
               <Button
                 type="button"
                 variant="outline"
-                disabled={problem !== null || probe.state === "testing"}
-                onClick={() => void test()}
+                disabled={(problem !== null && !hidden) || probe.state === "testing"}
+                onClick={() => {
+                  if (!reveal()) void test();
+                }}
               >
-                {probe.state === "testing"
-                  ? local
-                    ? "Checking…"
-                    : "Testing…"
-                  : local
-                    ? "Check folder"
-                    : "Test connection"}
+                {probe.state === "testing" ? copy.testing : copy.test}
               </Button>
               {/* Only the result is announced, not the button's label. */}
               <span role="status" className="flex min-w-0">
                 {probe.state === "ok" ? (
                   <span className="flex items-center gap-1.5 text-sm text-emerald-700 dark:text-emerald-400">
-                    <CircleCheck className="size-4" /> {local ? "Folder is writable" : "Connection works"}
+                    <CircleCheck className="size-4" /> {copy.ok}
                   </span>
                 ) : probe.state === "failed" ? (
                   <span className="flex items-start gap-1.5 text-sm text-destructive [overflow-wrap:anywhere]">
@@ -406,7 +393,7 @@ export function StorageDialog({
             </Button>
             {/* Enabled while a problem is still hidden, so Save can say
                 what is missing; disabled once the problem is on screen. */}
-            <Button type="submit" disabled={(problem !== null && shown(problem.field)) || busy || !dirty}>
+            <Button type="submit" disabled={(problem !== null && !hidden) || busy || !dirty}>
               {busy ? "Saving…" : "Save"}
             </Button>
           </DialogFooter>

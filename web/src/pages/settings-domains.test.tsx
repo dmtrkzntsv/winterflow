@@ -227,10 +227,8 @@ describe("DomainsCard", () => {
         description: expect.anything(),
       }),
     );
-    // One line per warning: the description keeps its newlines.
-    const added = render(<>{toastWarning.mock.calls[0][1].description}</>).container.firstElementChild;
-    expect(added).toHaveClass("whitespace-pre-line");
-    expect(added).toHaveTextContent("ingress reload failed (previous routing still active): boom");
+    // One line per warning (toast descriptions keep newlines).
+    expect(toastWarning.mock.calls[0][1].description).toBe("ingress reload failed (previous routing still active): boom");
 
     await user.click(screen.getByRole("button", { name: "Remove domain tunnel.example.com" }));
     await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Remove domain" }));
@@ -239,7 +237,7 @@ describe("DomainsCard", () => {
         description: expect.anything(),
       }),
     );
-    expect(render(<>{toastWarning.mock.calls[1][1].description}</>).container).toHaveTextContent("ingress: app-1 skipped");
+    expect(toastWarning.mock.calls[1][1].description).toBe("ingress: app-1 skipped");
     expect(toastSuccess).not.toHaveBeenCalled();
   });
 

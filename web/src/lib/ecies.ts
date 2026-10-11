@@ -42,6 +42,11 @@ function assemblePayload(
   return bytesToBase64(payload);
 }
 
+// ENCRYPTED is the placeholder a stored secret reads as (app secrets, the
+// repo token, storage secrets). Sent back unchanged, it keeps the stored
+// value.
+export const ENCRYPTED = "<encrypted>";
+
 // encryptSecret encrypts plaintext for the server identified by its base64
 // public-key point. Returns the base64 ECIES payload.
 export async function encryptSecret(

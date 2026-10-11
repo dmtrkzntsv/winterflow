@@ -1,12 +1,11 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useRef } from "react";
 
 import { useNotifications } from "@/context/use-notifications";
 import { useServers } from "@/context/use-servers";
 import { readApiError } from "@/lib/api";
-import { encryptSecret } from "@/lib/ecies";
+import { ENCRYPTED, encryptSecret } from "@/lib/ecies";
 import type { Domain, DomainTLS } from "@/lib/domains";
 import {
-  ENCRYPTED,
   storageBody,
   type Storage,
   type StorageDraft,
@@ -40,6 +39,19 @@ export type Volume = {
 export type DomainCreated = { domain: Domain; warnings: string[] };
 
 type Accepted = { data?: { request_id?: string } };
+
+// fetchPublicKey reads a server's ECIES public key.
+async function fetchPublicKey(serverId: string): Promise<string> {
+  const res = await fetch(
+    `${base}/api/v1/server/get-public-key?server_id=${encodeURIComponent(serverId)}`,
+    { credentials: "include" },
+  );
+  if (!res.ok) throw new Error(`Failed to fetch public key: ${res.status}`);
+  const result = (await res.json()) as { data?: { public_key?: string } };
+  const key = result.data?.public_key;
+  if (!key) throw new Error("Server returned no public key");
+  return key;
+}
 
 // How long to wait for a storage command's result. storage.save may run up
 // to 8 minutes on the agent (the probe, docker ps, then redeploys of the
@@ -87,18 +99,27 @@ export function useDocker() {
     [serverId, waitFor],
   );
 
-  const getPublicKey = useCallback(async (): Promise<string> => {
-    if (!serverId) throw new Error("No active server");
-    const res = await fetch(
-      `${base}/api/v1/server/get-public-key?server_id=${encodeURIComponent(serverId)}`,
-      { credentials: "include" },
-    );
-    if (!res.ok) throw new Error(`Failed to fetch public key: ${res.status}`);
-    const result = (await res.json()) as { data?: { public_key?: string } };
-    const key = result.data?.public_key;
-    if (!key) throw new Error("Server returned no public key");
-    return key;
+  // The server's public key is fetched once per server (a storage is often
+  // tested, then saved); a failed fetch is not kept.
+  const publicKey = useRef<{ serverId: string; key: Promise<string> } | null>(null);
+  const getPublicKey = useCallback((): Promise<string> => {
+    if (!serverId) return Promise.reject(new Error("No active server"));
+    if (publicKey.current?.serverId !== serverId) {
+      const key = fetchPublicKey(serverId);
+      publicKey.current = { serverId, key };
+      key.catch(() => {
+        if (publicKey.current?.key === key) publicKey.current = null;
+      });
+    }
+    return publicKey.current.key;
   }, [serverId]);
+
+  // encrypt encrypts a secret (a registry password, a certificate key, a
+  // storage's secret key) for the active server.
+  const encrypt = useCallback(
+    async (plaintext: string) => encryptSecret(plaintext, await getPublicKey()),
+    [getPublicKey],
+  );
 
   const listRegistries = useCallback(
     () =>
@@ -111,14 +132,12 @@ export function useDocker() {
   const createRegistry = useCallback(
     async (address: string, username: string, password: string) => {
       // Registry passwords are secrets — encrypt with the server key.
-      const key = await getPublicKey();
-      const enc = await encryptSecret(password, key);
       await dispatch("/api/v1/registry/create", {
         method: "POST",
-        body: { address, username, password: enc, encrypted: true },
+        body: { address, username, password: await encrypt(password), encrypted: true },
       });
     },
-    [dispatch, getPublicKey],
+    [dispatch, encrypt],
   );
 
   const deleteRegistry = useCallback(
@@ -193,9 +212,8 @@ export function useDocker() {
     ): Promise<DomainCreated> => {
       const body: Record<string, string> = { name, tls };
       if (tls === "certificate" && cert) {
-        const key = await getPublicKey();
         body.certificate = cert.certificate;
-        body.key = await encryptSecret(cert.key, key);
+        body.key = await encrypt(cert.key);
       }
       const res = await dispatch<{ domain: Domain; warnings?: string[] | null }>(
         "/api/v1/domain/create",
@@ -203,7 +221,7 @@ export function useDocker() {
       );
       return { domain: res.domain, warnings: res.warnings ?? [] };
     },
-    [dispatch, getPublicKey],
+    [dispatch, encrypt],
   );
 
   // deleteDomain resolves with the proxy reload's warnings.
@@ -232,12 +250,9 @@ export function useDocker() {
   const storageRequest = useCallback(
     async (draft: StorageDraft) => {
       if (draft.type !== "s3") return storageBody(draft, "");
-      const secret = draft.secret
-        ? await encryptSecret(draft.secret, await getPublicKey())
-        : ENCRYPTED;
-      return storageBody(draft, secret);
+      return storageBody(draft, draft.secret ? await encrypt(draft.secret) : ENCRYPTED);
     },
-    [getPublicKey],
+    [encrypt],
   );
 
   // testStorage resolves with the probe's outcome: a failed probe is

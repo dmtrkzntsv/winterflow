@@ -1,13 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  draftError,
   draftFrom,
   draftProblem,
   endpointError,
   pathStyleDefault,
   storageBody,
-  storageNameError,
   storageVar,
   type Storage,
   type StorageDraft,
@@ -30,6 +28,9 @@ const s3: Storage = {
 };
 
 const draft = (over: Partial<StorageDraft>): StorageDraft => ({ ...draftFrom(null), name: "disk", path: "/mnt/usb", ...over });
+
+// draftError is draftProblem's message ("" when the draft can be sent).
+const draftError = (d: StorageDraft, editing: boolean) => draftProblem(d, editing)?.message ?? "";
 
 describe("storages", () => {
   it("builds a draft from a listed storage, never with its secret", () => {
@@ -71,16 +72,19 @@ describe("storages", () => {
   });
 
   it("checks names like the agent", () => {
-    for (const ok of ["a", "backup-disk", "s3", "x".repeat(32)]) expect(storageNameError(ok)).toBe("");
-    for (const bad of ["", "-a", "a-", "A", "a_b", "a.b", "x".repeat(33)]) expect(storageNameError(bad)).not.toBe("");
+    for (const ok of ["a", "backup-disk", "s3", "x".repeat(32)]) expect(draftError(draft({ name: ok }), false)).toBe("");
+    for (const bad of ["", "-a", "a-", "A", "a_b", "a.b", "x".repeat(33)]) {
+      expect(draftProblem(draft({ name: bad }), false)).toEqual({
+        field: "name",
+        message: "Use 1-32 lowercase letters, digits and inner hyphens, like backup-disk.",
+      });
+    }
   });
 
-  it("checks endpoints like the agent", () => {
-    for (const ok of ["https://s3.example.com", "https://s3.example.com/", "http://127.0.0.1:9000", "http://192.168.1.5:9000", "http://10.0.0.2", "http://172.20.0.1", "http://localhost:9000"]) {
+  it("checks an endpoint's syntax, leaving plain http to the agent", () => {
+    for (const ok of ["https://s3.example.com", "https://s3.example.com/", "http://127.0.0.1:9000", "http://localhost:9000", "http://s3.example.com"]) {
       expect(endpointError(ok)).toBe("");
     }
-    expect(endpointError("http://s3.example.com")).toMatch(/Use https/);
-    expect(endpointError("http://172.32.0.1")).toMatch(/Use https/);
     expect(endpointError("https://s3.example.com/bucket")).toMatch(/without a path/);
     expect(endpointError("ftp://s3.example.com")).toMatch(/URL like/);
     expect(endpointError("not a url")).toMatch(/URL like/);
@@ -93,7 +97,7 @@ describe("storages", () => {
     expect(draftError(draft({ path: "/" }), false)).toMatch(/cannot be \//);
     const ok = { ...draftFrom(s3), secret: "s3cret" };
     expect(draftError(ok, false)).toBe("");
-    expect(draftError({ ...ok, endpoint: "http://s3.example.com" }, false)).toMatch(/https/);
+    expect(draftError({ ...ok, endpoint: "s3.example.com" }, false)).toMatch(/URL like/);
     expect(draftError({ ...ok, bucket: "Bad_Bucket" }, false)).toMatch(/bucket/);
     expect(draftError({ ...ok, bucket: "a..b" }, false)).toMatch(/bucket/);
     for (const prefix of ["/x", "a//b", "a/../b", "./a"]) expect(draftError({ ...ok, prefix }, false)).toMatch(/folder names/);

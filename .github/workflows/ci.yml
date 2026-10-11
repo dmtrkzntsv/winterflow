@@ -99,6 +99,20 @@ jobs:
       - name: install.sh dry-run suite
         run: bash scripts/install_test.sh
 
+  # Generated sqlc code (internal/infra/db/sqlc/gen) must match the queries
+  # and migrations it is built from.
+  sqlc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: make sqlc-check
+        run: make sqlc-check
+
   # The API contract suite and the internal/infra/db packages (migration
   # runner, repositories) on Postgres (the go job already runs them on
   # SQLite). The contract suite must match testdata/parity.golden.json like

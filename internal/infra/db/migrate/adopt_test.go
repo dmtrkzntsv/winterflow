@@ -3,6 +3,8 @@ package migrate
 import (
 	"reflect"
 	"testing"
+
+	"winterflow/internal/infra/db/backend"
 )
 
 const (
@@ -42,6 +44,9 @@ func TestAdoptBunDatabase(t *testing.T) {
 				if n := count(t, db, d, `SELECT count(*) FROM app_domains`); n != 2 {
 					t.Fatalf("app_domains rows = %d, want 2", n)
 				}
+				if n := count(t, db, d, bunTablesSQL(d)); n != 0 {
+					t.Fatalf("%d bun_* tables survived drop_bun_tables", n)
+				}
 				// Idempotent: a second boot adopts nothing and applies nothing.
 				if err := Migrate(ctx, db, d); err != nil {
 					t.Fatalf("second Migrate: %v", err)
@@ -50,6 +55,13 @@ func TestAdoptBunDatabase(t *testing.T) {
 			})
 		}
 	}
+}
+
+func bunTablesSQL(d string) string {
+	if d == backend.Postgres {
+		return `SELECT count(*) FROM information_schema.tables WHERE table_schema = current_schema() AND table_name LIKE 'bun\_%'`
+	}
+	return `SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name LIKE 'bun\_%' ESCAPE '\'`
 }
 
 // A build that adopted bun_migrations but crashed before drop_bun_tables

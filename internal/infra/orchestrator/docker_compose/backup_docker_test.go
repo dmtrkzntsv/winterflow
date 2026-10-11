@@ -67,6 +67,9 @@ func TestBackupThroughDocker(t *testing.T) {
 	agent := buildAgent(t)
 	r.helperBinary = func() (string, error) { return agent, nil }
 	stamp := strconv.FormatInt(time.Now().UnixNano(), 36)
+	// Every helper this test starts by hand carries its own label, so the
+	// cleanup below never touches a real backup running on the same host.
+	testLabel := "winterflow.test=" + stamp
 	vol := "wf-itg-backup-" + stamp
 	dockerT(t, "volume", "create", vol)
 	t.Cleanup(func() { _ = exec.Command("docker", "volume", "rm", "-f", vol).Run() })
@@ -180,7 +183,7 @@ x-winterflow:
 	name := "wf-backup-itg-" + stamp
 	kctx, kcancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer kcancel()
-	_, _, err = runDockerHelper(kctx, name, []string{"run", "--rm", "--name", name, "--label", helper.RoleLabel, helper.Image, "sleep", "60"}, io.Discard)
+	_, _, err = runDockerHelper(kctx, name, []string{"run", "--rm", "--name", name, "--label", helper.RoleLabel, "--label", testLabel, helper.Image, "sleep", "60"}, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "time limit") {
 		t.Fatalf("killed run: %v", err)
 	}
@@ -193,7 +196,7 @@ x-winterflow:
 	// must not be left running.
 	bname := "wf-backup-blocked-" + stamp
 	started := time.Now()
-	_, _, _ = runDockerHelper(ctx, bname, []string{"run", "--rm", "--name", bname, "--label", helper.RoleLabel, helper.Image,
+	_, _, _ = runDockerHelper(ctx, bname, []string{"run", "--rm", "--name", bname, "--label", helper.RoleLabel, "--label", testLabel, helper.Image,
 		"sh", "-c", "head -c 50000000 /dev/zero"}, &failAfter{n: 4 << 10})
 	if time.Since(started) > 30*time.Second {
 		t.Fatalf("the run with a failing writer took %s", time.Since(started))
@@ -203,11 +206,12 @@ x-winterflow:
 	}
 
 	// Leftover helpers from a crashed agent are removed at start.
-	dockerT(t, "run", "-d", "--label", helper.RoleLabel, "--label", helper.AppLabel+"=itg", helper.Image, "sleep", "60")
-	if err := r.RemoveHelpers(context.Background()); err != nil {
+	leftover := dockerT(t, "run", "-d", "--label", helper.RoleLabel, "--label", testLabel, "--label", helper.AppLabel+"=itg", helper.Image, "sleep", "60")
+	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", leftover).Run() })
+	if err := r.removeHelpers(context.Background(), "label="+testLabel); err != nil {
 		t.Fatal(err)
 	}
-	if left := dockerT(t, "ps", "-aq", "--filter", "label="+helper.RoleLabel); left != "" {
+	if left := dockerT(t, "ps", "-aq", "--filter", "label="+testLabel); left != "" {
 		t.Fatalf("leftover helpers: %s", left)
 	}
 }

@@ -594,9 +594,20 @@ func (r *Repository) checkHelperVolumes(ctx context.Context, plan helperPlan) er
 // RemoveHelpers removes helper containers left behind by an agent that
 // stopped mid-run: one `docker ps` and at most one `docker rm`.
 func (r *Repository) RemoveHelpers(ctx context.Context) error {
+	return r.removeHelpers(ctx)
+}
+
+// removeHelpers is RemoveHelpers narrowed by extra `docker ps` filters (a
+// test removes only its own helpers, never a real backup in progress on the
+// same host).
+func (r *Repository) removeHelpers(ctx context.Context, extra ...string) error {
 	ctx, cancel := context.WithTimeout(ctx, dockerCallTimeout)
 	defer cancel()
-	out, err := execOutput(ctx, "docker", "ps", "-aq", "--filter", "label="+helper.RoleLabel)
+	args := []string{"ps", "-aq", "--filter", "label=" + helper.RoleLabel}
+	for _, f := range extra {
+		args = append(args, "--filter", f)
+	}
+	out, err := execOutput(ctx, "docker", args...)
 	if err != nil {
 		return err
 	}

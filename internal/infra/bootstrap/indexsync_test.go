@@ -155,10 +155,16 @@ func TestDomainSyncIsBounded(t *testing.T) {
 	s, _ := newTestIndexSync(t, hub, 10*time.Millisecond)
 	s.online("srv-1")
 	waitFor(t, "the retry", func() bool { return hub.count() == 2 })
+	// Heartbeats claim the last attempt once the retry's answer has settled
+	// (how long that takes depends on the machine's load).
+	waitFor(t, "the last attempt", func() bool {
+		s.heartbeat("srv-1")
+		return hub.count() == indexSyncMaxAttempts
+	})
 	for i := 0; i < 5; i++ {
 		s.heartbeat("srv-1")
 	}
-	time.Sleep(50 * time.Millisecond) // no second retry timer may fire
+	time.Sleep(50 * time.Millisecond) // no further attempt or retry timer may fire
 	if hub.count() != indexSyncMaxAttempts {
 		t.Fatalf("calls = %d, want %d", hub.count(), indexSyncMaxAttempts)
 	}

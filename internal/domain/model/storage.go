@@ -72,6 +72,16 @@ type StorageSummary struct {
 // app secrets use: command.EncryptedPlaceholder).
 const EncryptedSecret = "<encrypted>"
 
+// Length caps (bytes). They keep Location — the folder, or
+// endpoint/bucket/prefix (at most 255+1+63+1+512 bytes) — inside the API
+// index's server_storages.location VARCHAR(1024): one oversized row would
+// fail the whole index sync of its server.
+const (
+	maxLocalPathLen = 512
+	maxEndpointLen  = 255
+	maxPrefixLen    = 512
+)
+
 var (
 	storageNameRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$`)
 	bucketRE      = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$`)
@@ -143,8 +153,11 @@ func (l LocalStorage) validate() error {
 	}
 	// A control character would break the storage.env line (and every deploy
 	// that references the storage), so refuse it at save time.
-	if strings.ContainsFunc(l.Path, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
+	if hasControl(l.Path) {
 		return fmt.Errorf("the folder path cannot contain control characters (newline, tab, NUL, ...), got %q", l.Path)
+	}
+	if len(l.Path) > maxLocalPathLen {
+		return fmt.Errorf("the folder path can be at most %d bytes long, got %d", maxLocalPathLen, len(l.Path))
 	}
 	if l.Path == "/" {
 		return errors.New("the folder cannot be / itself")
@@ -165,8 +178,13 @@ func (c S3Storage) validate() error {
 	if err := validatePrefix(c.Prefix); err != nil {
 		return err
 	}
-	if c.AccessKeyID == "" || len(c.AccessKeyID) > 128 || strings.ContainsAny(c.AccessKeyID, " \t\r\n") {
+	if c.AccessKeyID == "" || len(c.AccessKeyID) > 128 || strings.Contains(c.AccessKeyID, " ") {
 		return errors.New("the access key id is required and cannot contain spaces")
+	}
+	// Like a local path: a control character would fail every deploy that
+	// references the key id.
+	if hasControl(c.AccessKeyID) {
+		return errors.New("the access key id cannot contain control characters (newline, tab, NUL, ...)")
 	}
 	if c.SecretAccessKey == "" {
 		return errors.New("the secret access key is required")
@@ -178,6 +196,9 @@ func (c S3Storage) validate() error {
 // loopback or private address (MinIO on the LAN): credentials must not cross
 // the internet in clear text.
 func validateEndpoint(endpoint string) error {
+	if len(endpoint) > maxEndpointLen {
+		return fmt.Errorf("the endpoint can be at most %d bytes long, got %d", maxEndpointLen, len(endpoint))
+	}
 	u, err := url.Parse(endpoint)
 	if err != nil || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
 		return fmt.Errorf("the endpoint must be a URL like https://s3.example.com, got %q", endpoint)
@@ -195,6 +216,11 @@ func validateEndpoint(endpoint string) error {
 	}
 }
 
+// hasControl reports whether s has a C0 control character or DEL.
+func hasControl(s string) bool {
+	return strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 || r == 0x7f })
+}
+
 func privateHost(host string) bool {
 	if host == "localhost" {
 		return true
@@ -209,7 +235,7 @@ func validatePrefix(p string) error {
 	if p == "" {
 		return nil
 	}
-	bad := len(p) > 512 || strings.HasPrefix(p, "/") || strings.ContainsAny(p, "\\\x00\r\n\t")
+	bad := len(p) > maxPrefixLen || strings.HasPrefix(p, "/") || strings.ContainsAny(p, "\\\x00\r\n\t")
 	for _, seg := range strings.Split(strings.TrimSuffix(p, "/"), "/") {
 		if seg == "" || seg == "." || seg == ".." {
 			bad = true

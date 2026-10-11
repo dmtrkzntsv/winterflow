@@ -43,6 +43,8 @@ func TestStorageValidate(t *testing.T) {
 		"http private":         s3Storage(func(c *S3Storage) { c.Endpoint = "http://192.168.1.10:9000/" }),
 		"http localhost":       s3Storage(func(c *S3Storage) { c.Endpoint = "http://localhost:9000" }),
 		"placeholder secret":   s3Storage(func(c *S3Storage) { c.SecretAccessKey = EncryptedSecret }),
+		"local path at cap":    local("/mnt/" + strings.Repeat("a", maxLocalPathLen-5)),
+		"endpoint at cap":      s3Storage(func(c *S3Storage) { c.Endpoint = "https://" + strings.Repeat("a", maxEndpointLen-12) + ".com" }),
 	}
 	for name, s := range valid {
 		if err := s.Validate(); err != nil {
@@ -80,11 +82,40 @@ func TestStorageValidate(t *testing.T) {
 		"prefix empty seg":  {s3Storage(func(c *S3Storage) { c.Prefix = "a//b/" }), "valid prefix"},
 		"no key id":         {s3Storage(func(c *S3Storage) { c.AccessKeyID = "" }), "access key id"},
 		"no secret":         {s3Storage(func(c *S3Storage) { c.SecretAccessKey = "" }), "secret access key"},
+		"path too long":     {local("/mnt/" + strings.Repeat("a", maxLocalPathLen-4)), "at most 512"},
+		"endpoint too long": {s3Storage(func(c *S3Storage) { c.Endpoint = "https://" + strings.Repeat("a", maxEndpointLen-11) + ".com" }), "at most 255"},
+		"key id nul":        {s3Storage(func(c *S3Storage) { c.AccessKeyID = "AK\x00IA" }), "control characters"},
+		"key id escape":     {s3Storage(func(c *S3Storage) { c.AccessKeyID = "AK\x1bIA" }), "control characters"},
+		"key id delete":     {s3Storage(func(c *S3Storage) { c.AccessKeyID = "AK\x7fIA" }), "control characters"},
+		"key id bell":       {s3Storage(func(c *S3Storage) { c.AccessKeyID = "AK\aIA" }), "control characters"},
+		"key id space":      {s3Storage(func(c *S3Storage) { c.AccessKeyID = "AK IA" }), "cannot contain spaces"},
+		"prefix too long":   {s3Storage(func(c *S3Storage) { c.Prefix = strings.Repeat("p/", 255) + "pp" }), "valid prefix"},
 	}
 	for name, tc := range invalid {
 		err := tc.s.Validate()
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: err = %v, want %q", name, err, tc.want)
+		}
+	}
+}
+
+// The longest valid storage still fits server_storages.location
+// (VARCHAR(1024)): one oversized row would fail the whole index sync.
+func TestStorageLocationFitsTheIndex(t *testing.T) {
+	longest := []Storage{
+		{Name: "disk", Type: StorageLocal, Local: &LocalStorage{Path: "/" + strings.Repeat("a", maxLocalPathLen-1)}},
+		s3Storage(func(c *S3Storage) {
+			c.Endpoint = "https://" + strings.Repeat("a", maxEndpointLen-12) + ".com"
+			c.Bucket = strings.Repeat("b", 63)
+			c.Prefix = strings.Repeat("p/", 256)
+		}),
+	}
+	for _, s := range longest {
+		if err := s.Validate(); err != nil {
+			t.Fatalf("%s: %v", s.Type, err)
+		}
+		if n := len(s.Normalized().Location()); n > 1024 {
+			t.Fatalf("%s: location is %d bytes", s.Type, n)
 		}
 	}
 }

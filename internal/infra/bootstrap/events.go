@@ -81,10 +81,17 @@ type eventSink struct {
 	store eventStore
 	fan   *statusFanout
 	log   *logger.Logger
-	// online, when set, runs when a server comes online (an unknown->online
-	// transition, or a capabilities event: the agent (re)registered). It
-	// fills the API's per-server indexes from the agent.
-	online func(ctx context.Context, serverID string)
+	// sync, when set, fills the API's per-server indexes from the agent: it
+	// starts when a server comes online (an unknown->online transition, or a
+	// capabilities event: the agent (re)registered) and is nudged by every
+	// heartbeat while it is still pending.
+	sync serverSync
+}
+
+// serverSync is the per-server index fill the event sink drives.
+type serverSync interface {
+	online(serverID string)
+	heartbeat(serverID string)
 }
 
 func (s *eventSink) handle(ctx context.Context, ev bus.EventMessage) {
@@ -132,8 +139,13 @@ func (s *eventSink) handle(ctx context.Context, ev bus.EventMessage) {
 		s.log.Warn("unknown event kind", "kind", ev.Kind)
 		return
 	}
-	if s.online != nil && (transition || ev.Kind == bus.EventCapabilities) {
-		s.online(ctx, ev.ServerID)
+	if s.sync == nil {
+		return
+	}
+	if transition || ev.Kind == bus.EventCapabilities {
+		s.sync.online(ev.ServerID)
+	} else if ev.Kind == bus.EventServerOnline {
+		s.sync.heartbeat(ev.ServerID)
 	}
 }
 
@@ -149,13 +161,13 @@ func (s *eventSink) sweep(ctx context.Context, cache *status.Cache, now time.Tim
 // liveness, capabilities, status), updating the in-memory status cache and the
 // DB, and pushing transitions over SSE. It also runs the expiry sweeper. It is
 // the API's consumer of events:<region>.
-func startEventsSubscriber(ctx context.Context, b bus.Bus, cache *status.Cache, serverRepo port.ServerRepository, nm port.NotificationManager, cfg *config.ServerConfig, log *logger.Logger, online func(ctx context.Context, serverID string)) {
+func startEventsSubscriber(ctx context.Context, b bus.Bus, cache *status.Cache, serverRepo port.ServerRepository, nm port.NotificationManager, cfg *config.ServerConfig, log *logger.Logger, indexSync serverSync) {
 	sink := &eventSink{
-		cache:  cache,
-		store:  serverRepo,
-		fan:    newStatusFanout(serverRepo, nm, log),
-		log:    log,
-		online: online,
+		cache: cache,
+		store: serverRepo,
+		fan:   newStatusFanout(serverRepo, nm, log),
+		log:   log,
+		sync:  indexSync,
 	}
 	bus.SubscribeJSON(ctx, b, cfg.GetBusEventsQueue(), log, func(ev bus.EventMessage) {
 		sink.handle(ctx, ev)

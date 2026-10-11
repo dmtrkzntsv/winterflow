@@ -135,13 +135,20 @@ func TestSweepFansOutUnknownTransition(t *testing.T) {
 	}
 }
 
-// TestOnlineSyncRunsWhenAServerComesOnline: the per-server index sync runs
+// fakeSync records the sink's calls into the per-server index sync.
+type fakeSync struct{ started, beats []string }
+
+func (f *fakeSync) online(serverID string)    { f.started = append(f.started, serverID) }
+func (f *fakeSync) heartbeat(serverID string) { f.beats = append(f.beats, serverID) }
+
+// TestOnlineSyncRunsWhenAServerComesOnline: the per-server index sync starts
 // on an unknown->online transition (whichever event causes it) and on every
-// capabilities event (the agent registered), never on a steady heartbeat.
+// capabilities event (the agent registered); a steady heartbeat only nudges
+// it (re-fires it while still pending).
 func TestOnlineSyncRunsWhenAServerComesOnline(t *testing.T) {
 	sink, cache := newTestSink(&recorder{}, nil)
-	var synced []string
-	sink.online = func(_ context.Context, serverID string) { synced = append(synced, serverID) }
+	synced := &fakeSync{}
+	sink.sync = synced
 	ctx := context.Background()
 	beat := bus.EventMessage{ServerID: "srv-1", Kind: bus.EventServerOnline}
 
@@ -154,14 +161,17 @@ func TestOnlineSyncRunsWhenAServerComesOnline(t *testing.T) {
 	sink.handle(ctx, bus.EventMessage{ServerID: "srv-2", Kind: bus.EventAppsStatus, Payload: status})        // steady
 	sink.handle(ctx, bus.EventMessage{ServerID: "srv-3", Kind: bus.EventCapabilities, Payload: []byte("{")}) // undecodable: no sync
 
-	if want := []string{"srv-1", "srv-1", "srv-2"}; strings.Join(synced, ",") != strings.Join(want, ",") {
-		t.Fatalf("synced = %v, want %v", synced, want)
+	if want := []string{"srv-1", "srv-1", "srv-2"}; strings.Join(synced.started, ",") != strings.Join(want, ",") {
+		t.Fatalf("online = %v, want %v", synced.started, want)
+	}
+	if want := []string{"srv-1"}; strings.Join(synced.beats, ",") != strings.Join(want, ",") {
+		t.Fatalf("heartbeats = %v, want %v", synced.beats, want)
 	}
 
-	// After the server went quiet, its next heartbeat syncs again.
+	// After the server went quiet, its next heartbeat starts a sync again.
 	sink.sweep(ctx, cache, time.Now().Add(5*time.Minute))
 	sink.handle(ctx, beat)
-	if len(synced) != 4 {
-		t.Fatalf("synced = %v, want a sync after coming back", synced)
+	if len(synced.started) != 4 {
+		t.Fatalf("online = %v, want a sync after coming back", synced.started)
 	}
 }

@@ -3,10 +3,8 @@ package bootstrap
 import (
 	"context"
 
-	"winterflow/internal/domain/port"
 	notificationsvc "winterflow/internal/domain/service/notification"
 	"winterflow/internal/domain/service/status"
-	appuc "winterflow/internal/domain/usecase/app"
 	"winterflow/internal/infra/db"
 	"winterflow/internal/infra/db/repository"
 	"winterflow/internal/infra/transport/bus"
@@ -34,7 +32,7 @@ func WireCore(ctx context.Context, b bus.Bus, dbconn *db.BunConnection, cfg *con
 	statusCache := status.NewCache(statusTTL)
 
 	startResponseSubscriber(ctx, b, dispatcher, cfg, log)
-	startEventsSubscriber(ctx, b, statusCache, serverRepo, nm, cfg, log, syncServerDomains(dispatcher, serverDomainRepo, log))
+	startEventsSubscriber(ctx, b, statusCache, serverRepo, nm, cfg, log, newDomainSync(ctx, dispatcher, serverDomainRepo, log))
 
 	return &Deps{
 		Log:                    log,
@@ -48,18 +46,4 @@ func WireCore(ctx context.Context, b bus.Bus, dbconn *db.BunConnection, cfg *con
 		NotificationManager:    nm,
 		StatusCache:            statusCache,
 	}, serverRepo
-}
-
-// syncServerDomains fills a server's server_domains index when its agent
-// comes online: a domain.list dispatched for no user (the result reaches no
-// SSE stream) whose result replaces the index rows, unchanged rows costing
-// no write. An agent without domain commands answers an error, which is
-// ignored.
-func syncServerDomains(d port.CommandDispatcher, repo port.ServerDomainRepository, log *logger.Logger) func(context.Context, string) {
-	uc := appuc.NewUseCase(&appuc.Deps{CommandDispatcher: d, ServerDomainRepository: repo, Log: log})
-	return func(ctx context.Context, serverID string) {
-		if _, err := uc.ListServerDomains(ctx, "", serverID); err != nil {
-			log.Warn("sync registered domains: dispatch domain.list", "error", err, "server_id", serverID)
-		}
-	}
 }

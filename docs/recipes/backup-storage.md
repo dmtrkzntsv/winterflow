@@ -33,9 +33,14 @@ not be inside winterflow's own data folder.
 itself.** Create it after mounting, e.g. `/mnt/usb/winterflow` for a disk
 mounted on `/mnt/usb`. When the disk isn't mounted (after a reboot, or
 unplugged), the mount point is still there as an empty folder on the system
-disk, and every check winterflow makes can accept it: backups and apps
-would then quietly fill the system disk. A folder created on the disk disappears
-with it, so the test, deploys and writes fail instead.
+disk. A folder created on the disk disappears with it, so the test, deploys,
+backups and writes fail instead of quietly filling the system disk.
+
+Under `/mnt` and `/media` winterflow also refuses a folder that is on the
+same filesystem as `/` ("is on the system disk, not on a mounted disk or
+share"), so even a registered mount point fails while its disk is not
+mounted. Folders elsewhere (allowed with a drop-in, below) are not checked
+this way.
 
 The installer's systemd unit runs winterflow with `ProtectSystem=strict`:
 the service can write only its data folder, the Docker socket, and

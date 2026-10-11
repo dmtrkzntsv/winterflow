@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 
 	"winterflow/pkg/fsutil"
 )
@@ -31,12 +32,10 @@ func openLocal(root string) (*local, error) {
 	return l, nil
 }
 
-// checkRoot requires the root to be an existing folder. Every call re-checks
-// it, so writes fail once the folder itself is gone (a folder on a disk that
-// was unplugged after Open) instead of landing elsewhere. It cannot tell an
-// empty leftover mount point from a real folder: that is why
-// docs/recipes/backup-storage.md tells users to register a folder created
-// inside the mounted disk, never the mount point. A missing root matches
+// checkRoot requires the root to be an existing folder and, under a mount
+// root, a folder on a mounted disk (checkMounted). Every call re-checks it,
+// so writes fail once the folder itself is gone (a folder on a disk that was
+// unplugged after Open) instead of landing elsewhere. A missing root matches
 // fs.ErrNotExist.
 func (l *local) checkRoot() error {
 	info, err := os.Stat(l.root)
@@ -49,7 +48,64 @@ func (l *local) checkRoot() error {
 	if !info.IsDir() {
 		return fmt.Errorf("%s is not a folder", l.root)
 	}
+	return checkMounted(l.root)
+}
+
+// MountRoots are the folders disks and network shares are mounted under: the
+// systemd unit lets the agent write there (ReadWritePaths=-/mnt -/media).
+var MountRoots = []string{"/mnt", "/media"}
+
+// deviceOf is the id of the filesystem path lives on (st_dev); replaced in
+// tests.
+var deviceOf = func(path string) (uint64, error) {
+	var st syscall.Stat_t
+	if err := syscall.Stat(path, &st); err != nil {
+		return 0, err
+	}
+	return uint64(st.Dev), nil
+}
+
+// checkMounted refuses a folder under a mount root that is on the same
+// filesystem as "/": the mount point of a disk that is not mounted (after a
+// reboot, or unplugged) is an empty folder on the system disk, and backups
+// written there would quietly fill it. Comparing with the folder's parent
+// instead would refuse every folder inside a mounted disk (the recommended
+// /mnt/usb/winterflow); comparing with "/" accepts those and still refuses a
+// bare, unmounted /mnt/usb. Folders outside the mount roots are not checked:
+// the operator allowed them with a systemd drop-in.
+func checkMounted(folder string) error {
+	for _, root := range MountRoots {
+		if !inside(folder, root) {
+			continue
+		}
+		sys, err := deviceOf("/")
+		if err != nil {
+			return nil // nothing to compare with
+		}
+		dev, err := deviceOf(folder)
+		if err != nil {
+			return fmt.Errorf("cannot open %s: %w", folder, err)
+		}
+		if dev == sys {
+			return notMountedError(folder)
+		}
+		return nil
+	}
 	return nil
+}
+
+// inside reports whether path is dir or below it.
+func inside(path, dir string) bool {
+	rel, err := filepath.Rel(dir, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// notMountedError is a folder under /mnt or /media that is on the system
+// disk: usually a disk that is not mounted.
+type notMountedError string
+
+func (e notMountedError) Error() string {
+	return "the storage folder " + string(e) + " is on the system disk, not on a mounted disk or share (is the disk mounted?)"
 }
 
 // missingFolderError is a storage folder that does not exist: usually a disk

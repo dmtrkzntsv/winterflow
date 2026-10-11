@@ -16,6 +16,7 @@ import (
 
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
+	"winterflow/internal/infra/backup/store"
 	"winterflow/pkg/crypto"
 )
 
@@ -62,11 +63,6 @@ func detached(fn func() error) <-chan error {
 	go func() { done <- fn() }()
 	return done
 }
-
-// mountRoots are the folders the systemd unit lets the agent write
-// (ReadWritePaths=-/mnt -/media): the usual mount points of USB disks and
-// network shares.
-var mountRoots = []string{"/mnt", "/media"}
 
 // ListStorages reports every storage (secret masked) with the apps whose
 // compose files reference it; withApps false skips finding those (a read of
@@ -234,7 +230,7 @@ func explainWrite(s model.Storage, err error) error {
 	if s.Type != model.StorageLocal || !(errors.Is(err, fs.ErrPermission) || errors.Is(err, syscall.EROFS)) {
 		return fmt.Errorf("write a test file: %w", err)
 	}
-	for _, root := range mountRoots {
+	for _, root := range store.MountRoots {
 		if within(s.Local.Path, root) {
 			return fmt.Errorf("cannot write to %s: %w — make the folder writable by the user winterflow runs as", s.Local.Path, err)
 		}

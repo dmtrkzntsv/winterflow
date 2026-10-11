@@ -204,3 +204,88 @@ func TestLocalStoreTmpSuffixedKey(t *testing.T) {
 		t.Fatalf("list = %+v, %v", list, err)
 	}
 }
+
+// stubDevices makes deviceOf answer from devs (paths not in it fail) and the
+// mount roots be roots, for the rest of the test.
+func stubDevices(t *testing.T, devs map[string]uint64, roots ...string) {
+	t.Helper()
+	prevDev, prevRoots := deviceOf, MountRoots
+	deviceOf = func(p string) (uint64, error) {
+		if d, ok := devs[p]; ok {
+			return d, nil
+		}
+		return 0, fs.ErrPermission
+	}
+	MountRoots = roots
+	t.Cleanup(func() { deviceOf, MountRoots = prevDev, prevRoots })
+}
+
+// A disk's mount point under /mnt while the disk is not mounted is an empty
+// folder on the system disk: refused, before and after Open.
+func TestLocalStoreRefusesAnUnmountedMountPoint(t *testing.T) {
+	root := t.TempDir()
+	mnt := filepath.Join(root, "mnt")
+	usb := filepath.Join(mnt, "usb")
+	if err := os.MkdirAll(usb, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	devs := map[string]uint64{"/": 1, usb: 1}
+	stubDevices(t, devs, mnt)
+
+	_, err := openLocal(usb)
+	var nm notMountedError
+	if !errors.As(err, &nm) || !strings.Contains(err.Error(), "is on the system disk") || errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("unmounted mount point: %v", err)
+	}
+
+	// Mounted: another filesystem than "/".
+	devs[usb] = 2
+	st, err := openLocal(usb)
+	if err != nil {
+		t.Fatalf("mounted disk: %v", err)
+	}
+	if err := st.Put(context.Background(), "a/b", strings.NewReader("x")); err != nil {
+		t.Fatal(err)
+	}
+	// Unmounted after Open: every call re-checks.
+	devs[usb] = 1
+	if err := st.Put(context.Background(), "a/c", strings.NewReader("x")); !errors.As(err, &nm) {
+		t.Fatalf("put after unmount: %v", err)
+	}
+	if _, err := st.List(context.Background(), ""); !errors.As(err, &nm) {
+		t.Fatalf("list after unmount: %v", err)
+	}
+	// A folder inside the mounted disk shares the disk's device.
+	inner := filepath.Join(usb, "winterflow")
+	if err := os.Mkdir(inner, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	devs[usb], devs[inner] = 2, 2
+	if _, err := openLocal(inner); err != nil {
+		t.Fatalf("folder on the disk: %v", err)
+	}
+	// A device that can't be read is an error, not a pass.
+	delete(devs, inner)
+	if _, err := openLocal(inner); err == nil || !strings.Contains(err.Error(), "cannot open") {
+		t.Fatalf("unreadable device: %v", err)
+	}
+}
+
+// Folders outside the mount roots are never compared: the operator allowed
+// them explicitly.
+func TestLocalStoreChecksOnlyUnderMountRoots(t *testing.T) {
+	root := t.TempDir()
+	srv := filepath.Join(root, "srv")
+	if err := os.Mkdir(srv, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	stubDevices(t, map[string]uint64{"/": 1, srv: 1}, filepath.Join(root, "mnt"))
+	if _, err := openLocal(srv); err != nil {
+		t.Fatalf("folder outside the mount roots: %v", err)
+	}
+	// "/" unreadable: nothing to compare with.
+	stubDevices(t, map[string]uint64{}, root)
+	if _, err := openLocal(srv); err != nil {
+		t.Fatalf("no device for /: %v", err)
+	}
+}

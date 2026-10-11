@@ -303,7 +303,7 @@ func BuildConfig(apps []AppIngress, regs []domains.Registration, opts Options) (
 		for _, d := range a.Ingress.DomainNames() {
 			win, ok := model.Winning(regs, d)
 			if !ok {
-				warnings = append(warnings, fmt.Sprintf("app %s: domain %s is not covered by a registered domain, skipping", a.AppID, d))
+				warnings = append(warnings, fmt.Sprintf("app %s: domain %s is not covered by a domain on this server, skipping", a.AppID, d))
 				continue
 			}
 			if owner, taken := claimed[d]; taken {

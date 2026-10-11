@@ -197,14 +197,14 @@ func (m *Manager) DeleteDomain(_ context.Context, name string) error {
 		for _, a := range users {
 			names = append(names, a.label())
 		}
-		return fmt.Errorf("%s is used by %s and no other registered domain covers those hostnames: remove them from those apps (or register a covering domain) first", name, strings.Join(names, ", "))
+		return fmt.Errorf("%s is used by %s and no other domain on this server covers those hostnames: remove them from those apps (or add a covering domain) first", name, strings.Join(names, ", "))
 	}
 	existed, err := m.domains.Delete(name)
 	if err != nil {
 		return err
 	}
 	if !existed {
-		return fmt.Errorf("%s is not registered on this server", name)
+		return fmt.Errorf("%s is not added on this server", name)
 	}
 	return nil
 }

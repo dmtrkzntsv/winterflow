@@ -145,7 +145,7 @@ func TestDomainCommandsCertificateMode(t *testing.T) {
 	if err := m.DeleteDomain(ctx, "*.twillingate.app"); err != nil {
 		t.Fatalf("delete unused wildcard: %v", err)
 	}
-	if err := m.DeleteDomain(ctx, "*.twillingate.app"); err == nil || !strings.Contains(err.Error(), "not registered") {
+	if err := m.DeleteDomain(ctx, "*.twillingate.app"); err == nil || !strings.Contains(err.Error(), "not added") {
 		t.Fatalf("delete missing = %v", err)
 	}
 }

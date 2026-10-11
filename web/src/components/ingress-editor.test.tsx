@@ -136,11 +136,11 @@ describe("IngressEditor", () => {
     render(<Harness ingress={oneDomain("")} />);
 
     await user.type(screen.getByLabelText("Hostname"), "shop.other.app");
-    const hint = await screen.findByText(/No registered domain covers this hostname/);
+    const hint = await screen.findByText(/No domain on this server covers this hostname/);
     expect(screen.getByLabelText("Hostname")).toHaveAttribute("aria-invalid", "true");
     expect(screen.getByLabelText("Hostname")).toHaveAttribute("aria-describedby", hint.id);
     // A new tab, so following it doesn't lose the unsaved form.
-    const link = screen.getByRole("link", { name: /Register one/ });
+    const link = screen.getByRole("link", { name: /Add it/ });
     expect(link).toHaveAttribute("href", "/settings?tab=domains");
     expect(link).toHaveAttribute("target", "_blank");
     // Nothing covers it: the stored flag keeps its default.
@@ -149,7 +149,7 @@ describe("IngressEditor", () => {
     // Removing the row drops it and its hint.
     await user.click(screen.getByRole("button", { name: "Remove shop.other.app" }));
     expect(screen.queryByLabelText("Hostname")).not.toBeInTheDocument();
-    expect(screen.queryByText(/No registered domain covers/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/No domain on this server covers/)).not.toBeInTheDocument();
     expect(screen.getByText(/Add a hostname to send web traffic/)).toBeInTheDocument();
   });
 
@@ -158,7 +158,7 @@ describe("IngressEditor", () => {
     render(<Harness ingress={oneDomain("")} />);
 
     await user.type(screen.getByLabelText("Hostname"), "shop.other.app");
-    await screen.findByText(/No registered domain covers this hostname/);
+    await screen.findByText(/No domain on this server covers this hostname/);
     const loads = calls("/api/v1/domain/get-domains").length;
 
     // Registered in the other tab meanwhile.
@@ -170,7 +170,7 @@ describe("IngressEditor", () => {
     });
 
     await waitFor(() =>
-      expect(screen.queryByText(/No registered domain covers/)).not.toBeInTheDocument(),
+      expect(screen.queryByText(/No domain on this server covers/)).not.toBeInTheDocument(),
     );
     expect(calls("/api/v1/domain/get-domains").length).toBe(loads + 1);
     expect(await screen.findByText("Auto TLS")).toBeInTheDocument();
@@ -223,12 +223,12 @@ describe("IngressEditor", () => {
 
     const [first] = screen.getAllByLabelText("Redirect hostname");
     await user.type(first, "old.other.app");
-    expect(await screen.findByText(/No registered domain covers/)).toBeInTheDocument();
+    expect(await screen.findByText(/No domain on this server covers/)).toBeInTheDocument();
 
     // Removing the redirect drops its hint too.
     await user.click(screen.getAllByRole("button", { name: "Remove redirect" })[0]);
     expect(screen.getAllByLabelText("Redirect hostname")).toHaveLength(2);
-    expect(screen.queryByText(/No registered domain covers/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/No domain on this server covers/)).not.toBeInTheDocument();
   });
 
   it("adds and edits hostnames and redirects", async () => {

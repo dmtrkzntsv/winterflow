@@ -61,9 +61,9 @@ routes by hostname from there. A wildcard hostname (`*.example.com`) also
 works; add the wildcard CNAME pointing at `<tunnel-id>.cfargotunnel.com`
 to your DNS zone yourself.
 
-## 4. Register the domain with TLS off
+## 4. Add the domain with TLS off
 
-In **Server → Settings → Domains**, register the names the tunnel serves —
+In **Server → Settings → Domains**, add the names the tunnel serves —
 `*.example.com` covers every single-label subdomain — and pick **TLS off**.
 Cloudflare already terminates TLS at the edge; with no inbound 80/443,
 Let's Encrypt issuance can't complete behind a tunnel, so winterflow serves
@@ -72,9 +72,9 @@ these hostnames over plain HTTP only and never asks for a certificate.
 ## 5. Configure app domains in winterflow
 
 In each app's **Domains & Routing** card, add the hostname (pick the
-registered domain from the suggestions and type the label) and set the
+domain from the suggestions and type the label) and set the
 upstream port to the app's published host port. The card shows the
-**TLS off** badge it inherits from the registration. An unknown hostname
+**TLS off** badge it inherits from the domain. An unknown hostname
 under the wildcard answers a plain 404.
 
 ## 6. Let the rate limiter see real visitors

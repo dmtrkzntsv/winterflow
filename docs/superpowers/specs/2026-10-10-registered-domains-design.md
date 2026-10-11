@@ -225,7 +225,7 @@ All routes go through `caller` / `RequireServerAccess`.
 `save-app` checks each ingress hostname against the index for that server:
 
 - **Covered:** a registration covers the host. Otherwise: "`<host>` is not
-  covered by a domain registered on this server — register `<host>` or
+  covered by a domain on this server — add `<host>` or
   `*.<parent>`".
 - **Unique per server:** no other app on the same server claims it.
 - Hostnames the app already holds (per `app_domains`) are grandfathered when

@@ -62,7 +62,7 @@ func TestSaveAppRequiresACoveringRegistration(t *testing.T) {
 	}
 	// The hint names the wildcard for the host's parent.
 	_, err := save(ingressWith("shop.example.com", ""))
-	if !strings.Contains(err.Error(), "register shop.example.com or *.example.com") {
+	if !strings.Contains(err.Error(), "add shop.example.com or *.example.com") {
 		t.Errorf("hint = %v", err)
 	}
 	// Another server's registrations do not count.

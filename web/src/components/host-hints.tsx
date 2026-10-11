@@ -29,14 +29,14 @@ export function HostHints({ id, check }: { id: string; check: HostCheck }) {
     // The editor re-checks when the user comes back.
     return (
       <p id={id} className="mt-2 text-xs text-destructive">
-        No registered domain covers this hostname.{" "}
+        No domain on this server covers this hostname.{" "}
         <Link
           to="/settings?tab=domains"
           target="_blank"
           rel="noreferrer"
           className="inline-flex items-center gap-0.5 font-medium underline underline-offset-4"
         >
-          Register one
+          Add it
           <ExternalLink className="size-3" aria-hidden />
           <span className="sr-only">(opens in a new tab)</span>
         </Link>

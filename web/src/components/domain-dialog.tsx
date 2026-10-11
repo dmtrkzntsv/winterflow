@@ -76,7 +76,7 @@ export function DomainDialog({
       changeOpen(false);
       onSaved(created);
     } catch (e) {
-      toast.error(replace ? "Couldn't update domain" : "Couldn't register domain", {
+      toast.error(replace ? "Couldn't update domain" : "Couldn't add domain", {
         description: e instanceof Error ? e.message : undefined,
       });
     } finally {
@@ -96,7 +96,7 @@ export function DomainDialog({
           }}
         >
           <DialogHeader>
-            <DialogTitle>{replace ? "Edit domain" : "Register domain"}</DialogTitle>
+            <DialogTitle>{replace ? "Edit domain" : "Add domain"}</DialogTitle>
             <DialogDescription>
               {replace ? (
                 <>
@@ -104,7 +104,7 @@ export function DomainDialog({
                   <code className="font-mono [overflow-wrap:anywhere] text-foreground">{replace.name}</code>.
                 </>
               ) : (
-                "Apps on this server can only use hostnames under a registered domain."
+                "Apps on this server can only use hostnames under a domain you've added."
               )}
             </DialogDescription>
           </DialogHeader>
@@ -203,7 +203,7 @@ export function DomainDialog({
               Cancel
             </Button>
             <Button type="submit" disabled={!canSave}>
-              {busy ? "Saving…" : replace ? "Save" : "Register"}
+              {busy ? "Saving…" : replace ? "Save" : "Add"}
             </Button>
           </DialogFooter>
         </form>

@@ -104,7 +104,7 @@ export function IngressEditor({ state, onChange, appId, serverId }: Props) {
   return (
     <EditorSection
       title="Domains & Routing"
-      description="Serve the app on hostnames under the domains registered on this server. Each domain sets how HTTPS works."
+      description="Serve the app on hostnames under the domains on this server. Each domain sets how HTTPS works."
     >
       <div className="space-y-6">
         <div className="space-y-3">

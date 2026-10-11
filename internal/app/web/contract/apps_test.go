@@ -52,7 +52,7 @@ func TestAppLifecycle(t *testing.T) {
 		r := owner.do(t, call{Method: http.MethodPost, Path: "/api/v1/app/save-app", Body: happ.SaveAppRequest{
 			ServerID: sid, App: model.App{Name: "web", Icon: "box", Color: "#112233"}, Config: ingress,
 		}}).expect(t, http.StatusBadRequest)
-		const want = "web.example.test is not covered by a domain registered on this server — register web.example.test or *.example.test"
+		const want = "web.example.test is not covered by a domain on this server — add web.example.test or *.example.test"
 		if !strings.Contains(string(r.Body), want) {
 			t.Fatalf("body = %s", r.Body)
 		}

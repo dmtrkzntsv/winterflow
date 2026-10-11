@@ -86,13 +86,13 @@ func TestNotCoveredError(t *testing.T) {
 	if !errors.Is(err, ErrDomainNotCovered) {
 		t.Fatalf("not wrapped: %v", err)
 	}
-	want := "shop.twillingate.app is not covered by a domain registered on this server — register shop.twillingate.app or *.twillingate.app"
+	want := "shop.twillingate.app is not covered by a domain on this server — add shop.twillingate.app or *.twillingate.app"
 	if err.Error() != want {
 		t.Fatalf("message = %q", err)
 	}
 	for _, host := range []string{"localhost", "twillingate.app"} {
 		// An apex never falls under *.<tld>: suggest the apex alone.
-		if got := NotCoveredError(host).Error(); !strings.HasSuffix(got, "register "+host) {
+		if got := NotCoveredError(host).Error(); !strings.HasSuffix(got, "add "+host) {
 			t.Fatalf("%s hint = %q", host, got)
 		}
 	}

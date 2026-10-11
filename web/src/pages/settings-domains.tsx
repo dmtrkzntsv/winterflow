@@ -126,7 +126,7 @@ export function DomainsCard({ docker }: { docker: Docker }) {
   // A create or delete answers with what changed, so the list is patched in
   // place rather than listed again (Refresh does that).
   const saved = ({ domain, warnings }: DomainCreated) => {
-    toastResult(replace ? "Domain updated" : "Domain registered", warnings);
+    toastResult(replace ? "Domain updated" : "Domain added", warnings);
     setItems((prev) =>
       [...(prev ?? []).filter((d) => d.name !== domain.name), domain].sort((a, b) =>
         a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
@@ -178,7 +178,7 @@ export function DomainsCard({ docker }: { docker: Docker }) {
             <RefreshCw className={cn("size-4", loading && "animate-spin")} />
           </Button>
           <Button size="sm" onClick={() => openDialog(null)}>
-            <Plus className="size-4" /> Register domain
+            <Plus className="size-4" /> Add domain
           </Button>
         </div>
       </CardHeader>
@@ -189,7 +189,7 @@ export function DomainsCard({ docker }: { docker: Docker }) {
           </div>
         ) : items.length === 0 ? (
           <p className="rounded-lg border border-dashed px-4 py-10 text-center text-sm text-muted-foreground">
-            No domains yet. Register one, e.g. <code className="font-mono">*.example.com</code>, before
+            No domains yet. Add one, e.g. <code className="font-mono">*.example.com</code>, before
             giving an app a hostname.
           </p>
         ) : (
@@ -289,7 +289,7 @@ export function DomainsCard({ docker }: { docker: Docker }) {
                   <span className="font-medium text-foreground">
                     {deleteApps.map((id) => names.get(id) ?? id).join(", ")}
                   </span>
-                  : remove those hostnames first, unless another registered domain covers them.
+                  : remove those hostnames first, unless another domain on this server covers them.
                 </>
               ) : null}
             </AlertDialogDescription>

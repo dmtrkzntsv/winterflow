@@ -876,7 +876,7 @@ paths:
       security:
       - bearer: []
       - cookie: []
-      summary: Register a domain, or replace its TLS mode or certificate
+      summary: Add a domain, or replace its TLS mode or certificate
       tags:
       - domains
       x-operation-result:
@@ -939,7 +939,7 @@ paths:
       security:
       - bearer: []
       - cookie: []
-      summary: Remove a registered domain no app uses
+      summary: Remove a domain no app uses
       tags:
       - domains
       x-operation-result:
@@ -997,7 +997,7 @@ paths:
       security:
       - bearer: []
       - cookie: []
-      summary: A server's registered domains from the API's index (no agent round-trip)
+      summary: A server's domains from the API's index (no agent round-trip)
       tags:
       - domains
   /api/v1/domain/list:
@@ -1053,7 +1053,7 @@ paths:
       security:
       - bearer: []
       - cookie: []
-      summary: List the domains registered on a server, with the apps using each
+      summary: List the domains on a server, with the apps using each
       tags:
       - domains
       x-operation-result:

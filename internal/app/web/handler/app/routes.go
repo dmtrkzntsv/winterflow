@@ -105,17 +105,17 @@ func (h *Handler) Routes(api.Guards) []api.Route {
 		},
 		{
 			Method: http.MethodGet, Path: "/api/v1/domain/get-domains", Handler: h.GetDomains, Auth: api.User,
-			Summary: "A server's registered domains from the API's index (no agent round-trip)", Tag: "domains",
+			Summary: "A server's domains from the API's index (no agent round-trip)", Tag: "domains",
 			Query: api.ServerQuery{}, Response: GetDomainsResponse{}, Errors: server,
 		},
 		{
 			Method: http.MethodGet, Path: "/api/v1/domain/list", Handler: h.ListRegisteredDomains, Auth: api.User,
-			Summary: "List the domains registered on a server, with the apps using each", Tag: "domains",
+			Summary: "List the domains on a server, with the apps using each", Tag: "domains",
 			Query: api.ServerQuery{}, Accepted: true, Result: command.ListDomainsResponse{}, Errors: server,
 		},
 		{
 			Method: http.MethodPost, Path: "/api/v1/domain/create", Handler: h.CreateDomain, Auth: api.User,
-			Summary: "Register a domain, or replace its TLS mode or certificate", Tag: "domains",
+			Summary: "Add a domain, or replace its TLS mode or certificate", Tag: "domains",
 			Description: "In certificate mode `certificate` is the PEM chain and `key` the PEM private key " +
 				"ECIES-encrypted with the server's public key (GET /api/v1/server/get-public-key).",
 			Query: api.ServerQuery{}, Request: command.CreateDomainRequest{},
@@ -123,7 +123,7 @@ func (h *Handler) Routes(api.Guards) []api.Route {
 		},
 		{
 			Method: http.MethodPost, Path: "/api/v1/domain/delete", Handler: h.DeleteDomain, Auth: api.User,
-			Summary: "Remove a registered domain no app uses", Tag: "domains",
+			Summary: "Remove a domain no app uses", Tag: "domains",
 			Query: api.ServerQuery{}, Request: command.DeleteDomainRequest{},
 			Accepted: true, Result: command.DeleteDomainResponse{}, Errors: server,
 		},

@@ -97,14 +97,14 @@ describe("DomainsCard", () => {
     expect(screen.getAllByText("Not used")).toHaveLength(3);
   });
 
-  it("registers a domain with TLS off", async () => {
+  it("adds a domain with TLS off", async () => {
     const user = setupUser();
     const docker = fakeDocker();
     renderCard(docker);
 
-    await user.click(await screen.findByRole("button", { name: /Register domain/ }));
+    await user.click(await screen.findByRole("button", { name: /Add domain/ }));
     const dialog = await screen.findByRole("dialog");
-    const submit = within(dialog).getByRole("button", { name: "Register" });
+    const submit = within(dialog).getByRole("button", { name: "Add" });
     expect(submit).toBeDisabled();
 
     await user.type(within(dialog).getByLabelText("Name"), "*.*.bad");
@@ -121,7 +121,7 @@ describe("DomainsCard", () => {
     const row = (await screen.findByText("*.tunnel.example.com")).closest("tr");
     expect(row?.nextElementSibling).toHaveTextContent("*.twillingate.app");
     expect(docker.listDomains).toHaveBeenCalledTimes(1);
-    expect(toastSuccess).toHaveBeenCalledWith("Domain registered");
+    expect(toastSuccess).toHaveBeenCalledWith("Domain added");
   });
 
   it("asks for a certificate and key in certificate mode", async () => {
@@ -129,7 +129,7 @@ describe("DomainsCard", () => {
     const docker = fakeDocker();
     renderCard(docker);
 
-    await user.click(await screen.findByRole("button", { name: /Register domain/ }));
+    await user.click(await screen.findByRole("button", { name: /Add domain/ }));
     const dialog = await screen.findByRole("dialog");
     await user.type(within(dialog).getByLabelText("Name"), "*.secure.app");
     expect(within(dialog).queryByLabelText("Certificate (PEM)")).not.toBeInTheDocument();
@@ -138,7 +138,7 @@ describe("DomainsCard", () => {
     // A loaded certificate also serves matching auto hosts: the dialog says so.
     expect(within(dialog).getByText(/also serves the Auto TLS hostnames it covers/)).toBeInTheDocument();
     expect(within(dialog).queryByText(/Paste the certificate again/)).not.toBeInTheDocument();
-    const submit = within(dialog).getByRole("button", { name: "Register" });
+    const submit = within(dialog).getByRole("button", { name: "Add" });
     await pastePEM(user, within(dialog).getByLabelText("Certificate (PEM)"), "CERT");
     expect(submit).toBeDisabled(); // the key is still missing
     await pastePEM(user, within(dialog).getByLabelText("Private key (PEM)"), "KEY");
@@ -204,12 +204,12 @@ describe("DomainsCard", () => {
     });
     renderCard(docker);
 
-    await user.click(await screen.findByRole("button", { name: /Register domain/ }));
+    await user.click(await screen.findByRole("button", { name: /Add domain/ }));
     const dialog = await screen.findByRole("dialog");
     await user.type(within(dialog).getByLabelText("Name"), "x.example.com");
-    await user.click(within(dialog).getByRole("button", { name: "Register" }));
+    await user.click(within(dialog).getByRole("button", { name: "Add" }));
     await waitFor(() =>
-      expect(toastWarning).toHaveBeenCalledWith("Domain registered, but the proxy reported a problem", {
+      expect(toastWarning).toHaveBeenCalledWith("Domain added, but the proxy reported a problem", {
         description: "ingress reload failed (previous routing still active): boom",
       }),
     );
@@ -293,16 +293,16 @@ describe("DomainsCard", () => {
     });
     renderCard(docker);
 
-    await user.click(await screen.findByRole("button", { name: /Register domain/ }));
+    await user.click(await screen.findByRole("button", { name: /Add domain/ }));
     const dialog = await screen.findByRole("dialog");
     await user.type(within(dialog).getByLabelText("Name"), "*.secure.app");
     await user.click(within(dialog).getByRole("radio", { name: "Certificate" }));
     await pastePEM(user, within(dialog).getByLabelText("Certificate (PEM)"), "CERT");
     await pastePEM(user, within(dialog).getByLabelText("Private key (PEM)"), "KEY");
-    await user.click(within(dialog).getByRole("button", { name: "Register" }));
+    await user.click(within(dialog).getByRole("button", { name: "Add" }));
 
     await waitFor(() =>
-      expect(toastError).toHaveBeenCalledWith("Couldn't register domain", {
+      expect(toastError).toHaveBeenCalledWith("Couldn't add domain", {
         description: "certificate does not cover the name",
       }),
     );

@@ -99,7 +99,7 @@ type notCoveredError struct{ msg string }
 func (e notCoveredError) Error() string { return e.msg }
 func (e notCoveredError) Unwrap() error { return ErrDomainNotCovered }
 
-// NotCoveredError explains how to cover host: register it, or the wildcard
+// NotCoveredError explains how to cover host: add it, or the wildcard
 // for its parent — unless that parent is a bare TLD (an apex like
 // twillingate.app is never covered by *.twillingate.app, and *.app is no
 // advice).
@@ -108,5 +108,5 @@ func NotCoveredError(host string) error {
 	if _, parent, ok := strings.Cut(host, "."); ok && strings.Contains(parent, ".") {
 		hint = host + " or *." + parent
 	}
-	return notCoveredError{fmt.Sprintf("%s is not covered by a domain registered on this server — register %s", host, hint)}
+	return notCoveredError{fmt.Sprintf("%s is not covered by a domain on this server — add %s", host, hint)}
 }

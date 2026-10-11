@@ -74,10 +74,10 @@ func (h *Handler) CreateDomain(w http.ResponseWriter, r *http.Request) {
 	}
 	reqID, err := h.usecase.CreateDomain(r.Context(), userID, serverID, req)
 	if err != nil {
-		webutil.Error(w, "failed to register domain", nil)
+		webutil.Error(w, "failed to add domain", nil)
 		return
 	}
-	accepted(w, "register domain dispatched", reqID)
+	accepted(w, "add domain dispatched", reqID)
 }
 
 // DeleteDomain removes a registration; the agent refuses while an app uses it.

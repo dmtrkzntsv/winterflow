@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"winterflow/internal/domain/command"
+	"winterflow/pkg/fsutil"
 )
 
 // appExists reports whether the app's data dir is present.
@@ -263,7 +264,7 @@ func (r *Repository) RenameApp(ctx context.Context, appID, newName string) error
 	if err != nil {
 		return fmt.Errorf("encode config: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, configRel), updated, 0o644); err != nil {
+	if err := fsutil.WriteFile(filepath.Join(dir, configRel), updated, 0o644); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
 	if _, err := gitCommitAll(dir, "rename to "+newName); err != nil {

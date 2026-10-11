@@ -16,6 +16,7 @@ import (
 	"winterflow/internal/domain/command"
 	"winterflow/internal/infra/backup/layout"
 	"winterflow/internal/infra/backup/store"
+	"winterflow/pkg/fsutil"
 )
 
 // backupUpdateBudget bounds backup.update, its redeploy included.
@@ -184,7 +185,7 @@ func (r *Repository) UpdateBackups(ctx context.Context, appID string, overrides 
 		// Leave the working tree as it was: compose and the next deploy read
 		// it, and must not apply settings the caller was told failed.
 		if readErr == nil {
-			_ = os.WriteFile(filepath.Join(dir, configRel), prevConfig, 0o644)
+			_ = fsutil.WriteFile(filepath.Join(dir, configRel), prevConfig, 0o644)
 		}
 		return resp, fmt.Errorf("commit: %w", err)
 	}

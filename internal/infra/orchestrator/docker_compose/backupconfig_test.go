@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -520,5 +521,74 @@ func TestSaveRefusedRepinsSource(t *testing.T) {
 	}
 	if raw, _ := os.ReadFile(filepath.Join(dir, "source", "compose.yml")); string(raw) != backupCompose {
 		t.Fatalf("source/ is not at the locked head: %q", raw)
+	}
+}
+
+// The scheduler and the handlers read config.json while backup.update and
+// saves rewrite it: a reader must see the old or the new file whole, never
+// a truncated one.
+func TestConfigJSONIsWrittenAtomically(t *testing.T) {
+	r := newTestRepo(t)
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, filepath.Dir(configRel)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, configRel), []byte(`{"name":"demo"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	big := []recipe.BackupConfig{{Name: "a", Enabled: true, Storage: strings.Repeat("s", 4000)}}
+	small := []recipe.BackupConfig{{Name: "a"}}
+	if err := r.writeOverrides(dir, small); err != nil {
+		t.Fatal(err)
+	}
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			o := small
+			if i%2 == 0 {
+				o = big
+			}
+			if err := r.writeOverrides(dir, o); err != nil {
+				t.Error(err)
+				return
+			}
+		}
+	}()
+	for i := 0; i < 3000; i++ {
+		if _, err := r.readOverrides(dir); err != nil {
+			close(stop)
+			wg.Wait()
+			t.Fatalf("read %d: %v", i, err)
+		}
+	}
+	close(stop)
+	wg.Wait()
+	if _, err := os.Stat(filepath.Join(dir, configRel+".tmp")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("temp file left behind: %v", err)
+	}
+}
+
+// Renaming an app whose config.json is `null` writes the name into a fresh
+// object instead of panicking.
+func TestRenameAppOnNullConfig(t *testing.T) {
+	r, _ := updateRepo(t)
+	dir := r.appDataDir("app-1")
+	if err := os.WriteFile(filepath.Join(dir, configRel), []byte("null"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.RenameApp(context.Background(), "app-1", "new name"); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := r.readAppConfig(dir)
+	if err != nil || cfg["name"] != "new name" {
+		t.Fatalf("config = %v, %v", cfg, err)
 	}
 }

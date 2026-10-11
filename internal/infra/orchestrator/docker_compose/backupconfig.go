@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"winterflow/internal/domain/backup/recipe"
+	"winterflow/pkg/fsutil"
 )
 
 // stopOffTimeout bounds removing the services of backups that are off (the
@@ -81,9 +82,6 @@ func (r *Repository) writeOverrides(dir string, overrides []recipe.BackupConfig)
 	if err != nil {
 		return err
 	}
-	if cfg == nil { // a config.json of `null`
-		cfg = map[string]any{}
-	}
 	if len(overrides) == 0 {
 		delete(cfg, backupsKey)
 	} else {
@@ -93,7 +91,7 @@ func (r *Repository) writeOverrides(dir string, overrides []recipe.BackupConfig)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, configRel), raw, 0o644)
+	return fsutil.WriteFile(filepath.Join(dir, configRel), raw, 0o644)
 }
 
 // keepBackups carries the stored backups list into a new config blob that

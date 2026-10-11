@@ -359,11 +359,13 @@ duration of one run.
    writes the manifest beside it (`….json`: sha256, size, raw size, type,
    agent version, fingerprint). The manifest is written last, so **a point
    without a manifest is incomplete**: it is ignored, and pruned after 24h.
-4. **Prune** by `keep`:
+4. **Prune** by `keep`, under the retention ceiling:
+   - **Ceiling:** no copy of any kind older than `BACKUP_RETENTION_DAYS` is
+     kept. It overrides every rule below. `0` means no ceiling.
    - `scheduled` copies follow the tiers, and the newest complete scheduled
      copy is never deleted;
-   - `manual` copies are never pruned automatically: they're yours until you
-     delete them (see "Restore points");
+   - `manual` copies are pruned only by the ceiling, or deleted by hand (see
+     "Restore points");
    - `pre-restore` copies are kept for 30 days.
 5. **Record** state and update health.
 
@@ -373,6 +375,12 @@ for the image pull on first use. A run past its deadline is killed
 
 **Exit 3** (unchanged) counts as a success without upload: `last_success`
 advances, so an idle tenant stays `ok`.
+
+**Refresh before the ceiling.** If the newest scheduled copy is older than half
+of `BACKUP_RETENTION_DAYS`, the run ignores the unchanged check and uploads a
+fresh copy. Otherwise an idle tenant's only copy would age past the ceiling,
+and it would be left with none. A `manual` backup has no such refresh: the UI
+shows "expires in N days" on copies within 14 days of the ceiling.
 
 ### Health
 
@@ -447,17 +455,20 @@ as SSE `operation_result` with the same `request_id`.
   warning, not an error, like the volume sweep.
 - **Without it,** the agent writes `<prefix><app-id>/.deleted`
   (`{"deleted_at": …, "app_name": …}`) in each of those storages.
-- **Daily sweep** on the scheduler goroutine, once per 24h after start: for each
-  storage, list `<prefix>*/.deleted` markers and delete each folder whose
-  marker is older than `BACKUP_ORPHAN_RETENTION_DAYS`. The default is 180;
+- **Daily sweep** on the scheduler goroutine, once per 24h after start. For
+  each storage, it applies the ceiling to folders with a `.deleted` marker:
+  copies older than `BACKUP_RETENTION_DAYS` are deleted, and a folder left
+  without copies is removed together with its marker. A deleted app's backups
+  therefore disappear at most `BACKUP_RETENTION_DAYS` after their last copy.
   `0` disables the sweep. **Folders without a marker are never deleted
-  automatically.**
+  automatically.** They may belong to another server, which applies its own
+  ceiling.
 
 ### Orphans
 
 | Command | Does |
 |---|---|
-| `storage.orphans {name}` | lists `<prefix>` top-level folders whose app id is not on this server: `{AppID, AppName (from .deleted, if any), DeletedAt, PurgeAt, Copies, Bytes, Newest}`; on request only |
+| `storage.orphans {name}` | lists `<prefix>` top-level folders whose app id is not on this server: `{AppID, AppName (from .deleted, if any), DeletedAt, PurgeAt (newest copy + ceiling; empty without a marker), Copies, Bytes, Newest}`; on request only |
 | `storage.delete-orphan {name, app_id}` | refused if the app exists on this server |
 
 ## API (C2)
@@ -485,7 +496,9 @@ with the result as SSE `operation_result`.
     `off`). The schedule reads "Manual" for `every: manual`.
   - **Enable switch:** opens a storage picker of this server's storages, with
     a link to Settings → Storages when there are none.
-  - **Edit:** schedule (Manual, or an interval), retention, volume and path. Each field is badged "from
+  - **Edit:** schedule (Manual, or an interval), retention (with the note
+    "capped at N days on this server" when tiers reach past the ceiling),
+    volume and path. Each field is badged "from
     template" or "changed", with *Reset to template*.
   - **Back up now.**
   - **Restore:** a points list (time, kind, size, with a Delete action per
@@ -503,9 +516,9 @@ with the result as SSE `operation_result`.
 
 `.env.example` gains one variable:
 
-- `BACKUP_ORPHAN_RETENTION_DAYS=180`: days to keep the backups of apps
-  deleted without "delete backups"; `0` keeps them forever. Read by
-  standalone and agent.
+- `BACKUP_RETENTION_DAYS=180`: the ceiling on backup age. No copy, of any
+  kind and of any app (including deleted apps' backups), is kept longer.
+  `0` means no ceiling. Read by standalone and agent.
 
 The helper image is the hard-coded constant `alpine:3.20`, not configurable.
 
@@ -556,4 +569,4 @@ contract suite on SQLite and Postgres, and `api/openapi.yaml` up to date.
 | Client-side encryption of backup objects | follow-up; until then, protection at rest is the provider's |
 | A `list`/`restore` contract for `custom` backups | |
 | A published helper image | |
-| Per-storage orphan retention | |
+| A per-storage or per-backup ceiling | |

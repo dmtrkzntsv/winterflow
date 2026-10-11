@@ -45,6 +45,7 @@ import {
   type ControlAction,
   type DeleteAppResult,
 } from "@/context/apps-context-base";
+import { readApiError } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 const base = apiBaseUrl.endsWith("/") ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
@@ -241,7 +242,7 @@ function LogsTab({ appId }: { appId: string }) {
         activeServerId,
       )}&app_id=${encodeURIComponent(appId)}&tail=${tail}`;
       const res = await fetch(url, { credentials: "include" });
-      if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+      if (!res.ok) throw await readApiError(res);
       const accepted = (await res.json()) as { data?: { request_id?: string } };
       const ref = accepted.data?.request_id;
       if (!ref) throw new Error("No request id");

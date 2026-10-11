@@ -8,6 +8,8 @@ data/
 *.sqlite*
 # coverage reports (make test)
 /coverage.out
+# Postgres coverage profile (make test-pg TEST_PG_ARGS='... -coverprofile=contract-postgres.out')
+/contract-postgres.out
 
 # root-built binaries (go build ./cmd/...)
 /agent

@@ -37,8 +37,9 @@ lint:
 test:
 	$(GO) test -race -covermode=atomic -coverpkg=./... -coverprofile=coverage.out ./...
 
-# The API contract suite against a throwaway postgres:16 container (Docker).
-# Plain `go test ./...` stays on SQLite. Extra go test flags:
+# The API contract suite and the internal/infra/db packages against a
+# throwaway postgres:16 container (Docker). Plain `go test ./...` stays on
+# SQLite. Extra go test flags:
 # make test-pg TEST_PG_ARGS='-run TestParity -v'
 test-pg:
 	GO=$(GO) bash scripts/test-pg.sh $(TEST_PG_ARGS)

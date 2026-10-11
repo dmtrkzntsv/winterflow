@@ -21,12 +21,8 @@ func (uc *UseCase) requireStorageRefs(ctx context.Context, serverID string, p co
 	}
 	files := map[string][]byte{}
 	for _, f := range p.Files {
-		name := f.Name
-		if name == "" {
-			name = f.ID
-		}
 		if !f.Encrypted {
-			files[name] = f.Content
+			files[f.ItemName()] = f.Content
 		}
 	}
 	var contents [][]byte
@@ -61,13 +57,14 @@ func (uc *UseCase) ServerStorages(ctx context.Context, serverID string) ([]model
 
 // ListServerStorages dispatches storage.list to the server's agent. The
 // result reconciles the server_storages index and is delivered over SSE to
-// userID (none for the system's own sync when an agent comes online).
+// userID. The system's own sync when an agent comes online (no user) only
+// needs the registry, so the agent skips finding each storage's apps.
 func (uc *UseCase) ListServerStorages(ctx context.Context, userID, serverID string) (string, error) {
 	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
 		AgentID: serverID,
 		UserID:  userID,
 		Type:    command.TypeStorageList,
-		Payload: command.ListStoragesRequest{},
+		Payload: command.ListStoragesRequest{RegistryOnly: userID == ""},
 		OnResult: func(res port.CommandResult) {
 			if !res.Success || len(res.Payload) == 0 || uc.serverStorages == nil {
 				return
@@ -79,7 +76,7 @@ func (uc *UseCase) ListServerStorages(ctx context.Context, userID, serverID stri
 			}
 			rows := make([]model.StorageSummary, 0, len(listed.Storages))
 			for _, s := range listed.Storages {
-				rows = append(rows, model.StorageSummary{Name: s.Name, Type: s.Type, Location: s.Location})
+				rows = append(rows, s.Summary())
 			}
 			if err := uc.serverStorages.ReplaceForServer(context.Background(), serverID, rows); err != nil {
 				uc.log.Error("ListServerStorages: sync index", "error", err, "server_id", serverID)
@@ -116,8 +113,7 @@ func (uc *UseCase) SaveStorage(ctx context.Context, userID, serverID string, req
 				uc.log.Error("SaveStorage: decode result", "error", err)
 				return
 			}
-			row := model.StorageSummary{Name: saved.Storage.Name, Type: saved.Storage.Type, Location: saved.Storage.Location}
-			if err := uc.serverStorages.Upsert(context.Background(), serverID, row); err != nil {
+			if err := uc.serverStorages.Upsert(context.Background(), serverID, saved.Storage.Summary()); err != nil {
 				uc.log.Error("SaveStorage: update index", "error", err, "server_id", serverID)
 			}
 		},

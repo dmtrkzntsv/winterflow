@@ -57,31 +57,29 @@ type syncState struct {
 	inFlightUntil time.Time
 }
 
-func newIndexSync(ctx context.Context, what string, log *logger.Logger) *indexSync {
-	return &indexSync{what: what, ctx: ctx, retryDelay: indexSyncRetryDelay, log: log, pending: map[string]*syncState{}}
-}
-
-// newDomainSync fills server_domains through the app usecase's
-// ListServerDomains, observing each result via a dispatcher tap.
-func newDomainSync(ctx context.Context, d port.CommandDispatcher, repo port.ServerDomainRepository, log *logger.Logger) *indexSync {
-	s := newIndexSync(ctx, "registered domains", log)
-	uc := appuc.NewUseCase(&appuc.Deps{CommandDispatcher: resultTap{d, s.result}, ServerDomainRepository: repo, Log: log})
+// newIndexSync builds a sync whose list is an app usecase method (built on
+// deps) dispatching a list command for no user; a dispatcher tap observes
+// each result.
+func newIndexSync(ctx context.Context, what string, d port.CommandDispatcher, deps appuc.Deps,
+	list func(uc *appuc.UseCase, ctx context.Context, userID, serverID string) (string, error), log *logger.Logger) *indexSync {
+	s := &indexSync{what: what, ctx: ctx, retryDelay: indexSyncRetryDelay, log: log, pending: map[string]*syncState{}}
+	deps.CommandDispatcher, deps.Log = resultTap{d, s.result}, log
+	uc := appuc.NewUseCase(&deps)
 	s.list = func(ctx context.Context, serverID string) error {
-		_, err := uc.ListServerDomains(ctx, "", serverID)
+		_, err := list(uc, ctx, "", serverID)
 		return err
 	}
 	return s
+}
+
+// newDomainSync fills server_domains through ListServerDomains.
+func newDomainSync(ctx context.Context, d port.CommandDispatcher, repo port.ServerDomainRepository, log *logger.Logger) *indexSync {
+	return newIndexSync(ctx, "registered domains", d, appuc.Deps{ServerDomainRepository: repo}, (*appuc.UseCase).ListServerDomains, log)
 }
 
 // newStorageSync fills server_storages through ListServerStorages.
 func newStorageSync(ctx context.Context, d port.CommandDispatcher, repo port.ServerStorageRepository, log *logger.Logger) *indexSync {
-	s := newIndexSync(ctx, "storages", log)
-	uc := appuc.NewUseCase(&appuc.Deps{CommandDispatcher: resultTap{d, s.result}, ServerStorageRepository: repo, Log: log})
-	s.list = func(ctx context.Context, serverID string) error {
-		_, err := uc.ListServerStorages(ctx, "", serverID)
-		return err
-	}
-	return s
+	return newIndexSync(ctx, "storages", d, appuc.Deps{ServerStorageRepository: repo}, (*appuc.UseCase).ListServerStorages, log)
 }
 
 // indexSyncs drives every index sync from the same server events.

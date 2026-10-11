@@ -16,13 +16,13 @@ import (
 // name, type and location (never a secret) into its server_storages index.
 
 // ErrStorageRef marks a save whose compose file references a WF_STORAGE_ /
-// WF_BACKUP_ variable that resolves to nothing on the target server; the HTTP
-// layer maps it to 400.
-var ErrStorageRef = errors.New("unresolved storage variable")
+// WF_BACKUP_ variable that resolves to nothing on the target server. It
+// matches ErrRejected.
+var ErrStorageRef = rejected("unresolved storage variable")
 
-// ErrReservedVariable marks a user variable whose name a storage provides;
-// the HTTP layer maps it to 400.
-var ErrReservedVariable = errors.New("reserved variable name")
+// ErrReservedVariable marks a user variable whose name a storage provides.
+// It matches ErrRejected.
+var ErrReservedVariable = rejected("reserved variable name")
 
 // StorageType is the kind of a storage.
 type StorageType string
@@ -299,9 +299,9 @@ const (
 	FieldSecretAccessKey = "SECRET_ACCESS_KEY"
 )
 
-// storageFields is every field, longest first so suffix matching picks
-// ACCESS_KEY_ID before any shorter field could match.
-var storageFields = []string{FieldSecretAccessKey, FieldAccessKeyID, FieldEndpoint, FieldPrefix, FieldRegion, FieldBucket, FieldType, FieldPath}
+// storageFields is every field. No field ends with "_" plus another, so a
+// variable name matches at most one as its suffix.
+var storageFields = []string{FieldType, FieldPrefix, FieldPath, FieldEndpoint, FieldRegion, FieldBucket, FieldAccessKeyID, FieldSecretAccessKey}
 
 // StorageVarName is the variable for field of the storage named name.
 func StorageVarName(name, field string) string {
@@ -367,7 +367,7 @@ func ParseStorageRef(v string) (StorageRef, error) {
 	name := tokenName(token)
 	if !ok || ValidateStorageName(name) != nil {
 		return StorageRef{}, fmt.Errorf("%w: ${%s} is not a storage variable: use WF_STORAGE_<NAME>_<FIELD> with FIELD one of %s",
-			ErrStorageRef, v, strings.Join([]string{FieldType, FieldPrefix, FieldPath, FieldEndpoint, FieldRegion, FieldBucket, FieldAccessKeyID, FieldSecretAccessKey}, ", "))
+			ErrStorageRef, v, strings.Join(storageFields, ", "))
 	}
 	return StorageRef{Var: v, Storage: name, Field: field}, nil
 }
@@ -411,30 +411,24 @@ func StorageFieldValue(s Storage, field, secret string) string {
 		if s.Local != nil {
 			return s.Local.Path
 		}
+		return ""
+	}
+	if s.S3 == nil {
+		return ""
+	}
+	switch field {
 	case FieldPrefix:
-		if s.S3 != nil {
-			return s.S3.Prefix
-		}
+		return s.S3.Prefix
 	case FieldEndpoint:
-		if s.S3 != nil {
-			return s.S3.Endpoint
-		}
+		return s.S3.Endpoint
 	case FieldRegion:
-		if s.S3 != nil {
-			return s.S3.Region
-		}
+		return s.S3.Region
 	case FieldBucket:
-		if s.S3 != nil {
-			return s.S3.Bucket
-		}
+		return s.S3.Bucket
 	case FieldAccessKeyID:
-		if s.S3 != nil {
-			return s.S3.AccessKeyID
-		}
+		return s.S3.AccessKeyID
 	case FieldSecretAccessKey:
-		if s.S3 != nil {
-			return secret
-		}
+		return secret
 	}
 	return ""
 }

@@ -353,10 +353,11 @@ func (uc *UseCase) SaveApp(ctx context.Context, userID, serverID string, app mod
 		payload.Config = cfgBytes
 	}
 
-	for _, v := range payload.Variables {
-		if err := model.ReservedVariableError(v.Name); err != nil {
-			return "", err
-		}
+	// The agent runs the same Validate; here a reserved variable name is a
+	// synchronous 400 instead of an async failure.
+	req := command.SaveAppRequest{App: payload, Draft: draft}
+	if err := req.Validate(); err != nil {
+		return "", err
 	}
 
 	// Ingress rides the config blob. Parse + validate + conflict-check here so
@@ -393,7 +394,6 @@ func (uc *UseCase) SaveApp(ctx context.Context, userID, serverID string, app mod
 		return "", err
 	}
 
-	req := command.SaveAppRequest{App: payload, Draft: draft}
 	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
 		AgentID: serverID,
 		UserID:  userID,

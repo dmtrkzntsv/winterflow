@@ -11,38 +11,6 @@ import (
 	"winterflow/pkg/logger"
 )
 
-// fakeServerStorages is an in-memory port.ServerStorageRepository.
-type fakeServerStorages struct {
-	rows     map[string][]model.StorageSummary // serverID -> rows
-	upserted []model.StorageSummary
-	deleted  []string
-}
-
-func newFakeServerStorages(rows ...model.StorageSummary) *fakeServerStorages {
-	f := &fakeServerStorages{rows: map[string][]model.StorageSummary{}}
-	if len(rows) > 0 {
-		f.rows["srv-1"] = rows
-	}
-	return f
-}
-
-func (f *fakeServerStorages) ListForServer(_ context.Context, serverID string) ([]model.StorageSummary, error) {
-	return f.rows[serverID], nil
-}
-func (f *fakeServerStorages) Upsert(_ context.Context, serverID string, s model.StorageSummary) error {
-	f.upserted = append(f.upserted, s)
-	f.rows[serverID] = append(f.rows[serverID], s)
-	return nil
-}
-func (f *fakeServerStorages) Delete(_ context.Context, _, name string) error {
-	f.deleted = append(f.deleted, name)
-	return nil
-}
-func (f *fakeServerStorages) ReplaceForServer(_ context.Context, serverID string, ss []model.StorageSummary) error {
-	f.rows[serverID] = ss
-	return nil
-}
-
 func newStoragesUseCase(d port.CommandDispatcher, ss port.ServerStorageRepository) *UseCase {
 	return NewUseCase(&Deps{
 		CommandDispatcher:       d,
@@ -62,7 +30,8 @@ func TestListServerStoragesReconcilesTheIndex(t *testing.T) {
 		t.Fatal(err)
 	}
 	in := disp.last()
-	if in.Type != command.TypeStorageList || in.AgentID != "srv-1" || in.UserID != "u1" {
+	if in.Type != command.TypeStorageList || in.AgentID != "srv-1" || in.UserID != "u1" ||
+		in.Payload.(command.ListStoragesRequest).RegistryOnly {
 		t.Fatalf("dispatch = %+v", in)
 	}
 	in.OnResult(port.CommandResult{Success: true, Payload: []byte(
@@ -76,6 +45,18 @@ func TestListServerStoragesReconcilesTheIndex(t *testing.T) {
 	in.OnResult(port.CommandResult{Success: true, Payload: []byte("{")})
 	if !reflect.DeepEqual(ss.rows["srv-1"], want) {
 		t.Fatalf("index changed: %+v", ss.rows["srv-1"])
+	}
+}
+
+// The system's own sync (no user) asks for the registry alone: it never
+// shows which apps use a storage.
+func TestListServerStoragesSyncSkipsTheApps(t *testing.T) {
+	disp := &recordingDispatcher{}
+	if _, err := newStoragesUseCase(disp, newFakeServerStorages()).ListServerStorages(context.Background(), "", "srv-1"); err != nil {
+		t.Fatal(err)
+	}
+	if !disp.last().Payload.(command.ListStoragesRequest).RegistryOnly {
+		t.Fatalf("dispatch = %+v", disp.last())
 	}
 }
 

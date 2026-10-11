@@ -106,8 +106,7 @@ func (h *Handler) SaveApp(w http.ResponseWriter, r *http.Request) {
 
 	requestID, err := h.usecase.SaveApp(r.Context(), userID, req.ServerID, app, payload, req.Draft)
 	if err != nil {
-		if errors.Is(err, model.ErrIngressInvalid) || errors.Is(err, model.ErrDomainTaken) || errors.Is(err, model.ErrDomainNotCovered) ||
-			errors.Is(err, model.ErrStorageRef) || errors.Is(err, model.ErrReservedVariable) {
+		if errors.Is(err, model.ErrRejected) {
 			webutil.Error(w, err.Error(), nil)
 			return
 		}

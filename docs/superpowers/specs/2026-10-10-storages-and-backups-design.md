@@ -216,7 +216,7 @@ x-winterflow:
       type: sqlite            # sqlite | custom  (postgres, mysql, volume: later)
       volume: data            # sqlite: a key under top-level `volumes:` of this compose file
       path: twillingate.db    # sqlite: relative path inside the volume (safeRel)
-      every: 1h               # sqlite: Go duration, >= 5m; default 1h
+      every: 1h               # sqlite: Go duration >= 5m, or `manual` (no schedule); default 1h
       keep:                   # sqlite: default shown
         recent: 24h           #   keep every copy younger than this
         daily: 14             #   then the newest copy of each of the last N UTC days
@@ -236,7 +236,7 @@ x-winterflow:
   - unknown keys or types;
   - duplicate names;
   - dangling `volume` or `service` references;
-  - `every` below 5m;
+  - `every` below 5m, or neither a duration nor `manual`;
   - an unparsable `keep`.
 - **A `custom` service must list the profile `wf-backup-<backup name>`** in its
   `profiles:`. Otherwise it would run with backups off, so its absence is an
@@ -304,6 +304,8 @@ duration of one run.
   never blocked by a backup.
 - **One timer** set to the earliest due time across all backups. There is no
   per-app ticker.
+- **`every: manual` backups are never scheduled.** They run only through
+  Back up now.
 - **Next run:** `last_attempt + every`. For a backup never run, the time it
   was enabled plus a stable per-backup offset, a hash of `app-id/backup name`
   mod `every`, so 40 tenants don't fire together.
@@ -358,9 +360,11 @@ duration of one run.
    agent version, fingerprint). The manifest is written last, so **a point
    without a manifest is incomplete**: it is ignored, and pruned after 24h.
 4. **Prune** by `keep`:
-   - `scheduled` copies follow the tiers;
-   - `manual` and `pre-restore` copies are kept for 30 days;
-   - the newest complete copy is never deleted.
+   - `scheduled` copies follow the tiers, and the newest complete scheduled
+     copy is never deleted;
+   - `manual` copies are never pruned automatically: they're yours until you
+     delete them (see "Restore points");
+   - `pre-restore` copies are kept for 30 days.
 5. **Record** state and update health.
 
 **Deadlines:** 30 minutes for the whole run (dump plus upload), and 5 minutes
@@ -378,8 +382,9 @@ Per backup, one of these states:
 |---|---|
 | `off` | the backup is disabled |
 | `running` | a run is in progress |
-| `ok` | the last run succeeded within `2 × every` |
-| `late` | no success within `2 × every`; never-run backups count from `enabled_at` |
+| `never` | enabled, no run yet (a `manual` backup until its first Back up now) |
+| `ok` | the last run succeeded; for a scheduled backup, within `2 × every` |
+| `late` | scheduled only: no success within `2 × every`, counting never-run backups from `enabled_at` |
 | `failing` | the last attempt failed |
 
 `command.AppStatus` gains `Backups []BackupHealth{Name, State, LastSuccess,
@@ -396,10 +401,15 @@ running, because winterflow can't observe their freshness.
 objects with their manifests. It returns `[]{ID, Time, Kind, Size}`, newest
 first. It runs only on request, with a 30s deadline.
 
+`backup.delete-point {app_id, backup, point}` deletes one copy and its
+manifest. Any kind can be deleted by hand.
+
 ### Back up now
 
 `backup.run {app_id, backup}` queues a `manual` run at the front of the
-scheduler. The command returns once the run is queued; the outcome arrives as
+scheduler. It works at any time on any enabled backup, scheduled or
+`every: manual`; a request while the same backup is already running or queued
+joins that run instead of adding another. The command returns once the run is queued; the outcome arrives as
 SSE `operation_result` when the run ends. Further pushes are not needed beyond
 the existing health change.
 
@@ -461,6 +471,7 @@ with the result as SSE `operation_result`.
 | `GET /api/v1/app/list-restore-points?server_id&app_id&backup` | |
 | `POST /api/v1/app/run-backup` | `{server_id, app_id, backup}` |
 | `POST /api/v1/app/restore-backup` | `{server_id, app_id, backup, point}` |
+| `POST /api/v1/app/delete-restore-point` | `{server_id, app_id, backup, point}` |
 | `GET /api/v1/storage/list-orphans?server_id&name` | |
 | `POST /api/v1/storage/delete-orphan` | `{server_id, name, app_id}` |
 | `POST /api/v1/app/delete-app` | gains `delete_backups` |
@@ -470,15 +481,16 @@ with the result as SSE `operation_result`.
 
 - **App page → Backups section**, shown when the app has any backup:
   - **Each row** shows the backup name, type, storage, schedule, "last backup
-    4 min ago" and a health badge (`ok`, `late`, `failing`, `running`, `off`).
+    4 min ago" and a health badge (`ok`, `late`, `failing`, `running`, `never`,
+    `off`). The schedule reads "Manual" for `every: manual`.
   - **Enable switch:** opens a storage picker of this server's storages, with
     a link to Settings → Storages when there are none.
-  - **Edit:** schedule, retention, volume and path. Each field is badged "from
+  - **Edit:** schedule (Manual, or an interval), retention, volume and path. Each field is badged "from
     template" or "changed", with *Reset to template*.
   - **Back up now.**
-  - **Restore:** a points list (time, kind, size), then a confirmation stating
-    that the app stops and the current database is first saved as a
-    `pre-restore` point.
+  - **Restore:** a points list (time, kind, size, with a Delete action per
+    point), then a confirmation stating that the app stops and the current
+    database is first saved as a `pre-restore` point.
   - **Add backup:** a UI-added `sqlite` entry.
 - **App grid:** a small warning dot on cards with a `late` or `failing`
   backup.

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -62,6 +62,14 @@ export default function SettingsPage() {
     (tabParam !== "domains" || hasIngress)
       ? tabParam
       : "registries";
+  // A tab opened by link (?tab=storages) may sit past the bar's scrolled
+  // edge on a phone: bring it into view.
+  const tabBar = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    tabBar.current
+      ?.querySelector<HTMLElement>('[role="tab"][data-state="active"]')
+      ?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }, [tab]);
   const setTab = (next: string) => {
     setSearchParams(next === "registries" ? {} : { tab: next }, {
       replace: true,
@@ -78,14 +86,18 @@ export default function SettingsPage() {
 
   return (
     <Tabs value={tab} onValueChange={setTab}>
-      <TabsList>
-        <TabsTrigger value="registries">Registries</TabsTrigger>
-        <TabsTrigger value="networks">Networks</TabsTrigger>
-        <TabsTrigger value="volumes">Volumes</TabsTrigger>
-        {hasIngress ? <TabsTrigger value="domains">Domains</TabsTrigger> : null}
-        <TabsTrigger value="storages">Storages</TabsTrigger>
-        <TabsTrigger value="agent">Agent</TabsTrigger>
-      </TabsList>
+      {/* Six tabs are wider than a phone: the bar scrolls inside itself
+          instead of widening the page. */}
+      <div ref={tabBar} className="-mx-1 max-w-full overflow-x-auto px-1 pb-1">
+        <TabsList className="w-max">
+          <TabsTrigger value="registries">Registries</TabsTrigger>
+          <TabsTrigger value="networks">Networks</TabsTrigger>
+          <TabsTrigger value="volumes">Volumes</TabsTrigger>
+          {hasIngress ? <TabsTrigger value="domains">Domains</TabsTrigger> : null}
+          <TabsTrigger value="storages">Storages</TabsTrigger>
+          <TabsTrigger value="agent">Agent</TabsTrigger>
+        </TabsList>
+      </div>
       <TabsContent value="registries">
         <RegistriesCard docker={docker} />
       </TabsContent>

@@ -51,4 +51,29 @@ describe("SettingsPage", () => {
     expect(screen.getByRole("tab", { name: "Storages" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByText("storages card")).toBeInTheDocument();
   });
+
+  it("scrolls the tab bar inside itself on a phone instead of widening the page", () => {
+    ingress = true;
+    renderAt("/settings?tab=storages");
+    const list = screen.getByRole("tablist");
+    // The list keeps its natural width; its wrapper is capped to the page
+    // and scrolls.
+    expect(list).toHaveClass("w-max");
+    expect(list.parentElement).toHaveClass("max-w-full", "overflow-x-auto");
+  });
+
+  it("brings a linked tab into view in the scrolled bar", () => {
+    ingress = true;
+    const scrolled: Element[] = [];
+    const spy = vi.fn(function (this: Element) {
+      scrolled.push(this);
+    });
+    Element.prototype.scrollIntoView = spy;
+    try {
+      renderAt("/settings?tab=storages");
+      expect(scrolled).toContain(screen.getByRole("tab", { name: "Storages" }));
+    } finally {
+      delete (Element.prototype as Partial<Element>).scrollIntoView;
+    }
+  });
 });

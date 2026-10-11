@@ -88,3 +88,70 @@ describe("useDocker domain calls", () => {
     await expect(result.current.listDomains()).rejects.toThrow("ingress is disabled on this server");
   });
 });
+
+describe("useDocker storage calls", () => {
+  beforeEach(() => {
+    sent = [];
+    vi.stubGlobal("fetch", fetchMock);
+    waitFor.mockResolvedValue({ status: 0, payload: {} });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  const s3Draft = {
+    name: "hetzner",
+    type: "s3" as const,
+    path: "",
+    endpoint: "https://fsn1.example.com",
+    region: "fsn1",
+    bucket: "tenants",
+    prefix: "wf/",
+    accessKeyId: "AKIA",
+    secret: "S3-PLAIN",
+    pathStyle: false,
+  };
+
+  it("encrypts a typed secret with the server's public key", async () => {
+    const { result } = renderHook(() => useDocker());
+    waitFor.mockResolvedValueOnce({ status: 0, payload: { ok: true } });
+    expect(await result.current.testStorage(s3Draft)).toEqual({ ok: true });
+
+    const test = sent.find((s) => s.url.includes("/api/v1/storage/test"));
+    expect(test?.url).toContain("server_id=srv-1");
+    expect(test?.body).toMatchObject({ name: "hetzner", type: "s3", s3: { secret_access_key: "enc(S3-PLAIN|PUB)", bucket: "tenants" } });
+    expect(JSON.stringify(sent)).not.toContain('"S3-PLAIN"');
+  });
+
+  it("keeps the stored secret when none is typed, and sends no key for a folder", async () => {
+    const { result } = renderHook(() => useDocker());
+    waitFor.mockResolvedValueOnce({ status: 0, payload: { storage: { name: "hetzner" } } });
+    expect(await result.current.saveStorage({ ...s3Draft, secret: "" })).toEqual({
+      storage: { name: "hetzner" },
+      redeployed: [],
+      warnings: [],
+    });
+    expect(sent).toHaveLength(1); // no public key fetched
+    expect(sent[0].body).toMatchObject({ s3: { secret_access_key: "<encrypted>" } });
+
+    waitFor.mockResolvedValueOnce({ status: 0, payload: { storage: { name: "disk" }, redeployed: ["a1"], warnings: ["w"] } });
+    expect(await result.current.saveStorage({ ...s3Draft, name: "disk", type: "local", path: "/mnt/usb" })).toEqual({
+      storage: { name: "disk" },
+      redeployed: ["a1"],
+      warnings: ["w"],
+    });
+    expect(sent[1].body).toEqual({ name: "disk", type: "local", local: { path: "/mnt/usb" } });
+  });
+
+  it("lists and deletes storages", async () => {
+    const { result } = renderHook(() => useDocker());
+    waitFor.mockResolvedValueOnce({ status: 0, payload: { storages: null } });
+    expect(await result.current.listStorages()).toEqual([]);
+    waitFor.mockResolvedValueOnce({ status: 0, payload: { storages: [{ name: "disk" }] } });
+    expect(await result.current.listStorages()).toEqual([{ name: "disk" }]);
+
+    await result.current.deleteStorage("disk");
+    const del = sent.find((s) => s.url.includes("/api/v1/storage/delete"));
+    expect(del).toMatchObject({ method: "POST", body: { name: "disk" } });
+    waitFor.mockResolvedValueOnce({ status: 1, error: "disk is used by Shop" });
+    await expect(result.current.deleteStorage("disk")).rejects.toThrow("disk is used by Shop");
+  });
+});

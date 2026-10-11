@@ -5,6 +5,14 @@ import { useServers } from "@/context/use-servers";
 import { readApiError } from "@/lib/api";
 import { encryptSecret } from "@/lib/ecies";
 import type { Domain, DomainTLS } from "@/lib/domains";
+import {
+  ENCRYPTED,
+  storageBody,
+  type Storage,
+  type StorageDraft,
+  type StorageSaved,
+  type StorageTest,
+} from "@/lib/storages";
 import { apiBaseUrl } from "@/config";
 
 const base = apiBaseUrl.endsWith("/") ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
@@ -202,6 +210,60 @@ export function useDocker() {
     [dispatch],
   );
 
+  const listStorages = useCallback(
+    () =>
+      dispatch<{ storages: Storage[] | null }>("/api/v1/storage/list", {}).then(
+        (p) => p.storages ?? [],
+      ),
+    [dispatch],
+  );
+
+  // storageRequest is the body for a draft. A typed secret is encrypted with
+  // the server key, like registry passwords; an empty one keeps the stored
+  // secret ("<encrypted>"). Local folders have no secret.
+  const storageRequest = useCallback(
+    async (draft: StorageDraft) => {
+      if (draft.type !== "s3") return storageBody(draft, "");
+      const secret = draft.secret
+        ? await encryptSecret(draft.secret, await getPublicKey())
+        : ENCRYPTED;
+      return storageBody(draft, secret);
+    },
+    [getPublicKey],
+  );
+
+  // testStorage resolves with the probe's outcome: a failed probe is
+  // { ok: false, error }, not a rejection.
+  const testStorage = useCallback(
+    async (draft: StorageDraft): Promise<StorageTest> =>
+      dispatch<StorageTest>("/api/v1/storage/test", {
+        method: "POST",
+        body: await storageRequest(draft),
+      }),
+    [dispatch, storageRequest],
+  );
+
+  // saveStorage resolves with the stored storage, the apps redeployed with
+  // it and the redeploy warnings (the storage itself was saved).
+  const saveStorage = useCallback(
+    async (draft: StorageDraft): Promise<StorageSaved> => {
+      const res = await dispatch<{
+        storage: Storage;
+        redeployed?: string[] | null;
+        warnings?: string[] | null;
+      }>("/api/v1/storage/save", { method: "POST", body: await storageRequest(draft) });
+      return { storage: res.storage, redeployed: res.redeployed ?? [], warnings: res.warnings ?? [] };
+    },
+    [dispatch, storageRequest],
+  );
+
+  const deleteStorage = useCallback(
+    async (name: string): Promise<void> => {
+      await dispatch("/api/v1/storage/delete", { method: "POST", body: { name } });
+    },
+    [dispatch],
+  );
+
   const updateAgent = useCallback(
     (version: string) =>
       dispatch("/api/v1/agent/update", { method: "POST", body: { version } }),
@@ -225,6 +287,10 @@ export function useDocker() {
       listDomains,
       createDomain,
       deleteDomain,
+      listStorages,
+      testStorage,
+      saveStorage,
+      deleteStorage,
       updateAgent,
     }),
     [
@@ -241,6 +307,10 @@ export function useDocker() {
       listDomains,
       createDomain,
       deleteDomain,
+      listStorages,
+      testStorage,
+      saveStorage,
+      deleteStorage,
       updateAgent,
     ],
   );

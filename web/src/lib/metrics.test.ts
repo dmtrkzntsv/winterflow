@@ -13,6 +13,8 @@ import {
   sensorFields,
   stackApps,
   toChartRows,
+  temperatureChart,
+  type MetricPoint,
 } from "@/lib/metrics";
 
 describe("toChartRows", () => {
@@ -99,5 +101,25 @@ describe("helpers", () => {
     ];
     expect(fullestDisk(disks)?.mount).toBe("/data");
     expect(fullestDisk(null)).toBeUndefined();
+  });
+});
+
+describe("temperatureChart", () => {
+  it("keys series by CSS-safe index and labels them with the sensor names", () => {
+    const points: MetricPoint[] = [
+      { t: 0, "temp:Core 0": 40, "temp:Core 0_max": 45, "temp:nvme: Composite": 30 },
+      { t: 60, "temp:Core 0": 41, "temp:nvme: Composite": 31 },
+    ];
+    const { rows, series } = temperatureChart(points, 60, "avg");
+    expect(series.map((s) => [s.key, s.label])).toEqual([
+      ["temp0", "Core 0"],
+      ["temp1", "nvme: Composite"],
+    ]);
+    for (const s of series) expect(s.key).toMatch(/^[a-z0-9]+$/);
+    expect(rows).toEqual([
+      { t: 0, temp0: 40, temp1: 30 },
+      { t: 60000, temp0: 41, temp1: 31 },
+    ]);
+    expect(temperatureChart(points, 60, "peak").rows[0]).toEqual({ t: 0, temp0: 45, temp1: null });
   });
 });

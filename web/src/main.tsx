@@ -17,6 +17,7 @@ import { AppLayout } from "@/layouts/app-layout"
 import HomePage from "@/pages/home"
 import CreateAppPage from "@/pages/create-app"
 import AppDetailsPage from "@/pages/app-details"
+import MonitoringPage from "@/pages/monitoring"
 import SettingsPage from "@/pages/settings"
 import UserTokensPage from "@/pages/user-tokens"
 import UserPasswordPage from "@/pages/user-password"
@@ -44,6 +45,10 @@ const router = createBrowserRouter([
       {
         path: "/app/:appId",
         element: <AppDetailsPage />,
+      },
+      {
+        path: "/monitoring",
+        element: <MonitoringPage />,
       },
       {
         path: "/settings",

@@ -210,3 +210,29 @@ const CHART_COLORS = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var
 export function chartColor(i: number): string {
   return CHART_COLORS[i % CHART_COLORS.length];
 }
+
+// temperatureChart builds the per-sensor temperature rows and series. Sensor
+// labels ("Core 0", "nvme: Composite") are not CSS-safe, and series keys end
+// up in CSS custom properties (--color-<key>), so rows and series use index
+// keys (temp0, temp1, ...) and the sensor name is only the series label.
+export function temperatureChart(
+  points: MetricPoint[],
+  intervalSeconds: number,
+  mode: MetricsMode,
+): { rows: ChartRow[]; series: { key: string; label: string; color: string }[] } {
+  const sensors = sensorFields(points);
+  const keys = sensors.map((_, i) => `temp${i}`);
+  const rows = toChartRows(points, intervalSeconds, sensors, mode).map((r) => {
+    const out: ChartRow = { t: r.t };
+    sensors.forEach((f, i) => {
+      out[keys[i]] = r[f];
+    });
+    return out;
+  });
+  const series = sensors.map((f, i) => ({
+    key: keys[i],
+    label: f.slice(TEMP_PREFIX.length),
+    color: chartColor(i),
+  }));
+  return { rows, series };
+}

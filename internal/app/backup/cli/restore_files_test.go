@@ -12,6 +12,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"winterflow/internal/infra/backup/helper"
 )
 
 // dumpOf archives sources the way a backup run does.
@@ -874,5 +876,34 @@ func TestDumpSkipsRestoreTempFolders(t *testing.T) {
 		if !slices.Contains(names, path.Join(entry, "data.txt")) {
 			t.Errorf("entry %q: names = %v", entry, names)
 		}
+	}
+}
+
+// A files restore says it is about to swap (and only then): a helper killed
+// before that line has changed nothing, and the agent starts the app again.
+func TestRestoreFilesPrintsTheSwappingLineOnlyBeforeTheSwap(t *testing.T) {
+	root := t.TempDir()
+	writeFileT(t, root, "media/keep.txt", "original")
+	args := func() []string {
+		return []string{"restore", "files", "--id", "t1", "--root", root, "--src", root + "/media", "--entry", "app/media"}
+	}
+	var stderr bytes.Buffer
+	good := tarOf(t, file("app/media/new.txt", "new"))
+	recordChowns(t)
+	if code := Run(args(), bytes.NewReader(good), io.Discard, &stderr); code != ExitOK {
+		t.Fatalf("restore: %d\n%s", code, stderr.String())
+	}
+	lines := strings.Split(strings.TrimSpace(stderr.String()), "\n")
+	if len(lines) != 2 || lines[0] != helper.SwappingLine || !helper.Swapping(stderr.Bytes()) {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+	// Refused while extracting: no swap, no line.
+	stderr.Reset()
+	bad := tarOf(t, file("app/other/x", "x"))
+	if code := Run(args(), bytes.NewReader(bad), io.Discard, &stderr); code != ExitFailed {
+		t.Fatalf("refused restore: %d", code)
+	}
+	if helper.Swapping(stderr.Bytes()) {
+		t.Fatalf("a restore refused before the swap printed the line: %q", stderr.String())
 	}
 }

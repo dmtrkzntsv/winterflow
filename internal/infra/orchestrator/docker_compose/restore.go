@@ -48,6 +48,19 @@ const RestoreStopBudget = 3*dockerCallTimeout + helperStopGrace + time.Second + 
 // to run, and a helper cut short by the budget leaves the data in doubt.
 const restoreMinBudget = 10 * time.Minute
 
+// restoreExtractRate is the rate, in raw bytes per second, a restore is
+// assumed to put data back at on the slowest box (a Raspberry Pi's SD card):
+// the time left is checked against the size of the copy.
+const restoreExtractRate = 10 << 20
+
+// restoreNeeds is the time a restore needs to put m's data back, and so the
+// least of the budget that must remain before the app is stopped (and again
+// before the helper starts): the floor, or what the copy's raw size takes at
+// restoreExtractRate.
+func restoreNeeds(m layout.Manifest) time.Duration {
+	return max(restoreMinBudget, time.Duration(max(m.RawSize, 0)/restoreExtractRate)*time.Second)
+}
+
 // restoreDownloadMargin is the room beyond a download's size the disk must
 // have free: the agent's own database and logs live on it too.
 const restoreDownloadMargin = 64 << 20
@@ -311,8 +324,8 @@ func (r *Repository) RestoreBackup(ctx context.Context, job RestoreJob) (command
 
 	// Too little time left could cut the helper short, which leaves the
 	// data in doubt: refuse before anything is changed.
-	if dl, ok := ctx.Deadline(); ok && time.Until(dl) < restoreMinBudget {
-		return resp, fmt.Errorf("too little time is left to restore safely (%s; at least %s are needed): nothing was changed", time.Until(dl).Round(time.Second), restoreMinBudget)
+	if dl, ok := ctx.Deadline(); ok && time.Until(dl) < restoreNeeds(m) {
+		return resp, fmt.Errorf("too little time is left to restore safely (%s; at least %s are needed): nothing was changed", time.Until(dl).Round(time.Second), restoreNeeds(m))
 	}
 	end, err := r.beginRestore(job.AppID)
 	if err != nil {
@@ -369,6 +382,16 @@ func (r *Repository) RestoreBackup(ctx context.Context, job RestoreJob) (command
 		resp.Warnings = append(resp.Warnings, "the pre-restore copy: "+w)
 	}
 
+	// The pre-restore copy (and the download) may have used the time the
+	// helper needs: a helper cut short by the budget leaves the data in
+	// doubt, so look again, now that nothing has been replaced.
+	if dl, ok := ctx.Deadline(); ok && time.Until(dl) < restoreNeeds(m) {
+		note := ""
+		if resp.PreRestorePoint != "" {
+			note = "; the pre-restore copy " + resp.PreRestorePoint + " was kept"
+		}
+		return resp, fail(fmt.Errorf("too little time is left after the pre-restore copy to put the data back safely (%s; at least %s are needed): nothing was changed%s", time.Until(dl).Round(time.Second), restoreNeeds(m), note))
+	}
 	r.updateRestoreMark(job.AppID, func(m *RestoreMark) {
 		m.Phase, m.PreRestorePoint = restorePhaseHelper, resp.PreRestorePoint
 	})
@@ -400,6 +423,10 @@ func (r *Repository) RestoreBackup(ctx context.Context, job RestoreJob) (command
 		return resp, fail(fmt.Errorf("the restore failed, the app's data is unchanged: %s", reason(res, stderr, exit)))
 	case notStarted:
 		return resp, fail(fmt.Errorf("the restore could not start, the app's data is unchanged: %w", err))
+	case err != nil && ctx.Err() != nil && b.Type == recipe.TypeFiles && !helper.Swapping(stderr):
+		// Stopped from outside before the first rename into place: the
+		// helper had only written into its own temp folders.
+		return resp, fail(fmt.Errorf("the restore was stopped (%w) before it replaced any data, so the app's data is unchanged", err))
 	case err != nil && b.Type == recipe.TypeSQLite:
 		// Stopped from outside (its time limit, the app's deletion).
 		return resp, stopped(fmt.Errorf("the restore helper was stopped (%w), so the database file may be partly replaced. The app was left stopped; %s", err, back))

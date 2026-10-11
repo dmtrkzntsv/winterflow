@@ -77,7 +77,7 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	case "restore sqlite":
 		res, err = restoreSQLiteCmd(args[2:], stdin)
 	case "restore files":
-		res, err = restoreFilesCmd(args[2:], stdin)
+		res, err = restoreFilesCmd(args[2:], stdin, stderr)
 	default:
 		return usage(stderr)
 	}

@@ -904,3 +904,97 @@ func TestRunDockerIOWithoutDocker(t *testing.T) {
 		t.Fatalf("exit %d, err %v", exit, err)
 	}
 }
+
+// setRawSize rewrites a point's manifest with another raw size.
+func (rr *restoreRepo) setRawSize(t *testing.T, id string, raw int64) {
+	t.Helper()
+	mpath := filepath.Join(rr.disk, "app-1", "media", id+".json")
+	body, err := os.ReadFile(mpath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m layout.Manifest
+	_ = json.Unmarshal(body, &m)
+	m.RawSize = raw
+	body, _ = json.Marshal(m)
+	if err := os.WriteFile(mpath, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A restore whose copy takes longer to put back than the time left is
+// refused before the app is stopped; a small one is not.
+func TestRestoreBudgetFollowsTheCopysSize(t *testing.T) {
+	rr := newRestoreRepo(t)
+	id := rr.filesPoint(t)
+	rr.setRawSize(t, id, 100<<30) // 100 GiB: hours at the assumed rate
+	ctx, cancel := context.WithTimeout(context.Background(), time.Hour)
+	defer cancel()
+	_, err := rr.restore(ctx, "media", id)
+	if err == nil || !strings.Contains(err.Error(), "too little time is left to restore safely") || !strings.Contains(err.Error(), "nothing was changed") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(rr.compose) != 0 || len(rr.restorer.calls) != 0 {
+		t.Fatalf("compose %v, helper %d", rr.compose, len(rr.restorer.calls))
+	}
+	rr.setRawSize(t, id, 5<<20)
+	if _, err := rr.restore(ctx, "media", id); err != nil {
+		t.Fatalf("a small copy: %v", err)
+	}
+}
+
+// The time is looked at again after the pre-restore copy, which may have used
+// it: nothing was replaced then, so the app is started again and the
+// pre-restore copy kept.
+func TestRestoreBudgetIsCheckedAgainAfterThePreRestoreCopy(t *testing.T) {
+	rr := newRestoreRepo(t)
+	id := rr.filesPoint(t)
+	inner := rr.runHelper
+	rr.runHelper = func(ctx context.Context, name string, args []string, out io.Writer) (int, []byte, error) {
+		time.Sleep(200 * time.Millisecond) // the pre-restore dump takes its time
+		return inner(ctx, name, args, out)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), restoreMinBudget+100*time.Millisecond)
+	defer cancel()
+	_, err := rr.restore(ctx, "media", id)
+	if err == nil || !strings.Contains(err.Error(), "too little time is left after the pre-restore copy") || !strings.Contains(err.Error(), "pre-restore copy 2026") {
+		t.Fatalf("err = %v", err)
+	}
+	if !slices.Equal(rr.compose, []string{"stop", "start"}) || len(rr.restorer.calls) != 0 {
+		t.Fatalf("compose %v, helper %d", rr.compose, len(rr.restorer.calls))
+	}
+}
+
+// A files helper stopped from outside before it printed its swapping line has
+// only written temp folders: the app is started again. After the line the
+// data may be partly replaced, and the app is left stopped.
+func TestRestoreStoppedBeforeTheSwapStartsTheAppAgain(t *testing.T) {
+	for name, tc := range map[string]struct {
+		stderr  string
+		compose []string
+		want    string
+	}{
+		"before":  {"progress\n", []string{"stop", "start"}, "before it replaced any data, so the app's data is unchanged"},
+		"during":  {helper.SwappingLine + "\n", []string{"stop", "down"}, "the paths may be partly replaced. The app was left stopped"},
+		"no line": {"", []string{"stop", "start"}, "before it replaced any data"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rr := newRestoreRepo(t)
+			id := rr.filesPoint(t)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			rr.runRestoreHelper = func(_ context.Context, _ string, _ []string, in io.Reader) (int, []byte, error) {
+				_, _ = io.Copy(io.Discard, in)
+				cancel() // the agent stops, or the time limit passes
+				return -1, []byte(tc.stderr), fmt.Errorf("stopped after its time limit: %w", ctx.Err())
+			}
+			_, err := rr.restore(ctx, "media", id)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v", err)
+			}
+			if !slices.Equal(rr.compose, tc.compose) {
+				t.Fatalf("compose calls = %v, want %v", rr.compose, tc.compose)
+			}
+		})
+	}
+}

@@ -36,6 +36,22 @@ type Result struct {
 	Error       string   `json:"error,omitempty"`
 }
 
+// SwappingLine is what a files restore prints on stderr just before its
+// first rename into place. Up to then it has only written into its own temp
+// folders, so a restore killed before this line left the app's data as it
+// was; the agent reads that from the stderr it kept (see Swapping).
+const SwappingLine = `{"phase":"swapping"}`
+
+// Swapping reports whether a helper's stderr says it began replacing data.
+func Swapping(stderr []byte) bool {
+	for _, line := range bytes.Split(stderr, []byte("\n")) {
+		if string(bytes.TrimSpace(line)) == SwappingLine {
+			return true
+		}
+	}
+	return false
+}
+
 // ParseResult reads the Result from a helper's stderr: its last non-empty
 // line. ok is false when that line is not a Result (docker failed before
 // the helper ran).

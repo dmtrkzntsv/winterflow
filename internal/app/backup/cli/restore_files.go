@@ -19,6 +19,8 @@ import (
 	"time"
 
 	"golang.org/x/sys/unix"
+
+	"winterflow/internal/infra/backup/helper"
 )
 
 // errPartial is a files restore that failed while swapping and could not put
@@ -109,7 +111,7 @@ type target struct {
 
 func (t target) display() string { return displayName(t.entry) }
 
-func restoreFilesCmd(args []string, stdin io.Reader) (Result, error) {
+func restoreFilesCmd(args []string, stdin io.Reader, stderr io.Writer) (Result, error) {
 	fs := flag.NewFlagSet("restore files", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	var roots, srcs, entries, needs, exclude list
@@ -146,7 +148,7 @@ func restoreFilesCmd(args []string, stdin io.Reader) (Result, error) {
 		}
 		need[filepath.Clean(n[:i])] += bytes
 	}
-	return restoreFiles(targets, *id, need, exclude, stdin)
+	return restoreFilesNotify(targets, *id, need, exclude, stdin, func() { fmt.Fprintln(stderr, helper.SwappingLine) })
 }
 
 // restoreFiles replaces the targets' paths with the archive read from in.
@@ -164,6 +166,13 @@ func restoreFilesCmd(args []string, stdin io.Reader) (Result, error) {
 // data then stays in .wf-restore-<id>.old/. Paths the archive doesn't hold
 // are left as they are, with a warning.
 func restoreFiles(targets []target, id string, need map[string]uint64, exclude []string, in io.Reader) (Result, error) {
+	return restoreFilesNotify(targets, id, need, exclude, in, nil)
+}
+
+// restoreFilesNotify is restoreFiles that calls swapping (if set) just
+// before the first path is moved into place: everything before it only wrote
+// into the restore's temp folders.
+func restoreFilesNotify(targets []target, id string, need map[string]uint64, exclude []string, in io.Reader, swapping func()) (Result, error) {
 	var warns warner
 	tmpName := restoreTmpPrefix + id
 	roots := map[string]string{}  // mount root -> its temp folder
@@ -223,6 +232,9 @@ func restoreFiles(targets []target, id string, need map[string]uint64, exclude [
 		if !x.seen[i] {
 			warns.add(t.display() + ": not in the copy, left as it is")
 		}
+	}
+	if swapping != nil {
+		swapping()
 	}
 	partial, err := swap(targets, roots, asides, x.seen, exclude, warns.add)
 	if err != nil {

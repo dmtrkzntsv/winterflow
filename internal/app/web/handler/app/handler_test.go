@@ -45,10 +45,12 @@ func (f *fakeAppRepo) SyncApps(context.Context, string, []model.App) error { ret
 
 // fakeServerAccess owns exactly the servers in `owned` for any user.
 type fakeServerAccess struct {
-	owned map[string]bool
+	owned  map[string]bool
+	checks int // UserOwnsServer calls
 }
 
 func (f *fakeServerAccess) UserOwnsServer(_ context.Context, _, serverID string) (bool, error) {
+	f.checks++
 	return f.owned[serverID], nil
 }
 

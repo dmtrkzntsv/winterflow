@@ -62,8 +62,17 @@ var probes = map[string]probe{
 	"POST /api/v1/app/rename-app": {valid: func(s string) call {
 		return post("/api/v1/app/rename-app", map[string]any{"server_id": s, "app_id": anApp, "name": "y"})
 	}, malformed: bad("POST", "/api/v1/app/rename-app")},
-	"GET /api/v1/domains/check": {malformed: call{Method: http.MethodGet, Path: "/api/v1/domains/check",
-		Query: url.Values{"domain": {"not a domain"}}}},
+	"GET /api/v1/domain/get-domains": {valid: func(s string) call { return get("/api/v1/domain/get-domains", sq(s)) }, malformed: bad("GET", "/api/v1/domain/get-domains")},
+	"GET /api/v1/domain/list":        {valid: func(s string) call { return get("/api/v1/domain/list", sq(s)) }, malformed: bad("GET", "/api/v1/domain/list")},
+	"POST /api/v1/domain/create": {valid: func(s string) call {
+		return call{Method: http.MethodPost, Path: "/api/v1/domain/create", Query: sq(s), Body: map[string]any{"name": "*.example.test", "tls": "off"}}
+	}, malformed: bad("POST", "/api/v1/domain/create")},
+	"POST /api/v1/domain/delete": {valid: func(s string) call {
+		return call{Method: http.MethodPost, Path: "/api/v1/domain/delete", Query: sq(s), Body: map[string]any{"name": "*.example.test"}}
+	}, malformed: bad("POST", "/api/v1/domain/delete")},
+	"GET /api/v1/domains/check": {valid: func(s string) call {
+		return get("/api/v1/domains/check", url.Values{"server_id": {s}, "domain": {"free.example.test"}})
+	}, malformed: bad("GET", "/api/v1/domains/check")},
 
 	"GET /api/v1/registry/list": {valid: func(s string) call { return get("/api/v1/registry/list", sq(s)) }, malformed: bad("GET", "/api/v1/registry/list")},
 	"POST /api/v1/registry/create": {valid: func(s string) call {

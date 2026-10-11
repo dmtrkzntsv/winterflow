@@ -29,8 +29,9 @@ type ImageTagsQuery struct {
 
 // CheckDomainQuery is the query of GET /api/v1/domains/check.
 type CheckDomainQuery struct {
-	Domain string `query:"domain" description:"Hostname to check."`
-	AppID  string `query:"app_id" description:"App being edited; its own claims don't count."`
+	ServerID string `query:"server_id" required:"true" description:"Server the hostname would be served on."`
+	Domain   string `query:"domain" description:"Hostname to check."`
+	AppID    string `query:"app_id" description:"App being edited; its own claims don't count."`
 }
 
 // Routes is the app handler's slice of the route table.
@@ -103,9 +104,33 @@ func (h *Handler) Routes(api.Guards) []api.Route {
 			Request: RenameAppRequest{}, Accepted: true, Result: command.RenameAppResponse{}, Errors: server,
 		},
 		{
+			Method: http.MethodGet, Path: "/api/v1/domain/get-domains", Handler: h.GetDomains, Auth: api.User,
+			Summary: "A server's domains from the API's index (no agent round-trip)", Tag: "domains",
+			Query: api.ServerQuery{}, Response: GetDomainsResponse{}, Errors: server,
+		},
+		{
+			Method: http.MethodGet, Path: "/api/v1/domain/list", Handler: h.ListRegisteredDomains, Auth: api.User,
+			Summary: "List the domains on a server, with the apps using each", Tag: "domains",
+			Query: api.ServerQuery{}, Accepted: true, Result: command.ListDomainsResponse{}, Errors: server,
+		},
+		{
+			Method: http.MethodPost, Path: "/api/v1/domain/create", Handler: h.CreateDomain, Auth: api.User,
+			Summary: "Add a domain, or replace its TLS mode or certificate", Tag: "domains",
+			Description: "In certificate mode `certificate` is the PEM chain and `key` the PEM private key " +
+				"ECIES-encrypted with the server's public key (GET /api/v1/server/get-public-key).",
+			Query: api.ServerQuery{}, Request: command.CreateDomainRequest{},
+			Accepted: true, Result: command.CreateDomainResponse{}, Errors: server,
+		},
+		{
+			Method: http.MethodPost, Path: "/api/v1/domain/delete", Handler: h.DeleteDomain, Auth: api.User,
+			Summary: "Remove a domain no app uses", Tag: "domains",
+			Query: api.ServerQuery{}, Request: command.DeleteDomainRequest{},
+			Accepted: true, Result: command.DeleteDomainResponse{}, Errors: server,
+		},
+		{
 			Method: http.MethodGet, Path: "/api/v1/domains/check", Handler: h.CheckDomain, Auth: api.User,
-			Summary: "Check whether a hostname is free", Tag: "apps",
-			Query: CheckDomainQuery{}, Response: CheckDomainResponse{}, Errors: []int{http.StatusBadRequest},
+			Summary: "Check whether a hostname is free on a server", Tag: "apps",
+			Query: CheckDomainQuery{}, Response: CheckDomainResponse{}, Errors: server,
 		},
 	}
 }

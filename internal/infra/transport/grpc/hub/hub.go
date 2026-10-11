@@ -142,7 +142,7 @@ func (h *Hub) dispatchToAgent(cmd bus.CommandMessage) {
 
 	if !active {
 		h.log.Warn("command for offline/unknown agent", "agent_id", cmd.AgentID, "request_id", cmd.RequestID)
-		h.publishError(cmd.RequestID, "agent not connected")
+		h.publishError(cmd.RequestID, bus.ErrAgentNotConnected)
 		return
 	}
 

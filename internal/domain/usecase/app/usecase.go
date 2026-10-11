@@ -13,25 +13,28 @@ import (
 )
 
 type UseCase struct {
-	dispatcher port.CommandDispatcher
-	repo       port.AppRepository
-	domains    port.AppDomainRepository
-	log        *logger.Logger
+	dispatcher    port.CommandDispatcher
+	repo          port.AppRepository
+	domains       port.AppDomainRepository
+	serverDomains port.ServerDomainRepository
+	log           *logger.Logger
 }
 
 type Deps struct {
-	CommandDispatcher   port.CommandDispatcher
-	AppRepository       port.AppRepository
-	AppDomainRepository port.AppDomainRepository
-	Log                 *logger.Logger
+	CommandDispatcher      port.CommandDispatcher
+	AppRepository          port.AppRepository
+	AppDomainRepository    port.AppDomainRepository
+	ServerDomainRepository port.ServerDomainRepository
+	Log                    *logger.Logger
 }
 
 func NewUseCase(d *Deps) *UseCase {
 	return &UseCase{
-		dispatcher: d.CommandDispatcher,
-		repo:       d.AppRepository,
-		domains:    d.AppDomainRepository,
-		log:        d.Log,
+		dispatcher:    d.CommandDispatcher,
+		repo:          d.AppRepository,
+		domains:       d.AppDomainRepository,
+		serverDomains: d.ServerDomainRepository,
+		log:           d.Log,
 	}
 }
 
@@ -226,17 +229,98 @@ func (uc *UseCase) GetLogs(ctx context.Context, userID, serverID, appID string, 
 	})
 }
 
-// CheckDomain reports which app (if any) already claims a hostname — the
-// live-typing availability check behind GET /api/v1/domains/check.
-func (uc *UseCase) CheckDomain(ctx context.Context, domain, excludeAppID string) ([]model.DomainClaim, error) {
+// DomainCheck answers GET /api/v1/domains/check: the apps on the server
+// already claiming the hostname, and the registration covering it (nil when
+// none does).
+type DomainCheck struct {
+	Claims       []model.DomainClaim
+	Registration *model.RegisteredDomain
+}
+
+// ValidateCheckDomain is the syntax check of GET /api/v1/domains/check's
+// hostname (the ingress rule), wrapped in ErrIngressInvalid. The handler
+// runs it before any DB query.
+func ValidateCheckDomain(domain string) error {
 	probe := model.Ingress{Domains: []model.IngressDomain{{Domain: domain, UpstreamPort: 1}}}
 	if err := probe.Validate(); err != nil {
-		return nil, fmt.Errorf("%w: %v", model.ErrIngressInvalid, err)
+		return fmt.Errorf("%w: %v", model.ErrIngressInvalid, err)
 	}
+	return nil
+}
+
+// CheckDomain reports whether a hostname (already validated with
+// ValidateCheckDomain) is free and covered on serverID — the live-typing
+// check behind GET /api/v1/domains/check. A hostname is unique per server
+// only.
+func (uc *UseCase) CheckDomain(ctx context.Context, serverID, domain, excludeAppID string) (DomainCheck, error) {
+	var out DomainCheck
+	if uc.serverDomains != nil {
+		regs, err := uc.serverDomains.ListForServer(ctx, serverID)
+		if err != nil {
+			return DomainCheck{}, err
+		}
+		if win, ok := model.Winning(regs, domain); ok {
+			out.Registration = &win
+		}
+	}
+	if uc.domains != nil {
+		claims, err := uc.domains.FindClaims(ctx, serverID, []string{domain}, excludeAppID)
+		if err != nil {
+			return DomainCheck{}, err
+		}
+		out.Claims = claims
+	}
+	return out, nil
+}
+
+// requireCovered refuses an ingress hostname no domain registered on
+// serverID covers (the agent drops uncovered hosts again in BuildConfig).
+// Hostnames appID already holds are grandfathered: the registration index
+// may still be empty right after an upgrade until the agent's first
+// domain.list, and domain.delete is refused while an app uses a covered
+// hostname. They are looked up only once a host turns out uncovered.
+func (uc *UseCase) requireCovered(ctx context.Context, serverID, appID string, ing *model.Ingress) error {
+	if uc.serverDomains == nil {
+		return nil
+	}
+	regs, err := uc.serverDomains.ListForServer(ctx, serverID)
+	if err != nil {
+		uc.log.Error("SaveApp: list registered domains", "error", err, "server_id", serverID)
+		return err
+	}
+	var held map[string]bool
+	for _, host := range ing.DomainNames() {
+		if _, ok := model.Winning(regs, host); ok {
+			continue
+		}
+		if held == nil {
+			if held, err = uc.heldHostnames(ctx, serverID, appID); err != nil {
+				uc.log.Error("SaveApp: list held hostnames", "error", err, "app_id", appID)
+				return err
+			}
+		}
+		if !held[host] {
+			return model.NotCoveredError(host)
+		}
+	}
+	return nil
+}
+
+// heldHostnames is the set of hostnames appID holds on serverID per the
+// app_domains index (empty for a new app or without the index).
+func (uc *UseCase) heldHostnames(ctx context.Context, serverID, appID string) (map[string]bool, error) {
+	held := map[string]bool{}
 	if uc.domains == nil {
-		return nil, nil
+		return held, nil
 	}
-	return uc.domains.FindClaims(ctx, []string{domain}, excludeAppID)
+	hosts, err := uc.domains.ListForApp(ctx, serverID, appID)
+	if err != nil {
+		return nil, err
+	}
+	for _, h := range hosts {
+		held[h] = true
+	}
+	return held, nil
 }
 
 // SaveApp dispatches an app.save command to the server's agent and returns
@@ -273,8 +357,11 @@ func (uc *UseCase) SaveApp(ctx context.Context, userID, serverID string, app mod
 		if err := ing.Validate(); err != nil {
 			return "", fmt.Errorf("%w: %v", model.ErrIngressInvalid, err)
 		}
+		if err := uc.requireCovered(ctx, serverID, app.ID, ing); err != nil {
+			return "", err
+		}
 		if uc.domains != nil {
-			claims, err := uc.domains.FindClaims(ctx, ing.DomainNames(), app.ID)
+			claims, err := uc.domains.FindClaims(ctx, serverID, ing.DomainNames(), app.ID)
 			if err != nil {
 				uc.log.Error("SaveApp: find domain claims", "error", err, "app_id", app.ID)
 				return "", err
@@ -282,7 +369,7 @@ func (uc *UseCase) SaveApp(ctx context.Context, userID, serverID string, app mod
 			if len(claims) > 0 {
 				var parts []string
 				for _, c := range claims {
-					parts = append(parts, fmt.Sprintf("%s is already used by app %q on server %q", c.Domain, c.AppName, c.ServerName))
+					parts = append(parts, fmt.Sprintf("%s is already used by app %q on this server", c.Domain, c.AppName))
 				}
 				return "", fmt.Errorf("%w: %s", model.ErrDomainTaken, strings.Join(parts, "; "))
 			}

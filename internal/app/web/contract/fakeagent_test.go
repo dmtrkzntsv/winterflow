@@ -3,6 +3,7 @@ package contract_test
 import (
 	"context"
 	"encoding/json"
+	"sort"
 	"sync"
 	"testing"
 
@@ -38,10 +39,60 @@ type fakeAgent struct {
 	mu        sync.Mutex
 	overrides map[command.Type]script
 	calls     []received
+	// domains is each agent's registry (agentID -> name -> domain): the
+	// domain.* defaults read and write it, so a list after a create sees it.
+	domains map[string]map[string]command.Domain
 }
 
 func newFakeAgent() *fakeAgent {
-	return &fakeAgent{overrides: map[command.Type]script{}}
+	return &fakeAgent{overrides: map[command.Type]script{}, domains: map[string]map[string]command.Domain{}}
+}
+
+// register puts a domain straight into agentID's registry, the way the
+// agent's upgrade path seeds one without any API call.
+func (a *fakeAgent) register(agentID string, d command.Domain) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.domains[agentID] == nil {
+		a.domains[agentID] = map[string]command.Domain{}
+	}
+	if d.Apps == nil {
+		d.Apps = []string{}
+	}
+	a.domains[agentID][d.Name] = d
+}
+
+// domainScript answers domain.* from agentID's registry.
+func (a *fakeAgent) domainScript(typ command.Type, agentID string) (script, bool) {
+	switch typ {
+	case command.TypeDomainList:
+		return func(json.RawMessage) reply {
+			a.mu.Lock()
+			defer a.mu.Unlock()
+			out := []command.Domain{}
+			for _, d := range a.domains[agentID] {
+				out = append(out, d)
+			}
+			sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+			return reply{Payload: command.ListDomainsResponse{Domains: out}}
+		}, true
+	case command.TypeDomainCreate:
+		return func(raw json.RawMessage) reply {
+			in := decode[command.CreateDomainRequest](raw)
+			d := command.Domain{RegisteredDomain: model.RegisteredDomain{Name: in.Name, TLS: in.TLS}, Apps: []string{}}
+			a.register(agentID, d)
+			return reply{Payload: command.CreateDomainResponse{Domain: d}}
+		}, true
+	case command.TypeDomainDelete:
+		return func(raw json.RawMessage) reply {
+			in := decode[command.DeleteDomainRequest](raw)
+			a.mu.Lock()
+			delete(a.domains[agentID], in.Name)
+			a.mu.Unlock()
+			return reply{Payload: command.DeleteDomainResponse{Name: in.Name}}
+		}, true
+	}
+	return nil, false
 }
 
 // on overrides the answer for typ for the rest of the test.
@@ -89,7 +140,11 @@ func (a *fakeAgent) Dispatch(_ context.Context, req *proto.RequestEnvelope) *pro
 	s, ok := a.overrides[typ]
 	a.mu.Unlock()
 	if !ok {
-		s = defaultScript(typ)
+		if ds, isDomain := a.domainScript(typ, agentID); isDomain {
+			s = ds
+		} else {
+			s = defaultScript(typ)
+		}
 	}
 	r := s(req.Payload)
 	code, detail, body := proto.ResponseCode_RESPONSE_CODE_SUCCESS, "ok", r.Payload
@@ -219,6 +274,7 @@ func TestFakeAgentAnswersEveryCommandType(t *testing.T) {
 		command.TypeRegistryCreate, command.TypeRegistryDelete, command.TypeNetworkList,
 		command.TypeNetworkCreate, command.TypeNetworkDelete, command.TypeVolumeList,
 		command.TypeVolumeCreate, command.TypeVolumeDelete, command.TypeImageTags, command.TypeAgentUpdate,
+		command.TypeDomainList, command.TypeDomainCreate, command.TypeDomainDelete,
 	} {
 		resp := a.Dispatch(context.Background(), &proto.RequestEnvelope{Type: string(typ), RequestId: "r", Payload: []byte(`{}`)})
 		if resp.Base.ResponseCode != proto.ResponseCode_RESPONSE_CODE_SUCCESS {

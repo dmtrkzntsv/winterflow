@@ -396,3 +396,16 @@ func TestGetIngressACMEEmail(t *testing.T) {
 		t.Fatalf("GetIngressACMEEmail() = %q, want ops@example.com", got)
 	}
 }
+
+func TestGetIngressTrustedProxies(t *testing.T) {
+	c := NewServerConfig("standalone")
+	unsetenv(t, "INGRESS_TRUSTED_PROXIES")
+	if got := c.GetIngressTrustedProxies(); len(got) != 0 {
+		t.Fatalf("unset = %v, want none", got)
+	}
+	t.Setenv("INGRESS_TRUSTED_PROXIES", " 172.16.0.0/12, ,10.0.0.1,")
+	got := c.GetIngressTrustedProxies()
+	if len(got) != 2 || got[0] != "172.16.0.0/12" || got[1] != "10.0.0.1" {
+		t.Fatalf("GetIngressTrustedProxies() = %q", got)
+	}
+}

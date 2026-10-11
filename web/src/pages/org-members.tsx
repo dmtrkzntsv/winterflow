@@ -4,6 +4,7 @@ import { toast } from "sonner";
 
 import { useAppBreadcrumbs } from "@/layouts/use-app-layout";
 import { apiBaseUrl } from "@/config";
+import { readApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -50,11 +51,9 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
     credentials: "include",
     ...init,
   });
-  const body = await res.json().catch(() => null);
-  if (!res.ok || !body?.success) {
-    throw new Error(body?.message ?? `Request failed: ${res.status}`);
-  }
-  return body.data as T;
+  if (!res.ok) throw await readApiError(res);
+  const body = (await res.json()) as { data: T };
+  return body.data;
 }
 
 function postJSON<T>(path: string, payload: unknown): Promise<T> {

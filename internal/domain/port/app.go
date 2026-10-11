@@ -2,6 +2,7 @@ package port
 
 import (
 	"context"
+	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
 )
 
@@ -24,10 +25,11 @@ type AppRepository interface {
 // claims. The repository reconciles app config blobs via ReplaceForApp or
 // ReplaceForServer; external APIs query for domain conflicts via FindClaims.
 type AppDomainRepository interface {
-	// FindClaims returns rows holding any of the given domains, excluding the
-	// app being saved (its own claims are not conflicts). Claims carry app and
-	// server names for the error message.
-	FindClaims(ctx context.Context, domains []string, excludeAppID string) ([]model.DomainClaim, error)
+	// FindClaims returns rows on serverID holding any of the given domains,
+	// excluding the app being saved (its own claims are not conflicts). A
+	// hostname is unique per server, so other servers' claims never count.
+	// Claims carry the app name for the error message.
+	FindClaims(ctx context.Context, serverID string, domains []string, excludeAppID string) ([]model.DomainClaim, error)
 	// ReplaceForApp makes the index mirror the app's ingress: delete the
 	// app's rows, insert the new set, one transaction. nil ingress = no-op
 	// (old clients); empty ingress = rows removed.
@@ -38,6 +40,23 @@ type AppDomainRepository interface {
 	ReplaceForServer(ctx context.Context, serverID string, apps []model.App) error
 	// ListForServer returns display rows grouped by app id.
 	ListForServer(ctx context.Context, serverID string) (map[string][]model.AppDomainInfo, error)
+	// ListForApp returns the hostnames appID holds on serverID.
+	ListForApp(ctx context.Context, serverID, appID string) ([]string, error)
+}
+
+// ServerDomainRepository is the DB-backed index of each server's domain
+// registrations (the agent's domains/ dir is the source of truth): what
+// save-app checks ingress hostnames against.
+type ServerDomainRepository interface {
+	// ListForServer returns the server's registrations sorted by name.
+	ListForServer(ctx context.Context, serverID string) ([]model.RegisteredDomain, error)
+	// Upsert records a registration the agent confirmed creating.
+	Upsert(ctx context.Context, serverID string, d model.RegisteredDomain) error
+	// Delete drops a registration the agent confirmed deleting.
+	Delete(ctx context.Context, serverID, name string) error
+	// ReplaceForServer makes the index mirror a domain.list answer; an
+	// unchanged answer writes nothing.
+	ReplaceForServer(ctx context.Context, serverID string, ds []model.RegisteredDomain) error
 }
 
 // IngressManager owns the embedded reverse proxy. Implementations must be
@@ -50,4 +69,13 @@ type IngressManager interface {
 	Reload(ctx context.Context) []string
 	// Enabled reports whether the proxy bound its ports at startup.
 	Enabled() bool
+	// ListDomains reports the domain registrations with the apps using
+	// each; it works with ingress disabled.
+	ListDomains(ctx context.Context) ([]command.Domain, error)
+	// CreateDomain registers or replaces a name (certificate mode: the
+	// ECIES-encrypted key is decrypted and the pair checked first).
+	CreateDomain(ctx context.Context, in command.CreateDomainRequest) (command.Domain, error)
+	// DeleteDomain removes a registration unless an app has a hostname
+	// only that registration covers.
+	DeleteDomain(ctx context.Context, name string) error
 }

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { apiBaseUrl } from "@/config";
+import { readApiError } from "@/lib/api";
 
 export type ApiToken = {
   token_id: string;
@@ -24,11 +25,9 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
     credentials: "include",
     ...init,
   });
-  const body = await res.json().catch(() => null);
-  if (!res.ok || !body?.success) {
-    throw new Error(body?.message ?? `Request failed: ${res.status}`);
-  }
-  return body.data as T;
+  if (!res.ok) throw await readApiError(res);
+  const body = (await res.json()) as { data: T };
+  return body.data;
 }
 
 // useTokens loads and mutates the user's personal access tokens. All three

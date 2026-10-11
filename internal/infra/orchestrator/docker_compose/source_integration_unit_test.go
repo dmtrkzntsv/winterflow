@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"winterflow/internal/domain/command"
+	"winterflow/pkg/crypto/cryptotest"
 )
 
 // timeSleepShim keeps the polling test readable.
@@ -129,7 +130,7 @@ func TestSourceTokenStoredEncryptedAndMasked(t *testing.T) {
 	commit("compose.yml", "services: {}\n")
 
 	p := sourcePayload(up, "")
-	p.Source.Token = []byte(eciesEncrypt(t, pub, "gh-token-plaintext"))
+	p.Source.Token = []byte(cryptotest.Encrypt(t, pub, "gh-token-plaintext"))
 	if _, err := r.saveWithoutDeploy(p); err != nil {
 		t.Fatal(err)
 	}

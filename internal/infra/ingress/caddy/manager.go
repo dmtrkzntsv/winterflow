@@ -2,6 +2,7 @@ package caddy
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"sync"
 
 	"winterflow/internal/domain/model"
+	"winterflow/internal/infra/ingress/domains"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
 
@@ -34,15 +36,20 @@ var caddyMu sync.Mutex
 // Manager owns the embedded Caddy instance. Ingress failures degrade ingress
 // only: Start never fails the agent, Reload never fails a deploy.
 type Manager struct {
-	cfg *config.ServerConfig
-	log *logger.Logger
+	cfg     *config.ServerConfig
+	log     *logger.Logger
+	domains *domains.Store
 
 	mu      sync.Mutex
 	enabled bool
 }
 
 func NewManager(cfg *config.ServerConfig, log *logger.Logger) *Manager {
-	return &Manager{cfg: cfg, log: log}
+	return &Manager{
+		cfg:     cfg,
+		log:     log,
+		domains: domains.NewStore(filepath.Join(cfg.GetAgentDataDir(), "domains")),
+	}
 }
 
 func (m *Manager) options() Options {
@@ -54,6 +61,7 @@ func (m *Manager) options() Options {
 		LogLevel:       m.cfg.GetLogLevel(),
 		RateLimitRPS:   m.cfg.GetIngressRateLimitRPS(),
 		RateLimitBurst: m.cfg.GetIngressRateLimitBurst(),
+		TrustedProxies: m.cfg.GetIngressTrustedProxies(),
 	}
 }
 
@@ -61,13 +69,24 @@ func (m *Manager) options() Options {
 // parsed ingress fragments. Unreadable/unparseable apps are skipped with a
 // warning — one broken app must not stop the scan.
 func (m *Manager) scanApps() ([]AppIngress, []string) {
+	apps, warnings, err := m.readApps()
+	if err != nil {
+		m.log.Warn("ingress: scan apps-data", "error", err)
+	}
+	return apps, warnings
+}
+
+// readApps is scanApps that reports an unreadable apps-data dir as an error
+// (a missing one is simply no apps), for callers that must not mistake it
+// for an install without apps.
+func (m *Manager) readApps() ([]AppIngress, []string, error) {
 	appsDir := m.cfg.GetAppsDataDir()
 	entries, err := os.ReadDir(appsDir)
 	if err != nil {
-		if !os.IsNotExist(err) {
-			m.log.Warn("ingress: scan apps-data", "error", err)
+		if os.IsNotExist(err) {
+			return nil, nil, nil
 		}
-		return nil, nil
+		return nil, nil, err
 	}
 	var out []AppIngress
 	var warnings []string
@@ -77,10 +96,13 @@ func (m *Manager) scanApps() ([]AppIngress, []string) {
 		}
 		appID := e.Name()
 		raw, err := os.ReadFile(filepath.Join(appsDir, appID, ".winterflow", "config.json"))
-		if err != nil {
+		if os.IsNotExist(err) {
 			continue // app without a committed config yet
 		}
-		ing, err := model.ParseIngress(raw)
+		var ing *model.Ingress
+		if err == nil {
+			ing, err = model.ParseIngress(raw)
+		}
 		if err != nil {
 			warnings = append(warnings, "app "+appID+": unreadable config, ingress skipped: "+err.Error())
 			continue
@@ -88,15 +110,25 @@ func (m *Manager) scanApps() ([]AppIngress, []string) {
 		if ing == nil {
 			continue
 		}
-		out = append(out, AppIngress{AppID: appID, Ingress: *ing})
+		var meta struct {
+			Name string `json:"name"`
+		}
+		_ = json.Unmarshal(raw, &meta) // ParseIngress already proved it is JSON
+		out = append(out, AppIngress{AppID: appID, Name: meta.Name, Ingress: *ing})
 	}
-	return out, warnings
+	return out, warnings, nil
 }
 
 func (m *Manager) buildConfig() ([]byte, []string) {
-	apps, scanWarnings := m.scanApps()
-	cfg, buildWarnings, err := BuildConfig(apps, m.options())
-	warnings := append(scanWarnings, buildWarnings...)
+	apps, warnings := m.scanApps()
+	regs, err := m.domains.List()
+	if err != nil {
+		// Unreadable domains dir: no registration covers anything, so
+		// every host is excluded (fail closed) and the warning says why.
+		warnings = append(warnings, "ingress: "+err.Error())
+	}
+	cfg, buildWarnings, err := BuildConfig(apps, regs, m.options())
+	warnings = append(warnings, buildWarnings...)
 	if err != nil {
 		// Marshal failure of our own structs: effectively impossible, but
 		// degrade rather than propagate.
@@ -114,6 +146,10 @@ func (m *Manager) buildConfig() ([]byte, []string) {
 func (m *Manager) Start(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	// Before the enabled check: an install that turns ingress on later
+	// still finds its old hostnames registered.
+	m.seedDomains()
 
 	if !m.cfg.IsIngressEnabled() {
 		m.log.Info("ingress disabled by config (INGRESS_ENABLED=false); its ports are left to another proxy",
@@ -172,8 +208,10 @@ func (m *Manager) Stop() {
 
 // Reload rebuilds from disk and hot-swaps the config. On a load failure the
 // previous config keeps serving and the error is returned as a warning for
-// the triggering command's response.
-func (m *Manager) Reload(ctx context.Context) []string {
+// the triggering command's response. Caddy skips a load whose JSON is
+// unchanged; a replaced certificate still changes it, since certificate
+// files are named by their content (see package domains).
+func (m *Manager) Reload(context.Context) []string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if !m.enabled {

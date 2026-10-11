@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"winterflow/internal/domain/command"
+	"winterflow/internal/domain/model"
 	dockercompose "winterflow/internal/infra/orchestrator/docker_compose"
 	"winterflow/internal/infra/transport/grpc/proto"
 	"winterflow/pkg/config"
@@ -26,14 +27,37 @@ func newTestDispatcher(t *testing.T) *Dispatcher {
 }
 
 // fakeIngress is a minimal port.IngressManager test double: it counts reloads
-// and returns canned warnings, standing in for the real Caddy manager.
+// and returns canned warnings, standing in for the real Caddy manager. Its
+// domain methods record calls and answer from fields.
 type fakeIngress struct {
 	reloads  int
 	warnings []string
+
+	domains   []command.Domain
+	domainErr error // returned by CreateDomain and DeleteDomain when set
+	created   []command.CreateDomainRequest
+	deleted   []string
 }
 
-func (f *fakeIngress) Reload(_ context.Context) []string { f.reloads++; return f.warnings }
-func (f *fakeIngress) Enabled() bool                     { return true }
+func (f *fakeIngress) Reload(context.Context) []string {
+	f.reloads++
+	return f.warnings
+}
+func (f *fakeIngress) Enabled() bool { return true }
+func (f *fakeIngress) ListDomains(context.Context) ([]command.Domain, error) {
+	return f.domains, nil
+}
+func (f *fakeIngress) CreateDomain(_ context.Context, in command.CreateDomainRequest) (command.Domain, error) {
+	f.created = append(f.created, in)
+	if f.domainErr != nil {
+		return command.Domain{}, f.domainErr
+	}
+	return command.Domain{RegisteredDomain: model.RegisteredDomain{Name: in.Name, TLS: in.TLS}, Apps: []string{}}, nil
+}
+func (f *fakeIngress) DeleteDomain(_ context.Context, name string) error {
+	f.deleted = append(f.deleted, name)
+	return f.domainErr
+}
 
 func envelope(typ string, payload []byte) *proto.RequestEnvelope {
 	return &proto.RequestEnvelope{
@@ -72,6 +96,8 @@ func TestDispatchMalformedPayloadsReturnCorrelatedErrors(t *testing.T) {
 		command.TypeVolumeCreate,
 		command.TypeVolumeDelete,
 		command.TypeAgentUpdate,
+		command.TypeDomainCreate,
+		command.TypeDomainDelete,
 	} {
 		resp := d.Dispatch(context.Background(), envelope(string(typ), bad))
 		if resp.Base.ResponseCode == proto.ResponseCode_RESPONSE_CODE_SUCCESS {

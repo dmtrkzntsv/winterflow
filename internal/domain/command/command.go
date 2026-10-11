@@ -49,6 +49,11 @@ const (
 	TypeVolumeCreate Type = "volume.create"
 	TypeVolumeDelete Type = "volume.delete"
 
+	// Domain registrations (ingress names + TLS mode).
+	TypeDomainList   Type = "domain.list"
+	TypeDomainCreate Type = "domain.create"
+	TypeDomainDelete Type = "domain.delete"
+
 	// Container images.
 	TypeImageTags Type = "image.tags" // list available registry tags for an image
 

@@ -228,6 +228,21 @@ func (c *ServerConfig) GetIngressRateLimitBurst() int {
 	return 100
 }
 
+// GetIngressTrustedProxies lists the proxies (comma-separated CIDRs or IPs in
+// INGRESS_TRUSTED_PROXIES, default none) whose CF-Connecting-IP /
+// X-Forwarded-For headers the ingress believes (Caddy's trusted_proxies).
+// Without them every request behind a tunnel or CDN shares the proxy's IP —
+// and one throttle bucket.
+func (c *ServerConfig) GetIngressTrustedProxies() []string {
+	var out []string
+	for _, v := range strings.Split(os.Getenv("INGRESS_TRUSTED_PROXIES"), ",") {
+		if v = strings.TrimSpace(v); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
 func (c *ServerConfig) GetHubCASubject() string {
 	return os.Getenv("HUB_CA_SUBJECT")
 }

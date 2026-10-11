@@ -132,11 +132,7 @@ func (rl *RateLimit) ServeHTTP(w http.ResponseWriter, r *http.Request, next cadd
 	if rl.RPS <= 0 {
 		return next.ServeHTTP(w, r)
 	}
-	ip, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		ip = r.RemoteAddr
-	}
-	lim := rl.limiterFor(ip, time.Now())
+	lim := rl.limiterFor(clientIP(r), time.Now())
 	if lim != nil && !lim.Allow() {
 		w.Header().Set("Retry-After", strconv.Itoa(1))
 		w.WriteHeader(http.StatusTooManyRequests)
@@ -144,6 +140,20 @@ func (rl *RateLimit) ServeHTTP(w http.ResponseWriter, r *http.Request, next cadd
 		return nil
 	}
 	return next.ServeHTTP(w, r)
+}
+
+// clientIP is the address a request is throttled under: Caddy's client_ip
+// var — the TCP peer, or the client a trusted proxy names in its headers
+// (the server's trusted_proxies, see BuildConfig) — else the TCP peer.
+func clientIP(r *http.Request) string {
+	if ip, ok := caddyhttp.GetVar(r.Context(), caddyhttp.ClientIPVarKey).(string); ok && ip != "" {
+		return ip
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }
 
 // Interface guards.

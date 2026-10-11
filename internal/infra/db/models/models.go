@@ -160,12 +160,12 @@ type App struct {
 type AppDomain struct {
 	bun.BaseModel `bun:"table:app_domains"`
 
-	// Domain is the PK: lowercased FQDN. The PK is the global uniqueness
-	// constraint that makes cross-app/cross-server conflicts impossible to
-	// persist, not just impolite.
+	// (ServerID, Domain) is the PK: a hostname is unique per server, so two
+	// apps on one agent can never both persist it, while apps on different
+	// servers may share it (DNS round robin).
 	Domain       string         `bun:"domain,pk" json:"domain"`
 	AppID        string         `bun:"app_id,notnull,type:char(36)" json:"app_id"`
-	ServerID     string         `bun:"server_id,notnull,type:char(36)" json:"server_id"`
+	ServerID     string         `bun:"server_id,pk,type:char(36)" json:"server_id"`
 	Kind         string         `bun:"kind,notnull" json:"kind"` // "route" | "redirect"
 	SSL          bool           `bun:"ssl,notnull" json:"ssl"`
 	UpstreamPort int            `bun:"upstream_port,notnull,default:0" json:"upstream_port"` // routes only
@@ -175,4 +175,17 @@ type AppDomain struct {
 
 	App    *App    `bun:"rel:belongs-to,join:app_id=app_id"`
 	Server *Server `bun:"rel:belongs-to,join:server_id=server_id"`
+}
+
+// ServerDomain is one row of the server_domains index: a domain registered on
+// an agent, mirrored from domain.list / domain.create / domain.delete.
+type ServerDomain struct {
+	bun.BaseModel `bun:"table:server_domains"`
+
+	ServerID  string          `bun:"server_id,pk" json:"server_id"`
+	Name      string          `bun:"name,pk" json:"name"`
+	TLS       string          `bun:"tls,notnull" json:"tls"`
+	NotAfter  *types.DateTime `bun:"not_after,nullzero" json:"not_after"`
+	Issuer    string          `bun:"issuer,notnull" json:"issuer"`
+	UpdatedAt types.DateTime  `bun:"updated_at,notnull" json:"updated_at"`
 }

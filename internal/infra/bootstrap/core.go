@@ -25,23 +25,25 @@ func WireCore(ctx context.Context, b bus.Bus, dbconn *db.BunConnection, cfg *con
 	serverRepo := repository.NewDbServerRepository(dbconn, log)
 	appRepo := repository.NewDbAppRepository(dbconn, log)
 	appDomainRepo := repository.NewDbAppDomainRepository(dbconn, log)
+	serverDomainRepo := repository.NewDbServerDomainRepository(dbconn, log)
 
 	nm := notificationsvc.NewNotificationManager(log)
 	dispatcher := dispatch.NewManager(b, nm, cfg, log)
 	statusCache := status.NewCache(statusTTL)
 
 	startResponseSubscriber(ctx, b, dispatcher, cfg, log)
-	startEventsSubscriber(ctx, b, statusCache, serverRepo, nm, cfg, log)
+	startEventsSubscriber(ctx, b, statusCache, serverRepo, nm, cfg, log, newDomainSync(ctx, dispatcher, serverDomainRepo, log))
 
 	return &Deps{
-		Log:                 log,
-		Cfg:                 cfg,
-		UserService:         userRepo,
-		ServerRepository:    serverRepo,
-		AppRepository:       appRepo,
-		AppDomainRepository: appDomainRepo,
-		CommandDispatcher:   dispatcher,
-		NotificationManager: nm,
-		StatusCache:         statusCache,
+		Log:                    log,
+		Cfg:                    cfg,
+		UserService:            userRepo,
+		ServerRepository:       serverRepo,
+		AppRepository:          appRepo,
+		AppDomainRepository:    appDomainRepo,
+		ServerDomainRepository: serverDomainRepo,
+		CommandDispatcher:      dispatcher,
+		NotificationManager:    nm,
+		StatusCache:            statusCache,
 	}, serverRepo
 }

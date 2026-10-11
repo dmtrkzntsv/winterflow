@@ -90,12 +90,18 @@ type fakeDomainRepo struct {
 		serverID string
 		ing      *model.Ingress
 	}
-	deleted string
-	synced  string
+	deleted     string
+	synced      string
+	claimServer string // serverID of the last FindClaims
+	held        map[string][]model.AppDomainInfo
+	heldErr     error
+	claimErr    error
+	forApp      int // ListForApp calls
 }
 
-func (f *fakeDomainRepo) FindClaims(_ context.Context, _ []string, _ string) ([]model.DomainClaim, error) {
-	return f.claims, nil
+func (f *fakeDomainRepo) FindClaims(_ context.Context, serverID string, _ []string, _ string) ([]model.DomainClaim, error) {
+	f.claimServer = serverID
+	return f.claims, f.claimErr
 }
 func (f *fakeDomainRepo) ReplaceForApp(_ context.Context, appID, serverID string, ing *model.Ingress) error {
 	f.replaced.appID, f.replaced.serverID, f.replaced.ing = appID, serverID, ing
@@ -110,7 +116,15 @@ func (f *fakeDomainRepo) ReplaceForServer(_ context.Context, serverID string, _ 
 	return nil
 }
 func (f *fakeDomainRepo) ListForServer(_ context.Context, _ string) (map[string][]model.AppDomainInfo, error) {
-	return nil, nil
+	return f.held, f.heldErr
+}
+func (f *fakeDomainRepo) ListForApp(_ context.Context, _, appID string) ([]string, error) {
+	f.forApp++
+	var hosts []string
+	for _, d := range f.held[appID] {
+		hosts = append(hosts, d.Domain)
+	}
+	return hosts, f.heldErr
 }
 
 const ingressConfig = `{"name":"demo","ingress":{"domains":[{"domain":"blog.example.com","upstream_port":8088,"ssl":true}],"redirects":[]}}`
@@ -140,14 +154,17 @@ func TestSaveAppRejectsInvalidIngress(t *testing.T) {
 
 func TestSaveAppRejectsTakenDomain(t *testing.T) {
 	disp := &captureDispatcher{}
-	repo := &fakeDomainRepo{claims: []model.DomainClaim{{Domain: "blog.example.com", AppName: "Ghost", ServerName: "hetzner-1"}}}
+	repo := &fakeDomainRepo{claims: []model.DomainClaim{{Domain: "blog.example.com", AppName: "Ghost", ServerID: "s"}}}
 	uc := newTestUseCaseWithDomains(disp, repo)
 
 	_, err := uc.SaveApp(context.Background(), "u", "s", model.App{Name: "demo"}, command.AppPayload{Config: []byte(ingressConfig)}, false)
 	if !errors.Is(err, model.ErrDomainTaken) {
 		t.Fatalf("err = %v, want ErrDomainTaken", err)
 	}
-	for _, part := range []string{"blog.example.com", "Ghost", "hetzner-1"} {
+	if repo.claimServer != "s" {
+		t.Fatalf("claims looked up on server %q, want the target server s", repo.claimServer)
+	}
+	for _, part := range []string{"blog.example.com", "Ghost", "on this server"} {
 		if !strings.Contains(err.Error(), part) {
 			t.Fatalf("error %q missing %q", err, part)
 		}
@@ -230,12 +247,15 @@ func TestCheckDomain(t *testing.T) {
 	repo := &fakeDomainRepo{claims: []model.DomainClaim{{Domain: "x.example.com", AppName: "Other"}}}
 	uc := newTestUseCaseWithDomains(&captureDispatcher{}, repo)
 
-	claims, err := uc.CheckDomain(context.Background(), "x.example.com", "app-1")
-	if err != nil || len(claims) != 1 {
-		t.Fatalf("CheckDomain = %v, %v", claims, err)
+	check, err := uc.CheckDomain(context.Background(), "srv-1", "x.example.com", "app-1")
+	if err != nil || len(check.Claims) != 1 || repo.claimServer != "srv-1" || check.Registration != nil {
+		t.Fatalf("CheckDomain = %+v, %v (server %q)", check, err, repo.claimServer)
 	}
 
-	if _, err := uc.CheckDomain(context.Background(), "NOT A HOST", ""); !errors.Is(err, model.ErrIngressInvalid) {
+	if err := ValidateCheckDomain("NOT A HOST"); !errors.Is(err, model.ErrIngressInvalid) {
 		t.Fatalf("err = %v, want ErrIngressInvalid", err)
+	}
+	if err := ValidateCheckDomain("x.example.com"); err != nil {
+		t.Fatalf("valid hostname: %v", err)
 	}
 }

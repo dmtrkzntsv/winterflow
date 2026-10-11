@@ -12,11 +12,25 @@ import (
 	"strings"
 
 	"winterflow/internal/domain/model"
+	"winterflow/internal/infra/ingress/domains"
+
+	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 )
 
+// AppIngress is one app's committed ingress plus its display name (from the
+// same config.json), which names the app in the domain delete refusal.
 type AppIngress struct {
 	AppID   string
+	Name    string
 	Ingress model.Ingress
+}
+
+// label is how messages name the app: its display name, else its id.
+func (a AppIngress) label() string {
+	if a.Name != "" {
+		return a.Name
+	}
+	return a.AppID
 }
 
 type Options struct {
@@ -31,6 +45,11 @@ type Options struct {
 	// host.
 	RateLimitRPS   float64
 	RateLimitBurst int
+	// TrustedProxies (INGRESS_TRUSTED_PROXIES) are the CIDRs or IPs whose
+	// CF-Connecting-IP / X-Forwarded-For headers Caddy believes for the
+	// client IP the throttle keys on. Invalid entries are dropped with a
+	// warning (fail closed: never trusted).
+	TrustedProxies []string
 }
 
 // --- minimal typed mirror of Caddy's documented JSON config ---------------
@@ -70,7 +89,24 @@ type httpServer struct {
 	// on a small host. Durations are Caddy duration strings.
 	ReadHeaderTimeout string `json:"read_header_timeout,omitempty"`
 	IdleTimeout       string `json:"idle_timeout,omitempty"`
+	// Client IP behind trusted proxies: for a request whose TCP peer is in
+	// TrustedProxies, Caddy takes the client IP (its client_ip var, which
+	// the throttle keys on) from ClientIPHeaders, right to left, skipping
+	// trusted hops (strict); anyone else's headers are ignored.
+	TrustedProxies       *ipSource `json:"trusted_proxies,omitempty"`
+	ClientIPHeaders      []string  `json:"client_ip_headers,omitempty"`
+	TrustedProxiesStrict int       `json:"trusted_proxies_strict,omitempty"`
 }
+
+// ipSource is Caddy's http.ip_sources.static module.
+type ipSource struct {
+	Source string   `json:"source"`
+	Ranges []string `json:"ranges"`
+}
+
+// clientIPHeaders are read in this order: Cloudflare's header, then the
+// generic one.
+var clientIPHeaders = []string{"CF-Connecting-IP", "X-Forwarded-For"}
 
 type route struct {
 	Match  []matcher        `json:"match,omitempty"`
@@ -80,10 +116,24 @@ type route struct {
 type matcher struct {
 	Host []string `json:"host,omitempty"`
 	Path []string `json:"path,omitempty"`
+	// Not excludes requests any of these matcher sets match.
+	Not []matcher `json:"not,omitempty"`
 }
 
 type tlsApp struct {
-	Automation tlsAutomation `json:"automation"`
+	Automation   *tlsAutomation   `json:"automation,omitempty"`
+	Certificates *tlsCertificates `json:"certificates,omitempty"`
+}
+
+// tlsCertificates loads uploaded (certificate-mode) PEM pairs from disk.
+// Automatic HTTPS skips every name a loaded certificate covers.
+type tlsCertificates struct {
+	LoadFiles []certKeyFiles `json:"load_files"`
+}
+
+type certKeyFiles struct {
+	Certificate string `json:"certificate"`
+	Key         string `json:"key"`
 }
 
 type tlsAutomation struct {
@@ -136,12 +186,93 @@ func redirectRoute(host, path, location string, code int) route {
 	}
 }
 
-// BuildConfig merges per-app ingress fragments into one Caddy config.
-// Fragment validation failures and cross-app duplicate domains produce
-// warnings and exclusions, never errors: one app's bad routing must not take
-// down another's. Apps are processed in sorted-AppID order so duplicate
-// resolution is deterministic.
-func BuildConfig(apps []AppIngress, opts Options) ([]byte, []string, error) {
+// notFoundRoute answers 404 for every host under a registration that no app
+// route claimed (it sits after all app routes on its server).
+func notFoundRoute(m matcher) route {
+	return route{
+		Match: []matcher{m},
+		Handle: []map[string]any{{
+			"handler":     "static_response",
+			"status_code": "404",
+			"headers":     http.Header{"Content-Type": []string{"text/plain; charset=utf-8"}},
+			"body":        "404 not found: no app is served on this hostname\n",
+		}},
+	}
+}
+
+// catchAllRoutes are the 404 routes for hosts no app claims: one per off
+// registration (HTTP server) and per certificate registration (HTTPS server,
+// where the loaded certificate completes the handshake first). Auto
+// registrations get none — an unknown host there has no certificate, so its
+// handshake fails before any route could answer. A wildcard's catch-all
+// leaves out the exact registrations under it: those win their host and may
+// sit on the other server.
+func catchAllRoutes(regs []domains.Registration) (httpRoutes, httpsRoutes []route) {
+	for _, r := range regs {
+		if r.TLS == model.DomainTLSAuto {
+			continue
+		}
+		m := matcher{Host: []string{r.Name}}
+		if model.IsWildcardDomain(r.Name) {
+			var exact []string
+			for _, o := range regs {
+				if !model.IsWildcardDomain(o.Name) && model.DomainCovers(r.Name, o.Name) {
+					exact = append(exact, o.Name)
+				}
+			}
+			if len(exact) > 0 {
+				m.Not = []matcher{{Host: exact}}
+			}
+		}
+		if r.TLS == model.DomainTLSOff {
+			httpRoutes = append(httpRoutes, notFoundRoute(m))
+		} else {
+			httpsRoutes = append(httpsRoutes, notFoundRoute(m))
+		}
+	}
+	return httpRoutes, httpsRoutes
+}
+
+// throttle is the predefined rate-limit route: non-terminal, first on both
+// servers, passing allowed requests through to the routes below. ok is
+// false when it is disabled (0 rps).
+func throttle(opts Options) (rt route, ok bool) {
+	if opts.RateLimitRPS <= 0 {
+		return route{}, false
+	}
+	return route{Handle: []map[string]any{{
+		"handler": "winterflow_rate_limit",
+		"rps":     opts.RateLimitRPS,
+		"burst":   opts.RateLimitBurst,
+	}}}, true
+}
+
+// trustedRanges splits INGRESS_TRUSTED_PROXIES entries into the CIDRs/IPs
+// Caddy accepts (normalized to prefixes) and the ones it would reject.
+func trustedRanges(entries []string) (valid, bad []string) {
+	for _, e := range entries {
+		e = strings.TrimSpace(e)
+		if e == "" {
+			continue
+		}
+		if p, err := caddyhttp.CIDRExpressionToPrefix(e); err == nil {
+			valid = append(valid, p.Masked().String())
+		} else {
+			bad = append(bad, e)
+		}
+	}
+	return valid, bad
+}
+
+// BuildConfig merges per-app ingress fragments into one Caddy config, placing
+// each hostname by the TLS mode of the registration that wins it (exact over
+// wildcard): auto and certificate on the HTTPS server, off on the HTTP
+// server; only auto hosts are ACME subjects. A hostname no registration
+// covers is excluded with a warning (fail closed). Fragment validation
+// failures and cross-app duplicates are warnings too, never errors: one
+// app's bad routing must not take down another's. Apps are processed in
+// sorted-AppID order so duplicate resolution is deterministic.
+func BuildConfig(apps []AppIngress, regs []domains.Registration, opts Options) ([]byte, []string, error) {
 	httpPort, httpsPort := opts.HTTPPort, opts.HTTPSPort
 	if httpPort == 0 {
 		httpPort = 80
@@ -156,100 +287,93 @@ func BuildConfig(apps []AppIngress, opts Options) ([]byte, []string, error) {
 
 	var warnings []string
 	claimed := map[string]string{} // domain -> appID that won it
-
 	httpsRoutes := []route{}
 	httpRoutes := []route{}
-	var sslSubjects []string
+	var acmeSubjects []string
 
 	for _, a := range sorted {
 		if err := a.Ingress.Validate(); err != nil {
 			warnings = append(warnings, fmt.Sprintf("app %s: ingress excluded: %v", a.AppID, err))
 			continue
 		}
-		// Claim this app's hostnames; on cross-app duplicates the app keeps
-		// its other domains — only the contested hostname is dropped.
-		mine := map[string]bool{}
+		// mine: the TLS mode of each hostname this app claims (its winning
+		// registration's). On cross-app duplicates the app keeps its other
+		// domains — only the contested hostname is dropped.
+		mine := map[string]model.DomainTLS{}
 		for _, d := range a.Ingress.DomainNames() {
+			win, ok := model.Winning(regs, d)
+			if !ok {
+				warnings = append(warnings, fmt.Sprintf("app %s: domain %s is not covered by a domain on this server, skipping", a.AppID, d))
+				continue
+			}
 			if owner, taken := claimed[d]; taken {
 				warnings = append(warnings, fmt.Sprintf("app %s: domain %s already claimed by app %s, skipping", a.AppID, d, owner))
 				continue
 			}
 			claimed[d] = a.AppID
-			mine[d] = true
+			mine[d] = win.TLS
+		}
+		// place puts a route for one of this app's hosts on the server its
+		// mode selects; an auto host serving content is an ACME subject.
+		place := func(host string, rt route, subject bool) {
+			mode, ok := mine[host]
+			switch {
+			case !ok:
+			case mode == model.DomainTLSOff:
+				httpRoutes = append(httpRoutes, rt)
+			default:
+				httpsRoutes = append(httpsRoutes, rt)
+				if subject && mode == model.DomainTLSAuto {
+					acmeSubjects = append(acmeSubjects, host)
+				}
+			}
 		}
 
-		// Path rules first (must match before their domain's main route);
-		// group them per target list depending on the parent domain's SSL.
-		sslOf := map[string]bool{}
+		// Path rules first: they must match before their domain's main route.
+		for _, r := range a.Ingress.Redirects {
+			if r.Path != "" {
+				place(r.Domain, redirectRoute(r.Domain, r.Path, r.To, r.Code), false)
+			}
+		}
 		for _, d := range a.Ingress.Domains {
-			sslOf[d.Domain] = d.SSL
+			place(d.Domain, proxyRoute(d.Domain, d.UpstreamPort), true)
 		}
 		for _, r := range a.Ingress.Redirects {
 			if r.Path == "" {
-				sslOf[r.Domain] = r.SSL
-				continue
-			}
-		}
-		for _, r := range a.Ingress.Redirects {
-			if r.Path == "" || !mine[r.Domain] {
-				continue
-			}
-			rt := redirectRoute(r.Domain, r.Path, r.To, r.Code)
-			if sslOf[r.Domain] {
-				httpsRoutes = append(httpsRoutes, rt)
-			} else {
-				httpRoutes = append(httpRoutes, rt)
-			}
-		}
-		for _, d := range a.Ingress.Domains {
-			if !mine[d.Domain] {
-				continue
-			}
-			rt := proxyRoute(d.Domain, d.UpstreamPort)
-			if d.SSL {
-				httpsRoutes = append(httpsRoutes, rt)
-				sslSubjects = append(sslSubjects, d.Domain)
-			} else {
-				httpRoutes = append(httpRoutes, rt)
-			}
-		}
-		for _, r := range a.Ingress.Redirects {
-			if r.Path != "" || !mine[r.Domain] {
-				continue
-			}
-			// Domain-level redirect preserves the request URI. The
-			// {http.request.uri} placeholder is a fixed literal appended to a
-			// validated absolute URL — not user templating.
-			rt := redirectRoute(r.Domain, "", r.To+"{http.request.uri}", r.Code)
-			if r.SSL {
-				httpsRoutes = append(httpsRoutes, rt)
-				sslSubjects = append(sslSubjects, r.Domain)
-			} else {
-				httpRoutes = append(httpRoutes, rt)
+				// Domain-level redirect preserves the request URI. The
+				// {http.request.uri} placeholder is a fixed literal appended
+				// to a validated absolute URL — not user templating.
+				place(r.Domain, redirectRoute(r.Domain, "", r.To+"{http.request.uri}", r.Code), true)
 			}
 		}
 	}
 
-	// Predefined throttle: a non-terminal first route on both servers — the
-	// middleware passes allowed requests through to the routes below.
-	if opts.RateLimitRPS > 0 {
-		throttle := route{Handle: []map[string]any{{
-			"handler": "winterflow_rate_limit",
-			"rps":     opts.RateLimitRPS,
-			"burst":   opts.RateLimitBurst,
-		}}}
-		httpsRoutes = append([]route{throttle}, httpsRoutes...)
-		httpRoutes = append([]route{throttle}, httpRoutes...)
+	httpCatchAll, httpsCatchAll := catchAllRoutes(regs)
+	httpRoutes = append(httpRoutes, httpCatchAll...)
+	httpsRoutes = append(httpsRoutes, httpsCatchAll...)
+	if rt, ok := throttle(opts); ok {
+		httpsRoutes = append([]route{rt}, httpsRoutes...)
+		httpRoutes = append([]route{rt}, httpRoutes...)
+	}
+
+	trusted, bad := trustedRanges(opts.TrustedProxies)
+	for _, b := range bad {
+		warnings = append(warnings, fmt.Sprintf("INGRESS_TRUSTED_PROXIES: ignoring %q: not an IP or CIDR", b))
 	}
 
 	httpsServer := &httpServer{Listen: []string{":" + strconv.Itoa(httpsPort)}, Routes: httpsRoutes}
 	// Servers listening only on the HTTP port are exempt from automatic
 	// HTTPS: no certs, no redirects for their hosts. Caddy appends its own
-	// HTTP->HTTPS redirects for the ssl hosts to this server.
+	// HTTP->HTTPS redirects for the HTTPS server's hosts to this server.
 	httpServerCfg := &httpServer{Listen: []string{":" + strconv.Itoa(httpPort)}, Routes: httpRoutes}
 	for _, srv := range []*httpServer{httpsServer, httpServerCfg} {
 		srv.ReadHeaderTimeout = "10s"
 		srv.IdleTimeout = "5m"
+		if len(trusted) > 0 {
+			srv.TrustedProxies = &ipSource{Source: "static", Ranges: trusted}
+			srv.ClientIPHeaders = clientIPHeaders
+			srv.TrustedProxiesStrict = 1
+		}
 	}
 	if strings.EqualFold(opts.LogLevel, "debug") {
 		access := map[string]any{}
@@ -265,15 +389,28 @@ func BuildConfig(apps []AppIngress, opts Options) ([]byte, []string, error) {
 		},
 	}
 
-	if len(sslSubjects) > 0 {
+	var tlsCfg tlsApp
+	if len(acmeSubjects) > 0 {
 		issuer := map[string]any{"module": "acme"}
 		if opts.ACMEEmail != "" {
 			issuer["email"] = opts.ACMEEmail
 		}
-		appsCfg["tls"] = tlsApp{Automation: tlsAutomation{Policies: []tlsPolicy{{
-			Subjects: sslSubjects,
+		tlsCfg.Automation = &tlsAutomation{Policies: []tlsPolicy{{
+			Subjects: acmeSubjects,
 			Issuers:  []map[string]any{issuer},
-		}}}}
+		}}}
+	}
+	var loadFiles []certKeyFiles
+	for _, r := range regs {
+		if r.TLS == model.DomainTLSCertificate {
+			loadFiles = append(loadFiles, certKeyFiles{Certificate: r.CertFile, Key: r.KeyFile})
+		}
+	}
+	if len(loadFiles) > 0 {
+		tlsCfg.Certificates = &tlsCertificates{LoadFiles: loadFiles}
+	}
+	if tlsCfg.Automation != nil || tlsCfg.Certificates != nil {
+		appsCfg["tls"] = tlsCfg
 	}
 
 	cfg := caddyConfig{

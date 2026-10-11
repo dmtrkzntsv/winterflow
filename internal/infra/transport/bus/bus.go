@@ -39,6 +39,12 @@ type CommandMessage struct {
 	Payload   []byte `json:"payload"`
 }
 
+// ErrAgentNotConnected is the Error of the result a hub publishes for a
+// command addressed to an agent without an active stream (unknown, not yet
+// streaming, or gone). Callers compare it exactly to tell this transient
+// bounce from an agent-side failure.
+const ErrAgentNotConnected = "agent not connected"
+
 // EventKind enumerates the agent-initiated events published on events:<region>.
 type EventKind string
 

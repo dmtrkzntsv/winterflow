@@ -2,7 +2,9 @@ import { useCallback, useMemo } from "react";
 
 import { useNotifications } from "@/context/use-notifications";
 import { useServers } from "@/context/use-servers";
+import { readApiError } from "@/lib/api";
 import { encryptSecret } from "@/lib/ecies";
+import type { Domain, DomainTLS } from "@/lib/domains";
 import { apiBaseUrl } from "@/config";
 
 const base = apiBaseUrl.endsWith("/") ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
@@ -24,6 +26,10 @@ export type Volume = {
   orphan: boolean;
   anonymous: boolean;
 };
+
+// DomainCreated is domain.create's result: the stored registration (to
+// splice into a list) and the proxy reload's warnings.
+export type DomainCreated = { domain: Domain; warnings: string[] };
 
 type Accepted = { data?: { request_id?: string } };
 
@@ -51,7 +57,8 @@ export function useDocker() {
         headers: opts.body ? { "Content-Type": "application/json" } : undefined,
         body: opts.body ? JSON.stringify(opts.body) : undefined,
       });
-      if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+      // The API explains a refusal (e.g. an invalid domain) in `message`.
+      if (!res.ok) throw await readApiError(res);
       const accepted = (await res.json()) as Accepted;
       const ref = accepted.data?.request_id;
       if (!ref) throw new Error("No request id");
@@ -150,6 +157,51 @@ export function useDocker() {
     [dispatch],
   );
 
+  const listDomains = useCallback(
+    () =>
+      dispatch<{ domains: Domain[] | null }>("/api/v1/domain/list", {}).then(
+        (p) => p.domains ?? [],
+      ),
+    [dispatch],
+  );
+
+  // createDomain registers (or replaces) a name. In certificate mode the key
+  // is a secret: it is encrypted with the server key, like registry passwords.
+  // It resolves with the stored registration and the proxy reload's warnings
+  // (the change itself applied).
+  const createDomain = useCallback(
+    async (
+      name: string,
+      tls: DomainTLS,
+      cert?: { certificate: string; key: string },
+    ): Promise<DomainCreated> => {
+      const body: Record<string, string> = { name, tls };
+      if (tls === "certificate" && cert) {
+        const key = await getPublicKey();
+        body.certificate = cert.certificate;
+        body.key = await encryptSecret(cert.key, key);
+      }
+      const res = await dispatch<{ domain: Domain; warnings?: string[] | null }>(
+        "/api/v1/domain/create",
+        { method: "POST", body },
+      );
+      return { domain: res.domain, warnings: res.warnings ?? [] };
+    },
+    [dispatch, getPublicKey],
+  );
+
+  // deleteDomain resolves with the proxy reload's warnings.
+  const deleteDomain = useCallback(
+    async (name: string): Promise<string[]> => {
+      const res = await dispatch<{ warnings?: string[] } | null>("/api/v1/domain/delete", {
+        method: "POST",
+        body: { name },
+      });
+      return res?.warnings ?? [];
+    },
+    [dispatch],
+  );
+
   const updateAgent = useCallback(
     (version: string) =>
       dispatch("/api/v1/agent/update", { method: "POST", body: { version } }),
@@ -170,6 +222,9 @@ export function useDocker() {
       listVolumes,
       createVolume,
       deleteVolume,
+      listDomains,
+      createDomain,
+      deleteDomain,
       updateAgent,
     }),
     [
@@ -183,6 +238,9 @@ export function useDocker() {
       listVolumes,
       createVolume,
       deleteVolume,
+      listDomains,
+      createDomain,
+      deleteDomain,
       updateAgent,
     ],
   );

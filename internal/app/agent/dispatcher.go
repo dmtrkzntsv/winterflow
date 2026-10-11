@@ -6,6 +6,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -29,25 +30,44 @@ type Dispatcher struct {
 
 type handlerFunc func(ctx context.Context, agentID string, req *proto.RequestEnvelope) *proto.ResponseEnvelope
 
+// NewDispatcher wires the registry. A nil ingress (tests) stands in as
+// noIngress: reloads are no-ops and domain commands fail with errNoIngress.
 func NewDispatcher(orch *dockercompose.Repository, ingress port.IngressManager, log *logger.Logger) *Dispatcher {
+	if ingress == nil {
+		ingress = noIngress{}
+	}
 	d := &Dispatcher{orch: orch, ingress: ingress, log: log}
 	d.handlers = d.newHandlers()
 	return d
 }
 
 // reloadIngress rebuilds the proxy config after a mutation. Warnings are
-// returned for responses that carry them (app.save) and logged otherwise. A
-// nil manager (tests, ingress disabled) is a no-op.
+// returned for responses that carry them (app.save, domain.create/delete)
+// and logged either way.
 func (d *Dispatcher) reloadIngress(ctx context.Context) []string {
-	if d.ingress == nil {
-		return nil
-	}
 	warnings := d.ingress.Reload(ctx)
 	for _, w := range warnings {
 		d.log.Warn("ingress", "warning", w)
 	}
 	return warnings
 }
+
+// errNoIngress answers domain commands on a dispatcher built without an
+// ingress manager (tests); production always wires one.
+var errNoIngress = errors.New("ingress is not available on this agent")
+
+// noIngress is the IngressManager of a dispatcher built without one.
+type noIngress struct{}
+
+func (noIngress) Reload(context.Context) []string { return nil }
+func (noIngress) Enabled() bool                   { return false }
+func (noIngress) ListDomains(context.Context) ([]command.Domain, error) {
+	return nil, errNoIngress
+}
+func (noIngress) CreateDomain(context.Context, command.CreateDomainRequest) (command.Domain, error) {
+	return command.Domain{}, errNoIngress
+}
+func (noIngress) DeleteDomain(context.Context, string) error { return errNoIngress }
 
 // Dispatch decodes the request payload by its command type, runs the matching
 // handler, and returns the response envelope. Decode/handler errors become an
@@ -208,6 +228,24 @@ func (d *Dispatcher) newHandlers() map[command.Type]handlerFunc {
 		}),
 		command.TypeVolumeDelete: handle(d, func(ctx context.Context, in command.DeleteVolumeRequest) (command.DeleteVolumeResponse, error) {
 			return command.DeleteVolumeResponse{Name: in.Name}, d.orch.DeleteVolume(ctx, in.Name)
+		}),
+
+		command.TypeDomainList: handle(d, func(ctx context.Context, _ command.ListDomainsRequest) (command.ListDomainsResponse, error) {
+			doms, err := d.ingress.ListDomains(ctx)
+			return command.ListDomainsResponse{Domains: doms}, err
+		}),
+		command.TypeDomainCreate: handle(d, func(ctx context.Context, in command.CreateDomainRequest) (command.CreateDomainResponse, error) {
+			dom, err := d.ingress.CreateDomain(ctx, in)
+			if err != nil {
+				return command.CreateDomainResponse{}, err
+			}
+			return command.CreateDomainResponse{Domain: dom, Warnings: d.reloadIngress(ctx)}, nil
+		}),
+		command.TypeDomainDelete: handle(d, func(ctx context.Context, in command.DeleteDomainRequest) (command.DeleteDomainResponse, error) {
+			if err := d.ingress.DeleteDomain(ctx, in.Name); err != nil {
+				return command.DeleteDomainResponse{}, err
+			}
+			return command.DeleteDomainResponse{Name: in.Name, Warnings: d.reloadIngress(ctx)}, nil
 		}),
 
 		command.TypeImageTags: handle(d, func(ctx context.Context, in command.ImageTagsRequest) (command.ImageTagsResponse, error) {

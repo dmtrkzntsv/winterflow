@@ -2,6 +2,7 @@ package dockercompose
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io/fs"
 	"os"
@@ -114,7 +115,7 @@ func TestUpdateBackupsRefuses(t *testing.T) {
 	}{
 		{[]recipe.BackupConfig{{Name: "gone", Every: "1h"}}, `the compose file has no backup "gone": a new backup needs its type`},
 		{[]recipe.BackupConfig{{Name: "database", Enabled: true, Storage: "nas"}}, `backup database: there is no storage "nas" on this server`},
-		{[]recipe.BackupConfig{{Name: "media", Enabled: true, Storage: "disk", Paths: []string{"/etc/app"}}}, "/etc/app is not on a mount of service web"},
+		{[]recipe.BackupConfig{{Name: "media", Enabled: true, Storage: "disk", Paths: ptrList("/etc/app")}}, "/etc/app is not on a mount of service web"},
 		{[]recipe.BackupConfig{{Name: "database", Every: "1m"}}, "backups[0].every: 1m is too often"},
 	} {
 		if _, _, _, err := update(r, tc.list...); err == nil || !strings.Contains(err.Error(), tc.want) {
@@ -202,5 +203,62 @@ func TestUpdateBackupsOnNullConfig(t *testing.T) {
 	got, err := r.readOverrides(dir)
 	if err != nil || len(got) != 1 || got[0].Every != "2h" {
 		t.Fatalf("stored = %+v, %v", got, err)
+	}
+}
+
+func ptrList(s ...string) *[]string { return &s }
+
+const volumeFilesCompose = `services:
+  web:
+    image: example/web
+    volumes: [data:/data]
+volumes:
+  data:
+x-winterflow:
+  backups:
+    - name: media
+      type: files
+      volume: data
+      paths: [uploads]
+      exclude: ["*.tmp"]
+`
+
+// What backup.update answers is what is stored: an override that widens a
+// files backup to the whole volume (paths: []) or clears the recipe's
+// excludes (exclude: []) must survive config.json, not fall back to the
+// recipe's lists on the next read.
+func TestUpdateBackupsExplicitEmptyListsRoundTrip(t *testing.T) {
+	r, _ := updateRepo(t)
+	if _, err := saveConfig(t, r, "app-1", volumeFilesCompose, plainConfig); err != nil {
+		t.Fatal(err)
+	}
+	r.markDeployed("app-1", "")
+	dir := r.appDataDir("app-1")
+	for name, o := range map[string]recipe.BackupConfig{
+		"both empty":    {Name: "media", Paths: ptrList(), Exclude: ptrList()},
+		"paths only":    {Name: "media", Paths: ptrList()},
+		"exclude only":  {Name: "media", Exclude: ptrList()},
+		"inherit both":  {Name: "media"},
+		"replace lists": {Name: "media", Paths: ptrList("a", "b"), Exclude: ptrList("*.log")},
+	} {
+		resp, err := r.UpdateBackups(context.Background(), "app-1", []recipe.BackupConfig{o})
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		got, err := r.appBackups(dir, r.appComposeFiles(dir))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		stored, _ := json.Marshal(got.backups)
+		answered, _ := json.Marshal(resp.Backups)
+		if string(stored) != string(answered) {
+			t.Errorf("%s: stored %s, answered %s", name, stored, answered)
+		}
+	}
+	// The widened backup really covers the whole volume now.
+	resp, _ := r.UpdateBackups(context.Background(), "app-1", []recipe.BackupConfig{{Name: "media", Paths: ptrList(), Exclude: ptrList()}})
+	got, _ := r.appBackups(dir, r.appComposeFiles(dir))
+	if len(got.backups[0].Paths) != 0 || len(got.backups[0].Exclude) != 0 || got.backups[0].FromRecipe["paths"] || got.backups[0].FromRecipe["exclude"] {
+		t.Fatalf("stored = %+v (answered %+v)", got.backups[0], resp.Backups[0])
 	}
 }

@@ -3393,7 +3393,9 @@ components:
         exclude:
           items:
             type: string
-          type: array
+          type:
+          - "null"
+          - array
         keep:
           $ref: '#/components/schemas/KeepInput'
         name:
@@ -3403,7 +3405,9 @@ components:
         paths:
           items:
             type: string
-          type: array
+          type:
+          - "null"
+          - array
         service:
           type: string
         storage:

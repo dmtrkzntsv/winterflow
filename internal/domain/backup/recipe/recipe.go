@@ -98,17 +98,26 @@ func (k *Keep) Retention() Retention {
 // Storage). An override of a recipe backup sets only the fields it changes;
 // a backup added in the UI carries Type and every field its type needs.
 type BackupConfig struct {
-	Name    string   `json:"name" yaml:"name"`
-	Type    Type     `json:"type,omitempty" yaml:"type"`
-	Enabled bool     `json:"enabled,omitempty" yaml:"-"`
-	Storage string   `json:"storage,omitempty" yaml:"-"`
-	Every   string   `json:"every,omitempty" yaml:"every"`
-	Keep    *Keep    `json:"keep,omitempty" yaml:"keep"`
-	Volume  string   `json:"volume,omitempty" yaml:"volume"`
-	Service string   `json:"service,omitempty" yaml:"service"`
-	Path    string   `json:"path,omitempty" yaml:"path"`
-	Paths   []string `json:"paths,omitempty" yaml:"paths"`
-	Exclude []string `json:"exclude,omitempty" yaml:"exclude"`
+	Name    string    `json:"name" yaml:"name"`
+	Type    Type      `json:"type,omitempty" yaml:"type"`
+	Enabled bool      `json:"enabled,omitempty" yaml:"-"`
+	Storage string    `json:"storage,omitempty" yaml:"-"`
+	Every   string    `json:"every,omitempty" yaml:"every"`
+	Keep    *Keep     `json:"keep,omitempty" yaml:"keep"`
+	Volume  string    `json:"volume,omitempty" yaml:"volume"`
+	Service string    `json:"service,omitempty" yaml:"service"`
+	Path    string    `json:"path,omitempty" yaml:"path"`
+	Paths   *[]string `json:"paths,omitempty" yaml:"paths"`
+	Exclude *[]string `json:"exclude,omitempty" yaml:"exclude"`
+}
+
+// List is the values of an optional list: nil (inherit the recipe's) reads
+// as empty.
+func List(p *[]string) []string {
+	if p == nil {
+		return nil
+	}
+	return *p
 }
 
 // EffectiveBackup is one backup as it runs: the recipe with its override
@@ -202,8 +211,9 @@ func validate(c BackupConfig, comp Compose, field string) error {
 		}
 		return validateAbsPath(f, p)
 	}
+	paths, exclude := List(c.Paths), List(c.Exclude)
 	if c.Type == TypeSQLite {
-		if len(c.Paths) > 0 || len(c.Exclude) > 0 {
+		if len(paths) > 0 || len(exclude) > 0 {
 			return invalid(field, "a sqlite backup takes path (the database file), not paths or exclude")
 		}
 		if c.Path == "" {
@@ -214,14 +224,14 @@ func validate(c BackupConfig, comp Compose, field string) error {
 	if c.Path != "" {
 		return invalid(field+".path", "a files backup takes paths, a list of folders and files")
 	}
-	if !inVolume && len(c.Paths) == 0 {
+	if !inVolume && len(paths) == 0 {
 		return invalid(field+".paths", "a files backup addressed by service needs paths inside the service's container")
 	}
-	if len(c.Paths) > maxListLen || len(c.Exclude) > maxListLen {
+	if len(paths) > maxListLen || len(exclude) > maxListLen {
 		return invalid(field, "at most %d paths and %d exclude patterns", maxListLen, maxListLen)
 	}
 	seen := map[string]bool{}
-	for i, p := range c.Paths {
+	for i, p := range paths {
 		f := fmt.Sprintf("%s.paths[%d]", field, i)
 		if err := checkPath(f, p); err != nil {
 			return err
@@ -231,7 +241,7 @@ func validate(c BackupConfig, comp Compose, field string) error {
 		}
 		seen[p] = true
 	}
-	for i, p := range c.Exclude {
+	for i, p := range exclude {
 		if err := validatePattern(fmt.Sprintf("%s.exclude[%d]", field, i), p); err != nil {
 			return err
 		}
@@ -240,7 +250,7 @@ func validate(c BackupConfig, comp Compose, field string) error {
 }
 
 func validateCustom(c BackupConfig, comp Compose, field string) error {
-	if c.Volume != "" || c.Path != "" || len(c.Paths) > 0 || len(c.Exclude) > 0 || c.Every != "" || c.Keep != nil {
+	if c.Volume != "" || c.Path != "" || len(List(c.Paths)) > 0 || len(List(c.Exclude)) > 0 || c.Every != "" || c.Keep != nil {
 		return invalid(field, "a custom backup takes only service: the service that runs the backup tool")
 	}
 	if c.Service == "" {

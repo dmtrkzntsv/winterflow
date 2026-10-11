@@ -1,6 +1,7 @@
 package recipe
 
 import (
+	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
@@ -69,8 +70,8 @@ func TestParseCompose(t *testing.T) {
 	want := []BackupConfig{
 		{Name: "database", Type: TypeSQLite, Volume: "data", Path: "twillingate.db", Every: "1h",
 			Keep: &Keep{Recent: "24h", Daily: ptr(14), Monthly: ptr(6)}},
-		{Name: "media", Type: TypeFiles, Service: "web", Paths: []string{"/app/media", "/data/config"},
-			Exclude: []string{"/app/media/cache/", "*.tmp"}, Every: "24h"},
+		{Name: "media", Type: TypeFiles, Service: "web", Paths: strs("/app/media", "/data/config"),
+			Exclude: strs("/app/media/cache/", "*.tmp"), Every: "24h"},
 		{Name: "replica", Type: TypeCustom, Service: "litestream"},
 	}
 	if !reflect.DeepEqual(c.Recipe, want) {
@@ -184,12 +185,12 @@ func TestValidateErrors(t *testing.T) {
 	for i := range many {
 		many[i] = "p" + strings.Repeat("x", i)
 	}
-	c.Recipe = []BackupConfig{{Name: "a", Type: TypeFiles, Volume: "data", Paths: many}}
+	c.Recipe = []BackupConfig{{Name: "a", Type: TypeFiles, Volume: "data", Paths: &many}}
 	if err := Validate(c); err == nil || !strings.Contains(err.Error(), "at most 64 paths") {
 		t.Fatalf("too many paths: %v", err)
 	}
 	// Control characters never pass.
-	c.Recipe = []BackupConfig{{Name: "a", Type: TypeFiles, Volume: "data", Paths: []string{"a\nb"}}}
+	c.Recipe = []BackupConfig{{Name: "a", Type: TypeFiles, Volume: "data", Paths: strs("a\nb")}}
 	if err := Validate(c); err == nil {
 		t.Fatal("a newline in a path passed")
 	}
@@ -292,7 +293,7 @@ func TestClean(t *testing.T) {
 		{Name: "database", Type: TypeSQLite, Enabled: true, Storage: "hetzner", Every: "1h", Volume: "data",
 			Path: "twillingate.db", Keep: &Keep{Recent: "24h", Daily: ptr(14), Monthly: ptr(6)}},
 		// Says nothing: dropped.
-		{Name: "media", Paths: []string{"/app/media", "/data/config"}},
+		{Name: "media", Paths: strs("/app/media", "/data/config")},
 		// Changed fields stay.
 		{Name: "replica", Enabled: true, Storage: "hetzner"},
 		{Name: "gone", Every: "2h"},
@@ -309,7 +310,7 @@ func TestClean(t *testing.T) {
 	if len(warnings) != 1 || !strings.Contains(warnings[0], `no longer has the backup "gone"`) {
 		t.Fatalf("warnings = %v", warnings)
 	}
-	kept, _ = Clean(c, []BackupConfig{{Name: "media", Exclude: []string{}, Every: "6h", Keep: &Keep{Daily: ptr(3)}, Service: "web", Volume: ""},
+	kept, _ = Clean(c, []BackupConfig{{Name: "media", Exclude: strs(), Every: "6h", Keep: &Keep{Daily: ptr(3)}, Service: "web", Volume: ""},
 		{Name: "database", Volume: "data", Path: "other.db"}})
 	if len(kept) != 2 || kept[0].Exclude == nil || kept[0].Every != "6h" || kept[0].Keep == nil || kept[0].Service != "" ||
 		kept[1].Volume != "" || kept[1].Path != "other.db" {
@@ -371,7 +372,7 @@ func TestParseComposeBrokenFiles(t *testing.T) {
 // only when they differ.
 func TestOverrideKeepPathsExclude(t *testing.T) {
 	c := parse(t, compose)
-	o := []BackupConfig{{Name: "media", Keep: &Keep{Daily: ptr(3)}, Paths: []string{"/app/media"}, Exclude: []string{"*.log"}}}
+	o := []BackupConfig{{Name: "media", Keep: &Keep{Daily: ptr(3)}, Paths: strs("/app/media"), Exclude: strs("*.log")}}
 	got, err := Effective(c, o)
 	if err != nil {
 		t.Fatal(err)
@@ -388,7 +389,7 @@ func TestOverrideKeepPathsExclude(t *testing.T) {
 	// Restating the recipe's values changes nothing: from the recipe, and
 	// dropped by Clean.
 	same := []BackupConfig{{Name: "database", Keep: &Keep{Recent: "24h", Daily: ptr(14), Monthly: ptr(6)}},
-		{Name: "media", Paths: []string{"/app/media", "/data/config"}, Exclude: []string{"/app/media/cache/", "*.tmp"}}}
+		{Name: "media", Paths: strs("/app/media", "/data/config"), Exclude: strs("/app/media/cache/", "*.tmp")}}
 	got, err = Effective(c, same)
 	if err != nil {
 		t.Fatal(err)
@@ -403,5 +404,57 @@ func TestOverrideKeepPathsExclude(t *testing.T) {
 	got, err = Effective(c, []BackupConfig{{Name: "database", Path: "other.db"}})
 	if err != nil || got[0].Path != "other.db" || got[0].FromRecipe[FieldPath] {
 		t.Fatalf("path = %+v, %v", got, err)
+	}
+}
+
+func strs(s ...string) *[]string {
+	if s == nil {
+		s = []string{}
+	}
+	return &s
+}
+
+// An explicit empty list is an override ("the whole volume", "no excludes"),
+// different from an omitted one ("keep the recipe's"), and survives JSON.
+func TestExplicitEmptyListsAreOverrides(t *testing.T) {
+	c := parse(t, `
+services:
+  web:
+    image: example/web
+    volumes: [data:/data]
+volumes:
+  data:
+x-winterflow:
+  backups:
+    - name: media
+      type: files
+      volume: data
+      paths: [uploads]
+      exclude: ["*.tmp"]
+`)
+	var o BackupConfig
+	if err := json.Unmarshal([]byte(`{"name":"media","paths":[],"exclude":[]}`), &o); err != nil {
+		t.Fatal(err)
+	}
+	if o.Paths == nil || o.Exclude == nil {
+		t.Fatalf("[] decoded as absent: %+v", o)
+	}
+	kept, _ := Clean(c, []BackupConfig{o})
+	raw, _ := json.Marshal(kept)
+	if string(raw) != `[{"name":"media","paths":[],"exclude":[]}]` {
+		t.Fatalf("stored %s", raw)
+	}
+	var back []BackupConfig
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatal(err)
+	}
+	eff, err := Effective(c, back)
+	if err != nil || len(eff[0].Paths) != 0 || len(eff[0].Exclude) != 0 || eff[0].FromRecipe[FieldPaths] || eff[0].FromRecipe[FieldExclude] {
+		t.Fatalf("effective = %+v, %v", eff, err)
+	}
+	// Omitted lists inherit the recipe's.
+	eff, _ = Effective(c, []BackupConfig{{Name: "media"}})
+	if !reflect.DeepEqual(eff[0].Paths, []string{"uploads"}) || !reflect.DeepEqual(eff[0].Exclude, []string{"*.tmp"}) {
+		t.Fatalf("inherited = %+v", eff[0])
 	}
 }

@@ -177,13 +177,23 @@ func minimize(r, o BackupConfig) BackupConfig {
 	if o.Path != "" && o.Path != r.Path {
 		m.Path = o.Path
 	}
-	if o.Paths != nil && !slices.Equal(o.Paths, r.Paths) {
-		m.Paths = o.Paths
+	if o.Paths != nil && !slices.Equal(*o.Paths, List(r.Paths)) {
+		m.Paths = nonNil(o.Paths)
 	}
-	if o.Exclude != nil && !slices.Equal(o.Exclude, r.Exclude) {
-		m.Exclude = o.Exclude
+	if o.Exclude != nil && !slices.Equal(*o.Exclude, List(r.Exclude)) {
+		m.Exclude = nonNil(o.Exclude)
 	}
 	return m
+}
+
+// nonNil is p with a nil slice made empty: an explicit empty list must be
+// stored as [] (a pointer to a nil slice marshals as null, which reads back
+// as "inherit the recipe's").
+func nonNil(p *[]string) *[]string {
+	if *p == nil {
+		return &[]string{}
+	}
+	return p
 }
 
 // empty reports whether an override says nothing beyond its name.
@@ -209,8 +219,8 @@ func fromRecipe(r, c BackupConfig) map[string]bool {
 	set(FieldVolume, r.Volume != "", c.Volume == r.Volume)
 	set(FieldService, r.Service != "", c.Service == r.Service)
 	set(FieldPath, r.Path != "", c.Path == r.Path)
-	set(FieldPaths, r.Paths != nil, slices.Equal(c.Paths, r.Paths))
-	set(FieldExclude, r.Exclude != nil, slices.Equal(c.Exclude, r.Exclude))
+	set(FieldPaths, r.Paths != nil, slices.Equal(List(c.Paths), List(r.Paths)))
+	set(FieldExclude, r.Exclude != nil, slices.Equal(List(c.Exclude), List(r.Exclude)))
 	return from
 }
 
@@ -219,7 +229,7 @@ func fromRecipe(r, c BackupConfig) map[string]bool {
 func finish(c BackupConfig, inRecipe bool, from map[string]bool) EffectiveBackup {
 	b := EffectiveBackup{
 		Name: c.Name, Type: c.Type, Enabled: c.Enabled, Storage: c.Storage,
-		Volume: c.Volume, Service: c.Service, Path: c.Path, Paths: c.Paths, Exclude: c.Exclude,
+		Volume: c.Volume, Service: c.Service, Path: c.Path, Paths: List(c.Paths), Exclude: List(c.Exclude),
 		InRecipe: inRecipe, FromRecipe: from,
 	}
 	if c.Type != TypeCustom {

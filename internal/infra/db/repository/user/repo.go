@@ -460,7 +460,8 @@ func (r *Repo) GetCredentials(ctx context.Context, userID string) (model.Credent
 
 // ListMembers returns the org's members, oldest membership first, each with
 // their email and "local" when they have credentials, else the provider of
-// one of their connected accounts. A member with neither is listed with an
+// their first connected account (ordered by provider, then external_id, so
+// the choice is deterministic). A member with neither is listed with an
 // empty email and provider; any other lookup failure is returned.
 func (r *Repo) ListMembers(ctx context.Context, orgID string) ([]model.Member, error) {
 	db := r.tx.Querier(ctx)

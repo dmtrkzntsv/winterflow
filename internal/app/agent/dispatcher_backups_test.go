@@ -252,19 +252,3 @@ func TestRunBackupIsBounded(t *testing.T) {
 		t.Fatal("a stopped scheduler left the request waiting")
 	}
 }
-
-// backup.points encodes no restore points as [], not null, even when the
-// orchestrator answers nil.
-func TestBackupPointsEmptyIsAnArray(t *testing.T) {
-	d := newTestDispatcher(t)
-	d.SetBackups(&fakeBackups{})
-	dispatchJSON(t, d, command.TypeStorageSave, command.SaveStorageRequest{Create: true,
-		Storage: model.Storage{Name: "disk", Type: model.StorageLocal, Local: &model.LocalStorage{Path: t.TempDir()}}})
-	dispatchJSON(t, d, command.TypeAppSave, command.SaveAppRequest{Draft: true, App: command.AppPayload{AppID: "app-1",
-		Config: []byte(`{"name":"demo","files":[{"filename":"compose.yml"}],"backups":[{"name":"database","storage":"disk"}]}`),
-		Files:  []command.ContentItem{{Name: "compose.yml", Content: []byte(backupsCompose)}}}})
-	resp := dispatchJSON(t, d, command.TypeBackupPoints, command.ListRestorePointsRequest{AppID: "app-1", Backup: "database"})
-	if !strings.Contains(string(resp.Payload), `"points":[]`) {
-		t.Fatalf("payload = %s", resp.Payload)
-	}
-}

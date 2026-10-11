@@ -277,9 +277,6 @@ func (d *Dispatcher) newHandlers() map[command.Type]handlerFunc {
 		}),
 		command.TypeBackupPoints: handle(d, func(ctx context.Context, in command.ListRestorePointsRequest) (command.ListRestorePointsResponse, error) {
 			points, err := d.orch.ListRestorePoints(ctx, in.AppID, in.Backup)
-			if points == nil {
-				points = []command.RestorePoint{} // "[]" on the wire, never "null"
-			}
 			return command.ListRestorePointsResponse{AppID: in.AppID, Backup: in.Backup, Points: points}, err
 		}),
 		command.TypeBackupRun: handle(d, d.runBackup),

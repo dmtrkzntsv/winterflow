@@ -11,6 +11,7 @@ import (
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
 
+	"winterflow/internal/domain/command"
 	"winterflow/internal/infra/transport/grpc/proto"
 
 	"google.golang.org/grpc"
@@ -46,6 +47,15 @@ type Agent struct {
 	streamDone   chan struct{} // closed when the active stream's receive loop exits
 	stream       grpc.BidiStreamingClient[proto.AgentMessage, proto.ServerCommand]
 	sendMutex    sync.Mutex // serializes stream.Send across heartbeat + handler goroutines
+	// lifeCtx is the context of the agent's lifetime (Run's), which detached
+	// commands run on: they outlive the stream they arrived on.
+	lifeCtx      context.Context
+	detachedWait time.Duration // tests shorten detachedReplyWait
+	// streamReady is closed while a stream is active and replaced by an open
+	// channel when it goes down: detached replies wait on it for the next
+	// connection.
+	streamReady       chan struct{}
+	streamReadyClosed bool
 
 	registered      bool
 	registeredMutex sync.RWMutex
@@ -61,8 +71,43 @@ func NewAgent(log *logger.Logger, cfg *config.ServerConfig, agentID string) *Age
 		features:        make(map[string]bool),
 		apps:            make([]*proto.App, 0),
 		streamActive:    false,
+		streamReady:     make(chan struct{}),
 		registered:      false,
 	}
+}
+
+// detachedReplyWait bounds how long a detached command's reply waits for a
+// connected stream before it is dropped.
+const detachedReplyWait = 5 * time.Minute
+
+// markUpLocked records that a stream is active and wakes the replies waiting
+// for one. The caller holds streamMutex.
+func (a *Agent) markUpLocked() {
+	if !a.streamReadyClosed {
+		close(a.streamReady)
+		a.streamReadyClosed = true
+	}
+}
+
+// markDownLocked records that no stream is active. The caller holds
+// streamMutex.
+func (a *Agent) markDownLocked() {
+	a.streamActive = false
+	if a.streamReadyClosed {
+		a.streamReady = make(chan struct{})
+		a.streamReadyClosed = false
+	}
+}
+
+// currentStream is the active stream, or nil and a channel that closes when
+// one is.
+func (a *Agent) currentStream() (grpc.BidiStreamingClient[proto.AgentMessage, proto.ServerCommand], <-chan struct{}) {
+	a.streamMutex.RLock()
+	defer a.streamMutex.RUnlock()
+	if a.streamActive && a.stream != nil {
+		return a.stream, nil
+	}
+	return nil, a.streamReady
 }
 
 // SetDispatcher installs the command handler the agent invokes for each
@@ -206,6 +251,8 @@ func (a *Agent) StartStream(ctx context.Context) error {
 	a.streamCancel = cancel
 	a.streamDone = done
 	a.stream = stream
+	a.lifeCtx = ctx
+	a.markUpLocked()
 	a.streamMutex.Unlock()
 
 	a.log.Info("Agent stream started", "agent_id", a.agentID)
@@ -266,7 +313,7 @@ func (a *Agent) sendHeartbeat(stream grpc.BidiStreamingClient[proto.AgentMessage
 func (a *Agent) handleIncomingMessages(ctx context.Context, stream grpc.BidiStreamingClient[proto.AgentMessage, proto.ServerCommand], done chan struct{}) {
 	defer func() {
 		a.streamMutex.Lock()
-		a.streamActive = false
+		a.markDownLocked()
 		a.stream = nil
 		if a.streamCancel != nil {
 			a.streamCancel()
@@ -359,6 +406,18 @@ func (a *Agent) SendEvent(kind string, payload []byte) error {
 // runs in its own goroutine so long-running commands don't block the receive
 // loop.
 func (a *Agent) handleRequest(ctx context.Context, stream grpc.BidiStreamingClient[proto.AgentMessage, proto.ServerCommand], req *proto.RequestEnvelope) {
+	// A detached command (backup.run) waits for work that outlives a stream
+	// (the hub recycles every connection about every two hours): it runs on
+	// the agent's lifetime, and its reply goes out on whichever stream is
+	// current when it is ready.
+	detached := command.Type(req.Type).Detached()
+	if detached {
+		a.streamMutex.RLock()
+		if a.lifeCtx != nil {
+			ctx = a.lifeCtx
+		}
+		a.streamMutex.RUnlock()
+	}
 	var resp *proto.ResponseEnvelope
 	if a.dispatcher == nil {
 		a.log.Error("no dispatcher configured", "agent_id", a.agentID, "type", req.Type)
@@ -380,11 +439,52 @@ func (a *Agent) handleRequest(ctx context.Context, stream grpc.BidiStreamingClie
 		resp = a.dispatcher.Dispatch(ctx, req)
 	}
 
-	if err := a.sendMessage(stream, &proto.AgentMessage{
-		Message: &proto.AgentMessage_Response{Response: resp},
-	}); err != nil {
+	msg := &proto.AgentMessage{Message: &proto.AgentMessage_Response{Response: resp}}
+	if detached {
+		a.sendDetachedReply(ctx, msg, req.RequestId)
+		return
+	}
+	if err := a.sendMessage(stream, msg); err != nil {
 		a.log.Error("Failed to send response", "error", err, "agent_id", a.agentID, "request_id", req.RequestId)
 	}
+}
+
+// sendDetachedReply sends a detached command's reply on the current stream,
+// waiting for the next connection when there is none (or the send fails on a
+// stream that is going down), for at most detachedReplyWait or the agent's
+// lifetime; then it drops the reply with a log line.
+func (a *Agent) sendDetachedReply(ctx context.Context, msg *proto.AgentMessage, requestID string) {
+	limit := time.NewTimer(a.replyWait())
+	defer limit.Stop()
+	for {
+		stream, ready := a.currentStream()
+		var retry <-chan time.Time
+		if stream != nil {
+			err := a.sendMessage(stream, msg)
+			if err == nil {
+				return
+			}
+			a.log.Warn("Failed to send detached response, will retry", "error", err, "agent_id", a.agentID, "request_id", requestID)
+			retry = time.After(time.Second) // the stream is going down; look again shortly
+		}
+		select {
+		case <-ready:
+		case <-retry:
+		case <-limit.C:
+			a.log.Error("Dropping detached response: no stream to send it on", "agent_id", a.agentID, "request_id", requestID)
+			return
+		case <-ctx.Done():
+			a.log.Warn("Dropping detached response: the agent is stopping", "agent_id", a.agentID, "request_id", requestID)
+			return
+		}
+	}
+}
+
+func (a *Agent) replyWait() time.Duration {
+	if a.detachedWait > 0 {
+		return a.detachedWait
+	}
+	return detachedReplyWait
 }
 
 // Run supervises the agent connection for the lifetime of ctx: it connects,
@@ -459,7 +559,7 @@ func (a *Agent) teardownConn() {
 		a.streamCancel()
 		a.streamCancel = nil
 	}
-	a.streamActive = false
+	a.markDownLocked()
 	a.streamMutex.Unlock()
 
 	a.registeredMutex.Lock()
@@ -500,7 +600,7 @@ func (a *Agent) Stop(ctx context.Context) error {
 	a.streamMutex.Lock()
 	if a.streamActive && a.streamCancel != nil {
 		a.streamCancel()
-		a.streamActive = false
+		a.markDownLocked()
 		a.streamCancel = nil
 	}
 	a.streamMutex.Unlock()

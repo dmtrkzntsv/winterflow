@@ -21,6 +21,9 @@ type MetricRepository interface {
 	Series(ctx context.Context, serverID, appID string, tier metrics.Tier, from time.Time) ([]metrics.Bucket, error)
 	// AppsSeries returns every app's rows of tier since from, keyed by app.
 	AppsSeries(ctx context.Context, serverID string, tier metrics.Tier, from time.Time) (map[string][]metrics.Bucket, error)
+	// Rollup builds every closed, missing bucket of each coarser tier from
+	// the tier below and reports how many rows it wrote.
+	Rollup(ctx context.Context, now time.Time) (int, error)
 	// Prune deletes rows past their tier's retention and reports how many.
 	Prune(ctx context.Context, now time.Time) (int64, error)
 }

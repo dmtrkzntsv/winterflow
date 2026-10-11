@@ -63,6 +63,7 @@ type Querier interface {
 	ListCapabilitiesByUser(ctx context.Context, userID string) ([]ListCapabilitiesByUserRow, error)
 	ListFeaturesByUser(ctx context.Context, userID string) ([]ServerFeature, error)
 	ListMetricSamples(ctx context.Context, arg ListMetricSamplesParams) ([]MetricSample, error)
+	ListMetricSamplesInRange(ctx context.Context, arg ListMetricSamplesInRangeParams) ([]MetricSample, error)
 	ListOrganizationMembers(ctx context.Context, organizationID string) ([]User, error)
 	ListServerAppMetricSamples(ctx context.Context, arg ListServerAppMetricSamplesParams) ([]MetricSample, error)
 	// The server_domains index (mirrors each agent's domain registrations).

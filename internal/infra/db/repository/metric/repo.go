@@ -26,6 +26,7 @@ type (
 	listParams   = sqlitegen.ListMetricSamplesParams
 	appsParams   = sqlitegen.ListServerAppMetricSamplesParams
 	pruneParams  = sqlitegen.DeleteMetricSamplesBeforeParams
+	rangeParams  = sqlitegen.ListMetricSamplesInRangeParams
 )
 
 type querier interface {
@@ -33,6 +34,7 @@ type querier interface {
 	ListMetricSamples(ctx context.Context, db backend.DBTX, p listParams) ([]sampleRow, error)
 	ListServerAppMetricSamples(ctx context.Context, db backend.DBTX, p appsParams) ([]sampleRow, error)
 	DeleteMetricSamplesBefore(ctx context.Context, db backend.DBTX, p pruneParams) (int64, error)
+	ListMetricSamplesInRange(ctx context.Context, db backend.DBTX, p rangeParams) ([]sampleRow, error)
 	ListAppIDsByServer(ctx context.Context, db backend.DBTX, serverID string) ([]string, error)
 }
 

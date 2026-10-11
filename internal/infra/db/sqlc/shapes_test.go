@@ -20,6 +20,8 @@ var (
 	_ = pgsqlgen.ListServerAppMetricSamplesParams(sqlitegen.ListServerAppMetricSamplesParams{})
 	_ = sqlitegen.DeleteMetricSamplesBeforeParams(pgsqlgen.DeleteMetricSamplesBeforeParams{})
 	_ = pgsqlgen.DeleteMetricSamplesBeforeParams(sqlitegen.DeleteMetricSamplesBeforeParams{})
+	_ = sqlitegen.ListMetricSamplesInRangeParams(pgsqlgen.ListMetricSamplesInRangeParams{})
+	_ = pgsqlgen.ListMetricSamplesInRangeParams(sqlitegen.ListMetricSamplesInRangeParams{})
 	_ = sqlitegen.App(pgsqlgen.App{})
 	_ = pgsqlgen.App(sqlitegen.App{})
 	_ = sqlitegen.AppDomain(pgsqlgen.AppDomain{})

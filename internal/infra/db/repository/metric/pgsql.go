@@ -27,6 +27,10 @@ func (pgsqlQuerier) DeleteMetricSamplesBefore(ctx context.Context, db backend.DB
 	return pgsqlgen.New(db).DeleteMetricSamplesBefore(ctx, pgsqlgen.DeleteMetricSamplesBeforeParams(p))
 }
 
+func (pgsqlQuerier) ListMetricSamplesInRange(ctx context.Context, db backend.DBTX, p rangeParams) ([]sampleRow, error) {
+	return convert(pgsqlgen.New(db).ListMetricSamplesInRange(ctx, pgsqlgen.ListMetricSamplesInRangeParams(p)))
+}
+
 func (pgsqlQuerier) ListAppIDsByServer(ctx context.Context, db backend.DBTX, serverID string) ([]string, error) {
 	return pgsqlgen.New(db).ListAppIDsByServer(ctx, serverID)
 }

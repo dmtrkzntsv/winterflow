@@ -114,6 +114,48 @@ func (q *Queries) ListMetricSamples(ctx context.Context, arg ListMetricSamplesPa
 	return items, nil
 }
 
+const listMetricSamplesInRange = `-- name: ListMetricSamplesInRange :many
+SELECT server_id, app_id, tier, bucket_start, samples, data FROM metric_samples
+WHERE tier = ?1 AND bucket_start >= ?2 AND bucket_start < ?3
+ORDER BY server_id ASC, app_id ASC, bucket_start ASC
+`
+
+type ListMetricSamplesInRangeParams struct {
+	Tier     int64
+	FromTime types.DateTime
+	ToTime   types.DateTime
+}
+
+func (q *Queries) ListMetricSamplesInRange(ctx context.Context, arg ListMetricSamplesInRangeParams) ([]MetricSample, error) {
+	rows, err := q.db.QueryContext(ctx, listMetricSamplesInRange, arg.Tier, arg.FromTime, arg.ToTime)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []MetricSample{}
+	for rows.Next() {
+		var i MetricSample
+		if err := rows.Scan(
+			&i.ServerID,
+			&i.AppID,
+			&i.Tier,
+			&i.BucketStart,
+			&i.Samples,
+			&i.Data,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listServerAppMetricSamples = `-- name: ListServerAppMetricSamples :many
 SELECT server_id, app_id, tier, bucket_start, samples, data FROM metric_samples
 WHERE server_id = ? AND app_id <> '' AND tier = ? AND bucket_start >= ?

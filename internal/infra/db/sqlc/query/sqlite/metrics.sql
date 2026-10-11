@@ -15,6 +15,11 @@ SELECT * FROM metric_samples
 WHERE server_id = ? AND app_id <> '' AND tier = ? AND bucket_start >= ?
 ORDER BY app_id ASC, bucket_start ASC;
 
+-- name: ListMetricSamplesInRange :many
+SELECT * FROM metric_samples
+WHERE tier = sqlc.arg(tier) AND bucket_start >= sqlc.arg(from_time) AND bucket_start < sqlc.arg(to_time)
+ORDER BY server_id ASC, app_id ASC, bucket_start ASC;
+
 -- name: DeleteMetricSamplesBefore :execrows
 DELETE FROM metric_samples WHERE tier = ? AND bucket_start < ?;
 

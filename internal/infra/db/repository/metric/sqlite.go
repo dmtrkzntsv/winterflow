@@ -27,6 +27,10 @@ func (sqliteQuerier) DeleteMetricSamplesBefore(ctx context.Context, db backend.D
 	return sqlitegen.New(db).DeleteMetricSamplesBefore(ctx, p)
 }
 
+func (sqliteQuerier) ListMetricSamplesInRange(ctx context.Context, db backend.DBTX, p rangeParams) ([]sampleRow, error) {
+	return sqlitegen.New(db).ListMetricSamplesInRange(ctx, p)
+}
+
 func (sqliteQuerier) ListAppIDsByServer(ctx context.Context, db backend.DBTX, serverID string) ([]string, error) {
 	return sqlitegen.New(db).ListAppIDsByServer(ctx, serverID)
 }

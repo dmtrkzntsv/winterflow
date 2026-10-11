@@ -245,7 +245,8 @@ func (s *Scheduler) Forget(appID string) {
 
 // RunNow queues a manual run of an app's backup ahead of the scheduled ones
 // and returns where its outcome arrives. A request for a backup that is
-// already running or queued joins that run. Whether the backup can run
+// already running or queued fails at once, so waiters
+// can't pile up behind one run. Whether the backup can run
 // (enabled, sqlite or files) is decided when it runs.
 func (s *Scheduler) RunNow(appID, name string) <-chan Outcome {
 	ch := make(chan Outcome, 1)
@@ -260,15 +261,13 @@ func (s *Scheduler) RunNow(appID, name string) <-chan Outcome {
 		ch <- Outcome{Err: errStillStopping}
 		return ch
 	}
-	if s.running != nil && s.running.key == k {
-		s.running.waiters = append(s.running.waiters, ch)
-		return ch
-	}
+	dup := s.running != nil && s.running.key == k
 	for _, j := range s.queue {
-		if j.key == k {
-			j.waiters = append(j.waiters, ch)
-			return ch
-		}
+		dup = dup || j.key == k
+	}
+	if dup {
+		ch <- Outcome{Err: fmt.Errorf("a backup of %s is already queued or running", name)}
+		return ch
 	}
 	s.queue = append(s.queue, &job{key: k, kind: command.PointManual, waiters: []chan Outcome{ch}})
 	s.signal()

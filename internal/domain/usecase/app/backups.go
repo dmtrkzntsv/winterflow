@@ -11,9 +11,11 @@ import (
 	"winterflow/internal/domain/port"
 )
 
-// backupRunWait is how long the API awaits a Back up now result: the run
-// may queue behind others, and runs for up to 30 minutes.
-const backupRunWait = 2 * time.Hour
+// backupRunWait is how long the API awaits a Back up now result: the
+// agent's own bound (command.BackupRunWait; the run may queue behind others
+// and runs for up to 30 minutes) plus slack for the trip, so the agent's
+// timeout answer is never dropped as late.
+const backupRunWait = command.BackupRunWait + 5*time.Minute
 
 // checkBackups validates the backups a save makes when its compose file is
 // in the request: the recipe, the request's backups list when its config

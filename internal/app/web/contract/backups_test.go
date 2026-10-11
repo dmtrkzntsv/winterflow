@@ -41,6 +41,8 @@ func TestBackupRoutes(t *testing.T) {
 			`{"server_id":"` + sid + `","app_id":"` + anApp + `","backups":[{"name":"database","enabled":true,"storage":"nas"}]}`: `backup database: there is no storage \"nas\" on this server`,
 			`{"server_id":"` + sid + `","app_id":"` + anApp + `","backups":[{"name":"database","enabled":true}]}`:                 "backups[0].storage: an enabled backup needs a storage",
 			`{"server_id":"` + sid + `","app_id":"` + anApp + `","backups":[{"name":"Data_Base"}]}`:                               "is not a valid backup name",
+			`{"server_id":"` + sid + `","app_id":"` + anApp + `"}`:                                                                "backups is required",
+			`{"server_id":"` + sid + `","app_id":"` + anApp + `","backups":null}`:                                                 "backups is required",
 			`{"app_id":"` + anApp + `","backups":[]}`:                                                                             "server_id is required",
 			`{"server_id":"` + sid + `","app_id":"../x","backups":[]}`:                                                            "invalid app id",
 		} {

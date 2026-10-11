@@ -17,6 +17,19 @@ type UpdateBackupsRequest struct {
 	command.UpdateBackupsRequest
 }
 
+// Validate refuses a body without a backups list (absent or null: a
+// misspelt key must not wipe every backup setting); an explicit [] means
+// "no overrides".
+func (r UpdateBackupsRequest) Validate() error {
+	if err := r.UpdateBackupsRequest.Validate(); err != nil {
+		return err
+	}
+	if r.Backups == nil {
+		return errors.New("backups is required (use [] for no overrides)")
+	}
+	return nil
+}
+
 // RunBackupRequest is the body of POST /api/v1/app/run-backup.
 type RunBackupRequest struct {
 	ServerID string `json:"server_id"`

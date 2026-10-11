@@ -108,7 +108,8 @@ func (h *Handler) Routes(api.Guards) []api.Route {
 			Summary: "Replace an app's backups list (new revision; redeploys only when profiles or storage variables change)", Tag: "backups",
 			Description: "`backups` is the whole list of the app's backup settings: entries named like a backup of the compose file's " +
 				"`x-winterflow.backups` override it (only the fields that differ, never `type`); other entries are backups added here " +
-				"and carry `type` and every field it needs. `enabled: true` needs `storage`, a storage on the server.",
+				"and carry `type` and every field it needs. `enabled: true` needs `storage`, a storage on the server. " +
+				"`backups` is required: `[]` means no overrides, an absent or null list is a 400.",
 			Request: UpdateBackupsRequest{}, Accepted: true, Result: command.UpdateBackupsResponse{}, Errors: server,
 		},
 		{

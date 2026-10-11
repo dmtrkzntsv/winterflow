@@ -254,7 +254,7 @@ func TestStateIsRecordedAndReloaded(t *testing.T) {
 }
 
 // Back up now goes ahead of the schedule; a request for a backup already
-// running or queued joins that run.
+// running or queued fails at once instead of waiting behind it.
 func TestRunNowJoinsAndGoesFirst(t *testing.T) {
 	e := newEngine(planned("app-1", "db", recipe.TypeSQLite, true, "5m"), planned("app-1", "media", recipe.TypeFiles, true, recipe.Manual))
 	e.block = make(chan struct{})
@@ -264,22 +264,28 @@ func TestRunNowJoinsAndGoesFirst(t *testing.T) {
 	if j := ran(t, e); j.Backup != "db" {
 		t.Fatalf("run = %+v", j)
 	}
-	// db is running: a request for it joins; media queues once for two.
-	joined := s.RunNow("app-1", "db")
-	m1, m2 := s.RunNow("app-1", "media"), s.RunNow("app-1", "media")
+	// db is running: a request for it fails at once; media queues once and
+	// a second request for it fails at once.
+	dupRunning := <-s.RunNow("app-1", "db")
+	m1 := s.RunNow("app-1", "media")
+	dupQueued := <-s.RunNow("app-1", "media")
+	for _, o := range []Outcome{dupRunning, dupQueued} {
+		if o.Err == nil || !strings.Contains(o.Err.Error(), "is already queued or running") {
+			t.Fatalf("duplicate = %+v", o)
+		}
+	}
+	if !strings.Contains(dupRunning.Err.Error(), "a backup of db ") {
+		t.Fatalf("error = %v", dupRunning.Err)
+	}
 	if h := s.Health("app-1", clock.Now(), nil); h[0].State != command.BackupRunning || h[1].State != command.BackupNever {
 		t.Fatalf("health = %+v", h)
 	}
 	close(e.block)
-	if o := <-joined; o.Err != nil || o.Result.Backup != "db" || o.Result.Point == nil {
-		t.Fatalf("joined = %+v", o)
-	}
 	if j := ran(t, e); j.Backup != "media" || j.Kind != command.PointManual {
 		t.Fatalf("manual run = %+v", j)
 	}
-	o1, o2 := <-m1, <-m2
-	if o1.Err != nil || o2.Err != nil || o1.Result.AppID != "app-1" {
-		t.Fatalf("outcomes = %+v %+v", o1, o2)
+	if o1 := <-m1; o1.Err != nil || o1.Result.AppID != "app-1" {
+		t.Fatalf("outcome = %+v", o1)
 	}
 	idle(t, clock)
 	noRun(t, e)

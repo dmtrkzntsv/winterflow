@@ -45,9 +45,10 @@ func (noBackups) Decorate(apps []command.AppStatus, _ time.Time) []command.AppSt
 // may not).
 func (d *Dispatcher) SetBackups(b Backups) { d.backups = b }
 
-// backupRunWait bounds how long a Back up now request waits for its run: the
-// API's own wait for backup.run (the runs queued ahead of it count too).
-const backupRunWait = 2 * time.Hour
+// backupRunWait bounds how long a Back up now request waits for its run;
+// the API waits command.BackupRunWait plus slack, so this answer arrives
+// before the API gives up.
+const backupRunWait = command.BackupRunWait
 
 // runBackup waits for a Back up now request's run (on the backup scheduler,
 // never on the command pipeline: backup.run is a detached command).

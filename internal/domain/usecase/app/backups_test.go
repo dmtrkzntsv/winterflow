@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"winterflow/internal/domain/backup/recipe"
 	"winterflow/internal/domain/command"
@@ -64,6 +65,14 @@ func TestSaveAppChecksBackups(t *testing.T) {
 		if len(disp.all) != 0 {
 			t.Errorf("%s: reached the agent", name)
 		}
+	}
+}
+
+// The API awaits a run longer than the agent holds it, so the agent's own
+// timeout answer still finds its pending request.
+func TestBackupRunWaitExceedsAgentBound(t *testing.T) {
+	if backupRunWait < command.BackupRunWait+time.Minute {
+		t.Fatalf("API wait %s does not exceed the agent's %s with slack", backupRunWait, command.BackupRunWait)
 	}
 }
 

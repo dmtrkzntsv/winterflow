@@ -3,6 +3,7 @@ package command
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"winterflow/internal/domain/backup/recipe"
 )
@@ -61,6 +62,11 @@ func validateBackupRef(appID, backup string) error {
 	}
 	return recipe.ValidateName(backup)
 }
+
+// BackupRunWait bounds how long the agent holds a Back up now request for its
+// run (the runs queued ahead of it count too). The API awaits the result
+// longer, so the agent's timeout answer still finds its owner.
+const BackupRunWait = 2 * time.Hour
 
 // --- backup.update ----------------------------------------------------------
 

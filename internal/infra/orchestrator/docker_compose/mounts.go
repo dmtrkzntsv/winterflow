@@ -420,3 +420,14 @@ func dockerOutputIn(ctx context.Context, dir string, args []string) ([]byte, err
 	}
 	return out, nil
 }
+
+// planEntries are the archive names a plan's paths are stored under, sorted:
+// what a manifest records, and what a restore checks a copy against.
+func planEntries(plan helperPlan) []string {
+	out := make([]string, 0, len(plan.Paths))
+	for _, p := range plan.Paths {
+		out = append(out, p.Entry)
+	}
+	sort.Strings(out)
+	return out
+}

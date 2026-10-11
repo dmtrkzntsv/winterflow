@@ -998,3 +998,50 @@ func TestRestoreStoppedBeforeTheSwapStartsTheAppAgain(t *testing.T) {
 		})
 	}
 }
+
+// setEntries rewrites a point's manifest with other entries.
+func (rr *restoreRepo) setEntries(t *testing.T, backup, id string, entries []string) []string {
+	t.Helper()
+	mpath := filepath.Join(rr.disk, "app-1", backup, id+".json")
+	body, err := os.ReadFile(mpath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m layout.Manifest
+	_ = json.Unmarshal(body, &m)
+	was := m.Entries
+	m.Entries = entries
+	body, _ = json.Marshal(m)
+	if err := os.WriteFile(mpath, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return was
+}
+
+// A copy made under a location the backup no longer has is refused before
+// anything is touched, instead of being extracted somewhere else; older
+// manifests (no entries) are restored as before.
+func TestRestoreRefusesACopyOfAnotherLocation(t *testing.T) {
+	rr := newRestoreRepo(t)
+	id := rr.filesPoint(t)
+	if was := rr.setEntries(t, "media", id, []string{"app/media"}); !slices.Equal(was, []string{"app/media"}) {
+		t.Fatalf("the manifest recorded entries %q", was)
+	}
+	rr.setEntries(t, "media", id, []string{"app/photos"})
+	_, err := rr.restore(context.Background(), "media", id)
+	if err == nil || !strings.Contains(err.Error(), "the backup's location changed since this copy was made (the copy holds /app/photos; the backup now covers /app/media)") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(rr.compose) != 0 || len(rr.restorer.calls) != 0 {
+		t.Fatalf("compose %v, helper %d", rr.compose, len(rr.restorer.calls))
+	}
+	// A copy of a whole volume cannot be put into a path of it either.
+	rr.setEntries(t, "media", id, []string{""})
+	if _, err := rr.restore(context.Background(), "media", id); err == nil || !strings.Contains(err.Error(), "the copy holds the whole volume") {
+		t.Fatalf("whole volume: %v", err)
+	}
+	rr.setEntries(t, "media", id, nil) // an older manifest
+	if _, err := rr.restore(context.Background(), "media", id); err != nil {
+		t.Fatalf("old manifest: %v", err)
+	}
+}

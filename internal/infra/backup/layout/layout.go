@@ -80,6 +80,11 @@ type Manifest struct {
 	RawSize      int64             `json:"raw_size"` // the database or tar stream before compression
 	Fingerprint  string            `json:"fingerprint"`
 	AgentVersion string            `json:"agent_version"`
+	// Entries are the archive names the copy was made under (a files copy's
+	// paths inside the archive; a whole volume is ""). A restore refuses a
+	// copy whose entries the backup's location no longer has, instead of
+	// extracting them somewhere else. Absent in older manifests.
+	Entries []string `json:"entries,omitempty"`
 }
 
 // Point is one restore point as found in a backup's folder.

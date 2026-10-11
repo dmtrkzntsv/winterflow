@@ -300,6 +300,9 @@ func (r *Repository) RestoreBackup(ctx context.Context, job RestoreJob) (command
 	if m.Type != b.Type {
 		return resp, fmt.Errorf("the restore point is a %s copy, but the backup %s is a %s backup now", m.Type, b.Name, b.Type)
 	}
+	if err := checkLocation(m, plan); err != nil {
+		return resp, err
+	}
 	if err := r.ensureHelperImage(ctx); err != nil {
 		return resp, err
 	}
@@ -443,6 +446,35 @@ func (r *Repository) RestoreBackup(ctx context.Context, job RestoreJob) (command
 		}
 	}
 	return resp, nil
+}
+
+// checkLocation refuses a copy made under entries the backup's location no
+// longer has. The archive's names are container paths in the service form and
+// paths inside the volume in the volume form, and a whole volume accepts any
+// name: a copy restored under a changed location would be extracted
+// somewhere else and report success. Manifests of older agents list no
+// entries and are not checked.
+func checkLocation(m layout.Manifest, plan helperPlan) error {
+	if len(m.Entries) == 0 {
+		return nil
+	}
+	have := planEntries(plan)
+	show := func(entries []string) string {
+		out := make([]string, len(entries))
+		for i, e := range entries {
+			out[i] = "/" + e
+			if e == "" {
+				out[i] = "the whole volume"
+			}
+		}
+		return strings.Join(out, ", ")
+	}
+	for _, e := range m.Entries {
+		if !slices.Contains(have, e) {
+			return fmt.Errorf("the backup's location changed since this copy was made (the copy holds %s; the backup now covers %s), so it can't be restored here: nothing was changed. Put the location back, or restore it by hand", show(m.Entries), show(have))
+		}
+	}
+	return nil
 }
 
 // reason is why a helper failed: its result's error, else its exit code and

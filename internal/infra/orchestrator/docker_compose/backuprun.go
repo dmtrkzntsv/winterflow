@@ -180,7 +180,7 @@ func (r *Repository) RunBackup(ctx context.Context, job BackupJob) (BackupResult
 		m := layout.Manifest{
 			AppID: job.AppID, Backup: b.Name, Type: b.Type, Kind: job.Kind, Created: now,
 			SHA256: dump.sha256, Size: dump.size, RawSize: dump.result.RawSize,
-			Fingerprint: dump.result.Fingerprint, AgentVersion: version.GetVersion(),
+			Fingerprint: dump.result.Fingerprint, AgentVersion: version.GetVersion(), Entries: planEntries(plan),
 		}
 		if err := writeManifest(ctx, st, layout.ManifestKey(job.AppID, b.Name, id), m); err != nil {
 			return res, err

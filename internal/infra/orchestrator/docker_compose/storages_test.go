@@ -134,6 +134,30 @@ func TestSaveStorageCreateAndEditModes(t *testing.T) {
 	}
 }
 
+// The decisive check runs under the registry's lock when storing: an add
+// that passed the pre-check is still refused when the name was taken while
+// it was being tested, and the storage stored meanwhile stays.
+func TestSaveStorageRechecksWhenStoring(t *testing.T) {
+	r := newTestRepo(t)
+	theirs, mine := t.TempDir(), t.TempDir()
+	old := openStorage
+	t.Cleanup(func() { openStorage = old })
+	openStorage = func(s model.Storage, secret string) (store.Store, error) {
+		// Another add of the same name lands during the probe.
+		if err := r.storages.Put(localStorage("disk", theirs)); err != nil {
+			t.Fatal(err)
+		}
+		return old(s, secret)
+	}
+	_, err := r.SaveStorage(context.Background(), localStorage("disk", mine), true)
+	if err == nil || err.Error() != "a storage named disk already exists on this server" {
+		t.Fatalf("err = %v", err)
+	}
+	if s, _, _ := r.storages.Get("disk"); s.Local.Path != theirs {
+		t.Fatalf("the add overwrote the storage stored meanwhile: %+v", s.Local)
+	}
+}
+
 func TestTestStorageReportsInline(t *testing.T) {
 	r := newTestRepo(t)
 	res, err := r.TestStorage(context.Background(), localStorage("disk", t.TempDir()))

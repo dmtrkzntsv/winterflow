@@ -228,6 +228,8 @@ func TestMarshalStorageEnvQuoting(t *testing.T) {
 		"/mnt/a#b":               "'/mnt/a#b'",
 		`/mnt/a\b"c`:             `'/mnt/a\b"c'`,
 		"/mnt/it's":              `"/mnt/it's"`,
+		`/mnt/a\`:                `"/mnt/a\\"`,
+		`\`:                      `"\\"`,
 		`/mnt/it's $X \ "q"`:     `"/mnt/it's \$X \\ \"q\""`,
 	}
 	for in, want := range cases {
@@ -250,6 +252,7 @@ func TestStorageEnvRoundTripsThroughDockerCompose(t *testing.T) {
 	values := []string{
 		"/mnt/usb", "", "/mnt/my disk", "/mnt/$HOME/${USER}", "/mnt/a#b # c", `/mnt/a\nb\\c"d`,
 		"/mnt/it's", `/mnt/it's $HOME \ "q" #h`, "  padded  ", "a=b=c", "$(touch pwned)",
+		`/mnt/a\`, `\`, `/mnt/my disk\`,
 	}
 	dir := t.TempDir()
 	writeFileT(t, dir, "compose.yml", "services:\n  a:\n    image: x\n    environment:\n      V: \"${V}\"\n      EVIL: \"${WF_STORAGE_EVIL_PATH:-unset}\"\n")

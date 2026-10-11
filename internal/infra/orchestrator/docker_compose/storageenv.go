@@ -132,8 +132,8 @@ func marshalStorageEnv(vars []resolvedItem) ([]byte, error) {
 
 // quoteEnvValue renders a single-line value for a compose env file: bare when
 // it only has characters with no special meaning, else single-quoted (taken
-// literally, no expansion), else — it holds a single quote itself —
-// double-quoted with \, " and $ escaped.
+// literally, no expansion), else — it holds a single quote or ends in a
+// backslash — double-quoted with \, " and $ escaped.
 func quoteEnvValue(val string) string {
 	bare := true
 	for _, c := range val {
@@ -145,7 +145,9 @@ func quoteEnvValue(val string) string {
 	switch {
 	case bare:
 		return val
-	case !strings.Contains(val, "'"):
+	case !strings.Contains(val, "'") && !strings.HasSuffix(val, `\`):
+		// Compose treats a closing quote after a backslash as escaped even
+		// inside single quotes, so a trailing backslash needs the other form.
 		return "'" + val + "'"
 	default:
 		return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`, `$`, `\$`).Replace(val) + `"`

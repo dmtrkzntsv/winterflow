@@ -179,6 +179,7 @@ describe("StoragesCard", () => {
     expect(within(dialog).getByText(/plain http is only allowed/)).toBeInTheDocument();
     await user.clear(within(dialog).getByLabelText("Endpoint"));
     await user.type(within(dialog).getByLabelText("Endpoint"), "https://s3.example.com");
+    await user.type(within(dialog).getByLabelText("Region"), "fsn1");
     await user.type(within(dialog).getByLabelText("Bucket"), "tenants");
     await user.type(within(dialog).getByLabelText("Access key"), "AKIA");
     // Not reached yet: no complaint. Left empty: it says what is missing.
@@ -192,7 +193,7 @@ describe("StoragesCard", () => {
     await user.click(within(dialog).getByRole("button", { name: "Test connection" }));
     expect(await within(dialog).findByText("write a test file: Access Denied")).toBeInTheDocument();
     expect(docker.testStorage).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "s3", bucket: "tenants", secret: "S3-PLAIN", pathStyle: true }),
+      expect.objectContaining({ type: "s3", region: "fsn1", bucket: "tenants", secret: "S3-PLAIN", pathStyle: true }),
     );
     // Editing a field clears the result.
     await user.type(within(dialog).getByLabelText("Prefix"), "wf");

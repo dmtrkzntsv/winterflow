@@ -165,4 +165,11 @@ func TestRegistrySaveChecksUnderTheLock(t *testing.T) {
 	if s, _, _ := r.Get("hetzner"); s.S3.SecretAccessKey != "TWO" {
 		t.Fatalf("a refused save wrote %+v", s.S3)
 	}
+	// A registration that can't be read can't be checked: fail closed.
+	if err := os.WriteFile(filepath.Join(r.Dir(), "hetzner.json"), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Save(s3("hetzner", "FOUR"), check); err == nil || !strings.Contains(err.Error(), "read storage hetzner") {
+		t.Fatalf("unreadable registration: %v", err)
+	}
 }

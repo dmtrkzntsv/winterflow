@@ -238,12 +238,7 @@ export function StorageDialog({
           className="grid gap-4"
           onSubmit={(e) => {
             e.preventDefault();
-            if (problem) {
-              setTouched(new Set(FIELD_ORDER));
-              document.getElementById(FIELD_ID[problem.field])?.focus();
-              return;
-            }
-            if (!busy && dirty) void save();
+            if (!problem && !busy && dirty) void save();
           }}
         >
           <DialogHeader>

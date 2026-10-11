@@ -2,6 +2,7 @@ package dockercompose
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
@@ -20,6 +22,13 @@ import (
 // plaintext secrets: 0600, gitignored, and excluded from every commit
 // whatever .gitignore says (neverCommitted).
 const storageEnvRel = ".winterflow/storage.env"
+
+// storageFolderTimeout bounds the deploy-time check that a referenced local
+// storage's folder exists (a variable so tests can shrink it).
+var storageFolderTimeout = 10 * time.Second
+
+// statStorageFolder stats a local storage's folder; replaced in tests.
+var statStorageFolder = os.Stat
 
 // composeContents reads the app's compose files (missing ones skipped).
 func (r *Repository) composeContents(dir string) ([][]byte, error) {
@@ -51,8 +60,9 @@ func (r *Repository) storageRefs(dir string) ([]string, error) {
 // compose files reference — an app never receives credentials for a
 // storage it doesn't mention — or removes it when they reference none. A
 // reference to a storage this server doesn't have (deleted, or added to a
-// git-sourced compose file upstream) fails the deploy.
-func (r *Repository) materializeStorageEnv(dir string) error {
+// git-sourced compose file upstream) fails the deploy, and so does a
+// referenced local storage whose folder is missing (see checkStorageFolder).
+func (r *Repository) materializeStorageEnv(ctx context.Context, dir string) error {
 	refs, err := r.storageRefs(dir)
 	if err != nil {
 		return err
@@ -77,9 +87,16 @@ func (r *Repository) materializeStorageEnv(dir string) error {
 		return err
 	}
 	secrets := map[string]string{} // each storage's secret decrypted once
+	checked := map[string]bool{}   // each local folder checked once
 	vars := make([]resolvedItem, 0, len(parsed))
 	for _, ref := range parsed {
 		s := byName[ref.Storage]
+		if s.Type == model.StorageLocal && s.Local != nil && !checked[s.Name] {
+			checked[s.Name] = true
+			if err := checkStorageFolder(ctx, s); err != nil {
+				return err
+			}
+		}
 		secret := ""
 		if ref.Secret() && s.S3 != nil {
 			if _, done := secrets[s.Name]; !done {
@@ -105,6 +122,43 @@ func (r *Repository) materializeStorageEnv(dir string) error {
 	}
 	// WriteFile's perm only applies on create.
 	return os.Chmod(path, 0o600)
+}
+
+// checkStorageFolder refuses a deploy whose compose file references a
+// local storage whose folder is missing: docker would create a missing bind
+// source as an empty folder on the system disk (the unmounted USB disk case)
+// and the app would fill it. The stat runs in a goroutine abandoned after
+// storageFolderTimeout, like probeStorage: a hung NFS/CIFS mount must not
+// wedge the (standalone: single) command pipeline.
+func checkStorageFolder(parent context.Context, s model.Storage) error {
+	ctx, cancel := context.WithTimeout(parent, storageFolderTimeout)
+	defer cancel()
+	folder := s.Local.Path
+	stat := statStorageFolder
+	done := make(chan error, 1) // buffered: an abandoned stat must not block on send
+	go func() {
+		info, err := stat(folder)
+		if err == nil && !info.IsDir() {
+			err = errors.New("it is not a folder")
+		}
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		switch {
+		case err == nil:
+			return nil
+		case errors.Is(err, fs.ErrNotExist):
+			return fmt.Errorf("storage %s: the folder %s is missing (is the disk mounted?): not deploying, so docker does not create it on the system disk", s.Name, folder)
+		default:
+			return fmt.Errorf("storage %s: cannot use the folder %s: %w", s.Name, folder, err)
+		}
+	case <-ctx.Done():
+		if err := parent.Err(); err != nil {
+			return fmt.Errorf("storage %s: the folder %s was not checked: %w", s.Name, folder, err)
+		}
+		return fmt.Errorf("storage %s: the folder %s did not answer within %s (is the share reachable?)", s.Name, folder, storageFolderTimeout)
+	}
 }
 
 // marshalStorageEnv renders NAME=VALUE lines for docker compose's env-file

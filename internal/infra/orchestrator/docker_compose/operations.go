@@ -419,7 +419,7 @@ func (r *Repository) composeRun(ctx context.Context, appID string, verb ...strin
 func (r *Repository) composeUp(ctx context.Context, appID string) error {
 	// The storage variables are resolved on every deploy: a storage removed
 	// or changed since the last one must not be served stale.
-	if err := r.materializeStorageEnv(r.appDataDir(appID)); err != nil {
+	if err := r.materializeStorageEnv(ctx, r.appDataDir(appID)); err != nil {
 		return err
 	}
 	// Refresh the manual-run helper alongside every deploy; never fail one on it.

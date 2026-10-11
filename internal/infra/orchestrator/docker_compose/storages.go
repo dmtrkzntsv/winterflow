@@ -34,6 +34,9 @@ var (
 	// manager's 10 minute pending TTL, so the result is not dropped, and
 	// bounds how long the command can hold the (standalone: single) pipeline.
 	storageSaveBudget = 8 * time.Minute
+	// storageRedeployMinBudget is the least of the save's budget that must
+	// remain to start another redeploy.
+	storageRedeployMinBudget = 2 * time.Minute
 )
 
 // openStorage opens a storage driver; replaced in tests.
@@ -267,7 +270,9 @@ func (r *Repository) redeployStorageUsers(ctx context.Context, ids []string) (re
 			warnings = append(warnings, name+" has undeployed changes and was not redeployed: deploy it to use the new storage settings")
 			continue
 		}
-		if ctx.Err() != nil {
+		// Starting a redeploy that the budget would cut short could leave
+		// the app down half-way: skip it unless enough time remains.
+		if deadline, ok := ctx.Deadline(); ctx.Err() != nil || (ok && time.Until(deadline) < storageRedeployMinBudget) {
 			warnings = append(warnings, fmt.Sprintf("%s: not redeployed: time budget exhausted — redeploy %s to use the new settings", name, name))
 			continue
 		}

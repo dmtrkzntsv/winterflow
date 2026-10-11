@@ -407,9 +407,9 @@ func TestSaveStorageBudgetSkipsLaterRedeploys(t *testing.T) {
 		<-ctx.Done() // a redeploy that takes longer than the whole budget
 		return ctx.Err()
 	}
-	old := storageSaveBudget
-	storageSaveBudget = 200 * time.Millisecond
-	t.Cleanup(func() { storageSaveBudget = old })
+	old, oldMin := storageSaveBudget, storageRedeployMinBudget
+	storageSaveBudget, storageRedeployMinBudget = 200*time.Millisecond, 0
+	t.Cleanup(func() { storageSaveBudget, storageRedeployMinBudget = old, oldMin })
 
 	start := time.Now()
 	resp, err := r.SaveStorage(context.Background(), localStorage("disk", t.TempDir()))
@@ -429,5 +429,42 @@ func TestSaveStorageBudgetSkipsLaterRedeploys(t *testing.T) {
 	}
 	if !reflect.DeepEqual(resp.Warnings, want) {
 		t.Fatalf("warnings = %q", resp.Warnings)
+	}
+}
+
+// A redeploy is only started with storageRedeployMinBudget of the save's
+// budget left: one cut short half-way would leave the app down.
+func TestSaveStorageStartsNoRedeployWithoutEnoughBudget(t *testing.T) {
+	r := newTestRepo(t)
+	storageApp(t, r, "a-first", "First", "disk", false)
+	storageApp(t, r, "b-second", "Second", "disk", false)
+	r.runningProjects = func(context.Context) (map[string]bool, error) {
+		return map[string]bool{"wf-a-first": true, "wf-b-second": true}, nil
+	}
+	var started []string
+	r.redeploy = func(ctx context.Context, appID string) error {
+		started = append(started, appID)
+		time.Sleep(1100 * time.Millisecond) // uses up the budget's slack
+		return nil
+	}
+	old, oldMin := storageSaveBudget, storageRedeployMinBudget
+	storageSaveBudget, storageRedeployMinBudget = 30*time.Second, 29*time.Second
+	t.Cleanup(func() { storageSaveBudget, storageRedeployMinBudget = old, oldMin })
+
+	resp, err := r.SaveStorage(context.Background(), localStorage("disk", t.TempDir()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(started, []string{"a-first"}) || !reflect.DeepEqual(resp.Redeployed, []string{"a-first"}) {
+		t.Fatalf("started = %v, redeployed = %v", started, resp.Redeployed)
+	}
+	want := []string{"Second: not redeployed: time budget exhausted — redeploy Second to use the new settings"}
+	if !reflect.DeepEqual(resp.Warnings, want) {
+		t.Fatalf("warnings = %q", resp.Warnings)
+	}
+
+	// The default keeps two minutes in reserve of an eight minute budget.
+	if oldMin != 2*time.Minute || old != 8*time.Minute {
+		t.Fatalf("defaults: budget %v, minimum %v", old, oldMin)
 	}
 }

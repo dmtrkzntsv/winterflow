@@ -26,7 +26,7 @@ vi.mock("@/context/use-servers", () => ({
   useServers: () => ({ activeServer: { id: "s1", name: "prod-1" }, activeServerId: "s1" }),
 }));
 vi.mock("@/context/use-apps", () => ({
-  useApps: () => ({ apps: [{ id: "app-1", name: "Nextcloud" }] }),
+  useApps: () => ({ apps: [{ id: "app-1", name: "Nextcloud" }, { id: "app-2-unnamed", name: "" }] }),
 }));
 vi.mock("@/hooks/use-metrics", () => ({
   useServerMetrics: (...args: unknown[]) => {
@@ -144,11 +144,12 @@ describe("MonitoringPage", { timeout: 20_000 }, () => {
   it("stacks per-app averages but draws per-app peaks as lines", async () => {
     data!.apps = [
       { app_id: "app-1", points: [{ t: 0, cpu: 1, cpu_max: 3 }, { t: 60, cpu: 2, cpu_max: 4 }] },
-      { app_id: "app-2", points: [{ t: 0, cpu: 1, cpu_max: 3 }, { t: 60, cpu: 2, cpu_max: 4 }] },
+      { app_id: "app-2-unnamed", points: [{ t: 0, cpu: 1, cpu_max: 3 }, { t: 60, cpu: 2, cpu_max: 4 }] },
     ];
     renderPage();
     for (const f of fills("CPU by app")) expect(f).not.toBe("none");
     expect(screen.getByTestId("chart-CPU by app")).toHaveTextContent("Nextcloud");
+    expect(screen.getByTestId("chart-CPU by app")).toHaveTextContent("app-2-un"); // nameless: id prefix
     await userEvent.click(screen.getByRole("radio", { name: "Peak" }));
     expect(fills("CPU by app").length).toBe(2);
     for (const f of fills("CPU by app")) expect(f).toBe("none");

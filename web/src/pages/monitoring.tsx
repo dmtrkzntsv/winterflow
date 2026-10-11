@@ -64,7 +64,8 @@ export default function MonitoringPage() {
   const interval = data?.interval_seconds ?? 60;
   const rows = (fields: string[]) => toChartRows(points, interval, fields, mode);
   const temps = temperatureChart(points, interval, mode);
-  const appName = (id: string) => apps.find((a) => a.id === id)?.name ?? id.slice(0, 8);
+  // An app without a name (not reconciled yet) is labelled by its id prefix.
+  const appName = (id: string) => apps.find((a) => a.id === id)?.name || id.slice(0, 8);
   const appSeries = (data?.apps ?? []).map((a, i) => s(a.app_id, appName(a.app_id), i));
   // The disk scan is hourly: take the latest sample's, not the range's.
   const latest = overview?.servers?.find((o) => o.server_id === activeServerId)?.latest?.server;

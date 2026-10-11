@@ -1,3 +1,4 @@
+import { TriangleAlert } from "lucide-react";
 import { Link } from "react-router-dom";
 
 import { Card } from "@/components/ui/card";
@@ -91,7 +92,8 @@ export function AppGrid() {
         const unknown =
           (statusByApp[app.id] ?? AppStatusCode.Unknown) ===
           AppStatusCode.Unknown;
-        // A late or failing backup: a small dot, never the card's color
+        // A late or failing backup: a small warning triangle (a shape, not just a
+        // color, so it reads without hover), never the card's color
         // (backup health doesn't change the app's status).
         const backupWarning = needsAttention(backupsByApp?.[app.id]);
         return (
@@ -109,10 +111,10 @@ export function AppGrid() {
               )}
             >
               {backupWarning ? (
-                <span
+                <TriangleAlert
                   role="img"
                   aria-label="A backup is late or failing"
-                  className="absolute top-2 right-2 size-2 rounded-full bg-amber-500 ring-2 ring-background"
+                  className="absolute top-2 right-2 size-4 text-amber-500"
                 />
               ) : null}
               <div className="flex flex-1 flex-col items-center gap-2">

@@ -81,7 +81,7 @@ function DeleteAppConfirm({ name, onConfirm }: { name: string; onConfirm: (choic
         checked={withBackups}
         onChange={setWithBackups}
         label="Also delete its backups"
-        hint="Permanently deletes every copy of this app in its backup storages. Unticked, the copies are kept until they reach this server's retention limit; you can delete them sooner in Server Settings → Storages."
+        hint="Permanently deletes every copy of this app in its backup storages. Unticked, the copies stay on the storage and expire per the server's retention settings; you can delete them sooner in Server Settings → Storages."
       />
       <AlertDialogFooter>
         <AlertDialogCancel>Cancel</AlertDialogCancel>

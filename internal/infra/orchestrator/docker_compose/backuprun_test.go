@@ -62,7 +62,7 @@ func (f *fakeHelper) run(_ context.Context, _ string, args []string, out io.Writ
 		return f.exit, []byte(f.stderr), f.err
 	}
 	if i := slices.Index(args, "--since"); i >= 0 && args[i+1] == f.fp {
-		return helper.ExitUnchanged, []byte(`{"unchanged":true}` + "\n"), nil
+		return helper.ExitUnchanged, []byte(`{"unchanged":true,"warnings":["a note"]}` + "\n"), nil
 	}
 	if _, err := io.WriteString(out, f.payload); err != nil {
 		return 1, nil, err
@@ -475,7 +475,9 @@ func TestRunBackupUnchangedMakesNoUpload(t *testing.T) {
 		t.Fatalf("puts = %d", puts.Load())
 	}
 	b.clock = b.clock.Add(time.Hour)
-	if res, err := b.run(t, "database", command.PointScheduled); err != nil || !res.Unchanged {
+	// The helper's warnings reach the result of an unchanged run too.
+	if res, err := b.run(t, "database", command.PointScheduled); err != nil || !res.Unchanged ||
+		len(res.Warnings) != 1 || res.Warnings[0] != "a note" {
 		t.Fatalf("unchanged = %+v, %v", res, err)
 	}
 	b.helper.exit, b.helper.stderr = helper.ExitMissing, `{"error":"database file not found"}`
@@ -660,5 +662,16 @@ func TestRunBackupStalledUploadIsBoundedByTheRunDeadline(t *testing.T) {
 	}
 	if got := b.stored(t); len(got) != 0 {
 		t.Fatalf("left %v", got)
+	}
+}
+
+// A sqlite backup's helper is told the database's name in the backup, so its
+// messages don't name the helper-internal /src/<n> path.
+func TestHelperArgsNameTheSQLiteEntry(t *testing.T) {
+	plan := helperPlan{Mounts: []helperMount{{Volume: "wf-app-1_data"}}, Paths: []helperPath{{Sub: "db/app.db", Entry: "db/app.db"}}}
+	args := helperArgs("n", "app-1", "/opt/wf", plan, recipe.EffectiveBackup{Type: recipe.TypeSQLite}, "fp")
+	joined := strings.Join(args, " ")
+	if !strings.HasSuffix(joined, "/wf backup dump sqlite /src/0/db/app.db --entry db/app.db --since fp") {
+		t.Fatalf("args = %s", joined)
 	}
 }

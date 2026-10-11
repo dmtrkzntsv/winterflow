@@ -5,7 +5,7 @@
 // that the agent's own user cannot open. A dump writes the copy to stdout
 // and, as stderr's last line, a JSON Result.
 //
-//	backup dump sqlite <path> [--since <fingerprint>]
+//	backup dump sqlite <path> [--entry <name>] [--since <fingerprint>]
 //	backup dump files (--src <source> --entry <entry name>)... [--exclude <pattern>...] [--since <fingerprint>]
 //
 // Exit codes: 0 done, 3 unchanged since --since (nothing written), 4 nothing
@@ -69,7 +69,7 @@ func Main(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, err)
 		return usage(stderr)
 	case errors.Is(err, errUnchanged):
-		res, code = Result{Unchanged: true}, ExitUnchanged
+		res.Unchanged, code = true, ExitUnchanged // the warnings of the check stay
 	case errors.Is(err, errMissing):
 		res.Error, code = strings.TrimSuffix(err.Error(), ": "+errMissing.Error()), ExitMissing
 	case err != nil:
@@ -84,7 +84,7 @@ var errUsage = errors.New("usage")
 
 func usage(stderr io.Writer) int {
 	fmt.Fprintln(stderr, `usage:
-  backup dump sqlite <path> [--since <fingerprint>]
+  backup dump sqlite <path> [--entry <name>] [--since <fingerprint>]
   backup dump files (--src <source> --entry <entry name>)... [--exclude <pattern>...] [--since <fingerprint>]`)
 	return ExitUsage
 }
@@ -103,10 +103,11 @@ func dumpSQLiteCmd(args []string, stdout io.Writer) (Result, error) {
 	fs := flag.NewFlagSet("dump sqlite", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	since := fs.String("since", "", "")
+	entry := fs.String("entry", "", "")
 	if err := fs.Parse(args[1:]); err != nil || fs.NArg() > 0 {
-		return Result{}, fmt.Errorf("%w: dump sqlite takes <path> [--since <fingerprint>]", errUsage)
+		return Result{}, fmt.Errorf("%w: dump sqlite takes <path> [--entry <name>] [--since <fingerprint>]", errUsage)
 	}
-	return dumpSQLite(path, *since, os.TempDir(), stdout)
+	return dumpSQLite(path, strings.Trim(*entry, "/"), *since, os.TempDir(), stdout)
 }
 
 func dumpFilesCmd(args []string, stdout io.Writer) (Result, error) {

@@ -479,3 +479,73 @@ func TestWriteEntrySkipsASwappedFile(t *testing.T) {
 		}
 	}
 }
+
+// Messages name the backup's own path (the entry), never the helper's
+// /src/<n> mount path.
+func TestMessagesUseTheEntryName(t *testing.T) {
+	dir := t.TempDir()
+	// A missing database.
+	code, _, res := run(t, "dump", "sqlite", filepath.Join(dir, "nope.db"), "--entry", "data/app.db")
+	if code != ExitMissing || res.Error != "database file not found: /data/app.db" {
+		t.Fatalf("missing: %d %+v", code, res)
+	}
+	// Not a file.
+	if err := os.Mkdir(filepath.Join(dir, "d.db"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, _, res = run(t, "dump", "sqlite", filepath.Join(dir, "d.db"), "--entry", "data/d.db")
+	if code != ExitFailed || res.Error != "/data/d.db is not a file" {
+		t.Fatalf("not a file: %d %+v", code, res)
+	}
+	// A path that cannot be read (a file where a folder is expected).
+	if err := os.WriteFile(filepath.Join(dir, "f"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"dump", "files", "--src", filepath.Join(dir, "f", "sub"), "--entry", "app/sub"},
+		{"dump", "sqlite", filepath.Join(dir, "f", "x.db"), "--entry", "app/x.db"},
+	} {
+		code, _, res = run(t, args...)
+		if code == ExitOK || strings.Contains(res.Error, dir) || !strings.Contains(res.Error, "/app/") {
+			t.Fatalf("%v: %d %+v", args, code, res)
+		}
+	}
+}
+
+// An unreadable folder's warning names its place in the backup.
+func TestUnreadableFolderWarningUsesTheEntryName(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads everything")
+	}
+	src := t.TempDir()
+	locked := filepath.Join(src, "private")
+	if err := os.Mkdir(locked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "ok.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(locked, 0o755) })
+	code, _, res := run(t, "dump", "files", "--src", src, "--entry", "app/data")
+	if code != ExitOK || len(res.Warnings) != 1 || !strings.HasPrefix(res.Warnings[0], "/app/data/private: ") || strings.Contains(res.Warnings[0], src) {
+		t.Fatalf("code %d, %+v", code, res)
+	}
+}
+
+// The warnings of an unchanged run are kept: the helper's exit 3 result
+// carries them to the run's result.
+func TestUnchangedKeepsWarnings(t *testing.T) {
+	src0, _ := filesTree(t) // media/pipe is a FIFO: skipped with a warning
+	args := []string{"dump", "files", "--src", src0 + "/media", "--entry", "app/media"}
+	code, _, first := run(t, args...)
+	if code != ExitOK || len(first.Warnings) == 0 {
+		t.Fatalf("first: %d %+v", code, first)
+	}
+	code, out, again := run(t, append(args, "--since", first.Fingerprint)...)
+	if code != ExitUnchanged || !again.Unchanged || len(out) != 0 || len(again.Warnings) == 0 || again.Warnings[0] != first.Warnings[0] {
+		t.Fatalf("unchanged: %d %+v", code, again)
+	}
+}

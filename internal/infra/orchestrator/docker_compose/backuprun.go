@@ -286,7 +286,7 @@ func helperArgs(name, appID, exe string, plan helperPlan, b recipe.EffectiveBack
 	}
 	args = append(args, "--mount", "type=bind,"+csvField("source="+exe)+",target=/wf,readonly", helper.Image, "/wf", "backup", "dump")
 	if b.Type == recipe.TypeSQLite {
-		args = append(args, "sqlite", plan.Paths[0].Src())
+		args = append(args, "sqlite", plan.Paths[0].Src(), "--entry", plan.Paths[0].Entry)
 	} else {
 		args = append(args, "files")
 		for _, p := range plan.Paths {

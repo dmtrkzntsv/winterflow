@@ -53,6 +53,26 @@ func (w *warner) result() []string {
 	return append(w.list, fmt.Sprintf("and %d more", w.extra))
 }
 
+// scrub drops the file name from a path error, so a message names the
+// backup's own path (see source.display), not a helper-internal /src/<n>.
+func scrub(err error) error {
+	var pe *fs.PathError
+	if errors.As(err, &pe) {
+		return pe.Err
+	}
+	return err
+}
+
+// display is the backup's name for p, a path at or below the source: what
+// the user knows (the entry name), not the helper's mount path.
+func (s source) display(p string) string {
+	rel, err := filepath.Rel(s.path, p)
+	if err != nil || rel == "." {
+		return displayName(s.entry)
+	}
+	return "/" + path.Join(s.entry, filepath.ToSlash(rel))
+}
+
 // dumpFiles walks the sources twice, so memory stays proportional to the
 // tree's depth, not to its number of files. The first, streaming walk hashes
 // every entry's name, size, mode and mtime into the fingerprint (and exits
@@ -125,7 +145,7 @@ func displayName(entry string) string {
 // unreadable folders are reported to warn. An error from fn stops the walk.
 func walk(s source, exclude []string, warn func(string), fn func(entry) error) error {
 	if _, err := os.Lstat(s.path); err != nil {
-		return err
+		return fmt.Errorf("%s: %w", displayName(s.entry), scrub(err))
 	}
 	return filepath.WalkDir(s.path, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -133,13 +153,13 @@ func walk(s source, exclude []string, warn func(string), fn func(entry) error) e
 				return nil // removed meanwhile
 			}
 			if p != s.path {
-				warn(fmt.Sprintf("%s: %v", p, err))
+				warn(fmt.Sprintf("%s: %v", s.display(p), scrub(err)))
 				if d != nil && d.IsDir() {
 					return filepath.SkipDir
 				}
 				return nil
 			}
-			return err
+			return fmt.Errorf("%s: %w", displayName(s.entry), scrub(err))
 		}
 		rel, _ := filepath.Rel(s.path, p)
 		name := s.entry
@@ -220,7 +240,7 @@ func writeEntry(tw *tar.Writer, e entry) (string, error) {
 		// for a FIFO (open would block) or a symlink (open would follow it)
 		// since, so refuse both and check what was really opened.
 		if f, err = os.OpenFile(e.path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0); err != nil {
-			return fmt.Sprintf("/%s: skipped: %v", e.name, err), nil
+			return fmt.Sprintf("/%s: skipped: %v", e.name, scrub(err)), nil
 		}
 		defer f.Close()
 		if st, err := f.Stat(); err != nil || !st.Mode().IsRegular() {

@@ -26,17 +26,23 @@ const busyTimeout = 30 * time.Second
 // snapshot that, in WAL mode, doesn't block the app's writer) into a temp
 // file in tmpDir, checks it, and writes it to stdout. The fingerprint is
 // the size and mtime of the database and its -wal file, taken before the
-// copy: equal to since means unchanged.
-func dumpSQLite(path, since, tmpDir string, stdout io.Writer) (Result, error) {
+// copy: equal to since means unchanged. entry is the database's name in the
+// backup (its path in the volume or the container), which messages use
+// instead of the helper-internal /src/<n> path.
+func dumpSQLite(path, entry, since, tmpDir string, stdout io.Writer) (Result, error) {
+	shown := path
+	if entry != "" {
+		shown = "/" + entry
+	}
 	info, err := os.Stat(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return Result{}, fmt.Errorf("database file not found: %s: %w", path, errMissing)
+		return Result{}, fmt.Errorf("database file not found: %s: %w", shown, errMissing)
 	}
 	if err != nil {
-		return Result{}, err
+		return Result{}, fmt.Errorf("%s: %w", shown, scrub(err))
 	}
 	if !info.Mode().IsRegular() {
-		return Result{}, fmt.Errorf("%s is not a file", path)
+		return Result{}, fmt.Errorf("%s is not a file", shown)
 	}
 	fp := sqliteFingerprint(path, info)
 	if since != "" && fp == since {
@@ -56,7 +62,7 @@ func dumpSQLite(path, since, tmpDir string, stdout io.Writer) (Result, error) {
 	_ = os.Remove(snapPath) // VACUUM INTO needs a new file
 	defer os.Remove(snapPath)
 	if err := vacuumInto(path, snapPath); err != nil {
-		return Result{}, err
+		return Result{}, fmt.Errorf("%s: %w", shown, scrub(err))
 	}
 	if err := checkSnapshot(snapPath); err != nil {
 		return Result{}, err

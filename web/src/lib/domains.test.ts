@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   certExpiry,
   covers,
+  daysLeft,
   domainNameError,
   isWildcard,
   winningDomain,
@@ -46,5 +47,13 @@ describe("domain registrations", () => {
     expect(certExpiry("2026-10-09T00:00:00Z", now)).toBe("expired");
     expect(certExpiry("2026-10-20T00:00:00Z", now)).toBe("soon");
     expect(certExpiry("2027-01-01T00:00:00Z", now)).toBe("ok");
+  });
+
+  it("counts the days a certificate has left, rounding up", () => {
+    const now = new Date("2026-10-10T12:00:00Z");
+    expect(daysLeft("2026-10-20T11:59:59Z", now)).toBe(10);
+    expect(daysLeft("2026-10-10T12:00:00Z", now)).toBe(0);
+    expect(daysLeft("2026-10-09T12:00:00Z", now)).toBe(-1);
+    expect(daysLeft("not a date", now)).toBeNull();
   });
 });

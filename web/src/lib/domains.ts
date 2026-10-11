@@ -17,6 +17,14 @@ export const TLS_LABELS: Record<DomainTLS, string> = {
   off: "TLS off",
 };
 
+// TLS_SUMMARY says, in a few plain words, what a mode means for a hostname
+// (shown next to the badge in the app editor).
+export const TLS_SUMMARY: Record<DomainTLS, string> = {
+  auto: "Free Let's Encrypt certificate",
+  certificate: "Your uploaded certificate",
+  off: "Plain HTTP, for a tunnel or proxy in front",
+};
+
 // Same strict lowercase RFC-1123 rule as the ingress hostnames.
 const HOSTNAME_RE =
   /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$/;
@@ -56,6 +64,15 @@ export function winningDomain(names: string[], host: string): string | null {
   return wildcard;
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// daysLeft counts whole days until notAfter, rounding up (10 days minus a
+// second still reads "10 days"); null for an unparsable date.
+export function daysLeft(notAfter: string, now: Date = new Date()): number | null {
+  const left = new Date(notAfter).getTime() - now.getTime();
+  return Number.isNaN(left) ? null : Math.ceil(left / DAY_MS);
+}
+
 export type CertExpiry = "ok" | "soon" | "expired";
 
 // certExpiry grades a certificate's not_after: expired, under 30 days
@@ -65,5 +82,5 @@ export function certExpiry(notAfter: string | undefined, now: Date = new Date())
   const left = new Date(notAfter).getTime() - now.getTime();
   if (Number.isNaN(left)) return null;
   if (left <= 0) return "expired";
-  return left < 30 * 24 * 60 * 60 * 1000 ? "soon" : "ok";
+  return left < 30 * DAY_MS ? "soon" : "ok";
 }

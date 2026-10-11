@@ -38,6 +38,7 @@ const DOMAINS: RegisteredDomain[] = [
   { name: "old.example.com", tls: "certificate", not_after: inDays(-1), apps: [] },
   { name: "tunnel.example.com", tls: "off", apps: [] },
   { name: "example.com", tls: "auto", apps: ["a1"] },
+  { name: "far.example.com", tls: "certificate", not_after: "2099-01-31T00:00:00Z", apps: [] },
 ];
 
 function fakeDocker(over: Partial<Docker> = {}): Docker {
@@ -79,14 +80,19 @@ describe("DomainsCard", () => {
     expect(screen.getAllByText("Certificate").length).toBeGreaterThan(0);
     expect(screen.getByText("TLS off")).toBeInTheDocument();
     expect(screen.getByText("Auto TLS")).toBeInTheDocument();
-    // Under 30 days is a warning; past is destructive.
-    expect(screen.getByText(/^Expires /)).toHaveClass("text-amber-700");
-    expect(screen.getByText(/^Expired /)).toHaveClass("text-destructive");
-    expect(screen.getByText(/^Expires /)).toHaveAttribute("title", "Issued by CF Origin");
+    // Under 30 days is a countdown warning; past is destructive; later is
+    // just the date. Each shows twice: in its column and in the phone line.
+    const soon = screen.getAllByText("Expires in 10 days");
+    expect(soon).toHaveLength(2);
+    expect(soon[0]).toHaveClass("text-amber-700");
+    expect(soon[0].getAttribute("title")).toMatch(/^\d{4}-\d{2}-\d{2} · Issued by CF Origin$/);
+    expect(screen.getAllByText(/^Expired /)[0]).toHaveClass("text-destructive");
+    expect(screen.getAllByText("Expires 2099-01-31")[0]).not.toHaveClass("text-amber-700");
     expect(screen.getByText(/2 apps:/)).toBeInTheDocument();
+    expect(screen.getByText("2 apps").closest("div")).toHaveClass("sm:hidden");
     expect(screen.getAllByRole("link", { name: "Shop" })[0]).toHaveAttribute("href", "/app/a1");
     expect(screen.getByRole("link", { name: "Blog" })).toHaveAttribute("href", "/app/a2");
-    expect(screen.getAllByText("Not used")).toHaveLength(2);
+    expect(screen.getAllByText("Not used")).toHaveLength(3);
   });
 
   it("registers a domain with TLS off", async () => {
@@ -124,7 +130,8 @@ describe("DomainsCard", () => {
     await user.click(within(dialog).getByRole("radio", { name: "Certificate" }));
 
     // A loaded certificate also serves matching auto hosts: the dialog says so.
-    expect(within(dialog).getByText(/also serves any Auto TLS hostname it matches/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/also serves the Auto TLS hostnames it covers/)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/Paste the certificate again/)).not.toBeInTheDocument();
     const submit = within(dialog).getByRole("button", { name: "Register" });
     await pastePEM(user, within(dialog).getByLabelText("Certificate (PEM)"), "CERT");
     expect(submit).toBeDisabled(); // the key is still missing
@@ -144,9 +151,11 @@ describe("DomainsCard", () => {
 
     await user.click(await screen.findByRole("button", { name: "Edit domain *.twillingate.app" }));
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByLabelText("Name")).toHaveValue("*.twillingate.app");
-    expect(within(dialog).getByLabelText("Name")).toHaveAttribute("readonly");
+    // The name is shown, not editable: only the mode and certificate change.
+    expect(within(dialog).queryByLabelText("Name")).not.toBeInTheDocument();
+    expect(within(dialog).getByText("*.twillingate.app")).toBeInTheDocument();
     expect(within(dialog).getByRole("radio", { name: "Certificate" })).toBeChecked();
+    expect(within(dialog).getByText(/Paste the certificate again/)).toBeInTheDocument();
     await pastePEM(user, within(dialog).getByLabelText("Certificate (PEM)"), "NEW");
     await pastePEM(user, within(dialog).getByLabelText("Private key (PEM)"), "KEY");
     await user.click(within(dialog).getByRole("button", { name: "Save" }));
@@ -169,7 +178,7 @@ describe("DomainsCard", () => {
     }
     await user.click(screen.getByRole("button", { name: "Edit domain example.com" }));
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByLabelText("Name")).toHaveValue("example.com");
+    expect(within(dialog).getByText("example.com")).toBeInTheDocument();
     expect(within(dialog).getByRole("radio", { name: "Auto TLS" })).toBeChecked();
     expect(within(dialog).queryByLabelText("Certificate (PEM)")).not.toBeInTheDocument();
     await user.click(within(dialog).getByRole("radio", { name: "TLS off" }));
@@ -306,11 +315,17 @@ describe("DomainsCard", () => {
     renderCard(docker);
 
     await user.click(await screen.findByRole("button", { name: "Remove domain tunnel.example.com" }));
-    await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Remove domain" }));
+    const unused = await screen.findByRole("alertdialog");
+    expect(unused).toHaveTextContent("Apps on this server will no longer be able to use tunnel.example.com.");
+    expect(unused).not.toHaveTextContent("used by");
+    await user.click(within(unused).getByRole("button", { name: "Remove domain" }));
     expect(docker.deleteDomain).toHaveBeenCalledWith("tunnel.example.com");
 
     await user.click(screen.getByRole("button", { name: "Remove domain example.com" }));
-    await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Remove domain" }));
+    const confirm = await screen.findByRole("alertdialog");
+    // The confirm already says which apps hold it.
+    expect(confirm).toHaveTextContent("It's used by Shop: remove those hostnames first");
+    await user.click(within(confirm).getByRole("button", { name: "Remove domain" }));
     expect(toastError).toHaveBeenCalledWith("Couldn't remove domain", {
       description: "example.com is used by Shop (a1)",
     });

@@ -92,8 +92,47 @@ describe("IngressEditor", () => {
     render(<Harness ingress={oneDomain("")} />);
 
     await user.type(screen.getByLabelText("Hostname"), "shop.other.app");
-    expect(await screen.findByText(/Not covered by a domain registered on this server/)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Register a domain" })).toHaveAttribute("href", "/settings?tab=domains");
+    const hint = await screen.findByText(/No registered domain covers this hostname/);
+    expect(screen.getByLabelText("Hostname")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByLabelText("Hostname")).toHaveAttribute("aria-describedby", hint.id);
+    // A new tab, so following it doesn't lose the unsaved form.
+    const link = screen.getByRole("link", { name: /Register one/ });
+    expect(link).toHaveAttribute("href", "/settings?tab=domains");
+    expect(link).toHaveAttribute("target", "_blank");
+
+    // Removing the row drops it and its hint.
+    await user.click(screen.getByRole("button", { name: "Remove shop.other.app" }));
+    expect(screen.queryByLabelText("Hostname")).not.toBeInTheDocument();
+    expect(screen.queryByText(/No registered domain covers/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Add a hostname to send web traffic/)).toBeInTheDocument();
+  });
+
+  it("re-checks an uncovered hostname when the user comes back to the tab", async () => {
+    const user = userEvent.setup({ delay: null });
+    checks["shop.other.app"] = { available: true, covered: false, claims: null };
+    render(<Harness ingress={oneDomain("")} />);
+
+    await user.type(screen.getByLabelText("Hostname"), "shop.other.app");
+    await screen.findByText(/No registered domain covers this hostname/);
+    const loads = listDomainsMock.mock.calls.length;
+
+    // Registered in the other tab meanwhile.
+    listDomainsMock.mockResolvedValueOnce([
+      ...REGISTRATIONS,
+      { name: "*.other.app", tls: "auto", apps: [] },
+    ]);
+    checks["shop.other.app"] = { available: true, covered: true, claims: null };
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+
+    await waitFor(() =>
+      expect(screen.queryByText(/No registered domain covers/)).not.toBeInTheDocument(),
+    );
+    expect(listDomainsMock.mock.calls.length).toBe(loads + 1);
+    expect(await screen.findByText("Auto TLS")).toBeInTheDocument();
+    expect(screen.getByText("*.other.app")).toBeInTheDocument();
+    expect(screen.getByLabelText("Hostname")).toHaveAttribute("aria-invalid", "false");
   });
 
   it("names the app that already takes the hostname", async () => {
@@ -102,7 +141,7 @@ describe("IngressEditor", () => {
     render(<Harness ingress={oneDomain("")} />);
 
     await user.type(screen.getByLabelText("Hostname"), "shop.twillingate.app");
-    expect(await screen.findByText('Taken by app "Shop" on this server.')).toBeInTheDocument();
+    expect(await screen.findByText(/Already used by/)).toHaveTextContent("Already used by Shop on this server.");
   });
 
   it("checks domain-level redirect sources and shows their mode", async () => {
@@ -122,7 +161,7 @@ describe("IngressEditor", () => {
     expect(await screen.findByText("TLS off")).toBeInTheDocument();
     const [first] = screen.getAllByLabelText("Redirect hostname");
     await user.type(first, "old.other.app");
-    expect(await screen.findByText(/Not covered/)).toBeInTheDocument();
+    expect(await screen.findByText(/No registered domain covers/)).toBeInTheDocument();
   });
 
   it("works without registrations", async () => {
@@ -134,7 +173,7 @@ describe("IngressEditor", () => {
     await act(async () => {
       await listDomainsMock.mock.results[0].value.catch(() => undefined);
     });
-    expect(screen.queryByText("Use:")).not.toBeInTheDocument();
+    expect(screen.queryByText("Start from:")).not.toBeInTheDocument();
     // The hostname field still works, just without suggestions or a badge.
     await user.type(screen.getByLabelText("Hostname"), "shop.example.com");
     expect(screen.getByLabelText("Hostname")).toHaveValue("shop.example.com");

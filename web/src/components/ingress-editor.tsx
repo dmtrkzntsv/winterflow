@@ -1,8 +1,7 @@
-import { Plus, Trash2 } from "lucide-react";
+import { ExternalLink, Plus, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,11 +13,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { EditorSection } from "@/components/editor-section";
+import { TLSBadge } from "@/components/tls-badge";
 import { apiBaseUrl } from "@/config";
 import { useDocker } from "@/context/use-docker";
+import { cn } from "@/lib/utils";
 import {
   isWildcard,
-  TLS_LABELS,
+  TLS_SUMMARY,
   winningDomain,
   type RegisteredDomain,
 } from "@/lib/domains";
@@ -42,12 +43,15 @@ type Props = {
 type Issue = { kind: "taken"; app: string } | { kind: "uncovered" };
 
 // HostHints shows, under a hostname input, the live check's problem (with a
-// way to fix it) or the TLS mode the covering registration gives the host.
+// way to fix it) or what HTTPS the covering registration gives the host. id
+// lets the input point at it (aria-describedby).
 function HostHints({
+  id,
   host,
   issue,
   registrations,
 }: {
+  id: string;
   host: string;
   issue?: Issue;
   registrations: RegisteredDomain[];
@@ -55,17 +59,26 @@ function HostHints({
   if (!host) return null;
   if (issue?.kind === "taken") {
     return (
-      <p className="mt-2 text-xs text-destructive">
-        Taken by app "{issue.app}" on this server.
+      <p id={id} className="mt-2 text-xs text-destructive">
+        Already used by <span className="font-medium">{issue.app}</span> on this server.
       </p>
     );
   }
   if (issue?.kind === "uncovered") {
+    // A new tab: following the link here would throw away the unsaved form.
+    // The editor re-checks when the user comes back.
     return (
-      <p className="mt-2 text-xs text-destructive">
-        Not covered by a domain registered on this server.{" "}
-        <Link to="/settings?tab=domains" className="font-medium underline underline-offset-4">
-          Register a domain
+      <p id={id} className="mt-2 text-xs text-destructive">
+        No registered domain covers this hostname.{" "}
+        <Link
+          to="/settings?tab=domains"
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-0.5 font-medium underline underline-offset-4"
+        >
+          Register one
+          <ExternalLink className="size-3" aria-hidden />
+          <span className="sr-only">(opens in a new tab)</span>
         </Link>
       </p>
     );
@@ -77,10 +90,13 @@ function HostHints({
   const reg = registrations.find((r) => r.name === win);
   if (!reg) return null;
   return (
-    <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
-      <Badge variant={reg.tls === "off" ? "outline" : "secondary"}>{TLS_LABELS[reg.tls]}</Badge>
-      via <code className="font-mono">{reg.name}</code>
-    </p>
+    <div id={id} className="mt-2 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
+      <TLSBadge tls={reg.tls} />
+      <span>
+        {TLS_SUMMARY[reg.tls]} · set by{" "}
+        <code className="font-mono [overflow-wrap:anywhere]">{reg.name}</code>
+      </span>
+    </div>
   );
 }
 
@@ -97,7 +113,7 @@ function Suggestions({
   if (registrations.length === 0) return null;
   return (
     <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-      <span>Use:</span>
+      <span>Start from:</span>
       {registrations.map((r) => (
         <Button
           key={r.name}
@@ -133,6 +149,8 @@ export function IngressEditor({ state, onChange, appId, serverId }: Props) {
   const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const inputs = useRef<Record<string, HTMLInputElement | null>>({});
   const [registrations, setRegistrations] = useState<RegisteredDomain[]>([]);
+  // Bumped to reload the registrations (see the focus handler below).
+  const [reloads, setReloads] = useState(0);
   const { listDomains } = useDocker();
 
   // The server's registrations drive suggestions and the TLS badges.
@@ -146,7 +164,7 @@ export function IngressEditor({ state, onChange, appId, serverId }: Props) {
     return () => {
       live = false;
     };
-  }, [listDomains, serverId]);
+  }, [listDomains, serverId, reloads]);
 
   // Cancel any in-flight debounce timers if the editor unmounts (e.g. the
   // user navigates away mid-check) so a stale check never calls setState.
@@ -210,6 +228,23 @@ export function IngressEditor({ state, onChange, appId, serverId }: Props) {
       if (caretAtStart) el.setSelectionRange(0, 0);
     });
   };
+
+  // An "uncovered" hint links to the Domains tab in a new tab. When the user
+  // comes back, reload the registrations and re-check the flagged hostnames
+  // so a domain registered meanwhile clears the hint. Only while something
+  // is flagged: a plain focus change costs nothing.
+  const uncovered = [...ing.domains, ...ing.redirects.filter((r) => r.path === "")].filter(
+    (row) => issues[row.domain]?.kind === "uncovered",
+  );
+  useEffect(() => {
+    if (uncovered.length === 0) return;
+    const onFocus = () => {
+      setReloads((n) => n + 1);
+      uncovered.forEach((row) => checkDomain(row.id, row.domain));
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  });
 
   // --- domains ---
   const updateDomain = (id: string, patch: Partial<IngressDomain>) =>
@@ -279,77 +314,91 @@ export function IngressEditor({ state, onChange, appId, serverId }: Props) {
   return (
     <EditorSection
       title="Domains & Routing"
-      description="Serve the app through the built-in proxy on hostnames under the domains registered on this server. TLS follows each domain's mode."
+      description="Serve the app on hostnames under the domains registered on this server. Each domain sets how HTTPS works."
     >
       <div className="space-y-6">
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <Label className="text-sm font-medium">Domains</Label>
+            <Label className="text-sm font-medium">Hostnames</Label>
             <Button size="sm" variant="outline" onClick={addDomain}>
-              <Plus className="size-4" /> Add domain
+              <Plus className="size-4" /> Add hostname
             </Button>
           </div>
           {ing.domains.length === 0 ? (
             <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-              Add a domain to route external traffic to this app.
+              Add a hostname to send web traffic to this app.
             </p>
           ) : null}
-          {ing.domains.map((d) => (
-            <div key={d.id} className="rounded-md border p-3">
-              <div className="flex items-center gap-2">
-                <Input
-                  ref={(el) => {
-                    inputs.current[d.id] = el;
-                  }}
-                  value={d.domain}
-                  placeholder="app.example.com"
-                  aria-label="Hostname"
-                  className="font-mono"
-                  onChange={(e) => {
-                    const domain = e.target.value.trim().toLowerCase();
-                    updateDomain(d.id, { domain });
-                    checkDomain(d.id, domain);
-                  }}
-                />
-                <Input
-                  value={d.upstream_port}
-                  type="number"
-                  placeholder="8088"
-                  aria-label="Upstream port"
-                  className="w-28 shrink-0"
-                  onChange={(e) =>
-                    updateDomain(d.id, {
-                      upstream_port:
-                        e.target.value === "" ? "" : Number(e.target.value),
-                    })
-                  }
-                />
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="size-8 shrink-0"
-                  aria-label="Remove domain"
-                  onClick={() => removeDomain(d.id)}
-                >
-                  <Trash2 className="size-4" />
-                </Button>
+          {ing.domains.map((d) => {
+            const issue = issues[d.domain];
+            const hintId = `${d.id}-hint`;
+            return (
+              <div key={d.id} className="rounded-md border p-3">
+                {/* Phones put the hostname on its own row: it's the long,
+                    important part, and the port fits beside the button. */}
+                <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap">
+                  <Input
+                    ref={(el) => {
+                      inputs.current[d.id] = el;
+                    }}
+                    value={d.domain}
+                    placeholder="app.example.com"
+                    aria-label="Hostname"
+                    aria-invalid={issue !== undefined}
+                    aria-describedby={d.domain ? hintId : undefined}
+                    className={cn(
+                      "basis-full font-mono sm:basis-auto",
+                      issue && "border-destructive focus-visible:ring-destructive",
+                    )}
+                    onChange={(e) => {
+                      const domain = e.target.value.trim().toLowerCase();
+                      updateDomain(d.id, { domain });
+                      checkDomain(d.id, domain);
+                    }}
+                  />
+                  <Input
+                    value={d.upstream_port}
+                    type="number"
+                    placeholder="8088"
+                    aria-label="Upstream port"
+                    title="Upstream port"
+                    className="w-28 shrink-0"
+                    onChange={(e) =>
+                      updateDomain(d.id, {
+                        upstream_port:
+                          e.target.value === "" ? "" : Number(e.target.value),
+                      })
+                    }
+                  />
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="ml-auto size-8 shrink-0 text-muted-foreground hover:text-destructive sm:ml-0"
+                    aria-label={`Remove ${d.domain || "hostname"}`}
+                    onClick={() => removeDomain(d.id)}
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
+                </div>
+                {d.domain === "" ? (
+                  <Suggestions
+                    registrations={registrations}
+                    onPick={(value, caret) =>
+                      pick(d.id, (domain) => updateDomain(d.id, { domain }), value, caret)
+                    }
+                  />
+                ) : (
+                  <HostHints id={hintId} host={d.domain} issue={issue} registrations={registrations} />
+                )}
               </div>
-              {d.domain === "" ? (
-                <Suggestions
-                  registrations={registrations}
-                  onPick={(value, caret) =>
-                    pick(d.id, (domain) => updateDomain(d.id, { domain }), value, caret)
-                  }
-                />
-              ) : (
-                <HostHints host={d.domain} issue={issues[d.domain]} registrations={registrations} />
-              )}
-              <p className="mt-2 text-xs text-muted-foreground">
-                The compose file must publish this port on 127.0.0.1, e.g.{" "}
-                <code>127.0.0.1:8088:80</code>.
-              </p>
-            </div>
-          ))}
+            );
+          })}
+          {ing.domains.length > 0 ? (
+            <p className="text-xs text-muted-foreground">
+              The compose file must publish each port on 127.0.0.1, e.g.{" "}
+              <code>127.0.0.1:8088:80</code>.
+            </p>
+          ) : null}
         </div>
 
         <div className="space-y-3">
@@ -361,83 +410,94 @@ export function IngressEditor({ state, onChange, appId, serverId }: Props) {
           </div>
           {ing.redirects.length === 0 ? (
             <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-              Redirect a domain (or a path on it) to another URL.
+              Redirect a hostname (or a path on it) to another URL.
             </p>
           ) : null}
-          {ing.redirects.map((r) => (
-            <div key={r.id} className="rounded-md border p-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <Input
-                  ref={(el) => {
-                    inputs.current[r.id] = el;
-                  }}
-                  value={r.domain}
-                  placeholder="old.example.com"
-                  aria-label="Redirect hostname"
-                  className="font-mono sm:max-w-56"
-                  onChange={(e) => {
-                    const domain = e.target.value.trim().toLowerCase();
-                    updateRedirect(r.id, { domain });
-                    // Path rules ride a domain checked above; only a
-                    // domain-level redirect claims its hostname.
-                    if (r.path === "") checkDomain(r.id, domain);
-                  }}
-                />
-                <Input
-                  value={r.path}
-                  placeholder="/old-path/* (empty = whole domain)"
-                  className="font-mono sm:max-w-64"
-                  onChange={(e) =>
-                    updateRedirect(r.id, { path: e.target.value })
-                  }
-                />
-                <Input
-                  value={r.to}
-                  placeholder="https://new.example.com/new-path"
-                  className="font-mono flex-1"
-                  onChange={(e) => updateRedirect(r.id, { to: e.target.value })}
-                />
-                <Select
-                  value={String(r.code)}
-                  onValueChange={(v) =>
-                    updateRedirect(r.id, {
-                      code: Number(v) as IngressRedirect["code"],
-                    })
-                  }
-                >
-                  <SelectTrigger className="h-9 w-24 shrink-0">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {REDIRECT_CODES.map((code) => (
-                      <SelectItem key={code} value={String(code)}>
-                        {code}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="size-8 shrink-0"
-                  aria-label="Remove redirect"
-                  onClick={() => removeRedirect(r.id)}
-                >
-                  <Trash2 className="size-4" />
-                </Button>
+          {ing.redirects.map((r) => {
+            const issue = r.path === "" ? issues[r.domain] : undefined;
+            const hintId = `${r.id}-hint`;
+            return (
+              <div key={r.id} className="rounded-md border p-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Input
+                    ref={(el) => {
+                      inputs.current[r.id] = el;
+                    }}
+                    value={r.domain}
+                    placeholder="old.example.com"
+                    aria-label="Redirect hostname"
+                    aria-invalid={issue !== undefined}
+                    aria-describedby={r.path === "" && r.domain ? hintId : undefined}
+                    className={cn(
+                      "font-mono sm:max-w-56",
+                      issue && "border-destructive focus-visible:ring-destructive",
+                    )}
+                    onChange={(e) => {
+                      const domain = e.target.value.trim().toLowerCase();
+                      updateRedirect(r.id, { domain });
+                      // Path rules ride a domain checked above; only a
+                      // domain-level redirect claims its hostname.
+                      if (r.path === "") checkDomain(r.id, domain);
+                    }}
+                  />
+                  <Input
+                    value={r.path}
+                    placeholder="/old-path/* (empty = whole domain)"
+                    aria-label="Redirect path"
+                    className="font-mono sm:max-w-64"
+                    onChange={(e) =>
+                      updateRedirect(r.id, { path: e.target.value })
+                    }
+                  />
+                  <Input
+                    value={r.to}
+                    placeholder="https://new.example.com/new-path"
+                    aria-label="Redirect to"
+                    className="font-mono flex-1"
+                    onChange={(e) => updateRedirect(r.id, { to: e.target.value })}
+                  />
+                  <Select
+                    value={String(r.code)}
+                    onValueChange={(v) =>
+                      updateRedirect(r.id, {
+                        code: Number(v) as IngressRedirect["code"],
+                      })
+                    }
+                  >
+                    <SelectTrigger className="h-9 w-24 shrink-0">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {REDIRECT_CODES.map((code) => (
+                        <SelectItem key={code} value={String(code)}>
+                          {code}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="size-8 shrink-0 text-muted-foreground hover:text-destructive"
+                    aria-label="Remove redirect"
+                    onClick={() => removeRedirect(r.id)}
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
+                </div>
+                {r.path !== "" ? null : r.domain === "" ? (
+                  <Suggestions
+                    registrations={registrations}
+                    onPick={(value, caret) =>
+                      pick(r.id, (domain) => updateRedirect(r.id, { domain }), value, caret)
+                    }
+                  />
+                ) : (
+                  <HostHints id={hintId} host={r.domain} issue={issue} registrations={registrations} />
+                )}
               </div>
-              {r.path !== "" ? null : r.domain === "" ? (
-                <Suggestions
-                  registrations={registrations}
-                  onPick={(value, caret) =>
-                    pick(r.id, (domain) => updateRedirect(r.id, { domain }), value, caret)
-                  }
-                />
-              ) : (
-                <HostHints host={r.domain} issue={issues[r.domain]} registrations={registrations} />
-              )}
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </EditorSection>

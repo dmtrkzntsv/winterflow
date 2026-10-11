@@ -137,6 +137,12 @@ type GetAppResponse struct {
 	// BackupsError says why they could not be read (an invalid recipe).
 	Backups      []recipe.EffectiveBackup `json:"backups,omitempty"`
 	BackupsError string                   `json:"backups_error,omitempty"`
+	// BackupTargets are where a backup added in the UI can point (the
+	// compose files' volumes and each service's mounts); nil when a compose
+	// file can't be read.
+	BackupTargets *recipe.Targets `json:"backup_targets,omitempty"`
+	// RetentionDays is the server's BACKUP_RETENTION_DAYS (0: no ceiling).
+	RetentionDays int `json:"retention_days,omitempty"`
 }
 
 // --- app.revisions --------------------------------------------------------
@@ -263,6 +269,10 @@ type DeleteAppRequest struct {
 	// DeleteVolumes also removes the app's compose-owned Docker volumes
 	// (never external ones). False keeps them, as before.
 	DeleteVolumes bool `json:"delete_volumes,omitempty"`
+	// DeleteBackups also deletes the app's backups (every copy, in every
+	// storage its backups use). False keeps them, marked as a deleted app's,
+	// for BACKUP_RETENTION_DAYS.
+	DeleteBackups bool `json:"delete_backups,omitempty"`
 }
 
 func (r DeleteAppRequest) Validate() error { return validateAppID(r.AppID) }
@@ -276,6 +286,9 @@ type DeleteAppResponse struct {
 	// (the volume sweep ran). An agent that predates the flag never sets it,
 	// which lets the UI tell "volumes removed" from "request ignored".
 	VolumesDeleted bool `json:"volumes_deleted,omitempty"`
+	// BackupsDeleted is true only when the agent honoured delete_backups
+	// (an agent that predates the flag keeps them).
+	BackupsDeleted bool `json:"backups_deleted,omitempty"`
 }
 
 // --- app.rename ---------------------------------------------------------------

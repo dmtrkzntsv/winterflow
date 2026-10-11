@@ -3665,6 +3665,8 @@ components:
       properties:
         app_id:
           type: string
+        backups_deleted:
+          type: boolean
         volumes_deleted:
           type: boolean
         warnings:
@@ -3878,12 +3880,16 @@ components:
       properties:
         app:
           $ref: '#/components/schemas/AppPayload'
+        backup_targets:
+          $ref: '#/components/schemas/Targets'
         backups:
           items:
             $ref: '#/components/schemas/EffectiveBackup'
           type: array
         backups_error:
           type: string
+        retention_days:
+          type: integer
         storage_variables:
           items:
             $ref: '#/components/schemas/StorageVariable'
@@ -4276,6 +4282,19 @@ components:
       properties:
         user_id:
           type: string
+      type: object
+    Mount:
+      properties:
+        source:
+          type: string
+        target:
+          type: string
+        type:
+          type: string
+      required:
+      - type
+      - source
+      - target
       type: object
     Network:
       properties:
@@ -4707,6 +4726,20 @@ components:
       - server_id
       - liveness
       type: object
+    ServiceMounts:
+      properties:
+        mounts:
+          items:
+            $ref: '#/components/schemas/Mount'
+          type:
+          - array
+          - "null"
+        name:
+          type: string
+      required:
+      - name
+      - mounts
+      type: object
     SessionUser:
       properties:
         attrs:
@@ -4827,6 +4860,24 @@ components:
       - name
       - storage
       - secret
+      type: object
+    Targets:
+      properties:
+        services:
+          items:
+            $ref: '#/components/schemas/ServiceMounts'
+          type:
+          - array
+          - "null"
+        volumes:
+          items:
+            type: string
+          type:
+          - array
+          - "null"
+      required:
+      - volumes
+      - services
       type: object
     TestStorageRequest:
       properties:

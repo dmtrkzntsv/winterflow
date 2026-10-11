@@ -53,8 +53,36 @@ func TestValidPointID(t *testing.T) {
 }
 
 func TestDetached(t *testing.T) {
-	if !TypeBackupRun.Detached() || TypeBackupPoints.Detached() || TypeAppSave.Detached() {
-		t.Fatal("only backup.run waits for long work")
+	if !TypeBackupRun.Detached() || !TypeBackupRestore.Detached() || TypeBackupPoints.Detached() || TypeAppSave.Detached() ||
+		TypeStorageOrphans.Detached() {
+		t.Fatal("only backup.run and backup.restore wait for long work")
+	}
+}
+
+func TestRestoreAndOrphanRequestsValidate(t *testing.T) {
+	for _, r := range []interface{ Validate() error }{
+		RestoreBackupRequest{AppID: "a1", Backup: "db", Point: "20261011T120000Z-scheduled"},
+		ListOrphansRequest{Name: "disk"},
+		DeleteOrphanRequest{Name: "disk", AppID: "a1"},
+	} {
+		if err := r.Validate(); err != nil {
+			t.Errorf("%+v: %v", r, err)
+		}
+	}
+	for _, tc := range []struct {
+		r    interface{ Validate() error }
+		want string
+	}{
+		{RestoreBackupRequest{AppID: "..", Backup: "db", Point: "20261011T120000Z-manual"}, "invalid app id"},
+		{RestoreBackupRequest{AppID: "a1", Backup: "DB", Point: "20261011T120000Z-manual"}, "is not a valid backup name"},
+		{RestoreBackupRequest{AppID: "a1", Backup: "db", Point: "latest"}, "invalid restore point id"},
+		{ListOrphansRequest{Name: "Disk"}, "storage name"},
+		{DeleteOrphanRequest{Name: "Disk", AppID: "a1"}, "storage name"},
+		{DeleteOrphanRequest{Name: "disk", AppID: "a/b"}, "invalid app id"},
+	} {
+		if err := tc.r.Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%+v: err = %v, want %q", tc.r, err, tc.want)
+		}
 	}
 }
 

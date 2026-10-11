@@ -94,3 +94,56 @@ type StorageVariable struct {
 	Backup  string `json:"backup,omitempty"`
 	Secret  bool   `json:"secret"`
 }
+
+// --- storage.orphans, storage.delete-orphan ---------------------------------
+
+// ListOrphansRequest lists the backups in a storage whose app is not on this
+// server: a deleted app's, or another server's sharing the storage.
+type ListOrphansRequest struct {
+	Name string `json:"name"`
+}
+
+func (r ListOrphansRequest) Validate() error { return model.ValidateStorageName(r.Name) }
+
+// Orphan is one app's backup folder in a storage, the app not being on this
+// server. AppName and DeletedAt come from the folder's .deleted marker (an
+// app deleted here); PurgeAt is when the daily sweep deletes the last copy
+// (the newest copy plus BACKUP_RETENTION_DAYS), 0 without a marker (another
+// server's folder is never deleted automatically) or without a ceiling.
+// Times are unix seconds; Bytes counts every object in the folder.
+type Orphan struct {
+	AppID     string `json:"app_id"`
+	AppName   string `json:"app_name,omitempty"`
+	DeletedAt int64  `json:"deleted_at,omitempty"`
+	PurgeAt   int64  `json:"purge_at,omitempty"`
+	Copies    int    `json:"copies"`
+	Bytes     int64  `json:"bytes"`
+	Newest    int64  `json:"newest,omitempty"`
+}
+
+// ListOrphansResponse lists a storage's orphans by app id ([] for none).
+type ListOrphansResponse struct {
+	Name    string   `json:"name"`
+	Orphans []Orphan `json:"orphans"`
+}
+
+// DeleteOrphanRequest deletes every object of an orphan's folder; the agent
+// refuses when the app is on this server.
+type DeleteOrphanRequest struct {
+	Name  string `json:"name"`
+	AppID string `json:"app_id"`
+}
+
+func (r DeleteOrphanRequest) Validate() error {
+	if err := model.ValidateStorageName(r.Name); err != nil {
+		return err
+	}
+	return validateAppID(r.AppID)
+}
+
+// DeleteOrphanResponse names the folder deleted and how many objects it held.
+type DeleteOrphanResponse struct {
+	Name    string `json:"name"`
+	AppID   string `json:"app_id"`
+	Deleted int    `json:"deleted"`
+}

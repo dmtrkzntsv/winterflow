@@ -192,3 +192,37 @@ func ValidPointID(id string) bool {
 	}
 	return false
 }
+
+// --- backup.restore ---------------------------------------------------------
+
+// RestoreBackupRequest restores one restore point of a backup in place: the
+// app is stopped, its current data saved as a pre-restore point, the point's
+// data put back, and the app started again. The answer comes when the
+// restore ends.
+type RestoreBackupRequest struct {
+	AppID  string `json:"app_id"`
+	Backup string `json:"backup"`
+	Point  string `json:"point"`
+}
+
+func (r RestoreBackupRequest) Validate() error {
+	if err := validateBackupRef(r.AppID, r.Backup); err != nil {
+		return err
+	}
+	if !ValidPointID(r.Point) {
+		return errors.New("invalid restore point id")
+	}
+	return nil
+}
+
+// RestoreBackupResponse is a finished restore: RestoredPoint is the point put
+// back; PreRestorePoint the copy of the data it replaced ("" when there was
+// none to save: no database file, or none of the paths). Warnings are paths
+// the point did not hold (left as they were) and files skipped.
+type RestoreBackupResponse struct {
+	AppID           string   `json:"app_id"`
+	Backup          string   `json:"backup"`
+	RestoredPoint   string   `json:"restored_point"`
+	PreRestorePoint string   `json:"pre_restore_point,omitempty"`
+	Warnings        []string `json:"warnings,omitempty"`
+}

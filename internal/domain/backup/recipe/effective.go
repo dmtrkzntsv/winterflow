@@ -206,21 +206,23 @@ func keepEqual(a, b *Keep) bool {
 	return a.Retention() == b.Retention()
 }
 
-// fromRecipe names the fields of c that hold the recipe's value.
+// fromRecipe names the fields of c that hold the recipe's value, including
+// one the recipe leaves out (its default, or empty) and no override sets:
+// the UI badges every other field as changed, with a reset to the recipe.
 func fromRecipe(r, c BackupConfig) map[string]bool {
 	from := map[string]bool{}
-	set := func(name string, recipeHas, same bool) {
-		if recipeHas && same {
+	set := func(name string, same bool) {
+		if same {
 			from[name] = true
 		}
 	}
-	set(FieldEvery, r.Every != "", c.Every == r.Every)
-	set(FieldKeep, r.Keep != nil, keepEqual(c.Keep, r.Keep))
-	set(FieldVolume, r.Volume != "", c.Volume == r.Volume)
-	set(FieldService, r.Service != "", c.Service == r.Service)
-	set(FieldPath, r.Path != "", c.Path == r.Path)
-	set(FieldPaths, r.Paths != nil, slices.Equal(List(c.Paths), List(r.Paths)))
-	set(FieldExclude, r.Exclude != nil, slices.Equal(List(c.Exclude), List(r.Exclude)))
+	set(FieldEvery, c.Every == r.Every)
+	set(FieldKeep, keepEqual(c.Keep, r.Keep))
+	set(FieldVolume, c.Volume == r.Volume)
+	set(FieldService, c.Service == r.Service)
+	set(FieldPath, c.Path == r.Path)
+	set(FieldPaths, slices.Equal(List(c.Paths), List(r.Paths)))
+	set(FieldExclude, slices.Equal(List(c.Exclude), List(r.Exclude)))
 	return from
 }
 

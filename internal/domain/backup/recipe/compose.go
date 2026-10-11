@@ -13,6 +13,7 @@ import (
 type Compose struct {
 	Volumes  map[string]bool
 	Services map[string][]string // service name -> profiles
+	Mounts   map[string][]Mount  // service name -> its volume and bind mounts
 	Recipe   []BackupConfig
 	// Unparsed is set when a compose file is not valid YAML and was skipped:
 	// the recipe is then incomplete, so callers must not conclude that a
@@ -37,11 +38,12 @@ var keepKeys = map[string]bool{"recent": true, "daily": true, "monthly": true}
 // decoded. The recipe is checked only for its shape here (keys, types, duplicate names);
 // Validate checks the values.
 func ParseCompose(files ...[]byte) (Compose, error) {
-	out := Compose{Volumes: map[string]bool{}, Services: map[string][]string{}}
+	out := Compose{Volumes: map[string]bool{}, Services: map[string][]string{}, Mounts: map[string][]Mount{}}
 	for _, raw := range files {
 		var doc struct {
 			Services map[string]struct {
-				Profiles []string `yaml:"profiles"`
+				Profiles []string    `yaml:"profiles"`
+				Volumes  []yaml.Node `yaml:"volumes"`
 			} `yaml:"services"`
 			Volumes     map[string]any `yaml:"volumes"`
 			XWinterflow yaml.Node      `yaml:"x-winterflow"`
@@ -58,6 +60,11 @@ func ParseCompose(files ...[]byte) (Compose, error) {
 		}
 		for name, s := range doc.Services {
 			out.Services[name] = s.Profiles
+			for _, v := range s.Volumes {
+				if m, ok := parseMount(&v); ok {
+					out.Mounts[name] = addMount(out.Mounts[name], m)
+				}
+			}
 		}
 		entries, err := parseRecipe(&doc.XWinterflow)
 		if err != nil {

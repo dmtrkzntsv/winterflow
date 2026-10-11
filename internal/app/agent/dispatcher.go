@@ -26,7 +26,7 @@ type Dispatcher struct {
 	orch     *dockercompose.Repository
 	ingress  port.IngressManager
 	backups  Backups
-	runWait  time.Duration // bound of a backup.run
+	runWait  time.Duration // bound of a backup.run / backup.restore
 	log      *logger.Logger
 	handlers map[command.Type]handlerFunc
 }
@@ -271,6 +271,14 @@ func (d *Dispatcher) newHandlers() map[command.Type]handlerFunc {
 			defer d.backups.Reload()
 			return command.DeleteStorageResponse{Name: in.Name}, d.orch.DeleteStorage(ctx, in.Name)
 		}),
+		command.TypeStorageOrphans: handle(d, func(ctx context.Context, in command.ListOrphansRequest) (command.ListOrphansResponse, error) {
+			orphans, err := d.orch.ListOrphans(ctx, in.Name)
+			return command.ListOrphansResponse{Name: in.Name, Orphans: orphans}, err
+		}),
+		command.TypeStorageDeleteOrphan: handle(d, func(ctx context.Context, in command.DeleteOrphanRequest) (command.DeleteOrphanResponse, error) {
+			n, err := d.orch.DeleteOrphan(ctx, in.Name, in.AppID)
+			return command.DeleteOrphanResponse{Name: in.Name, AppID: in.AppID, Deleted: n}, err
+		}),
 
 		command.TypeBackupUpdate: handle(d, func(ctx context.Context, in command.UpdateBackupsRequest) (command.UpdateBackupsResponse, error) {
 			defer d.backups.Reload()
@@ -280,7 +288,8 @@ func (d *Dispatcher) newHandlers() map[command.Type]handlerFunc {
 			points, err := d.orch.ListRestorePoints(ctx, in.AppID, in.Backup)
 			return command.ListRestorePointsResponse{AppID: in.AppID, Backup: in.Backup, Points: points}, err
 		}),
-		command.TypeBackupRun: handle(d, d.runBackup),
+		command.TypeBackupRun:     handle(d, d.runBackup),
+		command.TypeBackupRestore: handle(d, d.restoreBackup),
 		command.TypeBackupDeletePoint: handle(d, func(ctx context.Context, in command.DeleteRestorePointRequest) (command.DeleteRestorePointResponse, error) {
 			err := d.orch.DeleteRestorePoint(ctx, in.AppID, in.Backup, in.Point)
 			return command.DeleteRestorePointResponse{AppID: in.AppID, Backup: in.Backup, Point: in.Point}, err

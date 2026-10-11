@@ -21,13 +21,16 @@ type Backups interface {
 	// queued or running); its outcome arrives when the
 	// run ends.
 	RunNow(appID, name string) <-chan backup.Outcome
+	// Restore queues a restore of a point; its outcome arrives when the
+	// restore ends.
+	Restore(appID, name, point string) <-chan backup.Outcome
 	// Decorate adds each app's backup health to its status.
 	Decorate(apps []command.AppStatus, now time.Time) []command.AppStatus
 }
 
 var _ Backups = (*backup.Scheduler)(nil)
 
-// errNoBackups answers backup.run on an agent without a scheduler (tests).
+// errNoBackups answers backup.run and backup.restore on an agent without a scheduler (tests).
 var errNoBackups = errors.New("backups are not available on this agent")
 
 // noBackups is the Backups of a dispatcher built without a scheduler.
@@ -36,6 +39,11 @@ type noBackups struct{}
 func (noBackups) Reload()       {}
 func (noBackups) Forget(string) {}
 func (noBackups) RunNow(string, string) <-chan backup.Outcome {
+	ch := make(chan backup.Outcome, 1)
+	ch <- backup.Outcome{Err: errNoBackups}
+	return ch
+}
+func (noBackups) Restore(string, string, string) <-chan backup.Outcome {
 	ch := make(chan backup.Outcome, 1)
 	ch <- backup.Outcome{Err: errNoBackups}
 	return ch
@@ -63,6 +71,19 @@ func (d *Dispatcher) runBackup(ctx context.Context, in command.RunBackupRequest)
 		return o.Result, o.Err
 	case <-ctx.Done():
 		return command.RunBackupResponse{AppID: in.AppID, Backup: in.Backup}, ctx.Err()
+	}
+}
+
+// restoreBackup waits for a restore request (on the backup scheduler, like
+// backup.run: backup.restore is a detached command), bounded like it.
+func (d *Dispatcher) restoreBackup(ctx context.Context, in command.RestoreBackupRequest) (command.RestoreBackupResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, d.runWait)
+	defer cancel()
+	select {
+	case o := <-d.backups.Restore(in.AppID, in.Backup, in.Point):
+		return o.Restore, o.Err
+	case <-ctx.Done():
+		return command.RestoreBackupResponse{AppID: in.AppID, Backup: in.Backup, RestoredPoint: in.Point}, ctx.Err()
 	}
 }
 

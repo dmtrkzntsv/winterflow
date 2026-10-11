@@ -22,6 +22,7 @@ type fakeBackups struct {
 	reloads  int
 	forgets  []string
 	runs     []string
+	restores []string
 	outcome  backup.Outcome
 	hold     chan struct{} // RunNow answers only once closed
 	decorate int
@@ -45,6 +46,15 @@ func (f *fakeBackups) RunNow(appID, name string) <-chan backup.Outcome {
 		}
 		ch <- o
 	}()
+	return ch
+}
+func (f *fakeBackups) Restore(appID, name, point string) <-chan backup.Outcome {
+	f.mu.Lock()
+	f.restores = append(f.restores, appID+"/"+name+"@"+point)
+	o := f.outcome
+	f.mu.Unlock()
+	ch := make(chan backup.Outcome, 1)
+	ch <- o
 	return ch
 }
 func (f *fakeBackups) Decorate(apps []command.AppStatus, _ time.Time) []command.AppStatus {
@@ -137,6 +147,38 @@ func TestDispatchBackupCommands(t *testing.T) {
 	if resp = dispatchJSON(t, d, command.TypeBackupRun, command.RunBackupRequest{AppID: "app-1", Backup: "database"}); resp.Base.Detail != "database file not found" {
 		t.Fatalf("failed run = %+v", resp.Base)
 	}
+	// A restore waits for its outcome on the scheduler.
+	fb.outcome = backup.Outcome{Restore: command.RestoreBackupResponse{AppID: "app-1", Backup: "database",
+		RestoredPoint: "20261011T120000Z-manual", PreRestorePoint: "20261011T130000Z-pre-restore"}}
+	resp = dispatchJSON(t, d, command.TypeBackupRestore, command.RestoreBackupRequest{AppID: "app-1", Backup: "database", Point: "20261011T120000Z-manual"})
+	var restoredResp command.RestoreBackupResponse
+	if resp.Base.ResponseCode != ok || json.Unmarshal(resp.Payload, &restoredResp) != nil ||
+		restoredResp.PreRestorePoint != "20261011T130000Z-pre-restore" || fb.restores[0] != "app-1/database@20261011T120000Z-manual" {
+		t.Fatalf("backup.restore = %+v %s", resp.Base, resp.Payload)
+	}
+	fb.outcome = backup.Outcome{Err: errors.New("the restore failed, the app's data is unchanged")}
+	if resp = dispatchJSON(t, d, command.TypeBackupRestore, command.RestoreBackupRequest{AppID: "app-1", Backup: "database",
+		Point: "20261011T120000Z-manual"}); resp.Base.Detail != "the restore failed, the app's data is unchanged" {
+		t.Fatalf("failed restore = %+v", resp.Base)
+	}
+
+	// Orphans: none in the storage while the app is here; its folder is
+	// refused.
+	resp = dispatchJSON(t, d, command.TypeStorageOrphans, command.ListOrphansRequest{Name: "disk"})
+	var orphans command.ListOrphansResponse
+	if resp.Base.ResponseCode != ok || json.Unmarshal(resp.Payload, &orphans) != nil || orphans.Orphans == nil || len(orphans.Orphans) != 0 {
+		t.Fatalf("storage.orphans = %+v %s", resp.Base, resp.Payload)
+	}
+	resp = dispatchJSON(t, d, command.TypeStorageDeleteOrphan, command.DeleteOrphanRequest{Name: "disk", AppID: "app-1"})
+	if resp.Base.ResponseCode == ok || !strings.Contains(resp.Base.Detail, "is on this server") {
+		t.Fatalf("storage.delete-orphan = %+v", resp.Base)
+	}
+	resp = dispatchJSON(t, d, command.TypeStorageDeleteOrphan, command.DeleteOrphanRequest{Name: "disk", AppID: "gone"})
+	var deleted command.DeleteOrphanResponse
+	if resp.Base.ResponseCode != ok || json.Unmarshal(resp.Payload, &deleted) != nil || deleted.AppID != "gone" || deleted.Deleted != 0 {
+		t.Fatalf("storage.delete-orphan gone = %+v %s", resp.Base, resp.Payload)
+	}
+
 	// A request whose caller gave up stops waiting.
 	fb.hold = make(chan struct{})
 	defer close(fb.hold)
@@ -156,17 +198,21 @@ func TestDispatchBackupCommands(t *testing.T) {
 	if resp = dispatchJSON(t, d, command.TypeAppRename, command.RenameAppRequest{AppID: "app-1", Name: "renamed"}); resp.Base.ResponseCode != ok {
 		t.Fatalf("rename = %+v", resp.Base)
 	}
-	resp = dispatchJSON(t, d, command.TypeAppDelete, command.DeleteAppRequest{AppID: "app-1"})
-	if len(fb.forgets) != 2 || fb.forgets[0] != "app-1" {
-		t.Fatalf("delete: forgets = %v (%+v)", fb.forgets, resp.Base)
+	resp = dispatchJSON(t, d, command.TypeAppDelete, command.DeleteAppRequest{AppID: "app-1", DeleteBackups: true})
+	var deletedApp command.DeleteAppResponse
+	if len(fb.forgets) != 2 || fb.forgets[0] != "app-1" || json.Unmarshal(resp.Payload, &deletedApp) != nil || !deletedApp.BackupsDeleted {
+		t.Fatalf("delete: forgets = %v (%+v %s)", fb.forgets, resp.Base, resp.Payload)
 	}
 
 	// Invalid payloads never reach the orchestrator or the scheduler.
 	for typ, req := range map[command.Type]any{
-		command.TypeBackupUpdate:      command.UpdateBackupsRequest{AppID: "..", Backups: nil},
-		command.TypeBackupPoints:      command.ListRestorePointsRequest{AppID: "app-1", Backup: "Bad"},
-		command.TypeBackupRun:         command.RunBackupRequest{AppID: "a/b", Backup: "db"},
-		command.TypeBackupDeletePoint: command.DeleteRestorePointRequest{AppID: "app-1", Backup: "db", Point: "../x"},
+		command.TypeBackupUpdate:        command.UpdateBackupsRequest{AppID: "..", Backups: nil},
+		command.TypeBackupPoints:        command.ListRestorePointsRequest{AppID: "app-1", Backup: "Bad"},
+		command.TypeBackupRun:           command.RunBackupRequest{AppID: "a/b", Backup: "db"},
+		command.TypeBackupDeletePoint:   command.DeleteRestorePointRequest{AppID: "app-1", Backup: "db", Point: "../x"},
+		command.TypeBackupRestore:       command.RestoreBackupRequest{AppID: "app-1", Backup: "db", Point: "latest"},
+		command.TypeStorageOrphans:      command.ListOrphansRequest{Name: "Disk"},
+		command.TypeStorageDeleteOrphan: command.DeleteOrphanRequest{Name: "disk", AppID: "../x"},
 	} {
 		if resp := dispatchJSON(t, d, typ, req); resp.Base.ResponseCode == ok || !strings.HasPrefix(resp.Base.Detail, "invalid payload: ") {
 			t.Errorf("%s: %+v", typ, resp.Base)
@@ -180,6 +226,10 @@ func TestDispatchWithoutBackups(t *testing.T) {
 	resp := dispatchJSON(t, d, command.TypeBackupRun, command.RunBackupRequest{AppID: "app-1", Backup: "db"})
 	if resp.Base.ResponseCode == proto.ResponseCode_RESPONSE_CODE_SUCCESS || resp.Base.Detail != errNoBackups.Error() {
 		t.Fatalf("backup.run = %+v", resp.Base)
+	}
+	resp = dispatchJSON(t, d, command.TypeBackupRestore, command.RestoreBackupRequest{AppID: "app-1", Backup: "db", Point: "20261011T120000Z-manual"})
+	if resp.Base.ResponseCode == proto.ResponseCode_RESPONSE_CODE_SUCCESS || resp.Base.Detail != errNoBackups.Error() {
+		t.Fatalf("backup.restore = %+v", resp.Base)
 	}
 	var nb noBackups
 	nb.Reload()
@@ -250,5 +300,21 @@ func TestRunBackupIsBounded(t *testing.T) {
 	}
 	if time.Since(start) > 5*time.Second {
 		t.Fatal("a stopped scheduler left the request waiting")
+	}
+	resp = dispatchJSON(t, d, command.TypeBackupRestore, command.RestoreBackupRequest{AppID: "app-1", Backup: "db", Point: "20261011T120000Z-manual"})
+	if resp.Base.ResponseCode == proto.ResponseCode_RESPONSE_CODE_SUCCESS || !strings.Contains(resp.Base.Detail, "stopping") {
+		t.Fatalf("restore on a stopped scheduler = %+v", resp.Base)
+	}
+}
+
+// A restore request is bounded like a run: a scheduler that never answers
+// fails it at the limit.
+func TestRestoreBackupIsBounded(t *testing.T) {
+	d := newTestDispatcher(t)
+	d.SetBackups(backup.New(d.orch, t.TempDir(), d.log))
+	d.runWait = 50 * time.Millisecond
+	resp := dispatchJSON(t, d, command.TypeBackupRestore, command.RestoreBackupRequest{AppID: "app-1", Backup: "db", Point: "20261011T120000Z-manual"})
+	if resp.Base.ResponseCode == proto.ResponseCode_RESPONSE_CODE_SUCCESS || !strings.Contains(resp.Base.Detail, "deadline exceeded") {
+		t.Fatalf("unanswered restore = %+v", resp.Base)
 	}
 }

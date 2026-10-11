@@ -154,9 +154,11 @@ func TestDeleteOrphanRefusesAnAppLiveElsewhere(t *testing.T) {
 			t.Errorf("%s: err %v, dispatches %d", app, err, len(disp.all))
 		}
 	}
-	// A failing catalog stops the request instead of letting it through.
-	uc := NewUseCase(&Deps{CommandDispatcher: &recordingDispatcher{}, AppRepository: catalogRepo{err: errors.New("db down")}})
-	if _, err := uc.DeleteOrphan(context.Background(), "u", "srv-1", command.DeleteOrphanRequest{Name: "disk", AppID: "x"}); err == nil {
-		t.Error("a catalog error let the delete through")
+	// The check is advisory: a catalog that can't answer (Postgres rejects an
+	// id that is no uuid) leaves the decision to the agent.
+	disp := &recordingDispatcher{}
+	uc := NewUseCase(&Deps{CommandDispatcher: disp, AppRepository: catalogRepo{err: errors.New("invalid input syntax for type uuid")}})
+	if _, err := uc.DeleteOrphan(context.Background(), "u", "srv-1", command.DeleteOrphanRequest{Name: "disk", AppID: "x"}); err != nil || len(disp.all) != 1 {
+		t.Errorf("a catalog error: err %v, dispatches %d", err, len(disp.all))
 	}
 }

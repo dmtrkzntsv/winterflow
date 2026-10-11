@@ -150,7 +150,12 @@ func (uc *UseCase) DeleteOrphan(ctx context.Context, userID, serverID string, re
 	switch app, err := uc.repo.GetApp(ctx, req.AppID); {
 	case errors.Is(err, model.ErrAppNotFound):
 	case err != nil:
-		return "", err
+		// Advisory: the catalog may not even take the id (Postgres keys apps by
+		// uuid, and an orphan's folder can carry any id); the agent decides
+		// for its own server.
+		if uc.log != nil {
+			uc.log.Debug("delete-orphan: the catalog could not be asked about the app", "app_id", req.AppID, "error", err)
+		}
 	case app.ID != "" && app.ServerID != serverID:
 		return "", model.Rejected("that app is live on another server: its backups are not orphans, and are deleted with the app")
 	}

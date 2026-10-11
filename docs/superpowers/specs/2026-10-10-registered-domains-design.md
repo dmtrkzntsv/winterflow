@@ -61,20 +61,25 @@ A **registration** is a name plus a TLS mode, stored per server (agent).
 ### Commands (`internal/domain/command/domain.go`)
 
 ```go
+// internal/domain/model
 type DomainTLS string // "auto" | "certificate" | "off"
-
-type Domain struct {
+type RegisteredDomain struct {
     Name     string     `json:"name"`
     TLS      DomainTLS  `json:"tls"`
     NotAfter *time.Time `json:"not_after,omitempty"` // certificate mode
     Issuer   string     `json:"issuer,omitempty"`    // certificate mode, CN of the issuer
-    Apps     []string   `json:"apps"`                // app ids using a covered host on this agent
+}
+
+// internal/domain/command
+type Domain struct {
+    model.RegisteredDomain
+    Apps []string `json:"apps"` // app ids using a covered host on this agent
 }
 type ListDomainsRequest struct{}
 type ListDomainsResponse struct{ Domains []Domain `json:"domains"` }
 type CreateDomainRequest struct {
     Name        string    `json:"name"`
-    TLS         DomainTLS `json:"tls"`
+    TLS         model.DomainTLS `json:"tls"`
     Certificate string    `json:"certificate,omitempty"` // PEM chain, certificate mode
     Key         string    `json:"key,omitempty"`         // ECIES ciphertext of the PEM key, certificate mode
 }
@@ -94,18 +99,27 @@ type DeleteDomainResponse struct {
   and `Key` are present iff the mode is `certificate`. It runs in the dispatcher
   hook (PR #4's pattern), with one dispatcher line per type.
 - `domain.create` on an existing name replaces it, which is how a certificate is
-  renewed. The cert files keep their paths, so the generated config is
-  byte-identical and Caddy would skip the load as unchanged: `domain.create`
-  therefore forces the reload (`Reload(ctx, force=true)`), which re-provisions
-  the TLS app and evicts the old certificate. Other reloads stay unforced.
+  renewed. Certificate files are content-addressed (see Storage), so a new
+  certificate changes the generated config and the ordinary reload loads it;
+  no reload is ever forced.
 
 ### Storage (`{AGENT_DATA_DIR}/domains/`)
 
 - `<file-safe name>.json` holds `{name, tls}`, mode 0644. A wildcard's `*` is
   encoded as `_wildcard_` in the filename.
-- Certificate mode also writes `<file>.crt` (0644) and `<file>.key` (0600). The
+- Certificate mode also writes the pair `<file>.<fp>.crt` (0644) and
+  `<file>.<fp>.key` (0600), where `fp` is the first 12 hex digits of
+  `sha256(cert || key)`; the `.json` additionally records `fingerprint`,
+  `not_after` and `issuer` (read from the leaf once, at create time). The
   key is decrypted with the agent's private key at create time, and it never
   leaves the agent or appears in any response.
+- **Renewal** writes the new pair next to the old one, then switches the
+  `.json` to it (written last, atomically), then prunes the old pair. The
+  `.json` therefore only ever names a complete pair — a crash leaves at worst
+  an unreferenced pair, pruned on the name's next change — and the running
+  proxy's files are never overwritten in place. A registration whose pair is
+  missing is skipped when listed (its hosts fall out of ingress, fail
+  closed).
 - **Create-time checks in certificate mode:**
   - `tls.X509KeyPair(cert, key)` must succeed;
   - the leaf certificate must cover the registered name (wildcard SAN for a
@@ -116,7 +130,9 @@ type DeleteDomainResponse struct {
 - **Delete** is refused while any app on the agent uses a hostname that this
   registration wins and no remaining registration would cover. A host another
   registration still covers (a seeded exact name next to a new wildcard) just
-  moves to it. The error names the apps.
+  moves to it. The error names the apps (by name; an app without one by its
+  id). It fails closed: when apps-data or an app's config can't be read, the
+  delete is refused, since it can't tell whether the name is in use.
 
 ### Upgrade path
 
@@ -137,18 +153,25 @@ type DeleteDomainResponse struct {
   registration in that mode. Automatic HTTPS skips the names those certs cover.
   Verify this against real Caddy in `TestBuildConfigValidatesWithCaddy`, plus
   a test that no ACME policy lists such a host.
-- **Catch-all:** after all app routes, every registration gets a route matching
-  its name (or `*.s`) that answers **404** with a small text body. It is on the
-  HTTPS server for `auto`/`certificate` and the HTTP server for `off`. Unknown
-  `xyz.twillingate.app` therefore gets a clean 404 under `off` and
-  `certificate` (the loaded cert completes the handshake). Under `auto` an
-  unknown host has no certificate — it is not an ACME subject — so the client
-  sees a TLS handshake failure, not the 404; only its plain-HTTP request would
-  reach the catch-all. (A 410 for stopped apps is sub-project D.)
+- **Catch-all:** after all app routes, every `off` and `certificate`
+  registration gets a route matching its name (or `*.s`, minus the exact
+  registrations under it) that answers **404** with a small text body: on the
+  HTTP server for `off`, on the HTTPS server for `certificate` (the loaded
+  cert completes the handshake). Unknown `xyz.twillingate.app` therefore gets
+  a clean 404 under both. `auto` registrations get no catch-all: an unknown
+  host there has no certificate — it is not an ACME subject — so the client
+  sees a TLS handshake failure anyway, and no route ever names an unused
+  `auto` name (so Caddy never tries to order a certificate for it). (A 410 for
+  stopped apps is sub-project D.)
 - The rate-limit route stays first on both servers. Read-header and idle
-  timeouts are unchanged. It keys on the TCP peer unless that peer is in
-  `INGRESS_TRUSTED_PROXIES` (CIDRs, default empty); then on `CF-Connecting-IP`,
-  else the rightmost untrusted `X-Forwarded-For` hop, else the peer.
+  timeouts are unchanged. It keys on Caddy's client IP: the TCP peer, unless
+  that peer is in `INGRESS_TRUSTED_PROXIES` (CIDRs or IPs, default empty) —
+  emitted as Caddy's own `trusted_proxies` (`static` source) with
+  `client_ip_headers` `CF-Connecting-IP`, `X-Forwarded-For` and
+  `trusted_proxies_strict` on both servers. Then the client is read from
+  those headers right to left, skipping trusted hops (else the peer). Invalid
+  entries are dropped with a warning (never trusted). Only proxies that
+  overwrite `CF-Connecting-IP` belong in the range.
 - **Reload triggers:** `app.save`, `app.delete`, `app.rename`, `rollback`
   (all as today), plus `domain.create` and `domain.delete`.
 
@@ -166,8 +189,11 @@ When `INGRESS_ENABLED` is false on the agent, `domain.create` and
   with primary key `(server_id, name)`, a foreign key to servers with cascade,
   and an index on `name`.
 - It is refreshed from command results (create and delete) and from a
-  `domain.list` reconcile, triggered when the Domains tab loads and after each
-  `apps.list` reconcile.
+  `domain.list` reconcile, triggered when the Domains tab loads and when the
+  server's agent comes online (an unknown→online transition, or a
+  capabilities event: the agent registered). That system sync is dispatched
+  for no user (its result reaches no SSE stream); a reconcile whose rows equal
+  the stored ones writes nothing.
 - `app_domains`: the primary key changes from `(domain)` to `(server_id, domain)`
   (migration on both dialects). `FindClaims` becomes per server.
 
@@ -177,10 +203,17 @@ All routes go through `caller` / `RequireServerAccess`.
 
 - `GET /api/v1/domain/list?server_id=` is agent-bound: 202, with the result over
   SSE.
+- `GET /api/v1/domain/get-domains?server_id=` answers synchronously from the
+  index: `{domains: [{name, tls, not_after?, issuer?}]}` (no app usage; that
+  needs the agent).
 - `POST /api/v1/domain/create?server_id=` with body `CreateDomainRequest`.
 - `POST /api/v1/domain/delete?server_id=` with body `{name}`.
 - `GET /api/v1/domains/check?server_id=&domain=&app_id=` gains `server_id`
-  (required) and answers `{available, covered, registration?, claims[]}`.
+  (required) and answers `{available, covered, registration?, claims[]}`. The
+  hostname's syntax is checked before any DB query (live typing sends many
+  partial names); ownership is still checked before anything about claims or
+  registrations is read. A claim is `{domain, app_id, app_name, server_id}`
+  (claims are per server, so the server's name is not repeated).
 
 ### Save-app checks (synchronous, 400)
 
@@ -190,6 +223,10 @@ All routes go through `caller` / `RequireServerAccess`.
   covered by a domain registered on this server — register `<host>` or
   `*.<parent>`".
 - **Unique per server:** no other app on the same server claims it.
+- Hostnames the app already holds (per `app_domains`) are grandfathered when
+  uncovered: right after an upgrade the index may still be empty until the
+  agent's first `domain.list`. They are looked up (one per-app query) only
+  once a host turns out uncovered.
 
 The agent enforces coverage again when it builds the Caddy config.
 

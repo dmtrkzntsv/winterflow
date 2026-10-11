@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	appagent "winterflow/internal/app/agent"
+	"winterflow/internal/domain/backup/recipe"
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
 	"winterflow/internal/infra/transport/codec"
@@ -324,6 +325,28 @@ func defaultScript(typ command.Type) script {
 		return func(raw json.RawMessage) reply {
 			return reply{Payload: command.ImageTagsResponse{Image: decode[command.ImageTagsRequest](raw).Image, Tags: []string{"latest"}}}
 		}
+	case command.TypeBackupUpdate:
+		return func(raw json.RawMessage) reply {
+			in := decode[command.UpdateBackupsRequest](raw)
+			return reply{Payload: command.UpdateBackupsResponse{AppID: in.AppID, Revision: "rev-2", Backups: []recipe.EffectiveBackup{}}}
+		}
+	case command.TypeBackupPoints:
+		return func(raw json.RawMessage) reply {
+			in := decode[command.ListRestorePointsRequest](raw)
+			return reply{Payload: command.ListRestorePointsResponse{AppID: in.AppID, Backup: in.Backup, Points: []command.RestorePoint{
+				{ID: "20261011T120000Z-scheduled", Time: 1791720000, Kind: command.PointScheduled, Size: 1024, Expires: 1807272000}}}}
+		}
+	case command.TypeBackupRun:
+		return func(raw json.RawMessage) reply {
+			in := decode[command.RunBackupRequest](raw)
+			return reply{Payload: command.RunBackupResponse{AppID: in.AppID, Backup: in.Backup,
+				Point: &command.RestorePoint{ID: "20261011T130000Z-manual", Time: 1791723600, Kind: command.PointManual, Size: 2048}}}
+		}
+	case command.TypeBackupDeletePoint:
+		return func(raw json.RawMessage) reply {
+			in := decode[command.DeleteRestorePointRequest](raw)
+			return reply{Payload: command.DeleteRestorePointResponse{AppID: in.AppID, Backup: in.Backup, Point: in.Point}}
+		}
 	case command.TypeAgentUpdate:
 		return func(raw json.RawMessage) reply {
 			return reply{Payload: command.UpdateAgentResponse{FromVersion: "v1", ToVersion: decode[command.UpdateAgentRequest](raw).Version, Scheduled: true}}
@@ -346,6 +369,7 @@ func TestFakeAgentAnswersEveryCommandType(t *testing.T) {
 		command.TypeVolumeCreate, command.TypeVolumeDelete, command.TypeImageTags, command.TypeAgentUpdate,
 		command.TypeDomainList, command.TypeDomainCreate, command.TypeDomainDelete,
 		command.TypeStorageList, command.TypeStorageTest, command.TypeStorageSave, command.TypeStorageDelete,
+		command.TypeBackupUpdate, command.TypeBackupPoints, command.TypeBackupRun, command.TypeBackupDeletePoint,
 	} {
 		payload := []byte(`{}`)
 		if typ == command.TypeStorageSave {

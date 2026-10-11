@@ -10,13 +10,14 @@ import (
 )
 
 // requireStorageRefs refuses a save whose compose file (in the request)
-// references a WF_STORAGE_ variable of a storage the server doesn't have,
-// or any WF_BACKUP_ variable. The compose files are picked the way the
-// agent picks them (model.DetectComposeFiles). A git-sourced app's compose
-// file is not in the request: the agent checks it at deploy. Without the
-// index (old wiring) the agent's check is the only one.
-func (uc *UseCase) requireStorageRefs(ctx context.Context, serverID string, p command.AppPayload) error {
-	if p.Source != nil || uc.serverStorages == nil {
+// declares invalid backups, or references a WF_STORAGE_ variable of a
+// storage the server doesn't have or a WF_BACKUP_ variable of a backup the
+// app doesn't declare. The compose files are picked the way the agent picks
+// them (model.DetectComposeFiles). A git-sourced app's compose file is not
+// in the request: the agent checks it at save and deploy. Without the
+// storage index (old wiring) the agent's storage check is the only one.
+func (uc *UseCase) requireStorageRefs(ctx context.Context, serverID string, p command.AppPayload, isNew bool) error {
+	if p.Source != nil {
 		return nil
 	}
 	files := map[string][]byte{}
@@ -29,20 +30,26 @@ func (uc *UseCase) requireStorageRefs(ctx context.Context, serverID string, p co
 	for _, name := range model.DetectComposeFiles(func(n string) bool { _, ok := files[n]; return ok }) {
 		contents = append(contents, files[name])
 	}
+	backupDeclared, err := uc.checkBackups(ctx, serverID, contents, p.Config, isNew)
+	if err != nil {
+		return err
+	}
 	refs := model.ScanStorageRefs(contents...)
 	if len(refs) == 0 {
 		return nil
 	}
-	list, err := uc.serverStorages.ListForServer(ctx, serverID)
-	if err != nil {
-		uc.log.Error("SaveApp: list storages", "error", err, "server_id", serverID)
-		return err
+	have := map[string]bool{}
+	if uc.serverStorages != nil {
+		list, err := uc.serverStorages.ListForServer(ctx, serverID)
+		if err != nil {
+			uc.log.Error("SaveApp: list storages", "error", err, "server_id", serverID)
+			return err
+		}
+		for _, s := range list {
+			have[s.Name] = true
+		}
 	}
-	have := make(map[string]bool, len(list))
-	for _, s := range list {
-		have[s.Name] = true
-	}
-	_, err = model.CheckStorageRefs(refs, func(name string) bool { return have[name] }, nil)
+	_, err = model.CheckStorageRefs(refs, func(name string) bool { return uc.serverStorages == nil || have[name] }, backupDeclared)
 	return err
 }
 

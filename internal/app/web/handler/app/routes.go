@@ -104,6 +104,30 @@ func (h *Handler) Routes(api.Guards) []api.Route {
 			Request: RenameAppRequest{}, Accepted: true, Result: command.RenameAppResponse{}, Errors: server,
 		},
 		{
+			Method: http.MethodPost, Path: "/api/v1/app/update-backups", Handler: h.UpdateBackups, Auth: api.User,
+			Summary: "Replace an app's backups list (new revision; redeploys only when profiles or storage variables change)", Tag: "backups",
+			Description: "`backups` is the whole list of the app's backup settings: entries named like a backup of the compose file's " +
+				"`x-winterflow.backups` override it (only the fields that differ, never `type`); other entries are backups added here " +
+				"and carry `type` and every field it needs. `enabled: true` needs `storage`, a storage on the server.",
+			Request: UpdateBackupsRequest{}, Accepted: true, Result: command.UpdateBackupsResponse{}, Errors: server,
+		},
+		{
+			Method: http.MethodGet, Path: "/api/v1/app/list-restore-points", Handler: h.ListRestorePoints, Auth: api.User,
+			Summary: "List a backup's restore points, newest first (30s deadline)", Tag: "backups",
+			Query: RestorePointsQuery{}, Accepted: true, Result: command.ListRestorePointsResponse{}, Errors: server,
+		},
+		{
+			Method: http.MethodPost, Path: "/api/v1/app/run-backup", Handler: h.RunBackup, Auth: api.User,
+			Summary: "Back up now (joins a run of the same backup already running or queued)", Tag: "backups",
+			Description: "The result arrives when the run ends, which can take up to 30 minutes after it starts.",
+			Request:     RunBackupRequest{}, Accepted: true, Result: command.RunBackupResponse{}, Errors: server,
+		},
+		{
+			Method: http.MethodPost, Path: "/api/v1/app/delete-restore-point", Handler: h.DeleteRestorePoint, Auth: api.User,
+			Summary: "Delete one restore point (any kind)", Tag: "backups",
+			Request: DeleteRestorePointRequest{}, Accepted: true, Result: command.DeleteRestorePointResponse{}, Errors: server,
+		},
+		{
 			Method: http.MethodGet, Path: "/api/v1/domain/get-domains", Handler: h.GetDomains, Auth: api.User,
 			Summary: "A server's domains from the API's index (no agent round-trip)", Tag: "domains",
 			Query: api.ServerQuery{}, Response: GetDomainsResponse{}, Errors: server,

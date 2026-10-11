@@ -342,7 +342,8 @@ func (uc *UseCase) SaveApp(ctx context.Context, userID, serverID string, app mod
 	// New apps have no id yet; the API owns identity, so assign one here and use
 	// it both on the wire (the agent keys its on-disk storage by app id) and on
 	// the persisted catalog record.
-	if app.ID == "" {
+	isNew := app.ID == ""
+	if isNew {
 		app.ID = util.GenerateID()
 	}
 	payload.AppID = app.ID
@@ -390,7 +391,7 @@ func (uc *UseCase) SaveApp(ctx context.Context, userID, serverID string, app mod
 		}
 	}
 
-	if err := uc.requireStorageRefs(ctx, serverID, payload); err != nil {
+	if err := uc.requireStorageRefs(ctx, serverID, payload, isNew); err != nil {
 		return "", err
 	}
 

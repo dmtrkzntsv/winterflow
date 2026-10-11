@@ -213,6 +213,61 @@ paths:
       - apps
       x-operation-result:
         $ref: '#/components/schemas/DeleteAppResponse'
+  /api/v1/app/delete-restore-point:
+    post:
+      operationId: appDeleteRestorePoint
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteRestorePointRequest'
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Delete one restore point (any kind)
+      tags:
+      - backups
+      x-operation-result:
+        $ref: '#/components/schemas/DeleteRestorePointResponse'
   /api/v1/app/get-app:
     get:
       operationId: appGetApp
@@ -522,6 +577,74 @@ paths:
       - apps
       x-operation-result:
         $ref: '#/components/schemas/GetRevisionsResponse'
+  /api/v1/app/list-restore-points:
+    get:
+      operationId: appListRestorePoints
+      parameters:
+      - in: query
+        name: server_id
+        required: true
+        schema:
+          type: string
+      - in: query
+        name: app_id
+        required: true
+        schema:
+          type: string
+      - description: Backup name.
+        in: query
+        name: backup
+        required: true
+        schema:
+          description: Backup name.
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: List a backup's restore points, newest first (30s deadline)
+      tags:
+      - backups
+      x-operation-result:
+        $ref: '#/components/schemas/ListRestorePointsResponse'
   /api/v1/app/refresh-apps:
     post:
       operationId: appRefreshApps
@@ -690,6 +813,63 @@ paths:
       - apps
       x-operation-result:
         $ref: '#/components/schemas/RollbackAppResponse'
+  /api/v1/app/run-backup:
+    post:
+      description: The result arrives when the run ends, which can take up to 30 minutes
+        after it starts.
+      operationId: appRunBackup
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunBackupRequest'
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Back up now (joins a run of the same backup already running or queued)
+      tags:
+      - backups
+      x-operation-result:
+        $ref: '#/components/schemas/RunBackupResponse'
   /api/v1/app/save-app:
     post:
       operationId: appSaveApp
@@ -745,6 +925,67 @@ paths:
       - apps
       x-operation-result:
         $ref: '#/components/schemas/SaveAppResponse'
+  /api/v1/app/update-backups:
+    post:
+      description: '`backups` is the whole list of the app''s backup settings: entries
+        named like a backup of the compose file''s `x-winterflow.backups` override
+        it (only the fields that differ, never `type`); other entries are backups
+        added here and carry `type` and every field it needs. `enabled: true` needs
+        `storage`, a storage on the server.'
+      operationId: appUpdateBackups
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateBackupsRequest'
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Replace an app's backups list (new revision; redeploys only when profiles
+        or storage variables change)
+      tags:
+      - backups
+      x-operation-result:
+        $ref: '#/components/schemas/UpdateBackupsResponse'
   /api/v1/auth/register:
     post:
       operationId: authRegister
@@ -3142,6 +3383,35 @@ components:
       required:
       - status
       type: object
+    BackupConfig:
+      properties:
+        enabled:
+          type: boolean
+        every:
+          type: string
+        exclude:
+          items:
+            type: string
+          type: array
+        keep:
+          $ref: '#/components/schemas/KeepInput'
+        name:
+          type: string
+        path:
+          type: string
+        paths:
+          items:
+            type: string
+          type: array
+        service:
+          type: string
+        storage:
+          type: string
+        type:
+          type: string
+        volume:
+          type: string
+      type: object
     BackupHealth:
       properties:
         last_error:
@@ -3437,6 +3707,30 @@ components:
           type: string
       required:
       - address
+      type: object
+    DeleteRestorePointRequest:
+      properties:
+        app_id:
+          type: string
+        backup:
+          type: string
+        point:
+          type: string
+        server_id:
+          type: string
+      type: object
+    DeleteRestorePointResponse:
+      properties:
+        app_id:
+          type: string
+        backup:
+          type: string
+        point:
+          type: string
+      required:
+      - app_id
+      - backup
+      - point
       type: object
     DeleteStorageRequest:
       properties:
@@ -3803,6 +4097,19 @@ components:
         recent:
           type: string
       type: object
+    KeepInput:
+      properties:
+        daily:
+          type:
+          - "null"
+          - integer
+        monthly:
+          type:
+          - "null"
+          - integer
+        recent:
+          type: string
+      type: object
     LibraryError:
       properties:
         error:
@@ -3853,6 +4160,23 @@ components:
           - "null"
       required:
       - registries
+      type: object
+    ListRestorePointsResponse:
+      properties:
+        app_id:
+          type: string
+        backup:
+          type: string
+        points:
+          items:
+            $ref: '#/components/schemas/RestorePoint'
+          type:
+          - array
+          - "null"
+      required:
+      - app_id
+      - backup
+      - points
       type: object
     ListStoragesResponse:
       properties:
@@ -4130,6 +4454,27 @@ components:
       - user_id
       - temp_password
       type: object
+    RestorePoint:
+      properties:
+        expires:
+          format: int64
+          type: integer
+        id:
+          type: string
+        kind:
+          type: string
+        size:
+          format: int64
+          type: integer
+        time:
+          format: int64
+          type: integer
+      required:
+      - id
+      - time
+      - kind
+      - size
+      type: object
     RevisionInfo:
       properties:
         hash:
@@ -4162,6 +4507,34 @@ components:
       required:
       - app_id
       - revision
+      type: object
+    RunBackupRequest:
+      properties:
+        app_id:
+          type: string
+        backup:
+          type: string
+        server_id:
+          type: string
+      type: object
+    RunBackupResponse:
+      properties:
+        app_id:
+          type: string
+        backup:
+          type: string
+        point:
+          $ref: '#/components/schemas/RestorePoint'
+        unchanged:
+          type: boolean
+        warnings:
+          items:
+            type: string
+          type: array
+      required:
+      - app_id
+      - backup
+      - unchanged
       type: object
     S3Storage:
       properties:
@@ -4486,6 +4859,43 @@ components:
       - from_version
       - to_version
       - scheduled
+      type: object
+    UpdateBackupsRequest:
+      properties:
+        app_id:
+          type: string
+        backups:
+          items:
+            $ref: '#/components/schemas/BackupConfig'
+          type:
+          - array
+          - "null"
+        server_id:
+          type: string
+      type: object
+    UpdateBackupsResponse:
+      properties:
+        app_id:
+          type: string
+        backups:
+          items:
+            $ref: '#/components/schemas/EffectiveBackup'
+          type:
+          - array
+          - "null"
+        redeployed:
+          type: boolean
+        revision:
+          type: string
+        warnings:
+          items:
+            type: string
+          type: array
+      required:
+      - app_id
+      - revision
+      - redeployed
+      - backups
       type: object
     UpdateOrganizationRequest:
       properties:

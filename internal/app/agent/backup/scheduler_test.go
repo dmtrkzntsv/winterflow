@@ -1323,3 +1323,43 @@ func TestAbandonedRestoreThatSucceededLaterIsNoFailure(t *testing.T) {
 		t.Fatalf("health = %+v", h)
 	}
 }
+
+// A restore the agent's last run was cut short in becomes its backup's
+// last_error: the backup reads as failing, it is stored, and it clears when
+// the backup next succeeds. Nothing is run.
+func TestInterruptedRestoreIsTheBackupsLastError(t *testing.T) {
+	e := newEngine(planned("app-1", "db", recipe.TypeSQLite, true, recipe.Manual))
+	dir := t.TempDir()
+	logs := &lockedBuffer{}
+	s := New(e, dir, &logger.Logger{Logger: slog.New(slog.NewJSONHandler(logs, nil))})
+	mark := dockercompose.RestoreMark{App: "app-1", Backup: "db", Point: "20261011T120000Z-manual",
+		PreRestorePoint: "20261011T130000Z-pre-restore", WasRunning: true, Phase: "restoring", Started: t0}
+	s.NoteInterrupted(nil) // nothing to note
+	s.NoteInterrupted([]dockercompose.RestoreMark{mark})
+	clock := newClock()
+	s.clock = clock
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { s.Run(ctx); close(done) }()
+	t.Cleanup(func() { cancel(); <-done })
+	idle(t, clock)
+	h := s.Health("app-1", clock.Now(), nil)
+	if len(h) != 1 || h[0].State != command.BackupFailing || h[0].LastError != mark.Message() ||
+		!strings.Contains(h[0].LastError, "pre-restore copy 20261011T130000Z-pre-restore") {
+		t.Fatalf("health = %+v", h)
+	}
+	noRun(t, e)
+	if out := logs.String(); !strings.Contains(out, "a restore was interrupted by an agent stop") || !strings.Contains(out, `"phase":"restoring"`) {
+		t.Fatalf("log = %s", out)
+	}
+	raw, _ := os.ReadFile(filepath.Join(dir, "backups", "state.json"))
+	if !strings.Contains(string(raw), "check the app's data") {
+		t.Fatalf("state.json = %s", raw)
+	}
+	if o := <-s.RunNow("app-1", "db"); o.Err != nil {
+		t.Fatal(o.Err)
+	}
+	if h := s.Health("app-1", clock.Now(), nil); h[0].LastError != "" {
+		t.Fatalf("after a successful run: %+v", h)
+	}
+}

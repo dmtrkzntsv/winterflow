@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +15,7 @@ import (
 	"winterflow/internal/domain/backup/recipe"
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
+	dockercompose "winterflow/internal/infra/orchestrator/docker_compose"
 	"winterflow/internal/infra/transport/grpc/proto"
 )
 
@@ -245,9 +248,15 @@ func (f fakeStatus) GetAppsStatus(context.Context) ([]command.AppStatus, error) 
 	return []command.AppStatus{{AppID: "app-1"}}, f.err
 }
 
-type fakeCleaner struct{ err error }
+type fakeCleaner struct {
+	err         error
+	interrupted []dockercompose.RestoreMark
+}
 
 func (f fakeCleaner) RemoveHelpers(context.Context) error { return f.err }
+func (f fakeCleaner) InterruptedRestores() []dockercompose.RestoreMark {
+	return f.interrupted
+}
 
 func TestWithBackupHealthAndRunBackups(t *testing.T) {
 	fb := &fakeBackups{}
@@ -260,16 +269,27 @@ func TestWithBackupHealthAndRunBackups(t *testing.T) {
 	}
 	// RunBackups cleans up, then runs the scheduler until ctx ends.
 	d := newTestDispatcher(t)
-	s := backup.New(d.orch, t.TempDir(), d.log)
+	stateDir := t.TempDir()
+	s := backup.New(d.orch, stateDir, d.log)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
-	go func() { RunBackups(ctx, fakeCleaner{err: errors.New("docker down")}, s, d.log); close(done) }()
+	cut := dockercompose.RestoreMark{App: "app-1", Backup: "db", Point: "20261011T120000Z-manual", PreRestorePoint: "pre", Phase: "restoring"}
+	go func() {
+		RunBackups(ctx, fakeCleaner{err: errors.New("docker down"), interrupted: []dockercompose.RestoreMark{cut}}, s, d.log)
+		close(done)
+	}()
 	o := <-s.RunNow("app-1", "db")
 	if o.Err == nil || !strings.Contains(o.Err.Error(), "app app-1 not found") {
 		t.Fatalf("outcome = %+v", o)
 	}
 	cancel()
 	<-done
+	// The restore the last run was cut short in is the backup's last_error
+	// (state.json), whether or not the app still exists.
+	raw, err := os.ReadFile(filepath.Join(stateDir, "backups", "state.json"))
+	if err != nil || !strings.Contains(string(raw), cut.Message()) {
+		t.Fatalf("state.json = %s (%v)", raw, err)
+	}
 }
 
 // A Back up now request is bounded: a scheduler that never answers (here one

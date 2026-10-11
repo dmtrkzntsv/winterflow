@@ -64,6 +64,32 @@ var ErrRestoring = errors.New("a restore of this app is in progress")
 // still running.
 var ErrAppBusy = errors.New("the app is busy")
 
+// ErrAgentUpdating is why a restore does not begin: the agent has replaced
+// its binary and is about to exit.
+var ErrAgentUpdating = errors.New("the agent is updating and about to restart")
+
+// ErrRestoreRunning is why the agent does not update itself: its exit would
+// cut a restore short, with the app stopped and its data perhaps half
+// replaced.
+var ErrRestoreRunning = errors.New("the agent is not updated while a backup is being restored: try again once the restore has ended")
+
+// beginUpdate refuses an agent update while any restore runs, and from then
+// on refuses a new restore (the agent is about to exit). failed undoes it
+// when the update did not go through.
+func (r *Repository) beginUpdate() (failed func(), err error) {
+	r.restoreMu.Lock()
+	defer r.restoreMu.Unlock()
+	if len(r.restores) > 0 {
+		return nil, ErrRestoreRunning
+	}
+	r.updating = true
+	return func() {
+		r.restoreMu.Lock()
+		r.updating = false
+		r.restoreMu.Unlock()
+	}, nil
+}
+
 // restoreLimits are a restore helper's: a dump's, plus what putting files
 // back needs (give them their owner; set the mode and times of files it
 // doesn't own; keep a folder's setgid bit when its group is set).
@@ -87,6 +113,9 @@ func statfsFree(path string) (uint64, error) {
 func (r *Repository) beginRestore(appID string) (end func(), err error) {
 	r.restoreMu.Lock()
 	defer r.restoreMu.Unlock()
+	if r.updating {
+		return nil, ErrAgentUpdating
+	}
 	if _, busy := r.restores[appID]; busy {
 		return nil, ErrRestoring
 	}
@@ -297,6 +326,13 @@ func (r *Repository) RestoreBackup(ctx context.Context, job RestoreJob) (command
 		return resp, fmt.Errorf("check whether the app is running: %w", err)
 	}
 	running := up[projectName(job.AppID)]
+	// From here on a stop of the agent leaves the app in doubt: the marker
+	// tells the next start (see InterruptedRestores).
+	if err := r.setRestoreMark(RestoreMark{App: job.AppID, Backup: job.Backup, Point: job.Point,
+		WasRunning: running, Phase: restorePhaseStopping, Started: r.now().UTC()}); err != nil {
+		r.log.Warn("record the restore in progress", "app_id", job.AppID, "error", err)
+	}
+	defer r.clearRestoreMark(job.AppID)
 	// Compose stops the services of HEAD's compose files: with undeployed
 	// changes, a container of a service HEAD no longer has would keep
 	// running beside the swap.
@@ -317,6 +353,7 @@ func (r *Repository) RestoreBackup(ctx context.Context, job RestoreJob) (command
 		return err
 	}
 
+	r.updateRestoreMark(job.AppID, func(m *RestoreMark) { m.Phase = restorePhaseCopy })
 	// The pre-restore run's retention must not delete the point being
 	// restored (a retry after a failure would find it gone).
 	pre, err := r.RunBackup(ctx, BackupJob{AppID: job.AppID, Backup: b.Name, Kind: command.PointPreRestore, Protect: job.Point})
@@ -332,6 +369,9 @@ func (r *Repository) RestoreBackup(ctx context.Context, job RestoreJob) (command
 		resp.Warnings = append(resp.Warnings, "the pre-restore copy: "+w)
 	}
 
+	r.updateRestoreMark(job.AppID, func(m *RestoreMark) {
+		m.Phase, m.PreRestorePoint = restorePhaseHelper, resp.PreRestorePoint
+	})
 	name := "wf-restore-" + strconv.FormatInt(r.now().UnixNano(), 36)
 	args := restoreArgs(name, job.AppID, exe, plan, b, needs)
 	exit, stderr, err := r.runZstdRestore(ctx, name, args, local)

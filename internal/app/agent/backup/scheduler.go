@@ -227,6 +227,31 @@ func (s *Scheduler) signal() {
 	}
 }
 
+// NoteInterrupted records the restores a stop of the agent cut short (see
+// dockercompose.RestoreMark): each is logged and becomes its backup's
+// last_error, which reaches health until the backup next succeeds. It
+// starts nothing and rolls nothing back; the data may be partly replaced and
+// the user decides. Call it before Run.
+func (s *Scheduler) NoteInterrupted(marks []dockercompose.RestoreMark) {
+	if len(marks) == 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, m := range marks {
+		s.log.Warn("a restore was interrupted by an agent stop", "app_id", m.App, "backup", m.Backup, "point", m.Point,
+			"pre_restore_point", m.PreRestorePoint, "was_running", m.WasRunning, "phase", m.Phase, "started", m.Started)
+		k := key{m.App, m.Backup}.String()
+		st := s.state[k]
+		if st == nil {
+			st = &State{}
+			s.state[k] = st
+		}
+		st.LastError = m.Message()
+	}
+	s.saveLocked()
+}
+
 // Reload rereads the plan before the next decision: an app was saved,
 // rolled back, renamed or deleted, its backups changed, or a storage was
 // saved or deleted.

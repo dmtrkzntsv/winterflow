@@ -61,6 +61,13 @@ type Repository struct {
 	// ops counts the operations in flight per app (see beginOp): a restore
 	// does not begin while one runs.
 	ops map[string]int
+	// updating is set once an agent update is under way (see beginUpdate):
+	// no restore begins then, the agent is about to exit.
+	updating bool
+	// marks are the restores in progress, mirrored in backups/restoring.json
+	// (see RestoreMark), under markMu.
+	markMu sync.Mutex
+	marks  map[string]RestoreMark
 	// restoreWait bounds how long DeleteApp waits for a restore of its app
 	// to end (replaced in tests).
 	restoreWait time.Duration
@@ -156,4 +163,5 @@ func (r *Repository) forgetApp(appID string) {
 	delete(r.restores, appID)
 	delete(r.ops, appID)
 	r.restoreMu.Unlock()
+	r.clearRestoreMark(appID)
 }

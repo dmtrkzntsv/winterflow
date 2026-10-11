@@ -7,6 +7,7 @@ import (
 
 	"winterflow/internal/app/agent/backup"
 	"winterflow/internal/domain/command"
+	dockercompose "winterflow/internal/infra/orchestrator/docker_compose"
 	"winterflow/pkg/logger"
 )
 
@@ -87,14 +88,21 @@ func (d *Dispatcher) restoreBackup(ctx context.Context, in command.RestoreBackup
 	}
 }
 
-// HelperCleaner removes leftover backup helper containers.
+// HelperCleaner removes leftover backup helper containers, and reports the
+// restores a previous run of the agent was cut short in.
 type HelperCleaner interface {
 	RemoveHelpers(ctx context.Context) error
+	// InterruptedRestores reads (once) what the last run left in
+	// backups/restoring.json.
+	InterruptedRestores() []dockercompose.RestoreMark
 }
 
-// RunBackups is the backup goroutine: it removes the helpers a previous run
-// of the agent left behind, then runs the scheduler until ctx is done.
+// RunBackups is the backup goroutine: it notes the restores a previous run
+// of the agent was cut short in (their backups' last_error tells the user to
+// check the app's data), removes the helpers it left behind, then runs the
+// scheduler until ctx is done.
 func RunBackups(ctx context.Context, cleaner HelperCleaner, s *backup.Scheduler, log *logger.Logger) {
+	s.NoteInterrupted(cleaner.InterruptedRestores())
 	if err := cleaner.RemoveHelpers(ctx); err != nil {
 		log.Warn("remove leftover backup helpers", "error", err)
 	}

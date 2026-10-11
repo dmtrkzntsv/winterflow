@@ -24,6 +24,7 @@ const (
 	ExitUsage     = 2
 	ExitUnchanged = 3 // the source matches --since: nothing written
 	ExitMissing   = 4 // nothing to back up: the database file or every path is missing
+	ExitPartial   = 5 // a files restore failed while swapping: its paths are partly replaced
 )
 
 // Result is the JSON line a dump ends stderr with.

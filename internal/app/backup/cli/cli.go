@@ -7,11 +7,14 @@
 //
 //	backup dump sqlite <path> [--entry <name>] [--since <fingerprint>]
 //	backup dump files (--src <source> --entry <entry name>)... [--exclude <pattern>...] [--since <fingerprint>]
-//	backup restore sqlite <path> [--entry <name>]    (the copy on stdin)
+//	backup restore sqlite <path>                     (the copy on stdin)
+//	backup restore files --id <id> (--root <mount> --src <source> --entry <entry name>)... [--need <mount>=<bytes>...]
+//	                                                 (the archive on stdin)
 //
 // Exit codes: 0 done, 3 unchanged since --since (nothing written), 4 nothing
-// to back up (the database file or every path is missing), 2 bad usage,
-// 1 any other failure (a restore then changed nothing).
+// to back up (the database file or every path is missing), 5 a files
+// restore failed while swapping (the paths are partly replaced), 2 bad
+// usage, 1 any other failure (a restore then changed nothing).
 package cli
 
 import (
@@ -33,6 +36,7 @@ const (
 	ExitUsage     = helper.ExitUsage
 	ExitUnchanged = helper.ExitUnchanged
 	ExitMissing   = helper.ExitMissing
+	ExitPartial   = helper.ExitPartial
 )
 
 // Result is the JSON line a dump ends stderr with.
@@ -69,6 +73,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		res, err = dumpFilesCmd(args[2:], stdout)
 	case "restore sqlite":
 		res, err = restoreSQLiteCmd(args[2:], stdin)
+	case "restore files":
+		res, err = restoreFilesCmd(args[2:], stdin)
 	default:
 		return usage(stderr)
 	}
@@ -81,6 +87,8 @@ func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		res.Unchanged, code = true, ExitUnchanged // the warnings of the check stay
 	case errors.Is(err, errMissing):
 		res.Error, code = strings.TrimSuffix(err.Error(), ": "+errMissing.Error()), ExitMissing
+	case errors.Is(err, errPartial):
+		res.Error, code = strings.TrimSuffix(err.Error(), ": "+errPartial.Error()), ExitPartial
 	case err != nil:
 		res.Error, code = err.Error(), ExitFailed
 	}
@@ -95,7 +103,8 @@ func usage(stderr io.Writer) int {
 	fmt.Fprintln(stderr, `usage:
   backup dump sqlite <path> [--entry <name>] [--since <fingerprint>]
   backup dump files (--src <source> --entry <entry name>)... [--exclude <pattern>...] [--since <fingerprint>]
-  backup restore sqlite <path> [--entry <name>]`)
+  backup restore sqlite <path>
+  backup restore files --id <id> (--root <mount> --src <source> --entry <entry name>)... [--need <mount>=<bytes>...]`)
 	return ExitUsage
 }
 

@@ -675,3 +675,33 @@ func TestHelperArgsNameTheSQLiteEntry(t *testing.T) {
 		t.Fatalf("args = %s", joined)
 	}
 }
+
+// Two copies of the same kind made in the same second never overwrite each
+// other: the second takes the next free second (and the first keeps its data).
+func TestRunBackupsInTheSameSecondKeepBothCopies(t *testing.T) {
+	b := newBackupRepo(t)
+	first, err := b.run(t, "database", command.PointManual)
+	if err != nil || first.Point == nil {
+		t.Fatalf("first: %+v, %v", first, err)
+	}
+	b.helper.payload, b.helper.fp = "CHANGED", "sqlite:2" // same clock, other data
+	second, err := b.run(t, "database", command.PointManual)
+	if err != nil || second.Point == nil {
+		t.Fatalf("second: %+v, %v", second, err)
+	}
+	if first.Point.ID != "20261011T120000Z-manual" || second.Point.ID != "20261011T120001Z-manual" {
+		t.Fatalf("ids = %s, %s", first.Point.ID, second.Point.ID)
+	}
+	want := []string{
+		"app-1/database/20261011T120000Z-manual.db.zst", "app-1/database/20261011T120000Z-manual.json",
+		"app-1/database/20261011T120001Z-manual.db.zst", "app-1/database/20261011T120001Z-manual.json",
+	}
+	if got := b.stored(t); !slices.Equal(got, want) {
+		t.Fatalf("stored = %v", got)
+	}
+	data, _ := os.ReadFile(filepath.Join(b.disk, want[0]))
+	dec, _ := zstd.NewReader(bytes.NewReader(data))
+	if plain, _ := io.ReadAll(dec); string(plain) != "SQLITE-SNAPSHOT" {
+		t.Fatalf("the first copy now holds %q", plain)
+	}
+}

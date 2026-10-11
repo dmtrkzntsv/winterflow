@@ -156,7 +156,15 @@ func (r *Repository) RunBackup(ctx context.Context, job BackupJob) (BackupResult
 	if err := r.checkHelperVolumes(ctx, plan); err != nil {
 		return BackupResult{}, err
 	}
+	// Point ids have one-second resolution: a copy of the same kind made in
+	// the same second as another (two Back up now clicks in a row, of data
+	// that changed in between) must not overwrite it, so it takes the next
+	// free second.
 	id := layout.PointID(now, job.Kind)
+	for slices.ContainsFunc(points, func(p layout.Point) bool { return p.ID == id }) {
+		now = now.Add(time.Second)
+		id = layout.PointID(now, job.Kind)
+	}
 	name := "wf-backup-" + strconv.FormatInt(now.UnixNano(), 36)
 	args := helperArgs(name, job.AppID, exe, plan, b, since)
 	dataKey := layout.DataKey(job.AppID, b.Name, id, b.Type)

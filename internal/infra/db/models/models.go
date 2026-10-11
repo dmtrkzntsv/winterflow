@@ -177,6 +177,19 @@ type AppDomain struct {
 	Server *Server `bun:"rel:belongs-to,join:server_id=server_id"`
 }
 
+// ServerStorage is one row of the server_storages index: a storage
+// registered on an agent, mirrored from storage.list / save / delete. It
+// never holds a secret.
+type ServerStorage struct {
+	bun.BaseModel `bun:"table:server_storages"`
+
+	ServerID  string         `bun:"server_id,pk" json:"server_id"`
+	Name      string         `bun:"name,pk" json:"name"`
+	Type      string         `bun:"type,notnull" json:"type"`
+	Location  string         `bun:"location,notnull" json:"location"`
+	UpdatedAt types.DateTime `bun:"updated_at,notnull" json:"updated_at"`
+}
+
 // ServerDomain is one row of the server_domains index: a domain registered on
 // an agent, mirrored from domain.list / domain.create / domain.delete.
 type ServerDomain struct {

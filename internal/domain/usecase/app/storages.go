@@ -1,0 +1,103 @@
+package app
+
+import (
+	"context"
+	"encoding/json"
+
+	"winterflow/internal/domain/command"
+	"winterflow/internal/domain/model"
+	"winterflow/internal/domain/port"
+)
+
+// ServerStorages reads the server's storages from the server_storages index
+// (no agent round-trip).
+func (uc *UseCase) ServerStorages(ctx context.Context, serverID string) ([]model.StorageSummary, error) {
+	if uc.serverStorages == nil {
+		return []model.StorageSummary{}, nil
+	}
+	return uc.serverStorages.ListForServer(ctx, serverID)
+}
+
+// ListServerStorages dispatches storage.list to the server's agent. The
+// result reconciles the server_storages index and is delivered over SSE to
+// userID (none for the system's own sync when an agent comes online).
+func (uc *UseCase) ListServerStorages(ctx context.Context, userID, serverID string) (string, error) {
+	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
+		AgentID: serverID,
+		UserID:  userID,
+		Type:    command.TypeStorageList,
+		Payload: command.ListStoragesRequest{},
+		OnResult: func(res port.CommandResult) {
+			if !res.Success || len(res.Payload) == 0 || uc.serverStorages == nil {
+				return
+			}
+			var listed command.ListStoragesResponse
+			if err := json.Unmarshal(res.Payload, &listed); err != nil {
+				uc.log.Error("ListServerStorages: decode result", "error", err)
+				return
+			}
+			rows := make([]model.StorageSummary, 0, len(listed.Storages))
+			for _, s := range listed.Storages {
+				rows = append(rows, model.StorageSummary{Name: s.Name, Type: s.Type, Location: s.Location})
+			}
+			if err := uc.serverStorages.ReplaceForServer(context.Background(), serverID, rows); err != nil {
+				uc.log.Error("ListServerStorages: sync index", "error", err, "server_id", serverID)
+			}
+		},
+	})
+}
+
+// TestStorage dispatches storage.test (callers validate req first). Nothing
+// is indexed: a test stores nothing.
+func (uc *UseCase) TestStorage(ctx context.Context, userID, serverID string, req command.TestStorageRequest) (string, error) {
+	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
+		AgentID: serverID,
+		UserID:  userID,
+		Type:    command.TypeStorageTest,
+		Payload: req,
+	})
+}
+
+// SaveStorage dispatches storage.save (callers validate req first). On the
+// agent's confirmation the storage enters the index.
+func (uc *UseCase) SaveStorage(ctx context.Context, userID, serverID string, req command.SaveStorageRequest) (string, error) {
+	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
+		AgentID: serverID,
+		UserID:  userID,
+		Type:    command.TypeStorageSave,
+		Payload: req,
+		OnResult: func(res port.CommandResult) {
+			if !res.Success || len(res.Payload) == 0 || uc.serverStorages == nil {
+				return
+			}
+			var saved command.SaveStorageResponse
+			if err := json.Unmarshal(res.Payload, &saved); err != nil {
+				uc.log.Error("SaveStorage: decode result", "error", err)
+				return
+			}
+			row := model.StorageSummary{Name: saved.Storage.Name, Type: saved.Storage.Type, Location: saved.Storage.Location}
+			if err := uc.serverStorages.Upsert(context.Background(), serverID, row); err != nil {
+				uc.log.Error("SaveStorage: update index", "error", err, "server_id", serverID)
+			}
+		},
+	})
+}
+
+// DeleteStorage dispatches storage.delete. On the agent's confirmation the
+// storage leaves the index; a refusal (in use) changes nothing.
+func (uc *UseCase) DeleteStorage(ctx context.Context, userID, serverID, name string) (string, error) {
+	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
+		AgentID: serverID,
+		UserID:  userID,
+		Type:    command.TypeStorageDelete,
+		Payload: command.DeleteStorageRequest{Name: name},
+		OnResult: func(res port.CommandResult) {
+			if !res.Success || uc.serverStorages == nil {
+				return
+			}
+			if err := uc.serverStorages.Delete(context.Background(), serverID, name); err != nil {
+				uc.log.Error("DeleteStorage: update index", "error", err, "server_id", serverID)
+			}
+		},
+	})
+}

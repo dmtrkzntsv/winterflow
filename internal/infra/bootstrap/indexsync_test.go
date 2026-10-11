@@ -91,7 +91,7 @@ func (f *fakeIndex) synced(serverID string) bool {
 	return ok && len(ds) == 1 && ds[0].Name == "a.app"
 }
 
-func newTestDomainSync(t *testing.T, hub *fakeHub, retryDelay time.Duration) (*domainSync, *fakeIndex) {
+func newTestIndexSync(t *testing.T, hub *fakeHub, retryDelay time.Duration) (*indexSync, *fakeIndex) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -117,7 +117,7 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 // first domain.list bounces; the agent's first heartbeat re-fires it.
 func TestDomainSyncRefiresOnHeartbeatAfterNotConnected(t *testing.T) {
 	hub := &fakeHub{}
-	s, idx := newTestDomainSync(t, hub, time.Hour) // the retry timer never fires here
+	s, idx := newTestIndexSync(t, hub, time.Hour) // the retry timer never fires here
 	s.online("srv-1")
 	if hub.count() != 1 || idx.synced("srv-1") {
 		t.Fatalf("first attempt: calls %d", hub.count())
@@ -138,7 +138,7 @@ func TestDomainSyncRefiresOnHeartbeatAfterNotConnected(t *testing.T) {
 // bounced sync is retried once after the delay.
 func TestDomainSyncRetriesOnceAfterNotConnected(t *testing.T) {
 	hub := &fakeHub{}
-	s, idx := newTestDomainSync(t, hub, 10*time.Millisecond)
+	s, idx := newTestIndexSync(t, hub, 10*time.Millisecond)
 	s.online("srv-1")
 	hub.set(func(h *fakeHub) { h.connected = true })
 	waitFor(t, "the retry to sync", func() bool { return idx.synced("srv-1") })
@@ -148,22 +148,22 @@ func TestDomainSyncRetriesOnceAfterNotConnected(t *testing.T) {
 }
 
 // TestDomainSyncIsBounded: an agent the hub keeps reporting as not
-// connected is asked at most domainSyncMaxAttempts times per online period
+// connected is asked at most indexSyncMaxAttempts times per online period
 // (one retry, then heartbeats); the next online period starts afresh.
 func TestDomainSyncIsBounded(t *testing.T) {
 	hub := &fakeHub{}
-	s, _ := newTestDomainSync(t, hub, 10*time.Millisecond)
+	s, _ := newTestIndexSync(t, hub, 10*time.Millisecond)
 	s.online("srv-1")
 	waitFor(t, "the retry", func() bool { return hub.count() == 2 })
 	for i := 0; i < 5; i++ {
 		s.heartbeat("srv-1")
 	}
 	time.Sleep(50 * time.Millisecond) // no second retry timer may fire
-	if hub.count() != domainSyncMaxAttempts {
-		t.Fatalf("calls = %d, want %d", hub.count(), domainSyncMaxAttempts)
+	if hub.count() != indexSyncMaxAttempts {
+		t.Fatalf("calls = %d, want %d", hub.count(), indexSyncMaxAttempts)
 	}
 	s.online("srv-1")
-	if hub.count() != domainSyncMaxAttempts+1 {
+	if hub.count() != indexSyncMaxAttempts+1 {
 		t.Fatalf("a new online period did not sync: calls %d", hub.count())
 	}
 }
@@ -173,7 +173,7 @@ func TestDomainSyncIsBounded(t *testing.T) {
 // error (no domain commands) settles it the same way.
 func TestDomainSyncSettlesOnce(t *testing.T) {
 	hub := &fakeHub{connected: true}
-	s, idx := newTestDomainSync(t, hub, time.Millisecond)
+	s, idx := newTestIndexSync(t, hub, time.Millisecond)
 	s.online("srv-1")
 	s.heartbeat("srv-1")
 	if hub.count() != 1 || !idx.synced("srv-1") {
@@ -193,7 +193,7 @@ func TestDomainSyncSettlesOnce(t *testing.T) {
 // next heartbeat retries.
 func TestDomainSyncInFlightAndPublishFailure(t *testing.T) {
 	hub := &fakeHub{connected: true, drop: true}
-	s, _ := newTestDomainSync(t, hub, time.Hour)
+	s, _ := newTestIndexSync(t, hub, time.Hour)
 	s.online("srv-1")
 	s.heartbeat("srv-1")
 	s.online("srv-1") // still in flight: kept, not restarted
@@ -210,4 +210,77 @@ func TestDomainSyncInFlightAndPublishFailure(t *testing.T) {
 	}
 	// Results for servers with nothing pending are ignored.
 	s.result("srv-9", port.CommandResult{Success: true})
+}
+
+// fakeStorageIndex records server_storages ReplaceForServer calls.
+type fakeStorageIndex struct {
+	mu       sync.Mutex
+	replaced map[string][]model.StorageSummary
+}
+
+func (f *fakeStorageIndex) ListForServer(context.Context, string) ([]model.StorageSummary, error) {
+	return nil, nil
+}
+func (f *fakeStorageIndex) Upsert(context.Context, string, model.StorageSummary) error { return nil }
+func (f *fakeStorageIndex) Delete(context.Context, string, string) error               { return nil }
+func (f *fakeStorageIndex) ReplaceForServer(_ context.Context, serverID string, ss []model.StorageSummary) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.replaced == nil {
+		f.replaced = map[string][]model.StorageSummary{}
+	}
+	f.replaced[serverID] = ss
+	return nil
+}
+
+// listAnswerer answers both list commands at once, the way a connected
+// agent does, and counts them by type.
+type listAnswerer struct {
+	mu    sync.Mutex
+	calls map[command.Type]int
+}
+
+func (a *listAnswerer) Dispatch(_ context.Context, in port.DispatchInput) (string, error) {
+	a.mu.Lock()
+	a.calls[in.Type]++
+	a.mu.Unlock()
+	var payload any
+	switch in.Type {
+	case command.TypeDomainList:
+		payload = command.ListDomainsResponse{Domains: []command.Domain{{RegisteredDomain: model.RegisteredDomain{Name: "a.app", TLS: model.DomainTLSAuto}}}}
+	case command.TypeStorageList:
+		payload = command.ListStoragesResponse{Storages: []command.StorageInfo{{
+			Storage:  model.Storage{Name: "disk", Type: model.StorageLocal, Local: &model.LocalStorage{Path: "/mnt/usb"}},
+			Location: "/mnt/usb",
+		}}}
+	default:
+		return "", errors.New("unexpected command")
+	}
+	raw, _ := json.Marshal(payload)
+	in.OnResult(port.CommandResult{Success: true, Payload: raw})
+	return "req", nil
+}
+
+// TestIndexSyncsFillBothIndexes: one server event drives the domain and
+// the storage sync, each settling on its own result.
+func TestIndexSyncsFillBothIndexes(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
+	agent := &listAnswerer{calls: map[command.Type]int{}}
+	domains, storages := &fakeIndex{}, &fakeStorageIndex{}
+	syncs := indexSyncs{newDomainSync(ctx, agent, domains, log), newStorageSync(ctx, agent, storages, log)}
+
+	syncs.online("srv-1")
+	syncs.heartbeat("srv-1") // settled: no second round
+	if agent.calls[command.TypeDomainList] != 1 || agent.calls[command.TypeStorageList] != 1 {
+		t.Fatalf("calls = %v", agent.calls)
+	}
+	if !domains.synced("srv-1") {
+		t.Fatal("server_domains not filled")
+	}
+	want := []model.StorageSummary{{Name: "disk", Type: model.StorageLocal, Location: "/mnt/usb"}}
+	if got := storages.replaced["srv-1"]; len(got) != 1 || got[0] != want[0] {
+		t.Fatalf("server_storages = %+v", got)
+	}
 }

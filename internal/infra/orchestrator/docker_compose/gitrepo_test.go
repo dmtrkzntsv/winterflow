@@ -185,3 +185,27 @@ func TestGitRestoreUnknownHashErrors(t *testing.T) {
 		t.Fatal("expected error for unknown hash")
 	}
 }
+
+// The derived artifacts never enter an app's history, whatever its
+// .gitignore says (a rollback can restore one that lists none of them).
+func TestGitCommitAllExcludesDerivedArtifacts(t *testing.T) {
+	dir := t.TempDir()
+	if err := gitEnsure(dir); err != nil {
+		t.Fatal(err)
+	}
+	writeFileT(t, dir, "compose.yml", "services: {}\n")
+	for _, rel := range derivedArtifacts {
+		writeFileT(t, dir, rel, "derived\n")
+	}
+	if _, err := gitCommitAll(dir, "no gitignore"); err != nil {
+		t.Fatal(err)
+	}
+	if !tracked(t, dir, "compose.yml") {
+		t.Fatal("compose.yml was not committed")
+	}
+	for _, rel := range derivedArtifacts {
+		if tracked(t, dir, rel) {
+			t.Errorf("%s was committed", rel)
+		}
+	}
+}

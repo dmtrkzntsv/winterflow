@@ -3,7 +3,6 @@ package command
 import (
 	"encoding/json"
 	"errors"
-	"strings"
 	"testing"
 
 	"winterflow/internal/domain/model"
@@ -38,14 +37,20 @@ func TestStorageRequestIsFlat(t *testing.T) {
 	}
 }
 
-func TestStorageResponsesRenderEmptyLists(t *testing.T) {
-	raw, _ := json.Marshal(StorageInfo{Storage: model.Storage{Name: "d", Type: model.StorageLocal, Local: &model.LocalStorage{Path: "/mnt"}}, Location: "/mnt"})
-	if !strings.Contains(string(raw), `"apps":[]`) || !strings.Contains(string(raw), `"name":"d"`) || !strings.Contains(string(raw), `"location":"/mnt"`) {
-		t.Fatalf("info = %s", raw)
+// The index row is the storage as the agent reported it.
+func TestStorageInfoSummary(t *testing.T) {
+	info := StorageInfo{Storage: model.Storage{Name: "d", Type: model.StorageLocal}, Location: "/mnt"}
+	if got := info.Summary(); got != (model.StorageSummary{Name: "d", Type: model.StorageLocal, Location: "/mnt"}) {
+		t.Fatalf("summary = %+v", got)
 	}
-	raw, _ = json.Marshal(SaveStorageResponse{})
-	if !strings.Contains(string(raw), `"redeployed":[]`) || strings.Contains(string(raw), "warnings") {
-		t.Fatalf("save = %s", raw)
+}
+
+func TestContentItemName(t *testing.T) {
+	if n := (ContentItem{ID: "id", Name: "name"}).ItemName(); n != "name" {
+		t.Fatalf("name = %q", n)
+	}
+	if n := (ContentItem{ID: "id"}).ItemName(); n != "id" {
+		t.Fatalf("fallback = %q", n)
 	}
 }
 

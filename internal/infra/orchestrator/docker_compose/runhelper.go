@@ -43,10 +43,11 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-// writeRunHelper (re)writes the app's manual-run helper.
-func (r *Repository) writeRunHelper(appID string) error {
+// writeRunHelper (re)writes the app's manual-run helper for its compose
+// files.
+func (r *Repository) writeRunHelper(appID string, files []string) error {
 	dir := r.appDataDir(appID)
-	script := runHelperScript(projectName(appID), r.composeFiles(dir, r.appSourceSpec(dir)))
+	script := runHelperScript(projectName(appID), files)
 	path := filepath.Join(dir, runRel)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err

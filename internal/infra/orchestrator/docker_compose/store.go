@@ -110,10 +110,7 @@ func (r *Repository) writeAppStore(dir string, app command.AppPayload) (secretSt
 	// Variables: split plain vs secret.
 	var plainVars []resolvedItem
 	for _, v := range app.Variables {
-		name := v.Name
-		if name == "" {
-			name = v.ID
-		}
+		name := v.ItemName()
 		if name == managedEnvVar {
 			r.log.Warn("dropping reserved variable", "name", name)
 			continue
@@ -155,10 +152,7 @@ func (r *Repository) writeAppStore(dir string, app command.AppPayload) (secretSt
 	}
 	var plainFiles []plainFile
 	for _, f := range app.Files {
-		name := f.Name
-		if name == "" {
-			name = f.ID
-		}
+		name := f.ItemName()
 		rel, err := safeRel(name)
 		if err != nil {
 			return secretStore{}, err
@@ -226,7 +220,7 @@ func (r *Repository) writeAppStore(dir string, app command.AppPayload) (secretSt
 		return secretStore{}, err
 	}
 
-	ignored := []string{envSecretsRel, deployedRel, runRel, storageEnvRel}
+	ignored := append([]string(nil), derivedArtifacts...)
 	if app.Source != nil {
 		ignored = append(ignored, sourceDirRel+"/")
 	}

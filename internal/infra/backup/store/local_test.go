@@ -2,8 +2,10 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -55,7 +57,7 @@ func TestLocalStore(t *testing.T) {
 
 func TestOpenLocalNeedsAnExistingFolder(t *testing.T) {
 	root := t.TempDir()
-	if _, err := openLocal(filepath.Join(root, "usb")); err == nil || !strings.Contains(err.Error(), "is the disk mounted") {
+	if _, err := openLocal(filepath.Join(root, "usb")); !errors.Is(err, fs.ErrNotExist) || !strings.Contains(err.Error(), "is the disk mounted") {
 		t.Fatalf("missing folder: %v", err)
 	}
 	file := filepath.Join(root, "f")

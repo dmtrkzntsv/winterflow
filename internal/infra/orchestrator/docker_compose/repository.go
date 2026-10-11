@@ -25,7 +25,9 @@ import (
 	"sync"
 	"time"
 
+	"winterflow/internal/domain/model"
 	"winterflow/internal/infra/backup/storages"
+	"winterflow/internal/infra/backup/store"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
 )
@@ -48,10 +50,13 @@ type Repository struct {
 
 	// storages is the agent's storage registry ({data}/storages/): what
 	// storage.* commands manage and WF_STORAGE_ variables resolve against.
-	storages *storages.Registry
+	storages      *storages.Registry
+	storageLimits storageLimits
 
-	// The Docker-touching steps of storage.save (which compose projects
-	// are up; bringing an app up again), replaced in tests.
+	// The steps of the storage commands that touch a storage or Docker,
+	// replaced in tests: opening a storage's driver (store.Open), which
+	// compose projects are up, and bringing an app up again.
+	openStorage     func(s model.Storage, secret string) (store.Store, error)
 	runningProjects func(ctx context.Context) (map[string]bool, error)
 	redeploy        func(ctx context.Context, appID string) error
 }
@@ -64,11 +69,13 @@ type versionEntry struct {
 
 func NewRepository(cfg *config.ServerConfig, log *logger.Logger) *Repository {
 	r := &Repository{
-		cfg:          cfg,
-		log:          log,
-		sourceChecks: make(map[string]time.Time),
-		versionCache: make(map[string]versionEntry),
-		storages:     storages.NewRegistry(filepath.Join(cfg.GetAgentDataDir(), "storages")),
+		cfg:           cfg,
+		log:           log,
+		sourceChecks:  make(map[string]time.Time),
+		versionCache:  make(map[string]versionEntry),
+		storages:      storages.NewRegistry(filepath.Join(cfg.GetAgentDataDir(), "storages")),
+		storageLimits: defaultStorageLimits,
+		openStorage:   store.Open,
 	}
 	r.runningProjects = r.composeProjectsUp
 	r.redeploy = r.deploy

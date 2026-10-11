@@ -16,32 +16,52 @@ import (
 
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
-	"winterflow/internal/infra/backup/store"
 	"winterflow/pkg/crypto"
 )
 
-// Time limits of the storage commands. Variables so tests can shrink them.
-var (
-	// storageProbeTimeout bounds a storage test: opening the storage and the
-	// probe write and delete (storage.test, and the test storage.save runs
-	// first).
-	storageProbeTimeout = 30 * time.Second
-	// storageRedeployTimeout bounds one app's redeploy after storage.save.
-	storageRedeployTimeout = 10 * time.Minute
-	// storageDockerTimeout bounds the one `docker ps` storage.save runs.
-	storageDockerTimeout = 30 * time.Second
-	// storageSaveBudget is the overall budget of one storage.save (probe,
-	// docker ps and every redeploy share it). It stays below the dispatch
-	// manager's 10 minute pending TTL, so the result is not dropped, and
-	// bounds how long the command can hold the (standalone: single) pipeline.
-	storageSaveBudget = 8 * time.Minute
-	// storageRedeployMinBudget is the least of the save's budget that must
-	// remain to start another redeploy.
-	storageRedeployMinBudget = 2 * time.Minute
-)
+// storageLimits are the time limits of the storage commands (a field of the
+// Repository so tests can shrink them).
+type storageLimits struct {
+	// probe bounds a storage test: opening the storage and the probe write
+	// and delete (storage.test, and the test storage.save runs first).
+	probe time.Duration
+	// redeploy bounds one app's redeploy after storage.save.
+	redeploy time.Duration
+	// docker bounds the one `docker ps` storage.save runs.
+	docker time.Duration
+	// saveBudget is the overall budget of one storage.save (probe, docker ps
+	// and every redeploy share it). It stays below the dispatch manager's 10
+	// minute pending TTL, so the result is not dropped, and bounds how long
+	// the command can hold the (standalone: single) pipeline.
+	saveBudget time.Duration
+	// redeployMinBudget is the least of the save's budget that must remain
+	// to start another redeploy.
+	redeployMinBudget time.Duration
+	// folder bounds the deploy-time check that the referenced local
+	// storages' folders exist (all of them, checked concurrently).
+	folder time.Duration
+}
 
-// openStorage opens a storage driver; replaced in tests.
-var openStorage = store.Open
+var defaultStorageLimits = storageLimits{
+	probe:             30 * time.Second,
+	redeploy:          10 * time.Minute,
+	docker:            30 * time.Second,
+	saveBudget:        8 * time.Minute,
+	redeployMinBudget: 2 * time.Minute,
+	folder:            10 * time.Second,
+}
+
+// detached runs fn in a goroutine and returns the channel its result
+// arrives on. Storage syscalls ignore contexts (a hung hard NFS/CIFS mount
+// blocks them indefinitely), so callers wait on the channel and their
+// deadline together and abandon fn when the deadline comes first: it may
+// linger until the mount answers, but the command pipeline is freed. The
+// channel is buffered, so an abandoned fn never blocks on its send.
+func detached(fn func() error) <-chan error {
+	done := make(chan error, 1)
+	go func() { done <- fn() }()
+	return done
+}
 
 // mountRoots are the folders the systemd unit lets the agent write
 // (ReadWritePaths=-/mnt -/media): the usual mount points of USB disks and
@@ -49,15 +69,18 @@ var openStorage = store.Open
 var mountRoots = []string{"/mnt", "/media"}
 
 // ListStorages reports every storage (secret masked) with the apps whose
-// compose files reference it.
-func (r *Repository) ListStorages(context.Context) ([]command.StorageInfo, error) {
+// compose files reference it; withApps false skips finding those (a read of
+// every app's compose files) and reports none.
+func (r *Repository) ListStorages(_ context.Context, withApps bool) ([]command.StorageInfo, error) {
 	list, err := r.storages.List()
 	if err != nil {
 		return nil, err
 	}
-	users, err := r.storageUsers()
-	if err != nil {
-		r.log.Warn("storage list: some apps could not be checked", "error", err)
+	var users map[string][]string
+	if withApps {
+		if users, err = r.storageUsers(); err != nil {
+			r.log.Warn("storage list: some apps could not be checked", "error", err)
+		}
 	}
 	out := make([]command.StorageInfo, 0, len(list))
 	for _, s := range list {
@@ -66,7 +89,12 @@ func (r *Repository) ListStorages(context.Context) ([]command.StorageInfo, error
 	return out, nil
 }
 
+// describeStorage is s as it leaves the agent: secret masked, apps a list
+// even when empty.
 func describeStorage(s model.Storage, apps []string) command.StorageInfo {
+	if apps == nil {
+		apps = []string{}
+	}
 	return command.StorageInfo{Storage: s.Masked(), Location: s.Location(), Apps: apps}
 }
 
@@ -89,7 +117,8 @@ func (r *Repository) storageUsers() (map[string][]string, error) {
 		if !e.IsDir() {
 			continue
 		}
-		refs, err := r.storageRefs(filepath.Join(r.cfg.GetAppsDataDir(), e.Name()))
+		dir := filepath.Join(r.cfg.GetAppsDataDir(), e.Name())
+		refs, err := r.storageRefs(dir, r.appComposeFiles(dir))
 		if err != nil {
 			problems = append(problems, e.Name()+": "+err.Error())
 			continue
@@ -112,10 +141,11 @@ func (r *Repository) storageUsers() (map[string][]string, error) {
 
 // resolveStorage prepares a requested storage: normalized and validated, a
 // local folder kept out of the agent's data dir, an S3 secret resolved
-// ("<encrypted>" reuses the one stored under the same name) and decrypted.
-// The returned storage still carries the ciphertext, ready to store; secret
-// is the plaintext, which only ever lives in memory here.
-func (r *Repository) resolveStorage(in model.Storage) (model.Storage, string, error) {
+// ("<encrypted>" reuses the one stored under the same name: prev, when
+// exists) and decrypted. The returned storage still carries the ciphertext,
+// ready to store; secret is the plaintext, which only ever lives in memory
+// here.
+func (r *Repository) resolveStorage(in, prev model.Storage, exists bool) (model.Storage, string, error) {
 	s := in.Normalized()
 	if err := s.Validate(); err != nil {
 		return model.Storage{}, "", err
@@ -128,20 +158,26 @@ func (r *Repository) resolveStorage(in model.Storage) (model.Storage, string, er
 		return s, "", nil
 	}
 	if s.S3.SecretAccessKey == model.EncryptedSecret {
-		prev, ok, err := r.storages.Get(s.Name)
-		if err != nil {
-			return model.Storage{}, "", err
-		}
-		if !ok || prev.S3 == nil {
+		if !exists || prev.S3 == nil {
 			return model.Storage{}, "", fmt.Errorf("enter the secret access key: %s has none stored", s.Name)
 		}
 		s.S3.SecretAccessKey = prev.S3.SecretAccessKey
 	}
-	secret, err := crypto.DecryptWithPrivateKey(r.cfg.GetAgentKeyPath(), s.S3.SecretAccessKey)
+	secret, err := r.storageSecret(s)
 	if err != nil {
-		return model.Storage{}, "", fmt.Errorf("decrypt the secret access key: %w", err)
+		return model.Storage{}, "", err
 	}
 	return s, secret, nil
+}
+
+// storageSecret decrypts an S3 storage's secret access key with the agent's
+// key.
+func (r *Repository) storageSecret(s model.Storage) (string, error) {
+	plain, err := crypto.DecryptWithPrivateKey(r.cfg.GetAgentKeyPath(), s.S3.SecretAccessKey)
+	if err != nil {
+		return "", fmt.Errorf("decrypt the secret access key of storage %s: %w", s.Name, err)
+	}
+	return plain, nil
 }
 
 // within reports whether path is dir or inside it.
@@ -151,29 +187,23 @@ func within(path, dir string) bool {
 }
 
 // probeStorage opens the storage and writes and deletes a probe object
-// within storageProbeTimeout. The local driver's syscalls ignore contexts (a
-// hung hard NFS/CIFS mount blocks them indefinitely), so the probe runs in a
-// goroutine that is abandoned on timeout: it may linger until the mount
-// answers, but the command pipeline is freed.
-func probeStorage(parent context.Context, s model.Storage, secret string) error {
-	ctx, cancel := context.WithTimeout(parent, storageProbeTimeout)
+// within the probe limit, abandoning the probe on timeout (see detached).
+func (r *Repository) probeStorage(parent context.Context, s model.Storage, secret string) error {
+	ctx, cancel := context.WithTimeout(parent, r.storageLimits.probe)
 	defer cancel()
-	done := make(chan error, 1) // buffered: an abandoned probe must not block on send
-	open := openStorage
-	go func() { done <- runProbe(ctx, open, s, secret) }()
 	select {
-	case err := <-done:
+	case err := <-detached(func() error { return r.runProbe(ctx, s, secret) }):
 		return err
 	case <-ctx.Done():
 		if err := parent.Err(); err != nil {
 			return fmt.Errorf("%s was not tested: %w", s.Name, err)
 		}
-		return fmt.Errorf("%s did not answer within %s", s.Name, storageProbeTimeout)
+		return fmt.Errorf("%s did not answer within %s", s.Name, r.storageLimits.probe)
 	}
 }
 
-func runProbe(ctx context.Context, open func(model.Storage, string) (store.Store, error), s model.Storage, secret string) error {
-	st, err := open(s, secret)
+func (r *Repository) runProbe(ctx context.Context, s model.Storage, secret string) error {
+	st, err := r.openStorage(s, secret)
 	if err != nil {
 		return err
 	}
@@ -217,9 +247,14 @@ func explainWrite(s model.Storage, err error) error {
 // an unknown secret, a failed probe — is reported in the response, not as a
 // command error, so the UI can show it inline.
 func (r *Repository) TestStorage(ctx context.Context, in model.Storage) (command.TestStorageResponse, error) {
-	s, secret, err := r.resolveStorage(in)
+	prev, exists, err := r.storages.Get(in.Normalized().Name)
+	var s model.Storage
+	var secret string
 	if err == nil {
-		err = probeStorage(ctx, s, secret)
+		s, secret, err = r.resolveStorage(in, prev, exists)
+	}
+	if err == nil {
+		err = r.probeStorage(ctx, s, secret)
 	}
 	if err != nil {
 		return command.TestStorageResponse{OK: false, Error: err.Error()}, nil
@@ -234,7 +269,7 @@ func (r *Repository) TestStorage(ctx context.Context, in model.Storage) (command
 // change of type. Nothing is stored when the test fails. Redeploy problems
 // are warnings: the storage is saved.
 func (r *Repository) SaveStorage(ctx context.Context, in model.Storage, create bool) (command.SaveStorageResponse, error) {
-	ctx, cancel := context.WithTimeout(ctx, storageSaveBudget)
+	ctx, cancel := context.WithTimeout(ctx, r.storageLimits.saveBudget)
 	defer cancel()
 	check := func(prev model.Storage, exists bool) error {
 		return checkSaveMode(in.Normalized(), prev, exists, create)
@@ -249,11 +284,11 @@ func (r *Repository) SaveStorage(ctx context.Context, in model.Storage, create b
 	if err := check(prev, exists); err != nil {
 		return command.SaveStorageResponse{}, err
 	}
-	s, secret, err := r.resolveStorage(in)
+	s, secret, err := r.resolveStorage(in, prev, exists)
 	if err != nil {
 		return command.SaveStorageResponse{}, err
 	}
-	if err := probeStorage(ctx, s, secret); err != nil {
+	if err := r.probeStorage(ctx, s, secret); err != nil {
 		return command.SaveStorageResponse{}, fmt.Errorf("the connection test failed, nothing was saved: %w", err)
 	}
 	if err := r.storages.Save(s, check); err != nil {
@@ -293,14 +328,15 @@ func checkSaveMode(s, prev model.Storage, exists, create bool) error {
 // budget of storage.save: apps not reached before it runs out are not
 // redeployed and are named in a warning.
 func (r *Repository) redeployStorageUsers(ctx context.Context, ids []string) (redeployed, warnings []string) {
+	redeployed = []string{}
 	if len(ids) == 0 {
-		return nil, nil
+		return redeployed, nil
 	}
-	psCtx, cancel := context.WithTimeout(ctx, storageDockerTimeout)
+	psCtx, cancel := context.WithTimeout(ctx, r.storageLimits.docker)
 	running, err := r.runningProjects(psCtx)
 	cancel()
 	if err != nil {
-		return nil, []string{"could not check which apps are running, so none was redeployed: " + err.Error()}
+		return redeployed, []string{"could not check which apps are running, so none was redeployed: " + err.Error()}
 	}
 	for _, id := range ids {
 		if !running[projectName(id)] {
@@ -313,11 +349,11 @@ func (r *Repository) redeployStorageUsers(ctx context.Context, ids []string) (re
 		}
 		// Starting a redeploy that the budget would cut short could leave
 		// the app down half-way: skip it unless enough time remains.
-		if deadline, ok := ctx.Deadline(); ctx.Err() != nil || (ok && time.Until(deadline) < storageRedeployMinBudget) {
+		if deadline, ok := ctx.Deadline(); ctx.Err() != nil || (ok && time.Until(deadline) < r.storageLimits.redeployMinBudget) {
 			warnings = append(warnings, fmt.Sprintf("%s: not redeployed: time budget exhausted — redeploy %s to use the new settings", name, name))
 			continue
 		}
-		upCtx, cancel := context.WithTimeout(ctx, storageRedeployTimeout)
+		upCtx, cancel := context.WithTimeout(ctx, r.storageLimits.redeploy)
 		err := r.redeploy(upCtx, id)
 		cancel()
 		if err != nil {

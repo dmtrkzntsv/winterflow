@@ -1,8 +1,6 @@
 package command
 
 import (
-	"encoding/json"
-
 	"winterflow/internal/domain/model"
 )
 
@@ -14,23 +12,25 @@ import (
 
 // StorageInfo is one storage as the agent reports it: the registration with
 // its secret masked, its location, and the ids of the apps whose compose
-// files reference it through WF_STORAGE_ variables.
+// files reference it through WF_STORAGE_ variables. The agent always sends
+// Apps as a list ([] for none), so clients can iterate it unconditionally.
 type StorageInfo struct {
 	model.Storage
 	Location string   `json:"location"`
 	Apps     []string `json:"apps"`
 }
 
-// MarshalJSON renders a nil Apps as [] so clients can iterate it unconditionally.
-func (s StorageInfo) MarshalJSON() ([]byte, error) {
-	type plain StorageInfo
-	if s.Apps == nil {
-		s.Apps = []string{}
-	}
-	return json.Marshal(plain(s))
+// Summary is the index row of the storage as reported.
+func (i StorageInfo) Summary() model.StorageSummary {
+	return model.StorageSummary{Name: i.Name, Type: i.Type, Location: i.Location}
 }
 
-type ListStoragesRequest struct{}
+// ListStoragesRequest lists the storages. RegistryOnly skips finding the
+// apps that use each one (a read of every app's compose files): the API's
+// index sync needs the registry alone.
+type ListStoragesRequest struct {
+	RegistryOnly bool `json:"registry_only,omitempty"`
+}
 
 type ListStoragesResponse struct {
 	Storages []StorageInfo `json:"storages"`
@@ -64,21 +64,12 @@ type SaveStorageRequest struct {
 func (r SaveStorageRequest) Validate() error { return r.Storage.Validate() }
 
 // SaveStorageResponse is the stored storage plus the apps redeployed so they
-// pick up the new values. Warnings are redeploys that failed or were skipped;
-// the storage itself was saved.
+// pick up the new values ([] for none). Warnings are redeploys that failed or
+// were skipped; the storage itself was saved.
 type SaveStorageResponse struct {
 	Storage    StorageInfo `json:"storage"`
 	Redeployed []string    `json:"redeployed"`
 	Warnings   []string    `json:"warnings,omitempty"`
-}
-
-// MarshalJSON renders a nil Redeployed as [].
-func (r SaveStorageResponse) MarshalJSON() ([]byte, error) {
-	type plain SaveStorageResponse
-	if r.Redeployed == nil {
-		r.Redeployed = []string{}
-	}
-	return json.Marshal(plain(r))
 }
 
 // DeleteStorageRequest removes a storage; the agent refuses while an app

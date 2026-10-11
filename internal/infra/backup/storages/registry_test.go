@@ -24,10 +24,10 @@ func TestRegistryPutGetListDelete(t *testing.T) {
 	if _, ok, err := r.Get("none"); ok || err != nil {
 		t.Fatalf("get missing: %v, %v", ok, err)
 	}
-	if err := r.Put(s3("hetzner", "CIPHERTEXT")); err != nil {
+	if err := r.Save(s3("hetzner", "CIPHERTEXT"), nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.Put(model.Storage{Name: "disk", Type: model.StorageLocal, Local: &model.LocalStorage{Path: "/mnt/usb/"}}); err != nil {
+	if err := r.Save(model.Storage{Name: "disk", Type: model.StorageLocal, Local: &model.LocalStorage{Path: "/mnt/usb/"}}, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -58,7 +58,7 @@ func TestRegistryPutGetListDelete(t *testing.T) {
 	}
 
 	// Replacing keeps one file.
-	if err := r.Put(s3("hetzner", "NEW")); err != nil {
+	if err := r.Save(s3("hetzner", "NEW"), nil); err != nil {
 		t.Fatal(err)
 	}
 	if s, _, _ := r.Get("hetzner"); s.S3.SecretAccessKey != "NEW" {
@@ -79,10 +79,10 @@ func TestRegistryPutGetListDelete(t *testing.T) {
 
 func TestRegistryRefusesBadInput(t *testing.T) {
 	r := NewRegistry(t.TempDir())
-	if err := r.Put(s3("Bad", "C")); err == nil {
+	if err := r.Save(s3("Bad", "C"), nil); err == nil {
 		t.Fatal("an invalid storage must not be stored")
 	}
-	if err := r.Put(s3("x", model.EncryptedSecret)); err == nil || !strings.Contains(err.Error(), "placeholder") {
+	if err := r.Save(s3("x", model.EncryptedSecret), nil); err == nil || !strings.Contains(err.Error(), "placeholder") {
 		t.Fatalf("placeholder stored: %v", err)
 	}
 	if _, _, err := r.Get("../etc"); err == nil {
@@ -97,7 +97,7 @@ func TestRegistryRefusesBadInput(t *testing.T) {
 func TestRegistrySkipsDamagedFiles(t *testing.T) {
 	dir := t.TempDir()
 	r := NewRegistry(dir)
-	if err := r.Put(s3("good", "C")); err != nil {
+	if err := r.Save(s3("good", "C"), nil); err != nil {
 		t.Fatal(err)
 	}
 	for name, body := range map[string]string{
@@ -131,16 +131,14 @@ func TestRegistryUnreadableDir(t *testing.T) {
 	if _, err := r.List(); err == nil {
 		t.Fatal("a storages path that is a file must fail the listing")
 	}
-	if err := r.Put(s3("x", "C")); err == nil {
+	if err := r.Save(s3("x", "C"), nil); err == nil {
 		t.Fatal("put under a file must fail")
-	}
-	if r.Dir() != file {
-		t.Fatal("Dir")
 	}
 }
 
 func TestRegistrySaveChecksUnderTheLock(t *testing.T) {
-	r := NewRegistry(filepath.Join(t.TempDir(), "storages"))
+	dir := filepath.Join(t.TempDir(), "storages")
+	r := NewRegistry(dir)
 	var seen []bool
 	check := func(prev model.Storage, exists bool) error {
 		seen = append(seen, exists)
@@ -166,7 +164,7 @@ func TestRegistrySaveChecksUnderTheLock(t *testing.T) {
 		t.Fatalf("a refused save wrote %+v", s.S3)
 	}
 	// A registration that can't be read can't be checked: fail closed.
-	if err := os.WriteFile(filepath.Join(r.Dir(), "hetzner.json"), []byte("{"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "hetzner.json"), []byte("{"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.Save(s3("hetzner", "FOUR"), check); err == nil || !strings.Contains(err.Error(), "read storage hetzner") {

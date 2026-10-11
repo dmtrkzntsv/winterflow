@@ -10,11 +10,9 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
-	"winterflow/pkg/crypto"
 )
 
 // storageEnvRel holds the values of the WF_STORAGE_ variables an app's
@@ -23,17 +21,11 @@ import (
 // whatever .gitignore says (neverCommitted).
 const storageEnvRel = ".winterflow/storage.env"
 
-// storageFolderTimeout bounds the deploy-time check that a referenced local
-// storage's folder exists (a variable so tests can shrink it).
-var storageFolderTimeout = 10 * time.Second
-
-// statStorageFolder stats a local storage's folder; replaced in tests.
-var statStorageFolder = os.Stat
-
-// composeContents reads the app's compose files (missing ones skipped).
-func (r *Repository) composeContents(dir string) ([][]byte, error) {
+// composeContents reads the given compose files of the app in dir (missing
+// ones skipped).
+func composeContents(dir string, files []string) ([][]byte, error) {
 	var out [][]byte
-	for _, f := range r.composeFiles(dir, r.appSourceSpec(dir)) {
+	for _, f := range files {
 		raw, err := os.ReadFile(filepath.Join(dir, f))
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
@@ -48,8 +40,8 @@ func (r *Repository) composeContents(dir string) ([][]byte, error) {
 
 // storageRefs lists the WF_STORAGE_ / WF_BACKUP_ variables the app's
 // compose files reference.
-func (r *Repository) storageRefs(dir string) ([]string, error) {
-	contents, err := r.composeContents(dir)
+func (r *Repository) storageRefs(dir string, files []string) ([]string, error) {
+	contents, err := composeContents(dir, files)
 	if err != nil {
 		return nil, fmt.Errorf("read compose files: %w", err)
 	}
@@ -61,9 +53,10 @@ func (r *Repository) storageRefs(dir string) ([]string, error) {
 // storage it doesn't mention — or removes it when they reference none. A
 // reference to a storage this server doesn't have (deleted, or added to a
 // git-sourced compose file upstream) fails the deploy, and so does a
-// referenced local storage whose folder is missing (see checkStorageFolder).
-func (r *Repository) materializeStorageEnv(ctx context.Context, dir string) error {
-	refs, err := r.storageRefs(dir)
+// referenced local storage whose folder is missing (see checkStorageFolders).
+// An unchanged storage.env is not rewritten.
+func (r *Repository) materializeStorageEnv(ctx context.Context, dir string, files []string) error {
+	refs, err := r.storageRefs(dir, files)
 	if err != nil {
 		return err
 	}
@@ -74,37 +67,48 @@ func (r *Repository) materializeStorageEnv(ctx context.Context, dir string) erro
 		}
 		return nil
 	}
-	list, err := r.storages.List()
+	// Only the referenced registrations are read.
+	byName := map[string]model.Storage{}
+	var readErr error
+	parsed, err := model.CheckStorageRefs(refs, func(name string) bool {
+		if _, ok := byName[name]; ok {
+			return true
+		}
+		s, ok, err := r.storages.Get(name)
+		if err != nil && readErr == nil {
+			readErr = err
+		}
+		if ok {
+			byName[name] = s
+		}
+		return ok
+	})
+	if readErr != nil {
+		return readErr
+	}
 	if err != nil {
 		return err
 	}
-	byName := make(map[string]model.Storage, len(list))
-	for _, s := range list {
-		byName[s.Name] = s
+	var folders []model.Storage
+	for _, s := range byName {
+		if s.Type == model.StorageLocal && s.Local != nil {
+			folders = append(folders, s)
+		}
 	}
-	parsed, err := model.CheckStorageRefs(refs, func(n string) bool { _, ok := byName[n]; return ok })
-	if err != nil {
+	sort.Slice(folders, func(i, j int) bool { return folders[i].Name < folders[j].Name })
+	if err := r.checkStorageFolders(ctx, folders); err != nil {
 		return err
 	}
 	secrets := map[string]string{} // each storage's secret decrypted once
-	checked := map[string]bool{}   // each local folder checked once
 	vars := make([]resolvedItem, 0, len(parsed))
 	for _, ref := range parsed {
 		s := byName[ref.Storage]
-		if s.Type == model.StorageLocal && s.Local != nil && !checked[s.Name] {
-			checked[s.Name] = true
-			if err := checkStorageFolder(ctx, s); err != nil {
-				return err
-			}
-		}
 		secret := ""
 		if ref.Secret() && s.S3 != nil {
 			if _, done := secrets[s.Name]; !done {
-				plain, err := crypto.DecryptWithPrivateKey(r.cfg.GetAgentKeyPath(), s.S3.SecretAccessKey)
-				if err != nil {
-					return fmt.Errorf("decrypt the secret access key of storage %s: %w", s.Name, err)
+				if secrets[s.Name], err = r.storageSecret(s); err != nil {
+					return err
 				}
-				secrets[s.Name] = plain
 			}
 			secret = secrets[s.Name]
 		}
@@ -114,51 +118,55 @@ func (r *Repository) materializeStorageEnv(ctx context.Context, dir string) erro
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	if err := os.WriteFile(path, content, 0o600); err != nil {
-		return err
+	if old, err := os.ReadFile(path); err != nil || !bytes.Equal(old, content) {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(path, content, 0o600); err != nil {
+			return err
+		}
 	}
 	// WriteFile's perm only applies on create.
 	return os.Chmod(path, 0o600)
 }
 
-// checkStorageFolder refuses a deploy whose compose file references a
+// checkStorageFolders refuses a deploy whose compose file references a
 // local storage whose folder is missing: docker would create a missing bind
 // source as an empty folder on the system disk (the unmounted USB disk case)
-// and the app would fill it. The stat runs in a goroutine abandoned after
-// storageFolderTimeout, like probeStorage: a hung NFS/CIFS mount must not
-// wedge the (standalone: single) command pipeline.
-func checkStorageFolder(parent context.Context, s model.Storage) error {
-	ctx, cancel := context.WithTimeout(parent, storageFolderTimeout)
-	defer cancel()
-	folder := s.Local.Path
-	stat := statStorageFolder
-	done := make(chan error, 1) // buffered: an abandoned stat must not block on send
-	go func() {
-		info, err := stat(folder)
-		if err == nil && !info.IsDir() {
-			err = errors.New("it is not a folder")
-		}
-		done <- err
-	}()
-	select {
-	case err := <-done:
-		switch {
-		case err == nil:
-			return nil
-		case errors.Is(err, fs.ErrNotExist):
-			return fmt.Errorf("storage %s: the folder %s is missing (is the disk mounted?): not deploying, so docker does not create it on the system disk", s.Name, folder)
-		default:
-			return fmt.Errorf("storage %s: cannot use the folder %s: %w", s.Name, folder, err)
-		}
-	case <-ctx.Done():
-		if err := parent.Err(); err != nil {
-			return fmt.Errorf("storage %s: the folder %s was not checked: %w", s.Name, folder, err)
-		}
-		return fmt.Errorf("storage %s: the folder %s did not answer within %s (is the share reachable?)", s.Name, folder, storageFolderTimeout)
+// and the app would fill it. The folders are checked concurrently, each
+// opened the way a backup opens it, in goroutines abandoned (see detached)
+// after one shared folder limit: a hung NFS/CIFS mount must not wedge the
+// (standalone: single) command pipeline. The first folder in name order
+// that fails is reported.
+func (r *Repository) checkStorageFolders(parent context.Context, folders []model.Storage) error {
+	if len(folders) == 0 {
+		return nil
 	}
+	ctx, cancel := context.WithTimeout(parent, r.storageLimits.folder)
+	defer cancel()
+	results := make([]<-chan error, len(folders))
+	for i, s := range folders {
+		results[i] = detached(func() error { _, err := r.openStorage(s, ""); return err })
+	}
+	for i, s := range folders {
+		folder := s.Local.Path
+		select {
+		case err := <-results[i]:
+			switch {
+			case err == nil:
+			case errors.Is(err, fs.ErrNotExist):
+				return fmt.Errorf("storage %s: the folder %s is missing (is the disk mounted?): not deploying, so docker does not create it on the system disk", s.Name, folder)
+			default:
+				return fmt.Errorf("storage %s: cannot use the folder %s: %w", s.Name, folder, err)
+			}
+		case <-ctx.Done():
+			if err := parent.Err(); err != nil {
+				return fmt.Errorf("storage %s: the folder %s was not checked: %w", s.Name, folder, err)
+			}
+			return fmt.Errorf("storage %s: the folder %s did not answer within %s (is the share reachable?)", s.Name, folder, r.storageLimits.folder)
+		}
+	}
+	return nil
 }
 
 // marshalStorageEnv renders NAME=VALUE lines for docker compose's env-file
@@ -168,20 +176,12 @@ func checkStorageFolder(parent context.Context, s model.Storage) error {
 // line, nor expand $VAR / ${VAR}, nor be cut at a '#'. A value with a line
 // break or NUL has no faithful single-line form and is refused outright.
 func marshalStorageEnv(vars []resolvedItem) ([]byte, error) {
-	sorted := append([]resolvedItem(nil), vars...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].name < sorted[j].name })
-	var b bytes.Buffer
-	for _, v := range sorted {
-		val := string(v.content)
+	return writeEnvLines(vars, func(name, val string) (string, error) {
 		if strings.ContainsAny(val, "\n\r\x00") {
-			return nil, fmt.Errorf("%s contains a line break or NUL character, which cannot be passed to the app", v.name)
+			return "", fmt.Errorf("%s contains a line break or NUL character, which cannot be passed to the app", name)
 		}
-		b.WriteString(v.name)
-		b.WriteByte('=')
-		b.WriteString(quoteEnvValue(val))
-		b.WriteByte('\n')
-	}
-	return b.Bytes(), nil
+		return quoteEnvValue(val), nil
+	})
 }
 
 // quoteEnvValue renders a single-line value for a compose env file: bare when

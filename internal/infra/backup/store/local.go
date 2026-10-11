@@ -11,40 +11,38 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"winterflow/pkg/fsutil"
 )
 
 // local stores objects as files under root: directories 0700, files 0600,
-// each Put written to its own temp file (tmpPrefix…, a name no key can
-// have), fsynced and renamed into place.
+// each Put written atomically through its own temp file (tmpPrefix…, a name
+// no key can have).
 type local struct{ root string }
 
 // openLocal requires root to be an existing folder: winterflow never creates
 // it, so an unmounted disk fails here (for a folder on the disk) instead of
 // filling the root filesystem.
 func openLocal(root string) (*local, error) {
-	info, err := os.Stat(root)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil, fmt.Errorf("the folder %s does not exist (is the disk mounted?)", root)
-		}
-		return nil, fmt.Errorf("cannot open %s: %w", root, err)
+	l := &local{root: root}
+	if err := l.checkRoot(); err != nil {
+		return nil, err
 	}
-	if !info.IsDir() {
-		return nil, fmt.Errorf("%s is not a folder", root)
-	}
-	return &local{root: root}, nil
+	return l, nil
 }
 
-// checkRoot re-checks the root on every call, so writes fail once the folder
-// itself is gone (a folder on a disk that was unplugged after Open) instead
-// of landing elsewhere. It cannot tell an empty leftover mount point from a
-// real folder: that is why docs/recipes/backup-storage.md tells users to
-// register a folder created inside the mounted disk, never the mount point.
+// checkRoot requires the root to be an existing folder. Every call re-checks
+// it, so writes fail once the folder itself is gone (a folder on a disk that
+// was unplugged after Open) instead of landing elsewhere. It cannot tell an
+// empty leftover mount point from a real folder: that is why
+// docs/recipes/backup-storage.md tells users to register a folder created
+// inside the mounted disk, never the mount point. A missing root matches
+// fs.ErrNotExist.
 func (l *local) checkRoot() error {
 	info, err := os.Stat(l.root)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("the storage folder %s is missing (is the disk mounted?)", l.root)
+			return missingFolderError(l.root)
 		}
 		return fmt.Errorf("cannot open %s: %w", l.root, err)
 	}
@@ -53,6 +51,16 @@ func (l *local) checkRoot() error {
 	}
 	return nil
 }
+
+// missingFolderError is a storage folder that does not exist: usually a disk
+// that is not mounted.
+type missingFolderError string
+
+func (e missingFolderError) Error() string {
+	return "the storage folder " + string(e) + " is missing (is the disk mounted?)"
+}
+
+func (missingFolderError) Unwrap() error { return fs.ErrNotExist }
 
 // mkdirBelow creates the folders of rel (a clean, "/"-separated path) one
 // level at a time under root. Unlike MkdirAll it can never recreate root
@@ -101,29 +109,7 @@ func (l *local) Put(ctx context.Context, key string, r io.Reader) error {
 	if err := l.mkdirBelow(path.Dir(key)); err != nil {
 		return err
 	}
-	dst := l.file(key)
-	// A temp file per Put (0600): concurrent Puts of one key never share
-	// one, and the last rename wins whole.
-	f, err := os.CreateTemp(filepath.Dir(dst), tmpPrefix+"*")
-	if err != nil {
-		return err
-	}
-	tmp := f.Name()
-	_, err = io.Copy(f, ctxReader{ctx, r})
-	if err == nil {
-		err = f.Sync()
-	}
-	if cerr := f.Close(); err == nil {
-		err = cerr
-	}
-	if err == nil {
-		err = os.Rename(tmp, dst)
-	}
-	if err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return nil
+	return fsutil.WriteReader(l.file(key), tmpPrefix+"*", ctxReader{ctx, r})
 }
 
 func (l *local) Get(_ context.Context, key string) (io.ReadCloser, error) {

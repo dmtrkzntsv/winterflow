@@ -140,14 +140,14 @@ func TestSaveStorageCreateAndEditModes(t *testing.T) {
 func TestSaveStorageRechecksWhenStoring(t *testing.T) {
 	r := newTestRepo(t)
 	theirs, mine := t.TempDir(), t.TempDir()
-	old := openStorage
-	t.Cleanup(func() { openStorage = old })
-	openStorage = func(s model.Storage, secret string) (store.Store, error) {
-		// Another add of the same name lands during the probe.
-		if err := r.storages.Put(localStorage("disk", theirs)); err != nil {
-			t.Fatal(err)
+	r.openStorage = func(s model.Storage, secret string) (store.Store, error) {
+		// Another add of the same name lands during the probe (which runs
+		// in its own goroutine: no t.Fatal here).
+		if err := r.storages.Save(localStorage("disk", theirs), nil); err != nil {
+			t.Error(err)
+			return nil, err
 		}
-		return old(s, secret)
+		return store.Open(s, secret)
 	}
 	_, err := r.SaveStorage(context.Background(), localStorage("disk", mine), true)
 	if err == nil || err.Error() != "a storage named disk already exists on this server" {
@@ -165,7 +165,7 @@ func TestTestStorageReportsInline(t *testing.T) {
 		t.Fatalf("ok case = %+v, %v", res, err)
 	}
 	res, err = r.TestStorage(context.Background(), localStorage("disk", "/nonexistent-wf-test"))
-	if err != nil || res.OK || !strings.Contains(res.Error, "does not exist") {
+	if err != nil || res.OK || !strings.Contains(res.Error, "is missing (is the disk mounted?)") {
 		t.Fatalf("failing case = %+v, %v", res, err)
 	}
 	if list, _ := r.storages.List(); len(list) != 0 {
@@ -295,7 +295,7 @@ func TestListStorages(t *testing.T) {
 	r, pub := newSecretRepo(t)
 	withStorages(t, r, func(p string) string { return cryptotest.Encrypt(t, pub, p) })
 	storageApp(t, r, "app-1", "Shop", "hetzner", false)
-	list, err := r.ListStorages(context.Background())
+	list, err := r.ListStorages(context.Background(), true)
 	if err != nil || len(list) != 3 {
 		t.Fatalf("list = %+v, %v", list, err)
 	}
@@ -309,17 +309,27 @@ func TestListStorages(t *testing.T) {
 	if h := list[byName["hetzner"]]; !reflect.DeepEqual(h.Apps, []string{"app-1"}) || h.Location != "https://s3.example.com/tenants/wf/" {
 		t.Fatalf("hetzner = %+v", h)
 	}
-	if d := list[byName["backup-disk"]]; len(d.Apps) != 0 || d.Location != "/mnt/usb" {
+	if d := list[byName["backup-disk"]]; d.Apps == nil || len(d.Apps) != 0 || d.Location != "/mnt/usb" {
 		t.Fatalf("backup-disk = %+v", d)
+	}
+	// The registry alone (the API's index sync): no app is read.
+	list, err = r.ListStorages(context.Background(), false)
+	if err != nil || len(list) != 3 {
+		t.Fatalf("registry only = %+v, %v", list, err)
+	}
+	for _, s := range list {
+		if s.Apps == nil || len(s.Apps) != 0 || s.Location == "" {
+			t.Fatalf("registry only: %+v", s)
+		}
 	}
 }
 
 func TestDeleteStorage(t *testing.T) {
 	r := newTestRepo(t)
-	if err := r.storages.Put(localStorage("disk", "/mnt/usb")); err != nil {
+	if err := r.storages.Save(localStorage("disk", "/mnt/usb"), nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.storages.Put(localStorage("spare", "/mnt/spare")); err != nil {
+	if err := r.storages.Save(localStorage("spare", "/mnt/spare"), nil); err != nil {
 		t.Fatal(err)
 	}
 	storageApp(t, r, "app-1", "Shop", "disk", false)
@@ -345,7 +355,7 @@ func TestDeleteStorageFailsClosed(t *testing.T) {
 		t.Skip("root reads unreadable files")
 	}
 	r := newTestRepo(t)
-	if err := r.storages.Put(localStorage("disk", "/mnt/usb")); err != nil {
+	if err := r.storages.Save(localStorage("disk", "/mnt/usb"), nil); err != nil {
 		t.Fatal(err)
 	}
 	storageApp(t, r, "app-1", "Shop", "disk", false)
@@ -359,7 +369,7 @@ func TestDeleteStorageFailsClosed(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 	// The listing still answers, without that app.
-	if list, err := r.ListStorages(context.Background()); err != nil || len(list) != 1 || len(list[0].Apps) != 0 {
+	if list, err := r.ListStorages(context.Background(), true); err != nil || len(list) != 1 || len(list[0].Apps) != 0 {
 		t.Fatalf("list = %+v, %v", list, err)
 	}
 }
@@ -448,15 +458,14 @@ func TestHasDraft(t *testing.T) {
 
 func TestProbeStorageDoesNotWaitForAHungMount(t *testing.T) {
 	release := make(chan struct{})
-	old, oldTimeout := openStorage, storageProbeTimeout
-	openStorage = func(model.Storage, string) (store.Store, error) {
+	t.Cleanup(func() { close(release) })
+	r := newTestRepo(t)
+	r.openStorage = func(model.Storage, string) (store.Store, error) {
 		<-release // a hard NFS mount: the syscall never returns
 		return nil, errors.New("released")
 	}
-	storageProbeTimeout = 50 * time.Millisecond
-	t.Cleanup(func() { close(release); openStorage, storageProbeTimeout = old, oldTimeout })
+	r.storageLimits.probe = 50 * time.Millisecond
 
-	r := newTestRepo(t)
 	start := time.Now()
 	res, err := r.TestStorage(context.Background(), localStorage("disk", t.TempDir()))
 	if err != nil || res.OK || res.Error != "disk did not answer within 50ms" {
@@ -488,9 +497,7 @@ func TestSaveStorageBudgetSkipsLaterRedeploys(t *testing.T) {
 		<-ctx.Done() // a redeploy that takes longer than the whole budget
 		return ctx.Err()
 	}
-	old, oldMin := storageSaveBudget, storageRedeployMinBudget
-	storageSaveBudget, storageRedeployMinBudget = 200*time.Millisecond, 0
-	t.Cleanup(func() { storageSaveBudget, storageRedeployMinBudget = old, oldMin })
+	r.storageLimits.saveBudget, r.storageLimits.redeployMinBudget = 200*time.Millisecond, 0
 
 	start := time.Now()
 	resp, err := r.SaveStorage(context.Background(), localStorage("disk", t.TempDir()), true)
@@ -513,7 +520,7 @@ func TestSaveStorageBudgetSkipsLaterRedeploys(t *testing.T) {
 	}
 }
 
-// A redeploy is only started with storageRedeployMinBudget of the save's
+// A redeploy is only started with redeployMinBudget of the save's
 // budget left: one cut short half-way would leave the app down.
 func TestSaveStorageStartsNoRedeployWithoutEnoughBudget(t *testing.T) {
 	r := newTestRepo(t)
@@ -528,9 +535,7 @@ func TestSaveStorageStartsNoRedeployWithoutEnoughBudget(t *testing.T) {
 		time.Sleep(1100 * time.Millisecond) // uses up the budget's slack
 		return nil
 	}
-	old, oldMin := storageSaveBudget, storageRedeployMinBudget
-	storageSaveBudget, storageRedeployMinBudget = 30*time.Second, 29*time.Second
-	t.Cleanup(func() { storageSaveBudget, storageRedeployMinBudget = old, oldMin })
+	r.storageLimits.saveBudget, r.storageLimits.redeployMinBudget = 30*time.Second, 29*time.Second
 
 	resp, err := r.SaveStorage(context.Background(), localStorage("disk", t.TempDir()), true)
 	if err != nil {
@@ -545,7 +550,7 @@ func TestSaveStorageStartsNoRedeployWithoutEnoughBudget(t *testing.T) {
 	}
 
 	// The default keeps two minutes in reserve of an eight minute budget.
-	if oldMin != 2*time.Minute || old != 8*time.Minute {
-		t.Fatalf("defaults: budget %v, minimum %v", old, oldMin)
+	if d := defaultStorageLimits; d.redeployMinBudget != 2*time.Minute || d.saveBudget != 8*time.Minute {
+		t.Fatalf("defaults: budget %v, minimum %v", d.saveBudget, d.redeployMinBudget)
 	}
 }

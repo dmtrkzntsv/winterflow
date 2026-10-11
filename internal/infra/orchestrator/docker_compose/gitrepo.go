@@ -38,11 +38,22 @@ func gitEnsure(dir string) error {
 	return err
 }
 
-// neverCommitted are derived files holding plaintext secrets that must stay
-// out of an app's history whatever its .gitignore says: a rollback restores
-// an old .gitignore that may not list them. (go-git does not read
-// .git/info/exclude, so the patterns ride on every commit's worktree.)
-var neverCommitted = []gitignore.Pattern{gitignore.ParsePattern("/"+storageEnvRel, nil)}
+// derivedArtifacts are the files a deploy derives in the app folder (some
+// hold plaintext secrets). They never belong in the app's history: the
+// .gitignore lists them, and every commit excludes them (neverCommitted)
+// whatever .gitignore says — a rollback restores an old .gitignore that may
+// not list them.
+var derivedArtifacts = []string{envSecretsRel, deployedRel, runRel, storageEnvRel}
+
+// neverCommitted are derivedArtifacts as go-git patterns. go-git does not
+// read .git/info/exclude, so they ride on every commit's worktree.
+var neverCommitted = func() []gitignore.Pattern {
+	out := make([]gitignore.Pattern, 0, len(derivedArtifacts))
+	for _, rel := range derivedArtifacts {
+		out = append(out, gitignore.ParsePattern("/"+rel, nil))
+	}
+	return out
+}()
 
 // gitCommitAll stages everything (honoring .gitignore and neverCommitted)
 // and commits. A clean worktree is a no-op that returns the current HEAD
@@ -146,15 +157,10 @@ func gitCount(dir string) (int, error) {
 
 // commitCount is gitCount behind the per-app HEAD-keyed cache.
 func (r *Repository) commitCount(appID, dir string) (int, error) {
-	repo, err := git.PlainOpen(dir)
+	h, err := gitHead(dir)
 	if err != nil {
 		return 0, err
 	}
-	head, err := repo.Head()
-	if err != nil {
-		return 0, err
-	}
-	h := head.Hash().String()
 
 	r.versionMu.Lock()
 	if e, ok := r.versionCache[appID]; ok && e.head == h {

@@ -71,6 +71,14 @@ type ContentItem struct {
 	Encrypted bool   `json:"encrypted,omitempty"`
 }
 
+// ItemName is the item's key: its Name, or its ID when the name is empty.
+func (c ContentItem) ItemName() string {
+	if c.Name != "" {
+		return c.Name
+	}
+	return c.ID
+}
+
 // EncryptedPlaceholder is the sentinel value meaning "preserve the existing
 // stored secret" — the browser sends it instead of re-encrypting an unchanged
 // secret on edit.
@@ -92,11 +100,7 @@ func (r SaveAppRequest) Validate() error {
 		return err
 	}
 	for _, v := range r.App.Variables {
-		name := v.Name
-		if name == "" {
-			name = v.ID
-		}
-		if err := model.ReservedVariableError(name); err != nil {
+		if err := model.ReservedVariableError(v.ItemName()); err != nil {
 			return err
 		}
 	}

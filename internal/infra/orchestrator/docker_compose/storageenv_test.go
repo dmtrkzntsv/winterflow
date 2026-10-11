@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,6 +17,7 @@ import (
 
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
+	"winterflow/internal/infra/backup/store"
 	"winterflow/pkg/crypto/cryptotest"
 )
 
@@ -41,7 +42,7 @@ func withStorages(t *testing.T, r *Repository, encrypt func(string) string) {
 		{Name: "other", Type: model.StorageS3, S3: &model.S3Storage{Endpoint: "https://o.example.com", Bucket: "other-bucket",
 			AccessKeyID: "OTHER", SecretAccessKey: encrypt("other-plain")}},
 	} {
-		if err := r.storages.Put(s); err != nil {
+		if err := r.storages.Save(s, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -49,22 +50,27 @@ func withStorages(t *testing.T, r *Repository, encrypt func(string) string) {
 
 // storageFoldersExist makes every local storage folder look present, for
 // tests about other parts of storage.env (their paths are made up).
-func storageFoldersExist(t *testing.T) {
+func storageFoldersExist(t *testing.T, r *Repository) {
 	t.Helper()
 	dir := t.TempDir()
-	old := statStorageFolder
-	statStorageFolder = func(string) (fs.FileInfo, error) { return os.Stat(dir) }
-	t.Cleanup(func() { statStorageFolder = old })
+	r.openStorage = func(s model.Storage, secret string) (store.Store, error) {
+		return store.Open(localStorage(s.Name, dir), secret)
+	}
+}
+
+// materialize is materializeStorageEnv for the app in dir.
+func materialize(ctx context.Context, r *Repository, dir string) error {
+	return r.materializeStorageEnv(ctx, dir, r.appComposeFiles(dir))
 }
 
 func TestMaterializeStorageEnv(t *testing.T) {
-	storageFoldersExist(t)
 	r, pub := newSecretRepo(t)
+	storageFoldersExist(t, r)
 	withStorages(t, r, func(p string) string { return cryptotest.Encrypt(t, pub, p) })
 	savedApp(t, r, "app-1", "demo", storageCompose)
 	dir := r.appDataDir("app-1")
 
-	if err := r.materializeStorageEnv(context.Background(), dir); err != nil {
+	if err := materialize(context.Background(), r, dir); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := os.ReadFile(filepath.Join(dir, storageEnvRel))
@@ -99,13 +105,13 @@ func TestMaterializeStorageEnv(t *testing.T) {
 
 	// No references any more: the file goes away.
 	writeFileT(t, dir, "compose.yml", "services: {}\n")
-	if err := r.materializeStorageEnv(context.Background(), dir); err != nil {
+	if err := materialize(context.Background(), r, dir); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, storageEnvRel)); !os.IsNotExist(err) {
 		t.Fatal("storage.env kept without references")
 	}
-	if err := r.materializeStorageEnv(context.Background(), dir); err != nil {
+	if err := materialize(context.Background(), r, dir); err != nil {
 		t.Fatalf("removing twice: %v", err)
 	}
 }
@@ -136,7 +142,7 @@ func tracked(t *testing.T, dir, rel string) bool {
 func TestMaterializeStorageEnvRefusesUnknownStorage(t *testing.T) {
 	r := newTestRepo(t)
 	savedApp(t, r, "app-1", "demo", "x: ${WF_STORAGE_GONE_BUCKET}\n")
-	err := r.materializeStorageEnv(context.Background(), r.appDataDir("app-1"))
+	err := materialize(context.Background(), r, r.appDataDir("app-1"))
 	if !errors.Is(err, model.ErrStorageRef) || !strings.Contains(err.Error(), `there is no storage "gone" on this server`) {
 		t.Fatalf("err = %v", err)
 	}
@@ -152,11 +158,11 @@ func TestMaterializeStorageEnvRefusesUnknownStorage(t *testing.T) {
 }
 
 func TestMaterializeStorageEnvUndecryptableSecret(t *testing.T) {
-	storageFoldersExist(t)
 	r, _ := newSecretRepo(t)
+	storageFoldersExist(t, r)
 	withStorages(t, r, func(string) string { return "not-ciphertext" })
 	savedApp(t, r, "app-1", "demo", storageCompose)
-	err := r.materializeStorageEnv(context.Background(), r.appDataDir("app-1"))
+	err := materialize(context.Background(), r, r.appDataDir("app-1"))
 	if err == nil || !strings.Contains(err.Error(), "decrypt the secret access key of storage hetzner") {
 		t.Fatalf("err = %v", err)
 	}
@@ -216,12 +222,12 @@ func TestMarshalStorageEnvRefusesLineBreaks(t *testing.T) {
 
 func TestMaterializeStorageEnvRefusesInjectedLine(t *testing.T) {
 	r := newTestRepo(t)
-	if err := r.storages.Put(model.Storage{Name: "disk", Type: model.StorageLocal,
-		Local: &model.LocalStorage{Path: "/mnt/a\nWF_STORAGE_EVIL_PATH=/etc"}}); err != nil {
+	if err := r.storages.Save(model.Storage{Name: "disk", Type: model.StorageLocal,
+		Local: &model.LocalStorage{Path: "/mnt/a\nWF_STORAGE_EVIL_PATH=/etc"}}, nil); err != nil {
 		t.Skipf("the registry already refuses this path: %v", err)
 	}
 	savedApp(t, r, "app-1", "demo", "x: ${WF_STORAGE_DISK_PATH}\n")
-	err := r.materializeStorageEnv(context.Background(), r.appDataDir("app-1"))
+	err := materialize(context.Background(), r, r.appDataDir("app-1"))
 	if err == nil || !strings.Contains(err.Error(), "line break") {
 		t.Fatalf("err = %v", err)
 	}
@@ -307,14 +313,14 @@ func TestMaterializeStorageEnvRefusesMissingFolder(t *testing.T) {
 	usb := filepath.Join(t.TempDir(), "usb")
 	gone := filepath.Join(t.TempDir(), "gone")
 	for _, s := range []model.Storage{localStorage("disk", usb), localStorage("unused", gone)} {
-		if err := r.storages.Put(s); err != nil {
+		if err := r.storages.Save(s, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
 	savedApp(t, r, "app-1", "demo", "services:\n  a:\n    volumes:\n      - ${WF_STORAGE_DISK_PATH}:/backup\n")
 	dir := r.appDataDir("app-1")
 
-	err := r.materializeStorageEnv(ctx, dir)
+	err := materialize(ctx, r, dir)
 	if err == nil || !strings.Contains(err.Error(), "storage disk: the folder "+usb+" is missing") {
 		t.Fatalf("err = %v", err)
 	}
@@ -328,7 +334,7 @@ func TestMaterializeStorageEnvRefusesMissingFolder(t *testing.T) {
 	if err := os.WriteFile(usb, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.materializeStorageEnv(ctx, dir); err == nil || !strings.Contains(err.Error(), "it is not a folder") {
+	if err := materialize(ctx, r, dir); err == nil || !strings.Contains(err.Error(), usb+" is not a folder") {
 		t.Fatalf("file: %v", err)
 	}
 	// Mounted: the deploy goes on. The unreferenced storage's missing folder
@@ -339,7 +345,7 @@ func TestMaterializeStorageEnvRefusesMissingFolder(t *testing.T) {
 	if err := os.Mkdir(usb, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.materializeStorageEnv(ctx, dir); err != nil {
+	if err := materialize(ctx, r, dir); err != nil {
 		t.Fatal(err)
 	}
 
@@ -356,21 +362,19 @@ func TestMaterializeStorageEnvRefusesMissingFolder(t *testing.T) {
 // blocking the command pipeline.
 func TestMaterializeStorageEnvHungFolder(t *testing.T) {
 	release := make(chan struct{})
-	old, oldTimeout := statStorageFolder, storageFolderTimeout
-	statStorageFolder = func(string) (fs.FileInfo, error) {
+	t.Cleanup(func() { close(release) })
+	r := newTestRepo(t)
+	r.openStorage = func(model.Storage, string) (store.Store, error) {
 		<-release
 		return nil, errors.New("released")
 	}
-	storageFolderTimeout = 50 * time.Millisecond
-	t.Cleanup(func() { close(release); statStorageFolder, storageFolderTimeout = old, oldTimeout })
-
-	r := newTestRepo(t)
-	if err := r.storages.Put(localStorage("nfs", "/mnt/nfs")); err != nil {
+	r.storageLimits.folder = 50 * time.Millisecond
+	if err := r.storages.Save(localStorage("nfs", "/mnt/nfs"), nil); err != nil {
 		t.Fatal(err)
 	}
 	savedApp(t, r, "app-1", "demo", "x: ${WF_STORAGE_NFS_PATH}\n")
 	start := time.Now()
-	err := r.materializeStorageEnv(context.Background(), r.appDataDir("app-1"))
+	err := materialize(context.Background(), r, r.appDataDir("app-1"))
 	if err == nil || err.Error() != "storage nfs: the folder /mnt/nfs did not answer within 50ms (is the share reachable?)" {
 		t.Fatalf("err = %v", err)
 	}
@@ -380,7 +384,63 @@ func TestMaterializeStorageEnvHungFolder(t *testing.T) {
 	// A cancelled deploy says so instead.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := r.materializeStorageEnv(ctx, r.appDataDir("app-1")); err == nil || !strings.Contains(err.Error(), "was not checked: context canceled") {
+	if err := materialize(ctx, r, r.appDataDir("app-1")); err == nil || !strings.Contains(err.Error(), "was not checked: context canceled") {
 		t.Fatalf("cancelled: %v", err)
+	}
+}
+
+// The referenced folders are checked concurrently: two that each answer only
+// once the other was asked would deadlock a check one at a time.
+func TestMaterializeStorageEnvChecksFoldersConcurrently(t *testing.T) {
+	r := newTestRepo(t)
+	for _, s := range []model.Storage{localStorage("one", "/mnt/one"), localStorage("two", "/mnt/two")} {
+		if err := r.storages.Save(s, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var asked sync.WaitGroup
+	asked.Add(2)
+	present := t.TempDir()
+	r.openStorage = func(s model.Storage, secret string) (store.Store, error) {
+		asked.Done()
+		asked.Wait()
+		return store.Open(localStorage(s.Name, present), secret)
+	}
+	r.storageLimits.folder = 5 * time.Second
+	savedApp(t, r, "app-1", "demo", "x: ${WF_STORAGE_ONE_PATH} ${WF_STORAGE_TWO_PATH}\n")
+	if err := materialize(context.Background(), r, r.appDataDir("app-1")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// An unchanged storage.env is left alone (its mode still enforced).
+func TestMaterializeStorageEnvKeepsAnUnchangedFile(t *testing.T) {
+	r := newTestRepo(t)
+	storageFoldersExist(t, r)
+	if err := r.storages.Save(localStorage("disk", "/mnt/usb"), nil); err != nil {
+		t.Fatal(err)
+	}
+	savedApp(t, r, "app-1", "demo", "x: ${WF_STORAGE_DISK_PATH}\n")
+	dir := r.appDataDir("app-1")
+	path := filepath.Join(dir, storageEnvRel)
+	if err := materialize(context.Background(), r, dir); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-time.Hour).Truncate(time.Second)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := materialize(context.Background(), r, dir); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.ModTime().Equal(old) || info.Mode().Perm() != 0o600 {
+		t.Fatalf("rewritten or mode kept: %v %v", info.ModTime(), info.Mode())
 	}
 }

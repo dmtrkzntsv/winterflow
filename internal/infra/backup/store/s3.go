@@ -51,7 +51,13 @@ func (s *s3) Put(ctx context.Context, key string, r io.Reader) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.client.PutObject(ctx, s.bucket, s.prefix+key, r, -1, minio.PutObjectOptions{
+	// A reader that knows its length (strings/bytes.Reader: the probe) goes
+	// up in one PUT; a stream of unknown size is uploaded in parts.
+	size := int64(-1)
+	if l, ok := r.(interface{ Len() int }); ok {
+		size = int64(l.Len())
+	}
+	_, err = s.client.PutObject(ctx, s.bucket, s.prefix+key, r, size, minio.PutObjectOptions{
 		PartSize:    partSize,
 		ContentType: "application/octet-stream",
 		// No per-chunk payload signing: over https minio-go already sends

@@ -136,7 +136,7 @@ func TestWriteRunHelper(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := r.writeRunHelper("app-1"); err != nil {
+	if err := r.writeRunHelper("app-1", r.appComposeFiles(dir)); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(filepath.Join(dir, runRel))

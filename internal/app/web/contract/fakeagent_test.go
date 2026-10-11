@@ -102,7 +102,7 @@ func (a *fakeAgent) storageScript(typ command.Type, agentID string) (script, boo
 			}
 			info := command.StorageInfo{Storage: in.Masked(), Location: in.Location(), Apps: []string{}}
 			a.addStorage(agentID, info)
-			return reply{Payload: command.SaveStorageResponse{Storage: info}}
+			return reply{Payload: command.SaveStorageResponse{Storage: info, Redeployed: []string{}}}
 		}, true
 	case command.TypeStorageDelete:
 		return func(raw json.RawMessage) reply {

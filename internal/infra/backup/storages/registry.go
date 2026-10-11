@@ -19,6 +19,7 @@ import (
 	"sync"
 
 	"winterflow/internal/domain/model"
+	"winterflow/pkg/fsutil"
 )
 
 // Registry reads and writes the storages/ folder. Methods are safe for
@@ -29,9 +30,6 @@ type Registry struct {
 }
 
 func NewRegistry(dir string) *Registry { return &Registry{dir: dir} }
-
-// Dir is the folder the registry owns.
-func (r *Registry) Dir() string { return r.dir }
 
 func (r *Registry) path(name string) string { return filepath.Join(r.dir, name+".json") }
 
@@ -101,14 +99,12 @@ func (r *Registry) Get(name string) (model.Storage, bool, error) {
 	return s, true, nil
 }
 
-// Put writes (or replaces) a storage as given: callers resolve the
-// "<encrypted>" placeholder first, so the stored secret is ciphertext.
-func (r *Registry) Put(s model.Storage) error { return r.Save(s, nil) }
-
-// Save is Put guarded by check, which sees the storage currently stored
-// under the same name (exists false when there is none) and refuses the
-// write by returning an error. The check and the write happen under one
-// lock, so two saves can't both pass a "the name is free" check.
+// Save writes (or replaces) a storage as given: callers resolve the
+// "<encrypted>" placeholder first, so the stored secret is ciphertext. A
+// non-nil check sees the storage currently stored under the same name
+// (exists false when there is none) and refuses the write by returning an
+// error. The check and the write happen under one lock, so two saves can't
+// both pass a "the name is free" check.
 func (r *Registry) Save(s model.Storage, check func(prev model.Storage, exists bool) error) error {
 	s = s.Normalized()
 	if err := s.Validate(); err != nil {
@@ -136,7 +132,7 @@ func (r *Registry) Save(s model.Storage, check func(prev model.Storage, exists b
 	if err := os.MkdirAll(r.dir, 0o700); err != nil {
 		return fmt.Errorf("create storages dir: %w", err)
 	}
-	return writeAtomic(r.path(s.Name), raw)
+	return fsutil.WriteFile(r.path(s.Name), raw, 0o600)
 }
 
 // Delete removes a storage and reports whether it existed.
@@ -153,43 +149,6 @@ func (r *Registry) Delete(name string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("delete storage %s: %w", name, err)
 	}
-	syncDir(r.dir)
+	fsutil.SyncDir(r.dir)
 	return true, nil
-}
-
-// writeAtomic writes data (mode 0600) to path via a fsynced temp file that
-// is renamed into place; the folder is fsynced after. A failed step removes
-// the temp file, leaving the old content in place.
-func writeAtomic(path string, data []byte) error {
-	tmp := path + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err == nil {
-		_, err = f.Write(data)
-		if err == nil {
-			err = f.Sync()
-		}
-		if cerr := f.Close(); err == nil {
-			err = cerr
-		}
-	}
-	if err == nil {
-		err = os.Rename(tmp, path)
-	}
-	if err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("write %s: %w", filepath.Base(path), err)
-	}
-	syncDir(filepath.Dir(path))
-	return nil
-}
-
-// syncDir fsyncs a folder so a rename or removal in it is durable. Best
-// effort: some filesystems refuse to sync a folder.
-func syncDir(dir string) {
-	d, err := os.Open(dir)
-	if err != nil {
-		return
-	}
-	_ = d.Sync()
-	_ = d.Close()
 }

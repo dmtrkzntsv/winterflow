@@ -73,7 +73,8 @@ func TestS3StorePrefixConfinement(t *testing.T) {
 	}
 }
 
-// TestS3StoreMultipart streams an object larger than one part.
+// TestS3StoreMultipart streams an object of unknown size larger than one
+// part.
 func TestS3StoreMultipart(t *testing.T) {
 	old := partSize
 	partSize = 5 << 20 // S3's minimum part size
@@ -82,7 +83,8 @@ func TestS3StoreMultipart(t *testing.T) {
 	st := openFake(t, endpoint, "")
 	ctx := context.Background()
 	data := bytes.Repeat([]byte("0123456789abcdef"), (11<<20)/16) // 11 MiB: three parts
-	if err := st.Put(ctx, "big.tar.zst", bytes.NewReader(data)); err != nil {
+	stream := io.MultiReader(bytes.NewReader(data))               // hides the length
+	if err := st.Put(ctx, "big.tar.zst", stream); err != nil {
 		t.Fatal(err)
 	}
 	rc, err := st.Get(ctx, "big.tar.zst")

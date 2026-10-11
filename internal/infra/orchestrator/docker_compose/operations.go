@@ -378,6 +378,11 @@ func (r *Repository) composeFiles(dir string, spec *sourceSpec) []string {
 	return model.DetectComposeFiles(fileIn(dir))
 }
 
+// appComposeFiles is composeFiles for the app in dir.
+func (r *Repository) appComposeFiles(dir string) []string {
+	return r.composeFiles(dir, r.appSourceSpec(dir))
+}
+
 // fileIn reports whether a regular file name exists in dir.
 func fileIn(dir string) func(name string) bool {
 	return func(name string) bool {
@@ -392,9 +397,15 @@ func fileIn(dir string) func(name string) bool {
 // Env files load in order — .env, storage.env, .env.secrets — later ones
 // winning.
 func (r *Repository) composeArgs(appID string, verb ...string) []string {
+	return r.composeArgsFor(appID, r.appComposeFiles(r.appDataDir(appID)), verb...)
+}
+
+// composeArgsFor is composeArgs with the app's compose files already
+// resolved.
+func (r *Repository) composeArgsFor(appID string, files []string, verb ...string) []string {
 	args := []string{"compose", "--project-name", projectName(appID)}
 	dir := r.appDataDir(appID)
-	for _, f := range r.composeFiles(dir, r.appSourceSpec(dir)) {
+	for _, f := range files {
 		args = append(args, "-f", f)
 	}
 	args = append(args, "--env-file", envRel)
@@ -407,7 +418,12 @@ func (r *Repository) composeArgs(appID string, verb ...string) []string {
 }
 
 func (r *Repository) composeRun(ctx context.Context, appID string, verb ...string) error {
-	cmd := exec.CommandContext(ctx, "docker", r.composeArgs(appID, verb...)...)
+	return r.composeExec(ctx, appID, r.composeArgs(appID, verb...))
+}
+
+// composeExec runs docker with args in the app's folder.
+func (r *Repository) composeExec(ctx context.Context, appID string, args []string) error {
+	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Dir = r.appDataDir(appID)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -417,16 +433,18 @@ func (r *Repository) composeRun(ctx context.Context, appID string, verb ...strin
 }
 
 func (r *Repository) composeUp(ctx context.Context, appID string) error {
+	dir := r.appDataDir(appID)
+	files := r.appComposeFiles(dir)
 	// The storage variables are resolved on every deploy: a storage removed
 	// or changed since the last one must not be served stale.
-	if err := r.materializeStorageEnv(ctx, r.appDataDir(appID)); err != nil {
+	if err := r.materializeStorageEnv(ctx, dir, files); err != nil {
 		return err
 	}
 	// Refresh the manual-run helper alongside every deploy; never fail one on it.
-	if err := r.writeRunHelper(appID); err != nil {
+	if err := r.writeRunHelper(appID, files); err != nil {
 		r.log.Warn("write manual-run helper", "app_id", appID, "error", err)
 	}
-	return r.composeRun(ctx, appID, "up", "-d", "--remove-orphans")
+	return r.composeExec(ctx, appID, r.composeArgsFor(appID, files, "up", "-d", "--remove-orphans"))
 }
 
 // composeDown is a no-op (nil) if the app dir does not exist. volumes=true

@@ -92,8 +92,13 @@ func Check(comp Compose, overrides []BackupConfig) ([]EffectiveBackup, error) {
 // Clean is the backups list to store: stale overrides (a name the recipe no
 // longer has, without type) are dropped with a warning; an override of a
 // recipe backup keeps only the fields that differ from the recipe (and no
-// type); a disabled entry left with nothing to say is dropped.
+// type); a disabled entry left with nothing to say is dropped. When a compose
+// file could not be read (comp.Unparsed) the recipe is incomplete, so nothing
+// is dropped: the overrides come back unchanged, with no warnings.
 func Clean(comp Compose, overrides []BackupConfig) (kept []BackupConfig, warnings []string) {
+	if comp.Unparsed {
+		return overrides, nil
+	}
 	recipe := map[string]BackupConfig{}
 	for _, r := range comp.Recipe {
 		recipe[r.Name] = r
@@ -200,7 +205,7 @@ func fromRecipe(r, c BackupConfig) map[string]bool {
 		}
 	}
 	set(FieldEvery, r.Every != "", c.Every == r.Every)
-	set(FieldKeep, r.Keep != nil, c.Keep == r.Keep)
+	set(FieldKeep, r.Keep != nil, keepEqual(c.Keep, r.Keep))
 	set(FieldVolume, r.Volume != "", c.Volume == r.Volume)
 	set(FieldService, r.Service != "", c.Service == r.Service)
 	set(FieldPath, r.Path != "", c.Path == r.Path)

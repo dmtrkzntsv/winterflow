@@ -80,7 +80,7 @@ func TestParseCompose(t *testing.T) {
 		t.Fatal(err)
 	}
 	// No x-winterflow, a null one, a null list, invalid YAML: no recipe.
-	for _, f := range []string{"services: {a: {}}", "x-winterflow:\n", "x-winterflow:\n  backups:\n", "x-winterflow: {other: 1}", ":\n  - ["} {
+	for _, f := range []string{"services: {a: {}}", "x-winterflow:\n", "x-winterflow:\n  backups:\n", "x-winterflow: {other: 1}"} {
 		if c := parse(t, f); len(c.Recipe) != 0 {
 			t.Errorf("%q: recipe = %+v", f, c.Recipe)
 		}
@@ -337,5 +337,71 @@ func TestErrInvalidIsARejection(t *testing.T) {
 	_, err := ParseCompose([]byte("x-winterflow: [1]"))
 	if !errors.Is(err, model.ErrRejected) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// A file with only type errors keeps what decoded; one that is not YAML is
+// skipped and flagged, and Clean then drops nothing.
+func TestParseComposeBrokenFiles(t *testing.T) {
+	typeErr := "services:\n  web: {profiles: wf-backup-x}\nvolumes:\n  data:\nx-winterflow:\n  backups:\n    - {name: a, type: files, volume: data}\n"
+	c := parse(t, typeErr)
+	if c.Unparsed || !c.Volumes["data"] || len(c.Recipe) != 1 {
+		t.Fatalf("type error: %+v", c)
+	}
+	if _, ok := c.Services["web"]; !ok {
+		t.Fatalf("services = %v", c.Services)
+	}
+
+	c = parse(t, ":\n  - [")
+	if !c.Unparsed || len(c.Recipe) != 0 {
+		t.Fatalf("syntax error: %+v", c)
+	}
+	in := []BackupConfig{{Name: "a", Enabled: true, Storage: "s"}}
+	kept, warnings := Clean(c, in)
+	if !reflect.DeepEqual(kept, in) || len(warnings) != 0 {
+		t.Fatalf("kept = %+v, warnings = %v", kept, warnings)
+	}
+	// A readable main file plus a broken override file is still flagged.
+	if c := parse(t, compose, ":\n  - ["); !c.Unparsed || len(c.Recipe) != 3 {
+		t.Fatalf("broken override: %+v", c)
+	}
+}
+
+// Overrides of keep, paths and exclude layer on the recipe and survive Clean
+// only when they differ.
+func TestOverrideKeepPathsExclude(t *testing.T) {
+	c := parse(t, compose)
+	o := []BackupConfig{{Name: "media", Keep: &Keep{Daily: ptr(3)}, Paths: []string{"/app/media"}, Exclude: []string{"*.log"}}}
+	got, err := Effective(c, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := got[1]
+	if *m.Keep.Daily != 3 || *m.Keep.Monthly != DefaultMonthly || !reflect.DeepEqual(m.Paths, []string{"/app/media"}) ||
+		!reflect.DeepEqual(m.Exclude, []string{"*.log"}) || m.FromRecipe[FieldKeep] || m.FromRecipe[FieldPaths] || m.FromRecipe[FieldExclude] || !m.FromRecipe[FieldService] {
+		t.Fatalf("media = %+v (keep %+v)", m, m.Keep)
+	}
+	kept, _ := Clean(c, o)
+	if len(kept) != 1 || kept[0].Keep == nil || kept[0].Paths == nil || kept[0].Exclude == nil {
+		t.Fatalf("kept = %+v", kept)
+	}
+	// Restating the recipe's values changes nothing: from the recipe, and
+	// dropped by Clean.
+	same := []BackupConfig{{Name: "database", Keep: &Keep{Recent: "24h", Daily: ptr(14), Monthly: ptr(6)}},
+		{Name: "media", Paths: []string{"/app/media", "/data/config"}, Exclude: []string{"/app/media/cache/", "*.tmp"}}}
+	got, err = Effective(c, same)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got[0].FromRecipe[FieldKeep] || !got[1].FromRecipe[FieldPaths] || !got[1].FromRecipe[FieldExclude] {
+		t.Fatalf("restated = %+v %+v", got[0].FromRecipe, got[1].FromRecipe)
+	}
+	if kept, _ := Clean(c, same); len(kept) != 0 {
+		t.Fatalf("kept = %+v", kept)
+	}
+	// An override path replaces the recipe's.
+	got, err = Effective(c, []BackupConfig{{Name: "database", Path: "other.db"}})
+	if err != nil || got[0].Path != "other.db" || got[0].FromRecipe[FieldPath] {
+		t.Fatalf("path = %+v, %v", got, err)
 	}
 }

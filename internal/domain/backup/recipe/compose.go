@@ -1,6 +1,7 @@
 package recipe
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -13,6 +14,10 @@ type Compose struct {
 	Volumes  map[string]bool
 	Services map[string][]string // service name -> profiles
 	Recipe   []BackupConfig
+	// Unparsed is set when a compose file is not valid YAML and was skipped:
+	// the recipe is then incomplete, so callers must not conclude that a
+	// backup is gone from it (Clean keeps the overrides as they are).
+	Unparsed bool
 }
 
 // recipeKeys are the keys a recipe entry may have. enabled and storage are
@@ -27,8 +32,9 @@ var keepKeys = map[string]bool{"recent": true, "daily": true, "monthly": true}
 // ParseCompose reads the compose files in the order compose loads them (the
 // main file, then its override). Volumes and services are merged; recipe
 // entries of a later file replace those of the same name. A file that is not
-// valid YAML contributes nothing: docker compose reports it at deploy. The
-// recipe is checked only for its shape here (keys, types, duplicate names);
+// valid YAML is skipped and sets Unparsed (docker compose reports it at
+// deploy); a file with only type errors (profiles: a-string) keeps what
+// decoded. The recipe is checked only for its shape here (keys, types, duplicate names);
 // Validate checks the values.
 func ParseCompose(files ...[]byte) (Compose, error) {
 	out := Compose{Volumes: map[string]bool{}, Services: map[string][]string{}}
@@ -40,8 +46,12 @@ func ParseCompose(files ...[]byte) (Compose, error) {
 			Volumes     map[string]any `yaml:"volumes"`
 			XWinterflow yaml.Node      `yaml:"x-winterflow"`
 		}
-		if yaml.Unmarshal(raw, &doc) != nil {
-			continue
+		if err := yaml.Unmarshal(raw, &doc); err != nil {
+			var typeErr *yaml.TypeError
+			if !errors.As(err, &typeErr) {
+				out.Unparsed = true
+				continue
+			}
 		}
 		for name := range doc.Volumes {
 			out.Volumes[name] = true

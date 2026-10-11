@@ -19,6 +19,7 @@ vi.mock("@/context/use-docker", () => ({
 }));
 vi.mock("@/pages/settings-domains", () => ({ DomainsCard: () => <p>domains card</p> }));
 vi.mock("@/pages/settings-volumes", () => ({ VolumesCard: () => <p>volumes card</p> }));
+vi.mock("@/pages/settings-storages", () => ({ StoragesCard: () => <p>storages card</p> }));
 
 function renderAt(url: string) {
   return render(
@@ -42,5 +43,12 @@ describe("SettingsPage", () => {
     expect(screen.queryByRole("tab", { name: "Domains" })).not.toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Registries" })).toHaveAttribute("aria-selected", "true");
     expect(screen.queryByText("domains card")).not.toBeInTheDocument();
+  });
+
+  it("offers the Storages tab on every server", () => {
+    ingress = false;
+    renderAt("/settings?tab=storages");
+    expect(screen.getByRole("tab", { name: "Storages" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("storages card")).toBeInTheDocument();
   });
 });

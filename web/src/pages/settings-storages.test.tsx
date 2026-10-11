@@ -1,0 +1,261 @@
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { AppsContext, type AppsContextValue } from "@/context/apps-context-base";
+import type { Docker } from "@/context/use-docker";
+import type { Storage, StorageDraft } from "@/lib/storages";
+import { StoragesCard } from "@/pages/settings-storages";
+
+const toastError = vi.fn();
+const toastSuccess = vi.fn();
+const toastWarning = vi.fn();
+vi.mock("sonner", () => ({
+  toast: {
+    success: (...args: unknown[]) => toastSuccess(...args),
+    error: (...args: unknown[]) => toastError(...args),
+    warning: (...args: unknown[]) => toastWarning(...args),
+  },
+}));
+
+const setupUser = () => userEvent.setup({ delay: null });
+
+const STORAGES: Storage[] = [
+  {
+    name: "hetzner",
+    type: "s3",
+    s3: {
+      endpoint: "https://fsn1.example.com",
+      region: "fsn1",
+      bucket: "tenants",
+      prefix: "wf/",
+      access_key_id: "AKIA",
+      secret_access_key: "<encrypted>",
+      path_style: false,
+    },
+    location: "https://fsn1.example.com/tenants/wf/",
+    apps: ["a1", "a2"],
+  },
+  { name: "disk", type: "local", local: { path: "/mnt/usb" }, location: "/mnt/usb", apps: [] },
+];
+
+// saved answers a save the way the agent does: the stored storage.
+const saved = (d: StorageDraft) => ({
+  storage: {
+    name: d.name,
+    type: d.type,
+    location: d.type === "local" ? d.path : `${d.endpoint}/${d.bucket}/${d.prefix}`,
+    apps: [],
+  } as Storage,
+  redeployed: [] as string[],
+  warnings: [] as string[],
+});
+
+function fakeDocker(over: Partial<Docker> = {}): Docker {
+  return {
+    listStorages: vi.fn().mockResolvedValue(STORAGES),
+    testStorage: vi.fn().mockResolvedValue({ ok: true }),
+    saveStorage: vi.fn(async (d: StorageDraft) => saved(d)),
+    deleteStorage: vi.fn().mockResolvedValue(undefined),
+    ...over,
+  } as unknown as Docker;
+}
+
+function renderCard(docker: Docker) {
+  const apps = {
+    apps: [
+      { id: "a1", name: "Shop" },
+      { id: "a2", name: "Blog" },
+    ],
+  } as unknown as AppsContextValue;
+  return render(
+    <MemoryRouter>
+      <AppsContext.Provider value={apps}>
+        <StoragesCard docker={docker} />
+      </AppsContext.Provider>
+    </MemoryRouter>,
+  );
+}
+
+describe("StoragesCard", () => {
+  beforeEach(() => {
+    toastError.mockReset();
+    toastSuccess.mockReset();
+    toastWarning.mockReset();
+  });
+
+  it("lists name, type, location and the apps using each", async () => {
+    renderCard(fakeDocker());
+    expect(await screen.findByText("hetzner")).toHaveClass("font-mono");
+    expect(screen.getByText("S3-compatible")).toBeInTheDocument();
+    expect(screen.getByText("Local folder")).toBeInTheDocument();
+    expect(screen.getByText("https://fsn1.example.com/tenants/wf/")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Shop" })).toHaveAttribute("href", "/app/a1");
+    expect(screen.getByRole("link", { name: "Blog" })).toHaveAttribute("href", "/app/a2");
+    expect(screen.getByText("Not used")).toBeInTheDocument();
+  });
+
+  it("shows an empty state", async () => {
+    renderCard(fakeDocker({ listStorages: vi.fn().mockResolvedValue([]) }));
+    expect(await screen.findByText(/No storages yet/)).toBeInTheDocument();
+  });
+
+  it("adds a local folder after testing it", async () => {
+    const user = setupUser();
+    const docker = fakeDocker();
+    renderCard(docker);
+
+    await user.click(await screen.findByRole("button", { name: /Add storage/ }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Add storage")).toBeInTheDocument();
+    const save = within(dialog).getByRole("button", { name: "Save" });
+    expect(save).toBeDisabled();
+
+    await user.type(within(dialog).getByLabelText("Name"), "Backup-Disk");
+    expect(within(dialog).getByText("Compose files use it as ${WF_STORAGE_BACKUP_DISK_…}.")).toBeInTheDocument();
+    await user.type(within(dialog).getByLabelText("Folder"), "backups");
+    expect(within(dialog).getByText(/absolute folder path/)).toBeInTheDocument();
+    await user.clear(within(dialog).getByLabelText("Folder"));
+    await user.type(within(dialog).getByLabelText("Folder"), "/mnt/backup");
+
+    await user.click(within(dialog).getByRole("button", { name: "Test connection" }));
+    expect(await within(dialog).findByText("Connection works")).toBeInTheDocument();
+    expect(docker.testStorage).toHaveBeenCalledWith(expect.objectContaining({ name: "backup-disk", type: "local", path: "/mnt/backup" }));
+
+    await user.click(save);
+    expect(docker.saveStorage).toHaveBeenCalledWith(expect.objectContaining({ name: "backup-disk", path: "/mnt/backup" }));
+    // The answer goes straight into the list, in name order.
+    const row = (await screen.findByText("backup-disk")).closest("tr");
+    expect(row?.nextElementSibling).toHaveTextContent("disk");
+    expect(docker.listStorages).toHaveBeenCalledTimes(1);
+    expect(toastSuccess).toHaveBeenCalledWith("Storage added", { description: undefined });
+  });
+
+  it("shows a failed test inline and lets a stale result go", async () => {
+    const user = setupUser();
+    const docker = fakeDocker({
+      testStorage: vi
+        .fn()
+        .mockResolvedValueOnce({ ok: false, error: "write a test file: Access Denied" })
+        .mockRejectedValueOnce(new Error("agent offline")),
+    });
+    renderCard(docker);
+
+    await user.click(await screen.findByRole("button", { name: /Add storage/ }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("tab", { name: "S3-compatible" }));
+    await user.type(within(dialog).getByLabelText("Name"), "hetzner2");
+    await user.type(within(dialog).getByLabelText("Endpoint"), "http://s3.example.com");
+    expect(within(dialog).getByText(/plain http is only allowed/)).toBeInTheDocument();
+    await user.clear(within(dialog).getByLabelText("Endpoint"));
+    await user.type(within(dialog).getByLabelText("Endpoint"), "https://s3.example.com");
+    await user.type(within(dialog).getByLabelText("Bucket"), "tenants");
+    await user.type(within(dialog).getByLabelText("Access key"), "AKIA");
+    expect(within(dialog).getByText("Enter the secret key.")).toBeInTheDocument();
+    await user.type(within(dialog).getByLabelText("Secret key"), "S3-PLAIN");
+    await user.click(within(dialog).getByRole("checkbox", { name: "Path-style addressing" }));
+
+    await user.click(within(dialog).getByRole("button", { name: "Test connection" }));
+    expect(await within(dialog).findByText("write a test file: Access Denied")).toBeInTheDocument();
+    expect(docker.testStorage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "s3", bucket: "tenants", secret: "S3-PLAIN", pathStyle: true }),
+    );
+    // Editing a field clears the result.
+    await user.type(within(dialog).getByLabelText("Prefix"), "wf");
+    expect(within(dialog).queryByText("write a test file: Access Denied")).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Test connection" }));
+    expect(await within(dialog).findByText("agent offline")).toBeInTheDocument();
+  });
+
+  it("edits keeping the secret, warning about the apps to redeploy", async () => {
+    const user = setupUser();
+    const docker = fakeDocker({
+      saveStorage: vi.fn(async (d: StorageDraft) => ({ ...saved(d), redeployed: ["a1"], warnings: ["Blog has undeployed changes"] })),
+    });
+    renderCard(docker);
+
+    await user.click(await screen.findByRole("button", { name: "Edit storage hetzner" }));
+    const dialog = await screen.findByRole("dialog");
+    // Name and type are the storage's identity: shown, not offered.
+    expect(within(dialog).queryByLabelText("Name")).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("tab")).not.toBeInTheDocument();
+    expect(within(dialog).getByText("2 apps will be redeployed.")).toBeInTheDocument();
+    expect(within(dialog).getByText("Leave empty to keep.")).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("Secret key")).toHaveValue("");
+    expect(within(dialog).getByLabelText("Bucket")).toHaveValue("tenants");
+
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    expect(docker.saveStorage).toHaveBeenCalledWith(expect.objectContaining({ name: "hetzner", secret: "", bucket: "tenants" }));
+    await waitFor(() =>
+      expect(toastWarning).toHaveBeenCalledWith("Storage saved, but not every app was redeployed", {
+        description: "Redeployed Shop.\nBlog has undeployed changes",
+      }),
+    );
+  });
+
+  it("reports a refused save and keeps the dialog open", async () => {
+    const user = setupUser();
+    const docker = fakeDocker({ saveStorage: vi.fn().mockRejectedValue(new Error("the connection test failed, nothing was saved: …")) });
+    renderCard(docker);
+    await user.click(await screen.findByRole("button", { name: "Edit storage disk" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith("Couldn't save storage", {
+        description: "the connection test failed, nothing was saved: …",
+      }),
+    );
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("wipes a typed secret when the dialog closes", async () => {
+    const user = setupUser();
+    renderCard(fakeDocker());
+    await user.click(await screen.findByRole("button", { name: "Edit storage hetzner" }));
+    let dialog = await screen.findByRole("dialog");
+    await user.type(within(dialog).getByLabelText("Secret key"), "TYPED");
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(document.body.innerHTML).not.toContain("TYPED");
+    await user.click(screen.getByRole("button", { name: "Edit storage hetzner" }));
+    dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByLabelText("Secret key")).toHaveValue("");
+  });
+
+  it("blocks removing a storage in use and confirms otherwise", async () => {
+    const user = setupUser();
+    const docker = fakeDocker();
+    renderCard(docker);
+
+    const inUse = await screen.findByRole("button", { name: "Remove storage hetzner" });
+    expect(inUse).toBeDisabled();
+    expect(inUse.parentElement).toHaveAttribute("title", "Used by 2 apps: remove its WF_STORAGE_ variables first");
+
+    await user.click(screen.getByRole("button", { name: "Remove storage disk" }));
+    const confirm = await screen.findByRole("alertdialog");
+    await user.click(within(confirm).getByRole("button", { name: "Remove storage" }));
+    expect(docker.deleteStorage).toHaveBeenCalledWith("disk");
+    await waitFor(() => expect(screen.queryByText("disk")).not.toBeInTheDocument());
+    expect(toastSuccess).toHaveBeenCalledWith("Storage removed");
+  });
+
+  it("reports load and delete failures", async () => {
+    const user = setupUser();
+    const docker = fakeDocker({
+      listStorages: vi.fn().mockRejectedValueOnce(new Error("agent offline")).mockResolvedValue(STORAGES),
+      deleteStorage: vi.fn().mockRejectedValue(new Error("disk is used by Shop")),
+    });
+    renderCard(docker);
+    expect(await screen.findByText("Couldn't load storages.")).toBeInTheDocument();
+    expect(toastError).toHaveBeenCalledWith("Failed to load storages", { description: "agent offline" });
+
+    await user.click(screen.getByRole("button", { name: "Refresh storages" }));
+    await user.click(await screen.findByRole("button", { name: "Remove storage disk" }));
+    await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Remove storage" }));
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith("Couldn't remove storage", { description: "disk is used by Shop" }),
+    );
+    expect(screen.getByText("disk")).toBeInTheDocument();
+  });
+});

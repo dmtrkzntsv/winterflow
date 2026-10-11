@@ -34,13 +34,14 @@ import {
 } from "@/context/use-docker";
 import { useServers } from "@/context/use-servers";
 import { DomainsCard } from "@/pages/settings-domains";
+import { StoragesCard } from "@/pages/settings-storages";
 import { VolumesCard } from "@/pages/settings-volumes";
 
-const TABS = ["registries", "networks", "volumes", "domains", "agent"] as const;
+const TABS = ["registries", "networks", "volumes", "domains", "storages", "agent"] as const;
 
 // SettingsPage is the server-level settings view (v1 "Server Settings"):
 // Docker registries, networks and volumes, registered domains (servers with
-// ingress only), plus agent self-update — one tab per section, synced to
+// ingress only), storages, plus agent self-update — one tab per section, synced to
 // ?tab= like the app details page.
 export default function SettingsPage() {
   const breadcrumbs = useMemo(
@@ -82,6 +83,7 @@ export default function SettingsPage() {
         <TabsTrigger value="networks">Networks</TabsTrigger>
         <TabsTrigger value="volumes">Volumes</TabsTrigger>
         {hasIngress ? <TabsTrigger value="domains">Domains</TabsTrigger> : null}
+        <TabsTrigger value="storages">Storages</TabsTrigger>
         <TabsTrigger value="agent">Agent</TabsTrigger>
       </TabsList>
       <TabsContent value="registries">
@@ -98,6 +100,9 @@ export default function SettingsPage() {
           <DomainsCard docker={docker} />
         </TabsContent>
       ) : null}
+      <TabsContent value="storages">
+        <StoragesCard docker={docker} />
+      </TabsContent>
       <TabsContent value="agent">
         <AgentCard docker={docker} />
       </TabsContent>

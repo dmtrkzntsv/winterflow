@@ -10,9 +10,12 @@ import {
   expiresNote,
   formatBytes,
   keepDays,
+  keepError,
   keepLabel,
+  locationError,
   locationLabel,
   needsAttention,
+  pathsFrom,
   relativeAge,
   resetField,
   scheduleLabel,
@@ -193,5 +196,30 @@ describe("labels", () => {
     expect(backupNameError("audit", ["database"])).toBe("");
     expect(backupNameError("Audit", [])).toContain("lowercase");
     expect(backupNameError("database", ["database"])).toBe("The app already has a backup named database.");
+  });
+});
+
+describe("the backup forms' checks", () => {
+  it("splits paths by line or comma", () => {
+    expect(pathsFrom(" /a \n\n/b, /c ")).toEqual(["/a", "/b", "/c"]);
+    expect(pathsFrom("")).toEqual([]);
+  });
+  it("checks a retention", () => {
+    expect(keepError("24h", "14", "6")).toBe("");
+    expect(keepError("", "0", "0")).toBe("");
+    expect(keepError("a day", "14", "6")).toBe("Keep every copy for a duration like 24h or 72h.");
+    expect(keepError("24h", "-1", "6")).toContain("whole numbers");
+    expect(keepError("24h", "14", "4000")).toContain("whole numbers");
+  });
+  it("checks a location", () => {
+    expect(locationError("sqlite", "volume", "data", ["app.db"])).toBe("");
+    expect(locationError("files", "volume", "data", [])).toBe("");
+    expect(locationError("files", "volume", "", [])).toBe("Pick a volume.");
+    expect(locationError("files", "service", "", [])).toBe("Pick a service.");
+    expect(locationError("sqlite", "volume", "data", [])).toBe("Enter the database file's path.");
+    expect(locationError("files", "service", "web", [])).toBe("Enter the paths to back up.");
+    expect(locationError("files", "service", "web", ["app"])).toBe("app: use an absolute path in the container, like /app/data.");
+    expect(locationError("files", "volume", "data", ["/abs"])).toBe("/abs: use a path inside the volume, like app.db or media/.");
+    expect(locationError("files", "volume", "data", ["a/../b"])).toContain("inside the volume");
   });
 });

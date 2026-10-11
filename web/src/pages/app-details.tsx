@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { AppIcon } from "@/components/app-icon";
 import { LogsView, type LogLine } from "@/components/logs-view";
+import { AppBackups } from "@/components/app-backups";
 import { AppEditorPanel } from "@/components/app-editor-panel";
 import { AppStatusIndicator } from "@/components/app-status-badge";
 import { DeleteAppDialog } from "@/components/delete-app-dialog";
@@ -48,7 +49,7 @@ import { cn } from "@/lib/utils";
 
 const base = apiBaseUrl.endsWith("/") ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
 
-const TABS = ["logs", "editor", "history", "settings"] as const;
+const TABS = ["logs", "editor", "backups", "history", "settings"] as const;
 
 const tabTriggerClass =
   "-mb-px rounded-none border-b-2 border-transparent px-1 pt-1 pb-2.5 text-muted-foreground shadow-none hover:text-foreground data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none";
@@ -183,6 +184,9 @@ export default function AppDetailsPage() {
           <TabsTrigger value="editor" className={tabTriggerClass}>
             Configuration
           </TabsTrigger>
+          <TabsTrigger value="backups" className={tabTriggerClass}>
+            Backups
+          </TabsTrigger>
           <TabsTrigger value="history" className={tabTriggerClass}>
             History
           </TabsTrigger>
@@ -195,6 +199,9 @@ export default function AppDetailsPage() {
         </TabsContent>
         <TabsContent value="editor" className="mt-0">
           <AppEditorPanel appId={app.id} />
+        </TabsContent>
+        <TabsContent value="backups" className="mt-6">
+          <AppBackups appId={app.id} />
         </TabsContent>
         <TabsContent value="history" className="mt-6">
           <HistoryTab appId={app.id} />

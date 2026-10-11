@@ -288,3 +288,42 @@ export function backupNameError(name: string, taken: readonly string[]): string 
   if (!NAME_RE.test(name)) return "Use 1-32 lowercase letters, digits and inner hyphens, like database.";
   return taken.includes(name) ? `The app already has a backup named ${name}.` : "";
 }
+
+// selectClass styles a native <select> like the design system's inputs.
+export const selectClass =
+  "h-9 w-full min-w-0 rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50";
+
+// pathsFrom splits a paths field (one per line, or comma-separated) into
+// its trimmed, non-empty paths.
+export function pathsFrom(text: string): string[] {
+  return text
+    .split(/[\n,]/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+}
+
+// keepError checks a retention's fields like the recipe; "" means valid.
+export function keepError(recent: string, daily: string, monthly: string): string {
+  const ms = durationMs(recent.trim());
+  if (recent.trim() && (Number.isNaN(ms) || ms < 0)) return "Keep every copy for a duration like 24h or 72h.";
+  for (const n of [daily, monthly]) {
+    if (!/^\d+$/.test(n.trim()) || Number(n) > 3650) return "Use whole numbers from 0 to 3650 for the daily and monthly copies.";
+  }
+  return "";
+}
+
+// locationError checks a backup's place like the recipe: a volume's paths
+// are relative to it (none: the whole volume, files only), a service's are
+// absolute paths in its container; "" means valid.
+export function locationError(type: BackupType, where: "volume" | "service", target: string, paths: string[]): string {
+  if (!target) return where === "volume" ? "Pick a volume." : "Pick a service.";
+  if (type === "sqlite" && paths.length !== 1) return "Enter the database file's path.";
+  if (where === "service" && paths.length === 0) return "Enter the paths to back up.";
+  for (const p of paths) {
+    if (where === "service" && !p.startsWith("/")) return `${p}: use an absolute path in the container, like /app/data.`;
+    if (where === "volume" && (p.startsWith("/") || p.split("/").includes(".."))) {
+      return `${p}: use a path inside the volume, like app.db or media/.`;
+    }
+  }
+  return "";
+}

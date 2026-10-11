@@ -1,0 +1,45 @@
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
+import { describe, expect, it, vi } from "vitest";
+
+import { BackupStorageDialog } from "@/components/backup-storage-dialog";
+
+function renderDialog(load: () => Promise<string[]>, current = "") {
+  const onPick = vi.fn();
+  render(
+    <MemoryRouter>
+      <BackupStorageDialog backup="database" current={current} open load={load} onOpenChange={() => {}} onPick={onPick} />
+    </MemoryRouter>,
+  );
+  return onPick;
+}
+
+describe("BackupStorageDialog", () => {
+  it("picks one of the server's storages", async () => {
+    const user = userEvent.setup({ delay: null });
+    const onPick = renderDialog(async () => ["disk", "offsite"], "offsite");
+    const select = await screen.findByLabelText("Storage");
+    expect(select).toHaveValue("offsite");
+    await user.selectOptions(select, "disk");
+    await user.click(screen.getByRole("button", { name: "Turn on" }));
+    expect(onPick).toHaveBeenCalledWith("disk");
+  });
+
+  it("starts on the first storage when the last one is gone", async () => {
+    renderDialog(async () => ["disk"], "removed");
+    expect(await screen.findByLabelText("Storage")).toHaveValue("disk");
+  });
+
+  it("points to Settings → Storages when there are none", async () => {
+    renderDialog(async () => []);
+    const link = await screen.findByRole("link", { name: "Add a storage in Settings → Storages" });
+    expect(link).toHaveAttribute("href", "/settings?tab=storages");
+    expect(screen.getByRole("button", { name: "Turn on" })).toBeDisabled();
+  });
+
+  it("says when the storages can't be loaded", async () => {
+    renderDialog(() => Promise.reject(new Error("server offline")));
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("server offline"));
+  });
+});

@@ -763,9 +763,14 @@ paths:
         $ref: '#/components/schemas/RenameAppResponse'
   /api/v1/app/restore-backup:
     post:
-      description: The result arrives when the restore ends. On a failure that leaves
-        the data as it was, the app is started again; a files restore that fails half-way
-        leaves the app stopped and names the pre-restore point to restore.
+      description: 'The result arrives when the restore ends. On a failure that leaves
+        the data as it was (the helper failed cleanly, or a files helper was stopped
+        before it began replacing data), the app is started again. Any other end (a
+        crash, a kill, a swap that fails half-way, an agent stop; sqlite as well as
+        files) may have left the data partly replaced: the app is left stopped and
+        removed (never its volumes) and the error names the pre-restore point to restore.
+        A copy made under a location the backup no longer has is refused, and so is
+        a restore that needs more time than is left for the copy''s size.'
       operationId: appRestoreBackup
       requestBody:
         content:

@@ -128,8 +128,12 @@ func (h *Handler) Routes(api.Guards) []api.Route {
 		{
 			Method: http.MethodPost, Path: "/api/v1/app/restore-backup", Handler: h.RestoreBackup, Auth: api.User,
 			Summary: "Restore a restore point in place (the app is stopped, its data saved as a pre-restore point first)", Tag: "backups",
-			Description: "The result arrives when the restore ends. On a failure that leaves the data as it was, the app is " +
-				"started again; a files restore that fails half-way leaves the app stopped and names the pre-restore point to restore.",
+			Description: "The result arrives when the restore ends. On a failure that leaves the data as it was (the helper " +
+				"failed cleanly, or a files helper was stopped before it began replacing data), the app is started again. Any " +
+				"other end (a crash, a kill, a swap that fails half-way, an agent stop; sqlite as well as files) may have left the " +
+				"data partly replaced: the app is left stopped and removed (never its volumes) and the error names the " +
+				"pre-restore point to restore. A copy made under a location the backup no longer has is refused, and so is a " +
+				"restore that needs more time than is left for the copy's size.",
 			Request: RestoreBackupRequest{}, Accepted: true, Result: command.RestoreBackupResponse{}, Errors: server,
 		},
 		{

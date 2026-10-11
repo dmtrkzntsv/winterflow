@@ -399,7 +399,7 @@ func TestRestoreLeftStoppedDetails(t *testing.T) {
 }
 
 // A restore stopped because its app is being deleted doesn't start it
-// again; a start that fails is a warning once the data is back.
+// again (data unchanged: the containers stay for the delete to remove); a start that fails is a warning once the data is back.
 func TestRestoreStartAgain(t *testing.T) {
 	rr := newRestoreRepo(t)
 	id := rr.point(t, "database")
@@ -500,9 +500,11 @@ func TestRemoveRestoreDownloads(t *testing.T) {
 	}
 }
 
-// A restore stopped because its app is being deleted removes nothing and
-// starts nothing, whatever the helper's end.
-func TestRestoreAppDeletedLeavesContainersAlone(t *testing.T) {
+// A restore stopped because its app is being deleted starts nothing; when the
+// helper may have been replacing data, its containers are removed (never -v)
+// all the same, so that a delete that then fails leaves nothing that could
+// start on that data.
+func TestRestoreAppDeletedStartsNothing(t *testing.T) {
 	rr := newRestoreRepo(t)
 	id := rr.filesPoint(t)
 	ctx, cancel := context.WithCancelCause(context.Background())
@@ -512,7 +514,7 @@ func TestRestoreAppDeletedLeavesContainersAlone(t *testing.T) {
 	if _, err := rr.restore(ctx, "media", id); err == nil {
 		t.Fatal("no error")
 	}
-	if !slices.Equal(rr.compose, []string{"stop"}) {
+	if !slices.Equal(rr.compose, []string{"stop", "down"}) {
 		t.Fatalf("compose calls = %v", rr.compose)
 	}
 }

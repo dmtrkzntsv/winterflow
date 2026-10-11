@@ -237,8 +237,9 @@ func (r *Repository) removeRestoreDownloads() {
 //
 //  1. the point is downloaded (size and free space checked first) and its
 //     sha256 checked against its manifest; a mismatch, an unreadable archive,
-//     a manifest of another type, or too little of the time budget left
-//     aborts before anything is stopped;
+//     a manifest of another type or of a location the backup no longer has,
+//     or too little of the time budget left for the copy's size (looked at
+//     again after the pre-restore copy) aborts before anything is replaced;
 //  2. the app is marked as being restored (other operations on it are
 //     refused with ErrRestoring, and the restore itself is refused with
 //     ErrAppBusy while one is running), and a running app is stopped
@@ -254,9 +255,11 @@ func (r *Repository) removeRestoreDownloads() {
 // The data is left as it was, and the app started again (unless the
 // restore was stopped because the app is being deleted), only when the
 // helper never ran or failed cleanly (exit 1, docker's own 125-127, a
-// helper that did not start). Any other end — a crash, a kill, a swap that
-// failed half-way, a "success" with no result, the agent stopping the
-// helper — may have left the data partly replaced: the app is left stopped
+// helper that did not start), or when a files helper was stopped from
+// outside before it printed its swapping line (it had only written its temp
+// folders). Any other end — a crash, a kill, a swap that failed half-way, a
+// "success" with no result, the agent stopping the helper — may have left
+// the data partly replaced: the app is left stopped
 // and removed (compose down, never -v, so nothing can start it on that
 // data), and the error names the pre-restore point to go back to. ctx
 // bounds the whole restore.
@@ -490,10 +493,12 @@ func reason(res helper.Result, stderr []byte, exit int) string {
 // removed) would be started again by a redeploy, or by Docker's restart
 // policy after a daemon or host restart, on data that may be half replaced.
 // compose down (never -v) removes them, on a context of its own bounded by
-// restartTimeout; an app being deleted, or one that was not running, is left
-// alone. It returns cause, with the failure of the removal joined to it.
+// restartTimeout; an app that was not running is left alone. An app being
+// deleted is no exception: if the delete then fails, the app must not be left
+// with containers over data that may be half replaced. It returns cause, with
+// the failure of the removal joined to it.
 func (r *Repository) leaveStopped(ctx context.Context, appID string, running bool, cause error) error {
-	if !running || errors.Is(context.Cause(ctx), ErrAppDeleted) {
+	if !running {
 		return cause
 	}
 	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), restartTimeout)

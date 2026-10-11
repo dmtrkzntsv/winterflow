@@ -76,6 +76,8 @@ export function StorageDialog({
   const [probe, setProbe] = useState<Probe>({ state: "idle" });
   const [busy, setBusy] = useState(false);
   const [saveError, setSaveError] = useState("");
+  // Path-style follows the endpoint on an add until the user sets it.
+  const [pathStyleSet, setPathStyleSet] = useState(false);
   // The furthest field (DRAFT_FIELDS index) the user changed or left: a
   // problem shows once the user reached its field.
   const [reached, setReached] = useState(-1);
@@ -297,12 +299,10 @@ export function StorageDialog({
                   draft.endpoint,
                   (v) =>
                     // An IP address or localhost has no bucket.host names: on
-                    // an add, path-style follows the endpoint while it still
-                    // has the endpoint's default (the user didn't set it).
+                    // an add, path-style follows the endpoint until the user
+                    // ticks or unticks it, then it never moves by itself.
                     set(
-                      !editing && draft.pathStyle === pathStyleDefault(draft.endpoint)
-                        ? { endpoint: v, pathStyle: pathStyleDefault(v) }
-                        : { endpoint: v },
+                      !editing && !pathStyleSet ? { endpoint: v, pathStyle: pathStyleDefault(v) } : { endpoint: v },
                       "endpoint",
                     ),
                   { placeholder: "https://s3.example.com" },
@@ -325,7 +325,10 @@ export function StorageDialog({
                 <label className="flex items-center gap-2 text-sm">
                   <Checkbox
                     checked={draft.pathStyle}
-                    onCheckedChange={(v) => set({ pathStyle: v === true })}
+                    onCheckedChange={(v) => {
+                      setPathStyleSet(true);
+                      set({ pathStyle: v === true });
+                    }}
                     aria-label="Path-style addressing"
                   />
                   Path-style addressing (MinIO and some providers)

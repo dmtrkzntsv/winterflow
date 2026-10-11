@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { Archive, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -32,7 +32,9 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { AppLinks } from "@/components/app-links";
+import { OrphansDialog } from "@/components/orphans-dialog";
 import { StorageDialog } from "@/components/storage-dialog";
+import { useBackups } from "@/context/use-backups";
 import { type Docker } from "@/context/use-docker";
 import { useApps } from "@/context/use-apps";
 import { returnFocusTo } from "@/lib/focus";
@@ -52,6 +54,9 @@ export function StoragesCard({ docker }: { docker: Docker }) {
   const [edit, setEdit] = useState<Storage | null>(null);
   const [dialogKey, setDialogKey] = useState(0);
   const [toDelete, setToDelete] = useState<Storage | null>(null);
+  // The storage whose backups of apps not on this server are shown.
+  const [orphansOf, setOrphansOf] = useState<string | null>(null);
+  const backups = useBackups();
   // The dialogs have no trigger of their own (the storage dialog remounts
   // per opening): focus goes back to the button that opened them, or to
   // Add storage when that button left with its row.
@@ -215,6 +220,19 @@ export function StoragesCard({ docker }: { docker: Docker }) {
                         size="icon"
                         variant="ghost"
                         className="size-8 text-muted-foreground"
+                        aria-label={`Backups of apps not on this server in ${s.name}`}
+                        title="Backups of apps not on this server"
+                        onClick={(e) => {
+                          opener.current = e.currentTarget;
+                          setOrphansOf(s.name);
+                        }}
+                      >
+                        <Archive className="size-4" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="size-8 text-muted-foreground"
                         aria-label={`Edit storage ${s.name}`}
                         title="Edit storage"
                         onClick={(e) => openDialog(s, e.currentTarget)}
@@ -268,6 +286,16 @@ export function StoragesCard({ docker }: { docker: Docker }) {
         onOpenChange={setDialogOpen}
         onSaved={saved}
       />
+      {orphansOf ? (
+        <OrphansDialog
+          key={orphansOf}
+          backups={backups}
+          storage={orphansOf}
+          open
+          returnFocus={opener}
+          onOpenChange={(o) => !o && setOrphansOf(null)}
+        />
+      ) : null}
       <AlertDialog open={toDelete !== null} onOpenChange={(o) => !o && setToDelete(null)}>
         <AlertDialogContent onCloseAutoFocus={returnFocusTo(opener, addButton)}>
           <AlertDialogHeader>

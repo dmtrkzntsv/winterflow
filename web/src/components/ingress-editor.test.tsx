@@ -159,7 +159,9 @@ describe("IngressEditor", () => {
     render(<Harness ingress={oneDomain("")} />);
 
     await user.type(screen.getByLabelText("Hostname"), "shop.other.app");
-    await screen.findByText(/No domain on this server covers this hostname/);
+    // An edited hostname is checked after a 400 ms debounce, which leaves the
+    // default 1 s wait little room on a loaded CI runner: wait longer.
+    await screen.findByText(/No domain on this server covers this hostname/, undefined, { timeout: 4000 });
     const loads = calls("/api/v1/domain/get-domains").length;
 
     // Registered in the other tab meanwhile.
@@ -170,11 +172,11 @@ describe("IngressEditor", () => {
       window.dispatchEvent(new Event("focus"));
     });
 
-    await waitFor(() =>
-      expect(screen.queryByText(/No domain on this server covers/)).not.toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.queryByText(/No domain on this server covers/)).not.toBeInTheDocument(), {
+      timeout: 4000,
+    });
     expect(calls("/api/v1/domain/get-domains").length).toBe(loads + 1);
-    expect(await screen.findByText("Auto TLS")).toBeInTheDocument();
+    expect(await screen.findByText("Auto TLS", undefined, { timeout: 4000 })).toBeInTheDocument();
     expect(screen.getByText("*.other.app")).toBeInTheDocument();
     expect(screen.getByLabelText("Hostname")).toHaveAttribute("aria-invalid", "false");
 

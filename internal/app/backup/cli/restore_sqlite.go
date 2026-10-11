@@ -41,8 +41,9 @@ func restoreSQLiteCmd(args []string, stdin io.Reader) (Result, error) {
 // -wal, -shm and -journal files are moved aside as <file>.restore-old (SQLite
 // would otherwise replay them onto the new file), a rename puts the copy in
 // place, and the moved files are removed only after it. Any failure puts them
-// back: the original, with its WAL, is as it was. (A helper killed in between
-// leaves them aside, not lost.) entry is the database's name in the backup,
+// back: the original, with its WAL, is as it was. When putting them back
+// fails too, the restore is errPartial (exit 5: they stay aside). (A helper
+// killed in between leaves them aside, not lost.) entry is the database's name in the backup,
 // which messages use instead of the helper's /src/<n> path.
 func restoreSQLite(path, entry string, in io.Reader) (Result, error) {
 	shown := path
@@ -76,6 +77,9 @@ func restoreSQLite(path, entry string, in io.Reader) (Result, error) {
 	if n == 0 {
 		return Result{}, errors.New("the copy is empty")
 	}
+	if afterWrite != nil {
+		afterWrite()
+	}
 	// The owner and mode go on through the descriptor (fchown, fchmod):
 	// they never follow whatever has since appeared at the path.
 	if st, ok := owner.Sys().(*syscall.Stat_t); ok {
@@ -108,7 +112,7 @@ func restoreSQLite(path, entry string, in io.Reader) (Result, error) {
 	if err := rename(tmp, path); err != nil {
 		err = fmt.Errorf("put the copy in place: %w", scrub(err))
 		if rerr := putBack(path, asides); rerr != nil {
-			err = fmt.Errorf("%w; %v", err, rerr)
+			err = fmt.Errorf("%w; %v: %w", err, rerr, errPartial)
 		}
 		return Result{}, err
 	}
@@ -126,9 +130,10 @@ const restoreOld = ".restore-old"
 
 var restoreOldExts = []string{"-wal", "-shm", "-journal"}
 
-// Test seams: beforeSwap runs between the copy's check and the swap; rename
-// is os.Rename.
+// Test seams: afterWrite runs once the copy is written, beforeSwap between
+// its check and the swap; rename is os.Rename.
 var (
+	afterWrite func()
 	beforeSwap func()
 	rename     = os.Rename
 )
@@ -139,14 +144,14 @@ var (
 func moveAside(path string) ([]string, error) {
 	var moved []string
 	for _, ext := range restoreOldExts {
-		err := os.Rename(path+ext, path+ext+restoreOld)
+		err := rename(path+ext, path+ext+restoreOld)
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
 		}
 		if err != nil {
 			err = fmt.Errorf("set the old %s file aside: %w", ext, scrub(err))
 			if rerr := putBack(path, moved); rerr != nil {
-				err = fmt.Errorf("%w; %v", err, rerr)
+				err = fmt.Errorf("%w; %v: %w", err, rerr, errPartial)
 			}
 			return nil, err
 		}
@@ -159,7 +164,7 @@ func moveAside(path string) ([]string, error) {
 func putBack(path string, moved []string) error {
 	var failed []string
 	for _, ext := range moved {
-		if err := os.Rename(path+ext+restoreOld, path+ext); err != nil {
+		if err := rename(path+ext+restoreOld, path+ext); err != nil {
 			failed = append(failed, ext)
 		}
 	}

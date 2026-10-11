@@ -203,6 +203,76 @@ func TestRestoreSQLiteFailedSwapKeepsTheWAL(t *testing.T) {
 	}
 }
 
+// When the old files can't be put back either, the restore is partial (exit
+// 5): they stay set aside, and the caller must not treat the data as intact.
+func TestRestoreSQLitePutBackFailureIsPartial(t *testing.T) {
+	for name, fails := range map[string]func(to string) bool{
+		// the swap fails, and so does every put-back
+		"swap": func(to string) bool { return !strings.HasSuffix(to, restoreOld) },
+		// setting the -journal aside fails, and so does putting the -wal back
+		"set aside": func(to string) bool {
+			return strings.HasSuffix(to, "-journal"+restoreOld) || strings.HasSuffix(to, "app.db-wal")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "app.db")
+			copied := walFixture(t, path, 50, 25)
+			if err := os.WriteFile(path+"-journal", nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			recordChowns(t)
+			prev := rename
+			t.Cleanup(func() { rename = prev })
+			rename = func(from, to string) error {
+				if fails(to) {
+					return &os.LinkError{Op: "rename", Old: from, New: to, Err: syscall.EIO}
+				}
+				return prev(from, to)
+			}
+			code, res := restore(t, copied, "sqlite", path)
+			if code != ExitPartial || !strings.Contains(res.Error, "stay set aside as *"+restoreOld) || strings.Contains(res.Error, "partial") || strings.Contains(res.Error, dir) {
+				t.Fatalf("%d %+v", code, res)
+			}
+			if _, err := os.Stat(path + "-wal" + restoreOld); err != nil {
+				t.Fatalf("the old -wal is not kept aside: %v", err)
+			}
+		})
+	}
+}
+
+// The owner and mode are set through the open file, not the copy's path: a
+// symlink put there as soon as the copy is written gets neither.
+func TestRestoreSQLiteGivesOwnerAndModeByDescriptor(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "app.db")
+	copied := walFixture(t, path, 10, 5)
+	target := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(target, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	chowns := recordChowns(t)
+	t.Cleanup(func() { afterWrite = nil })
+	afterWrite = func() {
+		tmp := path + ".restore-tmp"
+		if err := os.Remove(tmp); err != nil {
+			t.Error(err)
+		}
+		if err := os.Symlink(target, tmp); err != nil {
+			t.Error(err)
+		}
+	}
+	if code, res := restore(t, copied, "sqlite", path); code != ExitFailed {
+		t.Fatalf("%d %+v", code, res)
+	}
+	if info, _ := os.Stat(target); info.Mode().Perm() != 0o600 {
+		t.Fatalf("the target's mode became %v", info.Mode())
+	}
+	if _, ok := chowns.of("secret"); ok {
+		t.Fatal("the target was chowned")
+	}
+}
+
 // A leftover .restore-old of a killed run is replaced by the live file and
 // removed after a successful restore.
 func TestRestoreSQLiteClearsLeftoverAsides(t *testing.T) {

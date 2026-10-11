@@ -173,6 +173,14 @@ func walk(s source, exclude []string, warn func(string), fn func(entry) error) e
 		if name == "" { // the root of a whole volume
 			return nil
 		}
+		// A restore's temp folders at the top of a source (see
+		// restoreTmpPrefix) are never part of a copy.
+		if rel != "." && !strings.Contains(rel, string(filepath.Separator)) && strings.HasPrefix(d.Name(), restoreTmpPrefix) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 		if excluded(name, d.IsDir(), exclude) {
 			if d.IsDir() {
 				return filepath.SkipDir

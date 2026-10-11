@@ -404,3 +404,24 @@ func TestHungBindSourceIsStatedOnce(t *testing.T) {
 		t.Fatalf("%d stats still registered", left)
 	}
 }
+
+// A volume mounted at two container paths, both listed, is one place: it is
+// archived (and restored) once, or the second restore would swap the first
+// one's data back out.
+func TestResolveBackupArchivesAVolumeListedTwiceOnce(t *testing.T) {
+	m := testModel(t)
+	b := recipe.EffectiveBackup{Name: "nc", Type: recipe.TypeFiles, Service: "ncskip", Paths: []string{"/var/www/html", "/var/www/htmlx"}}
+	got, err := resolveBackup(m, b, isSettingsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var whole []string
+	for _, p := range got.Paths {
+		if p.Mount == 0 && p.Sub == "" {
+			whole = append(whole, p.Entry)
+		}
+	}
+	if !reflect.DeepEqual(whole, []string{"var/www/html"}) {
+		t.Fatalf("the volume is listed as %q in %+v", whole, got.Paths)
+	}
+}

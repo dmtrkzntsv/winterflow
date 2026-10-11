@@ -11,6 +11,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -169,7 +170,7 @@ func restoreFiles(targets []target, id string, need map[string]uint64, exclude [
 	asides := map[string]string{} // mount root -> where the old data goes
 	for _, t := range targets {
 		roots[t.root] = filepath.Join(t.root, tmpName)
-		asides[t.root] = filepath.Join(t.root, tmpName+".old")
+		asides[t.root] = filepath.Join(t.root, tmpName+restoreOldSuffix)
 	}
 	for _, t := range targets {
 		if err := checkParents(t); err != nil {
@@ -179,8 +180,15 @@ func restoreFiles(targets []target, id string, need map[string]uint64, exclude [
 	if err := checkMounts(targets); err != nil {
 		return Result{}, err
 	}
-	// A killed restore leaves its temp folders, possibly a whole extracted
-	// copy: they go first, or they would eat the room the check looks for.
+	// Old data an earlier restore could not put back is never deleted for
+	// the user: they decide.
+	for root := range roots {
+		if err := checkOldData(root, targets); err != nil {
+			return Result{}, err
+		}
+	}
+	// A killed restore leaves its extraction folder, possibly a whole copy:
+	// it goes first, or it would eat the room the check looks for.
 	for root := range roots {
 		removeStale(root)
 	}
@@ -368,17 +376,59 @@ func human(n uint64) string {
 	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
 }
 
-// removeStale removes the temp folders a killed restore left at root.
+// restoreOldSuffix ends the name of the folder holding the data a restore
+// replaces.
+const restoreOldSuffix = ".old"
+
+// removeStale removes the extraction folders a killed restore left at root
+// (never a .old folder: see checkOldData).
 func removeStale(root string) {
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return
 	}
 	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), restoreTmpPrefix) {
+		if strings.HasPrefix(e.Name(), restoreTmpPrefix) && !strings.HasSuffix(e.Name(), restoreOldSuffix) {
 			_ = os.RemoveAll(filepath.Join(root, e.Name()))
 		}
 	}
+}
+
+// checkOldData refuses a mount holding a .wf-restore-*.old folder with files
+// in it: after a restore that failed half-way it holds the only copy of what
+// could not be put back (the pre-restore point never holds the files its
+// backup excludes). One without files in it is removed.
+func checkOldData(root string, targets []target) error {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil
+	}
+	for _, e := range entries {
+		if !strings.HasPrefix(e.Name(), restoreTmpPrefix) || !strings.HasSuffix(e.Name(), restoreOldSuffix) {
+			continue
+		}
+		dir := filepath.Join(root, e.Name())
+		hasFiles := false
+		_ = filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
+			if err != nil || !d.IsDir() {
+				hasFiles = true
+				return filepath.SkipAll
+			}
+			return nil
+		})
+		if hasFiles {
+			shown := root
+			for _, t := range targets {
+				if t.root == root {
+					shown = t.display()
+					break
+				}
+			}
+			return fmt.Errorf("old data from an earlier incomplete restore is kept in %s at the root of the mount holding %s; move or remove it, then restore again", e.Name(), shown)
+		}
+		_ = os.RemoveAll(dir)
+	}
+	return nil
 }
 
 // meta is the owner, mode and times of an archive entry.
@@ -704,6 +754,9 @@ func swap(targets []target, roots, asides map[string]string, seen map[int]bool, 
 	)
 	for _, i := range order {
 		t := targets[i]
+		if covered(t, targets, order[:slices.Index(order, i)]) {
+			continue // the same folder as, or inside, a path already swapped
+		}
 		aside := filepath.Join(asides[t.root], strconv.Itoa(i))
 		var s swapped
 		var err error
@@ -732,6 +785,20 @@ func swap(targets []target, roots, asides map[string]string, seen map[int]bool, 
 		syncDir(root)
 	}
 	return false, nil
+}
+
+// covered reports whether t is the same path as, or below, one of the
+// targets before it in the same mount (a mount listed at two container
+// paths gives two targets for one folder): swapping it again would move the
+// restored data aside.
+func covered(t target, targets []target, before []int) bool {
+	for _, j := range before {
+		u := targets[j]
+		if u.root == t.root && (u.sub == "" || t.sub == u.sub || strings.HasPrefix(t.sub, u.sub+"/")) {
+			return true
+		}
+	}
+	return false
 }
 
 // swapPath replaces the path t.src: the old one goes to aside/old, the
@@ -781,12 +848,19 @@ func mkdirLike(root, dir string) error {
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		return err
 	}
+	// Owner and mode through a descriptor, never following a symlink that
+	// has since taken the folder's place.
+	f, err := os.OpenFile(dir, os.O_RDONLY|syscall.O_DIRECTORY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
 	if st, ok := info.Sys().(*syscall.Stat_t); ok {
-		if err := lchown(dir, int(st.Uid), int(st.Gid)); err != nil {
+		if err := fchown(f, int(st.Uid), int(st.Gid)); err != nil {
 			return err
 		}
 	}
-	return os.Chmod(dir, info.Mode()&(fs.ModePerm|fs.ModeSetgid|fs.ModeSticky))
+	return f.Chmod(info.Mode() & (fs.ModePerm | fs.ModeSetgid | fs.ModeSticky))
 }
 
 // swapMount replaces everything at a mount's root (but restore temp
@@ -826,6 +900,12 @@ func keepExcluded(s swapped, exclude []string, warn func(string)) error {
 	if len(exclude) == 0 || s.old == "" {
 		return nil
 	}
+	// The restored path must be a real folder: files are never moved through
+	// a symlink there.
+	freshIsDir := false
+	if info, err := os.Lstat(s.fresh); err == nil && info.IsDir() {
+		freshIsDir = true
+	}
 	return filepath.WalkDir(s.old, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -843,6 +923,10 @@ func keepExcluded(s swapped, exclude []string, warn func(string)) error {
 				return filepath.SkipDir
 			}
 			return nil
+		}
+		if !freshIsDir {
+			warn("/" + entry + ": not kept, the restored copy is not a folder")
+			return skip()
 		}
 		dest := filepath.Join(s.fresh, rel)
 		if err := keepParents(s.old, s.fresh, filepath.Dir(rel)); err != nil {

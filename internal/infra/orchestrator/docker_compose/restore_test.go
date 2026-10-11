@@ -310,7 +310,8 @@ func TestRestoreHelperStopped(t *testing.T) {
 	rr.compose = nil
 	id = rr.filesPoint(t)
 	_, err = rr.restore(context.Background(), "media", id)
-	if !errors.Is(err, stopped) || !strings.Contains(err.Error(), "the paths may be partly replaced. The app was left stopped; restore the pre-restore point 20261011T140000Z-pre-restore to go back") {
+	if !errors.Is(err, stopped) || !strings.Contains(err.Error(), "the paths may be partly replaced. The app was left stopped; restore the pre-restore point 20261011T140000Z-pre-restore to go back") ||
+		!strings.Contains(err.Error(), "stays in a .wf-restore-*.old folder at the root of the mount: move or remove it before restoring again") {
 		t.Fatalf("files: %v", err)
 	}
 	if !slices.Equal(rr.compose, []string{"stop", "down"}) {

@@ -5,7 +5,9 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -763,5 +765,114 @@ func TestRestoreFilesNestedPathsAndMissingParents(t *testing.T) {
 	}
 	if c, ok := logs.of("p"); !ok || c != [2]int{os.Getuid(), os.Getgid()} {
 		t.Fatalf("p's owner = %v %v", c, ok)
+	}
+}
+
+// Old data an incomplete restore (exit 5) kept aside is never deleted by the
+// next one: that restore is refused and the folder stays. A .old folder with
+// no files in it is just removed, and so is a plain extraction folder.
+func TestRestoreFilesNeverDeletesOldData(t *testing.T) {
+	root := t.TempDir()
+	writeFileT(t, root, "a/b/old.txt", "old")
+	recordChowns(t)
+	failRenames(t, 2, 1000)
+	args := []string{"files", "--id", "r4", "--root", root, "--src", root + "/a/b", "--entry", "x"}
+	if code, _ := restore(t, tarOf(t, file("x/new.txt", "new")), args...); code != ExitPartial {
+		t.Fatalf("first restore: %d", code)
+	}
+	rename = os.Rename
+	kept := filepath.Join(root, ".wf-restore-r4.old", "0", "old", "old.txt")
+	args[2] = "r5"
+	code, res := restore(t, tarOf(t, file("x/new.txt", "new")), args...)
+	if code != ExitFailed || !strings.Contains(res.Error, "old data from an earlier incomplete restore is kept in .wf-restore-r4.old") ||
+		!strings.Contains(res.Error, "move or remove it, then restore again") {
+		t.Fatalf("second restore: %d %+v", code, res)
+	}
+	if body, err := os.ReadFile(kept); err != nil || string(body) != "old" {
+		t.Fatalf("the old data is gone: %q %v", body, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "a", "b", "new.txt")); !os.IsNotExist(err) {
+		t.Fatal("the refused restore changed the mount")
+	}
+
+	// The user clears it; folders without files and a killed run's
+	// extraction folder do not stand in the way.
+	if err := os.RemoveAll(filepath.Join(root, ".wf-restore-r4.old")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".wf-restore-z.old", "0", "old"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeFileT(t, root, ".wf-restore-q/x", "stale")
+	if code, res := restore(t, tarOf(t, file("x/new.txt", "new")), args...); code != ExitOK {
+		t.Fatalf("third restore: %d %+v", code, res)
+	}
+	if left, _ := filepath.Glob(filepath.Join(root, restoreTmpPrefix+"*")); len(left) != 0 {
+		t.Fatalf("temp folders left: %v", left)
+	}
+}
+
+// One folder listed twice as a whole mount (a volume mounted at two container
+// paths) is restored once: the second target must not move the data back
+// out.
+func TestRestoreFilesTheSameMountListedTwice(t *testing.T) {
+	root := t.TempDir()
+	writeFileT(t, root, "f.txt", "original")
+	archive := dumpOf(t, "--src", root, "--entry", "a", "--src", root, "--entry", "b")
+	writeFileT(t, root, "f.txt", "newer")
+	writeFileT(t, root, "g.txt", "later")
+	recordChowns(t)
+	code, res := restore(t, archive, "files", "--id", "d1", "--root", root, "--src", root, "--entry", "a", "--root", root, "--src", root, "--entry", "b")
+	if code != ExitOK {
+		t.Fatalf("%d %+v", code, res)
+	}
+	if body, err := os.ReadFile(filepath.Join(root, "f.txt")); err != nil || string(body) != "original" {
+		t.Fatalf("f.txt = %q %v", body, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "g.txt")); !os.IsNotExist(err) {
+		t.Fatal("g.txt survived")
+	}
+}
+
+// Excluded files are only kept inside a real folder: when the restored path
+// is a symlink they stay out (and are reported), never moved through it.
+func TestRestoreFilesKeepsNothingThroughASymlink(t *testing.T) {
+	root, other := t.TempDir(), t.TempDir()
+	writeFileT(t, root, "media/sub/x.mp4", "movie")
+	recordChowns(t)
+	code, res := restore(t, tarOf(t, &tar.Header{Name: "app/media", Typeflag: tar.TypeSymlink, Linkname: other}), "files", "--id", "y1",
+		"--root", root, "--src", root+"/media", "--entry", "app/media", "--exclude", "*.mp4")
+	if code != ExitOK || len(res.Warnings) != 1 || res.Warnings[0] != "/app/media/sub/x.mp4: not kept, the restored copy is not a folder" {
+		t.Fatalf("%d %+v", code, res)
+	}
+	if entries, _ := os.ReadDir(other); len(entries) != 0 {
+		t.Fatalf("files were moved through the link: %v", entries)
+	}
+}
+
+// A whole-volume dump leaves a restore's temp folders out of the copy.
+func TestDumpSkipsRestoreTempFolders(t *testing.T) {
+	root := t.TempDir()
+	writeFileT(t, root, "data.txt", "d")
+	writeFileT(t, root, restoreTmpPrefix+"x/big", "leftover")
+	writeFileT(t, root, restoreTmpPrefix+"x.old/0/old", "old")
+	for _, entry := range []string{"", "app"} {
+		archive := dumpOf(t, "--src", root, "--entry", entry)
+		var names []string
+		for tr := tar.NewReader(bytes.NewReader(archive)); ; {
+			h, err := tr.Next()
+			if err != nil {
+				break
+			}
+			names = append(names, h.Name)
+		}
+		for _, n := range names {
+			if strings.Contains(n, restoreTmpPrefix+"x") {
+				t.Errorf("entry %q: the archive holds %s", entry, n)
+			}
+		}
+		if !slices.Contains(names, path.Join(entry, "data.txt")) {
+			t.Errorf("entry %q: names = %v", entry, names)
+		}
 	}
 }

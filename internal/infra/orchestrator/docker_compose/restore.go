@@ -290,6 +290,10 @@ func (r *Repository) RestoreBackup(ctx context.Context, job RestoreJob) (command
 	if resp.PreRestorePoint != "" {
 		back = "restore the pre-restore point " + resp.PreRestorePoint + " to go back"
 	}
+	if b.Type != recipe.TypeSQLite {
+		// A swap that failed half-way keeps the data it could not put back.
+		back += ". Data the restore could not put back stays in a .wf-restore-*.old folder at the root of the mount: move or remove it before restoring again"
+	}
 	// Only a helper that failed cleanly (exit 1) or never ran (docker's own
 	// 125-127) leaves the data as it was. Anything else — a crash, a kill,
 	// a swap that failed, a "success" with no result — may have left it

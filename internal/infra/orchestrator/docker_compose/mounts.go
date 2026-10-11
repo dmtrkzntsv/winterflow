@@ -169,6 +169,18 @@ func resolveBackup(m composeModel, b recipe.EffectiveBackup, isFile func(string)
 // order and the restore matches its copies of a nested mount's folder (the
 // empty mount point of the outer mount, the root of the inner one) by it.
 func ancestorsFirst(paths []helperPath) []helperPath {
+	// One place listed twice (a volume mounted at two container paths, both
+	// listed) is archived once: restoring it twice would swap the data back
+	// out.
+	seen := map[[2]any]bool{}
+	unique := paths[:0:0]
+	for _, p := range paths {
+		if k := [2]any{p.Mount, p.Sub}; !seen[k] {
+			seen[k] = true
+			unique = append(unique, p)
+		}
+	}
+	paths = unique
 	below := func(entry, of string) bool {
 		return entry != of && (of == "" || strings.HasPrefix(entry, of+"/"))
 	}

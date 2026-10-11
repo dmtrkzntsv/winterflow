@@ -8,8 +8,9 @@ merged). It ships as two stacked PRs: **C1 storages**, **C2 backups**.
 
 A twillingate tenant is one SQLite database in a named volume. twillingate-cloud
 replicates every tenant database with one host-level Litestream service. On
-winterflow, backups must work for any app, not just SQLite. Postgres, MySQL and
-plain volumes come later behind the same interface. Today winterflow has no
+winterflow, backups must work for any app, not just SQLite. C2 ships SQLite
+and whole-volume backups; Postgres and MySQL come later behind the same
+interface. Today winterflow has no
 object-storage code, no settings store, and never touches the user's compose
 file beyond `-f` for git-sourced apps.
 

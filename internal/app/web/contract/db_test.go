@@ -11,8 +11,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
-	"github.com/uptrace/bun/driver/pgdriver"
+	_ "github.com/jackc/pgx/v5/stdlib" // the "pgx" driver for the admin connection
 )
 
 // dbEnv names the Postgres server the suite runs against. Unset means
@@ -76,23 +77,35 @@ func freshDB(t *testing.T) string {
 		t.Fatal(err)
 	}
 	schema := "t_" + hex.EncodeToString(b[:])
-	admin := sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(base)))
-	if _, err := admin.ExecContext(context.Background(), "CREATE SCHEMA "+schema); err != nil {
+	admin, err := sql.Open("pgx", base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminCtx := func() (context.Context, context.CancelFunc) {
+		return context.WithTimeout(context.Background(), 30*time.Second)
+	}
+	ctx, cancel := adminCtx()
+	defer cancel()
+	if _, err := admin.ExecContext(ctx, "CREATE SCHEMA "+schema); err != nil {
 		_ = admin.Close()
 		t.Fatalf("create schema on %s: %v", dbEnv, err)
 	}
 	t.Cleanup(func() {
-		_, _ = admin.ExecContext(context.Background(), "DROP SCHEMA "+schema+" CASCADE")
+		ctx, cancel := adminCtx()
+		defer cancel()
+		if _, err := admin.ExecContext(ctx, "DROP SCHEMA "+schema+" CASCADE"); err != nil {
+			t.Errorf("drop schema %s: %v", schema, err)
+		}
 		_ = admin.Close()
 	})
 	u, err := url.Parse(base)
 	if err != nil {
 		t.Fatalf("parse %s: %v", dbEnv, err)
 	}
-	u.Scheme = "postgres" // the server accepts only postgres:// (db.setupBun)
+	u.Scheme = "postgres" // the server accepts only postgres:// (db.Open)
 	q := u.Query()
 	q.Set("search_path", schema)
-	// A non-UTC session zone: the server must pin UTC itself (db.utcDSN).
+	// A non-UTC session zone: the server must pin UTC itself (pgsql.utcDSN).
 	q.Set("timezone", "America/New_York")
 	u.RawQuery = q.Encode()
 	return fmt.Sprint(u)

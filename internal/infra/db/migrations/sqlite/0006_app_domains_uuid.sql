@@ -1,0 +1,3 @@
+-- Postgres retypes app_domains.app_id/server_id to UUID here. SQLite has no
+-- UUID type: nothing to do (the version is kept so both engines share one
+-- version list).

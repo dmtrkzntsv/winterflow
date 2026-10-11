@@ -359,8 +359,8 @@ carries its user's full access.
 - **Hub:** `internal/infra/transport/grpc/hub/hub.go` (bridge, publishResult,
   publishEvent, reaper). **Agent transport:** `internal/infra/transport/grpc/agent/agent.go`
   (`Run` reconnect loop).
-- **Persistence:** `internal/infra/db/{models,migrations,repository}` (Bun;
-  SQLite or Postgres via `DATABASE_URL`).
+- **Persistence:** `internal/infra/db/{migrations,migrate,sqlc,repository}`
+  (sqlc; SQLite or Postgres via `DATABASE_URL`).
 - **Web delivery:** `internal/app/web/{routes.go,bootstrap.go,handler/*}`.
 - **Web UI:** `web/src/{pages,context,components,lib}/`. Contexts:
   `servers-context`, `apps-context`, `notifications-context` (SSE + `waitFor`),

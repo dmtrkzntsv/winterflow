@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Run the API contract suite against a throwaway postgres:16 container on a
-# random host port (make test-pg). The container is removed on exit, pass or
-# fail. Extra arguments go to `go test` (e.g. -run TestParity -v).
+# Run the API contract suite and the internal/infra/db packages (migration
+# runner, repositories) against a throwaway postgres:16 container on a random
+# host port (make test-pg). The container is removed on exit, pass or fail.
+# Extra arguments go to `go test` (e.g. -run TestParity -v).
 set -euo pipefail
 
 GO="${GO:-go}"
@@ -18,4 +19,4 @@ done
 docker exec "$cid" pg_isready -U postgres -h 127.0.0.1 >/dev/null
 
 export WF_TEST_DATABASE_URL="postgres://postgres:postgres@127.0.0.1:${port}/postgres?sslmode=disable"
-"$GO" test -count=1 "$@" ./internal/app/web/contract/
+"$GO" test -count=1 "$@" ./internal/app/web/contract/ ./internal/infra/db/...

@@ -8,7 +8,7 @@ import (
 	agentsrv "winterflow/internal/infra/agent/service"
 	"winterflow/internal/infra/cert"
 	"winterflow/internal/infra/db"
-	"winterflow/internal/infra/db/repository"
+	serverrepo "winterflow/internal/infra/db/repository/server"
 	ingresscaddy "winterflow/internal/infra/ingress/caddy"
 	dockercompose "winterflow/internal/infra/orchestrator/docker_compose"
 	"winterflow/internal/infra/transport/bus"
@@ -28,7 +28,10 @@ import (
 // replaces the gRPC Hub, and the Docker Compose orchestrator executes commands
 // locally. This proves the layered design supports the single-server app.
 func BootstrapStandalone(ctx context.Context, log *logger.Logger, cfg *config.ServerConfig) *Deps {
-	dbconn := db.NewBunConnection(log, cfg.GetDbURL())
+	dbconn, err := db.Open(log, cfg.GetDbURL())
+	if err != nil {
+		log.Fatalf("failed to open database: %v", err)
+	}
 
 	certmanager, err := cert.NewManager(cfg, log)
 	if err != nil {
@@ -116,7 +119,7 @@ func BootstrapStandalone(ctx context.Context, log *logger.Logger, cfg *config.Se
 // events queue — the same EventCapabilities a distributed agent's registration
 // produces — so the DB and the UI see specs/IP/version without a hub. The
 // embedded server may not be claimed yet at boot; poll until it exists.
-func publishEmbeddedCapabilities(ctx context.Context, b bus.Bus, serverRepo *repository.DbServerRepository, cfg *config.ServerConfig, log *logger.Logger, ingressEnabled bool) {
+func publishEmbeddedCapabilities(ctx context.Context, b bus.Bus, serverRepo *serverrepo.Repo, cfg *config.ServerConfig, log *logger.Logger, ingressEnabled bool) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	for {

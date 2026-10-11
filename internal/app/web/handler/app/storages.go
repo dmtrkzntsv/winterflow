@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"net/http"
 
 	webutil "winterflow/internal/app/web/util"
@@ -48,68 +49,19 @@ func (h *Handler) ListStorages(w http.ResponseWriter, r *http.Request) {
 // TestStorage asks the agent to write and delete a probe object; the
 // outcome ({ok, error}) arrives over SSE. Nothing is stored.
 func (h *Handler) TestStorage(w http.ResponseWriter, r *http.Request) {
-	userID, serverID, ok := h.serverFromQuery(w, r)
-	if !ok {
-		return
-	}
-	req, ok := webutil.DecodeBody[command.TestStorageRequest](w, r)
-	if !ok {
-		return
-	}
-	if err := req.Validate(); err != nil {
-		webutil.Error(w, err.Error(), nil)
-		return
-	}
-	reqID, err := h.usecase.TestStorage(r.Context(), userID, serverID, req)
-	if err != nil {
-		webutil.Error(w, "failed to test storage", nil)
-		return
-	}
-	accepted(w, "test storage dispatched", reqID)
+	dispatchBody(h, w, r, "test storage", h.usecase.TestStorage)
 }
 
 // SaveStorage adds (create) or edits a storage; the agent refuses an add
 // over an existing name, an edit of a missing one or of its type, tests it,
 // and redeploys the running apps that reference it.
 func (h *Handler) SaveStorage(w http.ResponseWriter, r *http.Request) {
-	userID, serverID, ok := h.serverFromQuery(w, r)
-	if !ok {
-		return
-	}
-	req, ok := webutil.DecodeBody[command.SaveStorageRequest](w, r)
-	if !ok {
-		return
-	}
-	if err := req.Validate(); err != nil {
-		webutil.Error(w, err.Error(), nil)
-		return
-	}
-	reqID, err := h.usecase.SaveStorage(r.Context(), userID, serverID, req)
-	if err != nil {
-		webutil.Error(w, "failed to save storage", nil)
-		return
-	}
-	accepted(w, "save storage dispatched", reqID)
+	dispatchBody(h, w, r, "save storage", h.usecase.SaveStorage)
 }
 
 // DeleteStorage removes a storage; the agent refuses while an app uses it.
 func (h *Handler) DeleteStorage(w http.ResponseWriter, r *http.Request) {
-	userID, serverID, ok := h.serverFromQuery(w, r)
-	if !ok {
-		return
-	}
-	req, ok := webutil.DecodeBody[command.DeleteStorageRequest](w, r)
-	if !ok {
-		return
-	}
-	if err := req.Validate(); err != nil {
-		webutil.Error(w, err.Error(), nil)
-		return
-	}
-	reqID, err := h.usecase.DeleteStorage(r.Context(), userID, serverID, req.Name)
-	if err != nil {
-		webutil.Error(w, "failed to remove storage", nil)
-		return
-	}
-	accepted(w, "remove storage dispatched", reqID)
+	dispatchBody(h, w, r, "remove storage", func(ctx context.Context, userID, serverID string, req command.DeleteStorageRequest) (string, error) {
+		return h.usecase.DeleteStorage(ctx, userID, serverID, req.Name)
+	})
 }

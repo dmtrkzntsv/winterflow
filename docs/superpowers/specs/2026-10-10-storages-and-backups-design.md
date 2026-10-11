@@ -102,8 +102,12 @@ type Store interface {
 func Open(s model.Storage, secret string) (Store, error)
 ```
 
-- **`local`:** files under `path`. `Put` writes `<key>.tmp`, fsyncs, then
-  renames. Directories are created 0700 and files 0600.
+- **`local`:** files under `path`. `Put` writes its own temp file
+  (`.wf-tmp-…` in the destination folder, a name no key may have), fsyncs,
+  then renames. Every call re-checks that `path` exists, and folders are
+  only ever created below it (never `path` itself, so an unplugged disk
+  can't be recreated on the system disk). Directories are created 0700 and
+  files 0600.
 - **`s3`:** `github.com/minio/minio-go/v7` (Apache-2.0) with streaming
   multipart upload. Every call carries the caller's context deadline.
 - Keys are always relative and go through `safeRel`. A key never escapes

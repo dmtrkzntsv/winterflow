@@ -13,11 +13,9 @@ import (
 	"strings"
 )
 
-// tmpSuffix marks a Put in progress; List never reports such files.
-const tmpSuffix = ".tmp"
-
 // local stores objects as files under root: directories 0700, files 0600,
-// each Put written to <key>.tmp, fsynced and renamed into place.
+// each Put written to its own temp file (tmpPrefix…, a name no key can
+// have), fsynced and renamed into place.
 type local struct{ root string }
 
 // openLocal requires root to be an existing folder: winterflow never creates
@@ -37,6 +35,57 @@ func openLocal(root string) (*local, error) {
 	return &local{root: root}, nil
 }
 
+// checkRoot re-checks the root on every call: a disk unplugged after Open
+// leaves its (empty) mount point behind, and writing on would fill the
+// system disk.
+func (l *local) checkRoot() error {
+	info, err := os.Stat(l.root)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("the storage folder %s is missing (is the disk mounted?)", l.root)
+		}
+		return fmt.Errorf("cannot open %s: %w", l.root, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("%s is not a folder", l.root)
+	}
+	return nil
+}
+
+// mkdirBelow creates the folders of rel (a clean, "/"-separated path) one
+// level at a time under root. Unlike MkdirAll it can never recreate root
+// itself: a root that vanished meanwhile fails the first Mkdir.
+func (l *local) mkdirBelow(rel string) error {
+	if rel == "." {
+		return nil
+	}
+	dir := l.root
+	for _, seg := range strings.Split(rel, "/") {
+		dir = filepath.Join(dir, seg)
+		err := os.Mkdir(dir, 0o700)
+		switch {
+		case err == nil:
+		case errors.Is(err, fs.ErrExist):
+			info, err := os.Stat(dir)
+			if err != nil {
+				return err
+			}
+			if !info.IsDir() {
+				return fmt.Errorf("%s is not a folder", dir)
+			}
+		case errors.Is(err, fs.ErrNotExist):
+			// The root (or a folder just made) vanished meanwhile.
+			if rerr := l.checkRoot(); rerr != nil {
+				return rerr
+			}
+			return err
+		default:
+			return err
+		}
+	}
+	return nil
+}
+
 func (l *local) file(key string) string { return filepath.Join(l.root, filepath.FromSlash(key)) }
 
 func (l *local) Put(ctx context.Context, key string, r io.Reader) error {
@@ -44,15 +93,20 @@ func (l *local) Put(ctx context.Context, key string, r io.Reader) error {
 	if err != nil {
 		return err
 	}
-	dst := l.file(key)
-	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+	if err := l.checkRoot(); err != nil {
 		return err
 	}
-	tmp := dst + tmpSuffix
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err := l.mkdirBelow(path.Dir(key)); err != nil {
+		return err
+	}
+	dst := l.file(key)
+	// A temp file per Put (0600): concurrent Puts of one key never share
+	// one, and the last rename wins whole.
+	f, err := os.CreateTemp(filepath.Dir(dst), tmpPrefix+"*")
 	if err != nil {
 		return err
 	}
+	tmp := f.Name()
 	_, err = io.Copy(f, ctxReader{ctx, r})
 	if err == nil {
 		err = f.Sync()
@@ -75,12 +129,18 @@ func (l *local) Get(_ context.Context, key string) (io.ReadCloser, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := l.checkRoot(); err != nil {
+		return nil, err
+	}
 	return os.Open(l.file(key))
 }
 
 func (l *local) List(ctx context.Context, prefix string) ([]Object, error) {
 	prefix, err := cleanPrefix(prefix)
 	if err != nil {
+		return nil, err
+	}
+	if err := l.checkRoot(); err != nil {
 		return nil, err
 	}
 	// Walk only the folder the prefix lives in.
@@ -99,7 +159,7 @@ func (l *local) List(ctx context.Context, prefix string) ([]Object, error) {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if d.IsDir() || !d.Type().IsRegular() || strings.HasSuffix(p, tmpSuffix) {
+		if d.IsDir() || !d.Type().IsRegular() || strings.HasPrefix(d.Name(), tmpPrefix) {
 			return nil
 		}
 		rel, err := filepath.Rel(l.root, p)
@@ -126,6 +186,9 @@ func (l *local) List(ctx context.Context, prefix string) ([]Object, error) {
 
 // Delete removes the files and then the folders left empty, up to root.
 func (l *local) Delete(ctx context.Context, keys ...string) error {
+	if err := l.checkRoot(); err != nil {
+		return err
+	}
 	for _, key := range keys {
 		if err := ctx.Err(); err != nil {
 			return err

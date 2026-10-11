@@ -16,7 +16,7 @@ func TestCleanKey(t *testing.T) {
 			t.Errorf("%q: %q, %v", ok, got, err)
 		}
 	}
-	for _, bad := range []string{"", "/a", "../a", "..", ".", "a/../b", "a//b", "a/", "a\\b", "a\x00b", "./a"} {
+	for _, bad := range []string{"", "/a", "../a", "..", ".", "a/../b", "a//b", "a/", "a\\b", "a\x00b", "./a", tmpPrefix + "x", "app/" + tmpPrefix + "x", tmpPrefix + "d/x"} {
 		if _, err := cleanKey(bad); err == nil {
 			t.Errorf("%q should be refused", bad)
 		}

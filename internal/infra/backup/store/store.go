@@ -51,11 +51,18 @@ func Open(s model.Storage, secret string) (Store, error) {
 	}
 }
 
+// tmpPrefix starts the name of a local Put in progress. cleanKey refuses it
+// in every path segment, so no object can be mistaken for one (List skips
+// them) or collide with one.
+const tmpPrefix = ".wf-tmp-"
+
 // cleanKey checks an object key: relative, "/"-separated, already clean,
-// and not "." or "..". Leading-dot names (".winterflow-probe-…") are fine.
+// and not "." or "..". Leading-dot names (".winterflow-probe-…") are fine,
+// except the reserved tmpPrefix.
 func cleanKey(key string) (string, error) {
 	if key == "" || strings.HasPrefix(key, "/") || strings.ContainsAny(key, "\\\x00") ||
-		path.Clean(key) != key || key == "." || key == ".." || strings.HasPrefix(key, "../") {
+		path.Clean(key) != key || key == "." || key == ".." || strings.HasPrefix(key, "../") ||
+		strings.HasPrefix(key, tmpPrefix) || strings.Contains(key, "/"+tmpPrefix) {
 		return "", fmt.Errorf("invalid object key %q", key)
 	}
 	return key, nil

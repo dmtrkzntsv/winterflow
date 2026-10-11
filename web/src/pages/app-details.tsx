@@ -35,6 +35,7 @@ import { AppIcon } from "@/components/app-icon";
 import { LogsView, type LogLine } from "@/components/logs-view";
 import { AppEditorPanel } from "@/components/app-editor-panel";
 import { AppStatusIndicator } from "@/components/app-status-badge";
+import { AppMetricBlocks, AppMetricsTab } from "@/components/app-metrics";
 import { useApps } from "@/context/use-apps";
 import { useNotifications } from "@/context/use-notifications";
 import { useServers } from "@/context/use-servers";
@@ -49,7 +50,7 @@ import { cn } from "@/lib/utils";
 
 const base = apiBaseUrl.endsWith("/") ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
 
-const TABS = ["logs", "editor", "history", "settings"] as const;
+const TABS = ["logs", "metrics", "editor", "history", "settings"] as const;
 
 const tabTriggerClass =
   "-mb-px rounded-none border-b-2 border-transparent px-1 pt-1 pb-2.5 text-muted-foreground shadow-none hover:text-foreground data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none";
@@ -176,10 +177,15 @@ export default function AppDetailsPage() {
         </div>
       </header>
 
+      <AppMetricBlocks serverId={app.serverId} appId={app.id} />
+
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="h-auto w-full justify-start gap-6 rounded-none border-b bg-transparent p-0">
           <TabsTrigger value="logs" className={tabTriggerClass}>
             Logs
+          </TabsTrigger>
+          <TabsTrigger value="metrics" className={tabTriggerClass}>
+            Metrics
           </TabsTrigger>
           <TabsTrigger value="editor" className={tabTriggerClass}>
             Configuration
@@ -193,6 +199,9 @@ export default function AppDetailsPage() {
         </TabsList>
         <TabsContent value="logs" className="mt-6">
           <LogsTab appId={app.id} />
+        </TabsContent>
+        <TabsContent value="metrics" className="mt-6">
+          <AppMetricsTab serverId={app.serverId} appId={app.id} />
         </TabsContent>
         <TabsContent value="editor" className="mt-0">
           <AppEditorPanel appId={app.id} />

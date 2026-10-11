@@ -1,0 +1,91 @@
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { AppMetricBlocks, AppMetricsTab } from "@/components/app-metrics";
+import type { Series } from "@/lib/metrics";
+
+const calls: unknown[][] = [];
+let data: Series | null = null;
+
+vi.mock("@/hooks/use-metrics", () => ({
+  useAppMetrics: (...args: unknown[]) => {
+    calls.push(args);
+    return { data, loading: false, error: null, refresh: vi.fn() };
+  },
+}));
+
+describe("AppMetricBlocks", () => {
+  beforeEach(() => {
+    calls.length = 0;
+    data = {
+      interval_seconds: 60,
+      points: [
+        { t: 0, cpu: 1 },
+        { t: 60, cpu: 12.5, mem_used: 512 * 1024 ** 2, mem_limit: 1024 ** 3, disk: 2 * 1024 ** 3, image: 1024 ** 2, net_rx_bps: 1024, net_tx_bps: 1024 },
+      ],
+    };
+  });
+
+  it("shows the newest minute", () => {
+    render(<AppMetricBlocks serverId="s1" appId="a1" />);
+    expect(calls[0]).toEqual(["s1", "a1", "1h"]);
+    expect(screen.getByTestId("block-CPU")).toHaveTextContent("13%");
+    expect(screen.getByTestId("block-Memory")).toHaveTextContent("512.0 MBof 1.0 GB limit");
+    expect(screen.getByTestId("block-Disk")).toHaveTextContent("2.0 GB+ 1.0 MB images");
+    expect(screen.getByTestId("block-Network")).toHaveTextContent("2.0 KB/s");
+  });
+
+  it("says no limit, and dashes for fields not reported yet", () => {
+    data!.points = [{ t: 0, mem_used: 1 }];
+    render(<AppMetricBlocks serverId="s1" appId="a1" />);
+    expect(screen.getByTestId("block-Memory")).toHaveTextContent("no limit");
+    expect(screen.getByTestId("block-CPU")).toHaveTextContent("–");
+    expect(screen.getByTestId("block-Network")).toHaveTextContent("–");
+  });
+
+  it("renders nothing without data and explains unavailable containers", () => {
+    data = { interval_seconds: 60, points: [] };
+    const { container, rerender } = render(<AppMetricBlocks serverId="s1" appId="a1" />);
+    expect(container).toBeEmptyDOMElement();
+    data = { interval_seconds: 60, points: [{ t: 0, unavailable: 1, unavailable_max: 1 }] };
+    rerender(<AppMetricBlocks serverId="s1" appId="a2" />);
+    expect(screen.getByText("Container metrics are unavailable on this host")).toBeInTheDocument();
+    expect(screen.queryByTestId("block-CPU")).not.toBeInTheDocument();
+  });
+
+  it("still shows disk when container metrics are unavailable", () => {
+    data = { interval_seconds: 60, points: [{ t: 0, unavailable: 1, disk: 2 * 1024 ** 3 }] };
+    render(<AppMetricBlocks serverId="s1" appId="a1" />);
+    expect(screen.getByText("Container metrics are unavailable on this host")).toBeInTheDocument();
+    expect(screen.getByTestId("block-Disk")).toHaveTextContent("2.0 GB");
+    expect(screen.queryByTestId("block-CPU")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("block-Memory")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("block-Network")).not.toBeInTheDocument();
+  });
+});
+
+describe("AppMetricsTab", () => {
+  beforeEach(() => {
+    calls.length = 0;
+    data = { interval_seconds: 1200, points: [{ t: 0, cpu: 1, disk: 5 }] };
+  });
+
+  it("charts the app over the chosen range", async () => {
+    render(<AppMetricsTab serverId="s1" appId="a1" />);
+    expect(calls.at(-1)).toEqual(["s1", "a1", "24h"]);
+    for (const title of ["CPU", "Memory", "Network", "Disk"]) {
+      expect(screen.getByTestId(`chart-${title}`)).toBeInTheDocument();
+    }
+    expect(screen.getByTestId("chart-Memory")).toHaveTextContent("No data yet");
+    await userEvent.click(screen.getByRole("radio", { name: "30 days" }));
+    expect(calls.at(-1)).toEqual(["s1", "a1", "30d"]);
+  });
+
+  it("explains unavailable container metrics but still charts disk", () => {
+    data = { interval_seconds: 60, points: [{ t: 0, unavailable: 1, disk: 5 }] };
+    render(<AppMetricsTab serverId="s1" appId="a1" />);
+    expect(screen.getByTestId("chart-CPU")).toHaveTextContent("Container metrics are unavailable on this host");
+    expect(screen.getByTestId("chart-Disk")).not.toHaveTextContent("unavailable");
+  });
+});

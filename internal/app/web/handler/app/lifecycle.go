@@ -28,7 +28,8 @@ func requireValidAppID(w http.ResponseWriter, appID string) bool {
 	return true
 }
 
-type controlAppRequest struct {
+// ControlAppRequest is the body of POST /api/v1/app/control-app.
+type ControlAppRequest struct {
 	ServerID string                `json:"server_id"`
 	AppID    string                `json:"app_id"`
 	Action   command.ControlAction `json:"action"`
@@ -41,7 +42,7 @@ func (h *Handler) ControlApp(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	req, ok := webutil.DecodeBody[controlAppRequest](w, r)
+	req, ok := webutil.DecodeBody[ControlAppRequest](w, r)
 	if !ok {
 		return
 	}
@@ -70,7 +71,8 @@ func (h *Handler) ControlApp(w http.ResponseWriter, r *http.Request) {
 	accepted(w, "control action dispatched", requestID)
 }
 
-type deleteAppRequest struct {
+// DeleteAppRequest is the body of POST /api/v1/app/delete-app.
+type DeleteAppRequest struct {
 	ServerID      string `json:"server_id"`
 	AppID         string `json:"app_id"`
 	DeleteVolumes bool   `json:"delete_volumes"`
@@ -82,7 +84,7 @@ func (h *Handler) DeleteApp(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	req, ok := webutil.DecodeBody[deleteAppRequest](w, r)
+	req, ok := webutil.DecodeBody[DeleteAppRequest](w, r)
 	if !ok {
 		return
 	}
@@ -105,7 +107,8 @@ func (h *Handler) DeleteApp(w http.ResponseWriter, r *http.Request) {
 	accepted(w, "delete dispatched", requestID)
 }
 
-type renameAppRequest struct {
+// RenameAppRequest is the body of POST /api/v1/app/rename-app.
+type RenameAppRequest struct {
 	ServerID string `json:"server_id"`
 	AppID    string `json:"app_id"`
 	Name     string `json:"name"`
@@ -117,7 +120,7 @@ func (h *Handler) RenameApp(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	req, ok := webutil.DecodeBody[renameAppRequest](w, r)
+	req, ok := webutil.DecodeBody[RenameAppRequest](w, r)
 	if !ok {
 		return
 	}
@@ -197,7 +200,8 @@ func (h *Handler) GetRevisions(w http.ResponseWriter, r *http.Request) {
 	accepted(w, "revisions fetch dispatched", requestID)
 }
 
-type rollbackAppRequest struct {
+// RollbackAppRequest is the body of POST /api/v1/app/rollback-app.
+type RollbackAppRequest struct {
 	ServerID string `json:"server_id"`
 	AppID    string `json:"app_id"`
 	Hash     string `json:"hash"`
@@ -210,7 +214,7 @@ func (h *Handler) RollbackApp(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	req, ok := webutil.DecodeBody[rollbackAppRequest](w, r)
+	req, ok := webutil.DecodeBody[RollbackAppRequest](w, r)
 	if !ok {
 		return
 	}

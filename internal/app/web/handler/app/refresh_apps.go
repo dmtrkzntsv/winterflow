@@ -30,7 +30,5 @@ func (h *Handler) RefreshApps(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	webutil.Accepted(w, "apps refresh dispatched", struct {
-		RequestID string `json:"request_id"`
-	}{RequestID: requestID})
+	accepted(w, "apps refresh dispatched", requestID)
 }

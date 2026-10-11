@@ -80,10 +80,22 @@ func validEmail(email string) bool {
 	return at > 0 && at < len(email)-1 && !strings.ContainsAny(email, " \t")
 }
 
-type createUserRequest struct {
+// CreateUserRequest is the body of POST /api/v1/org/create-user. Role is
+// "admin" or "member".
+type CreateUserRequest struct {
 	Name  string `json:"name"`
 	Email string `json:"email"`
 	Role  string `json:"role"`
+}
+
+// CreateUserResponse is the data of POST /api/v1/org/create-user.
+// TempPassword is shown only here.
+type CreateUserResponse struct {
+	UserID       string `json:"user_id"`
+	Name         string `json:"name"`
+	Email        string `json:"email"`
+	Role         string `json:"role"`
+	TempPassword string `json:"temp_password"`
 }
 
 // CreateUser provisions an account in the caller's org. The response carries
@@ -93,7 +105,7 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	req, ok := webutil.DecodeBody[createUserRequest](w, r)
+	req, ok := webutil.DecodeBody[CreateUserRequest](w, r)
 	if !ok {
 		return
 	}
@@ -126,13 +138,13 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		webutil.Error(w, "failed to create user", nil)
 		return
 	}
-	webutil.Success(w, "user created", struct {
-		UserID       string `json:"user_id"`
-		Name         string `json:"name"`
-		Email        string `json:"email"`
-		Role         string `json:"role"`
-		TempPassword string `json:"temp_password"`
-	}{user.ID, user.Name, email, req.Role, tempPassword})
+	webutil.Success(w, "user created", CreateUserResponse{
+		UserID:       user.ID,
+		Name:         user.Name,
+		Email:        email,
+		Role:         req.Role,
+		TempPassword: tempPassword,
+	})
 }
 
 // GetMembers lists the caller's organization members.
@@ -150,7 +162,8 @@ func (h *Handler) GetMembers(w http.ResponseWriter, r *http.Request) {
 	webutil.Success(w, "members", members)
 }
 
-type updateMemberRequest struct {
+// UpdateMemberRequest is the body of POST /api/v1/org/update-member.
+type UpdateMemberRequest struct {
 	UserID string `json:"user_id"`
 	Role   string `json:"role"`
 }
@@ -161,7 +174,7 @@ func (h *Handler) UpdateMember(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	req, ok := webutil.DecodeBody[updateMemberRequest](w, r)
+	req, ok := webutil.DecodeBody[UpdateMemberRequest](w, r)
 	if !ok {
 		return
 	}
@@ -184,7 +197,9 @@ func (h *Handler) UpdateMember(w http.ResponseWriter, r *http.Request) {
 	webutil.Success(w, "member updated", nil)
 }
 
-type memberRequest struct {
+// MemberRequest names one member: the body of remove-member and
+// reset-member-password.
+type MemberRequest struct {
 	UserID string `json:"user_id"`
 }
 
@@ -195,7 +210,7 @@ func (h *Handler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	req, ok := webutil.DecodeBody[memberRequest](w, r)
+	req, ok := webutil.DecodeBody[MemberRequest](w, r)
 	if !ok {
 		return
 	}
@@ -218,6 +233,13 @@ func (h *Handler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 	webutil.Success(w, "member removed", nil)
 }
 
+// ResetMemberPasswordResponse is the data of POST
+// /api/v1/org/reset-member-password. TempPassword is shown only here.
+type ResetMemberPasswordResponse struct {
+	UserID       string `json:"user_id"`
+	TempPassword string `json:"temp_password"`
+}
+
 // ResetMemberPassword issues a new temp password (shown once) for a member
 // with local credentials and forces a change on next login.
 func (h *Handler) ResetMemberPassword(w http.ResponseWriter, r *http.Request) {
@@ -225,7 +247,7 @@ func (h *Handler) ResetMemberPassword(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	req, ok := webutil.DecodeBody[memberRequest](w, r)
+	req, ok := webutil.DecodeBody[MemberRequest](w, r)
 	if !ok {
 		return
 	}
@@ -251,10 +273,7 @@ func (h *Handler) ResetMemberPassword(w http.ResponseWriter, r *http.Request) {
 		webutil.Error(w, "failed to reset password", nil)
 		return
 	}
-	webutil.Success(w, "password reset", struct {
-		UserID       string `json:"user_id"`
-		TempPassword string `json:"temp_password"`
-	}{req.UserID, tempPassword})
+	webutil.Success(w, "password reset", ResetMemberPasswordResponse{UserID: req.UserID, TempPassword: tempPassword})
 }
 
 // GetOrganization returns the caller's org identity (name, icon, color).
@@ -273,7 +292,8 @@ func (h *Handler) GetOrganization(w http.ResponseWriter, r *http.Request) {
 	webutil.Success(w, "organization", org)
 }
 
-type updateOrganizationRequest struct {
+// UpdateOrganizationRequest is the body of POST /api/v1/org/update-organization.
+type UpdateOrganizationRequest struct {
 	Name  string `json:"name"`
 	Icon  string `json:"icon"`
 	Color string `json:"color"`
@@ -285,7 +305,7 @@ func (h *Handler) UpdateOrganization(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	req, ok := webutil.DecodeBody[updateOrganizationRequest](w, r)
+	req, ok := webutil.DecodeBody[UpdateOrganizationRequest](w, r)
 	if !ok {
 		return
 	}

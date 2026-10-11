@@ -3,7 +3,7 @@ BIN_DIR := bin
 STANDALONE_BIN := $(BIN_DIR)/standalone
 API_BIN := $(BIN_DIR)/api
 
-.PHONY: build lint standalone api web web-build third-party-licenses test web-test cover diffcov
+.PHONY: build lint standalone api web web-build third-party-licenses test web-test cover diffcov openapi
 
 # Release build: bundle the SPA first so go:embed picks up a fresh web/dist,
 # then compile. The binaries are fully self-contained (API + web UI).
@@ -50,6 +50,12 @@ cover: test web-test
 DIFFCOV_BASE ?= origin/main
 diffcov: test web-test
 	$(GO) run ./tools/diffcov --base $(DIFFCOV_BASE) --min 80 --go coverage.out --lcov web/coverage/lcov.info
+
+# Regenerate api/openapi.yaml from the route tables in internal/app/web.
+# TestOpenAPIUpToDate fails until the committed file matches.
+openapi:
+	$(GO) run ./cmd/openapi > api/openapi.yaml.tmp || { rm -f api/openapi.yaml.tmp; exit 1; }
+	mv api/openapi.yaml.tmp api/openapi.yaml
 
 mod:
 	$(GO) mod tidy

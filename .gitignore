@@ -11,7 +11,10 @@ data/
 
 # root-built binaries (go build ./cmd/...)
 /agent
-/api
+# /api is the committed OpenAPI document directory; only its generated
+# contents are tracked (use `go build -o bin/api ./cmd/api` for the binary)
+/api/*
+!/api/openapi.yaml
 /hub
 /standalone
 

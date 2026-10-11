@@ -7,6 +7,13 @@ import (
 	"winterflow/internal/domain/model"
 )
 
+// CheckDomainResponse is the data of GET /api/v1/domains/check. Claims lists
+// the apps already using the hostname (null when there are none).
+type CheckDomainResponse struct {
+	Available bool                `json:"available"`
+	Claims    []model.DomainClaim `json:"claims"`
+}
+
 // CheckDomain answers "is this hostname free?" for the app editor's
 // live-typing validation. app_id (optional) excludes the app being edited so
 // its own claims don't read as conflicts.
@@ -24,8 +31,5 @@ func (h *Handler) CheckDomain(w http.ResponseWriter, r *http.Request) {
 		webutil.Error(w, "failed to check domain", nil)
 		return
 	}
-	webutil.Success(w, "", struct {
-		Available bool                `json:"available"`
-		Claims    []model.DomainClaim `json:"claims"`
-	}{Available: len(claims) == 0, Claims: claims})
+	webutil.Success(w, "", CheckDomainResponse{Available: len(claims) == 0, Claims: claims})
 }

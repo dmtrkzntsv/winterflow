@@ -32,7 +32,7 @@ WinterFlow ships as four binaries from one repo and supports two topologies:
 
 Layering is hexagonal: `internal/domain/{model,port,usecase,service}` (business logic, transport-agnostic) over `internal/infra/{db,transport,orchestrator,cert}` (adapters), with `internal/app/{web,agent}` as the delivery layer. There is **no DI/factory abstraction** — each binary wires its concrete dependencies explicitly in `internal/infra/bootstrap` and hands a `Deps` struct to the server.
 
-**Single gRPC envelope + typed commands.** All hub↔agent traffic rides one envelope (`proto.RequestEnvelope`/`ResponseEnvelope`: a `type` string + JSON `payload`). The catalog of command types and their payload structs lives in `internal/domain/command`; `internal/infra/transport/codec` is the only place that (de)serializes payloads, so handlers on both ends work with typed Go values. Add a feature by: defining a command type + payload struct, adding an agent handler in `internal/app/agent`, and adding a usecase + route on the API side.
+**Single gRPC envelope + typed commands.** All hub↔agent traffic rides one envelope (`proto.RequestEnvelope`/`ResponseEnvelope`: a `type` string + JSON `payload`). The catalog of command types and their payload structs lives in `internal/domain/command`; `internal/infra/transport/codec` is the only place that (de)serializes payloads, so handlers on both ends work with typed Go values. Add a feature by: defining a command type + payload struct, adding an agent handler in `internal/app/agent`, and adding a usecase + route on the API side. A route is one `api.Route` entry in its handler package's `Routes()` (`internal/app/web/api`): the same table registers it with chi and generates `api/openapi.yaml`, so run `make openapi` and commit the result. Response schemas require every non-`omitempty` field (request-side copies of shared types are the lenient `<Name>Input` components); new SSE notification types are declared as `api.EventPayload`s on the `/api/v1/sse` route.
 
 ## Build, Test, and Development Commands
 - `make build` – compiles the standalone and API binaries into `bin/`.
@@ -42,6 +42,7 @@ Layering is hexagonal: `internal/domain/{model,port,usecase,service}` (business 
 - `pnpm --dir web run lint` – runs the ESLint suite configured for React 19.
 - `make test` – Go tests exactly as CI runs them (`-race`, coverage into `coverage.out`); `make web-test` – Vitest with coverage into `web/coverage/lcov.info`.
 - `make cover` – total Go and web coverage against `coverage-baseline.json` (CI's ratchet); `make diffcov` – CI's gate: lines changed since `$(DIFFCOV_BASE)` (default `origin/main`; override for stacked branches) must be ≥80% covered per language.
+- `make openapi` – regenerates `api/openapi.yaml` (OpenAPI 3.1) from the route tables; `TestOpenAPIUpToDate` fails until the committed file matches.
 - `make generate-hub-certs` / `make generate-agent-certs` – bootstrap local mTLS material for hub↔agent testing.
 
 ## Coding Style & Naming Conventions

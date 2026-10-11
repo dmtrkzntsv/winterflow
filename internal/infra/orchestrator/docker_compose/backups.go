@@ -21,21 +21,39 @@ import (
 // backupUpdateBudget bounds backup.update, its redeploy included.
 const backupUpdateBudget = 10 * time.Minute
 
-// withDeadline runs fn in a goroutine that is abandoned when the deadline d
-// comes first (see detached): storage calls on a hung network mount ignore
-// their context, and these run on the command pipeline.
-func withDeadline(parent context.Context, d time.Duration, what string, fn func(ctx context.Context) error) error {
+// withDeadlineValue runs fn in a goroutine that is abandoned when the
+// deadline d comes first (see detached): storage calls on a hung network
+// mount ignore their context, and these run on the command pipeline. fn's
+// value travels over a channel, so an abandoned fn shares nothing with the
+// caller.
+func withDeadlineValue[T any](parent context.Context, d time.Duration, what string, fn func(ctx context.Context) (T, error)) (T, error) {
+	type result struct {
+		v   T
+		err error
+	}
 	ctx, cancel := context.WithTimeout(parent, d)
 	defer cancel()
+	done := make(chan result, 1)
+	go func() {
+		v, err := fn(ctx)
+		done <- result{v, err}
+	}()
 	select {
-	case err := <-detached(func() error { return fn(ctx) }):
-		return err
+	case res := <-done:
+		return res.v, res.err
 	case <-ctx.Done():
+		var zero T
 		if err := parent.Err(); err != nil {
-			return fmt.Errorf("%s: %w", what, err)
+			return zero, fmt.Errorf("%s: %w", what, err)
 		}
-		return fmt.Errorf("%s: the storage did not answer within %s", what, d)
+		return zero, fmt.Errorf("%s: the storage did not answer within %s", what, d)
 	}
+}
+
+// withDeadline is withDeadlineValue for a call with no value.
+func withDeadline(parent context.Context, d time.Duration, what string, fn func(ctx context.Context) error) error {
+	_, err := withDeadlineValue(parent, d, what, func(ctx context.Context) (struct{}, error) { return struct{}{}, fn(ctx) })
+	return err
 }
 
 // backupStorage finds an app's backup (any state) and opens the storage it
@@ -65,22 +83,21 @@ func (r *Repository) backupStorage(appID, name string) (store.Store, string, err
 // ListRestorePoints lists a backup's complete restore points, newest first
 // (30 seconds; on request only).
 func (r *Repository) ListRestorePoints(ctx context.Context, appID, name string) ([]command.RestorePoint, error) {
-	out := []command.RestorePoint{}
-	err := withDeadline(ctx, storageCallTimeout, "list the restore points", func(ctx context.Context) error {
+	return withDeadlineValue(ctx, storageCallTimeout, "list the restore points", func(ctx context.Context) ([]command.RestorePoint, error) {
 		st, folder, err := r.backupStorage(appID, name)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		points, err := listFolder(ctx, st, folder)
 		if err != nil {
-			return err
+			return nil, err
 		}
+		out := []command.RestorePoint{}
 		for _, p := range layout.Complete(points) {
 			out = append(out, p.Info(r.cfg.GetBackupRetentionDays()))
 		}
-		return nil
+		return out, nil
 	})
-	return out, err
 }
 
 // DeleteRestorePoint deletes one restore point (any kind, complete or not)
@@ -158,11 +175,17 @@ func (r *Repository) UpdateBackups(ctx context.Context, appID string, overrides 
 	prevHead, _ := gitHead(dir)
 	deployed := marked && mark == prevHead
 	kept, warnings := recipe.Clean(comp, overrides)
+	prevConfig, readErr := os.ReadFile(filepath.Join(dir, configRel))
 	if err := r.writeOverrides(dir, kept); err != nil {
 		return resp, err
 	}
 	hash, err := gitCommitAll(dir, "update backups")
 	if err != nil {
+		// Leave the working tree as it was: compose and the next deploy read
+		// it, and must not apply settings the caller was told failed.
+		if readErr == nil {
+			_ = os.WriteFile(filepath.Join(dir, configRel), prevConfig, 0o644)
+		}
 		return resp, fmt.Errorf("commit: %w", err)
 	}
 	resp.Revision, resp.Backups, resp.Warnings = hash, backups, warnings

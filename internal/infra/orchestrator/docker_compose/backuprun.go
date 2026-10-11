@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/klauspost/compress/zstd"
@@ -34,10 +35,18 @@ const (
 	helperStopGrace    = 10 * time.Second // after a kill, for docker's output to drain
 )
 
+// putAbortGrace is how long an aborted upload gets to clean up after itself
+// (an S3 multipart abort) on a live context before that context is cancelled.
+var putAbortGrace = 30 * time.Second
+
 // Helper container limits: a run must not starve the apps it backs up on a
 // small box, and gets no network and only the capabilities a dump needs
-// (read every file; switch to a database's owner).
+// (read every file; switch to a database's owner). The log driver is off: the
+// dump travels over stdout, and docker's logging driver would otherwise write
+// every byte of it a second time (into json-file, or into journald/syslog,
+// where a database's contents would outlive the run).
 var helperLimits = []string{
+	"--log-driver", "none",
 	"--network", "none", "--memory", "256m", "--cpu-shares", "256",
 	"--cap-drop", "ALL", "--cap-add", "DAC_OVERRIDE", "--cap-add", "SETUID", "--cap-add", "SETGID",
 	"--security-opt", "no-new-privileges",
@@ -309,40 +318,131 @@ type dumpOutcome struct {
 	size      int64
 }
 
+// lazyUpload is the destination of the compressed dump: the upload to the
+// storage starts with the first byte the helper writes, so a run that
+// produces nothing (unchanged, or failing before any output) never touches
+// the storage. The upload runs on a context detached from the run's deadline,
+// so that when a run is cut short the storage driver can abort cleanly (an S3
+// multipart abort needs a live context); it is cancelled only after a grace.
+type lazyUpload struct {
+	st  store.Store
+	key string
+
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	mu      sync.Mutex
+	started bool
+	aborted bool
+	selfErr error // the upload failed on its own, before any abort
+	pr      *io.PipeReader
+	pw      *io.PipeWriter
+	done    chan error
+}
+
+func newLazyUpload(ctx context.Context, st store.Store, key string) *lazyUpload {
+	pctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	return &lazyUpload{st: st, key: key, ctx: pctx, cancel: cancel, done: make(chan error, 1)}
+}
+
+func (u *lazyUpload) Write(p []byte) (int, error) {
+	u.mu.Lock()
+	if u.aborted {
+		u.mu.Unlock()
+		return 0, errNotBackedUp
+	}
+	if !u.started {
+		u.started = true
+		u.pr, u.pw = io.Pipe()
+		go u.put(u.pr)
+	}
+	pw := u.pw
+	u.mu.Unlock()
+	return pw.Write(p)
+}
+
+func (u *lazyUpload) put(pr *io.PipeReader) {
+	err := u.st.Put(u.ctx, u.key, pr)
+	u.mu.Lock()
+	if err != nil && !u.aborted {
+		u.selfErr = err
+	}
+	u.mu.Unlock()
+	pr.CloseWithError(errNotBackedUp) // a failed upload fails the writes, never blocks them
+	u.done <- err
+}
+
+// finish ends a successful dump: the upload's data is complete. It waits for
+// the upload (until ctx ends, then the grace) and reports its outcome.
+func (u *lazyUpload) finish(ctx context.Context) error {
+	u.mu.Lock()
+	started, pw := u.started, u.pw
+	u.mu.Unlock()
+	if !started {
+		return errNotBackedUp
+	}
+	pw.Close()
+	select {
+	case err := <-u.done:
+		return err
+	case <-ctx.Done():
+	}
+	// The run's time is up: let the upload abort cleanly.
+	u.abort()
+	return fmt.Errorf("stopped after its time limit: %w", ctx.Err())
+}
+
+// abort ends an upload that must leave no object. The pipe is closed with an
+// error first, so the driver's read fails and it cleans up on a live context;
+// the context is cancelled only after the grace. It returns the error of an
+// upload that had failed by itself, if any.
+func (u *lazyUpload) abort() error {
+	u.mu.Lock()
+	u.aborted = true
+	started, pw := u.started, u.pw
+	u.mu.Unlock()
+	if started {
+		pw.CloseWithError(errNotBackedUp)
+		select {
+		case <-u.done:
+		case <-time.After(putAbortGrace):
+		}
+	}
+	u.cancel()
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.selfErr
+}
+
 // dumpAndUpload runs the helper and streams its stdout through zstd into
-// key, hashing what is stored. Unless the helper succeeds, the upload is
-// aborted, which leaves no object behind.
+// key, hashing what is stored. Unless the helper succeeds with a result, the
+// upload is aborted, which leaves no object behind.
 func (r *Repository) dumpAndUpload(ctx context.Context, st store.Store, key, name string, args []string) (dumpOutcome, error) {
-	pr, pw := io.Pipe()
-	put := make(chan error, 1)
-	go func() {
-		err := st.Put(ctx, key, pr)
-		pr.CloseWithError(errNotBackedUp) // a failed upload fails the writes, never blocks them
-		put <- err
-	}()
+	up := newLazyUpload(ctx, st, key)
+	defer up.cancel()
 	sum := sha256.New()
 	stored := &countWriter{}
-	enc, _ := zstd.NewWriter(io.MultiWriter(pw, sum, stored), zstd.WithEncoderConcurrency(1))
+	enc, _ := zstd.NewWriter(io.MultiWriter(up, sum, stored), zstd.WithEncoderConcurrency(1))
 	exit, stderr, runErr := r.runHelper(ctx, name, args, enc)
-	encErr := enc.Close()
 	res, parsed := helper.ParseResult(stderr)
 	out := dumpOutcome{result: res}
-	if runErr == nil && exit == helper.ExitOK && encErr == nil {
-		pw.Close()
-		if err := <-put; err != nil {
-			return out, fmt.Errorf("upload the copy: %w", err)
+	var encErr error
+	closed := false
+	if runErr == nil && exit == helper.ExitOK && parsed {
+		encErr, closed = enc.Close(), true
+		if encErr == nil {
+			if err := up.finish(ctx); err != nil {
+				return out, fmt.Errorf("upload the copy: %w", err)
+			}
+			out.sha256, out.size = hex.EncodeToString(sum.Sum(nil)), stored.n
+			return out, nil
 		}
-		out.sha256, out.size = hex.EncodeToString(sum.Sum(nil)), stored.n
-		return out, nil
 	}
 	// An upload that failed by itself is the cause (the helper then died
 	// writing to it); otherwise abort it.
-	var early error
-	select {
-	case early = <-put:
-	default:
-		pw.CloseWithError(errNotBackedUp)
-		<-put
+	early := up.abort()
+	if !closed {
+		_ = enc.Close() // its writes fail now: this only releases the encoder
 	}
 	switch {
 	case early != nil:
@@ -352,8 +452,10 @@ func (r *Repository) dumpAndUpload(ctx context.Context, st store.Store, key, nam
 	case exit == helper.ExitUnchanged:
 		out.unchanged = true
 		return out, nil
-	case exit == helper.ExitOK:
+	case exit == helper.ExitOK && encErr != nil:
 		return out, fmt.Errorf("compress the copy: %w", encErr)
+	case exit == helper.ExitOK && !parsed:
+		return out, errors.New("the backup helper reported no result")
 	case parsed && res.Error != "":
 		return out, errors.New(res.Error)
 	default:
@@ -390,7 +492,11 @@ func (t *tailBuffer) Write(p []byte) (int, error) {
 
 // runDockerHelper runs `docker run` (args) with stdout to out. When ctx ends
 // the helper container is removed (docker rm -f) and the CLI killed;
-// docker's output gets helperStopGrace to drain.
+// docker's output gets helperStopGrace to drain. Whenever the run does not
+// end in the helper's own exit (the CLI died on a failing out, was killed, or
+// docker itself failed), the container is removed too: --rm only fires once
+// the container exits, and one nobody reads from would block on its next
+// write forever.
 func runDockerHelper(ctx context.Context, name string, args []string, out io.Writer) (int, []byte, error) {
 	stderr := &tailBuffer{max: 64 << 10}
 	cmd := exec.CommandContext(ctx, "docker", args...)
@@ -402,13 +508,23 @@ func runDockerHelper(ctx context.Context, name string, args []string, out io.Wri
 	cmd.WaitDelay = helperStopGrace
 	err := cmd.Run()
 	if ctx.Err() != nil {
+		// The container may still have been being created when the CLI was
+		// killed: remove it again once the daemon has had time to finish.
+		removeHelper(name)
+		time.Sleep(time.Second)
+		removeHelper(name)
 		return -1, stderr.buf, fmt.Errorf("stopped after its time limit: %w", ctx.Err())
 	}
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
-		return ee.ExitCode(), stderr.buf, nil
+		code := ee.ExitCode()
+		if code != helper.ExitOK && code != helper.ExitUnchanged && code != helper.ExitMissing {
+			removeHelper(name)
+		}
+		return code, stderr.buf, nil
 	}
 	if err != nil {
+		removeHelper(name)
 		return -1, stderr.buf, err
 	}
 	return 0, stderr.buf, nil

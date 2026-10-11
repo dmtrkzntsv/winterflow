@@ -3,6 +3,9 @@ package dockercompose
 import (
 	"context"
 	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -147,5 +150,40 @@ func TestBackupPlan(t *testing.T) {
 	}
 	if len(plan) != 3 || plan[0].AppID != "app-1" || plan[0].Name != "database" || !plan[0].Enabled || plan[2].Name != "replica" {
 		t.Fatalf("plan = %+v", plan)
+	}
+}
+
+// A commit that fails leaves the previous config.json in the working tree, so
+// the next deploy does not apply settings the caller was told failed.
+func TestUpdateBackupsRestoresTheConfigWhenTheCommitFails(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("file permissions do not stop root")
+	}
+	r, _ := updateRepo(t)
+	dir := r.appDataDir("app-1")
+	cfgPath := filepath.Join(dir, configRel)
+	before, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Git can't write objects: every directory under .git/objects is read-only.
+	objects := filepath.Join(dir, ".git", "objects")
+	lock := func(mode os.FileMode) {
+		_ = filepath.WalkDir(objects, func(p string, d fs.DirEntry, _ error) error {
+			if d != nil && d.IsDir() {
+				_ = os.Chmod(p, mode)
+			}
+			return nil
+		})
+	}
+	lock(0o500)
+	t.Cleanup(func() { lock(0o700) })
+	_, err = r.UpdateBackups(context.Background(), "app-1", []recipe.BackupConfig{{Name: "database", Enabled: true, Storage: "disk"}})
+	if err == nil || !strings.Contains(err.Error(), "commit:") {
+		t.Fatalf("err = %v", err)
+	}
+	after, _ := os.ReadFile(cfgPath)
+	if string(after) != string(before) {
+		t.Fatalf("config.json = %s, want %s", after, before)
 	}
 }

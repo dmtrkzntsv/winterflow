@@ -8,11 +8,13 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -37,12 +39,25 @@ type fakeHelper struct {
 	exit    int
 	stderr  string
 	err     error
+	junk    int  // bytes of incompressible output written before a failure
+	noReply bool // succeed without the result line
 }
 
 func (f *fakeHelper) run(_ context.Context, _ string, args []string, out io.Writer) (int, []byte, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, args)
+	if f.junk > 0 {
+		buf := make([]byte, f.junk)
+		rand.New(rand.NewSource(1)).Read(buf)
+		if _, err := out.Write(buf); err != nil {
+			return 1, nil, err
+		}
+	}
+	if f.noReply {
+		_, _ = io.WriteString(out, f.payload)
+		return 0, []byte("progress\n"), nil
+	}
 	if f.err != nil || f.exit != 0 {
 		return f.exit, []byte(f.stderr), f.err
 	}
@@ -152,7 +167,7 @@ func TestRunBackupStoresAPoint(t *testing.T) {
 	args := strings.Join(b.helper.last(), " ")
 	for _, part := range []string{
 		"run --rm --name wf-backup-",
-		"--network none --memory 256m --cpu-shares 256 --cap-drop ALL --cap-add DAC_OVERRIDE --cap-add SETUID --cap-add SETGID --security-opt no-new-privileges",
+		"--log-driver none --network none --memory 256m --cpu-shares 256 --cap-drop ALL --cap-add DAC_OVERRIDE --cap-add SETUID --cap-add SETGID --security-opt no-new-privileges",
 		"--label winterflow.role=backup-helper --label winterflow.app=app-1",
 		"--mount type=volume,source=wf-app-1_data,target=/src/0 --mount type=bind,source=/usr/local/bin/winterflow,target=/wf,readonly",
 		"alpine:3.20 /wf backup dump sqlite /src/0/app.db",
@@ -411,5 +426,150 @@ func TestWithDeadlineAbandonsAHungCall(t *testing.T) {
 	cancel()
 	if err := withDeadline(ctx, time.Second, "list", func(context.Context) error { <-release; return nil }); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled: %v", err)
+	}
+}
+
+// countingStore counts the uploads made through it and can fail chosen calls.
+type countingStore struct {
+	store.Store
+	puts      *atomic.Int32
+	failPut   func(key string) error
+	failDelet error
+}
+
+func (c countingStore) Put(ctx context.Context, key string, r io.Reader) error {
+	c.puts.Add(1)
+	if c.failPut != nil {
+		if err := c.failPut(key); err != nil {
+			return err
+		}
+	}
+	return c.Store.Put(ctx, key, r)
+}
+
+func (c countingStore) Delete(ctx context.Context, keys ...string) error {
+	if c.failDelet != nil {
+		return c.failDelet
+	}
+	return c.Store.Delete(ctx, keys...)
+}
+
+func (b *backupRepo) wrapStore(c countingStore) {
+	b.Repository.openStorage = func(s model.Storage, secret string) (store.Store, error) {
+		st, err := store.Open(s, secret)
+		c.Store = st
+		return c, err
+	}
+}
+
+// An unchanged run, or one that fails before the helper writes anything,
+// never touches the storage's upload.
+func TestRunBackupUnchangedMakesNoUpload(t *testing.T) {
+	b := newBackupRepo(t)
+	puts := &atomic.Int32{}
+	b.wrapStore(countingStore{puts: puts})
+	if _, err := b.run(t, "database", command.PointScheduled); err != nil {
+		t.Fatal(err)
+	}
+	if puts.Load() != 2 { // the data, then the manifest
+		t.Fatalf("puts = %d", puts.Load())
+	}
+	b.clock = b.clock.Add(time.Hour)
+	if res, err := b.run(t, "database", command.PointScheduled); err != nil || !res.Unchanged {
+		t.Fatalf("unchanged = %+v, %v", res, err)
+	}
+	b.helper.exit, b.helper.stderr = helper.ExitMissing, `{"error":"database file not found"}`
+	if _, err := b.run(t, "database", command.PointScheduled); err == nil {
+		t.Fatal("a missing database succeeded")
+	}
+	if puts.Load() != 2 {
+		t.Fatalf("a run that wrote nothing uploaded: puts = %d", puts.Load())
+	}
+}
+
+// A helper that fails with data already streamed leaves no object (and no
+// temporary file), and its warnings still reach the result.
+func TestRunBackupAbortsAnUploadInFlight(t *testing.T) {
+	b := newBackupRepo(t)
+	b.helper.junk, b.helper.exit = 1<<20, 1
+	b.helper.stderr = `{"error":"read failed","warnings":["a file changed"]}`
+	res, err := b.run(t, "database", command.PointScheduled)
+	if err == nil || err.Error() != "read failed" {
+		t.Fatalf("err = %v", err)
+	}
+	if len(res.Warnings) != 1 || res.Warnings[0] != "a file changed" {
+		t.Fatalf("warnings = %v", res.Warnings)
+	}
+	if got := b.stored(t); len(got) != 0 {
+		t.Fatalf("a failed run left %v", got)
+	}
+}
+
+// Exit 0 without a result line is a failure: the fingerprint would be empty
+// and the backup would never be seen as unchanged again.
+func TestRunBackupNeedsTheHelpersResult(t *testing.T) {
+	b := newBackupRepo(t)
+	b.helper.noReply = true
+	if _, err := b.run(t, "database", command.PointScheduled); err == nil || err.Error() != "the backup helper reported no result" {
+		t.Fatalf("err = %v", err)
+	}
+	if got := b.stored(t); len(got) != 0 {
+		t.Fatalf("left %v", got)
+	}
+}
+
+// A manifest that can't be written leaves an incomplete point: not listed.
+func TestRunBackupManifestWriteFails(t *testing.T) {
+	b := newBackupRepo(t)
+	b.wrapStore(countingStore{puts: &atomic.Int32{}, failPut: func(key string) error {
+		if strings.HasSuffix(key, ".json") {
+			return errors.New("quota exceeded")
+		}
+		return nil
+	}})
+	if _, err := b.run(t, "database", command.PointScheduled); err == nil || err.Error() != "write the manifest: quota exceeded" {
+		t.Fatalf("err = %v", err)
+	}
+	b.Repository.openStorage = store.Open
+	points, err := b.ListRestorePoints(context.Background(), "app-1", "database")
+	if err != nil || len(points) != 0 {
+		t.Fatalf("points = %+v, %v", points, err)
+	}
+}
+
+// A retention failure doesn't fail the run: the new copy is stored, and the
+// failure is a warning.
+func TestRunBackupRetentionFailureIsAWarning(t *testing.T) {
+	b := newBackupRepo(t)
+	if _, err := saveConfig(t, b.Repository, "app-1", backupCompose, withBackups(
+		`[{"name":"database","enabled":true,"storage":"disk","keep":{"recent":"1h","daily":0,"monthly":0}}]`)); err != nil {
+		t.Fatal(err)
+	}
+	b.Repository.forgetApp("app-1")
+	b.wrapStore(countingStore{puts: &atomic.Int32{}, failDelet: errors.New("read-only storage")})
+	var res BackupResult
+	for i := range 2 {
+		b.helper.fp = "sqlite:" + string(rune('a'+i))
+		var err error
+		if res, err = b.run(t, "database", command.PointScheduled); err != nil {
+			t.Fatal(err)
+		}
+		b.clock = b.clock.Add(2 * time.Hour)
+	}
+	if res.Point == nil || len(res.Warnings) != 2 || res.Warnings[1] != "retention: read-only storage" {
+		t.Fatalf("result = %+v", res)
+	}
+}
+
+func TestWithDeadlineValue(t *testing.T) {
+	v, err := withDeadlineValue(context.Background(), time.Second, "x", func(context.Context) ([]int, error) { return []int{1}, nil })
+	if err != nil || len(v) != 1 {
+		t.Fatalf("v = %v, %v", v, err)
+	}
+	release := make(chan struct{})
+	defer close(release)
+	v, err = withDeadlineValue(context.Background(), 20*time.Millisecond, "x", func(context.Context) ([]int, error) { <-release; return []int{1}, nil })
+	if err == nil || v != nil {
+		t.Fatalf("hung: %v, %v", v, err)
 	}
 }

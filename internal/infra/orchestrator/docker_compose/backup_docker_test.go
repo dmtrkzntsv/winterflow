@@ -188,6 +188,20 @@ x-winterflow:
 		t.Fatalf("the killed helper is still there: %s", left)
 	}
 
+	// A helper whose output can't be delivered (the upload failed): the CLI
+	// dies on the failing write, and the container, blocked on its next write,
+	// must not be left running.
+	bname := "wf-backup-blocked-" + stamp
+	started := time.Now()
+	_, _, _ = runDockerHelper(ctx, bname, []string{"run", "--rm", "--name", bname, "--label", helper.RoleLabel, helper.Image,
+		"sh", "-c", "head -c 50000000 /dev/zero"}, &failAfter{n: 4 << 10})
+	if time.Since(started) > 30*time.Second {
+		t.Fatalf("the run with a failing writer took %s", time.Since(started))
+	}
+	if left := dockerT(t, "ps", "-aq", "--filter", "name="+bname); left != "" {
+		t.Fatalf("the blocked helper is still there: %s", left)
+	}
+
 	// Leftover helpers from a crashed agent are removed at start.
 	dockerT(t, "run", "-d", "--label", helper.RoleLabel, "--label", helper.AppLabel+"=itg", helper.Image, "sleep", "60")
 	if err := r.RemoveHelpers(context.Background()); err != nil {
@@ -214,4 +228,14 @@ func decompress(t *testing.T, path string) []byte {
 		t.Fatal(err)
 	}
 	return out
+}
+
+// failAfter is a writer that fails once n bytes have been written.
+type failAfter struct{ n int }
+
+func (f *failAfter) Write(p []byte) (int, error) {
+	if f.n -= len(p); f.n < 0 {
+		return 0, io.ErrClosedPipe
+	}
+	return len(p), nil
 }

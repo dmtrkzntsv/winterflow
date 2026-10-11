@@ -29,9 +29,11 @@ const (
 // and hands to every handler table. Handler tables put them in
 // Route.Middleware per route. The zero value (all nil) is only for spec
 // generation: Register refuses a nil middleware.
+//
+// There is no role guard: every member of an organization may call every
+// route. Authorization is authentication plus org ownership of the
+// addressed server (webutil.RequireServerAccess, inside the handlers).
 type Guards struct {
-	// Admin restricts a route to org owners/admins (rbac.RequireAdmin).
-	Admin Middleware
 	// AuthLimit is the per-IP limiter for bcrypt-priced endpoints.
 	AuthLimit Middleware
 }

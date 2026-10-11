@@ -29,7 +29,7 @@ export function NavUser() {
   const { isMobile } = useSidebar();
   const { logout } = useAuth();
   const navigate = useNavigate();
-  const { profile, isAdmin } = useProfile();
+  const { profile } = useProfile();
   const { user, loading } = useUser();
   const { t } = useTranslation();
   const displayName = user?.name ?? (loading ? "Loading..." : "Unknown user");
@@ -86,12 +86,10 @@ export function NavUser() {
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
-              {isAdmin ? (
-                <DropdownMenuItem onClick={() => navigate("/org/members")}>
-                  <Users />
-                  Members
-                </DropdownMenuItem>
-              ) : null}
+              <DropdownMenuItem onClick={() => navigate("/org/members")}>
+                <Users />
+                Members
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={() => navigate("/user/tokens")}>
                 <KeyRound />
                 API tokens

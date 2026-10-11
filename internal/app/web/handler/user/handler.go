@@ -24,7 +24,6 @@ type TokenStore interface {
 // endpoints need.
 type ProfileStore interface {
 	GetUser(ctx context.Context, userID string) (model.User, error)
-	RoleOf(ctx context.Context, userID string) (string, error)
 	GetCredentials(ctx context.Context, userID string) (model.Credentials, error)
 	VerifyLocalCredentials(ctx context.Context, email, password string) (model.User, error)
 	SetPassword(ctx context.Context, userID, password string, mustChange bool) error
@@ -52,13 +51,12 @@ type Profile struct {
 	UserID             string `json:"user_id"`
 	Name               string `json:"name"`
 	Email              string `json:"email"`
-	Role               string `json:"role"`
 	MustChangePassword bool   `json:"must_change_password"`
 }
 
-// GetProfile returns the caller's identity as the UI needs it: role (drives
-// admin-only navigation) and, for local accounts, email + the must-change
-// flag (drives the forced password-change redirect).
+// GetProfile returns the caller's identity as the UI needs it: id, name and,
+// for local accounts, email + the must-change flag (drives the forced
+// password-change redirect).
 func (h *Handler) GetProfile(w http.ResponseWriter, r *http.Request) {
 	userID, ok := webutil.RequireUser(w, r)
 	if !ok {
@@ -69,12 +67,7 @@ func (h *Handler) GetProfile(w http.ResponseWriter, r *http.Request) {
 		webutil.Error(w, "failed to load profile", nil)
 		return
 	}
-	role, err := h.users.RoleOf(r.Context(), userID)
-	if err != nil {
-		h.log.Error("GetProfile: role", "error", err, "user_id", userID)
-		role = ""
-	}
-	profile := Profile{UserID: u.ID, Name: u.Name, Role: role}
+	profile := Profile{UserID: u.ID, Name: u.Name}
 	if creds, err := h.users.GetCredentials(r.Context(), userID); err == nil {
 		profile.Email = creds.Email
 		profile.MustChangePassword = creds.MustChangePassword

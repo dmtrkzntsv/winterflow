@@ -19,6 +19,18 @@ func newUserRepo(t *testing.T) *DbUserRepository {
 	return NewDbUserRepository(newTestDB(t), log)
 }
 
+// storedRole reads organization_users.role straight from the table: the app
+// no longer reads it, but it is still written (see model.OrganizationRole).
+func storedRole(t *testing.T, repo *DbUserRepository, userID string) string {
+	t.Helper()
+	var row models.OrganizationUser
+	if err := repo.db.GetDB().NewSelect().Model(&row).
+		Where("user_id = ?", userID).Scan(context.Background()); err != nil {
+		t.Fatalf("read role of %s: %v", userID, err)
+	}
+	return row.Role
+}
+
 func TestCreateUserCreatesOrgMembershipAndAccount(t *testing.T) {
 	repo := newUserRepo(t)
 	ctx := context.Background()
@@ -201,8 +213,8 @@ func TestBootstrapLocalAdminCreatesOwnerOnce(t *testing.T) {
 	if admin.Name != "Ada Admin" {
 		t.Errorf("name = %q, want submitted 'Ada Admin'", admin.Name)
 	}
-	if role, err := repo.RoleOf(ctx, admin.ID); err != nil || role != "owner" {
-		t.Errorf("RoleOf = %q, %v; want owner", role, err)
+	if role := storedRole(t, repo, admin.ID); role != "owner" {
+		t.Errorf("stored role = %q, want owner", role)
 	}
 
 	// Email was normalized on write; verify with normalized form.
@@ -245,15 +257,17 @@ func TestCreateMemberUserJoinsOrgWithoutNewOrg(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	member, err := repo.CreateMemberUser(ctx, orgID, "Bob", "Bob@X.io", "member", "temp-pass-16char")
+	member, err := repo.CreateMemberUser(ctx, orgID, "Bob", "Bob@X.io", "temp-pass-16char")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got, err := repo.PrimaryOrganizationID(ctx, member.ID); err != nil || got != orgID {
 		t.Errorf("member org = %q, %v; want admin's org %q", got, err, orgID)
 	}
-	if role, _ := repo.RoleOf(ctx, member.ID); role != "member" {
-		t.Errorf("role = %q", role)
+	// Admin, not the column default 'member': an older binary run against
+	// this database must not demote accounts created without roles.
+	if role := storedRole(t, repo, member.ID); role != "admin" {
+		t.Errorf("stored role = %q, want admin", role)
 	}
 	if u, err := repo.VerifyLocalCredentials(ctx, "bob@x.io", "temp-pass-16char"); err != nil || u.ID != member.ID {
 		t.Errorf("temp password login: %v", err)
@@ -263,7 +277,7 @@ func TestCreateMemberUserJoinsOrgWithoutNewOrg(t *testing.T) {
 	}
 
 	// Duplicate email refused.
-	if _, err := repo.CreateMemberUser(ctx, orgID, "Bob2", "bob@x.io", "member", "zz"); !errors.Is(err, model.ErrEmailTaken) {
+	if _, err := repo.CreateMemberUser(ctx, orgID, "Bob2", "bob@x.io", "zz"); !errors.Is(err, model.ErrEmailTaken) {
 		t.Errorf("dup email err = %v, want ErrEmailTaken", err)
 	}
 
@@ -279,7 +293,7 @@ func TestSetPasswordClearsMustChange(t *testing.T) {
 	ctx := context.Background()
 	admin, _ := repo.BootstrapLocalAdmin(ctx, "", "boss@y.io", "bootpass-123")
 	orgID, _ := repo.PrimaryOrganizationID(ctx, admin.ID)
-	m, _ := repo.CreateMemberUser(ctx, orgID, "M", "m@y.io", "member", "old-temp-pass1")
+	m, _ := repo.CreateMemberUser(ctx, orgID, "M", "m@y.io", "old-temp-pass1")
 
 	if err := repo.SetPassword(ctx, m.ID, "brand-new-pass1", false); err != nil {
 		t.Fatal(err)
@@ -295,27 +309,63 @@ func TestSetPasswordClearsMustChange(t *testing.T) {
 	}
 }
 
-func TestUpdateMemberRoleLastOwnerGuard(t *testing.T) {
+func TestRemoveMemberAnyMemberOnlyInOrg(t *testing.T) {
 	repo := newUserRepo(t)
 	ctx := context.Background()
-	admin, _ := repo.BootstrapLocalAdmin(ctx, "", "boss@z.io", "bootpass-123")
-	orgID, _ := repo.PrimaryOrganizationID(ctx, admin.ID)
-	m, _ := repo.CreateMemberUser(ctx, orgID, "M", "m@z.io", "member", "temp-password1")
-
-	// Demoting the only owner is refused.
-	if err := repo.UpdateMemberRole(ctx, orgID, admin.ID, "member"); !errors.Is(err, model.ErrLastOwner) {
-		t.Errorf("demote last owner err = %v, want ErrLastOwner", err)
-	}
-	// Promote member to admin: fine.
-	if err := repo.UpdateMemberRole(ctx, orgID, m.ID, "admin"); err != nil {
+	creator, _ := repo.BootstrapLocalAdmin(ctx, "", "boss@z.io", "bootpass-123")
+	orgID, _ := repo.PrimaryOrganizationID(ctx, creator.ID)
+	m, _ := repo.CreateMemberUser(ctx, orgID, "M", "m@z.io", "temp-password1")
+	outsider, err := repo.RegisterLocalUser(ctx, "Eve", "eve@z.io", "evepass-1234")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if role, _ := repo.RoleOf(ctx, m.ID); role != "admin" {
-		t.Errorf("role = %q", role)
+
+	// A user of another org is not a member here: refused, and untouched.
+	if err := repo.RemoveMember(ctx, orgID, creator.ID, outsider.ID); !errors.Is(err, model.ErrorUserNotFound) {
+		t.Errorf("remove outsider err = %v, want ErrorUserNotFound", err)
 	}
-	// Removing the only owner is refused too.
-	if err := repo.RemoveMember(ctx, orgID, admin.ID); !errors.Is(err, model.ErrLastOwner) {
-		t.Errorf("remove last owner err = %v, want ErrLastOwner", err)
+	if _, err := repo.VerifyLocalCredentials(ctx, "eve@z.io", "evepass-1234"); err != nil {
+		t.Errorf("outsider lost their account: %v", err)
+	}
+
+	// No owner rule: the org's creator can be removed like anyone else, and
+	// the org lives on with the remaining member.
+	if err := repo.RemoveMember(ctx, orgID, m.ID, creator.ID); err != nil {
+		t.Fatalf("remove creator: %v", err)
+	}
+	members, err := repo.ListMembers(ctx, orgID)
+	if err != nil || len(members) != 1 || members[0].ID != m.ID {
+		t.Fatalf("members after removing the creator = %+v, %v", members, err)
+	}
+	if got, err := repo.PrimaryOrganizationID(ctx, m.ID); err != nil || got != orgID {
+		t.Errorf("remaining member's org = %q, %v; want %q", got, err, orgID)
+	}
+}
+
+// Two members removing each other concurrently must not empty the org: once
+// the caller itself has been removed, its pending removal is refused.
+func TestRemoveMemberRefusesRemovedCaller(t *testing.T) {
+	repo := newUserRepo(t)
+	ctx := context.Background()
+	a, _ := repo.BootstrapLocalAdmin(ctx, "", "a@r.io", "bootpass-123")
+	orgID, _ := repo.PrimaryOrganizationID(ctx, a.ID)
+	b, _ := repo.CreateMemberUser(ctx, orgID, "B", "b@r.io", "temp-password1")
+
+	// B removes A first; A's in-flight request to remove B then arrives.
+	if err := repo.RemoveMember(ctx, orgID, b.ID, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.RemoveMember(ctx, orgID, a.ID, b.ID); !errors.Is(err, model.ErrorUserNotFound) {
+		t.Fatalf("removal by a removed caller err = %v, want ErrorUserNotFound", err)
+	}
+	members, err := repo.ListMembers(ctx, orgID)
+	if err != nil || len(members) != 1 || members[0].ID != b.ID {
+		t.Fatalf("members = %+v, %v; want only B", members, err)
+	}
+	// A caller from another org is not a member here either.
+	other, _ := repo.RegisterLocalUser(ctx, "Eve", "eve@r.io", "evepass-1234")
+	if err := repo.RemoveMember(ctx, orgID, other.ID, b.ID); !errors.Is(err, model.ErrorUserNotFound) {
+		t.Errorf("foreign caller err = %v, want ErrorUserNotFound", err)
 	}
 }
 
@@ -324,13 +374,13 @@ func TestRemoveMemberDeletesUserAndTokens(t *testing.T) {
 	ctx := context.Background()
 	admin, _ := repo.BootstrapLocalAdmin(ctx, "", "boss@w.io", "bootpass-123")
 	orgID, _ := repo.PrimaryOrganizationID(ctx, admin.ID)
-	m, _ := repo.CreateMemberUser(ctx, orgID, "M", "m@w.io", "member", "temp-password1")
+	m, _ := repo.CreateMemberUser(ctx, orgID, "M", "m@w.io", "temp-password1")
 	_, patPlain, err := repo.CreateToken(ctx, m.ID, "m's token", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if err := repo.RemoveMember(ctx, orgID, m.ID); err != nil {
+	if err := repo.RemoveMember(ctx, orgID, admin.ID, m.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repo.VerifyLocalCredentials(ctx, "m@w.io", "temp-password1"); !errors.Is(err, model.ErrInvalidCredentials) {
@@ -364,8 +414,8 @@ func TestRegisterLocalUserCreatesOwnOrg(t *testing.T) {
 	if orgA == "" || orgA == orgB {
 		t.Errorf("orgs not distinct: %q vs %q", orgA, orgB)
 	}
-	if role, _ := repo.RoleOf(ctx, a.ID); role != "owner" {
-		t.Errorf("role = %q", role)
+	if role := storedRole(t, repo, a.ID); role != "owner" {
+		t.Errorf("stored role = %q, want owner", role)
 	}
 	if u, err := repo.VerifyLocalCredentials(ctx, "alice@x.io", "alicepass-123"); err != nil || u.ID != a.ID {
 		t.Errorf("login after register: %v", err)

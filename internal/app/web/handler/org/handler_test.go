@@ -19,41 +19,31 @@ type fakeOrgStore struct {
 	updatedOrg string
 	members    []model.Member
 	created    []string
-	updated    map[string]string
 	removed    []string
+	removedBy  []string
 	resetPw    []string
 	takenEmail string
-	lastOwner  string
 }
 
 func (f *fakeOrgStore) PrimaryOrganizationID(context.Context, string) (string, error) {
 	return "org-1", nil
 }
-func (f *fakeOrgStore) CreateMemberUser(_ context.Context, orgID, name, email, role, tempPassword string) (model.User, error) {
+func (f *fakeOrgStore) CreateMemberUser(_ context.Context, orgID, name, email, tempPassword string) (model.User, error) {
 	if email == f.takenEmail {
 		return model.User{}, model.ErrEmailTaken
 	}
-	f.created = append(f.created, email+"|"+role+"|"+tempPassword)
+	f.created = append(f.created, email+"|"+tempPassword)
 	return model.User{ID: "new-1", Name: name}, nil
 }
 func (f *fakeOrgStore) ListMembers(context.Context, string) ([]model.Member, error) {
 	return f.members, nil
 }
-func (f *fakeOrgStore) UpdateMemberRole(_ context.Context, _, userID, role string) error {
-	if userID == f.lastOwner {
-		return model.ErrLastOwner
-	}
-	if f.updated == nil {
-		f.updated = map[string]string{}
-	}
-	f.updated[userID] = role
-	return nil
-}
-func (f *fakeOrgStore) RemoveMember(_ context.Context, _, userID string) error {
-	if userID == f.lastOwner {
-		return model.ErrLastOwner
+func (f *fakeOrgStore) RemoveMember(_ context.Context, _, callerID, userID string) error {
+	if userID == "not-in-org" {
+		return model.ErrorUserNotFound
 	}
 	f.removed = append(f.removed, userID)
+	f.removedBy = append(f.removedBy, callerID)
 	return nil
 }
 func (f *fakeOrgStore) SetPassword(_ context.Context, userID, _ string, mustChange bool) error {
@@ -97,7 +87,7 @@ func post(h http.HandlerFunc, body string) *httptest.ResponseRecorder {
 
 func TestCreateUserReturnsTempPasswordOnce(t *testing.T) {
 	h, f := newHandler()
-	w := post(h.CreateUser, `{"name":"Bob","email":"Bob@X.io","role":"member"}`)
+	w := post(h.CreateUser, `{"name":"Bob","email":"Bob@X.io"}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
 	}
@@ -116,8 +106,26 @@ func TestCreateUserReturnsTempPasswordOnce(t *testing.T) {
 	if len(resp.Data.TempPassword) != 16 {
 		t.Errorf("temp password len = %d, want 16", len(resp.Data.TempPassword))
 	}
-	if len(f.created) != 1 || !strings.HasPrefix(f.created[0], "bob@x.io|member|") {
+	if len(f.created) != 1 || f.created[0] != "bob@x.io|"+resp.Data.TempPassword {
 		t.Errorf("created = %v", f.created)
+	}
+	if strings.Contains(w.Body.String(), `"role"`) {
+		t.Errorf("response still carries a role: %s", w.Body.String())
+	}
+}
+
+// A client that still sends a role (a browser tab opened before the
+// upgrade) creates the user anyway: the field is ignored, whatever it says.
+func TestCreateUserIgnoresStaleRole(t *testing.T) {
+	h, f := newHandler()
+	for i, role := range []string{"member", "admin", "owner", "weird"} {
+		body := `{"name":"B","email":"b` + string(rune('0'+i)) + `@x.io","role":"` + role + `"}`
+		if w := post(h.CreateUser, body); w.Code != http.StatusOK {
+			t.Errorf("role %q: code = %d, want 200", role, w.Code)
+		}
+	}
+	if len(f.created) != 4 {
+		t.Errorf("created = %v, want 4 accounts", f.created)
 	}
 }
 
@@ -126,11 +134,9 @@ func TestCreateUserValidation(t *testing.T) {
 	f.takenEmail = "taken@x.io"
 	for _, body := range []string{
 		`{}`,
-		`{"name":"B","email":"","role":"member"}`,
-		`{"name":"B","email":"not-an-email","role":"member"}`,
-		`{"name":"B","email":"b@x.io","role":"owner"}`,
-		`{"name":"B","email":"b@x.io","role":"weird"}`,
-		`{"name":"B","email":"taken@x.io","role":"member"}`,
+		`{"name":"B","email":""}`,
+		`{"name":"B","email":"not-an-email"}`,
+		`{"name":"B","email":"taken@x.io"}`,
 	} {
 		if w := post(h.CreateUser, body); w.Code != http.StatusBadRequest {
 			t.Errorf("body %s: code = %d, want 400", body, w.Code)
@@ -138,25 +144,29 @@ func TestCreateUserValidation(t *testing.T) {
 	}
 }
 
-func TestUpdateMemberLastOwnerGuard(t *testing.T) {
+func TestRemoveMember(t *testing.T) {
 	h, f := newHandler()
-	f.lastOwner = "owner-1"
-	if w := post(h.UpdateMember, `{"user_id":"owner-1","role":"member"}`); w.Code != http.StatusBadRequest {
-		t.Errorf("last owner demote: code = %d, want 400", w.Code)
-	}
-	if w := post(h.UpdateMember, `{"user_id":"m-1","role":"admin"}`); w.Code != http.StatusOK {
-		t.Errorf("promote: code = %d", w.Code)
-	}
-}
-
-func TestRemoveMemberSelfForbidden(t *testing.T) {
-	h, _ := newHandler()
-	// Caller is admin-1; removing self is refused.
+	// Caller is admin-1; removing self is refused (it would lock them out).
 	if w := post(h.RemoveMember, `{"user_id":"admin-1"}`); w.Code != http.StatusBadRequest {
 		t.Errorf("self-remove: code = %d, want 400", w.Code)
 	}
+	if w := post(h.RemoveMember, `{"user_id":""}`); w.Code != http.StatusBadRequest {
+		t.Errorf("empty user_id: code = %d, want 400", w.Code)
+	}
+	// A user outside the caller's org is a 400, not a removal.
+	if w := post(h.RemoveMember, `{"user_id":"not-in-org"}`); w.Code != http.StatusBadRequest {
+		t.Errorf("foreign user: code = %d, want 400", w.Code)
+	}
+	// Any other member goes, whoever created the org: there is no owner.
 	if w := post(h.RemoveMember, `{"user_id":"m-1"}`); w.Code != http.StatusOK {
 		t.Errorf("remove member: code = %d", w.Code)
+	}
+	if len(f.removed) != 1 || f.removed[0] != "m-1" {
+		t.Errorf("removed = %v, want [m-1]", f.removed)
+	}
+	// The caller is handed to the store so it can re-verify them under lock.
+	if len(f.removedBy) != 1 || f.removedBy[0] != "admin-1" {
+		t.Errorf("removedBy = %v, want [admin-1]", f.removedBy)
 	}
 }
 
@@ -186,12 +196,15 @@ func TestResetMemberPassword(t *testing.T) {
 
 func TestGetMembers(t *testing.T) {
 	h, f := newHandler()
-	f.members = []model.Member{{Role: "owner"}}
+	f.members = []model.Member{{User: model.User{ID: "u-1", Name: "Ann"}, Email: "ann@x.io", Provider: "local"}}
 	r := authed(httptest.NewRequest("GET", "/x", nil))
 	w := httptest.NewRecorder()
 	h.GetMembers(w, r)
-	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "owner") {
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "ann@x.io") {
 		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), `"role"`) {
+		t.Errorf("members still carry a role: %s", w.Body.String())
 	}
 }
 

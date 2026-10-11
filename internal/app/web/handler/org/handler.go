@@ -1,7 +1,7 @@
 // Package org serves organization member management: create accounts with
-// temp passwords, list members, change roles, reset passwords, remove.
-// Every route here sits behind the rbac.RequireAdmin middleware; handlers
-// additionally scope all operations to the caller's own organization.
+// temp passwords, list members, reset passwords, remove. There are no roles:
+// every member of an org may do all of it. Handlers scope every operation
+// to the caller's own organization.
 package org
 
 import (
@@ -18,10 +18,9 @@ import (
 // OrgStore is the slice of port.UserService this handler needs.
 type OrgStore interface {
 	PrimaryOrganizationID(ctx context.Context, userID string) (string, error)
-	CreateMemberUser(ctx context.Context, orgID, name, email, role, tempPassword string) (model.User, error)
+	CreateMemberUser(ctx context.Context, orgID, name, email, tempPassword string) (model.User, error)
 	ListMembers(ctx context.Context, orgID string) ([]model.Member, error)
-	UpdateMemberRole(ctx context.Context, orgID, userID, role string) error
-	RemoveMember(ctx context.Context, orgID, userID string) error
+	RemoveMember(ctx context.Context, orgID, callerID, userID string) error
 	SetPassword(ctx context.Context, userID, password string, mustChange bool) error
 	GetCredentials(ctx context.Context, userID string) (model.Credentials, error)
 	GetOrganization(ctx context.Context, orgID string) (model.Organization, error)
@@ -45,8 +44,9 @@ func NewHandler(d *Deps) *Handler {
 const tempPasswordLen = 16
 const passwordAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
-// randomPassword returns a crypto/rand temp password (shown to the admin
-// once; stored only as a bcrypt hash with must_change_password set).
+// randomPassword returns a crypto/rand temp password (shown once to the
+// member who created it; stored only as a bcrypt hash with
+// must_change_password set).
 func randomPassword() (string, error) {
 	buf := make([]byte, tempPasswordLen)
 	if _, err := rand.Read(buf); err != nil {
@@ -80,12 +80,10 @@ func validEmail(email string) bool {
 	return at > 0 && at < len(email)-1 && !strings.ContainsAny(email, " \t")
 }
 
-// CreateUserRequest is the body of POST /api/v1/org/create-user. Role is
-// "admin" or "member".
+// CreateUserRequest is the body of POST /api/v1/org/create-user.
 type CreateUserRequest struct {
 	Name  string `json:"name"`
 	Email string `json:"email"`
-	Role  string `json:"role"`
 }
 
 // CreateUserResponse is the data of POST /api/v1/org/create-user.
@@ -94,7 +92,6 @@ type CreateUserResponse struct {
 	UserID       string `json:"user_id"`
 	Name         string `json:"name"`
 	Email        string `json:"email"`
-	Role         string `json:"role"`
 	TempPassword string `json:"temp_password"`
 }
 
@@ -119,16 +116,12 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		webutil.Error(w, "a valid email is required", nil)
 		return
 	}
-	if req.Role != model.RoleAdmin.Value() && req.Role != model.RoleMember.Value() {
-		webutil.Error(w, "role must be admin or member", nil)
-		return
-	}
 	tempPassword, err := randomPassword()
 	if err != nil {
 		webutil.Error(w, "failed to generate password", nil)
 		return
 	}
-	user, err := h.users.CreateMemberUser(r.Context(), orgID, name, email, req.Role, tempPassword)
+	user, err := h.users.CreateMemberUser(r.Context(), orgID, name, email, tempPassword)
 	if err != nil {
 		if err == model.ErrEmailTaken {
 			webutil.Error(w, "email already in use", nil)
@@ -142,7 +135,6 @@ func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
 		UserID:       user.ID,
 		Name:         user.Name,
 		Email:        email,
-		Role:         req.Role,
 		TempPassword: tempPassword,
 	})
 }
@@ -162,41 +154,6 @@ func (h *Handler) GetMembers(w http.ResponseWriter, r *http.Request) {
 	webutil.Success(w, "members", members)
 }
 
-// UpdateMemberRequest is the body of POST /api/v1/org/update-member.
-type UpdateMemberRequest struct {
-	UserID string `json:"user_id"`
-	Role   string `json:"role"`
-}
-
-// UpdateMember changes a member's role within the caller's org.
-func (h *Handler) UpdateMember(w http.ResponseWriter, r *http.Request) {
-	_, orgID, ok := h.callerOrg(w, r)
-	if !ok {
-		return
-	}
-	req, ok := webutil.DecodeBody[UpdateMemberRequest](w, r)
-	if !ok {
-		return
-	}
-	if req.UserID == "" {
-		webutil.Error(w, "user_id is required", nil)
-		return
-	}
-	if req.Role != model.RoleAdmin.Value() && req.Role != model.RoleMember.Value() && req.Role != model.RoleOwner.Value() {
-		webutil.Error(w, "invalid role", nil)
-		return
-	}
-	if err := h.users.UpdateMemberRole(r.Context(), orgID, req.UserID, req.Role); err != nil {
-		if err == model.ErrLastOwner {
-			webutil.Error(w, "cannot demote the last owner", nil)
-			return
-		}
-		webutil.Error(w, "failed to update member", nil)
-		return
-	}
-	webutil.Success(w, "member updated", nil)
-}
-
 // MemberRequest names one member: the body of remove-member and
 // reset-member-password.
 type MemberRequest struct {
@@ -204,7 +161,8 @@ type MemberRequest struct {
 }
 
 // RemoveMember deletes a member (and their user account) from the caller's
-// org. Self-removal is refused — hand ownership over first.
+// org. Self-removal is refused, so an org always keeps the member who
+// removed the others.
 func (h *Handler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 	callerID, orgID, ok := h.callerOrg(w, r)
 	if !ok {
@@ -222,11 +180,7 @@ func (h *Handler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 		webutil.Error(w, "you cannot remove yourself", nil)
 		return
 	}
-	if err := h.users.RemoveMember(r.Context(), orgID, req.UserID); err != nil {
-		if err == model.ErrLastOwner {
-			webutil.Error(w, "cannot remove the last owner", nil)
-			return
-		}
+	if err := h.users.RemoveMember(r.Context(), orgID, callerID, req.UserID); err != nil {
 		webutil.Error(w, "failed to remove member", nil)
 		return
 	}
@@ -277,7 +231,7 @@ func (h *Handler) ResetMemberPassword(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetOrganization returns the caller's org identity (name, icon, color).
-// Visible to every member — only updates are admin-gated.
+// Visible to every member.
 func (h *Handler) GetOrganization(w http.ResponseWriter, r *http.Request) {
 	_, orgID, ok := h.callerOrg(w, r)
 	if !ok {
@@ -299,7 +253,7 @@ type UpdateOrganizationRequest struct {
 	Color string `json:"color"`
 }
 
-// UpdateOrganization sets the org's name/icon/color (admin-only via route).
+// UpdateOrganization sets the org's name/icon/color.
 func (h *Handler) UpdateOrganization(w http.ResponseWriter, r *http.Request) {
 	_, orgID, ok := h.callerOrg(w, r)
 	if !ok {

@@ -132,7 +132,6 @@ func TestUnauthenticatedIs401(t *testing.T) {
 }
 
 type fakeProfileStore struct {
-	role       string
 	creds      *model.Credentials
 	verifyErr  error
 	setCalls   []bool // mustChange flag per SetPassword call
@@ -142,7 +141,6 @@ type fakeProfileStore struct {
 func (f *fakeProfileStore) GetUser(_ context.Context, userID string) (model.User, error) {
 	return model.User{ID: userID, Name: "Alice"}, nil
 }
-func (f *fakeProfileStore) RoleOf(context.Context, string) (string, error) { return f.role, nil }
 func (f *fakeProfileStore) GetCredentials(context.Context, string) (model.Credentials, error) {
 	if f.creds == nil {
 		return model.Credentials{}, model.ErrorUserNotFound
@@ -170,7 +168,7 @@ func newProfileHandler(f *fakeProfileStore) *Handler {
 }
 
 func TestGetProfileShape(t *testing.T) {
-	f := &fakeProfileStore{role: "owner", creds: &model.Credentials{Email: "a@b.io", MustChangePassword: true}}
+	f := &fakeProfileStore{creds: &model.Credentials{Email: "a@b.io", MustChangePassword: true}}
 	h := newProfileHandler(f)
 	r := authed(httptest.NewRequest("GET", "/x", nil))
 	w := httptest.NewRecorder()
@@ -181,7 +179,6 @@ func TestGetProfileShape(t *testing.T) {
 	var resp struct {
 		Data struct {
 			UserID             string `json:"user_id"`
-			Role               string `json:"role"`
 			Email              string `json:"email"`
 			MustChangePassword bool   `json:"must_change_password"`
 		} `json:"data"`
@@ -189,13 +186,16 @@ func TestGetProfileShape(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
-	if resp.Data.Role != "owner" || resp.Data.Email != "a@b.io" || !resp.Data.MustChangePassword {
+	if resp.Data.UserID != "user-1" || resp.Data.Email != "a@b.io" || !resp.Data.MustChangePassword {
 		t.Errorf("profile = %+v", resp.Data)
+	}
+	if strings.Contains(w.Body.String(), `"role"`) {
+		t.Errorf("profile still carries a role: %s", w.Body.String())
 	}
 }
 
 func TestGetProfileGoogleOnlyHasNoEmail(t *testing.T) {
-	h := newProfileHandler(&fakeProfileStore{role: "member", creds: nil})
+	h := newProfileHandler(&fakeProfileStore{creds: nil})
 	r := authed(httptest.NewRequest("GET", "/x", nil))
 	w := httptest.NewRecorder()
 	h.GetProfile(w, r)

@@ -61,7 +61,7 @@ func (Null) JSONSchema() (jsonschema.Schema, error) {
 }
 
 // Error is the body of every webutil error: util.Error (400),
-// util.Unauthorized (401), util.Forbidden and rbac.RequireAdmin (403).
+// util.Unauthorized (401) and util.Forbidden (403, a server of another org).
 type Error struct {
 	Success bool   `json:"success" required:"true" const:"false"`
 	Message string `json:"message" required:"true"`

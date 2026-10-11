@@ -16,7 +16,6 @@ import (
 	huser "winterflow/internal/app/web/handler/user"
 	"winterflow/internal/app/web/middleware/patauth"
 	"winterflow/internal/app/web/middleware/ratelimit"
-	"winterflow/internal/app/web/middleware/rbac"
 	"winterflow/internal/app/web/util"
 	"winterflow/internal/infra/bootstrap"
 )
@@ -35,13 +34,9 @@ func (s *Server) registerRoutes() {
 	// authMW = PAT bearer first, JWT session otherwise. Every User route
 	// uses this so tokens work everywhere a browser session does.
 	authMW := patauth.Middleware(s.Deps.UserService, amw.Auth)
-	guards := api.Guards{
-		// Admin gates administration (member management, server
-		// registration, infrastructure mutations) to owners/admins. Members
-		// keep the full app lifecycle.
-		Admin:     rbac.RequireAdmin(s.Deps.UserService),
-		AuthLimit: authLimiter.Middleware,
-	}
+	// No role guard: every org member may do everything; server-addressed
+	// handlers still check the caller's org owns the server.
+	guards := api.Guards{AuthLimit: authLimiter.Middleware}
 	api.Register(s.Router, routeTable(s.Deps, guards), authMW)
 
 	// Serve the embedded SPA for everything the API doesn't claim (history-mode

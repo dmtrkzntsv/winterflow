@@ -1159,12 +1159,6 @@ paths:
               schema:
                 type: string
           description: Unauthorized
-        "403":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Forbidden
       security:
       - bearer: []
       - cookie: []
@@ -1211,12 +1205,6 @@ paths:
               schema:
                 type: string
           description: Unauthorized
-        "403":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Forbidden
       security:
       - bearer: []
       - cookie: []
@@ -1306,12 +1294,6 @@ paths:
               schema:
                 type: string
           description: Unauthorized
-        "403":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Forbidden
       security:
       - bearer: []
       - cookie: []
@@ -1359,69 +1341,10 @@ paths:
               schema:
                 type: string
           description: Unauthorized
-        "403":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Forbidden
       security:
       - bearer: []
       - cookie: []
       summary: Issue a member a new temp password
-      tags:
-      - org
-  /api/v1/org/update-member:
-    post:
-      operationId: orgUpdateMember
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UpdateMemberRequest'
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                properties:
-                  data:
-                    type: "null"
-                  message:
-                    type: string
-                  success:
-                    const: true
-                    type: boolean
-                required:
-                - success
-                - data
-                type: object
-          description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Bad Request
-        "401":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-            text/plain:
-              schema:
-                type: string
-          description: Unauthorized
-        "403":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Forbidden
-      security:
-      - bearer: []
-      - cookie: []
-      summary: Change a member's role
       tags:
       - org
   /api/v1/org/update-organization:
@@ -1465,12 +1388,6 @@ paths:
               schema:
                 type: string
           description: Unauthorized
-        "403":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Forbidden
       security:
       - bearer: []
       - cookie: []
@@ -1842,12 +1759,6 @@ paths:
               schema:
                 type: string
           description: Unauthorized
-        "403":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Forbidden
       security:
       - bearer: []
       - cookie: []
@@ -2063,7 +1974,7 @@ paths:
       security:
       - bearer: []
       - cookie: []
-      summary: The caller's profile and role
+      summary: The caller's profile
       tags:
       - user
   /api/v1/user/get-tokens:
@@ -2823,16 +2734,12 @@ components:
           type: string
         name:
           type: string
-        role:
-          type: string
       type: object
     CreateUserResponse:
       properties:
         email:
           type: string
         name:
-          type: string
-        role:
           type: string
         temp_password:
           type: string
@@ -2842,7 +2749,6 @@ components:
       - user_id
       - name
       - email
-      - role
       - temp_password
       type: object
     CreateVolumeRequest:
@@ -3242,8 +3148,6 @@ components:
           type: string
         provider:
           type: string
-        role:
-          type: string
       required:
       - id
       - name
@@ -3251,7 +3155,6 @@ components:
       - created_at
       - last_seen_at
       - email
-      - role
       - provider
       type: object
     MemberRequest:
@@ -3341,15 +3244,12 @@ components:
           type: boolean
         name:
           type: string
-        role:
-          type: string
         user_id:
           type: string
       required:
       - user_id
       - name
       - email
-      - role
       - must_change_password
       type: object
     PublicKeyResponse:
@@ -3639,13 +3539,6 @@ components:
       - from_version
       - to_version
       - scheduled
-      type: object
-    UpdateMemberRequest:
-      properties:
-        role:
-          type: string
-        user_id:
-          type: string
       type: object
     UpdateOrganizationRequest:
       properties:

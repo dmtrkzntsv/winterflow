@@ -36,12 +36,7 @@ export function ProfileProvider({ children }: { children: ReactNode }) {
   }, [refresh]);
 
   const value = useMemo(
-    () => ({
-      profile,
-      loading,
-      refresh,
-      isAdmin: profile?.role === "owner" || profile?.role === "admin",
-    }),
+    () => ({ profile, loading, refresh }),
     [profile, loading, refresh],
   );
 

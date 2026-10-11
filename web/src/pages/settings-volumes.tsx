@@ -46,7 +46,6 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { type Docker, type Volume } from "@/context/use-docker";
 import { useApps } from "@/context/use-apps";
-import { useProfile } from "@/context/use-profile";
 import { cn } from "@/lib/utils";
 import {
   groupVolumes,
@@ -248,7 +247,6 @@ function DeleteVolumeDialog({
 }
 
 export function VolumesCard({ docker }: { docker: Docker }) {
-  const { isAdmin } = useProfile();
   const { apps } = useApps();
   const [items, setItems] = useState<Volume[] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -295,7 +293,6 @@ export function VolumesCard({ docker }: { docker: Docker }) {
   const visible = all.filter((v) => showAnon || !v.anonymous);
   const groups = groupVolumes(visible);
   const orphanCount = visible.filter((v) => v.orphan).length;
-  const cols = isAdmin ? 4 : 3;
 
   const rows = (list: Volume[]) =>
     list.map((v) => {
@@ -330,23 +327,21 @@ export function VolumesCard({ docker }: { docker: Docker }) {
           <TableCell className="hidden sm:table-cell">
             <VolumeStatus volume={v} />
           </TableCell>
-          {isAdmin && (
-            <TableCell className="py-0.5 text-right">
-              {/* Docker refuses to remove a mounted volume; don't offer it. */}
-              {v.in_use ? null : (
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="size-8 text-muted-foreground hover:text-destructive"
-                  aria-label={`Delete volume ${v.name}`}
-                  title="Delete volume"
-                  onClick={() => setToDelete(v)}
-                >
-                  <Trash2 className="size-4" />
-                </Button>
-              )}
-            </TableCell>
-          )}
+          <TableCell className="py-0.5 text-right">
+            {/* Docker refuses to remove a mounted volume; don't offer it. */}
+            {v.in_use ? null : (
+              <Button
+                size="icon"
+                variant="ghost"
+                className="size-8 text-muted-foreground hover:text-destructive"
+                aria-label={`Delete volume ${v.name}`}
+                title="Delete volume"
+                onClick={() => setToDelete(v)}
+              >
+                <Trash2 className="size-4" />
+              </Button>
+            )}
+          </TableCell>
         </TableRow>
       );
     });
@@ -354,7 +349,7 @@ export function VolumesCard({ docker }: { docker: Docker }) {
   const groupRow = (label: string) => (
     <TableRow className="hover:bg-transparent">
       <TableCell
-        colSpan={cols}
+        colSpan={4}
         className="bg-muted/40 py-1.5 text-xs font-medium text-muted-foreground"
       >
         {label}
@@ -383,7 +378,7 @@ export function VolumesCard({ docker }: { docker: Docker }) {
           >
             <RefreshCw className={cn("size-4", loading && "animate-spin")} />
           </Button>
-          {isAdmin && <CreateVolumeDialog docker={docker} onCreated={load} />}
+          <CreateVolumeDialog docker={docker} onCreated={load} />
         </div>
       </CardHeader>
       <CardContent>
@@ -447,11 +442,9 @@ export function VolumesCard({ docker }: { docker: Docker }) {
                     <TableHead className="hidden sm:table-cell">
                       Status
                     </TableHead>
-                    {isAdmin && (
-                      <TableHead className="w-12">
-                        <span className="sr-only">Actions</span>
-                      </TableHead>
-                    )}
+                    <TableHead className="w-12">
+                      <span className="sr-only">Actions</span>
+                    </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>

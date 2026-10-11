@@ -21,8 +21,6 @@ var (
 	ErrTokenNotFound = errors.New("token not found")
 	// ErrInvalidCredentials is returned for a wrong email/password pair.
 	ErrInvalidCredentials = errors.New("invalid credentials")
-	// ErrLastOwner guards demoting/removing an organization's only owner.
-	ErrLastOwner = errors.New("cannot remove the last owner")
 	// ErrEmailTaken is returned when local credentials already use the email.
 	ErrEmailTaken = errors.New("email already in use")
 	// ErrNotBootstrap is returned when a bootstrap is attempted on a
@@ -46,7 +44,6 @@ type Credentials struct {
 type Member struct {
 	User
 	Email    string `json:"email"`
-	Role     string `json:"role"`
 	Provider string `json:"provider"`
 }
 

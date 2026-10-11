@@ -16,6 +16,7 @@ import (
 	"winterflow/pkg/util"
 
 	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/dialect"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -410,10 +411,11 @@ func (r *DbUserRepository) VerifyLocalCredentials(ctx context.Context, email, pa
 	return r.GetUser(ctx, creds.UserID)
 }
 
-// CreateMemberUser creates an admin-provisioned account inside an existing
-// organization: user + credentials (must-change temp password) + local
-// connected account + membership with the given role. No personal org.
-func (r *DbUserRepository) CreateMemberUser(ctx context.Context, orgID, name, email, role, tempPassword string) (model.User, error) {
+// CreateMemberUser creates an account inside an existing organization:
+// user + credentials (must-change temp password) + local connected account +
+// membership. No personal org. The stored role is model.RoleAdmin (see
+// model.OrganizationRole).
+func (r *DbUserRepository) CreateMemberUser(ctx context.Context, orgID, name, email, tempPassword string) (model.User, error) {
 	email = normalizeEmail(email)
 	hash, err := hashPassword(tempPassword)
 	if err != nil {
@@ -456,7 +458,7 @@ func (r *DbUserRepository) CreateMemberUser(ctx context.Context, orgID, name, em
 		_, err = tx.NewInsert().Model(&models.OrganizationUser{
 			OrganizationID: orgID,
 			UserID:         user.UserID,
-			Role:           role,
+			Role:           model.RoleAdmin.Value(),
 			CreatedAt:      types.NewDateTime(),
 		}).Exec(ctx)
 		return err
@@ -512,7 +514,7 @@ func (r *DbUserRepository) ListMembers(ctx context.Context, orgID string) ([]mod
 	}
 	out := make([]model.Member, 0, len(rows))
 	for _, row := range rows {
-		m := model.Member{Role: row.Role}
+		var m model.Member
 		if row.User != nil {
 			m.User = model.User{
 				ID:         row.User.UserID,
@@ -537,90 +539,45 @@ func (r *DbUserRepository) ListMembers(ctx context.Context, orgID string) ([]mod
 	return out, nil
 }
 
-// ownerCount reports how many owners the org has (for last-owner guards).
-func ownerCount(ctx context.Context, tx bun.IDB, orgID string) (int, error) {
-	return tx.NewSelect().Model((*models.OrganizationUser)(nil)).
-		Where("organization_id = ? AND role = ?", orgID, model.RoleOwner.Value()).
-		Count(ctx)
-}
-
-func (r *DbUserRepository) memberRole(ctx context.Context, tx bun.IDB, orgID, userID string) (string, error) {
-	var row models.OrganizationUser
-	err := tx.NewSelect().Model(&row).
-		Where("organization_id = ? AND user_id = ?", orgID, userID).
-		Scan(ctx)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return "", model.ErrorUserNotFound
-		}
-		return "", err
-	}
-	return row.Role, nil
-}
-
-func (r *DbUserRepository) UpdateMemberRole(ctx context.Context, orgID, userID, role string) error {
-	return r.db.Transaction(ctx, func(tx bun.IDB) error {
-		current, err := r.memberRole(ctx, tx, orgID, userID)
-		if err != nil {
-			return err
-		}
-		if current == model.RoleOwner.Value() && role != model.RoleOwner.Value() {
-			n, err := ownerCount(ctx, tx, orgID)
-			if err != nil {
-				return err
-			}
-			if n <= 1 {
-				return model.ErrLastOwner
-			}
-		}
-		_, err = tx.NewUpdate().Model((*models.OrganizationUser)(nil)).
-			Set("role = ?", role).
-			Where("organization_id = ? AND user_id = ?", orgID, userID).
-			Exec(ctx)
-		return err
-	})
-}
-
 // RemoveMember deletes the member's user row outright (memberships,
 // credentials, connected accounts, and PATs go with it via FK cascade).
-// Safe because every non-owner member is an admin-provisioned account.
-func (r *DbUserRepository) RemoveMember(ctx context.Context, orgID, userID string) error {
+// Only a member of orgID can be removed: anyone else is
+// model.ErrorUserNotFound and stays untouched. Safe to delete the user
+// itself because an account belongs to exactly one org.
+//
+// callerID is the member doing the removing. Their own membership row is
+// locked and re-verified inside the transaction, so two members removing
+// each other concurrently cannot empty the org: the second removal finds its
+// caller gone and is refused with model.ErrorUserNotFound.
+func (r *DbUserRepository) RemoveMember(ctx context.Context, orgID, callerID, userID string) error {
 	return r.db.Transaction(ctx, func(tx bun.IDB) error {
-		current, err := r.memberRole(ctx, tx, orgID, userID)
+		var caller models.OrganizationUser
+		callerQ := tx.NewSelect().Model(&caller).
+			Where("organization_id = ? AND user_id = ?", orgID, callerID)
+		// SQLite has no row locks (its writers are serialized instead).
+		if tx.Dialect().Name() == dialect.PG {
+			callerQ = callerQ.For("UPDATE")
+		}
+		if err := callerQ.Scan(ctx); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return model.ErrorUserNotFound
+			}
+			return err
+		}
+		member, err := tx.NewSelect().Model((*models.OrganizationUser)(nil)).
+			Where("organization_id = ? AND user_id = ?", orgID, userID).
+			Exists(ctx)
 		if err != nil {
 			return err
 		}
-		if current == model.RoleOwner.Value() {
-			n, err := ownerCount(ctx, tx, orgID)
-			if err != nil {
-				return err
-			}
-			if n <= 1 {
-				return model.ErrLastOwner
-			}
+		if !member {
+			return model.ErrorUserNotFound
 		}
 		_, err = tx.NewDelete().Model((*models.User)(nil)).
 			Where("user_id = ?", userID).
 			Exec(ctx)
 		return err
 	})
-}
-
-// RoleOf returns the caller's role in their primary organization.
-func (r *DbUserRepository) RoleOf(ctx context.Context, userID string) (string, error) {
-	var row models.OrganizationUser
-	err := r.db.GetDB().NewSelect().Model(&row).
-		Where("user_id = ?", userID).
-		Order("created_at ASC").
-		Limit(1).
-		Scan(ctx)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return "", model.ErrorUserNotFound
-		}
-		return "", err
-	}
-	return row.Role, nil
 }
 
 // RegisterLocalUser is open self-signup (distributed topology): user + their

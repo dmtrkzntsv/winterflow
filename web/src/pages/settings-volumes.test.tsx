@@ -5,10 +5,6 @@ import { describe, expect, it, vi } from "vitest";
 
 import { AppsContext, type AppsContextValue } from "@/context/apps-context-base";
 import type { Docker, Volume } from "@/context/use-docker";
-import {
-  ProfileContext,
-  type ProfileContextValue,
-} from "@/context/profile-context-base";
 import { VolumesCard } from "@/pages/settings-volumes";
 
 const HASH = "fedcba9876543210".repeat(4);
@@ -30,18 +26,16 @@ function fakeDocker(over: Partial<Docker> = {}): Docker {
   } as unknown as Docker;
 }
 
-function renderCard(docker: Docker, { isAdmin = true } = {}) {
-  const profile = { isAdmin } as ProfileContextValue;
+// No ProfileContext: the card no longer depends on who is looking.
+function renderCard(docker: Docker) {
   const apps = {
     apps: [{ id: "a1", name: "Nextcloud" }],
   } as unknown as AppsContextValue;
   return render(
     <MemoryRouter>
-      <ProfileContext.Provider value={profile}>
-        <AppsContext.Provider value={apps}>
-          <VolumesCard docker={docker} />
-        </AppsContext.Provider>
-      </ProfileContext.Provider>
+      <AppsContext.Provider value={apps}>
+        <VolumesCard docker={docker} />
+      </AppsContext.Provider>
     </MemoryRouter>,
   );
 }
@@ -96,16 +90,15 @@ describe("VolumesCard", () => {
     expect(docker.listVolumes).toHaveBeenCalledTimes(2);
   });
 
-  it("hides create and delete from non-admins", async () => {
-    renderCard(fakeDocker(), { isAdmin: false });
+  it("offers create and delete to every user", async () => {
+    renderCard(fakeDocker());
 
     await screen.findByText("Winterflow apps");
-    expect(
-      screen.queryByRole("button", { name: /Create volume/ }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: /^Delete volume/ }),
-    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Create volume/ })).toBeInTheDocument();
+    // Every unused volume is deletable (the mounted wf-a1_data is not).
+    expect(screen.getAllByRole("button", { name: /^Delete volume/ })).toHaveLength(2);
+    // The group header spans every column, actions included.
+    expect(screen.getByText("Winterflow apps").closest("td")).toHaveAttribute("colspan", "4");
   });
 
   it("validates the name before creating", async () => {

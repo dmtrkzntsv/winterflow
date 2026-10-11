@@ -23,8 +23,8 @@ func ingressWith(host, redirect string) []byte {
 
 func TestSaveAppRequiresACoveringRegistration(t *testing.T) {
 	sd := newFakeServerDomains(
-		model.RegisteredDomain{Name: "*.twillingate.app", TLS: "certificate"},
-		model.RegisteredDomain{Name: "twillingate.app", TLS: "auto"},
+		model.RegisteredDomain{Name: "*.twillingate.app", TLS: model.DomainTLSCertificate},
+		model.RegisteredDomain{Name: "twillingate.app", TLS: model.DomainTLSAuto},
 	)
 	ctx := context.Background()
 	save := func(cfg []byte) (*recordingDispatcher, error) {
@@ -76,8 +76,8 @@ func TestSaveAppRequiresACoveringRegistration(t *testing.T) {
 
 func TestCheckDomainReportsTheWinningRegistration(t *testing.T) {
 	sd := newFakeServerDomains(
-		model.RegisteredDomain{Name: "*.twillingate.app", TLS: "certificate"},
-		model.RegisteredDomain{Name: "app.twillingate.app", TLS: "off"},
+		model.RegisteredDomain{Name: "*.twillingate.app", TLS: model.DomainTLSCertificate},
+		model.RegisteredDomain{Name: "app.twillingate.app", TLS: model.DomainTLSOff},
 	)
 	uc := newDomainsUseCase(&recordingDispatcher{}, sd)
 	ctx := context.Background()
@@ -134,6 +134,19 @@ func TestSaveAppGrandfathersHeldHostnames(t *testing.T) {
 	if err := save(newUC(disp, nil), "app-1", ingressWith("shop.example.com", "")); err != nil || len(disp.all) != 1 {
 		t.Fatalf("unchanged host: err %v, dispatches %d", err, len(disp.all))
 	}
+	// Held hostnames are looked up only for an uncovered host: a covered
+	// save never queries them.
+	held.forApp = 0
+	covered := NewUseCase(&Deps{
+		CommandDispatcher:      &recordingDispatcher{},
+		AppRepository:          noopAppRepo{},
+		AppDomainRepository:    held,
+		ServerDomainRepository: newFakeServerDomains(model.RegisteredDomain{Name: "*.example.com", TLS: model.DomainTLSOff}),
+		Log:                    logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"}),
+	})
+	if err := save(covered, "app-1", ingressWith("shop.example.com", "www.example.com")); err != nil || held.forApp != 0 {
+		t.Fatalf("covered save: err %v, held lookups %d", err, held.forApp)
+	}
 	// A new hostname on the same app still needs coverage.
 	disp = &recordingDispatcher{}
 	err := save(newUC(disp, nil), "app-1", ingressWith("shop.example.com", "www.example.com"))
@@ -143,7 +156,7 @@ func TestSaveAppGrandfathersHeldHostnames(t *testing.T) {
 	// Another app cannot take the held hostname this way: it holds nothing,
 	// so the hostname still needs coverage.
 	disp = &recordingDispatcher{}
-	claim := []model.DomainClaim{{Domain: "shop.example.com", AppName: "Shop", ServerName: "s"}}
+	claim := []model.DomainClaim{{Domain: "shop.example.com", AppName: "Shop", ServerID: "srv-1"}}
 	err = save(newUC(disp, claim), "app-2", ingressWith("shop.example.com", ""))
 	if !errors.Is(err, model.ErrDomainNotCovered) || len(disp.all) != 0 {
 		t.Fatalf("other app: err %v", err)

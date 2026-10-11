@@ -50,7 +50,7 @@ func TestReplaceAndFindClaims(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(claims) != 1 || claims[0].Domain != "blog.example.com" || claims[0].AppName != "Ghost" || claims[0].ServerName == "" {
+	if len(claims) != 1 || claims[0].Domain != "blog.example.com" || claims[0].AppName != "Ghost" || claims[0].AppID != "app-1" || claims[0].ServerID != "srv-1" {
 		t.Fatalf("claims = %+v", claims)
 	}
 
@@ -183,5 +183,29 @@ func TestHostnamesAreUniquePerServer(t *testing.T) {
 	}
 	if claims, _ := repo.FindClaims(ctx, "srv-2", []string{"shop.example.com"}, ""); len(claims) != 1 {
 		t.Fatalf("srv-2 row lost: %+v", claims)
+	}
+}
+
+func TestListForApp(t *testing.T) {
+	repo, apps := newDomainRepo(t)
+	ctx := context.Background()
+	seedApp(t, apps, "app-1", "Ghost")
+	seedApp(t, apps, "app-2", "Blog")
+	ing := &model.Ingress{
+		Domains:   []model.IngressDomain{{Domain: "blog.example.com", UpstreamPort: 1}},
+		Redirects: []model.IngressRedirect{{Domain: "www.example.com", To: "https://blog.example.com", Code: 301}},
+	}
+	if err := repo.ReplaceForApp(ctx, "app-1", "srv-1", ing); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.ReplaceForApp(ctx, "app-2", "srv-1", ingressOf(model.IngressDomain{Domain: "other.example.com", UpstreamPort: 2})); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.ListForApp(ctx, "srv-1", "app-1")
+	if err != nil || len(got) != 2 || got[0] != "blog.example.com" || got[1] != "www.example.com" {
+		t.Fatalf("ListForApp = %v, %v", got, err)
+	}
+	if got, _ := repo.ListForApp(ctx, "srv-2", "app-1"); len(got) != 0 {
+		t.Fatalf("another server's rows: %v", got)
 	}
 }

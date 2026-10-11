@@ -5,24 +5,41 @@ import (
 
 	webutil "winterflow/internal/app/web/util"
 	"winterflow/internal/domain/command"
+	"winterflow/internal/domain/model"
 )
 
-// serverFromQuery resolves the caller and the server_id query parameter and
-// enforces the caller's org owns that server, writing 401/400/403 itself.
+// serverFromQuery reads the required server_id query parameter (400 when
+// missing), then authorizes the caller for it (401/403), writing the error
+// itself.
 func (h *Handler) serverFromQuery(w http.ResponseWriter, r *http.Request) (userID, serverID string, ok bool) {
-	userID, ok = webutil.RequireUser(w, r)
-	if !ok {
-		return "", "", false
-	}
 	serverID = r.URL.Query().Get(serverIDKey)
 	if serverID == "" {
 		webutil.Error(w, "server_id is required", nil)
 		return "", "", false
 	}
-	if !webutil.RequireServerAccess(w, r, h.servers, userID, serverID) {
-		return "", "", false
+	userID, ok = h.authorize(w, r, serverID)
+	return userID, serverID, ok
+}
+
+// GetDomainsResponse is the data of GET /api/v1/domain/get-domains.
+type GetDomainsResponse struct {
+	Domains []model.RegisteredDomain `json:"domains"`
+}
+
+// GetDomains answers the server's registrations from the API's index
+// (synchronous, no agent round-trip). The index is filled when the agent
+// comes online and kept current by domain.create/delete and domain.list.
+func (h *Handler) GetDomains(w http.ResponseWriter, r *http.Request) {
+	_, serverID, ok := h.serverFromQuery(w, r)
+	if !ok {
+		return
 	}
-	return userID, serverID, true
+	doms, err := h.usecase.ServerDomains(r.Context(), serverID)
+	if err != nil {
+		webutil.Error(w, "failed to load domains", nil)
+		return
+	}
+	webutil.Success(w, "", GetDomainsResponse{Domains: doms})
 }
 
 // ListRegisteredDomains dispatches domain.list; the registrations (with the

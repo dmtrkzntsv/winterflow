@@ -155,14 +155,13 @@ func ParseIngress(configBlob []byte) (*Ingress, error) {
 	return probe.Ingress, nil
 }
 
-// DomainClaim names the app/server holding a domain — the payload of the
-// cross-app conflict error and of the /domains/check endpoint.
+// DomainClaim names the app holding a domain on a server — the payload of
+// the cross-app conflict error and of the /domains/check endpoint.
 type DomainClaim struct {
-	Domain     string `json:"domain"`
-	AppID      string `json:"app_id"`
-	AppName    string `json:"app_name"`
-	ServerID   string `json:"server_id"`
-	ServerName string `json:"server_name"`
+	Domain   string `json:"domain"`
+	AppID    string `json:"app_id"`
+	AppName  string `json:"app_name"`
+	ServerID string `json:"server_id"`
 }
 
 // AppDomainInfo is the display slice of an app_domains row (app cards, chips).

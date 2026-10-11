@@ -24,6 +24,7 @@ func TestRoutes(t *testing.T) {
 		"POST /api/v1/app/control-app":    false,
 		"POST /api/v1/app/delete-app":     false,
 		"POST /api/v1/app/rename-app":     false,
+		"GET /api/v1/domain/get-domains":  false,
 		"GET /api/v1/domain/list":         false,
 		"POST /api/v1/domain/create":      false,
 		"POST /api/v1/domain/delete":      false,

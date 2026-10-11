@@ -51,35 +51,28 @@ func rowsFor(appID, serverID string, ing *model.Ingress) []models.AppDomain {
 	return rows
 }
 
+// FindClaims selects only what a claim reports: the row's own columns plus
+// the app's name (one join).
 func (r *DbAppDomainRepository) FindClaims(ctx context.Context, serverID string, domains []string, excludeAppID string) ([]model.DomainClaim, error) {
 	if len(domains) == 0 {
 		return nil, nil
 	}
-	var rows []models.AppDomain
+	var claims []model.DomainClaim
 	q := r.db.GetDB().NewSelect().
-		Model(&rows).
-		Relation("App").
-		Relation("Server").
-		Where("app_domain.server_id = ?", serverID).
-		Where("app_domain.domain IN (?)", bun.In(domains))
+		TableExpr("app_domains AS d").
+		ColumnExpr("d.domain, d.app_id, d.server_id").
+		ColumnExpr("COALESCE(a.name, '') AS app_name").
+		Join("LEFT JOIN apps AS a ON a.app_id = d.app_id").
+		Where("d.server_id = ?", serverID).
+		Where("d.domain IN (?)", bun.In(domains)).
+		OrderExpr("d.domain ASC")
 	if excludeAppID != "" {
-		q = q.Where("app_domain.app_id != ?", excludeAppID)
+		q = q.Where("d.app_id != ?", excludeAppID)
 	}
-	if err := q.Scan(ctx); err != nil {
+	if err := q.Scan(ctx, &claims); err != nil {
 		return nil, err
 	}
-	out := make([]model.DomainClaim, 0, len(rows))
-	for _, row := range rows {
-		claim := model.DomainClaim{Domain: row.Domain, AppID: row.AppID, ServerID: row.ServerID}
-		if row.App != nil {
-			claim.AppName = row.App.Name
-		}
-		if row.Server != nil {
-			claim.ServerName = row.Server.Name
-		}
-		out = append(out, claim)
-	}
-	return out, nil
+	return claims, nil
 }
 
 func (r *DbAppDomainRepository) ReplaceForApp(ctx context.Context, appID, serverID string, ing *model.Ingress) error {
@@ -157,4 +150,17 @@ func (r *DbAppDomainRepository) ListForServer(ctx context.Context, serverID stri
 		out[row.AppID] = append(out[row.AppID], model.AppDomainInfo{Domain: row.Domain, SSL: row.SSL, Kind: row.Kind})
 	}
 	return out, nil
+}
+
+// ListForApp returns the hostnames appID holds on serverID.
+func (r *DbAppDomainRepository) ListForApp(ctx context.Context, serverID, appID string) ([]string, error) {
+	var hosts []string
+	err := r.db.GetDB().NewSelect().
+		Model((*models.AppDomain)(nil)).
+		Column("domain").
+		Where("server_id = ?", serverID).
+		Where("app_id = ?", appID).
+		Order("domain ASC").
+		Scan(ctx, &hosts)
+	return hosts, err
 }

@@ -9,8 +9,18 @@ import (
 	"winterflow/internal/domain/port"
 )
 
+// ServerDomains reads the server's registrations from the server_domains
+// index (no agent round-trip).
+func (uc *UseCase) ServerDomains(ctx context.Context, serverID string) ([]model.RegisteredDomain, error) {
+	if uc.serverDomains == nil {
+		return []model.RegisteredDomain{}, nil
+	}
+	return uc.serverDomains.ListForServer(ctx, serverID)
+}
+
 // ListServerDomains dispatches domain.list to the server's agent. The result
-// reconciles the server_domains index and is delivered over SSE.
+// reconciles the server_domains index and is delivered over SSE to userID
+// (none for the system's own sync when an agent comes online).
 func (uc *UseCase) ListServerDomains(ctx context.Context, userID, serverID string) (string, error) {
 	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
 		AgentID: serverID,

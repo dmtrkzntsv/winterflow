@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -131,5 +132,36 @@ func TestSweepFansOutUnknownTransition(t *testing.T) {
 	p, ok := last.Payload.(model.ServerStatusPayload)
 	if !ok || p.Liveness != string(status.LivenessUnknown) {
 		t.Fatalf("sweep payload = %#v", last.Payload)
+	}
+}
+
+// TestOnlineSyncRunsWhenAServerComesOnline: the per-server index sync runs
+// on an unknown->online transition (whichever event causes it) and on every
+// capabilities event (the agent registered), never on a steady heartbeat.
+func TestOnlineSyncRunsWhenAServerComesOnline(t *testing.T) {
+	sink, cache := newTestSink(&recorder{}, nil)
+	var synced []string
+	sink.online = func(_ context.Context, serverID string) { synced = append(synced, serverID) }
+	ctx := context.Background()
+	beat := bus.EventMessage{ServerID: "srv-1", Kind: bus.EventServerOnline}
+
+	sink.handle(ctx, beat) // transition
+	sink.handle(ctx, beat) // steady
+	caps, _ := json.Marshal(capabilitiesEvent{Capabilities: map[string]string{"os": "linux"}})
+	sink.handle(ctx, bus.EventMessage{ServerID: "srv-1", Kind: bus.EventCapabilities, Payload: caps}) // re-registered
+	status, _ := json.Marshal(command.GetAppsStatusResponse{})
+	sink.handle(ctx, bus.EventMessage{ServerID: "srv-2", Kind: bus.EventAppsStatus, Payload: status})        // transition
+	sink.handle(ctx, bus.EventMessage{ServerID: "srv-2", Kind: bus.EventAppsStatus, Payload: status})        // steady
+	sink.handle(ctx, bus.EventMessage{ServerID: "srv-3", Kind: bus.EventCapabilities, Payload: []byte("{")}) // undecodable: no sync
+
+	if want := []string{"srv-1", "srv-1", "srv-2"}; strings.Join(synced, ",") != strings.Join(want, ",") {
+		t.Fatalf("synced = %v, want %v", synced, want)
+	}
+
+	// After the server went quiet, its next heartbeat syncs again.
+	sink.sweep(ctx, cache, time.Now().Add(5*time.Minute))
+	sink.handle(ctx, beat)
+	if len(synced) != 4 {
+		t.Fatalf("synced = %v, want a sync after coming back", synced)
 	}
 }

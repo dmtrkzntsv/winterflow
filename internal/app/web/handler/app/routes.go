@@ -104,6 +104,11 @@ func (h *Handler) Routes(api.Guards) []api.Route {
 			Request: RenameAppRequest{}, Accepted: true, Result: command.RenameAppResponse{}, Errors: server,
 		},
 		{
+			Method: http.MethodGet, Path: "/api/v1/domain/get-domains", Handler: h.GetDomains, Auth: api.User,
+			Summary: "A server's registered domains from the API's index (no agent round-trip)", Tag: "domains",
+			Query: api.ServerQuery{}, Response: GetDomainsResponse{}, Errors: server,
+		},
+		{
 			Method: http.MethodGet, Path: "/api/v1/domain/list", Handler: h.ListRegisteredDomains, Auth: api.User,
 			Summary: "List the domains registered on a server, with the apps using each", Tag: "domains",
 			Query: api.ServerQuery{}, Accepted: true, Result: command.ListDomainsResponse{}, Errors: server,

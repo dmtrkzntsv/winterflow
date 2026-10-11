@@ -65,7 +65,7 @@ func newDomainsUseCase(d port.CommandDispatcher, sd port.ServerDomainRepository)
 
 func TestListServerDomainsReconcilesTheIndex(t *testing.T) {
 	disp := &recordingDispatcher{}
-	sd := newFakeServerDomains(model.RegisteredDomain{Name: "stale.app", TLS: "auto"})
+	sd := newFakeServerDomains(model.RegisteredDomain{Name: "stale.app", TLS: model.DomainTLSAuto})
 	uc := newDomainsUseCase(disp, sd)
 
 	if _, err := uc.ListServerDomains(context.Background(), "u1", "srv-1"); err != nil {
@@ -121,7 +121,7 @@ func TestCreateAndDeleteDomainFollowTheAgent(t *testing.T) {
 	if del.Type != command.TypeDomainDelete || del.Payload != (command.DeleteDomainRequest{Name: "*.x.app"}) {
 		t.Fatalf("dispatch = %+v", del)
 	}
-	del.OnResult(port.CommandResult{Success: false, Error: "*.x.app is used by Shop (a1)"})
+	del.OnResult(port.CommandResult{Success: false, Error: "*.x.app is used by Shop"})
 	if len(sd.deleted) != 0 {
 		t.Fatal("a refused delete left the index")
 	}
@@ -131,15 +131,31 @@ func TestCreateAndDeleteDomainFollowTheAgent(t *testing.T) {
 	}
 }
 
-func TestRefreshAppsAlsoReconcilesDomains(t *testing.T) {
+// The index is filled when the agent comes online (bootstrap), not by
+// every apps reconcile.
+func TestRefreshAppsDoesNotListDomains(t *testing.T) {
 	disp := &recordingDispatcher{}
 	uc := newDomainsUseCase(disp, newFakeServerDomains())
 	if _, err := uc.RefreshApps(context.Background(), "u1", "srv-1"); err != nil {
 		t.Fatal(err)
 	}
 	disp.last().OnResult(port.CommandResult{Success: true, Payload: []byte(`{"apps":[]}`)})
-	if len(disp.all) != 2 || disp.all[1].Type != command.TypeDomainList || disp.all[1].AgentID != "srv-1" {
+	if len(disp.all) != 1 {
 		t.Fatalf("dispatches = %+v", disp.all)
+	}
+}
+
+func TestServerDomainsReadsTheIndex(t *testing.T) {
+	ctx := context.Background()
+	sd := newFakeServerDomains(model.RegisteredDomain{Name: "*.x.app", TLS: model.DomainTLSOff})
+	got, err := newDomainsUseCase(&recordingDispatcher{}, sd).ServerDomains(ctx, "srv-1")
+	if err != nil || len(got) != 1 || got[0].Name != "*.x.app" {
+		t.Fatalf("ServerDomains = %+v, %v", got, err)
+	}
+	// Without an index: an empty list, never null.
+	got, err = newTestUseCase(&recordingDispatcher{}).ServerDomains(ctx, "srv-1")
+	if err != nil || got == nil || len(got) != 0 {
+		t.Fatalf("no index = %#v, %v", got, err)
 	}
 }
 

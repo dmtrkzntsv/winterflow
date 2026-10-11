@@ -944,6 +944,62 @@ paths:
       - domains
       x-operation-result:
         $ref: '#/components/schemas/DeleteDomainResponse'
+  /api/v1/domain/get-domains:
+    get:
+      operationId: domainGetDomains
+      parameters:
+      - description: Target server id.
+        in: query
+        name: server_id
+        required: true
+        schema:
+          description: Target server id.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/GetDomainsResponse'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: A server's registered domains from the API's index (no agent round-trip)
+      tags:
+      - domains
   /api/v1/domain/list:
     get:
       operationId: domainList
@@ -3102,14 +3158,11 @@ components:
           type: string
         server_id:
           type: string
-        server_name:
-          type: string
       required:
       - domain
       - app_id
       - app_name
       - server_id
-      - server_name
       type: object
     Error:
       properties:
@@ -3162,6 +3215,17 @@ components:
           - "null"
       required:
       - apps
+      type: object
+    GetDomainsResponse:
+      properties:
+        domains:
+          items:
+            $ref: '#/components/schemas/RegisteredDomain'
+          type:
+          - array
+          - "null"
+      required:
+      - domains
       type: object
     GetLogsResponse:
       properties:

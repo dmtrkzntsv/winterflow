@@ -7,6 +7,7 @@ import (
 
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
+	"winterflow/internal/infra/transport/bus"
 )
 
 // indexed is the API's server_domains index for serverID, as names.
@@ -68,10 +69,34 @@ func TestDomainRoutes(t *testing.T) {
 			t.Fatalf("index = %v", idx)
 		}
 	})
-	t.Run("refresh-apps also reconciles domains", func(t *testing.T) {
+	t.Run("an agent coming online fills the index", func(t *testing.T) {
+		// Registered on the agent while the API wasn't looking; the agent
+		// (re)registering reports its capabilities.
 		e.agent.register(sid, command.Domain{RegisteredDomain: model.RegisteredDomain{Name: "seeded.test", TLS: model.DomainTLSOff}})
-		owner.succeed(t, call{Method: http.MethodPost, Path: "/api/v1/app/refresh-apps", Query: q}, nil)
+		n := len(e.agent.seen(command.TypeDomainList))
+		e.publishEvent(t, bus.EventMessage{ServerID: sid, Kind: bus.EventCapabilities, Payload: []byte(`{"capabilities":{}}`)})
 		eventually(t, func() bool { return e.indexed(t, sid)["seeded.test"] == "off" })
+		if got := e.agent.seen(command.TypeDomainList); len(got) != n+1 {
+			t.Fatalf("domain.list dispatches = %d, want one more than %d", len(got), n)
+		}
+		// refresh-apps no longer lists domains.
+		owner.succeed(t, call{Method: http.MethodPost, Path: "/api/v1/app/refresh-apps", Query: q}, nil)
+		if got := e.agent.seen(command.TypeDomainList); len(got) != n+1 {
+			t.Fatalf("refresh-apps dispatched domain.list")
+		}
+	})
+	t.Run("get-domains reads the index", func(t *testing.T) {
+		var got struct {
+			Domains []model.RegisteredDomain `json:"domains"`
+		}
+		owner.get(t, "/api/v1/domain/get-domains", q).expect(t, http.StatusOK).data(t, &got)
+		names := map[string]model.DomainTLS{}
+		for _, d := range got.Domains {
+			names[d.Name] = d.TLS
+		}
+		if names["seeded.test"] != model.DomainTLSOff || names["*.example.test"] != model.DomainTLSOff || len(names) != len(e.indexed(t, sid)) {
+			t.Fatalf("get-domains = %+v, index %v", got.Domains, e.indexed(t, sid))
+		}
 	})
 	t.Run("delete leaves the index", func(t *testing.T) {
 		owner.succeed(t, call{Method: http.MethodPost, Path: "/api/v1/domain/delete", Query: q,
@@ -81,9 +106,9 @@ func TestDomainRoutes(t *testing.T) {
 		}
 	})
 	t.Run("a refused delete keeps the registration", func(t *testing.T) {
-		e.agent.fail(command.TypeDomainDelete, "*.example.test is used by Shop (a1)")
+		e.agent.fail(command.TypeDomainDelete, "*.example.test is used by Shop")
 		owner.failWith(t, call{Method: http.MethodPost, Path: "/api/v1/domain/delete", Query: q,
-			Body: command.DeleteDomainRequest{Name: "*.example.test"}}, "*.example.test is used by Shop (a1)")
+			Body: command.DeleteDomainRequest{Name: "*.example.test"}}, "*.example.test is used by Shop")
 		if _, ok := e.indexed(t, sid)["*.example.test"]; !ok {
 			t.Fatal("a refused delete left the index")
 		}

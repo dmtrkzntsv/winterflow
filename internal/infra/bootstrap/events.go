@@ -81,13 +81,18 @@ type eventSink struct {
 	store eventStore
 	fan   *statusFanout
 	log   *logger.Logger
+	// online, when set, runs when a server comes online (an unknown->online
+	// transition, or a capabilities event: the agent (re)registered). It
+	// fills the API's per-server indexes from the agent.
+	online func(ctx context.Context, serverID string)
 }
 
 func (s *eventSink) handle(ctx context.Context, ev bus.EventMessage) {
+	var transition bool
 	now := time.Now()
 	switch ev.Kind {
 	case bus.EventServerOnline:
-		transition := s.cache.MarkOnline(ev.ServerID, now)
+		transition = s.cache.MarkOnline(ev.ServerID, now)
 		if err := s.store.TouchLastSeen(ctx, ev.ServerID); err != nil {
 			s.log.Debug("touch last_seen failed", "server_id", ev.ServerID, "error", err)
 		}
@@ -100,7 +105,7 @@ func (s *eventSink) handle(ctx context.Context, ev bus.EventMessage) {
 			s.log.Error("failed to decode capabilities event", err)
 			return
 		}
-		transition := s.cache.MarkOnline(ev.ServerID, now)
+		transition = s.cache.MarkOnline(ev.ServerID, now)
 		if err := s.store.SaveCapabilities(ctx, ev.ServerID, c.Capabilities, c.Features); err != nil {
 			s.log.Debug("save capabilities failed", "server_id", ev.ServerID, "error", err)
 		}
@@ -113,7 +118,8 @@ func (s *eventSink) handle(ctx context.Context, ev bus.EventMessage) {
 			s.log.Error("failed to decode apps status event", err)
 			return
 		}
-		changed, transition := s.cache.SetAppStatus(ev.ServerID, body.Apps, now)
+		var changed bool
+		changed, transition = s.cache.SetAppStatus(ev.ServerID, body.Apps, now)
 		// The reporter pushes on a fixed timer; only actual changes are worth
 		// a DB lookup + SSE fan-out. New clients seed from the cache on load.
 		if changed {
@@ -124,6 +130,10 @@ func (s *eventSink) handle(ctx context.Context, ev bus.EventMessage) {
 		}
 	default:
 		s.log.Warn("unknown event kind", "kind", ev.Kind)
+		return
+	}
+	if s.online != nil && (transition || ev.Kind == bus.EventCapabilities) {
+		s.online(ctx, ev.ServerID)
 	}
 }
 
@@ -139,12 +149,13 @@ func (s *eventSink) sweep(ctx context.Context, cache *status.Cache, now time.Tim
 // liveness, capabilities, status), updating the in-memory status cache and the
 // DB, and pushing transitions over SSE. It also runs the expiry sweeper. It is
 // the API's consumer of events:<region>.
-func startEventsSubscriber(ctx context.Context, b bus.Bus, cache *status.Cache, serverRepo port.ServerRepository, nm port.NotificationManager, cfg *config.ServerConfig, log *logger.Logger) {
+func startEventsSubscriber(ctx context.Context, b bus.Bus, cache *status.Cache, serverRepo port.ServerRepository, nm port.NotificationManager, cfg *config.ServerConfig, log *logger.Logger, online func(ctx context.Context, serverID string)) {
 	sink := &eventSink{
-		cache: cache,
-		store: serverRepo,
-		fan:   newStatusFanout(serverRepo, nm, log),
-		log:   log,
+		cache:  cache,
+		store:  serverRepo,
+		fan:    newStatusFanout(serverRepo, nm, log),
+		log:    log,
+		online: online,
 	}
 	bus.SubscribeJSON(ctx, b, cfg.GetBusEventsQueue(), log, func(ev bus.EventMessage) {
 		sink.handle(ctx, ev)

@@ -38,8 +38,12 @@ func serverDomainRow(serverID string, d model.RegisteredDomain) models.ServerDom
 
 // ListForServer returns the server's registrations sorted by name.
 func (r *DbServerDomainRepository) ListForServer(ctx context.Context, serverID string) ([]model.RegisteredDomain, error) {
+	return listServerDomains(ctx, r.db.GetDB(), serverID)
+}
+
+func listServerDomains(ctx context.Context, db bun.IDB, serverID string) ([]model.RegisteredDomain, error) {
 	var rows []models.ServerDomain
-	if err := r.db.GetDB().NewSelect().Model(&rows).
+	if err := db.NewSelect().Model(&rows).
 		Where("server_id = ?", serverID).Order("name ASC").Scan(ctx); err != nil {
 		return nil, err
 	}
@@ -75,20 +79,49 @@ func (r *DbServerDomainRepository) Delete(ctx context.Context, serverID, name st
 	return err
 }
 
-// ReplaceForServer makes the index mirror a domain.list answer.
+// ReplaceForServer makes the index mirror a domain.list answer. An answer
+// equal to the stored rows (the common case: every agent reconnect sends
+// one) writes nothing.
 func (r *DbServerDomainRepository) ReplaceForServer(ctx context.Context, serverID string, ds []model.RegisteredDomain) error {
-	rows := make([]models.ServerDomain, 0, len(ds))
-	for _, d := range ds {
-		rows = append(rows, serverDomainRow(serverID, d))
-	}
 	return r.db.GetDB().RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		current, err := listServerDomains(ctx, tx, serverID)
+		if err != nil {
+			return err
+		}
+		if sameDomains(current, ds) {
+			return nil
+		}
 		if _, err := tx.NewDelete().Model((*models.ServerDomain)(nil)).Where("server_id = ?", serverID).Exec(ctx); err != nil {
 			return err
 		}
-		if len(rows) == 0 {
+		if len(ds) == 0 {
 			return nil
 		}
-		_, err := tx.NewInsert().Model(&rows).Exec(ctx)
+		rows := make([]models.ServerDomain, 0, len(ds))
+		for _, d := range ds {
+			rows = append(rows, serverDomainRow(serverID, d))
+		}
+		_, err = tx.NewInsert().Model(&rows).Exec(ctx)
 		return err
 	})
+}
+
+// sameDomains reports whether two registration lists hold the same rows,
+// in any order (expiries compared to the second, as stored).
+func sameDomains(a, b []model.RegisteredDomain) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	byName := make(map[string]model.RegisteredDomain, len(a))
+	for _, d := range a {
+		byName[d.Name] = d
+	}
+	for _, d := range b {
+		o, ok := byName[d.Name]
+		if !ok || o.TLS != d.TLS || o.Issuer != d.Issuer || (o.NotAfter == nil) != (d.NotAfter == nil) ||
+			(o.NotAfter != nil && !o.NotAfter.Truncate(time.Second).Equal(d.NotAfter.Truncate(time.Second))) {
+			return false
+		}
+	}
+	return true
 }

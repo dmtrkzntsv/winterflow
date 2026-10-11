@@ -99,3 +99,77 @@ func TestServerDomainsCascadeWithServer(t *testing.T) {
 		t.Fatalf("rows survived their server: %+v", got)
 	}
 }
+
+// TestServerDomainsReplaceSkipsUnchanged: an agent reconnect re-reports the
+// same registrations; that must not rewrite the rows.
+func TestServerDomainsReplaceSkipsUnchanged(t *testing.T) {
+	repo := newServerDomainRepo(t)
+	ctx := context.Background()
+	notAfter := time.Date(2027, 1, 2, 3, 4, 5, 0, time.UTC)
+	rows := []model.RegisteredDomain{
+		{Name: "a.app", TLS: model.DomainTLSAuto},
+		{Name: "*.b.app", TLS: model.DomainTLSCertificate, NotAfter: &notAfter, Issuer: "CF"},
+	}
+	if err := repo.ReplaceForServer(ctx, "srv-1", rows); err != nil {
+		t.Fatal(err)
+	}
+	stamps := func() map[string]time.Time {
+		var raw []models.ServerDomain
+		if err := repo.db.GetDB().NewSelect().Model(&raw).Where("server_id = ?", "srv-1").Scan(ctx); err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]time.Time{}
+		for _, r := range raw {
+			out[r.Name] = r.UpdatedAt.Time()
+		}
+		return out
+	}
+	before := stamps()
+	// Force the clock past the stored second, then re-report in another order.
+	time.Sleep(1100 * time.Millisecond)
+	if err := repo.ReplaceForServer(ctx, "srv-1", []model.RegisteredDomain{rows[1], rows[0]}); err != nil {
+		t.Fatal(err)
+	}
+	after := stamps()
+	for name, at := range before {
+		if !after[name].Equal(at) {
+			t.Errorf("%s rewritten although unchanged: %v -> %v", name, at, after[name])
+		}
+	}
+	// A changed mode is written.
+	if err := repo.ReplaceForServer(ctx, "srv-1", []model.RegisteredDomain{{Name: "a.app", TLS: model.DomainTLSOff}}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := repo.ListForServer(ctx, "srv-1"); len(got) != 1 || got[0].TLS != model.DomainTLSOff {
+		t.Fatalf("changed list not written: %+v", got)
+	}
+}
+
+func TestSameDomains(t *testing.T) {
+	t1 := time.Date(2027, 1, 2, 3, 4, 5, 0, time.UTC)
+	t2 := t1.Add(time.Hour)
+	d := func(name string, tls model.DomainTLS, na *time.Time, issuer string) model.RegisteredDomain {
+		return model.RegisteredDomain{Name: name, TLS: tls, NotAfter: na, Issuer: issuer}
+	}
+	base := []model.RegisteredDomain{d("a.app", "auto", nil, ""), d("b.app", "certificate", &t1, "CF")}
+	cases := map[string]struct {
+		other []model.RegisteredDomain
+		same  bool
+	}{
+		"reordered":   {[]model.RegisteredDomain{base[1], base[0]}, true},
+		"fewer":       {base[:1], false},
+		"renamed":     {[]model.RegisteredDomain{base[0], d("c.app", "certificate", &t1, "CF")}, false},
+		"mode":        {[]model.RegisteredDomain{d("a.app", "off", nil, ""), base[1]}, false},
+		"issuer":      {[]model.RegisteredDomain{base[0], d("b.app", "certificate", &t1, "LE")}, false},
+		"expiry":      {[]model.RegisteredDomain{base[0], d("b.app", "certificate", &t2, "CF")}, false},
+		"expiry gone": {[]model.RegisteredDomain{base[0], d("b.app", "certificate", nil, "CF")}, false},
+		"sub-second":  {[]model.RegisteredDomain{base[0], d("b.app", "certificate", ptr(t1.Add(time.Millisecond)), "CF")}, true},
+	}
+	for name, tc := range cases {
+		if got := sameDomains(base, tc.other); got != tc.same {
+			t.Errorf("%s: sameDomains = %v, want %v", name, got, tc.same)
+		}
+	}
+}
+
+func ptr[T any](v T) *T { return &v }

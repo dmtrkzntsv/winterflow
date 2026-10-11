@@ -28,7 +28,7 @@ type AppDomainRepository interface {
 	// FindClaims returns rows on serverID holding any of the given domains,
 	// excluding the app being saved (its own claims are not conflicts). A
 	// hostname is unique per server, so other servers' claims never count.
-	// Claims carry app and server names for the error message.
+	// Claims carry the app name for the error message.
 	FindClaims(ctx context.Context, serverID string, domains []string, excludeAppID string) ([]model.DomainClaim, error)
 	// ReplaceForApp makes the index mirror the app's ingress: delete the
 	// app's rows, insert the new set, one transaction. nil ingress = no-op
@@ -40,6 +40,8 @@ type AppDomainRepository interface {
 	ReplaceForServer(ctx context.Context, serverID string, apps []model.App) error
 	// ListForServer returns display rows grouped by app id.
 	ListForServer(ctx context.Context, serverID string) (map[string][]model.AppDomainInfo, error)
+	// ListForApp returns the hostnames appID holds on serverID.
+	ListForApp(ctx context.Context, serverID, appID string) ([]string, error)
 }
 
 // ServerDomainRepository is the DB-backed index of each server's domain
@@ -52,7 +54,8 @@ type ServerDomainRepository interface {
 	Upsert(ctx context.Context, serverID string, d model.RegisteredDomain) error
 	// Delete drops a registration the agent confirmed deleting.
 	Delete(ctx context.Context, serverID, name string) error
-	// ReplaceForServer makes the index mirror a domain.list answer.
+	// ReplaceForServer makes the index mirror a domain.list answer; an
+	// unchanged answer writes nothing.
 	ReplaceForServer(ctx context.Context, serverID string, ds []model.RegisteredDomain) error
 }
 

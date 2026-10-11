@@ -80,13 +80,6 @@ func (uc *UseCase) RefreshApps(ctx context.Context, userID, serverID string) (st
 					uc.log.Error("RefreshApps: sync domain rows", "error", err, "server_id", serverID)
 				}
 			}
-			// Registrations change with the apps' agent (upgrade seeding,
-			// another API replica): re-read them with every reconcile.
-			if uc.serverDomains != nil {
-				if _, err := uc.ListServerDomains(context.Background(), userID, serverID); err != nil {
-					uc.log.Error("RefreshApps: dispatch domain.list", "error", err, "server_id", serverID)
-				}
-			}
 		},
 	})
 }
@@ -244,21 +237,31 @@ type DomainCheck struct {
 	Registration *model.RegisteredDomain
 }
 
-// CheckDomain reports whether a hostname is free and covered on serverID —
-// the live-typing check behind GET /api/v1/domains/check. A hostname is
-// unique per server only.
-func (uc *UseCase) CheckDomain(ctx context.Context, serverID, domain, excludeAppID string) (DomainCheck, error) {
+// ValidateCheckDomain is the syntax check of GET /api/v1/domains/check's
+// hostname (the ingress rule), wrapped in ErrIngressInvalid. The handler
+// runs it before any DB query.
+func ValidateCheckDomain(domain string) error {
 	probe := model.Ingress{Domains: []model.IngressDomain{{Domain: domain, UpstreamPort: 1}}}
 	if err := probe.Validate(); err != nil {
-		return DomainCheck{}, fmt.Errorf("%w: %v", model.ErrIngressInvalid, err)
+		return fmt.Errorf("%w: %v", model.ErrIngressInvalid, err)
 	}
+	return nil
+}
+
+// CheckDomain reports whether a hostname (already validated with
+// ValidateCheckDomain) is free and covered on serverID — the live-typing
+// check behind GET /api/v1/domains/check. A hostname is unique per server
+// only.
+func (uc *UseCase) CheckDomain(ctx context.Context, serverID, domain, excludeAppID string) (DomainCheck, error) {
 	var out DomainCheck
 	if uc.serverDomains != nil {
 		regs, err := uc.serverDomains.ListForServer(ctx, serverID)
 		if err != nil {
 			return DomainCheck{}, err
 		}
-		out.Registration = winningRegistration(regs, domain)
+		if win, ok := model.Winning(regs, domain); ok {
+			out.Registration = &win
+		}
 	}
 	if uc.domains != nil {
 		claims, err := uc.domains.FindClaims(ctx, serverID, []string{domain}, excludeAppID)
@@ -270,31 +273,54 @@ func (uc *UseCase) CheckDomain(ctx context.Context, serverID, domain, excludeApp
 	return out, nil
 }
 
-// heldHostnames is the set of hostnames appID already holds on serverID per
-// the app_domains index (empty for a new app or without the index).
+// requireCovered refuses an ingress hostname no domain registered on
+// serverID covers (the agent drops uncovered hosts again in BuildConfig).
+// Hostnames appID already holds are grandfathered: the registration index
+// may still be empty right after an upgrade until the agent's first
+// domain.list, and domain.delete is refused while an app uses a covered
+// hostname. They are looked up only once a host turns out uncovered.
+func (uc *UseCase) requireCovered(ctx context.Context, serverID, appID string, ing *model.Ingress) error {
+	if uc.serverDomains == nil {
+		return nil
+	}
+	regs, err := uc.serverDomains.ListForServer(ctx, serverID)
+	if err != nil {
+		uc.log.Error("SaveApp: list registered domains", "error", err, "server_id", serverID)
+		return err
+	}
+	var held map[string]bool
+	for _, host := range ing.DomainNames() {
+		if _, ok := model.Winning(regs, host); ok {
+			continue
+		}
+		if held == nil {
+			if held, err = uc.heldHostnames(ctx, serverID, appID); err != nil {
+				uc.log.Error("SaveApp: list held hostnames", "error", err, "app_id", appID)
+				return err
+			}
+		}
+		if !held[host] {
+			return model.NotCoveredError(host)
+		}
+	}
+	return nil
+}
+
+// heldHostnames is the set of hostnames appID holds on serverID per the
+// app_domains index (empty for a new app or without the index).
 func (uc *UseCase) heldHostnames(ctx context.Context, serverID, appID string) (map[string]bool, error) {
 	held := map[string]bool{}
-	if uc.domains == nil || appID == "" {
+	if uc.domains == nil {
 		return held, nil
 	}
-	byApp, err := uc.domains.ListForServer(ctx, serverID)
+	hosts, err := uc.domains.ListForApp(ctx, serverID, appID)
 	if err != nil {
 		return nil, err
 	}
-	for _, d := range byApp[appID] {
-		held[d.Domain] = true
+	for _, h := range hosts {
+		held[h] = true
 	}
 	return held, nil
-}
-
-// winningRegistration is the registration among regs covering host (exact
-// over wildcard), or nil.
-func winningRegistration(regs []model.RegisteredDomain, host string) *model.RegisteredDomain {
-	win, ok := model.Winning(regs, host)
-	if !ok {
-		return nil
-	}
-	return &win
 }
 
 // SaveApp dispatches an app.save command to the server's agent and returns
@@ -331,32 +357,8 @@ func (uc *UseCase) SaveApp(ctx context.Context, userID, serverID string, app mod
 		if err := ing.Validate(); err != nil {
 			return "", fmt.Errorf("%w: %v", model.ErrIngressInvalid, err)
 		}
-		// Every hostname must sit under a domain registered on this
-		// server; the agent drops uncovered hosts again in BuildConfig.
-		if uc.serverDomains != nil {
-			regs, err := uc.serverDomains.ListForServer(ctx, serverID)
-			if err != nil {
-				uc.log.Error("SaveApp: list registered domains", "error", err, "server_id", serverID)
-				return "", err
-			}
-			held, err := uc.heldHostnames(ctx, serverID, app.ID)
-			if err != nil {
-				uc.log.Error("SaveApp: list held hostnames", "error", err, "app_id", app.ID)
-				return "", err
-			}
-			for _, host := range ing.DomainNames() {
-				// Hostnames the app already holds are grandfathered: the
-				// registration index may still be empty after an upgrade
-				// until the first domain.list reconcile, and domain.delete is
-				// refused while an app uses a covered hostname. New or
-				// changed hostnames still need coverage.
-				if held[host] {
-					continue
-				}
-				if winningRegistration(regs, host) == nil {
-					return "", model.NotCoveredError(host)
-				}
-			}
+		if err := uc.requireCovered(ctx, serverID, app.ID, ing); err != nil {
+			return "", err
 		}
 		if uc.domains != nil {
 			claims, err := uc.domains.FindClaims(ctx, serverID, ing.DomainNames(), app.ID)
@@ -367,7 +369,7 @@ func (uc *UseCase) SaveApp(ctx context.Context, userID, serverID string, app mod
 			if len(claims) > 0 {
 				var parts []string
 				for _, c := range claims {
-					parts = append(parts, fmt.Sprintf("%s is already used by app %q on server %q", c.Domain, c.AppName, c.ServerName))
+					parts = append(parts, fmt.Sprintf("%s is already used by app %q on this server", c.Domain, c.AppName))
 				}
 				return "", fmt.Errorf("%w: %s", model.ErrDomainTaken, strings.Join(parts, "; "))
 			}

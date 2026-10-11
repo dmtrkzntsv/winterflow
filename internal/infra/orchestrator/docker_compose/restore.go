@@ -35,8 +35,8 @@ const restartTimeout = 2 * time.Minute
 
 // restoreLimits are a restore helper's: a dump's, plus what putting files
 // back needs (give them their owner; set the mode and times of files it
-// doesn't own).
-var restoreLimits = append(slices.Clone(helperLimits), "--cap-add", "CHOWN", "--cap-add", "FOWNER")
+// doesn't own; keep a folder's setgid bit when its group is set).
+var restoreLimits = append(slices.Clone(helperLimits), "--cap-add", "CHOWN", "--cap-add", "FOWNER", "--cap-add", "FSETID")
 
 // RestoreJob is one restore: Point of the app's backup.
 type RestoreJob struct {
@@ -338,6 +338,11 @@ func restoreArgs(name, appID, exe string, plan helperPlan, b recipe.EffectiveBac
 	args = append(args, "files", "--id", strings.TrimPrefix(name, "wf-restore-"))
 	for _, p := range plan.Paths {
 		args = append(args, "--root", "/src/"+strconv.Itoa(p.Mount), "--src", p.Src(), "--entry", p.Entry)
+	}
+	// What the backup excludes is not in the copy; the helper keeps it where
+	// it is instead of deleting it with the old data.
+	for _, e := range b.Exclude {
+		args = append(args, "--exclude", e)
 	}
 	for i := range plan.Mounts {
 		if n := needs[i]; n > 0 {

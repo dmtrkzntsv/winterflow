@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -146,52 +147,84 @@ func TestRestoreFilesWholeVolume(t *testing.T) {
 
 // A nested mount (a volume at /data/media inside the one at /data) is a
 // second source: the dump archives data/media/ twice (the empty mount point
-// in the outer volume, then the inner volume's root). Restore takes both
-// and keeps the mount point in the outer volume.
+// in the outer volume, then the inner volume's root). Restore takes both and
+// keeps the mount point in the outer volume, whichever source was dumped
+// first.
 func TestRestoreFilesNestedMount(t *testing.T) {
-	root := t.TempDir()
-	outer, inner := filepath.Join(root, "0"), filepath.Join(root, "1")
-	for _, f := range []struct{ path, body string }{
-		{"0/app.yml", "k: v"}, {"0/sub/notes.txt", "notes"}, {"1/photo.jpg", "jpeg"}, {"1/2026/a.jpg", "a"},
-	} {
-		writeFileT(t, root, f.path, f.body)
-	}
-	if err := os.Mkdir(filepath.Join(outer, "media"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	archive := dumpOf(t, "--src", outer, "--entry", "data", "--src", inner, "--entry", "data/media")
-	dirs := 0
-	for tr := tar.NewReader(bytes.NewReader(archive)); ; {
-		h, err := tr.Next()
-		if err != nil {
-			break
-		}
-		if h.Name == "data/media/" {
-			dirs++
-		}
-	}
-	if dirs != 2 {
-		t.Fatalf("the dump archived data/media/ %d times, want 2", dirs)
-	}
-	beforeOuter, beforeInner := snapshot(t, outer), snapshot(t, inner)
-	for _, p := range []string{filepath.Join(outer, "sub"), filepath.Join(inner, "2026"), filepath.Join(outer, "media")} {
-		if err := os.RemoveAll(p); err != nil {
-			t.Fatal(err)
-		}
-	}
-	writeFileT(t, root, "1/stray.jpg", "x")
-	recordChowns(t)
-	code, res := restore(t, archive, "files", "--id", "n1",
-		"--root", outer, "--src", outer, "--entry", "data",
-		"--root", inner, "--src", inner, "--entry", "data/media")
-	if code != ExitOK || len(res.Warnings) != 0 {
-		t.Fatalf("%d %+v", code, res)
-	}
-	if after := snapshot(t, outer); !mapsEqual(after, beforeOuter) {
-		t.Fatalf("outer:\n%v\nwant\n%v", after, beforeOuter)
-	}
-	if after := snapshot(t, inner); !mapsEqual(after, beforeInner) {
-		t.Fatalf("inner:\n%v\nwant\n%v", after, beforeInner)
+	for name, innerFirst := range map[string]bool{"outer first": false, "inner first": true} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			outer, inner := filepath.Join(root, "0"), filepath.Join(root, "1")
+			for _, f := range []struct{ path, body string }{
+				{"0/app.yml", "k: v"}, {"0/sub/notes.txt", "notes"}, {"1/photo.jpg", "jpeg"}, {"1/2026/a.jpg", "a"},
+			} {
+				writeFileT(t, root, f.path, f.body)
+			}
+			// The mount point and the inner root differ, so a mix-up shows.
+			if err := os.Mkdir(filepath.Join(outer, "media"), 0o711); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(filepath.Join(outer, "media"), 0o711); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(inner, 0o750); err != nil {
+				t.Fatal(err)
+			}
+			pointTime, rootTime := time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC), time.Date(2021, 6, 7, 8, 9, 10, 0, time.UTC)
+			if err := os.Chtimes(filepath.Join(outer, "media"), pointTime, pointTime); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chtimes(inner, rootTime, rootTime); err != nil {
+				t.Fatal(err)
+			}
+			args := []string{"--src", outer, "--entry", "data", "--src", inner, "--entry", "data/media"}
+			restoreArgs := []string{"--root", outer, "--src", outer, "--entry", "data", "--root", inner, "--src", inner, "--entry", "data/media"}
+			if innerFirst {
+				args = []string{"--src", inner, "--entry", "data/media", "--src", outer, "--entry", "data"}
+				restoreArgs = []string{"--root", inner, "--src", inner, "--entry", "data/media", "--root", outer, "--src", outer, "--entry", "data"}
+			}
+			archive := dumpOf(t, args...)
+			dirs := 0
+			for tr := tar.NewReader(bytes.NewReader(archive)); ; {
+				h, err := tr.Next()
+				if err != nil {
+					break
+				}
+				if h.Name == "data/media/" {
+					dirs++
+				}
+			}
+			if dirs != 2 {
+				t.Fatalf("the dump archived data/media/ %d times, want 2", dirs)
+			}
+			beforeOuter, beforeInner := snapshot(t, outer), snapshot(t, inner)
+			for _, p := range []string{filepath.Join(outer, "sub"), filepath.Join(inner, "2026"), filepath.Join(outer, "media")} {
+				if err := os.RemoveAll(p); err != nil {
+					t.Fatal(err)
+				}
+			}
+			writeFileT(t, root, "1/stray.jpg", "x")
+			if err := os.Chmod(inner, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			recordChowns(t)
+			code, res := restore(t, archive, append([]string{"files", "--id", "n1"}, restoreArgs...)...)
+			if code != ExitOK || len(res.Warnings) != 0 {
+				t.Fatalf("%d %+v", code, res)
+			}
+			if after := snapshot(t, outer); !mapsEqual(after, beforeOuter) {
+				t.Fatalf("outer:\n%v\nwant\n%v", after, beforeOuter)
+			}
+			if after := snapshot(t, inner); !mapsEqual(after, beforeInner) {
+				t.Fatalf("inner:\n%v\nwant\n%v", after, beforeInner)
+			}
+			if info, err := os.Lstat(inner); err != nil || info.Mode().Perm() != 0o750 || !info.ModTime().Equal(rootTime) {
+				t.Fatalf("the inner mount's root: %v %v", info, err)
+			}
+			if info, err := os.Lstat(filepath.Join(outer, "media")); err != nil || info.Mode().Perm() != 0o711 || !info.ModTime().Equal(pointTime) {
+				t.Fatalf("the outer mount point: %v %v", info, err)
+			}
+		})
 	}
 }
 
@@ -259,6 +292,12 @@ func TestRestoreFilesRefusals(t *testing.T) {
 		"through a symlink": {tarOf(t,
 			&tar.Header{Name: "app/media/link", Typeflag: tar.TypeSymlink, Linkname: target},
 			file("app/media/link/evil", "x")), "through a symlink"},
+		"symlink over a folder": {tarOf(t,
+			&tar.Header{Name: "app/media/d/", Typeflag: tar.TypeDir, Mode: 0o755},
+			&tar.Header{Name: "app/media/d", Typeflag: tar.TypeSymlink, Linkname: "x"}), "is a folder and a symlink"},
+		"file over a folder": {tarOf(t,
+			&tar.Header{Name: "app/media/d/", Typeflag: tar.TypeDir, Mode: 0o755},
+			file("app/media/d", "x")), "through a symlink or over a folder"},
 		"over a symlink": {tarOf(t,
 			&tar.Header{Name: "app/media/link", Typeflag: tar.TypeSymlink, Linkname: filepath.Join(target, "f")},
 			file("app/media/link", "x")), "through a symlink"},
@@ -338,23 +377,71 @@ func TestRestoreFilesMissingPathAndOddEntries(t *testing.T) {
 	}
 }
 
-// A failure while swapping (here: the old path can't be removed) reports a
-// partial restore.
-func TestRestoreFilesPartialSwap(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root ignores folder permissions")
+// failRenames makes the helper's renames fail from the nth call on (1 = the
+// first); until then they work.
+func failRenames(t *testing.T, from, to int) *int {
+	t.Helper()
+	prev := rename
+	calls := 0
+	rename = func(a, b string) error {
+		calls++
+		if calls >= from && calls <= to {
+			return syscall.EIO
+		}
+		return prev(a, b)
 	}
+	t.Cleanup(func() { rename = prev })
+	return &calls
+}
+
+// A failure while swapping that can be undone changes nothing (exit 1): the
+// old data of every path is back and no temp folder remains.
+func TestRestoreFilesSwapFailureIsUndone(t *testing.T) {
+	root := t.TempDir()
+	writeFileT(t, root, "media/keep.txt", "original")
+	writeFileT(t, root, "config/c.yml", "untouched")
+	archive := tarOf(t, file("app/media/new.txt", "new"), file("app/config/new.yml", "new"))
+	recordChowns(t)
+	// media: old aside (1), new in (2); config: old aside (3) fails; undo works.
+	failRenames(t, 3, 3)
+	code, res := restore(t, archive, "files", "--id", "r4",
+		"--root", root, "--src", root+"/media", "--entry", "app/media",
+		"--root", root, "--src", root+"/config", "--entry", "app/config")
+	if code != ExitFailed || !strings.Contains(res.Error, "/app/config was not replaced") {
+		t.Fatalf("%d %+v", code, res)
+	}
+	for p, want := range map[string]string{"media/keep.txt": "original", "config/c.yml": "untouched"} {
+		if body, err := os.ReadFile(filepath.Join(root, p)); err != nil || string(body) != want {
+			t.Fatalf("%s = %q %v", p, body, err)
+		}
+	}
+	for _, p := range []string{"media/new.txt", "config/new.yml"} {
+		if _, err := os.Stat(filepath.Join(root, p)); !os.IsNotExist(err) {
+			t.Fatalf("%s was restored", p)
+		}
+	}
+	if left, _ := filepath.Glob(filepath.Join(root, restoreTmpPrefix+"*")); len(left) != 0 {
+		t.Fatalf("temp folders left: %v", left)
+	}
+}
+
+// A failure while swapping that can't be undone reports a partial restore
+// and keeps the old data aside.
+func TestRestoreFilesPartialSwap(t *testing.T) {
 	root := t.TempDir()
 	writeFileT(t, root, "a/b/old.txt", "old")
-	if err := os.Chmod(filepath.Join(root, "a"), 0o500); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chmod(filepath.Join(root, "a"), 0o755) })
 	recordChowns(t)
+	failRenames(t, 2, 1000) // the new data can't go in, and the old can't come back
 	code, res := restore(t, tarOf(t, file("x/new.txt", "new")), "files", "--id", "r4",
 		"--root", root, "--src", root+"/a/b", "--entry", "x")
-	if code != ExitPartial || !strings.Contains(res.Error, "/x was partly replaced") {
+	if code != ExitPartial || !strings.Contains(res.Error, "/x was partly replaced") || !strings.Contains(res.Error, ".wf-restore-r4.old") {
 		t.Fatalf("%d %+v", code, res)
+	}
+	if body, err := os.ReadFile(filepath.Join(root, ".wf-restore-r4.old", "0", "old", "old.txt")); err != nil || string(body) != "old" {
+		t.Fatalf("the old data was not kept: %q %v", body, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".wf-restore-r4")); !os.IsNotExist(err) {
+		t.Fatalf("the extracted copy was kept: %v", err)
 	}
 }
 
@@ -385,5 +472,296 @@ func TestRestoreFilesUsage(t *testing.T) {
 		if code := Run(append([]string{"restore"}, args...), strings.NewReader(""), io.Discard, &stderr); code != ExitUsage || !strings.Contains(stderr.String(), "usage:") {
 			t.Errorf("%v: code %d, stderr %q", args, code, stderr.String())
 		}
+	}
+}
+
+// A temp folder a killed restore left holds up to a whole copy: it is removed
+// before the room is checked, so it can't make every later restore fail.
+func TestRestoreFilesRemovesStaleFoldersBeforeTheRoomCheck(t *testing.T) {
+	root := t.TempDir()
+	writeFileT(t, root, "media/keep.txt", "original")
+	writeFileT(t, root, restoreTmpPrefix+"old/big", "x")
+	prev := freeSpace
+	freeSpace = func(string) (uint64, error) { return 1 << 20, nil }
+	t.Cleanup(func() { freeSpace = prev })
+	code, res := restore(t, tarOf(t, file("app/media/new.txt", "new")), "files", "--id", "s1",
+		"--root", root, "--src", root+"/media", "--entry", "app/media", "--need", root+"=3000000")
+	if code != ExitFailed || !strings.Contains(res.Error, "not enough free space") {
+		t.Fatalf("%d %+v", code, res)
+	}
+	if left, _ := filepath.Glob(filepath.Join(root, restoreTmpPrefix+"*")); len(left) != 0 {
+		t.Fatalf("the stale folder is still there: %v", left)
+	}
+	if body, _ := os.ReadFile(filepath.Join(root, "media", "keep.txt")); string(body) != "original" {
+		t.Fatalf("the mount changed: %q", body)
+	}
+}
+
+// Mounts on one file system share its free space.
+func TestRestoreFilesSharedDiskRoom(t *testing.T) {
+	a, b := t.TempDir(), t.TempDir() // the same file system
+	var asked []string
+	prev := freeSpace
+	freeSpace = func(p string) (uint64, error) { asked = append(asked, p); return 10 << 20, nil }
+	t.Cleanup(func() { freeSpace = prev })
+	code, res := restore(t, tarOf(t, file("a/x", "x"), file("b/x", "x")), "files", "--id", "s2",
+		"--root", a, "--src", a, "--entry", "a", "--root", b, "--src", b, "--entry", "b",
+		"--need", a+"=6291456", "--need", b+"=6291456")
+	if code != ExitFailed || !strings.Contains(res.Error, "it needs 12.0 MiB next to the current data, 10.0 MiB is free") || len(asked) != 1 {
+		t.Fatalf("%d %+v asked %v", code, res, asked)
+	}
+}
+
+// What the backup excludes isn't in the copy; the restore keeps those files
+// where they are, in the restored tree, instead of deleting them with the
+// old data.
+func TestRestoreFilesKeepsExcludedFiles(t *testing.T) {
+	root := t.TempDir()
+	for p, body := range map[string]string{
+		"media/a.jpg": "a", "media/big.mp4": "movie", "media/sub/clip.mp4": "clip", "media/sub/b.jpg": "b",
+		"media/cache/x": "cached", "media/new-but-kept/note": "n",
+	} {
+		writeFileT(t, root, p, body)
+	}
+	excludes := []string{"--exclude", "*.mp4", "--exclude", "cache/"}
+	archive := dumpOf(t, append([]string{"--src", root + "/media", "--entry", "app/media"}, excludes...)...)
+	// The app changes things after the copy.
+	if err := os.WriteFile(filepath.Join(root, "media", "a.jpg"), []byte("edited"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(root, "media", "sub", "b.jpg")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(root, "media", "new-but-kept")); err != nil {
+		t.Fatal(err)
+	}
+	writeFileT(t, root, "media/later/clip2.mp4", "later") // in a folder the copy lacks
+	writeFileT(t, root, "media/new.txt", "not excluded")
+	recordChowns(t)
+	args := append([]string{"files", "--id", "k1", "--root", root, "--src", root + "/media", "--entry", "app/media"}, excludes...)
+	if code, res := restore(t, archive, args...); code != ExitOK || len(res.Warnings) != 0 {
+		t.Fatalf("%d %+v", code, res)
+	}
+	for p, want := range map[string]string{
+		"media/a.jpg": "a", "media/big.mp4": "movie", "media/sub/clip.mp4": "clip", "media/sub/b.jpg": "b",
+		"media/cache/x": "cached", "media/later/clip2.mp4": "later",
+	} {
+		if body, err := os.ReadFile(filepath.Join(root, p)); err != nil || string(body) != want {
+			t.Errorf("%s = %q %v, want %q", p, body, err, want)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "media", "new.txt")); !os.IsNotExist(err) {
+		t.Errorf("a file the backup does not exclude survived: %v", err)
+	}
+	if left, _ := filepath.Glob(filepath.Join(root, restoreTmpPrefix+"*")); len(left) != 0 {
+		t.Fatalf("temp folders left: %v", left)
+	}
+}
+
+// The same for a whole volume, where the restored entries replace every
+// top-level entry of the mount.
+func TestRestoreFilesKeepsExcludedFilesOfAWholeVolume(t *testing.T) {
+	root := t.TempDir()
+	writeFileT(t, root, "a.mp4", "movie")
+	writeFileT(t, root, "b.txt", "b")
+	archive := dumpOf(t, "--src", root, "--entry", "", "--exclude", "*.mp4")
+	writeFileT(t, root, "b.txt", "changed")
+	recordChowns(t)
+	if code, res := restore(t, archive, "files", "--id", "k2", "--root", root, "--src", root, "--entry", "", "--exclude", "*.mp4"); code != ExitOK || len(res.Warnings) != 0 {
+		t.Fatalf("%d %+v", code, res)
+	}
+	for p, want := range map[string]string{"a.mp4": "movie", "b.txt": "b"} {
+		if body, err := os.ReadFile(filepath.Join(root, p)); err != nil || string(body) != want {
+			t.Errorf("%s = %q %v", p, body, err)
+		}
+	}
+}
+
+// A kept file never replaces one the copy has, and a file where the old tree
+// had a folder keeps its files out with a warning.
+func TestRestoreFilesKeptFilesNeverReplaceTheCopy(t *testing.T) {
+	root := t.TempDir()
+	writeFileT(t, root, "media/a.mp4", "current")
+	writeFileT(t, root, "media/d/x.mp4", "inside")
+	recordChowns(t)
+	code, res := restore(t, tarOf(t, file("app/media/a.mp4", "copy"), file("app/media/d", "now a file")), "files", "--id", "k3",
+		"--root", root, "--src", root+"/media", "--entry", "app/media", "--exclude", "*.mp4")
+	if code != ExitOK || len(res.Warnings) != 2 ||
+		res.Warnings[0] != "/app/media/a.mp4: not kept, the restored copy has one" ||
+		res.Warnings[1] != "/app/media/d/x.mp4: not kept, the restored copy has a file where its folder was" {
+		t.Fatalf("%d %+v", code, res)
+	}
+	if body, _ := os.ReadFile(filepath.Join(root, "media", "a.mp4")); string(body) != "copy" {
+		t.Fatalf("a.mp4 = %q", body)
+	}
+}
+
+// A disk mounted inside a path (a bind mount is recursive) can't be swapped
+// by renames: refused before anything is touched.
+func TestRestoreFilesRefusesMountsInside(t *testing.T) {
+	root := t.TempDir()
+	writeFileT(t, root, "media/keep.txt", "original")
+	prevMounts, prevDev := mountPoints, devOf
+	t.Cleanup(func() { mountPoints, devOf = prevMounts, prevDev })
+	for name, tc := range map[string]struct {
+		mounts []string
+		dev    func(string) (uint64, error)
+		src    string
+		entry  string
+	}{
+		"below the path":      {[]string{"/", root, root + "/media/disk2"}, prevDev, root + "/media", "app/media"},
+		"below a whole mount": {[]string{root + "/disk2"}, prevDev, root, ""},
+		"the path is a mount": {nil, func(p string) (uint64, error) {
+			if p == root+"/media" {
+				return 99, nil
+			}
+			return prevDev(p)
+		}, root + "/media", "app/media"},
+		"its nearest parent is a mount": {nil, func(p string) (uint64, error) {
+			if p == root+"/media" {
+				return 99, nil
+			}
+			return prevDev(p)
+		}, root + "/media/not/yet", "app/media/not/yet"},
+	} {
+		mountPoints = func() ([]string, error) { return tc.mounts, nil }
+		devOf = tc.dev
+		recordChowns(t)
+		code, res := restore(t, tarOf(t, file(tc.entry+"/new.txt", "new")), "files", "--id", "m1", "--root", root, "--src", tc.src, "--entry", tc.entry)
+		want := "refused: a disk is mounted at or inside /" + tc.entry + ", so it can't be restored in place"
+		if tc.entry == "" {
+			want = "refused: a disk is mounted at or inside the volume, so it can't be restored in place"
+		}
+		if code != ExitFailed || res.Error != want {
+			t.Errorf("%s: %d %+v", name, code, res)
+		}
+		if body, _ := os.ReadFile(filepath.Join(root, "media", "keep.txt")); string(body) != "original" {
+			t.Fatalf("%s: the mount changed", name)
+		}
+		if left, _ := filepath.Glob(filepath.Join(root, restoreTmpPrefix+"*")); len(left) != 0 {
+			t.Fatalf("%s: temp folders left: %v", name, left)
+		}
+	}
+	mountPoints = func() ([]string, error) { return nil, os.ErrPermission }
+	if code, res := restore(t, tarOf(t, file("app/media/new.txt", "new")), "files", "--id", "m2", "--root", root, "--src", root+"/media", "--entry", "app/media"); code != ExitFailed ||
+		!strings.Contains(res.Error, "check for disks mounted inside the restore paths") {
+		t.Fatalf("unreadable mountinfo: %d %+v", code, res)
+	}
+}
+
+func TestParseMountInfo(t *testing.T) {
+	raw := "22 1 8:1 / / rw,relatime - ext4 /dev/sda1 rw\n36 35 98:0 /mnt1 /mnt/with\\040space rw - ext3 /dev/root rw\n\nshort\n37 35 98:0 / /a\\134b\\012c rw - tmpfs t rw\n"
+	got := parseMountInfo(raw)
+	if want := []string{"/", "/mnt/with space", "/a\\b\nc"}; strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("mount points = %q, want %q", got, want)
+	}
+	if got := unescapeMount(`/x\04`); got != `/x\04` {
+		t.Fatalf("a truncated escape = %q", got)
+	}
+	if _, err := mountPoints(); err != nil {
+		t.Fatalf("/proc/self/mountinfo: %v", err)
+	}
+}
+
+// Owner, mode and times are applied through descriptors or without following
+// symlinks: a symlink entry gets its own times, and what it points at (here a
+// file outside the restore) is never touched.
+func TestRestoreFilesNeverFollowsSymlinksForMetadata(t *testing.T) {
+	root, outside := t.TempDir(), t.TempDir()
+	victim := filepath.Join(outside, "victim")
+	if err := os.WriteFile(victim, []byte("v"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	victimTime := time.Date(2019, 1, 1, 0, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(victim, victimTime, victimTime); err != nil {
+		t.Fatal(err)
+	}
+	linkTime := time.Date(2022, 2, 3, 4, 5, 6, 0, time.UTC)
+	logs := recordChowns(t)
+	code, res := restore(t, tarOf(t,
+		&tar.Header{Name: "app/media/link", Typeflag: tar.TypeSymlink, Linkname: victim, ModTime: linkTime, Mode: 0o777, Uid: 7, Gid: 8},
+		file("app/media/f", "f")), "files", "--id", "l1", "--root", root, "--src", root+"/media", "--entry", "app/media")
+	if code != ExitOK {
+		t.Fatalf("%d %+v", code, res)
+	}
+	info, err := os.Lstat(filepath.Join(root, "media", "link"))
+	if err != nil || info.Mode()&os.ModeSymlink == 0 || !info.ModTime().Equal(linkTime) {
+		t.Fatalf("the link: %v %v", info, err)
+	}
+	if c, ok := logs.of("link"); !ok || c != [2]int{7, 8} {
+		t.Fatalf("link owner = %v %v", c, ok)
+	}
+	vinfo, err := os.Stat(victim)
+	if err != nil || vinfo.Mode().Perm() != 0o640 || !vinfo.ModTime().Equal(victimTime) {
+		t.Fatalf("the file behind the link changed: %v %v", vinfo, err)
+	}
+}
+
+// A whole-volume copy with nothing in it (the volume was empty) empties the
+// volume.
+func TestRestoreFilesEmptyVolume(t *testing.T) {
+	root := t.TempDir()
+	writeFileT(t, root, "keep.txt", "newer")
+	recordChowns(t)
+	if code, res := restore(t, tarOf(t), "files", "--id", "e1", "--root", root, "--src", root, "--entry", ""); code != ExitOK || len(res.Warnings) != 0 {
+		t.Fatalf("%d %+v", code, res)
+	}
+	if entries, _ := os.ReadDir(root); len(entries) != 0 {
+		t.Fatalf("the volume still holds %v", entries)
+	}
+}
+
+// A mount's root takes the copy's mode and times, which removing the temp
+// folders must not disturb; a restore's own temp folder in the archive is
+// skipped.
+func TestRestoreFilesMountRootTimesAndTempNames(t *testing.T) {
+	root := t.TempDir()
+	when := time.Date(2021, 3, 4, 5, 6, 7, 0, time.UTC)
+	recordChowns(t)
+	code, res := restore(t, tarOf(t,
+		&tar.Header{Name: "app/", Typeflag: tar.TypeDir, Mode: 0o750, ModTime: when},
+		&tar.Header{Name: "app/" + restoreTmpPrefix + "x/", Typeflag: tar.TypeDir, Mode: 0o755},
+		file("app/ok.txt", "ok")), "files", "--id", "e2", "--root", root, "--src", root, "--entry", "app")
+	if code != ExitOK || len(res.Warnings) != 1 || !strings.Contains(res.Warnings[0], "skipped (a restore's temp folder)") {
+		t.Fatalf("%d %+v", code, res)
+	}
+	if info, err := os.Lstat(root); err != nil || info.Mode().Perm() != 0o750 || !info.ModTime().Equal(when) {
+		t.Fatalf("the root: %v %v", info, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "ok.txt")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A path restored below another restored path moves with it; a folder the
+// path needs is made with its parent's owner and mode.
+func TestRestoreFilesNestedPathsAndMissingParents(t *testing.T) {
+	root := t.TempDir()
+	writeFileT(t, root, "a/old.txt", "old")
+	writeFileT(t, root, "a/b/old2.txt", "old2")
+	logs := recordChowns(t)
+	code, res := restore(t, tarOf(t, file("app/a/x.txt", "x"), file("app/a/b/y.txt", "y"), file("app/p/q/z.txt", "z")), "files", "--id", "n2",
+		"--root", root, "--src", root+"/a", "--entry", "app/a",
+		"--root", root, "--src", root+"/a/b", "--entry", "app/a/b",
+		"--root", root, "--src", root+"/p/q", "--entry", "app/p/q")
+	if code != ExitOK || len(res.Warnings) != 0 {
+		t.Fatalf("%d %+v", code, res)
+	}
+	for p, want := range map[string]string{"a/x.txt": "x", "a/b/y.txt": "y", "p/q/z.txt": "z"} {
+		if body, err := os.ReadFile(filepath.Join(root, p)); err != nil || string(body) != want {
+			t.Errorf("%s = %q %v", p, body, err)
+		}
+	}
+	for _, p := range []string{"a/old.txt", "a/b/old2.txt"} {
+		if _, err := os.Stat(filepath.Join(root, p)); !os.IsNotExist(err) {
+			t.Errorf("%s survived", p)
+		}
+	}
+	rootInfo, _ := os.Stat(root)
+	if info, err := os.Stat(filepath.Join(root, "p")); err != nil || info.Mode().Perm() != rootInfo.Mode().Perm() {
+		t.Fatalf("p: %v %v", info, err)
+	}
+	if c, ok := logs.of("p"); !ok || c != [2]int{os.Getuid(), os.Getgid()} {
+		t.Fatalf("p's owner = %v %v", c, ok)
 	}
 }

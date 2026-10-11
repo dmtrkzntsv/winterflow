@@ -123,6 +123,12 @@ func TestResolveBackup(t *testing.T) {
 				Mounts: []helperMount{{Volume: "wf-app-1_html"}, {Bind: "/mnt/nas/nc"}, {Volume: "custom-name"}},
 				Paths: []helperPath{{Mount: 0, Entry: "var/www/html"}, {Mount: 1, Entry: "var/www/html/data"},
 					{Mount: 2, Entry: "var/www/html/data/deep"}, {Mount: 1, Sub: "x", Entry: "var/www/html/data/x"}}}},
+		// The dump and the restore rely on a path coming before every path below it.
+		{"a nested path listed before its parent follows it",
+			recipe.EffectiveBackup{Name: "nc", Type: recipe.TypeFiles, Service: "nc", Paths: []string{"/var/www/html/data/deep", "/var/www/html"}},
+			helperPlan{
+				Mounts: []helperMount{{Volume: "custom-name"}, {Volume: "wf-app-1_html"}, {Bind: "/mnt/nas/nc"}},
+				Paths:  []helperPath{{Mount: 1, Entry: "var/www/html"}, {Mount: 2, Entry: "var/www/html/data"}, {Mount: 0, Entry: "var/www/html/data/deep"}}}},
 		{"a sibling folder with the same prefix is not nested",
 			recipe.EffectiveBackup{Name: "nc", Type: recipe.TypeFiles, Service: "ncskip", Paths: []string{"/var/www/html/data"}},
 			helperPlan{Mounts: []helperMount{{Bind: "/mnt/nas/nc"}}, Paths: []helperPath{{Entry: "var/www/html/data"}}}},

@@ -7,8 +7,8 @@
 //
 //	backup dump sqlite <path> [--entry <name>] [--since <fingerprint>]
 //	backup dump files (--src <source> --entry <entry name>)... [--exclude <pattern>...] [--since <fingerprint>]
-//	backup restore sqlite <path>                     (the copy on stdin)
-//	backup restore files --id <id> (--root <mount> --src <source> --entry <entry name>)... [--need <mount>=<bytes>...]
+//	backup restore sqlite <path> [--entry <name>]    (the copy on stdin)
+//	backup restore files --id <id> (--root <mount> --src <source> --entry <entry name>)... [--exclude <pattern>...] [--need <mount>=<bytes>...]
 //	                                                 (the archive on stdin)
 //
 // Exit codes: 0 done, 3 unchanged since --since (nothing written), 4 nothing
@@ -104,8 +104,8 @@ func usage(stderr io.Writer) int {
 	fmt.Fprintln(stderr, `usage:
   backup dump sqlite <path> [--entry <name>] [--since <fingerprint>]
   backup dump files (--src <source> --entry <entry name>)... [--exclude <pattern>...] [--since <fingerprint>]
-  backup restore sqlite <path>
-  backup restore files --id <id> (--root <mount> --src <source> --entry <entry name>)... [--need <mount>=<bytes>...]`)
+  backup restore sqlite <path> [--entry <name>]
+  backup restore files --id <id> (--root <mount> --src <source> --entry <entry name>)... [--exclude <pattern>...] [--need <mount>=<bytes>...]`)
 	return ExitUsage
 }
 

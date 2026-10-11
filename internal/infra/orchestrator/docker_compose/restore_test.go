@@ -119,7 +119,7 @@ func TestRestoreSQLitePoint(t *testing.T) {
 	args := strings.Join(rr.restorer.calls[0], " ")
 	for _, part := range []string{
 		"run --rm -i --name wf-restore-",
-		"--cap-drop ALL --cap-add DAC_OVERRIDE --cap-add SETUID --cap-add SETGID --security-opt no-new-privileges --cap-add CHOWN --cap-add FOWNER",
+		"--cap-drop ALL --cap-add DAC_OVERRIDE --cap-add SETUID --cap-add SETGID --security-opt no-new-privileges --cap-add CHOWN --cap-add FOWNER --cap-add FSETID",
 		"--label winterflow.role=backup-helper --label winterflow.app=app-1",
 		"--mount type=volume,source=wf-app-1_data,target=/src/0 --mount",
 		"alpine:3.20 /wf backup restore sqlite /src/0/app.db --entry app.db",
@@ -346,7 +346,8 @@ func TestRestoreStartAgain(t *testing.T) {
 	}
 }
 
-// A files restore names its mounts, paths and the room each mount needs.
+// A files restore names its mounts, paths, the backup's excludes (the helper
+// keeps what they match) and the room each mount needs.
 func TestRestoreFilesPoint(t *testing.T) {
 	rr := newRestoreRepo(t)
 	var archive bytes.Buffer
@@ -372,7 +373,7 @@ func TestRestoreFilesPoint(t *testing.T) {
 	args := strings.Join(rr.restorer.calls[0], " ")
 	if !strings.Contains(args, "--mount type=bind,source=/data/apps-data/app-1/media,target=/src/0 --mount") ||
 		!strings.Contains(args, "/wf backup restore files --id ") ||
-		!strings.HasSuffix(args, "--root /src/0 --src /src/0 --entry app/media --need /src/0=16384") {
+		!strings.HasSuffix(args, "--root /src/0 --src /src/0 --entry app/media --exclude *.tmp --need /src/0=16384") {
 		t.Fatalf("args = %s", args)
 	}
 	if !bytes.Equal(rr.restorer.stdin, archive.Bytes()) {

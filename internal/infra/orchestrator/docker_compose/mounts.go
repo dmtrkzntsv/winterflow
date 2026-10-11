@@ -98,6 +98,7 @@ func resolveBackup(m composeModel, b recipe.EffectiveBackup, isFile func(string)
 		if len(plan.Paths) == 0 { // the whole volume
 			plan.Paths = []helperPath{{}}
 		}
+		plan.Paths = ancestorsFirst(plan.Paths)
 		return plan, nil
 	}
 	svc, ok := m.Services[b.Service]
@@ -159,7 +160,32 @@ func resolveBackup(m composeModel, b recipe.EffectiveBackup, isFile func(string)
 			plan.Paths = append(plan.Paths, helperPath{Mount: mountIndex(nhm), Entry: strings.TrimPrefix(t, "/")})
 		}
 	}
+	plan.Paths = ancestorsFirst(plan.Paths)
 	return plan, nil
+}
+
+// ancestorsFirst orders paths so that each one comes before every path below
+// it, keeping the given order otherwise. The dump archives paths in this
+// order and the restore matches its copies of a nested mount's folder (the
+// empty mount point of the outer mount, the root of the inner one) by it.
+func ancestorsFirst(paths []helperPath) []helperPath {
+	below := func(entry, of string) bool {
+		return entry != of && (of == "" || strings.HasPrefix(entry, of+"/"))
+	}
+	out := make([]helperPath, 0, len(paths))
+	for _, p := range paths {
+		at := len(out)
+		for k, q := range out {
+			if below(q.Entry, p.Entry) {
+				at = k
+				break
+			}
+		}
+		out = append(out, helperPath{})
+		copy(out[at+1:], out[at:])
+		out[at] = p
+	}
+	return out
 }
 
 // skippedMount is the error of a mount a nested path may leave out (it

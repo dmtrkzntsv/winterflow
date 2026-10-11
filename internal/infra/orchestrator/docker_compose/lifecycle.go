@@ -133,7 +133,11 @@ func (r *Repository) DeleteApp(ctx context.Context, appID string, deleteVolumes,
 	var backupStorages []string
 	appName := appID
 	if exists {
-		backupStorages = r.appBackupStorages(appID)
+		var err error
+		if backupStorages, err = r.appBackupStorages(appID); err != nil {
+			res.BackupsDeleted = false
+			res.Warnings = append(res.Warnings, "backups: the app's backup settings can't be read, so its backup folders are left as they are: "+err.Error())
+		}
 		appName = r.appName(r.appDataDir(appID), appID)
 	}
 	downErr := r.composeDown(ctx, appID, deleteVolumes)
@@ -143,16 +147,21 @@ func (r *Repository) DeleteApp(ctx context.Context, appID string, deleteVolumes,
 		r.log.Warn("delete: compose down failed, continuing", "app_id", appID, "error", downErr)
 	}
 	if res.VolumesDeleted {
-		res.Warnings = r.sweepAppVolumes(ctx, appID, downErr != nil)
+		res.Warnings = append(res.Warnings, r.sweepAppVolumes(ctx, appID, downErr != nil)...)
 	}
 	if err := removeAppSymlink(r.cfg.GetAppsDir(), appID); err != nil {
 		r.log.Warn("delete: symlink removal failed, continuing", "app_id", appID, "error", err)
 	}
 	if err := os.RemoveAll(r.appDataDir(appID)); err != nil {
+		res.BackupsDeleted = false // nothing of the backups was touched
 		return res, fmt.Errorf("remove app dir: %w", err)
 	}
 	r.forgetApp(appID)
-	res.Warnings = append(res.Warnings, r.settleBackups(ctx, appID, appName, backupStorages, deleteBackups)...)
+	warnings, purged := r.settleBackups(ctx, appID, appName, backupStorages, deleteBackups)
+	res.Warnings = append(res.Warnings, warnings...)
+	if len(backupStorages) > 0 { // else nothing to delete: res stands as it was
+		res.BackupsDeleted = deleteBackups && purged
+	}
 	return res, nil
 }
 

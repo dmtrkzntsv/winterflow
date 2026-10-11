@@ -183,12 +183,27 @@ func (r *Repository) RunBackup(ctx context.Context, job BackupJob) (BackupResult
 		res.Point, res.Fingerprint, res.Size = &info, m.Fingerprint, dump.size
 		points = append([]layout.Point{p}, points...)
 	}
+	if err := clearDeletedMarker(ctx, st, job.AppID); err != nil {
+		// Only logged: a storage that refuses deletes already warns about
+		// retention below, and the sweep ignores a marker older than a point.
+		r.log.Warn("backup: the stale deleted marker could not be removed", "app_id", job.AppID, "error", err)
+	}
 	policy := layout.Policy{Keep: b.Keep.Retention(), CeilingDays: ceiling}
 	doomed := slices.DeleteFunc(layout.Prune(points, policy, now), func(p layout.Point) bool { return job.Protect != "" && p.ID == job.Protect })
 	if err := deletePoints(ctx, st, doomed); err != nil {
 		res.Warnings = append(res.Warnings, "retention: "+err.Error())
 	}
 	return res, nil
+}
+
+// clearDeletedMarker removes a stale <app-id>/.deleted marker: the app is
+// here and running backups, so its folder is not a deleted app's (the app was
+// deleted with its backups kept and later created again under the same id).
+// One cheap Delete per run; a missing marker is no error (30s).
+func clearDeletedMarker(ctx context.Context, st store.Store, appID string) error {
+	ctx, cancel := context.WithTimeout(ctx, storageCallTimeout)
+	defer cancel()
+	return st.Delete(ctx, appID+"/"+DeletedMarkerName)
 }
 
 // runnableBackup finds a backup the agent runs: one of the app's, enabled,

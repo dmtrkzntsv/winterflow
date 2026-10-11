@@ -2,7 +2,8 @@ import { act, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ServerScope, ToServerScope } from "@/components/server-routes";
+import { NotFound } from "@/components/not-found";
+import { DefaultServer, ServerScope } from "@/components/server-routes";
 import { ServersProvider } from "@/context/servers-context";
 import { useServers } from "@/context/use-servers";
 
@@ -53,14 +54,14 @@ function renderAt(url: string) {
     <MemoryRouter initialEntries={[url]}>
       <ServersProvider>
         <Routes>
-          <Route path="/" element={<ToServerScope fallback={<Probe />} />} />
+          <Route path="/" element={<DefaultServer fallback={<Probe />} />} />
           <Route path="/server/:serverId" element={<ServerScope />}>
             <Route index element={<Probe />} />
             <Route path="settings" element={<Probe />} />
             <Route path="app/:appId" element={<Probe />} />
           </Route>
-          <Route path="/settings" element={<ToServerScope />} />
           <Route path="/user/tokens" element={<Probe />} />
+          <Route path="*" element={<NotFound />} />
         </Routes>
       </ServersProvider>
     </MemoryRouter>,
@@ -77,17 +78,22 @@ describe("server-scoped URLs", () => {
     expect(at()).toBe("/server/s2/app/a9");
   });
 
-  it("moves / and pre-scoping URLs into the default server", async () => {
-    renderAt("/settings?tab=domains");
+  it("opens the default server's dashboard at /", async () => {
+    renderAt("/");
     await screen.findByTestId("at");
-    expect(at()).toBe("/server/s1/settings?tab=domains");
+    expect(at()).toBe("/server/s1");
     expect(server()).toBe("Alpha");
   });
 
-  it("sends an unknown server id back to the default server", async () => {
+  it("shows an error page for an unknown server id", async () => {
     renderAt("/server/nope/settings");
-    await screen.findByTestId("at");
-    expect(at()).toBe("/server/s1");
+    expect(await screen.findByText("Server not found")).toBeInTheDocument();
+    expect(screen.queryByTestId("at")).not.toBeInTheDocument();
+  });
+
+  it("shows an error page for unscoped and unknown routes", async () => {
+    renderAt("/settings");
+    expect(await screen.findByText("Page not found")).toBeInTheDocument();
   });
 
   it("keeps the page when switching servers, except an app page", async () => {

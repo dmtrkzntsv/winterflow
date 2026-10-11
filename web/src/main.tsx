@@ -5,7 +5,8 @@ import { createBrowserRouter, Outlet, RouterProvider } from "react-router-dom"
 import "@/lib/i18n"
 
 import { RequireAuth } from "@/components/require-auth"
-import { ServerScope, ToServerScope } from "@/components/server-routes"
+import { DefaultServer, ServerScope } from "@/components/server-routes"
+import { NotFound } from "@/components/not-found"
 import { LogoSprite } from "@/components/app-logo"
 import { Toaster } from "@/components/ui/sonner"
 import { AuthProvider } from "@/context/auth-context"
@@ -47,7 +48,7 @@ const router = createBrowserRouter([
         children: [
           {
             path: "/",
-            element: <ToServerScope fallback={<HomePage />} />,
+            element: <DefaultServer fallback={<HomePage />} />,
           },
           {
             path: "/server/:serverId",
@@ -59,10 +60,6 @@ const router = createBrowserRouter([
               { path: "settings", element: <SettingsPage /> },
             ],
           },
-          // Pre-scoping URLs (bookmarks, old links) move into the active server.
-          { path: "/create-app", element: <ToServerScope /> },
-          { path: "/app/:appId", element: <ToServerScope /> },
-          { path: "/settings", element: <ToServerScope /> },
           {
             path: "/user/tokens",
             element: <UserTokensPage />,
@@ -75,6 +72,7 @@ const router = createBrowserRouter([
             path: "/org/members",
             element: <OrgMembersPage />,
           },
+          { path: "*", element: <NotFound /> },
         ],
       },
       {

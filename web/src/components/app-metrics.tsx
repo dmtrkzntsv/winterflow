@@ -8,21 +8,19 @@ import {
   formatPercent,
   formatRate,
   formatSize,
+  hasData,
+  isUnavailable,
   lastPoint,
   toChartRows,
-  type MetricPoint,
   type MetricsMode,
   type MetricsRange,
 } from "@/lib/metrics";
 
 // UNAVAILABLE is shown when the host's cgroups resolve under no known
 // layout (rootless Docker, exotic drivers): the agent sends
-// containers_unavailable and stores "unavailable": 1.
+// containers_unavailable and stores "unavailable": 1 (a rolled-up point
+// carries the flagged fraction; see isUnavailable).
 const UNAVAILABLE = "Container metrics are unavailable on this host";
-
-function unavailable(p: MetricPoint | undefined): boolean {
-  return (p?.unavailable ?? 0) > 0;
-}
 
 function Block({ label, value, detail }: { label: string; value: string; detail?: string }) {
   return (
@@ -44,7 +42,7 @@ export function AppMetricBlocks({ serverId, appId }: { serverId: string; appId: 
   if (!last) return null;
   // Container metrics come from cgroups; the disk figure comes from the
   // hourly scan, so it stays meaningful when cgroups are unavailable.
-  const blind = unavailable(last);
+  const blind = isUnavailable(last);
   const net =
     last.net_rx_bps !== undefined || last.net_tx_bps !== undefined
       ? (last.net_rx_bps ?? 0) + (last.net_tx_bps ?? 0)
@@ -83,13 +81,17 @@ export function AppMetricBlocks({ serverId, appId }: { serverId: string; appId: 
 // AppMetricsTab is the app page's Metrics tab: CPU, memory, network and
 // disk growth over the selected range.
 export function AppMetricsTab({ serverId, appId }: { serverId: string; appId: string }) {
-  const [range, setRange] = useState<MetricsRange>("24h");
+  // 1h has data from the first minute (raw samples); see MonitoringPage.
+  const [range, setRange] = useState<MetricsRange>("1h");
   const [mode, setMode] = useState<MetricsMode>("avg");
   const { data, error } = useAppMetrics(serverId, appId, range);
   const points = useMemo(() => data?.points ?? [], [data]);
   const interval = data?.interval_seconds ?? 60;
   const rows = (fields: string[]) => toChartRows(points, interval, fields, mode);
-  const blind = unavailable(lastPoint(points)) ? UNAVAILABLE : undefined;
+  const blind = isUnavailable(lastPoint(points)) ? UNAVAILABLE : undefined;
+  // No container of the app has a limit: no "Limit" series to show.
+  const memSeries = [{ key: "mem_used", label: "Used", color: chartColor(1) }];
+  if (hasData(points, ["mem_limit"])) memSeries.push({ key: "mem_limit", label: "Limit", color: chartColor(3) });
 
   return (
     <div className="space-y-4">
@@ -110,11 +112,8 @@ export function AppMetricsTab({ serverId, appId }: { serverId: string; appId: st
         />
         <MetricChartCard
           title="Memory"
-          rows={rows(["mem_used", "mem_limit"])}
-          series={[
-            { key: "mem_used", label: "Used", color: chartColor(1) },
-            { key: "mem_limit", label: "Limit", color: chartColor(3) },
-          ]}
+          rows={rows(memSeries.map((m) => m.key))}
+          series={memSeries}
           format={formatSize}
           range={range}
           empty={blind}

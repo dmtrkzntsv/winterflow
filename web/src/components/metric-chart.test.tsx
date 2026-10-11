@@ -1,3 +1,4 @@
+import { cloneElement, type ReactElement } from "react";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -6,7 +7,27 @@ import { MetricChartCard, ModeToggle, RangeSelect } from "@/components/metric-ch
 import { Sparkline } from "@/components/sparkline";
 import { chartColor } from "@/lib/metrics";
 
+// jsdom has no layout: give recharts' ResponsiveContainer a fixed size so
+// the chart (areas, legend) actually renders.
+vi.mock("recharts", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("recharts")>();
+  return {
+    ...mod,
+    ResponsiveContainer: ({ children }: { children: ReactElement<{ width?: number; height?: number }> }) => (
+      <div style={{ width: 600, height: 180 }}>{cloneElement(children, { width: 600, height: 180 })}</div>
+    ),
+  };
+});
+
 const series = [{ key: "cpu", label: "CPU", color: chartColor(0) }];
+const rows2 = [
+  { t: 0, cpu: 1, mem: 2 },
+  { t: 60_000, cpu: 2, mem: 3 },
+];
+
+function areaPaths(container: HTMLElement) {
+  return [...container.querySelectorAll<SVGPathElement>("path.recharts-area-area")];
+}
 
 describe("MetricChartCard", () => {
   it("says No data yet without rows or with only nulls", () => {
@@ -38,9 +59,42 @@ describe("MetricChartCard", () => {
     expect(container.querySelector("[data-chart]")).not.toBeNull();
   });
 
-  it("cycles theme colors", () => {
-    expect(chartColor(0)).toBe("var(--chart-1)");
-    expect(chartColor(5)).toBe("var(--chart-1)");
+  it("labels a stacked chart even with a single series", () => {
+    const { container } = render(
+      <MetricChartCard title="CPU by app" rows={rows2} series={[{ key: "cpu", label: "Nextcloud", color: chartColor(0) }]} range="1h" format={String} stacked />,
+    );
+    const legend = container.querySelector(".recharts-legend-wrapper");
+    expect(legend).not.toBeNull();
+    expect(legend).toHaveTextContent("Nextcloud");
+  });
+
+  it("hides the legend of a single unstacked series", () => {
+    const { container } = render(<MetricChartCard title="CPU" rows={rows2} series={series} range="1h" format={String} />);
+    expect(container.querySelector(".recharts-legend-wrapper")).toBeNull();
+  });
+
+  it("wraps a long legend inside an overflow-safe card", () => {
+    const many = Array.from({ length: 9 }, (_, i) => ({ key: `temp${i}`, label: `Package id ${i}`, color: chartColor(i) }));
+    const { container } = render(
+      <MetricChartCard title="Temperature" rows={[{ t: 0, temp0: 1 }, { t: 60_000, temp0: 2 }]} series={many} range="1h" format={String} lines />,
+    );
+    expect(screen.getByTestId("chart-Temperature")).toHaveClass("min-w-0");
+    const legend = container.querySelector(".recharts-legend-wrapper > div");
+    expect(legend).toHaveClass("flex-wrap");
+    expect(legend?.className).toContain("whitespace-nowrap");
+  });
+
+  it("draws lines without fills when asked", () => {
+    const { container, rerender } = render(
+      <MetricChartCard title="Load" rows={rows2} series={[series[0], { key: "mem", label: "Mem", color: chartColor(1) }]} range="1h" format={String} lines />,
+    );
+    const paths = areaPaths(container);
+    expect(paths).toHaveLength(2);
+    for (const p of paths) expect(p.getAttribute("fill")).toBe("none");
+    rerender(
+      <MetricChartCard title="Load" rows={rows2} series={[series[0], { key: "mem", label: "Mem", color: chartColor(1) }]} range="1h" format={String} />,
+    );
+    for (const p of areaPaths(container)) expect(p.getAttribute("fill")).not.toBe("none");
   });
 });
 

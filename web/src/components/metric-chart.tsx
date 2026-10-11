@@ -12,6 +12,7 @@ import {
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
   METRICS_RANGES,
+  compactTick,
   formatTick,
   type ChartRow,
   type MetricsMode,
@@ -29,6 +30,9 @@ type MetricChartCardProps = {
   format: (v: number) => string;
   // stacked draws the series on top of each other (per-app CPU/memory).
   stacked?: boolean;
+  // lines draws unfilled, unstacked lines: for many overlapping series
+  // (temperature sensors, load averages) whose fills would blend together.
+  lines?: boolean;
   // empty replaces the chart with this message (no data yet, unavailable).
   empty?: string;
 };
@@ -43,8 +47,10 @@ export function MetricChartCard({
   range,
   format,
   stacked,
+  lines,
   empty,
 }: MetricChartCardProps) {
+  const stack = stacked && !lines;
   const config: ChartConfig = Object.fromEntries(
     series.map((s) => [s.key, { label: s.label, color: s.color }]),
   );
@@ -53,7 +59,9 @@ export function MetricChartCard({
   const hasValues = rows.some((r) => series.some((s) => typeof r[s.key] === "number"));
   const message = empty ?? (hasValues ? undefined : "No data yet");
   return (
-    <Card data-testid={`chart-${title}`}>
+    // min-w-0 lets the card shrink inside a grid cell instead of widening the
+    // page to fit the chart.
+    <Card data-testid={`chart-${title}`} className="min-w-0">
       <CardHeader className="pb-2">
         <CardTitle className="text-sm font-medium">{title}</CardTitle>
         {description ? <CardDescription>{description}</CardDescription> : null}
@@ -65,7 +73,7 @@ export function MetricChartCard({
           </div>
         ) : (
           <ChartContainer config={config} className="aspect-auto h-[180px] w-full">
-            <AreaChart data={rows} margin={{ left: 0, right: 8, top: 4 }}>
+            <AreaChart data={rows} margin={{ left: 0, right: 8, top: 10 }}>
               <CartesianGrid vertical={false} />
               <XAxis
                 dataKey="t"
@@ -77,7 +85,12 @@ export function MetricChartCard({
                 axisLine={false}
                 minTickGap={32}
               />
-              <YAxis tickFormatter={(v: number) => format(v)} tickLine={false} axisLine={false} width={64} />
+              <YAxis
+                tickFormatter={(v: number) => compactTick(format(v))}
+                tickLine={false}
+                axisLine={false}
+                width={76}
+              />
               <ChartTooltip
                 content={
                   <ChartTooltipContent
@@ -93,16 +106,23 @@ export function MetricChartCard({
                   />
                 }
               />
-              {series.length > 1 ? <ChartLegend content={<ChartLegendContent />} /> : null}
+              {/* A stack is labelled even with one app; long legends wrap
+                  between items, never inside a label. */}
+              {series.length > 1 || stacked ? (
+                <ChartLegend
+                  content={<ChartLegendContent className="flex-wrap gap-x-3 gap-y-1 [&>div]:whitespace-nowrap" />}
+                />
+              ) : null}
               {series.map((s) => (
                 <Area
                   key={s.key}
                   dataKey={s.key}
                   type="monotone"
                   stroke={`var(--color-${s.key})`}
-                  fill={`var(--color-${s.key})`}
-                  fillOpacity={stacked ? 0.4 : 0.15}
-                  stackId={stacked ? "stack" : undefined}
+                  fill={lines ? "none" : `var(--color-${s.key})`}
+                  fillOpacity={lines ? 0 : stack ? 0.4 : 0.15}
+                  strokeWidth={lines ? 1.5 : undefined}
+                  stackId={stack ? "stack" : undefined}
                   connectNulls={false}
                   isAnimationActive={false}
                   dot={false}

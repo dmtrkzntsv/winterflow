@@ -5,14 +5,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { MetricChartCard, ModeToggle, RangeSelect, type ChartSeries } from "@/components/metric-chart";
 import { useApps } from "@/context/use-apps";
 import { useServers } from "@/context/use-servers";
-import { useServerMetrics } from "@/hooks/use-metrics";
+import { useMetricsOverview, useServerMetrics } from "@/hooks/use-metrics";
 import {
   chartColor,
+  dockerDiskUsage,
   formatPercent,
   formatRate,
   formatSize,
   formatTemp,
-  lastPoint,
   stackApps,
   temperatureChart,
   toChartRows,
@@ -47,9 +47,12 @@ function s(key: string, label: string, i: number): ChartSeries {
 export default function MonitoringPage() {
   const { activeServer, activeServerId } = useServers();
   const { apps } = useApps();
-  const [range, setRange] = useState<MetricsRange>("24h");
+  // 1h is served from raw samples, so it has data from the first minute;
+  // coarser ranges fill in once their rollup buckets close.
+  const [range, setRange] = useState<MetricsRange>("1h");
   const [mode, setMode] = useState<MetricsMode>("avg");
   const { data, loading, error } = useServerMetrics(activeServerId, range);
+  const { data: overview } = useMetricsOverview();
 
   const breadcrumbs = useMemo(
     () => [{ label: "Monitoring", href: "#", hideOnMobile: true }, { label: activeServer?.name ?? "Server" }],
@@ -63,7 +66,12 @@ export default function MonitoringPage() {
   const temps = temperatureChart(points, interval, mode);
   const appName = (id: string) => apps.find((a) => a.id === id)?.name ?? id.slice(0, 8);
   const appSeries = (data?.apps ?? []).map((a, i) => s(a.app_id, appName(a.app_id), i));
-  const last = lastPoint(points);
+  // The disk scan is hourly: take the latest sample's, not the range's.
+  const latest = overview?.servers?.find((o) => o.server_id === activeServerId)?.latest?.server;
+  const df = dockerDiskUsage(latest?.docker_df, points);
+  // Peaks of different apps do not happen at once: summing them overstates
+  // the total, so in peak mode the apps are drawn as separate lines.
+  const peak = mode === "peak";
 
   if (!activeServerId) {
     return <p className="text-sm text-muted-foreground">No server selected.</p>;
@@ -96,6 +104,7 @@ export default function MonitoringPage() {
           series={[s("load1", "1 min", 0), s("load5", "5 min", 1), s("load15", "15 min", 2)]}
           format={(v) => v.toFixed(2)}
           range={range}
+          lines
         />
         <MetricChartCard
           title="Disk usage"
@@ -127,6 +136,7 @@ export default function MonitoringPage() {
             series={temps.series}
             format={formatTemp}
             range={range}
+            lines
           />
         ) : null}
         <MetricChartCard
@@ -135,7 +145,8 @@ export default function MonitoringPage() {
           series={appSeries}
           format={formatPercent}
           range={range}
-          stacked
+          stacked={!peak}
+          lines={peak}
         />
         <MetricChartCard
           title="Memory by app"
@@ -143,7 +154,8 @@ export default function MonitoringPage() {
           series={appSeries}
           format={formatSize}
           range={range}
-          stacked
+          stacked={!peak}
+          lines={peak}
         />
       </div>
 
@@ -152,23 +164,23 @@ export default function MonitoringPage() {
           <CardTitle className="text-sm font-medium">Docker disk usage</CardTitle>
         </CardHeader>
         <CardContent>
-          {last && last.docker_images !== undefined ? (
+          {df ? (
             <dl className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4" data-testid="docker-df">
               <div>
                 <dt className="text-muted-foreground">Images</dt>
-                <dd>{formatSize(last.docker_images)}</dd>
+                <dd>{formatSize(df.images)}</dd>
               </div>
               <div>
                 <dt className="text-muted-foreground">Volumes</dt>
-                <dd>{formatSize(last.docker_volumes)}</dd>
+                <dd>{formatSize(df.volumes)}</dd>
               </div>
               <div>
                 <dt className="text-muted-foreground">Build cache</dt>
-                <dd>{formatSize(last.docker_build_cache)}</dd>
+                <dd>{formatSize(df.build_cache)}</dd>
               </div>
               <div>
                 <dt className="text-muted-foreground">Reclaimable</dt>
-                <dd>{formatSize(last.docker_reclaimable)}</dd>
+                <dd>{formatSize(df.reclaimable)}</dd>
               </div>
             </dl>
           ) : (

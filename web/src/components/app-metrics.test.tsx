@@ -73,13 +73,30 @@ describe("AppMetricsTab", () => {
 
   it("charts the app over the chosen range", async () => {
     render(<AppMetricsTab serverId="s1" appId="a1" />);
-    expect(calls.at(-1)).toEqual(["s1", "a1", "24h"]);
+    expect(calls.at(-1)).toEqual(["s1", "a1", "1h"]);
     for (const title of ["CPU", "Memory", "Network", "Disk"]) {
       expect(screen.getByTestId(`chart-${title}`)).toBeInTheDocument();
     }
     expect(screen.getByTestId("chart-Memory")).toHaveTextContent("No data yet");
     await userEvent.click(screen.getByRole("radio", { name: "30 days" }));
     expect(calls.at(-1)).toEqual(["s1", "a1", "30d"]);
+  });
+
+  it("ignores a bucket where containers were unavailable only briefly", () => {
+    data = { interval_seconds: 1200, points: [{ t: 0, cpu: 1, mem_used: 5, unavailable: 0.05, unavailable_max: 1 }] };
+    render(<AppMetricsTab serverId="s1" appId="a1" />);
+    expect(screen.queryByText("Container metrics are unavailable on this host")).not.toBeInTheDocument();
+  });
+
+  it("draws a memory limit only when the app has one", () => {
+    data = { interval_seconds: 60, points: [{ t: 0, mem_used: 5 }, { t: 60, mem_used: 6 }] };
+    const { rerender } = render(<AppMetricsTab serverId="s1" appId="a1" />);
+    const css = () => screen.getByTestId("chart-Memory").querySelector("style")?.textContent ?? "";
+    expect(css()).toContain("--color-mem_used:");
+    expect(css()).not.toContain("--color-mem_limit:");
+    data = { interval_seconds: 60, points: [{ t: 0, mem_used: 5, mem_limit: 10 }, { t: 60, mem_used: 6, mem_limit: 10 }] };
+    rerender(<AppMetricsTab serverId="s1" appId="a2" />);
+    expect(css()).toContain("--color-mem_limit:");
   });
 
   it("explains unavailable container metrics but still charts disk", () => {

@@ -101,3 +101,16 @@ func TestSaveAppRequestRefusesNonObjectConfig(t *testing.T) {
 		}
 	}
 }
+
+// The UI recognizes the stale-base refusal by its opening phrase (the wire
+// carries only text): web/src/lib/backups.ts isBackupsChanged matches this
+// exact string. Change both together.
+func TestBackupsChangedMarkerIsStable(t *testing.T) {
+	const phrase = "the backups changed since you opened them"
+	if BackupsChangedMarker != phrase {
+		t.Fatalf("marker = %q; the UI matches %q", BackupsChangedMarker, phrase)
+	}
+	if !strings.HasPrefix(ErrBackupsChanged.Error(), BackupsChangedMarker) {
+		t.Fatalf("the refusal %q does not start with the marker", ErrBackupsChanged)
+	}
+}

@@ -85,9 +85,15 @@ type UpdateBackupsRequest struct {
 	Base    string                `json:"base,omitempty"`
 }
 
+// BackupsChangedMarker starts the agent's refusal of an update made from a
+// stale base. The wire carries only the error text, so the UI recognizes the
+// refusal by this phrase (web/src/lib/backups.ts, isBackupsChanged): change
+// it only together with that function.
+const BackupsChangedMarker = "the backups changed since you opened them"
+
 // ErrBackupsChanged is the agent's answer to an update whose base is no
 // longer the stored list's.
-var ErrBackupsChanged = errors.New("the backups changed since you opened them; reload and try again")
+var ErrBackupsChanged = errors.New(BackupsChangedMarker + "; reload and try again")
 
 func (r UpdateBackupsRequest) Validate() error {
 	if err := validateAppID(r.AppID); err != nil {

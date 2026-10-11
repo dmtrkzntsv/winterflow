@@ -248,24 +248,29 @@ x-winterflow:
 ## Overrides (`.winterflow/config.json` → `backups`)
 
 ```json
-"backups": {
-  "database": { "enabled": true, "storage": "hetzner", "every": "15m" },
-  "extra":    { "type": "sqlite", "volume": "data", "path": "audit.db", "enabled": false }
-}
+"backups": [
+  { "name": "database", "enabled": true, "storage": "hetzner", "every": "15m" },
+  { "name": "audit", "type": "sqlite", "volume": "data", "path": "audit.db",
+    "enabled": true, "storage": "backup-disk" }
+]
 ```
 
-- **An override may set** `enabled`, `storage`, `every`, `keep`, `volume` and
-  `path` (and `service` for custom). An entry whose name is not in the recipe
-  must carry `type`; it is a UI-added backup.
+- **The same list shape as the recipe,** matched to it by `name`. Only fields
+  that differ from the recipe are saved, and `enabled` is omitted when false.
+- **An entry whose name is in the recipe is an override.** It may set
+  `enabled`, `storage`, `every`, `keep`, `volume` and `path` (and `service`
+  for custom), but not `type`.
+- **An entry whose name is not in the recipe is a backup added in the UI.** It
+  must be complete: `type` plus that type's required fields.
 - **The effective backup** is the recipe, then the override field by field.
   `enabled` defaults to `false`.
 - **`enabled: true` requires `storage`** naming a storage on the app's server.
   Otherwise the save gets a 400.
 - **Validation** is the same as for the recipe, against the effective entry.
-- **When the recipe changes**, overrides of fields the user didn't touch
-  follow the new recipe. An override whose backup name has disappeared from
-  the recipe is dropped at the next save, with a warning, unless it carries
-  `type`.
+- **When the recipe changes**, fields without an override follow the new
+  recipe. An override whose backup name has disappeared from
+  the recipe is dropped at the next save, with a warning (a UI-added backup,
+  which carries `type`, is kept).
 - **The override is committed** with the app (history, rollback) and is part
   of `app.get` as `backups: []EffectiveBackup{Name, Type, Enabled, Storage,
   Every, Keep, Volume, Path, Service, FromRecipe map[field]bool}`.
@@ -452,7 +457,7 @@ with the result as SSE `operation_result`.
 
 | Route | Request |
 |---|---|
-| `POST /api/v1/app/update-backups` | `{server_id, app_id, backups: map[name]Override}`; commits a new revision; redeploys only if `COMPOSE_PROFILES` or `storage.env` changed; otherwise reloads the scheduler |
+| `POST /api/v1/app/update-backups` | `{server_id, app_id, backups: []BackupConfig}` (the list above, replaced as a whole); commits a new revision; redeploys only if `COMPOSE_PROFILES` or `storage.env` changed; otherwise reloads the scheduler |
 | `GET /api/v1/app/list-restore-points?server_id&app_id&backup` | |
 | `POST /api/v1/app/run-backup` | `{server_id, app_id, backup}` |
 | `POST /api/v1/app/restore-backup` | `{server_id, app_id, backup, point}` |

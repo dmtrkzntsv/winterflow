@@ -164,6 +164,62 @@ func TestForeignKeysOffRebuild(t *testing.T) {
 	}
 }
 
+// An orphan that predates the run (Bun-era installs have them: Bun lost
+// foreign_keys=ON whenever its pool replaced the connection) in a table the
+// rebuild does not touch must not fail the rebuild, nor be removed by it.
+func TestForeignKeysOffRebuildToleratesPreexistingOrphans(t *testing.T) {
+	ctx := tctx(t)
+	db := openEmpty(t, backend.SQLite)
+	loadDump(t, db, backend.SQLite, "bun_20260711000001.sql")
+	mustExec(t, db, backend.SQLite, `PRAGMA foreign_keys = OFF`)
+	mustExec(t, db, backend.SQLite, `INSERT INTO server_capabilities (server_id, name, value, updated_at) VALUES ('0192a3b4-0000-7000-8000-0000000000ff', 'orphan', 'x', '2026-08-23 10:11:12')`)
+	mustExec(t, db, backend.SQLite, `PRAGMA foreign_keys = ON`)
+
+	if err := Migrate(ctx, db, backend.SQLite); err != nil {
+		t.Fatalf("a pre-existing orphan failed the migration: %v", err)
+	}
+	if n := count(t, db, backend.SQLite, `SELECT count(*) FROM server_capabilities WHERE name = 'orphan'`); n != 1 {
+		t.Fatalf("orphan rows = %d, want 1", n)
+	}
+	if n := count(t, db, backend.SQLite, `SELECT count(*) FROM schema_migrations WHERE version = 20261010000002`); n != 1 {
+		t.Fatal("the app_domains rebuild was not recorded")
+	}
+}
+
+// A rebuild that adds a violation of its own still fails, even when the
+// database already had an unrelated one.
+func TestForeignKeysOffRebuildFailsOnNewViolationBesideOldOne(t *testing.T) {
+	ctx := tctx(t)
+	db := openEmpty(t, backend.SQLite)
+	base := fstest.MapFS{
+		"1_parent.sql": {Data: []byte("CREATE TABLE parent (id INT PRIMARY KEY);\nCREATE TABLE child (pid INT REFERENCES parent (id));\nCREATE TABLE other (pid INT REFERENCES parent (id));\nINSERT INTO parent VALUES (1);\nINSERT INTO child VALUES (1);")},
+	}
+	if err := Run(ctx, db, backend.SQLite, base, -1); err != nil {
+		t.Fatal(err)
+	}
+	mustExec(t, db, backend.SQLite, `PRAGMA foreign_keys = OFF`)
+	mustExec(t, db, backend.SQLite, `INSERT INTO other VALUES (42)`)
+	mustExec(t, db, backend.SQLite, `PRAGMA foreign_keys = ON`)
+
+	broken := fstest.MapFS{
+		"1_parent.sql":  base["1_parent.sql"],
+		"2_rebuild.sql": {Data: []byte(fkOffMarker + "\nCREATE TABLE parent_new (id INT PRIMARY KEY);\nDROP TABLE parent;\nALTER TABLE parent_new RENAME TO parent;")},
+	}
+	err := Run(ctx, db, backend.SQLite, broken, -1)
+	if err == nil || !strings.Contains(err.Error(), "foreign_key_check") || !strings.Contains(err.Error(), "child") {
+		t.Fatalf("err = %v, want a foreign_key_check failure naming child", err)
+	}
+	if strings.Contains(err.Error(), "other") {
+		t.Fatalf("err = %v names the pre-existing orphan", err)
+	}
+	if n := count(t, db, backend.SQLite, `SELECT count(*) FROM parent`); n != 1 {
+		t.Fatalf("parent rows after rollback = %d, want 1", n)
+	}
+	if got := versions(t, db); !reflect.DeepEqual(got, []int64{1}) {
+		t.Fatalf("versions = %v", got)
+	}
+}
+
 func TestForeignKeysOffIsSQLiteOnly(t *testing.T) {
 	fsys := fstest.MapFS{"1_x.sql": {Data: []byte(fkOffMarker + "\nSELECT 1;")}}
 	if err := Run(tctx(t), nil, backend.Postgres, fsys, -1); err == nil {
@@ -186,8 +242,8 @@ func TestAppDomainsRebuildIsAtomic(t *testing.T) {
 	mustExec(t, db, backend.SQLite, `CREATE TABLE app_domains_child (d VARCHAR(253) REFERENCES app_domains (domain))`)
 	mustExec(t, db, backend.SQLite, `INSERT INTO app_domains_child (d) VALUES ('keep.test')`)
 
-	if err := Migrate(ctx, db, backend.SQLite); err == nil {
-		t.Fatal("rebuild succeeded although foreign_key_check must fail")
+	if err := Migrate(ctx, db, backend.SQLite); err == nil || !strings.Contains(err.Error(), "foreign_key_check") {
+		t.Fatalf("err = %v, want a foreign_key_check failure", err)
 	}
 	if n := count(t, db, backend.SQLite, `SELECT count(*) FROM app_domains`); n != 2 {
 		t.Fatalf("app_domains rows = %d, want 2", n)

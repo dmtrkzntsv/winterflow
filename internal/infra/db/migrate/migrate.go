@@ -26,8 +26,9 @@ import (
 )
 
 // fkOffMarker, as the first line of a SQLite migration, marks a table
-// rebuild: it runs with foreign keys off and must pass PRAGMA
-// foreign_key_check before it commits.
+// rebuild: it runs with foreign keys off and must not add any PRAGMA
+// foreign_key_check violation before it commits (violations already in the
+// database before it ran are tolerated).
 const fkOffMarker = "-- migrate:foreign_keys=off"
 
 // pgLockKey serializes concurrent runners (several API replicas booting at
@@ -138,7 +139,15 @@ func Run(ctx context.Context, db *sql.DB, driverName string, fsys fs.FS, target 
 			// dead connection forever.
 			uctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), unlockTimeout)
 			defer cancel()
-			if _, uerr := c.ExecContext(uctx, `SELECT pg_advisory_unlock($1)`, pgLockKey); uerr != nil {
+			var released bool
+			uerr := c.QueryRowContext(uctx, `SELECT pg_advisory_unlock($1)`, pgLockKey).Scan(&released)
+			if uerr == nil && !released {
+				// false: this session did not hold the lock, so the run
+				// was not serialized as assumed; treat it like a failed
+				// unlock.
+				uerr = errors.New("lock was not held by this session")
+			}
+			if uerr != nil {
 				// Never return a connection that may still hold the lock
 				// to the pool: closing the session releases it.
 				_ = c.Raw(func(any) error { return driver.ErrBadConn })
@@ -343,13 +352,27 @@ func apply(ctx context.Context, c *sql.Conn, driverName string, m Migration) (er
 		return fmt.Errorf("migrate: %s: begin: %w", m.Name, err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	var baseline map[fkViolation]bool
+	if m.FKOff {
+		// Orphans that predate the run (a Bun-era build lost foreign_keys=ON
+		// whenever its pool replaced the connection) are not this rebuild's
+		// doing and must not block it; only new ones fail the check.
+		vs, err := foreignKeyViolations(ctx, tx)
+		if err != nil {
+			return fmt.Errorf("migrate: %s: %w", m.Name, err)
+		}
+		baseline = make(map[fkViolation]bool, len(vs))
+		for _, v := range vs {
+			baseline[v] = true
+		}
+	}
 	for _, stmt := range Split(m.SQL) {
 		if _, err := tx.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("migrate: %s: %w\n--- statement ---\n%s", m.Name, err, stmt)
 		}
 	}
 	if m.FKOff {
-		if err := foreignKeyCheck(ctx, tx); err != nil {
+		if err := foreignKeyCheck(ctx, tx, baseline); err != nil {
 			return fmt.Errorf("migrate: %s: %w", m.Name, err)
 		}
 	}
@@ -362,25 +385,51 @@ func apply(ctx context.Context, c *sql.Conn, driverName string, m Migration) (er
 	return nil
 }
 
-// foreignKeyCheck fails when PRAGMA foreign_key_check reports any row (or
-// cannot run, e.g. a parent key that is no longer unique).
-func foreignKeyCheck(ctx context.Context, tx *sql.Tx) error {
+// fkViolation is one row of PRAGMA foreign_key_check: the child table, the
+// child row's rowid (NULL for a WITHOUT ROWID table), the parent table and
+// the index of the violated foreign key.
+type fkViolation struct {
+	table, rowid, parent, fkid string
+}
+
+// foreignKeyViolations lists what PRAGMA foreign_key_check reports. An error
+// running the pragma itself (e.g. "foreign key mismatch": a parent key that
+// is no longer unique) is returned as is.
+func foreignKeyViolations(ctx context.Context, tx *sql.Tx) ([]fkViolation, error) {
 	rows, err := tx.QueryContext(ctx, `PRAGMA foreign_key_check`)
 	if err != nil {
-		return fmt.Errorf("foreign_key_check: %w", err)
+		return nil, fmt.Errorf("foreign_key_check: %w", err)
 	}
 	defer rows.Close()
-	var broken []string
+	var out []fkViolation
 	for rows.Next() {
 		var table, parent string
 		var rowid, fkid any
 		if err := rows.Scan(&table, &rowid, &parent, &fkid); err != nil {
-			return fmt.Errorf("foreign_key_check: %w", err)
+			return nil, fmt.Errorf("foreign_key_check: %w", err)
 		}
-		broken = append(broken, fmt.Sprintf("%s(rowid %v) -> %s", table, rowid, parent))
+		out = append(out, fkViolation{table: table, rowid: fmt.Sprint(rowid), parent: parent, fkid: fmt.Sprint(fkid)})
 	}
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("foreign_key_check: %w", err)
+		return nil, fmt.Errorf("foreign_key_check: %w", err)
+	}
+	return out, nil
+}
+
+// foreignKeyCheck fails when PRAGMA foreign_key_check reports a row that is
+// not in baseline (the violations present before the migration ran), or
+// cannot run at all.
+func foreignKeyCheck(ctx context.Context, tx *sql.Tx, baseline map[fkViolation]bool) error {
+	vs, err := foreignKeyViolations(ctx, tx)
+	if err != nil {
+		return err
+	}
+	var broken []string
+	for _, v := range vs {
+		if baseline[v] {
+			continue
+		}
+		broken = append(broken, fmt.Sprintf("%s(rowid %s) -> %s", v.table, v.rowid, v.parent))
 	}
 	if len(broken) > 0 {
 		return errors.New("foreign_key_check failed: " + strings.Join(broken, ", "))

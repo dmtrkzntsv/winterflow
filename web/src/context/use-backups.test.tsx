@@ -1,7 +1,7 @@
 import { renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { BACKUP_RUN_TIMEOUT_MS, useBackups } from "@/context/use-backups";
+import { BACKUP_RUN_TIMEOUT_MS, ORPHAN_DELETE_TIMEOUT_MS, ORPHAN_LIST_TIMEOUT_MS, useBackups } from "@/context/use-backups";
 
 vi.mock("@/context/use-servers", () => ({ useServers: () => ({ activeServerId: "srv-1" }) }));
 const waitFor = vi.fn();
@@ -53,6 +53,9 @@ describe("useBackups", () => {
     waitFor.mockResolvedValueOnce({ status: 0, payload: { deleted: 6 } });
     expect(await result.current.deleteOrphan("disk", "gone")).toBe(6);
     expect(sent[4].body).toEqual({ server_id: "srv-1", name: "disk", app_id: "gone" });
+    // Longer than the agent's own bounds (2 minutes), so its answer arrives first.
+    expect(waitFor).toHaveBeenLastCalledWith("r1", ORPHAN_DELETE_TIMEOUT_MS);
+    expect(ORPHAN_DELETE_TIMEOUT_MS).toBeGreaterThanOrEqual(150_000);
   });
 
   it("puts server_id in the query of the GET routes", async () => {
@@ -63,6 +66,8 @@ describe("useBackups", () => {
     waitFor.mockResolvedValueOnce({ status: 0, payload: { orphans: [{ app_id: "gone" }] } });
     expect(await result.current.listOrphans("disk")).toEqual([{ app_id: "gone" }]);
     expect(sent[1].url).toContain("/api/v1/storage/list-orphans?server_id=srv-1&name=disk");
+    expect(waitFor).toHaveBeenLastCalledWith("r1", ORPHAN_LIST_TIMEOUT_MS);
+    expect(ORPHAN_LIST_TIMEOUT_MS).toBeGreaterThan(60_000);
     expect(await result.current.serverStorages()).toEqual(["disk", "s3"]);
   });
 

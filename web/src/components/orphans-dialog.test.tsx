@@ -28,6 +28,9 @@ function fake(over: Partial<Backups> = {}): Backups {
   } as unknown as Backups;
 }
 
+// The dialog has two Close buttons: the corner X and the footer's.
+const footerClose = () => screen.getAllByRole("button", { name: "Close" }).find((b) => !b.querySelector(".sr-only"))!;
+
 describe("OrphansDialog", () => {
   beforeEach(() => {
     toastSuccess.mockReset();
@@ -43,7 +46,10 @@ describe("OrphansDialog", () => {
     expect(within(dialog).getByText("Not deleted automatically (another server's?)")).toBeInTheDocument();
     expect(within(dialog).getByText("At the next daily sweep")).toBeInTheDocument();
     expect(within(dialog).getByText("Kept: no retention limit on this server")).toBeInTheDocument();
-    expect(within(dialog).getByText(/^Deleted on /)).toBeInTheDocument();
+    expect(within(dialog).getByText(/^Will be deleted on /)).toBeInTheDocument();
+    expect(within(dialog).getByRole("columnheader", { name: "Automatic deletion" })).toBeInTheDocument();
+    // On a phone the copies column is hidden: the app cell says it too.
+    expect(within(dialog).getByText("2 copies · 2.0 kB · 1 h ago")).toBeInTheDocument();
     expect(within(dialog).getByText("2 · 2.0 kB")).toBeInTheDocument();
     expect(within(dialog).getByText("1 h ago")).toBeInTheDocument();
   });
@@ -53,16 +59,44 @@ describe("OrphansDialog", () => {
     const backups = fake();
     render(<OrphansDialog backups={backups} storage="disk" open onOpenChange={() => {}} />);
     await user.click(await screen.findByRole("button", { name: "Delete the backups of Old shop" }));
-    const confirm = screen.getByRole("alertdialog");
-    expect(confirm).toHaveTextContent("Delete every copy of Old shop (2 copies, 2.0 kB) from disk?");
+    const confirm = await screen.findByRole("alertdialog");
+    expect(confirm).toHaveTextContent("Delete every copy of Old shop (2 copies, 2.0 kB) from disk? This cannot be undone.");
+    expect(confirm).not.toHaveTextContent("another server");
     await user.click(within(confirm).getByRole("button", { name: "Cancel" }));
-    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
     await user.click(screen.getByRole("button", { name: "Delete the backups of other-server" }));
-    expect(screen.getByRole("alertdialog")).toHaveTextContent("(1 copy, 500 B)");
+    expect(await screen.findByRole("alertdialog")).toHaveTextContent("(1 copy, 500 B)");
     await user.click(screen.getByRole("button", { name: "Delete backups" }));
     await waitFor(() => expect(screen.queryByText("other-server")).not.toBeInTheDocument());
     expect(backups.deleteOrphan).toHaveBeenCalledWith("disk", "other-server");
     expect(toastSuccess).toHaveBeenCalledWith("Backups of other-server deleted", { description: "6 objects removed from disk." });
+    // The row the focus was on is gone: it lands on the dialog's Close button.
+    await waitFor(() => expect(footerClose()).toHaveFocus());
+  });
+
+  it("takes focus in the confirmation, and Escape closes only that", async () => {
+    const user = userEvent.setup({ delay: null });
+    render(<OrphansDialog backups={fake()} storage="disk" open onOpenChange={() => {}} />);
+    const row = await screen.findByRole("button", { name: "Delete the backups of Old shop" });
+    await user.click(row);
+    const confirm = await screen.findByRole("alertdialog");
+    expect(within(confirm).getByRole("button", { name: "Cancel" })).toHaveFocus();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Delete the backups of Old shop" })).toHaveFocus();
+  });
+
+  it("warns that a folder nobody marked as deleted may be another server's", async () => {
+    const user = userEvent.setup({ delay: null });
+    const backups = fake({ listOrphans: vi.fn().mockResolvedValue([{ app_id: "other-server", copies: 1, bytes: 500 }]) });
+    render(<OrphansDialog backups={backups} storage="disk" open onOpenChange={() => {}} />);
+    await user.click(await screen.findByRole("button", { name: "Delete the backups of other-server" }));
+    const confirm = await screen.findByRole("alertdialog");
+    expect(confirm).toHaveTextContent("not marked as deleted by this server");
+    expect(confirm).toHaveTextContent("live backups of an app on another server that shares this storage");
+    expect(confirm).toHaveTextContent("is permanent");
+    expect(confirm).toHaveTextContent("(1 copy, 500 B)");
   });
 
   it("reports a refused delete and a failed list", async () => {
@@ -70,12 +104,33 @@ describe("OrphansDialog", () => {
     const backups = fake({ deleteOrphan: vi.fn().mockRejectedValue(new Error("the app Shop is on this server")) });
     render(<OrphansDialog backups={backups} storage="disk" open onOpenChange={() => {}} />);
     await user.click(await screen.findByRole("button", { name: "Delete the backups of Old shop" }));
-    await user.click(screen.getByRole("button", { name: "Delete backups" }));
+    await user.click(await screen.findByRole("button", { name: "Delete backups" }));
     await waitFor(() => expect(toastError).toHaveBeenCalledWith("Couldn't delete the backups", { description: "the app Shop is on this server" }));
+    // The confirmation is gone and the row is still there to try again.
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
     expect(screen.getByRole("button", { name: "Delete the backups of Old shop" })).toBeInTheDocument();
+  });
 
-    render(<OrphansDialog backups={fake({ listOrphans: vi.fn().mockRejectedValue(new Error("the storage did not answer")) })} storage="s3" open onOpenChange={() => {}} />);
+  it("reports a failed list and tries again", async () => {
+    const user = userEvent.setup({ delay: null });
+    const listOrphans = vi.fn().mockRejectedValueOnce(new Error("the storage did not answer")).mockResolvedValue(ORPHANS);
+    render(<OrphansDialog backups={fake({ listOrphans })} storage="s3" open onOpenChange={() => {}} />);
     expect(await screen.findByText("the storage did not answer")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("Old shop")).toBeInTheDocument();
+    expect(screen.queryByText("the storage did not answer")).not.toBeInTheDocument();
+  });
+
+  it("closes from its Close button, and says an object in the singular", async () => {
+    const user = userEvent.setup({ delay: null });
+    const onOpenChange = vi.fn();
+    const backups = fake({ deleteOrphan: vi.fn().mockResolvedValue(1) });
+    render(<OrphansDialog backups={backups} storage="disk" open onOpenChange={onOpenChange} />);
+    await user.click(await screen.findByRole("button", { name: "Delete the backups of Old shop" }));
+    await user.click(await screen.findByRole("button", { name: "Delete backups" }));
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith("Backups of Old shop deleted", { description: "1 object removed from disk." }));
+    await user.click(footerClose());
+    expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
   it("says when there is nothing", async () => {

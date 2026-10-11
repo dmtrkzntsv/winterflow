@@ -20,6 +20,11 @@ const base = apiBaseUrl.endsWith("/") ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
 // hours. update-backups may redeploy the app (10 minutes on the agent).
 export const BACKUP_RUN_TIMEOUT_MS = 125 * 60_000;
 export const BACKUP_UPDATE_TIMEOUT_MS = 11 * 60_000;
+// Listing a storage's orphans is bounded at 1 minute on the agent, deleting
+// one at 2: wait a little longer than each, so the agent's own answer (its
+// error included) is what the user sees.
+export const ORPHAN_LIST_TIMEOUT_MS = 70_000;
+export const ORPHAN_DELETE_TIMEOUT_MS = 150_000;
 
 export type BackupsUpdated = { backups: EffectiveBackup[]; redeployed: boolean; warnings: string[] };
 
@@ -118,7 +123,7 @@ export function useBackups() {
 
   const listOrphans = useCallback(
     async (storage: string): Promise<Orphan[]> => {
-      const res = await dispatch<{ orphans?: Orphan[] | null }>("/api/v1/storage/list-orphans", { name: storage });
+      const res = await dispatch<{ orphans?: Orphan[] | null }>("/api/v1/storage/list-orphans", { name: storage }, { timeoutMs: ORPHAN_LIST_TIMEOUT_MS });
       return res.orphans ?? [];
     },
     [dispatch],
@@ -126,7 +131,7 @@ export function useBackups() {
 
   const deleteOrphan = useCallback(
     async (storage: string, appId: string): Promise<number> => {
-      const res = await dispatch<{ deleted?: number }>("/api/v1/storage/delete-orphan", { name: storage, app_id: appId }, { post: true });
+      const res = await dispatch<{ deleted?: number }>("/api/v1/storage/delete-orphan", { name: storage, app_id: appId }, { post: true, timeoutMs: ORPHAN_DELETE_TIMEOUT_MS });
       return res.deleted ?? 0;
     },
     [dispatch],

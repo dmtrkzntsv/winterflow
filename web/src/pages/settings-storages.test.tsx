@@ -9,9 +9,10 @@ import type { Storage, StorageDraft } from "@/lib/storages";
 import { StorageDialog } from "@/components/storage-dialog";
 import { StoragesCard } from "@/pages/settings-storages";
 
-// Most tests here type whole forms through jsdom, which takes a second or
-// more on a loaded CI runner: well past Vitest's 5 s default in the worst case.
-vi.setConfig({ testTimeout: 30_000 });
+// Most tests here type whole forms through jsdom (the slowest, "shows a failed
+// test inline" and the path-style ones, take about a second idle), which on a
+// loaded CI runner can pass Vitest's 5 s default.
+vi.setConfig({ testTimeout: 15_000 });
 
 const toastError = vi.fn();
 const toastSuccess = vi.fn();

@@ -46,6 +46,7 @@ import {
   type DeleteAppResult,
 } from "@/context/apps-context-base";
 import { cn } from "@/lib/utils";
+import { useServerPath } from "@/context/use-server-path";
 
 const base = apiBaseUrl.endsWith("/") ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
 
@@ -57,6 +58,7 @@ const tabTriggerClass =
 export default function AppDetailsPage() {
   const { appId } = useParams();
   const navigate = useNavigate();
+  const toServer = useServerPath();
   const [searchParams, setSearchParams] = useSearchParams();
   const { apps, statusByApp, control, remove, rename } = useApps();
 
@@ -207,7 +209,7 @@ export default function AppDetailsPage() {
             onRename={rename}
             onDelete={async (opts) => {
               const result = await remove(app.id, opts);
-              navigate("/");
+              navigate(toServer());
               return result;
             }}
           />

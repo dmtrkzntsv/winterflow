@@ -10,9 +10,11 @@ import { ServerCards } from "@/components/server-cards"
 import { AppGrid } from "@/components/app-grid"
 import { isStandalone } from "@/config"
 import { useServers } from "@/context/use-servers"
+import { useServerPath } from "@/context/use-server-path"
 
 export default function HomePage() {
   const navigate = useNavigate()
+  const toServer = useServerPath()
   const [isServerDialogOpen, setIsServerDialogOpen] = useState(false)
   const { refresh } = useServers()
   const breadcrumbs = useMemo(
@@ -46,7 +48,7 @@ export default function HomePage() {
       <Card>
         <CardHeader className="flex-row items-center justify-between space-y-0">
           <CardTitle>Apps</CardTitle>
-          <Button size="sm" onClick={() => navigate("/create-app")}>
+          <Button size="sm" onClick={() => navigate(toServer("/create-app"))}>
             <Plus className="size-4" /> New App
           </Button>
         </CardHeader>

@@ -8,6 +8,9 @@ import { IngressEditor } from "@/components/ingress-editor";
 import type { RegisteredDomain } from "@/lib/domains";
 import type { AppEditorState, AppIngress } from "@/types/app-config";
 
+// Links point into the active server's scope (/server/:id/...).
+vi.mock("@/context/use-servers", () => ({ useServers: () => ({ activeServerId: "srv-1" }) }));
+
 const WILDCARD: RegisteredDomain = { name: "*.twillingate.app", tls: "certificate" };
 const EXACT: RegisteredDomain = { name: "example.com", tls: "auto" };
 const TUNNEL: RegisteredDomain = { name: "*.tunnel.example.com", tls: "off" };
@@ -141,7 +144,7 @@ describe("IngressEditor", () => {
     expect(screen.getByLabelText("Hostname")).toHaveAttribute("aria-describedby", hint.id);
     // A new tab, so following it doesn't lose the unsaved form.
     const link = screen.getByRole("link", { name: /Add it/ });
-    expect(link).toHaveAttribute("href", "/settings?tab=domains");
+    expect(link).toHaveAttribute("href", "/server/srv-1/settings?tab=domains");
     expect(link).toHaveAttribute("target", "_blank");
     // Nothing covers it: the stored flag keeps its default.
     expect(ssl()).toEqual([["shop.other.app", true]]);

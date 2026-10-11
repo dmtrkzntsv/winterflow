@@ -37,6 +37,7 @@ import { type Docker, type DomainCreated } from "@/context/use-docker";
 import { useApps } from "@/context/use-apps";
 import { expiry, type Domain } from "@/lib/domains";
 import { cn } from "@/lib/utils";
+import { useServerPath } from "@/context/use-server-path";
 
 // Expiry shows how long a certificate-mode domain's certificate has left:
 // a countdown once it's under 30 days (amber), a date otherwise, red once
@@ -69,6 +70,7 @@ function Expiry({ domain }: { domain: Domain }) {
 }
 
 function UsedBy({ ids, names }: { ids: string[]; names: Map<string, string> }) {
+  const toServer = useServerPath();
   if (ids.length === 0) return <span className="text-muted-foreground">Not used</span>;
   return (
     <span>
@@ -76,7 +78,7 @@ function UsedBy({ ids, names }: { ids: string[]; names: Map<string, string> }) {
       {ids.map((id, i) => (
         <span key={id}>
           {i > 0 && ", "}
-          <Link to={`/app/${id}`} className="font-medium underline-offset-4 hover:underline">
+          <Link to={toServer(`/app/${id}`)} className="font-medium underline-offset-4 hover:underline">
             {names.get(id) ?? id}
           </Link>
         </span>

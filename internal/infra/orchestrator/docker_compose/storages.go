@@ -19,15 +19,25 @@ import (
 	"winterflow/pkg/crypto"
 )
 
-const (
-	// storageProbeTimeout bounds a storage test: the probe write and delete
-	// (storage.test, and the test storage.save runs first).
+// Time limits of the storage commands. Variables so tests can shrink them.
+var (
+	// storageProbeTimeout bounds a storage test: opening the storage and the
+	// probe write and delete (storage.test, and the test storage.save runs
+	// first).
 	storageProbeTimeout = 30 * time.Second
 	// storageRedeployTimeout bounds one app's redeploy after storage.save.
 	storageRedeployTimeout = 10 * time.Minute
 	// storageDockerTimeout bounds the one `docker ps` storage.save runs.
 	storageDockerTimeout = 30 * time.Second
+	// storageSaveBudget is the overall budget of one storage.save (probe,
+	// docker ps and every redeploy share it). It stays below the dispatch
+	// manager's 10 minute pending TTL, so the result is not dropped, and
+	// bounds how long the command can hold the (standalone: single) pipeline.
+	storageSaveBudget = 8 * time.Minute
 )
+
+// openStorage opens a storage driver; replaced in tests.
+var openStorage = store.Open
 
 // mountRoots are the folders the systemd unit lets the agent write
 // (ReadWritePaths=-/mnt -/media): the usual mount points of USB disks and
@@ -136,11 +146,30 @@ func within(path, dir string) bool {
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-// probeStorage writes and deletes a probe object within storageProbeTimeout.
-func probeStorage(ctx context.Context, s model.Storage, secret string) error {
-	ctx, cancel := context.WithTimeout(ctx, storageProbeTimeout)
+// probeStorage opens the storage and writes and deletes a probe object
+// within storageProbeTimeout. The local driver's syscalls ignore contexts (a
+// hung hard NFS/CIFS mount blocks them indefinitely), so the probe runs in a
+// goroutine that is abandoned on timeout: it may linger until the mount
+// answers, but the command pipeline is freed.
+func probeStorage(parent context.Context, s model.Storage, secret string) error {
+	ctx, cancel := context.WithTimeout(parent, storageProbeTimeout)
 	defer cancel()
-	st, err := store.Open(s, secret)
+	done := make(chan error, 1) // buffered: an abandoned probe must not block on send
+	open := openStorage
+	go func() { done <- runProbe(ctx, open, s, secret) }()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		if err := parent.Err(); err != nil {
+			return fmt.Errorf("%s was not tested: %w", s.Name, err)
+		}
+		return fmt.Errorf("%s did not answer within %s", s.Name, storageProbeTimeout)
+	}
+}
+
+func runProbe(ctx context.Context, open func(model.Storage, string) (store.Store, error), s model.Storage, secret string) error {
+	st, err := open(s, secret)
 	if err != nil {
 		return err
 	}
@@ -190,6 +219,8 @@ func (r *Repository) TestStorage(ctx context.Context, in model.Storage) (command
 // that reference it so they read the new values. Nothing is stored when the
 // test fails. Redeploy problems are warnings: the storage is saved.
 func (r *Repository) SaveStorage(ctx context.Context, in model.Storage) (command.SaveStorageResponse, error) {
+	ctx, cancel := context.WithTimeout(ctx, storageSaveBudget)
+	defer cancel()
 	s, secret, err := r.resolveStorage(in)
 	if err != nil {
 		return command.SaveStorageResponse{}, err
@@ -214,7 +245,9 @@ func (r *Repository) SaveStorage(ctx context.Context, in model.Storage) (command
 // redeployStorageUsers brings the running apps among ids up again so they
 // read the new storage.env. A stopped app stays stopped (its next start
 // resolves the values). An app with undeployed changes is skipped with a
-// warning: bringing it up would deploy its draft.
+// warning: bringing it up would deploy its draft. ctx carries the overall
+// budget of storage.save: apps not reached before it runs out are not
+// redeployed and are named in a warning.
 func (r *Repository) redeployStorageUsers(ctx context.Context, ids []string) (redeployed, warnings []string) {
 	if len(ids) == 0 {
 		return nil, nil
@@ -232,6 +265,10 @@ func (r *Repository) redeployStorageUsers(ctx context.Context, ids []string) (re
 		name := r.appName(r.appDataDir(id), id)
 		if r.hasDraft(id) {
 			warnings = append(warnings, name+" has undeployed changes and was not redeployed: deploy it to use the new storage settings")
+			continue
+		}
+		if ctx.Err() != nil {
+			warnings = append(warnings, fmt.Sprintf("%s: not redeployed: time budget exhausted — redeploy %s to use the new settings", name, name))
 			continue
 		}
 		upCtx, cancel := context.WithTimeout(ctx, storageRedeployTimeout)

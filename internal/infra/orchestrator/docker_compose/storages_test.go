@@ -12,11 +12,13 @@ import (
 	"sync"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/johannesboyne/gofakes3"
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
 
 	"winterflow/internal/domain/model"
+	"winterflow/internal/infra/backup/store"
 	"winterflow/pkg/crypto/cryptotest"
 )
 
@@ -360,5 +362,72 @@ func TestHasDraft(t *testing.T) {
 	storageApp(t, r, "ahead", "x", "", true)
 	if r.hasDraft("clean") || !r.hasDraft("ahead") {
 		t.Fatal("hasDraft")
+	}
+}
+
+func TestProbeStorageDoesNotWaitForAHungMount(t *testing.T) {
+	release := make(chan struct{})
+	old, oldTimeout := openStorage, storageProbeTimeout
+	openStorage = func(model.Storage, string) (store.Store, error) {
+		<-release // a hard NFS mount: the syscall never returns
+		return nil, errors.New("released")
+	}
+	storageProbeTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { close(release); openStorage, storageProbeTimeout = old, oldTimeout })
+
+	r := newTestRepo(t)
+	start := time.Now()
+	res, err := r.TestStorage(context.Background(), localStorage("disk", t.TempDir()))
+	if err != nil || res.OK || res.Error != "disk did not answer within 50ms" {
+		t.Fatalf("res = %+v, %v", res, err)
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Fatalf("took %v", d)
+	}
+	if _, err := r.SaveStorage(context.Background(), localStorage("disk", t.TempDir())); err == nil ||
+		!strings.Contains(err.Error(), "nothing was saved") || !strings.Contains(err.Error(), "did not answer") {
+		t.Fatalf("save: %v", err)
+	}
+	if list, _ := r.storages.List(); len(list) != 0 {
+		t.Fatalf("stored: %+v", list)
+	}
+}
+
+func TestSaveStorageBudgetSkipsLaterRedeploys(t *testing.T) {
+	r := newTestRepo(t)
+	storageApp(t, r, "a-slow", "Slow", "disk", false)
+	storageApp(t, r, "b-late", "Late", "disk", false)
+	storageApp(t, r, "c-later", "Later", "disk", false)
+	r.runningProjects = func(context.Context) (map[string]bool, error) {
+		return map[string]bool{"wf-a-slow": true, "wf-b-late": true, "wf-c-later": true}, nil
+	}
+	var started []string
+	r.redeploy = func(ctx context.Context, appID string) error {
+		started = append(started, appID)
+		<-ctx.Done() // a redeploy that takes longer than the whole budget
+		return ctx.Err()
+	}
+	old := storageSaveBudget
+	storageSaveBudget = 200 * time.Millisecond
+	t.Cleanup(func() { storageSaveBudget = old })
+
+	start := time.Now()
+	resp, err := r.SaveStorage(context.Background(), localStorage("disk", t.TempDir()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Fatalf("took %v", d)
+	}
+	if !reflect.DeepEqual(started, []string{"a-slow"}) || len(resp.Redeployed) != 0 {
+		t.Fatalf("started = %v, redeployed = %v", started, resp.Redeployed)
+	}
+	want := []string{
+		"Slow: redeploy failed: context deadline exceeded",
+		"Late: not redeployed: time budget exhausted — redeploy Late to use the new settings",
+		"Later: not redeployed: time budget exhausted — redeploy Later to use the new settings",
+	}
+	if !reflect.DeepEqual(resp.Warnings, want) {
+		t.Fatalf("warnings = %q", resp.Warnings)
 	}
 }

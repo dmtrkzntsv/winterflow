@@ -129,6 +129,7 @@ export function stateFromDetail(
     },
     files,
     variables,
+    storageVariables: d.storage_variables ?? [],
   };
 }
 

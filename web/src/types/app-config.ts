@@ -60,6 +60,15 @@ export type AppConfig = {
   ingress?: AppIngress;
 };
 
+// StorageVariable is a WF_STORAGE_ variable the app's compose files
+// reference (app.get's storage_variables): a name and its storage, never a
+// value.
+export type StorageVariable = {
+  name: string;
+  storage: string;
+  secret: boolean;
+};
+
 // Editor working state: the config metadata plus content maps keyed by id.
 export type AppEditorState = {
   config: AppConfig;
@@ -67,6 +76,9 @@ export type AppEditorState = {
   variables: Record<string, string>; // variable id -> value
   // New/replacement repo token typed this session ("" = keep/absent).
   sourceToken?: string;
+  // Read-only rows from the last app.get: provided by the server's
+  // storages, never saved with the app's variables.
+  storageVariables?: StorageVariable[];
 };
 
 let counter = 0;

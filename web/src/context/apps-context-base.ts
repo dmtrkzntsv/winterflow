@@ -103,6 +103,8 @@ export type AppDetailPayload = {
     variables: { id?: string; name: string; content: string; encrypted?: boolean }[] | null;
     files: { id?: string; name: string; content: string; encrypted?: boolean }[] | null;
   };
+  // WF_STORAGE_ variables the compose files reference (never values).
+  storage_variables?: { name: string; storage: string; secret: boolean }[] | null;
   revision: number;
   available_revisions: number[] | null;
 };

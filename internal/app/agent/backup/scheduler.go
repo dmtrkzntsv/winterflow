@@ -59,7 +59,8 @@ const (
 	// restore's own limit and the abandon grace it keeps the whole request
 	// (queue wait + run) under command.BackupRunWait, which the API's
 	// longer wait builds on.
-	restoreQueueWait = command.BackupRunWait - RestoreTimeout - 2*abandonAfter - 5*time.Minute
+	// A due sweep runs before the queue is looked at again, so it counts.
+	restoreQueueWait = command.BackupRunWait - RestoreTimeout - 2*abandonAfter - sweepTimeout - 5*time.Minute
 	// sweepEvery is how often deleted apps' backups are swept, the first
 	// time one interval after start; sweepTimeout bounds one sweep.
 	sweepEvery   = 24 * time.Hour
@@ -322,9 +323,9 @@ func (s *Scheduler) RunNow(appID, name string) <-chan Outcome {
 		ch <- Outcome{Err: err}
 		return ch
 	}
-	dup := s.running != nil && s.running.key == k
+	dup := s.running != nil && s.running.key == k && s.running.point == ""
 	for _, j := range s.queue {
-		dup = dup || j.key == k
+		dup = dup || (j.key == k && j.point == "")
 	}
 	if dup {
 		ch <- Outcome{Err: fmt.Errorf("a backup of %s is already queued or running", name)}
@@ -400,7 +401,7 @@ var (
 	errStopped = errors.New("the agent is stopping")
 	// errStillStopping answers a request for an app whose earlier run did
 	// not stop within its time limit and has not returned yet.
-	errStillStopping = errors.New("a previous backup of this app is still stopping (its storage or Docker is not answering)")
+	errStillStopping = errors.New("a previous backup or restore of this app is still stopping (its storage or Docker is not answering)")
 	// errDeleting answers a request for an app that is being deleted.
 	errDeleting = errors.New("the app is being deleted")
 	// errQueueWait answers a restore that waited too long for its turn.
@@ -643,12 +644,14 @@ func (s *Scheduler) execute(parent context.Context, j *job) {
 			select {
 			case d = <-ch:
 			default:
-				d.err = fmt.Errorf("the run did not stop after its time limit of %s", j.limit)
+				d.err = fmt.Errorf("the %s did not stop after its time limit of %s", j.noun(), j.limit)
 				s.markStuck(j)
 			}
 		}
 	}
-	if d.err == nil && j.ctx.Err() != nil {
+	// A restore its engine reported done is done (the data is back and the
+	// app restarted), whenever its context ended.
+	if d.err == nil && j.ctx.Err() != nil && j.point == "" {
 		d.err = fmt.Errorf("the run was stopped: %w", j.ctx.Err())
 	}
 	stopping := d.err != nil && parent.Err() != nil
@@ -666,13 +669,37 @@ func (s *Scheduler) recordRestore(j *job, res command.RestoreBackupResponse, err
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.running = nil
+	// Restores are logged whatever happens to the reply (the result is SSE
+	// only, and a stop rarely lets it out): what a restore did to the data
+	// must leave a trace.
+	switch {
+	case err == nil:
+		s.log.Info("backup restored", "app_id", j.key.app, "backup", j.key.name,
+			"restored_point", res.RestoredPoint, "pre_restore_point", res.PreRestorePoint)
+	case stopping || errors.Is(context.Cause(j.ctx), dockercompose.ErrAppDeleted):
+		s.log.Warn("backup restore stopped", "app_id", j.key.app, "backup", j.key.name, "point", j.point,
+			"pre_restore_point", res.PreRestorePoint, "error", err)
+	default:
+		s.log.Warn("backup restore failed", "app_id", j.key.app, "backup", j.key.name, "point", j.point,
+			"pre_restore_point", res.PreRestorePoint, "error", err)
+	}
 	if stopping {
-		err = errStopped
+		// Keep the engine's error: after a half-done swap it says the app was
+		// left stopped and names the pre-restore point to go back to.
+		err = fmt.Errorf("%w: %w", errStopped, err)
 	}
 	if errors.Is(err, dockercompose.ErrNotRunnable) {
 		s.dirty = true
 	}
 	finish(j, Outcome{Restore: res, Err: err})
+}
+
+// noun names what the job is, for messages.
+func (j *job) noun() string {
+	if j.point != "" {
+		return "restore"
+	}
+	return "run"
 }
 
 // markStuck blocks the job's app until its abandoned RunBackup returns (it
@@ -772,7 +799,8 @@ func (s *Scheduler) Health(appID string, now time.Time, running func(service str
 		if st != nil {
 			h.LastError = st.LastError
 		}
-		isRunning := s.running != nil && s.running.key == key{p.AppID, p.Name}
+		// A restore is not a backup run: the backup keeps its own state.
+		isRunning := s.running != nil && s.running.key == key{p.AppID, p.Name} && s.running.point == ""
 		h.State = state(p.EffectiveBackup, st, isRunning, now, running)
 		out = append(out, h)
 	}

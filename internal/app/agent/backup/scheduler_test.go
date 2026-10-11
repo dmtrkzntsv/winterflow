@@ -82,7 +82,10 @@ type fakeEngine struct {
 	exits     atomic.Int32
 	result    func(dockercompose.BackupJob) (dockercompose.BackupResult, error)
 	restores  chan restoreCall
-	sweeps    atomic.Int32
+	// restoreErr is what a stopped restore returns instead of its context's
+	// error (the engine's own words: left stopped, go back to the pre point).
+	restoreErr error
+	sweeps     atomic.Int32
 }
 
 func newEngine(plan ...dockercompose.PlannedBackup) *fakeEngine {
@@ -102,15 +105,22 @@ type restoreCall struct {
 func (e *fakeEngine) RestoreBackup(ctx context.Context, job dockercompose.RestoreJob) (command.RestoreBackupResponse, error) {
 	deadline, _ := ctx.Deadline()
 	e.mu.Lock()
-	block := e.block
+	block, ignore, rerr := e.block, e.ignore, e.restoreErr
 	e.mu.Unlock()
 	resp := command.RestoreBackupResponse{AppID: job.AppID, Backup: job.Backup, RestoredPoint: job.Point, PreRestorePoint: "pre"}
 	if block != nil {
 		e.restores <- restoreCall{job: job, deadline: deadline}
+		if ignore {
+			<-block
+			return resp, nil
+		}
 		select {
 		case <-block:
 		case <-ctx.Done():
 			e.restores <- restoreCall{job: job, cause: context.Cause(ctx)}
+			if rerr != nil {
+				return resp, rerr
+			}
 			return resp, ctx.Err()
 		}
 		return resp, nil
@@ -1117,5 +1127,87 @@ func TestRestoreRefusedAfterQueueWait(t *testing.T) {
 	case c := <-e.restores:
 		t.Fatalf("the expired restore started: %+v", c)
 	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+// A restore the agent's stop cuts short keeps the engine's own error (which
+// may name the pre-restore point), wrapped, not replaced.
+func TestStoppedRestoreKeepsItsError(t *testing.T) {
+	e := newEngine(planned("app-1", "db", recipe.TypeSQLite, true, recipe.Manual))
+	e.block = make(chan struct{})
+	e.restoreErr = errors.New("the app is left stopped; go back to the pre-restore point pre")
+	dir := t.TempDir()
+	s := New(e, dir, logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"}))
+	s.clock = newClock()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { s.Run(ctx); close(done) }()
+	defer func() { cancel(); <-done }()
+	res := s.Restore("app-1", "db", "20261011T120000Z-manual")
+	restored(t, e)
+	cancel()
+	o := outcome(t, res)
+	if !errors.Is(o.Err, errStopped) || !errors.Is(o.Err, e.restoreErr) || !strings.Contains(o.Err.Error(), "pre-restore point pre") {
+		t.Fatalf("outcome = %+v", o)
+	}
+}
+
+// A restore whose engine ignores the context is abandoned after the grace
+// like a run: it fails, and its app takes no backup or restore until the
+// engine call returns.
+func TestAbandonedRestoreHoldsItsApp(t *testing.T) {
+	e := newEngine(planned("app-1", "db", recipe.TypeSQLite, true, recipe.Manual))
+	e.block, e.ignore = make(chan struct{}), true
+	s, clock, _ := start(t, e, func(s *Scheduler) { s.restoreTimeout, s.grace = 20*time.Millisecond, 20*time.Millisecond })
+	idle(t, clock)
+	res := s.Restore("app-1", "db", "20261011T120000Z-manual")
+	restored(t, e)
+	if o := outcome(t, res); o.Err == nil || !strings.Contains(o.Err.Error(), "restore did not stop after its time limit of 20ms") {
+		t.Fatalf("outcome = %+v", o)
+	}
+	if o := <-s.RunNow("app-1", "db"); !errors.Is(o.Err, errStillStopping) {
+		t.Fatalf("run of the stuck app: %+v", o)
+	}
+	if o := <-s.Restore("app-1", "db", "20261011T120000Z-manual"); !errors.Is(o.Err, errStillStopping) {
+		t.Fatalf("restore of the stuck app: %+v", o)
+	}
+	close(e.block)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		o := <-s.RunNow("app-1", "db")
+		if o.Err == nil {
+			break
+		}
+		if !errors.Is(o.Err, errStillStopping) || time.Now().After(deadline) {
+			t.Fatalf("after the restore returned: %+v", o)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// A restore is no backup run: the backup keeps its own health state, and a
+// Back up now of it queues behind the restore instead of being refused.
+func TestRestoreIsNoRunningBackup(t *testing.T) {
+	e := newEngine(planned("app-1", "db", recipe.TypeSQLite, true, recipe.Manual))
+	e.block = make(chan struct{})
+	s, clock, _ := start(t, e)
+	idle(t, clock)
+	res := s.Restore("app-1", "db", "20261011T120000Z-manual")
+	restored(t, e)
+	if h := s.Health("app-1", clock.Now(), nil); len(h) != 1 || h[0].State == command.BackupRunning {
+		t.Fatalf("health during a restore = %+v", h)
+	}
+	run := s.RunNow("app-1", "db")
+	select {
+	case o := <-run:
+		t.Fatalf("Back up now answered during the restore: %+v", o)
+	case <-time.After(50 * time.Millisecond):
+	}
+	e.block <- struct{}{}
+	outcome(t, res)
+	ran(t, e)
+	e.block <- struct{}{}
+	if o := outcome(t, run); o.Err != nil {
+		t.Fatal(o.Err)
 	}
 }

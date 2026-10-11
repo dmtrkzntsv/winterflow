@@ -1,0 +1,162 @@
+import { useCallback, useMemo } from "react";
+
+import { useNotifications } from "@/context/use-notifications";
+import { useServers } from "@/context/use-servers";
+import { readApiError } from "@/lib/api";
+import type {
+  BackupConfig,
+  EffectiveBackup,
+  Orphan,
+  RestorePoint,
+  RestoreResult,
+  RunBackupResult,
+} from "@/lib/backups";
+import { apiBaseUrl } from "@/config";
+
+const base = apiBaseUrl.endsWith("/") ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
+
+// How long to wait for a result. A Back up now or a restore answers when it
+// ends, after any backup queued ahead of it: the agent bounds the wait at 2
+// hours. update-backups may redeploy the app (10 minutes on the agent).
+export const BACKUP_RUN_TIMEOUT_MS = 125 * 60_000;
+export const BACKUP_UPDATE_TIMEOUT_MS = 11 * 60_000;
+
+export type BackupsUpdated = { backups: EffectiveBackup[]; redeployed: boolean; warnings: string[] };
+
+// useBackups exposes the backup routes of the active server: an app's
+// backups list, its restore points, Back up now, restore, and the backups of
+// apps not on the server. Each dispatches an agent command and awaits its
+// SSE result. These routes take server_id in the body (POST) or the query
+// (GET).
+export function useBackups() {
+  const { activeServerId: serverId } = useServers();
+  const { waitFor } = useNotifications();
+
+  const dispatch = useCallback(
+    async <T>(path: string, params: Record<string, unknown>, opts: { post?: boolean; timeoutMs?: number } = {}): Promise<T> => {
+      if (!serverId) throw new Error("No active server");
+      let url = `${base}${path}`;
+      let init: RequestInit = { credentials: "include" };
+      if (opts.post) {
+        init = {
+          ...init,
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ server_id: serverId, ...params }),
+        };
+      } else {
+        const q = new URLSearchParams({ server_id: serverId });
+        for (const [k, v] of Object.entries(params)) q.set(k, String(v));
+        url += `?${q.toString()}`;
+      }
+      const res = await fetch(url, init);
+      if (!res.ok) throw await readApiError(res);
+      const accepted = (await res.json()) as { data?: { request_id?: string } };
+      const ref = accepted.data?.request_id;
+      if (!ref) throw new Error("No request id");
+      const result = await waitFor(ref, opts.timeoutMs);
+      if (result.status && result.status !== 0) throw new Error(result.error || "Operation failed");
+      return result.payload as T;
+    },
+    [serverId, waitFor],
+  );
+
+  // updateBackups replaces the app's backups list as a whole.
+  const updateBackups = useCallback(
+    async (appId: string, backups: BackupConfig[]): Promise<BackupsUpdated> => {
+      const res = await dispatch<{ backups?: EffectiveBackup[] | null; redeployed?: boolean; warnings?: string[] | null }>(
+        "/api/v1/app/update-backups",
+        { app_id: appId, backups },
+        { post: true, timeoutMs: BACKUP_UPDATE_TIMEOUT_MS },
+      );
+      return { backups: res.backups ?? [], redeployed: res.redeployed ?? false, warnings: res.warnings ?? [] };
+    },
+    [dispatch],
+  );
+
+  const listRestorePoints = useCallback(
+    async (appId: string, backup: string): Promise<RestorePoint[]> => {
+      const res = await dispatch<{ points?: RestorePoint[] | null }>("/api/v1/app/list-restore-points", { app_id: appId, backup });
+      return res.points ?? [];
+    },
+    [dispatch],
+  );
+
+  // runBackup resolves when the run ends. A backup already queued or running
+  // is refused (the error says so).
+  const runBackup = useCallback(
+    async (appId: string, backup: string): Promise<RunBackupResult> => {
+      const res = await dispatch<{ unchanged?: boolean; point?: RestorePoint | null; warnings?: string[] | null }>(
+        "/api/v1/app/run-backup",
+        { app_id: appId, backup },
+        { post: true, timeoutMs: BACKUP_RUN_TIMEOUT_MS },
+      );
+      return { unchanged: res.unchanged ?? false, point: res.point ?? null, warnings: res.warnings ?? [] };
+    },
+    [dispatch],
+  );
+
+  // restoreBackup resolves when the restore ends.
+  const restoreBackup = useCallback(
+    async (appId: string, backup: string, point: string): Promise<RestoreResult> => {
+      const res = await dispatch<{ restored_point: string; pre_restore_point?: string; warnings?: string[] | null }>(
+        "/api/v1/app/restore-backup",
+        { app_id: appId, backup, point },
+        { post: true, timeoutMs: BACKUP_RUN_TIMEOUT_MS },
+      );
+      return { restored_point: res.restored_point, pre_restore_point: res.pre_restore_point, warnings: res.warnings ?? [] };
+    },
+    [dispatch],
+  );
+
+  const deleteRestorePoint = useCallback(
+    async (appId: string, backup: string, point: string): Promise<void> => {
+      await dispatch("/api/v1/app/delete-restore-point", { app_id: appId, backup, point }, { post: true });
+    },
+    [dispatch],
+  );
+
+  const listOrphans = useCallback(
+    async (storage: string): Promise<Orphan[]> => {
+      const res = await dispatch<{ orphans?: Orphan[] | null }>("/api/v1/storage/list-orphans", { name: storage });
+      return res.orphans ?? [];
+    },
+    [dispatch],
+  );
+
+  const deleteOrphan = useCallback(
+    async (storage: string, appId: string): Promise<number> => {
+      const res = await dispatch<{ deleted?: number }>("/api/v1/storage/delete-orphan", { name: storage, app_id: appId }, { post: true });
+      return res.deleted ?? 0;
+    },
+    [dispatch],
+  );
+
+  // serverStorages reads the server's storage names from the API's index
+  // (no agent round-trip): the storage picker's choices.
+  const serverStorages = useCallback(async (): Promise<string[]> => {
+    if (!serverId) throw new Error("No active server");
+    const res = await fetch(`${base}/api/v1/storage/get-storages?server_id=${encodeURIComponent(serverId)}`, {
+      credentials: "include",
+    });
+    if (!res.ok) throw await readApiError(res);
+    const body = (await res.json()) as { data?: { storages?: { name: string }[] | null } };
+    return (body.data?.storages ?? []).map((s) => s.name);
+  }, [serverId]);
+
+  return useMemo(
+    () => ({
+      updateBackups,
+      listRestorePoints,
+      runBackup,
+      restoreBackup,
+      deleteRestorePoint,
+      listOrphans,
+      deleteOrphan,
+      serverStorages,
+    }),
+    [updateBackups, listRestorePoints, runBackup, restoreBackup, deleteRestorePoint, listOrphans, deleteOrphan, serverStorages],
+  );
+}
+
+export type Backups = ReturnType<typeof useBackups>;

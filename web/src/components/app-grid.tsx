@@ -4,6 +4,7 @@ import { Card } from "@/components/ui/card";
 import { AppIcon } from "@/components/app-icon";
 import { AppStatusCode } from "@/context/apps-context-base";
 import { useApps } from "@/context/use-apps";
+import { needsAttention } from "@/lib/backups";
 import { cn } from "@/lib/utils";
 
 // Status → card accents, mirroring v1's AppCard: the border and label carry
@@ -54,7 +55,7 @@ const STATUS_STYLE: Record<
 // icon block, status-colored border, status label, hover tilt, staggered
 // entrance animation. Each tile links to the app's details page.
 export function AppGrid() {
-  const { apps, statusByApp, loading, error } = useApps();
+  const { apps, statusByApp, backupsByApp, loading, error } = useApps();
 
   if (loading && apps.length === 0) {
     return (
@@ -90,20 +91,30 @@ export function AppGrid() {
         const unknown =
           (statusByApp[app.id] ?? AppStatusCode.Unknown) ===
           AppStatusCode.Unknown;
+        // A late or failing backup: a small dot, never the card's color
+        // (backup health doesn't change the app's status).
+        const backupWarning = needsAttention(backupsByApp?.[app.id]);
         return (
           <Link
             key={app.id}
             to={`/app/${app.id}`}
-            title={`${app.name}: ${status.label}`}
+            title={`${app.name}: ${status.label}${backupWarning ? " (a backup is late or failing)" : ""}`}
             className="app-card-in block"
             style={{ animationDelay: `${index * 40}ms` }}
           >
             <Card
               className={cn(
-                "flex h-32 w-32 flex-col items-center border-2 p-4 transition-all hover:rotate-3 hover:bg-muted/50",
+                "relative flex h-32 w-32 flex-col items-center border-2 p-4 transition-all hover:rotate-3 hover:bg-muted/50",
                 status.border,
               )}
             >
+              {backupWarning ? (
+                <span
+                  role="img"
+                  aria-label="A backup is late or failing"
+                  className="absolute top-2 right-2 size-2 rounded-full bg-amber-500 ring-2 ring-background"
+                />
+              ) : null}
               <div className="flex flex-1 flex-col items-center gap-2">
                 <AppIcon
                   name={app.name}

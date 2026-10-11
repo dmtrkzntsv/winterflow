@@ -1,5 +1,6 @@
 import { createContext } from "react";
 
+import type { BackupHealth, BackupTargets, EffectiveBackup } from "@/lib/backups";
 import type { StorageVariable } from "@/types/app-config";
 
 export type AppDomain = {
@@ -51,23 +52,28 @@ export type AppStatus = {
 export type DeleteAppResult = {
   warnings: string[];
   volumesDeleted: boolean;
+  backupsDeleted: boolean;
 };
 
 export type AppsContextValue = {
   apps: App[];
   // statusByApp maps app id -> latest container status code (live, in-memory).
   statusByApp: Record<string, number>;
+  // backupsByApp maps app id -> the health of each of its backups (live,
+  // with the status).
+  backupsByApp: Record<string, BackupHealth[]>;
   loading: boolean;
   error: string | null;
   refresh: () => Promise<void>;
   // Lifecycle actions: dispatch the command, await its SSE result, then refresh.
   control: (appId: string, action: ControlAction) => Promise<void>;
   // remove resolves with cleanup warnings (e.g. a volume still in use) and
-  // whether the agent honoured deleteVolumes — an older agent ignores the
-  // flag, so volumesDeleted stays false and the caller must not claim success.
+  // whether the agent honoured deleteVolumes and deleteBackups — an older
+  // agent ignores the flags, so they stay false and the caller must not
+  // claim success.
   remove: (
     appId: string,
-    opts?: { deleteVolumes?: boolean },
+    opts?: { deleteVolumes?: boolean; deleteBackups?: boolean },
   ) => Promise<DeleteAppResult>;
   rename: (appId: string, name: string) => Promise<void>;
   // saveApp dispatches app.save with the full payload (config + files +
@@ -107,6 +113,12 @@ export type AppDetailPayload = {
   };
   // WF_STORAGE_ variables the compose files reference (never values).
   storage_variables?: StorageVariable[] | null;
+  // The app's backups (recipe + its settings), why they can't be read,
+  // where a new one can point, and the server's BACKUP_RETENTION_DAYS.
+  backups?: EffectiveBackup[] | null;
+  backups_error?: string;
+  backup_targets?: BackupTargets | null;
+  retention_days?: number;
   revision: number;
   available_revisions: number[] | null;
 };

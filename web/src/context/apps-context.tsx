@@ -12,6 +12,7 @@ import { useServers } from "@/context/use-servers";
 import { useNotifications } from "@/context/use-notifications";
 import { apiBaseUrl } from "@/config";
 import { readApiError } from "@/lib/api";
+import type { BackupHealth } from "@/lib/backups";
 
 import {
   AppsContext,
@@ -47,7 +48,20 @@ type GetAppsResponse = {
 type AppStatusResponse = {
   app_id: string;
   status_code: number;
+  backups?: BackupHealth[] | null;
 };
+
+// byApp splits a status list into the status codes and the backup health
+// by app id.
+function byApp(list: AppStatusResponse[]) {
+  const status: Record<string, number> = {};
+  const backups: Record<string, BackupHealth[]> = {};
+  for (const s of list) {
+    status[s.app_id] = s.status_code;
+    if (s.backups?.length) backups[s.app_id] = s.backups;
+  }
+  return { status, backups };
+}
 
 type GetAppsStatusResponse = {
   data?: { apps?: AppStatusResponse[] | null };
@@ -76,6 +90,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
   const { subscribe, waitFor, connected } = useNotifications();
   const [apps, setApps] = useState<App[]>([]);
   const [statusByApp, setStatusByApp] = useState<Record<string, number>>({});
+  const [backupsByApp, setBackupsByApp] = useState<Record<string, BackupHealth[]>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const mounted = useRef(false);
@@ -154,7 +169,10 @@ export function AppsProvider({ children }: { children: ReactNode }) {
   // loadStatus pulls the live container-status snapshot (in-memory, TTL'd).
   const loadStatus = useCallback(async () => {
     if (!isAuthenticated || !activeServerId) {
-      if (mounted.current) setStatusByApp({});
+      if (mounted.current) {
+        setStatusByApp({});
+        setBackupsByApp({});
+      }
       return;
     }
     try {
@@ -165,11 +183,9 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       if (!res.ok) return;
       const result = (await res.json()) as GetAppsStatusResponse;
       if (!mounted.current) return;
-      const map: Record<string, number> = {};
-      for (const s of result.data?.apps ?? []) {
-        map[s.app_id] = s.status_code;
-      }
-      setStatusByApp(map);
+      const { status, backups } = byApp(result.data?.apps ?? []);
+      setStatusByApp(status);
+      setBackupsByApp(backups);
     } catch {
       // Status is best-effort; absence renders as "unknown".
     }
@@ -205,15 +221,13 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       const p = n.payload as
         | {
             server_id?: string;
-            apps?: { app_id: string; status_code: number }[] | null;
+            apps?: AppStatusResponse[] | null;
           }
         | undefined;
       if (!p?.server_id || p.server_id !== activeServerId) return;
-      const map: Record<string, number> = {};
-      for (const s of p.apps ?? []) {
-        map[s.app_id] = s.status_code;
-      }
-      setStatusByApp(map);
+      const { status, backups } = byApp(p.apps ?? []);
+      setStatusByApp(status);
+      setBackupsByApp(backups);
     });
   }, [subscribe, activeServerId]);
 
@@ -260,18 +274,20 @@ export function AppsProvider({ children }: { children: ReactNode }) {
   const remove = useCallback(
     async (
       appId: string,
-      opts?: { deleteVolumes?: boolean },
+      opts?: { deleteVolumes?: boolean; deleteBackups?: boolean },
     ): Promise<DeleteAppResult> => {
       const { payload } = await dispatchAndWait("delete-app", {
         app_id: appId,
         delete_volumes: opts?.deleteVolumes ?? false,
+        delete_backups: opts?.deleteBackups ?? false,
       });
       const res = payload as
-        | { warnings?: string[]; volumes_deleted?: boolean }
+        | { warnings?: string[]; volumes_deleted?: boolean; backups_deleted?: boolean }
         | undefined;
       return {
         warnings: res?.warnings ?? [],
         volumesDeleted: res?.volumes_deleted ?? false,
+        backupsDeleted: res?.backups_deleted ?? false,
       };
     },
     [dispatchAndWait],
@@ -417,6 +433,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
     () => ({
       apps,
       statusByApp,
+      backupsByApp,
       loading,
       error,
       refresh,
@@ -433,6 +450,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
     [
       apps,
       statusByApp,
+      backupsByApp,
       loading,
       error,
       refresh,

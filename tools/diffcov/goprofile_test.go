@@ -58,6 +58,17 @@ func TestGoProfileTotal(t *testing.T) {
 	}
 }
 
+func TestGoProfileTotalSkipsSQLCGen(t *testing.T) {
+	p, err := ParseGoProfile(strings.NewReader(sampleProfile+
+		"winterflow/internal/infra/db/sqlc/gen/sqlite/users.sql.go:10.1,20.2 7 0\n"), "winterflow")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cov, total := p.Total(); cov != 3 || total != 6 {
+		t.Fatalf("Total = %d/%d, want 3/6 (generated sqlc code left out)", cov, total)
+	}
+}
+
 func TestParseGoProfileErrors(t *testing.T) {
 	for name, in := range map[string]string{
 		"empty":     "",

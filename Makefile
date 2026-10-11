@@ -3,7 +3,7 @@ BIN_DIR := bin
 STANDALONE_BIN := $(BIN_DIR)/standalone
 API_BIN := $(BIN_DIR)/api
 
-.PHONY: build lint standalone api web web-build third-party-licenses test web-test cover diffcov openapi test-pg
+.PHONY: build lint standalone api web web-build third-party-licenses test web-test cover diffcov openapi test-pg sqlc sqlc-check
 
 # Release build: bundle the SPA first so go:embed picks up a fresh web/dist,
 # then compile. The binaries are fully self-contained (API + web UI).
@@ -83,9 +83,18 @@ agent:
 web:
 	pnpm --dir web dev
 
+# sqlc is pinned and run through `go run`, so nothing needs installing (its
+# Postgres parser is cgo: a C compiler is required; the first run takes about
+# a minute). make sqlc regenerates internal/infra/db/sqlc/gen; make sqlc-check
+# fails when the committed code is stale (CI).
+SQLC_VERSION := v1.31.1
+SQLC := $(GO) run github.com/sqlc-dev/sqlc/cmd/sqlc@$(SQLC_VERSION) -f internal/infra/db/sqlc/sqlc.yaml
+
 sqlc:
-	@echo "Generating SQLC code..."
-	@sqlc generate
+	$(SQLC) generate
+
+sqlc-check:
+	$(SQLC) diff
 
 grpc:
 	@echo "Installing protoc plugins..."

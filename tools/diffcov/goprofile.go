@@ -111,10 +111,14 @@ func (p GoProfile) HasPackage(file string) bool {
 	return false
 }
 
-// Total returns covered and total statements across the profile — the same
-// figure `go tool cover -func` prints as "total:".
+// Total returns covered and total statements across the profile — the
+// figure `go tool cover -func` prints as "total:", minus sqlc's generated
+// query code (sqlcGenDir), which no test is expected to cover in full.
 func (p GoProfile) Total() (covered, total int) {
-	for _, blocks := range p {
+	for file, blocks := range p {
+		if strings.HasPrefix(file, sqlcGenDir) {
+			continue
+		}
 		for _, b := range blocks {
 			total += b.Stmts
 			if b.Count > 0 {

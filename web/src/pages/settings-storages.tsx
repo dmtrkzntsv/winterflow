@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -45,7 +45,7 @@ function UsedBy({ ids, names }: { ids: string[]; names: Map<string, string> }) {
   return (
     <span className="flex flex-wrap gap-1">
       {ids.map((id) => (
-        <Badge key={id} variant="secondary" className="font-medium">
+        <Badge key={id} variant="secondary" className="whitespace-nowrap font-medium">
           <Link to={`/app/${id}`} className="underline-offset-4 hover:underline">
             {names.get(id) ?? id}
           </Link>
@@ -57,6 +57,10 @@ function UsedBy({ ids, names }: { ids: string[]; names: Map<string, string> }) {
 
 const byName = (a: Storage, b: Storage) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
 
+// listed joins names for a sentence: "A", "A and B", "A, B and C".
+const listed = (names: string[]) =>
+  names.length < 2 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+
 export function StoragesCard({ docker }: { docker: Docker }) {
   const { apps } = useApps();
   const [items, setItems] = useState<Storage[] | null>(null);
@@ -65,6 +69,11 @@ export function StoragesCard({ docker }: { docker: Docker }) {
   const [edit, setEdit] = useState<Storage | null>(null);
   const [dialogKey, setDialogKey] = useState(0);
   const [toDelete, setToDelete] = useState<Storage | null>(null);
+  // The dialogs have no trigger of their own (the storage dialog remounts
+  // per opening): focus goes back to the button that opened them, or to
+  // Add storage when that button left with its row.
+  const opener = useRef<HTMLElement | null>(null);
+  const addButton = useRef<HTMLButtonElement | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -93,8 +102,12 @@ export function StoragesCard({ docker }: { docker: Docker }) {
         ? `Redeployed ${redeployed.map((id) => names.get(id) ?? id).join(", ")}.`
         : undefined;
     if (warnings.length > 0) {
+      // It asks for action (each warning names its app): it stays until
+      // dismissed.
       toast.warning(`${done}, but not every app was redeployed`, {
         description: [description, ...warnings].filter(Boolean).join("\n"),
+        duration: Infinity,
+        closeButton: true,
       });
     } else {
       toast.success(done, { description });
@@ -106,6 +119,8 @@ export function StoragesCard({ docker }: { docker: Docker }) {
     try {
       await docker.deleteStorage(name);
       toast.success("Storage removed");
+      // Focus on the removed row's button would fall to the page.
+      if (opener.current && opener.current === document.activeElement) addButton.current?.focus();
       setItems((prev) => prev && prev.filter((s) => s.name !== name));
     } catch (e) {
       toast.error("Couldn't remove storage", {
@@ -114,7 +129,8 @@ export function StoragesCard({ docker }: { docker: Docker }) {
     }
   };
 
-  const openDialog = (row: Storage | null) => {
+  const openDialog = (row: Storage | null, from: HTMLElement) => {
+    opener.current = from;
     setEdit(row);
     setDialogKey((k) => k + 1);
     setDialogOpen(true);
@@ -123,7 +139,9 @@ export function StoragesCard({ docker }: { docker: Docker }) {
   return (
     <Card>
       <CardHeader className="flex-row flex-wrap items-start justify-between gap-x-4 gap-y-3 space-y-0">
-        <div className="min-w-0 space-y-1.5">
+        {/* basis-72: the text shrinks beside the actions, and the actions
+            wrap under it only on narrow screens. */}
+        <div className="min-w-0 flex-1 basis-72 space-y-1.5">
           <CardTitle>Storages</CardTitle>
           <CardDescription>
             Folders and S3-compatible buckets that backups and apps on this server can
@@ -143,7 +161,7 @@ export function StoragesCard({ docker }: { docker: Docker }) {
           >
             <RefreshCw className={cn("size-4", loading && "animate-spin")} />
           </Button>
-          <Button size="sm" onClick={() => openDialog(null)}>
+          <Button ref={addButton} size="sm" onClick={(e) => openDialog(null, e.currentTarget)}>
             <Plus className="size-4" /> Add storage
           </Button>
         </div>
@@ -163,10 +181,10 @@ export function StoragesCard({ docker }: { docker: Docker }) {
             <TableHeader>
               <TableRow>
                 <TableHead>Name</TableHead>
-                <TableHead>Type</TableHead>
+                <TableHead className="hidden sm:table-cell">Type</TableHead>
                 <TableHead className="hidden md:table-cell">Location</TableHead>
                 <TableHead className="hidden sm:table-cell">Used by</TableHead>
-                <TableHead className="w-20">
+                <TableHead className="w-px">
                   <span className="sr-only">Actions</span>
                 </TableHead>
               </TableRow>
@@ -177,14 +195,21 @@ export function StoragesCard({ docker }: { docker: Docker }) {
                 // Why the storage can't be removed (null: it can).
                 const blocked =
                   used.length > 0
-                    ? `Used by ${used.length === 1 ? "1 app" : `${used.length} apps`}: remove its WF_STORAGE_ variables first`
+                    ? `Used by ${listed(used.map((id) => names.get(id) ?? id))} — remove the references first`
                     : null;
+                const type = (
+                  <Badge variant="outline" className="whitespace-nowrap">
+                    {STORAGE_TYPES[s.type]}
+                  </Badge>
+                );
                 return (
                   <TableRow key={s.name}>
                     <TableCell>
                       <div className="font-mono [overflow-wrap:anywhere]">{s.name}</div>
-                      {/* Phones drop the Location and Used by columns;
-                          keep both visible inline. */}
+                      {/* Phones drop the Type, Location and Used by
+                          columns (the name gets the width); keep them
+                          visible inline. */}
+                      <div className="mt-1 sm:hidden">{type}</div>
                       <div className="mt-1 font-mono text-xs text-muted-foreground [overflow-wrap:anywhere] md:hidden">
                         {s.location}
                       </div>
@@ -194,11 +219,7 @@ export function StoragesCard({ docker }: { docker: Docker }) {
                         </div>
                       ) : null}
                     </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="whitespace-nowrap">
-                        {STORAGE_TYPES[s.type]}
-                      </Badge>
-                    </TableCell>
+                    <TableCell className="hidden sm:table-cell">{type}</TableCell>
                     <TableCell className="hidden font-mono text-xs [overflow-wrap:anywhere] md:table-cell">
                       {s.location}
                     </TableCell>
@@ -212,13 +233,14 @@ export function StoragesCard({ docker }: { docker: Docker }) {
                         className="size-8 text-muted-foreground"
                         aria-label={`Edit storage ${s.name}`}
                         title="Edit storage"
-                        onClick={() => openDialog(s)}
+                        onClick={(e) => openDialog(s, e.currentTarget)}
                       >
                         <Pencil className="size-4" />
                       </Button>
                       {/* In use: aria-disabled rather than disabled, so the
-                          button keeps hover (title) and focus, and keyboard
-                          and screen reader users hear why (aria-describedby). */}
+                          button keeps hover (title) and focus, screen reader
+                          users hear why (aria-describedby), and a click, tap
+                          or Enter says why on screen. */}
                       <Button
                         size="icon"
                         variant="ghost"
@@ -227,8 +249,13 @@ export function StoragesCard({ docker }: { docker: Docker }) {
                         aria-disabled={blocked ? true : undefined}
                         aria-describedby={blocked ? `storage-in-use-${s.name}` : undefined}
                         title={blocked ?? "Remove storage"}
-                        onClick={() => {
-                          if (!blocked) setToDelete(s);
+                        onClick={(e) => {
+                          if (blocked) {
+                            toast.warning(`Can't remove ${s.name}`, { description: `${blocked}.` });
+                            return;
+                          }
+                          opener.current = e.currentTarget;
+                          setToDelete(s);
                         }}
                       >
                         <Trash2 className="size-4" />
@@ -251,15 +278,26 @@ export function StoragesCard({ docker }: { docker: Docker }) {
         docker={docker}
         open={dialogOpen}
         edit={edit}
+        existing={(items ?? []).map((s) => s.name)}
+        usedBy={(edit?.apps ?? []).map((id) => names.get(id) ?? id)}
+        returnFocus={opener}
         onOpenChange={setDialogOpen}
         onSaved={saved}
       />
       <AlertDialog open={toDelete !== null} onOpenChange={(o) => !o && setToDelete(null)}>
-        <AlertDialogContent>
+        <AlertDialogContent
+          onCloseAutoFocus={(e) => {
+            const back = opener.current?.isConnected ? opener.current : addButton.current;
+            if (back) {
+              e.preventDefault();
+              back.focus();
+            }
+          }}
+        >
           <AlertDialogHeader>
             <AlertDialogTitle>Remove this storage?</AlertDialogTitle>
             <AlertDialogDescription>
-              <code className="font-mono text-foreground">{toDelete?.name}</code> is removed from this
+              <code className="font-mono text-foreground [overflow-wrap:anywhere]">{toDelete?.name}</code> is removed from this
               server. Nothing stored in it is deleted.
             </AlertDialogDescription>
           </AlertDialogHeader>

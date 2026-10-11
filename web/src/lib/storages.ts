@@ -141,33 +141,61 @@ export function endpointError(endpoint: string): string {
   return "Use a URL like https://s3.example.com.";
 }
 
-// draftError is the first problem with a draft ("" when it can be sent).
-// editing allows an empty secret (keep the stored one).
-export function draftError(d: StorageDraft, editing: boolean): string {
-  const nameErr = storageNameError(d.name.trim());
-  if (nameErr) return nameErr;
+// DraftField is a field of the dialog a problem belongs to.
+export type DraftField = "name" | "path" | "endpoint" | "bucket" | "prefix" | "accessKeyId" | "secret";
+
+// DraftProblem is the first problem with a draft and the field it belongs to.
+export type DraftProblem = { field: DraftField; message: string };
+
+// draftProblem is the first problem with a draft (null when it can be sent).
+// editing allows an empty secret (keep the stored one); existing are the
+// server's storage names, which an add can't reuse.
+export function draftProblem(d: StorageDraft, editing: boolean, existing: readonly string[] = []): DraftProblem | null {
+  const at = (field: DraftField, message: string): DraftProblem => ({ field, message });
+  const name = d.name.trim();
+  const nameErr = storageNameError(name);
+  if (nameErr) return at("name", nameErr);
+  if (!editing && existing.includes(name)) return at("name", `A storage named ${name} already exists. Edit it instead.`);
   if (d.type === "local") {
     const p = d.path.trim();
-    if (!p.startsWith("/")) return "Use an absolute folder path, like /mnt/backup/winterflow.";
-    if (hasControl(p)) return "The folder path cannot contain control characters (newline, tab, …).";
-    if (/^\/+$/.test(p)) return "The folder cannot be / itself.";
-    if (byteLength(p) > MAX_PATH_BYTES) return `The folder path can be at most ${MAX_PATH_BYTES} bytes long.`;
-    return "";
+    if (!p.startsWith("/")) return at("path", "Use an absolute folder path, like /mnt/backup/winterflow.");
+    if (hasControl(p)) return at("path", "The folder path cannot contain control characters (newline, tab, …).");
+    if (/^\/+$/.test(p)) return at("path", "The folder cannot be / itself.");
+    if (byteLength(p) > MAX_PATH_BYTES) return at("path", `The folder path can be at most ${MAX_PATH_BYTES} bytes long.`);
+    return null;
   }
   const endErr = endpointError(d.endpoint);
-  if (endErr) return endErr;
-  if (!BUCKET_RE.test(d.bucket.trim()) || d.bucket.includes("..")) return "Enter a valid bucket name.";
+  if (endErr) return at("endpoint", endErr);
+  if (!BUCKET_RE.test(d.bucket.trim()) || d.bucket.includes("..")) return at("bucket", "Enter a valid bucket name.");
   const prefix = d.prefix.trim();
   // The agent stores the prefix ending in "/": measure that form.
   const storedPrefix = prefix && !prefix.endsWith("/") ? `${prefix}/` : prefix;
   if (byteLength(storedPrefix) > MAX_PREFIX_BYTES || ["\\", "\u0000", "\r", "\n", "\t"].some((c) => prefix.includes(c)) || prefix.startsWith("/") || prefix.split("/").some((seg, i, all) => (seg === "" && i < all.length - 1) || seg === "." || seg === "..")) {
-    return "Use folder names separated by /, like winterflow/.";
+    return at("prefix", "Use folder names separated by /, like winterflow/.");
   }
   const keyId = d.accessKeyId.trim();
-  if (hasControl(keyId)) return "The access key cannot contain control characters (newline, tab, …).";
-  if (!keyId || keyId.includes(" ") || byteLength(keyId) > 128) return "Enter the access key.";
-  if (!editing && !d.secret) return "Enter the secret key.";
-  return "";
+  if (hasControl(keyId)) return at("accessKeyId", "The access key cannot contain control characters (newline, tab, …).");
+  if (!keyId || keyId.includes(" ") || byteLength(keyId) > 128) return at("accessKeyId", "Enter the access key.");
+  if (!editing && !d.secret) return at("secret", "Enter the secret key.");
+  return null;
+}
+
+// draftError is draftProblem's message ("" when the draft can be sent).
+export function draftError(d: StorageDraft, editing: boolean, existing: readonly string[] = []): string {
+  return draftProblem(d, editing, existing)?.message ?? "";
+}
+
+// pathStyleDefault says whether an endpoint needs path-style addressing: an
+// IP address or localhost has no wildcard DNS for bucket.host names (MinIO,
+// Garage and other self-hosted stores on the LAN).
+export function pathStyleDefault(endpoint: string): boolean {
+  let host: string;
+  try {
+    host = new URL(endpoint.trim()).hostname;
+  } catch {
+    return false;
+  }
+  return host === "localhost" || host.startsWith("[") || /^\d+\.\d+\.\d+\.\d+$/.test(host);
 }
 
 // storageVar is the compose variable for a storage's field, e.g.

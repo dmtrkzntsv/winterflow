@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   draftError,
   draftFrom,
+  draftProblem,
   endpointError,
+  pathStyleDefault,
   storageBody,
   storageNameError,
   storageVar,
@@ -100,6 +102,36 @@ describe("storages", () => {
     // A new storage needs its secret; an edit keeps the stored one.
     expect(draftError({ ...ok, secret: "" }, false)).toMatch(/secret/);
     expect(draftError({ ...ok, secret: "" }, true)).toBe("");
+  });
+
+  it("ties each problem to its field", () => {
+    expect(draftProblem(draft({}), false)).toBeNull();
+    expect(draftProblem(draft({ name: "" }), false)?.field).toBe("name");
+    expect(draftProblem(draft({ path: "" }), false)?.field).toBe("path");
+    const ok = { ...draftFrom(s3), name: "offsite", secret: "s3cret" };
+    expect(draftProblem({ ...ok, endpoint: "" }, false)?.field).toBe("endpoint");
+    expect(draftProblem({ ...ok, bucket: "" }, false)?.field).toBe("bucket");
+    expect(draftProblem({ ...ok, prefix: "/x" }, false)?.field).toBe("prefix");
+    expect(draftProblem({ ...ok, accessKeyId: "" }, false)?.field).toBe("accessKeyId");
+    expect(draftProblem({ ...ok, secret: "" }, false)?.field).toBe("secret");
+  });
+
+  it("refuses to add a name the server already has, but edits it", () => {
+    expect(draftProblem(draft({ name: "disk" }), false, ["disk", "hetzner"])).toEqual({
+      field: "name",
+      message: "A storage named disk already exists. Edit it instead.",
+    });
+    expect(draftProblem(draft({ name: "disk" }), true, ["disk"])).toBeNull();
+    expect(draftProblem(draft({ name: "usb" }), false, ["disk"])).toBeNull();
+  });
+
+  it("turns path-style on for an IP address or localhost", () => {
+    for (const on of ["http://127.0.0.1:9000", "http://192.168.1.5:9000", "http://localhost:9000", "http://[::1]:9000", "https://10.0.0.2"]) {
+      expect(pathStyleDefault(on)).toBe(true);
+    }
+    for (const off of ["https://s3.example.com", "https://fsn1.your-objectstorage.com", "", "not a url"]) {
+      expect(pathStyleDefault(off)).toBe(false);
+    }
   });
 
   it("caps lengths in bytes like the agent", () => {

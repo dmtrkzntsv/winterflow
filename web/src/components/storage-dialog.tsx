@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { CircleCheck, CircleX } from "lucide-react";
 import { toast } from "sonner";
 
@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   Dialog,
   DialogContent,
@@ -17,10 +17,12 @@ import {
 } from "@/components/ui/dialog";
 import type { Docker } from "@/context/use-docker";
 import {
-  draftError,
   draftFrom,
+  draftProblem,
+  pathStyleDefault,
   STORAGE_TYPES,
   storageVar,
+  type DraftField,
   type Storage,
   type StorageDraft,
   type StorageSaved,
@@ -29,27 +31,56 @@ import {
 
 type Probe = { state: "idle" | "testing" } | { state: "ok" } | { state: "failed"; error: string };
 
+// The validated fields in form order, and their inputs' ids.
+const FIELD_ORDER: DraftField[] = ["name", "path", "endpoint", "bucket", "prefix", "accessKeyId", "secret"];
+const FIELD_ID: Record<DraftField, string> = {
+  name: "st-name",
+  path: "st-path",
+  endpoint: "st-endpoint",
+  bucket: "st-bucket",
+  prefix: "st-prefix",
+  accessKeyId: "st-key",
+  secret: "st-secret",
+};
+
+const errorOf = (e: unknown) => (e instanceof Error ? e.message : "");
+
 // StorageDialog adds a storage, or (edit set) changes one: the name and type
 // are its identity, so an edit shows them instead of offering them. The
 // parent remounts it (key) per opening. Save tests again on the agent and
 // stores nothing when that fails. The typed secret never outlives the
-// dialog: it is wiped on every close.
+// dialog: it is wiped on every close. existing are the server's storage
+// names (an add can't reuse one); usedBy names the apps using the edited
+// storage; returnFocus is where focus goes back to on close (the dialog has
+// no trigger of its own).
 export function StorageDialog({
   docker,
   open,
   edit,
+  existing = [],
+  usedBy,
+  returnFocus,
   onOpenChange,
   onSaved,
 }: {
   docker: Docker;
   open: boolean;
   edit: Storage | null;
+  existing?: readonly string[];
+  usedBy?: readonly string[];
+  returnFocus?: RefObject<HTMLElement | null>;
   onOpenChange: (open: boolean) => void;
   onSaved: (saved: StorageSaved) => void;
 }) {
-  const [draft, setDraft] = useState<StorageDraft>(() => draftFrom(edit));
+  const initial = useMemo(() => draftFrom(edit), [edit]);
+  const [draft, setDraft] = useState<StorageDraft>(initial);
   const [probe, setProbe] = useState<Probe>({ state: "idle" });
   const [busy, setBusy] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  // Fields the user changed or left: their problems show from then on.
+  const [touched, setTouched] = useState<ReadonlySet<DraftField>>(() => new Set());
+  // Once the user sets path-style, the endpoint no longer decides it.
+  const pathStyleSet = useRef(false);
 
   // Answers can arrive after the dialog moved on. A save may run for
   // minutes: when it answers after this dialog closed (or unmounted, the
@@ -67,14 +98,29 @@ export function StorageDialog({
   }, []);
 
   const editing = edit !== null;
-  const error = draftError(draft, editing);
-  const users = edit?.apps?.length ?? 0;
+  const problem = draftProblem(draft, editing, editing ? [] : existing);
+  const apps = usedBy ?? edit?.apps ?? [];
+  const local = draft.type === "local";
+  // An edit that changes nothing has nothing to save (nor apps to redeploy).
+  const dirty = !editing || JSON.stringify(draft) !== JSON.stringify(initial);
 
-  // Any change makes the last test result stale.
-  const set = (patch: Partial<StorageDraft>) => {
+  // A problem shows under its field once the user touched that field or
+  // moved past it to a later one — never for a field not reached yet.
+  const shown = (field: DraftField) => {
+    if (problem?.field !== field) return false;
+    const at = FIELD_ORDER.indexOf(field);
+    return FIELD_ORDER.some((f, i) => i >= at && touched.has(f));
+  };
+  const touch = (field: DraftField) =>
+    setTouched((t) => (t.has(field) ? t : new Set(t).add(field)));
+
+  // Any change makes the last test result and save failure stale.
+  const set = (patch: Partial<StorageDraft>, field?: DraftField) => {
     probeSeq.current++;
     setDraft((d) => ({ ...d, ...patch }));
     setProbe({ state: "idle" });
+    setSaveError("");
+    if (field) touch(field);
   };
 
   const changeOpen = (next: boolean) => {
@@ -83,6 +129,7 @@ export function StorageDialog({
       probeSeq.current++;
       setDraft((d) => ({ ...d, secret: "" }));
       setProbe({ state: "idle" });
+      setSaveError("");
     }
     onOpenChange(next);
   };
@@ -95,63 +142,108 @@ export function StorageDialog({
       const res = await docker.testStorage(draft);
       if (current()) setProbe(res.ok ? { state: "ok" } : { state: "failed", error: res.error || "The test failed." });
     } catch (e) {
-      if (current()) setProbe({ state: "failed", error: e instanceof Error ? e.message : "The test failed." });
+      if (current()) setProbe({ state: "failed", error: errorOf(e) || "The test failed." });
     }
   };
 
   const save = async () => {
     const opened = session.current;
+    const stillOpen = () => mounted.current && opened === session.current;
     setBusy(true);
+    setSaveError("");
     try {
       const saved = await docker.saveStorage(draft, !editing);
-      if (mounted.current && opened === session.current) changeOpen(false);
+      if (stillOpen()) changeOpen(false);
       onSaved(saved);
     } catch (e) {
-      toast.error(editing ? "Couldn't save storage" : "Couldn't add storage", {
-        description: e instanceof Error ? e.message : undefined,
-      });
+      const title = editing ? "Couldn't save storage" : "Couldn't add storage";
+      const reason = errorOf(e) || "The save failed.";
+      // Open: the reason stays next to the form; closed: only the toast
+      // can carry it.
+      if (stillOpen()) {
+        setSaveError(reason);
+        toast.error(title);
+      } else {
+        toast.error(title, { description: reason });
+      }
     } finally {
-      setBusy(false);
+      if (mounted.current) setBusy(false);
     }
   };
 
   const field = (
-    id: string,
+    key: DraftField | "region",
     label: string,
     value: string,
     onChange: (v: string) => void,
     props: { placeholder?: string; hint?: string; type?: string } = {},
-  ) => (
-    <div className="grid gap-1.5">
-      <Label htmlFor={id}>{label}</Label>
-      <Input
-        id={id}
-        type={props.type ?? "text"}
-        autoComplete="off"
-        spellCheck={false}
-        placeholder={props.placeholder}
-        aria-describedby={props.hint ? `${id}-hint` : undefined}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-      />
-      {props.hint ? (
-        <p id={`${id}-hint`} className="text-xs text-muted-foreground">
-          {props.hint}
-        </p>
-      ) : null}
-    </div>
-  );
+  ) => {
+    const id = key === "region" ? "st-region" : FIELD_ID[key];
+    const invalid = key !== "region" && shown(key);
+    const describedBy = [props.hint ? `${id}-hint` : "", invalid ? `${id}-error` : ""].filter(Boolean).join(" ");
+    return (
+      <div className="grid gap-1.5">
+        <Label htmlFor={id}>{label}</Label>
+        <Input
+          id={id}
+          type={props.type ?? "text"}
+          autoComplete="off"
+          spellCheck={false}
+          placeholder={props.placeholder}
+          aria-invalid={invalid || undefined}
+          aria-describedby={describedBy || undefined}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onBlur={key === "region" ? undefined : () => touch(key)}
+        />
+        {props.hint ? (
+          <p id={`${id}-hint`} className="text-xs text-muted-foreground">
+            {props.hint}
+          </p>
+        ) : null}
+        {invalid ? (
+          <p id={`${id}-error`} className="text-xs text-destructive">
+            {problem?.message}
+          </p>
+        ) : null}
+      </div>
+    );
+  };
 
   const name = draft.name.trim();
 
   return (
     <Dialog open={open} onOpenChange={changeOpen}>
-      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl">
+      <DialogContent
+        className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl"
+        onOpenAutoFocus={(e) => {
+          // Add: the name comes first. Edit: the caret goes to the end of
+          // the first field, its text not selected (one stray key would
+          // replace it).
+          const first = document.getElementById(editing ? FIELD_ID[local ? "path" : "endpoint"] : FIELD_ID.name);
+          if (!(first instanceof HTMLInputElement)) return;
+          e.preventDefault();
+          first.focus();
+          first.setSelectionRange(first.value.length, first.value.length);
+        }}
+        onCloseAutoFocus={(e) => {
+          const back = returnFocus?.current;
+          if (back?.isConnected) {
+            e.preventDefault();
+            back.focus();
+          }
+        }}
+      >
         <form
           className="grid gap-4"
           onSubmit={(e) => {
             e.preventDefault();
-            if (!error && !busy) void save();
+            if (problem) {
+              setTouched(new Set(FIELD_ORDER));
+              document.getElementById(FIELD_ID[problem.field])?.focus();
+              return;
+            }
+            if (!busy && dirty) void save();
           }}
         >
           <DialogHeader>
@@ -168,93 +260,146 @@ export function StorageDialog({
             </DialogDescription>
           </DialogHeader>
 
-          {editing ? null : (
-            <>
-              <Tabs value={draft.type} onValueChange={(v) => set({ type: v as StorageType })}>
-                <TabsList>
-                  <TabsTrigger value="local">{STORAGE_TYPES.local}</TabsTrigger>
-                  <TabsTrigger value="s3">{STORAGE_TYPES.s3}</TabsTrigger>
-                </TabsList>
-              </Tabs>
-              {field("st-name", "Name", draft.name, (v) => set({ name: v.toLowerCase() }), {
-                placeholder: "backup-disk",
-                hint: name
-                  ? `Compose files use it as \${${storageVar(name, "…")}}.`
-                  : "Lowercase letters, digits and hyphens.",
-              })}
-            </>
-          )}
+          {/* Disabled while saving: what is shown is what is being saved. */}
+          <fieldset disabled={busy} className="grid min-w-0 gap-4">
+            {editing ? null : (
+              <>
+                <div className="grid gap-1.5">
+                  <Label id="st-type-label">Type</Label>
+                  <RadioGroup
+                    aria-labelledby="st-type-label"
+                    className="flex flex-wrap gap-x-6 gap-y-2"
+                    value={draft.type}
+                    onValueChange={(v) => set({ type: v as StorageType })}
+                  >
+                    {(Object.keys(STORAGE_TYPES) as StorageType[]).map((t) => (
+                      <div key={t} className="flex items-center gap-2">
+                        <RadioGroupItem value={t} id={`st-type-${t}`} />
+                        <Label htmlFor={`st-type-${t}`} className="font-normal">
+                          {STORAGE_TYPES[t]}
+                        </Label>
+                      </div>
+                    ))}
+                  </RadioGroup>
+                </div>
+                {field("name", "Name", draft.name, (v) => set({ name: v.toLowerCase() }, "name"), {
+                  placeholder: local ? "e.g. backup-disk" : "e.g. offsite",
+                  hint: name
+                    ? `Compose files use it as \${${storageVar(name, "…")}}.`
+                    : "Lowercase letters, digits and hyphens.",
+                })}
+              </>
+            )}
 
-          {draft.type === "local" ? (
-            field("st-path", "Folder", draft.path, (v) => set({ path: v }), {
-              placeholder: "/mnt/backup/winterflow",
-              hint: "An existing folder on the disk (under /mnt or /media), not its mount point.",
-            })
-          ) : (
-            <>
-              {field("st-endpoint", "Endpoint", draft.endpoint, (v) => set({ endpoint: v }), {
-                placeholder: "https://s3.example.com",
-              })}
-              <div className="grid gap-4 sm:grid-cols-2">
-                {field("st-region", "Region", draft.region, (v) => set({ region: v }), { placeholder: "auto" })}
-                {field("st-bucket", "Bucket", draft.bucket, (v) => set({ bucket: v }))}
-              </div>
-              {field("st-prefix", "Prefix", draft.prefix, (v) => set({ prefix: v }), {
-                placeholder: "winterflow/",
-                hint: "Optional: everything is written under this folder of the bucket.",
-              })}
-              {field("st-key", "Access key", draft.accessKeyId, (v) => set({ accessKeyId: v }))}
-              {field("st-secret", "Secret key", draft.secret, (v) => set({ secret: v }), {
-                type: "password",
-                hint: editing
-                  ? "Leave empty to keep."
-                  : "Encrypted in your browser; only this server can read it.",
-              })}
-              <label className="flex items-center gap-2 text-sm">
-                <Checkbox
-                  checked={draft.pathStyle}
-                  onCheckedChange={(v) => set({ pathStyle: v === true })}
-                  aria-label="Path-style addressing"
-                />
-                Path-style addressing (MinIO and some providers)
-              </label>
-            </>
-          )}
+            {local ? (
+              field("path", "Folder", draft.path, (v) => set({ path: v }, "path"), {
+                placeholder: "/mnt/backup/winterflow",
+                hint: "An existing folder on the disk (under /mnt or /media), not its mount point.",
+              })
+            ) : (
+              <>
+                {field(
+                  "endpoint",
+                  "Endpoint",
+                  draft.endpoint,
+                  (v) =>
+                    // An IP address or localhost has no bucket.host names:
+                    // path-style follows the endpoint until the user sets it.
+                    set(
+                      editing || pathStyleSet.current ? { endpoint: v } : { endpoint: v, pathStyle: pathStyleDefault(v) },
+                      "endpoint",
+                    ),
+                  { placeholder: "https://s3.example.com" },
+                )}
+                <div className="grid gap-4 sm:grid-cols-2">
+                  {field("region", "Region", draft.region, (v) => set({ region: v }), { placeholder: "e.g. auto" })}
+                  {field("bucket", "Bucket", draft.bucket, (v) => set({ bucket: v }, "bucket"))}
+                </div>
+                {field("prefix", "Prefix", draft.prefix, (v) => set({ prefix: v }, "prefix"), {
+                  placeholder: "e.g. winterflow/",
+                  hint: "Optional: everything is written under this folder of the bucket.",
+                })}
+                {field("accessKeyId", "Access key", draft.accessKeyId, (v) => set({ accessKeyId: v }, "accessKeyId"))}
+                {field("secret", "Secret key", draft.secret, (v) => set({ secret: v }, "secret"), {
+                  type: "password",
+                  hint: editing
+                    ? "Leave empty to keep."
+                    : "Encrypted in your browser; only this server can read it.",
+                })}
+                <label className="flex items-center gap-2 text-sm">
+                  <Checkbox
+                    checked={draft.pathStyle}
+                    onCheckedChange={(v) => {
+                      pathStyleSet.current = true;
+                      set({ pathStyle: v === true });
+                    }}
+                    aria-label="Path-style addressing"
+                  />
+                  Path-style addressing (MinIO and some providers)
+                </label>
+              </>
+            )}
 
-          {editing && users > 0 ? (
-            <p className="rounded-md bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">
-              Up to {users === 1 ? "1 running app" : `${users} running apps`} will be redeployed.
+            {editing && apps.length > 0 ? (
+              <p className="rounded-md bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">
+                {apps.length === 1
+                  ? `Saving redeploys the running app that uses it: ${apps[0]}.`
+                  : `Saving redeploys the running apps that use it: ${apps.join(", ")}.`}
+              </p>
+            ) : null}
+
+            <div className="flex min-h-9 flex-wrap items-center gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={problem !== null || probe.state === "testing"}
+                onClick={() => void test()}
+              >
+                {probe.state === "testing"
+                  ? local
+                    ? "Checking…"
+                    : "Testing…"
+                  : local
+                    ? "Check folder"
+                    : "Test connection"}
+              </Button>
+              {/* Only the result is announced, not the button's label. */}
+              <span role="status" className="flex min-w-0">
+                {probe.state === "ok" ? (
+                  <span className="flex items-center gap-1.5 text-sm text-emerald-700 dark:text-emerald-400">
+                    <CircleCheck className="size-4" /> {local ? "Folder is writable" : "Connection works"}
+                  </span>
+                ) : probe.state === "failed" ? (
+                  <span className="flex items-start gap-1.5 text-sm text-destructive [overflow-wrap:anywhere]">
+                    <CircleX className="mt-0.5 size-4 shrink-0" /> {probe.error}
+                  </span>
+                ) : null}
+              </span>
+            </div>
+          </fieldset>
+
+          {busy ? (
+            <p role="status" className="text-sm text-muted-foreground">
+              {apps.length > 0
+                ? "Testing the storage and redeploying apps that use it…"
+                : "Testing the storage and saving it…"}{" "}
+              You can close this dialog: the save goes on.
             </p>
           ) : null}
-
-          <div className="flex min-h-9 flex-wrap items-center gap-3" aria-live="polite">
-            <Button
-              type="button"
-              variant="outline"
-              disabled={error !== "" || probe.state === "testing"}
-              onClick={() => void test()}
+          {saveError ? (
+            <p
+              role="alert"
+              className="flex items-start gap-1.5 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive [overflow-wrap:anywhere]"
             >
-              {probe.state === "testing" ? "Testing…" : "Test connection"}
-            </Button>
-            {probe.state === "ok" ? (
-              <span className="flex items-center gap-1.5 text-sm text-emerald-700 dark:text-emerald-400">
-                <CircleCheck className="size-4" /> Connection works
-              </span>
-            ) : probe.state === "failed" ? (
-              <span className="flex items-start gap-1.5 text-sm text-destructive [overflow-wrap:anywhere]">
-                <CircleX className="mt-0.5 size-4 shrink-0" /> {probe.error}
-              </span>
-            ) : null}
-          </div>
-          {error && (name || draft.path || draft.endpoint) ? (
-            <p className="text-xs text-destructive">{error}</p>
+              <CircleX className="mt-0.5 size-4 shrink-0" /> {saveError}
+            </p>
           ) : null}
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => changeOpen(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={error !== "" || busy}>
+            <Button type="submit" disabled={problem !== null || busy || !dirty}>
               {busy ? "Saving…" : "Save"}
             </Button>
           </DialogFooter>

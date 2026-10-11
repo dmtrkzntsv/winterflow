@@ -102,8 +102,9 @@ describe("StoragesCard", () => {
   it("lists name, type, location and the apps using each", async () => {
     renderCard(fakeDocker());
     expect(await screen.findByText("hetzner")).toHaveClass("font-mono");
-    expect(screen.getByText("S3-compatible")).toBeInTheDocument();
-    expect(screen.getByText("Local folder")).toBeInTheDocument();
+    // Once in the Type column, once under the name on small screens.
+    expect(screen.getAllByText("S3-compatible")).toHaveLength(2);
+    expect(screen.getAllByText("Local folder")).toHaveLength(2);
     // Once in the Location column, once in the small-screen summary.
     expect(screen.getAllByText("https://fsn1.example.com/tenants/wf/")).toHaveLength(2);
     expect(screen.getAllByRole("link", { name: "Shop" })[0]).toHaveAttribute("href", "/app/a1");
@@ -146,11 +147,12 @@ describe("StoragesCard", () => {
     await user.clear(within(dialog).getByLabelText("Folder"));
     await user.type(within(dialog).getByLabelText("Folder"), "/mnt/backup/winterflow");
 
-    await user.click(within(dialog).getByRole("button", { name: "Test connection" }));
-    expect(await within(dialog).findByText("Connection works")).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Check folder" }));
+    expect(await within(dialog).findByText("Folder is writable")).toBeInTheDocument();
     expect(docker.testStorage).toHaveBeenCalledWith(expect.objectContaining({ name: "backup-disk", type: "local", path: "/mnt/backup/winterflow" }));
 
     await user.click(save);
+    // An add: the agent refuses it over an existing storage.
     expect(docker.saveStorage).toHaveBeenCalledWith(expect.objectContaining({ name: "backup-disk", path: "/mnt/backup/winterflow" }), true);
     // The answer goes straight into the list, in name order.
     const row = (await screen.findByText("backup-disk")).closest("tr");
@@ -171,7 +173,7 @@ describe("StoragesCard", () => {
 
     await user.click(await screen.findByRole("button", { name: /Add storage/ }));
     const dialog = await screen.findByRole("dialog");
-    await user.click(within(dialog).getByRole("tab", { name: "S3-compatible" }));
+    await user.click(within(dialog).getByRole("radio", { name: "S3-compatible" }));
     await user.type(within(dialog).getByLabelText("Name"), "hetzner2");
     await user.type(within(dialog).getByLabelText("Endpoint"), "http://s3.example.com");
     expect(within(dialog).getByText(/plain http is only allowed/)).toBeInTheDocument();
@@ -179,6 +181,10 @@ describe("StoragesCard", () => {
     await user.type(within(dialog).getByLabelText("Endpoint"), "https://s3.example.com");
     await user.type(within(dialog).getByLabelText("Bucket"), "tenants");
     await user.type(within(dialog).getByLabelText("Access key"), "AKIA");
+    // Not reached yet: no complaint. Left empty: it says what is missing.
+    expect(within(dialog).queryByText("Enter the secret key.")).not.toBeInTheDocument();
+    await user.click(within(dialog).getByLabelText("Secret key"));
+    await user.tab();
     expect(within(dialog).getByText("Enter the secret key.")).toBeInTheDocument();
     await user.type(within(dialog).getByLabelText("Secret key"), "S3-PLAIN");
     await user.click(within(dialog).getByRole("checkbox", { name: "Path-style addressing" }));
@@ -206,34 +212,62 @@ describe("StoragesCard", () => {
     const dialog = await screen.findByRole("dialog");
     // Name and type are the storage's identity: shown, not offered.
     expect(within(dialog).queryByLabelText("Name")).not.toBeInTheDocument();
-    expect(within(dialog).queryByRole("tab")).not.toBeInTheDocument();
-    expect(within(dialog).getByText("Up to 2 running apps will be redeployed.")).toBeInTheDocument();
+    expect(within(dialog).queryByRole("radiogroup")).not.toBeInTheDocument();
+    expect(within(dialog).getByText("Saving redeploys the running apps that use it: Shop, Blog.")).toBeInTheDocument();
     expect(within(dialog).getByText("Leave empty to keep.")).toBeInTheDocument();
     expect(within(dialog).getByLabelText("Secret key")).toHaveValue("");
     expect(within(dialog).getByLabelText("Bucket")).toHaveValue("tenants");
 
-    await user.click(within(dialog).getByRole("button", { name: "Save" }));
-    expect(docker.saveStorage).toHaveBeenCalledWith(expect.objectContaining({ name: "hetzner", secret: "", bucket: "tenants" }), false);
+    // Nothing changed yet: nothing to save (nor to redeploy).
+    const save = within(dialog).getByRole("button", { name: "Save" });
+    expect(save).toBeDisabled();
+    await user.type(within(dialog).getByLabelText("Prefix"), "x");
+    await user.click(save);
+    expect(docker.saveStorage).toHaveBeenCalledWith(expect.objectContaining({ name: "hetzner", secret: "", bucket: "tenants", prefix: "wf/x" }), false);
+    // The warning asks for action: it stays until dismissed.
     await waitFor(() =>
       expect(toastWarning).toHaveBeenCalledWith("Storage saved, but not every app was redeployed", {
         description: "Redeployed Shop.\nBlog has undeployed changes",
+        duration: Infinity,
+        closeButton: true,
       }),
     );
   });
 
-  it("reports a refused save and keeps the dialog open", async () => {
+  it("reports a refused save inside the dialog, which stays open", async () => {
     const user = setupUser();
     const docker = fakeDocker({ saveStorage: vi.fn().mockRejectedValue(new Error("the connection test failed, nothing was saved: …")) });
     renderCard(docker);
     await user.click(await screen.findByRole("button", { name: "Edit storage disk" }));
     const dialog = await screen.findByRole("dialog");
+    await user.type(within(dialog).getByLabelText("Folder"), "2");
     await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    // The reason stays next to the form; the toast only says it failed.
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("the connection test failed, nothing was saved: …");
+    expect(toastError).toHaveBeenCalledWith("Couldn't save storage");
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    // Any change makes it stale.
+    await user.type(within(dialog).getByLabelText("Folder"), "3");
+    expect(within(dialog).queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("puts a refused add's reason in the toast once the dialog is closed", async () => {
+    const user = setupUser();
+    let fail: (e: Error) => void = () => {};
+    const docker = fakeDocker({ saveStorage: vi.fn(() => new Promise<never>((_, reject) => (fail = reject))) });
+    renderCard(docker);
+    await user.click(await screen.findByRole("button", { name: /Add storage/ }));
+    const dialog = await screen.findByRole("dialog");
+    await user.type(within(dialog).getByLabelText("Name"), "usb");
+    await user.type(within(dialog).getByLabelText("Folder"), "/mnt/usb2");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    fail(new Error("a storage named usb already exists on this server"));
     await waitFor(() =>
-      expect(toastError).toHaveBeenCalledWith("Couldn't save storage", {
-        description: "the connection test failed, nothing was saved: …",
+      expect(toastError).toHaveBeenCalledWith("Couldn't add storage", {
+        description: "a storage named usb already exists on this server",
       }),
     );
-    expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
   it("counts one running app in the singular", async () => {
@@ -246,7 +280,7 @@ describe("StoragesCard", () => {
         onSaved={() => {}}
       />,
     );
-    expect(await screen.findByText("Up to 1 running app will be redeployed.")).toBeInTheDocument();
+    expect(await screen.findByText("Saving redeploys the running app that uses it: a1.")).toBeInTheDocument();
   });
 
   it("wipes a typed secret when the dialog closes", async () => {
@@ -308,7 +342,8 @@ describe("StoragesCard", () => {
       <StorageDialog docker={docker} open={open} edit={STORAGES[1]} onOpenChange={onOpenChange} onSaved={onSaved} />
     );
     const { rerender } = render(dialog(true));
-    await user.click(await screen.findByRole("button", { name: "Save" }));
+    await user.type(await screen.findByLabelText("Folder"), "2");
+    await user.click(screen.getByRole("button", { name: "Save" }));
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(onOpenChange).toHaveBeenCalledTimes(1);
     rerender(dialog(false));
@@ -329,19 +364,19 @@ describe("StoragesCard", () => {
 
     await user.click(await screen.findByRole("button", { name: "Edit storage disk" }));
     const dialog = await screen.findByRole("dialog");
-    await user.click(within(dialog).getByRole("button", { name: "Test connection" }));
+    await user.click(within(dialog).getByRole("button", { name: "Check folder" }));
     // Editing a field makes the running test stale; test again.
     await user.clear(within(dialog).getByLabelText("Folder"));
     await user.type(within(dialog).getByLabelText("Folder"), "/mnt/usb3");
-    await user.click(within(dialog).getByRole("button", { name: "Test connection" }));
+    await user.click(within(dialog).getByRole("button", { name: "Check folder" }));
     expect(answers).toHaveLength(2);
 
     answers[1]({ ok: true });
-    expect(await within(dialog).findByText("Connection works")).toBeInTheDocument();
+    expect(await within(dialog).findByText("Folder is writable")).toBeInTheDocument();
     answers[0]({ ok: false, error: "the folder /mnt/usb does not exist" });
     await new Promise((r) => setTimeout(r, 0));
     expect(within(dialog).queryByText("the folder /mnt/usb does not exist")).not.toBeInTheDocument();
-    expect(within(dialog).getByText("Connection works")).toBeInTheDocument();
+    expect(within(dialog).getByText("Folder is writable")).toBeInTheDocument();
   });
 
   it("blocks removing a storage in use and confirms otherwise", async () => {
@@ -351,10 +386,10 @@ describe("StoragesCard", () => {
 
     const inUse = await screen.findByRole("button", { name: "Remove storage hetzner" });
     expect(inUse).toHaveAttribute("aria-disabled", "true");
-    expect(inUse).toHaveAttribute("title", "Used by 2 apps: remove its WF_STORAGE_ variables first");
+    expect(inUse).toHaveAttribute("title", "Used by Shop and Blog — remove the references first");
     // The reason reaches keyboard and screen reader users too: the button
     // stays focusable and describes itself.
-    expect(inUse).toHaveAccessibleDescription("Used by 2 apps: remove its WF_STORAGE_ variables first");
+    expect(inUse).toHaveAccessibleDescription("Used by Shop and Blog — remove the references first");
     // The reason is only the description's target, never read on its own
     // while browsing (the button's description already says it).
     const reason = document.getElementById(inUse.getAttribute("aria-describedby") ?? "");
@@ -362,9 +397,16 @@ describe("StoragesCard", () => {
     expect(reason).not.toBeVisible();
     inUse.focus();
     expect(inUse).toHaveFocus();
+    // A click, a tap or Enter says why on screen, and removes nothing.
     await user.click(inUse);
+    expect(toastWarning).toHaveBeenLastCalledWith("Can't remove hetzner", {
+      description: "Used by Shop and Blog — remove the references first.",
+    });
+    toastWarning.mockReset();
     await user.keyboard("{Enter}");
+    expect(toastWarning).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(docker.deleteStorage).not.toHaveBeenCalled();
     const free = screen.getByRole("button", { name: "Remove storage disk" });
     expect(free).not.toHaveAttribute("aria-disabled");
     expect(free).not.toHaveAttribute("aria-describedby");
@@ -394,5 +436,166 @@ describe("StoragesCard", () => {
       expect(toastError).toHaveBeenCalledWith("Couldn't remove storage", { description: "disk is used by Shop" }),
     );
     expect(screen.getByText("disk")).toBeInTheDocument();
+  });
+});
+
+describe("StorageDialog form", () => {
+  beforeEach(() => {
+    toastError.mockReset();
+    toastSuccess.mockReset();
+    toastWarning.mockReset();
+  });
+
+  const openAdd = async (user: ReturnType<typeof setupUser>, docker = fakeDocker()) => {
+    renderCard(docker);
+    await user.click(await screen.findByRole("button", { name: /Add storage/ }));
+    return screen.findByRole("dialog");
+  };
+
+  it("refuses to add a name the server already has, at the name", async () => {
+    const user = setupUser();
+    const docker = fakeDocker();
+    const dialog = await openAdd(user, docker);
+    const name = within(dialog).getByLabelText("Name");
+    await user.type(name, "disk");
+    await user.type(within(dialog).getByLabelText("Folder"), "/mnt/other");
+    expect(name).toHaveAttribute("aria-invalid", "true");
+    expect(name).toHaveAccessibleDescription(expect.stringContaining("A storage named disk already exists. Edit it instead."));
+    expect(within(dialog).getByRole("button", { name: "Save" })).toBeDisabled();
+    await user.type(name, "2");
+    expect(name).not.toHaveAttribute("aria-invalid");
+    expect(within(dialog).getByRole("button", { name: "Save" })).toBeEnabled();
+  });
+
+  it("shows each problem under its field, and only once the user got there", async () => {
+    const user = setupUser();
+    const dialog = await openAdd(user);
+    const name = within(dialog).getByLabelText("Name");
+    const folder = within(dialog).getByLabelText("Folder");
+    // Focus starts on the name.
+    expect(name).toHaveFocus();
+    await user.type(name, "usb");
+    expect(within(dialog).queryByText(/absolute folder path/)).not.toBeInTheDocument();
+    expect(folder).not.toHaveAttribute("aria-invalid");
+
+    await user.type(folder, "relative");
+    const error = within(dialog).getByText("Use an absolute folder path, like /mnt/backup/winterflow.");
+    expect(folder).toHaveAttribute("aria-invalid", "true");
+    expect(folder.getAttribute("aria-describedby")?.split(" ")).toContain(error.id);
+    // Right under the field, not at the bottom of the form.
+    expect(folder.parentElement).toContainElement(error);
+  });
+
+  it("labels the type choice and offers type-appropriate examples", async () => {
+    const user = setupUser();
+    const dialog = await openAdd(user);
+    const type = within(dialog).getByRole("radiogroup", { name: "Type" });
+    expect(within(type).getByRole("radio", { name: "Local folder" })).toBeChecked();
+    expect(within(dialog).getByLabelText("Name")).toHaveAttribute("placeholder", "e.g. backup-disk");
+    await user.click(within(type).getByRole("radio", { name: "S3-compatible" }));
+    expect(within(dialog).getByLabelText("Name")).toHaveAttribute("placeholder", "e.g. offsite");
+    expect(within(dialog).getByLabelText("Prefix")).toHaveAttribute("placeholder", "e.g. winterflow/");
+    expect(within(dialog).getByLabelText("Region")).toHaveAttribute("placeholder", "e.g. auto");
+    expect(within(dialog).getByRole("button", { name: "Test connection" })).toBeInTheDocument();
+  });
+
+  it("turns path-style on for an IP or localhost endpoint until the user sets it", async () => {
+    const user = setupUser();
+    const dialog = await openAdd(user);
+    await user.click(within(dialog).getByRole("radio", { name: "S3-compatible" }));
+    const endpoint = within(dialog).getByLabelText("Endpoint");
+    const pathStyle = within(dialog).getByRole("checkbox", { name: "Path-style addressing" });
+    await user.type(endpoint, "http://127.0.0.1:9000");
+    expect(pathStyle).toBeChecked();
+    await user.clear(endpoint);
+    await user.type(endpoint, "https://s3.example.com");
+    expect(pathStyle).not.toBeChecked();
+    // The user's choice wins from then on.
+    await user.click(pathStyle);
+    await user.clear(endpoint);
+    await user.type(endpoint, "https://s3.other.example.com");
+    expect(pathStyle).toBeChecked();
+  });
+
+  it("announces only the test result, not the button", async () => {
+    const user = setupUser();
+    const dialog = await openAdd(user);
+    await user.type(within(dialog).getByLabelText("Name"), "usb");
+    await user.type(within(dialog).getByLabelText("Folder"), "/mnt/usb");
+    const check = within(dialog).getByRole("button", { name: "Check folder" });
+    const status = within(dialog).getByRole("status");
+    expect(status).not.toContainElement(check);
+    await user.click(check);
+    await waitFor(() => expect(status).toHaveTextContent("Folder is writable"));
+  });
+
+  it("locks the form and says what is going on while saving", async () => {
+    const user = setupUser();
+    let finish: (v: ReturnType<typeof saved>) => void = () => {};
+    const docker = fakeDocker({
+      saveStorage: vi.fn(() => new Promise<ReturnType<typeof saved>>((resolve) => (finish = resolve))),
+    });
+    renderCard(docker);
+    await user.click(await screen.findByRole("button", { name: "Edit storage hetzner" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.type(within(dialog).getByLabelText("Prefix"), "x");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    expect(within(dialog).getByText(/Testing the storage and redeploying apps that use it…/)).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("Prefix")).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Test connection" })).toBeDisabled();
+    // Closing stays possible: the save goes on.
+    expect(within(dialog).getByRole("button", { name: "Cancel" })).toBeEnabled();
+    finish(saved(draftFor("hetzner")));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("puts the caret at the end of an edit's first field without selecting it", async () => {
+    const user = setupUser();
+    renderCard(fakeDocker());
+    await user.click(await screen.findByRole("button", { name: "Edit storage disk" }));
+    const folder = (await screen.findByLabelText("Folder")) as HTMLInputElement;
+    expect(folder).toHaveFocus();
+    expect(folder.selectionStart).toBe("/mnt/usb".length);
+    expect(folder.selectionEnd).toBe("/mnt/usb".length);
+  });
+
+  it("returns focus to the button that opened a dialog", async () => {
+    const user = setupUser();
+    renderCard(fakeDocker());
+    const add = await screen.findByRole("button", { name: /Add storage/ });
+    await user.click(add);
+    await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(add).toHaveFocus());
+
+    const edit = screen.getByRole("button", { name: "Edit storage disk" });
+    await user.click(edit);
+    await screen.findByRole("dialog");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(edit).toHaveFocus());
+
+    // A removed storage takes its button along: focus goes to Add storage.
+    await user.click(screen.getByRole("button", { name: "Remove storage disk" }));
+    const confirm = await screen.findByRole("alertdialog");
+    expect(within(confirm).getByText("disk")).toHaveClass("[overflow-wrap:anywhere]");
+    await user.click(within(confirm).getByRole("button", { name: "Remove storage" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Remove storage disk" })).not.toBeInTheDocument());
+    expect(add).toHaveFocus();
+  });
+});
+
+describe("StoragesCard layout", () => {
+  it("gives the name the width on phones and keeps chips whole", async () => {
+    renderCard(fakeDocker());
+    const name = await screen.findByText("hetzner");
+    // The Type column is hidden below sm; its badge moves under the name.
+    expect(screen.getByRole("columnheader", { name: "Type" })).toHaveClass("hidden", "sm:table-cell");
+    expect(within(name.closest("td")!).getByText("S3-compatible").parentElement).toHaveClass("sm:hidden");
+    expect(screen.getAllByRole("link", { name: "Shop" })[0].closest(".whitespace-nowrap")).not.toBeNull();
+  });
+
+  it("keeps the header actions beside a shrinking description", async () => {
+    renderCard(fakeDocker());
+    const title = await screen.findByText("Storages");
+    expect(title.parentElement).toHaveClass("flex-1", "basis-72", "min-w-0");
   });
 });

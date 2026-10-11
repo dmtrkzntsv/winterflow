@@ -94,8 +94,12 @@ func (r *Repo) DeleteApp(ctx context.Context, appID string) error {
 }
 
 // deleteApp drops the app's samples, then the row; ctx must carry the
-// caller's transaction.
+// caller's transaction. An empty id is a no-op: app_id = '' marks the
+// servers' own metric rows.
 func (r *Repo) deleteApp(ctx context.Context, appID string) error {
+	if appID == "" {
+		return nil
+	}
 	if err := r.q.DeleteMetricSamplesByApp(ctx, r.tx.Querier(ctx), appID); err != nil {
 		return err
 	}

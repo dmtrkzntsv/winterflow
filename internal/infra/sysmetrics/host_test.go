@@ -212,3 +212,18 @@ func TestParseLoadavgShort(t *testing.T) {
 		t.Fatal("short loadavg accepted")
 	}
 }
+
+// md RAID arrays repeat their members' I/O; nbd and optical drives are not
+// local disks. None of them may count towards host disk I/O.
+func TestVirtualDisk(t *testing.T) {
+	for _, n := range []string{"loop0", "ram1", "dm-0", "zram0", "md0", "md127", "nbd3", "sr0"} {
+		if !virtualDisk(n) {
+			t.Errorf("%s counted as a physical disk", n)
+		}
+	}
+	for _, n := range []string{"sda", "nvme0n1", "mmcblk0", "vda", "xvda"} {
+		if virtualDisk(n) {
+			t.Errorf("%s excluded", n)
+		}
+	}
+}

@@ -256,3 +256,17 @@ func TestDeleteAppRemovesItsMetricSamples(t *testing.T) {
 		t.Fatalf("reconciled-away app keeps %s samples", got)
 	}
 }
+
+// An empty app id addresses no app: it must not reach the samples delete,
+// where app_id = '' matches every server's own rows.
+func TestDeleteAppWithEmptyIDKeepsServerSamples(t *testing.T) {
+	repo, d := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	seedSample(t, d, srv1, "")
+	if err := repo.DeleteApp(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+	if got := samples(t, d, ""); got != "1" {
+		t.Fatalf("server samples after DeleteApp(\"\") = %s, want 1", got)
+	}
+}

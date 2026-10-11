@@ -131,9 +131,10 @@ func parseDiskstats(b []byte, whole func(name string) bool) (read, written uint6
 	return read, written
 }
 
-// virtualDisk reports device names that are never physical disks.
+// virtualDisk reports device names that are never physical disks (md RAID
+// arrays would double-count their members' I/O).
 func virtualDisk(name string) bool {
-	for _, p := range []string{"loop", "ram", "dm-", "zram"} {
+	for _, p := range []string{"loop", "ram", "dm-", "zram", "md", "nbd", "sr"} {
 		if strings.HasPrefix(name, p) {
 			return true
 		}

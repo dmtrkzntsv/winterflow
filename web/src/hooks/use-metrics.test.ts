@@ -70,4 +70,77 @@ describe("metrics hooks", () => {
     expect(fetchMock.mock.calls.length).toBe(before);
     visibility.mockRestore();
   });
+
+  it("ignores a late response from the previous path and resets state", async () => {
+    let releaseOld: (r: Response) => void = () => {};
+    fetchMock.mockImplementationOnce(
+      () => new Promise<Response>((resolve) => (releaseOld = resolve)),
+    );
+    const { result, rerender } = renderHook(({ range }) => useServerMetrics("srv-1", range), {
+      initialProps: { range: "1h" as "1h" | "24h" },
+    });
+    expect(result.current.loading).toBe(true);
+    rerender({ range: "24h" });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.data?.interval_seconds).toBe(60);
+
+    await act(async () => {
+      releaseOld(
+        new Response(JSON.stringify({ data: { interval_seconds: 999, points: [], apps: [] } })),
+      );
+    });
+    expect(result.current.data?.interval_seconds).toBe(60);
+
+    // Switching path clears old data and starts loading again.
+    let releaseNext: (r: Response) => void = () => {};
+    fetchMock.mockImplementationOnce(
+      () => new Promise<Response>((resolve) => (releaseNext = resolve)),
+    );
+    rerender({ range: "1h" });
+    expect(result.current.data).toBeNull();
+    expect(result.current.loading).toBe(true);
+    releaseNext(new Response(JSON.stringify({ data: { interval_seconds: 1, points: [], apps: [] } })));
+  });
+
+  it("clears state when the path becomes null", async () => {
+    const { result, rerender } = renderHook(({ app }) => useAppMetrics("srv-1", app, "1h"), {
+      initialProps: { app: "app-1" as string | null },
+    });
+    await waitFor(() => expect(result.current.data).not.toBeNull());
+    rerender({ app: null });
+    expect(result.current.data).toBeNull();
+    expect(result.current.loading).toBe(false);
+    expect(result.current.error).toBeNull();
+  });
+
+  it("cleans up on unmount and does not set state afterwards", async () => {
+    const removeSpy = vi.spyOn(document, "removeEventListener");
+    const clearSpy = vi.spyOn(window, "clearInterval");
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    let release: (r: Response) => void = () => {};
+    fetchMock.mockImplementationOnce(() => new Promise<Response>((resolve) => (release = resolve)));
+    const { unmount } = renderHook(() => useMetricsOverview());
+    unmount();
+    expect(removeSpy).toHaveBeenCalledWith("visibilitychange", expect.any(Function));
+    expect(clearSpy).toHaveBeenCalled();
+    release(new Response(JSON.stringify({ data: { servers: null } })));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(errorSpy).not.toHaveBeenCalled();
+    removeSpy.mockRestore();
+    clearSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
+
+  it("normalizes null slices to arrays", async () => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          data: { servers: [{ server_id: "s", sparkline: null, liveness: "unknown", latest: null }] },
+        }),
+      ),
+    );
+    const { result } = renderHook(() => useMetricsOverview());
+    await waitFor(() => expect(result.current.data).not.toBeNull());
+    expect(result.current.data?.servers?.[0].sparkline).toEqual([]);
+  });
 });

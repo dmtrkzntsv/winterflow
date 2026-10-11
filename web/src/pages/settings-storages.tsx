@@ -155,7 +155,7 @@ export function StoragesCard({ docker }: { docker: Docker }) {
           </div>
         ) : items.length === 0 ? (
           <p className="rounded-lg border border-dashed px-4 py-10 text-center text-sm text-muted-foreground">
-            No storages yet. Add a folder, such as a USB disk under <code className="font-mono">/mnt</code>, or
+            No storages yet. Add a folder, such as one on a USB disk under <code className="font-mono">/mnt</code>, or
             an S3 bucket.
           </p>
         ) : (
@@ -234,7 +234,7 @@ export function StoragesCard({ docker }: { docker: Docker }) {
                         <Trash2 className="size-4" />
                       </Button>
                       {blocked ? (
-                        <span id={`storage-in-use-${s.name}`} className="sr-only">
+                        <span id={`storage-in-use-${s.name}`} hidden>
                           {blocked}
                         </span>
                       ) : null}

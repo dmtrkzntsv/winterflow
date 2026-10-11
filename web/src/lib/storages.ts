@@ -148,7 +148,7 @@ export function draftError(d: StorageDraft, editing: boolean): string {
   if (nameErr) return nameErr;
   if (d.type === "local") {
     const p = d.path.trim();
-    if (!p.startsWith("/")) return "Use an absolute folder path, like /mnt/backup.";
+    if (!p.startsWith("/")) return "Use an absolute folder path, like /mnt/backup/winterflow.";
     if (hasControl(p)) return "The folder path cannot contain control characters (newline, tab, …).";
     if (/^\/+$/.test(p)) return "The folder cannot be / itself.";
     if (byteLength(p) > MAX_PATH_BYTES) return `The folder path can be at most ${MAX_PATH_BYTES} bytes long.`;

@@ -187,8 +187,8 @@ export function StorageDialog({
 
           {draft.type === "local" ? (
             field("st-path", "Folder", draft.path, (v) => set({ path: v }), {
-              placeholder: "/mnt/backup",
-              hint: "An existing folder, usually under /mnt or /media.",
+              placeholder: "/mnt/backup/winterflow",
+              hint: "An existing folder on the disk (under /mnt or /media), not its mount point.",
             })
           ) : (
             <>

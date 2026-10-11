@@ -144,14 +144,14 @@ describe("StoragesCard", () => {
     await user.type(within(dialog).getByLabelText("Folder"), "backups");
     expect(within(dialog).getByText(/absolute folder path/)).toBeInTheDocument();
     await user.clear(within(dialog).getByLabelText("Folder"));
-    await user.type(within(dialog).getByLabelText("Folder"), "/mnt/backup");
+    await user.type(within(dialog).getByLabelText("Folder"), "/mnt/backup/winterflow");
 
     await user.click(within(dialog).getByRole("button", { name: "Test connection" }));
     expect(await within(dialog).findByText("Connection works")).toBeInTheDocument();
-    expect(docker.testStorage).toHaveBeenCalledWith(expect.objectContaining({ name: "backup-disk", type: "local", path: "/mnt/backup" }));
+    expect(docker.testStorage).toHaveBeenCalledWith(expect.objectContaining({ name: "backup-disk", type: "local", path: "/mnt/backup/winterflow" }));
 
     await user.click(save);
-    expect(docker.saveStorage).toHaveBeenCalledWith(expect.objectContaining({ name: "backup-disk", path: "/mnt/backup" }));
+    expect(docker.saveStorage).toHaveBeenCalledWith(expect.objectContaining({ name: "backup-disk", path: "/mnt/backup/winterflow" }));
     // The answer goes straight into the list, in name order.
     const row = (await screen.findByText("backup-disk")).closest("tr");
     expect(row?.nextElementSibling).toHaveTextContent("disk");
@@ -355,6 +355,11 @@ describe("StoragesCard", () => {
     // The reason reaches keyboard and screen reader users too: the button
     // stays focusable and describes itself.
     expect(inUse).toHaveAccessibleDescription("Used by 2 apps: remove its WF_STORAGE_ variables first");
+    // The reason is only the description's target, never read on its own
+    // while browsing (the button's description already says it).
+    const reason = document.getElementById(inUse.getAttribute("aria-describedby") ?? "");
+    expect(reason).not.toBeNull();
+    expect(reason).not.toBeVisible();
     inUse.focus();
     expect(inUse).toHaveFocus();
     await user.click(inUse);

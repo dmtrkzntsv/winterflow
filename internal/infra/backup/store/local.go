@@ -35,9 +35,11 @@ func openLocal(root string) (*local, error) {
 	return &local{root: root}, nil
 }
 
-// checkRoot re-checks the root on every call: a disk unplugged after Open
-// leaves its (empty) mount point behind, and writing on would fill the
-// system disk.
+// checkRoot re-checks the root on every call, so writes fail once the folder
+// itself is gone (a folder on a disk that was unplugged after Open) instead
+// of landing elsewhere. It cannot tell an empty leftover mount point from a
+// real folder: that is why docs/recipes/backup-storage.md tells users to
+// register a folder created inside the mounted disk, never the mount point.
 func (l *local) checkRoot() error {
 	info, err := os.Stat(l.root)
 	if err != nil {

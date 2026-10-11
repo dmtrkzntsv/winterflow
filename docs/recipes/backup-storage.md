@@ -24,9 +24,16 @@ To edit a storage without re-entering the secret, leave the secret empty.
 
 ## A local folder
 
-The folder must already exist: winterflow never creates it, so a USB disk
-that isn't mounted fails the test instead of filling up the system disk.
-It also must not be inside winterflow's own data folder.
+The folder must already exist: winterflow never creates it. It also must
+not be inside winterflow's own data folder.
+
+**Register a folder inside the mounted disk, never the mount point
+itself.** Create it after mounting, e.g. `/mnt/usb/winterflow` for a disk
+mounted on `/mnt/usb`. When the disk isn't mounted (after a reboot, or
+unplugged), the mount point is still there as an empty folder on the system
+disk, and every check winterflow makes accepts it: backups and apps would
+then quietly fill the system disk. A folder created on the disk disappears
+with it, so the test, deploys and writes fail instead.
 
 The installer's systemd unit runs winterflow with `ProtectSystem=strict`:
 the service can write only its data folder, the Docker socket, and
@@ -40,13 +47,16 @@ sudo mkdir -p /mnt/backup/winterflow
 sudo chown winterflow:winterflow /mnt/backup/winterflow
 ```
 
-Then add `/mnt/backup/winterflow` as a local storage. If the test says the
+The last two lines run with the disk mounted, so `winterflow` is a folder
+on the disk. Then add `/mnt/backup/winterflow` (not `/mnt/backup`) as a
+local storage. If the test says the
 folder isn't writable by the user winterflow runs as, fix the ownership as
 above.
 
 ### A folder outside /mnt and /media
 
-To use another folder, say `/srv/backups`, allow it with a systemd drop-in:
+To use another folder, say `/srv/backups/winterflow` on a disk mounted on
+`/srv/backups`, allow the mount with a systemd drop-in:
 
 ```sh
 sudo systemctl edit winterflow

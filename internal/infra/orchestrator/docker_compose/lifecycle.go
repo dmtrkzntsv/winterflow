@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"winterflow/internal/domain/backup/recipe"
 	"winterflow/internal/domain/command"
 	"winterflow/pkg/fsutil"
 )
@@ -99,10 +100,12 @@ func (r *Repository) UpdateApp(ctx context.Context, appID string) error {
 
 // DeleteResult is the outcome of DeleteApp. Warnings are cleanup steps that
 // failed (never an error); VolumesDeleted reports whether the volume sweep
-// actually ran.
+// actually ran, BackupsDeleted whether the backups were deleted (not just
+// marked).
 type DeleteResult struct {
 	Warnings       []string
 	VolumesDeleted bool
+	BackupsDeleted bool
 }
 
 // DeleteApp stops the app's containers and removes its folder and symlink.
@@ -111,18 +114,28 @@ type DeleteResult struct {
 // failures come back as warnings, never as an error. The sweep is skipped for
 // an app this agent does not have, so a delete request cannot be used to
 // destroy orphan volumes an admin deliberately kept (those go through the
-// volume registry).
+// volume registry). The app's backups, in every storage its backups use,
+// are deleted with deleteBackups, else marked as a deleted app's (the daily
+// sweep removes them past BACKUP_RETENTION_DAYS); failures there are
+// warnings too.
 //
 // A restore of the app that is running is waited for (it is being cancelled:
 // see ErrAppDeleted), for at most restoreWaitForDelete and ctx: the delete
 // never runs beside the helper swapping the app's data. If the restore is
 // still running then, the delete fails with ErrRestoring and can be retried.
-func (r *Repository) DeleteApp(ctx context.Context, appID string, deleteVolumes bool) (DeleteResult, error) {
+func (r *Repository) DeleteApp(ctx context.Context, appID string, deleteVolumes, deleteBackups bool) (DeleteResult, error) {
 	if err := r.waitForRestore(ctx, appID); err != nil {
 		return DeleteResult{}, err
 	}
 	// Decided before anything is removed: sweep only an app this agent has.
-	res := DeleteResult{VolumesDeleted: deleteVolumes && r.appExists(appID)}
+	exists := r.appExists(appID)
+	res := DeleteResult{VolumesDeleted: deleteVolumes && exists, BackupsDeleted: deleteBackups && exists}
+	var backupStorages []string
+	appName := appID
+	if exists {
+		backupStorages = r.appBackupStorages(appID)
+		appName = r.appName(r.appDataDir(appID), appID)
+	}
 	downErr := r.composeDown(ctx, appID, deleteVolumes)
 	if downErr != nil {
 		// Best-effort stop; continue with removal so a broken deployment can
@@ -139,6 +152,7 @@ func (r *Repository) DeleteApp(ctx context.Context, appID string, deleteVolumes 
 		return res, fmt.Errorf("remove app dir: %w", err)
 	}
 	r.forgetApp(appID)
+	res.Warnings = append(res.Warnings, r.settleBackups(ctx, appID, appName, backupStorages, deleteBackups)...)
 	return res, nil
 }
 
@@ -228,6 +242,15 @@ func (r *Repository) GetApp(ctx context.Context, appID string) (command.GetAppRe
 	if refs, err := r.storageRefs(dir, files); err == nil {
 		resp.StorageVariables = storageVariables(refs, cfg.backups)
 	}
+	// Where a backup added in the UI can point, and the server's ceiling
+	// (the UI notes retention tiers that reach past it).
+	if contents, err := composeContents(dir, files); err == nil {
+		if comp, err := recipe.ParseCompose(contents...); err == nil && !comp.Unparsed {
+			t := comp.Targets()
+			resp.BackupTargets = &t
+		}
+	}
+	resp.RetentionDays = r.cfg.GetBackupRetentionDays()
 	return resp, nil
 }
 

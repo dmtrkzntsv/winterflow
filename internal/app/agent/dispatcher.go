@@ -161,9 +161,10 @@ func (d *Dispatcher) newHandlers() map[command.Type]handlerFunc {
 		}),
 		command.TypeAppDelete: handle(d, func(ctx context.Context, in command.DeleteAppRequest) (command.DeleteAppResponse, error) {
 			d.backups.Forget(in.AppID) // stop a backup of it before its volumes go
-			res, err := d.orch.DeleteApp(ctx, in.AppID, in.DeleteVolumes)
+			res, err := d.orch.DeleteApp(ctx, in.AppID, in.DeleteVolumes, in.DeleteBackups)
 			d.backups.Forget(in.AppID) // and drop what a reload meanwhile read back
-			resp := command.DeleteAppResponse{AppID: in.AppID, Warnings: res.Warnings, VolumesDeleted: res.VolumesDeleted}
+			resp := command.DeleteAppResponse{AppID: in.AppID, Warnings: res.Warnings,
+				VolumesDeleted: res.VolumesDeleted, BackupsDeleted: res.BackupsDeleted}
 			if err != nil {
 				// handle drops the body on error, so fold the warnings in.
 				if len(res.Warnings) > 0 {

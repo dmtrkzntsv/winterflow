@@ -530,7 +530,7 @@ func TestRestoreRefusesLifecycleOperations(t *testing.T) {
 		_, _, saveErr := rr.SaveAppResult(ctx, command.AppPayload{AppID: "app-1"}, true)
 		_, rollbackErr := rr.Rollback(ctx, "app-1", "abc")
 		_, backupsErr := rr.UpdateBackups(ctx, "app-1", nil)
-		_, deleteErr := rr.DeleteApp(ctx, "app-1", false)
+		_, deleteErr := rr.DeleteApp(ctx, "app-1", false, false)
 		inside = map[string]error{
 			"start": rr.StartApp(ctx, "app-1"), "stop": rr.StopApp(ctx, "app-1"), "restart": rr.RestartApp(ctx, "app-1"),
 			"update": rr.UpdateApp(ctx, "app-1"), "save": saveErr, "rollback": rollbackErr,
@@ -582,7 +582,7 @@ func TestDeleteWaitsForTheRestore(t *testing.T) {
 	<-started
 	deleted := make(chan error, 1)
 	go func() {
-		_, err := rr.DeleteApp(context.Background(), "app-1", false)
+		_, err := rr.DeleteApp(context.Background(), "app-1", false, false)
 		deleted <- err
 	}()
 	select {

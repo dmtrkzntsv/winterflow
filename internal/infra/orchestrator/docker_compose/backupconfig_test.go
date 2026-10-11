@@ -446,7 +446,7 @@ func TestComposeVerbsCarryProfiles(t *testing.T) {
 	if err := r.StopApp(ctx, "app-1"); err != nil || !strings.HasSuffix(last(), "--profile * down --remove-orphans") {
 		t.Fatalf("stop: %v %s", err, last())
 	}
-	if _, err := r.DeleteApp(ctx, "app-1", true); err != nil {
+	if _, err := r.DeleteApp(ctx, "app-1", true, false); err != nil {
 		t.Fatal(err)
 	}
 	downs := 0

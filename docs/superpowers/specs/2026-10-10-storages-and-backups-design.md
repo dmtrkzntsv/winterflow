@@ -213,14 +213,19 @@ Rules:
 x-winterflow:
   backups:
     - name: database          # backup name: ^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$, unique in the app
-      type: sqlite            # sqlite | custom  (postgres, mysql, volume: later)
-      volume: data            # sqlite: a key under top-level `volumes:` of this compose file
+      type: sqlite            # sqlite | volume | custom  (postgres, mysql: later)
+      volume: data            # sqlite, volume: a key under top-level `volumes:` of this compose file
       path: twillingate.db    # sqlite: relative path inside the volume (safeRel)
-      every: 1h               # sqlite: Go duration >= 5m, or `manual` (no schedule); default 1h
-      keep:                   # sqlite: default shown
+      every: 1h               # sqlite, volume: Go duration >= 5m, or `manual` (no schedule); default 1h
+      keep:                   # sqlite, volume: default shown
         recent: 24h           #   keep every copy younger than this
         daily: 14             #   then the newest copy of each of the last N UTC days
         monthly: 6            #   then the newest copy of each of the last N UTC months
+    - name: uploads
+      type: volume            # the whole volume, as an archive
+      volume: uploads
+      every: 24h
+      exclude: [cache/, "*.tmp"]   # volume: optional, relative glob patterns
     - name: replica
       type: custom
       service: litestream     # custom: a service of this compose file
@@ -324,7 +329,7 @@ duration of one run.
 - **On start** the agent removes leftover helpers with one call:
   `docker rm -f $(docker ps -aq --filter label=winterflow.role=backup-helper)`.
 
-### One run (type `sqlite`)
+### One run (types `sqlite` and `volume`)
 
 1. **Start the helper:**
 
@@ -334,6 +339,9 @@ duration of one run.
      -v <docker volume>:/data -v <agent executable>:/wf:ro
      alpine:3.20 /wf backup dump sqlite /data/<path> --since <fingerprint>
    ```
+
+   For `volume` the mount is read-only (`-v <docker volume>:/data:ro`) and the
+   command is `/wf backup dump volume /data --exclude <pattern>… --since <fingerprint>`.
 
    - The image is the constant `alpine:3.20`, hard-coded.
    - The agent executable is `os.Executable()` with symlinks resolved. It is
@@ -352,10 +360,22 @@ duration of one run.
      non-empty.
    - **Output:** write the snapshot to stdout, and the new fingerprint plus raw
      size as JSON on stderr's last line.
+
+   For `volume`, the helper:
+   - **Unchanged check:** walks the volume once. The fingerprint is a hash of
+     every entry's relative path, size, mode and mtime. If it matches
+     `--since`, exit 3.
+   - **Archive:** writes a tar stream to stdout using Go's `archive/tar`.
+     The stream records uid, gid, mode, mtime and symlinks (as links, never
+     followed). Sockets, devices and FIFOs are skipped with a note, and
+     `exclude` patterns are applied.
+   - **No pause:** files are archived while the app runs. A file being
+     written at that moment may be captured half-written. That's documented
+     as fine for uploads and media; databases belong in their own type.
 3. **The agent** reads stdout and compresses it with zstd
    (`github.com/klauspost/compress`, BSD/Apache) while computing its sha256.
    It streams the result to the storage as
-   `<prefix><app-id>/<backup name>/<UTC yyyymmddThhmmssZ>-<kind>.db.zst`, then
+   `<prefix><app-id>/<backup name>/<UTC yyyymmddThhmmssZ>-<kind>.<db|tar>.zst`, then
    writes the manifest beside it (`….json`: sha256, size, raw size, type,
    agent version, fingerprint). The manifest is written last, so **a point
    without a manifest is incomplete**: it is ignored, and pruned after 24h.
@@ -433,7 +453,8 @@ as SSE `operation_result` with the same `request_id`.
 2. `compose stop`.
 3. Run a `pre-restore` backup of the current file (a normal run with kind
    `pre-restore`, ignoring the unchanged check). **If it fails, abort**:
-   `compose start`, and report. A missing database file skips this step.
+   `compose start`, and report. A missing database file, or an empty volume,
+   skips this step.
 4. Run the helper `/wf backup restore sqlite /data/<path>` with the
    decompressed copy on stdin. The helper:
    - writes `<path>.restore-tmp`;
@@ -444,6 +465,22 @@ as SSE `operation_result` with the same `request_id`.
    - renames the temp file over `<path>`.
 
    Any failure before the rename leaves the original in place.
+
+   For `volume`, the helper runs `/wf backup restore volume /data` with the
+   volume read-write and the decompressed tar on stdin:
+   - **Extract** into `/data/.wf-restore-<id>/` in full. Entries with absolute
+     paths or `..` are refused. Nothing is written through a symlink.
+     Ownership, modes and mtimes are restored.
+   - **A failure during extraction** removes the temp directory and leaves
+     the volume untouched.
+   - **Swap:** remove every top-level entry except the temp directory, move
+     the temp directory's entries up, then remove it.
+   - **A failure during the swap** leaves the volume partly replaced. The
+     report says so and names the `pre-restore` point to restore from.
+   - **Disk space:** a restore temporarily needs room for the old and new
+     contents side by side. The agent checks the archive's raw size against
+     the volume's free space first (`df` inside the same helper run) and
+     refuses with a clear error if it doesn't fit.
 5. `compose start`. Report `{pre_restore_point, restored_point}`.
 
 ### Delete
@@ -504,7 +541,8 @@ with the result as SSE `operation_result`.
   - **Restore:** a points list (time, kind, size, with a Delete action per
     point), then a confirmation stating that the app stops and the current
     database is first saved as a `pre-restore` point.
-  - **Add backup:** a UI-added `sqlite` entry.
+  - **Add backup:** a UI-added `sqlite` or `volume` entry (a volume picker
+    lists the compose file's volumes).
 - **App grid:** a small warning dot on cards with a `late` or `failing`
   backup.
 - **Delete app dialog:** an "Also delete backups" checkbox, unchecked, under
@@ -547,7 +585,11 @@ contract suite on SQLite and Postgres, and `api/openapi.yaml` up to date.
     restore and compare row counts;
   - restore refuses corrupt, empty and non-SQLite input;
   - ownership and mode are preserved;
-  - exit codes 3 and 4.
+  - exit codes 3 and 4;
+  - `volume`: a round trip preserving ownership, modes, mtimes and symlinks;
+    `exclude` patterns; the unchanged fingerprint; extraction refuses `..`,
+    absolute paths and writing through symlinks; a failed extraction leaves
+    the volume untouched; refusal when free space is short.
 - **Docker integration:** a dump and restore round trip through a real
   `docker run`, skipped when Docker is unavailable. It runs in CI.
 - **Contract suite:** every new route gets a happy path plus `probes`
@@ -563,7 +605,7 @@ contract suite on SQLite and Postgres, and `api/openapi.yaml` up to date.
 
 | Item | Where it goes |
 |---|---|
-| `postgres` (`postgres:<major>-alpine`, `pg_dump -Fc` on the app network), `mysql`, `volume` types | later PRs on the same helper and stdin/stdout contract |
+| `postgres` (`postgres:<major>-alpine`, `pg_dump -Fc` on the app network) and `mysql` types | later PRs on the same helper and stdin/stdout contract |
 | Restoring into a new app; restoring an orphaned backup | D |
 | More than one storage per backup | |
 | Client-side encryption of backup objects | follow-up; until then, protection at rest is the provider's |

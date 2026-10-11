@@ -9,7 +9,9 @@
 // next to the old one, then switches the .json (written last, atomically) to
 // it, then prunes the old pair. The .json therefore only ever names a
 // complete pair, and the generated Caddy config changes whenever the
-// certificate does.
+// certificate does. Every file is fsynced before its rename and the directory
+// after it, so a power cut cannot leave the .json naming a pair whose bytes
+// never reached the disk.
 package domains
 
 import (
@@ -97,9 +99,10 @@ func (s *Store) Exists() bool {
 
 // List returns every registration, sorted by name. A file that does not
 // parse, names something else than its file name, carries an unknown mode,
-// or (certificate mode) points at a pair that is not on disk is skipped: its
-// hosts then fall out of ingress (fail closed) instead of one broken file
-// stopping all routing.
+// or (certificate mode) points at a pair that is missing or does not load is
+// skipped: its hosts then fall out of ingress (fail closed) instead of one
+// broken file stopping all routing — Caddy refuses its whole TLS app when one
+// loaded pair is damaged.
 func (s *Store) List() ([]Registration, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -131,8 +134,8 @@ func (s *Store) List() ([]Registration, error) {
 				continue
 			}
 			r.CertFile, r.KeyFile = s.pairPaths(r.Name, r.Fingerprint)
-			if !isFile(r.CertFile) || !isFile(r.KeyFile) {
-				slog.Warn("skipping domain registration whose certificate files are missing", "domain", r.Name)
+			if err := loadPair(r.CertFile, r.KeyFile); err != nil {
+				slog.Warn("skipping domain registration whose certificate files are missing or damaged", "domain", r.Name, "error", err)
 				continue
 			}
 		}
@@ -142,9 +145,12 @@ func (s *Store) List() ([]Registration, error) {
 	return out, nil
 }
 
-func isFile(path string) bool {
-	fi, err := os.Stat(path)
-	return err == nil && fi.Mode().IsRegular()
+// loadPair checks that a pair on disk loads the way Caddy's load_files will
+// load it: both files present, parseable, and the key matching. A single
+// parse of two small files — cheap next to the outage a damaged pair causes.
+func loadPair(crt, key string) error {
+	_, err := tls.LoadX509KeyPair(crt, key)
+	return err
 }
 
 // Put writes (or replaces) a registration and returns it as stored. In
@@ -188,12 +194,12 @@ func (s *Store) Put(name string, mode model.DomainTLS, certPEM, keyPEM []byte) (
 	return reg, nil
 }
 
-// writePair installs a content-addressed pair. A complete pair already on
-// disk under these names has this very content, so it is left alone. On a
-// failure the pair's files are removed again: an incomplete pair is never
-// the one a .json names.
+// writePair installs a content-addressed pair. A pair already on disk under
+// these names that loads has this very content, so it is left alone (a
+// damaged one is rewritten). On a failure the pair's files are removed
+// again: an incomplete pair is never the one a .json names.
 func writePair(crt, key string, certPEM, keyPEM []byte) error {
-	if isFile(crt) && isFile(key) {
+	if loadPair(crt, key) == nil {
 		return nil
 	}
 	err := writeAtomic(crt, certPEM, 0o644)
@@ -208,8 +214,11 @@ func writePair(crt, key string, certPEM, keyPEM []byte) error {
 }
 
 // prunePairs removes name's pair files except the pair keep ("" removes
-// all). A file belongs to name when it is exactly <stem>.<fingerprint>.crt
-// or .key — parsing, not globbing, so "x.app" never prunes "x.app.y"'s files.
+// all), and any temp file name's writes left behind (a crash between write
+// and rename). A file belongs to name when it is exactly
+// <stem>.<fingerprint>.crt or .key, or <stem>.json, with an optional .tmp —
+// parsing, not globbing, so "x.app" never prunes "x.app.y"'s files. Callers
+// hold s.mu, so no write of name's is in progress.
 func (s *Store) prunePairs(name, keep string) {
 	entries, err := os.ReadDir(s.dir)
 	if err != nil {
@@ -217,12 +226,17 @@ func (s *Store) prunePairs(name, keep string) {
 	}
 	stem := fileStem(name)
 	for _, e := range entries {
-		base, ok := strings.CutSuffix(e.Name(), ".crt")
+		file, isTmp := strings.CutSuffix(e.Name(), ".tmp")
+		if isTmp && file == stem+".json" {
+			_ = os.Remove(filepath.Join(s.dir, e.Name()))
+			continue
+		}
+		base, ok := strings.CutSuffix(file, ".crt")
 		if !ok {
-			base, ok = strings.CutSuffix(e.Name(), ".key")
+			base, ok = strings.CutSuffix(file, ".key")
 		}
 		i := strings.LastIndex(base, ".")
-		if !ok || i < 0 || base[:i] != stem || !isFingerprint(base[i+1:]) || base[i+1:] == keep {
+		if !ok || i < 0 || base[:i] != stem || !isFingerprint(base[i+1:]) || (!isTmp && base[i+1:] == keep) {
 			continue
 		}
 		_ = os.Remove(filepath.Join(s.dir, e.Name()))
@@ -230,7 +244,8 @@ func (s *Store) prunePairs(name, keep string) {
 }
 
 // Delete removes a registration and its certificate files. It reports
-// whether the registration existed.
+// whether the registration existed; orphan pair and temp files for name are
+// removed either way.
 func (s *Store) Delete(name string) (bool, error) {
 	if err := model.ValidateDomainName(name); err != nil {
 		return false, err
@@ -238,13 +253,14 @@ func (s *Store) Delete(name string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	err := os.Remove(s.jsonPath(name))
-	if os.IsNotExist(err) {
-		return false, nil
-	}
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		return false, fmt.Errorf("delete domain: %w", err)
 	}
 	s.prunePairs(name, "")
+	if err != nil {
+		return false, nil
+	}
+	syncDir(s.dir)
 	return true, nil
 }
 
@@ -276,14 +292,17 @@ func (s *Store) Seed(regs []model.RegisteredDomain) (bool, error) {
 		_ = os.RemoveAll(tmp)
 		return false, fmt.Errorf("seed domains: %w", err)
 	}
+	syncDir(filepath.Dir(s.dir))
 	return true, nil
 }
 
-// writeAtomic writes data to path via a temp file renamed into place,
-// removing the temp file when either step fails.
+// writeAtomic writes data to path via a temp file that is fsynced, renamed
+// into place, and made durable by fsyncing the directory, removing the temp
+// file when a step fails. After a power cut path holds the old content or
+// the new, never a truncated file.
 func writeAtomic(path string, data []byte, perm os.FileMode) error {
 	tmp := path + ".tmp"
-	err := os.WriteFile(tmp, data, perm)
+	err := writeSynced(tmp, data, perm)
 	if err == nil {
 		err = os.Rename(tmp, path)
 	}
@@ -291,7 +310,36 @@ func writeAtomic(path string, data []byte, perm os.FileMode) error {
 		_ = os.Remove(tmp)
 		return fmt.Errorf("write %s: %w", filepath.Base(path), err)
 	}
+	syncDir(filepath.Dir(path))
 	return nil
+}
+
+// writeSynced is os.WriteFile plus an fsync before the close.
+func writeSynced(path string, data []byte, perm os.FileMode) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(data)
+	if err == nil {
+		err = f.Sync()
+	}
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return err
+}
+
+// syncDir fsyncs a directory so the renames and removals in it are durable.
+// Best effort: some filesystems refuse to sync a directory, and the files
+// themselves are already synced.
+func syncDir(dir string) {
+	d, err := os.Open(dir)
+	if err != nil {
+		return
+	}
+	_ = d.Sync()
+	_ = d.Close()
 }
 
 // CheckCertificate validates an uploaded pair for name at now: the key must

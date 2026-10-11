@@ -332,3 +332,91 @@ func TestStorePutCleansUpWhenWriteFails(t *testing.T) {
 		}
 	}
 }
+
+// TestStoreListSkipsDamagedPair: a pair whose key was truncated (a power cut
+// before the bytes reached the disk) is skipped like a missing one — Caddy
+// would otherwise refuse every certificate — and re-uploading the same pair
+// rewrites it instead of trusting the damaged files.
+func TestStoreListSkipsDamagedPair(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "domains")
+	s := NewStore(dir)
+	future := time.Now().Add(24 * time.Hour)
+	cert, key := certtest.Issue(t, future, "a.app")
+	reg, err := s.Put("a.app", model.DomainTLSCertificate, cert, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherCert, otherKey := certtest.Issue(t, future, "b.app")
+	if _, err := s.Put("b.app", model.DomainTLSCertificate, otherCert, otherKey); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(reg.KeyFile, 10); err != nil {
+		t.Fatal(err)
+	}
+	if regs, err := s.List(); err != nil || len(regs) != 1 || regs[0].Name != "b.app" {
+		t.Fatalf("List with a truncated key = %+v, %v", regs, err)
+	}
+	if _, err := s.Put("a.app", model.DomainTLSCertificate, cert, key); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.ReadFile(reg.KeyFile); string(got) != string(key) {
+		t.Fatal("re-upload left the damaged key in place")
+	}
+	if regs, _ := s.List(); len(regs) != 2 {
+		t.Fatalf("after re-upload: %+v", regs)
+	}
+}
+
+// TestStoreCleansLeftoverFiles: temp files a crash left between write and
+// rename, and pairs no .json names, are removed by the next Put or Delete of
+// that name — Delete even when the .json itself is gone. Other names' files
+// stay.
+func TestStoreCleansLeftoverFiles(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "domains")
+	s := NewStore(dir)
+	if _, err := s.Put("keep.app", model.DomainTLSOff, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	leftovers := func(stem string) []string {
+		return []string{
+			stem + ".json.tmp",
+			stem + ".0123456789ab.crt", stem + ".0123456789ab.key",
+			stem + ".ba9876543210.crt.tmp", stem + ".ba9876543210.key.tmp",
+		}
+	}
+	write := func(files []string) {
+		for _, f := range files {
+			if err := os.WriteFile(filepath.Join(dir, f), []byte("x"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	write(append(leftovers("a.app"), leftovers("_wildcard_.b.app")...))
+
+	// Put: a's leftovers go, including temp files of the pair it keeps.
+	cert, key := certtest.Issue(t, time.Now().Add(24*time.Hour), "a.app")
+	crt, keyFile := pairFiles("a.app", cert, key)
+	write([]string{crt + ".tmp"})
+	if _, err := s.Put("a.app", model.DomainTLSCertificate, cert, key); err != nil {
+		t.Fatal(err)
+	}
+	want := append([]string{"a.app.json", crt, keyFile, "keep.app.json"}, leftovers("_wildcard_.b.app")...)
+	if got := dirEntries(t, dir); !sameSet(got, want) {
+		t.Fatalf("after Put: %v, want %v", got, want)
+	}
+
+	// Delete without a .json: reports absent, still cleans.
+	if existed, err := s.Delete("*.b.app"); err != nil || existed {
+		t.Fatalf("Delete of orphan = %v, %v", existed, err)
+	}
+	if got := dirEntries(t, dir); !sameSet(got, []string{"a.app.json", crt, keyFile, "keep.app.json"}) {
+		t.Fatalf("after Delete: %v", got)
+	}
+}
+
+func sameSet(a, b []string) bool {
+	a, b = slices.Clone(a), slices.Clone(b)
+	slices.Sort(a)
+	slices.Sort(b)
+	return slices.Equal(a, b)
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -314,5 +315,82 @@ func TestManagerServesUploadedCertificateAndCatchAll(t *testing.T) {
 	}
 	if tlsResp.StatusCode != http.StatusNotFound {
 		t.Fatalf("certificate catch-all: %d", tlsResp.StatusCode)
+	}
+}
+
+// TestManagerSurvivesADamagedCertificate runs real Caddy with one
+// certificate registration whose key was truncated (a power cut mid-write):
+// that registration is skipped, while an off-mode host and another
+// certificate registration keep serving — Caddy refuses its whole TLS app
+// when one loaded pair is damaged, which took the ingress down.
+func TestManagerSurvivesADamagedCertificate(t *testing.T) {
+	dataDir := t.TempDir()
+	httpPort, httpsPort := freePort(t), freePort(t)
+	t.Setenv("AGENT_DATA_DIR", dataDir)
+	t.Setenv("INGRESS_ENABLED", "true")
+	t.Setenv("INGRESS_HTTP_PORT", fmt.Sprint(httpPort))
+	t.Setenv("INGRESS_HTTPS_PORT", fmt.Sprint(httpsPort))
+	t.Setenv("LOG_LEVEL", "error")
+
+	store := domains.NewStore(filepath.Join(dataDir, "domains"))
+	future := time.Now().Add(90 * 24 * time.Hour)
+	for _, name := range []string{"*.good.test", "*.broken.test"} {
+		cert, key := certtest.Issue(t, future, name)
+		reg, err := store.Put(name, model.DomainTLSCertificate, cert, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if name == "*.broken.test" {
+			if err := os.Truncate(reg.KeyFile, 17); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	registerDomain(t, dataDir, "*.tunnel.test", model.DomainTLSOff)
+
+	m := NewManager(config.NewServerConfig("standalone"), logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"}))
+	t.Cleanup(m.Stop)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := m.Start(ctx); err != nil || !m.Enabled() {
+		t.Fatalf("start: %v, enabled %v", err, m.Enabled())
+	}
+
+	resp := getVia(t, httpPort, "x.tunnel.test", "/")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("off host: %d", resp.StatusCode)
+	}
+
+	handshake := func(serverName string) (*tls.ConnectionState, error) {
+		var conn *tls.Conn
+		var err error
+		for i := 0; i < 50; i++ {
+			conn, err = tls.DialWithDialer(&net.Dialer{Timeout: time.Second}, "tcp", fmt.Sprintf("127.0.0.1:%d", httpsPort), &tls.Config{
+				ServerName:         serverName,
+				InsecureSkipVerify: true, // the test CA is not in the system pool; the leaf is checked below
+			})
+			if err == nil {
+				defer conn.Close()
+				st := conn.ConnectionState()
+				return &st, nil
+			}
+			var opErr *net.OpError
+			if !errors.As(err, &opErr) || opErr.Op != "dial" {
+				return nil, err // the server answered: a TLS failure, not a startup race
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		return nil, err
+	}
+	st, err := handshake("x.good.test")
+	if err != nil {
+		t.Fatalf("good certificate not served: %v", err)
+	}
+	if leaf := st.PeerCertificates[0]; len(leaf.DNSNames) != 1 || leaf.DNSNames[0] != "*.good.test" {
+		t.Fatalf("served %v for x.good.test", leaf.DNSNames)
+	}
+	if st, err := handshake("x.broken.test"); err == nil {
+		t.Fatalf("the damaged registration still served %v", st.PeerCertificates[0].DNSNames)
 	}
 }

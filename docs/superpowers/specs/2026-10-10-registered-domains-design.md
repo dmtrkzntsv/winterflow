@@ -115,11 +115,16 @@ type DeleteDomainResponse struct {
   leaves the agent or appears in any response.
 - **Renewal** writes the new pair next to the old one, then switches the
   `.json` to it (written last, atomically), then prunes the old pair. The
-  `.json` therefore only ever names a complete pair — a crash leaves at worst
-  an unreferenced pair, pruned on the name's next change — and the running
-  proxy's files are never overwritten in place. A registration whose pair is
-  missing is skipped when listed (its hosts fall out of ingress, fail
-  closed).
+  `.json` therefore only ever names a complete pair, and the running proxy's
+  files are never overwritten in place. Every file is fsynced before its
+  rename and the directory after it, so a crash leaves the old or the new
+  `.json`, plus at worst unreferenced pair or `.tmp` files, which the name's
+  next create or delete removes. A registration whose pair is missing or
+  does not load (`tls.LoadX509KeyPair`, e.g. a file damaged by the disk
+  itself) is skipped when listed: its hosts fall out of ingress (fail
+  closed), while every other registration keeps serving — Caddy would
+  otherwise refuse its whole TLS app. Re-uploading the same pair rewrites a
+  damaged one.
 - **Create-time checks in certificate mode:**
   - `tls.X509KeyPair(cert, key)` must succeed;
   - the leaf certificate must cover the registered name (wildcard SAN for a

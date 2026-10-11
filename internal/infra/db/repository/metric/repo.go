@@ -59,13 +59,15 @@ func New(tx *backend.TxManager, driver string, log *logger.Logger) (*Repo, error
 }
 
 // InsertSample writes the server row and the known apps' rows at tier 1. An
-// app with no values (a stopped one) gets no row.
+// empty server map or an app with no values (a stopped one) gets no row.
 func (r *Repo) InsertSample(ctx context.Context, serverID string, at time.Time, server metrics.Values, apps map[string]metrics.Values) error {
 	bucket := types.DateTime(metrics.Tier1.BucketStart(at))
 	return r.tx.WithTx(ctx, func(ctx context.Context) error {
 		q := r.tx.Querier(ctx)
-		if err := r.insert(ctx, q, serverID, "", metrics.Tier1, bucket, 1, server); err != nil {
-			return err
+		if len(server) > 0 { // never store an empty server row
+			if err := r.insert(ctx, q, serverID, "", metrics.Tier1, bucket, 1, server); err != nil {
+				return err
+			}
 		}
 		if len(apps) == 0 {
 			return nil

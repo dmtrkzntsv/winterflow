@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"winterflow/internal/domain/command"
+	"winterflow/internal/domain/metrics"
 	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/port"
 	"winterflow/internal/domain/service/status"
@@ -34,6 +35,14 @@ type eventStore interface {
 	TouchLastSeen(ctx context.Context, serverID string) error
 	SaveCapabilities(ctx context.Context, serverID string, capabilities map[string]string, features map[string]bool) error
 }
+
+// metricsStore is the slice of the metric repository the event sink needs.
+type metricsStore interface {
+	InsertSample(ctx context.Context, serverID string, at time.Time, server metrics.Values, apps map[string]metrics.Values) error
+}
+
+// metricsInsertTimeout bounds one sample write.
+const metricsInsertTimeout = 10 * time.Second
 
 // statusFanout pushes an unsolicited status notification to every member of
 // the org that owns the server. Function fields keep it trivially fakeable.
@@ -81,6 +90,11 @@ type eventSink struct {
 	store eventStore
 	fan   *statusFanout
 	log   *logger.Logger
+	// metrics stores server.metrics samples; nil when METRICS_ENABLED=false
+	// (the events are then dropped). latest keeps each server's newest host
+	// sample for the dashboard.
+	metrics metricsStore
+	latest  *metrics.LatestStore
 	// sync, when set, fills the API's per-server indexes from the agent: it
 	// starts when a server comes online (an unknown->online transition, or a
 	// capabilities event: the agent (re)registered) and is nudged by every
@@ -135,6 +149,9 @@ func (s *eventSink) handle(ctx context.Context, ev bus.EventMessage) {
 		if transition {
 			s.fan.serverStatus(ctx, ev.ServerID, status.LivenessOnline)
 		}
+	case bus.EventServerMetrics:
+		s.storeMetrics(ctx, ev, now)
+		return
 	default:
 		s.log.Warn("unknown event kind", "kind", ev.Kind)
 		return
@@ -146,6 +163,39 @@ func (s *eventSink) handle(ctx context.Context, ev bus.EventMessage) {
 		s.sync.online(ev.ServerID)
 	} else if ev.Kind == bus.EventServerOnline {
 		s.sync.heartbeat(ev.ServerID)
+	}
+}
+
+// storeMetrics writes one server.metrics sample (tier 1) and remembers the
+// host part as the server's latest. A write failure is logged; the next
+// minute's sample is independent. Metrics never touch liveness or SSE.
+func (s *eventSink) storeMetrics(ctx context.Context, ev bus.EventMessage, now time.Time) {
+	if s.metrics == nil {
+		return
+	}
+	var sample metrics.Sample
+	if err := json.Unmarshal(ev.Payload, &sample); err != nil {
+		s.log.Warn("failed to decode metrics event", "server_id", ev.ServerID, "error", err)
+		return
+	}
+	at := metrics.SampleTime(sample, now)
+	apps := make(map[string]metrics.Values, len(sample.Apps))
+	for _, a := range sample.Apps {
+		if a.AppID != "" {
+			apps[a.AppID] = a.Values()
+		}
+	}
+	// An empty server map writes no server row (the repository skips it).
+	if server := sample.Server.Values(); len(server) > 0 || len(apps) > 0 {
+		wctx, cancel := context.WithTimeout(ctx, metricsInsertTimeout)
+		err := s.metrics.InsertSample(wctx, ev.ServerID, at, server, apps)
+		cancel()
+		if err != nil {
+			s.log.Warn("store metrics failed", "server_id", ev.ServerID, "error", err)
+		}
+	}
+	if s.latest != nil {
+		s.latest.Set(ev.ServerID, metrics.Latest{At: at, Server: sample.Server})
 	}
 }
 
@@ -161,13 +211,15 @@ func (s *eventSink) sweep(ctx context.Context, cache *status.Cache, now time.Tim
 // liveness, capabilities, status), updating the in-memory status cache and the
 // DB, and pushing transitions over SSE. It also runs the expiry sweeper. It is
 // the API's consumer of events:<region>.
-func startEventsSubscriber(ctx context.Context, b bus.Bus, cache *status.Cache, serverRepo port.ServerRepository, nm port.NotificationManager, cfg *config.ServerConfig, log *logger.Logger, indexSync serverSync) {
+func startEventsSubscriber(ctx context.Context, b bus.Bus, cache *status.Cache, serverRepo port.ServerRepository, nm port.NotificationManager, cfg *config.ServerConfig, log *logger.Logger, indexSync serverSync, ms metricsStore, latest *metrics.LatestStore) {
 	sink := &eventSink{
-		cache: cache,
-		store: serverRepo,
-		fan:   newStatusFanout(serverRepo, nm, log),
-		log:   log,
-		sync:  indexSync,
+		cache:   cache,
+		store:   serverRepo,
+		fan:     newStatusFanout(serverRepo, nm, log),
+		log:     log,
+		sync:    indexSync,
+		metrics: ms,
+		latest:  latest,
 	}
 	bus.SubscribeJSON(ctx, b, cfg.GetBusEventsQueue(), log, func(ev bus.EventMessage) {
 		sink.handle(ctx, ev)

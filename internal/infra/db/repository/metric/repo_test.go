@@ -173,3 +173,16 @@ func TestInsertSampleSkipsAppsWithoutValues(t *testing.T) {
 		t.Fatalf("server rows = %s", got)
 	}
 }
+
+func TestInsertSampleSkipsEmptyServerRow(t *testing.T) {
+	repo, d := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	mustInsert(t, ctx, repo, srv1, t0, nil, map[string]metrics.Values{appA: {"cpu": 3}})
+	mustInsert(t, ctx, repo, srv1, t0.Add(time.Minute), metrics.Values{}, nil)
+	if got := count(t, d, "app_id = ''"); got != "0" {
+		t.Fatalf("server rows = %s, want none for an empty value map", got)
+	}
+	if got := count(t, d, "tier = 1"); got != "1" {
+		t.Fatalf("rows = %s, want only appA", got)
+	}
+}

@@ -193,6 +193,20 @@ describe("DomainsCard", () => {
     expect(docker.createDomain).toHaveBeenCalledWith("example.com", "off", undefined);
   });
 
+  it("returns focus to the button that opened the dialog", async () => {
+    const user = setupUser();
+    renderCard(fakeDocker());
+    const add = await screen.findByRole("button", { name: /Add domain/ });
+    await user.click(add);
+    await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(add).toHaveFocus());
+    const edit = screen.getByRole("button", { name: "Edit domain example.com" });
+    await user.click(edit);
+    await screen.findByRole("dialog");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(edit).toHaveFocus());
+  });
+
   it("shows the proxy's reload warnings after a create or a delete", async () => {
     const user = setupUser();
     const docker = fakeDocker({

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -147,7 +147,11 @@ export function DomainsCard({ docker }: { docker: Docker }) {
   };
 
   const names = useMemo(() => new Map(apps.map((a) => [a.id, a.name])), [apps]);
-  const openDialog = (row: Domain | null) => {
+  // The dialog has no trigger (it remounts per opening): focus goes back to
+  // the button that opened it.
+  const opener = useRef<HTMLElement | null>(null);
+  const openDialog = (row: Domain | null, from: HTMLElement) => {
+    opener.current = from;
     setReplace(row);
     setDialogKey((k) => k + 1);
     setDialogOpen(true);
@@ -177,7 +181,7 @@ export function DomainsCard({ docker }: { docker: Docker }) {
           >
             <RefreshCw className={cn("size-4", loading && "animate-spin")} />
           </Button>
-          <Button size="sm" onClick={() => openDialog(null)}>
+          <Button size="sm" onClick={(e) => openDialog(null, e.currentTarget)}>
             <Plus className="size-4" /> Add domain
           </Button>
         </div>
@@ -245,7 +249,7 @@ export function DomainsCard({ docker }: { docker: Docker }) {
                         className="size-8 text-muted-foreground"
                         aria-label={`Edit domain ${d.name}`}
                         title={d.tls === "certificate" ? "Change HTTPS mode or replace certificate" : "Change HTTPS mode"}
-                        onClick={() => openDialog(d)}
+                        onClick={(e) => openDialog(d, e.currentTarget)}
                       >
                         <Pencil className="size-4" />
                       </Button>
@@ -272,6 +276,7 @@ export function DomainsCard({ docker }: { docker: Docker }) {
         docker={docker}
         open={dialogOpen}
         replace={replace}
+        returnFocus={opener}
         onOpenChange={setDialogOpen}
         onSaved={saved}
       />

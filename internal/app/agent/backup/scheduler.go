@@ -1,10 +1,11 @@
 // Package backup is the agent's backup scheduler: one goroutine, next to the
 // source poller and independent of the command pipeline, that runs every
-// enabled sqlite and files backup on its schedule and the Back up now
-// requests, strictly one run at a time. It wakes on a single timer set to
-// the earliest due time, keeps each backup's last attempt and success in
-// {AGENT_DATA_DIR}/backups/state.json, and reports each backup's health for
-// apps.status.
+// enabled sqlite and files backup on its schedule, the Back up now and
+// restore requests, strictly one at a time (so a restore never overlaps a
+// backup of its app), and once a day the sweep of deleted apps' backups. It
+// wakes on a single timer set to the earliest due time, keeps each backup's
+// last attempt and success in {AGENT_DATA_DIR}/backups/state.json, and
+// reports each backup's health for apps.status.
 package backup
 
 import (
@@ -31,6 +32,8 @@ import (
 type Engine interface {
 	BackupPlan() ([]dockercompose.PlannedBackup, error)
 	RunBackup(ctx context.Context, job dockercompose.BackupJob) (dockercompose.BackupResult, error)
+	RestoreBackup(ctx context.Context, job dockercompose.RestoreJob) (command.RestoreBackupResponse, error)
+	SweepDeleted(ctx context.Context) []string
 }
 
 // Clock is the scheduler's time (a fake in tests).
@@ -48,6 +51,19 @@ func (realClock) After(d time.Duration) <-chan time.Time { return time.After(d) 
 const (
 	// RunTimeout bounds a run: the dump and the upload.
 	RunTimeout = 30 * time.Minute
+	// RestoreTimeout bounds a restore: the download, the pre-restore copy
+	// (itself a run) and putting the data back.
+	RestoreTimeout = time.Hour
+	// restoreQueueWait is how long a restore may wait for the requests
+	// ahead of it before it is refused instead of started. With the
+	// restore's own limit and the abandon grace it keeps the whole request
+	// (queue wait + run) under command.BackupRunWait, which the API's
+	// longer wait builds on.
+	restoreQueueWait = command.BackupRunWait - RestoreTimeout - 2*abandonAfter - 5*time.Minute
+	// sweepEvery is how often deleted apps' backups are swept, the first
+	// time one interval after start; sweepTimeout bounds one sweep.
+	sweepEvery   = 24 * time.Hour
+	sweepTimeout = 15 * time.Minute
 	// abandonAfter is how long past its deadline a run gets to stop before
 	// the scheduler gives up on it (a storage call stuck on a dead mount)
 	// and moves on.
@@ -70,10 +86,12 @@ type State struct {
 	EnabledAt   time.Time `json:"enabled_at,omitzero"`
 }
 
-// Outcome is what a Back up now request learns when its run ends.
+// Outcome is what a Back up now (Result) or restore (Restore) request
+// learns when its run ends.
 type Outcome struct {
-	Result command.RunBackupResponse
-	Err    error
+	Result  command.RunBackupResponse
+	Restore command.RestoreBackupResponse
+	Err     error
 }
 
 type key struct{ app, name string }
@@ -93,9 +111,16 @@ type tomb struct {
 type job struct {
 	key     key
 	kind    command.PointKind
+	point   string        // a restore of this point, not a backup run
+	limit   time.Duration // its time limit
+	queued  time.Time     // when a restore was queued
 	waiters []chan Outcome
 	ctx     context.Context
 	cancel  context.CancelFunc
+	// forget stops the job because its app is being deleted: its context's
+	// cause is then dockercompose.ErrAppDeleted (a restore cut short leaves
+	// such an app alone instead of starting it).
+	forget  func()
 	awaited bool // a Forget already waited out its grace on this job
 	// exited is closed (under the lock) when the engine's RunBackup call
 	// has returned, however long after the run was abandoned.
@@ -105,12 +130,15 @@ type job struct {
 // Scheduler runs backups. Its methods are safe for concurrent use; Run is
 // the one goroutine that runs them.
 type Scheduler struct {
-	engine     Engine
-	path       string
-	log        *logger.Logger
-	clock      Clock
-	runTimeout time.Duration
-	grace      time.Duration
+	engine         Engine
+	path           string
+	log            *logger.Logger
+	clock          Clock
+	runTimeout     time.Duration
+	restoreTimeout time.Duration
+	grace          time.Duration
+	// nextSweep is when deleted apps' backups are swept next (Run only).
+	nextSweep time.Time
 
 	wake chan struct{}
 
@@ -141,7 +169,7 @@ type Scheduler struct {
 func New(engine Engine, dataDir string, log *logger.Logger) *Scheduler {
 	s := &Scheduler{
 		engine: engine, path: filepath.Join(dataDir, "backups", "state.json"), log: log,
-		clock: realClock{}, runTimeout: RunTimeout, grace: abandonAfter,
+		clock: realClock{}, runTimeout: RunTimeout, restoreTimeout: RestoreTimeout, grace: abandonAfter,
 		wake: make(chan struct{}, 1), state: map[string]*State{}, dirty: true,
 		stuck: map[string]*job{}, forgotten: map[string]uint64{}, deleting: map[string]tomb{},
 	}
@@ -215,7 +243,7 @@ func (s *Scheduler) Forget(appID string) {
 	s.queue = kept
 	var wait []*job
 	if r := s.running; r != nil && r.key.app == appID {
-		r.cancel()
+		r.forget()
 		wait = append(wait, r)
 	}
 	// A job already stuck (or waited out by an earlier Forget) has had its
@@ -307,11 +335,47 @@ func (s *Scheduler) RunNow(appID, name string) <-chan Outcome {
 	return ch
 }
 
+// Restore queues a restore of an app's backup point behind the requests
+// already queued, and returns where its outcome arrives. It fails at once
+// while a restore of the same app is queued or running, or the app is
+// blocked, and it is refused (not started) once it has waited restoreQueueWait.
+func (s *Scheduler) Restore(appID, name, point string) <-chan Outcome {
+	ch := make(chan Outcome, 1)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stopped {
+		ch <- Outcome{Err: errStopped}
+		return ch
+	}
+	now := s.clock.Now()
+	if err := s.blockedLocked(appID, now); err != nil {
+		ch <- Outcome{Err: err}
+		return ch
+	}
+	dup := s.running != nil && s.running.key.app == appID && s.running.point != ""
+	for _, j := range s.queue {
+		dup = dup || (j.key.app == appID && j.point != "")
+	}
+	if dup {
+		ch <- Outcome{Err: errors.New("a restore of this app is already queued or running")}
+		return ch
+	}
+	s.queue = append(s.queue, &job{key: key{appID, name}, point: point, queued: now, waiters: []chan Outcome{ch}})
+	s.signal()
+	return ch
+}
+
 // Run runs backups until ctx is done.
 func (s *Scheduler) Run(ctx context.Context) {
+	s.nextSweep = s.clock.Now().Add(sweepEvery)
 	for ctx.Err() == nil {
 		s.refresh()
 		now := s.clock.Now()
+		if !now.Before(s.nextSweep) {
+			s.sweep(ctx)
+			s.nextSweep = now.Add(sweepEvery)
+			continue
+		}
 		if j := s.next(ctx, now); j != nil {
 			s.execute(ctx, j)
 			continue
@@ -339,6 +403,8 @@ var (
 	errStillStopping = errors.New("a previous backup of this app is still stopping (its storage or Docker is not answering)")
 	// errDeleting answers a request for an app that is being deleted.
 	errDeleting = errors.New("the app is being deleted")
+	// errQueueWait answers a restore that waited too long for its turn.
+	errQueueWait = errors.New("the restore waited too long behind other backups and was not started; try again")
 )
 
 // refresh rereads the plan when asked to, and records when each backup was
@@ -410,6 +476,15 @@ func (s *Scheduler) refresh() {
 func (s *Scheduler) next(parent context.Context, now time.Time) *job {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// A restore that waited too long is refused, wherever it stands in the
+	// queue, so the request still ends under the API's wait.
+	s.queue = slices.DeleteFunc(s.queue, func(j *job) bool {
+		if j.point == "" || now.Sub(j.queued) <= restoreQueueWait {
+			return false
+		}
+		finish(j, Outcome{Err: errQueueWait})
+		return true
+	})
 	for len(s.queue) > 0 {
 		j := s.queue[0]
 		s.queue = s.queue[1:]
@@ -438,10 +513,28 @@ func (s *Scheduler) next(parent context.Context, now time.Time) *job {
 // startLocked makes j the running job: its context and cancel exist from
 // this moment, under the same lock Forget takes.
 func (s *Scheduler) startLocked(parent context.Context, j *job) *job {
-	j.ctx, j.cancel = context.WithTimeout(parent, s.runTimeout)
+	limit := s.runTimeout
+	if j.point != "" {
+		limit = s.restoreTimeout
+	}
+	cctx, cancelCause := context.WithCancelCause(parent)
+	ctx, stop := context.WithTimeout(cctx, limit)
+	j.ctx, j.limit = ctx, limit
+	j.cancel = func() { stop(); cancelCause(nil) }
+	j.forget = func() { cancelCause(dockercompose.ErrAppDeleted) }
 	j.exited = make(chan struct{})
 	s.running = j
 	return j
+}
+
+// sweep deletes what is past BACKUP_RETENTION_DAYS in deleted apps' backup
+// folders (bounded by sweepTimeout), logging what failed.
+func (s *Scheduler) sweep(parent context.Context) {
+	ctx, cancel := context.WithTimeout(parent, sweepTimeout)
+	defer cancel()
+	for _, p := range s.engine.SweepDeleted(ctx) {
+		s.log.Warn("sweep of deleted apps' backups", "problem", p)
+	}
 }
 
 // dueLocked is when a scheduled backup runs next: its last attempt plus
@@ -489,7 +582,7 @@ func Offset(appID, name string, every time.Duration) time.Duration {
 func (s *Scheduler) untilDue(now time.Time) time.Duration {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	wait := idleWait
+	wait := min(idleWait, max(s.nextSweep.Sub(now), 0))
 	for app, t := range s.deleting {
 		if t.until.After(now) {
 			wait = min(wait, t.until.Sub(now))
@@ -514,13 +607,19 @@ func (s *Scheduler) execute(parent context.Context, j *job) {
 	defer j.cancel()
 	start := s.clock.Now()
 	type done struct {
-		res dockercompose.BackupResult
-		err error
+		res     dockercompose.BackupResult
+		restore command.RestoreBackupResponse
+		err     error
 	}
 	ch := make(chan done, 1)
 	go func() {
-		res, err := s.engine.RunBackup(j.ctx, dockercompose.BackupJob{AppID: j.key.app, Backup: j.key.name, Kind: j.kind})
-		ch <- done{res, err}
+		var d done
+		if j.point != "" {
+			d.restore, d.err = s.engine.RestoreBackup(j.ctx, dockercompose.RestoreJob{AppID: j.key.app, Backup: j.key.name, Point: j.point})
+		} else {
+			d.res, d.err = s.engine.RunBackup(j.ctx, dockercompose.BackupJob{AppID: j.key.app, Backup: j.key.name, Kind: j.kind})
+		}
+		ch <- d
 		s.mu.Lock()
 		wasStuck := s.stuck[j.key.app] == j
 		if wasStuck {
@@ -544,7 +643,7 @@ func (s *Scheduler) execute(parent context.Context, j *job) {
 			select {
 			case d = <-ch:
 			default:
-				d.err = fmt.Errorf("the run did not stop after its time limit of %s", s.runTimeout)
+				d.err = fmt.Errorf("the run did not stop after its time limit of %s", j.limit)
 				s.markStuck(j)
 			}
 		}
@@ -552,7 +651,28 @@ func (s *Scheduler) execute(parent context.Context, j *job) {
 	if d.err == nil && j.ctx.Err() != nil {
 		d.err = fmt.Errorf("the run was stopped: %w", j.ctx.Err())
 	}
-	s.record(j, start, d.res, d.err, d.err != nil && parent.Err() != nil)
+	stopping := d.err != nil && parent.Err() != nil
+	if j.point != "" {
+		s.recordRestore(j, d.restore, d.err, stopping)
+		return
+	}
+	s.record(j, start, d.res, d.err, stopping)
+}
+
+// recordRestore answers a restore's waiter. A restore is no backup attempt:
+// the state is left alone (its pre-restore copy is a point, not a run of the
+// schedule).
+func (s *Scheduler) recordRestore(j *job, res command.RestoreBackupResponse, err error, stopping bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.running = nil
+	if stopping {
+		err = errStopped
+	}
+	if errors.Is(err, dockercompose.ErrNotRunnable) {
+		s.dirty = true
+	}
+	finish(j, Outcome{Restore: res, Err: err})
 }
 
 // markStuck blocks the job's app until its abandoned RunBackup returns (it

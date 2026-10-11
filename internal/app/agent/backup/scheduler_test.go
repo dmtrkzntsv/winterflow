@@ -81,10 +81,48 @@ type fakeEngine struct {
 	exitDelay time.Duration
 	exits     atomic.Int32
 	result    func(dockercompose.BackupJob) (dockercompose.BackupResult, error)
+	restores  chan restoreCall
+	sweeps    atomic.Int32
 }
 
 func newEngine(plan ...dockercompose.PlannedBackup) *fakeEngine {
-	return &fakeEngine{plan: plan, runs: make(chan dockercompose.BackupJob, 100)}
+	return &fakeEngine{plan: plan, runs: make(chan dockercompose.BackupJob, 100), restores: make(chan restoreCall, 100)}
+}
+
+// restoreCall is one RestoreBackup the engine got: the job, its context's
+// deadline and, once it returned, why its context ended (nil: it didn't).
+type restoreCall struct {
+	job      dockercompose.RestoreJob
+	deadline time.Time
+	cause    error
+}
+
+// RestoreBackup records the restore and blocks like RunBackup (on block, or
+// until its context ends, then reports the context's cause).
+func (e *fakeEngine) RestoreBackup(ctx context.Context, job dockercompose.RestoreJob) (command.RestoreBackupResponse, error) {
+	deadline, _ := ctx.Deadline()
+	e.mu.Lock()
+	block := e.block
+	e.mu.Unlock()
+	resp := command.RestoreBackupResponse{AppID: job.AppID, Backup: job.Backup, RestoredPoint: job.Point, PreRestorePoint: "pre"}
+	if block != nil {
+		e.restores <- restoreCall{job: job, deadline: deadline}
+		select {
+		case <-block:
+		case <-ctx.Done():
+			e.restores <- restoreCall{job: job, cause: context.Cause(ctx)}
+			return resp, ctx.Err()
+		}
+		return resp, nil
+	}
+	e.restores <- restoreCall{job: job, deadline: deadline}
+	return resp, nil
+}
+
+// SweepDeleted counts the sweeps.
+func (e *fakeEngine) SweepDeleted(context.Context) []string {
+	e.sweeps.Add(1)
+	return []string{"disk: unreachable"}
 }
 
 func (e *fakeEngine) BackupPlan() ([]dockercompose.PlannedBackup, error) {
@@ -641,7 +679,8 @@ func TestAbandonedRunHoldsScheduledBackups(t *testing.T) {
 	idle(t, clock)
 	clock.Advance(5 * time.Minute)
 	ran(t, e)
-	if wait := idle(t, clock); wait != idleWait {
+	// Only the daily sweep (a day after start) is left to wait for.
+	if wait := idle(t, clock); wait != sweepEvery-5*time.Minute {
 		t.Fatalf("wait with the app stuck = %s", wait)
 	}
 	s.mu.Lock()
@@ -945,5 +984,138 @@ func TestDeletingBlockLapses(t *testing.T) {
 	clock.Advance(tombstoneTTL)
 	if j := ran(t, e); j.AppID != "app-1" || j.Kind != command.PointScheduled {
 		t.Fatalf("run = %+v", j)
+	}
+}
+
+func restored(t *testing.T, e *fakeEngine) restoreCall {
+	t.Helper()
+	select {
+	case c := <-e.restores:
+		return c
+	case <-time.After(5 * time.Second):
+		t.Fatal("no restore")
+		return restoreCall{}
+	}
+}
+
+func outcome(t *testing.T, ch <-chan Outcome) Outcome {
+	t.Helper()
+	select {
+	case o := <-ch:
+		return o
+	case <-time.After(5 * time.Second):
+		t.Fatal("no outcome")
+		return Outcome{}
+	}
+}
+
+// A restore waits for the run ahead of it (one at a time: it never overlaps
+// a backup of its app), gets the restore time limit, answers with the
+// restore's result and is no backup attempt.
+func TestRestoreRunsInTurn(t *testing.T) {
+	e := newEngine(planned("app-1", "db", recipe.TypeSQLite, true, recipe.Manual))
+	e.block = make(chan struct{})
+	s, clock, dir := start(t, e)
+	idle(t, clock)
+	run := s.RunNow("app-1", "db")
+	ran(t, e)
+	res := s.Restore("app-1", "db", "20261011T120000Z-manual")
+	if o := outcome(t, s.Restore("app-1", "other", "20261011T120000Z-manual")); o.Err == nil ||
+		o.Err.Error() != "a restore of this app is already queued or running" {
+		t.Fatalf("second restore: %+v", o)
+	}
+	select {
+	case c := <-e.restores:
+		t.Fatalf("the restore started during a run: %+v", c)
+	case <-time.After(50 * time.Millisecond):
+	}
+	e.block <- struct{}{} // the run ends
+	if o := outcome(t, run); o.Err != nil {
+		t.Fatal(o.Err)
+	}
+	c := restored(t, e)
+	if c.job != (dockercompose.RestoreJob{AppID: "app-1", Backup: "db", Point: "20261011T120000Z-manual"}) || time.Until(c.deadline) <= RunTimeout {
+		t.Fatalf("restore call = %+v (a restore gets %s)", c, RestoreTimeout)
+	}
+	if o := outcome(t, s.Restore("app-1", "db", "20261011T130000Z-manual")); o.Err == nil {
+		t.Fatal("a restore while one runs was queued")
+	}
+	e.block <- struct{}{}
+	o := outcome(t, res)
+	if o.Err != nil || o.Restore.RestoredPoint != "20261011T120000Z-manual" || o.Restore.PreRestorePoint != "pre" {
+		t.Fatalf("outcome = %+v", o)
+	}
+	raw, _ := os.ReadFile(filepath.Join(dir, "backups", "state.json"))
+	var st map[string]State
+	_ = json.Unmarshal(raw, &st)
+	// The manual run is the only attempt.
+	if a := st["app-1/db"].LastAttempt; !a.Equal(t0) {
+		t.Fatalf("state = %+v", st)
+	}
+}
+
+// Deleting the app stops its restore with ErrAppDeleted as the cause, so
+// the restore leaves the app stopped; the app takes no new restore.
+func TestForgetStopsARestore(t *testing.T) {
+	e := newEngine(planned("app-1", "db", recipe.TypeSQLite, true, "1h"))
+	e.block = make(chan struct{})
+	s, clock, _ := start(t, e)
+	idle(t, clock)
+	res := s.Restore("app-1", "db", "20261011T120000Z-manual")
+	restored(t, e)
+	s.Forget("app-1")
+	if c := restored(t, e); !errors.Is(c.cause, dockercompose.ErrAppDeleted) {
+		t.Fatalf("cause = %v", c.cause)
+	}
+	if o := outcome(t, res); o.Err == nil {
+		t.Fatal("the stopped restore succeeded")
+	}
+	if o := outcome(t, s.Restore("app-1", "db", "20261011T120000Z-manual")); !errors.Is(o.Err, errDeleting) {
+		t.Fatalf("restore of a deleted app: %v", o.Err)
+	}
+}
+
+// Once a day (the first a day after start) the deleted apps' backups are
+// swept on the scheduler's goroutine.
+func TestDailySweep(t *testing.T) {
+	e := newEngine()
+	_, clock, _ := start(t, e)
+	if wait := idle(t, clock); wait != sweepEvery {
+		t.Fatalf("wait = %s", wait)
+	}
+	clock.Advance(sweepEvery)
+	if wait := idle(t, clock); wait != sweepEvery || e.sweeps.Load() != 1 {
+		t.Fatalf("wait = %s after %d sweeps", wait, e.sweeps.Load())
+	}
+	clock.Advance(sweepEvery)
+	idle(t, clock)
+	if e.sweeps.Load() != 2 {
+		t.Fatalf("%d sweeps", e.sweeps.Load())
+	}
+}
+
+// A restore that waited too long behind other runs is refused instead of
+// started, so queue wait + restore stays under command.BackupRunWait.
+func TestRestoreRefusedAfterQueueWait(t *testing.T) {
+	if RestoreTimeout+restoreQueueWait+2*abandonAfter >= command.BackupRunWait {
+		t.Fatalf("restore bound %s + %s exceeds %s", restoreQueueWait, RestoreTimeout, command.BackupRunWait)
+	}
+	e := newEngine(planned("app-2", "db", recipe.TypeSQLite, true, recipe.Manual))
+	e.block = make(chan struct{})
+	s, clock, _ := start(t, e)
+	idle(t, clock)
+	run := s.RunNow("app-2", "db")
+	ran(t, e)
+	res := s.Restore("app-1", "db", "20261011T120000Z-manual")
+	clock.Advance(restoreQueueWait + time.Minute)
+	e.block <- struct{}{}
+	outcome(t, run)
+	if o := outcome(t, res); !errors.Is(o.Err, errQueueWait) {
+		t.Fatalf("outcome = %+v", o)
+	}
+	select {
+	case c := <-e.restores:
+		t.Fatalf("the expired restore started: %+v", c)
+	case <-time.After(50 * time.Millisecond):
 	}
 }

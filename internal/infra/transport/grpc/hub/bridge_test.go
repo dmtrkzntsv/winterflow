@@ -73,6 +73,11 @@ func TestDispatchToOfflineAgentPublishesError(t *testing.T) {
 		if ntf.Status != model.NotificationStatusError {
 			t.Errorf("status = %v, want error", ntf.Status)
 		}
+		// The API's domain sync tells this transient bounce apart by an
+		// exact match on the shared constant.
+		if ntf.Error != bus.ErrAgentNotConnected {
+			t.Errorf("error = %q, want %q", ntf.Error, bus.ErrAgentNotConnected)
+		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("expected an error result on the response queue, got none")
 	}

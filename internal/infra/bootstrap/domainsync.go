@@ -2,12 +2,12 @@ package bootstrap
 
 import (
 	"context"
-	"strings"
 	"sync"
 	"time"
 
 	"winterflow/internal/domain/port"
 	appuc "winterflow/internal/domain/usecase/app"
+	"winterflow/internal/infra/transport/bus"
 	"winterflow/pkg/logger"
 )
 
@@ -26,10 +26,6 @@ const (
 	domainSyncPublishTimeout = 10 * time.Second
 )
 
-// notConnected reports whether a command failed because the hub had no
-// active stream for the agent (hub.dispatchToAgent's "agent not connected").
-func notConnected(errMsg string) bool { return strings.Contains(errMsg, "not connected") }
-
 // domainSync fills a server's server_domains index when its agent comes
 // online: a domain.list dispatched for no user (the result reaches no SSE
 // stream) whose result replaces the index rows, unchanged rows costing no
@@ -37,7 +33,7 @@ func notConnected(errMsg string) bool { return strings.Contains(errMsg, "not con
 //
 // In the distributed topology the hub publishes the capabilities event from
 // RegisterAgent, before the agent's stream is active, so the first attempt
-// usually bounces with "agent not connected". A sync therefore stays pending
+// usually bounces with bus.ErrAgentNotConnected. A sync therefore stays pending
 // until a result arrives: a not-connected result is retried once after a
 // short delay, and the agent's next heartbeat (EventServerOnline, sent as
 // soon as the stream is up) re-fires a pending sync, up to
@@ -133,7 +129,7 @@ func (s *domainSync) result(serverID string, res port.CommandResult) {
 	if !ok {
 		return
 	}
-	if res.Success || !notConnected(res.Error) {
+	if res.Success || res.Error != bus.ErrAgentNotConnected {
 		if !res.Success {
 			s.log.Debug("sync registered domains: agent answered an error", "error", res.Error, "server_id", serverID)
 		}

@@ -11,6 +11,7 @@ import (
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/port"
+	"winterflow/internal/infra/transport/bus"
 	"winterflow/pkg/logger"
 )
 
@@ -52,7 +53,7 @@ func (h *fakeHub) Dispatch(_ context.Context, in port.DispatchInput) (string, er
 		return "", errors.New("bus down")
 	case drop:
 	case !connected:
-		in.OnResult(port.CommandResult{Error: "agent not connected"})
+		in.OnResult(port.CommandResult{Error: bus.ErrAgentNotConnected})
 	case agentErr != "":
 		in.OnResult(port.CommandResult{Error: agentErr})
 	default:

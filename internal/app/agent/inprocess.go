@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 
+	"winterflow/internal/domain/command"
 	"winterflow/internal/infra/transport/bus"
 	"winterflow/internal/infra/transport/codec"
 	"winterflow/internal/infra/transport/grpc/proto"
@@ -41,6 +42,12 @@ func NewInProcessBridge(b bus.Bus, cfg *config.ServerConfig, d CommandRunner, lo
 // done.
 func (br *InProcessBridge) Start(ctx context.Context) error {
 	bus.SubscribeJSON(ctx, br.bus, br.cfg.GetBusRequestQueue(), br.log, func(cmd bus.CommandMessage) {
+		// A detached command (backup.run) waits for work done elsewhere: it
+		// gets its own goroutine so the pipeline keeps draining.
+		if command.Type(cmd.Type).Detached() {
+			go br.handle(ctx, cmd)
+			return
+		}
 		br.handle(ctx, cmd)
 	})
 	br.log.Info("in-process bridge started", "request_queue", br.cfg.GetBusRequestQueue())

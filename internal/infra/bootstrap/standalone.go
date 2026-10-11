@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"time"
 	appagent "winterflow/internal/app/agent"
+	"winterflow/internal/app/agent/backup"
 	agentsrv "winterflow/internal/infra/agent/service"
 	"winterflow/internal/infra/cert"
 	"winterflow/internal/infra/db"
@@ -53,6 +54,10 @@ func BootstrapStandalone(ctx context.Context, log *logger.Logger, cfg *config.Se
 		log.Warn("ingress manager start", "error", err)
 	}
 	agentDispatcher := appagent.NewDispatcher(orchestrator, ingressManager, log)
+	// Backups run on their own goroutine, never on the bridge's.
+	backups := backup.New(orchestrator, cfg.GetAgentDataDir(), log)
+	agentDispatcher.SetBackups(backups)
+	go appagent.RunBackups(ctx, orchestrator, backups, log)
 	bridge := appagent.NewInProcessBridge(b, cfg, agentDispatcher, log)
 	if err := bridge.Start(ctx); err != nil {
 		log.Fatalf("failed to start in-process bridge: %v", err)
@@ -70,7 +75,7 @@ func BootstrapStandalone(ctx context.Context, log *logger.Logger, cfg *config.Se
 	// feeds the status cache (doubling as the liveness pulse) and the SSE push.
 	// Until the embedded server is claimed there is no server id to report as,
 	// so ticks are skipped silently.
-	go appagent.RunStatusReporter(ctx, orchestrator, func(kind bus.EventKind, payload []byte) error {
+	go appagent.RunStatusReporter(ctx, appagent.WithBackupHealth(orchestrator, backups), func(kind bus.EventKind, payload []byte) error {
 		id, ok, err := serverRepo.FirstServerID(ctx)
 		if err != nil || !ok {
 			return err

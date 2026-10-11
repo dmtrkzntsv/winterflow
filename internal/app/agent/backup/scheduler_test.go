@@ -494,3 +494,20 @@ func TestDecorate(t *testing.T) {
 		t.Fatalf("stopped service = %+v", got[0].Backups)
 	}
 }
+
+// Once Run has returned nothing would answer a queued request: Back up now
+// fails at once instead of waiting for a run that never comes.
+func TestRunNowAfterStop(t *testing.T) {
+	s := New(newEngine(), t.TempDir(), logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"}))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	s.Run(ctx)
+	select {
+	case o := <-s.RunNow("app-1", "db"):
+		if !errors.Is(o.Err, errStopped) {
+			t.Fatalf("outcome = %+v", o)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("RunNow after Run returned never answered")
+	}
+}

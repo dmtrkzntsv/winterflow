@@ -101,6 +101,7 @@ type Scheduler struct {
 	dirty   bool // the plan must be reread
 	queue   []*job
 	running *job
+	stopped bool // Run has returned: nothing answers a queued request any more
 }
 
 // New makes a scheduler keeping its state in dataDir/backups/state.json.
@@ -209,6 +210,10 @@ func (s *Scheduler) RunNow(appID, name string) <-chan Outcome {
 	k := key{appID, name}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.stopped {
+		ch <- Outcome{Err: errStopped}
+		return ch
+	}
 	if s.running != nil && s.running.key == k {
 		s.running.waiters = append(s.running.waiters, ch)
 		return ch
@@ -240,12 +245,16 @@ func (s *Scheduler) Run(ctx context.Context) {
 		}
 	}
 	s.mu.Lock()
+	s.stopped = true
 	for _, j := range s.queue {
-		finish(j, Outcome{Err: errors.New("the agent is stopping")})
+		finish(j, Outcome{Err: errStopped})
 	}
 	s.queue = nil
 	s.mu.Unlock()
 }
+
+// errStopped answers a request once Run has returned.
+var errStopped = errors.New("the agent is stopping")
 
 // refresh rereads the plan when asked to, and records when each backup was
 // turned on (its first run is offset from then).

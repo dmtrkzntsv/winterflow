@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 	appagent "winterflow/internal/app/agent"
+	"winterflow/internal/app/agent/backup"
 	backupcli "winterflow/internal/app/backup/cli"
 	ingresscaddy "winterflow/internal/infra/ingress/caddy"
 	dockercompose "winterflow/internal/infra/orchestrator/docker_compose"
@@ -91,7 +92,12 @@ func main() {
 	agent.SetFeatures(features)
 	agent.SetApps(apps)
 
-	agent.SetDispatcher(appagent.NewDispatcher(orchestrator, ingressManager, log))
+	dispatcher := appagent.NewDispatcher(orchestrator, ingressManager, log)
+	// Backups run on their own goroutine, next to the source poller.
+	backups := backup.New(orchestrator, cfg.GetAgentDataDir(), log)
+	dispatcher.SetBackups(backups)
+	go appagent.RunBackups(ctx, orchestrator, backups, log)
+	agent.SetDispatcher(dispatcher)
 
 	// Supervise the connection: connect, register, stream, and reconnect with
 	// backoff on failure, until ctx is canceled. Runs in the background so the
@@ -101,7 +107,7 @@ func main() {
 
 	// Periodic apps-status push: feeds the API's status cache and the SSE
 	// live-status pipeline. Ticks while the stream is down are skipped.
-	go appagent.RunStatusReporter(ctx, orchestrator, func(kind bus.EventKind, payload []byte) error {
+	go appagent.RunStatusReporter(ctx, appagent.WithBackupHealth(orchestrator, backups), func(kind bus.EventKind, payload []byte) error {
 		return agent.SendEvent(string(kind), payload)
 	}, 30*time.Second, log)
 

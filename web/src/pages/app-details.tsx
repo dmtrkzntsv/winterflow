@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   ArrowUpCircle,
@@ -67,6 +67,13 @@ export default function AppDetailsPage() {
   const setTab = (next: string) => {
     setSearchParams(next === "logs" ? {} : { tab: next }, { replace: true });
   };
+  // A tab opened by link may sit past the bar's scrolled edge on a phone.
+  const tabBar = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    tabBar.current
+      ?.querySelector<HTMLElement>('[role="tab"][data-state="active"]')
+      ?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }, [tab]);
 
   const app = useMemo(() => apps.find((a) => a.id === appId), [apps, appId]);
 
@@ -177,23 +184,27 @@ export default function AppDetailsPage() {
       </header>
 
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="h-auto w-full justify-start gap-6 rounded-none border-b bg-transparent p-0">
-          <TabsTrigger value="logs" className={tabTriggerClass}>
-            Logs
-          </TabsTrigger>
-          <TabsTrigger value="editor" className={tabTriggerClass}>
-            Configuration
-          </TabsTrigger>
-          <TabsTrigger value="backups" className={tabTriggerClass}>
-            Backups
-          </TabsTrigger>
-          <TabsTrigger value="history" className={tabTriggerClass}>
-            History
-          </TabsTrigger>
-          <TabsTrigger value="settings" className={tabTriggerClass}>
-            Settings
-          </TabsTrigger>
-        </TabsList>
+        {/* Five tabs are wider than a phone: the bar scrolls inside itself
+            instead of widening the page. */}
+        <div ref={tabBar} className="-mx-1 max-w-full overflow-x-auto px-1">
+          <TabsList className="h-auto w-max min-w-full justify-start gap-6 rounded-none border-b bg-transparent p-0">
+            <TabsTrigger value="logs" className={tabTriggerClass}>
+              Logs
+            </TabsTrigger>
+            <TabsTrigger value="editor" className={tabTriggerClass}>
+              Configuration
+            </TabsTrigger>
+            <TabsTrigger value="backups" className={tabTriggerClass}>
+              Backups
+            </TabsTrigger>
+            <TabsTrigger value="history" className={tabTriggerClass}>
+              History
+            </TabsTrigger>
+            <TabsTrigger value="settings" className={tabTriggerClass}>
+              Settings
+            </TabsTrigger>
+          </TabsList>
+        </div>
         <TabsContent value="logs" className="mt-6">
           <LogsTab appId={app.id} />
         </TabsContent>

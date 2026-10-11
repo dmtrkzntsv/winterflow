@@ -126,8 +126,26 @@ describe("RestorePointsDialog", () => {
     render(<RestorePointsDialog appId="a1" backup={database} backups={fake()} open onOpenChange={() => {}} />);
     expect(await screen.findByRole("button", { name: `Restore the copy of ${when(POINTS[0])}` })).toBeDisabled();
     expect(screen.getByText(/A restore of this app is running/)).toBeInTheDocument();
+    // Deleting a copy waits too: it may be the one being restored.
+    expect(screen.getByRole("button", { name: `Delete the copy of ${when(POINTS[0])}` })).toBeDisabled();
     act(() => end());
     await waitFor(() => expect(screen.getByRole("button", { name: `Restore the copy of ${when(POINTS[0])}` })).toBeEnabled());
+    expect(screen.getByRole("button", { name: `Delete the copy of ${when(POINTS[0])}` })).toBeEnabled();
+  });
+
+  it("doesn't offer a restore while a run of the backup or a save is in flight", async () => {
+    const restore = () => screen.getByRole("button", { name: `Restore the copy of ${when(POINTS[0])}` });
+    const end = trackActivity("a1", "database", "backup");
+    const view = render(<RestorePointsDialog appId="a1" backup={database} backups={fake()} open onOpenChange={() => {}} />);
+    await screen.findByRole("button", { name: `Restore the copy of ${when(POINTS[0])}` });
+    expect(restore()).toBeDisabled();
+    expect(screen.getByText(/A backup of database is running or being saved/)).toBeInTheDocument();
+    act(() => end());
+    await waitFor(() => expect(restore()).toBeEnabled());
+    view.rerender(<RestorePointsDialog appId="a1" backup={database} backups={fake()} open running onOpenChange={() => {}} />);
+    expect(restore()).toBeDisabled();
+    view.rerender(<RestorePointsDialog appId="a1" backup={database} backups={fake()} open busy onOpenChange={() => {}} />);
+    expect(restore()).toBeDisabled();
   });
 
   it("deletes a copy after a confirmation", async () => {
@@ -136,6 +154,7 @@ describe("RestorePointsDialog", () => {
     render(<RestorePointsDialog appId="a1" backup={database} backups={backups} open onOpenChange={() => {}} />);
     await user.click(await screen.findByRole("button", { name: `Delete the copy of ${when(POINTS[1])}` }));
     expect(screen.getByRole("alertdialog")).toHaveTextContent("(900 B)");
+    expect(screen.getByRole("alertdialog")).toHaveTextContent("may be the only way back from that restore");
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     await user.click(screen.getByRole("button", { name: `Delete the copy of ${when(POINTS[1])}` }));
     await user.click(screen.getByRole("button", { name: "Delete copy" }));

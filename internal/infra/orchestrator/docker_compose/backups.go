@@ -130,7 +130,7 @@ func (r *Repository) DeleteRestorePoint(ctx context.Context, appID, name, id str
 // file references through WF_BACKUP_ moved), never when it has undeployed
 // changes (a warning). Warnings also name the overrides dropped because the
 // recipe no longer has their backup.
-func (r *Repository) UpdateBackups(ctx context.Context, appID string, overrides []recipe.BackupConfig) (command.UpdateBackupsResponse, error) {
+func (r *Repository) UpdateBackups(ctx context.Context, appID string, overrides []recipe.BackupConfig, base string) (command.UpdateBackupsResponse, error) {
 	ctx, cancel := context.WithTimeout(ctx, backupUpdateBudget)
 	defer cancel()
 	resp := command.UpdateBackupsResponse{AppID: appID}
@@ -141,6 +141,15 @@ func (r *Repository) UpdateBackups(ctx context.Context, appID string, overrides 
 		return resp, fmt.Errorf("app %s not found", appID)
 	}
 	dir := r.appDataDir(appID)
+	if base != "" {
+		stored, err := r.readOverrides(dir)
+		if err != nil {
+			return resp, err
+		}
+		if backupsBase(stored) != base {
+			return resp, command.ErrBackupsChanged
+		}
+	}
 	files := r.appComposeFiles(dir)
 	contents, err := composeContents(dir, files)
 	if err != nil {
@@ -193,6 +202,9 @@ func (r *Repository) UpdateBackups(ctx context.Context, appID string, overrides 
 		return resp, fmt.Errorf("commit: %w", err)
 	}
 	resp.Revision, resp.Backups, resp.Warnings = hash, backups, warnings
+	if stored, err := r.readOverrides(dir); err == nil {
+		resp.BackupsBase = backupsBase(stored)
+	}
 	if !deployed {
 		if changed && marked {
 			resp.Warnings = append(resp.Warnings, "the app has undeployed changes and was not redeployed: deploy it to apply the backup settings")

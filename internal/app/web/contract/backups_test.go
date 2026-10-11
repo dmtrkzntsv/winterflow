@@ -25,13 +25,15 @@ func TestBackupRoutes(t *testing.T) {
 		var res command.UpdateBackupsResponse
 		owner.succeed(t, post("/api/v1/app/update-backups", happ.UpdateBackupsRequest{ServerID: sid, UpdateBackupsRequest: command.UpdateBackupsRequest{
 			AppID: anApp, Backups: []recipe.BackupConfig{{Name: "database", Enabled: true, Storage: "disk", Every: "15m"}, {Name: "media"}},
+			Base: "b1",
 		}}), &res)
-		if res.AppID != anApp || res.Revision != "rev-2" {
+		// The base the page loaded reaches the agent, and the new one comes back.
+		if res.AppID != anApp || res.Revision != "rev-2" || res.BackupsBase != "base-b1" {
 			t.Fatalf("result = %+v", res)
 		}
 		got := e.agent.seen(command.TypeBackupUpdate)
 		in := decode[command.UpdateBackupsRequest](got[len(got)-1].Payload)
-		if len(in.Backups) != 2 || in.Backups[0].Every != "15m" || !in.Backups[0].Enabled || in.Backups[1].Name != "media" {
+		if in.Base != "b1" || len(in.Backups) != 2 || in.Backups[0].Every != "15m" || !in.Backups[0].Enabled || in.Backups[1].Name != "media" {
 			t.Fatalf("agent got %+v", in)
 		}
 	})
@@ -59,6 +61,11 @@ func TestBackupRoutes(t *testing.T) {
 		e.agent.fail(command.TypeBackupUpdate, `backup media: /etc/app is not on a mount of service web`)
 		owner.failWith(t, post("/api/v1/app/update-backups", map[string]any{"server_id": sid, "app_id": anApp, "backups": []any{}}),
 			`backup media: /etc/app is not on a mount of service web`)
+	})
+	t.Run("a stale base is the operation's error", func(t *testing.T) {
+		e.agent.fail(command.TypeBackupUpdate, command.ErrBackupsChanged.Error())
+		owner.failWith(t, post("/api/v1/app/update-backups", map[string]any{"server_id": sid, "app_id": anApp, "backups": []any{}, "base": "old"}),
+			command.ErrBackupsChanged.Error())
 	})
 	t.Run("list-restore-points", func(t *testing.T) {
 		var res command.ListRestorePointsResponse

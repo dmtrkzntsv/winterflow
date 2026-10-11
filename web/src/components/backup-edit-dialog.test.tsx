@@ -117,6 +117,16 @@ describe("BackupEditDialog", () => {
     expect(cleared).toHaveBeenCalledWith({ name: "database", enabled: true, storage: "disk", volume: "data", paths: [] });
   });
 
+  it("goes back to its own volume when the location kind is switched back", async () => {
+    const user = userEvent.setup({ delay: null });
+    const onSave = renderDialog({ ...database, volume: "media", from_recipe: all });
+    await user.selectOptions(screen.getByLabelText("Location kind"), "service");
+    await user.selectOptions(screen.getByLabelText("Location kind"), "volume");
+    expect(screen.getByLabelText("Volume")).toHaveValue("media");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(onSave).toHaveBeenCalledWith({ name: "database", enabled: true, storage: "disk", volume: "media", path: "app.db" });
+  });
+
   it("keeps a UI-added backup whole and can remove it", async () => {
     const user = userEvent.setup({ delay: null });
     const onRemove = vi.fn();

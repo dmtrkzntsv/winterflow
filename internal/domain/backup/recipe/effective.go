@@ -85,6 +85,11 @@ func Check(comp Compose, overrides []BackupConfig) ([]EffectiveBackup, error) {
 		if !names[o.Name] && o.Type == "" {
 			return nil, invalid(fmt.Sprintf("backups[%d]", j), "the compose file has no backup %q: a new backup needs its type", o.Name)
 		}
+		// A page that was opened before the compose file gained this name
+		// would otherwise move the compose file's backup to its own location.
+		if names[o.Name] && o.Type != "" {
+			return nil, invalid(fmt.Sprintf("backups[%d]", j), "%s is declared by the compose file; edit it instead of adding it", o.Name)
+		}
 	}
 	return Effective(comp, overrides)
 }

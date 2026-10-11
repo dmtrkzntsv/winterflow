@@ -117,6 +117,9 @@ export type AppDetailPayload = {
   // where a new one can point, and the server's BACKUP_RETENTION_DAYS.
   backups?: EffectiveBackup[] | null;
   backups_error?: string;
+  // Identifies the stored backups list: sent back with the next update, so
+  // a change made elsewhere meanwhile is refused instead of undone.
+  backups_base?: string;
   backup_targets?: BackupTargets | null;
   retention_days?: number;
   revision: number;

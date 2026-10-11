@@ -10,6 +10,7 @@ import {
   expiresNote,
   formatBytes,
   keepDays,
+  isBackupsChanged,
   keepError,
   keepLabel,
   locationError,
@@ -200,8 +201,12 @@ describe("labels", () => {
 });
 
 describe("the backup forms' checks", () => {
-  it("splits paths by line or comma", () => {
-    expect(pathsFrom(" /a \n\n/b, /c ")).toEqual(["/a", "/b", "/c"]);
+  it("recognizes the agent's stale-view refusal", () => {
+    expect(isBackupsChanged("the backups changed since you opened them; reload and try again")).toBe(true);
+    expect(isBackupsChanged("disk full")).toBe(false);
+  });
+  it("splits paths by line, commas stay", () => {
+    expect(pathsFrom(" /a \n\n/b, /c ")).toEqual(["/a", "/b, /c"]);
     expect(pathsFrom("")).toEqual([]);
   });
   it("checks a retention", () => {

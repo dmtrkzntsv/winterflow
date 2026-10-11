@@ -26,6 +26,15 @@ describe("BackupStorageDialog", () => {
     expect(onPick).toHaveBeenCalledWith("disk");
   });
 
+  it("shows progress and can't be sent twice while the backup is turned on", async () => {
+    render(
+      <MemoryRouter>
+        <BackupStorageDialog backup="database" current="disk" open busy load={async () => ["disk"]} onOpenChange={() => {}} onPick={() => {}} />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByRole("button", { name: "Turning on…" })).toBeDisabled();
+  });
+
   it("starts on the first storage when the last one is gone", async () => {
     renderDialog(async () => ["disk"], "removed");
     expect(await screen.findByLabelText("Storage")).toHaveValue("disk");

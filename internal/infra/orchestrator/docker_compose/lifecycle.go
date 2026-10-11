@@ -245,6 +245,9 @@ func (r *Repository) GetApp(ctx context.Context, appID string) (command.GetAppRe
 		resp.BackupsError = err.Error()
 	}
 	resp.Backups = cfg.backups
+	if stored, err := r.readOverrides(dir); err == nil {
+		resp.BackupsBase = backupsBase(stored)
+	}
 	// The WF_STORAGE_ / WF_BACKUP_ variables the compose files reference:
 	// read-only rows in the editor. An unreadable compose file just shows
 	// none.

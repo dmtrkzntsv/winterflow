@@ -289,6 +289,17 @@ func TestCheckRefusesAnIncompleteNewBackup(t *testing.T) {
 	}
 }
 
+// An entry that says it is new (it carries a type) can't take the name of a
+// backup the compose file declares: a page opened before the compose file
+// gained it would otherwise move the compose file's backup.
+func TestCheckRefusesANewBackupNamedLikeTheRecipes(t *testing.T) {
+	c := parse(t, compose)
+	_, err := Check(c, []BackupConfig{{Name: "media", Type: TypeFiles, Volume: "data"}})
+	if err == nil || !strings.Contains(err.Error(), "media is declared by the compose file; edit it instead of adding it") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestClean(t *testing.T) {
 	c := parse(t, compose)
 	kept, warnings := Clean(c, []BackupConfig{

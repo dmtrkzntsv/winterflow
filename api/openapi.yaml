@@ -4090,6 +4090,8 @@ components:
           items:
             $ref: '#/components/schemas/EffectiveBackup'
           type: array
+        backups_base:
+          type: string
         backups_error:
           type: string
         retention_days:
@@ -5200,6 +5202,8 @@ components:
           type:
           - array
           - "null"
+        base:
+          type: string
         server_id:
           type: string
       type: object
@@ -5213,6 +5217,8 @@ components:
           type:
           - array
           - "null"
+        backups_base:
+          type: string
         redeployed:
           type: boolean
         revision:

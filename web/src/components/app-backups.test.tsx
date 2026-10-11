@@ -55,7 +55,7 @@ const HEALTH: BackupHealth[] = [
 
 function renderBackups(detail: Partial<AppDetailPayload> = {}, getApp?: AppsContextValue["getApp"], health: BackupHealth[] = HEALTH) {
   const value = {
-    getApp: getApp ?? vi.fn().mockResolvedValue({ backups: LIST, backup_targets: { volumes: ["data"], services: [] }, retention_days: 180, ...detail }),
+    getApp: getApp ?? vi.fn().mockResolvedValue({ backups: LIST, backup_targets: { volumes: ["data"], services: [] }, retention_days: 180, backups_base: "b0", ...detail }),
     backupsByApp: { a1: health },
   } as unknown as AppsContextValue;
   return render(
@@ -73,7 +73,9 @@ describe("AppBackups", () => {
   beforeEach(() => {
     for (const f of Object.values(backups)) f.mockReset();
     for (const f of Object.values(toast)) f.mockReset();
+    let version = 0;
     backups.updateBackups.mockImplementation(async (_app: string, list: { name: string; enabled?: boolean; storage?: string }[]) => ({
+      base: `b${++version}`,
       backups: LIST.map((b) => {
         const e = list.find((c) => c.name === b.name);
         return { ...b, enabled: e?.enabled ?? false, storage: e?.storage ?? "" };
@@ -111,20 +113,29 @@ describe("AppBackups", () => {
     await user.selectOptions(await within(dialog).findByLabelText("Storage"), "offsite");
     await user.click(within(dialog).getByRole("button", { name: "Turn on" }));
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith("media turned on", { description: undefined }));
-    expect(backups.updateBackups).toHaveBeenLastCalledWith("a1", [
-      { name: "database", enabled: true, storage: "disk" },
-      { name: "media", enabled: true, storage: "offsite" },
-      { name: "replica", enabled: true, storage: "s3" },
-    ]);
+    expect(backups.updateBackups).toHaveBeenLastCalledWith(
+      "a1",
+      [
+        { name: "database", enabled: true, storage: "disk" },
+        { name: "media", enabled: true, storage: "offsite" },
+        { name: "replica", enabled: true, storage: "s3" },
+      ],
+      "b0",
+    );
     expect(within(row("media")).getByRole("switch")).toBeChecked();
 
     await user.click(within(row("database")).getByRole("switch"));
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith("database turned off", { description: undefined }));
-    expect(backups.updateBackups).toHaveBeenLastCalledWith("a1", [
-      { name: "database", storage: "disk" },
-      { name: "media", enabled: true, storage: "offsite" },
-      { name: "replica", enabled: true, storage: "s3" },
-    ]);
+    // Each save carries the base the previous one answered with.
+    expect(backups.updateBackups).toHaveBeenLastCalledWith(
+      "a1",
+      [
+        { name: "database", storage: "disk" },
+        { name: "media", enabled: true, storage: "offsite" },
+        { name: "replica", enabled: true, storage: "s3" },
+      ],
+      "b1",
+    );
   });
 
   it("reports a refused save and its warnings", async () => {
@@ -231,11 +242,35 @@ describe("AppBackups", () => {
     expect(backups.updateBackups.mock.calls[0][1]).toEqual([{ name: "database", enabled: true, storage: "disk" }]);
   });
 
-  it("shows an empty state, a recipe error, and a load failure with a retry", async () => {
+  it("reloads and says so when the backups were changed elsewhere", async () => {
     const user = userEvent.setup({ delay: null });
+    const getApp = vi.fn().mockResolvedValue({ backups: LIST, backup_targets: null, backups_base: "b0" });
+    backups.updateBackups.mockRejectedValueOnce(new Error("the backups changed since you opened them; reload and try again"));
+    renderBackups({}, getApp);
+    await user.click(await screen.findByRole("switch", { name: "Back up database" }));
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith("The backups were changed elsewhere", {
+        description: "the backups changed since you opened them; reload and try again",
+      }),
+    );
+    await waitFor(() => expect(getApp).toHaveBeenCalledTimes(2));
+  });
+
+  it("changes nothing while the backups can't be read", async () => {
     renderBackups({ backups: [], backups_error: "x-winterflow.backups[0].volume: \"gone\" is not a volume" });
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent('The backups can\'t be read: x-winterflow.backups[0].volume: "gone" is not a volume');
+    expect(alert).toHaveTextContent("roll back in History");
+    expect(screen.getByRole("button", { name: /Add backup/ })).toBeDisabled();
+    expect(screen.queryByText(/This app has no backups/)).not.toBeInTheDocument();
+    expect(backups.updateBackups).not.toHaveBeenCalled();
+  });
+
+  it("shows an empty state and a load failure with a retry", async () => {
+    const user = userEvent.setup({ delay: null });
+    renderBackups({ backups: [] });
     expect(await screen.findByText(/This app has no backups/)).toBeInTheDocument();
-    expect(screen.getByRole("alert")).toHaveTextContent('The backups can\'t be read: x-winterflow.backups[0].volume: "gone" is not a volume');
+    expect(screen.getByRole("button", { name: /Add backup/ })).toBeEnabled();
 
     const getApp = vi.fn().mockRejectedValueOnce(new Error("agent offline")).mockResolvedValue({ backups: LIST });
     renderBackups({}, getApp);

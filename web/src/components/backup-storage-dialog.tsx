@@ -21,6 +21,7 @@ export function BackupStorageDialog({
   backup,
   current,
   open,
+  busy = false,
   load,
   onOpenChange,
   onPick,
@@ -28,6 +29,7 @@ export function BackupStorageDialog({
   backup: string;
   current: string;
   open: boolean;
+  busy?: boolean; // the backup is being turned on
   load: () => Promise<string[]>;
   onOpenChange: (open: boolean) => void;
   onPick: (storage: string) => void;
@@ -91,8 +93,8 @@ export function BackupStorageDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button disabled={!picked} onClick={() => onPick(picked)}>
-            Turn on
+          <Button disabled={!picked || busy} onClick={() => onPick(picked)}>
+            {busy ? "Turning on…" : "Turn on"}
           </Button>
         </DialogFooter>
       </DialogContent>

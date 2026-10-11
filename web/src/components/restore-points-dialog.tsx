@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { Backups } from "@/context/use-backups";
-import { trackActivity, useActivity } from "@/lib/backup-activity";
+import { isRunning, restoringBackup, trackActivity, useActivity } from "@/lib/backup-activity";
 import { expiresNote, formatBytes, KIND_LABELS, relativeAge, type EffectiveBackup, type RestorePoint } from "@/lib/backups";
 
 type Confirm = { action: "restore" | "delete"; point: RestorePoint };
@@ -36,6 +36,8 @@ export function RestorePointsDialog({
   backup,
   backups,
   open,
+  busy: saving = false,
+  running = false,
   onOpenChange,
   onRestored,
 }: {
@@ -43,6 +45,8 @@ export function RestorePointsDialog({
   backup: EffectiveBackup;
   backups: Backups;
   open: boolean;
+  busy?: boolean; // a change to the app's backups is being saved
+  running?: boolean; // the agent reports a run of this backup
   onOpenChange: (open: boolean) => void;
   onRestored?: () => void;
 }) {
@@ -53,7 +57,11 @@ export function RestorePointsDialog({
   const [failure, setFailure] = useState("");
   // Any restore of this app, started here or before (a restore stops the app,
   // and the agent refuses a second one).
-  const restoring = Object.values(useActivity(appId)).includes("restore");
+  const activity = useActivity(appId);
+  const restoring = restoringBackup(activity) !== undefined;
+  // A run of this backup (queued ahead or not) or a save in flight: the
+  // agent would hold a restore behind them, so it isn't offered.
+  const runBusy = isRunning(activity, backup.name, "backup") || running || saving;
 
   const load = useCallback(async () => {
     setError("");
@@ -151,6 +159,9 @@ export function RestorePointsDialog({
               <p id="point-confirm" className="text-sm">
                 Delete the copy of <strong>{when(confirm.point)}</strong> ({formatBytes(confirm.point.size)})? It can't be restored
                 afterwards.
+                {confirm.point.kind === "pre-restore"
+                  ? " This is the data a restore replaced: it may be the only way back from that restore."
+                  : ""}
               </p>
             )}
             {busy === "restore" ? (
@@ -180,7 +191,11 @@ export function RestorePointsDialog({
           </p>
         ) : restoring && busy !== "restore" ? (
           <p role="status" className="text-sm text-muted-foreground">
-            A restore of this app is running; another can start when it is done.
+            A restore of this app is running: copies can't be restored or deleted until it is done.
+          </p>
+        ) : runBusy ? (
+          <p role="status" className="text-sm text-muted-foreground">
+            A backup of {backup.name} is running or being saved: a copy can be restored when it is done.
           </p>
         ) : null}
         {error ? (
@@ -228,7 +243,7 @@ export function RestorePointsDialog({
                         size="sm"
                         variant="ghost"
                         aria-label={`Restore the copy of ${when(p)}`}
-                        disabled={busy !== null || !backup.enabled || restoring}
+                        disabled={busy !== null || !backup.enabled || restoring || runBusy}
                         title={backup.enabled ? undefined : "Turn the backup on to restore"}
                         onClick={() => setConfirm({ action: "restore", point: p })}
                       >
@@ -239,7 +254,7 @@ export function RestorePointsDialog({
                         variant="ghost"
                         className="text-destructive hover:text-destructive"
                         aria-label={`Delete the copy of ${when(p)}`}
-                        disabled={busy !== null}
+                        disabled={busy !== null || restoring}
                         onClick={() => setConfirm({ action: "delete", point: p })}
                       >
                         Delete

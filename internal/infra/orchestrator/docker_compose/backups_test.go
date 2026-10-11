@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"winterflow/internal/domain/backup/recipe"
+	"winterflow/internal/domain/command"
 )
 
 // updateRepo is an app with backupCompose deployed (its mark at HEAD),
@@ -35,7 +36,7 @@ func updateRepo(t *testing.T) (*Repository, *fakeComposeHooks) {
 }
 
 func update(r *Repository, list ...recipe.BackupConfig) (string, []string, bool, error) {
-	resp, err := r.UpdateBackups(context.Background(), "app-1", list)
+	resp, err := r.UpdateBackups(context.Background(), "app-1", list, "")
 	return resp.Revision, resp.Warnings, resp.Redeployed, err
 }
 
@@ -46,7 +47,7 @@ func TestUpdateBackupsWithoutRedeploy(t *testing.T) {
 	dir := r.appDataDir("app-1")
 	resp, err := r.UpdateBackups(context.Background(), "app-1", []recipe.BackupConfig{
 		{Name: "database", Enabled: true, Storage: "disk", Every: "1h"}, // every equals the default: kept, as the user set it
-	})
+	}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,13 +68,13 @@ func TestUpdateBackupsWithoutRedeploy(t *testing.T) {
 // app is redeployed.
 func TestUpdateBackupsRedeploysOnProfileChange(t *testing.T) {
 	r, hooks := updateRepo(t)
-	resp, err := r.UpdateBackups(context.Background(), "app-1", []recipe.BackupConfig{{Name: "replica", Enabled: true, Storage: "hetzner"}})
+	resp, err := r.UpdateBackups(context.Background(), "app-1", []recipe.BackupConfig{{Name: "replica", Enabled: true, Storage: "hetzner"}}, "")
 	if err != nil || !resp.Redeployed || len(hooks.redeploys) != 1 {
 		t.Fatalf("resp = %+v, %v, redeploys %v", resp, err, hooks.redeploys)
 	}
 	// A failed redeploy is a warning: the settings are saved.
 	hooks.failUp = map[string]error{"app-1": errors.New("port in use")}
-	resp, err = r.UpdateBackups(context.Background(), "app-1", nil)
+	resp, err = r.UpdateBackups(context.Background(), "app-1", nil, "")
 	if err != nil || resp.Redeployed || len(resp.Warnings) != 1 || !strings.Contains(resp.Warnings[0], "redeploy failed: port in use") {
 		t.Fatalf("resp = %+v, %v", resp, err)
 	}
@@ -82,7 +83,7 @@ func TestUpdateBackupsRedeploysOnProfileChange(t *testing.T) {
 func TestUpdateBackupsLeavesStoppedAndDraftAppsAlone(t *testing.T) {
 	r, hooks := updateRepo(t)
 	hooks.up = map[string]bool{}
-	resp, err := r.UpdateBackups(context.Background(), "app-1", []recipe.BackupConfig{{Name: "replica", Enabled: true, Storage: "hetzner"}})
+	resp, err := r.UpdateBackups(context.Background(), "app-1", []recipe.BackupConfig{{Name: "replica", Enabled: true, Storage: "hetzner"}}, "")
 	if err != nil || resp.Redeployed || len(hooks.redeploys) != 0 || r.hasDraft("app-1") {
 		t.Fatalf("stopped: %+v, %v", resp, err)
 	}
@@ -92,14 +93,14 @@ func TestUpdateBackupsLeavesStoppedAndDraftAppsAlone(t *testing.T) {
 	if _, err := gitCommitAll(r.appDataDir("app-1"), "draft"); err != nil {
 		t.Fatal(err)
 	}
-	resp, err = r.UpdateBackups(context.Background(), "app-1", nil)
+	resp, err = r.UpdateBackups(context.Background(), "app-1", nil, "")
 	if err != nil || resp.Redeployed || len(hooks.redeploys) != 0 || len(resp.Warnings) != 1 || !strings.Contains(resp.Warnings[0], "undeployed changes") {
 		t.Fatalf("draft: %+v, %v", resp, err)
 	}
 	// docker ps failing: a warning, no redeploy.
 	r2, hooks2 := updateRepo(t)
 	hooks2.psErr = errors.New("daemon down")
-	resp, err = r2.UpdateBackups(context.Background(), "app-1", []recipe.BackupConfig{{Name: "replica", Enabled: true, Storage: "hetzner"}})
+	resp, err = r2.UpdateBackups(context.Background(), "app-1", []recipe.BackupConfig{{Name: "replica", Enabled: true, Storage: "hetzner"}}, "")
 	if err != nil || resp.Redeployed || len(resp.Warnings) != 1 || !strings.Contains(resp.Warnings[0], "daemon down") {
 		t.Fatalf("ps error: %+v, %v", resp, err)
 	}
@@ -125,7 +126,7 @@ func TestUpdateBackupsRefuses(t *testing.T) {
 	if now, _ := gitHead(r.appDataDir("app-1")); now != head {
 		t.Fatal("a refused update committed")
 	}
-	if _, err := r.UpdateBackups(context.Background(), "gone", nil); err == nil {
+	if _, err := r.UpdateBackups(context.Background(), "gone", nil, ""); err == nil {
 		t.Fatal("a missing app was updated")
 	}
 }
@@ -179,7 +180,7 @@ func TestUpdateBackupsRestoresTheConfigWhenTheCommitFails(t *testing.T) {
 	}
 	lock(0o500)
 	t.Cleanup(func() { lock(0o700) })
-	_, err = r.UpdateBackups(context.Background(), "app-1", []recipe.BackupConfig{{Name: "database", Enabled: true, Storage: "disk"}})
+	_, err = r.UpdateBackups(context.Background(), "app-1", []recipe.BackupConfig{{Name: "database", Enabled: true, Storage: "disk"}}, "")
 	if err == nil || !strings.Contains(err.Error(), "commit:") {
 		t.Fatalf("err = %v", err)
 	}
@@ -197,7 +198,7 @@ func TestUpdateBackupsOnNullConfig(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, configRel), []byte("null"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.UpdateBackups(context.Background(), "app-1", []recipe.BackupConfig{{Name: "database", Every: "2h"}}); err != nil {
+	if _, err := r.UpdateBackups(context.Background(), "app-1", []recipe.BackupConfig{{Name: "database", Every: "2h"}}, ""); err != nil {
 		t.Fatal(err)
 	}
 	got, err := r.readOverrides(dir)
@@ -241,7 +242,7 @@ func TestUpdateBackupsExplicitEmptyListsRoundTrip(t *testing.T) {
 		"inherit both":  {Name: "media"},
 		"replace lists": {Name: "media", Paths: ptrList("a", "b"), Exclude: ptrList("*.log")},
 	} {
-		resp, err := r.UpdateBackups(context.Background(), "app-1", []recipe.BackupConfig{o})
+		resp, err := r.UpdateBackups(context.Background(), "app-1", []recipe.BackupConfig{o}, "")
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
@@ -256,9 +257,46 @@ func TestUpdateBackupsExplicitEmptyListsRoundTrip(t *testing.T) {
 		}
 	}
 	// The widened backup really covers the whole volume now.
-	resp, _ := r.UpdateBackups(context.Background(), "app-1", []recipe.BackupConfig{{Name: "media", Paths: ptrList(), Exclude: ptrList()}})
+	resp, _ := r.UpdateBackups(context.Background(), "app-1", []recipe.BackupConfig{{Name: "media", Paths: ptrList(), Exclude: ptrList()}}, "")
 	got, _ := r.appBackups(dir, r.appComposeFiles(dir))
 	if len(got.backups[0].Paths) != 0 || len(got.backups[0].Exclude) != 0 || got.backups[0].FromRecipe["paths"] || got.backups[0].FromRecipe["exclude"] {
 		t.Fatalf("stored = %+v (answered %+v)", got.backups[0], resp.Backups[0])
+	}
+}
+
+// An update carries the base it was made from: a list changed since is
+// refused, the current base is accepted, and none skips the check.
+func TestUpdateBackupsBase(t *testing.T) {
+	r, _ := updateRepo(t)
+	dir := r.appDataDir("app-1")
+	ctx := context.Background()
+	on := []recipe.BackupConfig{{Name: "database", Enabled: true, Storage: "disk"}}
+
+	first, err := r.UpdateBackups(ctx, "app-1", on, "")
+	if err != nil || first.BackupsBase == "" {
+		t.Fatalf("empty base: %+v, %v", first, err)
+	}
+	stored, _ := r.readOverrides(dir)
+	if first.BackupsBase != backupsBase(stored) {
+		t.Fatalf("response base %q != stored %q", first.BackupsBase, backupsBase(stored))
+	}
+	if got, err := r.GetApp(ctx, "app-1"); err != nil || got.BackupsBase != first.BackupsBase {
+		t.Fatalf("app.get base = %q, %v; want %q", got.BackupsBase, err, first.BackupsBase)
+	}
+
+	// The same base is accepted, and moves on.
+	off := []recipe.BackupConfig{}
+	second, err := r.UpdateBackups(ctx, "app-1", off, first.BackupsBase)
+	if err != nil || second.BackupsBase == first.BackupsBase || second.BackupsBase != backupsBase(nil) {
+		t.Fatalf("matching base: %+v, %v", second, err)
+	}
+
+	// The first base is stale now: refused, and nothing is written.
+	head, _ := gitHead(dir)
+	if _, err := r.UpdateBackups(ctx, "app-1", on, first.BackupsBase); !errors.Is(err, command.ErrBackupsChanged) {
+		t.Fatalf("stale base: %v", err)
+	}
+	if after, _ := gitHead(dir); after != head {
+		t.Fatalf("a refused update committed: %s -> %s", head, after)
 	}
 }

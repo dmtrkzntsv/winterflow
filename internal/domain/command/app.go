@@ -137,6 +137,9 @@ type GetAppResponse struct {
 	// BackupsError says why they could not be read (an invalid recipe).
 	Backups      []recipe.EffectiveBackup `json:"backups,omitempty"`
 	BackupsError string                   `json:"backups_error,omitempty"`
+	// BackupsBase identifies the stored backups list (the overrides): the
+	// base an update-backups sent from this view carries.
+	BackupsBase string `json:"backups_base,omitempty"`
 	// BackupTargets are where a backup added in the UI can point (the
 	// compose files' volumes and each service's mounts); nil when a compose
 	// file can't be read.

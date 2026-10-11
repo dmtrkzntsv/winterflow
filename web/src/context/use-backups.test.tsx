@@ -28,16 +28,17 @@ describe("useBackups", () => {
 
   it("sends server_id in the body of the POST routes", async () => {
     const { result } = renderHook(() => useBackups());
-    waitFor.mockResolvedValueOnce({ status: 0, payload: { backups: [{ name: "db" }], redeployed: true } });
-    expect(await result.current.updateBackups("a1", [{ name: "db", enabled: true, storage: "disk" }])).toEqual({
+    waitFor.mockResolvedValueOnce({ status: 0, payload: { backups: [{ name: "db" }], redeployed: true, backups_base: "b9" } });
+    expect(await result.current.updateBackups("a1", [{ name: "db", enabled: true, storage: "disk" }], "b8")).toEqual({
       backups: [{ name: "db" }],
       redeployed: true,
       warnings: [],
+      base: "b9",
     });
     expect(sent[0]).toEqual({
       url: expect.stringMatching(/\/api\/v1\/app\/update-backups$/),
       method: "POST",
-      body: { server_id: "srv-1", app_id: "a1", backups: [{ name: "db", enabled: true, storage: "disk" }] },
+      body: { server_id: "srv-1", app_id: "a1", backups: [{ name: "db", enabled: true, storage: "disk" }], base: "b8" },
     });
 
     waitFor.mockResolvedValueOnce({ status: 0, payload: { unchanged: true } });

@@ -74,10 +74,20 @@ const BackupRunWait = 2 * time.Hour
 // whole; the agent validates it against the compose file's recipe and the
 // server's storages, commits it as a new revision, and redeploys only when
 // the compose profiles or the storage variables change.
+//
+// Base is the backups_base the client last read (app.get, or the previous
+// update); the agent refuses the update when the stored list has changed
+// since (ErrBackupsChanged), so two people editing the tab don't undo each
+// other. Empty skips the check (API clients that don't track it).
 type UpdateBackupsRequest struct {
 	AppID   string                `json:"app_id"`
 	Backups []recipe.BackupConfig `json:"backups"`
+	Base    string                `json:"base,omitempty"`
 }
+
+// ErrBackupsChanged is the agent's answer to an update whose base is no
+// longer the stored list's.
+var ErrBackupsChanged = errors.New("the backups changed since you opened them; reload and try again")
 
 func (r UpdateBackupsRequest) Validate() error {
 	if err := validateAppID(r.AppID); err != nil {
@@ -108,6 +118,8 @@ type UpdateBackupsResponse struct {
 	Redeployed bool                     `json:"redeployed"`
 	Backups    []recipe.EffectiveBackup `json:"backups"`
 	Warnings   []string                 `json:"warnings,omitempty"`
+	// BackupsBase identifies the stored list now: the next update's base.
+	BackupsBase string `json:"backups_base,omitempty"`
 }
 
 // --- backup.points ----------------------------------------------------------

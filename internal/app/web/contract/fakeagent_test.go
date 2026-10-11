@@ -254,7 +254,7 @@ func defaultScript(typ command.Type) script {
 	case command.TypeAppGet:
 		return func(raw json.RawMessage) reply {
 			in := decode[command.GetAppRequest](raw)
-			return reply{Payload: command.GetAppResponse{App: command.AppPayload{AppID: in.AppID, Config: []byte(`{}`), Variables: []command.ContentItem{}, Files: []command.ContentItem{}}}}
+			return reply{Payload: command.GetAppResponse{App: command.AppPayload{AppID: in.AppID, Config: []byte(`{}`), Variables: []command.ContentItem{}, Files: []command.ContentItem{}}, BackupsBase: "base-0"}}
 		}
 	case command.TypeAppControl:
 		return func(raw json.RawMessage) reply {
@@ -328,7 +328,7 @@ func defaultScript(typ command.Type) script {
 	case command.TypeBackupUpdate:
 		return func(raw json.RawMessage) reply {
 			in := decode[command.UpdateBackupsRequest](raw)
-			return reply{Payload: command.UpdateBackupsResponse{AppID: in.AppID, Revision: "rev-2", Backups: []recipe.EffectiveBackup{}}}
+			return reply{Payload: command.UpdateBackupsResponse{AppID: in.AppID, Revision: "rev-2", Backups: []recipe.EffectiveBackup{}, BackupsBase: "base-" + in.Base}}
 		}
 	case command.TypeBackupPoints:
 		return func(raw json.RawMessage) reply {

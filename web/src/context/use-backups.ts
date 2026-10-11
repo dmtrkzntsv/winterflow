@@ -26,7 +26,8 @@ export const BACKUP_UPDATE_TIMEOUT_MS = 11 * 60_000;
 export const ORPHAN_LIST_TIMEOUT_MS = 70_000;
 export const ORPHAN_DELETE_TIMEOUT_MS = 150_000;
 
-export type BackupsUpdated = { backups: EffectiveBackup[]; redeployed: boolean; warnings: string[] };
+// base identifies the stored list now (the next update's base).
+export type BackupsUpdated = { backups: EffectiveBackup[]; redeployed: boolean; warnings: string[]; base: string };
 
 // useBackups exposes the backup routes of the active server: an app's
 // backups list, its restore points, Back up now, restore, and the backups of
@@ -66,15 +67,22 @@ export function useBackups() {
     [serverId, waitFor],
   );
 
-  // updateBackups replaces the app's backups list as a whole.
+  // updateBackups replaces the app's backups list as a whole. base is the
+  // backups_base this view was loaded with: the agent refuses the update when
+  // the stored list has changed since.
   const updateBackups = useCallback(
-    async (appId: string, backups: BackupConfig[]): Promise<BackupsUpdated> => {
-      const res = await dispatch<{ backups?: EffectiveBackup[] | null; redeployed?: boolean; warnings?: string[] | null }>(
+    async (appId: string, backups: BackupConfig[], base?: string): Promise<BackupsUpdated> => {
+      const res = await dispatch<{
+        backups?: EffectiveBackup[] | null;
+        redeployed?: boolean;
+        warnings?: string[] | null;
+        backups_base?: string;
+      }>(
         "/api/v1/app/update-backups",
-        { app_id: appId, backups },
+        { app_id: appId, backups, ...(base ? { base } : {}) },
         { post: true, timeoutMs: BACKUP_UPDATE_TIMEOUT_MS },
       );
-      return { backups: res.backups ?? [], redeployed: res.redeployed ?? false, warnings: res.warnings ?? [] };
+      return { backups: res.backups ?? [], redeployed: res.redeployed ?? false, warnings: res.warnings ?? [], base: res.backups_base ?? "" };
     },
     [dispatch],
   );

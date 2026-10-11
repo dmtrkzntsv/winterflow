@@ -232,7 +232,9 @@ export function BackupEditDialog({
                     onChange={(e) => {
                       const next = e.target.value as "volume" | "service";
                       setWhere(next);
-                      setTarget(next === "volume" ? (targets?.volumes[0] ?? "") : (services[0]?.name ?? ""));
+                      // Back to the backup's own kind: its own volume or service.
+                      const own = next === "volume" ? b.volume : b.service;
+                      setTarget(own ?? (next === "volume" ? (targets?.volumes[0] ?? "") : (services[0]?.name ?? "")));
                       setPathsEdited(true);
                       touch("location");
                     }}

@@ -529,7 +529,7 @@ func TestRestoreRefusesLifecycleOperations(t *testing.T) {
 	rr.restorer.onRun = func() {
 		_, _, saveErr := rr.SaveAppResult(ctx, command.AppPayload{AppID: "app-1"}, true)
 		_, rollbackErr := rr.Rollback(ctx, "app-1", "abc")
-		_, backupsErr := rr.UpdateBackups(ctx, "app-1", nil)
+		_, backupsErr := rr.UpdateBackups(ctx, "app-1", nil, "")
 		_, deleteErr := rr.DeleteApp(ctx, "app-1", false, false)
 		inside = map[string]error{
 			"start": rr.StartApp(ctx, "app-1"), "stop": rr.StopApp(ctx, "app-1"), "restart": rr.RestartApp(ctx, "app-1"),

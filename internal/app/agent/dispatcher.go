@@ -282,7 +282,7 @@ func (d *Dispatcher) newHandlers() map[command.Type]handlerFunc {
 
 		command.TypeBackupUpdate: handle(d, func(ctx context.Context, in command.UpdateBackupsRequest) (command.UpdateBackupsResponse, error) {
 			defer d.backups.Reload()
-			return d.orch.UpdateBackups(ctx, in.AppID, in.Backups)
+			return d.orch.UpdateBackups(ctx, in.AppID, in.Backups, in.Base)
 		}),
 		command.TypeBackupPoints: handle(d, func(ctx context.Context, in command.ListRestorePointsRequest) (command.ListRestorePointsResponse, error) {
 			points, err := d.orch.ListRestorePoints(ctx, in.AppID, in.Backup)

@@ -2,6 +2,8 @@ package dockercompose
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -51,6 +53,21 @@ func (r *Repository) readOverrides(dir string) ([]recipe.BackupConfig, error) {
 		return nil, fmt.Errorf("parse %s: %w", configRel, err)
 	}
 	return cfg.Backups, nil
+}
+
+// backupsBase identifies a stored backups list: a short hash of its
+// canonical JSON (none and [] are the same). A client sends the one it read
+// with its update; a different one means someone else saved in between.
+func backupsBase(overrides []recipe.BackupConfig) string {
+	raw := []byte("[]")
+	if len(overrides) > 0 {
+		var err error
+		if raw, err = json.Marshal(overrides); err != nil {
+			return ""
+		}
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:8])
 }
 
 // appBackups reads and validates an app's backups: the recipe in its compose

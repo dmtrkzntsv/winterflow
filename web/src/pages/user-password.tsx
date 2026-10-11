@@ -4,6 +4,7 @@ import { toast } from "sonner";
 
 import { useAppBreadcrumbs } from "@/layouts/use-app-layout";
 import { apiBaseUrl } from "@/config";
+import { readApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -45,10 +46,7 @@ export default function UserPasswordPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ current_password: current, new_password: next }),
       });
-      const body = await res.json().catch(() => null);
-      if (!res.ok || !body?.success) {
-        throw new Error(body?.message ?? `Request failed: ${res.status}`);
-      }
+      if (!res.ok) throw await readApiError(res);
       toast.success("Password changed");
       await refresh();
       navigate("/");

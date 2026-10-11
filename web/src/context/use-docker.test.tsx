@@ -53,7 +53,12 @@ describe("useDocker domain calls", () => {
   it("resolves create and delete with the reload warnings", async () => {
     const { result } = renderHook(() => useDocker());
     waitFor.mockResolvedValueOnce({ status: 0, payload: { domain: { name: "x.app" }, warnings: ["reload failed"] } });
-    expect(await result.current.createDomain("x.app", "off")).toEqual(["reload failed"]);
+    expect(await result.current.createDomain("x.app", "off")).toEqual({
+      domain: { name: "x.app" },
+      warnings: ["reload failed"],
+    });
+    waitFor.mockResolvedValueOnce({ status: 0, payload: { domain: { name: "x.app" } } });
+    expect(await result.current.createDomain("x.app", "off")).toEqual({ domain: { name: "x.app" }, warnings: [] });
     waitFor.mockResolvedValueOnce({ status: 0, payload: { name: "x.app" } });
     expect(await result.current.deleteDomain("x.app")).toEqual([]);
     waitFor.mockResolvedValueOnce({ status: 0, payload: null });

@@ -1,5 +1,5 @@
 import { Badge } from "@/components/ui/badge";
-import { TLS_LABELS, type DomainTLS } from "@/lib/domains";
+import { TLS_MODES, type DomainTLS } from "@/lib/domains";
 
 // TLSBadge names a registered domain's mode, the same way on the Domains tab
 // and under an app's hostnames. "TLS off" is outlined: nothing is wrong with
@@ -7,7 +7,7 @@ import { TLS_LABELS, type DomainTLS } from "@/lib/domains";
 export function TLSBadge({ tls }: { tls: DomainTLS }) {
   return (
     <Badge variant={tls === "off" ? "outline" : "secondary"} className="whitespace-nowrap">
-      {TLS_LABELS[tls]}
+      {TLS_MODES[tls].label}
     </Badge>
   );
 }

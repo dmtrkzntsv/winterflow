@@ -5,11 +5,7 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { buttonVariants } from "@/components/ui/button-variants";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Spinner } from "@/components/ui/spinner";
-import { Textarea } from "@/components/ui/textarea";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -28,14 +24,6 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
   Table,
   TableBody,
   TableCell,
@@ -43,44 +31,20 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { DomainDialog } from "@/components/domain-dialog";
 import { TLSBadge } from "@/components/tls-badge";
-import { type Docker } from "@/context/use-docker";
+import { type Docker, type DomainCreated } from "@/context/use-docker";
 import { useApps } from "@/context/use-apps";
-import {
-  certExpiry,
-  daysLeft,
-  domainNameError,
-  TLS_LABELS,
-  type DomainTLS,
-  type RegisteredDomain,
-} from "@/lib/domains";
+import { expiry, type Domain } from "@/lib/domains";
 import { cn } from "@/lib/utils";
-
-// The three ways a registered domain can do HTTPS, in plain words with the
-// Cloudflare setup each one fits.
-const MODES: { value: DomainTLS; hint: string }[] = [
-  {
-    value: "auto",
-    hint: "Gets a free Let's Encrypt certificate for each app hostname. For a DNS record pointing at this server (on Cloudflare: DNS only, grey cloud).",
-  },
-  {
-    value: "certificate",
-    hint: "Uses a certificate you paste in, such as a Cloudflare Origin certificate behind the Cloudflare proxy.",
-  },
-  {
-    value: "off",
-    hint: "Serves plain HTTP, for when something in front handles HTTPS, such as a Cloudflare Tunnel.",
-  },
-];
 
 // Expiry shows how long a certificate-mode domain's certificate has left:
 // a countdown once it's under 30 days (amber), a date otherwise, red once
 // past. Other modes renew themselves or have no certificate here.
-function Expiry({ domain }: { domain: RegisteredDomain }) {
-  const grade = certExpiry(domain.not_after);
-  if (domain.tls !== "certificate" || !grade || !domain.not_after) return null;
-  const day = domain.not_after.slice(0, 10);
-  const days = daysLeft(domain.not_after) ?? 0;
+function Expiry({ domain }: { domain: Domain }) {
+  const left = expiry(domain.not_after);
+  if (domain.tls !== "certificate" || !left) return null;
+  const { grade, days, day } = left;
   const text =
     grade === "expired"
       ? `Expired ${day}`
@@ -133,203 +97,14 @@ function toastResult(done: string, warnings: string[]) {
   }
 }
 
-// DomainDialog adds a registration, or (replace set) swaps the TLS mode or
-// certificate of an existing one — the agent replaces a name on create. The
-// parent remounts it (key) per opening, so state starts from replace.
-export function DomainDialog({
-  docker,
-  open,
-  replace,
-  onOpenChange,
-  onSaved,
-}: {
-  docker: Docker;
-  open: boolean;
-  replace: RegisteredDomain | null;
-  onOpenChange: (open: boolean) => void;
-  onSaved: () => Promise<void>;
-}) {
-  const [name, setName] = useState(replace?.name ?? "");
-  const [tls, setTLS] = useState<DomainTLS>(replace?.tls ?? "auto");
-  const [certificate, setCertificate] = useState("");
-  const [key, setKey] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  const trimmed = name.trim();
-  const nameError = trimmed ? domainNameError(trimmed) : "";
-  const needsPair = tls === "certificate";
-  const canSave =
-    trimmed !== "" &&
-    !nameError &&
-    !busy &&
-    (!needsPair || (certificate.trim() !== "" && key.trim() !== ""));
-
-  // The PEM material must not outlive the dialog: wipe it on every close
-  // (save, Cancel, Escape, overlay).
-  const changeOpen = (next: boolean) => {
-    if (!next) {
-      setCertificate("");
-      setKey("");
-    }
-    onOpenChange(next);
-  };
-
-  const save = async () => {
-    setBusy(true);
-    try {
-      const warnings = await docker.createDomain(
-        trimmed,
-        tls,
-        needsPair ? { certificate: certificate.trim(), key: key.trim() } : undefined,
-      );
-      toastResult(replace ? "Domain updated" : "Domain registered", warnings);
-      changeOpen(false);
-      await onSaved();
-    } catch (e) {
-      toast.error(replace ? "Couldn't update domain" : "Couldn't register domain", {
-        description: e instanceof Error ? e.message : undefined,
-      });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={changeOpen}>
-      {/* Certificate mode is taller than a phone screen: scroll inside. */}
-      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl">
-        <form
-          className="grid gap-4"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (canSave) void save();
-          }}
-        >
-          <DialogHeader>
-            <DialogTitle>{replace ? "Edit domain" : "Register domain"}</DialogTitle>
-            <DialogDescription>
-              {replace ? (
-                <>
-                  Choose how HTTPS works for{" "}
-                  <code className="font-mono [overflow-wrap:anywhere] text-foreground">{replace.name}</code>.
-                </>
-              ) : (
-                "Apps on this server can only use hostnames under a registered domain."
-              )}
-            </DialogDescription>
-          </DialogHeader>
-          {/* The name is the registration's identity: editing changes only
-              its mode, so an existing one is shown, not offered as a field. */}
-          {replace ? null : (
-            <div className="grid gap-1.5">
-              <Label htmlFor="dom-name">Name</Label>
-              <Input
-                id="dom-name"
-                placeholder="*.example.com"
-                autoComplete="off"
-                spellCheck={false}
-                className={cn("font-mono", nameError && "border-destructive focus-visible:ring-destructive")}
-                aria-invalid={nameError !== ""}
-                aria-describedby="dom-name-hint"
-                value={name}
-                onChange={(e) => setName(e.target.value.toLowerCase())}
-              />
-              <p
-                id="dom-name-hint"
-                className={cn("text-xs", nameError ? "text-destructive" : "text-muted-foreground")}
-              >
-                {nameError ||
-                  "app.example.com for one hostname, or *.example.com for any name directly under it."}
-              </p>
-            </div>
-          )}
-          <div className="grid gap-2">
-            <Label id="dom-mode-label">HTTPS</Label>
-            <RadioGroup
-              aria-labelledby="dom-mode-label"
-              value={tls}
-              onValueChange={(v) => setTLS(v as DomainTLS)}
-              className="gap-3"
-            >
-              {MODES.map((m) => (
-                <label key={m.value} className="flex cursor-pointer items-start gap-2.5 text-sm">
-                  <RadioGroupItem
-                    value={m.value}
-                    aria-label={TLS_LABELS[m.value]}
-                    aria-describedby={`dom-mode-${m.value}`}
-                    className="mt-0.5"
-                  />
-                  <span>
-                    <span className="font-medium">{TLS_LABELS[m.value]}</span>
-                    <span id={`dom-mode-${m.value}`} className="block text-xs text-muted-foreground">
-                      {m.hint}
-                    </span>
-                  </span>
-                </label>
-              ))}
-            </RadioGroup>
-          </div>
-          {needsPair ? (
-            <>
-              <div className="grid gap-1.5">
-                <Label htmlFor="dom-cert">Certificate (PEM)</Label>
-                <Textarea
-                  id="dom-cert"
-                  rows={4}
-                  spellCheck={false}
-                  className="font-mono text-xs"
-                  placeholder="-----BEGIN CERTIFICATE-----"
-                  aria-describedby="dom-cert-hint"
-                  value={certificate}
-                  onChange={(e) => setCertificate(e.target.value)}
-                />
-                <p id="dom-cert-hint" className="text-xs text-muted-foreground">
-                  {replace?.tls === "certificate"
-                    ? "Paste the certificate again, or a new one. "
-                    : null}
-                  It also serves the Auto TLS hostnames it covers, instead of Let's Encrypt.
-                </p>
-              </div>
-              <div className="grid gap-1.5">
-                <Label htmlFor="dom-key">Private key (PEM)</Label>
-                <Textarea
-                  id="dom-key"
-                  rows={4}
-                  spellCheck={false}
-                  className="font-mono text-xs"
-                  placeholder="-----BEGIN PRIVATE KEY-----"
-                  aria-describedby="dom-key-hint"
-                  value={key}
-                  onChange={(e) => setKey(e.target.value)}
-                />
-                <p id="dom-key-hint" className="text-xs text-muted-foreground">
-                  Encrypted in your browser; only this server can read it.
-                </p>
-              </div>
-            </>
-          ) : null}
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => changeOpen(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={!canSave}>
-              {busy ? "Saving…" : replace ? "Save" : "Register"}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 export function DomainsCard({ docker }: { docker: Docker }) {
   const { apps } = useApps();
-  const [items, setItems] = useState<RegisteredDomain[] | null>(null);
+  const [items, setItems] = useState<Domain[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [replace, setReplace] = useState<RegisteredDomain | null>(null);
+  const [replace, setReplace] = useState<Domain | null>(null);
   const [dialogKey, setDialogKey] = useState(0);
-  const [toDelete, setToDelete] = useState<RegisteredDomain | null>(null);
+  const [toDelete, setToDelete] = useState<Domain | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -348,20 +123,31 @@ export function DomainsCard({ docker }: { docker: Docker }) {
     void load();
   }, [load]);
 
+  // A create or delete answers with what changed, so the list is patched in
+  // place rather than listed again (Refresh does that).
+  const saved = ({ domain, warnings }: DomainCreated) => {
+    toastResult(replace ? "Domain updated" : "Domain registered", warnings);
+    setItems((prev) =>
+      [...(prev ?? []).filter((d) => d.name !== domain.name), domain].sort((a, b) =>
+        a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
+      ),
+    );
+  };
+
   const remove = async (name: string) => {
     try {
       toastResult("Domain removed", await docker.deleteDomain(name));
+      setItems((prev) => prev && prev.filter((d) => d.name !== name));
     } catch (e) {
       // A host only this name covers: the agent's message names the apps.
       toast.error("Couldn't remove domain", {
         description: e instanceof Error ? e.message : undefined,
       });
     }
-    await load();
   };
 
   const names = useMemo(() => new Map(apps.map((a) => [a.id, a.name])), [apps]);
-  const openDialog = (row: RegisteredDomain | null) => {
+  const openDialog = (row: Domain | null) => {
     setReplace(row);
     setDialogKey((k) => k + 1);
     setDialogOpen(true);
@@ -487,7 +273,7 @@ export function DomainsCard({ docker }: { docker: Docker }) {
         open={dialogOpen}
         replace={replace}
         onOpenChange={setDialogOpen}
-        onSaved={load}
+        onSaved={saved}
       />
       <AlertDialog open={toDelete !== null} onOpenChange={(o) => !o && setToDelete(null)}>
         <AlertDialogContent>

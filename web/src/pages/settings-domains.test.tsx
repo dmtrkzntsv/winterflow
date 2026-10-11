@@ -6,8 +6,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppsContext, type AppsContextValue } from "@/context/apps-context-base";
 import type { Docker } from "@/context/use-docker";
-import type { RegisteredDomain } from "@/lib/domains";
-import { DomainDialog, DomainsCard } from "@/pages/settings-domains";
+import { DomainDialog } from "@/components/domain-dialog";
+import type { Domain, DomainTLS } from "@/lib/domains";
+import { DomainsCard } from "@/pages/settings-domains";
 
 const toastError = vi.fn();
 const toastSuccess = vi.fn();
@@ -33,7 +34,7 @@ async function pastePEM(user: ReturnType<typeof setupUser>, field: HTMLElement, 
 const day = 24 * 60 * 60 * 1000;
 const inDays = (n: number) => new Date(Date.now() + n * day).toISOString();
 
-const DOMAINS: RegisteredDomain[] = [
+const DOMAINS: Domain[] = [
   { name: "*.twillingate.app", tls: "certificate", not_after: inDays(10), issuer: "CF Origin", apps: ["a1", "a2"] },
   { name: "old.example.com", tls: "certificate", not_after: inDays(-1), apps: [] },
   { name: "tunnel.example.com", tls: "off", apps: [] },
@@ -44,7 +45,8 @@ const DOMAINS: RegisteredDomain[] = [
 function fakeDocker(over: Partial<Docker> = {}): Docker {
   return {
     listDomains: vi.fn().mockResolvedValue(DOMAINS),
-    createDomain: vi.fn().mockResolvedValue([]),
+    // The agent answers a create with the stored registration.
+    createDomain: vi.fn(async (name: string, tls: DomainTLS) => ({ domain: { name, tls, apps: [] }, warnings: [] })),
     deleteDomain: vi.fn().mockResolvedValue([]),
     ...over,
   } as unknown as Docker;
@@ -115,7 +117,11 @@ describe("DomainsCard", () => {
     await user.click(submit);
 
     expect(docker.createDomain).toHaveBeenCalledWith("*.tunnel.example.com", "off", undefined);
-    expect(docker.listDomains).toHaveBeenCalledTimes(2);
+    // The answer goes straight into the list, in name order: no new listing.
+    const row = (await screen.findByText("*.tunnel.example.com")).closest("tr");
+    expect(row?.nextElementSibling).toHaveTextContent("*.twillingate.app");
+    expect(docker.listDomains).toHaveBeenCalledTimes(1);
+    expect(toastSuccess).toHaveBeenCalledWith("Domain registered");
   });
 
   it("asks for a certificate and key in certificate mode", async () => {
@@ -190,7 +196,10 @@ describe("DomainsCard", () => {
   it("shows the proxy's reload warnings after a create or a delete", async () => {
     const user = setupUser();
     const docker = fakeDocker({
-      createDomain: vi.fn().mockResolvedValue(["ingress reload failed (previous routing still active): boom"]),
+      createDomain: vi.fn().mockResolvedValue({
+        domain: { name: "x.example.com", tls: "auto", apps: [] },
+        warnings: ["ingress reload failed (previous routing still active): boom"],
+      }),
       deleteDomain: vi.fn().mockResolvedValue(["ingress: app-1 skipped"]),
     });
     renderCard(docker);
@@ -232,7 +241,7 @@ describe("DomainsCard", () => {
             open={open}
             replace={DOMAINS[0]}
             onOpenChange={setOpen}
-            onSaved={() => Promise.resolve()}
+            onSaved={() => {}}
           />
         </>
       );
@@ -309,8 +318,8 @@ describe("DomainsCard", () => {
     const docker = fakeDocker({
       deleteDomain: vi
         .fn()
-        .mockResolvedValueOnce(undefined)
-        .mockRejectedValueOnce(new Error("example.com is used by Shop (a1)")),
+        .mockResolvedValueOnce([])
+        .mockRejectedValueOnce(new Error("example.com is used by Shop")),
     });
     renderCard(docker);
 
@@ -320,6 +329,9 @@ describe("DomainsCard", () => {
     expect(unused).not.toHaveTextContent("used by");
     await user.click(within(unused).getByRole("button", { name: "Remove domain" }));
     expect(docker.deleteDomain).toHaveBeenCalledWith("tunnel.example.com");
+    // Removed from the list without listing again.
+    await waitFor(() => expect(screen.queryByText("tunnel.example.com")).not.toBeInTheDocument());
+    expect(toastSuccess).toHaveBeenCalledWith("Domain removed");
 
     await user.click(screen.getByRole("button", { name: "Remove domain example.com" }));
     const confirm = await screen.findByRole("alertdialog");
@@ -327,8 +339,11 @@ describe("DomainsCard", () => {
     expect(confirm).toHaveTextContent("It's used by Shop: remove those hostnames first");
     await user.click(within(confirm).getByRole("button", { name: "Remove domain" }));
     expect(toastError).toHaveBeenCalledWith("Couldn't remove domain", {
-      description: "example.com is used by Shop (a1)",
+      description: "example.com is used by Shop",
     });
+    // A refusal leaves the list as it was.
+    expect(screen.getByText("example.com")).toBeInTheDocument();
+    expect(docker.listDomains).toHaveBeenCalledTimes(1);
   });
 
   it("says so when the list can't be loaded, or is empty", async () => {
@@ -338,7 +353,12 @@ describe("DomainsCard", () => {
     expect(await screen.findByText("Couldn't load domains.")).toBeInTheDocument();
     unmount();
 
-    renderCard(fakeDocker({ listDomains: vi.fn().mockResolvedValue([]) }));
+    const docker = fakeDocker({ listDomains: vi.fn().mockResolvedValue([]) });
+    renderCard(docker);
     expect(await screen.findByText(/No domains yet/)).toBeInTheDocument();
+
+    // Refresh lists again.
+    await setupUser().click(screen.getByRole("button", { name: "Refresh domains" }));
+    await waitFor(() => expect(docker.listDomains).toHaveBeenCalledTimes(2));
   });
 });

@@ -3,6 +3,7 @@
 // editor state, validating it, and building the app.save payload (encrypting
 // touched secrets, passing the "<encrypted>" placeholder through so the agent
 // preserves stored values).
+import { validHostname } from "@/lib/domains";
 import { encryptSecret } from "@/lib/ecies";
 import type { AppDetailPayload } from "@/context/apps-context-base";
 import {
@@ -152,10 +153,6 @@ export function validateEditorState(state: AppEditorState): string | null {
   for (const v of state.config.variables) {
     if (!v.name.trim()) return "Every variable needs a name.";
   }
-  // Mirrors Go's Ingress.Validate() (internal/domain/model/ingress.go): strict
-  // lowercase RFC-1123 hostname, capped at 253 chars total.
-  const hostnameRe = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$/;
-  const validHostname = (h: string) => h.length <= 253 && hostnameRe.test(h);
   const validRedirectCodes = new Set([301, 302, 307, 308]);
   const ing = state.config.ingress;
   if (ing) {

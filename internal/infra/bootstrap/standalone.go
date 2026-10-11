@@ -84,7 +84,7 @@ func BootstrapStandalone(ctx context.Context, log *logger.Logger, cfg *config.Se
 	}, 30*time.Second, log)
 
 	// Auto-update for git-sourced apps.
-	go appagent.RunSourcePoller(ctx, orchestrator, log)
+	go appagent.RunSourcePoller(ctx, orchestrator, backups.Reload, log)
 
 	if !cert.IsServerCertificateGenerated(certmanager) {
 		certmanager.GenerateServer(true)

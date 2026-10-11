@@ -113,7 +113,7 @@ func main() {
 
 	// Auto-update for git-sourced apps: polls upstreams on each app's own
 	// interval and redeploys on new commits.
-	go appagent.RunSourcePoller(ctx, orchestrator, log)
+	go appagent.RunSourcePoller(ctx, orchestrator, backups.Reload, log)
 
 	// Status monitoring routine
 	go func() {

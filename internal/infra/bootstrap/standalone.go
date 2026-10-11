@@ -75,13 +75,13 @@ func BootstrapStandalone(ctx context.Context, log *logger.Logger, cfg *config.Se
 	// feeds the status cache (doubling as the liveness pulse) and the SSE push.
 	// Until the embedded server is claimed there is no server id to report as,
 	// so ticks are skipped silently.
-	go appagent.RunStatusReporter(ctx, appagent.WithBackupHealth(orchestrator, backups), func(kind bus.EventKind, payload []byte) error {
+	go appagent.RunStatusReporterOn(ctx, appagent.WithBackupHealth(orchestrator, backups), func(kind bus.EventKind, payload []byte) error {
 		id, ok, err := serverRepo.FirstServerID(ctx)
 		if err != nil || !ok {
 			return err
 		}
 		return b.Publish(ctx, cfg.GetBusEventsQueue(), bus.EventMessage{ServerID: id, Kind: kind, Payload: payload})
-	}, 30*time.Second, log)
+	}, 30*time.Second, backups.Changed(), log)
 
 	// Auto-update for git-sourced apps.
 	go appagent.RunSourcePoller(ctx, orchestrator, backups.Reload, log)

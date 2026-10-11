@@ -122,3 +122,29 @@ func TestStatusReporterStopsOnCancel(t *testing.T) {
 		t.Fatal("reporter did not stop on cancel")
 	}
 }
+
+// A nudge makes the reporter publish at once, long before its tick.
+func TestStatusReporterReportsOnNudge(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
+	got := make(chan sinkCall, 16)
+	nudge := make(chan struct{}, 1)
+	go RunStatusReporterOn(ctx, &fakeStatusSource{}, collectSink(got), time.Hour, nudge, log)
+	select {
+	case <-got: // the immediate first report
+	case <-time.After(2 * time.Second):
+		t.Fatal("no immediate report")
+	}
+	nudge <- struct{}{}
+	select {
+	case <-got:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a nudge did not trigger a report")
+	}
+	select {
+	case call := <-got:
+		t.Fatalf("an extra report: %+v", call)
+	case <-time.After(100 * time.Millisecond):
+	}
+}

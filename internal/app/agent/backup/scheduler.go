@@ -153,6 +153,10 @@ type Scheduler struct {
 	nextSweep time.Time
 
 	wake chan struct{}
+	// changed is nudged (coalesced: capacity one) whenever what Health
+	// reports may have changed: a run or restore ended, the plan was reread.
+	// The status reporter publishes on it instead of waiting for its tick.
+	changed chan struct{}
 
 	mu      sync.Mutex
 	plan    []dockercompose.PlannedBackup
@@ -182,7 +186,7 @@ func New(engine Engine, dataDir string, log *logger.Logger) *Scheduler {
 	s := &Scheduler{
 		engine: engine, path: filepath.Join(dataDir, "backups", "state.json"), log: log,
 		clock: realClock{}, runTimeout: RunTimeout, restoreTimeout: RestoreTimeout, grace: abandonAfter, restoreGrace: restoreGrace,
-		wake: make(chan struct{}, 1), state: map[string]*State{}, dirty: true,
+		wake: make(chan struct{}, 1), changed: make(chan struct{}, 1), state: map[string]*State{}, dirty: true,
 		stuck: map[string]*job{}, forgotten: map[string]uint64{}, deleting: map[string]tomb{},
 	}
 	s.load()
@@ -217,6 +221,18 @@ func (s *Scheduler) saveLocked() {
 	}
 	if err != nil {
 		s.log.Warn("save backup state", "error", err)
+	}
+}
+
+// Changed delivers a value when the backups' health may have changed (a run
+// or restore ended, the plan was reread): the status reporter publishes then,
+// instead of at its next tick. Several changes before a receive coalesce.
+func (s *Scheduler) Changed() <-chan struct{} { return s.changed }
+
+func (s *Scheduler) nudge() {
+	select {
+	case s.changed <- struct{}{}:
+	default:
 	}
 }
 
@@ -487,6 +503,7 @@ func (s *Scheduler) refresh() {
 		}
 	}
 	s.plan = plan
+	s.nudge() // the health follows the plan
 	changed := false
 	for _, p := range plan {
 		k := key{p.AppID, p.Name}.String()
@@ -744,6 +761,7 @@ func (s *Scheduler) lateLocked(j *job, d outcomeOf) {
 	s.log.Warn("abandoned backup restore ended", "app_id", j.key.app, "backup", j.key.name, "point", j.point,
 		"pre_restore_point", d.restore.PreRestorePoint, "error", d.err)
 	s.noteErrorLocked(j.key, fmt.Sprintf("the restore of %s did not stop in time and ended later: %v", j.point, d.err))
+	s.nudge()
 }
 
 // noteErrorLocked makes msg the backup's last_error (no attempt is recorded)
@@ -768,6 +786,7 @@ func (s *Scheduler) recordRestore(j *job, res command.RestoreBackupResponse, err
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.running = nil
+	s.nudge() // the health changed with it (under the lock Health takes)
 	// Restores are logged whatever happens to the reply (the result is SSE
 	// only, and a stop rarely lets it out): what a restore did to the data
 	// must leave a trace.
@@ -814,6 +833,7 @@ func (s *Scheduler) record(j *job, start time.Time, res dockercompose.BackupResu
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.running = nil
+	s.nudge() // the health changed with it (under the lock Health takes)
 	if stopping {
 		finish(j, Outcome{Result: resp, Err: errStopped})
 		return

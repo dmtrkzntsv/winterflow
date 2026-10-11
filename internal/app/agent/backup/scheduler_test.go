@@ -1363,3 +1363,58 @@ func TestInterruptedRestoreIsTheBackupsLastError(t *testing.T) {
 		t.Fatalf("after a successful run: %+v", h)
 	}
 }
+
+// drainChanged empties the scheduler's change nudge and reports how many
+// arrived.
+func drainChanged(s *Scheduler) int {
+	n := 0
+	for {
+		select {
+		case <-s.Changed():
+			n++
+		default:
+			return n
+		}
+	}
+}
+
+// When a run or a restore ends, and when the plan is reread, the status
+// reporter is nudged exactly once (several changes coalesce), so the badge
+// follows the toast instead of the next 30 s tick.
+func TestRunEndNudgesTheStatusReporterOnce(t *testing.T) {
+	e := newEngine(planned("app-1", "db", recipe.TypeSQLite, true, recipe.Manual))
+	s, clock, _ := start(t, e)
+	idle(t, clock)
+	drainChanged(s) // the first plan read
+	if o := <-s.RunNow("app-1", "db"); o.Err != nil {
+		t.Fatal(o.Err)
+	}
+	select {
+	case <-s.Changed():
+	case <-time.After(2 * time.Second):
+		t.Fatal("a run ended without nudging the status reporter")
+	}
+	if n := drainChanged(s); n != 0 {
+		t.Fatalf("%d more nudges for one run", n)
+	}
+	// A restore too.
+	if o := outcome(t, s.Restore("app-1", "db", "20261011T120000Z-manual")); o.Err != nil {
+		t.Fatal(o.Err)
+	}
+	select {
+	case <-s.Changed():
+	case <-time.After(2 * time.Second):
+		t.Fatal("a restore ended without nudging the status reporter")
+	}
+	drainChanged(s)
+	// A reload (backup.update) nudges once the plan is reread.
+	s.Reload()
+	select {
+	case <-s.Changed():
+	case <-time.After(2 * time.Second):
+		t.Fatal("a reload did not nudge the status reporter")
+	}
+	if n := drainChanged(s); n != 0 {
+		t.Fatalf("%d more nudges for one reload", n)
+	}
+}

@@ -157,6 +157,17 @@ func (c *ServerConfig) GetAppsDataDir() string {
 	return path.Join(c.GetAgentDataDir(), "apps-data")
 }
 
+// GetBackupRetentionDays is the ceiling on the age of every backup copy
+// (BACKUP_RETENTION_DAYS, default 180): no copy of any kind, of any app, is
+// kept longer. 0 means no ceiling; a negative or unparsable value is the
+// default. Read by standalone and agent.
+func (c *ServerConfig) GetBackupRetentionDays() int {
+	if v, err := strconv.Atoi(os.Getenv("BACKUP_RETENTION_DAYS")); err == nil && v >= 0 {
+		return v
+	}
+	return 180
+}
+
 // GetAppsDir holds the rendered, ready-to-run deployments:
 // {dataDir}/apps/{appID}/.
 func (c *ServerConfig) GetAppsDir() string {

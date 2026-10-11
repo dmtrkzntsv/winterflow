@@ -176,6 +176,20 @@ func TestAgentDataDirs(t *testing.T) {
 	}
 }
 
+func TestGetBackupRetentionDays(t *testing.T) {
+	c := NewServerConfig("standalone")
+	for v, want := range map[string]int{"": 180, "30": 30, "0": 0, "-1": 180, "a year": 180} {
+		t.Setenv("BACKUP_RETENTION_DAYS", v)
+		if got := c.GetBackupRetentionDays(); got != want {
+			t.Errorf("BACKUP_RETENTION_DAYS=%q: %d, want %d", v, got, want)
+		}
+	}
+	unsetenv(t, "BACKUP_RETENTION_DAYS")
+	if got := c.GetBackupRetentionDays(); got != 180 {
+		t.Fatalf("unset: %d", got)
+	}
+}
+
 func TestCertPathsDeriveFromCertDir(t *testing.T) {
 	c := NewServerConfig("distributed")
 	t.Setenv("HUB_CERT_DIR", "/etc/wf/certs")

@@ -179,11 +179,6 @@ func (r *Repository) commitCount(appID, dir string) (int, error) {
 	return count, nil
 }
 
-// gitRestore makes the worktree match the tree of the given commit: files in
-// the target tree are (re)written, and files tracked at HEAD but absent from
-// the target are deleted. Untracked/ignored files (e.g. .env.secrets) are left
-// alone. It does NOT commit — the caller commits the restored tree so history
-// stays linear.
 // gitTracked reports whether commit hash has the file rel.
 func gitTracked(dir, hash, rel string) bool {
 	repo, err := git.PlainOpen(dir)
@@ -198,6 +193,11 @@ func gitTracked(dir, hash, rel string) bool {
 	return err == nil
 }
 
+// gitRestore makes the worktree match the tree of the given commit: files in
+// the target tree are (re)written, and files tracked at HEAD but absent from
+// the target are deleted. Untracked/ignored files (e.g. .env.secrets) are left
+// alone. It does NOT commit — the caller commits the restored tree so history
+// stays linear.
 func gitRestore(dir, hash string) error {
 	repo, err := git.PlainOpen(dir)
 	if err != nil {

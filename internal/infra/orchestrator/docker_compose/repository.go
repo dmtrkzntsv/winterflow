@@ -76,6 +76,10 @@ type Repository struct {
 
 	// hostStat stats a bind source on the host (replaced in tests).
 	hostStat func(path string) (fs.FileInfo, error)
+	// statFlight holds the host stats still running, one per path: a dead
+	// share leaves one blocked goroutine, however often it is asked about.
+	statMu     sync.Mutex
+	statFlight map[string]*statCall
 
 	// Backup runs: the helper image is pulled once; runHelper runs one
 	// helper container, docker one short docker command, helperBinary

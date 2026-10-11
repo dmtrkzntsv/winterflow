@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -359,5 +360,41 @@ func TestDockerCommandHasAWaitDelay(t *testing.T) {
 	cmd := dockerCommand(context.Background(), "/tmp", []string{"compose", "config"})
 	if cmd.WaitDelay != dockerWaitDelay || cmd.Dir != "/tmp" || cmd.Args[0] != "docker" {
 		t.Fatalf("cmd = %+v", cmd)
+	}
+}
+
+// Asking again about a bind source whose stat hangs does not start another
+// stat: a dead share leaks at most one blocked goroutine per path. Once the
+// stat returns, the path is stat'ed afresh.
+func TestHungBindSourceIsStatedOnce(t *testing.T) {
+	release := make(chan struct{})
+	var calls atomic.Int32
+	r := newTestRepo(t)
+	r.hostStat = func(string) (fs.FileInfo, error) {
+		calls.Add(1)
+		<-release
+		return nil, os.ErrNotExist
+	}
+	r.storageLimits.folder = 20 * time.Millisecond
+	paths := map[string]bool{"/mnt/dead": true}
+	for range 5 {
+		if _, err := r.statRegularFiles(context.Background(), paths); err == nil || !strings.Contains(err.Error(), "did not answer") {
+			t.Fatalf("err = %v", err)
+		}
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("stat started %d times for one hung path", got)
+	}
+	close(release)
+	r.storageLimits.folder = 5 * time.Second
+	got, err := r.statRegularFiles(context.Background(), paths)
+	if err != nil || got["/mnt/dead"] || calls.Load() > 2 {
+		t.Fatalf("after the share answered: %v, %v, %d stats", got, err, calls.Load())
+	}
+	r.statMu.Lock()
+	left := len(r.statFlight)
+	r.statMu.Unlock()
+	if left != 0 {
+		t.Fatalf("%d stats still registered", left)
 	}
 }

@@ -303,9 +303,40 @@ func (r *Repository) resolveBackups(ctx context.Context, appID string, files []s
 	return out, nil
 }
 
+// statCall is one host stat in flight; regular is set before done closes.
+type statCall struct {
+	done    chan struct{}
+	regular bool
+}
+
+// statStart starts stat'ing p unless a stat of it is still running (a
+// hung share), whose call it returns instead: abandoned stats are bounded
+// to one goroutine per path, not one per resolution.
+func (r *Repository) statStart(p string) *statCall {
+	r.statMu.Lock()
+	defer r.statMu.Unlock()
+	if c, ok := r.statFlight[p]; ok {
+		return c
+	}
+	if r.statFlight == nil {
+		r.statFlight = map[string]*statCall{}
+	}
+	c := &statCall{done: make(chan struct{})}
+	r.statFlight[p] = c
+	go func() {
+		info, err := r.hostStat(p)
+		c.regular = err == nil && info.Mode().IsRegular()
+		r.statMu.Lock()
+		delete(r.statFlight, p)
+		r.statMu.Unlock()
+		close(c.done)
+	}()
+	return c
+}
+
 // statRegularFiles reports which of the host paths are regular files
 // (anything it can't stat counts as a folder). The paths are stat'ed
-// concurrently, in goroutines abandoned (see detached) after one shared
+// concurrently, in goroutines abandoned (see statStart) after one shared
 // folder limit: a hung NFS/CIFS mount must not wedge the (standalone:
 // single) command pipeline.
 func (r *Repository) statRegularFiles(parent context.Context, paths map[string]bool) (map[string]bool, error) {
@@ -319,20 +350,15 @@ func (r *Repository) statRegularFiles(parent context.Context, paths map[string]b
 	sort.Strings(list)
 	ctx, cancel := context.WithTimeout(parent, r.storageLimits.folder)
 	defer cancel()
-	regular := make([]bool, len(list))
-	results := make([]<-chan error, len(list))
+	calls := make([]*statCall, len(list))
 	for i, p := range list {
-		results[i] = detached(func() error {
-			info, err := r.hostStat(p)
-			regular[i] = err == nil && info.Mode().IsRegular()
-			return nil
-		})
+		calls[i] = r.statStart(p)
 	}
 	out := make(map[string]bool, len(list))
 	for i, p := range list {
 		select {
-		case <-results[i]:
-			out[p] = regular[i]
+		case <-calls[i].done:
+			out[p] = calls[i].regular
 		case <-ctx.Done():
 			if err := parent.Err(); err != nil {
 				return nil, fmt.Errorf("the folder %s was not checked: %w", p, err)

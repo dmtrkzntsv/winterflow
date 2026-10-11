@@ -105,7 +105,10 @@ export function StoragesCard({ docker }: { docker: Docker }) {
       // It asks for action (each warning names its app): it stays until
       // dismissed.
       toast.warning(`${done}, but not every app was redeployed`, {
-        description: [description, ...warnings].filter(Boolean).join("\n"),
+        // One line each: sonner's description doesn't keep newlines.
+        description: (
+          <span className="whitespace-pre-line">{[description, ...warnings].filter(Boolean).join("\n")}</span>
+        ),
         duration: Infinity,
         closeButton: true,
       });

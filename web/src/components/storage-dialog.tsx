@@ -238,7 +238,15 @@ export function StorageDialog({
           className="grid gap-4"
           onSubmit={(e) => {
             e.preventDefault();
-            if (!problem && !busy && dirty) void save();
+            if (busy || !dirty) return;
+            // A problem the user hasn't reached yet (e.g. a secret never
+            // focused): reveal every problem and go to it, send nothing.
+            if (problem) {
+              setTouched(new Set(FIELD_ORDER));
+              document.getElementById(FIELD_ID[problem.field])?.focus();
+              return;
+            }
+            void save();
           }}
         >
           <DialogHeader>
@@ -337,9 +345,11 @@ export function StorageDialog({
 
             {editing && apps.length > 0 ? (
               <p className="rounded-md bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">
+                {/* The agent redeploys only the running ones (and skips an
+                    app with undeployed changes, with a warning). */}
                 {apps.length === 1
-                  ? `Saving redeploys the running app that uses it: ${apps[0]}.`
-                  : `Saving redeploys the running apps that use it: ${apps.join(", ")}.`}
+                  ? `Saving redeploys the app that uses it if it's running: ${apps[0]}.`
+                  : `Saving redeploys the apps that use it if they're running: ${apps.join(", ")}.`}
               </p>
             ) : null}
 
@@ -394,7 +404,9 @@ export function StorageDialog({
             <Button type="button" variant="outline" onClick={() => changeOpen(false)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={problem !== null || busy || !dirty}>
+            {/* Enabled while a problem is still hidden, so Save can say
+                what is missing; disabled once the problem is on screen. */}
+            <Button type="submit" disabled={(problem !== null && shown(problem.field)) || busy || !dirty}>
               {busy ? "Saving…" : "Save"}
             </Button>
           </DialogFooter>

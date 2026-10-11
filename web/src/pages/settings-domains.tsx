@@ -90,7 +90,8 @@ function UsedBy({ ids, names }: { ids: string[]; names: Map<string, string> }) {
 function toastResult(done: string, warnings: string[]) {
   if (warnings.length > 0) {
     toast.warning(`${done}, but the proxy reported a problem`, {
-      description: warnings.join("\n"),
+      // One line each: sonner's description doesn't keep newlines.
+      description: <span className="whitespace-pre-line">{warnings.join("\n")}</span>,
     });
   } else {
     toast.success(done);

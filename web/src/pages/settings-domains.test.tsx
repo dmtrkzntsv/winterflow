@@ -224,17 +224,22 @@ describe("DomainsCard", () => {
     await user.click(within(dialog).getByRole("button", { name: "Add" }));
     await waitFor(() =>
       expect(toastWarning).toHaveBeenCalledWith("Domain added, but the proxy reported a problem", {
-        description: "ingress reload failed (previous routing still active): boom",
+        description: expect.anything(),
       }),
     );
+    // One line per warning: the description keeps its newlines.
+    const added = render(<>{toastWarning.mock.calls[0][1].description}</>).container.firstElementChild;
+    expect(added).toHaveClass("whitespace-pre-line");
+    expect(added).toHaveTextContent("ingress reload failed (previous routing still active): boom");
 
     await user.click(screen.getByRole("button", { name: "Remove domain tunnel.example.com" }));
     await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Remove domain" }));
     await waitFor(() =>
       expect(toastWarning).toHaveBeenCalledWith("Domain removed, but the proxy reported a problem", {
-        description: "ingress: app-1 skipped",
+        description: expect.anything(),
       }),
     );
+    expect(render(<>{toastWarning.mock.calls[1][1].description}</>).container).toHaveTextContent("ingress: app-1 skipped");
     expect(toastSuccess).not.toHaveBeenCalled();
   });
 

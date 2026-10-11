@@ -1,5 +1,6 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactNode } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -21,6 +22,9 @@ vi.mock("sonner", () => ({
 }));
 
 const setupUser = () => userEvent.setup({ delay: null });
+
+// renderedText renders a toast's description node on its own.
+const renderedText = (node: ReactNode) => render(<>{node}</>).container.firstElementChild as HTMLElement;
 
 const STORAGES: Storage[] = [
   {
@@ -138,7 +142,9 @@ describe("StoragesCard", () => {
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText("Add storage")).toBeInTheDocument();
     const save = within(dialog).getByRole("button", { name: "Save" });
-    expect(save).toBeDisabled();
+    // Nothing typed yet, no problem shown: Save stays clickable so it can
+    // say what is missing.
+    expect(save).toBeEnabled();
 
     await user.type(within(dialog).getByLabelText("Name"), "Backup-Disk");
     expect(within(dialog).getByText("Compose files use it as ${WF_STORAGE_BACKUP_DISK_…}.")).toBeInTheDocument();
@@ -214,7 +220,7 @@ describe("StoragesCard", () => {
     // Name and type are the storage's identity: shown, not offered.
     expect(within(dialog).queryByLabelText("Name")).not.toBeInTheDocument();
     expect(within(dialog).queryByRole("radiogroup")).not.toBeInTheDocument();
-    expect(within(dialog).getByText("Saving redeploys the running apps that use it: Shop, Blog.")).toBeInTheDocument();
+    expect(within(dialog).getByText("Saving redeploys the apps that use it if they're running: Shop, Blog.")).toBeInTheDocument();
     expect(within(dialog).getByText("Leave empty to keep.")).toBeInTheDocument();
     expect(within(dialog).getByLabelText("Secret key")).toHaveValue("");
     expect(within(dialog).getByLabelText("Bucket")).toHaveValue("tenants");
@@ -227,12 +233,15 @@ describe("StoragesCard", () => {
     expect(docker.saveStorage).toHaveBeenCalledWith(expect.objectContaining({ name: "hetzner", secret: "", bucket: "tenants", prefix: "wf/x" }), false);
     // The warning asks for action: it stays until dismissed.
     await waitFor(() =>
-      expect(toastWarning).toHaveBeenCalledWith("Storage saved, but not every app was redeployed", {
-        description: "Redeployed Shop.\nBlog has undeployed changes",
-        duration: Infinity,
-        closeButton: true,
-      }),
+      expect(toastWarning).toHaveBeenCalledWith(
+        "Storage saved, but not every app was redeployed",
+        expect.objectContaining({ duration: Infinity, closeButton: true }),
+      ),
     );
+    // One line per warning: the description keeps its newlines.
+    const shown = renderedText(toastWarning.mock.calls[0][1].description);
+    expect(shown).toHaveClass("whitespace-pre-line");
+    expect(shown).toHaveTextContent("Redeployed Shop.\nBlog has undeployed changes", { normalizeWhitespace: false });
   });
 
   it("reports a refused save inside the dialog, which stays open", async () => {
@@ -281,7 +290,7 @@ describe("StoragesCard", () => {
         onSaved={() => {}}
       />,
     );
-    expect(await screen.findByText("Saving redeploys the running app that uses it: a1.")).toBeInTheDocument();
+    expect(await screen.findByText("Saving redeploys the app that uses it if it's running: a1.")).toBeInTheDocument();
   });
 
   it("wipes a typed secret when the dialog closes", async () => {
@@ -485,6 +494,47 @@ describe("StorageDialog form", () => {
     expect(folder.getAttribute("aria-describedby")?.split(" ")).toContain(error.id);
     // Right under the field, not at the bottom of the form.
     expect(folder.parentElement).toContainElement(error);
+  });
+
+  it("says what is missing when Save meets a field the user never reached", async () => {
+    const user = setupUser();
+    const docker = fakeDocker();
+    const dialog = await openAdd(user, docker);
+    await user.click(within(dialog).getByRole("radio", { name: "S3-compatible" }));
+    await user.type(within(dialog).getByLabelText("Name"), "offsite");
+    await user.type(within(dialog).getByLabelText("Endpoint"), "https://s3.example.com");
+    await user.type(within(dialog).getByLabelText("Bucket"), "tenants");
+    await user.type(within(dialog).getByLabelText("Access key"), "AKIA");
+    // The secret was never focused: its problem is hidden, Save is not.
+    const secret = within(dialog).getByLabelText("Secret key");
+    expect(within(dialog).queryByText("Enter the secret key.")).not.toBeInTheDocument();
+    const save = within(dialog).getByRole("button", { name: "Save" });
+    expect(save).toBeEnabled();
+
+    await user.click(save);
+    expect(docker.saveStorage).not.toHaveBeenCalled();
+    expect(within(dialog).getByText("Enter the secret key.")).toBeInTheDocument();
+    expect(secret).toHaveAttribute("aria-invalid", "true");
+    expect(secret).toHaveFocus();
+    // Now on screen, the problem disables Save until it is fixed.
+    expect(save).toBeDisabled();
+    await user.type(secret, "S3-PLAIN");
+    expect(save).toBeEnabled();
+    await user.click(save);
+    expect(docker.saveStorage).toHaveBeenCalledWith(expect.objectContaining({ name: "offsite", secret: "S3-PLAIN" }), true);
+  });
+
+  it("keeps an edit's stored path-style when an IP endpoint is typed", async () => {
+    const user = setupUser();
+    renderCard(fakeDocker());
+    await user.click(await screen.findByRole("button", { name: "Edit storage hetzner" }));
+    const dialog = await screen.findByRole("dialog");
+    const pathStyle = within(dialog).getByRole("checkbox", { name: "Path-style addressing" });
+    expect(pathStyle).not.toBeChecked(); // as stored
+    const endpoint = within(dialog).getByLabelText("Endpoint");
+    await user.clear(endpoint);
+    await user.type(endpoint, "http://127.0.0.1:9000");
+    expect(pathStyle).not.toBeChecked();
   });
 
   it("labels the type choice and offers type-appropriate examples", async () => {

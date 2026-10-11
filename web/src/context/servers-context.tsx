@@ -6,10 +6,12 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useLocation, useMatch, useNavigate } from "react-router-dom";
 
 import { useAuth } from "@/context/use-auth";
 import { useNotifications } from "@/context/use-notifications";
 import { apiBaseUrl } from "@/config";
+import { serverPath, serverRoutePattern } from "@/lib/server-paths";
 
 import {
   ServersContext,
@@ -57,7 +59,13 @@ export function ServersProvider({ children }: { children: ReactNode }) {
   const { isAuthenticated } = useAuth();
   const { subscribe, connected } = useNotifications();
   const [servers, setServers] = useState<Server[]>([]);
-  const [activeServerId, setActiveServerId] = useState<string | null>(null);
+  // The active server comes from the URL (/server/:serverId/...). Pages
+  // outside a server's scope (account, members) keep showing the last server
+  // the tab looked at, falling back to the first one.
+  const urlServerId = useMatch(serverRoutePattern)?.params.serverId ?? null;
+  const [lastServerId, setLastServerId] = useState<string | null>(null);
+  const navigate = useNavigate();
+  const location = useLocation();
   const [statusByServer, setStatusByServer] = useState<
     Record<string, ServerLiveness>
   >({});
@@ -76,7 +84,6 @@ export function ServersProvider({ children }: { children: ReactNode }) {
     if (!isAuthenticated) {
       if (isMountedRef.current) {
         setServers([]);
-        setActiveServerId(null);
         setStatusByServer({});
         setLoading(false);
         setError(null);
@@ -103,21 +110,12 @@ export function ServersProvider({ children }: { children: ReactNode }) {
       }
       const list = (result.data?.servers ?? []).map(toServer);
       setServers(list);
-      // Keep the current selection if it still exists; otherwise default to
-      // the first server.
-      setActiveServerId((prev) => {
-        if (prev && list.some((s) => s.id === prev)) {
-          return prev;
-        }
-        return list[0]?.id ?? null;
-      });
     } catch (fetchError) {
       console.error("Failed to load servers", fetchError);
       if (!isMountedRef.current) {
         return;
       }
       setServers([]);
-      setActiveServerId(null);
       setError(
         fetchError instanceof Error
           ? fetchError.message
@@ -178,20 +176,54 @@ export function ServersProvider({ children }: { children: ReactNode }) {
     });
   }, [isAuthenticated, subscribe, fetchServers]);
 
+  useEffect(() => {
+    if (urlServerId) setLastServerId(urlServerId);
+  }, [urlServerId]);
+
+  const activeServer = useMemo(() => {
+    const byId = (id: string | null) =>
+      id ? servers.find((s) => s.id === id) : undefined;
+    if (urlServerId) return byId(urlServerId) ?? null;
+    return byId(lastServerId) ?? servers[0] ?? null;
+  }, [servers, urlServerId, lastServerId]);
+  const activeServerId = activeServer?.id ?? null;
+
+  // selectServer moves the tab to another server, keeping the current page
+  // (settings tab included) when it exists there too. An app page belongs to
+  // one server, so switching from it lands on the new server's dashboard.
+  const { pathname, search } = location;
+  const selectServer = useCallback(
+    (id: string) => {
+      const sub = urlServerId
+        ? pathname.slice(serverPath(urlServerId).length)
+        : "";
+      const keep = sub !== "" && !sub.startsWith("/app/");
+      navigate(keep ? serverPath(id, sub) + search : serverPath(id));
+    },
+    [navigate, pathname, search, urlServerId],
+  );
+
   const value = useMemo(() => {
-    const activeServer =
-      servers.find((s) => s.id === activeServerId) ?? null;
     return {
       servers,
       activeServer,
       activeServerId,
-      setActiveServerId,
+      selectServer,
       statusByServer,
       loading,
       error,
       refresh: fetchServers,
     };
-  }, [servers, activeServerId, statusByServer, loading, error, fetchServers]);
+  }, [
+    servers,
+    activeServer,
+    activeServerId,
+    selectServer,
+    statusByServer,
+    loading,
+    error,
+    fetchServers,
+  ]);
 
   return (
     <ServersContext.Provider value={value}>

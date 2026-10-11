@@ -8,7 +8,7 @@ import { useServers } from "@/context/use-servers";
 // agent version from capabilities, last-seen when the server isn't online.
 // Clicking a card makes it the active server, which scopes the apps list.
 export function ServerCards() {
-  const { servers, activeServerId, setActiveServerId, statusByServer, loading } =
+  const { servers, activeServerId, selectServer, statusByServer, loading } =
     useServers();
 
   if (loading && servers.length === 0) {
@@ -44,7 +44,7 @@ export function ServerCards() {
           <Card
             key={s.id}
             title={`${s.name}: ${online ? "online" : "unknown"}`}
-            onClick={() => setActiveServerId(s.id)}
+            onClick={() => selectServer(s.id)}
             className={cn(
               "w-[340px] cursor-pointer transition-all hover:bg-muted/50",
               selected && "border-primary ring-1 ring-primary",

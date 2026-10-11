@@ -46,6 +46,8 @@ import {
   type DeleteAppResult,
 } from "@/context/apps-context-base";
 import { cn } from "@/lib/utils";
+import { useServerPath } from "@/context/use-server-path";
+import { NotFound } from "@/components/not-found";
 
 const base = apiBaseUrl.endsWith("/") ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
 
@@ -57,8 +59,9 @@ const tabTriggerClass =
 export default function AppDetailsPage() {
   const { appId } = useParams();
   const navigate = useNavigate();
+  const toServer = useServerPath();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { apps, statusByApp, control, remove, rename } = useApps();
+  const { apps, statusByApp, loading, control, remove, rename } = useApps();
 
   const tabParam = searchParams.get("tab") ?? "logs";
   const tab = (TABS as readonly string[]).includes(tabParam)
@@ -71,8 +74,11 @@ export default function AppDetailsPage() {
   const app = useMemo(() => apps.find((a) => a.id === appId), [apps, appId]);
 
   const breadcrumbs = useMemo(
-    () => [{ label: "Apps", href: "/" }, { label: app?.name ?? appId ?? "App" }],
-    [app?.name, appId],
+    () => [
+      { label: "Apps", href: toServer() },
+      { label: app?.name ?? appId ?? "App" },
+    ],
+    [app?.name, appId, toServer],
   );
   useAppBreadcrumbs(breadcrumbs);
 
@@ -94,10 +100,12 @@ export default function AppDetailsPage() {
   };
 
   if (!app) {
+    if (loading) return null;
     return (
-      <div className="flex min-h-60 items-center justify-center">
-        <p className="text-sm text-muted-foreground">App not found.</p>
-      </div>
+      <NotFound
+        title="App not found"
+        description="This app doesn't exist on this server."
+      />
     );
   }
 
@@ -207,7 +215,7 @@ export default function AppDetailsPage() {
             onRename={rename}
             onDelete={async (opts) => {
               const result = await remove(app.id, opts);
-              navigate("/");
+              navigate(toServer());
               return result;
             }}
           />

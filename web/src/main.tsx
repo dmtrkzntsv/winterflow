@@ -1,10 +1,12 @@
 import { StrictMode } from "react"
 import { createRoot } from "react-dom/client"
-import { createBrowserRouter, RouterProvider } from "react-router-dom"
+import { createBrowserRouter, Outlet, RouterProvider } from "react-router-dom"
 
 import "@/lib/i18n"
 
 import { RequireAuth } from "@/components/require-auth"
+import { DefaultServer, ServerScope } from "@/components/server-routes"
+import { NotFound } from "@/components/not-found"
 import { LogoSprite } from "@/components/app-logo"
 import { Toaster } from "@/components/ui/sonner"
 import { AuthProvider } from "@/context/auth-context"
@@ -25,51 +27,63 @@ import LoginPage from "@/pages/login"
 import RegisterPage from "@/pages/register"
 import "./index.css"
 
+// The servers and apps providers sit inside the router: the active server is
+// read from the URL.
 const router = createBrowserRouter([
   {
     element: (
-      <RequireAuth>
-        <AppLayout />
-      </RequireAuth>
+      <ServersProvider>
+        <AppsProvider>
+          <Outlet />
+        </AppsProvider>
+      </ServersProvider>
     ),
     children: [
       {
-        path: "/",
-        element: <HomePage />,
+        element: (
+          <RequireAuth>
+            <AppLayout />
+          </RequireAuth>
+        ),
+        children: [
+          {
+            path: "/",
+            element: <DefaultServer fallback={<HomePage />} />,
+          },
+          {
+            path: "/server/:serverId",
+            element: <ServerScope />,
+            children: [
+              { index: true, element: <HomePage /> },
+              { path: "create-app", element: <CreateAppPage /> },
+              { path: "app/:appId", element: <AppDetailsPage /> },
+              { path: "settings", element: <SettingsPage /> },
+            ],
+          },
+          {
+            path: "/user/tokens",
+            element: <UserTokensPage />,
+          },
+          {
+            path: "/user/password",
+            element: <UserPasswordPage />,
+          },
+          {
+            path: "/org/members",
+            element: <OrgMembersPage />,
+          },
+          { path: "*", element: <NotFound /> },
+        ],
       },
       {
-        path: "/create-app",
-        element: <CreateAppPage />,
+        path: "/login",
+        element: <LoginPage />,
       },
       {
-        path: "/app/:appId",
-        element: <AppDetailsPage />,
-      },
-      {
-        path: "/settings",
-        element: <SettingsPage />,
-      },
-      {
-        path: "/user/tokens",
-        element: <UserTokensPage />,
-      },
-      {
-        path: "/user/password",
-        element: <UserPasswordPage />,
-      },
-      {
-        path: "/org/members",
-        element: <OrgMembersPage />,
+        path: "/register",
+        element: <RegisterPage />,
       },
     ],
-  },
-  {
-    path: "/login",
-    element: <LoginPage />,
-  },
-  {
-    path: "/register",
-    element: <RegisterPage />,
   },
 ])
 
@@ -79,13 +93,9 @@ createRoot(document.getElementById("root")!).render(
       <UserProvider>
         <ProfileProvider>
         <NotificationsProvider>
-          <ServersProvider>
-            <AppsProvider>
-              <LogoSprite />
-              <RouterProvider router={router} />
-              <Toaster />
-            </AppsProvider>
-          </ServersProvider>
+          <LogoSprite />
+          <RouterProvider router={router} />
+          <Toaster />
         </NotificationsProvider>
         </ProfileProvider>
       </UserProvider>

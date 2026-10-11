@@ -5,6 +5,7 @@ import { AppIcon } from "@/components/app-icon";
 import { AppStatusCode } from "@/context/apps-context-base";
 import { useApps } from "@/context/use-apps";
 import { cn } from "@/lib/utils";
+import { useServerPath } from "@/context/use-server-path";
 
 // Status → card accents, mirroring v1's AppCard: the border and label carry
 // the container status color; unknown stays neutral.
@@ -54,6 +55,7 @@ const STATUS_STYLE: Record<
 // icon block, status-colored border, status label, hover tilt, staggered
 // entrance animation. Each tile links to the app's details page.
 export function AppGrid() {
+  const toServer = useServerPath();
   const { apps, statusByApp, loading, error } = useApps();
 
   if (loading && apps.length === 0) {
@@ -93,7 +95,7 @@ export function AppGrid() {
         return (
           <Link
             key={app.id}
-            to={`/app/${app.id}`}
+            to={toServer(`/app/${app.id}`)}
             title={`${app.name}: ${status.label}`}
             className="app-card-in block"
             style={{ animationDelay: `${index * 40}ms` }}

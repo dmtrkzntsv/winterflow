@@ -71,7 +71,7 @@ export function ServerSwitcher({
   onAddServer?: () => void;
 }) {
   const { isMobile } = useSidebar();
-  const { servers, activeServer, setActiveServerId, loading } = useServers();
+  const { servers, activeServer, selectServer, loading } = useServers();
 
   // Never collapse to nothing: show a stable placeholder while loading or when
   // there are no servers yet, instead of disappearing.
@@ -169,7 +169,7 @@ export function ServerSwitcher({
             {servers.map((server, index) => (
               <DropdownMenuItem
                 key={server.id}
-                onClick={() => setActiveServerId(server.id)}
+                onClick={() => selectServer(server.id)}
                 className="gap-2 p-2"
               >
                 <LogoSpinner

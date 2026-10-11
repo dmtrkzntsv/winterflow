@@ -184,6 +184,20 @@ func (r *Repository) commitCount(appID, dir string) (int, error) {
 // the target are deleted. Untracked/ignored files (e.g. .env.secrets) are left
 // alone. It does NOT commit — the caller commits the restored tree so history
 // stays linear.
+// gitTracked reports whether commit hash has the file rel.
+func gitTracked(dir, hash, rel string) bool {
+	repo, err := git.PlainOpen(dir)
+	if err != nil {
+		return false
+	}
+	c, err := repo.CommitObject(plumbing.NewHash(hash))
+	if err != nil {
+		return false
+	}
+	_, err = c.File(filepath.ToSlash(rel))
+	return err == nil
+}
+
 func gitRestore(dir, hash string) error {
 	repo, err := git.PlainOpen(dir)
 	if err != nil {

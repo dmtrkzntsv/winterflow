@@ -3,7 +3,9 @@ package dockercompose
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -79,6 +81,8 @@ func (r *Repository) saveWithoutDeploy(app command.AppPayload) (string, error) {
 // dropped because the compose file no longer has their backup.
 func (r *Repository) save(app command.AppPayload) (string, []string, error) {
 	dir := r.appDataDir(app.AppID)
+	_, statErr := os.Stat(dir)
+	created := errors.Is(statErr, fs.ErrNotExist) // this save creates the app's folder
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", nil, err
 	}
@@ -103,7 +107,7 @@ func (r *Repository) save(app command.AppPayload) (string, []string, error) {
 	// a git-sourced app, the one just pulled); nothing is committed if not.
 	warnings, err := r.cleanBackups(dir)
 	if err != nil {
-		r.undoSave(dir)
+		r.undoSave(dir, created, savedPaths(app))
 		return "", nil, err
 	}
 
@@ -122,19 +126,59 @@ func (r *Repository) save(app command.AppPayload) (string, []string, error) {
 	return hash, warnings, nil
 }
 
+// savedPaths are the committed-state files writeAppStore writes for app
+// (secret files are written only after the commit).
+func savedPaths(app command.AppPayload) []string {
+	out := []string{configRel, secretsRel, envRel, gitignoreRel}
+	for _, f := range app.Files {
+		if f.Encrypted {
+			continue
+		}
+		if rel, err := safeRel(f.ItemName()); err == nil {
+			out = append(out, rel)
+		}
+	}
+	return out
+}
+
 // undoSave puts an app's folder back the way its last commit left it after
-// a save that was refused before committing; a new app (no commit yet) is
-// removed, so no half-saved app is ever listed.
-func (r *Repository) undoSave(dir string) {
-	head, err := gitHead(dir)
-	if err != nil {
-		if rmErr := os.RemoveAll(dir); rmErr != nil {
-			r.log.Warn("undo a refused save", "dir", dir, "error", rmErr)
+// a save that was refused before committing: tracked files are restored,
+// the files the save wrote (written) that the last commit doesn't have are
+// removed, and a git-sourced app's source/ goes back to the restored lock.
+// A folder this save created (created) is removed whole, so no half-saved
+// app is ever listed; a folder that existed before (even without a commit
+// yet) only loses what the save wrote.
+func (r *Repository) undoSave(dir string, created bool, written []string) {
+	if created {
+		if err := os.RemoveAll(dir); err != nil {
+			r.log.Warn("undo a refused save", "dir", dir, "error", err)
 		}
 		return
 	}
-	if err := gitRestore(dir, head); err != nil {
-		r.log.Warn("undo a refused save", "dir", dir, "error", err)
+	head, headErr := gitHead(dir)
+	if headErr == nil {
+		if err := gitRestore(dir, head); err != nil {
+			r.log.Warn("undo a refused save", "dir", dir, "error", err)
+		}
+	}
+	for _, rel := range written {
+		if headErr == nil && gitTracked(dir, head, rel) {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, rel)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			r.log.Warn("undo a refused save", "file", rel, "error", err)
+		}
+	}
+	if headErr != nil {
+		return
+	}
+	// ensureSource already moved source/ to the new upstream head.
+	if spec := r.appSourceSpec(dir); spec != nil {
+		if lock, ok := readSourceLock(dir); ok {
+			if _, err := r.ensureSource(context.Background(), dir, *spec, r.sourceTokenPlaintext(dir), lock.SHA); err != nil {
+				r.log.Warn("undo a refused save: restore source", "dir", dir, "error", err)
+			}
+		}
 	}
 }
 
@@ -435,8 +479,13 @@ func fileIn(dir string) func(name string) bool {
 // directory moves there and would stop auto-loading the app's committed .env.
 // Env files load in order — .env, storage.env, .env.secrets — later ones
 // winning.
+//
+// The app's backup profiles are passed as on a deploy: a custom backup's
+// service only exists for compose while its profile is active.
 func (r *Repository) composeArgs(appID string, verb ...string) []string {
-	return r.composeArgsFor(appID, r.appComposeFiles(r.appDataDir(appID)), nil, verb...)
+	dir := r.appDataDir(appID)
+	files := r.appComposeFiles(dir)
+	return r.composeArgsFor(appID, files, r.appProfiles(dir, files), verb...)
 }
 
 // composeArgsFor is composeArgs with the app's compose files already
@@ -507,7 +556,7 @@ func (r *Repository) composeUp(ctx context.Context, appID string) error {
 	if err := r.composeExec(ctx, appID, r.composeArgsFor(appID, files, profiles, "up", "-d", "--remove-orphans")); err != nil {
 		return err
 	}
-	return r.stopOffServices(ctx, appID, files, cfg, profiles)
+	return r.stopOffServices(ctx, appID, files, cfg, activeProfiles(dir, profiles))
 }
 
 // composeDown is a no-op (nil) if the app dir does not exist. volumes=true
@@ -516,7 +565,11 @@ func (r *Repository) composeDown(ctx context.Context, appID string, volumes bool
 	if _, err := os.Stat(r.appDataDir(appID)); err != nil {
 		return nil
 	}
-	return r.composeRun(ctx, appID, composeDownVerb(volumes)...)
+	// Every profile is activated: down removes all of the project's services,
+	// whatever the recipe says or whether it can be read at all.
+	dir := r.appDataDir(appID)
+	args := r.composeArgsFor(appID, r.appComposeFiles(dir), []string{"*"}, composeDownVerb(volumes)...)
+	return r.composeExec(ctx, appID, args)
 }
 
 func (r *Repository) composeRestart(ctx context.Context, appID string) error {

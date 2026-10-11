@@ -145,6 +145,21 @@ func TestSaveRefusesInvalidBackups(t *testing.T) {
 	if string(raw) != backupCompose {
 		t.Fatal("a refused save left its compose file in the worktree")
 	}
+	// A file the refused save added doesn't survive it (it would be loaded by
+	// the next deploy and committed by the next save).
+	_, _, err = r.save(command.AppPayload{AppID: "app-1", Config: []byte(plainConfig),
+		Files: []command.ContentItem{
+			{Name: "compose.yml", Content: []byte(backupCompose)},
+			{Name: "compose.override.yml", Content: []byte(strings.Replace(backupCompose, "volume: data", "volume: gone", 1))}}})
+	if err == nil {
+		t.Fatal("an invalid override file was saved")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "compose.override.yml")); !os.IsNotExist(err) {
+		t.Fatal("a refused save left its override file")
+	}
+	if _, err := r.appBackups(dir, r.appComposeFiles(dir)); err != nil {
+		t.Fatalf("the app no longer reads: %v", err)
+	}
 	// An override the compose file can't satisfy is refused too.
 	_, err = saveConfig(t, r, "app-1", backupCompose, withBackups(`[{"name":"database","enabled":true}]`))
 	if err == nil || !strings.Contains(err.Error(), "backups[0].storage: an enabled backup needs a storage") {
@@ -209,9 +224,17 @@ func TestComposeProfiles(t *testing.T) {
 	dir := r.appDataDir("app-1")
 	writeFileT(t, dir, envRel, "COMPOSE_PROFILES=extra, wf-backup-replica,debug\n")
 	off := []recipe.EffectiveBackup{{Name: "replica", Type: recipe.TypeCustom}}
+	// The user names the profile of a backup that is off: winterflow owns
+	// it, so it is dropped and the rest passed explicitly.
+	if got := r.composeProfiles(dir, off); !reflect.DeepEqual(got, []string{"debug", "extra"}) {
+		t.Fatalf("custom backup off: %v", got)
+	}
+	// Nothing of winterflow's involved: compose reads COMPOSE_PROFILES itself.
+	writeFileT(t, dir, envRel, "COMPOSE_PROFILES=extra,debug\n")
 	if got := r.composeProfiles(dir, off); got != nil {
 		t.Fatalf("no custom backup on: %v", got)
 	}
+	writeFileT(t, dir, envRel, "COMPOSE_PROFILES=extra, wf-backup-replica,debug\n")
 	on := []recipe.EffectiveBackup{{Name: "replica", Type: recipe.TypeCustom, Enabled: true}, {Name: "db", Type: recipe.TypeSQLite, Enabled: true}}
 	if got := r.composeProfiles(dir, on); !reflect.DeepEqual(got, []string{"debug", "extra", "wf-backup-replica"}) {
 		t.Fatalf("profiles = %v", got)
@@ -345,5 +368,157 @@ func TestStorageUsersIncludeBackups(t *testing.T) {
 	writeFileT(t, r.appDataDir("app-1"), "compose.yml", strings.Replace(backupCompose, "volume: data", "volume: gone", 1))
 	if err := r.DeleteStorage(context.Background(), "disk"); err == nil || !strings.Contains(err.Error(), "can't be checked") {
 		t.Fatalf("delete = %v", err)
+	}
+}
+
+func TestActiveProfiles(t *testing.T) {
+	dir := t.TempDir()
+	writeFileT(t, dir, envRel, "COMPOSE_PROFILES=extra,wf-backup-replica\n")
+	// Nothing passed: compose honours the user's profiles (minus winterflow's).
+	if got := activeProfiles(dir, nil); !reflect.DeepEqual(got, []string{"extra"}) {
+		t.Fatalf("active = %v", got)
+	}
+	if got := activeProfiles(dir, []string{"x"}); !reflect.DeepEqual(got, []string{"x"}) {
+		t.Fatalf("active = %v", got)
+	}
+}
+
+// With no custom backup on, a service of a backup that is off which also
+// carries a profile the user activates is kept (the nil-profiles path).
+func TestComposeUpKeepsUserActivatedBackupService(t *testing.T) {
+	r := newTestRepo(t)
+	var calls composeCalls
+	calls.install(r)
+	compose := strings.Replace(backupCompose, "profiles: [wf-backup-replica]", "profiles: [wf-backup-replica, extra]", 1)
+	if _, err := r.SaveApp(context.Background(), command.AppPayload{AppID: "app-1",
+		Config:    []byte(plainConfig),
+		Variables: []command.ContentItem{{Name: "COMPOSE_PROFILES", Content: []byte("extra,wf-backup-replica")}},
+		Files:     []command.ContentItem{{Name: "compose.yml", Content: []byte(compose)}}}); err != nil {
+		t.Fatal(err)
+	}
+	// replica is off: the stray wf-backup profile is stripped, "extra" is
+	// passed explicitly, and the service stays because "extra" is active.
+	if len(calls.args) != 1 || !strings.Contains(strings.Join(calls.args[0], " "), "--profile extra up -d") {
+		t.Fatalf("compose calls = %v", calls.args)
+	}
+	// Only the user's own profile: nothing is passed (compose reads
+	// COMPOSE_PROFILES) and the service still isn't removed.
+	calls.args = nil
+	if _, err := r.SaveApp(context.Background(), command.AppPayload{AppID: "app-1",
+		Config:    []byte(plainConfig),
+		Variables: []command.ContentItem{{Name: "COMPOSE_PROFILES", Content: []byte("extra")}},
+		Files:     []command.ContentItem{{Name: "compose.yml", Content: []byte(compose)}}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls.args) != 1 || strings.Contains(strings.Join(calls.args[0], " "), "--profile") {
+		t.Fatalf("compose calls = %v", calls.args)
+	}
+}
+
+// Every verb but up carries the app's backup profiles; down all of them.
+func TestComposeVerbsCarryProfiles(t *testing.T) {
+	r, pub := newSecretRepo(t)
+	storageFoldersExist(t, r)
+	withStorages(t, r, func(p string) string { return cryptotest.Encrypt(t, pub, p) })
+	var calls composeCalls
+	calls.install(r)
+	ctx := context.Background()
+	if _, err := r.SaveApp(ctx, command.AppPayload{AppID: "app-1",
+		Config: []byte(withBackups(`[{"name":"replica","enabled":true,"storage":"hetzner"}]`)),
+		Files:  []command.ContentItem{{Name: "compose.yml", Content: []byte(backupCompose)}}}); err != nil {
+		t.Fatal(err)
+	}
+	last := func() string {
+		calls.mu.Lock()
+		defer calls.mu.Unlock()
+		return strings.Join(calls.args[len(calls.args)-1], " ")
+	}
+	if err := r.RestartApp(ctx, "app-1"); err != nil || !strings.HasSuffix(last(), "--profile wf-backup-replica restart") {
+		t.Fatalf("restart: %v %s", err, last())
+	}
+	if err := r.composePull(ctx, "app-1"); err != nil || !strings.HasSuffix(last(), "--profile wf-backup-replica pull") {
+		t.Fatalf("pull: %v %s", err, last())
+	}
+	if got := strings.Join(r.composeArgs("app-1", "logs"), " "); !strings.HasSuffix(got, "--profile wf-backup-replica logs") {
+		t.Fatalf("logs args: %s", got)
+	}
+	if err := r.StopApp(ctx, "app-1"); err != nil || !strings.HasSuffix(last(), "--profile * down --remove-orphans") {
+		t.Fatalf("stop: %v %s", err, last())
+	}
+	if _, err := r.DeleteApp(ctx, "app-1", true); err != nil {
+		t.Fatal(err)
+	}
+	downs := 0
+	for _, a := range calls.args {
+		if j := strings.Join(a, " "); strings.Contains(j, " down ") {
+			downs++
+			if !strings.Contains(j, "--profile * down -v") && !strings.Contains(j, "--profile * down --remove-orphans") {
+				t.Fatalf("down without every profile: %s", j)
+			}
+		}
+	}
+	if downs != 2 {
+		t.Fatalf("downs = %d, calls %v", downs, calls.args)
+	}
+	// An unreadable recipe: other verbs pass nothing, down still all.
+	if _, err := r.SaveApp(ctx, command.AppPayload{AppID: "app-2", Config: []byte(plainConfig),
+		Files: []command.ContentItem{{Name: "compose.yml", Content: []byte(backupCompose)}}}); err != nil {
+		t.Fatal(err)
+	}
+	writeFileT(t, r.appDataDir("app-2"), "compose.yml", strings.Replace(backupCompose, "volume: data", "volume: gone", 1))
+	if got := strings.Join(r.composeArgs("app-2", "restart"), " "); strings.Contains(got, "--profile") {
+		t.Fatalf("unreadable recipe: %s", got)
+	}
+	if err := r.StopApp(ctx, "app-2"); err != nil || !strings.HasSuffix(last(), "--profile * down --remove-orphans") {
+		t.Fatalf("stop: %v %s", err, last())
+	}
+}
+
+func TestReadOverridesWithoutConfig(t *testing.T) {
+	r := newTestRepo(t)
+	got, err := r.readOverrides(t.TempDir())
+	if err != nil || got != nil {
+		t.Fatalf("overrides = %v, %v", got, err)
+	}
+}
+
+// A refused save on a folder that existed before it (no commit yet) removes
+// only what the save wrote.
+func TestSaveRefusedKeepsPreexistingFolder(t *testing.T) {
+	r := newTestRepo(t)
+	dir := r.appDataDir("app-1")
+	writeFileT(t, dir, "data/notes.txt", "keep me")
+	bad := strings.Replace(backupCompose, "volume: data", "volume: gone", 1)
+	if _, err := saveConfig(t, r, "app-1", bad, plainConfig); err == nil {
+		t.Fatal("invalid backups were saved")
+	}
+	if raw, err := os.ReadFile(filepath.Join(dir, "data/notes.txt")); err != nil || string(raw) != "keep me" {
+		t.Fatalf("the folder's own file is gone: %v", err)
+	}
+	for _, rel := range []string{"compose.yml", configRel, ".env", ".gitignore"} {
+		if _, err := os.Stat(filepath.Join(dir, rel)); !os.IsNotExist(err) {
+			t.Errorf("%s was left behind", rel)
+		}
+	}
+}
+
+// A refused save puts a git-sourced app's source/ back at the restored lock.
+func TestSaveRefusedRepinsSource(t *testing.T) {
+	r := newTestRepo(t)
+	up, commit := newUpstream(t)
+	c1 := commit("compose.yml", backupCompose)
+	if _, _, err := r.save(sourcePayload(up, "")); err != nil {
+		t.Fatal(err)
+	}
+	commit("compose.yml", strings.Replace(backupCompose, "volume: data", "volume: gone", 1))
+	if _, _, err := r.save(sourcePayload(up, "")); err == nil {
+		t.Fatal("upstream with invalid backups was saved")
+	}
+	dir := r.appDataDir("git-app")
+	if lock, ok := readSourceLock(dir); !ok || lock.SHA != c1 {
+		t.Fatalf("lock = %+v", lock)
+	}
+	if raw, _ := os.ReadFile(filepath.Join(dir, "source", "compose.yml")); string(raw) != backupCompose {
+		t.Fatalf("source/ is not at the locked head: %q", raw)
 	}
 }

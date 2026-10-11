@@ -42,7 +42,7 @@ func (r *DbServerRepository) GetServers(ctx context.Context, userID string) ([]m
 				Column("organization_id").
 				Where("user_id = ?", userID),
 		).
-		Order("created_at ASC").
+		Order("created_at ASC", "server_id ASC").
 		Scan(ctx)
 	if err != nil {
 		return nil, err

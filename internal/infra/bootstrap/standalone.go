@@ -38,7 +38,7 @@ func BootstrapStandalone(ctx context.Context, log *logger.Logger, cfg *config.Se
 	// Identical core wiring to the distributed API; Redis is replaced by an
 	// in-memory bus.
 	b := membus.NewBus(log)
-	deps, serverRepo := wireCore(ctx, b, dbconn, cfg, log)
+	deps, serverRepo := WireCore(ctx, b, dbconn, cfg, log)
 
 	// In-process bridge: consumes the request queue and runs commands against
 	// the local Docker Compose orchestrator (the standalone Hub + agent). The

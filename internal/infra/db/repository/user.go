@@ -260,7 +260,7 @@ func (r *DbUserRepository) ListTokens(ctx context.Context, userID string) ([]mod
 	var rows []models.UserToken
 	if err := r.db.GetDB().NewSelect().Model(&rows).
 		Where("user_id = ?", userID).
-		Order("created_at DESC").
+		Order("created_at DESC", "token_id DESC").
 		Scan(ctx); err != nil {
 		return nil, err
 	}
@@ -506,7 +506,7 @@ func (r *DbUserRepository) ListMembers(ctx context.Context, orgID string) ([]mod
 	if err := r.db.GetDB().NewSelect().Model(&rows).
 		Relation("User").
 		Where("organization_user.organization_id = ?", orgID).
-		Order("organization_user.created_at ASC").
+		Order("organization_user.created_at ASC", "organization_user.user_id ASC").
 		Scan(ctx); err != nil {
 		return nil, err
 	}

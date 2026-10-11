@@ -28,7 +28,9 @@ func (r *DbAppRepository) GetApps(ctx context.Context, serverID string) ([]model
 	err := r.db.GetDB().NewSelect().
 		Model(&rows).
 		Where("server_id = ?", serverID).
-		Order("created_at ASC").
+		// created_at has second precision: break ties by the (UUIDv7,
+		// time-ordered) id so SQLite and Postgres list in the same order.
+		Order("created_at ASC", "app_id ASC").
 		Scan(ctx)
 	if err != nil {
 		return nil, err

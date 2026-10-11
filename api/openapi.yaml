@@ -2348,12 +2348,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/LibraryError'
+            text/plain:
+              schema:
+                type: string
           description: Bad Request
         "403":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/LibraryError'
+            text/plain:
+              schema:
+                type: string
           description: Forbidden
         "429":
           content:
@@ -2366,6 +2372,9 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/LibraryError'
+            text/plain:
+              schema:
+                type: string
           description: Internal Server Error
       summary: Email+password login; sets the JWT cookie
       tags:
@@ -2419,6 +2428,9 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/LibraryError'
+            text/plain:
+              schema:
+                type: string
           description: Unauthorized
         "429":
           content:
@@ -2450,12 +2462,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/LibraryError'
+            text/plain:
+              schema:
+                type: string
           description: Bad Request
         "403":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/LibraryError'
+            text/plain:
+              schema:
+                type: string
           description: Forbidden
       summary: A stored avatar image
       tags:

@@ -192,6 +192,7 @@ func TestEnvelopeSchemas(t *testing.T) {
 		{"403", "GET", "/api/v1/thing/get-thing", 403, "application/json", `{"success":false,"message":"forbidden","data":null}`, true},
 		{"raw body", "POST", "/auth/local/login", 200, "application/json", `{"id":"u1"}`, true},
 		{"library error", "POST", "/auth/local/login", 403, "application/json", `{"error":"incorrect user or password"}`, true},
+		{"library error as text", "POST", "/auth/local/login", 403, "text/plain", `"{\"error\":\"user is nil\"}\n"`, true},
 		{"429 text", "POST", "/auth/local/login", 429, "text/plain", `"too many requests\n"`, true},
 		{"sse event", "GET", "/api/v1/sse", 200, "text/event-stream", `{"type":"thing","ref":"","payload":{"name":"n"}}`, true},
 		{"sse event needs ref", "GET", "/api/v1/sse", 200, "text/event-stream", `{"type":"thing","payload":{"name":"n"}}`, false},

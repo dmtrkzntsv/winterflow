@@ -1,0 +1,238 @@
+package contract_test
+
+import (
+	"context"
+	"encoding/json"
+	"sync"
+	"testing"
+
+	appagent "winterflow/internal/app/agent"
+	"winterflow/internal/domain/command"
+	"winterflow/internal/domain/model"
+	"winterflow/internal/infra/transport/codec"
+	grpcagent "winterflow/internal/infra/transport/grpc/agent"
+	"winterflow/internal/infra/transport/grpc/proto"
+)
+
+// reply is a scripted agent answer: Err != "" makes it an error response
+// (status 1 on the SSE result), otherwise Payload is the success body.
+type reply struct {
+	Payload any
+	Err     string
+}
+
+// script answers one command; req is the raw request payload.
+type script func(req json.RawMessage) reply
+
+// received is one command the fake agent saw.
+type received struct {
+	Type    command.Type
+	AgentID string
+	Payload json.RawMessage
+}
+
+// fakeAgent stands in for the docker-compose Dispatcher behind the real
+// InProcessBridge. Every command type answers success by default with the
+// same echo shape the real Dispatcher produces; tests override per type.
+type fakeAgent struct {
+	mu        sync.Mutex
+	overrides map[command.Type]script
+	calls     []received
+}
+
+func newFakeAgent() *fakeAgent {
+	return &fakeAgent{overrides: map[command.Type]script{}}
+}
+
+// on overrides the answer for typ for the rest of the test.
+func (a *fakeAgent) on(typ command.Type, s script) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.overrides[typ] = s
+}
+
+// fail makes typ answer with an error.
+func (a *fakeAgent) fail(typ command.Type, msg string) {
+	a.on(typ, func(json.RawMessage) reply { return reply{Err: msg} })
+}
+
+// seen returns the commands of type typ received so far.
+func (a *fakeAgent) seen(typ command.Type) []received {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	var out []received
+	for _, c := range a.calls {
+		if c.Type == typ {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// count is the number of commands received so far, of any type.
+func (a *fakeAgent) count() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return len(a.calls)
+}
+
+// Dispatch implements agent.CommandRunner (and the gRPC transport's
+// Dispatcher): decode nothing itself, answer through the real codec.
+func (a *fakeAgent) Dispatch(_ context.Context, req *proto.RequestEnvelope) *proto.ResponseEnvelope {
+	typ := command.Type(req.Type)
+	agentID := ""
+	if req.Base != nil {
+		agentID = req.Base.AgentId
+	}
+	a.mu.Lock()
+	a.calls = append(a.calls, received{Type: typ, AgentID: agentID, Payload: append(json.RawMessage(nil), req.Payload...)})
+	s, ok := a.overrides[typ]
+	a.mu.Unlock()
+	if !ok {
+		s = defaultScript(typ)
+	}
+	r := s(req.Payload)
+	code, detail, body := proto.ResponseCode_RESPONSE_CODE_SUCCESS, "ok", r.Payload
+	if r.Err != "" {
+		code, detail, body = proto.ResponseCode_RESPONSE_CODE_SERVER_ERROR, r.Err, nil
+	}
+	resp, err := codec.EncodeResponse(agentID, req.RequestId, typ, code, detail, body)
+	if err != nil {
+		resp, _ = codec.EncodeResponse(agentID, req.RequestId, typ, proto.ResponseCode_RESPONSE_CODE_SERVER_ERROR, err.Error(), nil)
+	}
+	return resp
+}
+
+// decode is the scripts' request decoder (the real codec).
+func decode[T any](raw json.RawMessage) T {
+	var v T
+	_ = codec.DecodePayload(raw, &v)
+	return v
+}
+
+// defaultScript is the success answer for typ, echoing request fields the
+// way internal/app/agent's Dispatcher does.
+func defaultScript(typ command.Type) script {
+	switch typ {
+	case command.TypeAppSave:
+		return func(raw json.RawMessage) reply {
+			in := decode[command.SaveAppRequest](raw)
+			return reply{Payload: command.SaveAppResponse{AppID: in.App.AppID, Revision: "rev-1"}}
+		}
+	case command.TypeAppsList:
+		return func(json.RawMessage) reply { return reply{Payload: command.ListAppsResponse{Apps: []model.App{}}} }
+	case command.TypeAppsStatus:
+		return func(json.RawMessage) reply {
+			return reply{Payload: command.GetAppsStatusResponse{Apps: []command.AppStatus{}}}
+		}
+	case command.TypeAppGet:
+		return func(raw json.RawMessage) reply {
+			in := decode[command.GetAppRequest](raw)
+			return reply{Payload: command.GetAppResponse{App: command.AppPayload{AppID: in.AppID, Config: []byte(`{}`), Variables: []command.ContentItem{}, Files: []command.ContentItem{}}}}
+		}
+	case command.TypeAppControl:
+		return func(raw json.RawMessage) reply {
+			in := decode[command.ControlAppRequest](raw)
+			return reply{Payload: command.ControlAppResponse{AppID: in.AppID, Action: in.Action}}
+		}
+	case command.TypeAppDelete:
+		return func(raw json.RawMessage) reply {
+			return reply{Payload: command.DeleteAppResponse{AppID: decode[command.DeleteAppRequest](raw).AppID}}
+		}
+	case command.TypeAppRename:
+		return func(raw json.RawMessage) reply {
+			in := decode[command.RenameAppRequest](raw)
+			return reply{Payload: command.RenameAppResponse{AppID: in.AppID, Name: in.Name}}
+		}
+	case command.TypeAppLogs:
+		return func(raw json.RawMessage) reply {
+			in := decode[command.GetLogsRequest](raw)
+			return reply{Payload: command.GetLogsResponse{AppID: in.AppID, Logs: []command.LogEntry{{Timestamp: 1, Level: command.LogLevelInfo, Message: "hello"}}}}
+		}
+	case command.TypeAppRevisions:
+		return func(raw json.RawMessage) reply {
+			in := decode[command.GetRevisionsRequest](raw)
+			return reply{Payload: command.GetRevisionsResponse{AppID: in.AppID, Current: "rev-1", Deployed: "rev-1",
+				Revisions: []command.RevisionInfo{{Hash: "rev-1", Subject: "save", Timestamp: 1}}}}
+		}
+	case command.TypeAppRollback:
+		return func(raw json.RawMessage) reply {
+			return reply{Payload: command.RollbackAppResponse{AppID: decode[command.RollbackAppRequest](raw).AppID, Revision: "rev-2"}}
+		}
+	case command.TypeRegistryList:
+		return func(json.RawMessage) reply {
+			return reply{Payload: command.ListRegistriesResponse{Registries: []command.Registry{{Address: "ghcr.io"}}}}
+		}
+	case command.TypeRegistryCreate:
+		return func(raw json.RawMessage) reply {
+			return reply{Payload: command.CreateRegistryResponse{Address: decode[command.CreateRegistryRequest](raw).Address}}
+		}
+	case command.TypeRegistryDelete:
+		return func(raw json.RawMessage) reply {
+			return reply{Payload: command.DeleteRegistryResponse{Address: decode[command.DeleteRegistryRequest](raw).Address}}
+		}
+	case command.TypeNetworkList:
+		return func(json.RawMessage) reply {
+			return reply{Payload: command.ListNetworksResponse{Networks: []command.Network{{Name: "bridge", Driver: "bridge"}}}}
+		}
+	case command.TypeNetworkCreate:
+		return func(raw json.RawMessage) reply {
+			return reply{Payload: command.CreateNetworkResponse{Name: decode[command.CreateNetworkRequest](raw).Name}}
+		}
+	case command.TypeNetworkDelete:
+		return func(raw json.RawMessage) reply {
+			return reply{Payload: command.DeleteNetworkResponse{Name: decode[command.DeleteNetworkRequest](raw).Name}}
+		}
+	case command.TypeVolumeList:
+		return func(json.RawMessage) reply {
+			return reply{Payload: command.ListVolumesResponse{Volumes: []command.Volume{{Name: "data", Driver: "local"}}}}
+		}
+	case command.TypeVolumeCreate:
+		return func(raw json.RawMessage) reply {
+			return reply{Payload: command.CreateVolumeResponse{Name: decode[command.CreateVolumeRequest](raw).Name}}
+		}
+	case command.TypeVolumeDelete:
+		return func(raw json.RawMessage) reply {
+			return reply{Payload: command.DeleteVolumeResponse{Name: decode[command.DeleteVolumeRequest](raw).Name}}
+		}
+	case command.TypeImageTags:
+		return func(raw json.RawMessage) reply {
+			return reply{Payload: command.ImageTagsResponse{Image: decode[command.ImageTagsRequest](raw).Image, Tags: []string{"latest"}}}
+		}
+	case command.TypeAgentUpdate:
+		return func(raw json.RawMessage) reply {
+			return reply{Payload: command.UpdateAgentResponse{FromVersion: "v1", ToVersion: decode[command.UpdateAgentRequest](raw).Version, Scheduled: true}}
+		}
+	}
+	return func(json.RawMessage) reply { return reply{Err: "fake agent: unsupported command type " + string(typ)} }
+}
+
+// TestFakeAgentAnswersEveryCommandType pins that every command type the
+// API can dispatch has a default success script.
+func TestFakeAgentAnswersEveryCommandType(t *testing.T) {
+	t.Parallel()
+	a := newFakeAgent()
+	for _, typ := range []command.Type{
+		command.TypeAppSave, command.TypeAppGet, command.TypeAppsList, command.TypeAppsStatus,
+		command.TypeAppDelete, command.TypeAppRename, command.TypeAppControl, command.TypeAppLogs,
+		command.TypeAppRevisions, command.TypeAppRollback, command.TypeRegistryList,
+		command.TypeRegistryCreate, command.TypeRegistryDelete, command.TypeNetworkList,
+		command.TypeNetworkCreate, command.TypeNetworkDelete, command.TypeVolumeList,
+		command.TypeVolumeCreate, command.TypeVolumeDelete, command.TypeImageTags, command.TypeAgentUpdate,
+	} {
+		resp := a.Dispatch(context.Background(), &proto.RequestEnvelope{Type: string(typ), RequestId: "r", Payload: []byte(`{}`)})
+		if resp.Base.ResponseCode != proto.ResponseCode_RESPONSE_CODE_SUCCESS {
+			t.Errorf("%s: default answer is %v %q", typ, resp.Base.ResponseCode, resp.Base.Detail)
+		}
+	}
+	resp := a.Dispatch(context.Background(), &proto.RequestEnvelope{Type: "nope", RequestId: "r"})
+	if resp.Base.ResponseCode == proto.ResponseCode_RESPONSE_CODE_SUCCESS {
+		t.Error("unknown command type must answer an error")
+	}
+}
+
+// The fake satisfies both seams the real Dispatcher fills.
+var (
+	_ appagent.CommandRunner = (*fakeAgent)(nil)
+	_ grpcagent.Dispatcher   = (*fakeAgent)(nil)
+)

@@ -31,7 +31,7 @@ jobs:
 
       - name: gofmt
         run: |
-          unformatted="$(gofmt -l $(git ls-files '*.go'))"
+          unformatted="$(git ls-files -z '*.go' | xargs -0 gofmt -l)"
           if [ -n "$unformatted" ]; then
             echo "::error::gofmt -w these files:"
             echo "$unformatted"
@@ -41,8 +41,15 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      # Includes the API contract suite on SQLite. -coverpkg=./... so that
+      # test-only package counts toward the handlers, usecases and
+      # repositories it drives; WF_CONTRACT_GUARD=require turns a stray
+      # -run/-skip/-short, which would skip its route-coverage guard, into a
+      # failure.
       - name: go test
-        run: go test -race -covermode=atomic -coverprofile=coverage.out ./...
+        env:
+          WF_CONTRACT_GUARD: require
+        run: go test -race -covermode=atomic -coverpkg=./... -coverprofile=coverage.out ./...
 
       - uses: actions/upload-artifact@v4
         with:
@@ -92,8 +99,47 @@ jobs:
       - name: install.sh dry-run suite
         run: bash scripts/install_test.sh
 
+  # The API contract suite on Postgres (the go job already runs it on
+  # SQLite). It must match testdata/parity.golden.json like the SQLite run,
+  # and its coverage profile is merged into the gates: Postgres-only
+  # branches run nowhere else.
+  contract:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -h 127.0.0.1"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      WF_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres?sslmode=disable
+      WF_CONTRACT_GUARD: require
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Contract suite (Postgres)
+        run: >-
+          go test -race -count=1 -covermode=atomic -coverpkg=./...
+          -coverprofile=contract-postgres.out ./internal/app/web/contract/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: contract-postgres-coverage
+          path: contract-postgres.out
+          if-no-files-found: error
+
   coverage:
-    needs: [go, web]
+    needs: [go, web, contract]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -114,6 +160,14 @@ jobs:
         with:
           name: web-coverage
           path: web/coverage
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: contract-postgres-coverage
+
+      # Duplicate blocks are fine: diffcov keeps the highest count per block.
+      - name: Merge Postgres contract coverage
+        run: tail -n +2 contract-postgres.out >> coverage.out
 
       - name: Diff coverage (changed lines >= 80%)
         if: github.event_name == 'pull_request'

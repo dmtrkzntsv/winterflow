@@ -30,7 +30,7 @@ func BootstrapAPI(ctx context.Context, log *logger.Logger, cfg *config.ServerCon
 	b := redisbus.NewBus(rc, log)
 	dbconn := db.NewBunConnection(log, cfg.GetDbURL())
 
-	deps, _ := wireCore(ctx, b, dbconn, cfg, log)
+	deps, _ := WireCore(ctx, b, dbconn, cfg, log)
 	return deps
 }
 

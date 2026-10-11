@@ -15,7 +15,7 @@ import (
 	"winterflow/pkg/logger"
 )
 
-// wireCore is the shared wiring both topologies boot through; prove it
+// WireCore is the shared wiring both topologies boot through; prove it
 // produces a working Deps whose response subscriber actually drains the
 // response queue into the notification manager.
 func TestWireCoreWiresResponsePipeline(t *testing.T) {
@@ -29,7 +29,7 @@ func TestWireCoreWiresResponsePipeline(t *testing.T) {
 	conn := db.NewBunConnection(log, cfg.GetDbURL())
 	t.Cleanup(func() { _ = conn.Shutdown() })
 
-	deps, serverRepo := wireCore(ctx, b, conn, cfg, log)
+	deps, serverRepo := WireCore(ctx, b, conn, cfg, log)
 	if deps.NotificationManager == nil || deps.CommandDispatcher == nil ||
 		deps.StatusCache == nil || deps.ServerRepository == nil || serverRepo == nil {
 		t.Fatalf("incomplete deps: %+v", deps)

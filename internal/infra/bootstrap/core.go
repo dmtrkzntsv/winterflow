@@ -13,20 +13,20 @@ import (
 	"winterflow/pkg/logger"
 )
 
-// wireCore builds the wiring both topologies share: DB-backed repositories and
+// WireCore builds the wiring both topologies share: DB-backed repositories and
 // services, the notification manager, the command dispatcher, the status
 // cache, and the response/events subscribers. The topologies differ only in
 // the bus they pass (Redis vs in-process) and the extras they add afterwards
 // (standalone: certs, in-process bridge, self-registration; api: nothing).
 // The concrete server repository is returned alongside Deps for standalone's
 // registration flow, which needs methods beyond the port.
-func wireCore(ctx context.Context, b bus.Bus, dbconn *db.BunConnection, cfg *config.ServerConfig, log *logger.Logger) (*Deps, *repository.DbServerRepository) {
+func WireCore(ctx context.Context, b bus.Bus, dbconn *db.BunConnection, cfg *config.ServerConfig, log *logger.Logger) (*Deps, *repository.DbServerRepository) {
 	userRepo := repository.NewDbUserRepository(dbconn, log)
 	serverRepo := repository.NewDbServerRepository(dbconn, log)
 	appRepo := repository.NewDbAppRepository(dbconn, log)
 	appDomainRepo := repository.NewDbAppDomainRepository(dbconn, log)
 
-	nm := notificationsvc.NewNotificationManager()
+	nm := notificationsvc.NewNotificationManager(log)
 	dispatcher := dispatch.NewManager(b, nm, cfg, log)
 	statusCache := status.NewCache(statusTTL)
 

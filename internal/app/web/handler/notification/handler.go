@@ -45,6 +45,11 @@ func (h *Handler) Stream(w http.ResponseWriter, r *http.Request) {
 	ch := h.nm.AddChannel(userID)
 	defer h.nm.RemoveChannel(userID, ch)
 
+	// Send the headers now: once the client sees 200 it is subscribed, so
+	// a command it dispatches next cannot finish before its result has a
+	// channel to land in.
+	flusher.Flush()
+
 	ctx := r.Context()
 	for {
 		select {

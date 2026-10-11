@@ -2,13 +2,30 @@ package notification
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
+	"time"
 
 	"winterflow/internal/domain/model"
+	"winterflow/pkg/logger"
 )
 
+func newManager() *Manager {
+	return NewNotificationManager(logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error"}))
+}
+
+// ref decodes the notification's ref from a queued message.
+func ref(t *testing.T, raw string) string {
+	t.Helper()
+	var n model.Notification
+	if err := json.Unmarshal([]byte(raw), &n); err != nil {
+		t.Fatalf("payload = %q: %v", raw, err)
+	}
+	return n.Ref
+}
+
 func TestPublishReachesAllUserChannels(t *testing.T) {
-	m := NewNotificationManager()
+	m := newManager()
 	a1 := m.AddChannel("alice")
 	a2 := m.AddChannel("alice")
 	b := m.AddChannel("bob")
@@ -34,31 +51,75 @@ func TestPublishReachesAllUserChannels(t *testing.T) {
 }
 
 func TestPublishToUnknownUserIsNoop(t *testing.T) {
-	m := NewNotificationManager()
+	m := newManager()
 	m.Publish("ghost", model.Notification{Ref: "r"}) // must not panic
 }
 
-func TestSlowChannelIsSkippedNotBlocked(t *testing.T) {
-	m := NewNotificationManager()
-	ch := m.AddChannel("alice") // buffer of 1
-	m.Publish("alice", model.Notification{Ref: "first"})
-	m.Publish("alice", model.Notification{Ref: "second"}) // buffer full: dropped, not blocking
-
-	raw := <-ch
-	var n model.Notification
-	_ = json.Unmarshal([]byte(raw), &n)
-	if n.Ref != "first" {
-		t.Fatalf("got %q, want first", n.Ref)
+// TestBurstIsDeliveredWithoutAReader: a status fan-out (apps_status, then
+// its server_status transition) followed by an operation_result arrives
+// while the SSE handler is still busy; every one of them must be queued.
+// With a 1-slot buffer the operation_result was dropped and the UI waited
+// for a result that never came.
+func TestBurstIsDeliveredWithoutAReader(t *testing.T) {
+	m := newManager()
+	ch := m.AddChannel("alice")
+	burst := []model.Notification{
+		{Type: model.NotificationAppsStatus, Ref: "apps"},
+		{Type: model.NotificationServerStatus, Ref: "server"},
+		{Type: model.NotificationOperationResult, Ref: "result"},
 	}
+	for _, n := range burst {
+		m.Publish("alice", n)
+	}
+	for _, want := range burst {
+		select {
+		case raw := <-ch:
+			if got := ref(t, raw); got != want.Ref {
+				t.Fatalf("got ref %q, want %q", got, want.Ref)
+			}
+		default:
+			t.Fatalf("%s (%s) was dropped although nothing was reading yet", want.Type, want.Ref)
+		}
+	}
+}
+
+// TestFullBufferDropsWithoutBlocking: a stuck client (nobody reading) must
+// cost Publish nothing: once its buffer is full, further notifications are
+// dropped and Publish returns immediately, so other users are unaffected.
+func TestFullBufferDropsWithoutBlocking(t *testing.T) {
+	m := newManager()
+	stuck := m.AddChannel("alice")
+	other := m.AddChannel("bob")
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < streamBuffer+10; i++ {
+			m.Publish("alice", model.Notification{Ref: fmt.Sprint(i)})
+		}
+		m.Publish("bob", model.Notification{Ref: "bob"})
+	}()
 	select {
-	case extra := <-ch:
-		t.Fatalf("second publish should have been dropped, got %q", extra)
-	default:
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Publish blocked on a full stream")
+	}
+
+	if len(stuck) != streamBuffer {
+		t.Fatalf("queued %d, want the buffer size %d", len(stuck), streamBuffer)
+	}
+	for i := 0; i < streamBuffer; i++ {
+		if got := ref(t, <-stuck); got != fmt.Sprint(i) {
+			t.Fatalf("message %d: ref %q (the oldest must be kept, the overflow dropped)", i, got)
+		}
+	}
+	if got := ref(t, <-other); got != "bob" {
+		t.Fatalf("bob got %q", got)
 	}
 }
 
 func TestRemoveChannelClosesAndStopsDelivery(t *testing.T) {
-	m := NewNotificationManager()
+	m := newManager()
 	ch := m.AddChannel("alice")
 	m.RemoveChannel("alice", ch)
 

@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"sync"
 	"testing"
+	"testing/fstest"
 
 	"winterflow/internal/infra/db/backend"
 )
@@ -53,5 +54,34 @@ func TestConcurrentMigrateIsSerialized(t *testing.T) {
 	}
 	if got, want := versions(t, first), versions(t, fresh); !reflect.DeepEqual(got, want) {
 		t.Fatalf("versions = %v, want %v", got, want)
+	}
+}
+
+// A Run that fails while holding the advisory lock must release it: a
+// second pool (another replica) migrates straight away while the first
+// pool, whose session may be reused, is still open.
+func TestFailedRunReleasesAdvisoryLock(t *testing.T) {
+	base := os.Getenv("WF_TEST_DATABASE_URL")
+	if base == "" {
+		t.Skip("Postgres only (make test-pg)")
+	}
+	ctx := tctx(t)
+	a := openEmpty(t, backend.Postgres)
+	var schema string
+	if err := a.QueryRowContext(ctx, `SELECT current_schema()`).Scan(&schema); err != nil {
+		t.Fatal(err)
+	}
+	broken := fstest.MapFS{"1_broken.sql": {Data: []byte("INSERT INTO missing VALUES (1);")}}
+	if err := Run(ctx, a, backend.Postgres, broken, -1); err == nil {
+		t.Fatal("broken migration succeeded")
+	}
+
+	b, err := sql.Open("pgx", schemaDSN(t, base, schema))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = b.Close() })
+	if err := Migrate(ctx, b, backend.Postgres); err != nil {
+		t.Fatalf("second pool blocked or failed after a failed run: %v", err)
 	}
 }

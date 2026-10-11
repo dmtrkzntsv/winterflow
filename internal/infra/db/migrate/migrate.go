@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"winterflow/internal/infra/db/backend"
 	"winterflow/internal/infra/db/migrations"
@@ -32,6 +33,9 @@ const fkOffMarker = "-- migrate:foreign_keys=off"
 // pgLockKey serializes concurrent runners (several API replicas booting at
 // once) on one Postgres database: pg_advisory_lock("wfmigrat").
 const pgLockKey int64 = 0x77666d6967726174
+
+// unlockTimeout bounds the release of the advisory lock.
+const unlockTimeout = 10 * time.Second
 
 // Migration is one parsed migration file.
 type Migration struct {
@@ -130,7 +134,11 @@ func Run(ctx context.Context, db *sql.DB, driverName string, fsys fs.FS, target 
 			return fmt.Errorf("migrate: advisory lock: %w", err)
 		}
 		defer func() {
-			if _, uerr := c.ExecContext(context.WithoutCancel(ctx), `SELECT pg_advisory_unlock($1)`, pgLockKey); uerr != nil {
+			// Unlock even when ctx is already cancelled, but never wait on a
+			// dead connection forever.
+			uctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), unlockTimeout)
+			defer cancel()
+			if _, uerr := c.ExecContext(uctx, `SELECT pg_advisory_unlock($1)`, pgLockKey); uerr != nil {
 				// Never return a connection that may still hold the lock
 				// to the pool: closing the session releases it.
 				_ = c.Raw(func(any) error { return driver.ErrBadConn })

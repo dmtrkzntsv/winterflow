@@ -23,6 +23,7 @@ package dockercompose
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -64,6 +65,10 @@ type Repository struct {
 	// updating is set once an agent update is under way (see beginUpdate):
 	// no restore begins then, the agent is about to exit.
 	updating bool
+	// appLocks serialize the writers of an app's committed files (see
+	// lockApp), one lock per app, under lockMu; forgetApp prunes them.
+	lockMu   sync.Mutex
+	appLocks map[string]chan struct{}
 	// marks are the restores in progress, mirrored in backups/restoring.json
 	// (see RestoreMark), under markMu.
 	markMu sync.Mutex
@@ -164,4 +169,32 @@ func (r *Repository) forgetApp(appID string) {
 	delete(r.ops, appID)
 	r.restoreMu.Unlock()
 	r.clearRestoreMark(appID)
+	r.lockMu.Lock()
+	delete(r.appLocks, appID)
+	r.lockMu.Unlock()
+}
+
+// lockApp serializes the writers of an app's committed files (save, rename,
+// rollback, backup settings): the check of a backups base and the commit that
+// follows it, in particular, must not interleave with another writer's. The
+// distributed agent runs each request on its own goroutine. It waits until
+// the lock is free or ctx is done; release it with the returned func, before
+// any redeploy (it is held for file work and one commit, never for compose).
+func (r *Repository) lockApp(ctx context.Context, appID string) (unlock func(), err error) {
+	r.lockMu.Lock()
+	ch := r.appLocks[appID]
+	if ch == nil {
+		if r.appLocks == nil {
+			r.appLocks = map[string]chan struct{}{}
+		}
+		ch = make(chan struct{}, 1)
+		r.appLocks[appID] = ch
+	}
+	r.lockMu.Unlock()
+	select {
+	case ch <- struct{}{}:
+		return func() { <-ch }, nil
+	case <-ctx.Done():
+		return nil, fmt.Errorf("another change to the app is still being written: %w", ctx.Err())
+	}
 }

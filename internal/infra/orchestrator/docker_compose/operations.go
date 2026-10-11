@@ -85,6 +85,10 @@ func (r *Repository) saveWithoutDeploy(app command.AppPayload) (string, error) {
 // save is saveWithoutDeploy with the warnings of the save: backup settings
 // dropped because the compose file no longer has their backup.
 func (r *Repository) save(app command.AppPayload) (string, []string, error) {
+	// One writer of the app's files at a time (a backups update checks its
+	// base against them); a source sync under it is bounded.
+	unlock, _ := r.lockApp(context.Background(), app.AppID)
+	defer unlock()
 	dir := r.appDataDir(app.AppID)
 	_, statErr := os.Stat(dir)
 	created := errors.Is(statErr, fs.ErrNotExist) // this save creates the app's folder
@@ -231,6 +235,8 @@ func (r *Repository) Rollback(ctx context.Context, appID, hash string) (string, 
 // rollbackWithoutDeploy restores the commit, commits the restored tree, and
 // re-materializes secrets — everything except bringing containers up.
 func (r *Repository) rollbackWithoutDeploy(appID, hash string) (string, error) {
+	unlock, _ := r.lockApp(context.Background(), appID)
+	defer unlock()
 	dir := r.appDataDir(appID)
 	if _, err := os.Stat(dir); err != nil {
 		return "", fmt.Errorf("app %s not found", appID)

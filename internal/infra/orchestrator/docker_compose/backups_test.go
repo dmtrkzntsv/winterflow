@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"winterflow/internal/domain/backup/recipe"
 	"winterflow/internal/domain/command"
@@ -298,5 +301,90 @@ func TestUpdateBackupsBase(t *testing.T) {
 	}
 	if after, _ := gitHead(dir); after != head {
 		t.Fatalf("a refused update committed: %s -> %s", head, after)
+	}
+}
+
+// Two saves made from the same base cannot both succeed, however they
+// interleave on the distributed agent (one goroutine per request): exactly
+// one wins and the other is refused as stale, instead of the later write
+// silently replacing the earlier.
+func TestUpdateBackupsSameBaseOneWins(t *testing.T) {
+	r, _ := updateRepo(t)
+	ctx := context.Background()
+	base := backupsBase(nil)
+	for round := range 30 {
+		errs := make([]error, 2)
+		var wg sync.WaitGroup
+		start := make(chan struct{})
+		for i := range errs {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				list := []recipe.BackupConfig{{Name: "database", Enabled: true, Storage: "disk", Every: fmt.Sprintf("%dm", 10+round*2+i)}}
+				_, errs[i] = r.UpdateBackups(ctx, "app-1", list, base)
+			}()
+		}
+		close(start)
+		wg.Wait()
+		wins, stale := 0, 0
+		for _, err := range errs {
+			switch {
+			case err == nil:
+				wins++
+			case errors.Is(err, command.ErrBackupsChanged):
+				stale++
+			default:
+				t.Fatalf("round %d: %v", round, err)
+			}
+		}
+		if wins != 1 || stale != 1 {
+			t.Fatalf("round %d: %d won, %d refused as stale (%v)", round, wins, stale, errs)
+		}
+		stored, _ := r.readOverrides(r.appDataDir("app-1"))
+		base = backupsBase(stored)
+	}
+}
+
+// The writers of an app's files wait for each other (and for ctx).
+func TestLockAppSerializesAndHonorsContext(t *testing.T) {
+	r := newTestRepo(t)
+	unlock, err := r.lockApp(context.Background(), "app-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	if _, err := r.lockApp(ctx, "app-1"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("second lock: %v", err)
+	}
+	if other, err := r.lockApp(context.Background(), "app-2"); err != nil {
+		t.Fatalf("another app: %v", err)
+	} else {
+		other()
+	}
+	unlock()
+	again, err := r.lockApp(context.Background(), "app-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	again()
+	r.forgetApp("app-1")
+	if len(r.appLocks) != 1 { // app-2's remains; app-1's is pruned
+		t.Fatalf("locks left: %d", len(r.appLocks))
+	}
+}
+
+// The base in an update's answer is the written list's even when the stored
+// file cannot be read back.
+func TestBaseAfterWriteFallsBackToWhatWasWritten(t *testing.T) {
+	r, _ := updateRepo(t)
+	dir := r.appDataDir("app-1")
+	written := []recipe.BackupConfig{{Name: "database", Enabled: true, Storage: "disk"}}
+	if err := os.WriteFile(filepath.Join(dir, configRel), []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.baseAfterWrite(dir, written); got == "" || got != backupsBase(written) {
+		t.Fatalf("base = %q, want %q", got, backupsBase(written))
 	}
 }

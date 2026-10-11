@@ -323,6 +323,11 @@ func (r *Repository) RenameApp(ctx context.Context, appID, newName string) error
 	if err := r.refuseDuringRestore(appID); err != nil {
 		return err
 	}
+	unlock, err := r.lockApp(ctx, appID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	dir := r.appDataDir(appID)
 	cfg, _, err := r.readAppConfig(dir)
 	if err != nil {

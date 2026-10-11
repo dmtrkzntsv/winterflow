@@ -141,6 +141,18 @@ func (r *Repository) UpdateBackups(ctx context.Context, appID string, overrides 
 		return resp, fmt.Errorf("app %s not found", appID)
 	}
 	dir := r.appDataDir(appID)
+	// The base check and the commit that follows it are one step: another
+	// writer between them would be overwritten silently. The lock is held for
+	// the file work only; the redeploy below runs without it.
+	unlock, err := r.lockApp(ctx, appID)
+	if err != nil {
+		return resp, err
+	}
+	defer func() {
+		if unlock != nil {
+			unlock()
+		}
+	}()
 	if base != "" {
 		stored, err := r.readOverrides(dir)
 		if err != nil {
@@ -202,9 +214,9 @@ func (r *Repository) UpdateBackups(ctx context.Context, appID string, overrides 
 		return resp, fmt.Errorf("commit: %w", err)
 	}
 	resp.Revision, resp.Backups, resp.Warnings = hash, backups, warnings
-	if stored, err := r.readOverrides(dir); err == nil {
-		resp.BackupsBase = backupsBase(stored)
-	}
+	resp.BackupsBase = r.baseAfterWrite(dir, kept)
+	unlock()
+	unlock = nil
 	if !deployed {
 		if changed && marked {
 			resp.Warnings = append(resp.Warnings, "the app has undeployed changes and was not redeployed: deploy it to apply the backup settings")
@@ -233,6 +245,16 @@ func (r *Repository) UpdateBackups(ctx context.Context, appID string, overrides 
 		}
 	}
 	return resp, nil
+}
+
+// baseAfterWrite is the base of the backups list just written: the stored one,
+// re-read, else (the read failed) the one of what was written, so a client
+// always gets a base to send with its next edit.
+func (r *Repository) baseAfterWrite(dir string, written []recipe.BackupConfig) string {
+	if stored, err := r.readOverrides(dir); err == nil {
+		return backupsBase(stored)
+	}
+	return backupsBase(written)
 }
 
 // PlannedBackup is one backup of one app, as the scheduler plans it.

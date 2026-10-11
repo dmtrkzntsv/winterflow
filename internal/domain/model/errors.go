@@ -15,3 +15,7 @@ func (e *rejection) Error() string        { return e.msg }
 func (e *rejection) Is(target error) bool { return target == ErrRejected }
 
 func rejected(msg string) error { return &rejection{msg: msg} }
+
+// Rejected makes a sentinel error for another package that matches
+// ErrRejected (an invalid backup recipe, say).
+func Rejected(msg string) error { return rejected(msg) }

@@ -24,4 +24,8 @@ func TestRejectedSentinels(t *testing.T) {
 	if errors.Is(errors.New("db down"), ErrRejected) {
 		t.Error("an internal error is rejected")
 	}
+	other := Rejected("invalid backup")
+	if !errors.Is(fmt.Errorf("%w: x", other), ErrRejected) || other.Error() != "invalid backup" || errors.Is(other, ErrStorageRef) {
+		t.Errorf("Rejected = %v", other)
+	}
 }

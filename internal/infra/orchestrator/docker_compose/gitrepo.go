@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	git "github.com/go-git/go-git/v5"
@@ -45,11 +46,18 @@ func gitEnsure(dir string) error {
 // not list them.
 var derivedArtifacts = []string{envSecretsRel, deployedRel, runRel, storageEnvRel}
 
-// neverCommitted are derivedArtifacts as go-git patterns. go-git does not
-// read .git/info/exclude, so they ride on every commit's worktree.
+// tempArtifacts are the temp files of the agent's own atomic writes in
+// .winterflow/ (fsutil.WriteFile's config.json.tmp): a crash mid-write
+// leaves one behind, and the next commit must not pick it up. App files
+// can't live in .winterflow/ (safeRel), so the glob takes nothing of theirs.
+const tempArtifacts = ".winterflow/*.tmp"
+
+// neverCommitted are derivedArtifacts and tempArtifacts as go-git
+// patterns. go-git does not read .git/info/exclude, so they ride on every
+// commit's worktree.
 var neverCommitted = func() []gitignore.Pattern {
-	out := make([]gitignore.Pattern, 0, len(derivedArtifacts))
-	for _, rel := range derivedArtifacts {
+	out := make([]gitignore.Pattern, 0, len(derivedArtifacts)+1)
+	for _, rel := range append(slices.Clone(derivedArtifacts), tempArtifacts) {
 		out = append(out, gitignore.ParsePattern("/"+rel, nil))
 	}
 	return out

@@ -14,6 +14,8 @@
 //	  .env.secrets, source/      --   gitignored deploy artifacts
 //	  .winterflow/storage.env    --   gitignored: referenced WF_STORAGE_ values
 //	storages/{name}.json         -- registered storages (0600, secret encrypted)
+//	backups/state.json           -- the backup scheduler's state
+//	backups/tmp/                 -- restore downloads (removed after each restore)
 //
 // The folder IS the deployment: compose runs in it directly, every save is a
 // commit, and rollbacks restore old trees as new commits.
@@ -87,6 +89,7 @@ type Repository struct {
 	// tests).
 	helperImageReady atomic.Bool
 	runHelper        func(ctx context.Context, name string, args []string, stdout io.Writer) (exit int, stderr []byte, err error)
+	runRestoreHelper func(ctx context.Context, name string, args []string, stdin io.Reader) (exit int, stderr []byte, err error)
 	docker           func(ctx context.Context, args ...string) error
 	helperBinary     func() (string, error)
 	now              func() time.Time
@@ -100,21 +103,22 @@ type versionEntry struct {
 
 func NewRepository(cfg *config.ServerConfig, log *logger.Logger) *Repository {
 	r := &Repository{
-		cfg:           cfg,
-		log:           log,
-		sourceChecks:  make(map[string]time.Time),
-		versionCache:  make(map[string]versionEntry),
-		storages:      storages.NewRegistry(filepath.Join(cfg.GetAgentDataDir(), "storages")),
-		storageLimits: defaultStorageLimits,
-		openStorage:   store.Open,
-		runCompose:    dockerIn,
-		composeOutput: dockerOutputIn,
-		mountCache:    make(map[string]mountCacheEntry),
-		hostStat:      os.Stat,
-		runHelper:     runDockerHelper,
-		docker:        dockerCombined,
-		helperBinary:  agentExecutable,
-		now:           time.Now,
+		cfg:              cfg,
+		log:              log,
+		sourceChecks:     make(map[string]time.Time),
+		versionCache:     make(map[string]versionEntry),
+		storages:         storages.NewRegistry(filepath.Join(cfg.GetAgentDataDir(), "storages")),
+		storageLimits:    defaultStorageLimits,
+		openStorage:      store.Open,
+		runCompose:       dockerIn,
+		composeOutput:    dockerOutputIn,
+		mountCache:       make(map[string]mountCacheEntry),
+		hostStat:         os.Stat,
+		runHelper:        runDockerHelper,
+		runRestoreHelper: runDockerRestoreHelper,
+		docker:           dockerCombined,
+		helperBinary:     agentExecutable,
+		now:              time.Now,
 	}
 	r.runningProjects = r.composeProjectsUp
 	r.redeploy = r.deploy

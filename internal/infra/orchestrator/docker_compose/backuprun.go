@@ -77,6 +77,17 @@ var errNotBackedUp = errors.New("no backup was produced")
 // custom, or not the app's. The scheduler records no attempt for it.
 var ErrNotRunnable = errors.New("backup not runnable")
 
+// ErrNothingToBackUp marks a run that found nothing to copy: the database
+// file is missing, or none of the paths exist (helper exit 4). A restore
+// skips its pre-restore copy on it.
+var ErrNothingToBackUp = errors.New("nothing to back up")
+
+// nothingToBackUp is an ErrNothingToBackUp with the helper's reason.
+type nothingToBackUp string
+
+func (e nothingToBackUp) Error() string        { return string(e) }
+func (e nothingToBackUp) Is(target error) bool { return target == ErrNothingToBackUp }
+
 // notRunnable is an ErrNotRunnable with its reason as the message.
 type notRunnable string
 
@@ -469,6 +480,8 @@ func (r *Repository) dumpAndUpload(ctx context.Context, st store.Store, key, nam
 	case exit == helper.ExitUnchanged:
 		out.unchanged = true
 		return out, nil
+	case exit == helper.ExitMissing && parsed && res.Error != "":
+		return out, nothingToBackUp(res.Error)
 	case exit == helper.ExitOK && encErr != nil:
 		return out, fmt.Errorf("compress the copy: %w", encErr)
 	case exit == helper.ExitOK && !parsed:
@@ -515,9 +528,21 @@ func (t *tailBuffer) Write(p []byte) (int, error) {
 // the container exits, and one nobody reads from would block on its next
 // write forever.
 func runDockerHelper(ctx context.Context, name string, args []string, out io.Writer) (int, []byte, error) {
+	return runDockerIO(ctx, name, args, nil, out)
+}
+
+// runDockerRestoreHelper is runDockerHelper for a restore: in is the
+// helper's stdin (its args carry -i), its stdout is discarded.
+func runDockerRestoreHelper(ctx context.Context, name string, args []string, in io.Reader) (int, []byte, error) {
+	return runDockerIO(ctx, name, args, in, io.Discard)
+}
+
+// runDockerIO runs a helper's `docker run` with stdin in (nil: none) and
+// stdout out.
+func runDockerIO(ctx context.Context, name string, args []string, in io.Reader, out io.Writer) (int, []byte, error) {
 	stderr := &tailBuffer{max: 64 << 10}
 	cmd := exec.CommandContext(ctx, "docker", args...)
-	cmd.Stdout, cmd.Stderr = out, stderr
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = in, out, stderr
 	cmd.Cancel = func() error {
 		removeHelper(name)
 		return cmd.Process.Kill()
@@ -535,7 +560,7 @@ func runDockerHelper(ctx context.Context, name string, args []string, out io.Wri
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
 		code := ee.ExitCode()
-		if code != helper.ExitOK && code != helper.ExitUnchanged && code != helper.ExitMissing {
+		if code != helper.ExitOK && code != helper.ExitUnchanged && code != helper.ExitMissing && code != helper.ExitPartial {
 			removeHelper(name)
 		}
 		return code, stderr.buf, nil
@@ -592,8 +617,10 @@ func (r *Repository) checkHelperVolumes(ctx context.Context, plan helperPlan) er
 }
 
 // RemoveHelpers removes helper containers left behind by an agent that
-// stopped mid-run: one `docker ps` and at most one `docker rm`.
+// stopped mid-run (one `docker ps` and at most one `docker rm`) and the
+// restore downloads it left in backups/tmp.
 func (r *Repository) RemoveHelpers(ctx context.Context) error {
+	r.removeRestoreDownloads()
 	return r.removeHelpers(ctx)
 }
 

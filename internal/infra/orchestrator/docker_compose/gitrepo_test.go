@@ -209,3 +209,21 @@ func TestGitCommitAllExcludesDerivedArtifacts(t *testing.T) {
 		}
 	}
 }
+
+// The temp file of an atomic write a crash left in .winterflow/ is never
+// committed; a .tmp file of the app's own is.
+func TestGitCommitAllExcludesAtomicWriteLeftovers(t *testing.T) {
+	dir := t.TempDir()
+	if err := gitEnsure(dir); err != nil {
+		t.Fatal(err)
+	}
+	writeFileT(t, dir, ".winterflow/config.json", "{}\n")
+	writeFileT(t, dir, ".winterflow/config.json.tmp", "{\"half\n")
+	writeFileT(t, dir, "data/cache.tmp", "the app's\n")
+	if _, err := gitCommitAll(dir, "crashed write"); err != nil {
+		t.Fatal(err)
+	}
+	if tracked(t, dir, ".winterflow/config.json.tmp") || !tracked(t, dir, ".winterflow/config.json") || !tracked(t, dir, "data/cache.tmp") {
+		t.Fatal("wrong files committed")
+	}
+}

@@ -1,0 +1,402 @@
+package dockercompose
+
+import (
+	"archive/tar"
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"winterflow/internal/domain/command"
+	"winterflow/internal/infra/backup/helper"
+	"winterflow/internal/infra/backup/layout"
+)
+
+// fakeRestorer stands in for the restore helper's `docker run`: it records
+// the arguments and stdin, and answers exit with stderr (a result line by
+// default). onRun runs first.
+type fakeRestorer struct {
+	mu     sync.Mutex
+	calls  [][]string
+	stdin  []byte
+	exit   int
+	stderr string
+	onRun  func()
+}
+
+func (f *fakeRestorer) run(_ context.Context, _ string, args []string, in io.Reader) (int, []byte, error) {
+	body, err := io.ReadAll(in)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls, f.stdin = append(f.calls, args), body
+	if f.onRun != nil {
+		f.onRun()
+	}
+	if err != nil {
+		return 1, nil, err
+	}
+	if f.stderr == "" {
+		return f.exit, []byte(`{"raw_size":1,"warnings":["/app/media/dev: skipped"]}` + "\n"), nil
+	}
+	return f.exit, []byte(f.stderr), nil
+}
+
+// restoreRepo is a backupRepo whose app is up, with compose calls recorded
+// and a fake restore helper.
+type restoreRepo struct {
+	*backupRepo
+	restorer *fakeRestorer
+	compose  []string
+	up       bool
+}
+
+func newRestoreRepo(t *testing.T) *restoreRepo {
+	t.Helper()
+	rr := &restoreRepo{backupRepo: newBackupRepo(t), restorer: &fakeRestorer{}, up: true}
+	rr.runRestoreHelper = rr.restorer.run
+	rr.runningProjects = func(context.Context) (map[string]bool, error) {
+		return map[string]bool{"wf-app-1": rr.up}, nil
+	}
+	rr.runCompose = func(_ context.Context, _ string, args []string) error {
+		rr.compose = append(rr.compose, args[len(args)-1])
+		return nil
+	}
+	return rr
+}
+
+// point makes a copy of name now and moves the clock on an hour.
+func (rr *restoreRepo) point(t *testing.T, name string) string {
+	t.Helper()
+	res, err := rr.run(t, name, command.PointScheduled)
+	if err != nil || res.Point == nil {
+		t.Fatalf("backup: %+v, %v", res, err)
+	}
+	rr.clock = rr.clock.Add(time.Hour)
+	return res.Point.ID
+}
+
+func (rr *restoreRepo) restore(ctx context.Context, name, point string) (command.RestoreBackupResponse, error) {
+	return rr.RestoreBackup(ctx, RestoreJob{AppID: "app-1", Backup: name, Point: point})
+}
+
+// tmpLeft lists what remains in backups/tmp.
+func (rr *restoreRepo) tmpLeft() []string {
+	entries, _ := os.ReadDir(rr.restoreTmpDir())
+	var out []string
+	for _, e := range entries {
+		out = append(out, e.Name())
+	}
+	return out
+}
+
+func TestRestoreSQLitePoint(t *testing.T) {
+	rr := newRestoreRepo(t)
+	id := rr.point(t, "database")
+	rr.helper.payload = "NEWER-SNAPSHOT" // what the pre-restore copy saves
+	rr.helper.fp = "sqlite:2"
+	resp, err := rr.restore(context.Background(), "database", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.RestoredPoint != id || resp.PreRestorePoint != "20261011T130000Z-pre-restore" || resp.AppID != "app-1" || resp.Backup != "database" ||
+		!slices.Equal(resp.Warnings, []string{"the pre-restore copy: a note", "/app/media/dev: skipped"}) {
+		t.Fatalf("response = %+v", resp)
+	}
+	if !slices.Equal(rr.compose, []string{"stop", "start"}) {
+		t.Fatalf("compose calls = %v", rr.compose)
+	}
+	if string(rr.restorer.stdin) != "SQLITE-SNAPSHOT" {
+		t.Fatalf("the helper read %q", rr.restorer.stdin)
+	}
+	args := strings.Join(rr.restorer.calls[0], " ")
+	for _, part := range []string{
+		"run --rm -i --name wf-restore-",
+		"--cap-drop ALL --cap-add DAC_OVERRIDE --cap-add SETUID --cap-add SETGID --security-opt no-new-privileges --cap-add CHOWN --cap-add FOWNER",
+		"--label winterflow.role=backup-helper --label winterflow.app=app-1",
+		"--mount type=volume,source=wf-app-1_data,target=/src/0 --mount",
+		"alpine:3.20 /wf backup restore sqlite /src/0/app.db --entry app.db",
+	} {
+		if !strings.Contains(args, part) {
+			t.Errorf("args lack %q:\n%s", part, args)
+		}
+	}
+	if !slices.Contains(rr.stored(t), "app-1/database/20261011T130000Z-pre-restore.json") {
+		t.Fatalf("no pre-restore point: %v", rr.stored(t))
+	}
+	if left := rr.tmpLeft(); len(left) != 0 {
+		t.Fatalf("downloads left: %v", left)
+	}
+}
+
+// A stopped app stays stopped: nothing to stop, nothing to start.
+func TestRestoreLeavesAStoppedAppStopped(t *testing.T) {
+	rr := newRestoreRepo(t)
+	id := rr.point(t, "database")
+	rr.up = false
+	if _, err := rr.restore(context.Background(), "database", id); err != nil {
+		t.Fatal(err)
+	}
+	if len(rr.compose) != 0 {
+		t.Fatalf("compose calls = %v", rr.compose)
+	}
+}
+
+// A copy whose data doesn't match its manifest is refused before the app
+// is touched.
+func TestRestoreRefusesADamagedPoint(t *testing.T) {
+	rr := newRestoreRepo(t)
+	id := rr.point(t, "database")
+	data := filepath.Join(rr.disk, "app-1", "database", id+".db.zst")
+	raw, _ := os.ReadFile(data)
+	raw[len(raw)-1] ^= 0xff
+	if err := os.WriteFile(data, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := rr.restore(context.Background(), "database", id)
+	if err == nil || !strings.Contains(err.Error(), "is damaged: its data does not match its manifest") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(rr.compose) != 0 || len(rr.restorer.calls) != 0 || len(rr.tmpLeft()) != 0 {
+		t.Fatalf("compose %v, helper %d, tmp %v", rr.compose, len(rr.restorer.calls), rr.tmpLeft())
+	}
+}
+
+func TestRestoreRefusals(t *testing.T) {
+	rr := newRestoreRepo(t)
+	id := rr.point(t, "database")
+	for name, tc := range map[string]struct {
+		backup, point, want string
+	}{
+		"unknown point":  {"database", "20200101T000000Z-manual", "has no restore point 20200101T000000Z-manual"},
+		"backup off":     {"replica", id, "the backup replica is off"},
+		"unknown backup": {"nope", id, "the app has no backup nope"},
+	} {
+		if _, err := rr.restore(context.Background(), tc.backup, tc.point); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want %q", name, err, tc.want)
+		}
+	}
+	if _, err := rr.RestoreBackup(context.Background(), RestoreJob{AppID: "gone", Backup: "database", Point: id}); !errors.Is(err, ErrNotRunnable) {
+		t.Fatalf("unknown app: %v", err)
+	}
+	// A point whose manifest names another type (the backup changed type).
+	mpath := filepath.Join(rr.disk, "app-1", "database", id+".json")
+	raw, _ := os.ReadFile(mpath)
+	var m layout.Manifest
+	_ = json.Unmarshal(raw, &m)
+	m.Type = "files"
+	raw, _ = json.Marshal(m)
+	if err := os.WriteFile(mpath, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rr.restore(context.Background(), "database", id); err == nil || !strings.Contains(err.Error(), "is a files copy, but the backup database is a sqlite backup now") {
+		t.Fatalf("type change: %v", err)
+	}
+	if len(rr.compose) != 0 {
+		t.Fatalf("compose calls = %v", rr.compose)
+	}
+}
+
+// A failed pre-restore copy restores nothing and starts the app again;
+// nothing to save (no database file yet) only warns.
+func TestRestorePreRestoreCopy(t *testing.T) {
+	rr := newRestoreRepo(t)
+	id := rr.point(t, "database")
+	rr.helper.exit, rr.helper.stderr = helper.ExitFailed, `{"error":"the copy failed its integrity check"}`+"\n"
+	_, err := rr.restore(context.Background(), "database", id)
+	if err == nil || !strings.Contains(err.Error(), "the pre-restore copy failed, so nothing was restored: the copy failed its integrity check") {
+		t.Fatalf("err = %v", err)
+	}
+	if !slices.Equal(rr.compose, []string{"stop", "start"}) || len(rr.restorer.calls) != 0 {
+		t.Fatalf("compose %v, helper %d", rr.compose, len(rr.restorer.calls))
+	}
+
+	rr.compose = nil
+	rr.helper.exit, rr.helper.stderr = helper.ExitMissing, `{"error":"database file not found: /src/0/app.db"}`+"\n"
+	resp, err := rr.restore(context.Background(), "database", id)
+	if err != nil || resp.PreRestorePoint != "" || !slices.Contains(resp.Warnings, "nothing was saved before the restore: database file not found: /src/0/app.db") {
+		t.Fatalf("missing database: %+v, %v", resp, err)
+	}
+	if !slices.Equal(rr.compose, []string{"stop", "start"}) || len(rr.restorer.calls) != 1 {
+		t.Fatalf("compose %v, helper %d", rr.compose, len(rr.restorer.calls))
+	}
+}
+
+// A helper that fails before swapping leaves the data as it was: the app is
+// started again. One that fails while swapping leaves the app stopped and
+// names the pre-restore point.
+func TestRestoreHelperFailures(t *testing.T) {
+	rr := newRestoreRepo(t)
+	id := rr.point(t, "database")
+	rr.restorer.exit, rr.restorer.stderr = helper.ExitFailed, `{"error":"the copy can't be restored: file is not a database"}`+"\n"
+	_, err := rr.restore(context.Background(), "database", id)
+	if err == nil || err.Error() != "the restore failed, the app's data is unchanged: the copy can't be restored: file is not a database" {
+		t.Fatalf("err = %v", err)
+	}
+	if !slices.Equal(rr.compose, []string{"stop", "start"}) {
+		t.Fatalf("compose calls = %v", rr.compose)
+	}
+
+	rr.compose = nil
+	rr.clock = rr.clock.Add(time.Hour)
+	rr.restorer.exit, rr.restorer.stderr = helper.ExitPartial, `{"error":"/app/media was partly replaced: permission denied"}`+"\n"
+	_, err = rr.restore(context.Background(), "database", id)
+	if err == nil || !strings.Contains(err.Error(), "the restore stopped half-way: /app/media was partly replaced: permission denied. The app was left stopped; restore the pre-restore point 20261011T140000Z-pre-restore to go back") {
+		t.Fatalf("err = %v", err)
+	}
+	if !slices.Equal(rr.compose, []string{"stop"}) {
+		t.Fatalf("compose calls = %v", rr.compose)
+	}
+
+	// Docker itself failing, and a helper with no result line.
+	rr.compose = nil
+	rr.restorer.exit, rr.restorer.stderr = 125, "docker: Error response from daemon\n"
+	if _, err := rr.restore(context.Background(), "database", id); err == nil || !strings.Contains(err.Error(), "the helper exited with 125: docker: Error response from daemon") {
+		t.Fatalf("err = %v", err)
+	}
+	if !slices.Equal(rr.compose, []string{"stop", "start"}) {
+		t.Fatalf("compose calls = %v", rr.compose)
+	}
+}
+
+// A helper stopped from outside (its time limit) may have been swapping: a
+// files restore leaves the app stopped and names the pre-restore point; a
+// database (one rename) starts the app again.
+func TestRestoreHelperStopped(t *testing.T) {
+	rr := newRestoreRepo(t)
+	stopped := errors.New("stopped after its time limit: context deadline exceeded")
+	rr.runRestoreHelper = func(_ context.Context, _ string, _ []string, in io.Reader) (int, []byte, error) {
+		_, _ = io.Copy(io.Discard, in)
+		return -1, nil, stopped
+	}
+	id := rr.point(t, "database")
+	_, err := rr.restore(context.Background(), "database", id)
+	if !errors.Is(err, stopped) || !strings.Contains(err.Error(), "the database is the old one or the restored one") {
+		t.Fatalf("sqlite: %v", err)
+	}
+	if !slices.Equal(rr.compose, []string{"stop", "start"}) {
+		t.Fatalf("compose calls = %v", rr.compose)
+	}
+	rr.compose = nil
+	var archive bytes.Buffer
+	tw := tar.NewWriter(&archive)
+	_ = tw.WriteHeader(&tar.Header{Name: "app/media/", Typeflag: tar.TypeDir, Mode: 0o755})
+	_ = tw.Close()
+	rr.helper.payload, rr.helper.fp = archive.String(), "files:1"
+	id = rr.point(t, "media")
+	_, err = rr.restore(context.Background(), "media", id)
+	if !errors.Is(err, stopped) || !strings.Contains(err.Error(), "the paths may be partly replaced. The app was left stopped; restore the pre-restore point 20261011T140000Z-pre-restore to go back") {
+		t.Fatalf("files: %v", err)
+	}
+	if !slices.Equal(rr.compose, []string{"stop"}) {
+		t.Fatalf("compose calls = %v", rr.compose)
+	}
+}
+
+// A restore stopped because its app is being deleted doesn't start it
+// again; a start that fails is a warning once the data is back.
+func TestRestoreStartAgain(t *testing.T) {
+	rr := newRestoreRepo(t)
+	id := rr.point(t, "database")
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	rr.restorer.exit, rr.restorer.stderr = helper.ExitFailed, `{"error":"stopped"}`+"\n"
+	rr.restorer.onRun = func() { cancel(ErrAppDeleted) }
+	if _, err := rr.restore(ctx, "database", id); err == nil {
+		t.Fatal("no error")
+	}
+	if !slices.Equal(rr.compose, []string{"stop"}) {
+		t.Fatalf("compose calls = %v", rr.compose)
+	}
+
+	rr.compose, rr.restorer.onRun = nil, nil
+	rr.restorer.exit, rr.restorer.stderr = 0, ""
+	rr.runCompose = func(_ context.Context, _ string, args []string) error {
+		rr.compose = append(rr.compose, args[len(args)-1])
+		if args[len(args)-1] == "start" {
+			return errors.New("port is already allocated")
+		}
+		return nil
+	}
+	resp, err := rr.restore(context.Background(), "database", id)
+	if err != nil || !slices.Contains(resp.Warnings, "the data was restored, but the app did not start again: start the app again: port is already allocated") {
+		t.Fatalf("%+v, %v", resp, err)
+	}
+	// A failed stop is reported and the app started again.
+	rr.compose = nil
+	rr.runCompose = func(_ context.Context, _ string, args []string) error {
+		rr.compose = append(rr.compose, args[len(args)-1])
+		if args[len(args)-1] == "stop" {
+			return errors.New("daemon busy")
+		}
+		return nil
+	}
+	if _, err := rr.restore(context.Background(), "database", id); err == nil || err.Error() != "stop the app: daemon busy" {
+		t.Fatalf("err = %v", err)
+	}
+	if !slices.Equal(rr.compose, []string{"stop", "start"}) {
+		t.Fatalf("compose calls = %v", rr.compose)
+	}
+}
+
+// A files restore names its mounts, paths and the room each mount needs.
+func TestRestoreFilesPoint(t *testing.T) {
+	rr := newRestoreRepo(t)
+	var archive bytes.Buffer
+	tw := tar.NewWriter(&archive)
+	for _, h := range []*tar.Header{
+		{Name: "app/media/", Typeflag: tar.TypeDir, Mode: 0o755},
+		{Name: "app/media/a.jpg", Typeflag: tar.TypeReg, Mode: 0o644, Size: 5000},
+		{Name: "app/media/b.jpg", Typeflag: tar.TypeReg, Mode: 0o644, Size: 10},
+	} {
+		if err := tw.WriteHeader(h); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write(make([]byte, h.Size)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = tw.Close()
+	rr.helper.payload, rr.helper.fp = archive.String(), "files:1"
+	id := rr.point(t, "media")
+	if _, err := rr.restore(context.Background(), "media", id); err != nil {
+		t.Fatal(err)
+	}
+	args := strings.Join(rr.restorer.calls[0], " ")
+	if !strings.Contains(args, "--mount type=bind,source=/data/apps-data/app-1/media,target=/src/0 --mount") ||
+		!strings.Contains(args, "/wf backup restore files --id ") ||
+		!strings.HasSuffix(args, "--root /src/0 --src /src/0 --entry app/media --need /src/0=16384") {
+		t.Fatalf("args = %s", args)
+	}
+	if !bytes.Equal(rr.restorer.stdin, archive.Bytes()) {
+		t.Fatal("the helper did not get the archive")
+	}
+	// An archive that can't be read is refused before the app stops.
+	rr.compose = nil
+	rr.helper.fp = "files:2"
+	rr.helper.payload = "not a tar archive, just text long enough to be a header block for tar reading purposes ........" + strings.Repeat(".", 500)
+	id = rr.point(t, "media")
+	if _, err := rr.restore(context.Background(), "media", id); err == nil || !strings.Contains(err.Error(), "archive can't be read") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(rr.compose) != 0 {
+		t.Fatalf("compose calls = %v", rr.compose)
+	}
+}
+
+// Downloads left by an agent that stopped mid-restore go at the next start.
+func TestRemoveRestoreDownloads(t *testing.T) {
+	r := newTestRepo(t)
+	writeFileT(t, r.restoreTmpDir(), "20261011T120000Z-manual-abc.zst", "partial")
+	r.removeRestoreDownloads()
+	if _, err := os.Stat(r.restoreTmpDir()); !os.IsNotExist(err) {
+		t.Fatalf("backups/tmp is still there: %v", err)
+	}
+}

@@ -7,10 +7,11 @@
 //
 //	backup dump sqlite <path> [--entry <name>] [--since <fingerprint>]
 //	backup dump files (--src <source> --entry <entry name>)... [--exclude <pattern>...] [--since <fingerprint>]
+//	backup restore sqlite <path> [--entry <name>]    (the copy on stdin)
 //
 // Exit codes: 0 done, 3 unchanged since --since (nothing written), 4 nothing
 // to back up (the database file or every path is missing), 2 bad usage,
-// 1 any other failure.
+// 1 any other failure (a restore then changed nothing).
 package cli
 
 import (
@@ -46,20 +47,28 @@ var errUnchanged = errors.New("unchanged")
 // maxWarnings caps the warnings a Result carries.
 const maxWarnings = 20
 
-// Main runs `backup <args>` and returns the exit code.
+// Main runs `backup <args>` with the process's stdin and returns the exit
+// code.
 func Main(args []string, stdout, stderr io.Writer) int {
-	if len(args) < 2 || args[0] != "dump" {
+	return Run(args, os.Stdin, stdout, stderr)
+}
+
+// Run runs `backup <args>`: a dump writes to stdout, a restore reads stdin.
+func Run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	if len(args) < 2 {
 		return usage(stderr)
 	}
 	var (
 		res Result
 		err error
 	)
-	switch args[1] {
-	case "sqlite":
+	switch args[0] + " " + args[1] {
+	case "dump sqlite":
 		res, err = dumpSQLiteCmd(args[2:], stdout)
-	case "files":
+	case "dump files":
 		res, err = dumpFilesCmd(args[2:], stdout)
+	case "restore sqlite":
+		res, err = restoreSQLiteCmd(args[2:], stdin)
 	default:
 		return usage(stderr)
 	}
@@ -85,7 +94,8 @@ var errUsage = errors.New("usage")
 func usage(stderr io.Writer) int {
 	fmt.Fprintln(stderr, `usage:
   backup dump sqlite <path> [--entry <name>] [--since <fingerprint>]
-  backup dump files (--src <source> --entry <entry name>)... [--exclude <pattern>...] [--since <fingerprint>]`)
+  backup dump files (--src <source> --entry <entry name>)... [--exclude <pattern>...] [--since <fingerprint>]
+  backup restore sqlite <path> [--entry <name>]`)
 	return ExitUsage
 }
 

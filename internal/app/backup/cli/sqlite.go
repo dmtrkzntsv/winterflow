@@ -119,9 +119,10 @@ func vacuumInto(path, dst string) error {
 	return nil
 }
 
-// checkSnapshot requires an intact copy with at least one schema object.
-func checkSnapshot(path string) error {
-	db, err := sql.Open("sqlite", sqliteDSN(path, "mode=ro"))
+// checkSnapshot requires an intact copy with at least one schema object;
+// extra are more DSN parameters.
+func checkSnapshot(path string, extra ...string) error {
+	db, err := sql.Open("sqlite", sqliteDSN(path, append([]string{"mode=ro"}, extra...)...))
 	if err != nil {
 		return err
 	}

@@ -91,11 +91,19 @@ INGRESS_TRUSTED_PROXIES=172.16.0.0/12
 
 `172.16.0.0/12` holds Docker's default bridge and compose networks; if your
 daemon allocates from another pool, use the subnet `docker network inspect`
-shows for the cloudflared app's network. Requests from a trusted peer are keyed on `CF-Connecting-IP` (falling back to
-the rightmost untrusted `X-Forwarded-For` hop, then the peer). Requests from
-any other address are keyed on that address and their headers are ignored, so
-a direct client can't forge its way past the limit. Restart the agent after
-changing it.
+shows for the cloudflared app's network. The setting becomes Caddy's own
+`trusted_proxies`: a request from a trusted peer is keyed on
+`CF-Connecting-IP` (falling back to the rightmost untrusted
+`X-Forwarded-For` hop, then the peer). Requests from any other address are
+keyed on that address and their headers are ignored, so a direct client
+can't forge its way past the limit. Restart the agent after changing it.
+
+The trusted range must contain only proxies that overwrite
+`CF-Connecting-IP` with the visitor's address, as cloudflared and
+Cloudflare's edge do: a trusted peer can name any client. `172.16.0.0/12`
+trusts every container on the default docker networks, so don't run another
+proxy there that passes a client's own `CF-Connecting-IP` header through —
+narrow the range to the cloudflared network's subnet if you do.
 
 Using the Cloudflare **proxy** (orange cloud, an A record to this server,
 usually with a Cloudflare Origin certificate in **Certificate** mode) instead

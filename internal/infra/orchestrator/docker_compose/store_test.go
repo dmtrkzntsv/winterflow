@@ -1,16 +1,8 @@
 package dockercompose
 
 import (
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/sha256"
-	"crypto/x509"
-	"encoding/base64"
 	"encoding/json"
-	"encoding/pem"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +10,7 @@ import (
 
 	"winterflow/internal/domain/command"
 	"winterflow/pkg/config"
+	"winterflow/pkg/crypto/cryptotest"
 	"winterflow/pkg/logger"
 )
 
@@ -29,51 +22,13 @@ func newSecretRepo(t *testing.T) (*Repository, *ecdsa.PublicKey) {
 	certDir := t.TempDir()
 	t.Setenv("HUB_CERT_DIR", certDir)
 
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	der, err := x509.MarshalECPrivateKey(key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(certDir, "agent.key"),
-		pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der}), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	pub := cryptotest.AgentKey(t, certDir)
 
 	r := NewRepository(
 		config.NewServerConfig("standalone"),
 		logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"}),
 	)
-	return r, &key.PublicKey
-}
-
-// eciesEncrypt mirrors the browser's encryption (ephemeral P-256 + ECDH +
-// SHA-256 + AES-256-GCM) — same construction as pkg/crypto's tests.
-func eciesEncrypt(t *testing.T, pub *ecdsa.PublicKey, plaintext string) string {
-	t.Helper()
-	curve := elliptic.P256()
-	eph, err := ecdsa.GenerateKey(curve, rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sharedX, _ := curve.ScalarMult(pub.X, pub.Y, eph.D.Bytes())
-	xb := sharedX.Bytes()
-	for len(xb) < 32 {
-		xb = append([]byte{0}, xb...)
-	}
-	keyHash := sha256.Sum256(xb)
-	block, _ := aes.NewCipher(keyHash[:])
-	gcm, _ := cipher.NewGCM(block)
-	iv := make([]byte, 12)
-	if _, err := rand.Read(iv); err != nil {
-		t.Fatal(err)
-	}
-	ct := gcm.Seal(nil, iv, []byte(plaintext), nil)
-	ephPoint := elliptic.Marshal(curve, eph.X, eph.Y) //nolint:staticcheck
-	payload := append(append(append([]byte{}, ephPoint...), iv...), ct...)
-	return base64.StdEncoding.EncodeToString(payload)
+	return r, pub
 }
 
 func storePayload(pub *ecdsa.PublicKey, t *testing.T) command.AppPayload {
@@ -83,11 +38,11 @@ func storePayload(pub *ecdsa.PublicKey, t *testing.T) command.AppPayload {
 		Config: []byte(`{"name":"demo","files":[{"filename":"compose.yml","is_encrypted":false},{"filename":"certs/tls.key","is_encrypted":true}],"variables":[{"name":"PORT","is_encrypted":false},{"name":"DB_PASS","is_encrypted":true}]}`),
 		Files: []command.ContentItem{
 			{Name: "compose.yml", Content: []byte("services: {}\n")},
-			{Name: "certs/tls.key", Encrypted: true, Content: []byte(eciesEncrypt(t, pub, "PRIVATE-KEY"))},
+			{Name: "certs/tls.key", Encrypted: true, Content: []byte(cryptotest.Encrypt(t, pub, "PRIVATE-KEY"))},
 		},
 		Variables: []command.ContentItem{
 			{Name: "PORT", Content: []byte("8080")},
-			{Name: "DB_PASS", Encrypted: true, Content: []byte(eciesEncrypt(t, pub, "s3cret"))},
+			{Name: "DB_PASS", Encrypted: true, Content: []byte(cryptotest.Encrypt(t, pub, "s3cret"))},
 		},
 	}
 }

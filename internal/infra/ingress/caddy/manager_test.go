@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"winterflow/internal/domain/command"
+	"winterflow/internal/domain/model"
 	"winterflow/internal/infra/ingress/domains"
 	"winterflow/internal/infra/ingress/domains/certtest"
 	"winterflow/pkg/config"
@@ -46,9 +46,9 @@ func writeApp(t *testing.T, dataDir, appID, configJSON string) {
 }
 
 // registerDomain stores a registration the way domain.create does.
-func registerDomain(t *testing.T, dataDir, name string, mode command.DomainTLS) {
+func registerDomain(t *testing.T, dataDir, name string, mode model.DomainTLS) {
 	t.Helper()
-	if err := domains.NewStore(filepath.Join(dataDir, "domains")).Put(name, mode, nil, nil); err != nil {
+	if _, err := domains.NewStore(filepath.Join(dataDir, "domains")).Put(name, mode, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -102,7 +102,7 @@ func TestManagerServesReloadsAndIsolates(t *testing.T) {
 		return string(raw)
 	}
 	writeApp(t, dataDir, "app-1", appCfg(upstreamPort))
-	registerDomain(t, dataDir, "*.test", command.DomainTLSOff)
+	registerDomain(t, dataDir, "*.test", model.DomainTLSOff)
 	// A second app with a broken config must not affect app-1.
 	writeApp(t, dataDir, "app-2", `{"name":"broken","ingress":{"domains":[{"domain":"BAD HOST","upstream_port":1}]}}`)
 
@@ -145,7 +145,7 @@ func TestManagerServesReloadsAndIsolates(t *testing.T) {
 	// Hot reload: change the app's domain, Reload, old gone / new serving.
 	newCfg := strings.ReplaceAll(appCfg(upstreamPort), "app.test", "app2.test")
 	writeApp(t, dataDir, "app-1", newCfg)
-	if warnings := m.Reload(ctx, false); len(warnings) != 1 { // app-2's bad fragment still warns
+	if warnings := m.Reload(ctx); len(warnings) != 1 { // app-2's bad fragment still warns
 		t.Fatalf("reload warnings = %v, want exactly the app-2 exclusion", warnings)
 	}
 	resp = getVia(t, httpPort, "app2.test", "/")
@@ -182,7 +182,7 @@ func TestManagerDisabledOnBindFailure(t *testing.T) {
 	if m.Enabled() {
 		t.Fatal("manager claims enabled despite bind failure")
 	}
-	if w := m.Reload(ctx, false); w != nil {
+	if w := m.Reload(ctx); w != nil {
 		t.Fatalf("disabled manager Reload must no-op, got %v", w)
 	}
 }
@@ -268,10 +268,10 @@ func TestManagerServesUploadedCertificateAndCatchAll(t *testing.T) {
 
 	cert, key := certtest.Issue(t, time.Now().Add(90*24*time.Hour), "*.cert.test")
 	store := domains.NewStore(filepath.Join(dataDir, "domains"))
-	if err := store.Put("*.cert.test", command.DomainTLSCertificate, cert, key); err != nil {
+	if _, err := store.Put("*.cert.test", model.DomainTLSCertificate, cert, key); err != nil {
 		t.Fatal(err)
 	}
-	registerDomain(t, dataDir, "*.tunnel.test", command.DomainTLSOff)
+	registerDomain(t, dataDir, "*.tunnel.test", model.DomainTLSOff)
 
 	m := NewManager(config.NewServerConfig("standalone"), logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"}))
 	t.Cleanup(m.Stop)

@@ -9,11 +9,6 @@ import (
 	"winterflow/internal/domain/port"
 )
 
-// registeredDomain is the index row for an agent-reported registration.
-func registeredDomain(d command.Domain) model.RegisteredDomain {
-	return model.RegisteredDomain{Name: d.Name, TLS: string(d.TLS), NotAfter: d.NotAfter, Issuer: d.Issuer}
-}
-
 // ListServerDomains dispatches domain.list to the server's agent. The result
 // reconciles the server_domains index and is delivered over SSE.
 func (uc *UseCase) ListServerDomains(ctx context.Context, userID, serverID string) (string, error) {
@@ -33,7 +28,7 @@ func (uc *UseCase) ListServerDomains(ctx context.Context, userID, serverID strin
 			}
 			rows := make([]model.RegisteredDomain, 0, len(listed.Domains))
 			for _, d := range listed.Domains {
-				rows = append(rows, registeredDomain(d))
+				rows = append(rows, d.RegisteredDomain)
 			}
 			if err := uc.serverDomains.ReplaceForServer(context.Background(), serverID, rows); err != nil {
 				uc.log.Error("ListServerDomains: sync index", "error", err, "server_id", serverID)
@@ -59,7 +54,7 @@ func (uc *UseCase) CreateDomain(ctx context.Context, userID, serverID string, re
 				uc.log.Error("CreateDomain: decode result", "error", err)
 				return
 			}
-			if err := uc.serverDomains.Upsert(context.Background(), serverID, registeredDomain(created.Domain)); err != nil {
+			if err := uc.serverDomains.Upsert(context.Background(), serverID, created.Domain.RegisteredDomain); err != nil {
 				uc.log.Error("CreateDomain: update index", "error", err, "server_id", serverID)
 			}
 		},

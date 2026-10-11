@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
 	"winterflow/internal/infra/ingress/domains"
 )
@@ -24,9 +23,10 @@ type view struct {
 					} `json:"match"`
 					Handle []map[string]any `json:"handle"`
 				} `json:"routes"`
-				AutomaticHTTPS *struct {
-					SkipCertificates []string `json:"skip_certificates"`
-				} `json:"automatic_https"`
+				AutomaticHTTPS       map[string]any `json:"automatic_https"`
+				TrustedProxies       map[string]any `json:"trusted_proxies"`
+				ClientIPHeaders      []string       `json:"client_ip_headers"`
+				TrustedProxiesStrict int            `json:"trusted_proxies_strict"`
 			} `json:"servers"`
 		} `json:"http"`
 		TLS *struct {
@@ -78,13 +78,23 @@ func routeKinds(v view, server string) []string {
 	return out
 }
 
+func reg(name string, mode model.DomainTLS) domains.Registration {
+	return domains.Registration{RegisteredDomain: model.RegisteredDomain{Name: name, TLS: mode}}
+}
+
+func certReg(name, certFile, keyFile string) domains.Registration {
+	r := reg(name, model.DomainTLSCertificate)
+	r.CertFile, r.KeyFile = certFile, keyFile
+	return r
+}
+
 func modeRegs() []domains.Registration {
 	return []domains.Registration{
-		{Name: "*.cert.test", TLS: command.DomainTLSCertificate, CertFile: "/d/_wildcard_.cert.test.crt", KeyFile: "/d/_wildcard_.cert.test.key"},
-		{Name: "x.cert.test", TLS: command.DomainTLSOff}, // exact wins over the wildcard
-		{Name: "auto.test", TLS: command.DomainTLSAuto},
-		{Name: "*.auto.test", TLS: command.DomainTLSAuto}, // no app uses it
-		{Name: "*.tunnel.test", TLS: command.DomainTLSOff},
+		certReg("*.cert.test", "/d/_wildcard_.cert.test.crt", "/d/_wildcard_.cert.test.key"),
+		reg("x.cert.test", model.DomainTLSOff), // exact wins over the wildcard
+		reg("auto.test", model.DomainTLSAuto),
+		reg("*.auto.test", model.DomainTLSAuto), // no app uses it
+		reg("*.tunnel.test", model.DomainTLSOff),
 	}
 }
 
@@ -122,9 +132,7 @@ func TestBuildConfigPlacesHostsByRegistrationMode(t *testing.T) {
 		"static_response auto.test", // path rule before its domain's route
 		"reverse_proxy a.cert.test",
 		"reverse_proxy auto.test",
-		"404 *.cert.test !x.cert.test",
-		"404 auto.test",
-		"404 *.auto.test",
+		"404 *.cert.test !x.cert.test", // auto registrations get no catch-all
 	}
 	wantHTTP := []string{
 		"winterflow_rate_limit",
@@ -153,11 +161,13 @@ func TestBuildConfigPlacesHostsByRegistrationMode(t *testing.T) {
 	if len(lf) != 1 || lf[0].Certificate != "/d/_wildcard_.cert.test.crt" || lf[0].Key != "/d/_wildcard_.cert.test.key" {
 		t.Errorf("load_files = %+v", lf)
 	}
-	// The unused auto wildcard never gets a certificate order; the served
-	// auto host does.
-	ah := v.Apps.HTTP.Servers["https"].AutomaticHTTPS
-	if ah == nil || strings.Join(ah.SkipCertificates, ",") != "*.auto.test" {
-		t.Errorf("automatic_https = %+v, want skip_certificates [*.auto.test]", ah)
+	// No route names an unused auto name, so Caddy orders no certificate
+	// for it, and nothing needs skipping.
+	if ah := v.Apps.HTTP.Servers["https"].AutomaticHTTPS; ah != nil {
+		t.Errorf("automatic_https = %+v, want none", ah)
+	}
+	if strings.Contains(string(raw), `"*.auto.test"`) {
+		t.Error("the unused auto wildcard reached the config")
 	}
 }
 
@@ -166,8 +176,8 @@ func TestBuildConfigPlacesHostsByRegistrationMode(t *testing.T) {
 // with no auto host there is no automation at all.
 func TestBuildConfigCertificateHostsAreNotACMESubjects(t *testing.T) {
 	regs := []domains.Registration{
-		{Name: "*.cert.test", TLS: command.DomainTLSCertificate, CertFile: "/c.crt", KeyFile: "/c.key"},
-		{Name: "exact.test", TLS: command.DomainTLSCertificate, CertFile: "/e.crt", KeyFile: "/e.key"},
+		certReg("*.cert.test", "/c.crt", "/c.key"),
+		certReg("exact.test", "/e.crt", "/e.key"),
 	}
 	apps := []AppIngress{{AppID: "a", Ingress: model.Ingress{Domains: []model.IngressDomain{
 		{Domain: "a.cert.test", UpstreamPort: 1, SSL: true},
@@ -185,7 +195,7 @@ func TestBuildConfigCertificateHostsAreNotACMESubjects(t *testing.T) {
 		t.Errorf("load_files = %d, want 2", n)
 	}
 	if ah := v.Apps.HTTP.Servers["https"].AutomaticHTTPS; ah != nil {
-		t.Errorf("certificate catch-alls need no skip list: %+v", ah)
+		t.Errorf("certificate catch-alls need no automatic_https: %+v", ah)
 	}
 }
 

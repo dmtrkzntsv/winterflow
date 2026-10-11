@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
 	"winterflow/internal/infra/ingress/domains"
 )
@@ -40,8 +39,8 @@ func decode(t *testing.T, raw []byte) map[string]any {
 // host with TLS off.
 func sampleRegs() []domains.Registration {
 	return []domains.Registration{
-		{Name: "*.example.com", TLS: command.DomainTLSAuto},
-		{Name: "plain.example.com", TLS: command.DomainTLSOff},
+		reg("*.example.com", model.DomainTLSAuto),
+		reg("plain.example.com", model.DomainTLSOff),
 	}
 }
 

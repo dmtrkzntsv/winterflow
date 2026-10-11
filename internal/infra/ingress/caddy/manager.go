@@ -96,10 +96,13 @@ func (m *Manager) readApps() ([]AppIngress, []string, error) {
 		}
 		appID := e.Name()
 		raw, err := os.ReadFile(filepath.Join(appsDir, appID, ".winterflow", "config.json"))
-		if err != nil {
+		if os.IsNotExist(err) {
 			continue // app without a committed config yet
 		}
-		ing, err := model.ParseIngress(raw)
+		var ing *model.Ingress
+		if err == nil {
+			ing, err = model.ParseIngress(raw)
+		}
 		if err != nil {
 			warnings = append(warnings, "app "+appID+": unreadable config, ingress skipped: "+err.Error())
 			continue
@@ -205,14 +208,10 @@ func (m *Manager) Stop() {
 
 // Reload rebuilds from disk and hot-swaps the config. On a load failure the
 // previous config keeps serving and the error is returned as a warning for
-// the triggering command's response.
-//
-// Caddy skips a load whose JSON is byte-identical to the running one. That is
-// right for app mutations, but a replaced certificate keeps its file paths, so
-// its config is identical while the files changed: force makes Caddy
-// re-provision anyway, re-reading the certificate files (its TLS app evicts
-// the old certificate from the cache on cleanup).
-func (m *Manager) Reload(ctx context.Context, force bool) []string {
+// the triggering command's response. Caddy skips a load whose JSON is
+// unchanged; a replaced certificate still changes it, since certificate
+// files are named by their content (see package domains).
+func (m *Manager) Reload(context.Context) []string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if !m.enabled {
@@ -223,7 +222,7 @@ func (m *Manager) Reload(ctx context.Context, force bool) []string {
 		return warnings
 	}
 	caddyMu.Lock()
-	err := caddy.Load(cfg, force)
+	err := caddy.Load(cfg, false)
 	caddyMu.Unlock()
 	if err != nil {
 		m.log.Error("ingress: reload failed, previous config keeps serving", "error", err)

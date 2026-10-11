@@ -3,13 +3,20 @@ package domains
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
-	"winterflow/internal/domain/command"
+	"winterflow/internal/domain/model"
 	"winterflow/internal/infra/ingress/domains/certtest"
 )
+
+// pairFiles are the content-addressed pair names Put uses for cert/key.
+func pairFiles(stem string, cert, key []byte) (string, string) {
+	fp := fingerprint(cert, key)
+	return stem + "." + fp + ".crt", stem + "." + fp + ".key"
+}
 
 func TestStorePutListDelete(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "domains")
@@ -21,19 +28,23 @@ func TestStorePutListDelete(t *testing.T) {
 		t.Fatalf("missing dir: %v, %v", regs, err)
 	}
 
-	cert, key := certtest.Issue(t, time.Now().Add(24*time.Hour), "*.twillingate.app")
-	if err := s.Put("*.twillingate.app", command.DomainTLSCertificate, cert, key); err != nil {
+	notAfter := time.Now().Add(24 * time.Hour).Truncate(time.Second)
+	cert, key := certtest.Issue(t, notAfter, "*.twillingate.app")
+	put, err := s.Put("*.twillingate.app", model.DomainTLSCertificate, cert, key)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Put("twillingate.app", command.DomainTLSAuto, nil, nil); err != nil {
+	if _, err := s.Put("twillingate.app", model.DomainTLSAuto, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 
-	// Wildcards are spelled _wildcard_ on disk; the key is private.
+	// Wildcards are spelled _wildcard_ on disk; the pair is named by its
+	// content; the key is private.
+	crt, keyFile := pairFiles("_wildcard_.twillingate.app", cert, key)
 	for file, perm := range map[string]os.FileMode{
 		"_wildcard_.twillingate.app.json": 0o644,
-		"_wildcard_.twillingate.app.crt":  0o644,
-		"_wildcard_.twillingate.app.key":  0o600,
+		crt:                               0o644,
+		keyFile:                           0o600,
 		"twillingate.app.json":            0o644,
 	} {
 		fi, err := os.Stat(filepath.Join(dir, file))
@@ -49,21 +60,24 @@ func TestStorePutListDelete(t *testing.T) {
 	if err != nil || len(regs) != 2 {
 		t.Fatalf("List = %+v, %v", regs, err)
 	}
-	if regs[0].Name != "*.twillingate.app" || regs[0].TLS != command.DomainTLSCertificate ||
-		regs[0].CertFile != filepath.Join(dir, "_wildcard_.twillingate.app.crt") ||
-		regs[0].KeyFile != filepath.Join(dir, "_wildcard_.twillingate.app.key") {
+	if regs[0].Name != "*.twillingate.app" || regs[0].TLS != model.DomainTLSCertificate ||
+		regs[0].CertFile != filepath.Join(dir, crt) || regs[0].KeyFile != filepath.Join(dir, keyFile) ||
+		regs[0].NotAfter == nil || !regs[0].NotAfter.Equal(notAfter) || regs[0].Issuer != certtest.Issuer {
 		t.Errorf("certificate registration = %+v", regs[0])
 	}
-	if regs[1].Name != "twillingate.app" || regs[1].TLS != command.DomainTLSAuto || regs[1].CertFile != "" {
+	if regs[0].CertFile != put.CertFile || regs[0].Fingerprint != put.Fingerprint {
+		t.Errorf("Put returned %+v, List %+v", put, regs[0])
+	}
+	if regs[1].Name != "twillingate.app" || regs[1].TLS != model.DomainTLSAuto || regs[1].CertFile != "" || regs[1].NotAfter != nil {
 		t.Errorf("auto registration = %+v", regs[1])
 	}
 
 	// Replacing with another mode drops the certificate files.
-	if err := s.Put("*.twillingate.app", command.DomainTLSOff, nil, nil); err != nil {
+	if _, err := s.Put("*.twillingate.app", model.DomainTLSOff, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "_wildcard_.twillingate.app.key")); !os.IsNotExist(err) {
-		t.Error("key survived the switch to off")
+	if got := dirEntries(t, dir); len(got) != 2 {
+		t.Errorf("pair survived the switch to off: %v", got)
 	}
 
 	existed, err := s.Delete("*.twillingate.app")
@@ -81,7 +95,7 @@ func TestStorePutListDelete(t *testing.T) {
 func TestStoreListSkipsBrokenFiles(t *testing.T) {
 	dir := t.TempDir()
 	s := NewStore(dir)
-	if err := s.Put("ok.app", command.DomainTLSOff, nil, nil); err != nil {
+	if _, err := s.Put("ok.app", model.DomainTLSOff, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	for file, body := range map[string]string{
@@ -89,6 +103,8 @@ func TestStoreListSkipsBrokenFiles(t *testing.T) {
 		"renamed.app.json": `{"name":"other.app","tls":"off"}`,
 		"mode.app.json":    `{"name":"mode.app","tls":"manual"}`,
 		"BAD.app.json":     `{"name":"BAD.app","tls":"off"}`,
+		"nofp.app.json":    `{"name":"nofp.app","tls":"certificate"}`,
+		"nopair.app.json":  `{"name":"nopair.app","tls":"certificate","fingerprint":"0123456789ab"}`,
 		"notes.txt":        "x",
 	} {
 		if err := os.WriteFile(filepath.Join(dir, file), []byte(body), 0o644); err != nil {
@@ -104,7 +120,7 @@ func TestStoreListSkipsBrokenFiles(t *testing.T) {
 func TestStoreSeedRunsOnce(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "domains")
 	s := NewStore(dir)
-	seeded, err := s.Seed([]Registration{{Name: "a.app", TLS: command.DomainTLSAuto}, {Name: "b.app", TLS: command.DomainTLSOff}})
+	seeded, err := s.Seed([]model.RegisteredDomain{{Name: "a.app", TLS: model.DomainTLSAuto}, {Name: "b.app", TLS: model.DomainTLSOff}})
 	if err != nil || !seeded {
 		t.Fatalf("first seed = %v, %v", seeded, err)
 	}
@@ -114,7 +130,7 @@ func TestStoreSeedRunsOnce(t *testing.T) {
 	if _, err := os.Stat(dir + ".seed"); !os.IsNotExist(err) {
 		t.Error("staging dir left behind")
 	}
-	seeded, err = s.Seed([]Registration{{Name: "c.app", TLS: command.DomainTLSAuto}})
+	seeded, err = s.Seed([]model.RegisteredDomain{{Name: "c.app", TLS: model.DomainTLSAuto}})
 	if err != nil || seeded {
 		t.Fatalf("second seed = %v, %v", seeded, err)
 	}
@@ -187,29 +203,6 @@ func TestCheckCertificate(t *testing.T) {
 	}
 }
 
-func TestCertInfo(t *testing.T) {
-	dir := t.TempDir()
-	notAfter := time.Now().Add(48 * time.Hour).Truncate(time.Second)
-	cert, _ := certtest.Issue(t, notAfter, "x.app")
-	path := filepath.Join(dir, "x.crt")
-	if err := os.WriteFile(path, cert, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	got, issuer, err := CertInfo(path)
-	if err != nil || !got.Equal(notAfter) || issuer != certtest.Issuer {
-		t.Fatalf("CertInfo = %v, %q, %v", got, issuer, err)
-	}
-	if err := os.WriteFile(path, []byte("junk"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := CertInfo(path); err == nil {
-		t.Error("junk must not parse")
-	}
-	if _, _, err := CertInfo(filepath.Join(dir, "missing.crt")); err == nil {
-		t.Error("missing file must error")
-	}
-}
-
 func dirEntries(t *testing.T, dir string) []string {
 	t.Helper()
 	entries, err := os.ReadDir(dir)
@@ -230,104 +223,112 @@ func TestStoreRejectsInvalidNamesWithoutTouchingDisk(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "domains")
 	s := NewStore(dir)
-	if err := s.Put("../x", command.DomainTLSOff, nil, nil); err == nil {
+	if _, err := s.Put("../x", model.DomainTLSOff, nil, nil); err == nil {
 		t.Error("Put accepted ../x")
 	}
-	if err := s.Put("ok.app", "manual", nil, nil); err == nil {
+	if _, err := s.Put("ok.app", "manual", nil, nil); err == nil {
 		t.Error("Put accepted an unknown mode")
+	}
+	// Review focus: a refused certificate stores nothing.
+	cert, key := certtest.Issue(t, time.Now().Add(24*time.Hour), "a.app")
+	if _, err := s.Put("a.app", model.DomainTLSCertificate, key, cert); err == nil || !strings.Contains(err.Error(), "do not match") {
+		t.Errorf("Put accepted a swapped pair: %v", err)
 	}
 	if _, err := s.Delete("a/b"); err == nil {
 		t.Error("Delete accepted a/b")
 	}
-	if seeded, err := s.Seed([]Registration{{Name: "ok.app", TLS: command.DomainTLSOff}, {Name: "../evil", TLS: command.DomainTLSOff}}); err == nil || seeded {
+	if seeded, err := s.Seed([]model.RegisteredDomain{{Name: "ok.app", TLS: model.DomainTLSOff}, {Name: "../evil", TLS: model.DomainTLSOff}}); err == nil || seeded {
 		t.Errorf("Seed accepted a bad name: %v, %v", seeded, err)
 	}
-	if _, err := s.Seed([]Registration{{Name: "ok.app", TLS: "manual"}}); err == nil {
+	if _, err := s.Seed([]model.RegisteredDomain{{Name: "ok.app", TLS: "manual"}}); err == nil {
 		t.Error("Seed accepted an unknown mode")
+	}
+	if _, err := s.Seed([]model.RegisteredDomain{{Name: "ok.app", TLS: model.DomainTLSCertificate}}); err == nil {
+		t.Error("Seed accepted certificate mode without a certificate")
 	}
 	if got := dirEntries(t, root); len(got) != 0 {
 		t.Fatalf("rejected calls touched disk: %v", got)
 	}
 }
 
-func TestStoreListSkipsMismatchedCertificatePair(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "domains")
-	s := NewStore(dir)
-	cert, key := certtest.Issue(t, time.Now().Add(24*time.Hour), "a.app")
-	if err := s.Put("a.app", command.DomainTLSCertificate, cert, key); err != nil {
-		t.Fatal(err)
-	}
-	if regs, _ := s.List(); len(regs) != 1 {
-		t.Fatalf("good pair not listed: %+v", regs)
-	}
-	// A crash between the two renames of a renewal leaves cert and key from
-	// different pairs.
-	_, otherKey := certtest.Issue(t, time.Now().Add(24*time.Hour), "a.app")
-	if err := os.WriteFile(filepath.Join(dir, "a.app.key"), otherKey, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if regs, _ := s.List(); len(regs) != 0 {
-		t.Fatalf("mismatched pair must be skipped: %+v", regs)
-	}
-}
-
-func TestStorePutRenewalReplacesPairAndLeavesNoTemp(t *testing.T) {
+// TestStoreRenewalIsContentAddressed: a renewal writes the new pair under
+// new names, switches the .json to it, then prunes the old pair — the
+// running proxy's files are never overwritten in place, and the paths (so
+// the Caddy config) change with the certificate.
+func TestStoreRenewalIsContentAddressed(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "domains")
 	s := NewStore(dir)
 	c1, k1 := certtest.Issue(t, time.Now().Add(24*time.Hour), "a.app")
 	c2, k2 := certtest.Issue(t, time.Now().Add(48*time.Hour), "a.app")
-	for _, p := range [][2][]byte{{c1, k1}, {c2, k2}} {
-		if err := s.Put("a.app", command.DomainTLSCertificate, p[0], p[1]); err != nil {
+	first, err := s.Put("a.app", model.DomainTLSCertificate, c1, k1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := s.Put("a.app", model.DomainTLSCertificate, c2, k2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.CertFile == second.CertFile || first.KeyFile == second.KeyFile {
+		t.Fatalf("renewal kept the paths: %s", second.CertFile)
+	}
+	if got, _ := os.ReadFile(second.CertFile); string(got) != string(c2) {
+		t.Error("renewal did not write the new certificate")
+	}
+	crt2, key2 := pairFiles("a.app", c2, k2)
+	if got := dirEntries(t, dir); len(got) != 3 || !slices.Contains(got, crt2) || !slices.Contains(got, key2) {
+		t.Fatalf("after renewal: %v (old pair or temp files left?)", got)
+	}
+	if regs, _ := s.List(); len(regs) != 1 || regs[0].CertFile != second.CertFile || !regs[0].NotAfter.Equal(*second.NotAfter) {
+		t.Fatalf("renewed pair not listed: %+v", regs)
+	}
+	// Re-uploading the same pair is a no-op on disk.
+	if again, err := s.Put("a.app", model.DomainTLSCertificate, c2, k2); err != nil || again.CertFile != second.CertFile {
+		t.Fatalf("same pair again = %+v, %v", again, err)
+	}
+	if got := dirEntries(t, dir); len(got) != 3 {
+		t.Fatalf("same pair again: %v", got)
+	}
+}
+
+// TestStorePrunesOnlyItsOwnPairs: pruning parses file names instead of
+// globbing, so a name that is a prefix of another never takes its files.
+func TestStorePrunesOnlyItsOwnPairs(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "domains")
+	s := NewStore(dir)
+	future := time.Now().Add(24 * time.Hour)
+	for _, name := range []string{"x.app", "x.app.io"} {
+		cert, key := certtest.Issue(t, future, name)
+		if _, err := s.Put(name, model.DomainTLSCertificate, cert, key); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if got, _ := os.ReadFile(filepath.Join(dir, "a.app.crt")); string(got) != string(c2) {
-		t.Error("renewal did not replace the certificate")
+	if _, err := s.Delete("x.app"); err != nil {
+		t.Fatal(err)
 	}
-	for _, n := range dirEntries(t, dir) {
-		if strings.HasSuffix(n, ".tmp") {
-			t.Errorf("temp file left behind: %s", n)
-		}
+	regs, _ := s.List()
+	if len(regs) != 1 || regs[0].Name != "x.app.io" {
+		t.Fatalf("deleting x.app took x.app.io's pair: %+v (dir %v)", regs, dirEntries(t, dir))
 	}
-	if regs, _ := s.List(); len(regs) != 1 {
-		t.Fatalf("renewed pair not listed: %+v", regs)
+	if got := dirEntries(t, dir); len(got) != 3 {
+		t.Fatalf("x.app's pair left behind: %v", got)
 	}
 }
 
-func TestStorePutCleansTempWhenWriteFails(t *testing.T) {
+func TestStorePutCleansUpWhenWriteFails(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "domains")
 	s := NewStore(dir)
 	cert, key := certtest.Issue(t, time.Now().Add(24*time.Hour), "a.app")
-	// A directory squatting on the key's temp path makes the second stage fail.
-	if err := os.MkdirAll(filepath.Join(dir, "a.app.key.tmp"), 0o755); err != nil {
+	crt, keyFile := pairFiles("a.app", cert, key)
+	// A directory squatting on the key's temp path makes its write fail.
+	if err := os.MkdirAll(filepath.Join(dir, keyFile+".tmp"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Put("a.app", command.DomainTLSCertificate, cert, key); err == nil {
+	if _, err := s.Put("a.app", model.DomainTLSCertificate, cert, key); err == nil {
 		t.Fatal("expected a write error")
 	}
-	if _, err := os.Stat(filepath.Join(dir, "a.app.crt.tmp")); !os.IsNotExist(err) {
-		t.Error("certificate temp file left behind")
-	}
-	if _, err := os.Stat(filepath.Join(dir, "a.app.crt")); !os.IsNotExist(err) {
-		t.Error("certificate was installed although the key could not be written")
-	}
-}
-
-func TestCertInfoSkipsNonCertificateBlocks(t *testing.T) {
-	notAfter := time.Now().Add(48 * time.Hour).Truncate(time.Second)
-	cert, key := certtest.Issue(t, notAfter, "x.app")
-	path := filepath.Join(t.TempDir(), "x.pem")
-	if err := os.WriteFile(path, append(append([]byte{}, key...), cert...), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	got, issuer, err := CertInfo(path)
-	if err != nil || !got.Equal(notAfter) || issuer != certtest.Issuer {
-		t.Fatalf("CertInfo = %v, %q, %v", got, issuer, err)
-	}
-	if err := os.WriteFile(path, key, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := CertInfo(path); err == nil {
-		t.Error("a file with no CERTIFICATE block must error")
+	for _, f := range []string{crt, crt + ".tmp", keyFile, "a.app.json"} {
+		if _, err := os.Stat(filepath.Join(dir, f)); !os.IsNotExist(err) {
+			t.Errorf("%s left behind", f)
+		}
 	}
 }

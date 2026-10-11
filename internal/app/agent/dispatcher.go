@@ -30,7 +30,12 @@ type Dispatcher struct {
 
 type handlerFunc func(ctx context.Context, agentID string, req *proto.RequestEnvelope) *proto.ResponseEnvelope
 
+// NewDispatcher wires the registry. A nil ingress (tests) stands in as
+// noIngress: reloads are no-ops and domain commands fail with errNoIngress.
 func NewDispatcher(orch *dockercompose.Repository, ingress port.IngressManager, log *logger.Logger) *Dispatcher {
+	if ingress == nil {
+		ingress = noIngress{}
+	}
 	d := &Dispatcher{orch: orch, ingress: ingress, log: log}
 	d.handlers = d.newHandlers()
 	return d
@@ -38,19 +43,9 @@ func NewDispatcher(orch *dockercompose.Repository, ingress port.IngressManager, 
 
 // reloadIngress rebuilds the proxy config after a mutation. Warnings are
 // returned for responses that carry them (app.save, domain.create/delete)
-// and logged either way. A
-// nil manager (tests, ingress disabled) is a no-op.
+// and logged either way.
 func (d *Dispatcher) reloadIngress(ctx context.Context) []string {
-	return d.reload(ctx, false)
-}
-
-// reload is reloadIngress with the force switch exposed: domain.create forces
-// it, since a replaced certificate leaves the generated config unchanged.
-func (d *Dispatcher) reload(ctx context.Context, force bool) []string {
-	if d.ingress == nil {
-		return nil
-	}
-	warnings := d.ingress.Reload(ctx, force)
+	warnings := d.ingress.Reload(ctx)
 	for _, w := range warnings {
 		d.log.Warn("ingress", "warning", w)
 	}
@@ -60,6 +55,19 @@ func (d *Dispatcher) reload(ctx context.Context, force bool) []string {
 // errNoIngress answers domain commands on a dispatcher built without an
 // ingress manager (tests); production always wires one.
 var errNoIngress = errors.New("ingress is not available on this agent")
+
+// noIngress is the IngressManager of a dispatcher built without one.
+type noIngress struct{}
+
+func (noIngress) Reload(context.Context) []string { return nil }
+func (noIngress) Enabled() bool                   { return false }
+func (noIngress) ListDomains(context.Context) ([]command.Domain, error) {
+	return nil, errNoIngress
+}
+func (noIngress) CreateDomain(context.Context, command.CreateDomainRequest) (command.Domain, error) {
+	return command.Domain{}, errNoIngress
+}
+func (noIngress) DeleteDomain(context.Context, string) error { return errNoIngress }
 
 // Dispatch decodes the request payload by its command type, runs the matching
 // handler, and returns the response envelope. Decode/handler errors become an
@@ -223,26 +231,17 @@ func (d *Dispatcher) newHandlers() map[command.Type]handlerFunc {
 		}),
 
 		command.TypeDomainList: handle(d, func(ctx context.Context, _ command.ListDomainsRequest) (command.ListDomainsResponse, error) {
-			if d.ingress == nil {
-				return command.ListDomainsResponse{}, errNoIngress
-			}
 			doms, err := d.ingress.ListDomains(ctx)
 			return command.ListDomainsResponse{Domains: doms}, err
 		}),
 		command.TypeDomainCreate: handle(d, func(ctx context.Context, in command.CreateDomainRequest) (command.CreateDomainResponse, error) {
-			if d.ingress == nil {
-				return command.CreateDomainResponse{}, errNoIngress
-			}
 			dom, err := d.ingress.CreateDomain(ctx, in)
 			if err != nil {
 				return command.CreateDomainResponse{}, err
 			}
-			return command.CreateDomainResponse{Domain: dom, Warnings: d.reload(ctx, true)}, nil
+			return command.CreateDomainResponse{Domain: dom, Warnings: d.reloadIngress(ctx)}, nil
 		}),
 		command.TypeDomainDelete: handle(d, func(ctx context.Context, in command.DeleteDomainRequest) (command.DeleteDomainResponse, error) {
-			if d.ingress == nil {
-				return command.DeleteDomainResponse{}, errNoIngress
-			}
 			if err := d.ingress.DeleteDomain(ctx, in.Name); err != nil {
 				return command.DeleteDomainResponse{}, err
 			}

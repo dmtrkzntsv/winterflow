@@ -60,7 +60,7 @@ func TestAppLifecycle(t *testing.T) {
 			t.Fatalf("%d uncovered save(s) reached the agent", n)
 		}
 	})
-	registerDomain(t, owner, sid, "*.example.test", command.DomainTLSAuto)
+	registerDomain(t, owner, sid, "*.example.test", model.DomainTLSAuto)
 
 	appID := saveApp(t, owner, sid, "web", ingress)
 	apps := listApps(t, owner, sid)
@@ -212,8 +212,8 @@ func TestHostnameUniquePerServer(t *testing.T) {
 	second := owner.registerServer(t)
 	shop := json.RawMessage(`{"ingress":{"domains":[{"domain":"shop.example.test","upstream_port":8080}]}}`)
 	// The same registration may exist on any number of servers.
-	registerDomain(t, owner, first, "*.example.test", command.DomainTLSOff)
-	registerDomain(t, owner, second, "*.example.test", command.DomainTLSAuto)
+	registerDomain(t, owner, first, "*.example.test", model.DomainTLSOff)
+	registerDomain(t, owner, second, "*.example.test", model.DomainTLSAuto)
 
 	saveApp(t, owner, first, "shop-a", shop)
 	saveApp(t, owner, second, "shop-b", shop)

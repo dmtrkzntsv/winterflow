@@ -79,7 +79,7 @@ func (a *fakeAgent) domainScript(typ command.Type, agentID string) (script, bool
 	case command.TypeDomainCreate:
 		return func(raw json.RawMessage) reply {
 			in := decode[command.CreateDomainRequest](raw)
-			d := command.Domain{Name: in.Name, TLS: in.TLS, Apps: []string{}}
+			d := command.Domain{RegisteredDomain: model.RegisteredDomain{Name: in.Name, TLS: in.TLS}, Apps: []string{}}
 			a.register(agentID, d)
 			return reply{Payload: command.CreateDomainResponse{Domain: d}}
 		}, true

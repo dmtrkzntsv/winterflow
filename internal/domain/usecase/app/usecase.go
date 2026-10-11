@@ -290,20 +290,11 @@ func (uc *UseCase) heldHostnames(ctx context.Context, serverID, appID string) (m
 // winningRegistration is the registration among regs covering host (exact
 // over wildcard), or nil.
 func winningRegistration(regs []model.RegisteredDomain, host string) *model.RegisteredDomain {
-	names := make([]string, len(regs))
-	for i, r := range regs {
-		names[i] = r.Name
-	}
-	win, ok := model.WinningDomain(names, host)
+	win, ok := model.Winning(regs, host)
 	if !ok {
 		return nil
 	}
-	for i := range regs {
-		if regs[i].Name == win {
-			return &regs[i]
-		}
-	}
-	return nil
+	return &win
 }
 
 // SaveApp dispatches an app.save command to the server's agent and returns

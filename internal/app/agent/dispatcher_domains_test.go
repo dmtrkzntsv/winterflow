@@ -7,18 +7,19 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"winterflow/internal/domain/command"
+	"winterflow/internal/domain/model"
 	ingresscaddy "winterflow/internal/infra/ingress/caddy"
 	"winterflow/internal/infra/ingress/domains/certtest"
 	dockercompose "winterflow/internal/infra/orchestrator/docker_compose"
 	"winterflow/internal/infra/transport/grpc/proto"
 	"winterflow/pkg/config"
+	"winterflow/pkg/crypto/cryptotest"
 	"winterflow/pkg/logger"
 )
 
@@ -34,7 +35,7 @@ func dispatchJSON(t *testing.T, d *Dispatcher, typ command.Type, req any) *proto
 func TestDispatchDomainCommands(t *testing.T) {
 	t.Setenv("AGENT_DATA_DIR", t.TempDir())
 	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
-	ing := &fakeIngress{domains: []command.Domain{{Name: "*.x.app", TLS: command.DomainTLSOff, Apps: []string{"a1"}}}}
+	ing := &fakeIngress{domains: []command.Domain{{RegisteredDomain: model.RegisteredDomain{Name: "*.x.app", TLS: model.DomainTLSOff}, Apps: []string{"a1"}}}}
 	d := NewDispatcher(dockercompose.NewRepository(config.NewServerConfig("standalone"), log), ing, log)
 	ok := proto.ResponseCode_RESPONSE_CODE_SUCCESS
 
@@ -49,7 +50,7 @@ func TestDispatchDomainCommands(t *testing.T) {
 
 	// The reload's warnings ride along in both mutation responses.
 	ing.warnings = []string{"ingress reload failed (previous routing still active): boom"}
-	resp = dispatchJSON(t, d, command.TypeDomainCreate, command.CreateDomainRequest{Name: "*.x.app", TLS: command.DomainTLSAuto})
+	resp = dispatchJSON(t, d, command.TypeDomainCreate, command.CreateDomainRequest{Name: "*.x.app", TLS: model.DomainTLSAuto})
 	var created command.CreateDomainResponse
 	if resp.Base.ResponseCode != ok || json.Unmarshal(resp.Payload, &created) != nil || created.Domain.Name != "*.x.app" ||
 		len(created.Warnings) != 1 || created.Warnings[0] != ing.warnings[0] {
@@ -65,13 +66,10 @@ func TestDispatchDomainCommands(t *testing.T) {
 	if ing.reloads != 2 {
 		t.Fatalf("reloads = %d, want one per successful mutation", ing.reloads)
 	}
-	if ing.forced != 1 {
-		t.Fatalf("forced reloads = %d, want 1 (domain.create forces; delete does not)", ing.forced)
-	}
 
 	// Invalid payloads never reach the manager.
 	for typ, req := range map[command.Type]any{
-		command.TypeDomainCreate: command.CreateDomainRequest{Name: "../etc", TLS: command.DomainTLSOff},
+		command.TypeDomainCreate: command.CreateDomainRequest{Name: "../etc", TLS: model.DomainTLSOff},
 		command.TypeDomainDelete: command.DeleteDomainRequest{Name: "a/b"},
 	} {
 		resp := dispatchJSON(t, d, typ, req)
@@ -84,12 +82,12 @@ func TestDispatchDomainCommands(t *testing.T) {
 	}
 
 	// A refused mutation is a correlated error and does not reload.
-	ing.domainErr = errors.New("*.x.app is used by Shop (a1)")
+	ing.domainErr = errors.New("*.x.app is used by Shop")
 	resp = dispatchJSON(t, d, command.TypeDomainDelete, command.DeleteDomainRequest{Name: "*.x.app"})
-	if resp.Base.ResponseCode == ok || resp.Base.Detail != "*.x.app is used by Shop (a1)" || resp.RequestId != "req-1" {
+	if resp.Base.ResponseCode == ok || resp.Base.Detail != "*.x.app is used by Shop" || resp.RequestId != "req-1" {
 		t.Fatalf("refused delete = %+v", resp)
 	}
-	resp = dispatchJSON(t, d, command.TypeDomainCreate, command.CreateDomainRequest{Name: "y.app", TLS: command.DomainTLSOff})
+	resp = dispatchJSON(t, d, command.TypeDomainCreate, command.CreateDomainRequest{Name: "y.app", TLS: model.DomainTLSOff})
 	if resp.Base.ResponseCode == ok {
 		t.Fatal("refused create succeeded")
 	}
@@ -102,12 +100,17 @@ func TestDispatchDomainCommandsWithoutIngress(t *testing.T) {
 	d := newTestDispatcher(t)
 	for typ, req := range map[command.Type]any{
 		command.TypeDomainList:   command.ListDomainsRequest{},
-		command.TypeDomainCreate: command.CreateDomainRequest{Name: "x.app", TLS: command.DomainTLSOff},
+		command.TypeDomainCreate: command.CreateDomainRequest{Name: "x.app", TLS: model.DomainTLSOff},
 		command.TypeDomainDelete: command.DeleteDomainRequest{Name: "x.app"},
 	} {
-		if resp := dispatchJSON(t, d, typ, req); resp.Base.ResponseCode == proto.ResponseCode_RESPONSE_CODE_SUCCESS {
-			t.Errorf("%s succeeded without an ingress manager", typ)
+		if resp := dispatchJSON(t, d, typ, req); resp.Base.ResponseCode == proto.ResponseCode_RESPONSE_CODE_SUCCESS ||
+			resp.Base.Detail != errNoIngress.Error() {
+			t.Errorf("%s without an ingress manager: %+v", typ, resp.Base)
 		}
+	}
+	// The stand-in reloads nothing and reports ingress off.
+	if w := d.reloadIngress(context.Background()); w != nil || d.ingress.Enabled() {
+		t.Errorf("noIngress: reload %v, enabled %v", w, d.ingress.Enabled())
 	}
 }
 
@@ -120,15 +123,15 @@ func TestDispatchDomainCreateWithRealManager(t *testing.T) {
 	t.Setenv("AGENT_DATA_DIR", dataDir)
 	t.Setenv("HUB_CERT_DIR", certDir)
 	t.Setenv("INGRESS_ENABLED", "true")
-	pub := certtest.AgentKey(t, certDir)
+	pub := cryptotest.AgentKey(t, certDir)
 	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
 	cfg := config.NewServerConfig("standalone")
 	d := NewDispatcher(dockercompose.NewRepository(cfg, log), ingresscaddy.NewManager(cfg, log), log)
 
 	cert, key := certtest.Issue(t, time.Now().Add(30*24*time.Hour), "*.twillingate.app")
 	resp := dispatchJSON(t, d, command.TypeDomainCreate, command.CreateDomainRequest{
-		Name: "*.twillingate.app", TLS: command.DomainTLSCertificate,
-		Certificate: string(cert), Key: certtest.Encrypt(t, pub, string(key)),
+		Name: "*.twillingate.app", TLS: model.DomainTLSCertificate,
+		Certificate: string(cert), Key: cryptotest.Encrypt(t, pub, string(key)),
 	})
 	if resp.Base.ResponseCode != proto.ResponseCode_RESPONSE_CODE_SUCCESS {
 		t.Fatalf("create: %+v", resp.Base)
@@ -136,8 +139,8 @@ func TestDispatchDomainCreateWithRealManager(t *testing.T) {
 	if strings.Contains(string(resp.Payload), "PRIVATE KEY") {
 		t.Fatal("the key leaked into the response")
 	}
-	if _, err := os.Stat(filepath.Join(dataDir, "domains", "_wildcard_.twillingate.app.key")); err != nil {
-		t.Fatal(err)
+	if keys, _ := filepath.Glob(filepath.Join(dataDir, "domains", "_wildcard_.twillingate.app.*.key")); len(keys) != 1 {
+		t.Fatalf("stored keys = %v", keys)
 	}
 	resp = dispatchJSON(t, d, command.TypeDomainList, command.ListDomainsRequest{})
 	var list command.ListDomainsResponse
@@ -182,9 +185,9 @@ func freeTCPPort(t *testing.T) int {
 }
 
 // TestDomainCreateReplacingCertificateReloadsCaddy is the renewal regression:
-// replacing a certificate keeps the same file paths, so the generated Caddy
-// config is byte-identical and an unforced reload is a no-op. domain.create
-// must still make the running proxy present the new certificate.
+// domain.create replacing a certificate must make the running proxy present
+// the new one. Certificate files are named by their content, so the new pair
+// changes the generated config and a plain (unforced) reload picks it up.
 func TestDomainCreateReplacingCertificateReloadsCaddy(t *testing.T) {
 	dataDir, certDir := t.TempDir(), t.TempDir()
 	httpPort, httpsPort := freeTCPPort(t), freeTCPPort(t)
@@ -194,7 +197,7 @@ func TestDomainCreateReplacingCertificateReloadsCaddy(t *testing.T) {
 	t.Setenv("INGRESS_HTTP_PORT", fmt.Sprint(httpPort))
 	t.Setenv("INGRESS_HTTPS_PORT", fmt.Sprint(httpsPort))
 	t.Setenv("LOG_LEVEL", "error")
-	pub := certtest.AgentKey(t, certDir)
+	pub := cryptotest.AgentKey(t, certDir)
 	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
 	cfg := config.NewServerConfig("standalone")
 	m := ingresscaddy.NewManager(cfg, log)
@@ -215,8 +218,8 @@ func TestDomainCreateReplacingCertificateReloadsCaddy(t *testing.T) {
 		t.Helper()
 		cert, key := certtest.Issue(t, notAfter, name)
 		resp := dispatchJSON(t, d, command.TypeDomainCreate, command.CreateDomainRequest{
-			Name: name, TLS: command.DomainTLSCertificate,
-			Certificate: string(cert), Key: certtest.Encrypt(t, pub, string(key)),
+			Name: name, TLS: model.DomainTLSCertificate,
+			Certificate: string(cert), Key: cryptotest.Encrypt(t, pub, string(key)),
 		})
 		if resp.Base.ResponseCode != proto.ResponseCode_RESPONSE_CODE_SUCCESS {
 			t.Fatalf("create: %+v", resp.Base)

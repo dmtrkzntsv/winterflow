@@ -1,4 +1,6 @@
-package certtest
+// Package cryptotest is the browser's half of pkg/crypto's ECIES scheme, for
+// tests of code that decrypts on the agent. Only _test files import it.
+package cryptotest
 
 import (
 	"crypto/aes"
@@ -34,8 +36,9 @@ func AgentKey(t testing.TB, certDir string) *ecdsa.PublicKey {
 	return &key.PublicKey
 }
 
-// Encrypt mirrors the browser's ECIES (ephemeral P-256 + ECDH + SHA-256 +
-// AES-256-GCM), the scheme pkg/crypto decrypts.
+// Encrypt mirrors the browser's ECIES: an ephemeral P-256 key, ECDH with
+// pub, SHA-256 of the shared X coordinate (32 bytes, big-endian) as the
+// AES-256-GCM key; the result is base64(ephemeral point | IV | ciphertext).
 func Encrypt(t testing.TB, pub *ecdsa.PublicKey, plaintext string) string {
 	t.Helper()
 	curve := elliptic.P256()
@@ -44,14 +47,18 @@ func Encrypt(t testing.TB, pub *ecdsa.PublicKey, plaintext string) string {
 		t.Fatal(err)
 	}
 	sharedX, _ := curve.ScalarMult(pub.X, pub.Y, eph.D.Bytes()) //nolint:staticcheck // mirrors the browser
-	xb := sharedX.Bytes()
-	for len(xb) < 32 {
-		xb = append([]byte{0}, xb...)
-	}
+	xb := make([]byte, 32)
+	sharedX.FillBytes(xb)
 	keyHash := sha256.Sum256(xb)
-	block, _ := aes.NewCipher(keyHash[:])
-	gcm, _ := cipher.NewGCM(block)
-	iv := make([]byte, 12)
+	block, err := aes.NewCipher(keyHash[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		t.Fatal(err)
+	}
+	iv := make([]byte, gcm.NonceSize())
 	if _, err := rand.Read(iv); err != nil {
 		t.Fatal(err)
 	}

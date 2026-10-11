@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"winterflow/internal/domain/command"
+	"winterflow/internal/domain/model"
 	dockercompose "winterflow/internal/infra/orchestrator/docker_compose"
 	"winterflow/internal/infra/transport/grpc/proto"
 	"winterflow/pkg/config"
@@ -30,7 +31,6 @@ func newTestDispatcher(t *testing.T) *Dispatcher {
 // domain methods record calls and answer from fields.
 type fakeIngress struct {
 	reloads  int
-	forced   int // reloads requested with force=true
 	warnings []string
 
 	domains   []command.Domain
@@ -39,11 +39,8 @@ type fakeIngress struct {
 	deleted   []string
 }
 
-func (f *fakeIngress) Reload(_ context.Context, force bool) []string {
+func (f *fakeIngress) Reload(context.Context) []string {
 	f.reloads++
-	if force {
-		f.forced++
-	}
 	return f.warnings
 }
 func (f *fakeIngress) Enabled() bool { return true }
@@ -55,7 +52,7 @@ func (f *fakeIngress) CreateDomain(_ context.Context, in command.CreateDomainReq
 	if f.domainErr != nil {
 		return command.Domain{}, f.domainErr
 	}
-	return command.Domain{Name: in.Name, TLS: in.TLS, Apps: []string{}}, nil
+	return command.Domain{RegisteredDomain: model.RegisteredDomain{Name: in.Name, TLS: in.TLS}, Apps: []string{}}, nil
 }
 func (f *fakeIngress) DeleteDomain(_ context.Context, name string) error {
 	f.deleted = append(f.deleted, name)

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
@@ -51,21 +50,21 @@ func (m *Manager) seedDomains() {
 // redirect sources) to exact registrations. Apps are scanned in app-id order
 // and the first entry for a host decides its mode, matching BuildConfig's
 // first-claim-wins rule.
-func seedRegistrations(apps []AppIngress) []domains.Registration {
+func seedRegistrations(apps []AppIngress) []model.RegisteredDomain {
 	sorted := append([]AppIngress(nil), apps...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].AppID < sorted[j].AppID })
 	seen := map[string]bool{}
-	var out []domains.Registration
+	var out []model.RegisteredDomain
 	add := func(host string, ssl bool) {
 		if seen[host] || model.ValidateDomainName(host) != nil || model.IsWildcardDomain(host) {
 			return
 		}
 		seen[host] = true
-		mode := command.DomainTLSOff
+		mode := model.DomainTLSOff
 		if ssl {
-			mode = command.DomainTLSAuto
+			mode = model.DomainTLSAuto
 		}
-		out = append(out, domains.Registration{Name: host, TLS: mode})
+		out = append(out, model.RegisteredDomain{Name: host, TLS: mode})
 	}
 	for _, a := range sorted {
 		for _, d := range a.Ingress.Domains {
@@ -80,37 +79,24 @@ func seedRegistrations(apps []AppIngress) []domains.Registration {
 	return out
 }
 
-// domainUsers maps each registration name to the apps (in app-id order)
-// with at least one hostname that registration wins.
-func domainUsers(apps []AppIngress, regs []domains.Registration) map[string][]AppIngress {
-	names := make([]string, len(regs))
-	for i, r := range regs {
-		names[i] = r.Name
-	}
-	out := map[string][]AppIngress{}
+// domainUsers maps each registration name to the ids of the apps (in scan
+// order) with at least one hostname that registration wins.
+func domainUsers(apps []AppIngress, regs []domains.Registration) map[string][]string {
+	out := map[string][]string{}
 	for _, a := range apps {
 		used := map[string]bool{}
 		for _, h := range a.Ingress.DomainNames() {
-			if win, ok := model.WinningDomain(names, h); ok && !used[win] {
-				used[win] = true
-				out[win] = append(out[win], a)
+			if win, ok := model.Winning(regs, h); ok && !used[win.Name] {
+				used[win.Name] = true
+				out[win.Name] = append(out[win.Name], a.AppID)
 			}
 		}
 	}
 	return out
 }
 
-func describe(r domains.Registration, users []AppIngress) command.Domain {
-	d := command.Domain{Name: r.Name, TLS: r.TLS, Apps: []string{}}
-	for _, a := range users {
-		d.Apps = append(d.Apps, a.AppID)
-	}
-	if r.TLS == command.DomainTLSCertificate {
-		if notAfter, issuer, err := domains.CertInfo(r.CertFile); err == nil {
-			d.NotAfter, d.Issuer = &notAfter, issuer
-		}
-	}
-	return d
+func describe(r domains.Registration, apps []string) command.Domain {
+	return command.Domain{RegisteredDomain: r.RegisteredDomain, Apps: apps}
 }
 
 // ListDomains reports every registration with the apps using it. It works
@@ -131,36 +117,34 @@ func (m *Manager) ListDomains(context.Context) ([]command.Domain, error) {
 
 // CreateDomain registers (or replaces) a name. In certificate mode the key
 // arrives ECIES-encrypted; it is decrypted with the agent's private key and
-// the pair must match, cover the name and not be expired before anything is
-// written. The caller reloads the proxy.
-func (m *Manager) CreateDomain(_ context.Context, in command.CreateDomainRequest) (command.Domain, error) {
+// the store checks the pair (match, coverage, expiry) before writing
+// anything. The caller reloads the proxy.
+func (m *Manager) CreateDomain(ctx context.Context, in command.CreateDomainRequest) (command.Domain, error) {
 	if !m.cfg.IsIngressEnabled() {
 		return command.Domain{}, ErrIngressDisabled
 	}
 	var cert, key []byte
-	if in.TLS == command.DomainTLSCertificate {
+	if in.TLS == model.DomainTLSCertificate {
 		plain, err := crypto.DecryptWithPrivateKey(m.cfg.GetAgentKeyPath(), in.Key)
 		if err != nil {
 			return command.Domain{}, fmt.Errorf("decrypt the certificate key: %w", err)
 		}
 		cert, key = []byte(in.Certificate), []byte(plain)
-		if _, err := domains.CheckCertificate(in.Name, cert, key, time.Now()); err != nil {
-			return command.Domain{}, err
-		}
 	}
-	if err := m.domains.Put(in.Name, in.TLS, cert, key); err != nil {
+	if err := ctx.Err(); err != nil {
 		return command.Domain{}, err
 	}
-	doms, err := m.ListDomains(context.Background())
+	reg, err := m.domains.Put(in.Name, in.TLS, cert, key)
 	if err != nil {
 		return command.Domain{}, err
 	}
-	for _, d := range doms {
-		if d.Name == in.Name {
-			return d, nil
-		}
+	// The other registrations decide which hosts this one wins.
+	regs, err := m.domains.List()
+	if err != nil {
+		regs = []domains.Registration{reg}
 	}
-	return command.Domain{Name: in.Name, TLS: in.TLS, Apps: []string{}}, nil
+	apps, _ := m.scanApps()
+	return describe(reg, domainUsers(apps, regs)[reg.Name]), nil
 }
 
 // orphanedBy returns the apps (in scan order) with a hostname that name wins
@@ -168,20 +152,19 @@ func (m *Manager) CreateDomain(_ context.Context, in command.CreateDomainRequest
 // drop out of ingress. A host a remaining registration (e.g. a wildcard next
 // to a seeded exact name) still covers just moves over to it.
 func orphanedBy(apps []AppIngress, regs []domains.Registration, name string) []AppIngress {
-	var all, rest []string
+	rest := make([]domains.Registration, 0, len(regs))
 	for _, r := range regs {
-		all = append(all, r.Name)
 		if r.Name != name {
-			rest = append(rest, r.Name)
+			rest = append(rest, r)
 		}
 	}
 	var out []AppIngress
 	for _, a := range apps {
 		for _, h := range a.Ingress.DomainNames() {
-			if win, ok := model.WinningDomain(all, h); !ok || win != name {
+			if win, ok := model.Winning(regs, h); !ok || win.Name != name {
 				continue
 			}
-			if _, ok := model.WinningDomain(rest, h); !ok {
+			if _, ok := model.Winning(rest, h); !ok {
 				out = append(out, a)
 				break
 			}
@@ -191,7 +174,9 @@ func orphanedBy(apps []AppIngress, regs []domains.Registration, name string) []A
 }
 
 // DeleteDomain removes a registration, refusing while an app uses a hostname
-// only this registration covers (the error names those apps).
+// only this registration covers (the error names those apps). It fails
+// closed: when apps-data or an app's config can't be read, it can't tell
+// whether the name is in use, so it refuses too.
 func (m *Manager) DeleteDomain(_ context.Context, name string) error {
 	if !m.cfg.IsIngressEnabled() {
 		return ErrIngressDisabled
@@ -200,17 +185,19 @@ func (m *Manager) DeleteDomain(_ context.Context, name string) error {
 	if err != nil {
 		return err
 	}
-	apps, _ := m.scanApps()
+	apps, warnings, err := m.readApps()
+	if err == nil && len(warnings) > 0 {
+		err = errors.New(strings.Join(warnings, "; "))
+	}
+	if err != nil {
+		return fmt.Errorf("cannot remove %s: the apps using it can't be checked: %w", name, err)
+	}
 	if users := orphanedBy(apps, regs, name); len(users) > 0 {
-		labels := make([]string, 0, len(users))
+		names := make([]string, 0, len(users))
 		for _, a := range users {
-			if a.Name != "" {
-				labels = append(labels, fmt.Sprintf("%s (%s)", a.Name, a.AppID))
-			} else {
-				labels = append(labels, a.AppID)
-			}
+			names = append(names, a.label())
 		}
-		return fmt.Errorf("%s is used by %s and no other registered domain covers those hostnames: remove them from those apps (or register a covering domain) first", name, strings.Join(labels, ", "))
+		return fmt.Errorf("%s is used by %s and no other registered domain covers those hostnames: remove them from those apps (or register a covering domain) first", name, strings.Join(names, ", "))
 	}
 	existed, err := m.domains.Delete(name)
 	if err != nil {

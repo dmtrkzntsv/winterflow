@@ -44,8 +44,17 @@ func TestDomainCovers(t *testing.T) {
 	}
 }
 
-func TestWinningDomain(t *testing.T) {
-	names := []string{"*.twillingate.app", "app.twillingate.app", "twillingate.app", "*.eu.twillingate.app"}
+// regs builds registrations named names (mode irrelevant to coverage).
+func regs(names ...string) []RegisteredDomain {
+	out := make([]RegisteredDomain, len(names))
+	for i, n := range names {
+		out[i] = RegisteredDomain{Name: n, TLS: DomainTLSOff}
+	}
+	return out
+}
+
+func TestWinning(t *testing.T) {
+	all := regs("*.twillingate.app", "app.twillingate.app", "twillingate.app", "*.eu.twillingate.app")
 	cases := []struct {
 		host, want string
 		ok         bool
@@ -58,16 +67,16 @@ func TestWinningDomain(t *testing.T) {
 		{"example.com", "", false},
 	}
 	for _, tc := range cases {
-		got, ok := WinningDomain(names, tc.host)
-		if got != tc.want || ok != tc.ok {
-			t.Errorf("WinningDomain(%q) = %q, %v; want %q, %v", tc.host, got, ok, tc.want, tc.ok)
+		got, ok := Winning(all, tc.host)
+		if got.Name != tc.want || ok != tc.ok {
+			t.Errorf("Winning(%q) = %q, %v; want %q, %v", tc.host, got.Name, ok, tc.want, tc.ok)
 		}
 	}
 	// Order does not matter: the exact name wins even listed after.
-	if got, _ := WinningDomain([]string{"app.twillingate.app", "*.twillingate.app"}, "app.twillingate.app"); got != "app.twillingate.app" {
-		t.Errorf("exact listed first: got %q", got)
+	if got, _ := Winning(regs("app.twillingate.app", "*.twillingate.app"), "app.twillingate.app"); got.Name != "app.twillingate.app" {
+		t.Errorf("exact listed first: got %q", got.Name)
 	}
-	if _, ok := WinningDomain(nil, "x.app"); ok {
+	if _, ok := Winning[RegisteredDomain](nil, "x.app"); ok {
 		t.Error("no registrations must cover nothing")
 	}
 }

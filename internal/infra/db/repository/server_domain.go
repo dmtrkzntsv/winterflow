@@ -26,7 +26,7 @@ type DbServerDomainRepository struct {
 
 func serverDomainRow(serverID string, d model.RegisteredDomain) models.ServerDomain {
 	row := models.ServerDomain{
-		ServerID: serverID, Name: d.Name, TLS: d.TLS, Issuer: d.Issuer,
+		ServerID: serverID, Name: d.Name, TLS: string(d.TLS), Issuer: d.Issuer,
 		UpdatedAt: types.DateTime(time.Now().UTC()),
 	}
 	if d.NotAfter != nil {
@@ -45,7 +45,7 @@ func (r *DbServerDomainRepository) ListForServer(ctx context.Context, serverID s
 	}
 	out := make([]model.RegisteredDomain, 0, len(rows))
 	for _, row := range rows {
-		d := model.RegisteredDomain{Name: row.Name, TLS: row.TLS, Issuer: row.Issuer}
+		d := model.RegisteredDomain{Name: row.Name, TLS: model.DomainTLS(row.TLS), Issuer: row.Issuer}
 		if row.NotAfter != nil {
 			na := row.NotAfter.Time().UTC()
 			d.NotAfter = &na

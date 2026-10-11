@@ -1,16 +1,23 @@
 // Package domains stores the agent's domain registrations under
-// {AGENT_DATA_DIR}/domains/: one <name>.json per registration ({name, tls}),
-// plus <name>.crt (0644) and <name>.key (0600) in certificate mode. A
+// {AGENT_DATA_DIR}/domains/: one <name>.json per registration, plus in
+// certificate mode the pair <name>.<fp>.crt (0644) and <name>.<fp>.key
+// (0600), where fp is the first 12 hex digits of sha256(cert || key). A
 // wildcard's "*" is spelled _wildcard_ in file names. The directory is the
 // source of truth the API's server_domains index mirrors.
+//
+// Certificate files are content-addressed: a renewal writes the new pair
+// next to the old one, then switches the .json (written last, atomically) to
+// it, then prunes the old pair. The .json therefore only ever names a
+// complete pair, and the generated Caddy config changes whenever the
+// certificate does.
 package domains
 
 import (
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
-	"encoding/pem"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -20,17 +27,17 @@ import (
 	"sync"
 	"time"
 
-	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
 )
 
-// Registration is one stored registration. CertFile and KeyFile are set in
-// certificate mode only.
+// Registration is one stored registration. In certificate mode the .json
+// also records the certificate's expiry, issuer and Fingerprint (which names
+// the pair files); CertFile and KeyFile are derived from it.
 type Registration struct {
-	Name     string            `json:"name"`
-	TLS      command.DomainTLS `json:"tls"`
-	CertFile string            `json:"-"`
-	KeyFile  string            `json:"-"`
+	model.RegisteredDomain
+	Fingerprint string `json:"fingerprint,omitempty"`
+	CertFile    string `json:"-"`
+	KeyFile     string `json:"-"`
 }
 
 // Store reads and writes the domains/ directory. Methods are safe for
@@ -45,15 +52,40 @@ func NewStore(dir string) *Store { return &Store{dir: dir} }
 // Dir is the directory the store owns.
 func (s *Store) Dir() string { return s.dir }
 
-const wildcardToken = "_wildcard_"
+const (
+	wildcardToken = "_wildcard_"
+	// fingerprintLen hex digits of sha256(cert || key) name a pair.
+	fingerprintLen = 12
+)
 
 // fileStem maps a validated name to its file stem ("*.x.app" ->
 // "_wildcard_.x.app"); nameOf is the inverse.
 func fileStem(name string) string { return strings.Replace(name, "*", wildcardToken, 1) }
 func nameOf(stem string) string   { return strings.Replace(stem, wildcardToken, "*", 1) }
 
-func (s *Store) path(name, ext string) string {
-	return filepath.Join(s.dir, fileStem(name)+ext)
+func (s *Store) jsonPath(name string) string {
+	return filepath.Join(s.dir, fileStem(name)+".json")
+}
+
+// pairPaths are the certificate and key files of name's pair fp.
+func (s *Store) pairPaths(name, fp string) (string, string) {
+	base := filepath.Join(s.dir, fileStem(name)+"."+fp)
+	return base + ".crt", base + ".key"
+}
+
+func fingerprint(certPEM, keyPEM []byte) string {
+	h := sha256.New()
+	h.Write(certPEM)
+	h.Write(keyPEM)
+	return hex.EncodeToString(h.Sum(nil))[:fingerprintLen]
+}
+
+func isFingerprint(fp string) bool {
+	if len(fp) != fingerprintLen {
+		return false
+	}
+	_, err := hex.DecodeString(fp)
+	return err == nil
 }
 
 // Exists reports whether the domains/ directory exists (the upgrade path
@@ -64,9 +96,10 @@ func (s *Store) Exists() bool {
 }
 
 // List returns every registration, sorted by name. A file that does not
-// parse, names something else than its file name, or carries an unknown
-// mode is skipped: its hosts then fall out of ingress (fail closed) instead
-// of one broken file stopping all routing.
+// parse, names something else than its file name, carries an unknown mode,
+// or (certificate mode) points at a pair that is not on disk is skipped: its
+// hosts then fall out of ingress (fail closed) instead of one broken file
+// stopping all routing.
 func (s *Store) List() ([]Registration, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -92,12 +125,14 @@ func (s *Store) List() ([]Registration, error) {
 			model.ValidateDomainName(r.Name) != nil || !r.TLS.Valid() {
 			continue
 		}
-		if r.TLS == command.DomainTLSCertificate {
-			r.CertFile, r.KeyFile = s.path(r.Name, ".crt"), s.path(r.Name, ".key")
-			// A renewal replaces two files; a crash between the renames
-			// leaves a mismatched pair. Fail closed rather than serve it.
-			if _, err := tls.LoadX509KeyPair(r.CertFile, r.KeyFile); err != nil {
-				slog.Warn("skipping domain registration with an unusable certificate pair", "domain", r.Name, "error", err)
+		if r.TLS == model.DomainTLSCertificate {
+			if !isFingerprint(r.Fingerprint) {
+				slog.Warn("skipping domain registration without a certificate fingerprint", "domain", r.Name)
+				continue
+			}
+			r.CertFile, r.KeyFile = s.pairPaths(r.Name, r.Fingerprint)
+			if !isFile(r.CertFile) || !isFile(r.KeyFile) {
+				slog.Warn("skipping domain registration whose certificate files are missing", "domain", r.Name)
 				continue
 			}
 		}
@@ -107,52 +142,91 @@ func (s *Store) List() ([]Registration, error) {
 	return out, nil
 }
 
-// Put writes (or replaces) a registration. In certificate mode certPEM and
-// keyPEM are written next to it; switching away from certificate mode removes
-// them. The .json is written last so a crash never leaves a registration
-// pointing at missing files.
-func (s *Store) Put(name string, mode command.DomainTLS, certPEM, keyPEM []byte) error {
+func isFile(path string) bool {
+	fi, err := os.Stat(path)
+	return err == nil && fi.Mode().IsRegular()
+}
+
+// Put writes (or replaces) a registration and returns it as stored. In
+// certificate mode the pair is checked first (CheckCertificate) and written
+// under its fingerprint; nothing is written when the check fails, and the
+// previous pair keeps serving until the .json switches to the new one.
+// Switching away from certificate mode removes the pair.
+func (s *Store) Put(name string, mode model.DomainTLS, certPEM, keyPEM []byte) (Registration, error) {
 	if err := model.ValidateDomainName(name); err != nil {
-		return err
+		return Registration{}, err
 	}
 	if !mode.Valid() {
-		return fmt.Errorf("unknown tls mode %q", mode)
+		return Registration{}, fmt.Errorf("unknown tls mode %q", mode)
+	}
+	reg := Registration{RegisteredDomain: model.RegisteredDomain{Name: name, TLS: mode}}
+	if mode == model.DomainTLSCertificate {
+		leaf, err := CheckCertificate(name, certPEM, keyPEM, time.Now())
+		if err != nil {
+			return Registration{}, err
+		}
+		notAfter := leaf.NotAfter.UTC()
+		reg.NotAfter, reg.Issuer = &notAfter, leaf.Issuer.CommonName
+		reg.Fingerprint = fingerprint(certPEM, keyPEM)
+		reg.CertFile, reg.KeyFile = s.pairPaths(name, reg.Fingerprint)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := os.MkdirAll(s.dir, 0o755); err != nil {
-		return fmt.Errorf("create domains dir: %w", err)
+		return Registration{}, fmt.Errorf("create domains dir: %w", err)
 	}
-	if mode == command.DomainTLSCertificate {
-		// Stage both files first, then rename back-to-back, so a failure
-		// while writing never touches the working pair.
-		crt, key := s.path(name, ".crt"), s.path(name, ".key")
-		if err := stage(crt+".tmp", certPEM, 0o644); err != nil {
-			return err
-		}
-		if err := stage(key+".tmp", keyPEM, 0o600); err != nil {
-			_ = os.Remove(crt + ".tmp")
-			return err
-		}
-		if err := os.Rename(crt+".tmp", crt); err != nil {
-			_ = os.Remove(crt + ".tmp")
-			_ = os.Remove(key + ".tmp")
-			return fmt.Errorf("write %s: %w", filepath.Base(crt), err)
-		}
-		if err := os.Rename(key+".tmp", key); err != nil {
-			_ = os.Remove(key + ".tmp")
-			return fmt.Errorf("write %s: %w", filepath.Base(key), err)
+	if mode == model.DomainTLSCertificate {
+		if err := writePair(reg.CertFile, reg.KeyFile, certPEM, keyPEM); err != nil {
+			return Registration{}, err
 		}
 	}
-	raw, _ := json.Marshal(Registration{Name: name, TLS: mode})
-	if err := writeAtomic(s.path(name, ".json"), raw, 0o644); err != nil {
-		return err
+	raw, _ := json.Marshal(reg)
+	if err := writeAtomic(s.jsonPath(name), raw, 0o644); err != nil {
+		return Registration{}, err
 	}
-	if mode != command.DomainTLSCertificate {
-		_ = os.Remove(s.path(name, ".crt"))
-		_ = os.Remove(s.path(name, ".key"))
+	s.prunePairs(name, reg.Fingerprint)
+	return reg, nil
+}
+
+// writePair installs a content-addressed pair. A complete pair already on
+// disk under these names has this very content, so it is left alone. On a
+// failure the pair's files are removed again: an incomplete pair is never
+// the one a .json names.
+func writePair(crt, key string, certPEM, keyPEM []byte) error {
+	if isFile(crt) && isFile(key) {
+		return nil
 	}
-	return nil
+	err := writeAtomic(crt, certPEM, 0o644)
+	if err == nil {
+		err = writeAtomic(key, keyPEM, 0o600)
+	}
+	if err != nil {
+		_ = os.Remove(crt)
+		_ = os.Remove(key)
+	}
+	return err
+}
+
+// prunePairs removes name's pair files except the pair keep ("" removes
+// all). A file belongs to name when it is exactly <stem>.<fingerprint>.crt
+// or .key — parsing, not globbing, so "x.app" never prunes "x.app.y"'s files.
+func (s *Store) prunePairs(name, keep string) {
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		return
+	}
+	stem := fileStem(name)
+	for _, e := range entries {
+		base, ok := strings.CutSuffix(e.Name(), ".crt")
+		if !ok {
+			base, ok = strings.CutSuffix(e.Name(), ".key")
+		}
+		i := strings.LastIndex(base, ".")
+		if !ok || i < 0 || base[:i] != stem || !isFingerprint(base[i+1:]) || base[i+1:] == keep {
+			continue
+		}
+		_ = os.Remove(filepath.Join(s.dir, e.Name()))
+	}
 }
 
 // Delete removes a registration and its certificate files. It reports
@@ -163,31 +237,23 @@ func (s *Store) Delete(name string) (bool, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	err := os.Remove(s.path(name, ".json"))
+	err := os.Remove(s.jsonPath(name))
 	if os.IsNotExist(err) {
 		return false, nil
 	}
 	if err != nil {
 		return false, fmt.Errorf("delete domain: %w", err)
 	}
-	_ = os.Remove(s.path(name, ".crt"))
-	_ = os.Remove(s.path(name, ".key"))
+	s.prunePairs(name, "")
 	return true, nil
 }
 
-// Seed creates the domains/ directory holding regs, unless it already
-// exists; it reports whether it did. The files are written to a sibling
-// directory renamed into place, so a crash mid-way leaves no half-seeded
-// directory that would stop the next start from seeding.
-func (s *Store) Seed(regs []Registration) (bool, error) {
-	for _, r := range regs {
-		if err := model.ValidateDomainName(r.Name); err != nil {
-			return false, err
-		}
-		if !r.TLS.Valid() {
-			return false, fmt.Errorf("unknown tls mode %q for %s", r.TLS, r.Name)
-		}
-	}
+// Seed creates the domains/ directory holding regs (auto or off), unless it
+// already exists; it reports whether it did. The registrations are Put into
+// a sibling staging directory that is renamed into place, so a crash mid-way
+// leaves no half-seeded directory that would stop the next start from
+// seeding.
+func (s *Store) Seed(regs []model.RegisteredDomain) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, err := os.Stat(s.dir); err == nil {
@@ -195,36 +261,33 @@ func (s *Store) Seed(regs []Registration) (bool, error) {
 	}
 	tmp := s.dir + ".seed"
 	_ = os.RemoveAll(tmp)
-	if err := os.MkdirAll(tmp, 0o755); err != nil {
-		return false, fmt.Errorf("seed domains: %w", err)
-	}
+	staging := NewStore(tmp)
+	err := os.MkdirAll(tmp, 0o755)
 	for _, r := range regs {
-		raw, _ := json.Marshal(Registration{Name: r.Name, TLS: r.TLS})
-		if err := os.WriteFile(filepath.Join(tmp, fileStem(r.Name)+".json"), raw, 0o644); err != nil {
-			return false, fmt.Errorf("seed domains: %w", err)
+		if err != nil {
+			break
 		}
+		_, err = staging.Put(r.Name, r.TLS, nil, nil)
 	}
-	if err := os.Rename(tmp, s.dir); err != nil {
+	if err == nil {
+		err = os.Rename(tmp, s.dir)
+	}
+	if err != nil {
+		_ = os.RemoveAll(tmp)
 		return false, fmt.Errorf("seed domains: %w", err)
 	}
 	return true, nil
 }
 
-// stage writes data to tmp, removing the partial file if the write fails.
-func stage(tmp string, data []byte, perm os.FileMode) error {
-	if err := os.WriteFile(tmp, data, perm); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("write %s: %w", filepath.Base(tmp), err)
-	}
-	return nil
-}
-
+// writeAtomic writes data to path via a temp file renamed into place,
+// removing the temp file when either step fails.
 func writeAtomic(path string, data []byte, perm os.FileMode) error {
 	tmp := path + ".tmp"
-	if err := stage(tmp, data, perm); err != nil {
-		return err
+	err := os.WriteFile(tmp, data, perm)
+	if err == nil {
+		err = os.Rename(tmp, path)
 	}
-	if err := os.Rename(tmp, path); err != nil {
+	if err != nil {
 		_ = os.Remove(tmp)
 		return fmt.Errorf("write %s: %w", filepath.Base(path), err)
 	}
@@ -257,39 +320,15 @@ func CheckCertificate(name string, certPEM, keyPEM []byte, now time.Time) (*x509
 	return leaf, nil
 }
 
+// leafCovers reports whether a SAN of leaf covers name under the
+// registration rule. A wildcard name's "*" counts as the one label, so only
+// the same wildcard SAN covers it; an exact name is covered by itself or by
+// the wildcard SAN of its parent.
 func leafCovers(leaf *x509.Certificate, name string) bool {
 	for _, san := range leaf.DNSNames {
-		san = strings.ToLower(san)
-		if san == name {
-			return true
-		}
-		if !model.IsWildcardDomain(name) && model.IsWildcardDomain(san) && model.DomainCovers(san, name) {
+		if model.DomainCovers(san, name) {
 			return true
 		}
 	}
 	return false
-}
-
-// CertInfo reads the leaf of a stored PEM certificate: its expiry and its
-// issuer's common name.
-func CertInfo(certFile string) (time.Time, string, error) {
-	raw, err := os.ReadFile(certFile)
-	if err != nil {
-		return time.Time{}, "", err
-	}
-	var block *pem.Block
-	for {
-		block, raw = pem.Decode(raw)
-		if block == nil {
-			return time.Time{}, "", errors.New("no PEM certificate")
-		}
-		if block.Type == "CERTIFICATE" {
-			break
-		}
-	}
-	leaf, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		return time.Time{}, "", err
-	}
-	return leaf.NotAfter, leaf.Issuer.CommonName, nil
 }

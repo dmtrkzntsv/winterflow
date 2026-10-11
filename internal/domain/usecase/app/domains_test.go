@@ -97,7 +97,7 @@ func TestCreateAndDeleteDomainFollowTheAgent(t *testing.T) {
 	uc := newDomainsUseCase(disp, sd)
 	ctx := context.Background()
 
-	req := command.CreateDomainRequest{Name: "*.x.app", TLS: command.DomainTLSOff}
+	req := command.CreateDomainRequest{Name: "*.x.app", TLS: model.DomainTLSOff}
 	if _, err := uc.CreateDomain(ctx, "u1", "srv-1", req); err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ func TestDomainResultsWithoutAnIndexAreNoOps(t *testing.T) {
 	uc := newTestUseCase(disp) // no ServerDomainRepository
 	ctx := context.Background()
 	_, _ = uc.ListServerDomains(ctx, "u", "s")
-	_, _ = uc.CreateDomain(ctx, "u", "s", command.CreateDomainRequest{Name: "x.app", TLS: command.DomainTLSOff})
+	_, _ = uc.CreateDomain(ctx, "u", "s", command.CreateDomainRequest{Name: "x.app", TLS: model.DomainTLSOff})
 	_, _ = uc.DeleteDomain(ctx, "u", "s", "x.app")
 	for _, in := range disp.all {
 		in.OnResult(port.CommandResult{Success: true, Payload: []byte(`{}`)})

@@ -11,15 +11,40 @@ import (
 // registered on the target server covers; the HTTP layer maps it to 400.
 var ErrDomainNotCovered = errors.New("domain not covered")
 
-// RegisteredDomain is one row of the API's server_domains index: a name an
-// agent accepts ingress hostnames under, with its TLS mode ("auto",
-// "certificate" or "off"). The agent's domains/ dir is the source of truth.
+// DomainTLS is how TLS works for hostnames under a registration.
+type DomainTLS string
+
+const (
+	// DomainTLSAuto: the agent obtains one ACME (HTTP-01) cert per app host.
+	DomainTLSAuto DomainTLS = "auto"
+	// DomainTLSCertificate: an uploaded PEM cert + key serves every host.
+	DomainTLSCertificate DomainTLS = "certificate"
+	// DomainTLSOff: TLS ends in front (tunnel, proxy); plain HTTP only.
+	DomainTLSOff DomainTLS = "off"
+)
+
+// Valid reports whether t is one of the three modes.
+func (t DomainTLS) Valid() bool {
+	return t == DomainTLSAuto || t == DomainTLSCertificate || t == DomainTLSOff
+}
+
+// RegisteredDomain is a name an agent accepts ingress hostnames under, with
+// its TLS mode. NotAfter and Issuer (the issuer's CN) describe the stored
+// certificate in certificate mode. The agent's domains/ dir is the source of
+// truth; the API's server_domains index mirrors it.
 type RegisteredDomain struct {
 	Name     string     `json:"name"`
-	TLS      string     `json:"tls"`
+	TLS      DomainTLS  `json:"tls"`
 	NotAfter *time.Time `json:"not_after,omitempty"`
 	Issuer   string     `json:"issuer,omitempty"`
 }
+
+// RegistrationName makes RegisteredDomain (and every type embedding it) a
+// Registered, for Winning.
+func (d RegisteredDomain) RegistrationName() string { return d.Name }
+
+// Registered is anything carrying a registration name.
+type Registered interface{ RegistrationName() string }
 
 // IsWildcardDomain reports whether a registration name is a wildcard: "*."
 // followed by the suffix it covers one label of.
@@ -48,21 +73,23 @@ func DomainCovers(name, host string) bool {
 	return ok && label != "" && suffix == name[2:]
 }
 
-// WinningDomain returns the registration among names that covers host: an
-// exact name wins over a wildcard. Only "*.<parent of host>" can be the
-// wildcard, so two wildcards never compete for one host.
-func WinningDomain(names []string, host string) (string, bool) {
-	var wildcard string
-	for _, n := range names {
+// Winning returns the registration among regs that covers host: an exact
+// name wins over a wildcard. Only "*.<parent of host>" can be the wildcard,
+// so two wildcards never compete for one host.
+func Winning[T Registered](regs []T, host string) (T, bool) {
+	var wildcard T
+	found := false
+	for _, r := range regs {
+		n := r.RegistrationName()
 		if !DomainCovers(n, host) {
 			continue
 		}
 		if !IsWildcardDomain(n) {
-			return n, true
+			return r, true
 		}
-		wildcard = n
+		wildcard, found = r, true
 	}
-	return wildcard, wildcard != ""
+	return wildcard, found
 }
 
 // notCoveredError is ErrDomainNotCovered with a message that stands on its

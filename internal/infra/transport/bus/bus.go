@@ -55,6 +55,9 @@ const (
 	EventCapabilities EventKind = "server.capabilities"
 	// EventAppsStatus reports container status for a server's apps.
 	EventAppsStatus EventKind = "apps.status"
+	// EventServerMetrics carries one minute's resource sample of a server
+	// and its apps (payload: metrics.Sample).
+	EventServerMetrics EventKind = "server.metrics"
 )
 
 // EventMessage is the events-queue payload: an unsolicited event from a server's

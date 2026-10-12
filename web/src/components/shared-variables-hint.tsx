@@ -1,38 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
-
 import { Badge } from "@/components/ui/badge";
-import {
-  createSharedVariablesApi,
-  sharedNames,
-  type SharedName,
-  type SharedVariablesApi,
-} from "@/lib/shared-variables";
+import type { SharedName } from "@/lib/shared-variables";
 
 const SCOPE_LABEL: Record<SharedName["scope"], string> = { org: "org", server: "server", builtin: "built-in" };
-
-// useSharedNames loads the shared names apps on serverId can reference
-// (names and scopes only); empty while loading or when the listing fails.
-// eslint-disable-next-line react-refresh/only-export-components -- hook and its component belong together (brief/test contract)
-export function useSharedNames(serverId?: string, api?: SharedVariablesApi): SharedName[] {
-  const client = useMemo(() => api ?? createSharedVariablesApi(), [api]);
-  const [loaded, setLoaded] = useState<{ serverId: string; names: SharedName[] } | null>(null);
-  useEffect(() => {
-    if (!serverId) return;
-    let live = true;
-    client.listServer(serverId).then(
-      (v) => {
-        if (live) setLoaded({ serverId, names: sharedNames(v) });
-      },
-      () => {
-        if (live) setLoaded({ serverId, names: [] });
-      },
-    );
-    return () => {
-      live = false;
-    };
-  }, [client, serverId]);
-  return loaded && loaded.serverId === serverId ? loaded.names : [];
-}
 
 // SharedVariablesHint is the editor's collapsed, read-only list of shared
 // variables an app can use as ${NAME} — never a value.

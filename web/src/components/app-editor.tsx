@@ -13,7 +13,8 @@ import { IngressEditor } from "@/components/ingress-editor";
 import { EditorSection } from "@/components/editor-section";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
-import { SharedVariablesHint, useSharedNames } from "@/components/shared-variables-hint";
+import { SharedVariablesHint } from "@/components/shared-variables-hint";
+import { useSharedNames } from "@/hooks/use-shared-names";
 import { overrideNote } from "@/lib/shared-variables";
 import { useServers } from "@/context/use-servers";
 import {
@@ -333,6 +334,7 @@ export function AppEditor({ state, onChange }: Props) {
           <div className="divide-y rounded-md border">
             {state.config.variables.map((v) => {
               const isRevealed = revealed[v.id] || !v.is_encrypted;
+              const note = overrideNote(v.name, shared);
               return (
                 <div key={v.id} className="flex items-center gap-1 p-1">
                   <Input
@@ -342,9 +344,7 @@ export function AppEditor({ state, onChange }: Props) {
                     className="h-8 w-32 shrink-0 border-transparent font-mono shadow-none focus-visible:border-input sm:w-56"
                     onChange={(e) => updateVarMeta(v.id, { name: e.target.value })}
                   />
-                  {overrideNote(v.name, shared) ? (
-                    <span className="shrink-0 text-xs text-muted-foreground">{overrideNote(v.name, shared)}</span>
-                  ) : null}
+                  {note ? <span className="shrink-0 text-xs text-muted-foreground">{note}</span> : null}
                   <Input
                     aria-label={`Value of ${v.name || "variable"}`}
                     value={state.variables[v.id] ?? ""}

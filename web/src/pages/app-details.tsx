@@ -1,4 +1,3 @@
-import { StaleVarsBadge } from "@/components/stale-vars-badge";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
@@ -37,6 +36,7 @@ import { LogsView, type LogLine } from "@/components/logs-view";
 import { AppEditorPanel } from "@/components/app-editor-panel";
 import { AppStatusIndicator } from "@/components/app-status-badge";
 import { AppMetricBlocks, AppMetricsTab } from "@/components/app-metrics";
+import { StaleVarsBadge } from "@/components/stale-vars-badge";
 import { useApps } from "@/context/use-apps";
 import { useNotifications } from "@/context/use-notifications";
 import { useServers } from "@/context/use-servers";
@@ -194,7 +194,7 @@ export default function AppDetailsPage() {
         </div>
       </header>
 
-      <StaleVarsBadge appId={app.id} />
+      <StaleVarsBadge key={app.id} appId={app.id} />
 
       <AppMetricBlocks serverId={app.serverId} appId={app.id} />
 

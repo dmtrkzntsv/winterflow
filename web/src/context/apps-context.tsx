@@ -11,8 +11,7 @@ import { useAuth } from "@/context/use-auth";
 import { useServers } from "@/context/use-servers";
 import { useNotifications } from "@/context/use-notifications";
 import { apiBaseUrl } from "@/config";
-import { readApiError } from "@/lib/api";
-import type { VarsReloaded } from "@/lib/shared-variables";
+import { createSharedVariablesApi, type VarsReloaded } from "@/lib/shared-variables";
 import { splitStatus, type AppStatusWire } from "@/lib/app-status";
 
 import {
@@ -283,13 +282,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
   const reloadSharedVars = useCallback(
     async (appId: string) => {
       if (!activeServerId) throw new Error("No active server");
-      const res = await fetch(`${base}/api/v1/shared-variables/reload`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ server_id: activeServerId, app_ids: [appId] }),
-      });
-      if (!res.ok) throw await readApiError(res);
+      await createSharedVariablesApi().reload({ server_id: activeServerId, app_ids: [appId] });
     },
     [activeServerId],
   );

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type RefObject } from "react";
 import { CircleX } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -25,6 +25,7 @@ import {
   type BackupConfig,
   type BackupTargets,
 } from "@/lib/backups";
+import { returnFocusTo } from "@/lib/focus";
 
 // A place is "volume:<key>" or "mount:<service>:<target>".
 const volumePlace = (v: string) => `volume:${v}`;
@@ -34,12 +35,16 @@ const mountPlace = (service: string, target: string) => `mount:${service}:${targ
 // declare. The picker lists the compose file's volumes and each service's
 // mounts (volumes and bind mounts); the paths come after. The backup is
 // added off: its switch picks the storage. taken are the app's backup
-// names. The parent remounts it per opening.
+// names; error is why the last add was refused, kept in view next to the
+// button. A volume is offered once (named, with where it is mounted), not
+// again as each service's mount of it. The parent remounts it per opening.
 export function AddBackupDialog({
   targets,
   taken,
   open,
   busy,
+  error = "",
+  returnFocus,
   onOpenChange,
   onAdd,
 }: {
@@ -47,6 +52,8 @@ export function AddBackupDialog({
   taken: readonly string[];
   open: boolean;
   busy: boolean;
+  error?: string;
+  returnFocus?: RefObject<HTMLElement | null>;
   onOpenChange: (open: boolean) => void;
   onAdd: (entry: BackupConfig) => void;
 }) {
@@ -58,7 +65,15 @@ export function AddBackupDialog({
   const [shown, setShown] = useState(false); // the user tried to add
 
   const volumes = targets?.volumes ?? [];
-  const services = (targets?.services ?? []).filter((s) => s.mounts.length > 0);
+  // A service's mount of a volume the compose file declares is that volume:
+  // the picker names it once, under Volumes.
+  const wholeVolume = (m: { type: string; source: string }) => m.type === "volume" && volumes.includes(m.source);
+  const services = (targets?.services ?? [])
+    .map((s) => ({ ...s, mounts: s.mounts.filter((m) => !wholeVolume(m)) }))
+    .filter((s) => s.mounts.length > 0);
+  const mountedIn = (v: string) =>
+    (targets?.services ?? []).flatMap((s) => s.mounts.filter((m) => m.type === "volume" && m.source === v).map((m) => `${s.name} at ${m.target}`));
+  const nothing = volumes.length === 0 && services.length === 0;
   const [kind, key] = place.split(":");
   const where = kind === "volume" ? "volume" : "service";
   const target = kind === "volume" ? key : (key ?? "");
@@ -86,7 +101,10 @@ export function AddBackupDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg">
+      <DialogContent
+        className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg"
+        onCloseAutoFocus={returnFocusTo(returnFocus)}
+      >
         <form
           className="grid gap-4"
           onSubmit={(e) => {
@@ -146,6 +164,7 @@ export function AddBackupDialog({
                     {volumes.map((v) => (
                       <option key={v} value={volumePlace(v)}>
                         Volume {v}
+                        {mountedIn(v).length > 0 ? ` (in ${mountedIn(v).join(", ")})` : ""}
                       </option>
                     ))}
                   </optgroup>
@@ -162,6 +181,12 @@ export function AddBackupDialog({
               </select>
               {kind === "mount" ? (
                 <p className="text-xs text-muted-foreground">Paths are in the {key} container.</p>
+              ) : null}
+              {nothing ? (
+                <p className="text-xs text-muted-foreground">
+                  This app's compose file has no volumes or bind mounts. A container's own files can't be backed up: add a
+                  volume to the compose file first.
+                </p>
               ) : null}
             </div>
             <div className="grid gap-1.5">
@@ -186,6 +211,11 @@ export function AddBackupDialog({
               </select>
             </div>
           </fieldset>
+          {error ? (
+            <p role="alert" className="flex items-start gap-1.5 text-sm text-destructive [overflow-wrap:anywhere]">
+              <CircleX className="mt-0.5 size-4 shrink-0" /> {error}
+            </p>
+          ) : null}
           {shown && problem ? (
             <p role="alert" className="flex items-start gap-1.5 text-sm text-destructive">
               <CircleX className="mt-0.5 size-4 shrink-0" /> {problem}

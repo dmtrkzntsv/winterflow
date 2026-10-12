@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -58,5 +58,43 @@ describe("AddBackupDialog", () => {
     await user.type(screen.getByLabelText("Name"), "db2");
     expect(screen.getByRole("alert")).toHaveTextContent("Pick where the data is.");
     expect(onAdd).not.toHaveBeenCalled();
+  });
+
+  it("offers each volume once, and says where it is mounted", () => {
+    renderDialog({
+      volumes: ["data", "cache"],
+      services: [
+        {
+          name: "web",
+          mounts: [
+            { type: "volume", source: "data", target: "/data" },
+            { type: "bind", source: "./uploads", target: "/app/uploads" },
+          ],
+        },
+        { name: "worker", mounts: [{ type: "volume", source: "data", target: "/shared" }] },
+      ],
+    });
+    expect(screen.getByRole("option", { name: "Volume data (in web at /data, worker at /shared)" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Volume cache" })).toBeInTheDocument();
+    // The mount of a whole volume is not a second name for it; a bind mount is.
+    expect(screen.queryByRole("option", { name: /\/data \(volume data\)/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Service worker" })).not.toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "/app/uploads (./uploads)" })).toBeInTheDocument();
+    expect(screen.queryByText(/has no volumes or bind mounts/)).not.toBeInTheDocument();
+  });
+
+  it("explains an empty picker", () => {
+    renderDialog({ volumes: [], services: [{ name: "web", mounts: [] }] });
+    expect(screen.getByText(/has no volumes or bind mounts/)).toBeInTheDocument();
+    cleanup();
+    renderDialog(null);
+    expect(screen.getByText(/has no volumes or bind mounts/)).toBeInTheDocument();
+  });
+
+  it("keeps the reason an add was refused next to the button", () => {
+    render(
+      <AddBackupDialog targets={targets} taken={[]} open busy={false} error="backups[1].volume: nope" onOpenChange={() => {}} onAdd={() => {}} />,
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent("backups[1].volume: nope");
   });
 });

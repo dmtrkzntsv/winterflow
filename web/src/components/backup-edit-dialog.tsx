@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useState, type ReactNode, type RefObject } from "react";
 import { CircleX, RotateCcw } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -17,11 +17,14 @@ import {
 import {
   cappedNote,
   changed,
+  compactDuration,
   configOf,
   everyError,
+  humanDuration,
   keepError,
   locationError,
   MANUAL,
+  parseKeepRecent,
   pathsFrom,
   SCHEDULES,
   selectClass,
@@ -29,6 +32,7 @@ import {
   type BackupTargets,
   type EffectiveBackup,
 } from "@/lib/backups";
+import { returnFocusTo } from "@/lib/focus";
 
 // Group is a part of the form that overrides the recipe as a whole.
 type Group = "schedule" | "retention" | "location";
@@ -42,15 +46,18 @@ const GROUP_FIELDS = {
 // BackupEditDialog edits a sqlite or files backup's schedule, retention and
 // location. For a backup of the compose file each part is badged "from
 // template" or "changed", and "Reset to template" drops the change (it
-// takes the template's value when saved). A backup added here can be
-// removed. The parent remounts it per opening; onSave gets the backup's
-// whole new list entry.
+// shows the template's value at once and applies it when saved). A backup
+// added here can be removed. The parent remounts it per opening; onSave gets
+// the backup's whole new list entry; error is why the last save was refused,
+// kept in view next to Save.
 export function BackupEditDialog({
   backup,
   retentionDays,
   targets,
   open,
   busy,
+  error = "",
+  returnFocus,
   onOpenChange,
   onSave,
   onRemove,
@@ -60,13 +67,16 @@ export function BackupEditDialog({
   targets: BackupTargets | null;
   open: boolean;
   busy: boolean;
+  error?: string;
+  returnFocus?: RefObject<HTMLElement | null>;
   onOpenChange: (open: boolean) => void;
   onSave: (entry: BackupConfig) => void;
   onRemove?: () => void;
 }) {
   const b = backup;
   const [every, setEvery] = useState(b.every ?? "1h");
-  const [recent, setRecent] = useState(b.keep?.recent ?? "24h");
+  // 24h0m0s as Go prints it reads "24 hours".
+  const [recent, setRecent] = useState(humanDuration(compactDuration(b.keep?.recent || "24h")));
   const [daily, setDaily] = useState(String(b.keep?.daily ?? 14));
   const [monthly, setMonthly] = useState(String(b.keep?.monthly ?? 6));
   const [where, setWhere] = useState<"volume" | "service">(b.volume ? "volume" : "service");
@@ -76,6 +86,9 @@ export function BackupEditDialog({
   // service (whose paths mean something else): only then are they sent for a
   // backup of the compose file. [] is a choice (the whole volume), never an echo.
   const [pathsEdited, setPathsEdited] = useState(false);
+  // The paths typed for each kind of location, so switching away and back
+  // finds them again.
+  const [pathsByKind, setPathsByKind] = useState<Partial<Record<"volume" | "service", string>>>({});
   const [edited, setEdited] = useState<Set<Group>>(new Set());
   const [reset, setReset] = useState<Set<Group>>(new Set());
 
@@ -87,7 +100,21 @@ export function BackupEditDialog({
       return next;
     });
   };
+  // resetGroup goes back to the compose file's value, shown at once.
   const resetGroup = (g: Group) => {
+    const t = b.template;
+    if (t && g === "schedule" && t.every) setEvery(t.every);
+    if (t && g === "retention" && t.keep) {
+      setRecent(humanDuration(compactDuration(t.keep.recent || "24h")));
+      setDaily(String(t.keep.daily ?? 14));
+      setMonthly(String(t.keep.monthly ?? 6));
+    }
+    if (t && g === "location") {
+      setWhere(t.volume ? "volume" : "service");
+      setTarget(t.volume ?? t.service ?? "");
+      setPathsText(b.type === "sqlite" ? (t.path ?? "") : (t.paths ?? []).join("\n"));
+      setPathsEdited(false);
+    }
     setReset((s) => new Set(s).add(g));
     setEdited((s) => {
       const next = new Set(s);
@@ -97,32 +124,38 @@ export function BackupEditDialog({
   };
   const isChanged = (g: Group) => !reset.has(g) && (edited.has(g) || GROUP_FIELDS[g].some((f) => changed(b, f)));
 
-  const paths = pathsFrom(pathsText);
+  const pathList = pathsFrom(pathsText);
   const problem =
     everyError(every) ||
     keepError(recent, daily, monthly) ||
-    (reset.has("location") ? "" : locationError(b.type, where, target, paths));
-  const keep = { recent: recent.trim() || "24h", daily: Number(daily), monthly: Number(monthly) };
+    (reset.has("location") ? "" : locationError(b.type, where, target, pathList));
+  const keep = { recent: parseKeepRecent(recent) || "24h", daily: Number(daily), monthly: Number(monthly) };
   const note = cappedNote(keep, retentionDays);
 
   const entry = (): BackupConfig => {
     // Fields this form doesn't edit (exclude) keep their override.
     const c = configOf(b);
     for (const g of Object.keys(GROUP_FIELDS) as Group[]) {
-      const sendPaths = g === "location" && (!b.in_recipe || pathsEdited);
-      // A recipe backup keeps its own path override unless the user edited it.
-      const keepPaths = g === "location" && b.in_recipe && isChanged(g) && !pathsEdited;
-      for (const f of GROUP_FIELDS[g]) {
-        if (!(keepPaths && (f === "path" || f === "paths"))) delete c[f];
+      const fields = GROUP_FIELDS[g];
+      if (b.in_recipe && !edited.has(g)) {
+        // Untouched: what is stored stays as it is, never rewritten from the
+        // form; a reset drops the override, so the compose file's value applies.
+        if (reset.has(g)) for (const f of fields) delete c[f];
+        continue;
       }
-      if (b.in_recipe && !isChanged(g)) continue;
+      const [path, paths] = [c.path, c.paths];
+      for (const f of fields) delete c[f];
       if (g === "schedule") c.every = every;
       if (g === "retention") c.keep = keep;
       if (g === "location") {
         c[where] = target;
-        if (sendPaths) {
-          if (b.type === "sqlite") c.path = paths[0];
-          else c.paths = paths;
+        if (!b.in_recipe || pathsEdited) {
+          if (b.type === "sqlite") c.path = pathList[0];
+          else c.paths = pathList;
+        } else {
+          // A recipe backup moved without touching its paths keeps its own.
+          if (path) c.path = path;
+          if (paths) c.paths = paths;
         }
       }
     }
@@ -143,7 +176,7 @@ export function BackupEditDialog({
               </Button>
             </>
           ) : (
-            <Badge variant="outline">{reset.has(g) ? "template's value on save" : "from template"}</Badge>
+            <Badge variant="outline">{reset.has(g) ? "template's value, applied on save" : "from template"}</Badge>
           )}
         </div>
       ) : null}
@@ -153,7 +186,10 @@ export function BackupEditDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg">
+      <DialogContent
+        className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg"
+        onCloseAutoFocus={returnFocusTo(returnFocus)}
+      >
         <form
           className="grid gap-4"
           onSubmit={(e) => {
@@ -235,6 +271,11 @@ export function BackupEditDialog({
                       // Back to the backup's own kind: its own volume or service.
                       const own = next === "volume" ? b.volume : b.service;
                       setTarget(own ?? (next === "volume" ? (targets?.volumes[0] ?? "") : (services[0]?.name ?? "")));
+                      // A volume's paths are relative, a service's absolute: a
+                      // path typed for the other kind means nothing here.
+                      const fits = (p: string) => (next === "service" ? p.startsWith("/") : !p.startsWith("/"));
+                      setPathsByKind((m) => ({ ...m, [where]: pathsText }));
+                      setPathsText(pathsByKind[next] ?? (pathList.every(fits) ? pathsText : ""));
                       setPathsEdited(true);
                       touch("location");
                     }}
@@ -278,15 +319,31 @@ export function BackupEditDialog({
                     }}
                   />
                 </div>
+                {b.type === "files" && (b.exclude ?? []).length > 0 ? (
+                  <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                    Skipped{b.in_recipe && b.from_recipe?.exclude ? " (set by the compose file)" : ""}:{" "}
+                    {(b.exclude ?? []).map((x, i) => (
+                      <span key={x}>
+                        {i > 0 ? ", " : ""}
+                        <code className="font-mono text-foreground">{x}</code>
+                      </span>
+                    ))}
+                  </p>
+                ) : null}
               </>,
             )}
           </fieldset>
+          {error ? (
+            <p role="alert" className="flex items-start gap-1.5 text-sm text-destructive [overflow-wrap:anywhere]">
+              <CircleX className="mt-0.5 size-4 shrink-0" /> {error}
+            </p>
+          ) : null}
           {problem ? (
             <p role="alert" className="flex items-start gap-1.5 text-sm text-destructive">
               <CircleX className="mt-0.5 size-4 shrink-0" /> {problem}
             </p>
           ) : null}
-          <DialogFooter className="gap-2 sm:justify-between">
+          <DialogFooter className="gap-2 sm:justify-between sm:space-x-0">
             {onRemove ? (
               <Button type="button" variant="ghost" className="text-destructive hover:text-destructive" disabled={busy} onClick={onRemove}>
                 Remove backup
@@ -294,7 +351,7 @@ export function BackupEditDialog({
             ) : (
               <span />
             )}
-            <div className="flex gap-2">
+            <div className="flex flex-col-reverse gap-2 sm:flex-row">
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
                 Cancel
               </Button>

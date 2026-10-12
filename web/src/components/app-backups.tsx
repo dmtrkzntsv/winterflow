@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Archive, HardDriveDownload, Pencil, Plus, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 
@@ -12,13 +12,28 @@ import { BackupEditDialog } from "@/components/backup-edit-dialog";
 import { BackupStorageDialog } from "@/components/backup-storage-dialog";
 import { RestorePointsDialog } from "@/components/restore-points-dialog";
 import { useApps } from "@/context/use-apps";
-import { restoringBackup, trackActivity, useActivity, type Activity } from "@/lib/backup-activity";
+import {
+  holdHealth,
+  releaseHealth,
+  restoringBackup,
+  shownHealth,
+  trackActivity,
+  useActivity,
+  useOverlays,
+  type Activity,
+  type Outcome,
+} from "@/lib/backup-activity";
 import { useBackups } from "@/context/use-backups";
 import {
+  AgentError,
   configOf,
   configsWith,
+  errorSummary,
   isBackupsChanged,
+  isRunRefusal,
+  isStaleTab,
   locationLabel,
+  nextCopyNote,
   relativeAge,
   scheduleLabel,
   STATE_LABELS,
@@ -69,6 +84,28 @@ export function AppBackups({ appId }: { appId: string }) {
   const restoring = restoringBackup(activity);
   const [open, setOpen] = useState<Open>(null);
   const [openKey, setOpenKey] = useState(0);
+  // Why the open dialog's last save was refused: it stays in the dialog.
+  const [saveError, setSaveError] = useState("");
+  // The control that opened the dialog: focus goes back to it on close.
+  const opener = useRef<HTMLElement | null>(null);
+  // What the user was just told outranks a health snapshot older than it.
+  const overlays = useOverlays(appId);
+  const [, expire] = useState(0);
+  const reported = backupsByApp?.[appId];
+  // A report that shows an operation's effect (or time running out) ends the
+  // hold for good: later reports are followed as they are.
+  useEffect(() => {
+    const at = Date.now();
+    for (const [name, o] of Object.entries(overlays)) {
+      if (at >= o.until || o.shows((reported ?? []).find((h) => h.name === name))) releaseHealth(appId, name);
+    }
+  }, [appId, overlays, reported]);
+  const nextExpiry = Math.min(Infinity, ...Object.values(overlays).map((o) => o.until));
+  useEffect(() => {
+    if (!Number.isFinite(nextExpiry)) return;
+    const t = setTimeout(() => expire((n) => n + 1), Math.max(0, nextExpiry - Date.now()) + 50);
+    return () => clearTimeout(t);
+  }, [nextExpiry]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -87,7 +124,9 @@ export function AppBackups({ appId }: { appId: string }) {
     void load();
   }, [load]);
 
-  const show = (next: Open) => {
+  const show = (next: Open, trigger?: HTMLElement | null) => {
+    opener.current = trigger ?? null;
+    setSaveError("");
     setOpenKey((k) => k + 1);
     setOpen(next);
   };
@@ -96,18 +135,23 @@ export function AppBackups({ appId }: { appId: string }) {
   // A list that can't be read comes back empty: building an update from it
   // would replace every stored setting with the one change.
   const locked = !!detail?.error;
-  const health = new Map((backupsByApp?.[appId] ?? []).map((h) => [h.name, h]));
+  const snapshot = new Map((backupsByApp?.[appId] ?? []).map((h) => [h.name, h]));
+  const now = Date.now();
+  const healthOf = (name: string) => shownHealth(overlays[name], snapshot.get(name), now);
 
   // save replaces the app's whole list, with name's entry replaced by entry
   // (null: removed; a new name: added). The agent refuses it when the stored
   // list is no longer the one this view loaded (someone saved meanwhile):
   // the tab then reloads instead of undoing their change.
-  const save = async (name: string, entry: BackupConfig | null, done: string) => {
+  const save = async (name: string, entry: BackupConfig | null, done: string, outcome?: Outcome) => {
     if (locked) return;
     const started = open; // the dialog this save belongs to
     setBusy(name);
+    setSaveError("");
     try {
+      const prior = healthOf(name);
       const res = await backups.updateBackups(appId, configsWith(list, name, entry), detail?.base);
+      if (outcome) holdHealth(appId, name, outcome, prior);
       setDetail((d) => (d ? { ...d, list: res.backups, base: res.base || d.base } : d));
       setOpen((cur) => (sameOpen(cur, started) ? null : cur));
       const description = [res.redeployed ? "The app was redeployed." : "", ...res.warnings].filter(Boolean).join("\n");
@@ -115,11 +159,17 @@ export function AppBackups({ appId }: { appId: string }) {
       else toast.success(done, { description: description || undefined });
     } catch (e) {
       const message = e instanceof Error ? e.message : "";
-      if (isBackupsChanged(message)) {
+      if (isBackupsChanged(message) || isStaleTab(message)) {
+        // Someone saved meanwhile, or the compose file changed under this
+        // view: nothing was saved, and the view is stale.
         setOpen(null);
-        toast.error("The backups were changed elsewhere", { description: message });
+        toast.error("The backups were changed elsewhere", {
+          description: isStaleTab(message) ? `${message}. This page was out of date; it was reloaded, so try again.` : message,
+        });
         void load();
       } else {
+        // The toast fades; the dialog keeps the reason next to Save.
+        setSaveError(message || "The backups couldn't be saved.");
         toast.error("Couldn't save the backups", { description: message || undefined });
       }
     } finally {
@@ -129,25 +179,31 @@ export function AppBackups({ appId }: { appId: string }) {
 
   const runNow = async (name: string) => {
     const end = trackActivity(appId, name, "backup");
+    const prior = healthOf(name);
     try {
       const res = await backups.runBackup(appId, name);
+      holdHealth(appId, name, { kind: "backed-up", unchanged: res.unchanged }, prior);
       const title = res.unchanged ? `${name}: nothing changed since the last copy` : `${name} backed up`;
       toast.success(title, { description: res.warnings.join("\n") || undefined });
     } catch (e) {
-      toast.error(`Couldn't back up ${name}`, { description: e instanceof Error ? e.message : undefined });
+      const message = e instanceof Error ? e.message : "";
+      // The run itself failed (not refused before or while another runs):
+      // the row says so now, not when the next report comes.
+      if (e instanceof AgentError && message && !isRunRefusal(message)) holdHealth(appId, name, { kind: "failed", error: message }, prior);
+      toast.error(`Couldn't back up ${name}`, { description: message || undefined });
     } finally {
       end();
     }
   };
 
-  const toggle = (b: EffectiveBackup, on: boolean) => {
+  const toggle = (b: EffectiveBackup, on: boolean, trigger: HTMLElement | null) => {
     if (on) {
-      show({ kind: "enable", name: b.name });
+      show({ kind: "enable", name: b.name }, trigger);
       return;
     }
     const off = configOf(b);
     delete off.enabled;
-    void save(b.name, off, `${b.name} turned off`);
+    void save(b.name, off, `${b.name} turned off`, { kind: "off" });
   };
 
   if (loading && !detail) {
@@ -172,10 +228,14 @@ export function AppBackups({ appId }: { appId: string }) {
   return (
     <div className="max-w-5xl space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <p className="max-w-2xl text-sm text-muted-foreground">
-          The compose file declares what can be backed up; turn a backup on to copy it to one of this server's storages on
-          its schedule.
-        </p>
+        {list.length > 0 ? (
+          <p className="max-w-2xl text-sm text-muted-foreground">
+            The compose file declares what can be backed up; turn a backup on to copy it to one of this server's storages on
+            its schedule.
+          </p>
+        ) : (
+          <span />
+        )}
         <div className="flex items-center gap-2">
           <Button
             size="icon"
@@ -188,7 +248,7 @@ export function AppBackups({ appId }: { appId: string }) {
           >
             <RefreshCw className={cn("size-4", loading && "animate-spin")} />
           </Button>
-          <Button size="sm" onClick={() => show({ kind: "add" })} disabled={busy !== null || !!restoring || locked}>
+          <Button size="sm" onClick={(e) => show({ kind: "add" }, e.currentTarget)} disabled={busy !== null || !!restoring || locked}>
             <Plus className="size-4" /> Add backup
           </Button>
         </div>
@@ -209,8 +269,8 @@ export function AppBackups({ appId }: { appId: string }) {
       ) : null}
       {list.length === 0 && locked ? null : list.length === 0 ? (
         <p className="rounded-lg border border-dashed px-4 py-10 text-center text-sm text-muted-foreground">
-          This app has no backups. Its compose file can declare them under <code className="font-mono">x-winterflow.backups</code>,
-          or add one here.
+          This app has no backups yet. Add one here to copy a database file or folders to one of this server's storages, or declare
+          them in the compose file under <code className="font-mono">x-winterflow.backups</code>.
         </p>
       ) : (
         <Table>
@@ -220,9 +280,9 @@ export function AppBackups({ appId }: { appId: string }) {
                 <span className="sr-only">On</span>
               </TableHead>
               <TableHead>Backup</TableHead>
-              <TableHead className="hidden md:table-cell">Storage</TableHead>
-              <TableHead className="hidden sm:table-cell">Schedule</TableHead>
-              <TableHead>Last backup</TableHead>
+              <TableHead className="hidden md:table-cell md:w-28">Storage</TableHead>
+              <TableHead className="hidden sm:table-cell sm:w-36">Schedule</TableHead>
+              <TableHead className="min-w-40 sm:w-64">Last backup</TableHead>
               <TableHead className="w-px">
                 <span className="sr-only">Actions</span>
               </TableHead>
@@ -233,13 +293,13 @@ export function AppBackups({ appId }: { appId: string }) {
               <BackupRow
                 key={b.name}
                 backup={b}
-                health={health.get(b.name)}
+                health={healthOf(b.name)}
                 busy={busy !== null || !!restoring || locked}
                 activity={activity[b.name]}
-                onToggle={(on) => toggle(b, on)}
+                onToggle={(on, el) => toggle(b, on, el)}
                 onRun={() => void runNow(b.name)}
-                onPoints={() => show({ kind: "points", name: b.name })}
-                onEdit={() => show({ kind: "edit", name: b.name })}
+                onPoints={(el) => show({ kind: "points", name: b.name }, el)}
+                onEdit={(el) => show({ kind: "edit", name: b.name }, el)}
               />
             ))}
           </TableBody>
@@ -252,9 +312,13 @@ export function AppBackups({ appId }: { appId: string }) {
           current={current.storage}
           open
           busy={busy !== null}
+          error={saveError}
+          returnFocus={opener}
           load={backups.serverStorages}
           onOpenChange={(o) => !o && setOpen(null)}
-          onPick={(storage) => void save(current.name, { ...configOf(current), enabled: true, storage }, `${current.name} turned on`)}
+          onPick={(storage) =>
+            void save(current.name, { ...configOf(current), enabled: true, storage }, `${current.name} turned on`, { kind: "on" })
+          }
         />
       ) : null}
       {open?.kind === "edit" && current ? (
@@ -265,6 +329,8 @@ export function AppBackups({ appId }: { appId: string }) {
           targets={detail?.targets ?? null}
           open
           busy={busy !== null}
+          error={saveError}
+          returnFocus={opener}
           onOpenChange={(o) => !o && setOpen(null)}
           onSave={(entry) => void save(current.name, entry, `${current.name} saved`)}
           onRemove={current.in_recipe ? undefined : () => void save(current.name, null, `${current.name} removed`)}
@@ -278,7 +344,8 @@ export function AppBackups({ appId }: { appId: string }) {
           backups={backups}
           open
           busy={busy !== null}
-          running={health.get(current.name)?.state === "running"}
+          running={healthOf(current.name)?.state === "running"}
+          returnFocus={opener}
           onOpenChange={(o) => !o && setOpen(null)}
           onRestored={() => void load()}
         />
@@ -290,6 +357,8 @@ export function AppBackups({ appId }: { appId: string }) {
           taken={list.map((b) => b.name)}
           open
           busy={busy !== null}
+          error={saveError}
+          returnFocus={opener}
           onOpenChange={(o) => !o && setOpen(null)}
           onAdd={(entry) => void save(entry.name, entry, `${entry.name} added`)}
         />
@@ -315,11 +384,12 @@ function BackupRow({
   health: BackupHealth | undefined;
   busy: boolean;
   activity: readonly Activity[] | undefined;
-  onToggle: (on: boolean) => void;
+  onToggle: (on: boolean, trigger: HTMLElement | null) => void;
   onRun: () => void;
-  onPoints: () => void;
-  onEdit: () => void;
+  onPoints: (trigger: HTMLElement) => void;
+  onEdit: (trigger: HTMLElement) => void;
 }) {
+  const switchRef = useRef<HTMLButtonElement>(null);
   const builtin = b.type !== "custom";
   const kinds = activity ?? [];
   const restoringRow = kinds.includes("restore");
@@ -327,10 +397,17 @@ function BackupRow({
   // A run is under way here, or the agent reports one (a page reloaded, or
   // another browser, started it): a second request would be refused.
   const running = kinds.includes("backup") || health?.state === "running";
+  const note = restoringRow || running || !builtin ? "" : nextCopyNote(b, state, health?.last_success);
   return (
     <TableRow>
       <TableCell>
-        <Switch checked={b.enabled} disabled={busy} aria-label={`Back up ${b.name}`} onCheckedChange={onToggle} />
+        <Switch
+          ref={switchRef}
+          checked={b.enabled}
+          disabled={busy}
+          aria-label={`Back up ${b.name}`}
+          onCheckedChange={(on) => onToggle(on, switchRef.current)}
+        />
       </TableCell>
       <TableCell>
         <div className="flex flex-wrap items-center gap-2">
@@ -340,20 +417,23 @@ function BackupRow({
         </div>
         <div className="mt-0.5 text-xs text-muted-foreground [overflow-wrap:anywhere]">{locationLabel(b)}</div>
       </TableCell>
-      <TableCell className="hidden md:table-cell">{b.storage || <span className="text-muted-foreground">—</span>}</TableCell>
+      <TableCell className="hidden md:table-cell md:w-28">{b.storage || <span className="text-muted-foreground">—</span>}</TableCell>
       <TableCell className="hidden sm:table-cell">{builtin ? scheduleLabel(b.every) : "Its own tool"}</TableCell>
       <TableCell>
         <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="outline" className={STATE_STYLE[restoringRow ? "running" : state]} title={health?.last_error}>
+          <Badge
+            variant="outline"
+            className={cn("min-w-[4.5rem] justify-center", STATE_STYLE[restoringRow ? "running" : state])}
+            title={health?.last_error}
+          >
             {restoringRow ? "Restoring" : STATE_LABELS[state]}
           </Badge>
           {health?.last_success ? (
             <span className="text-xs text-muted-foreground">last backup {relativeAge(health.last_success)}</span>
           ) : null}
         </div>
-        {state === "failing" && health?.last_error ? (
-          <div className="mt-1 text-xs text-destructive [overflow-wrap:anywhere]">{health.last_error}</div>
-        ) : null}
+        {state === "failing" && health?.last_error ? <RowError error={health.last_error} /> : null}
+        {note ? <div className="mt-1 text-xs text-muted-foreground">{note}</div> : null}
       </TableCell>
       <TableCell className="whitespace-nowrap py-0.5 text-right">
         {builtin ? (
@@ -376,7 +456,7 @@ function BackupRow({
               aria-label={`Copies of ${b.name}`}
               title={b.storage ? "Copies (restore, delete)" : "Turn the backup on to see its copies: they are stored in its storage"}
               disabled={!b.storage}
-              onClick={onPoints}
+              onClick={(e) => onPoints(e.currentTarget)}
             >
               <Archive className="size-4" />
             </Button>
@@ -387,7 +467,7 @@ function BackupRow({
               aria-label={`Edit ${b.name}`}
               title="Edit"
               disabled={busy}
-              onClick={onEdit}
+              onClick={(e) => onEdit(e.currentTarget)}
             >
               <Pencil className="size-4" />
             </Button>
@@ -395,5 +475,23 @@ function BackupRow({
         ) : null}
       </TableCell>
     </TableRow>
+  );
+}
+
+// RowError is a failing backup's error in a line, with the agent's full text
+// (paths, temporary names) one click away.
+function RowError({ error }: { error: string }) {
+  const summary = errorSummary(error);
+  const more = summary !== error.trim();
+  return (
+    <div className="mt-1 text-xs text-destructive [overflow-wrap:anywhere]">
+      <span>{summary}</span>
+      {more ? (
+        <details className="mt-0.5">
+          <summary className="w-fit cursor-pointer text-muted-foreground hover:text-foreground">Details</summary>
+          <p className="mt-1 whitespace-pre-wrap">{error}</p>
+        </details>
+      ) : null}
+    </div>
   );
 }

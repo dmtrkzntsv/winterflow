@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type RefObject } from "react";
 import { Link } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { selectClass } from "@/lib/backups";
+import { returnFocusTo } from "@/lib/focus";
 
 // BackupStorageDialog turns a backup on: it picks one of the server's
 // storages (load lists their names), or points to Settings → Storages when
@@ -22,6 +23,8 @@ export function BackupStorageDialog({
   current,
   open,
   busy = false,
+  error: saveError = "",
+  returnFocus,
   load,
   onOpenChange,
   onPick,
@@ -30,6 +33,8 @@ export function BackupStorageDialog({
   current: string;
   open: boolean;
   busy?: boolean; // the backup is being turned on
+  error?: string; // why the last attempt to turn it on was refused
+  returnFocus?: RefObject<HTMLElement | null>; // where focus goes back on close
   load: () => Promise<string[]>;
   onOpenChange: (open: boolean) => void;
   onPick: (storage: string) => void;
@@ -56,7 +61,7 @@ export function BackupStorageDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md" onCloseAutoFocus={returnFocusTo(returnFocus)}>
         <DialogHeader>
           <DialogTitle>Turn on {backup}</DialogTitle>
           <DialogDescription>Pick the storage its copies go to.</DialogDescription>
@@ -89,6 +94,11 @@ export function BackupStorageDialog({
             </select>
           </div>
         )}
+        {saveError ? (
+          <p role="alert" className="text-sm text-destructive [overflow-wrap:anywhere]">
+            {saveError}
+          </p>
+        ) : null}
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel

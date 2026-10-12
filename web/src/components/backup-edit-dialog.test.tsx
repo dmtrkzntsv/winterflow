@@ -21,9 +21,10 @@ const database: EffectiveBackup = {
   path: "app.db",
   in_recipe: true,
   from_recipe: { ...all, every: false },
+  template: { every: "1h", keep: { recent: "24h0m0s", daily: 14, monthly: 6 }, volume: "data", path: "app.db" },
 };
 
-function renderDialog(backup: EffectiveBackup, opts: { days?: number; onRemove?: () => void } = {}) {
+function renderDialog(backup: EffectiveBackup, opts: { days?: number; error?: string; onRemove?: () => void } = {}) {
   const onSave = vi.fn();
   render(
     <BackupEditDialog
@@ -32,6 +33,7 @@ function renderDialog(backup: EffectiveBackup, opts: { days?: number; onRemove?:
       targets={targets}
       open
       busy={false}
+      error={opts.error}
       onOpenChange={() => {}}
       onSave={onSave}
       onRemove={opts.onRemove}
@@ -48,9 +50,105 @@ describe("BackupEditDialog", () => {
     expect(screen.getByText("changed")).toBeInTheDocument(); // schedule
     expect(screen.getByLabelText("Schedule")).toHaveValue("15m");
     await user.click(screen.getByRole("button", { name: /Reset to template/ }));
-    expect(screen.getByText("template's value on save")).toBeInTheDocument();
+    expect(screen.getByText("template's value, applied on save")).toBeInTheDocument();
+    // The template's value is shown at once, not the overridden one.
+    expect(screen.getByLabelText("Schedule")).toHaveValue("1h");
     await user.click(screen.getByRole("button", { name: "Save" }));
     expect(onSave).toHaveBeenCalledWith({ name: "database", enabled: true, storage: "disk" });
+  });
+
+  it("shows the template's retention and location when they are reset", async () => {
+    const user = userEvent.setup({ delay: null });
+    const changedAll: EffectiveBackup = {
+      ...database,
+      from_recipe: { every: true },
+      keep: { recent: "72h0m0s", daily: 3, monthly: 0 },
+      volume: "media",
+      path: "other.db",
+    };
+    const onSave = renderDialog(changedAll);
+    expect(screen.getByLabelText("Every copy for")).toHaveValue("3 days");
+    const resets = screen.getAllByRole("button", { name: /Reset to template/ });
+    expect(resets).toHaveLength(2);
+    await user.click(resets[0]);
+    expect(screen.getByLabelText("Every copy for")).toHaveValue("24 hours");
+    expect(screen.getByLabelText("Daily copies")).toHaveValue("14");
+    expect(screen.getByLabelText("Monthly copies")).toHaveValue("6");
+    await user.click(screen.getByRole("button", { name: /Reset to template/ }));
+    expect(screen.getByLabelText("Volume")).toHaveValue("data");
+    expect(screen.getByLabelText(/Database file/)).toHaveValue("app.db");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(onSave).toHaveBeenCalledWith({ name: "database", enabled: true, storage: "disk" });
+
+    // A service-addressed template with paths.
+    cleanup();
+    const files: EffectiveBackup = {
+      ...database,
+      type: "files",
+      path: undefined,
+      volume: "media",
+      paths: ["x/"],
+      from_recipe: { ...all, volume: false, paths: false },
+      template: { service: "web", paths: ["/a", "/b"] },
+    };
+    renderDialog(files);
+    await user.click(screen.getByRole("button", { name: /Reset to template/ }));
+    expect(screen.getByLabelText("Service")).toHaveValue("web");
+    expect(screen.getByLabelText(/Paths, one per line/)).toHaveValue("/a\n/b");
+  });
+
+  it("shows retention in words and never writes an unchanged value back", async () => {
+    const user = userEvent.setup({ delay: null });
+    // A stored override the user does not touch is saved as it was, in the short form.
+    const stored: EffectiveBackup = { ...database, from_recipe: { ...all, keep: false }, keep: { recent: "168h0m0s", daily: 3, monthly: 0 } };
+    const onSave = renderDialog(stored);
+    expect(screen.getByLabelText("Every copy for")).toHaveValue("7 days");
+    await user.selectOptions(screen.getByLabelText("Schedule"), "6h");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(onSave).toHaveBeenCalledWith({
+      name: "database",
+      enabled: true,
+      storage: "disk",
+      every: "6h",
+      keep: { recent: "168h", daily: 3, monthly: 0 },
+    });
+    cleanup();
+
+    // Typing words is understood and saved as a Go duration.
+    const typed = renderDialog({ ...database, from_recipe: all });
+    const recent = screen.getByLabelText("Every copy for");
+    await user.clear(recent);
+    await user.type(recent, "2 days");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(typed).toHaveBeenCalledWith({
+      name: "database",
+      enabled: true,
+      storage: "disk",
+      keep: { recent: "48h", daily: 14, monthly: 6 },
+    });
+    cleanup();
+    renderDialog({ ...database, from_recipe: all });
+    await user.type(screen.getByLabelText("Every copy for"), "x");
+    expect(screen.getByRole("alert")).toHaveTextContent("a duration like 24 hours, 7 days or 72h");
+  });
+
+  it("shows why a save was refused in the dialog, and the compose file's exclusions", () => {
+    renderDialog({ ...database, type: "files", exclude: ["*.tmp", "cache/"], paths: ["m/"], path: undefined, from_recipe: all }, { error: "service web: /tmp/stuff is not on a mount" });
+    expect(screen.getByText("service web: /tmp/stuff is not on a mount").closest("[role=alert]")).toBeInTheDocument();
+    expect(screen.getByText(/Skipped \(set by the compose file\)/)).toHaveTextContent("*.tmp, cache/");
+  });
+
+  it("clears a path that fits the other kind of location and finds it again", async () => {
+    const user = userEvent.setup({ delay: null });
+    renderDialog({ ...database, from_recipe: all });
+    await user.selectOptions(screen.getByLabelText("Location kind"), "service");
+    expect(screen.getByLabelText(/Database file/)).toHaveValue("");
+    expect(screen.queryByText(/use an absolute path/)).not.toBeInTheDocument();
+    await user.type(screen.getByLabelText(/Database file/), "/data/app.db");
+    await user.selectOptions(screen.getByLabelText("Location kind"), "volume");
+    expect(screen.getByLabelText(/Database file/)).toHaveValue("app.db");
+    await user.selectOptions(screen.getByLabelText("Location kind"), "service");
+    expect(screen.getByLabelText(/Database file/)).toHaveValue("/data/app.db");
   });
 
   it("saves what the user changed as an override", async () => {
@@ -67,7 +165,7 @@ describe("BackupEditDialog", () => {
       enabled: true,
       storage: "disk",
       every: "manual",
-      keep: { recent: "24h0m0s", daily: 30, monthly: 6 },
+      keep: { recent: "24h", daily: 30, monthly: 6 },
     });
   });
 
@@ -151,7 +249,7 @@ describe("BackupEditDialog", () => {
       type: "files",
       exclude: ["*.tmp"],
       every: "6h",
-      keep: { recent: "24h0m0s", daily: 14, monthly: 6 },
+      keep: { recent: "24h", daily: 14, monthly: 6 },
       volume: "media",
       paths: [],
     });

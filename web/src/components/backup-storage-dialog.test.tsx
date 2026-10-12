@@ -51,4 +51,13 @@ describe("BackupStorageDialog", () => {
     renderDialog(() => Promise.reject(new Error("server offline")));
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("server offline"));
   });
+
+  it("keeps the reason the backup could not be turned on in the dialog", async () => {
+    render(
+      <MemoryRouter>
+        <BackupStorageDialog backup="database" current="disk" open error="storage disk is gone" load={async () => ["disk"]} onOpenChange={() => {}} onPick={() => {}} />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent("storage disk is gone");
+  });
 });

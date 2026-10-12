@@ -17,11 +17,13 @@ type SourceRefresher interface {
 const sourcePollTick = 30 * time.Second
 
 // RunSourcePoller drives auto-update for git-sourced apps until ctx is done.
-func RunSourcePoller(ctx context.Context, orch SourceRefresher, log *logger.Logger) {
-	runSourcePoller(ctx, orch, sourcePollTick, log)
+// reload (may be nil) runs after a tick that updated apps: the upstream may
+// have changed an app's backup recipe, so the backup plan is reread.
+func RunSourcePoller(ctx context.Context, orch SourceRefresher, reload func(), log *logger.Logger) {
+	runSourcePoller(ctx, orch, reload, sourcePollTick, log)
 }
 
-func runSourcePoller(ctx context.Context, orch SourceRefresher, tick time.Duration, log *logger.Logger) {
+func runSourcePoller(ctx context.Context, orch SourceRefresher, reload func(), tick time.Duration, log *logger.Logger) {
 	ticker := time.NewTicker(tick)
 	defer ticker.Stop()
 	for {
@@ -31,6 +33,9 @@ func runSourcePoller(ctx context.Context, orch SourceRefresher, tick time.Durati
 		case <-ticker.C:
 			if updated := orch.RefreshDueSources(ctx); len(updated) > 0 {
 				log.Info("auto-updated git-sourced apps", "apps", updated)
+				if reload != nil {
+					reload()
+				}
 			}
 		}
 	}

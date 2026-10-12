@@ -25,9 +25,11 @@ type Deps struct {
 	AppDomainRepository port.AppDomainRepository
 	// ServerDomainRepository indexes each server's domain registrations.
 	ServerDomainRepository port.ServerDomainRepository
-	CommandDispatcher      port.CommandDispatcher
-	NotificationManager    port.NotificationManager
-	StatusCache            *status.Cache
+	// ServerStorageRepository indexes each server's storages (no secrets).
+	ServerStorageRepository port.ServerStorageRepository
+	CommandDispatcher       port.CommandDispatcher
+	NotificationManager     port.NotificationManager
+	StatusCache             *status.Cache
 	// MetricRepository serves the monitoring charts; LatestMetrics holds
 	// each server's newest host sample for the dashboard.
 	MetricRepository port.MetricRepository

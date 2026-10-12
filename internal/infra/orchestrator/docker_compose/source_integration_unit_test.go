@@ -3,9 +3,13 @@ package dockercompose
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -83,31 +87,47 @@ func TestComposeFileResolution(t *testing.T) {
 	r := newTestRepo(t)
 	dir := filepath.Join(r.cfg.GetAppsDataDir(), "app-x")
 	_ = os.MkdirAll(filepath.Join(dir, "source", "deploy"), 0o755)
+	one := func(f string) []string { return []string{f} }
 
 	// compose_path explicitly set.
 	writeFileT(t, dir, "source/deploy/stack.yml", "x")
-	if got := r.composeFile(dir, &sourceSpec{ComposePath: "deploy/stack.yml"}); got != filepath.Join("source", "deploy", "stack.yml") {
+	if got := r.composeFiles(dir, &sourceSpec{ComposePath: "deploy/stack.yml"}); !reflect.DeepEqual(got, one(filepath.Join("source", "deploy", "stack.yml"))) {
 		t.Fatalf("compose_path resolution = %q", got)
 	}
 	// Repo-root compose.yml auto-detected.
 	writeFileT(t, dir, "source/compose.yml", "x")
-	if got := r.composeFile(dir, &sourceSpec{}); got != filepath.Join("source", "compose.yml") {
+	if got := r.composeFiles(dir, &sourceSpec{}); !reflect.DeepEqual(got, one(filepath.Join("source", "compose.yml"))) {
 		t.Fatalf("root compose.yml resolution = %q", got)
 	}
 	// docker-compose.yml fallback.
 	_ = os.Remove(filepath.Join(dir, "source", "compose.yml"))
 	writeFileT(t, dir, "source/docker-compose.yml", "x")
-	if got := r.composeFile(dir, &sourceSpec{}); got != filepath.Join("source", "docker-compose.yml") {
+	if got := r.composeFiles(dir, &sourceSpec{}); !reflect.DeepEqual(got, one(filepath.Join("source", "docker-compose.yml"))) {
 		t.Fatalf("docker-compose.yml resolution = %q", got)
 	}
-	// Nothing in the repo: fall back to the winterflow-authored root file.
+	// Nothing in the repo: the winterflow-authored file in the app folder.
 	_ = os.Remove(filepath.Join(dir, "source", "docker-compose.yml"))
-	if got := r.composeFile(dir, &sourceSpec{}); got != "" {
-		t.Fatalf("fallback should use auto-detect in app dir, got %q", got)
+	if got := r.composeFiles(dir, &sourceSpec{}); got != nil {
+		t.Fatalf("no compose file anywhere = %q", got)
 	}
-	// Non-source apps never get -f.
-	if got := r.composeFile(dir, nil); got != "" {
+	writeFileT(t, dir, "compose.yaml", "x")
+	if got := r.composeFiles(dir, &sourceSpec{}); !reflect.DeepEqual(got, one("compose.yaml")) {
+		t.Fatalf("fallback to the app folder = %q", got)
+	}
+	// An invalid compose_path falls back to the app folder too.
+	if got := r.composeFiles(dir, &sourceSpec{ComposePath: "../etc/x.yml"}); !reflect.DeepEqual(got, one("compose.yaml")) {
+		t.Fatalf("invalid compose_path = %q", got)
+	}
+	// Non-source apps name their file explicitly now, plus an override.
+	writeFileT(t, dir, "compose.override.yml", "x")
+	if got := r.composeFiles(dir, nil); !reflect.DeepEqual(got, []string{"compose.yaml", "compose.override.yml"}) {
 		t.Fatalf("non-source app resolution = %q", got)
+	}
+	// A folder named like a compose file is not one.
+	_ = os.Remove(filepath.Join(dir, "compose.yaml"))
+	_ = os.MkdirAll(filepath.Join(dir, "compose.yaml"), 0o755)
+	if got := r.composeFiles(dir, nil); got != nil {
+		t.Fatalf("a folder counted as a compose file: %q", got)
 	}
 }
 
@@ -116,11 +136,15 @@ func TestComposeArgsAlwaysIncludeEnvFile(t *testing.T) {
 	savedApp(t, r, "app-1", "demo", "x\n")
 
 	args := strings.Join(r.composeArgs("app-1", "up"), " ")
-	if !strings.Contains(args, "--env-file .env") {
-		t.Fatalf(".env must always be explicit now: %s", args)
+	if args != "compose --project-name wf-app-1 -f compose.yml --env-file .env up" {
+		t.Fatalf("args = %s", args)
 	}
-	if strings.Contains(args, ".env.secrets") {
-		t.Fatalf("no secrets -> no secrets env file: %s", args)
+	dir := r.appDataDir("app-1")
+	writeFileT(t, dir, envSecretsRel, "")
+	writeFileT(t, dir, storageEnvRel, "")
+	args = strings.Join(r.composeArgs("app-1", "up"), " ")
+	if !strings.HasSuffix(args, "-f compose.yml --env-file .env --env-file .winterflow/storage.env --env-file .env.secrets up") {
+		t.Fatalf("env files in order: %s", args)
 	}
 }
 
@@ -277,5 +301,123 @@ func TestRefreshDueSourcesHonorsIntervalAndFlag(t *testing.T) {
 	upHead, _ := gitLog(up)
 	if lock.SHA != upHead[0].Hash {
 		t.Fatalf("lock not advanced: %s vs %s", lock.SHA, upHead[0].Hash)
+	}
+}
+
+// The upstream sync of a save (a clone or fetch that can take minutes) does
+// not hold the app's lock: the other writers of the app's files (backup
+// settings, a rename) are not kept waiting for it. A refused sync of a new
+// app leaves no folder behind.
+func TestSaveSyncsTheSourceWithoutHoldingTheAppLock(t *testing.T) {
+	r := newTestRepo(t)
+	entered, release := make(chan struct{}, 8), make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		entered <- struct{}{}
+		<-release
+		http.Error(w, "gone", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	var once sync.Once
+	releaseAll := func() { once.Do(func() { close(release) }) }
+	defer releaseAll()
+
+	errc := make(chan error, 1)
+	go func() {
+		_, err := r.saveWithoutDeploy(sourcePayload(srv.URL+"/up.git", ""))
+		errc <- err
+	}()
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the save never reached the upstream")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	unlock, err := r.lockApp(ctx, "git-app")
+	if err != nil {
+		t.Fatalf("the app's lock is held across the sync: %v", err)
+	}
+	unlock()
+	// The source's own lock is.
+	sctx, scancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer scancel()
+	if _, err := r.lockSource(sctx, "git-app"); err == nil {
+		t.Fatal("two operations on source/ at once")
+	}
+	releaseAll()
+	if err := <-errc; err == nil || !strings.Contains(err.Error(), "sync source") {
+		t.Fatalf("save err = %v", err)
+	}
+	if _, err := os.Stat(r.appDataDir("git-app")); !os.IsNotExist(err) {
+		t.Fatalf("a refused save of a new app left its folder: %v", err)
+	}
+}
+
+// A source poll's commit stages everything, so it is made under the app's
+// lock: with a writer between its files and its commit, the poll must not
+// commit them under its own message.
+func TestSourcePollCommitWaitsForTheAppLock(t *testing.T) {
+	r := newTestRepo(t)
+	up, commit := newUpstream(t)
+	commit("compose.yml", "services: {}\n")
+	if _, err := r.saveWithoutDeploy(sourcePayload(up, "")); err != nil {
+		t.Fatal(err)
+	}
+	dir := r.appDataDir("git-app")
+	c2 := commit("marker.txt", "v2\n")
+
+	unlock, err := r.lockApp(context.Background(), "git-app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFileT(t, dir, "half-written.txt", "a writer's files\n") // not committed yet
+	type result struct {
+		changed bool
+		err     error
+	}
+	done := make(chan result, 1)
+	go func() {
+		changed, _, err := r.refreshSourceWithoutDeploy("git-app")
+		done <- result{changed, err}
+	}()
+	// The poll has synced the upstream (source.lock moved) and waits.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if lock, _ := readSourceLock(dir); lock.SHA == c2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the poll never synced the upstream")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	select {
+	case res := <-done:
+		t.Fatalf("the poll committed while a writer held the app's lock: %+v", res)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if _, err := gitCommitAll(dir, "writer commit"); err != nil {
+		t.Fatal(err)
+	}
+	unlock()
+	select {
+	case res := <-done:
+		if res.err != nil || !res.changed {
+			t.Fatalf("poll = %+v", res)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the poll never committed")
+	}
+	log, err := gitLog(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range log {
+		if strings.HasPrefix(c.Subject, "update source") {
+			t.Fatalf("the poll's commit took in the writer's files: %v", log)
+		}
+	}
+	if log[0].Subject != "writer commit" {
+		t.Fatalf("log = %v", log)
 	}
 }

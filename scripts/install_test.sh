@@ -154,6 +154,8 @@ assert_contains "unit: no new privileges" "$out" "NoNewPrivileges=true"
 assert_contains "unit: bind 80/443 capability" "$out" "AmbientCapabilities=CAP_NET_BIND_SERVICE"
 assert_contains "unit: data dir writable" "$out" "ReadWritePaths=/var/lib/winterflow"
 assert_contains "unit: docker socket writable" "$out" "ReadWritePaths=-/run/docker.sock"
+assert_contains "unit: /mnt writable for local storages" "$out" "ReadWritePaths=-/mnt"
+assert_contains "unit: /media writable for local storages" "$out" "ReadWritePaths=-/media"
 assert_not_contains "unit: never runs as root" "$out" "User=root"
 
 # --- Dry run defaults ---------------------------------------------------------

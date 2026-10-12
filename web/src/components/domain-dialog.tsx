@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type RefObject } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { Docker, DomainCreated } from "@/context/use-docker";
+import { returnFocusTo } from "@/lib/focus";
 import { domainNameError, TLS_MODES, type Domain, type DomainTLS } from "@/lib/domains";
 import { cn } from "@/lib/utils";
 
@@ -26,17 +27,20 @@ const MODES = Object.keys(TLS_MODES) as DomainTLS[];
 // certificate of an existing one — the agent replaces a name on create. The
 // parent remounts it (key) per opening, so state starts from replace. It
 // reports a failure itself; onSaved gets the stored registration and the
-// proxy's warnings.
+// proxy's warnings. returnFocus is where focus goes back to on close (the
+// dialog has no trigger of its own).
 export function DomainDialog({
   docker,
   open,
   replace,
+  returnFocus,
   onOpenChange,
   onSaved,
 }: {
   docker: Docker;
   open: boolean;
   replace: Domain | null;
+  returnFocus?: RefObject<HTMLElement | null>;
   onOpenChange: (open: boolean) => void;
   onSaved: (created: DomainCreated) => void;
 }) {
@@ -87,7 +91,10 @@ export function DomainDialog({
   return (
     <Dialog open={open} onOpenChange={changeOpen}>
       {/* Certificate mode is taller than a phone screen: scroll inside. */}
-      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl">
+      <DialogContent
+        className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl"
+        onCloseAutoFocus={returnFocusTo(returnFocus)}
+      >
         <form
           className="grid gap-4"
           onSubmit={(e) => {

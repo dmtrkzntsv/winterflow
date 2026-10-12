@@ -105,6 +105,14 @@ type ServerRegistration struct {
 	CreatedAt            types.DateTime
 }
 
+type ServerStorage struct {
+	ServerID  string
+	Name      string
+	Type      string
+	Location  string
+	UpdatedAt types.DateTime
+}
+
 type User struct {
 	UserID    string
 	Name      string

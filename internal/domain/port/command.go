@@ -2,6 +2,8 @@ package port
 
 import (
 	"context"
+	"time"
+
 	"winterflow/internal/domain/command"
 )
 
@@ -27,6 +29,11 @@ type DispatchInput struct {
 	// delivery). Use it for side effects like persisting the confirmed entity
 	// to the DB. It must be quick and non-blocking; it does not affect routing.
 	OnResult func(CommandResult)
+
+	// Wait is how long the result is awaited (0: the dispatcher's default):
+	// longer for a command whose result comes when long work ends
+	// (backup.run).
+	Wait time.Duration
 }
 
 // CommandResult is the outcome of a dispatched command, passed to OnResult.

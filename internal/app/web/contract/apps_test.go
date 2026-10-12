@@ -101,7 +101,7 @@ func TestAppLifecycle(t *testing.T) {
 	t.Run("agent reads", func(t *testing.T) {
 		var got command.GetAppResponse
 		owner.succeed(t, call{Method: http.MethodGet, Path: "/api/v1/app/get-app", Query: q}, &got)
-		if got.App.AppID != appID {
+		if got.App.AppID != appID || got.BackupsBase != "base-0" {
 			t.Fatalf("get-app = %+v", got)
 		}
 		owner.succeed(t, call{Method: http.MethodGet, Path: "/api/v1/app/get-revisions", Query: q}, nil)

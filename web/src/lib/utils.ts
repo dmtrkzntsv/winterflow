@@ -15,3 +15,19 @@ export function formatBytes(value: string | number | undefined): string {
   if (gb >= 1024) return `${(gb / 1024).toFixed(1)} TB`
   return `${gb.toFixed(1)} GB`
 }
+
+const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" })
+
+// relativeTime renders "5 minutes ago"-style labels (now in ms), falling back
+// to the date once the time is more than a week away.
+export function relativeTime(d: Date, now: number = Date.now()): string {
+  let secs = Math.round((d.getTime() - now) / 1000)
+  // A server clock slightly ahead of the browser's must not read "in 5 seconds".
+  if (secs > 0 && secs < 60) secs = 0
+  const abs = Math.abs(secs)
+  if (abs < 60) return rtf.format(secs, "second")
+  if (abs < 3600) return rtf.format(Math.round(secs / 60), "minute")
+  if (abs < 86400) return rtf.format(Math.round(secs / 3600), "hour")
+  if (abs < 7 * 86400) return rtf.format(Math.round(secs / 86400), "day")
+  return d.toLocaleDateString()
+}

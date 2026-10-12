@@ -185,3 +185,45 @@ func TestGitRestoreUnknownHashErrors(t *testing.T) {
 		t.Fatal("expected error for unknown hash")
 	}
 }
+
+// The derived artifacts never enter an app's history, whatever its
+// .gitignore says (a rollback can restore one that lists none of them).
+func TestGitCommitAllExcludesDerivedArtifacts(t *testing.T) {
+	dir := t.TempDir()
+	if err := gitEnsure(dir); err != nil {
+		t.Fatal(err)
+	}
+	writeFileT(t, dir, "compose.yml", "services: {}\n")
+	for _, rel := range derivedArtifacts {
+		writeFileT(t, dir, rel, "derived\n")
+	}
+	if _, err := gitCommitAll(dir, "no gitignore"); err != nil {
+		t.Fatal(err)
+	}
+	if !tracked(t, dir, "compose.yml") {
+		t.Fatal("compose.yml was not committed")
+	}
+	for _, rel := range derivedArtifacts {
+		if tracked(t, dir, rel) {
+			t.Errorf("%s was committed", rel)
+		}
+	}
+}
+
+// The temp file of an atomic write a crash left in .winterflow/ is never
+// committed; a .tmp file of the app's own is.
+func TestGitCommitAllExcludesAtomicWriteLeftovers(t *testing.T) {
+	dir := t.TempDir()
+	if err := gitEnsure(dir); err != nil {
+		t.Fatal(err)
+	}
+	writeFileT(t, dir, ".winterflow/config.json", "{}\n")
+	writeFileT(t, dir, ".winterflow/config.json.tmp", "{\"half\n")
+	writeFileT(t, dir, "data/cache.tmp", "the app's\n")
+	if _, err := gitCommitAll(dir, "crashed write"); err != nil {
+		t.Fatal(err)
+	}
+	if tracked(t, dir, ".winterflow/config.json.tmp") || !tracked(t, dir, ".winterflow/config.json") || !tracked(t, dir, "data/cache.tmp") {
+		t.Fatal("wrong files committed")
+	}
+}

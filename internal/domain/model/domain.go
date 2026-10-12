@@ -1,15 +1,14 @@
 package model
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 	"time"
 )
 
 // ErrDomainNotCovered marks a save whose ingress names a hostname no domain
-// registered on the target server covers; the HTTP layer maps it to 400.
-var ErrDomainNotCovered = errors.New("domain not covered")
+// registered on the target server covers. It matches ErrRejected.
+var ErrDomainNotCovered = rejected("domain not covered")
 
 // DomainTLS is how TLS works for hostnames under a registration.
 type DomainTLS string

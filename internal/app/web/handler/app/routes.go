@@ -95,13 +95,51 @@ func (h *Handler) Routes(api.Guards) []api.Route {
 		},
 		{
 			Method: http.MethodPost, Path: "/api/v1/app/delete-app", Handler: h.DeleteApp, Auth: api.User,
-			Summary: "Delete an app (optionally its volumes)", Tag: "apps",
+			Summary: "Delete an app (optionally its volumes and its backups)", Tag: "apps",
+			Description: "Without `delete_backups` the app's backups are kept, marked as a deleted app's: the agent's daily sweep " +
+				"deletes them once older than its BACKUP_RETENTION_DAYS.",
 			Request: DeleteAppRequest{}, Accepted: true, Result: command.DeleteAppResponse{}, Errors: server,
 		},
 		{
 			Method: http.MethodPost, Path: "/api/v1/app/rename-app", Handler: h.RenameApp, Auth: api.User,
 			Summary: "Rename an app", Tag: "apps",
 			Request: RenameAppRequest{}, Accepted: true, Result: command.RenameAppResponse{}, Errors: server,
+		},
+		{
+			Method: http.MethodPost, Path: "/api/v1/app/update-backups", Handler: h.UpdateBackups, Auth: api.User,
+			Summary: "Replace an app's backups list (new revision; redeploys only when profiles or storage variables change)", Tag: "backups",
+			Description: "`backups` is the whole list of the app's backup settings: entries named like a backup of the compose file's " +
+				"`x-winterflow.backups` override it (only the fields that differ, never `type`); other entries are backups added here " +
+				"and carry `type` and every field it needs. `enabled: true` needs `storage`, a storage on the server. " +
+				"`backups` is required: `[]` means no overrides, an absent or null list is a 400.",
+			Request: UpdateBackupsRequest{}, Accepted: true, Result: command.UpdateBackupsResponse{}, Errors: server,
+		},
+		{
+			Method: http.MethodGet, Path: "/api/v1/app/list-restore-points", Handler: h.ListRestorePoints, Auth: api.User,
+			Summary: "List a backup's restore points, newest first (30s deadline)", Tag: "backups",
+			Query: RestorePointsQuery{}, Accepted: true, Result: command.ListRestorePointsResponse{}, Errors: server,
+		},
+		{
+			Method: http.MethodPost, Path: "/api/v1/app/run-backup", Handler: h.RunBackup, Auth: api.User,
+			Summary: "Back up now (refused while the same backup is queued or running)", Tag: "backups",
+			Description: "The result arrives when the run ends, which can take up to 30 minutes after it starts. A second request while the same backup is queued or running fails at once (its result is an error).",
+			Request:     RunBackupRequest{}, Accepted: true, Result: command.RunBackupResponse{}, Errors: server,
+		},
+		{
+			Method: http.MethodPost, Path: "/api/v1/app/restore-backup", Handler: h.RestoreBackup, Auth: api.User,
+			Summary: "Restore a restore point in place (the app is stopped, its data saved as a pre-restore point first)", Tag: "backups",
+			Description: "The result arrives when the restore ends. On a failure that leaves the data as it was (the helper " +
+				"failed cleanly, or a files helper was stopped before it began replacing data), the app is started again. Any " +
+				"other end (a crash, a kill, a swap that fails half-way, an agent stop; sqlite as well as files) may have left the " +
+				"data partly replaced: the app is left stopped and removed (never its volumes) and the error names the " +
+				"pre-restore point to restore. A copy made under a location the backup no longer has is refused, and so is a " +
+				"restore that needs more time than is left for the copy's size.",
+			Request: RestoreBackupRequest{}, Accepted: true, Result: command.RestoreBackupResponse{}, Errors: server,
+		},
+		{
+			Method: http.MethodPost, Path: "/api/v1/app/delete-restore-point", Handler: h.DeleteRestorePoint, Auth: api.User,
+			Summary: "Delete one restore point (any kind)", Tag: "backups",
+			Request: DeleteRestorePointRequest{}, Accepted: true, Result: command.DeleteRestorePointResponse{}, Errors: server,
 		},
 		{
 			Method: http.MethodGet, Path: "/api/v1/domain/get-domains", Handler: h.GetDomains, Auth: api.User,
@@ -126,6 +164,50 @@ func (h *Handler) Routes(api.Guards) []api.Route {
 			Summary: "Remove a domain no app uses", Tag: "domains",
 			Query: api.ServerQuery{}, Request: command.DeleteDomainRequest{},
 			Accepted: true, Result: command.DeleteDomainResponse{}, Errors: server,
+		},
+		{
+			Method: http.MethodGet, Path: "/api/v1/storage/get-storages", Handler: h.GetStorages, Auth: api.User,
+			Summary: "A server's storages from the API's index (no agent round-trip, no secrets)", Tag: "storages",
+			Query: api.ServerQuery{}, Response: GetStoragesResponse{}, Errors: server,
+		},
+		{
+			Method: http.MethodGet, Path: "/api/v1/storage/list", Handler: h.ListStorages, Auth: api.User,
+			Summary: "List the storages on a server, with the apps using each", Tag: "storages",
+			Query: api.ServerQuery{}, Accepted: true, Result: command.ListStoragesResponse{}, Errors: server,
+		},
+		{
+			Method: http.MethodPost, Path: "/api/v1/storage/test", Handler: h.TestStorage, Auth: api.User,
+			Summary: "Test a storage by writing and deleting a probe object (30s deadline)", Tag: "storages",
+			Description: "`s3.secret_access_key` is ECIES-encrypted with the server's public key " +
+				"(GET /api/v1/server/get-public-key), or `<encrypted>` to reuse the secret stored under the same name. " +
+				"A failed probe is a successful result with `ok: false`.",
+			Query: api.ServerQuery{}, Request: command.TestStorageRequest{},
+			Accepted: true, Result: command.TestStorageResponse{}, Errors: server,
+		},
+		{
+			Method: http.MethodPost, Path: "/api/v1/storage/save", Handler: h.SaveStorage, Auth: api.User,
+			Summary: "Add or edit a storage (tested first; redeploys the running apps that use it)", Tag: "storages",
+			Description: "`create: true` adds a storage and fails when the name exists; otherwise the storage must exist " +
+				"and keep its type. `s3.secret_access_key` is ECIES-encrypted with the server's public key, or `<encrypted>` " +
+				"to keep the stored one. Nothing is saved when the connection test fails.",
+			Query: api.ServerQuery{}, Request: command.SaveStorageRequest{},
+			Accepted: true, Result: command.SaveStorageResponse{}, Errors: server,
+		},
+		{
+			Method: http.MethodPost, Path: "/api/v1/storage/delete", Handler: h.DeleteStorage, Auth: api.User,
+			Summary: "Remove a storage no app uses", Tag: "storages",
+			Query: api.ServerQuery{}, Request: command.DeleteStorageRequest{},
+			Accepted: true, Result: command.DeleteStorageResponse{}, Errors: server,
+		},
+		{
+			Method: http.MethodGet, Path: "/api/v1/storage/list-orphans", Handler: h.ListOrphans, Auth: api.User,
+			Summary: "List the backups in a storage whose app is not on this server", Tag: "storages",
+			Query: OrphansQuery{}, Accepted: true, Result: command.ListOrphansResponse{}, Errors: server,
+		},
+		{
+			Method: http.MethodPost, Path: "/api/v1/storage/delete-orphan", Handler: h.DeleteOrphan, Auth: api.User,
+			Summary: "Delete the backups of an app that is not on this server from a storage", Tag: "storages",
+			Request: DeleteOrphanRequest{}, Accepted: true, Result: command.DeleteOrphanResponse{}, Errors: server,
 		},
 		{
 			Method: http.MethodGet, Path: "/api/v1/domains/check", Handler: h.CheckDomain, Auth: api.User,

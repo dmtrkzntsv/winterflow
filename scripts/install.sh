@@ -368,12 +368,16 @@ AmbientCapabilities=CAP_NET_BIND_SERVICE
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 
 # Hardening. The Docker socket stays writable: app deployment shells out to
-# 'docker compose'.
+# 'docker compose'. /mnt and /media (the usual mount points of USB disks and
+# NFS/CIFS shares) stay writable for local backup storages; any other folder
+# needs a drop-in, see docs/recipes/backup-storage.md.
 NoNewPrivileges=true
 ProtectSystem=strict
 ReadWritePaths=${DATA_DIR}
 ReadWritePaths=-/run/docker.sock
 ReadWritePaths=-/var/run/docker.sock
+ReadWritePaths=-/mnt
+ReadWritePaths=-/media
 ProtectHome=true
 PrivateTmp=true
 ProtectKernelTunables=true
@@ -622,7 +626,8 @@ EOF
                 warn "install node+pnpm and rerun, or copy a built web/dist here first"
             fi
             log "Building standalone binary from ${repo_root}"
-            (cd "$repo_root" && go build -o bin/standalone ./cmd/standalone)
+            # CGO off: the backup helper runs this binary inside alpine (no glibc).
+            (cd "$repo_root" && CGO_ENABLED=0 go build -o bin/standalone ./cmd/standalone)
             BINARY_SRC="${repo_root}/bin/standalone"
         fi
     fi

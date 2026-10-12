@@ -54,7 +54,7 @@ func TestStatusReporterSendsImmediatelyAndOnTick(t *testing.T) {
 
 	src := &fakeStatusSource{}
 	got := make(chan sinkCall, 16)
-	go RunStatusReporter(ctx, src, collectSink(got), 30*time.Millisecond, log)
+	go RunStatusReporter(ctx, src, collectSink(got), 30*time.Millisecond, nil, log)
 
 	// Immediate first report.
 	select {
@@ -88,7 +88,7 @@ func TestStatusReporterSurvivesSourceErrors(t *testing.T) {
 
 	src := &fakeStatusSource{fail: true}
 	got := make(chan sinkCall, 16)
-	go RunStatusReporter(ctx, src, collectSink(got), 20*time.Millisecond, log)
+	go RunStatusReporter(ctx, src, collectSink(got), 20*time.Millisecond, nil, log)
 
 	// Give it several ticks to prove the loop keeps polling despite errors.
 	time.Sleep(120 * time.Millisecond)
@@ -110,7 +110,7 @@ func TestStatusReporterStopsOnCancel(t *testing.T) {
 	got := make(chan sinkCall, 16)
 	done := make(chan struct{})
 	go func() {
-		RunStatusReporter(ctx, src, collectSink(got), 10*time.Millisecond, log)
+		RunStatusReporter(ctx, src, collectSink(got), 10*time.Millisecond, nil, log)
 		close(done)
 	}()
 
@@ -120,5 +120,31 @@ func TestStatusReporterStopsOnCancel(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("reporter did not stop on cancel")
+	}
+}
+
+// A nudge makes the reporter publish at once, long before its tick.
+func TestStatusReporterReportsOnNudge(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
+	got := make(chan sinkCall, 16)
+	nudge := make(chan struct{}, 1)
+	go RunStatusReporter(ctx, &fakeStatusSource{}, collectSink(got), time.Hour, nudge, log)
+	select {
+	case <-got: // the immediate first report
+	case <-time.After(2 * time.Second):
+		t.Fatal("no immediate report")
+	}
+	nudge <- struct{}{}
+	select {
+	case <-got:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a nudge did not trigger a report")
+	}
+	select {
+	case call := <-got:
+		t.Fatalf("an extra report: %+v", call)
+	case <-time.After(100 * time.Millisecond):
 	}
 }

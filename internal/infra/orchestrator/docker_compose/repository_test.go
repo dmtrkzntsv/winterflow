@@ -271,7 +271,7 @@ func TestDeleteAppRemovesDirAndSymlink(t *testing.T) {
 	r := newTestRepo(t)
 	savedApp(t, r, "app-1", "demo", "x\n")
 
-	if _, err := r.DeleteApp(context.Background(), "app-1", false); err != nil {
+	if _, err := r.DeleteApp(context.Background(), "app-1", false, false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(r.appDataDir("app-1")); !os.IsNotExist(err) {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"time"
 	appagent "winterflow/internal/app/agent"
+	"winterflow/internal/app/agent/backup"
 	agentsrv "winterflow/internal/infra/agent/service"
 	"winterflow/internal/infra/cert"
 	"winterflow/internal/infra/db"
@@ -53,6 +54,10 @@ func BootstrapStandalone(ctx context.Context, log *logger.Logger, cfg *config.Se
 		log.Warn("ingress manager start", "error", err)
 	}
 	agentDispatcher := appagent.NewDispatcher(orchestrator, ingressManager, log)
+	// Backups run on their own goroutine, never on the bridge's.
+	backups := backup.New(orchestrator, cfg.GetAgentDataDir(), log)
+	agentDispatcher.SetBackups(backups)
+	go appagent.RunBackups(ctx, orchestrator, backups, log)
 	bridge := appagent.NewInProcessBridge(b, cfg, agentDispatcher, log)
 	if err := bridge.Start(ctx); err != nil {
 		log.Fatalf("failed to start in-process bridge: %v", err)
@@ -77,17 +82,18 @@ func BootstrapStandalone(ctx context.Context, log *logger.Logger, cfg *config.Se
 		}
 		return b.Publish(ctx, cfg.GetBusEventsQueue(), bus.EventMessage{ServerID: id, Kind: kind, Payload: payload})
 	}
-	// The snapshot lets the metrics reporter reuse the status reporter's
-	// `docker ps` instead of running its own.
-	statusSnapshot := appagent.NewStatusSnapshot(orchestrator)
-	go appagent.RunStatusReporter(ctx, statusSnapshot, sink, 30*time.Second, log)
+	// The snapshot carries each app's backup health too and lets the metrics
+	// reporter reuse the status reporter's `docker ps` instead of running its
+	// own.
+	statusSnapshot := appagent.NewStatusSnapshot(appagent.WithBackupHealth(orchestrator, backups))
+	go appagent.RunStatusReporter(ctx, statusSnapshot, sink, 30*time.Second, backups.Changed(), log)
 
 	// Resource metrics (server.metrics every 60 s, disk scan hourly) through
 	// the same events path; off with METRICS_ENABLED=false.
 	appagent.StartMetrics(ctx, cfg, statusSnapshot, orchestrator, sink, log)
 
 	// Auto-update for git-sourced apps.
-	go appagent.RunSourcePoller(ctx, orchestrator, log)
+	go appagent.RunSourcePoller(ctx, orchestrator, backups.Reload, log)
 
 	if !cert.IsServerCertificateGenerated(certmanager) {
 		certmanager.GenerateServer(true)

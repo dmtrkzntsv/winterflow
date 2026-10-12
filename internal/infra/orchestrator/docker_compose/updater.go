@@ -48,6 +48,18 @@ func (r *Repository) UpdateAgent(ctx context.Context, in command.UpdateAgentRequ
 	if err != nil {
 		return resp, fmt.Errorf("resolve executable path: %w", err)
 	}
+	// The exit that follows would cut a restore short: refuse while one runs,
+	// and let none begin from here on.
+	undo, err := r.beginUpdate()
+	if err != nil {
+		return resp, err
+	}
+	scheduled := false
+	defer func() {
+		if !scheduled {
+			undo()
+		}
+	}()
 
 	// The downloaded asset must match the running binary: in standalone the
 	// executable being replaced is the standalone binary, not the agent.
@@ -77,7 +89,7 @@ func (r *Repository) UpdateAgent(ctx context.Context, in command.UpdateAgentRequ
 
 	r.log.Info("agent binary replaced, exiting to restart on new version",
 		"from", current, "to", in.Version)
-	resp.Scheduled = true
+	resp.Scheduled, scheduled = true, true
 
 	// Exit after a brief delay so the response can be flushed back to the hub.
 	go func() {

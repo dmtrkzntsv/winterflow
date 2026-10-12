@@ -19,6 +19,8 @@ type Querier interface {
 	DeleteRegistration(ctx context.Context, serverID string) error
 	DeleteServerDomain(ctx context.Context, arg DeleteServerDomainParams) error
 	DeleteServerDomainsByServer(ctx context.Context, serverID string) error
+	DeleteServerStorage(ctx context.Context, arg DeleteServerStorageParams) error
+	DeleteServerStoragesByServer(ctx context.Context, serverID string) error
 	DeleteToken(ctx context.Context, arg DeleteTokenParams) (int64, error)
 	DeleteUser(ctx context.Context, userID string) error
 	EmailTaken(ctx context.Context, email string) (bool, error)
@@ -51,6 +53,7 @@ type Querier interface {
 	InsertRegistration(ctx context.Context, arg InsertRegistrationParams) error
 	InsertServer(ctx context.Context, arg InsertServerParams) error
 	InsertServerDomain(ctx context.Context, arg InsertServerDomainParams) error
+	InsertServerStorage(ctx context.Context, arg InsertServerStorageParams) error
 	// Personal access tokens (hashed at rest).
 	InsertToken(ctx context.Context, arg InsertTokenParams) error
 	InsertUser(ctx context.Context, arg InsertUserParams) error
@@ -68,6 +71,8 @@ type Querier interface {
 	ListServerAppMetricSamples(ctx context.Context, arg ListServerAppMetricSamplesParams) ([]MetricSample, error)
 	// The server_domains index (mirrors each agent's domain registrations).
 	ListServerDomains(ctx context.Context, serverID string) ([]ServerDomain, error)
+	// The server_storages index (mirrors each agent's storages; never a secret).
+	ListServerStorages(ctx context.Context, serverID string) ([]ServerStorage, error)
 	ListServerUserIDs(ctx context.Context, serverID string) ([]string, error)
 	// Servers, their capabilities/features, registrations and certificates.
 	ListServersByUser(ctx context.Context, userID string) ([]Server, error)
@@ -85,6 +90,7 @@ type Querier interface {
 	UpsertCapability(ctx context.Context, arg UpsertCapabilityParams) error
 	UpsertFeature(ctx context.Context, arg UpsertFeatureParams) error
 	UpsertServerDomain(ctx context.Context, arg UpsertServerDomainParams) error
+	UpsertServerStorage(ctx context.Context, arg UpsertServerStorageParams) error
 	UserOwnsServer(ctx context.Context, arg UserOwnsServerParams) (bool, error)
 }
 

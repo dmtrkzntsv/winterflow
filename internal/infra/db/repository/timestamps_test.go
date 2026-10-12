@@ -17,6 +17,7 @@ import (
 	metricrepo "winterflow/internal/infra/db/repository/metric"
 	serverrepo "winterflow/internal/infra/db/repository/server"
 	serverdomainrepo "winterflow/internal/infra/db/repository/serverdomain"
+	serverstoragerepo "winterflow/internal/infra/db/repository/serverstorage"
 	userrepo "winterflow/internal/infra/db/repository/user"
 )
 
@@ -43,6 +44,7 @@ func TestSQLiteTimestampsAreDateTimeText(t *testing.T) {
 	apps := must(apprepo.New(d.Tx, d.Driver, dbtest.Log))
 	appDomains := must(appdomainrepo.New(d.Tx, d.Driver, dbtest.Log))
 	serverDomains := must(serverdomainrepo.New(d.Tx, d.Driver, dbtest.Log))
+	serverStorages := must(serverstoragerepo.New(d.Tx, d.Driver, dbtest.Log))
 	metricSamples := must(metricrepo.New(d.Tx, d.Driver, dbtest.Log))
 
 	admin := must(users.BootstrapLocalAdmin(ctx, "Admin", "admin@example.com", "correct horse battery"))
@@ -93,6 +95,12 @@ func TestSQLiteTimestampsAreDateTimeText(t *testing.T) {
 	}
 	if err := serverDomains.Upsert(ctx, srv.ID, model.RegisteredDomain{
 		Name: "example.com", TLS: model.DomainTLSCertificate, NotAfter: &expires, Issuer: "CA",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := serverStorages.Upsert(ctx, srv.ID, model.StorageSummary{
+		Name: "disk", Type: model.StorageLocal, Location: "/mnt/usb/winterflow",
 	}); err != nil {
 		t.Fatal(err)
 	}

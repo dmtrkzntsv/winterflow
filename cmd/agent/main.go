@@ -8,6 +8,8 @@ import (
 	"syscall"
 	"time"
 	appagent "winterflow/internal/app/agent"
+	"winterflow/internal/app/agent/backup"
+	backupcli "winterflow/internal/app/backup/cli"
 	ingresscaddy "winterflow/internal/infra/ingress/caddy"
 	dockercompose "winterflow/internal/infra/orchestrator/docker_compose"
 	"winterflow/internal/infra/transport/bus"
@@ -22,6 +24,11 @@ import (
 )
 
 func main() {
+	// Hidden: what the agent runs inside a backup helper container (the
+	// binary is mounted there at /wf), before anything reads config or logs.
+	if len(os.Args) > 1 && os.Args[1] == "backup" {
+		os.Exit(backupcli.Main(os.Args[2:], os.Stdout, os.Stderr))
+	}
 	err := godotenv.Load()
 	cfg := config.NewServerConfig("distributed")
 	log := logger.NewLogger(logger.LoggerConfiguration{
@@ -85,7 +92,12 @@ func main() {
 	agent.SetFeatures(features)
 	agent.SetApps(apps)
 
-	agent.SetDispatcher(appagent.NewDispatcher(orchestrator, ingressManager, log))
+	dispatcher := appagent.NewDispatcher(orchestrator, ingressManager, log)
+	// Backups run on their own goroutine, next to the source poller.
+	backups := backup.New(orchestrator, cfg.GetAgentDataDir(), log)
+	dispatcher.SetBackups(backups)
+	go appagent.RunBackups(ctx, orchestrator, backups, log)
+	agent.SetDispatcher(dispatcher)
 
 	// Supervise the connection: connect, register, stream, and reconnect with
 	// backoff on failure, until ctx is canceled. Runs in the background so the
@@ -98,8 +110,10 @@ func main() {
 	sink := func(kind bus.EventKind, payload []byte) error {
 		return agent.SendEvent(string(kind), payload)
 	}
-	statusSnapshot := appagent.NewStatusSnapshot(orchestrator)
-	go appagent.RunStatusReporter(ctx, statusSnapshot, sink, 30*time.Second, log)
+	// The snapshot carries each app's backup health too and lets the metrics
+	// reporter reuse the status reporter's `docker ps`.
+	statusSnapshot := appagent.NewStatusSnapshot(appagent.WithBackupHealth(orchestrator, backups))
+	go appagent.RunStatusReporter(ctx, statusSnapshot, sink, 30*time.Second, backups.Changed(), log)
 
 	// Resource metrics: a server.metrics event every 60 s (procfs/cgroupfs
 	// reads, no forks) plus the hourly disk scan; off with
@@ -108,7 +122,7 @@ func main() {
 
 	// Auto-update for git-sourced apps: polls upstreams on each app's own
 	// interval and redeploys on new commits.
-	go appagent.RunSourcePoller(ctx, orchestrator, log)
+	go appagent.RunSourcePoller(ctx, orchestrator, backups.Reload, log)
 
 	// Status monitoring routine
 	go func() {

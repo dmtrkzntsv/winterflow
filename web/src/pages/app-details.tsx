@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   ArrowUpCircle,
@@ -8,18 +8,15 @@ import {
   RefreshCw,
   RotateCw,
   Square,
-  Trash2,
+  TriangleAlert,
 } from "lucide-react";
 import { toast } from "sonner";
 
 import { useAppBreadcrumbs } from "@/layouts/use-app-layout";
 import { Button } from "@/components/ui/button";
-import { buttonVariants } from "@/components/ui/button-variants";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Spinner } from "@/components/ui/spinner";
 import { Input } from "@/components/ui/input";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Label } from "@/components/ui/label";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -33,8 +30,10 @@ import {
 } from "@/components/ui/alert-dialog";
 import { AppIcon } from "@/components/app-icon";
 import { LogsView, type LogLine } from "@/components/logs-view";
+import { AppBackups } from "@/components/app-backups";
 import { AppEditorPanel } from "@/components/app-editor-panel";
 import { AppStatusIndicator } from "@/components/app-status-badge";
+import { DeleteAppDialog } from "@/components/delete-app-dialog";
 import { AppMetricBlocks, AppMetricsTab } from "@/components/app-metrics";
 import { useApps } from "@/context/use-apps";
 import { useNotifications } from "@/context/use-notifications";
@@ -46,14 +45,17 @@ import {
   type ControlAction,
   type DeleteAppResult,
 } from "@/context/apps-context-base";
+import { readApiError } from "@/lib/api";
+import { needsAttention } from "@/lib/backups";
+import { deleteOutcome, type DeleteChoice } from "@/lib/delete-app";
 import { appLabel } from "@/lib/kpi";
-import { cn } from "@/lib/utils";
+import { cn, relativeTime } from "@/lib/utils";
 import { useServerPath } from "@/context/use-server-path";
 import { NotFound } from "@/components/not-found";
 
 const base = apiBaseUrl.endsWith("/") ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
 
-const TABS = ["logs", "metrics", "editor", "history", "settings"] as const;
+const TABS = ["logs", "metrics", "editor", "backups", "history", "settings"] as const;
 
 const tabTriggerClass =
   "-mb-px rounded-none border-b-2 border-transparent px-0.5 pt-1 sm:px-1 pb-2.5 text-muted-foreground shadow-none hover:text-foreground data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none";
@@ -63,7 +65,7 @@ export default function AppDetailsPage() {
   const navigate = useNavigate();
   const toServer = useServerPath();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { apps, statusByApp, loading, control, remove, rename } = useApps();
+  const { apps, statusByApp, backupsByApp, loading, control, remove, rename } = useApps();
 
   const tabParam = searchParams.get("tab") ?? "logs";
   const tab = (TABS as readonly string[]).includes(tabParam)
@@ -72,6 +74,13 @@ export default function AppDetailsPage() {
   const setTab = (next: string) => {
     setSearchParams(next === "logs" ? {} : { tab: next }, { replace: true });
   };
+  // A tab opened by link may sit past the bar's scrolled edge on a phone.
+  const tabBar = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    tabBar.current
+      ?.querySelector<HTMLElement>('[role="tab"][data-state="active"]')
+      ?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }, [tab]);
 
   const app = useMemo(() => apps.find((a) => a.id === appId), [apps, appId]);
 
@@ -196,23 +205,37 @@ export default function AppDetailsPage() {
       <AppMetricBlocks serverId={app.serverId} appId={app.id} />
 
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="h-auto w-full justify-start gap-3 overflow-x-auto sm:gap-6 overflow-y-hidden rounded-none border-b bg-transparent p-0">
-          <TabsTrigger value="logs" className={tabTriggerClass}>
-            Logs
-          </TabsTrigger>
-          <TabsTrigger value="metrics" className={tabTriggerClass}>
-            Metrics
-          </TabsTrigger>
-          <TabsTrigger value="editor" className={tabTriggerClass}>
-            Configuration
-          </TabsTrigger>
-          <TabsTrigger value="history" className={tabTriggerClass}>
-            History
-          </TabsTrigger>
-          <TabsTrigger value="settings" className={tabTriggerClass}>
-            Settings
-          </TabsTrigger>
-        </TabsList>
+        {/* Six tabs are wider than a phone: the bar scrolls inside itself
+            instead of widening the page. */}
+        <div ref={tabBar} className="-mx-1 max-w-full overflow-x-auto px-1">
+          <TabsList className="h-auto w-max min-w-full justify-start gap-6 rounded-none border-b bg-transparent p-0">
+            <TabsTrigger value="logs" className={tabTriggerClass}>
+              Logs
+            </TabsTrigger>
+            <TabsTrigger value="metrics" className={tabTriggerClass}>
+              Metrics
+            </TabsTrigger>
+            <TabsTrigger value="editor" className={tabTriggerClass}>
+              Configuration
+            </TabsTrigger>
+            <TabsTrigger value="backups" className={tabTriggerClass}>
+              Backups
+              {needsAttention(backupsByApp?.[app.id]) ? (
+                <TriangleAlert
+                  role="img"
+                  aria-label="A backup is late or failing"
+                  className="ml-1.5 inline size-3.5 align-text-bottom text-amber-500"
+                />
+              ) : null}
+            </TabsTrigger>
+            <TabsTrigger value="history" className={tabTriggerClass}>
+              History
+            </TabsTrigger>
+            <TabsTrigger value="settings" className={tabTriggerClass}>
+              Settings
+            </TabsTrigger>
+          </TabsList>
+        </div>
         <TabsContent value="logs" className="mt-6">
           <LogsTab appId={app.id} />
         </TabsContent>
@@ -221,6 +244,9 @@ export default function AppDetailsPage() {
         </TabsContent>
         <TabsContent value="editor" className="mt-0">
           <AppEditorPanel appId={app.id} />
+        </TabsContent>
+        <TabsContent value="backups" className="mt-6">
+          <AppBackups appId={app.id} />
         </TabsContent>
         <TabsContent value="history" className="mt-6">
           <HistoryTab appId={app.id} />
@@ -266,7 +292,7 @@ function LogsTab({ appId }: { appId: string }) {
         activeServerId,
       )}&app_id=${encodeURIComponent(appId)}&tail=${tail}`;
       const res = await fetch(url, { credentials: "include" });
-      if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+      if (!res.ok) throw await readApiError(res);
       const accepted = (await res.json()) as { data?: { request_id?: string } };
       const ref = accepted.data?.request_id;
       if (!ref) throw new Error("No request id");
@@ -492,20 +518,6 @@ function HistoryTab({ appId }: { appId: string }) {
   );
 }
 
-const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
-
-// relativeTime renders "5 minutes ago"-style labels, falling back to the date
-// once a revision is more than a week old.
-function relativeTime(d: Date): string {
-  const secs = Math.round((d.getTime() - Date.now()) / 1000);
-  const abs = Math.abs(secs);
-  if (abs < 60) return rtf.format(secs, "second");
-  if (abs < 3600) return rtf.format(Math.round(secs / 60), "minute");
-  if (abs < 86400) return rtf.format(Math.round(secs / 3600), "hour");
-  if (abs < 7 * 86400) return rtf.format(Math.round(secs / 86400), "day");
-  return d.toLocaleDateString();
-}
-
 function SettingsTab({
   appId,
   name,
@@ -515,10 +527,12 @@ function SettingsTab({
   appId: string;
   name: string;
   onRename: (appId: string, name: string) => Promise<void>;
-  onDelete: (opts: { deleteVolumes: boolean }) => Promise<DeleteAppResult>;
+  onDelete: (opts: { deleteVolumes: boolean; deleteBackups: boolean }) => Promise<DeleteAppResult>;
 }) {
+  const { backupsByApp } = useApps();
   const [newName, setNewName] = useState(name);
   const [busy, setBusy] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const save = async () => {
     setBusy(true);
@@ -534,25 +548,17 @@ function SettingsTab({
     }
   };
 
-  const del = async (withVolumes: boolean) => {
+  const del = async (choice: DeleteChoice) => {
     setBusy(true);
+    setDeleting(true);
     try {
-      const { warnings, volumesDeleted } = await onDelete({
-        deleteVolumes: withVolumes,
-      });
-      if (withVolumes && !volumesDeleted) {
-        // An agent that predates volume deletion ignores the flag.
-        toast.warning("App deleted, but its volumes were kept", {
-          description:
-            "This server's agent is too old to delete volumes. Update the agent, then remove them in Server Settings → Volumes.",
-        });
-      } else if (warnings.length) {
-        toast.warning("App deleted with cleanup warnings", {
-          description: warnings.join("\n"),
-          classNames: { description: "whitespace-pre-line" },
-        });
+      const hadBackups = (backupsByApp?.[appId]?.length ?? 0) > 0;
+      const res = await onDelete({ deleteVolumes: choice.withVolumes, deleteBackups: choice.withBackups });
+      const out = deleteOutcome(choice, res, { hadBackups });
+      if (out.level === "warning") {
+        toast.warning(out.title, { description: out.description });
       } else {
-        toast.success(withVolumes ? "App and volumes deleted" : "App deleted");
+        toast.success(out.title, { description: out.description });
       }
     } catch (e) {
       toast.error("Delete failed", {
@@ -560,6 +566,7 @@ function SettingsTab({
       });
     } finally {
       setBusy(false);
+      setDeleting(false);
     }
   };
 
@@ -599,108 +606,18 @@ function SettingsTab({
           <h2 className="text-sm font-semibold text-destructive">Delete app</h2>
           <p className="text-sm text-muted-foreground">
             Stops the containers and removes the deployment and its history.
-            Volumes are kept unless you choose otherwise.
+            Volumes and backups are kept unless you choose otherwise.
           </p>
         </div>
         <div>
           <DeleteAppDialog
             name={name}
             disabled={busy}
-            onConfirm={(withVolumes) => void del(withVolumes)}
+            deleting={deleting}
+            onConfirm={(choice) => void del(choice)}
           />
         </div>
       </div>
     </div>
-  );
-}
-
-// DeleteAppDialog confirms deleting the app and, opt-in, its volumes.
-function DeleteAppDialog({
-  name,
-  disabled,
-  onConfirm,
-}: {
-  name: string;
-  disabled: boolean;
-  onConfirm: (withVolumes: boolean) => void;
-}) {
-  return (
-    <AlertDialog>
-      <AlertDialogTrigger asChild>
-        <Button variant="outline" className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive" disabled={disabled}>
-          <Trash2 className="size-4" /> Delete {name}
-        </Button>
-      </AlertDialogTrigger>
-      <AlertDialogContent>
-        <DeleteAppConfirm name={name} onConfirm={onConfirm} />
-      </AlertDialogContent>
-    </AlertDialog>
-  );
-}
-
-// DeleteAppConfirm owns the volumes choice. AlertDialogContent unmounts it on
-// close, so every opening starts with the safe default (unticked).
-function DeleteAppConfirm({
-  name,
-  onConfirm,
-}: {
-  name: string;
-  onConfirm: (withVolumes: boolean) => void;
-}) {
-  const [withVolumes, setWithVolumes] = useState(false);
-  return (
-    <>
-      <AlertDialogHeader>
-        <AlertDialogTitle>Delete {name}?</AlertDialogTitle>
-        <AlertDialogDescription>
-          Its containers are stopped and removed, along with the
-          deployment and every stored revision. This cannot be undone.
-        </AlertDialogDescription>
-      </AlertDialogHeader>
-      {/* Neutral until ticked, then unmistakably destructive: the
-          safe choice (keep the data) is the default. */}
-      <div
-        className={cn(
-          "flex items-start gap-3 rounded-md border p-3 transition-colors",
-          withVolumes && "border-destructive/50 bg-destructive/5",
-        )}
-      >
-        <Checkbox
-          id="delete-volumes"
-          className="mt-px data-[state=checked]:border-destructive data-[state=checked]:bg-destructive data-[state=checked]:text-destructive-foreground"
-          aria-describedby="delete-volumes-hint"
-          checked={withVolumes}
-          onCheckedChange={(v) => setWithVolumes(v === true)}
-        />
-        <div className="grid gap-1">
-          <Label
-            htmlFor="delete-volumes"
-            className={cn(
-              "cursor-pointer leading-snug",
-              withVolumes && "text-destructive",
-            )}
-          >
-            Also delete its volumes
-          </Label>
-          <p
-            id="delete-volumes-hint"
-            className="text-sm leading-snug text-muted-foreground"
-          >
-            Permanently erases the data in this app's Docker volumes.
-            Unticked, the volumes are kept; you can delete them later
-            in Server Settings → Volumes.
-          </p>
-        </div>
-      </div>
-      <AlertDialogFooter>
-        <AlertDialogCancel>Cancel</AlertDialogCancel>
-        <AlertDialogAction
-          className={buttonVariants({ variant: "destructive" })}
-          onClick={() => onConfirm(withVolumes)}
-        >
-          {withVolumes ? "Delete app and volumes" : "Delete app"}
-        </AlertDialogAction>
-      </AlertDialogFooter>
-    </>
   );
 }

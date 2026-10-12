@@ -3,13 +3,14 @@ import { useCallback, useMemo } from "react";
 import { useNotifications } from "@/context/use-notifications";
 import { useServers } from "@/context/use-servers";
 import { readApiError } from "@/lib/api";
-import type {
-  BackupConfig,
-  EffectiveBackup,
-  Orphan,
-  RestorePoint,
-  RestoreResult,
-  RunBackupResult,
+import {
+  AgentError,
+  type BackupConfig,
+  type EffectiveBackup,
+  type Orphan,
+  type RestorePoint,
+  type RestoreResult,
+  type RunBackupResult,
 } from "@/lib/backups";
 import { apiBaseUrl } from "@/config";
 
@@ -61,7 +62,7 @@ export function useBackups() {
       const ref = accepted.data?.request_id;
       if (!ref) throw new Error("No request id");
       const result = await waitFor(ref, opts.timeoutMs);
-      if (result.status && result.status !== 0) throw new Error(result.error || "Operation failed");
+      if (result.status && result.status !== 0) throw new AgentError(result.error || "Operation failed");
       return result.payload as T;
     },
     [serverId, waitFor],

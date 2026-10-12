@@ -14,6 +14,18 @@ export type Keep = { recent?: string; daily?: number | null; monthly?: number | 
 // RecipeField is a field the recipe may set and an override may change.
 export type RecipeField = "every" | "keep" | "volume" | "service" | "path" | "paths" | "exclude";
 
+// Template is a recipe backup's own settings as the compose file declares
+// them (defaults applied): what a reset to the template goes back to.
+export type Template = {
+  every?: string;
+  keep?: Keep | null;
+  volume?: string;
+  service?: string;
+  path?: string;
+  paths?: string[] | null;
+  exclude?: string[] | null;
+};
+
 // EffectiveBackup is a backup as it runs: the recipe, the overrides on top,
 // the defaults applied. from_recipe marks the fields holding the recipe's
 // value; in_recipe is false for a backup added in the UI.
@@ -31,6 +43,7 @@ export type EffectiveBackup = {
   exclude?: string[] | null;
   in_recipe: boolean;
   from_recipe: Partial<Record<RecipeField, boolean>> | null;
+  template?: Template | null;
 };
 
 // BackupConfig is one entry of the list update-backups replaces: an
@@ -88,6 +101,16 @@ export type BackupTargets = { volumes: string[]; services: { name: string; mount
 
 export const MANUAL = "manual";
 
+// AgentError is an agent's answer that a command failed (as opposed to the
+// API refusing it before it was sent, or the network failing).
+export class AgentError extends Error {}
+
+// isRunRefusal: the agent turned a run down because one of the backup is
+// already queued or running; the backup itself did not fail.
+export function isRunRefusal(message: string): boolean {
+  return message.includes("is already queued or running");
+}
+
 // SCHEDULES are the schedule picker's choices; a value outside them (set in
 // the compose file) is shown as is.
 export const SCHEDULES: { value: string; label: string }[] = [
@@ -112,6 +135,50 @@ export function durationMs(d: string): number {
     consumed += m[0].length;
   }
   return d && consumed === d.length ? total : NaN;
+}
+
+// compactDuration writes a Go duration the short way: Go prints 24h as
+// 24h0m0s, which is dropped to 24h (1h30m0s -> 1h30m, 15m0s -> 15m).
+export function compactDuration(d: string): string {
+  return d.replace(/(\d)m0s$/, "$1m").replace(/(\d)h0m$/, "$1h");
+}
+
+const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? "" : "s"}`;
+
+// humanDuration reads a Go duration for people: "24 hours", "7 days",
+// "1 hour 30 minutes"; a value that isn't one comes back as is.
+export function humanDuration(d: string): string {
+  const ms = durationMs(d);
+  if (Number.isNaN(ms) || ms <= 0 || ms % 1000 !== 0) return d;
+  let secs = ms / 1000;
+  const day = 86_400;
+  // A day is 24 hours: the default reads as the compose file writes it.
+  if (secs % day === 0 && secs >= 2 * day) return plural(secs / day, "day");
+  const parts: string[] = [];
+  for (const [unit, size] of [["hour", 3600], ["minute", 60], ["second", 1]] as const) {
+    const n = Math.floor(secs / size);
+    secs -= n * size;
+    if (n > 0) parts.push(plural(n, unit));
+  }
+  return parts.join(" ");
+}
+
+// parseKeepRecent reads what a person types for "Every copy for": a Go
+// duration (24h, 90m) or plain words (24 hours, 7 days, 2 weeks, 7d); the
+// result is the short Go form the agent takes (7 days -> 168h), "" when it
+// isn't a duration.
+export function parseKeepRecent(text: string): string {
+  const t = text.trim().toLowerCase();
+  if (!t) return "";
+  const ms = durationMs(t);
+  if (!Number.isNaN(ms)) return compactDuration(t);
+  const m = /^(\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?|days?|d|weeks?|w)$/.exec(t);
+  if (!m) return "";
+  const n = parseFloat(m[1]);
+  const unit = m[2][0] === "m" ? 1 / 60 : m[2][0] === "h" ? 1 : m[2][0] === "d" ? 24 : 168;
+  const hours = n * unit;
+  if (m[2][0] === "m") return `${Math.round(hours * 60)}m`;
+  return Number.isInteger(hours) ? `${hours}h` : "";
 }
 
 // scheduleLabel reads a backup's every: "Manual", a picker label, or
@@ -150,7 +217,7 @@ export function configOf(b: EffectiveBackup): BackupConfig {
     return c;
   }
   if (take("every") && b.every) c.every = b.every;
-  if (take("keep") && b.keep) c.keep = { ...b.keep };
+  if (take("keep") && b.keep) c.keep = { ...b.keep, ...(b.keep.recent ? { recent: compactDuration(b.keep.recent) } : {}) };
   // The location moves as a whole: volume or service, and its paths.
   if (take("volume") || take("service")) {
     if (b.volume) c.volume = b.volume;
@@ -210,8 +277,7 @@ export function cappedNote(keep: Keep | null | undefined, ceiling: number): stri
 
 // keepLabel reads a retention: "24h, 14 daily, 6 monthly".
 export function keepLabel(keep: Keep | null | undefined): string {
-  // Go writes 24h as 24h0m0s: drop the zero minutes and seconds.
-  const recent = keep?.recent ? keep.recent.replace(/(\d)m0s$/, "$1m").replace(/h0m$/, "h") : "24h";
+  const recent = keep?.recent ? compactDuration(keep.recent) : "24h";
   return `${recent}, ${keep?.daily ?? 14} daily, ${keep?.monthly ?? 6} monthly`;
 }
 
@@ -262,8 +328,58 @@ export function expiresNote(p: RestorePoint, now: number = Date.now()): string {
 export const KIND_LABELS: Record<PointKind, string> = {
   scheduled: "Scheduled",
   manual: "Manual",
-  "pre-restore": "Before a restore",
+  "pre-restore": "Pre-restore",
 };
+
+// pointTime reads the time out of a restore point's id
+// (20261011T232354Z-pre-restore) as unix seconds; NaN when it has none.
+export function pointTime(id: string): number {
+  const m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z/.exec(id);
+  return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) / 1000 : NaN;
+}
+
+// pointLabel names a restore point for people: "pre-restore copy of
+// 10/11/2026, 4:23:54 PM" (never its raw id).
+export function pointLabel(id: string, kind?: PointKind): string {
+  const t = pointTime(id);
+  const when = Number.isNaN(t) ? "" : ` of ${new Date(t * 1000).toLocaleString()}`;
+  const k = kind ?? (/-pre-restore$/.test(id) ? "pre-restore" : /-manual$/.test(id) ? "manual" : "scheduled");
+  return `${k} copy${when}`;
+}
+
+// errorSummary is a failing backup's error in a line: the step that failed
+// and the cause ("upload the copy: permission denied"), without paths or
+// temporary file names; the full text stays available behind it.
+export function errorSummary(error: string): string {
+  const first = error.trim().split("\n")[0];
+  const parts = first.split(": ");
+  const head = parts[0];
+  const tail = parts[parts.length - 1];
+  const short = parts.length > 1 && !tail.includes("/") ? `${head}: ${tail}` : head;
+  return short.length > 100 ? `${short.slice(0, 97)}…` : short;
+}
+
+// nextCopyNote says when a backup's next scheduled copy is due, or that the
+// first one comes within its interval; "" when there is nothing to say (off,
+// manual, running, failing, late, or not winterflow's to run).
+export function nextCopyNote(
+  b: Pick<EffectiveBackup, "enabled" | "type" | "every">,
+  state: BackupState,
+  lastSuccess: number | undefined,
+  now: number = Date.now(),
+): string {
+  if (!b.enabled || b.type === "custom" || !b.every || b.every === MANUAL) return "";
+  if (state !== "ok" && state !== "never") return "";
+  const ms = durationMs(b.every);
+  if (Number.isNaN(ms) || ms <= 0) return "";
+  if (!lastSuccess) return `First copy within ${humanDuration(b.every)}, or Back up now to try it.`;
+  const due = lastSuccess * 1000 + ms;
+  if (due <= now) return "Next copy is due now.";
+  const at = new Date(due);
+  const sameDay = at.toDateString() === new Date(now).toDateString();
+  const time = at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return `Next copy about ${sameDay ? time : `${at.toLocaleDateString()} ${time}`}.`;
+}
 
 export const STATE_LABELS: Record<BackupState, string> = {
   off: "Off",
@@ -289,10 +405,23 @@ export function backupNameError(name: string, taken: readonly string[]): string 
   return taken.includes(name) ? `The app already has a backup named ${name}.` : "";
 }
 
-// BACKUPS_CHANGED is what the agent answers an update made from a view of
-// the backups that someone else has changed since.
+// BACKUPS_CHANGED_MARKER starts what the agent answers an update made from a
+// view of the backups that someone else has changed since
+// (command.BackupsChangedMarker: a test reads it from the Go source).
+export const BACKUPS_CHANGED_MARKER = "the backups changed since you opened them";
+
 export function isBackupsChanged(message: string): boolean {
-  return message.includes("the backups changed since you opened them");
+  return message.includes(BACKUPS_CHANGED_MARKER);
+}
+
+// STALE_TAB_MARKERS are the parts of what recipe.Check answers a list built
+// from a view older than the compose file: the file gained a backup this view
+// offers as new, or lost one it overrides (recipe/effective.go: a test reads
+// them from the Go source).
+export const STALE_TAB_MARKERS = ["is declared by the compose file; edit it instead of adding it", "a new backup needs its type"];
+
+export function isStaleTab(message: string): boolean {
+  return STALE_TAB_MARKERS.some((m) => message.includes(m));
 }
 
 // selectClass styles a native <select> like the design system's inputs.
@@ -310,8 +439,7 @@ export function pathsFrom(text: string): string[] {
 
 // keepError checks a retention's fields like the recipe; "" means valid.
 export function keepError(recent: string, daily: string, monthly: string): string {
-  const ms = durationMs(recent.trim());
-  if (recent.trim() && (Number.isNaN(ms) || ms < 0)) return "Keep every copy for a duration like 24h or 72h.";
+  if (recent.trim() && !parseKeepRecent(recent)) return "Keep every copy for a duration like 24 hours, 7 days or 72h.";
   for (const n of [daily, monthly]) {
     if (!/^\d+$/.test(n.trim()) || Number(n) > 3650) return "Use whole numbers from 0 to 3650 for the daily and monthly copies.";
   }

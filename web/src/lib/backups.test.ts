@@ -1,14 +1,24 @@
 import { describe, expect, it } from "vitest";
 
+// The Go sources whose wording the UI matches (Vite reads them as text).
+import commandSource from "../../../internal/domain/command/backup.go?raw";
+import recipeSource from "../../../internal/domain/backup/recipe/effective.go?raw";
+
 import {
   backupNameError,
+  BACKUPS_CHANGED_MARKER,
   cappedNote,
+  compactDuration,
   configOf,
   configsWith,
   durationMs,
+  errorSummary,
   everyError,
   expiresNote,
   formatBytes,
+  humanDuration,
+  isRunRefusal,
+  isStaleTab,
   keepDays,
   isBackupsChanged,
   keepError,
@@ -16,7 +26,11 @@ import {
   locationError,
   locationLabel,
   needsAttention,
+  nextCopyNote,
+  parseKeepRecent,
   pathsFrom,
+  pointLabel,
+  pointTime,
   relativeAge,
   resetField,
   scheduleLabel,
@@ -100,7 +114,7 @@ describe("the backups list", () => {
       enabled: true,
       storage: "s3",
       every: "1h",
-      keep: { recent: "24h0m0s", daily: 3, monthly: 0 },
+      keep: { recent: "24h", daily: 3, monthly: 0 },
       volume: "data",
       path: "audit.db",
     });
@@ -113,7 +127,7 @@ describe("the backups list", () => {
     const recipeWhole: EffectiveBackup = { ...whole, from_recipe: all };
     expect(configOf(recipeWhole)).toEqual({ name: "media" });
     const added: EffectiveBackup = { ...whole, in_recipe: false, from_recipe: {} };
-    expect(configOf(added)).toEqual({ name: "media", type: "files", every: "24h", keep: { recent: "24h0m0s", daily: 14, monthly: 6 }, volume: "data" });
+    expect(configOf(added)).toEqual({ name: "media", type: "files", every: "24h", keep: { recent: "24h", daily: 14, monthly: 6 }, volume: "data" });
   });
   it("moves a changed location as a whole", () => {
     const moved: EffectiveBackup = { ...media, service: undefined, volume: "data", paths: ["media"], from_recipe: { ...all, volume: false, service: false, paths: false } };
@@ -212,7 +226,7 @@ describe("the backup forms' checks", () => {
   it("checks a retention", () => {
     expect(keepError("24h", "14", "6")).toBe("");
     expect(keepError("", "0", "0")).toBe("");
-    expect(keepError("a day", "14", "6")).toBe("Keep every copy for a duration like 24h or 72h.");
+    expect(keepError("a day", "14", "6")).toBe("Keep every copy for a duration like 24 hours, 7 days or 72h.");
     expect(keepError("24h", "-1", "6")).toContain("whole numbers");
     expect(keepError("24h", "14", "4000")).toContain("whole numbers");
   });
@@ -226,5 +240,107 @@ describe("the backup forms' checks", () => {
     expect(locationError("files", "service", "web", ["app"])).toBe("app: use an absolute path in the container, like /app/data.");
     expect(locationError("files", "volume", "data", ["/abs"])).toBe("/abs: use a path inside the volume, like app.db or media/.");
     expect(locationError("files", "volume", "data", ["a/../b"])).toContain("inside the volume");
+  });
+});
+
+describe("durations for people", () => {
+  it("writes a Go duration the short way and in words", () => {
+    expect(compactDuration("24h0m0s")).toBe("24h");
+    expect(compactDuration("1h30m0s")).toBe("1h30m");
+    expect(compactDuration("15m0s")).toBe("15m");
+    expect(compactDuration("72h")).toBe("72h");
+    expect(humanDuration("24h0m0s")).toBe("24 hours");
+    expect(humanDuration("168h")).toBe("7 days");
+    expect(humanDuration("24h")).toBe("24 hours");
+    expect(humanDuration("48h")).toBe("2 days");
+    expect(humanDuration("36h")).toBe("36 hours");
+    expect(humanDuration("1h")).toBe("1 hour");
+    expect(humanDuration("90m")).toBe("1 hour 30 minutes");
+    expect(humanDuration("45s")).toBe("45 seconds");
+    expect(humanDuration("soon")).toBe("soon");
+    expect(humanDuration("0s")).toBe("0s");
+  });
+
+  it("reads what a person types for how long to keep every copy", () => {
+    expect(parseKeepRecent("24h")).toBe("24h");
+    expect(parseKeepRecent("24h0m0s")).toBe("24h");
+    expect(parseKeepRecent(" 24 hours ")).toBe("24h");
+    expect(parseKeepRecent("1 hour")).toBe("1h");
+    expect(parseKeepRecent("7 days")).toBe("168h");
+    expect(parseKeepRecent("7d")).toBe("168h");
+    expect(parseKeepRecent("2 weeks")).toBe("336h");
+    expect(parseKeepRecent("90 minutes")).toBe("90m");
+    expect(parseKeepRecent("1.5 days")).toBe("36h");
+    expect(parseKeepRecent("1.3 hours")).toBe("");
+    expect(parseKeepRecent("a day")).toBe("");
+    expect(parseKeepRecent("")).toBe("");
+    expect(keepError("7 days", "14", "6")).toBe("");
+  });
+});
+
+describe("restore points", () => {
+  it("reads the time out of a point's id and names it for people", () => {
+    expect(pointTime("20261011T232354Z-pre-restore")).toBe(Date.UTC(2026, 9, 11, 23, 23, 54) / 1000);
+    expect(pointTime("p3")).toBeNaN();
+    const t = new Date(Date.UTC(2026, 9, 11, 23, 23, 54)).toLocaleString();
+    expect(pointLabel("20261011T232354Z-pre-restore")).toBe(`pre-restore copy of ${t}`);
+    expect(pointLabel("20261011T232354Z-manual")).toBe(`manual copy of ${t}`);
+    expect(pointLabel("20261011T232354Z", "scheduled")).toBe(`scheduled copy of ${t}`);
+    expect(pointLabel("p3", "pre-restore")).toBe("pre-restore copy");
+    expect(pointLabel("whatever")).toBe("scheduled copy");
+  });
+});
+
+describe("a failing backup's error", () => {
+  it("is a short cause, without paths or temporary names", () => {
+    expect(errorSummary("upload the copy: open /home/d/backups/disk/01a1/files/.wf-tmp-2637751049: permission denied")).toBe(
+      "upload the copy: permission denied",
+    );
+    expect(errorSummary("database file not found: /audit.db")).toBe("database file not found");
+    expect(errorSummary("disk full")).toBe("disk full");
+    expect(errorSummary("first line\nsecond line")).toBe("first line");
+    expect(errorSummary(`${"x".repeat(150)}`)).toHaveLength(98);
+  });
+});
+
+describe("the next copy", () => {
+  const at = new Date(2026, 9, 11, 12, 0, 0).getTime();
+  const secs = (ms: number) => Math.floor(ms / 1000);
+  const hourly = { enabled: true, type: "sqlite" as const, every: "1h" };
+  it("says when the next scheduled copy is due, or that the first one is coming", () => {
+    expect(nextCopyNote(hourly, "never", undefined, at)).toBe("First copy within 1 hour, or Back up now to try it.");
+    const last = secs(at) - 600;
+    const due = new Date(last * 1000 + 3_600_000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    expect(nextCopyNote(hourly, "ok", last, at)).toBe(`Next copy about ${due}.`);
+    expect(nextCopyNote(hourly, "ok", secs(at) - 7200, at)).toBe("Next copy is due now.");
+    const tomorrow = nextCopyNote({ ...hourly, every: "24h" }, "ok", secs(at) - 60, at);
+    expect(tomorrow).toContain(new Date(at + 86_400_000 - 60_000).toLocaleDateString());
+  });
+  it("says nothing when nothing is scheduled or the state says more", () => {
+    expect(nextCopyNote({ ...hourly, enabled: false }, "off", undefined, at)).toBe("");
+    expect(nextCopyNote({ ...hourly, every: "manual" }, "never", undefined, at)).toBe("");
+    expect(nextCopyNote({ ...hourly, every: undefined }, "never", undefined, at)).toBe("");
+    expect(nextCopyNote({ ...hourly, every: "soon" }, "never", undefined, at)).toBe("");
+    expect(nextCopyNote({ ...hourly, type: "custom" }, "ok", 1, at)).toBe("");
+    expect(nextCopyNote(hourly, "failing", 1, at)).toBe("");
+    expect(nextCopyNote(hourly, "running", 1, at)).toBe("");
+  });
+});
+
+describe("what the agent's answers are matched by", () => {
+  it("pins the backups-changed marker to the Go source", () => {
+    expect(commandSource).toContain(`BackupsChangedMarker = "${BACKUPS_CHANGED_MARKER}"`);
+    expect(isBackupsChanged(`${BACKUPS_CHANGED_MARKER}; reload and try again`)).toBe(true);
+  });
+  it("pins the stale-tab refusals of recipe.Check to the Go source", () => {
+    expect(recipeSource).toContain("%s is declared by the compose file; edit it instead of adding it");
+    expect(recipeSource).toContain("the compose file has no backup %q: a new backup needs its type");
+    expect(isStaleTab("backups[0].name: media is declared by the compose file; edit it instead of adding it")).toBe(true);
+    expect(isStaleTab('backups[0]: the compose file has no backup "x": a new backup needs its type')).toBe(true);
+    expect(isStaleTab("disk full")).toBe(false);
+  });
+  it("tells a refused run from a failed one", () => {
+    expect(isRunRefusal("a backup of uploads is already queued or running")).toBe(true);
+    expect(isRunRefusal("upload the copy: permission denied")).toBe(false);
   });
 });

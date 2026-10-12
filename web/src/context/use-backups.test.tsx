@@ -1,6 +1,7 @@
 import { renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { AgentError } from "@/lib/backups";
 import { BACKUP_RUN_TIMEOUT_MS, ORPHAN_DELETE_TIMEOUT_MS, ORPHAN_LIST_TIMEOUT_MS, useBackups } from "@/context/use-backups";
 
 vi.mock("@/context/use-servers", () => ({ useServers: () => ({ activeServerId: "srv-1" }) }));
@@ -75,9 +76,14 @@ describe("useBackups", () => {
   it("surfaces refusals and failed results", async () => {
     const { result } = renderHook(() => useBackups());
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ message: "invalid restore point id" }), { status: 400 }));
-    await expect(result.current.restoreBackup("a1", "db", "x")).rejects.toThrow("invalid restore point id");
+    // A refusal before anything was sent is not the agent's answer.
+    const refused = await result.current.restoreBackup("a1", "db", "x").catch((e: unknown) => e);
+    expect(refused).toMatchObject({ message: "invalid restore point id" });
+    expect(refused).not.toBeInstanceOf(AgentError);
     waitFor.mockResolvedValueOnce({ status: 1, error: "a backup of db is already queued or running" });
-    await expect(result.current.runBackup("a1", "db")).rejects.toThrow("a backup of db is already queued or running");
+    const failed = await result.current.runBackup("a1", "db").catch((e: unknown) => e);
+    expect(failed).toBeInstanceOf(AgentError);
+    expect(failed).toMatchObject({ message: "a backup of db is already queued or running" });
     waitFor.mockResolvedValueOnce({ status: 1 });
     await expect(result.current.listOrphans("disk")).rejects.toThrow("Operation failed");
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ data: {} }), { status: 202 }));

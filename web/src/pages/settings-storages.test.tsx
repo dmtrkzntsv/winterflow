@@ -9,6 +9,9 @@ import type { Storage, StorageDraft } from "@/lib/storages";
 import { StorageDialog } from "@/components/storage-dialog";
 import { StoragesCard } from "@/pages/settings-storages";
 
+// Links point into the active server's scope (/server/:id/...).
+vi.mock("@/context/use-servers", () => ({ useServers: () => ({ activeServerId: "srv-1" }) }));
+
 const toastError = vi.fn();
 const toastSuccess = vi.fn();
 const toastWarning = vi.fn();
@@ -110,8 +113,8 @@ describe("StoragesCard", () => {
     expect(screen.getAllByText("Local folder")).toHaveLength(2);
     // Once in the Location column, once in the small-screen summary.
     expect(screen.getAllByText("https://fsn1.example.com/tenants/wf/")).toHaveLength(2);
-    expect(screen.getAllByRole("link", { name: "Shop" })[0]).toHaveAttribute("href", "/app/a1");
-    expect(screen.getAllByRole("link", { name: "Blog" })[0]).toHaveAttribute("href", "/app/a2");
+    expect(screen.getAllByRole("link", { name: "Shop" })[0]).toHaveAttribute("href", "/server/srv-1/app/a1");
+    expect(screen.getAllByRole("link", { name: "Blog" })[0]).toHaveAttribute("href", "/server/srv-1/app/a2");
     expect(screen.getByText("Not used")).toBeInTheDocument();
   });
 
@@ -120,7 +123,7 @@ describe("StoragesCard", () => {
     const cell = (await screen.findByText("hetzner")).closest("td")!;
     expect(within(cell).getByText("https://fsn1.example.com/tenants/wf/")).toHaveClass("md:hidden");
     expect(within(cell).getByRole("link", { name: "Shop" }).closest(".sm\\:hidden")).not.toBeNull();
-    expect(within(cell).getByRole("link", { name: "Blog" })).toHaveAttribute("href", "/app/a2");
+    expect(within(cell).getByRole("link", { name: "Blog" })).toHaveAttribute("href", "/server/srv-1/app/a2");
     // A storage nobody uses gets no apps line, only its location.
     const idle = screen.getByText("disk").closest("td")!;
     expect(within(idle).getByText("/mnt/usb")).toBeInTheDocument();

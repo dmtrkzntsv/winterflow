@@ -10,6 +10,9 @@ import type { BackupHealth } from "@/lib/backups";
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
 vi.mock("@/components/app-backups", () => ({ AppBackups: () => <p>the backups tab</p> }));
+vi.mock("@/components/app-metrics", () => ({ AppMetricBlocks: () => null, AppMetricsTab: () => null }));
+// Links point into the active server's scope (/server/:id/...).
+vi.mock("@/context/use-servers", () => ({ useServers: () => ({ activeServerId: "srv-1" }) }));
 
 const remove = vi.fn();
 
@@ -28,7 +31,7 @@ function renderPage(url: string, backupsByApp: Record<string, BackupHealth[]> = 
         <Routes>
           <Route element={<Outlet context={{ setBreadcrumbs: () => {} }} />}>
             <Route path="/app/:appId" element={<AppDetailsPage />} />
-            <Route path="/" element={<p>the apps</p>} />
+            <Route path="/server/srv-1" element={<p>the apps</p>} />
           </Route>
         </Routes>
       </AppsContext.Provider>

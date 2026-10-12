@@ -52,6 +52,7 @@ import {
   shortVolumeName,
   volumeNameError,
 } from "@/lib/volumes";
+import { useServerPath } from "@/context/use-server-path";
 
 // Same dot + label language as AppStatusIndicator: the normal state stays
 // quiet, only Orphaned (data nobody owns any more) draws the eye.
@@ -71,10 +72,11 @@ function VolumeStatus({ volume }: { volume: Volume }) {
 }
 
 function VolumeOwner({ volume, appName }: { volume: Volume; appName?: string }) {
+  const toServer = useServerPath();
   if (volume.app_id && appName) {
     return (
       <Link
-        to={`/app/${volume.app_id}`}
+        to={toServer(`/app/${volume.app_id}`)}
         className="font-medium underline-offset-4 hover:underline"
       >
         {appName}

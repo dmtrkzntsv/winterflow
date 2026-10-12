@@ -10,6 +10,7 @@ import (
 	happ "winterflow/internal/app/web/handler/app"
 	hauth "winterflow/internal/app/web/handler/auth"
 	hdocker "winterflow/internal/app/web/handler/docker"
+	"winterflow/internal/app/web/handler/monitoring"
 	"winterflow/internal/app/web/handler/notification"
 	horg "winterflow/internal/app/web/handler/org"
 	"winterflow/internal/app/web/handler/server"
@@ -89,6 +90,14 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 		StatusCache:      d.StatusCache,
 		Cfg:              d.Cfg,
 	})
+	monitoringAPI := monitoring.NewHandler(&monitoring.Deps{
+		Logger:      d.Log,
+		Servers:     d.ServerRepository,
+		Metrics:     d.MetricRepository,
+		Latest:      d.LatestMetrics,
+		StatusCache: d.StatusCache,
+		Disabled:    !d.Cfg.IsMetricsEnabled(),
+	})
 	usersAPI := huser.NewHandler(&huser.Deps{Logger: d.Log, Tokens: d.UserService, Users: d.UserService})
 	orgAPI := horg.NewHandler(&horg.Deps{Logger: d.Log, Users: d.UserService})
 
@@ -102,6 +111,7 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 		appsAPI.Routes(g),
 		dockerAPI.Routes(g),
 		serversAPI.Routes(g),
+		monitoringAPI.Routes(g),
 		usersAPI.Routes(g),
 		orgAPI.Routes(g),
 		authprvd.Routes(),

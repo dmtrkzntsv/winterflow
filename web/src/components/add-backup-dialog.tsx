@@ -26,6 +26,7 @@ import {
   type BackupConfig,
   type BackupTargets,
 } from "@/lib/backups";
+import { useServerPath } from "@/context/use-server-path";
 import { returnFocusTo } from "@/lib/focus";
 
 // A place is "volume:<key>" or "mount:<service>:<target>".
@@ -63,6 +64,7 @@ export function AddBackupDialog({
   onOpenChange: (open: boolean) => void;
   onAdd: (entry: BackupConfig) => void;
 }) {
+  const toServer = useServerPath();
   const [typedName, setTypedName] = useState<string | null>(null); // null: still filled in from the picks
   const [type, setType] = useState<"sqlite" | "files">("files");
   const [place, setPlace] = useState("");
@@ -239,7 +241,7 @@ export function AddBackupDialog({
               ) : storages.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
                   This server has no storage yet.{" "}
-                  <Link to="/settings?tab=storages" className="font-medium text-foreground underline underline-offset-4">
+                  <Link to={toServer("/settings?tab=storages")} className="font-medium text-foreground underline underline-offset-4">
                     Add storage
                   </Link>{" "}
                   in Settings → Storages, then add the backup.

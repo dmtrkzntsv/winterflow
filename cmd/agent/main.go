@@ -107,9 +107,18 @@ func main() {
 
 	// Periodic apps-status push: feeds the API's status cache and the SSE
 	// live-status pipeline. Ticks while the stream is down are skipped.
-	go appagent.RunStatusReporter(ctx, appagent.WithBackupHealth(orchestrator, backups), func(kind bus.EventKind, payload []byte) error {
+	sink := func(kind bus.EventKind, payload []byte) error {
 		return agent.SendEvent(string(kind), payload)
-	}, 30*time.Second, backups.Changed(), log)
+	}
+	// The snapshot carries each app's backup health too and lets the metrics
+	// reporter reuse the status reporter's `docker ps`.
+	statusSnapshot := appagent.NewStatusSnapshot(appagent.WithBackupHealth(orchestrator, backups))
+	go appagent.RunStatusReporter(ctx, statusSnapshot, sink, 30*time.Second, backups.Changed(), log)
+
+	// Resource metrics: a server.metrics event every 60 s (procfs/cgroupfs
+	// reads, no forks) plus the hourly disk scan; off with
+	// METRICS_ENABLED=false.
+	appagent.StartMetrics(ctx, cfg, statusSnapshot, orchestrator, sink, log)
 
 	// Auto-update for git-sourced apps: polls upstreams on each app's own
 	// interval and redeploys on new commits.

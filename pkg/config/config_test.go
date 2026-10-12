@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // unsetenv guarantees key is absent for the duration of the test, restoring
@@ -421,5 +422,38 @@ func TestGetIngressTrustedProxies(t *testing.T) {
 	got := c.GetIngressTrustedProxies()
 	if len(got) != 2 || got[0] != "172.16.0.0/12" || got[1] != "10.0.0.1" {
 		t.Fatalf("GetIngressTrustedProxies() = %q", got)
+	}
+}
+
+func TestIsMetricsEnabled(t *testing.T) {
+	c := NewServerConfig("standalone")
+	cases := map[string]bool{"": true, "true": true, "1": true, "false": false, "FALSE": false, "0": false, "off": false, "junk": true}
+	for val, want := range cases {
+		if val == "" {
+			unsetenv(t, "METRICS_ENABLED")
+		} else {
+			t.Setenv("METRICS_ENABLED", val)
+		}
+		if got := c.IsMetricsEnabled(); got != want {
+			t.Errorf("METRICS_ENABLED=%q: got %v, want %v", val, got, want)
+		}
+	}
+}
+
+func TestGetMetricsDiskInterval(t *testing.T) {
+	c := NewServerConfig("standalone")
+	cases := map[string]time.Duration{
+		"": time.Hour, "0": 0, "0s": 0, "2h": 2 * time.Hour, "30m": 30 * time.Minute,
+		"1m": 5 * time.Minute, "junk": time.Hour, "-1h": time.Hour,
+	}
+	for val, want := range cases {
+		if val == "" {
+			unsetenv(t, "METRICS_DISK_INTERVAL")
+		} else {
+			t.Setenv("METRICS_DISK_INTERVAL", val)
+		}
+		if got := c.GetMetricsDiskInterval(); got != want {
+			t.Errorf("METRICS_DISK_INTERVAL=%q: got %v, want %v", val, got, want)
+		}
 	}
 }

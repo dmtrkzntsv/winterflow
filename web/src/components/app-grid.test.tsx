@@ -1,9 +1,12 @@
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { AppGrid } from "@/components/app-grid";
 import { AppsContext, type AppsContextValue } from "@/context/apps-context-base";
+
+// Links point into the active server's scope (/server/:id/...).
+vi.mock("@/context/use-servers", () => ({ useServers: () => ({ activeServerId: "srv-1" }) }));
 
 function renderGrid(over: Partial<AppsContextValue>) {
   const value = {
@@ -36,8 +39,8 @@ describe("AppGrid", () => {
 
   it("links the warning to the app's Backups tab, and the others to the app", () => {
     renderGrid({ backupsByApp: { a1: [{ name: "db", state: "late" }], a2: [{ name: "db", state: "ok" }] } });
-    expect(screen.getByRole("link", { name: /Shop/ })).toHaveAttribute("href", "/app/a1?tab=backups");
-    expect(screen.getByRole("link", { name: /Blog/ })).toHaveAttribute("href", "/app/a2");
+    expect(screen.getByRole("link", { name: /Shop/ })).toHaveAttribute("href", "/server/srv-1/app/a1?tab=backups");
+    expect(screen.getByRole("link", { name: /Blog/ })).toHaveAttribute("href", "/server/srv-1/app/a2");
   });
 
   it("shows no dot without backups", () => {

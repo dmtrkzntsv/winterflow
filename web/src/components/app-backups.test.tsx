@@ -8,6 +8,9 @@ import { AppsContext, type AppDetailPayload, type AppsContextValue } from "@/con
 import { holdHealth, OVERLAY_HOLD_MS, resetHeldHealth, trackActivity } from "@/lib/backup-activity";
 import { AgentError, type BackupHealth, type EffectiveBackup } from "@/lib/backups";
 
+// Links point into the active server's scope (/server/:id/...).
+vi.mock("@/context/use-servers", () => ({ useServers: () => ({ activeServerId: "srv-1" }) }));
+
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
 const backups = vi.hoisted(() => ({

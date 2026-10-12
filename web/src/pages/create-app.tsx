@@ -12,9 +12,11 @@ import {
   validateEditorState,
 } from "@/lib/app-editor-io";
 import type { AppEditorState } from "@/types/app-config";
+import { useServerPath } from "@/context/use-server-path";
 
 export default function CreateAppPage() {
   const navigate = useNavigate();
+  const toServer = useServerPath();
   const { saveApp, getPublicKey } = useApps();
   const [state, setState] = useState<AppEditorState>(emptyEditorState);
   const [saving, setSaving] = useState(false);
@@ -38,7 +40,7 @@ export default function CreateAppPage() {
       toast.success("App created and deploying");
       // Land on the new app's page so its deployment is visible right away.
       const created = apps.find((a) => a.name === state.config.name.trim());
-      navigate(created ? `/app/${created.id}` : "/");
+      navigate(toServer(created ? `/app/${created.id}` : ""));
     } catch (e) {
       toast.error("Couldn't create the app", {
         description: e instanceof Error ? e.message : undefined,
@@ -60,7 +62,7 @@ export default function CreateAppPage() {
         </div>
         <Button
           variant="ghost"
-          onClick={() => navigate("/")}
+          onClick={() => navigate(toServer())}
           disabled={saving}
         >
           Cancel

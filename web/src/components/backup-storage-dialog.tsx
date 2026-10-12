@@ -14,6 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useServerPath } from "@/context/use-server-path";
 import { returnFocusTo } from "@/lib/focus";
 
 // BackupStorageDialog picks one of the server's storages (load lists their
@@ -44,6 +45,7 @@ export function BackupStorageDialog({
   onOpenChange: (open: boolean) => void;
   onPick: (storage: string) => void;
 }) {
+  const toServer = useServerPath();
   const [names, setNames] = useState<string[] | null>(null);
   const [error, setError] = useState("");
   const [picked, setPicked] = useState(current);
@@ -82,7 +84,7 @@ export function BackupStorageDialog({
         ) : names.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             This server has no storage yet.{" "}
-            <Link to="/settings?tab=storages" className="font-medium text-foreground underline underline-offset-4">
+            <Link to={toServer("/settings?tab=storages")} className="font-medium text-foreground underline underline-offset-4">
               Add a storage in Settings → Storages
             </Link>
             , then come back.

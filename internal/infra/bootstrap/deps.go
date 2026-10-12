@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"winterflow/internal/domain/metrics"
 	"winterflow/internal/domain/port"
 	"winterflow/internal/domain/service/status"
 	"winterflow/pkg/config"
@@ -29,4 +30,8 @@ type Deps struct {
 	CommandDispatcher       port.CommandDispatcher
 	NotificationManager     port.NotificationManager
 	StatusCache             *status.Cache
+	// MetricRepository serves the monitoring charts; LatestMetrics holds
+	// each server's newest host sample for the dashboard.
+	MetricRepository port.MetricRepository
+	LatestMetrics    *metrics.LatestStore
 }

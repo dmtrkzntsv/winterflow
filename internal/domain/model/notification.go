@@ -14,6 +14,9 @@ const (
 	// NotificationAppsStatus is an unsolicited container-status report for a
 	// server's apps (Ref is empty; Payload is command.AppsStatusPayload).
 	NotificationAppsStatus NotificationType = "apps_status"
+	// NotificationAlert is an alert transition (fired/resolved) on one of
+	// the org's servers or apps (Ref is empty; Payload is alert.Notice).
+	NotificationAlert NotificationType = "alert"
 )
 
 // ServerStatusPayload is the payload of a server_status notification.

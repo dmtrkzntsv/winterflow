@@ -4,9 +4,11 @@ import (
 	"context"
 
 	"winterflow/internal/domain/metrics"
+	"winterflow/internal/domain/service/alerting"
 	notificationsvc "winterflow/internal/domain/service/notification"
 	"winterflow/internal/domain/service/status"
 	"winterflow/internal/infra/db"
+	alertrepo "winterflow/internal/infra/db/repository/alert"
 	apprepo "winterflow/internal/infra/db/repository/app"
 	appdomainrepo "winterflow/internal/infra/db/repository/appdomain"
 	metricrepo "winterflow/internal/infra/db/repository/metric"
@@ -18,6 +20,7 @@ import (
 	"winterflow/internal/infra/transport/dispatch"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
+	"winterflow/pkg/util"
 )
 
 // WireCore builds the wiring both topologies share: DB-backed repositories and
@@ -43,16 +46,22 @@ func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerCon
 	// METRICS_ENABLED=false; the chart routes then serve empty series.
 	latest := metrics.NewLatestStore()
 	var ms metricsStore
+	var history alerting.History
 	if cfg.IsMetricsEnabled() {
 		ms = r.metric
+		history = r.metric
 		go runMetricsMaintenance(ctx, r.metric, latest, metricsMaintenanceInterval, log)
 	}
+
+	// Alerts: the evaluator rides the events sink (samples, statuses,
+	// liveness sweep); the notifier sends through the org's channels.
+	al := wireAlerts(ctx, r.alert, history, newStatusFanout(r.server, nm, log), cfg, log)
 
 	startResponseSubscriber(ctx, b, dispatcher, cfg, log)
 	startEventsSubscriber(ctx, b, statusCache, r.server, nm, cfg, log, indexSyncs{
 		newDomainSync(ctx, dispatcher, r.serverDomain, log),
 		newStorageSync(ctx, dispatcher, r.serverStorage, log),
-	}, ms, latest)
+	}, ms, latest, al.evaluator)
 
 	return &Deps{
 		Log:                     log,
@@ -68,6 +77,9 @@ func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerCon
 		StatusCache:             statusCache,
 		MetricRepository:        r.metric,
 		LatestMetrics:           latest,
+		AlertRepository:         r.alert,
+		AlertNotifier:           al.notifier,
+		ChannelBox:              al.box,
 	}, r.server
 }
 
@@ -80,6 +92,7 @@ type repos struct {
 	serverDomain  *serverdomainrepo.Repo
 	serverStorage *serverstoragerepo.Repo
 	metric        *metricrepo.Repo
+	alert         *alertrepo.Repo
 }
 
 func newRepos(conn *db.DB, log *logger.Logger) (repos, error) {
@@ -105,6 +118,9 @@ func newRepos(conn *db.DB, log *logger.Logger) (repos, error) {
 	if r.serverStorage, err = serverstoragerepo.New(conn.Tx, conn.Driver, log); err != nil {
 		return r, err
 	}
-	r.metric, err = metricrepo.New(conn.Tx, conn.Driver, log)
+	if r.metric, err = metricrepo.New(conn.Tx, conn.Driver, log); err != nil {
+		return r, err
+	}
+	r.alert, err = alertrepo.New(conn.Tx, conn.Driver, log, util.GenerateID)
 	return r, err
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"winterflow/internal/domain/alert"
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/metrics"
 	"winterflow/internal/domain/model"
@@ -75,6 +76,11 @@ func (f *statusFanout) serverStatus(ctx context.Context, serverID string, livene
 	})
 }
 
+// alert pushes an alert transition to the server's org.
+func (f *statusFanout) alert(ctx context.Context, serverID string, n alert.Notice) {
+	f.send(ctx, serverID, model.Notification{Type: model.NotificationAlert, Payload: n, Timestamp: time.Now()})
+}
+
 func (f *statusFanout) appsStatus(ctx context.Context, serverID string, apps []command.AppStatus) {
 	f.send(ctx, serverID, model.Notification{
 		Type:      model.NotificationAppsStatus,
@@ -95,11 +101,23 @@ type eventSink struct {
 	// sample for the dashboard.
 	metrics metricsStore
 	latest  *metrics.LatestStore
+	// alerts, when set, evaluates the alert rules on every event and on
+	// the sweep.
+	alerts alertObserver
 	// sync, when set, fills the API's per-server indexes from the agent: it
 	// starts when a server comes online (an unknown->online transition, or a
 	// capabilities event: the agent (re)registered) and is nudged by every
 	// heartbeat while it is still pending.
 	sync serverSync
+}
+
+// alertObserver is the alert evaluator as the event sink drives it
+// (alerting.Evaluator).
+type alertObserver interface {
+	ObserveHeartbeat(ctx context.Context, serverID string)
+	ObserveMetrics(ctx context.Context, serverID string, at time.Time, server metrics.Values, apps map[string]metrics.Values)
+	ObserveAppStatus(ctx context.Context, serverID string, problematic map[string]bool)
+	Sweep(ctx context.Context)
 }
 
 // serverSync is the per-server index fill the event sink drives.
@@ -120,6 +138,9 @@ func (s *eventSink) handle(ctx context.Context, ev bus.EventMessage) {
 		if transition {
 			s.fan.serverStatus(ctx, ev.ServerID, status.LivenessOnline)
 		}
+		if s.alerts != nil {
+			s.alerts.ObserveHeartbeat(ctx, ev.ServerID)
+		}
 	case bus.EventCapabilities:
 		var c capabilitiesEvent
 		if err := json.Unmarshal(ev.Payload, &c); err != nil {
@@ -132,6 +153,9 @@ func (s *eventSink) handle(ctx context.Context, ev bus.EventMessage) {
 		}
 		if transition {
 			s.fan.serverStatus(ctx, ev.ServerID, status.LivenessOnline)
+		}
+		if s.alerts != nil {
+			s.alerts.ObserveHeartbeat(ctx, ev.ServerID)
 		}
 	case bus.EventAppsStatus:
 		var body command.GetAppsStatusResponse
@@ -148,6 +172,11 @@ func (s *eventSink) handle(ctx context.Context, ev bus.EventMessage) {
 		}
 		if transition {
 			s.fan.serverStatus(ctx, ev.ServerID, status.LivenessOnline)
+		}
+		// Every report counts (time passes for app-down rules), not only
+		// changed ones.
+		if s.alerts != nil {
+			s.alerts.ObserveAppStatus(ctx, ev.ServerID, problematicApps(body.Apps))
 		}
 	case bus.EventServerMetrics:
 		s.storeMetrics(ctx, ev, now)
@@ -171,6 +200,11 @@ func (s *eventSink) handle(ctx context.Context, ev bus.EventMessage) {
 // minute's sample is independent. Metrics never touch liveness or SSE.
 func (s *eventSink) storeMetrics(ctx context.Context, ev bus.EventMessage, now time.Time) {
 	if s.metrics == nil {
+		// Metrics are off: nothing to store or evaluate, but the event
+		// still proves the server is up.
+		if s.alerts != nil {
+			s.alerts.ObserveHeartbeat(ctx, ev.ServerID)
+		}
 		return
 	}
 	var sample metrics.Sample
@@ -197,6 +231,18 @@ func (s *eventSink) storeMetrics(ctx context.Context, ev bus.EventMessage, now t
 	if s.latest != nil {
 		s.latest.Set(ev.ServerID, metrics.Latest{At: at, Server: sample.Server})
 	}
+	if s.alerts != nil {
+		s.alerts.ObserveMetrics(ctx, ev.ServerID, at, sample.Server.Values(), apps)
+	}
+}
+
+// problematicApps maps an apps.status report to app id -> problematic.
+func problematicApps(apps []command.AppStatus) map[string]bool {
+	out := make(map[string]bool, len(apps))
+	for _, a := range apps {
+		out[a.AppID] = a.StatusCode == command.ContainerStatusProblematic
+	}
+	return out
 }
 
 // sweep flips servers whose liveness expired to unknown and pushes the
@@ -205,13 +251,16 @@ func (s *eventSink) sweep(ctx context.Context, cache *status.Cache, now time.Tim
 	for _, serverID := range cache.ExpireStale(now) {
 		s.fan.serverStatus(ctx, serverID, status.LivenessUnknown)
 	}
+	if s.alerts != nil {
+		s.alerts.Sweep(ctx)
+	}
 }
 
 // startEventsSubscriber drains the region's events queue (agent-initiated:
 // liveness, capabilities, status), updating the in-memory status cache and the
 // DB, and pushing transitions over SSE. It also runs the expiry sweeper. It is
 // the API's consumer of events:<region>.
-func startEventsSubscriber(ctx context.Context, b bus.Bus, cache *status.Cache, serverRepo port.ServerRepository, nm port.NotificationManager, cfg *config.ServerConfig, log *logger.Logger, indexSync serverSync, ms metricsStore, latest *metrics.LatestStore) {
+func startEventsSubscriber(ctx context.Context, b bus.Bus, cache *status.Cache, serverRepo port.ServerRepository, nm port.NotificationManager, cfg *config.ServerConfig, log *logger.Logger, indexSync serverSync, ms metricsStore, latest *metrics.LatestStore, alerts alertObserver) {
 	sink := &eventSink{
 		cache:   cache,
 		store:   serverRepo,
@@ -220,6 +269,7 @@ func startEventsSubscriber(ctx context.Context, b bus.Bus, cache *status.Cache, 
 		sync:    indexSync,
 		metrics: ms,
 		latest:  latest,
+		alerts:  alerts,
 	}
 	bus.SubscribeJSON(ctx, b, cfg.GetBusEventsQueue(), log, func(ev bus.EventMessage) {
 		sink.handle(ctx, ev)

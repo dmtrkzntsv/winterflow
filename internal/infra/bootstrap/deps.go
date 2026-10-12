@@ -3,9 +3,11 @@ package bootstrap
 import (
 	"winterflow/internal/domain/metrics"
 	"winterflow/internal/domain/port"
+	"winterflow/internal/domain/service/alerting"
 	"winterflow/internal/domain/service/status"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
+	"winterflow/pkg/secretbox"
 )
 
 // Deps holds the fully-constructed dependencies a web server needs to run.
@@ -34,4 +36,11 @@ type Deps struct {
 	// each server's newest host sample for the dashboard.
 	MetricRepository port.MetricRepository
 	LatestMetrics    *metrics.LatestStore
+	// AlertRepository stores channels, rules, overrides, states and
+	// history; AlertNotifier sends (the Test button uses it directly).
+	AlertRepository port.AlertRepository
+	AlertNotifier   *alerting.Notifier
+	// ChannelBox encrypts channel URLs; nil when JWT_SECRET is unset
+	// (saving or testing a channel then answers 400).
+	ChannelBox *secretbox.Box
 }

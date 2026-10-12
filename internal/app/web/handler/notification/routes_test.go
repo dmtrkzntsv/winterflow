@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"winterflow/internal/app/web/api"
+	"winterflow/internal/domain/alert"
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
 )
@@ -30,6 +31,7 @@ func TestRoutes(t *testing.T) {
 		"operation_result": nil,
 		"server_status":    model.ServerStatusPayload{},
 		"apps_status":      command.AppsStatusPayload{},
+		"alert":            alert.Notice{},
 	}
 	if len(rt.EventPayloads) != len(want) {
 		t.Fatalf("EventPayloads = %+v, want %d entries", rt.EventPayloads, len(want))

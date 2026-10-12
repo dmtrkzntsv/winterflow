@@ -335,22 +335,8 @@ func deletePoints(ctx context.Context, st store.Store, points []layout.Point) er
 // at /src/<n> (read-only for files; sqlite needs to take its locks), the
 // agent's own static binary at /wf.
 func helperArgs(name, appID, exe string, plan helperPlan, b recipe.EffectiveBackup, since string) []string {
-	args := []string{"run", "--rm", "--name", name}
-	args = append(args, helperLimits...)
-	args = append(args, "--label", helper.RoleLabel, "--label", helper.AppLabel+"="+appID)
-	ro := b.Type == recipe.TypeFiles
-	for i, m := range plan.Mounts {
-		spec := "type=volume," + csvField("source="+m.Volume)
-		if m.Bind != "" {
-			spec = "type=bind," + csvField("source="+m.Bind)
-		}
-		spec += ",target=/src/" + strconv.Itoa(i)
-		if ro {
-			spec += ",readonly"
-		}
-		args = append(args, "--mount", spec)
-	}
-	args = append(args, "--mount", "type=bind,"+csvField("source="+exe)+",target=/wf,readonly", helper.Image, "/wf", "backup", "dump")
+	args := helperRunHead(name, appID, exe, plan, helperLimits, b.Type == recipe.TypeFiles, false)
+	args = append(args, "backup", "dump")
 	if b.Type == recipe.TypeSQLite {
 		args = append(args, "sqlite", plan.Paths[0].Src(), "--entry", plan.Paths[0].Entry)
 	} else {
@@ -366,6 +352,32 @@ func helperArgs(name, appID, exe string, plan helperPlan, b recipe.EffectiveBack
 		args = append(args, "--since", since)
 	}
 	return args
+}
+
+// helperRunHead is the `docker run` of a helper up to its command: the name,
+// the limits, the labels, the plan's sources mounted at /src/<n> (read-only
+// when readonly), the agent's own static binary at /wf and the image. stdin
+// adds -i.
+func helperRunHead(name, appID, exe string, plan helperPlan, limits []string, readonly, stdin bool) []string {
+	args := []string{"run", "--rm"}
+	if stdin {
+		args = append(args, "-i")
+	}
+	args = append(args, "--name", name)
+	args = append(args, limits...)
+	args = append(args, "--label", helper.RoleLabel, "--label", helper.AppLabel+"="+appID)
+	for i, m := range plan.Mounts {
+		spec := "type=volume," + csvField("source="+m.Volume)
+		if m.Bind != "" {
+			spec = "type=bind," + csvField("source="+m.Bind)
+		}
+		spec += ",target=/src/" + strconv.Itoa(i)
+		if readonly {
+			spec += ",readonly"
+		}
+		args = append(args, "--mount", spec)
+	}
+	return append(args, "--mount", "type=bind,"+csvField("source="+exe)+",target=/wf,readonly", helper.Image, "/wf")
 }
 
 // csvField quotes one field of a --mount value (docker parses it as CSV):

@@ -631,7 +631,7 @@ func (r *Repository) downloadPoint(ctx context.Context, st store.Store, p layout
 	sum := sha256.New()
 	// One byte past the manifest's size is enough to see the object is
 	// bigger; a local folder's file ignores ctx, hence the reader.
-	n, err := io.Copy(io.MultiWriter(f, sum), io.LimitReader(ctxReader{ctx, rc}, m.Size+1))
+	n, err := io.Copy(io.MultiWriter(f, sum), io.LimitReader(store.CtxReader{Ctx: ctx, R: rc}, m.Size+1))
 	rc.Close()
 	if cerr := f.Close(); err == nil {
 		err = cerr
@@ -656,7 +656,7 @@ func archiveNeeds(ctx context.Context, local string, plan helperPlan) (map[int]u
 		return nil, err
 	}
 	defer f.Close()
-	dec, err := zstd.NewReader(ctxReader{ctx, f}, zstd.WithDecoderConcurrency(1))
+	dec, err := zstd.NewReader(store.CtxReader{Ctx: ctx, R: f}, zstd.WithDecoderConcurrency(1))
 	if err != nil {
 		return nil, err
 	}
@@ -698,17 +698,8 @@ func archiveNeeds(ctx context.Context, local string, plan helperPlan) (map[int]u
 // mounted read-write at /src/<n>, the agent's binary at /wf, the copy on
 // stdin (-i).
 func restoreArgs(name, appID, exe string, plan helperPlan, b recipe.EffectiveBackup, needs map[int]uint64) []string {
-	args := []string{"run", "--rm", "-i", "--name", name}
-	args = append(args, restoreLimits...)
-	args = append(args, "--label", helper.RoleLabel, "--label", helper.AppLabel+"="+appID)
-	for i, m := range plan.Mounts {
-		spec := "type=volume," + csvField("source="+m.Volume)
-		if m.Bind != "" {
-			spec = "type=bind," + csvField("source="+m.Bind)
-		}
-		args = append(args, "--mount", spec+",target=/src/"+strconv.Itoa(i))
-	}
-	args = append(args, "--mount", "type=bind,"+csvField("source="+exe)+",target=/wf,readonly", helper.Image, "/wf", "backup", "restore")
+	args := helperRunHead(name, appID, exe, plan, restoreLimits, false, true)
+	args = append(args, "backup", "restore")
 	if b.Type == recipe.TypeSQLite {
 		return append(args, "sqlite", plan.Paths[0].Src(), "--entry", plan.Paths[0].Entry)
 	}
@@ -743,17 +734,4 @@ func (r *Repository) runZstdRestore(ctx context.Context, name string, args []str
 	}
 	defer dec.Close()
 	return r.runRestoreHelper(ctx, name, args, dec)
-}
-
-// ctxReader stops a copy once ctx is done.
-type ctxReader struct {
-	ctx context.Context
-	r   io.Reader
-}
-
-func (c ctxReader) Read(p []byte) (int, error) {
-	if err := c.ctx.Err(); err != nil {
-		return 0, err
-	}
-	return c.r.Read(p)
 }

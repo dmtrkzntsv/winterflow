@@ -165,7 +165,7 @@ func (l *local) Put(ctx context.Context, key string, r io.Reader) error {
 	if err := l.mkdirBelow(path.Dir(key)); err != nil {
 		return err
 	}
-	return fsutil.WriteReader(l.file(key), tmpPrefix+"*", ctxReader{ctx, r})
+	return fsutil.WriteReader(l.file(key), tmpPrefix+"*", CtxReader{ctx, r})
 }
 
 func (l *local) Get(_ context.Context, key string) (io.ReadCloser, error) {
@@ -253,15 +253,15 @@ func (l *local) Delete(ctx context.Context, keys ...string) error {
 	return nil
 }
 
-// ctxReader stops a copy once ctx is done.
-type ctxReader struct {
-	ctx context.Context
-	r   io.Reader
+// CtxReader stops a copy once Ctx is done.
+type CtxReader struct {
+	Ctx context.Context
+	R   io.Reader
 }
 
-func (c ctxReader) Read(p []byte) (int, error) {
-	if err := c.ctx.Err(); err != nil {
+func (c CtxReader) Read(p []byte) (int, error) {
+	if err := c.Ctx.Err(); err != nil {
 		return 0, err
 	}
-	return c.r.Read(p)
+	return c.R.Read(p)
 }

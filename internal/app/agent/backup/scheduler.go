@@ -229,6 +229,17 @@ func (s *Scheduler) saveLocked() {
 // instead of at its next tick. Several changes before a receive coalesce.
 func (s *Scheduler) Changed() <-chan struct{} { return s.changed }
 
+// stateLocked is the state of the backup k, created when it has none. The
+// caller holds mu.
+func (s *Scheduler) stateLocked(k string) *State {
+	st := s.state[k]
+	if st == nil {
+		st = &State{}
+		s.state[k] = st
+	}
+	return st
+}
+
 func (s *Scheduler) nudge() {
 	select {
 	case s.changed <- struct{}{}:
@@ -258,11 +269,7 @@ func (s *Scheduler) NoteInterrupted(marks []dockercompose.RestoreMark) {
 		s.log.Warn("a restore was interrupted by an agent stop", "app_id", m.App, "backup", m.Backup, "point", m.Point,
 			"pre_restore_point", m.PreRestorePoint, "was_running", m.WasRunning, "phase", m.Phase, "started", m.Started)
 		k := key{m.App, m.Backup}.String()
-		st := s.state[k]
-		if st == nil {
-			st = &State{}
-			s.state[k] = st
-		}
+		st := s.stateLocked(k)
 		if strings.HasPrefix(st.LastError, stoppedRestorePrefix(m.Point)) {
 			continue // the restore's own error, stored when it ended
 		}
@@ -513,10 +520,7 @@ func (s *Scheduler) refresh() {
 		st := s.state[k]
 		switch {
 		case p.Enabled && (st == nil || st.EnabledAt.IsZero()):
-			if st == nil {
-				st = &State{}
-				s.state[k] = st
-			}
+			st = s.stateLocked(k)
 			st.EnabledAt, changed = now, true
 		case !p.Enabled && st != nil && !st.EnabledAt.IsZero():
 			st.EnabledAt, changed = time.Time{}, true
@@ -780,11 +784,7 @@ func (s *Scheduler) noteErrorLocked(k key, msg string) {
 	if !s.plannedLocked(k) {
 		return
 	}
-	st := s.state[k.String()]
-	if st == nil {
-		st = &State{}
-		s.state[k.String()] = st
-	}
+	st := s.stateLocked(k.String())
 	st.LastError = msg
 	s.saveLocked()
 }
@@ -865,11 +865,7 @@ func (s *Scheduler) record(j *job, start time.Time, res dockercompose.BackupResu
 		return
 	}
 	if s.plannedLocked(j.key) {
-		st := s.state[j.key.String()]
-		if st == nil {
-			st = &State{}
-			s.state[j.key.String()] = st
-		}
+		st := s.stateLocked(j.key.String())
 		st.LastAttempt = start
 		if err != nil {
 			st.LastError = err.Error()

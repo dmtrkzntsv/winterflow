@@ -311,12 +311,89 @@ func TestRedeployLockedRespectsTheOperationLock(t *testing.T) {
 	calls := 0
 	r.redeploy = func(context.Context, string) error { calls++; return nil }
 	unlock := r.lockAppOp("app-1")
-	if err := r.redeployLocked(context.Background(), "app-1"); !errors.Is(err, ErrAppBusy) {
+	if _, err := r.redeployLocked(context.Background(), "app-1"); !errors.Is(err, ErrAppBusy) {
 		t.Fatalf("redeploy of a busy app: %v, want ErrAppBusy", err)
 	}
 	unlock()
-	if err := r.redeployLocked(context.Background(), "app-1"); err != nil || calls != 1 {
-		t.Fatalf("redeploy = %v, calls %d", err, calls)
+	if skip, err := r.redeployLocked(context.Background(), "app-1"); err != nil || skip != redeployAllowed || calls != 1 {
+		t.Fatalf("redeploy = %v, %v, calls %d", skip, err, calls)
 	}
 	lockFree(t, r, "app-1", "redeployLocked")
+}
+
+// storage.save checks for a draft before it waits for an app's lock; a
+// draft saved while it waited (by the holder) must not be deployed over:
+// the check is made again under the lock.
+func TestStorageRedeploySkipsADraftSavedWhileItWaited(t *testing.T) {
+	r := newTestRepo(t)
+	stubDocker(t, 0)
+	if _, err := r.SaveApp(context.Background(), draftPayload("app-1")); err != nil {
+		t.Fatal(err)
+	}
+	r.runningProjects = func(context.Context) (map[string]bool, error) {
+		return map[string]bool{projectName("app-1"): true}, nil
+	}
+	calls := 0
+	r.redeploy = func(context.Context, string) error { calls++; return nil }
+
+	unlock := r.lockAppOp("app-1") // a user's save is under way
+	type result struct{ redeployed, warnings []string }
+	done := make(chan result, 1)
+	go func() {
+		red, warn := r.redeployStorageUsers(context.Background(), []string{"app-1"})
+		done <- result{red, warn}
+	}()
+	time.Sleep(20 * time.Millisecond) // the redeploy passed its first check and waits
+	p := draftPayload("app-1")
+	p.Files[0].Content = []byte("services: {web: {image: nginx}}\n")
+	if _, _, err := r.save(p, false); err != nil { // the holder's draft commit
+		t.Fatal(err)
+	}
+	unlock()
+	res := <-done
+	if calls != 0 || len(res.redeployed) != 0 {
+		t.Fatalf("a draft was deployed over: calls %d, %+v", calls, res)
+	}
+	if len(res.warnings) != 1 || !strings.Contains(res.warnings[0], "undeployed changes") {
+		t.Fatalf("warnings = %v", res.warnings)
+	}
+	// A restore begun meanwhile is reported the same way.
+	end, err := r.beginRestore("app-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer end()
+	if skip, err := r.redeployLocked(context.Background(), "app-1"); err != nil || skip != redeployRestoring {
+		t.Fatalf("redeploy during a restore = %v, %v", skip, err)
+	}
+}
+
+// UpdateApp renders the env files before its pull, so an image tag driven
+// by a shared variable is pulled with the current value.
+func TestUpdateAppRendersEnvFilesBeforePull(t *testing.T) {
+	r := newTestRepo(t)
+	stubDocker(t, 0)
+	if _, err := r.SaveApp(context.Background(), draftPayload("app-1")); err != nil {
+		t.Fatal(err)
+	}
+	dir := r.appDataDir("app-1")
+	if err := os.Remove(filepath.Join(dir, envSharedRel)); err != nil {
+		t.Fatal(err)
+	}
+	var atPull []string
+	r.runCompose = func(_ context.Context, d string, args []string) error {
+		if args[len(args)-1] == "pull" {
+			atPull = args
+			if _, err := os.Stat(filepath.Join(d, envSharedRel)); err != nil {
+				t.Errorf("pull ran before the shared file was rendered: %v", err)
+			}
+		}
+		return nil
+	}
+	if err := r.UpdateApp(context.Background(), "app-1"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(atPull, " "), "--env-file "+envSharedRel) {
+		t.Fatalf("pull args = %v", atPull)
+	}
 }

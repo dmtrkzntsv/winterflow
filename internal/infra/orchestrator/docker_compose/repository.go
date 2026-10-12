@@ -83,8 +83,8 @@ type Repository struct {
 	// serialize the public mutators of one app, held for their whole run,
 	// with the shared-variable reload worker. The distributed agent runs
 	// commands concurrently. busyWait bounds a mutator's wait (appBusyWait;
-	// tests shorten it). Lock order: operation lock, then lockSource, then
-	// lockApp, then sharedMu, then refMu/staleMu.
+	// tests shorten it). Lock order: operation lock, then lockApp, then
+	// lockSource, then sharedMu, then refMu/staleMu.
 	opMu     sync.Mutex
 	opLocks  map[string]chan struct{}
 	busyWait time.Duration

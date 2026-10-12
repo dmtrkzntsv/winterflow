@@ -37,6 +37,23 @@ func (r *Repository) deploy(ctx context.Context, appID string) error {
 	return nil
 }
 
+// renderDeployEnv writes every derived env file a deploy reads: the app's
+// secrets, the shared variables and the storage variables. deploy (via
+// composeUp) writes them again; this is for a compose command that runs
+// before it (UpdateApp's pull).
+func (r *Repository) renderDeployEnv(ctx context.Context, appID string) error {
+	dir := r.appDataDir(appID)
+	if err := r.materializeForDeploy(dir, loadSecretStore(dir)); err != nil {
+		return err
+	}
+	files := r.appComposeFiles(dir)
+	cfg, err := r.appBackups(dir, files)
+	if err != nil {
+		return err
+	}
+	return r.materializeStorageEnv(ctx, dir, files, cfg.backups)
+}
+
 // StartApp brings an app up.
 func (r *Repository) StartApp(ctx context.Context, appID string) error {
 	unlock, err := r.lockForMutation(ctx, appID)
@@ -107,6 +124,12 @@ func (r *Repository) UpdateApp(ctx context.Context, appID string) error {
 		if _, _, err := r.refreshSourceWithoutDeploy(appID); err != nil {
 			return fmt.Errorf("refresh source: %w", err)
 		}
+	}
+	// The pull interpolates the compose file too: render the env files the
+	// deploy will use first, so an image tag driven by a shared or storage
+	// variable is pulled with its current value.
+	if err := r.renderDeployEnv(ctx, appID); err != nil {
+		return err
 	}
 	if err := r.composePull(ctx, appID); err != nil {
 		return fmt.Errorf("docker compose pull: %w", err)

@@ -27,8 +27,11 @@ func (e appBusyError) Is(target error) bool { return target == ErrAppBusy }
 // The operation lock (opLocks, this file) and the file lock (lockApp,
 // lockSource in repository.go) are distinct. Lock order:
 //
-//	operation lock -> beginOp/beginRestore bookkeeping -> lockSource -> lockApp
+//	operation lock -> beginOp/beginRestore bookkeeping -> lockApp -> lockSource
 //	-> sharedMu -> refMu/staleMu
+//
+// (A save and a source poll take lockSource and release it before lockApp;
+// only a rollback holds both, lockApp first.)
 //
 // The operation lock is held for a public mutator's whole run (compose
 // included) and by the shared-variable reload worker; the file lock only for

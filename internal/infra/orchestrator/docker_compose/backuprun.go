@@ -135,7 +135,7 @@ func (r *Repository) RunBackup(ctx context.Context, job BackupJob) (BackupResult
 	}
 	plan := plans[b.Name]
 	folder := layout.Folder(job.AppID, b.Name)
-	points, err := listFolder(ctx, st, folder)
+	points, deletedMarker, err := listFolderAndMarker(ctx, st, job.AppID, folder)
 	if err != nil {
 		return BackupResult{}, err
 	}
@@ -208,10 +208,12 @@ func (r *Repository) RunBackup(ctx context.Context, job BackupJob) (BackupResult
 		// Same: the delete's marker (or purge) must stand.
 		return res, ErrAppDeleted
 	}
-	if err := clearDeletedMarker(ctx, st, job.AppID); err != nil {
-		// Only logged: a storage that refuses deletes already warns about
-		// retention below, and the sweep ignores a marker older than a point.
-		r.log.Warn("backup: the stale deleted marker could not be removed", "app_id", job.AppID, "error", err)
+	if deletedMarker {
+		if err := clearDeletedMarker(ctx, st, job.AppID); err != nil {
+			// Only logged: a storage that refuses deletes already warns about
+			// retention below, and the sweep ignores a marker older than a point.
+			r.log.Warn("backup: the stale deleted marker could not be removed", "app_id", job.AppID, "error", err)
+		}
 	}
 	policy := layout.Policy{Keep: b.Keep.Retention(), CeilingDays: ceiling}
 	doomed := slices.DeleteFunc(layout.Prune(points, policy, now), func(p layout.Point) bool { return job.Protect != "" && p.ID == job.Protect })
@@ -234,7 +236,8 @@ func (r *Repository) discardUpload(ctx context.Context, st store.Store, key stri
 // clearDeletedMarker removes a stale <app-id>/.deleted marker: the app is
 // here and running backups, so its folder is not a deleted app's (the app was
 // deleted with its backups kept and later created again under the same id).
-// One cheap Delete per run; a missing marker is no error (30s).
+// Only called when the run's listing saw the marker; a missing marker is no
+// error (30s).
 func clearDeletedMarker(ctx context.Context, st store.Store, appID string) error {
 	ctx, cancel := context.WithTimeout(ctx, storageCallTimeout)
 	defer cancel()
@@ -287,6 +290,19 @@ func listFolder(ctx context.Context, st store.Store, folder string) ([]layout.Po
 		return nil, fmt.Errorf("list the backup's copies: %w", err)
 	}
 	return layout.Points(objs, folder), nil
+}
+
+// listFolderAndMarker is listFolder from one listing of the whole app folder,
+// which also says whether the app's deleted marker is in it (30s).
+func listFolderAndMarker(ctx context.Context, st store.Store, appID, folder string) ([]layout.Point, bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, storageCallTimeout)
+	defer cancel()
+	objs, err := st.List(ctx, appID+"/")
+	if err != nil {
+		return nil, false, fmt.Errorf("list the backup's copies: %w", err)
+	}
+	marker := appID + "/" + DeletedMarkerName
+	return layout.Points(objs, folder), slices.ContainsFunc(objs, func(o store.Object) bool { return o.Key == marker }), nil
 }
 
 func readManifest(ctx context.Context, st store.Store, key string) (layout.Manifest, error) {

@@ -263,6 +263,9 @@ func (s *Scheduler) NoteInterrupted(marks []dockercompose.RestoreMark) {
 			st = &State{}
 			s.state[k] = st
 		}
+		if strings.HasPrefix(st.LastError, stoppedRestorePrefix(m.Point)) {
+			continue // the restore's own error, stored when it ended
+		}
 		st.LastError = m.Message()
 	}
 	s.saveLocked()
@@ -764,6 +767,13 @@ func (s *Scheduler) lateLocked(j *job, d outcomeOf) {
 	s.nudge()
 }
 
+// stoppedRestorePrefix starts the last_error of a restore the agent's stop
+// cut short (see recordRestore); NoteInterrupted does not replace it with
+// the less detailed message of the restore's marker.
+func stoppedRestorePrefix(point string) string {
+	return "the restore of " + point + " was cut short by the agent stopping: "
+}
+
 // noteErrorLocked makes msg the backup's last_error (no attempt is recorded)
 // when the backup is planned. The caller holds mu.
 func (s *Scheduler) noteErrorLocked(k key, msg string) {
@@ -803,7 +813,14 @@ func (s *Scheduler) recordRestore(j *job, res command.RestoreBackupResponse, err
 	}
 	if stopping {
 		// Keep the engine's error: after a half-done swap it says the app was
-		// left stopped and names the pre-restore point to go back to.
+		// left stopped and names the pre-restore point to go back to. The
+		// reply of a stopping agent rarely gets out, so the error is also
+		// the backup's last_error (stored): an app deleted meanwhile has
+		// nothing to report it on.
+		if !errors.Is(context.Cause(j.ctx), dockercompose.ErrAppDeleted) {
+			s.noteErrorLocked(j.key, stoppedRestorePrefix(j.point)+err.Error())
+			s.nudge()
+		}
 		err = fmt.Errorf("%w: %w", errStopped, err)
 	}
 	if errors.Is(err, dockercompose.ErrNotRunnable) {

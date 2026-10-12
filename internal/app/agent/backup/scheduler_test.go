@@ -1153,6 +1153,43 @@ func TestStoppedRestoreKeepsItsError(t *testing.T) {
 	}
 }
 
+// The error of a restore the agent's stop cut short is also the backup's
+// last_error (stored): the reply of a stopping agent rarely gets out. The
+// restore's marker, read at the next start, does not replace it.
+func TestStoppedRestoreIsTheBackupsLastError(t *testing.T) {
+	e := newEngine(planned("app-1", "db", recipe.TypeSQLite, true, recipe.Manual))
+	e.block = make(chan struct{})
+	e.restoreErr = errors.New("the app was left stopped; restore the pre-restore point pre to go back")
+	dir := t.TempDir()
+	s := New(e, dir, logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"}))
+	clock := newClock()
+	s.clock = clock
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { s.Run(ctx); close(done) }()
+	defer func() { cancel(); <-done }()
+	idle(t, clock)
+	const point = "20261011T120000Z-manual"
+	res := s.Restore("app-1", "db", point)
+	restored(t, e)
+	cancel()
+	outcome(t, res)
+	h := s.Health("app-1", clock.Now(), nil)
+	if len(h) != 1 || h[0].State != command.BackupFailing || !strings.Contains(h[0].LastError, "pre-restore point pre to go back") ||
+		!strings.HasPrefix(h[0].LastError, stoppedRestorePrefix(point)) {
+		t.Fatalf("health = %+v", h)
+	}
+	raw, _ := os.ReadFile(filepath.Join(dir, "backups", "state.json"))
+	if !strings.Contains(string(raw), "pre-restore point pre to go back") {
+		t.Fatalf("state.json = %s", raw)
+	}
+	// The next start finds the restore's marker too, and keeps this error.
+	s.NoteInterrupted([]dockercompose.RestoreMark{{App: "app-1", Backup: "db", Point: point, Phase: "restoring"}})
+	if h := s.Health("app-1", clock.Now(), nil); !strings.HasPrefix(h[0].LastError, stoppedRestorePrefix(point)) {
+		t.Fatalf("after the marker: %+v", h)
+	}
+}
+
 // A restore whose engine ignores the context is abandoned after the grace
 // like a run: it fails, and its app takes no backup or restore until the
 // engine call returns.

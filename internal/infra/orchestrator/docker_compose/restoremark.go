@@ -18,7 +18,9 @@ import (
 // restart, a host shutdown, a crash) cuts short leaves the app stopped and
 // its data perhaps half replaced; nothing else would tell the user. The file
 // is there from just before the app is stopped until the restore has ended,
-// and the next start of the agent reads it (see InterruptedRestores).
+// and the next start of the agent reads it (see InterruptedRestores). It is
+// kept past the end of a restore that the agent's stop left in doubt (its
+// reply may never get out).
 const restoreMarkName = "restoring.json"
 
 // Phases of a restore, as the marker records them.
@@ -113,8 +115,9 @@ func (r *Repository) updateRestoreMark(app string, change func(*RestoreMark)) {
 	}
 }
 
-// clearRestoreMark removes the marker of app's restore: it has ended, however
-// it ended (its error says what state the app is left in).
+// clearRestoreMark removes the marker of app's restore: it has ended and its
+// error says what state the app is left in (see RestoreBackup for the one
+// case where the marker stays).
 func (r *Repository) clearRestoreMark(app string) {
 	r.markMu.Lock()
 	defer r.markMu.Unlock()

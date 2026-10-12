@@ -353,7 +353,16 @@ func (r *Repository) RestoreBackup(ctx context.Context, job RestoreJob) (command
 		WasRunning: running, Phase: restorePhaseStopping, Started: r.now().UTC()}); err != nil {
 		r.log.Warn("record the restore in progress", "app_id", job.AppID, "error", err)
 	}
-	defer r.clearRestoreMark(job.AppID)
+	// The marker outlives a restore that the agent's stop (ctx cancelled,
+	// neither its time limit nor a delete) left in doubt: the reply of a
+	// stopping agent may never get out, and the next start tells the user.
+	inDoubt := false
+	defer func() {
+		if inDoubt && context.Cause(ctx) == context.Canceled {
+			return
+		}
+		r.clearRestoreMark(job.AppID)
+	}()
 	// Compose stops the services of HEAD's compose files: with undeployed
 	// changes, a container of a service HEAD no longer has would keep
 	// running beside the swap.
@@ -424,7 +433,10 @@ func (r *Repository) RestoreBackup(ctx context.Context, job RestoreJob) (command
 	// app stays stopped.
 	unchanged := err == nil && (exit == helper.ExitFailed || exit == 125 || exit == 126 || exit == 127)
 	notStarted := errors.Is(err, errHelperNotStarted)
-	stopped := func(e error) error { return r.leaveStopped(ctx, job.AppID, running, e) }
+	stopped := func(e error) error {
+		inDoubt = true
+		return r.leaveStopped(ctx, job.AppID, running, e)
+	}
 	switch {
 	case err == nil && exit == helper.ExitOK && parsed:
 	case unchanged:

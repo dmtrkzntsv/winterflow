@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -84,6 +85,48 @@ func TestRestoreMarkerGoneAfterFailures(t *testing.T) {
 	}
 	if marks, _ := readMarks(t, rr.Repository); marks != nil {
 		t.Fatalf("after a clean failure: %+v", marks)
+	}
+}
+
+// A restore the agent's stop left in doubt (the helper stopped by the
+// cancelled context, the app removed) keeps its marker, so the next start
+// reports it even if the reply never got out. Not so for a restore that ends
+// at its time limit or by its app's deletion, or that the stop left with the
+// data as it was.
+func TestRestoreMarkerKeptWhenTheAgentStopsInDoubt(t *testing.T) {
+	for name, tc := range map[string]struct {
+		stderr string
+		cause  error // why ctx ends (nil: cancelled)
+		gone   bool
+		kept   bool
+	}{
+		"stop during the swap":                 {helper.SwappingLine + "\n", nil, true, true},
+		"stop, helper not confirmed gone":      {"", nil, false, true},
+		"stop before the swap, data unchanged": {"", nil, true, false},
+		"time limit during the swap":           {helper.SwappingLine + "\n", context.DeadlineExceeded, true, false},
+		"app deleted during the swap":          {helper.SwappingLine + "\n", ErrAppDeleted, true, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rr := newRestoreRepo(t)
+			id := rr.filesPoint(t)
+			ctx, cancel := context.WithCancelCause(context.Background())
+			defer cancel(nil)
+			rr.runRestoreHelper = func(_ context.Context, _ string, _ []string, in io.Reader) (int, []byte, error) {
+				_, _ = io.Copy(io.Discard, in)
+				cancel(tc.cause)
+				return -1, []byte(tc.stderr), &helperStopped{cause: ctx.Err(), gone: tc.gone}
+			}
+			if _, err := rr.restore(ctx, "media", id); err == nil {
+				t.Fatal("expected a failure")
+			}
+			marks, _ := readMarks(t, rr.Repository)
+			if kept := len(marks) == 1; kept != tc.kept {
+				t.Fatalf("marker kept = %v, want %v (%+v)", kept, tc.kept, marks)
+			}
+			if tc.kept && (marks[0].App != "app-1" || marks[0].Phase != restorePhaseHelper || marks[0].PreRestorePoint == "") {
+				t.Fatalf("marker = %+v", marks[0])
+			}
+		})
 	}
 }
 

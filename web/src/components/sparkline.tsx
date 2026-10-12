@@ -2,14 +2,17 @@ import { useId } from "react";
 import { Area, AreaChart, YAxis } from "recharts";
 
 import { ChartContainer } from "@/components/ui/chart";
+import { sparkDomain } from "@/lib/chart-scale";
 import { cn } from "@/lib/utils";
 import type { ChartRow } from "@/lib/metrics";
 
 // Sparkline is a tiny axis-less area chart of one field (rows from
 // toChartRows): a 2px line over a gradient wash, with a dot on the newest
 // point. Without max the axis spans the data (the shape of the trend);
-// with max it runs from zero to max (a percentage). Nothing renders without
-// at least two points.
+// with max it runs from zero to max (a percentage); a flat series draws a
+// solid line at mid-height. Gaps are bridged: at this size a break reads as
+// a broken chart, not as missing data. Nothing renders without at least two
+// points.
 export function Sparkline({
   rows,
   field,
@@ -34,6 +37,7 @@ export function Sparkline({
   });
   if (count < 2) return null;
   const stroke = `var(--color-${field})`;
+  const domain = sparkDomain(rows.map((r) => r[field]), max);
   return (
     <ChartContainer
       config={{ [field]: { color } }}
@@ -47,16 +51,16 @@ export function Sparkline({
             <stop offset="100%" stopColor={stroke} stopOpacity={0.02} />
           </linearGradient>
         </defs>
-        <YAxis hide domain={max === undefined ? ["dataMin", "dataMax"] : [0, max]} />
+        <YAxis hide domain={domain} allowDataOverflow />
         <Area
           dataKey={field}
           type="monotone"
-          baseValue={max === undefined ? "dataMin" : undefined}
+          baseValue={domain[0]}
           stroke={stroke}
           strokeWidth={2}
           fill={`url(#${fade})`}
           isAnimationActive={false}
-          connectNulls={false}
+          connectNulls
           dot={(p: { index: number; cx?: number; cy?: number }) =>
             p.index === last && p.cx !== undefined && p.cy !== undefined ? (
               <circle

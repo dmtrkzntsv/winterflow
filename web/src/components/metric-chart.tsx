@@ -6,7 +6,7 @@ import { Card } from "@/components/ui/card";
 import { ChartContainer, ChartTooltip, type ChartConfig } from "@/components/ui/chart";
 import { ChartEmpty, MetricLegend, MetricTooltip } from "@/components/chart-parts";
 import { cn } from "@/lib/utils";
-import { axisWidth, niceAxis, scaleFor, stackTotals, valuesOf, type AxisScale } from "@/lib/chart-scale";
+import { axisWidth, niceAxis, scaleFor, stackTotals, timeTicks, valuesOf, type AxisScale } from "@/lib/chart-scale";
 import { formatTick, type ChartRow, type MetricsRange } from "@/lib/metrics";
 
 export type ChartSeries = { key: string; label: string; color: string };
@@ -117,6 +117,9 @@ export function MetricChartCard({
   const message = empty ?? (hasValues ? undefined : "No data yet");
   const axis = niceAxis(stack ? stackTotals(rows, keys) : valuesOf(rows, keys), scale ?? scaleFor(format), format);
   const yWidth = axisWidth(axis.ticks.map(axis.label));
+  // Round time boundaries across the rows' span; recharts drops every other
+  // one evenly when a narrow card cannot fit them all.
+  const xTicks = rows.length > 1 ? timeTicks(rows[0].t, rows[rows.length - 1].t) : undefined;
   // A single or stacked fill gets the full wash; overlapping fills a
   // lighter one so the ones behind still show.
   const wash = stack || series.length === 1 ? 0.32 : 0.16;
@@ -151,8 +154,9 @@ export function MetricChartCard({
                 type="number"
                 scale="time"
                 domain={["dataMin", "dataMax"]}
+                ticks={xTicks}
                 tickFormatter={(v: number) => formatTick(v, range)}
-                interval="preserveStartEnd"
+                interval="equidistantPreserveStart"
                 minTickGap={24}
                 {...AXIS}
               />

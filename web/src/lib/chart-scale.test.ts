@@ -11,6 +11,8 @@ import {
   splitHalves,
   stackTotals,
   tooltipRows,
+  sparkDomain,
+  timeTicks,
   valuesOf,
 } from "@/lib/chart-scale";
 import { formatPercent, formatRate, formatSize, formatTemp } from "@/lib/metrics";
@@ -166,5 +168,71 @@ describe("tooltipRows", () => {
     const one = tooltipRows([{ dataKey: "a", value: 1 }, { dataKey: "b", value: null }], series, String, true);
     expect(one.rows).toHaveLength(1);
     expect(one.total).toBeUndefined();
+  });
+});
+
+describe("timeTicks", () => {
+  const MIN = 60_000;
+  const H = 60 * MIN;
+  const D = 24 * H;
+  const at = (iso: string) => Date.parse(iso);
+  const steps = (ticks: number[]) => ticks.slice(1).map((t, i) => t - ticks[i]);
+
+  it("puts an hour on 10-minute boundaries with even steps", () => {
+    const ticks = timeTicks(at("2026-10-11T05:23:17Z"), at("2026-10-11T06:21:40Z"), 8, 0);
+    expect(ticks[0]).toBe(at("2026-10-11T05:30:00Z"));
+    expect(ticks[ticks.length - 1]).toBe(at("2026-10-11T06:20:00Z"));
+    expect(new Set(steps(ticks))).toEqual(new Set([10 * MIN]));
+  });
+
+  it("never forces the last data point in as a tick", () => {
+    const end = at("2026-10-11T06:21:40Z");
+    expect(timeTicks(at("2026-10-11T05:23:17Z"), end, 8, 0)).not.toContain(end);
+  });
+
+  it("uses 3-hour boundaries on 24h and 2-hour on 12h", () => {
+    const t24 = timeTicks(at("2026-10-10T06:14:00Z"), at("2026-10-11T06:10:00Z"), 8, 0);
+    expect(new Set(steps(t24))).toEqual(new Set([3 * H]));
+    expect(t24.every((t) => (t / H) % 3 === 0)).toBe(true);
+    const t12 = timeTicks(at("2026-10-10T18:14:00Z"), at("2026-10-11T06:10:00Z"), 8, 0);
+    expect(new Set(steps(t12))).toEqual(new Set([2 * H]));
+  });
+
+  it("uses midnights for days on 7d", () => {
+    const ticks = timeTicks(at("2026-10-04T06:00:00Z"), at("2026-10-11T06:00:00Z"), 8, 0);
+    expect(new Set(steps(ticks))).toEqual(new Set([D]));
+    expect(ticks.every((t) => t % D === 0)).toBe(true);
+    expect(ticks.length).toBeLessThanOrEqual(8);
+  });
+
+  it("aligns to local time with a timezone offset", () => {
+    // UTC+2 (getTimezoneOffset -120): local midnight is 22:00 UTC.
+    const ticks = timeTicks(at("2026-10-04T06:00:00Z"), at("2026-10-11T06:00:00Z"), 8, -120);
+    expect(ticks[0]).toBe(at("2026-10-04T22:00:00Z"));
+  });
+
+  it("stays within maxTicks and copes with empty or reversed spans", () => {
+    const ticks = timeTicks(at("2026-09-11T00:00:00Z"), at("2026-10-11T00:00:00Z"), 6, 0);
+    expect(ticks.length).toBeLessThanOrEqual(6);
+    expect(ticks.length).toBeGreaterThanOrEqual(2);
+    expect(timeTicks(5, 5, 8, 0)).toEqual([]);
+    expect(timeTicks(10, 5, 8, 0)).toEqual([]);
+    expect(timeTicks(Number.NaN, 5, 8, 0)).toEqual([]);
+  });
+});
+
+describe("sparkDomain", () => {
+  it("spans the data", () => {
+    expect(sparkDomain([2, null, 5, 3])).toEqual([2, 5]);
+  });
+  it("runs from zero to max when given", () => {
+    expect(sparkDomain([2, 5], 100)).toEqual([0, 100]);
+  });
+  it("pads a flat series so it draws as a solid line mid-height", () => {
+    expect(sparkDomain([0, 0, 0])).toEqual([-1, 1]);
+    expect(sparkDomain([4, 4])).toEqual([2, 6]);
+  });
+  it("falls back without values", () => {
+    expect(sparkDomain([null, undefined])).toEqual([0, 1]);
   });
 });

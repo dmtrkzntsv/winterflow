@@ -106,6 +106,52 @@ export function niceAxis(
   return { ticks, domain: [ticks[0], ticks[ticks.length - 1]], label };
 }
 
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
+// Round time steps, finest first: minutes that divide an hour, hours that
+// divide a day, then days and weeks.
+const TIME_STEPS = [
+  MINUTE, 2 * MINUTE, 5 * MINUTE, 10 * MINUTE, 15 * MINUTE, 30 * MINUTE,
+  HOUR, 2 * HOUR, 3 * HOUR, 6 * HOUR, 12 * HOUR,
+  DAY, 2 * DAY, 7 * DAY, 14 * DAY,
+];
+
+// timeTicks returns time-axis ticks on round local boundaries (every 10
+// minutes, 3 hours, midnight...) inside [start, end] ms: the finest step
+// that keeps at most maxTicks, evenly spaced. The newest point is not forced
+// in, so the last gap never crowds. tzOffsetMinutes is
+// Date#getTimezoneOffset (local by default).
+export function timeTicks(
+  start: number,
+  end: number,
+  maxTicks = 8,
+  tzOffsetMinutes = new Date(Number.isFinite(start) ? start : 0).getTimezoneOffset(),
+): number[] {
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return [];
+  const span = end - start;
+  const step = TIME_STEPS.find((s) => span / s < maxTicks) ?? TIME_STEPS[TIME_STEPS.length - 1];
+  const shift = -tzOffsetMinutes * MINUTE; // local = utc + shift
+  const first = Math.ceil((start + shift) / step) * step - shift;
+  const ticks: number[] = [];
+  for (let t = first; t <= end; t += step) ticks.push(t);
+  return ticks;
+}
+
+// sparkDomain is a sparkline's value axis: zero to max when given, else the
+// data's own span. A flat series is padded so it draws as a solid line at
+// mid-height rather than on a degenerate axis.
+export function sparkDomain(values: (number | null | undefined)[], max?: number): [number, number] {
+  if (max !== undefined) return [0, max];
+  const finite = values.filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+  if (finite.length === 0) return [0, 1];
+  const lo = Math.min(...finite);
+  const hi = Math.max(...finite);
+  if (lo !== hi) return [lo, hi];
+  const pad = Math.abs(lo) / 2 || 1;
+  return [lo - pad, hi + pad];
+}
+
 // scaleFor infers the axis scale from a chart's value formatter, so callers
 // that pass formatPercent/formatSize/formatRate need not say it twice.
 export function scaleFor(format: (v: number) => string): AxisScale {

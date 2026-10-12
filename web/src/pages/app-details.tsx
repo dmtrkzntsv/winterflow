@@ -34,6 +34,7 @@ import { AppBackups } from "@/components/app-backups";
 import { AppEditorPanel } from "@/components/app-editor-panel";
 import { AppStatusIndicator } from "@/components/app-status-badge";
 import { DeleteAppDialog } from "@/components/delete-app-dialog";
+import { AppAlertsBadge } from "@/components/alerts/active-alerts";
 import { AppMetricBlocks, AppMetricsTab } from "@/components/app-metrics";
 import { useApps } from "@/context/use-apps";
 import { useNotifications } from "@/context/use-notifications";
@@ -173,6 +174,7 @@ export default function AppDetailsPage() {
           </h1>
           <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
             <AppStatusIndicator status={status} />
+            <AppAlertsBadge serverId={app.serverId} appId={app.id} />
             {app.version ? <span>Revision {app.version}</span> : null}
             {routes.slice(0, 2).map((d) => (
               <a
@@ -240,7 +242,7 @@ export default function AppDetailsPage() {
           <LogsTab appId={app.id} />
         </TabsContent>
         <TabsContent value="metrics" className="mt-6">
-          <AppMetricsTab serverId={app.serverId} appId={app.id} />
+          <AppMetricsTab serverId={app.serverId} appId={app.id} appName={appLabel(app.name, app.id)} />
         </TabsContent>
         <TabsContent value="editor" className="mt-0">
           <AppEditorPanel appId={app.id} />

@@ -3,6 +3,7 @@ import { Navigate, Outlet, useLocation } from "react-router-dom"
 
 import { useProfile } from "@/context/use-profile"
 
+import { AlertToasts } from "@/components/alerts/alert-toasts"
 import { AppSidebar } from "@/components/app-sidebar"
 import { ServerSelectionDialog } from "@/components/server-creation-dialog"
 import { isStandalone } from "@/config"
@@ -115,6 +116,7 @@ export function AppLayout() {
     <SidebarProvider>
       <AppSidebar onAddServer={handleAddServer} />
       <AppLayoutContent />
+      <AlertToasts />
       {!isStandalone ? (
         <ServerSelectionDialog
           isOpen={isServerDialogOpen}

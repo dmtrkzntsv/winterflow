@@ -75,18 +75,17 @@ func TestStoreTreatsCorruptFileAsEmpty(t *testing.T) {
 	}
 }
 
-// The snapshot must carry only ciphertext. The check is falsifiable: the
-// plain variable's value is found in the file (so the substring search can
-// match), while the secret's plaintext, which exists only in the test and
-// not in any ciphertext field, is not.
-func TestStoreSnapshotNeverHoldsSecretPlaintext(t *testing.T) {
+// A secret entry that wrongly carries a plaintext Value must not reach
+// disk or memory. The sanity check shows the search can match: a plain
+// variable's value is found in the file.
+func TestStoreNeverPersistsSecretPlaintext(t *testing.T) {
 	const secretPlain = "s3cr3t-plaintext-value"
 	const plainValue = "visible-plain-value"
 	dir := t.TempDir()
 	s := NewStore(dir)
 	_, err := s.Apply(command.SyncVarsRequest{Revision: 1, Org: []command.SharedVar{
 		{Name: "PLAIN", Value: plainValue},
-		{Name: "SECRET", IsSecret: true, Ciphertext: "ENC:opaque-blob"},
+		{Name: "SECRET", IsSecret: true, Value: secretPlain, Ciphertext: "ENC:opaque-blob"},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -99,6 +98,23 @@ func TestStoreSnapshotNeverHoldsSecretPlaintext(t *testing.T) {
 		t.Fatalf("sanity: plain value should be stored verbatim, snapshot = %s", raw)
 	}
 	if strings.Contains(string(raw), secretPlain) {
-		t.Fatalf("snapshot holds secret plaintext: %s", raw)
+		t.Fatalf("snapshot file holds secret plaintext: %s", raw)
+	}
+	if got := s.Current().Org[1]; got.Value != "" || got.Ciphertext != "ENC:opaque-blob" {
+		t.Fatalf("cached secret = %+v", got)
+	}
+}
+
+func TestStoreReturnsCopies(t *testing.T) {
+	s := NewStore(t.TempDir())
+	in := command.SyncVarsRequest{Revision: 1, Org: []command.SharedVar{{Name: "A", Value: "1"}}}
+	if _, err := s.Apply(in); err != nil {
+		t.Fatal(err)
+	}
+	in.Org[0].Value = "mutated-input"
+	got := s.Current()
+	got.Org[0].Value = "mutated-output"
+	if v := s.Current().Org[0].Value; v != "1" {
+		t.Fatalf("cached snapshot mutated through caller: %q", v)
 	}
 }

@@ -34,7 +34,29 @@ func (s *Store) Current() command.SyncVarsRequest {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.loadLocked()
-	return s.cur
+	return cloneSnapshot(s.cur)
+}
+
+// cloneSnapshot copies the variable slices so callers cannot mutate the
+// cached snapshot.
+func cloneSnapshot(snap command.SyncVarsRequest) command.SyncVarsRequest {
+	snap.Org = append([]command.SharedVar(nil), snap.Org...)
+	snap.Server = append([]command.SharedVar(nil), snap.Server...)
+	return snap
+}
+
+// scrubSecrets returns a copy of snap in which every secret entry has an
+// empty Value, so snapshot.json can only ever hold ciphertext for secrets.
+func scrubSecrets(snap command.SyncVarsRequest) command.SyncVarsRequest {
+	snap = cloneSnapshot(snap)
+	for _, list := range [][]command.SharedVar{snap.Org, snap.Server} {
+		for i := range list {
+			if list[i].IsSecret {
+				list[i].Value = ""
+			}
+		}
+	}
+	return snap
 }
 
 func (s *Store) loadLocked() {
@@ -59,6 +81,7 @@ func (s *Store) Apply(snap command.SyncVarsRequest) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.loadLocked()
+	snap = scrubSecrets(snap)
 	if snap.Revision < s.cur.Revision {
 		return false, nil
 	}

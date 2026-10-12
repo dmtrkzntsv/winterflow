@@ -82,9 +82,9 @@ describe("ServerCards", () => {
     // The fullest filesystem, its mount in the row's title.
     expect(within(card).getByTestId("meter-Disk")).toHaveTextContent("90%");
     expect(within(card).getByTestId("meter-Disk")).toHaveAttribute("title", "Fullest filesystem: /srv");
-    expect(card).toHaveTextContent("Load 0.50 / 0.25 / 0.13");
+    expect(card).toHaveTextContent("Load 0.50");
     expect(card).toHaveTextContent("55°C");
-    expect(within(card).getByTestId("app-counts")).toHaveTextContent("3 running · 1 stopped · 1 problematic");
+    expect(within(card).getByTestId("app-counts")).toHaveTextContent("3 running · 1 problematic");
   });
 
   it("says when a server is offline and has no data", () => {

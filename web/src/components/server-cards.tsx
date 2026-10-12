@@ -6,6 +6,7 @@ import { useServers } from "@/context/use-servers";
 import type { Server } from "@/context/servers-context-base";
 import { useMetricsOverview } from "@/hooks/use-metrics";
 import { useNow } from "@/hooks/use-now";
+import { TILE_GRID } from "@/lib/grid";
 import { latestValue, serverPresence, type Presence } from "@/lib/kpi";
 import {
   chartColor,
@@ -53,7 +54,7 @@ function Meter({
   const width = percent === undefined ? 0 : Math.min(100, Math.max(0, percent));
   return (
     <div
-      className="grid grid-cols-[3.75rem_1fr_2.75rem] items-center gap-2 text-xs"
+      className="grid grid-cols-[3.5rem_1fr_2.5rem] items-center gap-2 text-xs"
       data-testid={`meter-${label}`}
       title={title}
     >
@@ -99,7 +100,7 @@ function HealthCard({
 
   const meta: string[] = [];
   if (latest) {
-    meta.push(`Load ${latest.load1.toFixed(2)} / ${latest.load5.toFixed(2)} / ${latest.load15.toFixed(2)}`);
+    meta.push(`Load ${latest.load1.toFixed(2)}`);
     if (latest.temp !== undefined) meta.push(formatTemp(latest.temp));
   } else {
     // Metrics off or not reported yet: app counts still show.
@@ -110,9 +111,10 @@ function HealthCard({
     ...specsLine(server.capabilities),
     server.capabilities.version ? `Agent v${server.capabilities.version}` : "",
   ].filter(Boolean);
+  const specs = quiet.join(" · ");
 
   return (
-    // The whole card opens the server's Monitoring page, by mouse or keyboard.
+    // The whole tile opens the server's Monitoring page, by mouse or keyboard.
     <Card
       role="link"
       tabIndex={0}
@@ -125,9 +127,9 @@ function HealthCard({
           onOpen();
         }
       }}
-      className="grid min-w-0 cursor-pointer gap-x-6 gap-y-2 p-3.5 transition-colors outline-none lg:grid-cols-[13rem_1fr] hover:border-primary/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+      className="flex min-w-0 cursor-pointer flex-col gap-2 p-3.5 transition-colors outline-none hover:border-primary/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
     >
-      <div className="flex items-center justify-between gap-3 lg:flex-col lg:items-start lg:justify-center lg:gap-1">
+      <div className="flex items-center justify-between gap-3">
         <div className="truncate text-base font-semibold tracking-tight">{server.name}</div>
         <span
           className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground"
@@ -139,8 +141,7 @@ function HealthCard({
         </span>
       </div>
 
-      <div className="min-w-0 space-y-2">
-      <div className="grid gap-x-6 gap-y-1.5 lg:grid-cols-3">
+      <div className="space-y-1.5">
         <Meter label="CPU" percent={cpu} color={chartColor(0)} />
         <Meter
           label="Memory"
@@ -155,26 +156,24 @@ function HealthCard({
         />
       </div>
 
-      <div className="space-y-0.5">
-        <div className="text-xs text-muted-foreground tabular-nums">
-          {meta.join(" · ")}
-          {apps ? (
-            <span data-testid="app-counts">
-              {" · "}
-              <span className="text-foreground">{apps.running} running</span>
-              {` · ${apps.stopped} stopped`}
-              {apps.problematic > 0 ? (
-                <span className="text-destructive">{` · ${apps.problematic} problematic`}</span>
-              ) : null}
-            </span>
-          ) : null}
-        </div>
-        {quiet.length > 0 ? (
-          <div className="text-xs text-muted-foreground">
-            {quiet.join(" · ")}
-          </div>
+      <div
+        className="truncate text-xs text-muted-foreground tabular-nums"
+        title={latest ? `Load ${latest.load1.toFixed(2)} / ${latest.load5.toFixed(2)} / ${latest.load15.toFixed(2)}` : undefined}
+      >
+        {meta.join(" · ")}
+        {apps ? (
+          <span data-testid="app-counts">
+            {" · "}
+            <span className="text-foreground">{apps.running} running</span>
+            {apps.problematic > 0 ? (
+              <span className="text-destructive">{` · ${apps.problematic} problematic`}</span>
+            ) : null}
+          </span>
         ) : null}
       </div>
+      {/* Reserve the line so tiles stay equal height with or without specs. */}
+      <div className="h-4 truncate text-xs text-muted-foreground" title={specs || undefined}>
+        {specs}
       </div>
     </Card>
   );
@@ -187,25 +186,22 @@ function HealthCardSkeleton() {
       role="status"
       aria-label="Loading servers"
       data-testid="server-card-skeleton"
-      className="grid min-w-0 gap-x-6 gap-y-2 p-3.5 lg:grid-cols-[13rem_1fr]"
+      className="flex min-w-0 flex-col gap-2 p-3.5"
     >
-      <div data-testid="skeleton-head" className="flex items-center justify-between gap-3 lg:flex-col lg:items-start lg:justify-center lg:gap-1">
-        <div className="frost h-5 w-28 rounded" />
+      <div data-testid="skeleton-head" className="flex items-center justify-between gap-3">
+        <div className="frost h-6 w-28 rounded" />
         <div className="frost h-4 w-14 rounded" />
       </div>
-      <div data-testid="skeleton-body" className="min-w-0 space-y-2">
-        <div className="grid gap-x-6 gap-y-1.5 lg:grid-cols-3">
-          {[0, 1, 2].map((i) => (
-            <div key={i} className="frost h-4 rounded" />
-          ))}
-        </div>
-        <div className="frost h-4 w-3/4 rounded" />
+      <div data-testid="skeleton-body" className="space-y-1.5">
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="frost h-4 rounded" />
+        ))}
       </div>
+      <div className="frost h-4 w-3/4 rounded" />
+      <div className="h-4" />
     </Card>
   );
 }
-
-const GRID = "grid gap-3";
 
 // ServerCards renders the org's servers as a compact health strip above the
 // apps on the dashboard: presence, usage bars, load, temperature and app
@@ -225,7 +221,7 @@ export function ServerCards() {
 
   if (loading && servers.length === 0) {
     return (
-      <div className={GRID}>
+      <div className={TILE_GRID}>
         <HealthCardSkeleton />
       </div>
     );
@@ -235,7 +231,7 @@ export function ServerCards() {
   }
 
   return (
-    <div className={GRID}>
+    <div className={TILE_GRID}>
       {servers.map((s) => (
         <HealthCard
           key={s.id}

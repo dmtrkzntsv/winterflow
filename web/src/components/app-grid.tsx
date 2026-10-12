@@ -6,6 +6,7 @@ import { AppIcon } from "@/components/app-icon";
 import { AppStatusCode } from "@/context/apps-context-base";
 import { useApps } from "@/context/use-apps";
 import { appLabel } from "@/lib/kpi";
+import { TILE_GRID } from "@/lib/grid";
 import { cn } from "@/lib/utils";
 
 // Status → a small dot and a word (twillingate's status treatment, not a
@@ -18,8 +19,6 @@ const STATUS_STYLE: Record<number, { label: string; dot: string }> = {
   [AppStatusCode.Stopped]: { label: "Stopped", dot: "bg-muted-foreground/40" },
   [AppStatusCode.Unknown]: { label: "Unknown", dot: "bg-muted-foreground/25" },
 };
-
-const GRID = "grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4";
 
 function AppTileSkeleton() {
   return (
@@ -41,7 +40,7 @@ export function AppGrid() {
 
   if (loading && apps.length === 0) {
     return (
-      <div className={GRID}>
+      <div className={TILE_GRID}>
         <AppTileSkeleton />
         <AppTileSkeleton />
         <AppTileSkeleton />
@@ -64,7 +63,7 @@ export function AppGrid() {
   }
 
   return (
-    <div className={GRID}>
+    <div className={TILE_GRID}>
       {apps.map((app, index) => {
         const code = statusByApp[app.id] ?? AppStatusCode.Unknown;
         const status = STATUS_STYLE[code] ?? STATUS_STYLE[AppStatusCode.Unknown];

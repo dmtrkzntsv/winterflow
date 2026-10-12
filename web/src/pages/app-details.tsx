@@ -47,7 +47,7 @@ import {
 import { readApiError } from "@/lib/api";
 import { needsAttention } from "@/lib/backups";
 import { deleteOutcome, type DeleteChoice } from "@/lib/delete-app";
-import { cn } from "@/lib/utils";
+import { cn, relativeTime } from "@/lib/utils";
 
 const base = apiBaseUrl.endsWith("/") ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
 
@@ -491,20 +491,6 @@ function HistoryTab({ appId }: { appId: string }) {
       </ol>
     </div>
   );
-}
-
-const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
-
-// relativeTime renders "5 minutes ago"-style labels, falling back to the date
-// once a revision is more than a week old.
-function relativeTime(d: Date): string {
-  const secs = Math.round((d.getTime() - Date.now()) / 1000);
-  const abs = Math.abs(secs);
-  if (abs < 60) return rtf.format(secs, "second");
-  if (abs < 3600) return rtf.format(Math.round(secs / 60), "minute");
-  if (abs < 86400) return rtf.format(Math.round(secs / 3600), "hour");
-  if (abs < 7 * 86400) return rtf.format(Math.round(secs / 86400), "day");
-  return d.toLocaleDateString();
 }
 
 function SettingsTab({

@@ -90,7 +90,7 @@ describe("AppBackups", () => {
     renderBackups();
     const db = within(await screen.findByText("database", { selector: "span.font-mono" }).then((e) => e.closest("tr")!));
     expect(db.getByText("Failing")).toBeInTheDocument();
-    expect(db.getByText("last backup 4 min ago")).toBeInTheDocument();
+    expect(db.getByText("last backup 4 minutes ago")).toBeInTheDocument();
     expect(db.getByText("disk full")).toBeInTheDocument();
     expect(db.getByText("Every hour")).toBeInTheDocument();
     expect(db.getByText("volume data: app.db")).toBeInTheDocument();
@@ -307,11 +307,11 @@ describe("AppBackups", () => {
     await act(async () => finish({ unchanged: false, point: { id: "p" }, warnings: [] }));
     // The told result, not the older report (Not run yet).
     expect(within(row("database")).getByText("OK")).toBeInTheDocument();
-    expect(within(row("database")).getByText("last backup just now")).toBeInTheDocument();
-    expect(within(row("database")).queryByText("last backup 1 h ago")).not.toBeInTheDocument();
+    expect(within(row("database")).getByText(/^last backup (now|\d+ seconds? ago)$/)).toBeInTheDocument();
+    expect(within(row("database")).queryByText("last backup 1 hour ago")).not.toBeInTheDocument();
     // An older report (or one from before the copy) changes nothing.
     view.setHealth([{ name: "database", state: "ok", last_success: old }]);
-    expect(within(row("database")).getByText("last backup just now")).toBeInTheDocument();
+    expect(within(row("database")).getByText(/^last backup (now|\d+ seconds? ago)$/)).toBeInTheDocument();
     view.setHealth([{ name: "database", state: "running" }]);
     expect(within(row("database")).getByText("OK")).toBeInTheDocument();
     // A report that shows the copy takes over.

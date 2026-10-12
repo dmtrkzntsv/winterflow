@@ -297,18 +297,9 @@ export function locationLabel(b: Pick<EffectiveBackup, "type" | "volume" | "serv
   return `${where}: ${paths.join(", ")}`;
 }
 
-// relativeAge reads a unix time as "4 min ago" (now in ms).
-export function relativeAge(unix: number, now: number = Date.now()): string {
-  const secs = Math.max(0, Math.round(now / 1000 - unix));
-  if (secs < 60) return "just now";
-  if (secs < 3600) return `${Math.floor(secs / 60)} min ago`;
-  if (secs < 86_400) return `${Math.floor(secs / 3600)} h ago`;
-  const days = Math.floor(secs / 86_400);
-  return days === 1 ? "yesterday" : `${days} days ago`;
-}
-
-// formatBytes reads a size: "512 B", "1.5 MB".
-export function formatBytes(n: number): string {
+// formatSize reads a size in SI units: "512 B", "1.5 MB". (utils.formatBytes
+// is the binary GB/TB one for hardware specs.)
+export function formatSize(n: number): string {
   if (n < 1000) return `${n} B`;
   const units = ["kB", "MB", "GB", "TB"];
   let v = n / 1000;

@@ -26,8 +26,9 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { Backups } from "@/context/use-backups";
 import { isRunning, restoringBackup, trackActivity, useActivity } from "@/lib/backup-activity";
-import { expiresNote, formatBytes, KIND_LABELS, pointLabel, relativeAge, type EffectiveBackup, type RestorePoint } from "@/lib/backups";
+import { expiresNote, formatSize, KIND_LABELS, pointLabel, type EffectiveBackup, type RestorePoint } from "@/lib/backups";
 import { returnFocusTo } from "@/lib/focus";
+import { relativeTime } from "@/lib/utils";
 
 type Confirm = { action: "restore" | "delete"; point: RestorePoint };
 
@@ -210,8 +211,8 @@ export function RestorePointsDialog({
                           two columns wide and the actions fit a phone. */}
                       <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
                         <Badge variant={p.kind === "pre-restore" ? "secondary" : "outline"}>{KIND_LABELS[p.kind]}</Badge>
-                        <span>{formatBytes(p.size)}</span>
-                        <span>{relativeAge(p.time)}</span>
+                        <span>{formatSize(p.size)}</span>
+                        <span>{relativeTime(new Date(p.time * 1000))}</span>
                         {expires ? <span className="text-amber-700 dark:text-amber-400">{expires}</span> : null}
                       </div>
                     </TableCell>
@@ -276,7 +277,7 @@ export function RestorePointsDialog({
                   </div>
                 ) : (
                   <p>
-                    Delete the copy of <strong>{when(confirm.point)}</strong> ({formatBytes(confirm.point.size)})? It can't be restored
+                    Delete the copy of <strong>{when(confirm.point)}</strong> ({formatSize(confirm.point.size)})? It can't be restored
                     afterwards.
                     {confirm.point.kind === "pre-restore"
                       ? " This is the data a restore replaced: it may be the only way back from that restore."

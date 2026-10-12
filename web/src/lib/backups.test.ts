@@ -15,7 +15,7 @@ import {
   errorSummary,
   everyError,
   expiresNote,
-  formatBytes,
+  formatSize,
   humanDuration,
   isRunRefusal,
   isStaleTab,
@@ -31,7 +31,6 @@ import {
   pathsFrom,
   pointLabel,
   pointTime,
-  relativeAge,
   resetField,
   scheduleLabel,
   type EffectiveBackup,
@@ -182,18 +181,13 @@ describe("labels", () => {
     expect(locationLabel(replica)).toBe("service litestream");
     expect(locationLabel({ type: "sqlite", service: "web" })).toBe("service web");
   });
-  it("reads ages, sizes and expiry", () => {
+  it("reads sizes and expiry", () => {
     const now = 1_800_000_000_000;
     const s = now / 1000;
-    expect(relativeAge(s - 10, now)).toBe("just now");
-    expect(relativeAge(s - 240, now)).toBe("4 min ago");
-    expect(relativeAge(s - 7200, now)).toBe("2 h ago");
-    expect(relativeAge(s - 86_400, now)).toBe("yesterday");
-    expect(relativeAge(s - 3 * 86_400, now)).toBe("3 days ago");
-    expect(formatBytes(512)).toBe("512 B");
-    expect(formatBytes(1500)).toBe("1.5 kB");
-    expect(formatBytes(25_000_000)).toBe("25 MB");
-    expect(formatBytes(3e15)).toBe("3000 TB");
+    expect(formatSize(512)).toBe("512 B");
+    expect(formatSize(1500)).toBe("1.5 kB");
+    expect(formatSize(25_000_000)).toBe("25 MB");
+    expect(formatSize(3e15)).toBe("3000 TB");
     const point = { id: "x", time: s, kind: "manual" as const, size: 1 };
     expect(expiresNote(point, now)).toBe("");
     expect(expiresNote({ ...point, expires: s + 30 * 86_400 }, now)).toBe("");

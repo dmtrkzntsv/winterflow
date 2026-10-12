@@ -49,9 +49,9 @@ describe("OrphansDialog", () => {
     expect(within(dialog).getByText(/^Will be deleted on /)).toBeInTheDocument();
     expect(within(dialog).getByRole("columnheader", { name: "Automatic deletion" })).toBeInTheDocument();
     // On a phone the copies column is hidden: the app cell says it too.
-    expect(within(dialog).getByText("2 copies · 2.0 kB · 1 h ago")).toBeInTheDocument();
+    expect(within(dialog).getByText("2 copies · 2.0 kB · 1 hour ago")).toBeInTheDocument();
     expect(within(dialog).getByText("2 · 2.0 kB")).toBeInTheDocument();
-    expect(within(dialog).getByText("1 h ago")).toBeInTheDocument();
+    expect(within(dialog).getByText("1 hour ago")).toBeInTheDocument();
   });
 
   it("deletes an orphan after a confirmation", async () => {

@@ -34,7 +34,6 @@ import {
   isStaleTab,
   locationLabel,
   nextCopyNote,
-  relativeAge,
   scheduleLabel,
   STATE_LABELS,
   type BackupConfig,
@@ -43,7 +42,7 @@ import {
   type BackupTargets,
   type EffectiveBackup,
 } from "@/lib/backups";
-import { cn } from "@/lib/utils";
+import { cn, relativeTime } from "@/lib/utils";
 
 const STATE_STYLE: Record<BackupState, string> = {
   ok: "border-emerald-500/40 text-emerald-700 dark:text-emerald-400",
@@ -429,7 +428,7 @@ function BackupRow({
             {restoringRow ? "Restoring" : STATE_LABELS[state]}
           </Badge>
           {health?.last_success ? (
-            <span className="text-xs text-muted-foreground">last backup {relativeAge(health.last_success)}</span>
+            <span className="text-xs text-muted-foreground">last backup {relativeTime(new Date(health.last_success * 1000))}</span>
           ) : null}
         </div>
         {state === "failing" && health?.last_error ? <RowError error={health.last_error} /> : null}

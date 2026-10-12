@@ -24,9 +24,9 @@ import {
 } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { Backups } from "@/context/use-backups";
-import { formatBytes, relativeAge, type Orphan } from "@/lib/backups";
+import { formatSize, type Orphan } from "@/lib/backups";
 import { returnFocusTo } from "@/lib/focus";
-import { cn } from "@/lib/utils";
+import { cn, relativeTime } from "@/lib/utils";
 
 const day = (unix: number) => new Date(unix * 1000).toLocaleDateString();
 
@@ -145,14 +145,14 @@ export function OrphansDialog({
                     <div className="font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]">{o.app_id}</div>
                     {o.deleted_at ? <div className="text-xs text-muted-foreground">Deleted {day(o.deleted_at)}</div> : null}
                     <div className="text-xs text-muted-foreground sm:hidden">
-                      {copiesLabel(o.copies)} · {formatBytes(o.bytes)}
-                      {o.newest ? ` · ${relativeAge(o.newest, now)}` : ""}
+                      {copiesLabel(o.copies)} · {formatSize(o.bytes)}
+                      {o.newest ? ` · ${relativeTime(new Date(o.newest * 1000), now)}` : ""}
                     </div>
                   </TableCell>
                   <TableCell className="hidden sm:table-cell">
-                    {o.copies} · {formatBytes(o.bytes)}
+                    {o.copies} · {formatSize(o.bytes)}
                   </TableCell>
-                  <TableCell className="hidden sm:table-cell">{o.newest ? relativeAge(o.newest, now) : "—"}</TableCell>
+                  <TableCell className="hidden sm:table-cell">{o.newest ? relativeTime(new Date(o.newest * 1000), now) : "—"}</TableCell>
                   <TableCell className={cn("text-sm", !o.deleted_at && "text-muted-foreground")}>{purgeLabel(o, now)}</TableCell>
                   <TableCell className="py-0.5 text-right">
                     <Button
@@ -191,14 +191,14 @@ export function OrphansDialog({
                 {confirm.deleted_at ? (
                   <>
                     Delete every copy of <strong>{confirm.app_name || confirm.app_id}</strong> (
-                    {copiesLabel(confirm.copies)}, {formatBytes(confirm.bytes)}) from {storage}? This cannot be undone.
+                    {copiesLabel(confirm.copies)}, {formatSize(confirm.bytes)}) from {storage}? This cannot be undone.
                   </>
                 ) : (
                   <>
                     This folder is not marked as deleted by this server, so it may hold the live backups of an app on
                     another server that shares this storage. Deleting every copy of{" "}
                     <strong>{confirm.app_name || confirm.app_id}</strong> ({copiesLabel(confirm.copies)},{" "}
-                    {formatBytes(confirm.bytes)}) from {storage} is permanent, and that app would lose its backups. Delete
+                    {formatSize(confirm.bytes)}) from {storage} is permanent, and that app would lose its backups. Delete
                     only if you are sure nothing uses them.
                   </>
                 )}

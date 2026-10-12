@@ -353,11 +353,11 @@ func (r *Repository) redeployStorageUsers(ctx context.Context, ids []string) (re
 			continue
 		}
 		name := r.appName(r.appDataDir(id), id)
-		if r.restoreRunning(id) {
+		switch r.redeployCheck(id, r.hasDraft(id)) {
+		case redeployRestoring:
 			warnings = append(warnings, name+" is being restored and was not redeployed: deploy it afterwards to use the new storage settings")
 			continue
-		}
-		if r.hasDraft(id) {
+		case redeployDraft:
 			warnings = append(warnings, name+" has undeployed changes and was not redeployed: deploy it to use the new storage settings")
 			continue
 		}
@@ -377,6 +377,29 @@ func (r *Repository) redeployStorageUsers(ctx context.Context, ids []string) (re
 		redeployed = append(redeployed, id)
 	}
 	return redeployed, warnings
+}
+
+// redeploySkip is why a running app is not brought up again after a config
+// change (storage.save, backup.update).
+type redeploySkip int
+
+const (
+	redeployAllowed   redeploySkip = iota
+	redeployRestoring              // a restore of the app runs: it owns the containers
+	redeployDraft                  // undeployed changes: bringing it up would deploy them
+)
+
+// redeployCheck decides whether a running app may be brought up again after
+// a config change; draft says it has undeployed changes. Both redeploying
+// paths use it.
+func (r *Repository) redeployCheck(appID string, draft bool) redeploySkip {
+	switch {
+	case r.restoreRunning(appID):
+		return redeployRestoring
+	case draft:
+		return redeployDraft
+	}
+	return redeployAllowed
 }
 
 // composeProjectsUp is the set of compose projects with containers (one

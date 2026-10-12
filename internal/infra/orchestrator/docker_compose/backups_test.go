@@ -109,6 +109,29 @@ func TestUpdateBackupsLeavesStoppedAndDraftAppsAlone(t *testing.T) {
 	}
 }
 
+// A restore that starts after the up-front check (here: while docker ps
+// runs) owns the containers: the settings are saved, the app not redeployed.
+func TestUpdateBackupsSkipsRedeployWhenARestoreStarts(t *testing.T) {
+	r, hooks := updateRepo(t)
+	inner := r.runningProjects
+	var end func()
+	r.runningProjects = func(ctx context.Context) (map[string]bool, error) {
+		var err error
+		end, err = r.beginRestore("app-1")
+		if err != nil {
+			t.Error(err)
+		}
+		return inner(ctx)
+	}
+	resp, err := r.UpdateBackups(context.Background(), "app-1", []recipe.BackupConfig{{Name: "replica", Enabled: true, Storage: "hetzner"}}, "")
+	if end != nil {
+		end()
+	}
+	if err != nil || resp.Redeployed || len(hooks.redeploys) != 0 || len(resp.Warnings) != 1 || !strings.Contains(resp.Warnings[0], "being restored") {
+		t.Fatalf("resp = %+v, %v, redeploys %v", resp, err, hooks.redeploys)
+	}
+}
+
 // Nothing is written when the list can't be used.
 func TestUpdateBackupsRefuses(t *testing.T) {
 	r, _ := updateRepo(t)

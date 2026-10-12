@@ -242,6 +242,9 @@ func (r *Repository) UpdateBackups(ctx context.Context, appID string, overrides 
 		resp.Warnings = append(resp.Warnings, "could not check whether the app is running, so it was not redeployed: "+err.Error())
 	case !running[projectName(appID)]:
 		r.markDeployed(appID, hash) // stopped: its next start deploys this commit
+	case r.redeployCheck(appID, !deployed) != redeployAllowed:
+		// A restore started since the check above: it owns the containers.
+		resp.Warnings = append(resp.Warnings, "the app is being restored and was not redeployed: deploy it afterwards to apply the backup settings")
 	default:
 		if err := r.redeploy(ctx, appID); err != nil {
 			resp.Warnings = append(resp.Warnings, "redeploy failed: "+err.Error())

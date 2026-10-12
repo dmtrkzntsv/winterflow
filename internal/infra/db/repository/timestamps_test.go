@@ -6,12 +6,14 @@ import (
 	"testing"
 	"time"
 
+	"winterflow/internal/domain/alert"
 	"winterflow/internal/domain/dto"
 	"winterflow/internal/domain/metrics"
 	"winterflow/internal/domain/model"
 	"winterflow/internal/infra/db"
 	"winterflow/internal/infra/db/backend"
 	"winterflow/internal/infra/db/dbtest"
+	alertrepo "winterflow/internal/infra/db/repository/alert"
 	apprepo "winterflow/internal/infra/db/repository/app"
 	appdomainrepo "winterflow/internal/infra/db/repository/appdomain"
 	metricrepo "winterflow/internal/infra/db/repository/metric"
@@ -20,6 +22,7 @@ import (
 	serverstoragerepo "winterflow/internal/infra/db/repository/serverstorage"
 	sharedvarrepo "winterflow/internal/infra/db/repository/sharedvar"
 	userrepo "winterflow/internal/infra/db/repository/user"
+	"winterflow/pkg/util"
 )
 
 // sqliteDateTime matches the only timestamp format SQLite may hold:
@@ -108,6 +111,19 @@ func TestSQLiteTimestampsAreDateTimeText(t *testing.T) {
 	}
 
 	if err := metricSamples.InsertSample(ctx, srv.ID, at, metrics.Values{"cpu": 1}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	alerts := must(alertrepo.New(d.Tx, d.Driver, dbtest.Log, util.GenerateID))
+	channel := must(alerts.CreateChannel(ctx, alert.Channel{OrgID: orgID, Name: "Ops", Service: "ntfy", Enabled: true, URLEncrypted: "x"}))
+	if err := alerts.RecordDelivery(ctx, channel.ID, at, ""); err != nil {
+		t.Fatal(err)
+	}
+	rule := must(alerts.CreateRule(ctx, alert.Rule{OrgID: orgID, TargetKind: alert.TargetServer, Metric: alert.MetricCPU,
+		Threshold: 90, DurationMinutes: 10, Enabled: true}))
+	key := alert.Key{RuleID: rule.ID, Target: alert.Target{ServerID: srv.ID}}
+	if _, err := alerts.Fire(ctx, key, 93, 90, alert.Event{ID: util.GenerateID(), OrgID: orgID, RuleID: rule.ID,
+		ServerID: srv.ID, TargetKind: alert.TargetServer, Metric: alert.MetricCPU, Kind: alert.EventFired, CreatedAt: at}); err != nil {
 		t.Fatal(err)
 	}
 

@@ -32,6 +32,12 @@ vi.mock("@/context/use-servers", () => ({
 vi.mock("@/context/use-apps", () => ({
   useApps: () => ({ apps: [{ id: "app-1", name: "Nextcloud" }, { id: "app-2-unnamed", name: "" }] }),
 }));
+// The Alerts card has its own tests; here it only has to be placed.
+vi.mock("@/components/alerts/target-alerts-card", () => ({
+  TargetAlertsCard: (p: { serverId: string; appId?: string }) => (
+    <div data-testid="alerts-card">{`${p.serverId}/${p.appId ?? ""}`}</div>
+  ),
+}));
 vi.mock("@/hooks/use-metrics", () => ({
   useServerMetrics: (...args: unknown[]) => {
     useServerMetrics(...args);
@@ -109,6 +115,7 @@ describe("MonitoringPage", { timeout: 20_000 }, () => {
       expect(screen.getByTestId(`chart-${title}`)).toBeInTheDocument();
     }
     expect(screen.getByTestId("docker-df")).toHaveTextContent("Images1.0 GB");
+    expect(screen.getByTestId("alerts-card")).toHaveTextContent("s1/");
     expect(screen.getByTestId("docker-df")).toHaveTextContent("Reclaimable512 B");
     // Rates were never reported: that chart says so instead of drawing zeros.
     expect(screen.getByTestId("chart-Network")).toHaveTextContent("No data yet");

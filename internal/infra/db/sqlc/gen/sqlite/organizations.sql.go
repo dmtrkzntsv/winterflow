@@ -12,7 +12,7 @@ import (
 )
 
 const getOrganization = `-- name: GetOrganization :one
-SELECT organization_id, name, created_at, icon, color FROM organizations WHERE organization_id = ?
+SELECT organization_id, name, created_at, icon, color, alert_defaults_seeded FROM organizations WHERE organization_id = ?
 `
 
 func (q *Queries) GetOrganization(ctx context.Context, organizationID string) (Organization, error) {
@@ -24,6 +24,7 @@ func (q *Queries) GetOrganization(ctx context.Context, organizationID string) (O
 		&i.CreatedAt,
 		&i.Icon,
 		&i.Color,
+		&i.AlertDefaultsSeeded,
 	)
 	return i, err
 }

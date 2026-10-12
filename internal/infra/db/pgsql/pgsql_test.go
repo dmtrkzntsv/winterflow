@@ -96,7 +96,7 @@ func TestOpenFailsFast(t *testing.T) {
 	if _, err := Open(ctx, "postgres://u:p@127.0.0.1:1/db?sslmode=disable&connect_timeout=2"); err == nil {
 		t.Fatal("Open succeeded against a closed port")
 	}
-	if _, err := Open(ctx, "postgres://u:p@db:5432/wf\x7f"); err == nil || !strings.Contains(err.Error(), "parse") {
+	if _, err := Open(ctx, "postgres://u:p@db:notaport/wf"); err == nil || !strings.Contains(err.Error(), "parse") {
 		t.Fatalf("unparsable DSN: err = %v", err)
 	}
 }

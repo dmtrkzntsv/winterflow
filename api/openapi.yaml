@@ -103,6 +103,682 @@ paths:
       - docker
       x-operation-result:
         $ref: '#/components/schemas/UpdateAgentResponse'
+  /api/v1/alerts/delete-channel:
+    post:
+      operationId: alertsDeleteChannel
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IDRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    type: "null"
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Delete a notification channel
+      tags:
+      - alerts
+  /api/v1/alerts/delete-override:
+    post:
+      operationId: alertsDeleteOverride
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteOverrideRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    type: "null"
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Remove a rule override
+      tags:
+      - alerts
+  /api/v1/alerts/delete-rule:
+    post:
+      operationId: alertsDeleteRule
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IDRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    type: "null"
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Delete an alert rule
+      tags:
+      - alerts
+  /api/v1/alerts/get-active:
+    get:
+      operationId: alertsGetActive
+      parameters:
+      - description: Only this server's alerts (and its apps').
+        in: query
+        name: server_id
+        schema:
+          description: Only this server's alerts (and its apps').
+          type: string
+      - description: Only this app's alerts; needs server_id.
+        in: query
+        name: app_id
+        schema:
+          description: Only this app's alerts; needs server_id.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    items:
+                      $ref: '#/components/schemas/ActiveAlert'
+                    type:
+                    - array
+                    - "null"
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Firing alerts
+      tags:
+      - alerts
+  /api/v1/alerts/get-channels:
+    get:
+      description: 'Channel URLs carry secrets and are never returned: `service` is
+        the URL scheme and `fields` the non-secret form values the client stored with
+        it.'
+      operationId: alertsGetChannels
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    items:
+                      $ref: '#/components/schemas/Channel'
+                    type:
+                    - array
+                    - "null"
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+      security:
+      - bearer: []
+      - cookie: []
+      summary: List the org's notification channels
+      tags:
+      - alerts
+  /api/v1/alerts/get-events:
+    get:
+      operationId: alertsGetEvents
+      parameters:
+      - description: Only this server's events (and its apps').
+        in: query
+        name: server_id
+        schema:
+          description: Only this server's events (and its apps').
+          type: string
+      - description: Only this app's events; needs server_id.
+        in: query
+        name: app_id
+        schema:
+          description: Only this app's events; needs server_id.
+          type: string
+      - description: Only this rule's events.
+        in: query
+        name: rule_id
+        schema:
+          description: Only this rule's events.
+          type: string
+      - description: Only fired or only resolved events.
+        in: query
+        name: kind
+        schema:
+          description: Only fired or only resolved events.
+          enum:
+          - fired
+          - resolved
+          type: string
+      - description: next_cursor of the previous page.
+        in: query
+        name: cursor
+        schema:
+          description: next_cursor of the previous page.
+          type: string
+      - description: Page size (default 50).
+        in: query
+        name: limit
+        schema:
+          description: Page size (default 50).
+          maximum: 200
+          minimum: 1
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/EventsResponse'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Alert history, newest first
+      tags:
+      - alerts
+  /api/v1/alerts/get-overrides:
+    get:
+      operationId: alertsGetOverrides
+      parameters:
+      - description: Target server id.
+        in: query
+        name: server_id
+        required: true
+        schema:
+          description: Target server id.
+          type: string
+      - description: Target app id; empty for the server itself.
+        in: query
+        name: app_id
+        schema:
+          description: Target app id; empty for the server itself.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    items:
+                      $ref: '#/components/schemas/Override'
+                    type:
+                    - array
+                    - "null"
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: A server's or app's rule overrides
+      tags:
+      - alerts
+  /api/v1/alerts/get-rules:
+    get:
+      operationId: alertsGetRules
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    items:
+                      $ref: '#/components/schemas/Rule'
+                    type:
+                    - array
+                    - "null"
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+      security:
+      - bearer: []
+      - cookie: []
+      summary: List the org's alert rules
+      tags:
+      - alerts
+  /api/v1/alerts/save-channel:
+    post:
+      description: '`url` is a Shoutrrr URL (telegram://, discord://, ntfy://, smtp://,
+        generic://, …), stored encrypted. An empty `id` creates. On update an empty
+        `url` keeps the stored destination (url, service and fields); only name, default
+        and enabled change.'
+      operationId: alertsSaveChannel
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaveChannelRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Channel'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Create or update a notification channel
+      tags:
+      - alerts
+  /api/v1/alerts/save-override:
+    post:
+      description: Null fields inherit the rule's; `channel_ids` null inherits, []
+        silences.
+      operationId: alertsSaveOverride
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OverrideInput'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Override'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Override a rule for one server or app
+      tags:
+      - alerts
+  /api/v1/alerts/save-rule:
+    post:
+      description: 'Fires when the metric''s average over `duration_minutes` (1-60)
+        is above `threshold` (down rules: when the server or app is down that long).
+        `channel_ids`: null = the org''s default channels, [] = none (History only).
+        `target_kind` and `metric` cannot change on update.'
+      operationId: alertsSaveRule
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaveRuleRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Rule'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Create or update an alert rule
+      tags:
+      - alerts
+  /api/v1/alerts/test-channel:
+    post:
+      description: Send exactly one of `id` (a saved channel; the outcome is recorded
+        on it) or `url` (a draft). Answers 200 with `ok` false and the error when
+        the service refuses.
+      operationId: alertsTestChannel
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TestChannelRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/TestChannelResponse'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "429":
+          content:
+            text/plain:
+              schema:
+                type: string
+          description: Too Many Requests
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Send a test notification
+      tags:
+      - alerts
   /api/v1/app/control-app:
     post:
       operationId: appControlApp
@@ -2999,7 +3675,7 @@ paths:
       description: |-
         Server-sent events, each `data: <Notification JSON>`.
 
-        Subscribe BEFORE dispatching a 202 operation: results are best-effort, not buffered or replayed. A result produced while no stream is open, or while this stream is not being read, is dropped. An operation_result is delivered only to the open streams of the user who dispatched it; match it on ref == the 202's data.request_id. server_status, apps_status and vars.* events go to every member of the server's organization and interleave with results; ignore types you do not handle.
+        Subscribe BEFORE dispatching a 202 operation: results are best-effort, not buffered or replayed. A result produced while no stream is open, or while this stream is not being read, is dropped. An operation_result is delivered only to the open streams of the user who dispatched it; match it on ref == the 202's data.request_id. server_status, apps_status, alert and vars.* events go to every member of the server's organization and interleave with results; ignore types you do not handle.
       operationId: sse
       responses:
         "200":
@@ -4057,6 +4733,43 @@ components:
       required:
       - request_id
       type: object
+    ActiveAlert:
+      properties:
+        app_id:
+          type: string
+        app_name:
+          type: string
+        metric:
+          type: string
+        rule_id:
+          type: string
+        server_id:
+          type: string
+        server_name:
+          type: string
+        since:
+          format: date-time
+          type: string
+        target_kind:
+          type: string
+        threshold:
+          format: double
+          type: number
+        value:
+          format: double
+          type: number
+      required:
+      - rule_id
+      - target_kind
+      - metric
+      - server_id
+      - app_id
+      - since
+      - value
+      - threshold
+      - server_name
+      - app_name
+      type: object
     App:
       properties:
         color:
@@ -4343,6 +5056,45 @@ components:
         new_password:
           type: string
       type: object
+    Channel:
+      properties:
+        created_at:
+          format: date-time
+          type: string
+        enabled:
+          type: boolean
+        fields:
+          additionalProperties:
+            type: string
+          type:
+          - object
+          - "null"
+        id:
+          type: string
+        is_default:
+          type: boolean
+        last_error:
+          type: string
+        last_sent_at:
+          format: date-time
+          type:
+          - "null"
+          - string
+        name:
+          type: string
+        service:
+          type: string
+      required:
+      - id
+      - name
+      - service
+      - fields
+      - is_default
+      - enabled
+      - last_error
+      - last_sent_at
+      - created_at
+      type: object
     CheckDomainResponse:
       properties:
         available:
@@ -4621,6 +5373,15 @@ components:
       - app_id
       - deleted
       type: object
+    DeleteOverrideRequest:
+      properties:
+        app_id:
+          type: string
+        rule_id:
+          type: string
+        server_id:
+          type: string
+      type: object
     DeleteRegistryRequest:
       properties:
         address:
@@ -4706,6 +5467,22 @@ components:
           type: string
       required:
       - name
+      type: object
+    Delivery:
+      properties:
+        channel_id:
+          type: string
+        channel_name:
+          type: string
+        error:
+          type: string
+        ok:
+          type: boolean
+      required:
+      - channel_id
+      - channel_name
+      - ok
+      - error
       type: object
     Disk:
       properties:
@@ -4884,6 +5661,76 @@ components:
       - message
       - data
       type: object
+    Event:
+      properties:
+        app_id:
+          type: string
+        app_name:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        deliveries:
+          items:
+            $ref: '#/components/schemas/Delivery'
+          type:
+          - array
+          - "null"
+        id:
+          type: string
+        kind:
+          type: string
+        message:
+          type: string
+        metric:
+          type: string
+        rule_id:
+          type: string
+        server_id:
+          type: string
+        server_name:
+          type: string
+        target_kind:
+          type: string
+        threshold:
+          format: double
+          type: number
+        title:
+          type: string
+        value:
+          format: double
+          type: number
+      required:
+      - id
+      - rule_id
+      - server_id
+      - app_id
+      - server_name
+      - app_name
+      - target_kind
+      - metric
+      - kind
+      - value
+      - threshold
+      - title
+      - message
+      - deliveries
+      - created_at
+      type: object
+    EventsResponse:
+      properties:
+        events:
+          items:
+            $ref: '#/components/schemas/Event'
+          type:
+          - array
+          - "null"
+        next_cursor:
+          type: string
+      required:
+      - events
+      - next_cursor
+      type: object
     FormDataLoginForm:
       properties:
         aud:
@@ -5019,6 +5866,11 @@ components:
           - "null"
       required:
       - storages
+      type: object
+    IDRequest:
+      properties:
+        id:
+          type: string
       type: object
     ImageTagsResponse:
       properties:
@@ -5396,6 +6248,39 @@ components:
       required:
       - name
       type: object
+    Notice:
+      properties:
+        app_id:
+          type: string
+        kind:
+          type: string
+        metric:
+          type: string
+        rule_id:
+          type: string
+        server_id:
+          type: string
+        target_kind:
+          type: string
+        threshold:
+          format: double
+          type: number
+        title:
+          type: string
+        value:
+          format: double
+          type: number
+      required:
+      - kind
+      - rule_id
+      - target_kind
+      - metric
+      - server_id
+      - app_id
+      - value
+      - threshold
+      - title
+      type: object
     Notification:
       allOf:
       - anyOf:
@@ -5418,6 +6303,16 @@ components:
         - properties:
             payload:
               $ref: '#/components/schemas/AppsStatusPayload'
+      - anyOf:
+        - not:
+            properties:
+              type:
+                const: alert
+            required:
+            - type
+        - properties:
+            payload:
+              $ref: '#/components/schemas/Notice'
       - anyOf:
         - not:
             properties:
@@ -5457,6 +6352,7 @@ components:
             - operation_result: the x-operation-result schema of the operation whose request_id equals ref (absent when the operation failed)
             - server_status: #/components/schemas/ServerStatusPayload
             - apps_status: #/components/schemas/AppsStatusPayload
+            - alert: #/components/schemas/Notice
             - vars.synced: #/components/schemas/VarsSyncedPayload
             - vars.sync_failed: #/components/schemas/VarsSyncFailedPayload
             - vars.reloaded: #/components/schemas/VarsReloadedPayload
@@ -5532,6 +6428,64 @@ components:
       - app_id
       - copies
       - bytes
+      type: object
+    Override:
+      properties:
+        app_id:
+          type: string
+        channel_ids:
+          items:
+            type: string
+          type:
+          - array
+          - "null"
+        disabled:
+          type: boolean
+        duration_minutes:
+          type:
+          - "null"
+          - integer
+        rule_id:
+          type: string
+        server_id:
+          type: string
+        threshold:
+          type:
+          - "null"
+          - number
+      required:
+      - rule_id
+      - server_id
+      - app_id
+      - disabled
+      - threshold
+      - duration_minutes
+      - channel_ids
+      type: object
+    OverrideInput:
+      properties:
+        app_id:
+          type: string
+        channel_ids:
+          items:
+            type: string
+          type:
+          - array
+          - "null"
+        disabled:
+          type: boolean
+        duration_minutes:
+          type:
+          - "null"
+          - integer
+        rule_id:
+          type: string
+        server_id:
+          type: string
+        threshold:
+          type:
+          - "null"
+          - number
       type: object
     OverviewResponse:
       properties:
@@ -5774,6 +6728,40 @@ components:
       - app_id
       - revision
       type: object
+    Rule:
+      properties:
+        channel_ids:
+          items:
+            type: string
+          type:
+          - array
+          - "null"
+        created_at:
+          format: date-time
+          type: string
+        duration_minutes:
+          type: integer
+        enabled:
+          type: boolean
+        id:
+          type: string
+        metric:
+          type: string
+        target_kind:
+          type: string
+        threshold:
+          format: double
+          type: number
+      required:
+      - id
+      - target_kind
+      - metric
+      - threshold
+      - duration_minutes
+      - channel_ids
+      - enabled
+      - created_at
+      type: object
     RunBackupRequest:
       properties:
         app_id:
@@ -5884,6 +6872,60 @@ components:
       required:
       - app_id
       - revision
+      type: object
+    SaveChannelRequest:
+      properties:
+        enabled:
+          type: boolean
+        fields:
+          additionalProperties:
+            type: string
+          type:
+          - object
+          - "null"
+        id:
+          type: string
+        is_default:
+          type: boolean
+        name:
+          type: string
+        url:
+          type: string
+      type: object
+    SaveRuleRequest:
+      properties:
+        channel_ids:
+          items:
+            type: string
+          type:
+          - array
+          - "null"
+        duration_minutes:
+          type: integer
+        enabled:
+          type: boolean
+        id:
+          type: string
+        metric:
+          enum:
+          - down
+          - cpu
+          - memory
+          - disk
+          - load1
+          - load5
+          - load15
+          - bandwidth
+          - temperature
+          type: string
+        target_kind:
+          enum:
+          - server
+          - app
+          type: string
+        threshold:
+          format: double
+          type: number
       type: object
     SaveServerVariableRequest:
       properties:
@@ -6017,6 +7059,8 @@ components:
       type: object
     ServerOverview:
       properties:
+        alerts_firing:
+          type: integer
         apps:
           $ref: '#/components/schemas/AppCounts'
         latest:
@@ -6039,6 +7083,7 @@ components:
       - latest
       - sparkline
       - apps
+      - alerts_firing
       type: object
     ServerSample:
       properties:
@@ -6384,6 +7429,23 @@ components:
           type: string
         volume:
           type: string
+      type: object
+    TestChannelRequest:
+      properties:
+        id:
+          type: string
+        url:
+          type: string
+      type: object
+    TestChannelResponse:
+      properties:
+        error:
+          type: string
+        ok:
+          type: boolean
+      required:
+      - ok
+      - error
       type: object
     TestStorageRequest:
       properties:

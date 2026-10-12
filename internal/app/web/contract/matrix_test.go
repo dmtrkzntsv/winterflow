@@ -147,10 +147,26 @@ var probes = map[string]probe{
 	"GET /api/v1/server/get-public-key": {valid: func(s string) call { return get("/api/v1/server/get-public-key", sq(s)) }, malformed: bad("GET", "/api/v1/server/get-public-key")},
 	"POST /api/v1/server/register":      {malformed: post("/api/v1/server/register", map[string]any{"code": "1"})},
 
-	"POST /api/v1/auth/register":             {malformed: bad("POST", "/api/v1/auth/register")},
-	"POST /api/v1/user/create-token":         {malformed: post("/api/v1/user/create-token", map[string]any{"name": ""})},
-	"POST /api/v1/user/delete-token":         {malformed: bad("POST", "/api/v1/user/delete-token")},
-	"POST /api/v1/user/change-password":      {malformed: post("/api/v1/user/change-password", map[string]any{"current_password": "x", "new_password": "1"})},
+	"POST /api/v1/auth/register":         {malformed: bad("POST", "/api/v1/auth/register")},
+	"POST /api/v1/user/create-token":     {malformed: post("/api/v1/user/create-token", map[string]any{"name": ""})},
+	"POST /api/v1/user/delete-token":     {malformed: bad("POST", "/api/v1/user/delete-token")},
+	"POST /api/v1/user/change-password":  {malformed: post("/api/v1/user/change-password", map[string]any{"current_password": "x", "new_password": "1"})},
+	"POST /api/v1/alerts/save-channel":   {malformed: post("/api/v1/alerts/save-channel", map[string]any{"name": "", "url": "ntfy://ntfy.sh/t"})},
+	"POST /api/v1/alerts/delete-channel": {malformed: post("/api/v1/alerts/delete-channel", map[string]any{"id": ""})},
+	"POST /api/v1/alerts/test-channel":   {malformed: post("/api/v1/alerts/test-channel", map[string]any{})},
+	"POST /api/v1/alerts/save-rule":      {malformed: post("/api/v1/alerts/save-rule", map[string]any{"target_kind": "server", "metric": "cpu", "threshold": 0, "duration_minutes": 5})},
+	"POST /api/v1/alerts/delete-rule":    {malformed: post("/api/v1/alerts/delete-rule", map[string]any{"id": ""})},
+	"GET /api/v1/alerts/get-overrides":   {valid: func(s string) call { return get("/api/v1/alerts/get-overrides", sq(s)) }, malformed: bad("GET", "/api/v1/alerts/get-overrides")},
+	"POST /api/v1/alerts/save-override": {valid: func(s string) call {
+		return post("/api/v1/alerts/save-override", map[string]any{"rule_id": "00000000-0000-0000-0000-000000000099", "server_id": s, "app_id": "", "disabled": true})
+	}, malformed: bad("POST", "/api/v1/alerts/save-override")},
+	"POST /api/v1/alerts/delete-override": {valid: func(s string) call {
+		return post("/api/v1/alerts/delete-override", map[string]any{"rule_id": "00000000-0000-0000-0000-000000000099", "server_id": s, "app_id": ""})
+	}, malformed: bad("POST", "/api/v1/alerts/delete-override")},
+	"GET /api/v1/alerts/get-events": {valid: func(s string) call { return get("/api/v1/alerts/get-events", sq(s)) },
+		malformed: call{Method: http.MethodGet, Path: "/api/v1/alerts/get-events", Query: url.Values{"kind": {"bogus"}}, Invalid: true}},
+	"GET /api/v1/alerts/get-active": {valid: func(s string) call { return get("/api/v1/alerts/get-active", sq(s)) },
+		malformed: call{Method: http.MethodGet, Path: "/api/v1/alerts/get-active", Query: url.Values{"app_id": {anApp}}, Invalid: true}},
 	"POST /api/v1/org/create-user":           {malformed: post("/api/v1/org/create-user", map[string]any{"name": "n", "email": "not-an-email"})},
 	"POST /api/v1/org/remove-member":         {malformed: post("/api/v1/org/remove-member", map[string]any{"user_id": ""})},
 	"POST /api/v1/org/reset-member-password": {malformed: post("/api/v1/org/reset-member-password", map[string]any{"user_id": ""})},

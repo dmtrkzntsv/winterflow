@@ -5,6 +5,7 @@ import { Plus } from "lucide-react"
 import { useAppBreadcrumbs } from "@/layouts/use-app-layout"
 import { Button } from "@/components/ui/button"
 import { ServerSelectionDialog } from "@/components/server-creation-dialog"
+import { ActiveAlertsStrip } from "@/components/alerts/active-alerts"
 import { ServerCards } from "@/components/server-cards"
 import { AppGrid } from "@/components/app-grid"
 import { isStandalone } from "@/config"
@@ -34,6 +35,8 @@ export default function HomePage() {
           <Plus className="size-4" /> New App
         </Button>
       </div>
+
+      <ActiveAlertsStrip />
 
       {/* Server health at a glance: a compact strip above the apps. Adding
           servers is a cloud capability; the standalone build ships one

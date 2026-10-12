@@ -14,6 +14,14 @@ type Bucket struct {
 	Data    Values
 }
 
+// TargetBucket is one stored row with its target: the server (AppID "")
+// or one of its apps.
+type TargetBucket struct {
+	ServerID string
+	AppID    string
+	Bucket
+}
+
 // UnavailableField is the app flag set when container metrics cannot be
 // read on the host. Rollup averages it over every row (absent = 0), so a
 // rolled-up value is the flagged fraction of the bucket.

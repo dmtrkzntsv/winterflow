@@ -153,6 +153,24 @@ func (r *Repo) Prune(ctx context.Context, now time.Time) (int64, error) {
 	return total, nil
 }
 
+// Tier1Range returns every target's tier-1 rows in [from, to), ordered by
+// server, app and bucket.
+func (r *Repo) Tier1Range(ctx context.Context, from, to time.Time) ([]metrics.TargetBucket, error) {
+	rows, err := r.q.ListMetricSamplesInRange(ctx, r.tx.Querier(ctx), rangeParams{
+		Tier: int64(metrics.Tier1), FromTime: types.DateTime(from.UTC()), ToTime: types.DateTime(to.UTC()),
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]metrics.TargetBucket, 0, len(rows))
+	for _, row := range rows {
+		if b, ok := r.hydrate(row); ok {
+			out = append(out, metrics.TargetBucket{ServerID: row.ServerID, AppID: row.AppID, Bucket: b})
+		}
+	}
+	return out, nil
+}
+
 // hydrate decodes a row; a row whose data is not JSON is logged and skipped
 // rather than failing the whole chart.
 func (r *Repo) hydrate(row sampleRow) (metrics.Bucket, bool) {

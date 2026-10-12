@@ -457,3 +457,23 @@ func TestGetMetricsDiskInterval(t *testing.T) {
 		}
 	}
 }
+
+func TestAllowsPrivateAlertTargets(t *testing.T) {
+	standalone, api := NewServerConfig("standalone"), NewServerConfig("distributed")
+	unsetenv(t, "ALERTS_ALLOW_PRIVATE_TARGETS")
+	if !standalone.AllowsPrivateAlertTargets() || api.AllowsPrivateAlertTargets() {
+		t.Fatal("defaults: standalone allows, distributed refuses")
+	}
+	t.Setenv("ALERTS_ALLOW_PRIVATE_TARGETS", "true")
+	if !api.AllowsPrivateAlertTargets() {
+		t.Error("true did not allow on the distributed API")
+	}
+	t.Setenv("ALERTS_ALLOW_PRIVATE_TARGETS", "off")
+	if standalone.AllowsPrivateAlertTargets() {
+		t.Error("off did not refuse in standalone")
+	}
+	t.Setenv("ALERTS_ALLOW_PRIVATE_TARGETS", "junk")
+	if !standalone.AllowsPrivateAlertTargets() || api.AllowsPrivateAlertTargets() {
+		t.Error("an unknown value must keep the topology default")
+	}
+}

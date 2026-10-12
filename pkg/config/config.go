@@ -214,6 +214,23 @@ func (c *ServerConfig) IsMetricsEnabled() bool {
 	}
 }
 
+// AllowsPrivateAlertTargets reports whether alert notifications may go to
+// loopback, private and link-local addresses (a LAN ntfy, Gotify or mail
+// server). Default: allowed in standalone (the box's own network is the
+// point), refused by the distributed API, whose self-registered orgs must
+// not reach its internal network. ALERTS_ALLOW_PRIVATE_TARGETS=true/false
+// overrides either default.
+func (c *ServerConfig) AllowsPrivateAlertTargets() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("ALERTS_ALLOW_PRIVATE_TARGETS"))) {
+	case "true", "1", "yes", "on":
+		return true
+	case "false", "0", "no", "off":
+		return false
+	default:
+		return c.IsStandalone()
+	}
+}
+
 // minMetricsDiskInterval keeps the disk scan (one `docker system df -v`,
 // ~45 s of daemon work on a busy box) from being scheduled back to back.
 const minMetricsDiskInterval = 5 * time.Minute

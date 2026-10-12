@@ -4,10 +4,12 @@ import (
 	"context"
 
 	"winterflow/internal/domain/metrics"
+	"winterflow/internal/domain/service/alerting"
 	notificationsvc "winterflow/internal/domain/service/notification"
 	"winterflow/internal/domain/service/status"
 	"winterflow/internal/domain/usecase/sharedvars"
 	"winterflow/internal/infra/db"
+	alertrepo "winterflow/internal/infra/db/repository/alert"
 	apprepo "winterflow/internal/infra/db/repository/app"
 	appdomainrepo "winterflow/internal/infra/db/repository/appdomain"
 	metricrepo "winterflow/internal/infra/db/repository/metric"
@@ -20,6 +22,7 @@ import (
 	"winterflow/internal/infra/transport/dispatch"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
+	"winterflow/pkg/util"
 )
 
 // WireCore builds the wiring both topologies share: DB-backed repositories and
@@ -45,9 +48,20 @@ func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerCon
 	// METRICS_ENABLED=false; the chart routes then serve empty series.
 	latest := metrics.NewLatestStore()
 	var ms metricsStore
+	var history alerting.History
 	if cfg.IsMetricsEnabled() {
 		ms = r.metric
-		go runMetricsMaintenance(ctx, r.metric, latest, metricsMaintenanceInterval, log)
+		history = r.metric
+	}
+
+	// Alerts: the evaluator rides the events sink (samples, statuses,
+	// liveness sweep); the notifier sends through the org's channels.
+	al := wireAlerts(ctx, r.alert, history, newStatusFanout(r.server, nm, log), cfg, log)
+
+	// After the alert warm start: the first rollup tick would otherwise
+	// hold SQLite's single connection while Load reads.
+	if cfg.IsMetricsEnabled() {
+		startMetricsMaintenance(ctx, r.metric, latest, log)
 	}
 
 	startResponseSubscriber(ctx, b, dispatcher, cfg, log)
@@ -57,7 +71,7 @@ func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerCon
 	startEventsSubscriber(ctx, b, statusCache, r.server, nm, cfg, log, indexSyncs{
 		newDomainSync(ctx, dispatcher, r.serverDomain, log),
 		newStorageSync(ctx, dispatcher, r.serverStorage, log),
-	}, vars, ms, latest)
+	}, vars, ms, latest, al.evaluator)
 
 	return &Deps{
 		Log:                      log,
@@ -74,6 +88,9 @@ func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerCon
 		StatusCache:              statusCache,
 		MetricRepository:         r.metric,
 		LatestMetrics:            latest,
+		AlertRepository:          r.alert,
+		AlertNotifier:            al.notifier,
+		ChannelBox:               al.box,
 	}, r.server
 }
 
@@ -87,6 +104,7 @@ type repos struct {
 	serverStorage *serverstoragerepo.Repo
 	metric        *metricrepo.Repo
 	sharedVar     *sharedvarrepo.Repo
+	alert         *alertrepo.Repo
 }
 
 func newRepos(conn *db.DB, log *logger.Logger) (repos, error) {
@@ -115,6 +133,9 @@ func newRepos(conn *db.DB, log *logger.Logger) (repos, error) {
 	if r.metric, err = metricrepo.New(conn.Tx, conn.Driver, log); err != nil {
 		return r, err
 	}
-	r.sharedVar, err = sharedvarrepo.New(conn.Tx, conn.Driver, log)
+	if r.sharedVar, err = sharedvarrepo.New(conn.Tx, conn.Driver, log); err != nil {
+		return r, err
+	}
+	r.alert, err = alertrepo.New(conn.Tx, conn.Driver, log, util.GenerateID)
 	return r, err
 }

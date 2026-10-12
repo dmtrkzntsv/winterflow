@@ -31,6 +31,9 @@ type querier interface {
 	DeleteApp(ctx context.Context, db backend.DBTX, appID string) error
 	RenameApp(ctx context.Context, db backend.DBTX, p renameParams) error
 	DeleteMetricSamplesByApp(ctx context.Context, db backend.DBTX, appID string) error
+	DeleteAlertOverridesByApp(ctx context.Context, db backend.DBTX, appID string) error
+	DeleteAlertStatesByApp(ctx context.Context, db backend.DBTX, appID string) error
+	DeleteAlertEventsByApp(ctx context.Context, db backend.DBTX, appID string) error
 }
 
 // Repo is the apps repository.
@@ -85,25 +88,34 @@ func (r *Repo) SaveApp(ctx context.Context, a model.App) error {
 	return r.q.UpsertApp(ctx, r.tx.Querier(ctx), upsertFor(a))
 }
 
-// DeleteApp removes the app row and its monitoring samples in one
-// transaction (no error when it does not exist).
+// DeleteApp removes the app row with its monitoring samples and alert
+// overrides, states and history in one transaction (no error when it does
+// not exist).
 func (r *Repo) DeleteApp(ctx context.Context, appID string) error {
 	return r.tx.WithTx(ctx, func(ctx context.Context) error {
 		return r.deleteApp(ctx, appID)
 	})
 }
 
-// deleteApp drops the app's samples, then the row; ctx must carry the
-// caller's transaction. An empty id is a no-op: app_id = ” marks the
-// servers' own metric rows.
+// deleteApp drops the app's samples and alert data, then the row; ctx must
+// carry the caller's transaction. An empty id is a no-op: app_id = ""
+// marks the servers' own metric rows and alert targets.
 func (r *Repo) deleteApp(ctx context.Context, appID string) error {
 	if appID == "" {
 		return nil
 	}
-	if err := r.q.DeleteMetricSamplesByApp(ctx, r.tx.Querier(ctx), appID); err != nil {
-		return err
+	q := r.tx.Querier(ctx)
+	for _, del := range []func(context.Context, backend.DBTX, string) error{
+		r.q.DeleteMetricSamplesByApp,
+		r.q.DeleteAlertOverridesByApp,
+		r.q.DeleteAlertStatesByApp,
+		r.q.DeleteAlertEventsByApp,
+	} {
+		if err := del(ctx, q, appID); err != nil {
+			return err
+		}
 	}
-	return r.q.DeleteApp(ctx, r.tx.Querier(ctx), appID)
+	return r.q.DeleteApp(ctx, q, appID)
 }
 
 // RenameApp sets the app's name (no error when it does not exist).

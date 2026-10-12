@@ -29,9 +29,7 @@ type UseCase struct {
 
 // ServerAccess answers whether a server belongs to one of a user's
 // organizations (port.ServerRepository satisfies it).
-type ServerAccess interface {
-	UserOwnsServer(ctx context.Context, userID, serverID string) (bool, error)
-}
+type ServerAccess = port.ServerOwnership
 
 type Deps struct {
 	CommandDispatcher      port.CommandDispatcher

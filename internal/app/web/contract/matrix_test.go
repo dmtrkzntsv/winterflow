@@ -155,6 +155,24 @@ var probes = map[string]probe{
 	"POST /api/v1/org/remove-member":         {malformed: post("/api/v1/org/remove-member", map[string]any{"user_id": ""})},
 	"POST /api/v1/org/reset-member-password": {malformed: post("/api/v1/org/reset-member-password", map[string]any{"user_id": ""})},
 	"POST /api/v1/org/update-organization":   {malformed: post("/api/v1/org/update-organization", map[string]any{"name": ""})},
+
+	"POST /api/v1/org/save-shared-variable":   {malformed: bad("POST", "/api/v1/org/save-shared-variable")},
+	"POST /api/v1/org/delete-shared-variable": {malformed: bad("POST", "/api/v1/org/delete-shared-variable")},
+	"GET /api/v1/server/list-shared-variables": {valid: func(s string) call { return get("/api/v1/server/list-shared-variables", sq(s)) },
+		malformed: bad("GET", "/api/v1/server/list-shared-variables")},
+	"POST /api/v1/server/save-shared-variable": {valid: func(s string) call {
+		return post("/api/v1/server/save-shared-variable", map[string]any{"server_id": s, "name": "PROBE", "value": "1"})
+	}, malformed: bad("POST", "/api/v1/server/save-shared-variable")},
+	// The id does not exist, so the own-server control answers 400, not 403.
+	"POST /api/v1/server/delete-shared-variable": {valid: func(s string) call {
+		return post("/api/v1/server/delete-shared-variable", map[string]any{"server_id": s, "id": anApp})
+	}, malformed: bad("POST", "/api/v1/server/delete-shared-variable")},
+	"POST /api/v1/shared-variables/resync": {valid: func(s string) call {
+		return post("/api/v1/shared-variables/resync", map[string]any{"server_id": s})
+	}, malformed: bad("POST", "/api/v1/shared-variables/resync")},
+	"POST /api/v1/shared-variables/reload": {valid: func(s string) call {
+		return post("/api/v1/shared-variables/reload", map[string]any{"server_id": s})
+	}, malformed: bad("POST", "/api/v1/shared-variables/reload")},
 }
 
 // carriesServerID reports whether t, or a struct nested in it by embedding,

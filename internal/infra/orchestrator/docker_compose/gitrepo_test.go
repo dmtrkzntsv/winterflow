@@ -3,8 +3,11 @@ package dockercompose
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	git "github.com/go-git/go-git/v5"
 )
 
 func writeFileT(t *testing.T, dir, rel, content string) {
@@ -183,6 +186,51 @@ func TestGitRestoreUnknownHashErrors(t *testing.T) {
 	_, _ = gitCommitAll(dir, "one")
 	if err := gitRestore(dir, "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"); err == nil {
 		t.Fatal("expected error for unknown hash")
+	}
+}
+
+// TestCommitNeverRecordsSharedEnvFiles: a rollback restores a .gitignore
+// written before shared variables existed; the next commit must still keep
+// the rendered plaintext out of history.
+func TestCommitNeverRecordsSharedEnvFiles(t *testing.T) {
+	dir := t.TempDir()
+	if err := gitEnsure(dir); err != nil {
+		t.Fatal(err)
+	}
+	writeFileT(t, dir, ".gitignore", ".env.secrets\n") // an old agent's .gitignore
+	writeFileT(t, dir, "compose.yml", "services: {}\n")
+	writeFileT(t, dir, ".env.shared", "SMTP_HOST=\"mail\"\n")
+	writeFileT(t, dir, ".env.shared.secrets", "SMTP_PASS=\"plaintext\"\n")
+	if _, err := gitCommitAll(dir, "rollback to old"); err != nil {
+		t.Fatal(err)
+	}
+	repo, err := git.PlainOpen(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, _ := repo.Head()
+	commit, _ := repo.CommitObject(head.Hash())
+	tree, _ := commit.Tree()
+	for _, f := range []string{".env.shared", ".env.shared.secrets"} {
+		if _, err := tree.File(f); err == nil {
+			t.Fatalf("%s was committed", f)
+		}
+	}
+	gi, _ := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	for _, want := range []string{".env.secrets", ".env.shared", ".env.shared.secrets"} {
+		if !strings.Contains(string(gi), want+"\n") {
+			t.Fatalf(".gitignore lacks %s: %q", want, gi)
+		}
+	}
+	// Idempotent: a second commit does not append the lines again.
+	if _, err := gitCommitAll(dir, "noop"); err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := os.ReadFile(filepath.Join(dir, ".gitignore")); string(again) != string(gi) {
+		t.Fatalf(".gitignore grew: %q", again)
+	}
+	if h, err := gitHead(dir); err != nil || h != head.Hash().String() {
+		t.Fatalf("gitHead = %q, %v; want %s", h, err, head.Hash())
 	}
 }
 

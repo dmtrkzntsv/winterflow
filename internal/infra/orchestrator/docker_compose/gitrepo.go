@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	git "github.com/go-git/go-git/v5"
@@ -44,7 +45,7 @@ func gitEnsure(dir string) error {
 // .gitignore lists them, and every commit excludes them (neverCommitted)
 // whatever .gitignore says — a rollback restores an old .gitignore that may
 // not list them.
-var derivedArtifacts = []string{envSecretsRel, deployedRel, runRel, storageEnvRel}
+var derivedArtifacts = []string{envSecretsRel, envSharedRel, envSharedSecretsRel, deployedRel, runRel, storageEnvRel}
 
 // tempArtifacts are the temp files of the agent's own atomic writes in
 // .winterflow/ (fsutil.WriteFile's config.json.tmp): a crash mid-write
@@ -67,6 +68,9 @@ var neverCommitted = func() []gitignore.Pattern {
 // and commits. A clean worktree is a no-op that returns the current HEAD
 // hash, so callers can commit unconditionally after a save.
 func gitCommitAll(dir, subject string) (string, error) {
+	if err := ensureIgnored(dir); err != nil {
+		return "", fmt.Errorf("guard .gitignore: %w", err)
+	}
 	repo, err := git.PlainOpen(dir)
 	if err != nil {
 		return "", err
@@ -271,4 +275,38 @@ func firstLine(s string) string {
 		}
 	}
 	return s
+}
+
+// alwaysIgnored are deploy artifacts holding plaintext. They must never be
+// committed, whatever the worktree's .gitignore says: a rollback restores
+// a .gitignore written before some of them existed. neverCommitted already
+// keeps them (and every other derived artifact) out of each commit; listing
+// them in .gitignore too keeps a manual `git add -A` in the folder honest.
+var alwaysIgnored = []string{envSecretsRel, envSharedRel, envSharedSecretsRel}
+
+// ensureIgnored appends any of alwaysIgnored missing from dir/.gitignore.
+func ensureIgnored(dir string) error {
+	path := filepath.Join(dir, gitignoreRel)
+	raw, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	have := map[string]bool{}
+	for _, line := range strings.Split(string(raw), "\n") {
+		have[strings.TrimSpace(line)] = true
+	}
+	var add []string
+	for _, p := range alwaysIgnored {
+		if !have[p] {
+			add = append(add, p)
+		}
+	}
+	if len(add) == 0 {
+		return nil
+	}
+	out := string(raw)
+	if out != "" && !strings.HasSuffix(out, "\n") {
+		out += "\n"
+	}
+	return os.WriteFile(path, []byte(out+strings.Join(add, "\n")+"\n"), 0o644)
 }

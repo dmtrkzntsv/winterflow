@@ -5,6 +5,7 @@
 // On-disk layout (rooted at cfg.GetAgentDataDir()):
 //
 //	apps/                        -- human-readable view: {slug} -> ../apps-data/{appID}
+//	vars/snapshot.json           -- last vars.sync (0600, ciphertext only)
 //	apps-data/{appID}/           -- canonical app folder, a git repository:
 //	  .winterflow/config.json    --   committed app config blob
 //	  .winterflow/secrets.json   --   committed, ECIES ciphertext only
@@ -12,6 +13,7 @@
 //	  compose.yml, <files...>    --   committed verbatim
 //	  .env                       --   committed plain variables
 //	  .env.secrets, source/      --   gitignored deploy artifacts
+//	  .env.shared(.secrets)      --   gitignored, rendered shared variables
 //	  .winterflow/storage.env    --   gitignored: referenced WF_STORAGE_ values
 //	storages/{name}.json         -- registered storages (0600, secret encrypted)
 //	backups/state.json           -- the backup scheduler's state
@@ -35,6 +37,7 @@ import (
 	"winterflow/internal/domain/model"
 	"winterflow/internal/infra/backup/storages"
 	"winterflow/internal/infra/backup/store"
+	agentvars "winterflow/internal/infra/vars"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
 )
@@ -54,6 +57,37 @@ type Repository struct {
 	// every listing would get slower for as long as the app lives.
 	versionMu    sync.Mutex
 	versionCache map[string]versionEntry
+
+	// vars is the last vars.sync snapshot ({data}/vars/snapshot.json); tz is
+	// the host timezone for WF_TZ, read once.
+	vars *agentvars.Store
+	tz   string
+
+	// refCache holds each app's referenced shared names keyed by HEAD +
+	// source.lock, so stale checks rescan only apps that changed.
+	refMu    sync.Mutex
+	refCache map[string]refEntry
+
+	// sharedMu serializes rendering the shared files with recomputing the
+	// stale set, so a recompute that read the files before a render cannot
+	// store a flag the render just cleared.
+	sharedMu sync.Mutex
+
+	// stale is the last computed stale set (app id -> names); staleReady is
+	// false until the first computation after a start.
+	staleMu    sync.Mutex
+	stale      map[string][]string
+	staleReady bool
+
+	// opLocks are the per-app operation locks (see applock.go): they
+	// serialize the public mutators of one app, held for their whole run,
+	// with the shared-variable reload worker. The distributed agent runs
+	// commands concurrently. busyWait bounds a mutator's wait (appBusyWait;
+	// tests shorten it). Lock order: operation lock, then lockApp, then
+	// lockSource, then sharedMu, then refMu/staleMu.
+	opMu     sync.Mutex
+	opLocks  map[string]chan struct{}
+	busyWait time.Duration
 
 	// restores holds the apps a restore is running on (see beginRestore):
 	// each entry's channel is closed when that restore ends.
@@ -134,6 +168,12 @@ func NewRepository(cfg *config.ServerConfig, log *logger.Logger) *Repository {
 		log:              log,
 		sourceChecks:     make(map[string]time.Time),
 		versionCache:     make(map[string]versionEntry),
+		vars:             agentvars.NewStore(filepath.Join(cfg.GetAgentDataDir(), "vars")),
+		tz:               hostTimezone(),
+		refCache:         make(map[string]refEntry),
+		stale:            make(map[string][]string),
+		opLocks:          make(map[string]chan struct{}),
+		busyWait:         appBusyWait,
 		storages:         storages.NewRegistry(filepath.Join(cfg.GetAgentDataDir(), "storages")),
 		storageLimits:    defaultStorageLimits,
 		openStorage:      store.Open,
@@ -154,7 +194,9 @@ func NewRepository(cfg *config.ServerConfig, log *logger.Logger) *Repository {
 	return r
 }
 
-// forgetApp drops an app's in-memory bookkeeping after deletion.
+// forgetApp drops an app's in-memory bookkeeping after deletion. The
+// shared-variable entries are pruned under sharedMu, so a RecomputeStale
+// already running cannot store them again afterwards.
 func (r *Repository) forgetApp(appID string) {
 	r.sourceMu.Lock()
 	delete(r.sourceChecks, appID)
@@ -162,6 +204,17 @@ func (r *Repository) forgetApp(appID string) {
 	r.versionMu.Lock()
 	delete(r.versionCache, appID)
 	r.versionMu.Unlock()
+	r.sharedMu.Lock()
+	r.refMu.Lock()
+	delete(r.refCache, appID)
+	r.refMu.Unlock()
+	r.staleMu.Lock()
+	delete(r.stale, appID)
+	r.staleMu.Unlock()
+	r.sharedMu.Unlock()
+	r.opMu.Lock()
+	delete(r.opLocks, appID)
+	r.opMu.Unlock()
 	r.mountMu.Lock()
 	delete(r.mountCache, appID)
 	r.mountMu.Unlock()
@@ -170,7 +223,7 @@ func (r *Repository) forgetApp(appID string) {
 	delete(r.ops, appID)
 	r.restoreMu.Unlock()
 	r.clearRestoreMark(appID)
-	// The app's locks are not dropped here: a holder or waiter may still be
+	// The app's file locks are not dropped here: a holder or waiter may still be
 	// on them, and a second holder on a new lock would run beside it (an app
 	// created again under the id); an idle lock removes itself.
 }

@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -173,5 +174,95 @@ func TestOnlineSyncRunsWhenAServerComesOnline(t *testing.T) {
 	sink.handle(ctx, beat)
 	if len(synced.started) != 4 {
 		t.Fatalf("online = %v, want a sync after coming back", synced.started)
+	}
+}
+
+// fakeVars records the shared-variable hooks and, as the store, the
+// capability saves, so their order is visible.
+type fakeVars struct {
+	mu    sync.Mutex
+	calls []string
+}
+
+func (f *fakeVars) add(s string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, s)
+}
+func (f *fakeVars) online(id string)    { f.add("online:" + id) }
+func (f *fakeVars) heartbeat(id string) { f.add("beat:" + id) }
+func (f *fakeVars) capabilities(_ context.Context, id string, caps map[string]string) {
+	f.add("key:" + id + ":" + caps["public_key"])
+}
+func (f *fakeVars) revision(_ context.Context, id string, rev int64) {
+	f.add(fmt.Sprintf("rev:%s:%d", id, rev))
+}
+func (f *fakeVars) reloaded(_ context.Context, id string, payload []byte) {
+	f.add("reloaded:" + id + ":" + string(payload))
+}
+func (f *fakeVars) TouchLastSeen(context.Context, string) error { return nil }
+func (f *fakeVars) SaveCapabilities(_ context.Context, id string, _ map[string]string, _ map[string]bool) error {
+	f.add("save:" + id)
+	return nil
+}
+
+func TestEventSinkDrivesSharedVariables(t *testing.T) {
+	rec := &recorder{}
+	sink, _ := newTestSink(rec, []string{"alice"})
+	fv := &fakeVars{}
+	sink.store = fv
+	sink.vars = fv
+	sink.sync = fanSync{fv}
+	ctx := context.Background()
+
+	caps, _ := json.Marshal(capabilitiesEvent{Capabilities: map[string]string{"public_key": "K2"}})
+	sink.handle(ctx, bus.EventMessage{ServerID: "s1", Kind: bus.EventCapabilities, Payload: caps})
+
+	// An old agent: apps.status without vars_revision never drives drift.
+	old, _ := json.Marshal(command.GetAppsStatusResponse{Apps: []command.AppStatus{}})
+	sink.handle(ctx, bus.EventMessage{ServerID: "s1", Kind: bus.EventAppsStatus, Payload: old})
+	rev := int64(3)
+	cur, _ := json.Marshal(command.GetAppsStatusResponse{Apps: []command.AppStatus{}, VarsRevision: &rev})
+	sink.handle(ctx, bus.EventMessage{ServerID: "s1", Kind: bus.EventAppsStatus, Payload: cur})
+
+	before := rec.count()
+	sink.handle(ctx, bus.EventMessage{ServerID: "s2", Kind: bus.EventVarsReloaded, Payload: []byte(`{"app_id":"a"}`)})
+	if rec.count() != before {
+		t.Fatal("a reload outcome was treated as a status change")
+	}
+
+	want := []string{"key:s1:K2", "save:s1", "online:s1", "rev:s1:3", `reloaded:s2:{"app_id":"a"}`}
+	if fmt.Sprint(fv.calls) != fmt.Sprint(want) {
+		t.Fatalf("calls = %v\nwant    %v", fv.calls, want)
+	}
+}
+
+// TestOldAgentIsNeverDriftPushed: without vars_revision in apps.status the
+// drift hook never runs, however often the agent reports.
+func TestOldAgentIsNeverDriftPushed(t *testing.T) {
+	sink, _ := newTestSink(&recorder{}, nil)
+	fv := &fakeVars{}
+	sink.vars = fv
+	old, _ := json.Marshal(command.GetAppsStatusResponse{Apps: []command.AppStatus{}})
+	for i := 0; i < 3; i++ {
+		sink.handle(context.Background(), bus.EventMessage{ServerID: "s1", Kind: bus.EventAppsStatus, Payload: old})
+	}
+	for _, c := range fv.calls {
+		if strings.HasPrefix(c, "rev:") {
+			t.Fatalf("drift hook ran for an old agent: %v", fv.calls)
+		}
+	}
+}
+
+// TestFanSyncDrivesEverySync: online and heartbeat reach each sync.
+func TestFanSyncDrivesEverySync(t *testing.T) {
+	a, b := &fakeVars{}, &fakeVars{}
+	f := fanSync{a, b}
+	f.online("s1")
+	f.heartbeat("s1")
+	for _, fv := range []*fakeVars{a, b} {
+		if fmt.Sprint(fv.calls) != "[online:s1 beat:s1]" {
+			t.Fatalf("calls = %v", fv.calls)
+		}
 	}
 }

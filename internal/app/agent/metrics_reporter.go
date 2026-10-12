@@ -32,6 +32,8 @@ type StatusSnapshot struct {
 // NewStatusSnapshot wraps src.
 func NewStatusSnapshot(src StatusSource) *StatusSnapshot { return &StatusSnapshot{src: src} }
 
+func (s *StatusSnapshot) unwrap() StatusSource { return s.src }
+
 // GetAppsStatus queries the wrapped source and caches a successful answer.
 func (s *StatusSnapshot) GetAppsStatus(ctx context.Context) ([]command.AppStatus, error) {
 	apps, err := s.src.GetAppsStatus(ctx)

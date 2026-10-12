@@ -25,6 +25,7 @@ import (
 type Dispatcher struct {
 	orch     *dockercompose.Repository
 	ingress  port.IngressManager
+	reloads  *ReloadWorker
 	backups  Backups
 	runWait  time.Duration // bound of a backup.run / backup.restore
 	log      *logger.Logger
@@ -41,6 +42,18 @@ func NewDispatcher(orch *dockercompose.Repository, ingress port.IngressManager, 
 	}
 	d := &Dispatcher{orch: orch, ingress: ingress, backups: noBackups{}, runWait: command.BackupRunWait, log: log}
 	d.handlers = d.newHandlers()
+	return d
+}
+
+// errNoReloads answers vars.reload on a dispatcher without a reload worker.
+var errNoReloads = errors.New("shared variable reload is not available on this agent")
+
+// WithReloads attaches the shared-variable reload worker (production
+// wiring); without one vars.reload answers errNoReloads. The worker runs on
+// its own goroutine: vars.reload only queues work, so a long reload never
+// holds up the dispatcher (standalone drains commands on one goroutine).
+func (d *Dispatcher) WithReloads(w *ReloadWorker) *Dispatcher {
+	d.reloads = w
 	return d
 }
 
@@ -135,7 +148,8 @@ func (d *Dispatcher) newHandlers() map[command.Type]handlerFunc {
 		}),
 		command.TypeAppsStatus: handle(d, func(ctx context.Context, _ command.GetAppsStatusRequest) (command.GetAppsStatusResponse, error) {
 			apps, err := d.orch.GetAppsStatus(ctx)
-			return command.GetAppsStatusResponse{Apps: d.backups.Decorate(apps, time.Now())}, err
+			rev := d.orch.VarsRevision()
+			return command.GetAppsStatusResponse{Apps: d.backups.Decorate(apps, time.Now()), VarsRevision: &rev}, err
 		}),
 		command.TypeAppGet: handle(d, func(ctx context.Context, in command.GetAppRequest) (command.GetAppResponse, error) {
 			return d.orch.GetApp(ctx, in.AppID)
@@ -171,6 +185,9 @@ func (d *Dispatcher) newHandlers() map[command.Type]handlerFunc {
 					err = fmt.Errorf("%w (cleanup: %s)", err, strings.Join(res.Warnings, "; "))
 				}
 				return resp, err
+			}
+			if d.reloads != nil {
+				d.reloads.Forget(in.AppID)
 			}
 			d.reloadIngress(ctx)
 			return resp, nil
@@ -256,6 +273,16 @@ func (d *Dispatcher) newHandlers() map[command.Type]handlerFunc {
 			return command.DeleteDomainResponse{Name: in.Name, Warnings: d.reloadIngress(ctx)}, nil
 		}),
 
+		command.TypeVarsSync: handle(d, func(ctx context.Context, in command.SyncVarsRequest) (command.SyncVarsResponse, error) {
+			return d.orch.SyncVars(ctx, in)
+		}),
+		command.TypeVarsReload: handle(d, func(_ context.Context, in command.ReloadVarsRequest) (command.ReloadVarsResponse, error) {
+			if d.reloads == nil {
+				return command.ReloadVarsResponse{}, errNoReloads
+			}
+			d.reloads.Enqueue(in)
+			return command.ReloadVarsResponse{Queued: true}, nil
+		}),
 		command.TypeStorageList: handle(d, func(ctx context.Context, in command.ListStoragesRequest) (command.ListStoragesResponse, error) {
 			list, err := d.orch.ListStorages(ctx, !in.RegistryOnly)
 			return command.ListStoragesResponse{Storages: list}, err

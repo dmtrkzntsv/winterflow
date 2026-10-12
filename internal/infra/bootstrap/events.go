@@ -100,12 +100,45 @@ type eventSink struct {
 	// capabilities event: the agent (re)registered) and is nudged by every
 	// heartbeat while it is still pending.
 	sync serverSync
+	// vars, when set, receives the shared-variable signals: key changes,
+	// reported snapshot revisions and reload outcomes.
+	vars varsEvents
 }
 
 // serverSync is the per-server index fill the event sink drives.
 type serverSync interface {
 	online(serverID string)
 	heartbeat(serverID string)
+}
+
+// varsEvents are the shared-variable hooks of the event sink.
+type varsEvents interface {
+	capabilities(ctx context.Context, serverID string, caps map[string]string)
+	revision(ctx context.Context, serverID string, agentRev int64)
+	reloaded(ctx context.Context, serverID string, payload []byte)
+}
+
+// varsDriver is varsSync as the subscriber sees it: an online sync plus
+// the event hooks.
+type varsDriver interface {
+	serverSync
+	varsEvents
+}
+
+// fanSync drives several per-server syncs from the same online/heartbeat
+// signals.
+type fanSync []serverSync
+
+func (f fanSync) online(serverID string) {
+	for _, s := range f {
+		s.online(serverID)
+	}
+}
+
+func (f fanSync) heartbeat(serverID string) {
+	for _, s := range f {
+		s.heartbeat(serverID)
+	}
 }
 
 func (s *eventSink) handle(ctx context.Context, ev bus.EventMessage) {
@@ -126,6 +159,9 @@ func (s *eventSink) handle(ctx context.Context, ev bus.EventMessage) {
 			s.log.Error("failed to decode capabilities event", err)
 			return
 		}
+		if s.vars != nil {
+			s.vars.capabilities(ctx, ev.ServerID, c.Capabilities)
+		}
 		transition = s.cache.MarkOnline(ev.ServerID, now)
 		if err := s.store.SaveCapabilities(ctx, ev.ServerID, c.Capabilities, c.Features); err != nil {
 			s.log.Debug("save capabilities failed", "server_id", ev.ServerID, "error", err)
@@ -139,6 +175,11 @@ func (s *eventSink) handle(ctx context.Context, ev bus.EventMessage) {
 			s.log.Error("failed to decode apps status event", err)
 			return
 		}
+		// Agents predating shared variables omit vars_revision: never
+		// drift-push to them.
+		if s.vars != nil && body.VarsRevision != nil {
+			s.vars.revision(ctx, ev.ServerID, *body.VarsRevision)
+		}
 		var changed bool
 		changed, transition = s.cache.SetAppStatus(ev.ServerID, body.Apps, now)
 		// The reporter pushes on a fixed timer; only actual changes are worth
@@ -151,6 +192,12 @@ func (s *eventSink) handle(ctx context.Context, ev bus.EventMessage) {
 		}
 	case bus.EventServerMetrics:
 		s.storeMetrics(ctx, ev, now)
+		return
+	case bus.EventVarsReloaded:
+		// A reload outcome is not a liveness or status signal.
+		if s.vars != nil {
+			s.vars.reloaded(ctx, ev.ServerID, ev.Payload)
+		}
 		return
 	default:
 		s.log.Warn("unknown event kind", "kind", ev.Kind)
@@ -211,7 +258,7 @@ func (s *eventSink) sweep(ctx context.Context, cache *status.Cache, now time.Tim
 // liveness, capabilities, status), updating the in-memory status cache and the
 // DB, and pushing transitions over SSE. It also runs the expiry sweeper. It is
 // the API's consumer of events:<region>.
-func startEventsSubscriber(ctx context.Context, b bus.Bus, cache *status.Cache, serverRepo port.ServerRepository, nm port.NotificationManager, cfg *config.ServerConfig, log *logger.Logger, indexSync serverSync, ms metricsStore, latest *metrics.LatestStore) {
+func startEventsSubscriber(ctx context.Context, b bus.Bus, cache *status.Cache, serverRepo port.ServerRepository, nm port.NotificationManager, cfg *config.ServerConfig, log *logger.Logger, indexSync serverSync, vars varsDriver, ms metricsStore, latest *metrics.LatestStore) {
 	sink := &eventSink{
 		cache:   cache,
 		store:   serverRepo,
@@ -220,6 +267,10 @@ func startEventsSubscriber(ctx context.Context, b bus.Bus, cache *status.Cache, 
 		sync:    indexSync,
 		metrics: ms,
 		latest:  latest,
+	}
+	if vars != nil {
+		sink.vars = vars
+		sink.sync = fanSync{indexSync, vars}
 	}
 	bus.SubscribeJSON(ctx, b, cfg.GetBusEventsQueue(), log, func(ev bus.EventMessage) {
 		sink.handle(ctx, ev)

@@ -6,6 +6,7 @@ import (
 	"winterflow/internal/domain/metrics"
 	notificationsvc "winterflow/internal/domain/service/notification"
 	"winterflow/internal/domain/service/status"
+	"winterflow/internal/domain/usecase/sharedvars"
 	"winterflow/internal/infra/db"
 	apprepo "winterflow/internal/infra/db/repository/app"
 	appdomainrepo "winterflow/internal/infra/db/repository/appdomain"
@@ -13,6 +14,7 @@ import (
 	serverrepo "winterflow/internal/infra/db/repository/server"
 	serverdomainrepo "winterflow/internal/infra/db/repository/serverdomain"
 	serverstoragerepo "winterflow/internal/infra/db/repository/serverstorage"
+	sharedvarrepo "winterflow/internal/infra/db/repository/sharedvar"
 	userrepo "winterflow/internal/infra/db/repository/user"
 	"winterflow/internal/infra/transport/bus"
 	"winterflow/internal/infra/transport/dispatch"
@@ -49,25 +51,29 @@ func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerCon
 	}
 
 	startResponseSubscriber(ctx, b, dispatcher, cfg, log)
+	vars := newVarsSync(ctx, dispatcher, sharedvars.Deps{
+		Repo: r.sharedVar, Servers: r.server, Notifications: nm, Revisions: statusCache, Log: log,
+	}, log)
 	startEventsSubscriber(ctx, b, statusCache, r.server, nm, cfg, log, indexSyncs{
 		newDomainSync(ctx, dispatcher, r.serverDomain, log),
 		newStorageSync(ctx, dispatcher, r.serverStorage, log),
-	}, ms, latest)
+	}, vars, ms, latest)
 
 	return &Deps{
-		Log:                     log,
-		Cfg:                     cfg,
-		UserService:             r.user,
-		ServerRepository:        r.server,
-		AppRepository:           r.app,
-		AppDomainRepository:     r.appDomain,
-		ServerDomainRepository:  r.serverDomain,
-		ServerStorageRepository: r.serverStorage,
-		CommandDispatcher:       dispatcher,
-		NotificationManager:     nm,
-		StatusCache:             statusCache,
-		MetricRepository:        r.metric,
-		LatestMetrics:           latest,
+		Log:                      log,
+		Cfg:                      cfg,
+		UserService:              r.user,
+		ServerRepository:         r.server,
+		AppRepository:            r.app,
+		AppDomainRepository:      r.appDomain,
+		ServerDomainRepository:   r.serverDomain,
+		ServerStorageRepository:  r.serverStorage,
+		SharedVariableRepository: r.sharedVar,
+		CommandDispatcher:        dispatcher,
+		NotificationManager:      nm,
+		StatusCache:              statusCache,
+		MetricRepository:         r.metric,
+		LatestMetrics:            latest,
 	}, r.server
 }
 
@@ -80,6 +86,7 @@ type repos struct {
 	serverDomain  *serverdomainrepo.Repo
 	serverStorage *serverstoragerepo.Repo
 	metric        *metricrepo.Repo
+	sharedVar     *sharedvarrepo.Repo
 }
 
 func newRepos(conn *db.DB, log *logger.Logger) (repos, error) {
@@ -105,6 +112,9 @@ func newRepos(conn *db.DB, log *logger.Logger) (repos, error) {
 	if r.serverStorage, err = serverstoragerepo.New(conn.Tx, conn.Driver, log); err != nil {
 		return r, err
 	}
-	r.metric, err = metricrepo.New(conn.Tx, conn.Driver, log)
+	if r.metric, err = metricrepo.New(conn.Tx, conn.Driver, log); err != nil {
+		return r, err
+	}
+	r.sharedVar, err = sharedvarrepo.New(conn.Tx, conn.Driver, log)
 	return r, err
 }

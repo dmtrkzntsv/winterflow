@@ -215,7 +215,7 @@ func TestDomainSyncInFlightAndPublishFailure(t *testing.T) {
 		t.Fatalf("publish failure not retried on heartbeat: calls %d", hub.count())
 	}
 	// Results for servers with nothing pending are ignored.
-	s.result("srv-9", port.CommandResult{Success: true})
+	s.result("srv-9", syncAttempt{}, port.CommandResult{Success: true})
 }
 
 // fakeStorageIndex records server_storages ReplaceForServer calls.

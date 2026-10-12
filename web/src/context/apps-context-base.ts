@@ -64,6 +64,12 @@ export type AppsContextValue = {
   apps: App[];
   // statusByApp maps app id -> latest container status code (live, in-memory).
   statusByApp: Record<string, number>;
+  // staleVarsByApp maps app id -> the shared variables changed since it
+  // was last rendered (stale apps only; live from apps_status).
+  staleVarsByApp: Record<string, string[]>;
+  // reloadSharedVars queues a vars.reload for one app (re-render + compose
+  // up -d); its outcome arrives as a vars.reloaded notification.
+  reloadSharedVars: (appId: string) => Promise<void>;
   // backupsByApp maps app id -> the health of each of its backups (live,
   // with the status).
   backupsByApp: Record<string, BackupHealth[]>;

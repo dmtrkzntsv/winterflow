@@ -136,14 +136,15 @@ func TestComposeArgsAlwaysIncludeEnvFile(t *testing.T) {
 	savedApp(t, r, "app-1", "demo", "x\n")
 
 	args := strings.Join(r.composeArgs("app-1", "up"), " ")
-	if args != "compose --project-name wf-app-1 -f compose.yml --env-file .env up" {
+	// A deploy-path save renders the shared file (the built-ins at least).
+	if args != "compose --project-name wf-app-1 -f compose.yml --env-file .env.shared --env-file .env up" {
 		t.Fatalf("args = %s", args)
 	}
 	dir := r.appDataDir("app-1")
 	writeFileT(t, dir, envSecretsRel, "")
 	writeFileT(t, dir, storageEnvRel, "")
 	args = strings.Join(r.composeArgs("app-1", "up"), " ")
-	if !strings.HasSuffix(args, "-f compose.yml --env-file .env --env-file .winterflow/storage.env --env-file .env.secrets up") {
+	if !strings.HasSuffix(args, "-f compose.yml --env-file .env.shared --env-file .env --env-file .winterflow/storage.env --env-file .env.secrets up") {
 		t.Fatalf("env files in order: %s", args)
 	}
 }
@@ -301,6 +302,26 @@ func TestRefreshDueSourcesHonorsIntervalAndFlag(t *testing.T) {
 	upHead, _ := gitLog(up)
 	if lock.SHA != upHead[0].Hash {
 		t.Fatalf("lock not advanced: %s vs %s", lock.SHA, upHead[0].Hash)
+	}
+}
+
+func TestComposeArgsSharedEnvFileOrder(t *testing.T) {
+	r := newTestRepo(t)
+	savedApp(t, r, "app-1", "demo", "x\n")
+	dir := r.appDataDir("app-1")
+	for _, f := range []string{envSharedRel, envSharedSecretsRel, envSecretsRel} {
+		if err := os.WriteFile(filepath.Join(dir, f), []byte("X=\"1\"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	args := strings.Join(r.composeArgs("app-1", "up"), " ")
+	want := "--env-file .env.shared --env-file .env.shared.secrets --env-file .env --env-file .env.secrets up"
+	if !strings.HasSuffix(args, want) {
+		t.Fatalf("args = %s\nwant suffix %s", args, want)
+	}
+	_ = os.Remove(filepath.Join(dir, envSharedSecretsRel))
+	if args := strings.Join(r.composeArgs("app-1", "up"), " "); strings.Contains(args, envSharedSecretsRel) || !strings.Contains(args, "--env-file .env.shared --env-file .env ") {
+		t.Fatalf("missing file not omitted: %s", args)
 	}
 }
 

@@ -11,6 +11,9 @@ const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), warning: vi.
 vi.mock("sonner", () => ({ toast }));
 vi.mock("@/components/app-backups", () => ({ AppBackups: () => <p>the backups tab</p> }));
 vi.mock("@/components/app-metrics", () => ({ AppMetricBlocks: () => null, AppMetricsTab: () => null }));
+// The stale shared-variables badge has its own tests (it subscribes to
+// notifications).
+vi.mock("@/components/stale-vars-badge", () => ({ StaleVarsBadge: () => null }));
 // Links point into the active server's scope (/server/:id/...).
 vi.mock("@/context/use-servers", () => ({ useServers: () => ({ activeServerId: "srv-1" }) }));
 

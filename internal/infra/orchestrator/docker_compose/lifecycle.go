@@ -17,8 +17,8 @@ func (r *Repository) appExists(appID string) bool {
 	return err == nil
 }
 
-// deploy (re)materializes secrets and brings the app up — the folder is the
-// deployment, so nothing needs rendering.
+// deploy (re)materializes secrets and shared variables and brings the app
+// up — the folder is the deployment, so nothing else needs rendering.
 func (r *Repository) deploy(ctx context.Context, appID string) error {
 	end, err := r.beginOp(appID)
 	if err != nil {
@@ -26,8 +26,8 @@ func (r *Repository) deploy(ctx context.Context, appID string) error {
 	}
 	defer end()
 	dir := r.appDataDir(appID)
-	if err := r.materializeSecrets(dir, loadSecretStore(dir)); err != nil {
-		return fmt.Errorf("materialize secrets: %w", err)
+	if err := r.materializeForDeploy(dir, loadSecretStore(dir)); err != nil {
+		return err
 	}
 	if err := r.composeUp(ctx, appID); err != nil {
 		return err
@@ -37,8 +37,30 @@ func (r *Repository) deploy(ctx context.Context, appID string) error {
 	return nil
 }
 
+// renderDeployEnv writes every derived env file a deploy reads: the app's
+// secrets, the shared variables and the storage variables. deploy (via
+// composeUp) writes them again; this is for a compose command that runs
+// before it (UpdateApp's pull).
+func (r *Repository) renderDeployEnv(ctx context.Context, appID string) error {
+	dir := r.appDataDir(appID)
+	if err := r.materializeForDeploy(dir, loadSecretStore(dir)); err != nil {
+		return err
+	}
+	files := r.appComposeFiles(dir)
+	cfg, err := r.appBackups(dir, files)
+	if err != nil {
+		return err
+	}
+	return r.materializeStorageEnv(ctx, dir, files, cfg.backups)
+}
+
 // StartApp brings an app up.
 func (r *Repository) StartApp(ctx context.Context, appID string) error {
+	unlock, err := r.lockForMutation(ctx, appID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	end, err := r.beginOp(appID)
 	if err != nil {
 		return err
@@ -53,6 +75,11 @@ func (r *Repository) StartApp(ctx context.Context, appID string) error {
 // StopApp stops all containers of the app (compose down). Missing app is a
 // no-op.
 func (r *Repository) StopApp(ctx context.Context, appID string) error {
+	unlock, err := r.lockForMutation(ctx, appID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	if err := r.refuseDuringRestore(appID); err != nil {
 		return err
 	}
@@ -61,6 +88,11 @@ func (r *Repository) StopApp(ctx context.Context, appID string) error {
 
 // RestartApp restarts the app's containers in place.
 func (r *Repository) RestartApp(ctx context.Context, appID string) error {
+	unlock, err := r.lockForMutation(ctx, appID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	end, err := r.beginOp(appID)
 	if err != nil {
 		return err
@@ -75,6 +107,11 @@ func (r *Repository) RestartApp(ctx context.Context, appID string) error {
 // UpdateApp refreshes a git-sourced app's upstream, then pulls the latest
 // images and recreates the app's containers.
 func (r *Repository) UpdateApp(ctx context.Context, appID string) error {
+	unlock, err := r.lockForMutation(ctx, appID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	end, err := r.beginOp(appID)
 	if err != nil {
 		return err
@@ -87,6 +124,12 @@ func (r *Repository) UpdateApp(ctx context.Context, appID string) error {
 		if _, _, err := r.refreshSourceWithoutDeploy(appID); err != nil {
 			return fmt.Errorf("refresh source: %w", err)
 		}
+	}
+	// The pull interpolates the compose file too: render the env files the
+	// deploy will use first, so an image tag driven by a shared or storage
+	// variable is pulled with its current value.
+	if err := r.renderDeployEnv(ctx, appID); err != nil {
+		return err
 	}
 	if err := r.composePull(ctx, appID); err != nil {
 		return fmt.Errorf("docker compose pull: %w", err)
@@ -122,7 +165,14 @@ type DeleteResult struct {
 // see ErrAppDeleted), for at most restoreWaitForDelete and ctx: the delete
 // never runs beside the helper swapping the app's data. If the restore is
 // still running then, the delete fails with ErrRestoring and can be retried.
+// The app's operation lock is taken first (a restore never takes it, so the
+// wait below cannot deadlock on it).
 func (r *Repository) DeleteApp(ctx context.Context, appID string, deleteVolumes, deleteBackups bool) (DeleteResult, error) {
+	unlock, err := r.lockForMutation(ctx, appID)
+	if err != nil {
+		return DeleteResult{}, err
+	}
+	defer unlock()
 	if err := r.waitForRestore(ctx, appID); err != nil {
 		return DeleteResult{}, err
 	}
@@ -323,6 +373,13 @@ func encryptedNames(cfg []byte) (vars map[string]bool, files map[string]bool) {
 // commit) and swaps the symlink. The compose project name is id-based, so no
 // restart is needed.
 func (r *Repository) RenameApp(ctx context.Context, appID, newName string) error {
+	// The operation lock (held for the whole rename) comes first, then the
+	// file lock the other writers of the committed files share.
+	unlockOp, err := r.lockForMutation(ctx, appID)
+	if err != nil {
+		return err
+	}
+	defer unlockOp()
 	if err := r.refuseDuringRestore(appID); err != nil {
 		return err
 	}

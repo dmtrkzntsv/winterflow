@@ -33,14 +33,20 @@ func (r *Repository) SaveAppDraft(ctx context.Context, app command.AppPayload) (
 }
 
 // SaveAppResult is SaveApp (or, draft, SaveAppDraft) with the save's
-// warnings.
+// warnings. It holds the app's operation lock for the whole run (save and
+// compose up), giving up after the busy wait.
 func (r *Repository) SaveAppResult(ctx context.Context, app command.AppPayload, draft bool) (string, []string, error) {
+	unlock, err := r.lockForMutation(ctx, app.AppID)
+	if err != nil {
+		return "", nil, err
+	}
+	defer unlock()
 	end, err := r.beginOp(app.AppID)
 	if err != nil {
 		return "", nil, err
 	}
 	defer end()
-	hash, warnings, err := r.save(app)
+	hash, warnings, err := r.save(app, !draft)
 	if err != nil || draft {
 		return hash, warnings, err
 	}
@@ -75,21 +81,23 @@ func (r *Repository) markDeployed(appID, sha string) {
 }
 
 // saveWithoutDeploy is SaveApp minus the compose invocation: write the store,
-// commit, materialize secrets, and fix the symlink. Split out so the full
-// persistence path is testable without Docker.
+// commit, materialize secrets and shared variables, and fix the symlink.
+// Split out so the full persistence path is testable without Docker.
 func (r *Repository) saveWithoutDeploy(app command.AppPayload) (string, error) {
-	hash, _, err := r.save(app)
+	hash, _, err := r.save(app, true)
 	return hash, err
 }
 
 // save is saveWithoutDeploy with the warnings of the save: backup settings
-// dropped because the compose file no longer has their backup.
+// dropped because the compose file no longer has their backup. forDeploy
+// also renders the shared variables: a draft deploys nothing, so its shared
+// files (and stale flag) stay as deployed.
 //
 // A git-sourced app's upstream is synced first, before the app's lock is
 // taken (the clone or fetch can take minutes and must not hold up the other
 // writers of the app's files); the files are then written and committed in one
 // step under it.
-func (r *Repository) save(app command.AppPayload) (string, []string, error) {
+func (r *Repository) save(app command.AppPayload, forDeploy bool) (string, []string, error) {
 	dir := r.appDataDir(app.AppID)
 	_, statErr := os.Stat(dir)
 	created := errors.Is(statErr, fs.ErrNotExist) // this save creates the app's folder
@@ -143,8 +151,13 @@ func (r *Repository) save(app command.AppPayload) (string, []string, error) {
 		return "", nil, fmt.Errorf("commit: %w", err)
 	}
 
-	if err := r.materializeSecrets(dir, store); err != nil {
-		return "", nil, fmt.Errorf("materialize secrets: %w", err)
+	if forDeploy {
+		err = r.materializeForDeploy(dir, store)
+	} else if err = r.materializeSecrets(dir, store); err != nil {
+		err = fmt.Errorf("materialize secrets: %w", err)
+	}
+	if err != nil {
+		return "", nil, err
 	}
 	if _, err := ensureAppSymlink(r.cfg.GetAppsDir(), "apps-data", app.AppID, name); err != nil {
 		r.log.Warn("failed to update app symlink", "app_id", app.AppID, "error", err)
@@ -278,6 +291,11 @@ func (r *Repository) Revisions(ctx context.Context, appID string) ([]command.Rev
 // linear), re-materializes secrets from the restored store, and redeploys.
 // Returns the new HEAD hash.
 func (r *Repository) Rollback(ctx context.Context, appID, hash string) (string, error) {
+	unlock, err := r.lockForMutation(ctx, appID)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
 	end, err := r.beginOp(appID)
 	if err != nil {
 		return "", err
@@ -326,8 +344,8 @@ func (r *Repository) rollbackWithoutDeploy(appID, hash string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("commit rollback: %w", err)
 	}
-	if err := r.materializeSecrets(dir, loadSecretStore(dir)); err != nil {
-		return "", fmt.Errorf("materialize secrets: %w", err)
+	if err := r.materializeForDeploy(dir, loadSecretStore(dir)); err != nil {
+		return "", err
 	}
 	// The restored config may carry a different name — keep the symlink true.
 	if _, err := ensureAppSymlink(r.cfg.GetAppsDir(), "apps-data", appID, r.appName(dir, appID)); err != nil {
@@ -368,7 +386,7 @@ func (r *Repository) GetAppsStatus(ctx context.Context) ([]command.AppStatus, er
 			Containers: cs,
 		})
 	}
-	return out, nil
+	return r.withStale(out), nil
 }
 
 // ListApps returns the apps present on disk (the agent's filesystem is the
@@ -504,19 +522,29 @@ func (r *Repository) RefreshDueSources(ctx context.Context) []string {
 			continue
 		}
 
-		changed, sha, err := r.refreshSourceWithoutDeploy(appID)
-		if err != nil {
-			r.log.Warn("source poll failed", "app_id", appID, "error", err)
-			continue
-		}
-		if !changed {
-			continue
-		}
-		r.log.Info("source updated, redeploying", "app_id", appID, "sha", sha)
-		if err := r.deploy(ctx, appID); err != nil {
-			r.log.Warn("redeploy after source update failed", "app_id", appID, "error", err)
-		}
-		updated = append(updated, appID)
+		func() {
+			// Busy (a reload or a user action holds the app): skip this
+			// round rather than stall polling for every other app.
+			unlock, err := r.lockForMutation(ctx, appID)
+			if err != nil {
+				r.log.Info("source poll skipped", "app_id", appID, "error", err)
+				return
+			}
+			defer unlock()
+			changed, sha, err := r.refreshSourceWithoutDeploy(appID)
+			if err != nil {
+				r.log.Warn("source poll failed", "app_id", appID, "error", err)
+				return
+			}
+			if !changed {
+				return
+			}
+			r.log.Info("source updated, redeploying", "app_id", appID, "sha", sha)
+			if err := r.deploy(ctx, appID); err != nil {
+				r.log.Warn("redeploy after source update failed", "app_id", appID, "error", err)
+			}
+			updated = append(updated, appID)
+		}()
 	}
 	return updated
 }
@@ -571,8 +599,13 @@ func fileIn(dir string) func(name string) bool {
 // composeArgs builds the common CLI prefix. Compose and env files are always
 // explicit: with -f pointing into source/, compose's implicit project
 // directory moves there and would stop auto-loading the app's committed .env.
-// Env files load in order — .env, storage.env, .env.secrets — later ones
-// winning.
+// Env files load in order — .env.shared, .env.shared.secrets, .env,
+// storage.env, .env.secrets — later ones winning: shared values first, so
+// the app's own win. The agent-computed storage values sit with the app's
+// files, as storages placed them; their WF_STORAGE_/WF_BACKUP_ names are
+// reserved on both sides (shared variables may not start with WF_, app
+// variables not with WF_STORAGE_/WF_BACKUP_), so no other file can collide
+// with them.
 //
 // The app's backup profiles are passed as on a deploy: a custom backup's
 // service only exists for compose while its profile is active.
@@ -590,6 +623,11 @@ func (r *Repository) composeArgsFor(appID string, files, profiles []string, verb
 	dir := r.appDataDir(appID)
 	for _, f := range files {
 		args = append(args, "-f", f)
+	}
+	for _, f := range []string{envSharedRel, envSharedSecretsRel} {
+		if _, err := os.Stat(filepath.Join(dir, f)); err == nil {
+			args = append(args, "--env-file", f)
+		}
 	}
 	args = append(args, "--env-file", envRel)
 	for _, rel := range []string{storageEnvRel, envSecretsRel} {
@@ -697,8 +735,14 @@ func (r *Repository) composePull(ctx context.Context, appID string) error {
 // dockerPSByProject lists every compose-managed container on the host in one
 // `docker ps` exec and groups them by compose project name.
 func (r *Repository) dockerPSByProject(ctx context.Context) (map[string][]composePS, error) {
+	return r.dockerPSLabel(ctx, composeProjectLabel)
+}
+
+// dockerPSLabel is dockerPSByProject restricted to containers matching a
+// `--filter label=` expression ("key" or "key=value").
+func (r *Repository) dockerPSLabel(ctx context.Context, label string) (map[string][]composePS, error) {
 	cmd := exec.CommandContext(ctx, "docker", "ps", "--all", "--no-trunc",
-		"--filter", "label="+composeProjectLabel, "--format", "json")
+		"--filter", "label="+label, "--format", "json")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, err

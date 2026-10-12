@@ -13,6 +13,8 @@ import { useNotifications } from "@/context/use-notifications";
 import { apiBase as base } from "@/config";
 import { dispatchCommand } from "@/lib/api";
 import type { BackupHealth } from "@/lib/backups";
+import { createSharedVariablesApi, type VarsReloaded } from "@/lib/shared-variables";
+import { splitStatus, type AppStatusWire } from "@/lib/app-status";
 
 import {
   AppsContext,
@@ -46,24 +48,6 @@ type GetAppsResponse = {
   data?: { apps?: AppResponse[] | null };
 };
 
-type AppStatusResponse = {
-  app_id: string;
-  status_code: number;
-  backups?: BackupHealth[] | null;
-};
-
-// byApp splits a status list into the status codes and the backup health
-// by app id.
-function byApp(list: AppStatusResponse[]) {
-  const status: Record<string, number> = {};
-  const backups: Record<string, BackupHealth[]> = {};
-  for (const s of list) {
-    status[s.app_id] = s.status_code;
-    if (s.backups?.length) backups[s.app_id] = s.backups;
-  }
-  return { status, backups };
-}
-
 // keepIfSame is a state update that keeps the previous value when the new
 // one reads the same: every agent report re-sends the whole snapshot, and a
 // new object would re-render every consumer for nothing.
@@ -73,7 +57,7 @@ const keepIfSame =
     JSON.stringify(prev) === JSON.stringify(next) ? prev : next;
 
 type GetAppsStatusResponse = {
-  data?: { apps?: AppStatusResponse[] | null };
+  data?: { apps?: AppStatusWire[] | null };
 };
 
 type AcceptedResponse = {
@@ -98,6 +82,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
   const { subscribe, waitFor, connected } = useNotifications();
   const [apps, setApps] = useState<App[]>([]);
   const [statusByApp, setStatusByApp] = useState<Record<string, number>>({});
+  const [staleVarsByApp, setStaleVarsByApp] = useState<Record<string, string[]>>({});
   const [backupsByApp, setBackupsByApp] = useState<Record<string, BackupHealth[]>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -179,6 +164,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
     if (!isAuthenticated || !activeServerId) {
       if (mounted.current) {
         setStatusByApp({});
+        setStaleVarsByApp({});
         setBackupsByApp({});
       }
       return;
@@ -191,8 +177,9 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       if (!res.ok) return;
       const result = (await res.json()) as GetAppsStatusResponse;
       if (!mounted.current) return;
-      const { status, backups } = byApp(result.data?.apps ?? []);
+      const { status, stale, backups } = splitStatus(result.data?.apps);
       setStatusByApp(keepIfSame(status));
+      setStaleVarsByApp(keepIfSame(stale));
       setBackupsByApp(keepIfSame(backups));
     } catch {
       // Status is best-effort; absence renders as "unknown".
@@ -229,12 +216,13 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       const p = n.payload as
         | {
             server_id?: string;
-            apps?: AppStatusResponse[] | null;
+            apps?: AppStatusWire[] | null;
           }
         | undefined;
       if (!p?.server_id || p.server_id !== activeServerId) return;
-      const { status, backups } = byApp(p.apps ?? []);
+      const { status, stale, backups } = splitStatus(p.apps);
       setStatusByApp(keepIfSame(status));
+      setStaleVarsByApp(keepIfSame(stale));
       setBackupsByApp(keepIfSame(backups));
     });
   }, [subscribe, activeServerId]);
@@ -309,6 +297,30 @@ export function AppsProvider({ children }: { children: ReactNode }) {
     },
     [dispatchAndWait],
   );
+
+  const reloadSharedVars = useCallback(
+    async (appId: string) => {
+      if (!activeServerId) throw new Error("No active server");
+      await createSharedVariablesApi().reload({ server_id: activeServerId, app_ids: [appId] });
+    },
+    [activeServerId],
+  );
+
+  // A successful reload applied the new values: the app is fresh until the
+  // next apps_status says otherwise.
+  useEffect(() => {
+    return subscribe((n) => {
+      if (n.type !== "vars.reloaded") return;
+      const p = n.payload as VarsReloaded | undefined;
+      if (!p?.ok || p.server_id !== activeServerId) return;
+      setStaleVarsByApp((prev) => {
+        if (!(p.app_id in prev)) return prev;
+        const next = { ...prev };
+        delete next[p.app_id];
+        return next;
+      });
+    });
+  }, [subscribe, activeServerId]);
 
   // getPublicKey fetches the server's ECIES public key (for encrypting secrets).
   const getPublicKey = useCallback(async (): Promise<string> => {
@@ -443,6 +455,8 @@ export function AppsProvider({ children }: { children: ReactNode }) {
     () => ({
       apps,
       statusByApp,
+      staleVarsByApp,
+      reloadSharedVars,
       backupsByApp,
       loading,
       error,
@@ -460,6 +474,8 @@ export function AppsProvider({ children }: { children: ReactNode }) {
     [
       apps,
       statusByApp,
+      staleVarsByApp,
+      reloadSharedVars,
       backupsByApp,
       loading,
       error,

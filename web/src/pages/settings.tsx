@@ -35,13 +35,15 @@ import {
 import { useServers } from "@/context/use-servers";
 import { DomainsCard } from "@/pages/settings-domains";
 import { StoragesCard } from "@/pages/settings-storages";
+import { VariablesCard } from "@/pages/settings-variables";
+import { createSharedVariablesApi } from "@/lib/shared-variables";
 import { VolumesCard } from "@/pages/settings-volumes";
 
-const TABS = ["registries", "networks", "volumes", "domains", "storages", "agent"] as const;
+const TABS = ["registries", "networks", "volumes", "domains", "storages", "variables", "agent"] as const;
 
 // SettingsPage is the server-level settings view (v1 "Server Settings"):
 // Docker registries, networks and volumes, registered domains (servers with
-// ingress only), storages, plus agent self-update — one tab per section, synced to
+// ingress only), storages, shared variables, plus agent self-update — one tab per section, synced to
 // ?tab= like the app details page.
 export default function SettingsPage() {
   const breadcrumbs = useMemo(
@@ -51,6 +53,7 @@ export default function SettingsPage() {
   useAppBreadcrumbs(breadcrumbs);
 
   const docker = useDocker();
+  const sharedApi = useMemo(() => createSharedVariablesApi(), []);
   const { activeServer } = useServers();
   // Domains configure the embedded ingress: only servers running it.
   const hasIngress = Boolean(activeServer?.features?.ingress);
@@ -88,7 +91,7 @@ export default function SettingsPage() {
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold tracking-tight">Server settings</h1>
       <Tabs value={tab} onValueChange={setTab}>
-        {/* Six tabs are wider than a phone: the bar scrolls inside itself
+        {/* Seven tabs are wider than a phone: the bar scrolls inside itself
             instead of widening the page. */}
         <div ref={tabBar} className="-mx-1 max-w-full overflow-x-auto px-1 pb-1">
           <TabsList className="w-max">
@@ -97,6 +100,7 @@ export default function SettingsPage() {
             <TabsTrigger value="volumes">Volumes</TabsTrigger>
             {hasIngress ? <TabsTrigger value="domains">Domains</TabsTrigger> : null}
             <TabsTrigger value="storages">Storages</TabsTrigger>
+            <TabsTrigger value="variables">Variables</TabsTrigger>
             <TabsTrigger value="agent">Agent</TabsTrigger>
           </TabsList>
         </div>
@@ -116,6 +120,9 @@ export default function SettingsPage() {
         ) : null}
         <TabsContent value="storages">
           <StoragesCard docker={docker} />
+        </TabsContent>
+        <TabsContent value="variables">
+          {activeServer ? <VariablesCard key={activeServer.id} serverId={activeServer.id} api={sharedApi} /> : null}
         </TabsContent>
         <TabsContent value="agent">
           <AgentCard docker={docker} />

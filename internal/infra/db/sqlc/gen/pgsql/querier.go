@@ -9,6 +9,7 @@ import (
 )
 
 type Querier interface {
+	BumpServerVarsRevision(ctx context.Context, serverID string) error
 	CountUsers(ctx context.Context) (int64, error)
 	DeleteAllRegistrations(ctx context.Context) error
 	DeleteApp(ctx context.Context, appID string) error
@@ -21,6 +22,10 @@ type Querier interface {
 	DeleteServerDomainsByServer(ctx context.Context, serverID string) error
 	DeleteServerStorage(ctx context.Context, arg DeleteServerStorageParams) error
 	DeleteServerStoragesByServer(ctx context.Context, serverID string) error
+	DeleteSharedCiphertext(ctx context.Context, arg DeleteSharedCiphertextParams) error
+	DeleteSharedCiphertextsByServer(ctx context.Context, serverID string) error
+	DeleteSharedCiphertextsByVariable(ctx context.Context, variableID string) error
+	DeleteSharedVariable(ctx context.Context, id string) error
 	DeleteToken(ctx context.Context, arg DeleteTokenParams) (int64, error)
 	DeleteUser(ctx context.Context, userID string) error
 	EmailTaken(ctx context.Context, email string) (bool, error)
@@ -34,9 +39,13 @@ type Querier interface {
 	GetFirstConnectedAccountProvider(ctx context.Context, userID string) (string, error)
 	GetFirstServerID(ctx context.Context) (string, error)
 	GetLatestRegistrationCode(ctx context.Context) (string, error)
+	GetOrgSharedVariableByName(ctx context.Context, arg GetOrgSharedVariableByNameParams) (SharedVariable, error)
 	GetOrganization(ctx context.Context, organizationID string) (Organization, error)
 	GetPrimaryOrganizationID(ctx context.Context, userID string) (string, error)
 	GetRegistrationByCode(ctx context.Context, code string) (ServerRegistration, error)
+	GetServerSharedVariableByName(ctx context.Context, arg GetServerSharedVariableByNameParams) (SharedVariable, error)
+	GetServerVarsInfo(ctx context.Context, serverID string) (GetServerVarsInfoRow, error)
+	GetSharedVariable(ctx context.Context, id string) (SharedVariable, error)
 	GetTokenByHash(ctx context.Context, tokenHash string) (UserToken, error)
 	// Users, their connected accounts and local credentials.
 	GetUser(ctx context.Context, userID string) (User, error)
@@ -54,6 +63,9 @@ type Querier interface {
 	InsertServer(ctx context.Context, arg InsertServerParams) error
 	InsertServerDomain(ctx context.Context, arg InsertServerDomainParams) error
 	InsertServerStorage(ctx context.Context, arg InsertServerStorageParams) error
+	// Gap fill: never overwrites a copy (a concurrent rotation's new value wins).
+	InsertSharedCiphertextIfAbsent(ctx context.Context, arg InsertSharedCiphertextIfAbsentParams) error
+	InsertSharedVariable(ctx context.Context, arg InsertSharedVariableParams) error
 	// Personal access tokens (hashed at rest).
 	InsertToken(ctx context.Context, arg InsertTokenParams) error
 	InsertUser(ctx context.Context, arg InsertUserParams) error
@@ -64,33 +76,45 @@ type Querier interface {
 	// The apps catalog (a reconciled cache of what agents report).
 	ListAppsByServer(ctx context.Context, serverID string) ([]App, error)
 	ListCapabilitiesByUser(ctx context.Context, userID string) ([]ListCapabilitiesByUserRow, error)
+	ListCiphertextServersByOrg(ctx context.Context, orgID string) ([]ListCiphertextServersByOrgRow, error)
 	ListFeaturesByUser(ctx context.Context, userID string) ([]ServerFeature, error)
 	ListMetricSamples(ctx context.Context, arg ListMetricSamplesParams) ([]MetricSample, error)
 	ListMetricSamplesInRange(ctx context.Context, arg ListMetricSamplesInRangeParams) ([]MetricSample, error)
+	ListOrgPublicKeys(ctx context.Context, organizationID string) ([]ListOrgPublicKeysRow, error)
+	ListOrgServers(ctx context.Context, organizationID string) ([]ListOrgServersRow, error)
+	// Org- and server-level shared variables and their per-server ciphertexts.
+	ListOrgSharedVariables(ctx context.Context, orgID string) ([]SharedVariable, error)
 	ListOrganizationMembers(ctx context.Context, organizationID string) ([]User, error)
 	ListServerAppMetricSamples(ctx context.Context, arg ListServerAppMetricSamplesParams) ([]MetricSample, error)
 	// The server_domains index (mirrors each agent's domain registrations).
 	ListServerDomains(ctx context.Context, serverID string) ([]ServerDomain, error)
+	ListServerSharedVariables(ctx context.Context, serverID *string) ([]SharedVariable, error)
 	// The server_storages index (mirrors each agent's storages; never a secret).
 	ListServerStorages(ctx context.Context, serverID string) ([]ServerStorage, error)
 	ListServerUserIDs(ctx context.Context, serverID string) ([]string, error)
 	// Servers, their capabilities/features, registrations and certificates.
 	ListServersByUser(ctx context.Context, userID string) ([]Server, error)
+	ListSharedCiphertextsForServer(ctx context.Context, serverID string) ([]ListSharedCiphertextsForServerRow, error)
 	ListTokensByUser(ctx context.Context, userID string) ([]UserToken, error)
 	// LockOrganizationMember re-reads and row-locks the caller's membership
 	// inside RemoveMember's transaction, so two members removing each other
 	// concurrently cannot empty the org.
 	LockOrganizationMember(ctx context.Context, arg LockOrganizationMemberParams) (string, error)
+	// Lifts vars_revision past an agent-reported revision the API never issued
+	// (the API database was restored); never lowers it.
+	RaiseServerVarsRevision(ctx context.Context, arg RaiseServerVarsRevisionParams) error
 	RenameApp(ctx context.Context, arg RenameAppParams) error
 	TouchServerLastSeen(ctx context.Context, arg TouchServerLastSeenParams) error
 	TouchTokenLastUsed(ctx context.Context, arg TouchTokenLastUsedParams) error
 	UpdateOrganization(ctx context.Context, arg UpdateOrganizationParams) (int64, error)
 	UpdatePassword(ctx context.Context, arg UpdatePasswordParams) (int64, error)
+	UpdateSharedVariable(ctx context.Context, arg UpdateSharedVariableParams) error
 	UpsertApp(ctx context.Context, arg UpsertAppParams) error
 	UpsertCapability(ctx context.Context, arg UpsertCapabilityParams) error
 	UpsertFeature(ctx context.Context, arg UpsertFeatureParams) error
 	UpsertServerDomain(ctx context.Context, arg UpsertServerDomainParams) error
 	UpsertServerStorage(ctx context.Context, arg UpsertServerStorageParams) error
+	UpsertSharedCiphertext(ctx context.Context, arg UpsertSharedCiphertextParams) error
 	UserOwnsServer(ctx context.Context, arg UserOwnsServerParams) (bool, error)
 }
 

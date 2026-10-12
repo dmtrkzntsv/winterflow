@@ -135,11 +135,18 @@ func (r *Repository) DeleteRestorePoint(ctx context.Context, appID, name, id str
 // variables change (a custom backup turned on or off, or one its compose
 // file references through WF_BACKUP_ moved), never when it has undeployed
 // changes (a warning). Warnings also name the overrides dropped because the
-// recipe no longer has their backup.
+// recipe no longer has their backup. Like the other mutators it holds the
+// app's operation lock for its whole run (commit and redeploy), giving up
+// after the busy wait.
 func (r *Repository) UpdateBackups(ctx context.Context, appID string, overrides []recipe.BackupConfig, base string) (command.UpdateBackupsResponse, error) {
 	ctx, cancel := context.WithTimeout(ctx, backupUpdateBudget)
 	defer cancel()
 	resp := command.UpdateBackupsResponse{AppID: appID}
+	unlockOp, err := r.lockForMutation(ctx, appID)
+	if err != nil {
+		return resp, err
+	}
+	defer unlockOp()
 	if err := r.refuseDuringRestore(appID); err != nil {
 		return resp, err
 	}

@@ -6,8 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Spinner } from "@/components/ui/spinner";
-import { Switch } from "@/components/ui/switch";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
 import { AddBackupDialog } from "@/components/add-backup-dialog";
 import { BackupEditDialog } from "@/components/backup-edit-dialog";
 import { BackupStorageDialog } from "@/components/backup-storage-dialog";
@@ -72,9 +71,9 @@ const sameOpen = (a: Open, b: Open) => JSON.stringify(a) === JSON.stringify(b);
 // AppBackups is the app page's Backups tab: each backup (declared by the
 // compose file, or added here) with its storage, schedule, last copy and
 // health; Set up for one that has no storage yet (it picks the storage and
-// turns the backup on), else a plain on/off switch; Back up now; its copies
-// (restore, delete); an editor for schedule, retention, location and storage;
-// and Add backup (which picks the storage and starts the backup on).
+// turns the backup on); Back up now; its copies (restore, delete); an editor
+// for on/off, schedule, retention, location and storage; and Add backup
+// (which picks the storage and starts the backup on).
 export function AppBackups({ appId }: { appId: string }) {
   const { getApp, backupsByApp } = useApps();
   const backups = useBackups();
@@ -199,17 +198,6 @@ export function AppBackups({ appId }: { appId: string }) {
     }
   };
 
-  // toggle flips a backup that already has a storage: no dialog needed.
-  const toggle = (b: EffectiveBackup, on: boolean) => {
-    if (on) {
-      void save(b.name, { ...configOf(b), enabled: true }, `${b.name} turned on`, { kind: "on" });
-      return;
-    }
-    const off = configOf(b);
-    delete off.enabled;
-    void save(b.name, off, `${b.name} turned off`, { kind: "off" });
-  };
-
   if (loading && !detail) {
     return (
       <div className="flex h-40 items-center justify-center">
@@ -278,20 +266,6 @@ export function AppBackups({ appId }: { appId: string }) {
         </p>
       ) : (
         <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-px">
-                <span className="sr-only">On</span>
-              </TableHead>
-              <TableHead>Backup</TableHead>
-              <TableHead className="hidden md:table-cell md:w-28">Storage</TableHead>
-              <TableHead className="hidden sm:table-cell sm:w-36">Schedule</TableHead>
-              <TableHead className="sm:w-64">Last backup</TableHead>
-              <TableHead className="w-px">
-                <span className="sr-only">Actions</span>
-              </TableHead>
-            </TableRow>
-          </TableHeader>
           <TableBody>
             {list.map((b) => (
               <BackupRow
@@ -301,7 +275,6 @@ export function AppBackups({ appId }: { appId: string }) {
                 busy={busy !== null || !!restoring || locked}
                 activity={activity[b.name]}
                 onSetUp={(el) => show({ kind: "enable", name: b.name }, el)}
-                onToggle={(on) => toggle(b, on)}
                 onRun={() => void runNow(b.name)}
                 onPoints={(el) => show({ kind: "points", name: b.name }, el)}
                 onEdit={(el) => show({ kind: "edit", name: b.name }, el)}
@@ -340,9 +313,16 @@ export function AppBackups({ appId }: { appId: string }) {
           error={saveError}
           returnFocus={opener}
           onOpenChange={(o) => !o && setOpen(null)}
-          onSave={(entry) => void save(current.name, entry, `${current.name} saved`)}
+          onSave={(entry) =>
+            void save(
+              current.name,
+              entry,
+              `${current.name} saved`,
+              !!entry.enabled === current.enabled ? undefined : { kind: entry.enabled ? "on" : "off" },
+            )
+          }
           onRemove={current.in_recipe ? undefined : () => void save(current.name, null, `${current.name} removed`)}
-          onChangeStorage={() => show({ kind: "storage", name: current.name }, opener.current)}
+          onChangeStorage={() => show({ kind: current.storage ? "storage" : "enable", name: current.name }, opener.current)}
         />
       ) : null}
       {open?.kind === "points" && current ? (
@@ -379,18 +359,17 @@ export function AppBackups({ appId }: { appId: string }) {
 
 const TYPE_LABELS: Record<EffectiveBackup["type"], string> = { sqlite: "SQLite database", files: "Folders", custom: "Custom" };
 
-// BackupRow is one backup: Set up (no storage yet) or its on/off switch, name
-// with its type and location, storage, schedule, last copy with health, and
-// actions (built-in backups only: winterflow neither runs nor lists a custom
-// backup's copies). The actions are text buttons, collapsed into one menu on a
-// phone.
+// BackupRow is one backup in three cells: its name with a muted line (type,
+// location, storage, schedule), its status (state, last copy, next copy), and
+// its actions: Set up (no storage yet), Back up now, Copies & restore and
+// Edit (built-in backups only: winterflow neither runs nor lists a custom
+// backup's copies; on/off is in Edit). On a phone the actions are one menu.
 function BackupRow({
   backup: b,
   health,
   busy,
   activity,
   onSetUp,
-  onToggle,
   onRun,
   onPoints,
   onEdit,
@@ -400,7 +379,6 @@ function BackupRow({
   busy: boolean;
   activity: readonly Activity[] | undefined;
   onSetUp: (trigger: HTMLElement) => void;
-  onToggle: (on: boolean) => void;
   onRun: () => void;
   onPoints: (trigger: HTMLElement) => void;
   onEdit: (trigger: HTMLElement) => void;
@@ -414,32 +392,16 @@ function BackupRow({
   // another browser, started it): a second request would be refused.
   const running = kinds.includes("backup") || health?.state === "running";
   const note = restoringRow || running || !builtin ? "" : nextCopyNote(b, state, health?.last_success);
-  const detail = [TYPE_LABELS[b.type], locationLabel(b), b.in_recipe ? "from the compose file" : ""].filter(Boolean).join(" · ");
+  const where = [TYPE_LABELS[b.type], locationLabel(b)].filter(Boolean).join(" · ");
+  const detail = [b.storage ? `${where} → ${b.storage}` : where, builtin ? scheduleLabel(b.every) : "Its own tool"].join(" · ");
   const runDisabled = !b.enabled || running || busy;
   const copiesTitle = b.storage ? undefined : "Set up the backup to see its copies: they are stored in its storage";
   return (
     <TableRow>
       <TableCell>
-        {b.storage ? (
-          <Switch checked={b.enabled} disabled={busy} aria-label={`Back up ${b.name}`} onCheckedChange={onToggle} />
-        ) : (
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={busy}
-            aria-label={`Set up ${b.name}`}
-            onClick={(e) => onSetUp(e.currentTarget)}
-          >
-            Set up…
-          </Button>
-        )}
-      </TableCell>
-      <TableCell>
         <span className="font-mono">{b.name}</span>
         <div className="mt-0.5 text-xs text-muted-foreground [overflow-wrap:anywhere]">{detail}</div>
       </TableCell>
-      <TableCell className="hidden md:table-cell md:w-28">{b.storage || <span className="text-muted-foreground">—</span>}</TableCell>
-      <TableCell className="hidden sm:table-cell">{builtin ? scheduleLabel(b.every) : "Its own tool"}</TableCell>
       <TableCell>
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <Badge
@@ -457,9 +419,14 @@ function BackupRow({
         {note ? <div className="mt-1 text-xs text-muted-foreground">{note}</div> : null}
       </TableCell>
       <TableCell className="whitespace-nowrap py-0.5 text-right">
-        {builtin ? (
-          <>
-            <div className="hidden justify-end sm:flex">
+        <div className="hidden justify-end sm:flex">
+          {b.storage ? null : (
+            <Button size="sm" variant="outline" disabled={busy} aria-label={`Set up ${b.name}`} onClick={(e) => onSetUp(e.currentTarget)}>
+              Set up…
+            </Button>
+          )}
+          {builtin ? (
+            <>
               <Button
                 size="sm"
                 variant="ghost"
@@ -491,28 +458,39 @@ function BackupRow({
               >
                 Edit
               </Button>
-            </div>
-            <div className="sm:hidden">
-              <DropdownMenu modal={false}>
-                <DropdownMenuTrigger asChild>
-                  <Button ref={menuRef} size="icon" variant="ghost" className="size-8 text-muted-foreground" aria-label={`Actions for ${b.name}`}>
-                    <MoreHorizontal className="size-4" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem disabled={runDisabled} onSelect={onRun}>
-                    Back up now
+            </>
+          ) : null}
+        </div>
+        {builtin || !b.storage ? (
+          <div className="sm:hidden">
+            <DropdownMenu modal={false}>
+              <DropdownMenuTrigger asChild>
+                <Button ref={menuRef} size="icon" variant="ghost" className="size-8 text-muted-foreground" aria-label={`Actions for ${b.name}`}>
+                  <MoreHorizontal className="size-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {b.storage ? null : (
+                  <DropdownMenuItem disabled={busy} onSelect={() => menuRef.current && onSetUp(menuRef.current)}>
+                    Set up…
                   </DropdownMenuItem>
-                  <DropdownMenuItem disabled={!b.storage} title={copiesTitle} onSelect={() => menuRef.current && onPoints(menuRef.current)}>
-                    Copies &amp; restore
-                  </DropdownMenuItem>
-                  <DropdownMenuItem disabled={busy} onSelect={() => menuRef.current && onEdit(menuRef.current)}>
-                    Edit
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-          </>
+                )}
+                {builtin ? (
+                  <>
+                    <DropdownMenuItem disabled={runDisabled} onSelect={onRun}>
+                      Back up now
+                    </DropdownMenuItem>
+                    <DropdownMenuItem disabled={!b.storage} title={copiesTitle} onSelect={() => menuRef.current && onPoints(menuRef.current)}>
+                      Copies &amp; restore
+                    </DropdownMenuItem>
+                    <DropdownMenuItem disabled={busy} onSelect={() => menuRef.current && onEdit(menuRef.current)}>
+                      Edit
+                    </DropdownMenuItem>
+                  </>
+                ) : null}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         ) : null}
       </TableCell>
     </TableRow>

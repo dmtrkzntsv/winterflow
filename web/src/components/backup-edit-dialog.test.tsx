@@ -57,6 +57,28 @@ describe("BackupEditDialog", () => {
     expect(screen.queryByRole("button", { name: "Change storage…" })).not.toBeInTheDocument();
   });
 
+  it("turns the backup on or off with the rest of its settings", async () => {
+    const user = userEvent.setup({ delay: null });
+    const onSave = renderDialog(database);
+    const toggle = screen.getByRole("switch", { name: "Back up on schedule" });
+    expect(toggle).toBeChecked();
+    await user.click(toggle);
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(onSave.mock.calls[0][0]).toEqual({ name: "database", storage: "disk", every: "15m" });
+    cleanup();
+    const onSaveOn = renderDialog({ ...database, enabled: false });
+    await user.click(screen.getByRole("switch", { name: "Back up on schedule" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(onSaveOn.mock.calls[0][0]).toEqual({ name: "database", enabled: true, storage: "disk", every: "15m" });
+  });
+
+  it("needs a storage before the backup can be turned on", () => {
+    renderDialog({ ...database, enabled: false, storage: "" }, { onChangeStorage: () => {} });
+    expect(screen.getByRole("switch", { name: "Back up on schedule" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Pick a storage…" })).toBeInTheDocument();
+    expect(screen.getByText(/Pick a storage to turn the backup on/)).toBeInTheDocument();
+  });
+
   it("badges each part from template or changed, and resets one to the template", async () => {
     const user = userEvent.setup({ delay: null });
     const onSave = renderDialog(database);

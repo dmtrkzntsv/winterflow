@@ -67,6 +67,14 @@ function renderBackups(detail: Partial<AppDetailPayload> = {}, getApp?: AppsCont
   );
 }
 
+// flip turns a backup on or off the way the page does: in its Edit dialog.
+async function flip(user: ReturnType<typeof userEvent.setup>, name: string) {
+  await user.click(await screen.findByRole("button", { name: `Edit: ${name}` }));
+  const dialog = await screen.findByRole("dialog");
+  await user.click(within(dialog).getByRole("switch", { name: "Back up on schedule" }));
+  await user.click(within(dialog).getByRole("button", { name: "Save" }));
+}
+
 const row = (name: string) => screen.getByText(name, { selector: "span.font-mono" }).closest("tr")!;
 
 describe("AppBackups", () => {
@@ -93,32 +101,32 @@ describe("AppBackups", () => {
     expect(db.getByText("Failing")).toBeInTheDocument();
     expect(db.getByText("· 4 minutes ago")).toBeInTheDocument();
     expect(db.getByText("disk full")).toBeInTheDocument();
-    expect(db.getByText("Every hour")).toBeInTheDocument();
-    expect(db.getByText("SQLite database · volume data: app.db · from the compose file")).toBeInTheDocument();
-    expect(db.getByRole("switch", { name: "Back up database" })).toBeChecked();
+    expect(db.getByText("SQLite database · volume data: app.db → disk · Every hour")).toBeInTheDocument();
+    expect(db.queryByRole("switch")).not.toBeInTheDocument();
     expect(db.queryByRole("button", { name: /Set up/ })).not.toBeInTheDocument();
     expect(db.queryByText("sqlite")).not.toBeInTheDocument();
     expect(db.queryByText("added here")).not.toBeInTheDocument();
     const media = within(row("media"));
-    expect(media.getByText("Manual")).toBeInTheDocument();
     expect(media.getByText("Off")).toBeInTheDocument();
-    expect(media.getByText("Folders · service web: /app/media · from the compose file")).toBeInTheDocument();
+    expect(media.getByText("Folders · service web: /app/media · Manual")).toBeInTheDocument();
     expect(media.getByRole("button", { name: "Back up now: media" })).toBeDisabled();
     expect(media.getByRole("button", { name: "Copies & restore: media" })).toBeDisabled();
     const replica = within(row("replica"));
-    expect(replica.getByText("Its own tool")).toBeInTheDocument();
+    expect(replica.getByText("Custom · service litestream → s3 · Its own tool")).toBeInTheDocument();
     expect(replica.getByText("OK")).toBeInTheDocument();
     expect(replica.queryByRole("button", { name: /Edit/ })).not.toBeInTheDocument();
+    // Three columns and no header row.
+    expect(screen.queryAllByRole("columnheader")).toHaveLength(0);
+    expect(within(row("database")).getAllByRole("cell")).toHaveLength(3);
   });
 
-  it("offers Set up, not a switch, to a backup without a storage, and a plain switch to the rest", async () => {
+  it("offers Set up in the actions to a backup without a storage, and no switch anywhere", async () => {
     const user = userEvent.setup({ delay: null });
     renderBackups();
     const media = within(await screen.findByText("media", { selector: "span.font-mono" }).then((e) => e.closest("tr")!));
-    expect(media.queryByRole("switch")).not.toBeInTheDocument();
+    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
     expect(media.getByRole("button", { name: "Set up media" })).toHaveTextContent("Set up…");
     expect(within(row("database")).queryByRole("button", { name: /Set up/ })).not.toBeInTheDocument();
-    expect(within(row("replica")).getByRole("switch")).toBeChecked();
     await user.click(media.getByRole("button", { name: "Set up media" }));
     expect(await screen.findByRole("heading", { name: "Turn on media" })).toBeInTheDocument();
   });
@@ -132,18 +140,27 @@ describe("AppBackups", () => {
     expect(db.getByText(/^next /)).toBeInTheDocument();
   });
 
-  it("turns a backup that has a storage on with no dialog", async () => {
+  it("turns a backup that has a storage on from Edit, with the rest of its settings", async () => {
     const user = userEvent.setup({ delay: null });
     renderBackups({ backups: [{ ...LIST[0], enabled: false }, LIST[1], LIST[2]] });
     backups.updateBackups.mockResolvedValueOnce({ base: "b1", backups: LIST, redeployed: false, warnings: [] });
-    await user.click(await screen.findByRole("switch", { name: "Back up database" }));
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("database turned on", { description: undefined }));
+    await flip(user, "database");
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("database saved", { description: undefined }));
     expect(backups.updateBackups).toHaveBeenCalledWith("a1", expect.arrayContaining([{ name: "database", enabled: true, storage: "disk" }]), "b0");
     expect(backups.serverStorages).not.toHaveBeenCalled();
   });
 
-  it("sets a backup up with a storage, and turns another off", async () => {
+  it("can't turn a backup without a storage on from Edit, and leads to the storage picker", async () => {
+    const user = userEvent.setup({ delay: null });
+    renderBackups();
+    await user.click(await screen.findByRole("button", { name: "Edit: media" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("switch", { name: "Back up on schedule" })).toBeDisabled();
+    await user.click(within(dialog).getByRole("button", { name: "Pick a storage…" }));
+    expect(await screen.findByRole("heading", { name: "Turn on media" })).toBeInTheDocument();
+  });
+
+  it("sets a backup up with a storage, and turns another off in Edit", async () => {
     const user = userEvent.setup({ delay: null });
     backups.serverStorages.mockResolvedValue(["disk", "offsite"]);
     renderBackups();
@@ -161,10 +178,10 @@ describe("AppBackups", () => {
       ],
       "b0",
     );
-    expect(within(row("media")).getByRole("switch")).toBeChecked();
+    expect(within(row("media")).queryByRole("button", { name: "Set up media" })).not.toBeInTheDocument();
 
-    await user.click(within(row("database")).getByRole("switch"));
-    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("database turned off", { description: undefined }));
+    await flip(user, "database");
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("database saved", { description: undefined }));
     // Each save carries the base the previous one answered with.
     expect(backups.updateBackups).toHaveBeenLastCalledWith(
       "a1",
@@ -181,14 +198,14 @@ describe("AppBackups", () => {
     const user = userEvent.setup({ delay: null });
     renderBackups();
     backups.updateBackups.mockRejectedValueOnce(new Error("backup database: /data is not on a mount"));
-    await user.click(await screen.findByRole("switch", { name: "Back up database" }));
+    await flip(user, "database");
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith("Couldn't save the backups", { description: "backup database: /data is not on a mount" }),
     );
     backups.updateBackups.mockResolvedValueOnce({ backups: LIST, redeployed: true, warnings: ["redeploy failed: port in use"] });
-    await user.click(screen.getByRole("switch", { name: "Back up database" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Save" }));
     await waitFor(() =>
-      expect(toast.warning).toHaveBeenCalledWith("database turned off", { description: "The app was redeployed.\nredeploy failed: port in use" }),
+      expect(toast.warning).toHaveBeenCalledWith("database saved", { description: "The app was redeployed.\nredeploy failed: port in use" }),
     );
   });
 
@@ -232,7 +249,7 @@ describe("AppBackups", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Restoring database: the app is stopped until it is done");
     expect(within(row("database")).getByText("Restoring")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add backup" })).toBeDisabled();
-    expect(screen.getByRole("switch", { name: "Back up database" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Edit: database" })).toBeDisabled();
     act(() => end());
     await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
   });
@@ -344,7 +361,7 @@ describe("AppBackups", () => {
     const getApp = vi.fn().mockResolvedValue({ backups: LIST, backup_targets: null, backups_base: "b0" });
     backups.updateBackups.mockRejectedValueOnce(new Error("the backups changed since you opened them; reload and try again"));
     renderBackups({}, getApp);
-    await user.click(await screen.findByRole("switch", { name: "Back up database" }));
+    await flip(user, "database");
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith("The backups were changed elsewhere", {
         description: "the backups changed since you opened them; reload and try again",
@@ -373,7 +390,7 @@ describe("AppBackups", () => {
     renderBackups({}, getApp);
     await user.click(await screen.findByRole("button", { name: "Try again" }));
     await waitFor(() => expect(getApp).toHaveBeenCalledTimes(2));
-    expect(await screen.findAllByRole("switch", { name: "Back up database" })).not.toHaveLength(0);
+    expect(await screen.findAllByRole("button", { name: "Edit: database" })).not.toHaveLength(0);
   });
 
   // mount renders the tab with a health snapshot that can be replaced, like
@@ -455,7 +472,7 @@ describe("AppBackups", () => {
   it("shows a backup turned off as Off until a report says so, and turned on as Not run yet with when the first copy comes", async () => {
     const user = userEvent.setup({ delay: null });
     const view = mount([{ name: "database", state: "failing", last_error: "disk full" }]);
-    await user.click(await screen.findByRole("switch", { name: "Back up database" }));
+    await flip(user, "database");
     await waitFor(() => expect(within(row("database")).getByText("Off")).toBeInTheDocument());
     expect(within(row("database")).queryByText("disk full")).not.toBeInTheDocument();
     view.setHealth([{ name: "database", state: "failing", last_error: "disk full" }]); // older
@@ -465,8 +482,8 @@ describe("AppBackups", () => {
 
     // Turned on again (it has its storage): the old Off report must not
     // contradict it.
-    await user.click(screen.getByRole("switch", { name: "Back up database" }));
-    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("database turned on", { description: undefined }));
+    await flip(user, "database");
+    await waitFor(() => expect(toast.success).toHaveBeenCalledTimes(2));
     expect(within(row("database")).getByText("Not run yet")).toBeInTheDocument();
     expect(within(row("database")).getByText("next within 1 hour")).toBeInTheDocument();
     view.setHealth([{ name: "database", state: "off" }]);
@@ -545,7 +562,7 @@ describe("AppBackups", () => {
     const user = userEvent.setup({ delay: null });
     const { getApp } = mount(HEALTH);
     backups.updateBackups.mockRejectedValueOnce(new Error("backups[1]: media is declared by the compose file; edit it instead of adding it"));
-    await user.click(await screen.findByRole("switch", { name: "Back up database" }));
+    await flip(user, "database");
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith("The backups were changed elsewhere", {
         description: expect.stringContaining("This page was out of date; it was reloaded, so try again."),

@@ -579,29 +579,30 @@ with the result as SSE `operation_result`.
 - **App page → Backups section**, shown when the app has any backup, under
   the line "Backups copy this app's data to one of the server's storages on a
   schedule. Backups the compose file declares are listed ready to set up."
-  - **Each row** shows the backup name with one muted line under it,
-    "<Folders|SQLite database> · <location>" and " · from the compose file"
-    for a backup the compose file declares; its storage and schedule (the
-    schedule reads "Manual" for `every: manual`); and a status, "<State> ·
-    <time of the last success>" (`OK`, `Late`, `Failing`, `Running`, `Not run
-    yet`, `Off`) with "next <time>" under it. A failing backup adds its error
-    in a line, the agent's full text behind Details.
-  - **Set up…:** a compose-declared backup that has no storage yet shows this
-    button in place of the switch. It opens a storage picker of this server's
-    storages (a link to Settings → Storages when there are none) and turns the
-    backup on with the pick.
-  - **On/off switch:** once a backup has a storage it is a plain switch;
-    turning it on needs no dialog, it saves `enabled: true`.
+  - **The table** has three columns and no header row: the backup, its
+    status, and its actions.
+  - **Backup cell:** the name, and one muted line under it, "<Folders|SQLite
+    database> · <location> → <storage> · <schedule>" ("→ storage" is left out
+    while there is none; the schedule reads "Manual" for `every: manual`).
+  - **Status cell:** the state badge (`OK`, `Late`, `Failing`, `Running`, `Not
+    run yet`, `Off`) with "· <time of the last success>", and "next <time>"
+    on a second muted line. A failing backup adds its error in a line, the
+    agent's full text behind Details.
   - **Actions** are text buttons, "Back up now", "Copies & restore" and
     "Edit"; below the `sm` breakpoint they collapse into one "⋯" menu with the
     same items and the same disabled rules (no storage: no copies; off or
     running: no Back up now).
-  - **Edit:** schedule (Manual, or an interval), retention (with the note
-    "capped at N days on this server" when tiers reach past the ceiling),
-    location (volume or service) and paths. Each field is badged "from
-    template" or "changed", with *Reset to template*. It also shows the
-    storage, with "Change storage…" opening the storage picker (the change
-    keeps the backup on or off as it is).
+  - **Set up…:** a backup that has no storage yet (a compose-declared one)
+    has this button first in its actions. It opens a storage picker of this
+    server's storages (a link to Settings → Storages when there are none) and
+    turns the backup on with the pick.
+  - **Edit:** a "Back up on schedule" switch (the on/off of the backup, saved
+    with the rest; disabled until the backup has a storage, with "Pick a
+    storage…" leading to the picker), the storage with "Change storage…"
+    (the change keeps the backup on or off as it is), schedule (Manual, or an
+    interval), retention (with the note "capped at N days on this server" when
+    tiers reach past the ceiling), location (volume or service) and paths. Each
+    of those is badged "from template" or "changed", with *Reset to template*.
   - **Restore:** a points list (time, kind, size, with a Delete action per
     point), then a confirmation stating that the app stops and the current
     database is first saved as a `pre-restore` point.

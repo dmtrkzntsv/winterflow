@@ -18,9 +18,12 @@ export type ServerLiveness = "online" | "unknown";
 
 export type ServersContextValue = {
   servers: Server[];
+  // The server addressed by the URL (null when the URL names an unknown
+  // server); outside a server's scope, the last one the tab used.
   activeServer: Server | null;
   activeServerId: string | null;
-  setActiveServerId: (id: string) => void;
+  // selectServer navigates the tab into another server's scope.
+  selectServer: (id: string) => void;
   // Live liveness per server id: seeded from get-servers-status, then updated
   // by server_status SSE notifications. Missing entry = unknown.
   statusByServer: Record<string, ServerLiveness>;

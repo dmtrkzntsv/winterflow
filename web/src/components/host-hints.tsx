@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { TLSBadge } from "@/components/tls-badge";
 import { isWildcard, TLS_MODES, type RegisteredDomain } from "@/lib/domains";
+import { useServerPath } from "@/context/use-server-path";
 
 // Issue is the live check's verdict on one hostname: another app on this
 // server claims it, or no registered domain covers it.
@@ -17,6 +18,7 @@ export type HostCheck = { issue?: Issue; registration?: RegisteredDomain };
 // way to fix it) or what HTTPS the covering registration gives the host. id
 // lets the input point at it (aria-describedby).
 export function HostHints({ id, check }: { id: string; check: HostCheck }) {
+  const toServer = useServerPath();
   if (check.issue?.kind === "taken") {
     return (
       <p id={id} className="mt-2 text-xs text-destructive">
@@ -31,7 +33,7 @@ export function HostHints({ id, check }: { id: string; check: HostCheck }) {
       <p id={id} className="mt-2 text-xs text-destructive">
         No domain on this server covers this hostname.{" "}
         <Link
-          to="/settings?tab=domains"
+          to={toServer("/settings?tab=domains")}
           target="_blank"
           rel="noreferrer"
           className="inline-flex items-center gap-0.5 font-medium underline underline-offset-4"

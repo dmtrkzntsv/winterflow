@@ -10,6 +10,9 @@ import { DomainDialog } from "@/components/domain-dialog";
 import type { Domain, DomainTLS } from "@/lib/domains";
 import { DomainsCard } from "@/pages/settings-domains";
 
+// Links point into the active server's scope (/server/:id/...).
+vi.mock("@/context/use-servers", () => ({ useServers: () => ({ activeServerId: "srv-1" }) }));
+
 const toastError = vi.fn();
 const toastSuccess = vi.fn();
 const toastWarning = vi.fn();
@@ -92,8 +95,8 @@ describe("DomainsCard", () => {
     expect(screen.getAllByText("Expires 2099-01-31")[0]).not.toHaveClass("text-amber-700");
     expect(screen.getByText(/2 apps:/)).toBeInTheDocument();
     expect(screen.getByText("2 apps").closest("div")).toHaveClass("sm:hidden");
-    expect(screen.getAllByRole("link", { name: "Shop" })[0]).toHaveAttribute("href", "/app/a1");
-    expect(screen.getByRole("link", { name: "Blog" })).toHaveAttribute("href", "/app/a2");
+    expect(screen.getAllByRole("link", { name: "Shop" })[0]).toHaveAttribute("href", "/server/srv-1/app/a1");
+    expect(screen.getByRole("link", { name: "Blog" })).toHaveAttribute("href", "/server/srv-1/app/a2");
     expect(screen.getAllByText("Not used")).toHaveLength(3);
   });
 

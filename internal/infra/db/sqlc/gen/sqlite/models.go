@@ -31,6 +31,15 @@ type AppDomain struct {
 	UpdatedAt    types.DateTime
 }
 
+type MetricSample struct {
+	ServerID    string
+	AppID       string
+	Tier        int64
+	BucketStart types.DateTime
+	Samples     int64
+	Data        string
+}
+
 type Organization struct {
 	OrganizationID string
 	Name           string

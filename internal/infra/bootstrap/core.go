@@ -3,11 +3,13 @@ package bootstrap
 import (
 	"context"
 
+	"winterflow/internal/domain/metrics"
 	notificationsvc "winterflow/internal/domain/service/notification"
 	"winterflow/internal/domain/service/status"
 	"winterflow/internal/infra/db"
 	apprepo "winterflow/internal/infra/db/repository/app"
 	appdomainrepo "winterflow/internal/infra/db/repository/appdomain"
+	metricrepo "winterflow/internal/infra/db/repository/metric"
 	serverrepo "winterflow/internal/infra/db/repository/server"
 	serverdomainrepo "winterflow/internal/infra/db/repository/serverdomain"
 	serverstoragerepo "winterflow/internal/infra/db/repository/serverstorage"
@@ -36,11 +38,21 @@ func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerCon
 	dispatcher := dispatch.NewManager(b, nm, cfg, log)
 	statusCache := status.NewCache(statusTTL)
 
+	// Metrics: the events sink stores server.metrics samples and the
+	// maintenance loop rolls them up and prunes them. Both are off when
+	// METRICS_ENABLED=false; the chart routes then serve empty series.
+	latest := metrics.NewLatestStore()
+	var ms metricsStore
+	if cfg.IsMetricsEnabled() {
+		ms = r.metric
+		go runMetricsMaintenance(ctx, r.metric, latest, metricsMaintenanceInterval, log)
+	}
+
 	startResponseSubscriber(ctx, b, dispatcher, cfg, log)
 	startEventsSubscriber(ctx, b, statusCache, r.server, nm, cfg, log, indexSyncs{
 		newDomainSync(ctx, dispatcher, r.serverDomain, log),
 		newStorageSync(ctx, dispatcher, r.serverStorage, log),
-	})
+	}, ms, latest)
 
 	return &Deps{
 		Log:                     log,
@@ -54,10 +66,12 @@ func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerCon
 		CommandDispatcher:       dispatcher,
 		NotificationManager:     nm,
 		StatusCache:             statusCache,
+		MetricRepository:        r.metric,
+		LatestMetrics:           latest,
 	}, r.server
 }
 
-// repos are the six DB repositories, built for the connection's driver.
+// repos are the DB repositories, built for the connection's driver.
 type repos struct {
 	user          *userrepo.Repo
 	server        *serverrepo.Repo
@@ -65,6 +79,7 @@ type repos struct {
 	appDomain     *appdomainrepo.Repo
 	serverDomain  *serverdomainrepo.Repo
 	serverStorage *serverstoragerepo.Repo
+	metric        *metricrepo.Repo
 }
 
 func newRepos(conn *db.DB, log *logger.Logger) (repos, error) {
@@ -87,6 +102,9 @@ func newRepos(conn *db.DB, log *logger.Logger) (repos, error) {
 	if r.serverDomain, err = serverdomainrepo.New(conn.Tx, conn.Driver, log); err != nil {
 		return r, err
 	}
-	r.serverStorage, err = serverstoragerepo.New(conn.Tx, conn.Driver, log)
+	if r.serverStorage, err = serverstoragerepo.New(conn.Tx, conn.Driver, log); err != nil {
+		return r, err
+	}
+	r.metric, err = metricrepo.New(conn.Tx, conn.Driver, log)
 	return r, err
 }

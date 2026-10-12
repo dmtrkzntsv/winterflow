@@ -269,6 +269,7 @@ export default function OrgMembersPage() {
 
   return (
     <div className="mx-auto w-full max-w-4xl space-y-6">
+      <h1 className="text-2xl font-semibold tracking-tight">Organization</h1>
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle>Organization</CardTitle>
@@ -279,7 +280,7 @@ export default function OrgMembersPage() {
         <CardContent>
           {org ? (
             <div className="flex items-center gap-3">
-              <AppIcon icon={org.icon} color={org.color} />
+              <AppIcon icon={org.icon} color={org.color} className="size-10 rounded-lg" />
               <div>
                 <p className="font-medium">{org.name}</p>
                 <p className="text-xs text-muted-foreground">{org.org_id}</p>

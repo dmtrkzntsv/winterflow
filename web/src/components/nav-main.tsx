@@ -1,7 +1,7 @@
 "use client"
 
 import { ChevronRight, type LucideIcon } from "lucide-react"
-import { Link } from "react-router-dom"
+import { Link, useLocation } from "react-router-dom"
 
 import {
     Collapsible,
@@ -10,7 +10,6 @@ import {
 } from "@/components/ui/collapsible"
 import {
     SidebarGroup,
-    SidebarGroupLabel,
     SidebarMenu,
     SidebarMenuButton,
     SidebarMenuItem,
@@ -18,19 +17,21 @@ import {
     SidebarMenuSubButton,
     SidebarMenuSubItem,
 } from "@/components/ui/sidebar"
+import { isNavActive, navItemClass } from "@/lib/nav"
 
 type NavItem = {
     title: string
     url: string
     icon?: LucideIcon
     isActive?: boolean
+    exact?: boolean
     items?: { title: string; url: string }[]
 }
 
 export function NavMain({ items }: { items: NavItem[] }) {
+    const { pathname } = useLocation()
     return (
         <SidebarGroup>
-            <SidebarGroupLabel>Platform</SidebarGroupLabel>
             <SidebarMenu>
                 {items.map((item) =>
                     item.items && item.items.length > 0 ? (
@@ -66,7 +67,12 @@ export function NavMain({ items }: { items: NavItem[] }) {
                     ) : (
                         // Leaf item: a plain navigable link (no collapsible).
                         <SidebarMenuItem key={item.title}>
-                            <SidebarMenuButton asChild tooltip={item.title}>
+                            <SidebarMenuButton
+                                asChild
+                                tooltip={item.title}
+                                isActive={isNavActive(pathname, item.url, item.exact)}
+                                className={navItemClass}
+                            >
                                 <Link to={item.url}>
                                     {item.icon && <item.icon />}
                                     <span>{item.title}</span>

@@ -36,17 +36,20 @@ function AppLayoutContent() {
   const [breadcrumbs, setBreadcrumbs] = useState<BreadcrumbEntry[]>([])
 
   return (
+    // The sky wash sits behind the page title; the top bar is translucent
+    // and blurred so content scrolls under it (twillingate's shell).
     <SidebarInset
+      className="sky-wash min-w-0"
       style={{
         transition: 'margin-left 200ms ease-linear',
       }}
     >
-        <header className="flex h-16 shrink-0 items-center gap-2 transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12">
-          <div className="flex items-center gap-2 px-4">
+        <header className="sticky top-0 z-20 flex h-12 shrink-0 items-center gap-2 border-b border-border/70 bg-background/55 backdrop-blur-md">
+          <div className="flex min-w-0 items-center gap-2 px-3 sm:px-4">
             <SidebarTrigger className="-ml-1" />
             <Separator
               orientation="vertical"
-              className="mr-2 data-[orientation=vertical]:h-4"
+              className="mr-1 data-[orientation=vertical]:h-4"
             />
             {breadcrumbs.length > 0 ? (
               <Breadcrumb>
@@ -80,7 +83,7 @@ function AppLayoutContent() {
             ) : null}
           </div>
         </header>
-        <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
+        <div className="flex flex-1 flex-col gap-4 p-4 sm:p-6">
           <Outlet context={{ setBreadcrumbs }} />
         </div>
       </SidebarInset>

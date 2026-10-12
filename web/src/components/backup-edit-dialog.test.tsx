@@ -72,6 +72,18 @@ describe("BackupEditDialog", () => {
     expect(onSaveOn.mock.calls[0][0]).toEqual({ name: "database", enabled: true, storage: "disk", every: "15m" });
   });
 
+  it("is reduced for a custom backup: its on/off and storage, nothing else", async () => {
+    const user = userEvent.setup({ delay: null });
+    const replica: EffectiveBackup = { name: "replica", type: "custom", enabled: false, storage: "s3", service: "litestream", in_recipe: true, from_recipe: all };
+    const onSave = renderDialog(replica, { onChangeStorage: () => {} });
+    expect(screen.queryByLabelText("Schedule")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Paths|Database file/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Change storage…" })).toBeInTheDocument();
+    await user.click(screen.getByRole("switch", { name: "Run its backup tool" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(onSave.mock.calls[0][0]).toEqual({ name: "replica", enabled: true, storage: "s3" });
+  });
+
   it("needs a storage before the backup can be turned on", () => {
     renderDialog({ ...database, enabled: false, storage: "" }, { onChangeStorage: () => {} });
     expect(screen.getByRole("switch", { name: "Back up on schedule" })).toBeDisabled();

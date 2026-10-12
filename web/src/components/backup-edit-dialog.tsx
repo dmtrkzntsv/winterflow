@@ -56,7 +56,8 @@ const keepFields = (k: EffectiveBackup["keep"]) => ({
 // template" or "changed", and "Reset to template" drops the change (it
 // shows the template's value at once and applies it when saved). A backup
 // added here can be removed. The "Back up on schedule" switch turns the
-// backup on or off with the rest (it needs a storage). The parent remounts it per opening; onSave gets
+// backup on or off with the rest (it needs a storage). A custom backup (its
+// own tool runs it) gets only that switch and the storage. The parent remounts it per opening; onSave gets
 // the backup's whole new list entry; error is why the last save was refused,
 // kept in view next to Save. onChangeStorage (when given) opens the storage
 // picker in place of this dialog: the storage is not edited here.
@@ -129,10 +130,13 @@ export function BackupEditDialog({
   };
 
   const pathList = pathsFrom(pathsText);
-  const problem =
-    everyError(every) ||
-    keepError(recent, daily, monthly) ||
-    (marks.get("location") === "reset" ? "" : locationError(b.type, where, target, pathList));
+  // A custom backup runs its own tool: only its on/off and storage are here.
+  const custom = b.type === "custom";
+  const problem = custom
+    ? ""
+    : everyError(every) ||
+      keepError(recent, daily, monthly) ||
+      (marks.get("location") === "reset" ? "" : locationError(b.type, where, target, pathList));
   const keep = { recent: parseKeepRecent(recent) || "24h", daily: Number(daily), monthly: Number(monthly) };
   const note = cappedNote(keep, retentionDays);
 
@@ -141,6 +145,7 @@ export function BackupEditDialog({
     const c = configOf(b);
     if (enabled) c.enabled = true;
     else delete c.enabled;
+    if (custom) return c;
     for (const g of Object.keys(GROUP_FIELDS) as Group[]) {
       const fields = GROUP_FIELDS[g];
       if (b.in_recipe && marks.get(g) !== "edited") {
@@ -206,14 +211,14 @@ export function BackupEditDialog({
           <DialogHeader>
             <DialogTitle>Edit backup {b.name}</DialogTitle>
             <DialogDescription>
-              {b.type === "sqlite" ? "A SQLite database file" : "Folders and files"}
+              {custom ? "Runs its own backup tool" : b.type === "sqlite" ? "A SQLite database file" : "Folders and files"}
               {b.in_recipe ? ", declared by the compose file." : ", added here."}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-3 rounded-md border p-3 text-sm">
             <div className="flex items-center justify-between gap-3">
               <Label htmlFor="backup-enabled" className="font-medium">
-                Back up on schedule
+                {custom ? "Run its backup tool" : "Back up on schedule"}
               </Label>
               <Switch id="backup-enabled" checked={enabled} disabled={busy || !b.storage} onCheckedChange={setEnabled} />
             </div>
@@ -230,6 +235,7 @@ export function BackupEditDialog({
             </div>
             {b.storage ? null : <p className="text-xs text-muted-foreground">Pick a storage to turn the backup on: its copies go there.</p>}
           </div>
+          {custom ? null : (
           <fieldset disabled={busy} className="grid min-w-0 gap-3">
             {section(
               "schedule",
@@ -342,6 +348,7 @@ export function BackupEditDialog({
               </>,
             )}
           </fieldset>
+          )}
           {error ? (
             <InlineError icon className="[overflow-wrap:anywhere]">
               {error}

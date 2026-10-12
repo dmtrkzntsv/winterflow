@@ -114,7 +114,8 @@ describe("AppBackups", () => {
     const replica = within(row("replica"));
     expect(replica.getByText("Custom · service litestream → s3 · Its own tool")).toBeInTheDocument();
     expect(replica.getByText("OK")).toBeInTheDocument();
-    expect(replica.queryByRole("button", { name: /Edit/ })).not.toBeInTheDocument();
+    expect(replica.getByRole("button", { name: "Edit: replica" })).toBeEnabled();
+    expect(replica.queryByRole("button", { name: /Back up now|Copies/ })).not.toBeInTheDocument();
     // Three columns and no header row.
     expect(screen.queryAllByRole("columnheader")).toHaveLength(0);
     expect(within(row("database")).getAllByRole("cell")).toHaveLength(3);
@@ -328,7 +329,40 @@ describe("AppBackups", () => {
     expect(await screen.findByRole("menuitem", { name: "Back up now" })).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByRole("menuitem", { name: "Copies & restore" })).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByRole("menuitem", { name: "Edit" })).not.toHaveAttribute("aria-disabled");
-    expect(within(row("replica")).queryByRole("button", { name: /Actions for/ })).not.toBeInTheDocument();
+
+    // A backup without a storage sets up from the menu too.
+    await user.keyboard("{Escape}");
+    await user.click(media.getByRole("button", { name: "Actions for media" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Set up…" }));
+    expect(await screen.findByRole("heading", { name: "Turn on media" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    // A custom backup's menu has only Edit.
+    await user.click(within(row("replica")).getByRole("button", { name: "Actions for replica" }));
+    expect(await screen.findAllByRole("menuitem")).toHaveLength(1);
+    expect(screen.getByRole("menuitem", { name: "Edit" })).toBeInTheDocument();
+  });
+
+  it("turns a custom backup off and changes its storage from a reduced Edit", async () => {
+    const user = userEvent.setup({ delay: null });
+    renderBackups();
+    await user.click(await screen.findByRole("button", { name: "Edit: replica" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/Runs its own backup tool/)).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText("Schedule")).not.toBeInTheDocument();
+    expect(within(dialog).queryByText("Location")).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole("switch", { name: "Run its backup tool" }));
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("replica saved", { description: undefined }));
+    expect(backups.updateBackups.mock.calls[0][1].find((c: { name: string }) => c.name === "replica")).toEqual({ name: "replica", storage: "s3" });
+
+    await user.click(screen.getByRole("button", { name: "Edit: replica" }));
+    await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Change storage…" }));
+    const pick = await screen.findByRole("dialog");
+    await user.selectOptions(await within(pick).findByLabelText("Storage"), "offsite");
+    await user.click(within(pick).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("replica storage changed", { description: undefined }));
+    expect(backups.updateBackups.mock.calls[1][1].find((c: { name: string }) => c.name === "replica")).toEqual({ name: "replica", storage: "offsite" });
   });
 
   it("changes a backup's storage from Edit without turning it on or off", async () => {

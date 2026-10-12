@@ -591,7 +591,9 @@ with the result as SSE `operation_result`.
   - **Actions** are text buttons, "Back up now", "Copies & restore" and
     "Edit"; below the `sm` breakpoint they collapse into one "⋯" menu with the
     same items and the same disabled rules (no storage: no copies; off or
-    running: no Back up now).
+    running: no Back up now). A custom backup (its own tool
+    runs it) has Edit only, which shows just a "Run its backup tool" switch
+    and the storage with "Change storage…".
   - **Set up…:** a backup that has no storage yet (a compose-declared one)
     has this button first in its actions. It opens a storage picker of this
     server's storages (a link to Settings → Storages when there are none) and

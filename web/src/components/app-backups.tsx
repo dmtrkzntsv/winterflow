@@ -362,8 +362,9 @@ const TYPE_LABELS: Record<EffectiveBackup["type"], string> = { sqlite: "SQLite d
 // BackupRow is one backup in three cells: its name with a muted line (type,
 // location, storage, schedule), its status (state, last copy, next copy), and
 // its actions: Set up (no storage yet), Back up now, Copies & restore and
-// Edit (built-in backups only: winterflow neither runs nor lists a custom
-// backup's copies; on/off is in Edit). On a phone the actions are one menu.
+// Edit (Back up now and Copies are for built-in backups only: winterflow
+// neither runs nor lists a custom backup's copies; on/off is in Edit). On a
+// phone the actions are one menu.
 function BackupRow({
   backup: b,
   health,
@@ -448,50 +449,48 @@ function BackupRow({
               >
                 Copies &amp; restore
               </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="px-2 text-muted-foreground"
-                aria-label={`Edit: ${b.name}`}
-                disabled={busy}
-                onClick={(e) => onEdit(e.currentTarget)}
-              >
-                Edit
-              </Button>
             </>
           ) : null}
+          <Button
+            size="sm"
+            variant="ghost"
+            className="px-2 text-muted-foreground"
+            aria-label={`Edit: ${b.name}`}
+            disabled={busy}
+            onClick={(e) => onEdit(e.currentTarget)}
+          >
+            Edit
+          </Button>
         </div>
-        {builtin || !b.storage ? (
-          <div className="sm:hidden">
-            <DropdownMenu modal={false}>
-              <DropdownMenuTrigger asChild>
-                <Button ref={menuRef} size="icon" variant="ghost" className="size-8 text-muted-foreground" aria-label={`Actions for ${b.name}`}>
-                  <MoreHorizontal className="size-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                {b.storage ? null : (
-                  <DropdownMenuItem disabled={busy} onSelect={() => menuRef.current && onSetUp(menuRef.current)}>
-                    Set up…
+        <div className="sm:hidden">
+          <DropdownMenu modal={false}>
+            <DropdownMenuTrigger asChild>
+              <Button ref={menuRef} size="icon" variant="ghost" className="size-8 text-muted-foreground" aria-label={`Actions for ${b.name}`}>
+                <MoreHorizontal className="size-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {b.storage ? null : (
+                <DropdownMenuItem disabled={busy} onSelect={() => menuRef.current && onSetUp(menuRef.current)}>
+                  Set up…
+                </DropdownMenuItem>
+              )}
+              {builtin ? (
+                <>
+                  <DropdownMenuItem disabled={runDisabled} onSelect={onRun}>
+                    Back up now
                   </DropdownMenuItem>
-                )}
-                {builtin ? (
-                  <>
-                    <DropdownMenuItem disabled={runDisabled} onSelect={onRun}>
-                      Back up now
-                    </DropdownMenuItem>
-                    <DropdownMenuItem disabled={!b.storage} title={copiesTitle} onSelect={() => menuRef.current && onPoints(menuRef.current)}>
-                      Copies &amp; restore
-                    </DropdownMenuItem>
-                    <DropdownMenuItem disabled={busy} onSelect={() => menuRef.current && onEdit(menuRef.current)}>
-                      Edit
-                    </DropdownMenuItem>
-                  </>
-                ) : null}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        ) : null}
+                  <DropdownMenuItem disabled={!b.storage} title={copiesTitle} onSelect={() => menuRef.current && onPoints(menuRef.current)}>
+                    Copies &amp; restore
+                  </DropdownMenuItem>
+                </>
+              ) : null}
+              <DropdownMenuItem disabled={busy} onSelect={() => menuRef.current && onEdit(menuRef.current)}>
+                Edit
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </TableCell>
     </TableRow>
   );

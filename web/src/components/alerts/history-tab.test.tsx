@@ -82,4 +82,44 @@ describe("HistoryTab", () => {
     await user.click(await screen.findByRole("option", { name: "lab" }));
     expect(api.calls.at(-1)?.query).toBe("?kind=fired&server_id=s2");
   });
+
+  it("ignores a response to an outdated filter", async () => {
+    const pending: { query: string; resolve: (page: unknown) => void }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (url: string) =>
+          new Promise<Response>((resolve) => {
+            pending.push({
+              query: new URL(url, "http://x").search,
+              resolve: (page) => resolve(new Response(JSON.stringify({ success: true, message: "ok", data: page }))),
+            });
+          }),
+      ),
+    );
+    const user = userEvent.setup({ delay: null });
+    render(
+      <MemoryRouter>
+        <HistoryTab />
+      </MemoryRouter>,
+    );
+    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    pending[0].resolve({ events: [event("all")], next_cursor: "" });
+    expect(await screen.findByText(/\(all\)/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("combobox", { name: "Kind" }));
+    await user.click(await screen.findByRole("option", { name: "Fired" }));
+    await user.click(screen.getByRole("combobox", { name: "Kind" }));
+    await user.click(await screen.findByRole("option", { name: "Resolved" }));
+    await vi.waitFor(() => expect(pending).toHaveLength(3));
+    expect(pending[1].query).toBe("?kind=fired");
+    expect(pending[2].query).toBe("?kind=resolved");
+
+    pending[2].resolve({ events: [event("newer", { kind: "resolved" })], next_cursor: "" });
+    expect(await screen.findByText(/\(newer\)/)).toBeInTheDocument();
+    pending[1].resolve({ events: [event("stale")], next_cursor: "" });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.queryByText(/\(stale\)/)).not.toBeInTheDocument();
+    expect(screen.getAllByTestId("event-row")).toHaveLength(1);
+  });
 });

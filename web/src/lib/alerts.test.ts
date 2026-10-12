@@ -94,6 +94,8 @@ describe("channel URL builders", () => {
     expect(() => buildChannel("discord", { webhook: "https://example.com/x" })).toThrow(/Discord webhook/);
     expect(() => buildChannel("email", { host: "h", port: "x", from: "a", to: "b" })).toThrow(/Port/);
     expect(() => buildChannel("webhook", { url: "ftp://x" })).toThrow(/https/);
+    expect(() => buildChannel("webhook", { url: "https://me:pw@hooks.example.com/a" })).toThrow(/Credentials in the URL are not supported/);
+    expect(() => buildChannel("webhook", { url: "https://token@hooks.example.com/a" })).toThrow(/Credentials/);
     expect(() => buildChannel("ntfy", { server: "ntfy.sh" })).toThrow("Topic is required");
   });
 

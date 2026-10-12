@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { CircleCheck, Flame } from "lucide-react";
 
@@ -33,9 +33,13 @@ export function HistoryTab() {
   const [cursor, setCursor] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // latest numbers the requests; a response to an older one (filters
+  // changed meanwhile) is dropped instead of overwriting the newer page.
+  const latest = useRef(0);
 
   const load = useCallback(
     async (after: string) => {
+      const request = ++latest.current;
       setLoading(true);
       const params: Record<string, string> = {};
       if (kind !== ALL) params.kind = kind;
@@ -43,13 +47,15 @@ export function HistoryTab() {
       if (after) params.cursor = after;
       try {
         const page = await alertsGet<Page>("get-events", params);
+        if (request !== latest.current) return;
         setEvents((prev) => (after ? [...prev, ...(page.events ?? [])] : (page.events ?? [])));
         setCursor(page.next_cursor);
         setError(null);
       } catch (e) {
+        if (request !== latest.current) return;
         setError(e instanceof Error ? e.message : "Failed to load history");
       } finally {
-        setLoading(false);
+        if (request === latest.current) setLoading(false);
       }
     },
     [kind, server],

@@ -398,6 +398,9 @@ export const SERVICES: ServiceSpec[] = [
         throw new Error("URL must start with https:// or http://");
       }
       if (u.protocol !== "https:" && u.protocol !== "http:") throw new Error("URL must start with https:// or http://");
+      if (u.username || u.password) {
+        throw new Error("Credentials in the URL are not supported; use a header-less token in the path or the raw Shoutrrr URL");
+      }
       const extra = u.search ? `&${u.search.slice(1)}` : "";
       return `generic://${u.host}${u.pathname}?template=json${u.protocol === "http:" ? "&disabletls=yes" : ""}${extra}`;
     },

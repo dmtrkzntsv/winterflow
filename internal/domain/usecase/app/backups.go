@@ -31,7 +31,10 @@ func (uc *UseCase) checkBackups(ctx context.Context, serverID string, contents [
 		return nil, err
 	}
 	var cfg struct {
-		Backups *[]recipe.BackupConfig `json:"backups"`
+		Backups  *[]recipe.BackupConfig `json:"backups"`
+		Instance *struct {
+			BackupDefaults []recipe.BackupConfig `json:"backup_defaults"`
+		} `json:"instance"`
 	}
 	if len(config) > 0 {
 		if err := json.Unmarshal(config, &cfg); err != nil {
@@ -48,6 +51,19 @@ func (uc *UseCase) checkBackups(ctx context.Context, serverID string, contents [
 	}
 	if err := uc.requireBackupStorages(ctx, serverID, backups); err != nil {
 		return nil, err
+	}
+	// A template upgrade's backup defaults are added by the agent where
+	// the app has no entry yet; an enabled one needs its storage too.
+	if cfg.Instance != nil {
+		var enabled []recipe.EffectiveBackup
+		for _, d := range cfg.Instance.BackupDefaults {
+			if d.Enabled {
+				enabled = append(enabled, recipe.EffectiveBackup{Name: d.Name, Enabled: true, Storage: d.Storage})
+			}
+		}
+		if err := uc.requireBackupStorages(ctx, serverID, enabled); err != nil {
+			return nil, err
+		}
 	}
 	declared := recipe.Declared(backups)
 	known := cfg.Backups != nil || isNew

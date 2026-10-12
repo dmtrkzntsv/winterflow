@@ -105,24 +105,40 @@ func (uc *UseCase) RefreshApps(ctx context.Context, userID, serverID string) (st
 // ControlApp dispatches a lifecycle action (start/stop/restart/update) to the
 // server's agent. Pure agent operation: no DB change; the result flows over SSE.
 func (uc *UseCase) ControlApp(ctx context.Context, userID, serverID, appID string, action command.ControlAction) (string, error) {
-	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
+	return uc.ControlAppObserved(ctx, userID, serverID, appID, action, nil)
+}
+
+// ControlAppObserved is ControlApp with an observer on the result.
+func (uc *UseCase) ControlAppObserved(ctx context.Context, userID, serverID, appID string, action command.ControlAction, observe Observer) (string, error) {
+	in := port.DispatchInput{
 		AgentID: serverID,
 		UserID:  userID,
 		Type:    command.TypeAppControl,
 		Payload: command.ControlAppRequest{AppID: appID, Action: action},
-	})
+	}
+	if observe != nil {
+		in.OnResult = func(res port.CommandResult) { observe(res) }
+	}
+	return uc.dispatcher.Dispatch(ctx, in)
 }
 
 // DeleteApp dispatches an app.delete to the agent and, on success, removes the
 // app from the DB cache. deleteBackups also deletes the app's backups (else
 // the agent marks them as a deleted app's).
 func (uc *UseCase) DeleteApp(ctx context.Context, userID, serverID, appID string, deleteVolumes, deleteBackups bool) (string, error) {
+	return uc.DeleteAppObserved(ctx, userID, serverID, appID, deleteVolumes, deleteBackups, nil)
+}
+
+// DeleteAppObserved is DeleteApp with an observer on the result (it runs
+// after the app's rows are removed).
+func (uc *UseCase) DeleteAppObserved(ctx context.Context, userID, serverID, appID string, deleteVolumes, deleteBackups bool, observe Observer) (string, error) {
 	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
 		AgentID: serverID,
 		UserID:  userID,
 		Type:    command.TypeAppDelete,
 		Payload: command.DeleteAppRequest{AppID: appID, DeleteVolumes: deleteVolumes, DeleteBackups: deleteBackups},
 		OnResult: func(res port.CommandResult) {
+			defer notify(observe, res)
 			if !res.Success {
 				return
 			}
@@ -342,6 +358,23 @@ func (uc *UseCase) heldHostnames(ctx context.Context, serverID, appID string) (m
 	return held, nil
 }
 
+// Observer is a caller's extra hook on a dispatched command's result: it
+// runs after the usecase's own result handling (the DB is updated by
+// then). It must not block.
+type Observer func(port.CommandResult)
+
+// CheckedSave is an app.save that passed every save-app check, ready to
+// dispatch.
+type CheckedSave struct {
+	serverID string
+	app      model.App
+	req      command.SaveAppRequest
+	ing      *model.Ingress
+}
+
+// AppID is the id the save addresses (assigned when the app was new).
+func (s CheckedSave) AppID() string { return s.app.ID }
+
 // SaveApp dispatches an app.save command to the server's agent and returns
 // the request id immediately. This call does not block. It is an upsert:
 // an empty app.ID means create (the API assigns identity), a present one
@@ -351,6 +384,18 @@ func (uc *UseCase) heldHostnames(ctx context.Context, serverID, appID string) (m
 // OnResult hook persists the app and the result is delivered to the user
 // over SSE.
 func (uc *UseCase) SaveApp(ctx context.Context, userID, serverID string, app model.App, payload command.AppPayload, draft bool) (string, error) {
+	checked, err := uc.CheckSave(ctx, serverID, app, payload, draft)
+	if err != nil {
+		return "", err
+	}
+	return uc.DispatchSave(ctx, userID, checked, nil)
+}
+
+// CheckSave runs save-app's checks (reserved variables, ingress syntax,
+// domain coverage and claims, storage and backup references) without
+// dispatching anything: a template instance claims its key only once its
+// rendered app passes them. An empty app.ID gets a new id.
+func (uc *UseCase) CheckSave(ctx context.Context, serverID string, app model.App, payload command.AppPayload, draft bool) (CheckedSave, error) {
 	// New apps have no id yet; the API owns identity, so assign one here and use
 	// it both on the wire (the agent keys its on-disk storage by app id) and on
 	// the persisted catalog record.
@@ -370,7 +415,7 @@ func (uc *UseCase) SaveApp(ctx context.Context, userID, serverID string, app mod
 	// synchronous 400 instead of an async failure.
 	req := command.SaveAppRequest{App: payload, Draft: draft}
 	if err := req.Validate(); err != nil {
-		return "", err
+		return CheckedSave{}, err
 	}
 
 	// Ingress rides the config blob. Parse + validate + conflict-check here so
@@ -378,41 +423,49 @@ func (uc *UseCase) SaveApp(ctx context.Context, userID, serverID string, app mod
 	// (no "ingress" key) means the feature is untouched: skip everything.
 	ing, err := model.ParseIngress(payload.Config)
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", model.ErrIngressInvalid, err)
+		return CheckedSave{}, fmt.Errorf("%w: %v", model.ErrIngressInvalid, err)
 	}
 	if ing != nil {
 		if err := ing.Validate(); err != nil {
-			return "", fmt.Errorf("%w: %v", model.ErrIngressInvalid, err)
+			return CheckedSave{}, fmt.Errorf("%w: %v", model.ErrIngressInvalid, err)
 		}
 		if err := uc.requireCovered(ctx, serverID, app.ID, ing); err != nil {
-			return "", err
+			return CheckedSave{}, err
 		}
 		if uc.domains != nil {
 			claims, err := uc.domains.FindClaims(ctx, serverID, ing.DomainNames(), app.ID)
 			if err != nil {
 				uc.log.Error("SaveApp: find domain claims", "error", err, "app_id", app.ID)
-				return "", err
+				return CheckedSave{}, err
 			}
 			if len(claims) > 0 {
 				var parts []string
 				for _, c := range claims {
 					parts = append(parts, fmt.Sprintf("%s is already used by app %q on this server", c.Domain, c.AppName))
 				}
-				return "", fmt.Errorf("%w: %s", model.ErrDomainTaken, strings.Join(parts, "; "))
+				return CheckedSave{}, fmt.Errorf("%w: %s", model.ErrDomainTaken, strings.Join(parts, "; "))
 			}
 		}
 	}
 
 	if err := uc.requireStorageRefs(ctx, serverID, payload, isNew); err != nil {
-		return "", err
+		return CheckedSave{}, err
 	}
+	return CheckedSave{serverID: serverID, app: app, req: req, ing: ing}, nil
+}
 
+// DispatchSave dispatches a checked save. On the agent's confirmation the
+// catalog record and the domain index are updated, then observe (if any)
+// runs.
+func (uc *UseCase) DispatchSave(ctx context.Context, userID string, s CheckedSave, observe Observer) (string, error) {
+	serverID, app, ing := s.serverID, s.app, s.ing
 	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
 		AgentID: serverID,
 		UserID:  userID,
 		Type:    command.TypeAppSave,
-		Payload: req,
+		Payload: s.req,
 		OnResult: func(res port.CommandResult) {
+			defer notify(observe, res)
 			if !res.Success {
 				return
 			}
@@ -439,4 +492,11 @@ func (uc *UseCase) SaveApp(ctx context.Context, userID, serverID string, app mod
 			}
 		},
 	})
+}
+
+// notify runs observe, when set, with res.
+func notify(observe Observer, res port.CommandResult) {
+	if observe != nil {
+		observe(res)
+	}
 }

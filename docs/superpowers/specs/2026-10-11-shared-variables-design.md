@@ -274,8 +274,14 @@ Compose wiring, in `composeArgs` and `.winterflow/run.sh` (later files override
 earlier ones; a missing file is omitted):
 
 ```
---env-file .env.shared  --env-file .env.shared.secrets  --env-file .env  --env-file .env.secrets
+--env-file .env.shared  --env-file .env.shared.secrets  --env-file .env  --env-file .winterflow/storage.env  --env-file .env.secrets
 ```
+
+`.winterflow/storage.env` is the storages feature's agent-computed file (the
+referenced `WF_STORAGE_*`/`WF_BACKUP_*` values, rendered at every deploy);
+its names are reserved on both sides (shared variables may not start with
+`WF_`, app variables not with `WF_STORAGE_`/`WF_BACKUP_`), so its position
+relative to the shared files changes no value.
 
 ### Referenced names
 
@@ -313,7 +319,9 @@ running app on this server". The handler queues work and replies immediately.
 
 A single **background worker goroutine** per agent performs reloads:
 
-- one app at a time, under the existing per-app lock;
+- one app at a time, under the per-app operation lock, registered as an
+  operation (`beginOp`): a reload is refused while a backup restore of the
+  app runs, and a restore does not begin while a reload does;
 - re-render, then `compose up -d` (compose recreates only services whose
   resolved config changed);
 - only **running** apps are reloaded;

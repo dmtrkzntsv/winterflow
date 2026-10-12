@@ -85,7 +85,17 @@ func main() {
 	agent.SetFeatures(features)
 	agent.SetApps(apps)
 
-	agent.SetDispatcher(appagent.NewDispatcher(orchestrator, ingressManager, log))
+	// One sink for every agent-initiated event (status, reload outcomes).
+	sink := func(kind bus.EventKind, payload []byte) error {
+		return agent.SendEvent(string(kind), payload)
+	}
+
+	// Shared-variable reloads run on their own goroutine, never inside a
+	// command handler.
+	reloads := appagent.NewReloadWorker(orchestrator, sink, log)
+	go reloads.Run(ctx)
+
+	agent.SetDispatcher(appagent.NewDispatcher(orchestrator, ingressManager, log).WithReloads(reloads))
 
 	// Supervise the connection: connect, register, stream, and reconnect with
 	// backoff on failure, until ctx is canceled. Runs in the background so the
@@ -95,9 +105,6 @@ func main() {
 
 	// Periodic apps-status push: feeds the API's status cache and the SSE
 	// live-status pipeline. Ticks while the stream is down are skipped.
-	sink := func(kind bus.EventKind, payload []byte) error {
-		return agent.SendEvent(string(kind), payload)
-	}
 	statusSnapshot := appagent.NewStatusSnapshot(orchestrator)
 	go appagent.RunStatusReporter(ctx, statusSnapshot, sink, 30*time.Second, log)
 

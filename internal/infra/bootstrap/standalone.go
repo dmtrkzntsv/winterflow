@@ -52,7 +52,21 @@ func BootstrapStandalone(ctx context.Context, log *logger.Logger, cfg *config.Se
 	if err := ingressManager.Start(ctx); err != nil {
 		log.Warn("ingress manager start", "error", err)
 	}
-	agentDispatcher := appagent.NewDispatcher(orchestrator, ingressManager, log)
+	// One sink for every embedded-agent event (status, reload outcomes):
+	// straight onto the in-process events queue. Until the embedded server
+	// is claimed there is no server id to report as, so events are skipped.
+	sink := func(kind bus.EventKind, payload []byte) error {
+		id, ok, err := serverRepo.FirstServerID(ctx)
+		if err != nil || !ok {
+			return err
+		}
+		return b.Publish(ctx, cfg.GetBusEventsQueue(), bus.EventMessage{ServerID: id, Kind: kind, Payload: payload})
+	}
+	// Shared-variable reloads run on their own goroutine: the bridge drains
+	// every command on one goroutine, so vars.reload only queues work.
+	reloads := appagent.NewReloadWorker(orchestrator, sink, log)
+	go reloads.Run(ctx)
+	agentDispatcher := appagent.NewDispatcher(orchestrator, ingressManager, log).WithReloads(reloads)
 	bridge := appagent.NewInProcessBridge(b, cfg, agentDispatcher, log)
 	if err := bridge.Start(ctx); err != nil {
 		log.Fatalf("failed to start in-process bridge: %v", err)
@@ -68,15 +82,6 @@ func BootstrapStandalone(ctx context.Context, log *logger.Logger, cfg *config.Se
 	// the box itself. Run the same status reporter the distributed agent runs,
 	// publishing apps.status straight onto the in-process events queue — that
 	// feeds the status cache (doubling as the liveness pulse) and the SSE push.
-	// Until the embedded server is claimed there is no server id to report as,
-	// so ticks are skipped silently.
-	sink := func(kind bus.EventKind, payload []byte) error {
-		id, ok, err := serverRepo.FirstServerID(ctx)
-		if err != nil || !ok {
-			return err
-		}
-		return b.Publish(ctx, cfg.GetBusEventsQueue(), bus.EventMessage{ServerID: id, Kind: kind, Payload: payload})
-	}
 	// The snapshot lets the metrics reporter reuse the status reporter's
 	// `docker ps` instead of running its own.
 	statusSnapshot := appagent.NewStatusSnapshot(orchestrator)

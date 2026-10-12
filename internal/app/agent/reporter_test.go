@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -120,5 +121,34 @@ func TestStatusReporterStopsOnCancel(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("reporter did not stop on cancel")
+	}
+}
+
+// revisionSource embeds a pointer so the fake's mutex is never copied.
+type revisionSource struct{ *fakeStatusSource }
+
+func (revisionSource) VarsRevision() int64 { return 9 }
+
+func TestStatusReporterAddsVarsRevision(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	got := make(chan sinkCall, 4)
+	go RunStatusReporter(ctx, revisionSource{&fakeStatusSource{}}, collectSink(got), time.Hour, testLog())
+	call := <-got
+	var body command.GetAppsStatusResponse
+	if err := json.Unmarshal(call.payload, &body); err != nil || body.VarsRevision == nil || *body.VarsRevision != 9 {
+		t.Fatalf("report = %s", call.payload)
+	}
+	// Wrapped in the snapshot the metrics reporter shares, it still does.
+	wrapped := make(chan sinkCall, 4)
+	go RunStatusReporter(ctx, NewStatusSnapshot(revisionSource{&fakeStatusSource{}}), collectSink(wrapped), time.Hour, testLog())
+	if c := <-wrapped; !strings.Contains(string(c.payload), `"vars_revision":9`) {
+		t.Fatalf("wrapped report = %s", c.payload)
+	}
+	// A source without revisions (an old orchestrator) sends none.
+	plain := make(chan sinkCall, 4)
+	go RunStatusReporter(ctx, &fakeStatusSource{}, collectSink(plain), time.Hour, testLog())
+	if c := <-plain; strings.Contains(string(c.payload), "vars_revision") {
+		t.Fatalf("report = %s", c.payload)
 	}
 }

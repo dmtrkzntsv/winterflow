@@ -16,6 +16,28 @@ type StatusSource interface {
 	GetAppsStatus(ctx context.Context) ([]command.AppStatus, error)
 }
 
+// VarsRevisionSource is implemented by status sources that hold a
+// shared-variables snapshot; the report then carries its revision, so the
+// API can re-push a missed vars.sync without a polling timer.
+type VarsRevisionSource interface {
+	VarsRevision() int64
+}
+
+// statusReport is the apps.status body for apps from src.
+func statusReport(apps []command.AppStatus, src StatusSource) command.GetAppsStatusResponse {
+	resp := command.GetAppsStatusResponse{Apps: apps}
+	// A StatusSnapshot (shared with the metrics reporter) wraps the real
+	// source; the revision lives on the wrapped one.
+	if w, ok := src.(*StatusSnapshot); ok {
+		src = w.src
+	}
+	if vr, ok := src.(VarsRevisionSource); ok {
+		rev := vr.VarsRevision()
+		resp.VarsRevision = &rev
+	}
+	return resp
+}
+
 // EventSink delivers one agent-initiated event upstream. The gRPC agent wraps
 // SendEvent (distributed); standalone publishes straight onto the in-process
 // events queue. A returned error means "not delivered this tick" — the
@@ -33,7 +55,7 @@ func RunStatusReporter(ctx context.Context, src StatusSource, sink EventSink, in
 			log.Debug("status report: collect failed", "error", err)
 			return
 		}
-		payload, err := json.Marshal(command.GetAppsStatusResponse{Apps: apps})
+		payload, err := json.Marshal(statusReport(apps, src))
 		if err != nil {
 			log.Error("status report: marshal failed", err)
 			return

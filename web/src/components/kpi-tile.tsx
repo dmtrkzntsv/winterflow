@@ -5,6 +5,7 @@ import { Card } from "@/components/ui/card";
 import { Sparkline } from "@/components/sparkline";
 import { cn } from "@/lib/utils";
 import { formatDelta } from "@/lib/chart-scale";
+import { deltaDirection } from "@/lib/kpi";
 import type { ChartRow } from "@/lib/metrics";
 
 export type KpiSpark = { rows: ChartRow[]; field: string; color: string; max?: number };
@@ -13,10 +14,13 @@ type KpiTileProps = {
   label: string;
   // value is the formatted headline figure ("42%", "1.2 GB").
   value: string;
-  // delta is the percent change vs the previous period (deltaPercent);
+  // delta is the percent change vs the previous period (periodDelta);
   // null or undefined shows no pill.
   delta?: number | null;
   deltaLabel?: string;
+  // significant=false keeps a real but trivial move neutral (isSignificant);
+  // a delta that shows as 0 % is always neutral, without an arrow.
+  significant?: boolean;
   // goodWhen says which direction is good news: "up" (default) paints a
   // rise green, "down" paints a rise red (resource usage), "neutral" keeps
   // both muted.
@@ -24,16 +28,27 @@ type KpiTileProps = {
   spark?: KpiSpark;
   // sub is a muted line under the figure ("of 1 GB limit").
   sub?: ReactNode;
-  // action sits at the tile's top right.
-  action?: ReactNode;
   className?: string;
   testId?: string;
 };
 
-function DeltaPill({ delta, label, goodWhen }: { delta: number; label: string; goodWhen: "up" | "down" | "neutral" }) {
-  const up = delta >= 0;
-  const good = goodWhen === "neutral" ? undefined : up === (goodWhen === "up");
-  const Arrow = up ? ArrowUpRight : ArrowDownRight;
+function DeltaPill({
+  delta,
+  label,
+  goodWhen,
+  significant,
+}: {
+  delta: number;
+  label: string;
+  goodWhen: "up" | "down" | "neutral";
+  significant: boolean;
+}) {
+  const direction = deltaDirection(delta);
+  const good =
+    goodWhen === "neutral" || direction === "flat" || !significant
+      ? undefined
+      : (direction === "up") === (goodWhen === "up");
+  const Arrow = direction === "up" ? ArrowUpRight : direction === "down" ? ArrowDownRight : null;
   return (
     // On a narrow tile the label drops under the pill as one line instead
     // of wrapping word by word beside it.
@@ -47,8 +62,8 @@ function DeltaPill({ delta, label, goodWhen }: { delta: number; label: string; g
           good === false && "bg-red-500/12 text-red-700 dark:text-red-400",
         )}
       >
-        <Arrow className="size-3" aria-hidden />
-        {formatDelta(delta)}
+        {Arrow ? <Arrow className="size-3" aria-hidden /> : null}
+        {direction === "flat" ? "0%" : formatDelta(delta)}
       </span>
       <span className="truncate whitespace-nowrap text-muted-foreground">{label}</span>
     </div>
@@ -65,9 +80,9 @@ export function KpiTile({
   delta,
   deltaLabel = "vs previous",
   goodWhen = "up",
+  significant = true,
   spark,
   sub,
-  action,
   className,
   testId,
 }: KpiTileProps) {
@@ -79,11 +94,10 @@ export function KpiTile({
     >
       <div className="flex min-h-5 items-center gap-1.5">
         <h3 className="truncate text-sm font-medium text-muted-foreground">{label}</h3>
-        {action ? <div className="ml-auto">{action}</div> : null}
       </div>
       <div className="pt-1 text-3xl leading-none font-semibold tracking-tight">{value}</div>
       {typeof delta === "number" && Number.isFinite(delta) ? (
-        <DeltaPill delta={delta} label={deltaLabel} goodWhen={goodWhen} />
+        <DeltaPill delta={delta} label={deltaLabel} goodWhen={goodWhen} significant={significant} />
       ) : null}
       {sub ? <div className="line-clamp-2 text-xs text-muted-foreground">{sub}</div> : null}
       {spark ? (

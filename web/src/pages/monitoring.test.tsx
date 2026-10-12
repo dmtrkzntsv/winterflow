@@ -5,7 +5,7 @@ import { MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import MonitoringPage from "@/pages/monitoring";
-import type { DockerDF, ServerSeries } from "@/lib/metrics";
+import type { DockerDF, ServerSample, ServerSeries } from "@/lib/metrics";
 
 const useServerMetrics = vi.fn();
 const refreshServer = vi.fn(async () => {});
@@ -13,6 +13,7 @@ const refreshOverview = vi.fn(async () => {});
 let data: ServerSeries | null = null;
 let loading = false;
 let latestDF: DockerDF | undefined;
+let latestServer: Partial<ServerSample> | undefined;
 
 // jsdom has no layout: a fixed-size ResponsiveContainer makes recharts draw.
 vi.mock("recharts", async (importOriginal) => {
@@ -40,7 +41,10 @@ vi.mock("@/hooks/use-metrics", () => ({
     data: {
       servers: [
         { server_id: "other", latest: { at: "", server: { docker_df: { images: 1, volumes: 1, build_cache: 1, reclaimable: 1 } } } },
-        { server_id: "s1", latest: latestDF ? { at: "", server: { docker_df: latestDF } } : null },
+        {
+          server_id: "s1",
+          latest: latestDF || latestServer ? { at: "", server: { ...latestServer, docker_df: latestDF } } : null,
+        },
       ],
     },
     loading: false,
@@ -76,6 +80,7 @@ describe("MonitoringPage", { timeout: 20_000 }, () => {
     refreshOverview.mockClear();
     loading = false;
     latestDF = undefined;
+    latestServer = undefined;
     data = {
       interval_seconds: 60,
       points: [
@@ -170,12 +175,13 @@ describe("MonitoringPage", { timeout: 20_000 }, () => {
   });
 
   it("leads with KPI tiles: the newest value and the trend within the range", () => {
-    data!.points = [
-      { t: 0, cpu: 10, mem_used: 1, mem_total: 4, net_rx_bps: 100, net_tx_bps: 100 },
-      { t: 60, cpu: 10, mem_used: 1, mem_total: 4, net_rx_bps: 100, net_tx_bps: 100 },
-      { t: 120, cpu: 20, mem_used: 2, mem_total: 4, net_rx_bps: 100, net_tx_bps: 100 },
-      { t: 180, cpu: 20, mem_used: 2, mem_total: 4, net_rx_bps: 1024, net_tx_bps: 1024 },
-    ];
+    // An hour of minutes: the older half at the low values, the newer half
+    // at the high ones.
+    data!.points = Array.from({ length: 60 }, (_, i) =>
+      i < 30
+        ? { t: i * 60, cpu: 10, mem_used: 1, mem_total: 4, net_rx_bps: 100, net_tx_bps: 100 }
+        : { t: i * 60, cpu: 20, mem_used: 2, mem_total: 4, net_rx_bps: 1024, net_tx_bps: 1024 },
+    );
     renderPage();
     const cpu = screen.getByTestId("kpi-CPU");
     expect(cpu).toHaveTextContent("20%");
@@ -187,9 +193,35 @@ describe("MonitoringPage", { timeout: 20_000 }, () => {
     expect(screen.getByTestId("kpi-Network")).toHaveTextContent("2.0 KB/s");
     expect(screen.getByTestId("kpi-Network")).toHaveTextContent("In 1.0 KB/s · Out 1.0 KB/s");
     expect(screen.getByTestId("kpi-Network").querySelector("[data-tone]")).toHaveAttribute("data-tone", "neutral");
-    // Two points are too few for a trend: no pill rather than a wild one.
+    // No disk series at all: no figure and no pill rather than a wild one.
     expect(screen.getByTestId("kpi-Disk")).toHaveTextContent("–");
     expect(screen.getByTestId("kpi-Disk").querySelector("[data-testid=kpi-delta]")).toBeNull();
+  });
+
+  it("hides the trend when the range is mostly empty", () => {
+    // A server that came up five minutes ago, viewed on the last hour.
+    data!.points = Array.from({ length: 5 }, (_, i) => ({ t: i * 60, cpu: 10 + i }));
+    renderPage();
+    expect(screen.getByTestId("kpi-CPU").querySelector("[data-testid=kpi-delta]")).toBeNull();
+  });
+
+  it("takes headline figures from the live sample, not the range's last bucket", () => {
+    latestServer = {
+      cpu: 42,
+      mem_used: 3,
+      mem_total: 4,
+      load1: 0.5,
+      disks: [{ mount: "/", used: 1, total: 4 }],
+      net_rx_bps: 2048,
+      net_tx_bps: 0,
+    };
+    renderPage();
+    expect(screen.getByTestId("kpi-CPU")).toHaveTextContent("42%");
+    expect(screen.getByTestId("kpi-CPU")).toHaveTextContent("Load 0.50");
+    expect(screen.getByTestId("kpi-Memory")).toHaveTextContent("75%");
+    expect(screen.getByTestId("kpi-Memory")).toHaveTextContent("3 B of 4 B");
+    expect(screen.getByTestId("kpi-Disk")).toHaveTextContent("25%");
+    expect(screen.getByTestId("kpi-Network")).toHaveTextContent("2.0 KB/s");
   });
 
   it("states freshness and re-fetches on refresh", async () => {

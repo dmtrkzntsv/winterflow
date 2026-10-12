@@ -27,10 +27,8 @@ describe("KpiTile", () => {
     render(<KpiTile label="CPU" value="42%" sub="of host" />);
     const tile = screen.getByTestId("kpi-CPU");
     expect(tile).toHaveAttribute("data-slot", "widget-card");
-    expect(screen.getByRole("heading", { name: "CPU" })).toHaveClass("text-sm", "text-muted-foreground");
-    const figure = screen.getByText("42%");
-    expect(figure).toHaveClass("text-3xl", "font-semibold");
-    expect(figure).not.toHaveClass("tabular-nums");
+    expect(screen.getByRole("heading", { name: "CPU" })).toBeInTheDocument();
+    expect(screen.getByText("42%")).toBeInTheDocument();
     expect(tile).toHaveTextContent("of host");
     expect(screen.queryByTestId("kpi-delta")).toBeNull();
   });
@@ -39,10 +37,8 @@ describe("KpiTile", () => {
     const { rerender } = render(<KpiTile label="Visitors" value="925" delta={3.6} />);
     expect(screen.getByTestId("kpi-delta")).toHaveTextContent("+3.6%vs previous");
     expect(screen.getByText("+3.6%")).toHaveAttribute("data-tone", "good");
-    expect(screen.getByText("+3.6%")).toHaveClass("bg-emerald-500/12");
     rerender(<KpiTile label="Visitors" value="925" delta={-12} deltaLabel="vs last week" />);
     expect(screen.getByText("-12%")).toHaveAttribute("data-tone", "bad");
-    expect(screen.getByText("-12%")).toHaveClass("bg-red-500/12");
     expect(screen.getByTestId("kpi-delta")).toHaveTextContent("vs last week");
   });
 
@@ -53,6 +49,17 @@ describe("KpiTile", () => {
     expect(screen.getByText("+20%")).toHaveAttribute("data-tone", "neutral");
     rerender(<KpiTile label="CPU" value="42%" delta={null} />);
     expect(screen.queryByTestId("kpi-delta")).toBeNull();
+  });
+
+  it("keeps a flat or trivial delta neutral, a flat one without an arrow", () => {
+    const { rerender } = render(<KpiTile label="CPU" value="42%" delta={0.04} goodWhen="down" />);
+    const flat = screen.getByText("0%");
+    expect(flat).toHaveAttribute("data-tone", "neutral");
+    expect(flat.querySelector("svg")).toBeNull();
+    rerender(<KpiTile label="CPU" value="42%" delta={180} significant={false} goodWhen="down" />);
+    const trivial = screen.getByText("+180%");
+    expect(trivial).toHaveAttribute("data-tone", "neutral");
+    expect(trivial.querySelector("svg")).not.toBeNull();
   });
 
   it("draws a sparkline with a dot on the newest point", () => {

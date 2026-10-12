@@ -3,12 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   average,
   axisWidth,
-  deltaPercent,
   formatDelta,
   niceAxis,
   niceTicks,
   scaleFor,
-  splitHalves,
   stackTotals,
   tooltipRows,
   sparkDomain,
@@ -120,24 +118,10 @@ describe("stackTotals and valuesOf", () => {
   });
 });
 
-describe("deltaPercent", () => {
-  it("compares the period averages", () => {
+describe("average and formatDelta", () => {
+  it("averages the finite values", () => {
     expect(average([1, null, 3])).toBe(2);
     expect(average([null])).toBeNull();
-    expect(deltaPercent([11, 13], [10, 10])).toBeCloseTo(20);
-    expect(deltaPercent([5, 5], [10, 10])).toBeCloseTo(-50);
-  });
-
-  it("is null without enough data or a zero baseline", () => {
-    expect(deltaPercent([1], [1, 2])).toBeNull();
-    expect(deltaPercent([1, 2], [null, 3])).toBeNull();
-    expect(deltaPercent([1, 2], [0, 0])).toBeNull();
-    expect(deltaPercent([1], [2], 1)).toBeCloseTo(-50);
-  });
-
-  it("splits one range into its older and newer half", () => {
-    expect(splitHalves([1, 2, 3, 4, 5])).toEqual({ previous: [1, 2], current: [4, 5] });
-    expect(splitHalves([])).toEqual({ previous: [], current: [] });
   });
 
   it("formats the pill figure", () => {

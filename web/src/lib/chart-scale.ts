@@ -1,6 +1,6 @@
 // Pure helpers behind the chart kit: round value-axis ticks per unit, the
-// axis width those ticks need, and the period-over-period delta a KPI tile
-// shows. Kept out of the components so they test without a DOM.
+// axis width those ticks need, round time ticks and the delta pill's
+// figure. Kept out of the components so they test without a DOM.
 
 import { formatPercent, formatRate, formatSize } from "@/lib/metrics";
 
@@ -185,31 +185,6 @@ export function average(values: (number | null | undefined)[]): number | null {
   const finite = values.filter((v): v is number => typeof v === "number" && Number.isFinite(v));
   if (finite.length === 0) return null;
   return finite.reduce((a, b) => a + b, 0) / finite.length;
-}
-
-// deltaPercent is the change of the current period's average against the
-// previous period's, in percent (+12.5 = 12.5 % higher). null when either
-// period has fewer than minPoints values or the previous average is 0
-// (no meaningful ratio).
-export function deltaPercent(
-  current: (number | null | undefined)[],
-  previous: (number | null | undefined)[],
-  minPoints = 2,
-): number | null {
-  const count = (vs: (number | null | undefined)[]) =>
-    vs.filter((v) => typeof v === "number" && Number.isFinite(v)).length;
-  if (count(current) < minPoints || count(previous) < minPoints) return null;
-  const cur = average(current);
-  const prev = average(previous);
-  if (cur === null || prev === null || prev === 0) return null;
-  return (100 * (cur - prev)) / Math.abs(prev);
-}
-
-// splitHalves splits a series into its older and newer half, for a delta
-// within one fetched range (the previous period is the first half).
-export function splitHalves<T>(values: T[]): { previous: T[]; current: T[] } {
-  const mid = Math.floor(values.length / 2);
-  return { previous: values.slice(0, mid), current: values.slice(values.length - mid) };
 }
 
 // formatDelta renders a delta pill's figure: "+12.1%", "-4%", "+130%", "0%".

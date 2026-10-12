@@ -13,6 +13,11 @@ describe("relativeTime", () => {
     expect(relativeTime(ago(86_400), now)).toBe("yesterday");
     expect(relativeTime(ago(3 * 86_400), now)).toBe("3 days ago");
   });
+  it("reads a time slightly in the future (clock skew) as now", () => {
+    expect(relativeTime(ago(-5), now)).toBe("now");
+    expect(relativeTime(ago(-59), now)).toBe("now");
+    expect(relativeTime(ago(-120), now)).toBe("in 2 minutes");
+  });
   it("falls back to the date after a week", () => {
     const old = ago(8 * 86_400);
     expect(relativeTime(old, now)).toBe(old.toLocaleDateString());

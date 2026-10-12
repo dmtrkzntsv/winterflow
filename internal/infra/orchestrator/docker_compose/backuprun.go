@@ -40,9 +40,12 @@ const (
 // helperWaitDelay is helperStopGrace (a variable for tests).
 var helperWaitDelay = helperStopGrace
 
-// putAbortGrace is how long an aborted upload gets to clean up after itself
-// (an S3 multipart abort) on a live context before that context is cancelled.
-var putAbortGrace = 30 * time.Second
+// defaultPutAbortGrace is how long an aborted upload gets to clean up after
+// itself (an S3 multipart abort) on a live context before that context is
+// cancelled; putAbortGrace is the variable tests replace.
+const defaultPutAbortGrace = 30 * time.Second
+
+var putAbortGrace = defaultPutAbortGrace
 
 // Helper container limits: a run must not starve the apps it backs up on a
 // small box, and gets no network and only the capabilities a dump needs

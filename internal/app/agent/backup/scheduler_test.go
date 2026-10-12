@@ -1255,9 +1255,11 @@ func TestRestoreIsNoRunningBackup(t *testing.T) {
 // on it before the outcome that names the pre-restore point exists; and the
 // request as a whole still ends under command.BackupRunWait.
 func TestRestoreGraceCoversTheEngineWindDown(t *testing.T) {
-	// 3 helper removals (30s), the output drain (10s), the daemon's second
-	// (1s), compose down or start (2m).
-	if want := 3*30*time.Second + 10*time.Second + time.Second + 2*time.Minute; restoreGrace < want {
+	// A cancel during the pre-restore copy is the longest wind-down: 3
+	// helper removals (30s), the output drain (10s), the daemon's second
+	// (1s), the upload's abort grace (30s) and discard (30s), then compose
+	// start (2m).
+	if want := 3*30*time.Second + 10*time.Second + time.Second + 30*time.Second + 30*time.Second + 2*time.Minute; restoreGrace < want {
 		t.Fatalf("restore grace %s is shorter than the engine's wind-down %s", restoreGrace, want)
 	}
 	if restoreGrace <= abandonAfter {

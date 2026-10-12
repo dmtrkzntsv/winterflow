@@ -35,13 +35,17 @@ var ErrAppDeleted = errors.New("the app is being deleted")
 const restartTimeout = 2 * time.Minute
 
 // RestoreStopBudget is the longest a restore takes to wind down after its
-// context ends, in the engine's own bounded steps: the kill of the helper
-// (docker rm -f, the wait for its output, two more removals and the second
-// the daemon is given) and then compose down or compose start. The scheduler
-// gives a restore at least this long past its deadline before it gives up on
-// it, so the engine's real outcome (the app left stopped, the pre-restore
+// context ends, in the engine's own bounded steps. The longest path is a
+// cancel during the pre-restore copy, a run: the kill of its helper (docker
+// rm -f, the wait for its output, two more removals and the second the
+// daemon is given), the abort of its upload (putAbortGrace) and the discard
+// of what it left (storageCallTimeout); then compose start to put the app
+// back (restartTimeout). The kill of the restore's own helper and
+// compose down are inside that. The scheduler gives a restore at least this
+// long past its deadline before it gives up on it, so the engine's real
+// outcome (the data unchanged, or the app left stopped and the pre-restore
 // point to go back to) is the one that gets recorded.
-const RestoreStopBudget = 3*dockerCallTimeout + helperStopGrace + time.Second + restartTimeout
+const RestoreStopBudget = 3*dockerCallTimeout + helperStopGrace + time.Second + defaultPutAbortGrace + storageCallTimeout + restartTimeout
 
 // restoreMinBudget is the least of a restore's time budget that must remain
 // before the app is stopped: the pre-restore copy and the helper still have

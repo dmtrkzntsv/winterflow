@@ -1142,3 +1142,14 @@ func TestDeleteRestorePointIsRefusedDuringARestore(t *testing.T) {
 		t.Fatalf("delete after the restore: %v", err)
 	}
 }
+
+// A restore cancelled during its pre-restore copy winds down through the
+// run's steps (helper kill, upload abort and discard) and then starts the
+// app again: the scheduler's grace covers all of it, so a cancelled but
+// unchanged restore is reported as what it is.
+func TestRestoreStopBudgetCoversACancelDuringThePreRestoreCopy(t *testing.T) {
+	helperKill := 3*dockerCallTimeout + helperStopGrace + time.Second
+	if want := helperKill + defaultPutAbortGrace + storageCallTimeout + restartTimeout; RestoreStopBudget < want {
+		t.Fatalf("RestoreStopBudget %s < %s", RestoreStopBudget, want)
+	}
+}

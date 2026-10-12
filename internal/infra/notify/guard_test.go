@@ -46,14 +46,18 @@ func TestGuardRefusesPrivateTargets(t *testing.T) {
 		!strings.Contains(err.Error(), "private") {
 		t.Fatalf("smtp to loopback: %v", err)
 	}
-	if err := checkHost(ctx, "smtp://u:p@10.0.0.5:25/"); !errors.Is(err, ErrPrivateTarget) {
-		t.Fatalf("smtp to RFC 1918: %v", err)
+	// Matrix connects while its sender is created, so its host is
+	// checked up front; everything else is checked at dial time.
+	if err := checkHost(ctx, "matrix://u:p@10.0.0.5/?rooms=!r:x"); !errors.Is(err, ErrPrivateTarget) {
+		t.Fatalf("matrix to RFC 1918: %v", err)
 	}
-	if err := checkHost(ctx, "smtp://u:p@203.0.113.7:25/"); err != nil {
-		t.Fatalf("public smtp refused: %v", err)
+	if err := checkHost(ctx, "matrix://u:p@203.0.113.7/?rooms=!r:x"); err != nil {
+		t.Fatalf("public matrix refused: %v", err)
 	}
-	// HTTP services are checked at dial time, not by their URL host
-	// (telegram://token@telegram has no real host).
+	if err := checkHost(ctx, "smtp://u:p@10.0.0.5:25/"); err != nil {
+		t.Fatalf("smtp is guarded at dial time, not by checkHost: %v", err)
+	}
+	// telegram://token@telegram has no real host.
 	if err := checkHost(ctx, "telegram://1:a@telegram?chats=1"); err != nil {
 		t.Fatalf("telegram refused: %v", err)
 	}
@@ -108,11 +112,83 @@ func TestCheckHostSkipsHTTPServices(t *testing.T) {
 }
 
 func TestCheckHostErrorOmitsHost(t *testing.T) {
-	err := checkHost(context.Background(), "smtp://u:p@secret-host-xyz.invalid:25/")
+	err := checkHost(context.Background(), "matrix://u:p@secret-host-xyz.invalid/?rooms=!r:x")
 	if err == nil {
 		t.Fatal("an unresolvable host was accepted")
 	}
 	if strings.Contains(err.Error(), "secret-host-xyz") {
 		t.Fatalf("host leaked: %v", err)
+	}
+}
+
+// connCounter is a TCP listener that counts the connections it accepts and
+// answers each with a minimal HTTP 200, so every service gets as far as it
+// can.
+func connCounter(t *testing.T) (string, *atomic.Int32) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	var n atomic.Int32
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			n.Add(1)
+			_, _ = c.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}"))
+			c.Close()
+		}
+	}()
+	return ln.Addr().String(), &n
+}
+
+// loopbackURLs points every service whose destination the URL chooses at
+// addr (services with a fixed public host cannot be aimed anywhere).
+func loopbackURLs(addr string) map[string]string {
+	return map[string]string{
+		"bark":       "bark://:devicekey@" + addr + "/?scheme=http",
+		"generic":    "generic://" + addr + "/hook?disabletls=yes",
+		"gotify":     "gotify://" + addr + "/Aaaaaaaaaaaaaaa?disabletls=yes",
+		"matrix":     "matrix://user:pass@" + addr + "/?rooms=!r:x&disableTLS=yes",
+		"mattermost": "mattermost://" + addr + "/abcdefghijklmnopqrstuvwxyz?disabletls=yes",
+		"ntfy":       "ntfy://" + addr + "/topic?scheme=http",
+		"rocketchat": "rocketchat://" + addr + "/tokenA/tokenB",
+		"signal":     "signal://" + addr + "/+1234567890/+1234567891?disabletls=yes",
+		"opsgenie":   "opsgenie://" + addr + "/apikey",
+		"googlechat": "googlechat://" + addr + "/v1/spaces/foo/messages?key=k&token=t",
+		"smtp":       "smtp://u:p@" + addr + "/?fromaddress=a@b.c&toaddresses=d@e.f&encryption=None&usestarttls=no",
+		"mqtt":       "mqtt://" + addr + "/topic?disabletls=yes",
+		"xmpp":       "xmpp://u@x.y:p@" + addr + "/?toaddresses=a@b.c",
+	}
+}
+
+func TestServiceNeverConnects(t *testing.T) {
+	addr, n := connCounter(t)
+	for name, raw := range loopbackURLs(addr) {
+		_, _ = Service(raw)
+		if got := n.Load(); got != 0 {
+			t.Fatalf("validating a %s URL opened %d connection(s)", name, got)
+		}
+	}
+}
+
+func TestGuardedSendNeverConnectsToPrivate(t *testing.T) {
+	addr, n := connCounter(t)
+	guarded := NewShoutrrr(2*time.Second, false)
+	for name, raw := range loopbackURLs(addr) {
+		_ = guarded.Send(context.Background(), raw, "T", "B")
+		if got := n.Load(); got != 0 {
+			t.Fatalf("a guarded %s send reached a loopback listener (%d connection(s))", name, got)
+		}
+	}
+	// The listener itself works: allowed sends do reach it.
+	allowed := NewShoutrrr(2*time.Second, true)
+	_ = allowed.Send(context.Background(), loopbackURLs(addr)["generic"], "T", "B")
+	if n.Load() == 0 {
+		t.Fatal("an allowed send never reached the listener")
 	}
 }

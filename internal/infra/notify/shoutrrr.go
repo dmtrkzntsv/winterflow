@@ -23,9 +23,11 @@ const maxURLLength = 2048
 // Shoutrrr sends through Shoutrrr with a per-send timeout.
 type Shoutrrr struct {
 	timeout time.Duration
-	// client is the guarded HTTP client; nil when private targets are
-	// allowed (Shoutrrr's own client is used).
+	// client and dial are the guarded HTTP client and TCP dialer (smtp,
+	// mqtt, xmpp); nil when private targets are allowed (Shoutrrr's own are
+	// used).
 	client *http.Client
+	dial   types.DialContextFunc
 }
 
 // NewShoutrrr builds a sender whose sends give up after timeout. Unless
@@ -35,13 +37,18 @@ type Shoutrrr struct {
 func NewShoutrrr(timeout time.Duration, allowPrivate bool) *Shoutrrr {
 	s := &Shoutrrr{timeout: timeout}
 	if !allowPrivate {
-		s.client = guardedClient(timeout)
+		d := guardedDialer(timeout)
+		s.client = guardedClient(d, timeout)
+		s.dial = d.DialContext
 	}
 	return s
 }
 
 // Service validates rawURL as a Shoutrrr URL and returns its service name:
 // the scheme without a "+transport" suffix ("generic+https" -> "generic").
+// It never connects anywhere: a service that would connect while being
+// created (dialsOnCreate) is only checked for a host, and its other
+// mistakes surface on the first send, which is guarded.
 func Service(rawURL string) (string, error) {
 	if rawURL == "" || len(rawURL) > maxURLLength {
 		return "", errors.New("the notification URL is empty or too long")
@@ -50,10 +57,17 @@ func Service(rawURL string) (string, error) {
 	if err != nil || u.Scheme == "" {
 		return "", errors.New("the notification URL is not a valid URL")
 	}
+	name := scheme(u)
+	if dialsOnCreate[name] {
+		if u.Hostname() == "" {
+			return "", fmt.Errorf("invalid %s URL: it has no host", u.Scheme)
+		}
+		return name, nil
+	}
 	if _, err := shoutrrr.CreateSenderWithOptions(types.SenderOptions{}, rawURL); err != nil {
 		return "", fmt.Errorf("invalid %s URL: %s", u.Scheme, Redact(err.Error(), rawURL))
 	}
-	return strings.SplitN(strings.ToLower(u.Scheme), "+", 2)[0], nil
+	return name, nil
 }
 
 // Send delivers one notification. It returns when the service answers, the
@@ -65,6 +79,7 @@ func (s *Shoutrrr) Send(ctx context.Context, rawURL, title, body string) error {
 			return errors.New(Redact(err.Error(), rawURL))
 		}
 		opts.HTTPClient = s.client
+		opts.DialContext = s.dial
 	}
 	r, err := shoutrrr.CreateSenderWithOptions(opts, rawURL)
 	if err != nil {

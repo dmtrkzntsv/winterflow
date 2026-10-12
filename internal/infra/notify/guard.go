@@ -68,22 +68,19 @@ func Private(ip net.IP) bool {
 	return false
 }
 
-// httpServices are the Shoutrrr schemes that send through the injected
-// HTTP client, whose dialer refuses private addresses at connect time (no
-// DNS-rebinding window). Every other scheme (smtp, mqtt, xmpp, …) dials
-// on its own and is checked by resolving its host first.
-var httpServices = map[string]bool{
-	"bark": true, "discord": true, "generic": true, "googlechat": true, "gotify": true, "join": true,
-	"lark": true, "matrix": true, "mattermost": true, "ntfy": true, "opsgenie": true, "pagerduty": true,
-	"pushover": true, "rocketchat": true, "signal": true, "slack": true, "teams": true, "telegram": true,
-	"twilio": true, "wecom": true, "zulip": true, "ifttt": true, "pushbullet": true, "notifiarr": true,
-	"signalgrid": true, "homeassistant": true,
-}
+// dialsOnCreate are the Shoutrrr schemes whose sender connects while it is
+// being created, before Shoutrrr injects our client and dialer: Matrix logs
+// in from its Initialize. Their host is resolved and checked up front, and
+// Service never creates them. Every other service connects only when
+// sending, through the guarded HTTP client or dialer (no DNS-rebinding
+// window).
+var dialsOnCreate = map[string]bool{"matrix": true}
 
-// guardedClient is an HTTP client whose connections to private addresses
-// fail. It ignores proxy settings: a proxy would hide the destination.
-func guardedClient(timeout time.Duration) *http.Client {
-	dialer := &net.Dialer{
+// guardedDialer is a dialer whose connections to private addresses fail.
+// Control sees the resolved address, so a name that resolves (or later
+// re-resolves) to a private address is refused too.
+func guardedDialer(timeout time.Duration) *net.Dialer {
+	return &net.Dialer{
 		Timeout: timeout,
 		Control: func(_, address string, _ syscall.RawConn) error {
 			host, _, err := net.SplitHostPort(address)
@@ -96,22 +93,33 @@ func guardedClient(timeout time.Duration) *http.Client {
 			return nil
 		},
 	}
+}
+
+// guardedClient is an HTTP client that dials through d. It ignores proxy
+// settings: a proxy would hide the destination.
+func guardedClient(d *net.Dialer, timeout time.Duration) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
-	transport.DialContext = dialer.DialContext
+	transport.DialContext = d.DialContext
 	return &http.Client{Transport: transport, Timeout: timeout}
 }
 
-// checkHost resolves the host of a non-HTTP service URL and refuses
-// private addresses. HTTP services are guarded at dial time instead.
+// scheme is rawURL's service name: the scheme without a "+transport"
+// suffix ("generic+https" -> "generic").
+func scheme(u *url.URL) string {
+	return strings.SplitN(strings.ToLower(u.Scheme), "+", 2)[0]
+}
+
+// checkHost resolves the host of a service that connects while it is
+// being created (dialsOnCreate) and refuses private addresses. Other
+// services are guarded at dial time instead.
 func checkHost(ctx context.Context, rawURL string) error {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return errors.New("the notification URL is not a valid URL")
 	}
-	scheme := strings.SplitN(strings.ToLower(u.Scheme), "+", 2)[0]
 	host := u.Hostname()
-	if httpServices[scheme] || host == "" {
+	if !dialsOnCreate[scheme(u)] || host == "" {
 		return nil
 	}
 	if ip := net.ParseIP(host); ip != nil {

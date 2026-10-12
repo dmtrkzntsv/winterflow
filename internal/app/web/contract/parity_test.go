@@ -16,10 +16,13 @@ import (
 	happ "winterflow/internal/app/web/handler/app"
 	"winterflow/internal/app/web/handler/server"
 	hsv "winterflow/internal/app/web/handler/sharedvars"
+	htpl "winterflow/internal/app/web/handler/templates"
 	"winterflow/internal/app/web/handler/user"
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
+	"winterflow/internal/domain/template"
 	"winterflow/internal/domain/usecase/sharedvars"
+	tuc "winterflow/internal/domain/usecase/templates"
 )
 
 var (
@@ -130,6 +133,15 @@ func TestParity(t *testing.T) {
 	rec("save org variable", p.post(t, "/api/v1/org/save-shared-variable",
 		hsv.SaveVariableRequest{Name: "PARITY", Value: strp("1"), Description: "parity"})).
 		expect(t, http.StatusOK).data(t, &saved)
+
+	var tpl tuc.SavedTemplate
+	rec("save template", p.post(t, "/api/v1/template/save-template", htpl.SaveTemplateRequest{
+		Name: "parity", Body: template.Body{Files: map[string]string{"compose.yaml": "services: {app: {image: x}}\n"}, AppName: "parity-app"},
+	})).expect(t, http.StatusOK).data(t, &tpl)
+	rec("create instance (wait)", p.post(t, "/api/v1/instance/create-instance", htpl.CreateInstanceRequest{
+		ServerID: sid, Key: "parity-1", TemplateID: tpl.ID, Wait: true,
+	})).expect(t, http.StatusOK)
+	rec("list templates", p.get(t, "/api/v1/template/get-templates", nil)).expect(t, http.StatusOK)
 
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)

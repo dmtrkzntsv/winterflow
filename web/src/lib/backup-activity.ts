@@ -8,25 +8,43 @@ import type { BackupHealth } from "@/lib/backups";
 
 export type Activity = "backup" | "restore";
 
+// createStore is a value with subscribers, for useSyncExternalStore. set
+// takes a new object per change: snapshots are compared by identity.
+function createStore<T>(initial: T) {
+  let value = initial;
+  const listeners = new Set<() => void>();
+  return {
+    get: () => value,
+    set(next: T) {
+      value = next;
+      for (const l of listeners) l();
+    },
+    subscribe(l: () => void) {
+      listeners.add(l);
+      return () => {
+        listeners.delete(l);
+      };
+    },
+  };
+}
+
 // What is running, by app id then backup name: every run in flight (a
 // Back up now and a restore of one backup can overlap, each ends on its
-// own). A new object per change: useSyncExternalStore compares snapshots by
-// identity.
+// own).
 type Running = Readonly<Record<string, readonly Activity[]>>;
 type ActivityMap = Readonly<Record<string, Running>>;
 
-let snapshot: ActivityMap = {};
-const listeners = new Set<() => void>();
+const activity = createStore<ActivityMap>({});
 
 function change(appId: string, backup: string, update: (kinds: readonly Activity[]) => readonly Activity[]) {
+  const snapshot = activity.get();
   const app = { ...snapshot[appId] };
   const kinds = update(app[backup] ?? []);
   if (kinds.length > 0) app[backup] = kinds;
   else delete app[backup];
   const next = { ...snapshot, [appId]: app };
   if (Object.keys(app).length === 0) delete (next as Record<string, unknown>)[appId];
-  snapshot = next;
-  for (const l of listeners) l();
+  activity.set(next);
 }
 
 // trackActivity marks a backup as running and returns the function that
@@ -44,20 +62,13 @@ export function trackActivity(appId: string, backup: string, kind: Activity): ()
   };
 }
 
-const subscribe = (l: () => void) => {
-  listeners.add(l);
-  return () => {
-    listeners.delete(l);
-  };
-};
-
 const NONE: Running = {};
 
 // useActivity is what is running for an app: backup name -> its runs.
 export function useActivity(appId: string): Running {
   return useSyncExternalStore(
-    subscribe,
-    () => snapshot[appId] ?? NONE,
+    activity.subscribe,
+    () => activity.get()[appId] ?? NONE,
     () => NONE,
   );
 }
@@ -128,28 +139,27 @@ export function shownHealth(overlay: Overlay | undefined, snapshot: BackupHealth
 }
 
 type Overlays = Readonly<Record<string, Readonly<Record<string, Overlay>>>>;
-let overlays: Overlays = {};
-const overlayListeners = new Set<() => void>();
+const overlayStore = createStore<Overlays>({});
 
 // holdHealth records an operation's outcome for a backup (it outlives the
 // tab, like the activity above).
 export function holdHealth(appId: string, backup: string, outcome: Outcome, prior: BackupHealth | undefined, now: number = Date.now()) {
+  const overlays = overlayStore.get();
   const app = { ...overlays[appId], [backup]: overlayFor(backup, outcome, prior, now) };
   for (const [name, o] of Object.entries(app)) if (now >= o.until) delete app[name];
-  overlays = { ...overlays, [appId]: app };
-  for (const l of overlayListeners) l();
+  overlayStore.set({ ...overlays, [appId]: app });
 }
 
 // releaseHealth gives a held health up (a report has shown its effect, or its
 // time is over): from then on the reports are followed again, even one that
 // differs.
 export function releaseHealth(appId: string, backup: string) {
+  const overlays = overlayStore.get();
   const app = overlays[appId];
   if (!app?.[backup]) return;
   const rest = { ...app };
   delete rest[backup];
-  overlays = { ...overlays, [appId]: rest };
-  for (const l of overlayListeners) l();
+  overlayStore.set({ ...overlays, [appId]: rest });
 }
 
 const NO_OVERLAYS: Readonly<Record<string, Overlay>> = {};
@@ -157,19 +167,13 @@ const NO_OVERLAYS: Readonly<Record<string, Overlay>> = {};
 // useOverlays is an app's held health by backup name.
 export function useOverlays(appId: string): Readonly<Record<string, Overlay>> {
   return useSyncExternalStore(
-    (l) => {
-      overlayListeners.add(l);
-      return () => {
-        overlayListeners.delete(l);
-      };
-    },
-    () => overlays[appId] ?? NO_OVERLAYS,
+    overlayStore.subscribe,
+    () => overlayStore.get()[appId] ?? NO_OVERLAYS,
     () => NO_OVERLAYS,
   );
 }
 
 // resetHeldHealth forgets every held health (tests share this module's state).
 export function resetHeldHealth() {
-  overlays = {};
-  for (const l of overlayListeners) l();
+  overlayStore.set({});
 }

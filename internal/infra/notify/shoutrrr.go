@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -94,8 +95,12 @@ func (s *Shoutrrr) Send(ctx context.Context, rawURL, title, body string) error {
 // port, "api") are not secrets and masking them would garble messages.
 const minSecretLen = 6
 
-// Redact removes rawURL and its secret-looking parts (user info, path
-// segments, query values) from msg.
+// Redact removes rawURL and its secret-looking parts (user info, host,
+// path segments, query values) from msg. Each part is also split on
+// [-:/@.] and every piece is masked on its own: services rebuild the URL
+// they call from those pieces (slack://hook:T-B-SECRET@webhook posts to
+// https://hooks.slack.com/services/T/B/SECRET), so the error text holds
+// them in a different arrangement.
 func Redact(msg, rawURL string) string {
 	if rawURL == "" {
 		return msg
@@ -112,10 +117,18 @@ func Redact(msg, rawURL string) string {
 			parts = append(parts, p)
 		}
 	}
+	parts = append(parts, u.Hostname())
 	parts = append(parts, strings.Split(u.Path, "/")...)
 	for _, vs := range u.Query() {
 		parts = append(parts, vs...)
 	}
+	for _, p := range parts {
+		parts = append(parts, strings.FieldsFunc(p, func(r rune) bool {
+			return strings.ContainsRune("-:/@.", r)
+		})...)
+	}
+	// Longest first, so a whole part is masked before its pieces.
+	sort.SliceStable(parts, func(i, j int) bool { return len(parts[i]) > len(parts[j]) })
 	for _, p := range parts {
 		if len(p) >= minSecretLen {
 			msg = strings.ReplaceAll(msg, p, "***")

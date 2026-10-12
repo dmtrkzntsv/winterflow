@@ -62,3 +62,56 @@ func TestGuardRefusesPrivateTargets(t *testing.T) {
 		t.Fatalf("allowed send: err=%v hits=%d", err, hits.Load())
 	}
 }
+
+func TestPrivateReservedAndEmbeddedRanges(t *testing.T) {
+	cases := map[string]bool{
+		"0.1.2.3":              true, // 0.0.0.0/8
+		"192.0.0.8":            true, // 192.0.0.0/24
+		"198.18.0.1":           true, // 198.18.0.0/15
+		"198.19.255.254":       true, // 198.18.0.0/15
+		"240.0.0.1":            true, // 240.0.0.0/4
+		"255.255.255.255":      true, // broadcast
+		"64:ff9b::a00:1":       true, // NAT64 of 10.0.0.1
+		"64:ff9b::7f00:1":      true, // NAT64 of 127.0.0.1
+		"64:ff9b:1::a9fe:a9fe": true, // local-use NAT64 of 169.254.169.254
+		"2002:c0a8:101::1":     true, // 6to4 of 192.168.1.1
+		"2002:a00:1::":         true, // 6to4 of 10.0.0.1
+		"1.1.1.1":              false,
+		"198.20.0.1":           false,
+		"192.0.1.1":            false,
+		"64:ff9b::808:808":     false, // NAT64 of 8.8.8.8
+		"2002:808:808::1":      false, // 6to4 of 8.8.8.8
+		"2606:4700:4700::1111": false,
+	}
+	for s, want := range cases {
+		if got := Private(net.ParseIP(s)); got != want {
+			t.Errorf("Private(%s) = %v, want %v", s, got, want)
+		}
+	}
+}
+
+// Services that send through the injected client are guarded at dial
+// time; resolving their "host" (a secret key) would fail and leak it.
+func TestCheckHostSkipsHTTPServices(t *testing.T) {
+	ctx := context.Background()
+	for _, raw := range []string{
+		"ifttt://SECRETWEBHOOKKEY/?events=ev",
+		"pushbullet://SECRETACCESSTOKEN/dev",
+		"notifiarr://SECRETAPIKEY123",
+		"signalgrid://SECRETCLIENTKEY/phone",
+	} {
+		if err := checkHost(ctx, raw); err != nil {
+			t.Errorf("%s: %v", raw, err)
+		}
+	}
+}
+
+func TestCheckHostErrorOmitsHost(t *testing.T) {
+	err := checkHost(context.Background(), "smtp://u:p@secret-host-xyz.invalid:25/")
+	if err == nil {
+		t.Fatal("an unresolvable host was accepted")
+	}
+	if strings.Contains(err.Error(), "secret-host-xyz") {
+		t.Fatalf("host leaked: %v", err)
+	}
+}

@@ -55,6 +55,31 @@ func TestRedactRemovesURLAndSecrets(t *testing.T) {
 	}
 }
 
+func TestRedactSlackWebhookPieces(t *testing.T) {
+	raw := "slack://hook:T1AAAAAA-B2BBBBBB-SECRETXYZ123@webhook"
+	msg := `failed to invoke webhook: Post "https://hooks.slack.com/services/T1AAAAAA/B2BBBBBB/SECRETXYZ123": dial tcp: lookup hooks.slack.com: no such host`
+	got := Redact(msg, raw)
+	for _, leak := range []string{"T1AAAAAA", "B2BBBBBB", "SECRETXYZ123"} {
+		if strings.Contains(got, leak) {
+			t.Errorf("%q leaked in %q", leak, got)
+		}
+	}
+}
+
+// Some services keep their secret in the URL host.
+func TestRedactMasksSecretHosts(t *testing.T) {
+	for raw, secret := range map[string]string{
+		"slack://T1AAAAAA/B2BBBBBB/SECRETXYZ123":      "T1AAAAAA",
+		"pushover://shoutrrr:APITOKEN123@USERKEY456/": "USERKEY456",
+		"discord://SECRETTOKEN789@123456789012345678": "123456789012345678",
+		"ifttt://SECRETWEBHOOKKEY/?events=ev":         "SECRETWEBHOOKKEY",
+	} {
+		if got := Redact("cannot reach "+secret+" now", raw); strings.Contains(got, secret) {
+			t.Errorf("%s: %q leaked in %q", raw, secret, got)
+		}
+	}
+}
+
 func TestSendPostsTitleAndBody(t *testing.T) {
 	got := make(chan map[string]string, 1)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

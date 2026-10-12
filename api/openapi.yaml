@@ -7924,9 +7924,10 @@ components:
         backups:
           additionalProperties:
             type: string
-          description: Backup name -> storage name, replacing the template default's
+          description: 'Backup name -> storage name, replacing the template default''s
             storage. Accepted only while the instance is pending; afterwards change
-            backups in the app's Backups tab.
+            backups in the app''s Backups tab. A pending instance keeps none of the
+            create''s overrides: send them again.'
           type: object
         key:
           type: string
@@ -7964,9 +7965,10 @@ components:
         backups:
           additionalProperties:
             type: string
-          description: Backup name -> storage name, replacing the template default's
+          description: 'Backup name -> storage name, replacing the template default''s
             storage. Accepted only while the instance is pending; afterwards change
-            backups in the app's Backups tab.
+            backups in the app''s Backups tab. A pending instance keeps none of the
+            create''s overrides: send them again.'
           type: object
         key:
           type: string

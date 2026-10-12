@@ -46,7 +46,8 @@ stop and delete copies of it over an API that a program can drive safely.
 ## Non-goals
 
 - A template expression language. Compose substitutes `${VAR}`; the API only
-  substitutes plain parameters into the app name and ingress hosts.
+  substitutes plain parameters into the app name, ingress hosts and ingress
+  ports.
 - Typed parameters (number, yes/no, list). Values are strings; `pattern`
   validates them.
 - Merging hand edits with template changes. An instance's files are read-only
@@ -431,7 +432,8 @@ it.
   app you can edit freely; template upgrades no longer reach it"), then the
   editor is enabled and the badge is gone.
 - Everything else (Backups, Logs, Metrics, History, start/stop, delete) is as
-  for any app. Delete also retires the key.
+  for any app. Delete also retires the key, from the instance routes and from
+  `delete-app` alike.
 
 **Existing app: Settings → Save as template.**
 
@@ -454,7 +456,7 @@ the org Variables page. A failure names the app and links to it.
 | 400 | a named field: missing required value, value not matching its pattern, unknown parameter, secret for a plain parameter, host not covered, missing storage, invalid template body |
 | 404 | unknown template, key or rollout, or one of another org |
 | 403 | a server the caller's org does not own |
-| 409 | key in use with different values, retired key, concurrent template edit, active rollout for the template, template with live instances |
+| 409 | key in use with different values, retired key, concurrent template edit, active rollout for the template, template with live instances, `save-app` or `rollback-app` on an instance's app |
 | agent error | with `wait`, the deploy's own failure; without it, over SSE |
 
 ## Security and resource invariants
@@ -465,8 +467,14 @@ the org Variables page. A failure names the app and links to it.
   pass unchanged into the app's encrypted variables. No route returns them;
   `get-instance` lists their names only. A template never holds a secret value.
 - Rendering substitutes only plain parameters, only into the app name,
-  ingress hosts and ingress ports, and the results go through the existing validation. There is
-  no expression language.
+  ingress hosts and ingress ports, and the results go through the existing
+  validation. There is no expression language.
+- A secret that does not have the ECIES wire format's shape is refused (400),
+  so a plaintext never reaches an app's history; a plain value or default may
+  not contain `$`, which compose would interpolate from the app's `.env`.
+- An instance's app changes only through its instance: `save-app` and
+  `rollback-app` refuse it (409) while the instance is `pending` or
+  `created`; `delete-app` deletes the instance too (its key is retired).
 - Regexes are RE2, at most 512 bytes; template bodies at most 1 MiB.
 - Every wait is bounded: `wait` 10 minutes; rollout steps 10 minutes for the
   command and 5 for health; leases 2 minutes.

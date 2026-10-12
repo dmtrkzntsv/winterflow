@@ -89,6 +89,7 @@ files:
           DATABASE_DSN: sqlite:///data/twillingate.db
           RETENTION_EVENTS_AGGREGATE_DAYS: ${RETENTION_DAYS}
           INGEST_DISABLED: ${INGEST_DISABLED}
+        ports: ["127.0.0.1:${PORT}:8080"]
         volumes: [data:/data]
     volumes: { data: {} }
     x-winterflow:
@@ -97,6 +98,7 @@ files:
 parameters:
   - { name: NAME, required: true, pattern: "^[a-z]{3,20}$", description: "Instance name" }
   - { name: VERSION, required: true }
+  - { name: PORT, required: true, pattern: "^[1-9][0-9]{0,4}$", description: "Host port the ingress forwards to" }
   - { name: MEMORY_MAX, default: 256m }
   - { name: RETENTION_DAYS, default: "365" }
   - { name: INGEST_DISABLED, default: "" }
@@ -105,7 +107,7 @@ app_name: ${NAME}
 icon: chart
 color: "#2563eb"
 ingress:
-  - { host: "${NAME}.twillingate.app", service: app, port: 8080 }
+  - { host: "${NAME}.twillingate.app", service: app, port: "${PORT}" }
 backups:
   db: { enabled: true, storage: tenants }
 note: "bump image to v0.15"   # optional, per revision
@@ -117,8 +119,11 @@ note: "bump image to v0.15"   # optional, per revision
   `pattern`, `description`.
 - `app_name`, `icon`, `color`: the app's catalog record. `app_name` may use
   `${PARAM}` of plain parameters.
-- `ingress`: host → service:port rows, rendered into the app's ingress config.
-  Hosts may use `${PARAM}` of plain parameters.
+- `ingress`: host → port rows, rendered into the app's ingress config. Hosts
+  may use `${PARAM}` of plain parameters. `port` is a number or `${PARAM}` of a
+  plain parameter. `service` is informational: winterflow's ingress forwards a
+  hostname to `127.0.0.1:<port>` on the host, so each instance publishes its own
+  host port (`ports: ["127.0.0.1:${PORT}:8080"]` above).
 - `backups`: per recipe backup name, the defaults applied when the instance is
   created: `enabled`, `storage` (a storage name, resolved on the instance's
   server), optional `every`/`keep` overrides as in C.
@@ -140,7 +145,7 @@ note: "bump image to v0.15"   # optional, per revision
   (`${X:-y}`): "SMTP_PASS is not a parameter; it must come from a shared
   variable on the server". This catches typos without blocking server-level
   variables.
-- `app_name` and ingress hosts reference only plain parameters.
+- `app_name`, ingress hosts and ingress ports reference only plain parameters.
 - The compose recipe passes C's recipe validation (`internal/domain/backup/recipe`);
   every `backups` default names a backup the recipe has.
 - Ingress rows pass the existing ingress validation once rendered with each
@@ -222,7 +227,7 @@ ordinary `app.save` payload. **The agent has no notion of templates.**
   upgrade, a secret not given again is sent as the `<encrypted>` placeholder,
   which keeps the agent's stored value.
 - **Catalog record:** `app_name`, `icon`, `color`, with plain parameters
-  substituted into `app_name`.
+  substituted into `app_name`, the ingress hosts and the ingress ports.
 - **Config blob:** the rendered ingress, the `instance` marker, and on create
   the backup overrides (template defaults, then the call's overrides).
 - **Backups on update and upgrade:** a backup that already has an override
@@ -289,8 +294,8 @@ Every route takes `server_id` and checks `RequireServerAccess`.
 | Route | Body / query | Does |
 |---|---|---|
 | `POST /api/v1/instance/create-instance` | `{server_id, key, template_id, revision?, parameters, secrets, backups?, wait?}` | create, or replay (above) |
-| `POST /api/v1/instance/update-instance` | `{server_id, key, parameters, secrets?, wait?}` | same revision, new values (merged with the stored ones) |
-| `POST /api/v1/instance/upgrade-instance` | `{server_id, key, revision, parameters?, secrets?, wait?}` | move to another revision; a newly required parameter without a default must be given |
+| `POST /api/v1/instance/update-instance` | `{server_id, key, parameters, secrets?, backups?, wait?}` | same revision, new values (merged with the stored ones) |
+| `POST /api/v1/instance/upgrade-instance` | `{server_id, key, revision, parameters?, secrets?, backups?, wait?}` | move to another revision; a newly required parameter without a default must be given |
 | `POST /api/v1/instance/control-instance` | `{server_id, key, action, wait?}` | `start`, `stop`, `restart` (today's app control) |
 | `POST /api/v1/instance/delete-instance` | `{server_id, key, delete_volumes, delete_backups, wait?}` | today's app delete; the key is retired (`deleted`) |
 | `POST /api/v1/instance/unlink-instance` | `{server_id, key, wait?}` | saves the app without the `instance` marker; the key is freed (`unlinked`) |
@@ -301,6 +306,11 @@ Every route takes `server_id` and checks `RequireServerAccess`.
 `{NAME: ciphertext}`, encrypted with the server's public key
 (`GET /api/v1/server/get-public-key`), only for secret parameters. `backups` is
 `{backup: {storage}}`, overriding the template's default storage.
+
+A **pending** instance (its create has not succeeded yet) is rendered on update
+and upgrade like a create: it must resend every secret (the agent holds no
+stored value to keep), the full backups list is sent, and `backups` overrides
+are accepted only while the instance is pending.
 
 Checks at create, update and upgrade (400, naming the parameter): required
 parameters present, unknown names refused, values matching their `pattern`,
@@ -454,8 +464,8 @@ the org Variables page. A failure names the app and links to it.
 - Secret parameter values reach the API only as ciphertext for one server and
   pass unchanged into the app's encrypted variables. No route returns them;
   `get-instance` lists their names only. A template never holds a secret value.
-- Rendering substitutes only plain parameters, only into the app name and
-  ingress hosts, and the results go through the existing validation. There is
+- Rendering substitutes only plain parameters, only into the app name,
+  ingress hosts and ingress ports, and the results go through the existing validation. There is
   no expression language.
 - Regexes are RE2, at most 512 bytes; template bodies at most 1 MiB.
 - Every wait is bounded: `wait` 10 minutes; rollout steps 10 minutes for the

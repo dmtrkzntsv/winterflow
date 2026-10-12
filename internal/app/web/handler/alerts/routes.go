@@ -12,6 +12,7 @@ import (
 // caller's (403).
 func (h *Handler) Routes(api.Guards) []api.Route {
 	bad := []int{http.StatusBadRequest}
+	target := []int{http.StatusBadRequest, http.StatusForbidden}
 	return []api.Route{
 		{
 			Method: http.MethodGet, Path: "/api/v1/alerts/get-channels", Handler: h.GetChannels, Auth: api.User,
@@ -57,6 +58,32 @@ func (h *Handler) Routes(api.Guards) []api.Route {
 			Method: http.MethodPost, Path: "/api/v1/alerts/delete-rule", Handler: h.DeleteRule, Auth: api.User,
 			Summary: "Delete an alert rule", Tag: "alerts",
 			Request: IDRequest{}, Errors: bad,
+		},
+		{
+			Method: http.MethodGet, Path: "/api/v1/alerts/get-overrides", Handler: h.GetOverrides, Auth: api.User,
+			Summary: "A server's or app's rule overrides", Tag: "alerts",
+			Query: TargetQuery{}, Response: []alert.Override{}, Errors: target,
+		},
+		{
+			Method: http.MethodPost, Path: "/api/v1/alerts/save-override", Handler: h.SaveOverride, Auth: api.User,
+			Summary: "Override a rule for one server or app", Tag: "alerts",
+			Description: "Null fields inherit the rule's; `channel_ids` null inherits, [] silences.",
+			Request:     alert.Override{}, Response: alert.Override{}, Errors: target,
+		},
+		{
+			Method: http.MethodPost, Path: "/api/v1/alerts/delete-override", Handler: h.DeleteOverride, Auth: api.User,
+			Summary: "Remove a rule override", Tag: "alerts",
+			Request: DeleteOverrideRequest{}, Errors: target,
+		},
+		{
+			Method: http.MethodGet, Path: "/api/v1/alerts/get-events", Handler: h.GetEvents, Auth: api.User,
+			Summary: "Alert history, newest first", Tag: "alerts",
+			Query: EventsQuery{}, Response: EventsResponse{}, Errors: target,
+		},
+		{
+			Method: http.MethodGet, Path: "/api/v1/alerts/get-active", Handler: h.GetActive, Auth: api.User,
+			Summary: "Firing alerts", Tag: "alerts",
+			Query: ActiveQuery{}, Response: []ActiveAlert{}, Errors: target,
 		},
 	}
 }

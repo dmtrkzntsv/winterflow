@@ -98,6 +98,7 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 		Latest:      d.LatestMetrics,
 		StatusCache: d.StatusCache,
 		Disabled:    !d.Cfg.IsMetricsEnabled(),
+		Alerts:      d.AlertRepository,
 	})
 	// Typed nils must not become non-nil interfaces: without JWT_SECRET
 	// there is no box, and the spec-only route table has no notifier.

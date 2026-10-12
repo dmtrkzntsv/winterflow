@@ -4,6 +4,7 @@
 package monitoring
 
 import (
+	"context"
 	"time"
 
 	"winterflow/internal/domain/metrics"
@@ -12,12 +13,18 @@ import (
 	"winterflow/pkg/logger"
 )
 
+// FiringCounter counts firing alerts per server (port.AlertRepository).
+type FiringCounter interface {
+	CountFiring(ctx context.Context) (map[string]int, error)
+}
+
 // Handler serves /api/v1/metrics/*.
 type Handler struct {
 	servers  port.ServerRepository
 	repo     port.MetricRepository
 	latest   *metrics.LatestStore
 	status   *status.Cache
+	alerts   FiringCounter
 	log      *logger.Logger
 	disabled bool
 	now      func() time.Time
@@ -33,6 +40,8 @@ type Deps struct {
 	// Disabled mirrors METRICS_ENABLED=false: the API stores nothing then,
 	// so the routes answer 200 with empty series and an empty overview.
 	Disabled bool
+	// Alerts feeds the overview's firing-alert badges; nil counts none.
+	Alerts FiringCounter
 }
 
 // NewHandler builds the handler.
@@ -42,6 +51,7 @@ func NewHandler(d *Deps) *Handler {
 		repo:     d.Metrics,
 		latest:   d.Latest,
 		status:   d.StatusCache,
+		alerts:   d.Alerts,
 		log:      d.Logger,
 		disabled: d.Disabled,
 		now:      time.Now,

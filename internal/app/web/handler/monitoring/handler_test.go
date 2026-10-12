@@ -323,3 +323,26 @@ func TestDisabledServesEmpty(t *testing.T) {
 		t.Fatalf("foreign: %d", w.Code)
 	}
 }
+
+// fakeCounter serves CountFiring.
+type fakeCounter struct {
+	counts map[string]int
+	err    error
+}
+
+func (f fakeCounter) CountFiring(context.Context) (map[string]int, error) { return f.counts, f.err }
+
+// The overview carries each server's firing-alert count; a count failure
+// is logged and shows zero.
+func TestOverviewCountsFiringAlerts(t *testing.T) {
+	h, _, _ := newHandler(&fakeRepo{}, fakeServers{})
+	h.alerts = fakeCounter{counts: map[string]int{"srv-1": 2, "srv-other": 5}}
+	if s := decode[OverviewResponse](t, get(h.Overview, "/x", "u1")).Servers[0]; s.AlertsFiring != 2 {
+		t.Fatalf("alerts_firing = %d", s.AlertsFiring)
+	}
+	h.alerts = fakeCounter{err: errors.New("db down")}
+	w := get(h.Overview, "/x", "u1")
+	if w.Code != http.StatusOK || decode[OverviewResponse](t, w).Servers[0].AlertsFiring != 0 {
+		t.Fatalf("count error: %d %s", w.Code, w.Body.String())
+	}
+}

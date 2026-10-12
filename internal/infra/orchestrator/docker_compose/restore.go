@@ -64,6 +64,18 @@ func restoreNeeds(m layout.Manifest) time.Duration {
 	return max(restoreMinBudget, time.Duration(max(m.RawSize, 0)/restoreExtractRate)*time.Second)
 }
 
+// timeShort reports whether ctx's deadline leaves less than restoring m
+// needs (restoreNeeds), with the time left (rounded to seconds) and the time
+// needed. No deadline is never short.
+func timeShort(ctx context.Context, m layout.Manifest) (left, need time.Duration, short bool) {
+	dl, ok := ctx.Deadline()
+	if !ok {
+		return 0, 0, false
+	}
+	left, need = time.Until(dl), restoreNeeds(m)
+	return left.Round(time.Second), need, left < need
+}
+
 // restoreDownloadMargin is the room beyond a download's size the disk must
 // have free: the agent's own database and logs live on it too.
 const restoreDownloadMargin = 64 << 20
@@ -335,8 +347,8 @@ func (r *Repository) RestoreBackup(ctx context.Context, job RestoreJob) (command
 
 	// Too little time left could cut the helper short, which leaves the
 	// data in doubt: refuse before anything is changed.
-	if dl, ok := ctx.Deadline(); ok && time.Until(dl) < restoreNeeds(m) {
-		return resp, fmt.Errorf("too little time is left to restore safely (%s; at least %s are needed): nothing was changed", time.Until(dl).Round(time.Second), restoreNeeds(m))
+	if left, need, short := timeShort(ctx, m); short {
+		return resp, fmt.Errorf("too little time is left to restore safely (%s; at least %s are needed): nothing was changed", left, need)
 	}
 	end, err := r.beginRestore(job.AppID)
 	if err != nil {
@@ -409,12 +421,12 @@ func (r *Repository) RestoreBackup(ctx context.Context, job RestoreJob) (command
 	// The pre-restore copy (and the download) may have used the time the
 	// helper needs: a helper cut short by the budget leaves the data in
 	// doubt, so look again, now that nothing has been replaced.
-	if dl, ok := ctx.Deadline(); ok && time.Until(dl) < restoreNeeds(m) {
+	if left, need, short := timeShort(ctx, m); short {
 		note := ""
 		if resp.PreRestorePoint != "" {
 			note = "; the pre-restore copy " + resp.PreRestorePoint + " was kept"
 		}
-		return resp, fail(fmt.Errorf("too little time is left after the pre-restore copy to put the data back safely (%s; at least %s are needed): nothing was changed%s", time.Until(dl).Round(time.Second), restoreNeeds(m), note))
+		return resp, fail(fmt.Errorf("too little time is left after the pre-restore copy to put the data back safely (%s; at least %s are needed): nothing was changed%s", left, need, note))
 	}
 	r.updateRestoreMark(job.AppID, func(m *RestoreMark) {
 		m.Phase, m.PreRestorePoint = restorePhaseHelper, resp.PreRestorePoint

@@ -2,6 +2,7 @@ import { StrictMode } from "react"
 import { createRoot } from "react-dom/client"
 import { createBrowserRouter, RouterProvider } from "react-router-dom"
 
+import "@fontsource-variable/inter"
 import "@/lib/i18n"
 
 import { RequireAuth } from "@/components/require-auth"
@@ -24,7 +25,11 @@ import UserPasswordPage from "@/pages/user-password"
 import OrgMembersPage from "@/pages/org-members"
 import LoginPage from "@/pages/login"
 import RegisterPage from "@/pages/register"
+import { followSystemTheme } from "@/lib/theme"
 import "./index.css"
+
+// Dark mode follows the OS; set before the first render so nothing flashes.
+followSystemTheme()
 
 const router = createBrowserRouter([
   {

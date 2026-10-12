@@ -5,9 +5,12 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme {
+    /* Inter is bundled (@fontsource-variable/inter, imported in main.tsx),
+       so every machine renders the same face. */
     --font-sans:
-        "Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont,
-        "Segoe UI", system-ui, sans-serif;
+        "Inter Variable", "Inter", ui-sans-serif, system-ui, -apple-system,
+        BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+        sans-serif;
 }
 
 @layer base {
@@ -18,6 +21,8 @@
     body {
         font-family: var(--font-sans);
         min-height: 100vh;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
     }
 }
 
@@ -59,6 +64,10 @@
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-ring: var(--sidebar-ring);
+    --color-sky: var(--sky);
+    --color-skeleton: var(--skeleton);
+    --color-skeleton-shine: var(--skeleton-shine);
+    --shadow-card: var(--card-shadow);
     --animate-accordion-down: accordion-down 0.2s ease-out;
     --animate-accordion-up: accordion-up 0.2s ease-out;
 
@@ -82,76 +91,84 @@
 }
 
 :root {
-    --radius: 0.5rem;
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.141 0.005 285.823);
-    --card: oklch(1 0 0);
-    --card-foreground: oklch(0.141 0.005 285.823);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.141 0.005 285.823);
-    --primary: oklch(0.623 0.214 259.815);
-    --primary-foreground: oklch(0.97 0.014 254.604);
-    --secondary: oklch(0.967 0.001 286.375);
-    --secondary-foreground: oklch(0.21 0.006 285.885);
-    --muted: oklch(0.967 0.001 286.375);
-    --muted-foreground: oklch(0.552 0.016 285.938);
-    --accent: oklch(0.967 0.001 286.375);
-    --accent-foreground: oklch(0.21 0.006 285.885);
-    --destructive: oklch(0.65 0.15 35);
-    --destructive-foreground: oklch(0.97 0.014 254.604);
-    --border: oklch(0.92 0.004 286.32);
-    --input: oklch(0.92 0.004 286.32);
-    --ring: oklch(0.623 0.214 259.815);
-    --chart-1: oklch(0.646 0.222 41.116);
-    --chart-2: oklch(0.6 0.118 184.704);
-    --chart-3: oklch(0.398 0.07 227.392);
-    --chart-4: oklch(0.828 0.189 84.429);
-    --chart-5: oklch(0.769 0.188 70.08);
-    --sidebar: oklch(0.985 0 0);
-    --sidebar-foreground: oklch(0.141 0.005 285.823);
-    --sidebar-primary: oklch(0.623 0.214 259.815);
-    --sidebar-primary-soft: oklch(0.75 0.14 259.815);
-    --sidebar-primary-foreground: oklch(0.97 0.014 254.604);
-    --sidebar-accent: oklch(0.967 0.001 286.375);
-    --sidebar-accent-foreground: oklch(0.21 0.006 285.885);
-    --sidebar-border: oklch(0.92 0.004 286.32);
-    --sidebar-ring: oklch(0.623 0.214 259.815);
+    /* Twillingate's palette: a cool blue-grey page with white cards on it,
+       the brand ocean blue as primary and lead chart series, then teal,
+       saffron, raspberry and violet. The sidebar is a deep navy sea. */
+    --radius: 0.75rem;
+    --background: #f3f7fb;
+    --foreground: #0b1f36;
+    --card: #ffffff;
+    --card-foreground: #0b1f36;
+    --popover: #ffffff;
+    --popover-foreground: #0b1f36;
+    --primary: #1478c9;
+    --primary-foreground: #ffffff;
+    --secondary: #e6f0f9;
+    --secondary-foreground: #0a4d8c;
+    --muted: #eaf1f7;
+    --muted-foreground: #587089;
+    --accent: #e3effa;
+    --accent-foreground: #0a4d8c;
+    --destructive: #d23b3b;
+    --destructive-foreground: #ffffff;
+    --border: #dbe5ee;
+    --input: #d0dce8;
+    --ring: #2e9fe5;
+    --chart-1: #1478c9;
+    --chart-2: #11a08a;
+    --chart-3: #e9a524;
+    --chart-4: #d6457a;
+    --chart-5: #7c5ce6;
+    --sky: #8fd3ff;
+    --skeleton: #e3edf6;
+    --skeleton-shine: #f4f9fd;
+    /* Card elevation: a hairline contact shadow plus a soft drop. Dark mode
+       has none (the border carries the edge). */
+    --card-shadow: 0 1px 2px rgb(11 31 54 / 0.04), 0 6px 16px -10px rgb(11 31 54 / 0.14);
+    --sidebar: #061a30;
+    --sidebar-foreground: #c4def2;
+    --sidebar-primary: #8fd3ff;
+    --sidebar-primary-soft: #1478c9;
+    --sidebar-primary-foreground: #06223f;
+    --sidebar-accent: rgb(143 211 255 / 12%);
+    --sidebar-accent-foreground: #f8fcff;
+    --sidebar-border: rgb(143 211 255 / 12%);
+    --sidebar-ring: #62c3f3;
 }
 
 .dark {
-    --background: oklch(0.141 0.005 285.823);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.21 0.006 285.885);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.21 0.006 285.885);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.546 0.245 262.881);
-    --primary-foreground: oklch(0.379 0.146 265.522);
-    --secondary: oklch(0.274 0.006 286.033);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.274 0.006 286.033);
-    --muted-foreground: oklch(0.705 0.015 286.067);
-    --accent: oklch(0.274 0.006 286.033);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.72 0.12 35);
-    --destructive-foreground: oklch(0.985 0 0);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.488 0.243 264.376);
-    --chart-1: oklch(0.488 0.243 264.376);
-    --chart-2: oklch(0.696 0.17 162.48);
-    --chart-3: oklch(0.769 0.188 70.08);
-    --chart-4: oklch(0.627 0.265 303.9);
-    --chart-5: oklch(0.645 0.246 16.439);
-    --sidebar: oklch(0.21 0.006 285.885);
-    --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.546 0.245 262.881);
-    --sidebar-primary-soft: oklch(0.68 0.19 262.881);
-    --sidebar-primary-foreground: oklch(0.379 0.146 265.522);
-    --sidebar-accent: oklch(0.274 0.006 286.033);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.488 0.243 264.376);
+    color-scheme: dark;
+    --background: #071a2f;
+    --foreground: #e6f2fb;
+    --card: #0c233b;
+    --card-foreground: #e6f2fb;
+    --popover: #0e2742;
+    --popover-foreground: #e6f2fb;
+    --primary: #8fd3ff;
+    --primary-foreground: #06223f;
+    --secondary: #12304e;
+    --secondary-foreground: #e6f2fb;
+    --muted: #10294a;
+    --muted-foreground: #8aa6c1;
+    --accent: #143556;
+    --accent-foreground: #f8fcff;
+    --destructive: #ff7a70;
+    --destructive-foreground: #2a0806;
+    --border: rgb(143 211 255 / 11%);
+    --input: rgb(143 211 255 / 18%);
+    --ring: #62c3f3;
+    /* OKLCH L 0.66, inside the dark band; checked for colour-blind and
+       normal-vision separation against the card. */
+    --chart-1: #3899e2;
+    --chart-2: #05ab86;
+    --chart-3: #c38300;
+    --chart-4: #dc6292;
+    --chart-5: #927fe7;
+    --sky: #2e9fe5;
+    --skeleton: #11304f;
+    --skeleton-shine: #1a4169;
+    --card-shadow: 0 0 #0000;
+    --sidebar: #030d19;
 }
 
 @layer base {
@@ -230,5 +247,91 @@
     to {
         opacity: 1;
         transform: none;
+    }
+}
+
+/* The sidebar is a deep sea: lit from the top, darkening toward the floor
+   (twillingate's shell). Muted text and fills inside it are re-pointed at
+   the sidebar's light ink so shared components stay legible on navy. */
+[data-sidebar="sidebar"] {
+    background-image:
+        radial-gradient(120% 55% at 50% 0%, rgb(46 159 229 / 22%), transparent 70%),
+        linear-gradient(180deg, #0b3a66 0%, #061a30 45%, #030b15 100%);
+    --muted: rgb(143 211 255 / 12%);
+    --muted-foreground: rgb(196 222 242 / 62%);
+}
+
+/* A wash of sky blue behind the page title, gone by the time the content
+   starts. */
+.sky-wash {
+    background-repeat: no-repeat;
+    background-size: 100% 18rem;
+    background-image: linear-gradient(
+        180deg,
+        color-mix(in oklab, var(--sky) 22%, transparent) 0%,
+        transparent 100%
+    );
+}
+.dark .sky-wash {
+    background-image: linear-gradient(
+        180deg,
+        color-mix(in oklab, var(--sky) 12%, transparent) 0%,
+        transparent 100%
+    );
+}
+
+/* Loading placeholders: a cool frost with light passing across it, the same
+   sweep on every shape so a loading grid moves as one. */
+.frost {
+    background-color: var(--skeleton);
+    background-image: linear-gradient(
+        100deg,
+        transparent 30%,
+        var(--skeleton-shine) 50%,
+        transparent 70%
+    );
+    background-size: 200% 100%;
+    background-attachment: fixed;
+    animation: frost 1.6s ease-in-out infinite;
+}
+@keyframes frost {
+    from {
+        background-position: 150% 0;
+    }
+    to {
+        background-position: -50% 0;
+    }
+}
+
+/* A card's own controls: shown on hover or focus, always on touch screens. */
+.hover-reveal {
+    opacity: 0;
+    transition: opacity 150ms;
+}
+[data-slot="widget-card"]:hover .hover-reveal,
+.hover-reveal:focus-within,
+.hover-reveal[data-open] {
+    opacity: 1;
+}
+@media (hover: none) {
+    .hover-reveal {
+        opacity: 1;
+    }
+}
+
+/* A loading note that stays hidden through a quick hop and shows on a slow one. */
+.fade-in-late {
+    animation: fade-in-late 300ms ease-out 400ms both;
+}
+@keyframes fade-in-late {
+    from {
+        opacity: 0;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .frost,
+    .app-card-in {
+        animation: none;
     }
 }

@@ -57,7 +57,7 @@ func RunStatusReporter(ctx context.Context, src StatusSource, sink EventSink, in
 		}
 		payload, err := json.Marshal(statusReport(apps, src))
 		if err != nil {
-			log.Error("status report: marshal failed", err)
+			log.Error("status report: marshal failed", "error", err)
 			return
 		}
 		if err := sink(bus.EventAppsStatus, payload); err != nil {

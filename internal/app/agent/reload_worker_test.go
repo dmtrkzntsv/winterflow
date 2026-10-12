@@ -26,9 +26,21 @@ type fakeReloader struct {
 	skip     map[string]bool
 	block    chan struct{}
 	started  chan string
+	// candBlock, when set, holds each ReloadCandidates call until closed or
+	// its context ends; candGaveUp then receives the context error.
+	candBlock  chan struct{}
+	candGaveUp chan error
 }
 
-func (f *fakeReloader) ReloadCandidates(_ context.Context, req command.ReloadVarsRequest) ([]string, error) {
+func (f *fakeReloader) ReloadCandidates(ctx context.Context, req command.ReloadVarsRequest) ([]string, error) {
+	if f.candBlock != nil {
+		select {
+		case <-f.candBlock:
+		case <-ctx.Done():
+			f.candGaveUp <- ctx.Err()
+			return nil, ctx.Err()
+		}
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if len(req.AppIDs) > 0 {
@@ -176,6 +188,39 @@ func TestReloadWorkerDeadline(t *testing.T) {
 	w.Enqueue(command.ReloadVarsRequest{})
 	out := awaitOutcomes(t, got, 1)[0]
 	if out.OK || !strings.Contains(out.Error, "deadline") {
+		t.Fatalf("outcome = %+v", out)
+	}
+}
+
+func TestReloadWorkerCandidateLookupDeadline(t *testing.T) {
+	f := &fakeReloader{stale: map[string][]string{"a": {"X"}},
+		candBlock: make(chan struct{}), candGaveUp: make(chan error, 4)}
+	got := make(chan sinkCall, 4)
+	w := NewReloadWorker(f, collectSink(got), testLog())
+	w.candidatesTimeout = 50 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go w.Run(ctx)
+
+	// A hung docker ps: the lookup gives up at its deadline, the pass ends
+	// without reloading anything.
+	w.Enqueue(command.ReloadVarsRequest{})
+	select {
+	case err := <-f.candGaveUp:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("lookup ended with %v, want its deadline", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("candidate lookup never gave up")
+	}
+	if r := f.reloaded(); len(r) != 0 {
+		t.Fatalf("reloads = %v", r)
+	}
+
+	// Docker recovers: the worker still serves the next request.
+	close(f.candBlock)
+	w.Enqueue(command.ReloadVarsRequest{})
+	if out := awaitOutcomes(t, got, 1)[0]; out.AppID != "a" || !out.OK {
 		t.Fatalf("outcome = %+v", out)
 	}
 }

@@ -25,6 +25,10 @@ type Reloader interface {
 // pull images).
 const reloadTimeout = 10 * time.Minute
 
+// candidatesTimeout bounds one candidate lookup (a `docker ps`), so a hung
+// Docker daemon fails the pass instead of wedging the worker forever.
+const candidatesTimeout = 2 * time.Minute
+
 // ReloadWorker performs vars.reload work on one goroutine, one app at a
 // time, so the dispatcher (and standalone's single bridge goroutine) only
 // queues it. Requests arriving mid-pass are merged and re-evaluated after
@@ -34,7 +38,9 @@ type ReloadWorker struct {
 	sink    EventSink
 	log     *logger.Logger
 	timeout time.Duration
-	wake    chan struct{}
+	// candidatesTimeout bounds each ReloadCandidates call.
+	candidatesTimeout time.Duration
+	wake              chan struct{}
 
 	mu      sync.Mutex
 	pending reloadBatch
@@ -63,7 +69,7 @@ func (b reloadBatch) empty() bool { return !b.all && len(b.names) == 0 && len(b.
 // vars.reloaded event through sink. Start it with Run.
 func NewReloadWorker(r Reloader, sink EventSink, log *logger.Logger) *ReloadWorker {
 	return &ReloadWorker{
-		r: r, sink: sink, log: log, timeout: reloadTimeout,
+		r: r, sink: sink, log: log, timeout: reloadTimeout, candidatesTimeout: candidatesTimeout,
 		wake: make(chan struct{}, 1), pending: newBatch(), dropped: map[string]bool{},
 	}
 }
@@ -143,6 +149,10 @@ func (w *ReloadWorker) drain(ctx context.Context) {
 		}
 		appID := queue[0]
 		queue = queue[1:]
+		// Unmarked before it runs: a request that arrives during this
+		// reload (e.g. explicit app_ids for this very app, after another
+		// change) queues it again on purpose, since it must render the
+		// newer snapshot.
 		delete(queued, appID)
 		if w.isDropped(appID) {
 			continue
@@ -183,9 +193,14 @@ func (w *ReloadWorker) candidates(ctx context.Context, b reloadBatch) []string {
 	seen := map[string]bool{}
 	var out []string
 	for _, req := range reqs {
-		ids, err := w.r.ReloadCandidates(ctx, req)
+		cctx, cancel := context.WithTimeout(ctx, w.candidatesTimeout)
+		ids, err := w.r.ReloadCandidates(cctx, req)
+		cancel()
 		if err != nil {
-			w.log.Warn("shared variable reload: list candidates", "error", err)
+			// No app to attribute an outcome to: the request is dropped
+			// and the apps stay stale until the next vars.reload.
+			w.log.Warn("shared variable reload: list candidates failed, request dropped",
+				"names", req.Names, "app_ids", req.AppIDs, "error", err)
 			continue
 		}
 		for _, id := range ids {

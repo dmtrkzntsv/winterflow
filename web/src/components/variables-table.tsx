@@ -12,8 +12,10 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
+  coverageIncomplete,
   coverageLabel,
   type BuiltinVariable,
+  type EncryptionKeys,
   type InheritedVariable,
   type SharedVariable,
 } from "@/lib/shared-variables";
@@ -24,6 +26,8 @@ export type VariablesTableProps = {
   inherited?: InheritedVariable[];
   builtins?: BuiltinVariable[];
   serverNames: Map<string, string>;
+  // Org servers' keys: coverage spells out pending (unkeyed) servers.
+  keys?: EncryptionKeys;
   // Org page: a Coverage column ("All servers" / "Missing on …").
   showCoverage?: boolean;
   onEdit: (v: SharedVariable) => void;
@@ -59,6 +63,7 @@ export function VariablesTable({
   inherited,
   builtins,
   serverNames,
+  keys,
   showCoverage,
   onEdit,
   onDelete,
@@ -90,11 +95,17 @@ export function VariablesTable({
                 <TableRow key={v.id}>
                   <TableCell className="font-mono">{v.name}</TableCell>
                   <TableCell>
-                    <Value v={v} />
+                    <span className="inline-flex flex-wrap items-center gap-2">
+                      <Value v={v} />
+                      {/* Without a Coverage column (server tab) a purged copy still needs a cue. */}
+                      {!showCoverage && v.is_secret && v.missing_on.length > 0 ? (
+                        <Badge variant="destructive">missing here</Badge>
+                      ) : null}
+                    </span>
                   </TableCell>
                   {showCoverage ? (
-                    <TableCell className={v.missing_on.length > 0 ? "text-amber-700 dark:text-amber-400" : undefined}>
-                      {v.is_secret ? coverageLabel(v, serverNames) : "—"}
+                    <TableCell className={coverageIncomplete(v, keys) ? "text-amber-700 dark:text-amber-400" : undefined}>
+                      {v.is_secret ? coverageLabel(v, serverNames, keys) : "—"}
                     </TableCell>
                   ) : null}
                   <TableCell className="text-muted-foreground">{v.description}</TableCell>

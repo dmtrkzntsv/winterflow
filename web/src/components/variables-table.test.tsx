@@ -47,6 +47,23 @@ describe("VariablesTable", () => {
     expect(h.onResync).toHaveBeenCalledWith(base);
   });
 
+  it("flags a purged server secret as missing on the server tab", () => {
+    renderTable();
+    const own = screen.getByRole("region", { name: "This server" });
+    expect(within(own).getByText("missing here")).toBeInTheDocument();
+    expect(within(own).getByRole("button", { name: "Provide value" })).toBeInTheDocument();
+  });
+
+  it("spells out pending servers in the coverage column", () => {
+    renderTable({
+      showCoverage: true,
+      variables: [{ ...secret, missing_on: [] }],
+      keys: { servers: [{ server_id: "s3", name: "srv-3", public_key: "pk" }], pending_servers: [{ server_id: "s4", name: "srv-4" }] },
+    });
+    expect(screen.getByText("All keyed servers; 1 pending (no key yet)")).toBeInTheDocument();
+    expect(screen.queryByText("missing here")).not.toBeInTheDocument();
+  });
+
   it("groups inherited org variables read-only with overridden marks, then built-ins", () => {
     const inherited: InheritedVariable[] = [
       { ...base, id: "o1", scope: "org", value: "mail.org", overridden: true },

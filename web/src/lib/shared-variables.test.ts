@@ -6,6 +6,7 @@ vi.mock("@/lib/ecies", () => ({
 
 import {
   applySyncEvent,
+  coverageIncomplete,
   coverageLabel,
   createSharedVariablesApi,
   overrideNote,
@@ -37,6 +38,26 @@ describe("helpers", () => {
     expect(coverageLabel(secret, names)).toBe("All servers");
     expect(coverageLabel({ ...secret, missing_on: ["s3", "s9"] }, names)).toBe("Missing on srv-3, s9");
     expect(coverageLabel({ ...secret, is_secret: false }, names)).toBe("");
+  });
+
+  it("never claims all servers while a server has no key", () => {
+    const names = new Map([["s3", "srv-3"]]);
+    const keyed = { server_id: "s3", name: "srv-3", public_key: "pk" };
+    const pending = { server_id: "s4", name: "srv-4" };
+    const all = { servers: [keyed], pending_servers: [] };
+    const withPending = { servers: [keyed], pending_servers: [pending] };
+    const none = { servers: [], pending_servers: [pending] };
+    expect(coverageLabel(secret, names, all)).toBe("All servers");
+    expect(coverageIncomplete(secret, all)).toBe(false);
+    expect(coverageLabel(secret, names, withPending)).toBe("All keyed servers; 1 pending (no key yet)");
+    expect(coverageIncomplete(secret, withPending)).toBe(true);
+    expect(coverageLabel(secret, names, none)).toBe("No server has a key yet");
+    expect(coverageLabel(secret, names, { servers: [], pending_servers: [] })).toBe("No server has a key yet");
+    expect(coverageIncomplete(secret, none)).toBe(true);
+    const gap = { ...secret, missing_on: ["s3"] };
+    expect(coverageLabel(gap, names, withPending)).toBe("Missing on srv-3; 1 pending (no key yet)");
+    expect(coverageIncomplete(gap)).toBe(true);
+    expect(coverageIncomplete({ ...secret, is_secret: false }, none)).toBe(false);
   });
 
   it("summarizes a push", () => {

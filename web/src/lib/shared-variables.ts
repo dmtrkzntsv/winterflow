@@ -110,10 +110,28 @@ export function serverNameMap(keys: EncryptionKeys): Map<string, string> {
   return m;
 }
 
-export function coverageLabel(v: SharedVariable, names: Map<string, string>): string {
+// coverageLabel says which servers hold a copy of a secret. missing_on
+// counts keyed servers only, so "All servers" is claimed only when every
+// server in the org has a key: pending servers (no key yet) and an org with
+// no keyed server at all are spelled out instead.
+export function coverageLabel(v: SharedVariable, names: Map<string, string>, keys?: EncryptionKeys): string {
   if (!v.is_secret) return "";
-  if (v.missing_on.length === 0) return "All servers";
-  return `Missing on ${v.missing_on.map((id) => names.get(id) ?? id).join(", ")}`;
+  const pending = keys?.pending_servers.length ?? 0;
+  const pendingNote = pending > 0 ? `${pending} pending (no key yet)` : "";
+  if (v.missing_on.length > 0) {
+    const missing = `Missing on ${v.missing_on.map((id) => names.get(id) ?? id).join(", ")}`;
+    return pendingNote ? `${missing}; ${pendingNote}` : missing;
+  }
+  if (keys && keys.servers.length === 0) return "No server has a key yet";
+  if (pendingNote) return `All keyed servers; ${pendingNote}`;
+  return "All servers";
+}
+
+// coverageIncomplete is true when coverageLabel names a gap.
+export function coverageIncomplete(v: SharedVariable, keys?: EncryptionKeys): boolean {
+  if (!v.is_secret) return false;
+  if (v.missing_on.length > 0) return true;
+  return !!keys && (keys.servers.length === 0 || keys.pending_servers.length > 0);
 }
 
 export function pushSummary(count: number, pending: number): string {

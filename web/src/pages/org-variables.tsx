@@ -57,6 +57,7 @@ export default function OrgVariablesPage({ api: injected }: { api?: SharedVariab
               title="Variables"
               variables={data.variables}
               serverNames={page.serverNames}
+              keys={page.keys}
               showCoverage
               onEdit={(v) => page.openDialog({ kind: "edit", variable: v })}
               onDelete={page.setToDelete}

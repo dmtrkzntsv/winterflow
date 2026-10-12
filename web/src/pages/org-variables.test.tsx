@@ -77,8 +77,8 @@ function renderPage(api: ReturnType<typeof fakeApi>) {
 describe("OrgVariablesPage", () => {
   it("shows each secret's coverage and each server's sync state", async () => {
     const { emit } = renderPage(fakeApi());
-    expect(await screen.findByText("All servers")).toBeInTheDocument();
-    expect(screen.getByText("Missing on gamma")).toBeInTheDocument();
+    expect(await screen.findByText("All keyed servers; 1 pending (no key yet)")).toBeInTheDocument();
+    expect(screen.getByText("Missing on gamma; 1 pending (no key yet)")).toBeInTheDocument();
     const servers = screen.getByRole("region", { name: "Servers" });
     expect(within(servers).getByText("alpha").closest("li")).toHaveTextContent("Synced");
     expect(within(servers).getByText("new-box").closest("li")).toHaveTextContent("No key yet");
@@ -90,7 +90,7 @@ describe("OrgVariablesPage", () => {
     const user = userEvent.setup();
     const api = fakeApi();
     renderPage(api);
-    await screen.findByText("Missing on gamma");
+    await screen.findByText("Missing on gamma; 1 pending (no key yet)");
     await user.click(screen.getByRole("button", { name: "Provide value" }));
     expect(screen.getByText("Encrypts the value for: gamma")).toBeInTheDocument();
     await user.type(screen.getByLabelText("Value"), "k3y");
@@ -102,7 +102,7 @@ describe("OrgVariablesPage", () => {
     const user = userEvent.setup();
     const api = fakeApi();
     renderPage(api);
-    await screen.findByText("All servers");
+    await screen.findByText("All keyed servers; 1 pending (no key yet)");
     await user.click(screen.getByRole("button", { name: "Add variable" }));
     await user.type(screen.getByLabelText("Name"), "API_TOKEN");
     await user.click(screen.getByRole("switch", { name: "Secret" }));
@@ -118,7 +118,7 @@ describe("OrgVariablesPage", () => {
     const user = userEvent.setup();
     const api = fakeApi();
     renderPage(api);
-    await screen.findByText("All servers");
+    await screen.findByText("All keyed servers; 1 pending (no key yet)");
     await user.click(screen.getByRole("button", { name: "Resync all servers" }));
     expect(api.resync).toHaveBeenCalledWith({});
     await user.click(screen.getByRole("button", { name: "Resync SMTP_PASS" }));
@@ -131,7 +131,7 @@ describe("OrgVariablesPage", () => {
     const user = userEvent.setup();
     const api = fakeApi();
     renderPage(api);
-    await screen.findByText("All servers");
+    await screen.findByText("All keyed servers; 1 pending (no key yet)");
     await user.click(screen.getByRole("button", { name: "Delete SMTP_HOST" }));
     await user.click(screen.getByRole("button", { name: "Delete" }));
     expect(api.deleteOrg).toHaveBeenCalledWith("v1");

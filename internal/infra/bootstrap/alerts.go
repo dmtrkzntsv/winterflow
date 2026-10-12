@@ -37,7 +37,7 @@ type alerts struct {
 func wireAlerts(ctx context.Context, repo *alertrepo.Repo, history alerting.History, fan *statusFanout, cfg *config.ServerConfig, log *logger.Logger) alerts {
 	box, err := secretbox.New(cfg.GetJwtSecret())
 	if err != nil {
-		log.Warn("notification channels unavailable: JWT_SECRET is not set")
+		log.Warn("notification channels unavailable: cannot build the channel URL cipher from JWT_SECRET", "error", err)
 		box = nil
 	}
 	// A nil *Box must not become a non-nil Opener.
@@ -58,14 +58,19 @@ func wireAlerts(ctx context.Context, repo *alertrepo.Repo, history alerting.Hist
 		Log:       log,
 	})
 	lctx, cancel := context.WithTimeout(ctx, alertLoadTimeout)
-	if err := evaluator.Load(lctx); err != nil {
-		log.Warn("alerts: warm start failed; buffers start empty", "error", err)
+	if err := loadEvaluator(evaluator, lctx); err != nil {
+		log.Warn("alerts: warm start incomplete; stored firing alerts are re-read by the liveness sweep, "+
+			"threshold rules may wait up to their duration for fresh samples", "error", err)
 	}
 	cancel()
 
 	go runAlertMaintenance(ctx, repo, alertMaintenanceInterval, log)
 	return alerts{evaluator: evaluator, notifier: notifier, box: box}
 }
+
+// loadEvaluator warms the evaluator. A variable so tests can observe when
+// WireCore runs it.
+var loadEvaluator = (*alerting.Evaluator).Load
 
 // alertMaintainer is the slice of the alert repository the loop needs.
 type alertMaintainer interface {

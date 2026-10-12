@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"winterflow/internal/domain/alert"
 )
@@ -153,4 +154,23 @@ func TestRunDrainsTheQueue(t *testing.T) {
 	}
 	cancel()
 	<-done
+}
+
+// A multibyte rune straddling the cut must not be split: Postgres rejects
+// invalid UTF-8 and the delivery would not be recorded.
+func TestErrorTextCutsAtRuneBoundary(t *testing.T) {
+	msg := strings.Repeat("a", maxErrorLen-1) + "é" + strings.Repeat("b", 50)
+	got := errorText(errors.New(msg))
+	if !utf8.ValidString(got) {
+		t.Fatalf("invalid UTF-8: %q", got[len(got)-8:])
+	}
+	if len(got) > maxErrorLen+len("…") {
+		t.Fatalf("len %d exceeds the bound", len(got))
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Fatalf("no ellipsis: %q", got[len(got)-8:])
+	}
+	if got := errorText(errors.New("bad \xff byte")); !utf8.ValidString(got) {
+		t.Fatalf("invalid input passed through: %q", got)
+	}
 }

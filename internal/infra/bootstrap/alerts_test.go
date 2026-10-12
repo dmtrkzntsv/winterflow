@@ -1,22 +1,27 @@
 package bootstrap
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/metrics"
+	"winterflow/internal/domain/service/alerting"
 	"winterflow/internal/infra/db"
 	"winterflow/internal/infra/transport/bus"
 	membus "winterflow/internal/infra/transport/mem/bus"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
+	"winterflow/pkg/secretbox"
 )
 
 // fakeObserver records what the sink tells the alert evaluator.
@@ -139,5 +144,77 @@ func TestWireCoreWiresAlerts(t *testing.T) {
 	deps, _ := WireCore(ctx, membus.NewBus(log), conn, cfg, log)
 	if deps.AlertRepository == nil || deps.AlertNotifier == nil || deps.ChannelBox != nil {
 		t.Fatalf("alert deps: repo=%v notifier=%v box=%v", deps.AlertRepository, deps.AlertNotifier, deps.ChannelBox)
+	}
+}
+
+// syncBuffer is a log sink safe for the goroutines WireCore starts.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func wireCoreForTest(t *testing.T, log *logger.Logger) *Deps {
+	t.Helper()
+	t.Setenv("DATABASE_URL", "sqlite://"+filepath.Join(t.TempDir(), "wf.sqlite"))
+	cfg := config.NewServerConfig("standalone")
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	conn, err := db.Open(log, cfg.GetDbURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Shutdown() })
+	deps, _ := WireCore(ctx, membus.NewBus(log), conn, cfg, log)
+	return deps
+}
+
+// The alert warm start reads before the metrics maintenance starts, so
+// the first rollup cannot hold SQLite's connection during Load.
+func TestWireCoreWarmsAlertsBeforeMetricsMaintenance(t *testing.T) {
+	t.Setenv("METRICS_ENABLED", "true")
+	var mu sync.Mutex
+	var order []string
+	record := func(s string) {
+		mu.Lock()
+		defer mu.Unlock()
+		order = append(order, s)
+	}
+	prevLoad, prevStart := loadEvaluator, startMetricsMaintenance
+	t.Cleanup(func() { loadEvaluator, startMetricsMaintenance = prevLoad, prevStart })
+	loadEvaluator = func(e *alerting.Evaluator, ctx context.Context) error {
+		record("load")
+		return prevLoad(e, ctx)
+	}
+	startMetricsMaintenance = func(context.Context, metricsMaintainer, *metrics.LatestStore, *logger.Logger) {
+		record("metrics")
+	}
+	wireCoreForTest(t, logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"}))
+	mu.Lock()
+	defer mu.Unlock()
+	if !reflect.DeepEqual(order, []string{"load", "metrics"}) {
+		t.Fatalf("order = %v", order)
+	}
+}
+
+// The channel-box warning carries the actual error.
+func TestWireCoreLogsChannelBoxError(t *testing.T) {
+	t.Setenv("JWT_SECRET", "")
+	var out syncBuffer
+	log := &logger.Logger{Logger: slog.New(slog.NewJSONHandler(&out, &slog.HandlerOptions{Level: slog.LevelWarn}))}
+	wireCoreForTest(t, log)
+	if got := out.String(); !strings.Contains(got, secretbox.ErrNoSecret.Error()) {
+		t.Fatalf("warning lacks the error: %s", got)
 	}
 }

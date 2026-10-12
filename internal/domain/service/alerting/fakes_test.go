@@ -38,6 +38,8 @@ type fakeStore struct {
 	dir             alert.Directory
 	fail            error // returned by ListRules/ListOverrides
 	failTransitions error // returned by Fire and Resolve
+	failFiring      error // returned by FiringStates
+	firingDelay     time.Duration
 }
 
 func newStore() *fakeStore {
@@ -80,9 +82,16 @@ func (s *fakeStore) ListOverrides(context.Context, string) ([]alert.Override, er
 	return append([]alert.Override(nil), s.overrides...), nil
 }
 
-func (s *fakeStore) FiringStates(context.Context) ([]alert.StateRow, error) {
+func (s *fakeStore) FiringStates(ctx context.Context) ([]alert.StateRow, error) {
+	time.Sleep(s.firingDelay)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.failFiring != nil {
+		return nil, s.failFiring
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	var out []alert.StateRow
 	for k, st := range s.states {
 		if st != alert.StateFiring {
@@ -199,6 +208,16 @@ type fakeHistory []metrics.TargetBucket
 
 func (h fakeHistory) Tier1Range(context.Context, time.Time, time.Time) ([]metrics.TargetBucket, error) {
 	return h, nil
+}
+
+// deadlineHistory records how much time its read had left.
+type deadlineHistory struct{ left *time.Duration }
+
+func (h deadlineHistory) Tier1Range(ctx context.Context, _, _ time.Time) ([]metrics.TargetBucket, error) {
+	if d, ok := ctx.Deadline(); ok {
+		*h.left = time.Until(d)
+	}
+	return nil, nil
 }
 
 // clock is a settable time source.

@@ -6,6 +6,7 @@ package alerting
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"sync"
 	"time"
@@ -95,6 +96,9 @@ type Evaluator struct {
 	problem map[alert.Target]time.Time
 	dir     alert.Directory
 	dirAt   time.Time
+	// firingLoaded is whether the stored firing states were read; until
+	// they are, Sweep retries, or those alerts would never resolve.
+	firingLoaded bool
 }
 
 // NewEvaluator builds an evaluator; call Load before feeding it events.
@@ -117,27 +121,23 @@ func NewEvaluator(cfg Config) *Evaluator {
 
 // Load restores the firing states and refills the buffers from the last
 // hour of tier-1 samples, so a restart neither re-fires nor waits a full
-// window before deciding. Servers count as heard from now.
+// window before deciding. Servers count as heard from now. Each read has
+// its own storeTimeout. When the firing states cannot be read, Sweep
+// keeps retrying them; the buffers are still refilled.
 func (e *Evaluator) Load(ctx context.Context) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	now := e.cfg.Now()
 	e.started = now
-	sctx, cancel := context.WithTimeout(ctx, storeTimeout)
-	defer cancel()
-	states, err := e.cfg.Store.FiringStates(sctx)
-	if err != nil {
-		return err
-	}
-	for _, s := range states {
-		e.firing[s.Key] = s.Metric
-	}
+	firingErr := e.loadFiring(ctx)
 	if e.cfg.History == nil {
-		return nil
+		return firingErr
 	}
-	rows, err := e.cfg.History.Tier1Range(sctx, now.Add(-historyWindow), now.Add(time.Minute))
+	hctx, cancel := context.WithTimeout(ctx, storeTimeout)
+	defer cancel()
+	rows, err := e.cfg.History.Tier1Range(hctx, now.Add(-historyWindow), now.Add(time.Minute))
 	if err != nil {
-		return err
+		return errors.Join(firingErr, err)
 	}
 	// Rows come ordered by server, app ("" first) and time, so a server's
 	// host memory is known before its apps' rows need it.
@@ -154,6 +154,25 @@ func (e *Evaluator) Load(ctx context.Context) error {
 		}
 		e.buffer(t).Add(alert.Point{At: row.Start, Values: alert.AppValues(row.Data, hostMem[row.ServerID][row.Start])})
 	}
+	return firingErr
+}
+
+// loadFiring reads the stored firing states into e.firing, keeping the
+// entries already there (this evaluator's own, newer transitions). The
+// caller holds e.mu.
+func (e *Evaluator) loadFiring(ctx context.Context) error {
+	sctx, cancel := context.WithTimeout(ctx, storeTimeout)
+	defer cancel()
+	states, err := e.cfg.Store.FiringStates(sctx)
+	if err != nil {
+		return err
+	}
+	for _, s := range states {
+		if _, ok := e.firing[s.Key]; !ok {
+			e.firing[s.Key] = s.Metric
+		}
+	}
+	e.firingLoaded = true
 	return nil
 }
 
@@ -267,10 +286,16 @@ func (e *Evaluator) ObserveAppStatus(ctx context.Context, serverID string, probl
 // rule's duration (at least DownGrace). A server never heard since the API
 // started counts from the start, not from a stale last_seen. App rules
 // need samples or status reports, which a down server does not send, so
-// they are naturally suppressed while it is down.
+// they are naturally suppressed while it is down. It first retries the
+// stored firing states when Load could not read them.
 func (e *Evaluator) Sweep(ctx context.Context) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if !e.firingLoaded {
+		if err := e.loadFiring(ctx); err != nil {
+			e.cfg.Log.Warn("alerts: load firing states failed; retrying next sweep", "error", err)
+		}
+	}
 	now := e.cfg.Now()
 	dir := e.directory(ctx, now, "")
 	ids := make([]string, 0, len(dir.Servers))

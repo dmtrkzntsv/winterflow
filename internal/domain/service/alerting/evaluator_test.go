@@ -2,6 +2,7 @@ package alerting
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -371,5 +372,50 @@ func TestDownRuleDisabledDoesNotResolve(t *testing.T) {
 	}
 	if len(store.cleared) != 1 {
 		t.Fatalf("disabled rule should be cleared: cleared=%v", store.cleared)
+	}
+}
+
+// A warm start that cannot read the firing states must not strand them:
+// Sweep retries until it succeeds, and the alert then resolves once.
+func TestSweepRetriesFiringStatesAfterFailedLoad(t *testing.T) {
+	store := newStore()
+	rule := cpuRule(store, 90, 10)
+	k := alert.Key{RuleID: rule.ID, Target: alert.Target{ServerID: srv}}
+	store.states[k] = alert.StateFiring
+	store.failFiring = errStore
+	h := newHarness(store)
+	if err := h.ev.Load(context.Background()); !errors.Is(err, errStore) {
+		t.Fatalf("Load = %v", err)
+	}
+	h.ev.Sweep(context.Background()) // still failing: retried later
+	store.mu.Lock()
+	store.failFiring = nil
+	store.mu.Unlock()
+	h.ev.Sweep(context.Background())
+	for i := 0; i < 10; i++ {
+		h.sample(10, nil)
+	}
+	if got := store.eventKinds(); !reflect.DeepEqual(got, []string{"resolved:cpu:"}) {
+		t.Fatalf("events = %v", got)
+	}
+	if store.states[k] != alert.StateOK {
+		t.Fatalf("state = %v", store.states[k])
+	}
+}
+
+// Load's reads have independent deadlines: time the firing-states read
+// spent (a connection held by another writer) is not taken from the
+// history read.
+func TestLoadReadsHaveIndependentDeadlines(t *testing.T) {
+	store := newStore()
+	store.firingDelay = 300 * time.Millisecond
+	var left time.Duration
+	h := newHarness(store)
+	h.ev.cfg.History = deadlineHistory{left: &left}
+	if err := h.ev.Load(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if left < storeTimeout-100*time.Millisecond {
+		t.Fatalf("the history read had %v of its %v", left, storeTimeout)
 	}
 }

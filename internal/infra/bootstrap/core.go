@@ -52,12 +52,17 @@ func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerCon
 	if cfg.IsMetricsEnabled() {
 		ms = r.metric
 		history = r.metric
-		go runMetricsMaintenance(ctx, r.metric, latest, metricsMaintenanceInterval, log)
 	}
 
 	// Alerts: the evaluator rides the events sink (samples, statuses,
 	// liveness sweep); the notifier sends through the org's channels.
 	al := wireAlerts(ctx, r.alert, history, newStatusFanout(r.server, nm, log), cfg, log)
+
+	// After the alert warm start: the first rollup tick would otherwise
+	// hold SQLite's single connection while Load reads.
+	if cfg.IsMetricsEnabled() {
+		startMetricsMaintenance(ctx, r.metric, latest, log)
+	}
 
 	startResponseSubscriber(ctx, b, dispatcher, cfg, log)
 	vars := newVarsSync(ctx, dispatcher, sharedvars.Deps{

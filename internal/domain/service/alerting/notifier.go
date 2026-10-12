@@ -2,7 +2,9 @@ package alerting
 
 import (
 	"context"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"winterflow/internal/domain/alert"
 	"winterflow/pkg/logger"
@@ -140,14 +142,19 @@ func (n *Notifier) send(ctx context.Context, ch alert.Channel, title, body strin
 	return errorText(n.sender.Send(sctx, rawURL, title, body))
 }
 
-// errorText is err's message, bounded; "" for nil.
+// errorText is err's message, bounded and valid UTF-8 (Postgres rejects
+// anything else); "" for nil.
 func errorText(err error) string {
 	if err == nil {
 		return ""
 	}
-	s := err.Error()
+	s := strings.ToValidUTF8(err.Error(), "\uFFFD")
 	if len(s) > maxErrorLen {
-		s = s[:maxErrorLen] + "…"
+		cut := maxErrorLen
+		for cut > 0 && !utf8.RuneStart(s[cut]) {
+			cut--
+		}
+		s = s[:cut] + "…"
 	}
 	return s
 }

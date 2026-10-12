@@ -277,6 +277,36 @@ func TestEffectiveOverrideRules(t *testing.T) {
 	}
 }
 
+func TestEffectiveCarriesTheTemplateOfARecipeBackup(t *testing.T) {
+	c := parse(t, compose)
+	// An override changes the effective value, never the template.
+	got, err := Effective(c, []BackupConfig{
+		{Name: "database", Every: "6h", Keep: &Keep{Recent: "72h", Daily: ptr(3)}},
+		{Name: "audit", Type: TypeSQLite, Volume: "data", Path: "a.db"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := got[0]
+	if db.Every != "6h" || db.Template == nil || db.Template.Every != "1h" || db.Template.Volume != "data" || db.Template.Path != "twillingate.db" {
+		t.Fatalf("database template = %+v", db.Template)
+	}
+	if k := db.Template.Keep; k == nil || k.Recent != "24h0m0s" || *k.Daily != 14 || *k.Monthly != 6 {
+		t.Fatalf("database template keep = %+v", db.Template.Keep)
+	}
+	// Defaults are applied to what the recipe leaves out.
+	media := got[1]
+	if media.Template == nil || media.Template.Service != "web" || len(media.Template.Paths) != 2 || len(media.Template.Exclude) != 2 || media.Template.Keep == nil || *media.Template.Keep.Daily != 14 {
+		t.Fatalf("media template = %+v", media.Template)
+	}
+	// A custom backup and one added in the UI have none.
+	for _, b := range got[2:] {
+		if b.Template != nil {
+			t.Fatalf("%s template = %+v", b.Name, b.Template)
+		}
+	}
+}
+
 func TestCheckRefusesAnIncompleteNewBackup(t *testing.T) {
 	c := parse(t, compose)
 	if _, err := Check(c, []BackupConfig{{Name: "gone", Every: "2h"}}); err == nil ||

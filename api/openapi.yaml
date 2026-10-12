@@ -4050,6 +4050,8 @@ components:
           type: string
         storage:
           type: string
+        template:
+          $ref: '#/components/schemas/Template'
         type:
           type: string
         volume:
@@ -5158,6 +5160,27 @@ components:
       required:
       - volumes
       - services
+      type: object
+    Template:
+      properties:
+        every:
+          type: string
+        exclude:
+          items:
+            type: string
+          type: array
+        keep:
+          $ref: '#/components/schemas/Keep'
+        path:
+          type: string
+        paths:
+          items:
+            type: string
+          type: array
+        service:
+          type: string
+        volume:
+          type: string
       type: object
     TestStorageRequest:
       properties:

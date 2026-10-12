@@ -138,6 +138,22 @@ type EffectiveBackup struct {
 	Exclude    []string        `json:"exclude,omitempty"`
 	InRecipe   bool            `json:"in_recipe"`
 	FromRecipe map[string]bool `json:"from_recipe"`
+	// Template is the compose file's own value of the fields an override can
+	// change (defaults applied), for a built-in backup that is declared
+	// there: what a reset to the template goes back to.
+	Template *Template `json:"template,omitempty"`
+}
+
+// Template is a recipe backup's own settings, as the compose file declares
+// them with the defaults applied.
+type Template struct {
+	Every   string   `json:"every,omitempty"`
+	Keep    *Keep    `json:"keep,omitempty"`
+	Volume  string   `json:"volume,omitempty"`
+	Service string   `json:"service,omitempty"`
+	Path    string   `json:"path,omitempty"`
+	Paths   []string `json:"paths,omitempty"`
+	Exclude []string `json:"exclude,omitempty"`
 }
 
 // Interval is the schedule: 0 for a manual backup (and a custom one, which

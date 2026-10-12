@@ -48,7 +48,11 @@ func Effective(comp Compose, overrides []BackupConfig) ([]EffectiveBackup, error
 		if err := validate(c, comp, field); err != nil {
 			return nil, err
 		}
-		out = append(out, finish(c, true, fromRecipe(r, c)))
+		eb := finish(c, true, fromRecipe(r, c))
+		if r.Type != TypeCustom {
+			eb.Template = templateOf(r)
+		}
+		out = append(out, eb)
 	}
 	for j, o := range overrides {
 		if inRecipe[o.Name] || o.Type == "" {
@@ -249,6 +253,21 @@ func finish(c BackupConfig, inRecipe bool, from map[string]bool) EffectiveBackup
 		b.Keep = &Keep{Recent: r.Recent.String(), Daily: &daily, Monthly: &monthly}
 	}
 	return b
+}
+
+// templateOf is the recipe entry r's own settings with the defaults applied.
+func templateOf(r BackupConfig) *Template {
+	t := &Template{
+		Every: r.Every, Volume: r.Volume, Service: r.Service, Path: r.Path,
+		Paths: List(r.Paths), Exclude: List(r.Exclude),
+	}
+	if t.Every == "" {
+		t.Every = DefaultEvery
+	}
+	ret := r.Keep.Retention()
+	daily, monthly := ret.Daily, ret.Monthly
+	t.Keep = &Keep{Recent: ret.Recent.String(), Daily: &daily, Monthly: &monthly}
+	return t
 }
 
 // Declared maps the effective backups by name: what WF_BACKUP_ references

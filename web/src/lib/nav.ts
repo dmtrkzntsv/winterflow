@@ -1,8 +1,8 @@
-import { Activity, LayoutDashboard } from "lucide-react";
+import { Activity, LayoutDashboard, Settings2 } from "lucide-react";
 
-// Platform navigation: Dashboard, the active server's Monitoring, then the
-// live Apps group (NavApps); Server Settings is pinned to the bottom of the
-// sidebar (app-sidebar.tsx) — mirroring v1's primary/secondary split.
+// Sidebar navigation: Dashboard (the apps page) on top, then the live Apps
+// group (NavApps), and a bottom group — Monitoring of the switcher's active
+// server and Server Settings — just above the account footer.
 export const navMain = [
   {
     title: "Dashboard",
@@ -10,11 +10,18 @@ export const navMain = [
     icon: LayoutDashboard,
     isActive: true,
   },
+];
+
+export const navBottom = [
   {
-    // Charts of the server switcher's active server.
     title: "Monitoring",
     url: "/monitoring",
     icon: Activity,
+  },
+  {
+    title: "Server Settings",
+    url: "/settings",
+    icon: Settings2,
   },
 ];
 

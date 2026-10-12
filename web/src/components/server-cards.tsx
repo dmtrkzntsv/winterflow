@@ -2,12 +2,11 @@ import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { Card } from "@/components/ui/card";
-import { Sparkline } from "@/components/sparkline";
 import { useServers } from "@/context/use-servers";
 import type { Server } from "@/context/servers-context-base";
 import { useMetricsOverview } from "@/hooks/use-metrics";
 import { useNow } from "@/hooks/use-now";
-import { latestValue, percentCeiling, serverPresence, type Presence } from "@/lib/kpi";
+import { latestValue, serverPresence, type Presence } from "@/lib/kpi";
 import {
   chartColor,
   formatPercent,
@@ -70,10 +69,9 @@ function Meter({
   );
 }
 
-// HealthCard is one server's dashboard card in twillingate's project-card
-// shape: name and a presence dot, the last hour of CPU as one sparkline,
-// slim usage bars, then a meta line and a quieter specs line. The whole
-// card opens the server's Monitoring page.
+// HealthCard is one server's compact health card: name and a presence dot,
+// slim CPU/Memory/Disk bars, then a meta line and a quieter specs line. The
+// whole card opens the server's Monitoring page.
 function HealthCard({
   server,
   overview,
@@ -127,7 +125,7 @@ function HealthCard({
           onOpen();
         }
       }}
-      className="flex min-w-0 cursor-pointer flex-col gap-3 p-4 transition-colors outline-none hover:border-primary/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+      className="flex min-w-0 cursor-pointer flex-col gap-2.5 p-3.5 transition-colors outline-none hover:border-primary/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
     >
       <div className="flex items-center justify-between gap-3">
         <div className="truncate text-base font-semibold tracking-tight">{server.name}</div>
@@ -139,21 +137,6 @@ function HealthCard({
           <span aria-hidden className={cn("size-2 rounded-full", DOT[presence.tone])} />
           {presence.label}
         </span>
-      </div>
-
-      <div className="relative h-12" role="img" aria-label="CPU, last hour">
-        {rows.filter((r) => typeof r.cpu === "number").length >= 2 ? (
-          <Sparkline
-            rows={rows}
-            field="cpu"
-            color={chartColor(0)}
-            max={percentCeiling(rows, "cpu")}
-            className="h-12"
-          />
-        ) : (
-          // twillingate's quiet card: a hairline where the trend will be.
-          <div className="absolute inset-x-0 bottom-1 border-b border-primary/30" />
-        )}
       </div>
 
       <div className="space-y-1.5">
@@ -203,7 +186,6 @@ function HealthCardSkeleton() {
         <div className="frost h-4 w-28 rounded" />
         <div className="frost h-3 w-14 rounded" />
       </div>
-      <div className="frost h-12 rounded-md opacity-70" />
       <div className="space-y-2.5">
         {[0, 1, 2].map((i) => (
           <div key={i} className="frost h-1.5 rounded-full" />
@@ -214,11 +196,11 @@ function HealthCardSkeleton() {
   );
 }
 
-const GRID = "grid gap-3 sm:grid-cols-2 xl:grid-cols-3";
+const GRID = "grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4";
 
-// ServerCards renders the org's servers as health cards at the top of the
-// dashboard: presence, the last hour of CPU, usage bars, load, temperature
-// and app counts. Clicking one makes it the active server and opens its
+// ServerCards renders the org's servers as a compact health strip above the
+// apps on the dashboard: presence, usage bars, load, temperature and app
+// counts. Clicking one makes it the active server and opens its
 // Monitoring page.
 export function ServerCards() {
   const { servers, setActiveServerId, statusByServer, loading } = useServers();

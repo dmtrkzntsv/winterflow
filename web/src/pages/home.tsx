@@ -16,8 +16,8 @@ export default function HomePage() {
   const { refresh } = useServers()
   const breadcrumbs = useMemo(
     () => [
-      { label: "Overview", href: "#", hideOnMobile: true },
-      { label: "Dashboard" },
+      { label: "Dashboard", href: "#", hideOnMobile: true },
+      { label: "Apps" },
     ],
     []
   )
@@ -25,30 +25,33 @@ export default function HomePage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
-      {/* Servers row (v1 AgentList). Adding servers is a cloud capability; the
-          standalone build ships one embedded server, so the action is hidden. */}
-      <div className="flex items-center justify-between pt-2">
-        <h2 className="text-sm font-medium text-muted-foreground">Servers</h2>
-        {!isStandalone ? (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setIsServerDialogOpen(true)}
-          >
-            <Plus className="size-4" /> Add Server
-          </Button>
-        ) : null}
-      </div>
-      <ServerCards />
-
-      {/* Apps: the same section shape as Servers, each app its own card. */}
-      <div className="flex items-center justify-between pt-4">
-        <h2 className="text-sm font-medium text-muted-foreground">Apps</h2>
+      {/* The apps page: title and New App share one row. */}
+      <div className="flex items-center justify-between gap-3">
+        <h1 className="text-2xl font-semibold tracking-tight">Apps</h1>
         <Button size="sm" onClick={() => navigate("/create-app")}>
           <Plus className="size-4" /> New App
         </Button>
       </div>
+
+      {/* Server health at a glance: a compact strip above the apps. Adding
+          servers is a cloud capability; the standalone build ships one
+          embedded server, so the action is hidden. */}
+      <section aria-label="Servers" className="space-y-2">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-medium text-muted-foreground">Servers</h2>
+          {!isStandalone ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setIsServerDialogOpen(true)}
+            >
+              <Plus className="size-4" /> Add Server
+            </Button>
+          ) : null}
+        </div>
+        <ServerCards />
+      </section>
+
       <AppGrid />
 
       {!isStandalone ? (

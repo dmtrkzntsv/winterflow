@@ -1,12 +1,16 @@
 import { describe, expect, it } from "vitest";
 
-import { isNavActive, navMain } from "@/lib/nav";
+import { isNavActive, navBottom, navMain } from "@/lib/nav";
 
-describe("navMain", () => {
-  it("links the Monitoring page right after the Dashboard", () => {
-    expect(navMain.map((i) => [i.title, i.url])).toEqual([
-      ["Dashboard", "/"],
+describe("sidebar groups", () => {
+  it("tops with the Dashboard alone", () => {
+    expect(navMain.map((i) => [i.title, i.url])).toEqual([["Dashboard", "/"]]);
+  });
+
+  it("groups Monitoring with Server Settings at the bottom", () => {
+    expect(navBottom.map((i) => [i.title, i.url])).toEqual([
       ["Monitoring", "/monitoring"],
+      ["Server Settings", "/settings"],
     ]);
   });
 });

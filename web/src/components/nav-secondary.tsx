@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/sidebar"
 import { isNavActive, navItemClass } from "@/lib/nav"
 
-// NavSecondary renders bottom-pinned navigation links (e.g. Server Settings).
+// NavSecondary renders bottom-pinned navigation links (Monitoring, Server Settings).
 export function NavSecondary({
     items,
     ...props
@@ -33,7 +33,6 @@ export function NavSecondary({
                         <SidebarMenuItem key={item.title}>
                             <SidebarMenuButton
                                 asChild
-                                size="sm"
                                 tooltip={item.title}
                                 isActive={isNavActive(pathname, item.url)}
                                 className={navItemClass}

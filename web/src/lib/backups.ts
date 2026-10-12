@@ -339,9 +339,10 @@ export function errorSummary(error: string): string {
   return short.length > 100 ? `${short.slice(0, 97)}…` : short;
 }
 
-// nextCopyNote says when a backup's next scheduled copy is due, or that the
-// first one comes within its interval; "" when there is nothing to say (off,
-// manual, running, failing, late, or not winterflow's to run).
+// nextCopyNote says when a backup's next scheduled copy is due ("next 3:00
+// PM"), or that the first one comes within its interval; "" when there is
+// nothing to say (off, manual, running, failing, late, or not winterflow's
+// to run).
 export function nextCopyNote(
   b: Pick<EffectiveBackup, "enabled" | "type" | "every">,
   state: BackupState,
@@ -352,13 +353,13 @@ export function nextCopyNote(
   if (state !== "ok" && state !== "never") return "";
   const ms = durationMs(b.every);
   if (Number.isNaN(ms) || ms <= 0) return "";
-  if (!lastSuccess) return `First copy within ${humanDuration(b.every)}, or Back up now to try it.`;
+  if (!lastSuccess) return `next within ${humanDuration(b.every)}`;
   const due = lastSuccess * 1000 + ms;
-  if (due <= now) return "Next copy is due now.";
+  if (due <= now) return "next due now";
   const at = new Date(due);
   const sameDay = at.toDateString() === new Date(now).toDateString();
   const time = at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  return `Next copy about ${sameDay ? time : `${at.toLocaleDateString()} ${time}`}.`;
+  return `next ${sameDay ? time : `${at.toLocaleDateString()} ${time}`}`;
 }
 
 export const STATE_LABELS: Record<BackupState, string> = {
@@ -402,6 +403,23 @@ export const STALE_TAB_MARKERS = ["is declared by the compose file; edit it inst
 
 export function isStaleTab(message: string): boolean {
   return STALE_TAB_MARKERS.some((m) => message.includes(m));
+}
+
+// backupNameFrom turns a path or a name (the first path's last segment, a
+// mount's target, a volume's name) into a backup name: its last segment,
+// without the extension when dropExtension (app.db -> app), lowercased with
+// anything else turned into hyphens, at most 32 characters, and made unique
+// among taken (uploads -> uploads-2). "" when nothing usable is left.
+export function backupNameFrom(source: string, taken: readonly string[], dropExtension = false): string {
+  let seg = source.split("/").filter(Boolean).at(-1) ?? "";
+  if (dropExtension) seg = seg.replace(/(.)\.[^.]*$/, "$1");
+  const clean = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  const base = clean(seg).slice(0, 28).replace(/-+$/, "");
+  if (!base) return "";
+  for (let n = 1; ; n++) {
+    const name = n === 1 ? base : `${base}-${n}`;
+    if (!taken.includes(name)) return name;
+  }
 }
 
 // pathsFrom splits a paths field (one per line) into its trimmed, non-empty

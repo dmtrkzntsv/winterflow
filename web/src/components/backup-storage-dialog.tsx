@@ -16,13 +16,16 @@ import {
 } from "@/components/ui/dialog";
 import { returnFocusTo } from "@/lib/focus";
 
-// BackupStorageDialog turns a backup on: it picks one of the server's
-// storages (load lists their names), or points to Settings → Storages when
-// there are none. The parent remounts it per opening.
+// BackupStorageDialog picks one of the server's storages (load lists their
+// names), or points to Settings → Storages when there are none. It turns a
+// backup on (a compose-declared one that has no storage yet: Set up), or,
+// with turnOn false, only changes the storage of a backup that has one. The
+// parent remounts it per opening.
 export function BackupStorageDialog({
   backup,
   current,
   open,
+  turnOn = true,
   busy = false,
   error: saveError = "",
   returnFocus,
@@ -33,7 +36,8 @@ export function BackupStorageDialog({
   backup: string;
   current: string;
   open: boolean;
-  busy?: boolean; // the backup is being turned on
+  turnOn?: boolean; // picking the storage turns the backup on (else it only changes it)
+  busy?: boolean; // the pick is being saved
   error?: string; // why the last attempt to turn it on was refused
   returnFocus?: RefObject<HTMLElement | null>; // where focus goes back on close
   load: () => Promise<string[]>;
@@ -64,8 +68,10 @@ export function BackupStorageDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md" onCloseAutoFocus={returnFocusTo(returnFocus)}>
         <DialogHeader>
-          <DialogTitle>Turn on {backup}</DialogTitle>
-          <DialogDescription>Pick the storage its copies go to.</DialogDescription>
+          <DialogTitle>{turnOn ? `Turn on ${backup}` : `Storage of ${backup}`}</DialogTitle>
+          <DialogDescription>
+            {turnOn ? "Pick the storage its copies go to." : "Pick the storage its copies go to from now on."}
+          </DialogDescription>
         </DialogHeader>
         {error ? (
           <InlineError>{error}</InlineError>
@@ -79,7 +85,7 @@ export function BackupStorageDialog({
             <Link to="/settings?tab=storages" className="font-medium text-foreground underline underline-offset-4">
               Add a storage in Settings → Storages
             </Link>
-            , then turn the backup on.
+            , then come back.
           </p>
         ) : (
           <div className="grid gap-1.5">
@@ -101,7 +107,7 @@ export function BackupStorageDialog({
             Cancel
           </Button>
           <Button disabled={!picked || busy} onClick={() => onPick(picked)}>
-            {busy ? "Turning on…" : "Turn on"}
+            {busy ? (turnOn ? "Turning on…" : "Saving…") : turnOn ? "Turn on" : "Save"}
           </Button>
         </DialogFooter>
       </DialogContent>

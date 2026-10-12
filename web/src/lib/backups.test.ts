@@ -17,6 +17,7 @@ import {
   expiresNote,
   formatSize,
   humanDuration,
+  backupNameFrom,
   isRunRefusal,
   isStaleTab,
   keepDays,
@@ -311,11 +312,11 @@ describe("the next copy", () => {
   const secs = (ms: number) => Math.floor(ms / 1000);
   const hourly = { enabled: true, type: "sqlite" as const, every: "1h" };
   it("says when the next scheduled copy is due, or that the first one is coming", () => {
-    expect(nextCopyNote(hourly, "never", undefined, at)).toBe("First copy within 1 hour, or Back up now to try it.");
+    expect(nextCopyNote(hourly, "never", undefined, at)).toBe("next within 1 hour");
     const last = secs(at) - 600;
     const due = new Date(last * 1000 + 3_600_000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-    expect(nextCopyNote(hourly, "ok", last, at)).toBe(`Next copy about ${due}.`);
-    expect(nextCopyNote(hourly, "ok", secs(at) - 7200, at)).toBe("Next copy is due now.");
+    expect(nextCopyNote(hourly, "ok", last, at)).toBe(`next ${due}`);
+    expect(nextCopyNote(hourly, "ok", secs(at) - 7200, at)).toBe("next due now");
     const tomorrow = nextCopyNote({ ...hourly, every: "24h" }, "ok", secs(at) - 60, at);
     expect(tomorrow).toContain(new Date(at + 86_400_000 - 60_000).toLocaleDateString());
   });
@@ -327,6 +328,27 @@ describe("the next copy", () => {
     expect(nextCopyNote({ ...hourly, type: "custom" }, "ok", 1, at)).toBe("");
     expect(nextCopyNote(hourly, "failing", 1, at)).toBe("");
     expect(nextCopyNote(hourly, "running", 1, at)).toBe("");
+  });
+});
+
+describe("backupNameFrom", () => {
+  it("names a backup after the last segment of what was picked", () => {
+    expect(backupNameFrom("media/Uploads/", [])).toBe("uploads");
+    expect(backupNameFrom("/app/my_files", [])).toBe("my-files");
+    expect(backupNameFrom("data", [])).toBe("data");
+  });
+  it("drops a database file's extension on request", () => {
+    expect(backupNameFrom("db/App.sqlite3", [], true)).toBe("app");
+    expect(backupNameFrom("db/App.sqlite3", [])).toBe("app-sqlite3");
+    expect(backupNameFrom(".hidden", [], true)).toBe("hidden");
+  });
+  it("is valid, short and unique, or empty", () => {
+    expect(backupNameFrom("a".repeat(60), [])).toHaveLength(28);
+    expect(backupNameFrom("uploads", ["uploads", "uploads-2"])).toBe("uploads-3");
+    expect(backupNameFrom("", [])).toBe("");
+    expect(backupNameFrom("/", [])).toBe("");
+    expect(backupNameFrom("---", [])).toBe("");
+    for (const src of ["media/Uploads/", "a".repeat(60), "x.y.z"]) expect(backupNameError(backupNameFrom(src, []), [])).toBe("");
   });
 });
 

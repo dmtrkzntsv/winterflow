@@ -26,6 +26,20 @@ describe("BackupStorageDialog", () => {
     expect(onPick).toHaveBeenCalledWith("disk");
   });
 
+  it("only changes the storage of a backup that has one, when it is not being turned on", async () => {
+    const user = userEvent.setup({ delay: null });
+    const onPick = vi.fn();
+    render(
+      <MemoryRouter>
+        <BackupStorageDialog backup="database" current="disk" open turnOn={false} load={async () => ["disk", "offsite"]} onOpenChange={() => {}} onPick={onPick} />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole("heading", { name: "Storage of database" })).toBeInTheDocument();
+    await user.selectOptions(await screen.findByLabelText("Storage"), "offsite");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(onPick).toHaveBeenCalledWith("offsite");
+  });
+
   it("shows progress and can't be sent twice while the backup is turned on", async () => {
     render(
       <MemoryRouter>

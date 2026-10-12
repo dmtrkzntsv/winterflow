@@ -67,6 +67,40 @@ func TestUpdateBackupsWithoutRedeploy(t *testing.T) {
 	}
 }
 
+// A backup added in the UI arrives already on, with its storage, in the one
+// update that also names its type and location: it is accepted, stored as
+// sent, and answered as enabled with that storage.
+func TestUpdateBackupsAddsATypedBackupAlreadyOn(t *testing.T) {
+	r, hooks := updateRepo(t)
+	dir := r.appDataDir("app-1")
+	resp, err := r.UpdateBackups(context.Background(), "app-1", []recipe.BackupConfig{
+		{Name: "uploads", Type: recipe.TypeFiles, Enabled: true, Storage: "disk", Every: "6h", Service: "web", Paths: ptrList("/app/media/uploads")},
+		{Name: "extra", Type: recipe.TypeSQLite, Enabled: true, Storage: "hetzner", Every: "1h", Volume: "data", Path: "extra.db"},
+	}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Redeployed || len(hooks.redeploys) != 0 {
+		t.Fatalf("redeploys = %v", hooks.redeploys)
+	}
+	want := map[string]string{"uploads": "disk", "extra": "hetzner"}
+	for _, b := range resp.Backups {
+		if s, ok := want[b.Name]; ok {
+			if !b.Enabled || b.Storage != s || b.InRecipe {
+				t.Errorf("%s = %+v", b.Name, b)
+			}
+			delete(want, b.Name)
+		}
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing from the answer: %v (%+v)", want, resp.Backups)
+	}
+	stored, err := r.readOverrides(dir)
+	if err != nil || len(stored) != 2 || !stored[0].Enabled || stored[0].Storage != "disk" || stored[0].Type != recipe.TypeFiles {
+		t.Fatalf("stored = %+v, %v", stored, err)
+	}
+}
+
 // Turning a custom backup on or off changes the compose profiles: a running
 // app is redeployed.
 func TestUpdateBackupsRedeploysOnProfileChange(t *testing.T) {

@@ -56,7 +56,8 @@ const keepFields = (k: EffectiveBackup["keep"]) => ({
 // shows the template's value at once and applies it when saved). A backup
 // added here can be removed. The parent remounts it per opening; onSave gets
 // the backup's whole new list entry; error is why the last save was refused,
-// kept in view next to Save.
+// kept in view next to Save. onChangeStorage (when given) opens the storage
+// picker in place of this dialog: the storage is not edited here.
 export function BackupEditDialog({
   backup,
   retentionDays,
@@ -68,6 +69,7 @@ export function BackupEditDialog({
   onOpenChange,
   onSave,
   onRemove,
+  onChangeStorage,
 }: {
   backup: EffectiveBackup;
   retentionDays: number;
@@ -79,6 +81,7 @@ export function BackupEditDialog({
   onOpenChange: (open: boolean) => void;
   onSave: (entry: BackupConfig) => void;
   onRemove?: () => void;
+  onChangeStorage?: () => void;
 }) {
   const b = backup;
   const [every, setEvery] = useState(b.every ?? "1h");
@@ -202,6 +205,17 @@ export function BackupEditDialog({
               {b.in_recipe ? ", declared by the compose file." : ", added here."}
             </DialogDescription>
           </DialogHeader>
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border p-3 text-sm">
+            <span>
+              <span className="font-medium">Storage</span>{" "}
+              <span className="font-mono text-muted-foreground [overflow-wrap:anywhere]">{b.storage || "none"}</span>
+            </span>
+            {onChangeStorage ? (
+              <Button type="button" variant="outline" size="sm" disabled={busy} onClick={onChangeStorage}>
+                Change storage…
+              </Button>
+            ) : null}
+          </div>
           <fieldset disabled={busy} className="grid min-w-0 gap-3">
             {section(
               "schedule",

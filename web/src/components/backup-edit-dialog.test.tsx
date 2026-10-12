@@ -24,7 +24,7 @@ const database: EffectiveBackup = {
   template: { every: "1h", keep: { recent: "24h0m0s", daily: 14, monthly: 6 }, volume: "data", path: "app.db" },
 };
 
-function renderDialog(backup: EffectiveBackup, opts: { days?: number; error?: string; onRemove?: () => void } = {}) {
+function renderDialog(backup: EffectiveBackup, opts: { days?: number; error?: string; onRemove?: () => void; onChangeStorage?: () => void } = {}) {
   const onSave = vi.fn();
   render(
     <BackupEditDialog
@@ -37,12 +37,26 @@ function renderDialog(backup: EffectiveBackup, opts: { days?: number; error?: st
       onOpenChange={() => {}}
       onSave={onSave}
       onRemove={opts.onRemove}
+      onChangeStorage={opts.onChangeStorage}
     />,
   );
   return onSave;
 }
 
 describe("BackupEditDialog", () => {
+  it("shows the storage and offers to change it when it can", async () => {
+    const user = userEvent.setup({ delay: null });
+    const onChangeStorage = vi.fn();
+    renderDialog(database, { onChangeStorage });
+    expect(screen.getByText("disk", { selector: "span.font-mono" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Change storage…" }));
+    expect(onChangeStorage).toHaveBeenCalled();
+    cleanup();
+    renderDialog({ ...database, storage: "" });
+    expect(screen.getByText("none")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Change storage…" })).not.toBeInTheDocument();
+  });
+
   it("badges each part from template or changed, and resets one to the template", async () => {
     const user = userEvent.setup({ delay: null });
     const onSave = renderDialog(database);

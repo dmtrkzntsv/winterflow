@@ -36,8 +36,8 @@ func (h *Handler) ControlInstance(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	userID, orgID, ok := h.serverCaller(w, r, req.ServerID)
-	if !ok || !requireKey(w, req.Key) {
+	userID, orgID, ok := h.instanceCaller(w, r, req.ServerID, req.Key)
+	if !ok {
 		return
 	}
 	out, err := h.uc.ControlInstance(r.Context(), userID, orgID, req.ServerID, req.Key, req.Action)
@@ -53,8 +53,8 @@ func (h *Handler) DeleteInstance(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	userID, orgID, ok := h.serverCaller(w, r, req.ServerID)
-	if !ok || !requireKey(w, req.Key) {
+	userID, orgID, ok := h.instanceCaller(w, r, req.ServerID, req.Key)
+	if !ok {
 		return
 	}
 	out, err := h.uc.DeleteInstance(r.Context(), userID, orgID, req.ServerID, req.Key, req.DeleteVolumes, req.DeleteBackups)
@@ -70,8 +70,8 @@ func (h *Handler) UnlinkInstance(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	userID, orgID, ok := h.serverCaller(w, r, req.ServerID)
-	if !ok || !requireKey(w, req.Key) {
+	userID, orgID, ok := h.instanceCaller(w, r, req.ServerID, req.Key)
+	if !ok {
 		return
 	}
 	out, err := h.uc.UnlinkInstance(r.Context(), userID, orgID, req.ServerID, req.Key)

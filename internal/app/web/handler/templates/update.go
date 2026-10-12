@@ -33,18 +33,13 @@ func (h *Handler) UpdateInstance(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	userID, orgID, ok := h.serverCaller(w, r, req.ServerID)
-	if !ok || !requireKey(w, req.Key) {
+	userID, orgID, ok := h.instanceCaller(w, r, req.ServerID, req.Key)
+	if !ok {
 		return
 	}
-	out, err := h.uc.UpdateInstance(r.Context(), userID, orgID, tuc.UpdateInput{
+	h.update(w, r, userID, orgID, tuc.UpdateInput{
 		ServerID: req.ServerID, Key: req.Key, Params: req.Parameters, Secrets: req.Secrets, Backups: req.Backups,
-	})
-	if err != nil {
-		h.fail(w, err, "update the instance")
-		return
-	}
-	h.respond(w, r, out, req.Wait, "instance save dispatched")
+	}, req.Wait, "update the instance")
 }
 
 func (h *Handler) UpgradeInstance(w http.ResponseWriter, r *http.Request) {
@@ -52,20 +47,26 @@ func (h *Handler) UpgradeInstance(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	userID, orgID, ok := h.serverCaller(w, r, req.ServerID)
-	if !ok || !requireKey(w, req.Key) {
+	userID, orgID, ok := h.instanceCaller(w, r, req.ServerID, req.Key)
+	if !ok {
 		return
 	}
 	if req.Revision < 1 {
 		webutil.Error(w, "revision is required", nil)
 		return
 	}
-	out, err := h.uc.UpdateInstance(r.Context(), userID, orgID, tuc.UpdateInput{
+	h.update(w, r, userID, orgID, tuc.UpdateInput{
 		ServerID: req.ServerID, Key: req.Key, Revision: req.Revision, Params: req.Parameters, Secrets: req.Secrets, Backups: req.Backups,
-	})
+	}, req.Wait, "upgrade the instance")
+}
+
+// update runs an update or upgrade and answers it; what names it in a
+// failure.
+func (h *Handler) update(w http.ResponseWriter, r *http.Request, userID, orgID string, in tuc.UpdateInput, wait bool, what string) {
+	out, err := h.uc.UpdateInstance(r.Context(), userID, orgID, in)
 	if err != nil {
-		h.fail(w, err, "upgrade the instance")
+		h.fail(w, err, what)
 		return
 	}
-	h.respond(w, r, out, req.Wait, "instance save dispatched")
+	h.respond(w, r, out, wait, "instance save dispatched")
 }

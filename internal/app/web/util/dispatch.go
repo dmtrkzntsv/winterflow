@@ -9,12 +9,7 @@ import (
 // client mistakes (400) — they must surface as 401 so browsers/proxies treat
 // them correctly.
 func Unauthorized(w http.ResponseWriter) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusUnauthorized)
-	_ = json.NewEncoder(w).Encode(APIResponse{
-		Success: false,
-		Message: "unauthorized",
-	})
+	write(w, http.StatusUnauthorized, false, "unauthorized", nil)
 }
 
 // RequireUser resolves the authenticated user id, writing a 401 itself when

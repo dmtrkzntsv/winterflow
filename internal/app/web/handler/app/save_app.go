@@ -107,10 +107,8 @@ func (h *Handler) SaveApp(w http.ResponseWriter, r *http.Request) {
 	requestID, err := h.usecase.SaveApp(r.Context(), userID, req.ServerID, app, payload, req.Draft)
 	if err != nil {
 		switch {
-		case errors.Is(err, model.ErrRejected):
-			webutil.Error(w, err.Error(), nil)
-		case errors.Is(err, model.ErrConflict):
-			webutil.ErrorStatus(w, http.StatusConflict, err.Error())
+		case errors.Is(err, model.ErrRejected), errors.Is(err, model.ErrConflict):
+			webutil.ErrorStatus(w, webutil.StatusFor(err), err.Error())
 		default:
 			webutil.Error(w, "failed to save app", nil)
 		}

@@ -6,7 +6,6 @@
 package sharedvars
 
 import (
-	"context"
 	"errors"
 	"net/http"
 
@@ -17,16 +16,11 @@ import (
 	"winterflow/pkg/logger"
 )
 
-// OrgResolver resolves a user's organization (port.UserService).
-type OrgResolver interface {
-	PrimaryOrganizationID(ctx context.Context, userID string) (string, error)
-}
-
 type Deps struct {
 	Logger              *logger.Logger
 	Repo                port.SharedVariableRepository
 	Servers             port.ServerRepository
-	Users               OrgResolver
+	Users               webutil.OrgResolver
 	CommandDispatcher   port.CommandDispatcher
 	NotificationManager port.NotificationManager
 	StatusCache         *status.Cache
@@ -34,7 +28,7 @@ type Deps struct {
 
 type Handler struct {
 	uc      *svuc.UseCase
-	users   OrgResolver
+	users   webutil.OrgResolver
 	servers webutil.ServerAccess
 	log     *logger.Logger
 }
@@ -59,30 +53,12 @@ func NewHandler(d *Deps) *Handler {
 
 // callerOrg resolves the caller and their org, writing 401/400 itself.
 func (h *Handler) callerOrg(w http.ResponseWriter, r *http.Request) (string, string, bool) {
-	userID, ok := webutil.RequireUser(w, r)
-	if !ok {
-		return "", "", false
-	}
-	if h.users == nil {
-		webutil.Error(w, "failed to resolve organization", nil)
-		return "", "", false
-	}
-	orgID, err := h.users.PrimaryOrganizationID(r.Context(), userID)
-	if err != nil {
-		h.log.Error("resolve caller org", "error", err, "user_id", userID)
-		webutil.Error(w, "failed to resolve organization", nil)
-		return "", "", false
-	}
-	return userID, orgID, true
+	return webutil.CallerOrg(w, r, h.users, h.log)
 }
 
 // serverAccess requires serverID (400) owned by the caller's org (403).
 func (h *Handler) serverAccess(w http.ResponseWriter, r *http.Request, userID, serverID string) bool {
-	if serverID == "" {
-		webutil.Error(w, "server_id is required", nil)
-		return false
-	}
-	return webutil.RequireServerAccess(w, r, h.servers, userID, serverID)
+	return webutil.RequireOwnedServer(w, r, h.servers, userID, serverID)
 }
 
 // orgFor is the org an optional server_id addresses: the server's (after

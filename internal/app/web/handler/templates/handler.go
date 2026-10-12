@@ -5,7 +5,6 @@
 package templates
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"time"
@@ -24,18 +23,13 @@ import (
 // with get-instance.
 const WaitBound = 10 * time.Minute
 
-// OrgResolver resolves a user's organization (port.UserService).
-type OrgResolver interface {
-	PrimaryOrganizationID(ctx context.Context, userID string) (string, error)
-}
-
 // Deps wires the handler; with zero Deps (route documentation) it is never
 // called.
 type Deps struct {
 	Logger                  *logger.Logger
 	Templates               port.TemplateRepository
 	SharedVariables         tuc.SharedNames
-	Users                   OrgResolver
+	Users                   webutil.OrgResolver
 	Servers                 webutil.ServerAccess
 	CommandDispatcher       port.CommandDispatcher
 	AppRepository           port.AppRepository
@@ -48,7 +42,7 @@ type Deps struct {
 // Handler serves the template and instance routes.
 type Handler struct {
 	uc        *tuc.UseCase
-	users     OrgResolver
+	users     webutil.OrgResolver
 	servers   webutil.ServerAccess
 	log       *logger.Logger
 	waitBound time.Duration
@@ -74,21 +68,7 @@ func NewHandler(d *Deps) *Handler {
 
 // callerOrg resolves the caller and their org, writing 401/400 itself.
 func (h *Handler) callerOrg(w http.ResponseWriter, r *http.Request) (string, string, bool) {
-	userID, ok := webutil.RequireUser(w, r)
-	if !ok {
-		return "", "", false
-	}
-	if h.users == nil {
-		webutil.Error(w, "failed to resolve organization", nil)
-		return "", "", false
-	}
-	orgID, err := h.users.PrimaryOrganizationID(r.Context(), userID)
-	if err != nil {
-		h.log.Error("resolve caller org", "error", err, "user_id", userID)
-		webutil.Error(w, "failed to resolve organization", nil)
-		return "", "", false
-	}
-	return userID, orgID, true
+	return webutil.CallerOrg(w, r, h.users, h.log)
 }
 
 // requireID answers 400 unless id is a template id.
@@ -104,14 +84,20 @@ func requireID(w http.ResponseWriter, field, id string) bool {
 // (400) owned by the caller's org (403).
 func (h *Handler) serverCaller(w http.ResponseWriter, r *http.Request, serverID string) (string, string, bool) {
 	userID, orgID, ok := h.callerOrg(w, r)
+	if !ok || !webutil.RequireOwnedServer(w, r, h.servers, userID, serverID) {
+		return "", "", false
+	}
+	return userID, orgID, true
+}
+
+// instanceCaller is serverCaller plus a required key (400).
+func (h *Handler) instanceCaller(w http.ResponseWriter, r *http.Request, serverID, key string) (string, string, bool) {
+	userID, orgID, ok := h.serverCaller(w, r, serverID)
 	if !ok {
 		return "", "", false
 	}
-	if serverID == "" {
-		webutil.Error(w, "server_id is required", nil)
-		return "", "", false
-	}
-	if !webutil.RequireServerAccess(w, r, h.servers, userID, serverID) {
+	if key == "" {
+		webutil.Error(w, "key is required", nil)
 		return "", "", false
 	}
 	return userID, orgID, true
@@ -122,12 +108,8 @@ func (h *Handler) serverCaller(w http.ResponseWriter, r *http.Request, serverID 
 // generic 400.
 func (h *Handler) fail(w http.ResponseWriter, err error, what string) {
 	switch {
-	case errors.Is(err, model.ErrNotFound):
-		webutil.ErrorStatus(w, http.StatusNotFound, err.Error())
-	case errors.Is(err, model.ErrConflict):
-		webutil.ErrorStatus(w, http.StatusConflict, err.Error())
-	case errors.Is(err, model.ErrRejected):
-		webutil.Error(w, err.Error(), nil)
+	case errors.Is(err, model.ErrNotFound), errors.Is(err, model.ErrConflict), errors.Is(err, model.ErrRejected):
+		webutil.ErrorStatus(w, webutil.StatusFor(err), err.Error())
 	default:
 		h.log.Error("templates: "+what, "error", err)
 		webutil.Error(w, "failed to "+what, nil)

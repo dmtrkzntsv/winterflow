@@ -234,7 +234,7 @@ func (h *Handler) RollbackApp(w http.ResponseWriter, r *http.Request) {
 
 	requestID, err := h.usecase.RollbackApp(r.Context(), userID, req.ServerID, req.AppID, req.Hash)
 	if errors.Is(err, model.ErrConflict) {
-		webutil.ErrorStatus(w, http.StatusConflict, err.Error())
+		webutil.ErrorStatus(w, webutil.StatusFor(err), err.Error())
 		return
 	}
 	if err != nil {

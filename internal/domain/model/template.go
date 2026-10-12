@@ -1,26 +1,6 @@
 package model
 
-import (
-	"errors"
-	"time"
-)
-
-// ErrNotFound marks an unknown template, revision or instance key, or one
-// of another org: the API answers 404. ErrConflict marks a request the
-// current state refuses: the API answers 409 with the message.
-var (
-	ErrNotFound = errors.New("not found")
-	ErrConflict = errors.New("conflict")
-)
-
-// classified is a sentinel error that also matches its class.
-type classified struct {
-	msg   string
-	class error
-}
-
-func (e *classified) Error() string        { return e.msg }
-func (e *classified) Is(target error) bool { return target == e.class }
+import "time"
 
 // Template errors. ErrTemplateNameTaken matches ErrRejected (400 naming
 // the field).

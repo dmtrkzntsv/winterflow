@@ -31,22 +31,13 @@ type InstancesQuery struct {
 	TemplateID string `query:"template_id" description:"Only this template's instances."`
 }
 
-// requireKey answers 400 without a key.
-func requireKey(w http.ResponseWriter, key string) bool {
-	if key == "" {
-		webutil.Error(w, "key is required", nil)
-		return false
-	}
-	return true
-}
-
 func (h *Handler) CreateInstance(w http.ResponseWriter, r *http.Request) {
 	req, ok := webutil.DecodeBody[CreateInstanceRequest](w, r)
 	if !ok {
 		return
 	}
-	userID, orgID, ok := h.serverCaller(w, r, req.ServerID)
-	if !ok || !requireKey(w, req.Key) {
+	userID, orgID, ok := h.instanceCaller(w, r, req.ServerID, req.Key)
+	if !ok {
 		return
 	}
 	if !requireID(w, "template_id", req.TemplateID) {
@@ -65,8 +56,8 @@ func (h *Handler) CreateInstance(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) GetInstance(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	_, orgID, ok := h.serverCaller(w, r, q.Get("server_id"))
-	if !ok || !requireKey(w, q.Get("key")) {
+	_, orgID, ok := h.instanceCaller(w, r, q.Get("server_id"), q.Get("key"))
+	if !ok {
 		return
 	}
 	out, err := h.uc.GetInstance(r.Context(), orgID, q.Get("server_id"), q.Get("key"))
@@ -80,19 +71,17 @@ func (h *Handler) GetInstance(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) GetInstances(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	serverID := q.Get("server_id")
-	var orgID string
+	var (
+		orgID string
+		ok    bool
+	)
 	if serverID != "" {
-		_, org, ok := h.serverCaller(w, r, serverID)
-		if !ok {
-			return
-		}
-		orgID = org
+		_, orgID, ok = h.serverCaller(w, r, serverID)
 	} else {
-		_, org, ok := h.callerOrg(w, r)
-		if !ok {
-			return
-		}
-		orgID = org
+		_, orgID, ok = h.callerOrg(w, r)
+	}
+	if !ok {
+		return
 	}
 	templateID := q.Get("template_id")
 	if templateID != "" && !requireID(w, "template_id", templateID) {

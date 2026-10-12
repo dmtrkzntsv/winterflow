@@ -1,7 +1,6 @@
 package util
 
 import (
-	"encoding/json"
 	"net/http"
 
 	"winterflow/internal/domain/port"
@@ -15,12 +14,7 @@ type ServerAccess = port.ServerOwnership
 // Forbidden writes a 403 JSON error: authenticated, but not allowed to act on
 // the target resource.
 func Forbidden(w http.ResponseWriter) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusForbidden)
-	_ = json.NewEncoder(w).Encode(APIResponse{
-		Success: false,
-		Message: "forbidden",
-	})
+	write(w, http.StatusForbidden, false, "forbidden", nil)
 }
 
 // RequireServerAccess enforces that serverID belongs to one of the caller's

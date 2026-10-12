@@ -260,12 +260,38 @@ func TestStoreErrorRetriesNextSample(t *testing.T) {
 	store := newStore()
 	cpuRule(store, 90, 1)
 	h := newHarness(store)
-	store.fail = errStore
+	// Fire error: first sample fails, local state unchanged, next sample retries
+	store.failTransitions = errStore
 	h.sample(95, nil)
-	store.fail = nil
+	if len(store.events) != 0 || h.queue.len() != 0 || len(h.ev.firing) != 0 {
+		t.Fatalf("fire error should leave state unchanged: events=%d jobs=%d firing=%d", len(store.events), h.queue.len(), len(h.ev.firing))
+	}
+	store.failTransitions = nil
 	h.sample(95, nil)
 	if len(store.events) != 1 {
-		t.Fatalf("events = %v", store.eventKinds())
+		t.Fatalf("after retry: events = %v", store.eventKinds())
+	}
+}
+
+func TestStoreResolveErrorRetriesNextSample(t *testing.T) {
+	store := newStore()
+	cpuRule(store, 90, 1)
+	h := newHarness(store)
+	// Fire the rule
+	h.sample(95, nil)
+	if len(store.events) != 1 {
+		t.Fatalf("should have fired: %v", store.eventKinds())
+	}
+	// Drop below threshold and try to resolve, but fail
+	store.failTransitions = errStore
+	h.sample(10, nil) // would resolve, but fails
+	if len(store.events) != 1 || len(h.ev.firing) != 1 {
+		t.Fatalf("resolve error should keep firing: events=%d firing=%d", len(store.events), len(h.ev.firing))
+	}
+	store.failTransitions = nil
+	h.sample(10, nil) // try again, should succeed
+	if len(store.events) != 2 || len(h.ev.firing) != 0 {
+		t.Fatalf("after resolve retry: events=%v firing=%d", store.eventKinds(), len(h.ev.firing))
 	}
 }
 
@@ -289,5 +315,61 @@ func TestUnknownTargetsAreIgnoredAndPruned(t *testing.T) {
 	h.sample(10, nil)
 	if h.ev.buffers[alert.Target{ServerID: srv, AppID: app}] != nil {
 		t.Fatal("deleted app's buffer kept")
+	}
+}
+
+func TestDeletedRulesAreForget(t *testing.T) {
+	store := newStore()
+	rule := cpuRule(store, 90, 1)
+	h := newHarness(store)
+	// Fire the rule
+	h.sample(95, nil)
+	if len(store.events) != 1 {
+		t.Fatalf("rule should have fired: %v", store.eventKinds())
+	}
+	if _, firing := h.ev.firing[alert.Key{RuleID: rule.ID, Target: alert.Target{ServerID: srv}}]; !firing {
+		t.Fatal("rule not in firing")
+	}
+	// Delete the rule from the store
+	store.mu.Lock()
+	store.rules = []alert.Rule{}
+	store.mu.Unlock()
+	// Next sample should remove it from firing
+	h.sample(95, nil)
+	if _, firing := h.ev.firing[alert.Key{RuleID: rule.ID, Target: alert.Target{ServerID: srv}}]; firing {
+		t.Fatal("deleted rule still in firing")
+	}
+	// No additional event or job should be produced
+	if len(store.events) != 1 {
+		t.Fatalf("deleted rule produced event: %v", store.eventKinds())
+	}
+	if h.queue.len() != 1 {
+		t.Fatalf("deleted rule produced job: %d", h.queue.len())
+	}
+}
+
+func TestDownRuleDisabledDoesNotResolve(t *testing.T) {
+	store := newStore()
+	store.addRule(alert.Rule{TargetKind: alert.TargetServer, Metric: alert.MetricDown, DurationMinutes: 5})
+	h := newHarness(store)
+	ctx := context.Background()
+	// Mark server as heard and then let it go silent
+	h.ev.ObserveHeartbeat(ctx, srv)
+	h.clock.t = t0.Add(5 * time.Minute)
+	h.ev.Sweep(ctx)
+	if len(store.events) != 1 {
+		t.Fatalf("down rule should have fired: %v", store.eventKinds())
+	}
+	// Disable the rule in the store
+	store.mu.Lock()
+	store.rules[0].Enabled = false
+	store.mu.Unlock()
+	// ObserveHeartbeat should clear the state silently, not send resolved
+	h.ev.ObserveHeartbeat(ctx, srv)
+	if len(store.events) != 1 {
+		t.Fatalf("disabled rule should not resolve: events=%v", store.eventKinds())
+	}
+	if len(store.cleared) != 1 {
+		t.Fatalf("disabled rule should be cleared: cleared=%v", store.cleared)
 	}
 }

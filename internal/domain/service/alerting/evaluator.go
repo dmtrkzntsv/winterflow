@@ -198,6 +198,7 @@ func (e *Evaluator) ObserveMetrics(ctx context.Context, serverID string, at time
 	if !ok {
 		return
 	}
+	e.forgetDeletedRules(dir, srv.OrgID, rules)
 	for _, t := range targets {
 		e.evalThresholds(ctx, dir, srv, t, rules, overrides, now)
 	}
@@ -238,6 +239,7 @@ func (e *Evaluator) ObserveAppStatus(ctx context.Context, serverID string, probl
 	if !ok {
 		return
 	}
+	e.forgetDeletedRules(dir, srv.OrgID, rules)
 	for _, id := range appIDs {
 		t := alert.Target{ServerID: serverID, AppID: id}
 		for _, r := range rules {
@@ -287,6 +289,9 @@ func (e *Evaluator) Sweep(ctx context.Context) {
 		or, seen := byOrg[srv.OrgID]
 		if !seen {
 			or.rules, or.overrides, or.ok = e.rules(ctx, srv.OrgID)
+			if or.ok {
+				e.forgetDeletedRules(dir, srv.OrgID, or.rules)
+			}
 			byOrg[srv.OrgID] = or
 		}
 		if !or.ok {
@@ -341,7 +346,12 @@ func (e *Evaluator) hear(ctx context.Context, dir alert.Directory, serverID stri
 			delete(e.firing, k) // the rule is gone; its state cascaded
 			continue
 		}
-		e.transition(ctx, dir, srv, r, alert.Effective(r, overrides[k]), k, false, 0, now)
+		s := alert.Effective(r, overrides[k])
+		if !s.Enabled {
+			e.clear(ctx, k)
+			continue
+		}
+		e.transition(ctx, dir, srv, r, s, k, false, 0, now)
 	}
 }
 
@@ -512,6 +522,22 @@ func (e *Evaluator) directory(ctx context.Context, now time.Time, serverID strin
 		}
 	}
 	return d
+}
+
+// forgetDeletedRules removes firing entries for rules that no longer exist.
+func (e *Evaluator) forgetDeletedRules(dir alert.Directory, orgID string, rules []alert.Rule) {
+	rulesByID := make(map[string]bool, len(rules))
+	for _, r := range rules {
+		rulesByID[r.ID] = true
+	}
+	for k := range e.firing {
+		if !rulesByID[k.RuleID] {
+			// The rule is gone; check if this target's org is orgID
+			if srv, ok := dir.Servers[k.ServerID]; ok && srv.OrgID == orgID {
+				delete(e.firing, k)
+			}
+		}
+	}
 }
 
 // buffer returns t's buffer, creating it.

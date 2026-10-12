@@ -26,17 +26,18 @@ const (
 // fakeStore is an in-memory alert repository with the real
 // compare-and-set semantics of Fire and Resolve.
 type fakeStore struct {
-	mu        sync.Mutex
-	rules     []alert.Rule
-	overrides []alert.Override
-	states    map[alert.Key]alert.State
-	events    []alert.Event
-	cleared   []alert.Key
-	channels  []alert.Channel
-	delivered map[string][]alert.Delivery
-	records   []string // "channel:error"
-	dir       alert.Directory
-	fail      error
+	mu               sync.Mutex
+	rules            []alert.Rule
+	overrides        []alert.Override
+	states           map[alert.Key]alert.State
+	events           []alert.Event
+	cleared          []alert.Key
+	channels         []alert.Channel
+	delivered        map[string][]alert.Delivery
+	records          []string // "channel:error"
+	dir              alert.Directory
+	fail             error      // returned by ListRules/ListOverrides
+	failTransitions  error      // returned by Fire and Resolve
 }
 
 func newStore() *fakeStore {
@@ -99,8 +100,8 @@ func (s *fakeStore) FiringStates(context.Context) ([]alert.StateRow, error) {
 func (s *fakeStore) Fire(_ context.Context, k alert.Key, _, _ float64, ev alert.Event) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.fail != nil {
-		return false, s.fail
+	if s.failTransitions != nil {
+		return false, s.failTransitions
 	}
 	if s.states[k] == alert.StateFiring {
 		return false, nil
@@ -113,8 +114,8 @@ func (s *fakeStore) Fire(_ context.Context, k alert.Key, _, _ float64, ev alert.
 func (s *fakeStore) Resolve(_ context.Context, k alert.Key, _ float64, ev alert.Event) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.fail != nil {
-		return false, s.fail
+	if s.failTransitions != nil {
+		return false, s.failTransitions
 	}
 	if s.states[k] != alert.StateFiring {
 		return false, nil

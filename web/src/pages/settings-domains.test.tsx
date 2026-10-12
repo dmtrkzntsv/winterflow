@@ -196,6 +196,20 @@ describe("DomainsCard", () => {
     expect(docker.createDomain).toHaveBeenCalledWith("example.com", "off", undefined);
   });
 
+  it("returns focus to the button that opened the dialog", async () => {
+    const user = setupUser();
+    renderCard(fakeDocker());
+    const add = await screen.findByRole("button", { name: /Add domain/ });
+    await user.click(add);
+    await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(add).toHaveFocus());
+    const edit = screen.getByRole("button", { name: "Edit domain example.com" });
+    await user.click(edit);
+    await screen.findByRole("dialog");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(edit).toHaveFocus());
+  });
+
   it("shows the proxy's reload warnings after a create or a delete", async () => {
     const user = setupUser();
     const docker = fakeDocker({
@@ -213,17 +227,20 @@ describe("DomainsCard", () => {
     await user.click(within(dialog).getByRole("button", { name: "Add" }));
     await waitFor(() =>
       expect(toastWarning).toHaveBeenCalledWith("Domain added, but the proxy reported a problem", {
-        description: "ingress reload failed (previous routing still active): boom",
+        description: expect.anything(),
       }),
     );
+    // One line per warning (toast descriptions keep newlines).
+    expect(toastWarning.mock.calls[0][1].description).toBe("ingress reload failed (previous routing still active): boom");
 
     await user.click(screen.getByRole("button", { name: "Remove domain tunnel.example.com" }));
     await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Remove domain" }));
     await waitFor(() =>
       expect(toastWarning).toHaveBeenCalledWith("Domain removed, but the proxy reported a problem", {
-        description: "ingress: app-1 skipped",
+        description: expect.anything(),
       }),
     );
+    expect(toastWarning.mock.calls[1][1].description).toBe("ingress: app-1 skipped");
     expect(toastSuccess).not.toHaveBeenCalled();
   });
 

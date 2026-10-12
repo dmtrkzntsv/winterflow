@@ -2241,6 +2241,318 @@ paths:
       summary: Notification stream (operation results, status changes)
       tags:
       - system
+  /api/v1/storage/delete:
+    post:
+      operationId: storageDelete
+      parameters:
+      - description: Target server id.
+        in: query
+        name: server_id
+        required: true
+        schema:
+          description: Target server id.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteStorageRequest'
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Remove a storage no app uses
+      tags:
+      - storages
+      x-operation-result:
+        $ref: '#/components/schemas/DeleteStorageResponse'
+  /api/v1/storage/get-storages:
+    get:
+      operationId: storageGetStorages
+      parameters:
+      - description: Target server id.
+        in: query
+        name: server_id
+        required: true
+        schema:
+          description: Target server id.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/GetStoragesResponse'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: A server's storages from the API's index (no agent round-trip, no secrets)
+      tags:
+      - storages
+  /api/v1/storage/list:
+    get:
+      operationId: storageList
+      parameters:
+      - description: Target server id.
+        in: query
+        name: server_id
+        required: true
+        schema:
+          description: Target server id.
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: List the storages on a server, with the apps using each
+      tags:
+      - storages
+      x-operation-result:
+        $ref: '#/components/schemas/ListStoragesResponse'
+  /api/v1/storage/save:
+    post:
+      description: '`create: true` adds a storage and fails when the name exists;
+        otherwise the storage must exist and keep its type. `s3.secret_access_key`
+        is ECIES-encrypted with the server''s public key, or `<encrypted>` to keep
+        the stored one. Nothing is saved when the connection test fails.'
+      operationId: storageSave
+      parameters:
+      - description: Target server id.
+        in: query
+        name: server_id
+        required: true
+        schema:
+          description: Target server id.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaveStorageRequest'
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Add or edit a storage (tested first; redeploys the running apps that
+        use it)
+      tags:
+      - storages
+      x-operation-result:
+        $ref: '#/components/schemas/SaveStorageResponse'
+  /api/v1/storage/test:
+    post:
+      description: '`s3.secret_access_key` is ECIES-encrypted with the server''s public
+        key (GET /api/v1/server/get-public-key), or `<encrypted>` to reuse the secret
+        stored under the same name. A failed probe is a successful result with `ok:
+        false`.'
+      operationId: storageTest
+      parameters:
+      - description: Target server id.
+        in: query
+        name: server_id
+        required: true
+        schema:
+          description: Target server id.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TestStorageRequest'
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Test a storage by writing and deleting a probe object (30s deadline)
+      tags:
+      - storages
+      x-operation-result:
+        $ref: '#/components/schemas/TestStorageResponse'
   /api/v1/user/change-password:
     post:
       operationId: userChangePassword
@@ -3326,6 +3638,18 @@ components:
       required:
       - address
       type: object
+    DeleteStorageRequest:
+      properties:
+        name:
+          type: string
+      type: object
+    DeleteStorageResponse:
+      properties:
+        name:
+          type: string
+      required:
+      - name
+      type: object
     DeleteTokenRequest:
       properties:
         token_id:
@@ -3445,6 +3769,10 @@ components:
       properties:
         app:
           $ref: '#/components/schemas/AppPayload'
+        storage_variables:
+          items:
+            $ref: '#/components/schemas/StorageVariable'
+          type: array
       required:
       - app
       type: object
@@ -3536,6 +3864,17 @@ components:
           - "null"
       required:
       - servers
+      type: object
+    GetStoragesResponse:
+      properties:
+        storages:
+          items:
+            $ref: '#/components/schemas/StorageSummary'
+          type:
+          - array
+          - "null"
+      required:
+      - storages
       type: object
     ImageTagsResponse:
       properties:
@@ -3698,6 +4037,17 @@ components:
       required:
       - registries
       type: object
+    ListStoragesResponse:
+      properties:
+        storages:
+          items:
+            $ref: '#/components/schemas/StorageInfo'
+          type:
+          - array
+          - "null"
+      required:
+      - storages
+      type: object
     ListVolumesResponse:
       properties:
         volumes:
@@ -3708,6 +4058,18 @@ components:
           - "null"
       required:
       - volumes
+      type: object
+    LocalStorage:
+      properties:
+        path:
+          type: string
+      required:
+      - path
+      type: object
+    LocalStorageInput:
+      properties:
+        path:
+          type: string
       type: object
     LogEntry:
       properties:
@@ -4000,6 +4362,48 @@ components:
       - app_id
       - revision
       type: object
+    S3Storage:
+      properties:
+        access_key_id:
+          type: string
+        bucket:
+          type: string
+        endpoint:
+          type: string
+        path_style:
+          type: boolean
+        prefix:
+          type: string
+        region:
+          type: string
+        secret_access_key:
+          type: string
+      required:
+      - endpoint
+      - region
+      - bucket
+      - prefix
+      - access_key_id
+      - secret_access_key
+      - path_style
+      type: object
+    S3StorageInput:
+      properties:
+        access_key_id:
+          type: string
+        bucket:
+          type: string
+        endpoint:
+          type: string
+        path_style:
+          type: boolean
+        prefix:
+          type: string
+        region:
+          type: string
+        secret_access_key:
+          type: string
+      type: object
     SaveAppRequest:
       properties:
         app:
@@ -4040,6 +4444,37 @@ components:
       required:
       - app_id
       - revision
+      type: object
+    SaveStorageRequest:
+      properties:
+        create:
+          type: boolean
+        local:
+          $ref: '#/components/schemas/LocalStorageInput'
+        name:
+          type: string
+        s3:
+          $ref: '#/components/schemas/S3StorageInput'
+        type:
+          type: string
+      type: object
+    SaveStorageResponse:
+      properties:
+        redeployed:
+          items:
+            type: string
+          type:
+          - array
+          - "null"
+        storage:
+          $ref: '#/components/schemas/StorageInfo'
+        warnings:
+          items:
+            type: string
+          type: array
+      required:
+      - storage
+      - redeployed
       type: object
     SeriesResponse:
       properties:
@@ -4290,6 +4725,76 @@ components:
       required:
       - bootstrap
       - registration_enabled
+      type: object
+    StorageInfo:
+      properties:
+        apps:
+          items:
+            type: string
+          type:
+          - array
+          - "null"
+        local:
+          $ref: '#/components/schemas/LocalStorage'
+        location:
+          type: string
+        name:
+          type: string
+        s3:
+          $ref: '#/components/schemas/S3Storage'
+        type:
+          type: string
+      required:
+      - name
+      - type
+      - location
+      - apps
+      type: object
+    StorageSummary:
+      properties:
+        location:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+      required:
+      - name
+      - type
+      - location
+      type: object
+    StorageVariable:
+      properties:
+        name:
+          type: string
+        secret:
+          type: boolean
+        storage:
+          type: string
+      required:
+      - name
+      - storage
+      - secret
+      type: object
+    TestStorageRequest:
+      properties:
+        local:
+          $ref: '#/components/schemas/LocalStorageInput'
+        name:
+          type: string
+        s3:
+          $ref: '#/components/schemas/S3StorageInput'
+        type:
+          type: string
+      type: object
+    TestStorageResponse:
+      properties:
+        error:
+          type: string
+        ok:
+          type: boolean
+      required:
+      - ok
       type: object
     UpdateAgentRequest:
       properties:

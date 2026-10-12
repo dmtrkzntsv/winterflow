@@ -56,6 +56,7 @@ function Harness({ ingress }: { ingress: AppIngress }) {
     config: { id: "app-1", name: "x", files: [], variables: [], ingress },
     files: {},
     variables: {},
+    storageVariables: [],
   });
   const ing = state.config.ingress;
   return (

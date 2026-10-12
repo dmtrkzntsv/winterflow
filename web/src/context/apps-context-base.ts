@@ -1,5 +1,7 @@
 import { createContext } from "react";
 
+import type { StorageVariable } from "@/types/app-config";
+
 export type AppDomain = {
   domain: string;
   ssl: boolean;
@@ -103,6 +105,8 @@ export type AppDetailPayload = {
     variables: { id?: string; name: string; content: string; encrypted?: boolean }[] | null;
     files: { id?: string; name: string; content: string; encrypted?: boolean }[] | null;
   };
+  // WF_STORAGE_ variables the compose files reference (never values).
+  storage_variables?: StorageVariable[] | null;
   revision: number;
   available_revisions: number[] | null;
 };

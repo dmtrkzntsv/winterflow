@@ -11,6 +11,7 @@ import { useAuth } from "@/context/use-auth";
 import { useServers } from "@/context/use-servers";
 import { useNotifications } from "@/context/use-notifications";
 import { apiBaseUrl } from "@/config";
+import { readApiError } from "@/lib/api";
 
 import {
   AppsContext,
@@ -231,7 +232,8 @@ export function AppsProvider({ children }: { children: ReactNode }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...body, server_id: activeServerId }),
       });
-      if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+      // A refused command (400) carries the reason, e.g. an unknown storage.
+      if (!res.ok) throw await readApiError(res);
       const accepted = (await res.json()) as AcceptedResponse;
       const ref = accepted.data?.request_id;
       let payload: unknown;

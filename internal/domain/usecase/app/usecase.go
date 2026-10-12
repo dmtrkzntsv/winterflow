@@ -17,7 +17,11 @@ type UseCase struct {
 	repo          port.AppRepository
 	domains       port.AppDomainRepository
 	serverDomains port.ServerDomainRepository
-	log           *logger.Logger
+	// serverStorages indexes each server's storages: the storage
+	// routes keep it current; save-app checks WF_STORAGE_ references
+	// against it.
+	serverStorages port.ServerStorageRepository
+	log            *logger.Logger
 }
 
 type Deps struct {
@@ -25,16 +29,19 @@ type Deps struct {
 	AppRepository          port.AppRepository
 	AppDomainRepository    port.AppDomainRepository
 	ServerDomainRepository port.ServerDomainRepository
-	Log                    *logger.Logger
+	// ServerStorageRepository indexes each server's storages.
+	ServerStorageRepository port.ServerStorageRepository
+	Log                     *logger.Logger
 }
 
 func NewUseCase(d *Deps) *UseCase {
 	return &UseCase{
-		dispatcher:    d.CommandDispatcher,
-		repo:          d.AppRepository,
-		domains:       d.AppDomainRepository,
-		serverDomains: d.ServerDomainRepository,
-		log:           d.Log,
+		dispatcher:     d.CommandDispatcher,
+		repo:           d.AppRepository,
+		domains:        d.AppDomainRepository,
+		serverDomains:  d.ServerDomainRepository,
+		serverStorages: d.ServerStorageRepository,
+		log:            d.Log,
 	}
 }
 
@@ -346,6 +353,13 @@ func (uc *UseCase) SaveApp(ctx context.Context, userID, serverID string, app mod
 		payload.Config = cfgBytes
 	}
 
+	// The agent runs the same Validate; here a reserved variable name is a
+	// synchronous 400 instead of an async failure.
+	req := command.SaveAppRequest{App: payload, Draft: draft}
+	if err := req.Validate(); err != nil {
+		return "", err
+	}
+
 	// Ingress rides the config blob. Parse + validate + conflict-check here so
 	// a bad config is a synchronous 400, not an async agent failure. ing==nil
 	// (no "ingress" key) means the feature is untouched: skip everything.
@@ -376,7 +390,10 @@ func (uc *UseCase) SaveApp(ctx context.Context, userID, serverID string, app mod
 		}
 	}
 
-	req := command.SaveAppRequest{App: payload, Draft: draft}
+	if err := uc.requireStorageRefs(ctx, serverID, payload); err != nil {
+		return "", err
+	}
+
 	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
 		AgentID: serverID,
 		UserID:  userID,

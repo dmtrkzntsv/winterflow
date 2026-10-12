@@ -12,6 +12,7 @@ import (
 	metricrepo "winterflow/internal/infra/db/repository/metric"
 	serverrepo "winterflow/internal/infra/db/repository/server"
 	serverdomainrepo "winterflow/internal/infra/db/repository/serverdomain"
+	serverstoragerepo "winterflow/internal/infra/db/repository/serverstorage"
 	userrepo "winterflow/internal/infra/db/repository/user"
 	"winterflow/internal/infra/transport/bus"
 	"winterflow/internal/infra/transport/dispatch"
@@ -48,32 +49,37 @@ func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerCon
 	}
 
 	startResponseSubscriber(ctx, b, dispatcher, cfg, log)
-	startEventsSubscriber(ctx, b, statusCache, r.server, nm, cfg, log, newDomainSync(ctx, dispatcher, r.serverDomain, log), ms, latest)
+	startEventsSubscriber(ctx, b, statusCache, r.server, nm, cfg, log, indexSyncs{
+		newDomainSync(ctx, dispatcher, r.serverDomain, log),
+		newStorageSync(ctx, dispatcher, r.serverStorage, log),
+	}, ms, latest)
 
 	return &Deps{
-		Log:                    log,
-		Cfg:                    cfg,
-		UserService:            r.user,
-		ServerRepository:       r.server,
-		AppRepository:          r.app,
-		AppDomainRepository:    r.appDomain,
-		ServerDomainRepository: r.serverDomain,
-		CommandDispatcher:      dispatcher,
-		NotificationManager:    nm,
-		StatusCache:            statusCache,
-		MetricRepository:       r.metric,
-		LatestMetrics:          latest,
+		Log:                     log,
+		Cfg:                     cfg,
+		UserService:             r.user,
+		ServerRepository:        r.server,
+		AppRepository:           r.app,
+		AppDomainRepository:     r.appDomain,
+		ServerDomainRepository:  r.serverDomain,
+		ServerStorageRepository: r.serverStorage,
+		CommandDispatcher:       dispatcher,
+		NotificationManager:     nm,
+		StatusCache:             statusCache,
+		MetricRepository:        r.metric,
+		LatestMetrics:           latest,
 	}, r.server
 }
 
-// repos are the six DB repositories, built for the connection's driver.
+// repos are the DB repositories, built for the connection's driver.
 type repos struct {
-	user         *userrepo.Repo
-	server       *serverrepo.Repo
-	app          *apprepo.Repo
-	appDomain    *appdomainrepo.Repo
-	serverDomain *serverdomainrepo.Repo
-	metric       *metricrepo.Repo
+	user          *userrepo.Repo
+	server        *serverrepo.Repo
+	app           *apprepo.Repo
+	appDomain     *appdomainrepo.Repo
+	serverDomain  *serverdomainrepo.Repo
+	serverStorage *serverstoragerepo.Repo
+	metric        *metricrepo.Repo
 }
 
 func newRepos(conn *db.DB, log *logger.Logger) (repos, error) {
@@ -94,6 +100,9 @@ func newRepos(conn *db.DB, log *logger.Logger) (repos, error) {
 		return r, err
 	}
 	if r.serverDomain, err = serverdomainrepo.New(conn.Tx, conn.Driver, log); err != nil {
+		return r, err
+	}
+	if r.serverStorage, err = serverstoragerepo.New(conn.Tx, conn.Driver, log); err != nil {
 		return r, err
 	}
 	r.metric, err = metricrepo.New(conn.Tx, conn.Driver, log)

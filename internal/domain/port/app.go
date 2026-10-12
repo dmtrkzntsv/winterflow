@@ -59,6 +59,22 @@ type ServerDomainRepository interface {
 	ReplaceForServer(ctx context.Context, serverID string, ds []model.RegisteredDomain) error
 }
 
+// ServerStorageRepository is the DB-backed index of each server's storages
+// (the agent's storages/ dir is the source of truth): name, type and
+// location, never a secret. Save-app checks WF_STORAGE_ references
+// against it.
+type ServerStorageRepository interface {
+	// ListForServer returns the server's storages sorted by name.
+	ListForServer(ctx context.Context, serverID string) ([]model.StorageSummary, error)
+	// Upsert records a storage the agent confirmed saving.
+	Upsert(ctx context.Context, serverID string, s model.StorageSummary) error
+	// Delete drops a storage the agent confirmed deleting.
+	Delete(ctx context.Context, serverID, name string) error
+	// ReplaceForServer makes the index mirror a storage.list answer; an
+	// unchanged answer writes nothing.
+	ReplaceForServer(ctx context.Context, serverID string, ss []model.StorageSummary) error
+}
+
 // IngressManager owns the embedded reverse proxy. Implementations must be
 // safe for concurrent use and must never let an ingress failure propagate as
 // a command failure.

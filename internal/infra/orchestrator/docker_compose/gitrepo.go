@@ -10,6 +10,7 @@ import (
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/filemode"
+	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
 	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
@@ -37,9 +38,26 @@ func gitEnsure(dir string) error {
 	return err
 }
 
-// gitCommitAll stages everything (honoring .gitignore) and commits. A clean
-// worktree is a no-op that returns the current HEAD hash, so callers can
-// commit unconditionally after a save.
+// derivedArtifacts are the files a deploy derives in the app folder (some
+// hold plaintext secrets). They never belong in the app's history: the
+// .gitignore lists them, and every commit excludes them (neverCommitted)
+// whatever .gitignore says — a rollback restores an old .gitignore that may
+// not list them.
+var derivedArtifacts = []string{envSecretsRel, deployedRel, runRel, storageEnvRel}
+
+// neverCommitted are derivedArtifacts as go-git patterns. go-git does not
+// read .git/info/exclude, so they ride on every commit's worktree.
+var neverCommitted = func() []gitignore.Pattern {
+	out := make([]gitignore.Pattern, 0, len(derivedArtifacts))
+	for _, rel := range derivedArtifacts {
+		out = append(out, gitignore.ParsePattern("/"+rel, nil))
+	}
+	return out
+}()
+
+// gitCommitAll stages everything (honoring .gitignore and neverCommitted)
+// and commits. A clean worktree is a no-op that returns the current HEAD
+// hash, so callers can commit unconditionally after a save.
 func gitCommitAll(dir, subject string) (string, error) {
 	repo, err := git.PlainOpen(dir)
 	if err != nil {
@@ -49,6 +67,7 @@ func gitCommitAll(dir, subject string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	wt.Excludes = append(wt.Excludes, neverCommitted...)
 	if err := wt.AddWithOptions(&git.AddOptions{All: true}); err != nil {
 		return "", err
 	}
@@ -70,6 +89,19 @@ func gitCommitAll(dir, subject string) (string, error) {
 		return "", err
 	}
 	return hash.String(), nil
+}
+
+// gitHead returns the hash HEAD points at.
+func gitHead(dir string) (string, error) {
+	repo, err := git.PlainOpen(dir)
+	if err != nil {
+		return "", err
+	}
+	head, err := repo.Head()
+	if err != nil {
+		return "", err
+	}
+	return head.Hash().String(), nil
 }
 
 // gitLog returns the app's history, newest first.
@@ -125,15 +157,10 @@ func gitCount(dir string) (int, error) {
 
 // commitCount is gitCount behind the per-app HEAD-keyed cache.
 func (r *Repository) commitCount(appID, dir string) (int, error) {
-	repo, err := git.PlainOpen(dir)
+	h, err := gitHead(dir)
 	if err != nil {
 		return 0, err
 	}
-	head, err := repo.Head()
-	if err != nil {
-		return 0, err
-	}
-	h := head.Hash().String()
 
 	r.versionMu.Lock()
 	if e, ok := r.versionCache[appID]; ok && e.head == h {

@@ -21,35 +21,50 @@ func (r *recordingDispatcher) Dispatch(_ context.Context, in port.DispatchInput)
 
 func (r *recordingDispatcher) last() port.DispatchInput { return r.all[len(r.all)-1] }
 
-// fakeServerDomains is an in-memory port.ServerDomainRepository.
-type fakeServerDomains struct {
-	rows     map[string][]model.RegisteredDomain // serverID -> rows
-	upserted []model.RegisteredDomain
+// fakeIndex is an in-memory per-server index: port.ServerDomainRepository
+// over model.RegisteredDomain, port.ServerStorageRepository over
+// model.StorageSummary.
+type fakeIndex[T any] struct {
+	rows     map[string][]T // serverID -> rows
+	upserted []T
 	deleted  []string
 }
 
-func newFakeServerDomains(rows ...model.RegisteredDomain) *fakeServerDomains {
-	f := &fakeServerDomains{rows: map[string][]model.RegisteredDomain{}}
+type (
+	fakeServerDomains  = fakeIndex[model.RegisteredDomain]
+	fakeServerStorages = fakeIndex[model.StorageSummary]
+)
+
+// newFakeIndex holds rows for srv-1.
+func newFakeIndex[T any](rows ...T) *fakeIndex[T] {
+	f := &fakeIndex[T]{rows: map[string][]T{}}
 	if len(rows) > 0 {
 		f.rows["srv-1"] = rows
 	}
 	return f
 }
 
-func (f *fakeServerDomains) ListForServer(_ context.Context, serverID string) ([]model.RegisteredDomain, error) {
+func newFakeServerDomains(rows ...model.RegisteredDomain) *fakeServerDomains {
+	return newFakeIndex(rows...)
+}
+func newFakeServerStorages(rows ...model.StorageSummary) *fakeServerStorages {
+	return newFakeIndex(rows...)
+}
+
+func (f *fakeIndex[T]) ListForServer(_ context.Context, serverID string) ([]T, error) {
 	return f.rows[serverID], nil
 }
-func (f *fakeServerDomains) Upsert(_ context.Context, serverID string, d model.RegisteredDomain) error {
-	f.upserted = append(f.upserted, d)
-	f.rows[serverID] = append(f.rows[serverID], d)
+func (f *fakeIndex[T]) Upsert(_ context.Context, serverID string, row T) error {
+	f.upserted = append(f.upserted, row)
+	f.rows[serverID] = append(f.rows[serverID], row)
 	return nil
 }
-func (f *fakeServerDomains) Delete(_ context.Context, _, name string) error {
+func (f *fakeIndex[T]) Delete(_ context.Context, _, name string) error {
 	f.deleted = append(f.deleted, name)
 	return nil
 }
-func (f *fakeServerDomains) ReplaceForServer(_ context.Context, serverID string, ds []model.RegisteredDomain) error {
-	f.rows[serverID] = ds
+func (f *fakeIndex[T]) ReplaceForServer(_ context.Context, serverID string, rows []T) error {
+	f.rows[serverID] = rows
 	return nil
 }
 

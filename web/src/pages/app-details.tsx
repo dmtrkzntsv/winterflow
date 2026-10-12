@@ -46,6 +46,7 @@ import {
   type ControlAction,
   type DeleteAppResult,
 } from "@/context/apps-context-base";
+import { readApiError } from "@/lib/api";
 import { appLabel } from "@/lib/kpi";
 import { cn } from "@/lib/utils";
 import { useServerPath } from "@/context/use-server-path";
@@ -266,7 +267,7 @@ function LogsTab({ appId }: { appId: string }) {
         activeServerId,
       )}&app_id=${encodeURIComponent(appId)}&tail=${tail}`;
       const res = await fetch(url, { credentials: "include" });
-      if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+      if (!res.ok) throw await readApiError(res);
       const accepted = (await res.json()) as { data?: { request_id?: string } };
       const ref = accepted.data?.request_id;
       if (!ref) throw new Error("No request id");
@@ -549,7 +550,6 @@ function SettingsTab({
       } else if (warnings.length) {
         toast.warning("App deleted with cleanup warnings", {
           description: warnings.join("\n"),
-          classNames: { description: "whitespace-pre-line" },
         });
       } else {
         toast.success(withVolumes ? "App and volumes deleted" : "App deleted");

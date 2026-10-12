@@ -248,6 +248,20 @@ func (d *Dispatcher) newHandlers() map[command.Type]handlerFunc {
 			return command.DeleteDomainResponse{Name: in.Name, Warnings: d.reloadIngress(ctx)}, nil
 		}),
 
+		command.TypeStorageList: handle(d, func(ctx context.Context, in command.ListStoragesRequest) (command.ListStoragesResponse, error) {
+			list, err := d.orch.ListStorages(ctx, !in.RegistryOnly)
+			return command.ListStoragesResponse{Storages: list}, err
+		}),
+		command.TypeStorageTest: handle(d, func(ctx context.Context, in command.TestStorageRequest) (command.TestStorageResponse, error) {
+			return d.orch.TestStorage(ctx, in.Storage)
+		}),
+		command.TypeStorageSave: handle(d, func(ctx context.Context, in command.SaveStorageRequest) (command.SaveStorageResponse, error) {
+			return d.orch.SaveStorage(ctx, in.Storage, in.Create)
+		}),
+		command.TypeStorageDelete: handle(d, func(ctx context.Context, in command.DeleteStorageRequest) (command.DeleteStorageResponse, error) {
+			return command.DeleteStorageResponse{Name: in.Name}, d.orch.DeleteStorage(ctx, in.Name)
+		}),
+
 		command.TypeImageTags: handle(d, func(ctx context.Context, in command.ImageTagsRequest) (command.ImageTagsResponse, error) {
 			tags, err := d.orch.ImageTags(ctx, in.Image)
 			return command.ImageTagsResponse{Image: in.Image, Tags: tags}, err

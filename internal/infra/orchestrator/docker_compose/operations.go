@@ -359,46 +359,71 @@ func (r *Repository) appName(dir, appID string) string {
 
 // --- compose helpers ------------------------------------------------------
 
-// composeFile resolves the compose file for git-sourced apps: the configured
-// compose_path inside source/, else a repo-root compose file, else "" (auto-
-// detect in the app dir — the winterflow-authored root compose). Non-source
-// apps always auto-detect.
-func (r *Repository) composeFile(dir string, spec *sourceSpec) string {
-	if spec == nil {
-		return ""
-	}
-	if spec.ComposePath != "" {
-		if rel, err := safeRel(spec.ComposePath); err == nil {
-			return filepath.Join(sourceDirRel, rel)
-		}
-		return ""
-	}
-	for _, candidate := range []string{"compose.yml", "compose.yaml", "docker-compose.yml", "docker-compose.yaml"} {
-		if _, err := os.Stat(filepath.Join(dir, sourceDirRel, candidate)); err == nil {
-			return filepath.Join(sourceDirRel, candidate)
+// composeFiles names an app's compose files explicitly, so every invocation
+// (and run.sh, and anything appended later) loads exactly them. A git-sourced
+// app uses its compose_path inside source/, else the compose file compose
+// would find at the repo root. Otherwise, and when the repo has none, it is
+// the file compose auto-detects in the app folder plus its override file
+// (model.DetectComposeFiles). nil when there is no compose file at all.
+func (r *Repository) composeFiles(dir string, spec *sourceSpec) []string {
+	if spec != nil {
+		if spec.ComposePath != "" {
+			if rel, err := safeRel(spec.ComposePath); err == nil {
+				return []string{filepath.Join(sourceDirRel, rel)}
+			}
+		} else if found := model.DetectComposeFiles(fileIn(filepath.Join(dir, sourceDirRel))); found != nil {
+			return []string{filepath.Join(sourceDirRel, found[0])}
 		}
 	}
-	return ""
+	return model.DetectComposeFiles(fileIn(dir))
 }
 
-// composeArgs builds the common CLI prefix. Env files are always explicit:
-// with -f pointing into source/, compose's implicit project directory moves
-// there and would stop auto-loading the app's committed .env.
+// appComposeFiles is composeFiles for the app in dir.
+func (r *Repository) appComposeFiles(dir string) []string {
+	return r.composeFiles(dir, r.appSourceSpec(dir))
+}
+
+// fileIn reports whether a regular file name exists in dir.
+func fileIn(dir string) func(name string) bool {
+	return func(name string) bool {
+		info, err := os.Stat(filepath.Join(dir, name))
+		return err == nil && info.Mode().IsRegular()
+	}
+}
+
+// composeArgs builds the common CLI prefix. Compose and env files are always
+// explicit: with -f pointing into source/, compose's implicit project
+// directory moves there and would stop auto-loading the app's committed .env.
+// Env files load in order — .env, storage.env, .env.secrets — later ones
+// winning.
 func (r *Repository) composeArgs(appID string, verb ...string) []string {
+	return r.composeArgsFor(appID, r.appComposeFiles(r.appDataDir(appID)), verb...)
+}
+
+// composeArgsFor is composeArgs with the app's compose files already
+// resolved.
+func (r *Repository) composeArgsFor(appID string, files []string, verb ...string) []string {
 	args := []string{"compose", "--project-name", projectName(appID)}
 	dir := r.appDataDir(appID)
-	if f := r.composeFile(dir, r.appSourceSpec(dir)); f != "" {
+	for _, f := range files {
 		args = append(args, "-f", f)
 	}
 	args = append(args, "--env-file", envRel)
-	if _, err := os.Stat(filepath.Join(dir, envSecretsRel)); err == nil {
-		args = append(args, "--env-file", envSecretsRel)
+	for _, rel := range []string{storageEnvRel, envSecretsRel} {
+		if _, err := os.Stat(filepath.Join(dir, rel)); err == nil {
+			args = append(args, "--env-file", rel)
+		}
 	}
 	return append(args, verb...)
 }
 
 func (r *Repository) composeRun(ctx context.Context, appID string, verb ...string) error {
-	cmd := exec.CommandContext(ctx, "docker", r.composeArgs(appID, verb...)...)
+	return r.composeExec(ctx, appID, r.composeArgs(appID, verb...))
+}
+
+// composeExec runs docker with args in the app's folder.
+func (r *Repository) composeExec(ctx context.Context, appID string, args []string) error {
+	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Dir = r.appDataDir(appID)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -408,11 +433,18 @@ func (r *Repository) composeRun(ctx context.Context, appID string, verb ...strin
 }
 
 func (r *Repository) composeUp(ctx context.Context, appID string) error {
+	dir := r.appDataDir(appID)
+	files := r.appComposeFiles(dir)
+	// The storage variables are resolved on every deploy: a storage removed
+	// or changed since the last one must not be served stale.
+	if err := r.materializeStorageEnv(ctx, dir, files); err != nil {
+		return err
+	}
 	// Refresh the manual-run helper alongside every deploy; never fail one on it.
-	if err := r.writeRunHelper(appID); err != nil {
+	if err := r.writeRunHelper(appID, files); err != nil {
 		r.log.Warn("write manual-run helper", "app_id", appID, "error", err)
 	}
-	return r.composeRun(ctx, appID, "up", "-d", "--remove-orphans")
+	return r.composeExec(ctx, appID, r.composeArgsFor(appID, files, "up", "-d", "--remove-orphans"))
 }
 
 // composeDown is a no-op (nil) if the app dir does not exist. volumes=true

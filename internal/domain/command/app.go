@@ -71,10 +71,18 @@ type ContentItem struct {
 	Encrypted bool   `json:"encrypted,omitempty"`
 }
 
+// ItemName is the item's key: its Name, or its ID when the name is empty.
+func (c ContentItem) ItemName() string {
+	if c.Name != "" {
+		return c.Name
+	}
+	return c.ID
+}
+
 // EncryptedPlaceholder is the sentinel value meaning "preserve the existing
 // stored secret" — the browser sends it instead of re-encrypting an unchanged
 // secret on edit.
-const EncryptedPlaceholder = "<encrypted>"
+const EncryptedPlaceholder = model.EncryptedSecret
 
 // --- app.save -----------------------------------------------------------------
 
@@ -85,7 +93,19 @@ type SaveAppRequest struct {
 	Draft bool `json:"draft,omitempty"`
 }
 
-func (r SaveAppRequest) Validate() error { return validateAppID(r.App.AppID) }
+// Validate checks the app id and refuses user variables named like storage
+// variables (WF_STORAGE_, WF_BACKUP_): those only come from storages.
+func (r SaveAppRequest) Validate() error {
+	if err := validateAppID(r.App.AppID); err != nil {
+		return err
+	}
+	for _, v := range r.App.Variables {
+		if err := model.ReservedVariableError(v.ItemName()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 type SaveAppResponse struct {
 	AppID    string `json:"app_id"`
@@ -105,6 +125,9 @@ func (r GetAppRequest) Validate() error { return validateAppID(r.AppID) }
 
 type GetAppResponse struct {
 	App AppPayload `json:"app"`
+	// StorageVariables are the WF_STORAGE_ variables the app's compose files
+	// reference: shown read-only in the Variables panel, never with values.
+	StorageVariables []StorageVariable `json:"storage_variables,omitempty"`
 }
 
 // --- app.revisions --------------------------------------------------------

@@ -1,5 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -31,13 +30,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { AppLinks } from "@/components/app-links";
 import { DomainDialog } from "@/components/domain-dialog";
 import { TLSBadge } from "@/components/tls-badge";
 import { type Docker, type DomainCreated } from "@/context/use-docker";
 import { useApps } from "@/context/use-apps";
 import { expiry, type Domain } from "@/lib/domains";
 import { cn } from "@/lib/utils";
-import { useServerPath } from "@/context/use-server-path";
 
 // Expiry shows how long a certificate-mode domain's certificate has left:
 // a countdown once it's under 30 days (amber), a date otherwise, red once
@@ -69,29 +68,12 @@ function Expiry({ domain }: { domain: Domain }) {
   );
 }
 
-function UsedBy({ ids, names }: { ids: string[]; names: Map<string, string> }) {
-  const toServer = useServerPath();
-  if (ids.length === 0) return <span className="text-muted-foreground">Not used</span>;
-  return (
-    <span>
-      {ids.length === 1 ? "1 app: " : `${ids.length} apps: `}
-      {ids.map((id, i) => (
-        <span key={id}>
-          {i > 0 && ", "}
-          <Link to={toServer(`/app/${id}`)} className="font-medium underline-offset-4 hover:underline">
-            {names.get(id) ?? id}
-          </Link>
-        </span>
-      ))}
-    </span>
-  );
-}
-
 // toastResult reports a domain mutation: success, or a warning when the proxy
 // reload that applied it reported problems (the change itself is stored).
 function toastResult(done: string, warnings: string[]) {
   if (warnings.length > 0) {
     toast.warning(`${done}, but the proxy reported a problem`, {
+      // One line each (toast descriptions keep newlines: index.css).
       description: warnings.join("\n"),
     });
   } else {
@@ -149,7 +131,11 @@ export function DomainsCard({ docker }: { docker: Docker }) {
   };
 
   const names = useMemo(() => new Map(apps.map((a) => [a.id, a.name])), [apps]);
-  const openDialog = (row: Domain | null) => {
+  // The dialog has no trigger (it remounts per opening): focus goes back to
+  // the button that opened it.
+  const opener = useRef<HTMLElement | null>(null);
+  const openDialog = (row: Domain | null, from: HTMLElement) => {
+    opener.current = from;
     setReplace(row);
     setDialogKey((k) => k + 1);
     setDialogOpen(true);
@@ -179,7 +165,7 @@ export function DomainsCard({ docker }: { docker: Docker }) {
           >
             <RefreshCw className={cn("size-4", loading && "animate-spin")} />
           </Button>
-          <Button size="sm" onClick={() => openDialog(null)}>
+          <Button size="sm" onClick={(e) => openDialog(null, e.currentTarget)}>
             <Plus className="size-4" /> Add domain
           </Button>
         </div>
@@ -238,7 +224,7 @@ export function DomainsCard({ docker }: { docker: Docker }) {
                       )}
                     </TableCell>
                     <TableCell className="hidden sm:table-cell">
-                      <UsedBy ids={used} names={names} />
+                      <AppLinks ids={used} names={names} />
                     </TableCell>
                     <TableCell className="whitespace-nowrap py-0.5 text-right">
                       <Button
@@ -247,7 +233,7 @@ export function DomainsCard({ docker }: { docker: Docker }) {
                         className="size-8 text-muted-foreground"
                         aria-label={`Edit domain ${d.name}`}
                         title={d.tls === "certificate" ? "Change HTTPS mode or replace certificate" : "Change HTTPS mode"}
-                        onClick={() => openDialog(d)}
+                        onClick={(e) => openDialog(d, e.currentTarget)}
                       >
                         <Pencil className="size-4" />
                       </Button>
@@ -274,6 +260,7 @@ export function DomainsCard({ docker }: { docker: Docker }) {
         docker={docker}
         open={dialogOpen}
         replace={replace}
+        returnFocus={opener}
         onOpenChange={setDialogOpen}
         onSaved={saved}
       />

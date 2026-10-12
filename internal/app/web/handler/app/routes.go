@@ -128,6 +128,40 @@ func (h *Handler) Routes(api.Guards) []api.Route {
 			Accepted: true, Result: command.DeleteDomainResponse{}, Errors: server,
 		},
 		{
+			Method: http.MethodGet, Path: "/api/v1/storage/get-storages", Handler: h.GetStorages, Auth: api.User,
+			Summary: "A server's storages from the API's index (no agent round-trip, no secrets)", Tag: "storages",
+			Query: api.ServerQuery{}, Response: GetStoragesResponse{}, Errors: server,
+		},
+		{
+			Method: http.MethodGet, Path: "/api/v1/storage/list", Handler: h.ListStorages, Auth: api.User,
+			Summary: "List the storages on a server, with the apps using each", Tag: "storages",
+			Query: api.ServerQuery{}, Accepted: true, Result: command.ListStoragesResponse{}, Errors: server,
+		},
+		{
+			Method: http.MethodPost, Path: "/api/v1/storage/test", Handler: h.TestStorage, Auth: api.User,
+			Summary: "Test a storage by writing and deleting a probe object (30s deadline)", Tag: "storages",
+			Description: "`s3.secret_access_key` is ECIES-encrypted with the server's public key " +
+				"(GET /api/v1/server/get-public-key), or `<encrypted>` to reuse the secret stored under the same name. " +
+				"A failed probe is a successful result with `ok: false`.",
+			Query: api.ServerQuery{}, Request: command.TestStorageRequest{},
+			Accepted: true, Result: command.TestStorageResponse{}, Errors: server,
+		},
+		{
+			Method: http.MethodPost, Path: "/api/v1/storage/save", Handler: h.SaveStorage, Auth: api.User,
+			Summary: "Add or edit a storage (tested first; redeploys the running apps that use it)", Tag: "storages",
+			Description: "`create: true` adds a storage and fails when the name exists; otherwise the storage must exist " +
+				"and keep its type. `s3.secret_access_key` is ECIES-encrypted with the server's public key, or `<encrypted>` " +
+				"to keep the stored one. Nothing is saved when the connection test fails.",
+			Query: api.ServerQuery{}, Request: command.SaveStorageRequest{},
+			Accepted: true, Result: command.SaveStorageResponse{}, Errors: server,
+		},
+		{
+			Method: http.MethodPost, Path: "/api/v1/storage/delete", Handler: h.DeleteStorage, Auth: api.User,
+			Summary: "Remove a storage no app uses", Tag: "storages",
+			Query: api.ServerQuery{}, Request: command.DeleteStorageRequest{},
+			Accepted: true, Result: command.DeleteStorageResponse{}, Errors: server,
+		},
+		{
 			Method: http.MethodGet, Path: "/api/v1/domains/check", Handler: h.CheckDomain, Auth: api.User,
 			Summary: "Check whether a hostname is free on a server", Tag: "apps",
 			Query: CheckDomainQuery{}, Response: CheckDomainResponse{}, Errors: server,

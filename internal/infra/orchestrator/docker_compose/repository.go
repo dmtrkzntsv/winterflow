@@ -12,15 +12,22 @@
 //	  compose.yml, <files...>    --   committed verbatim
 //	  .env                       --   committed plain variables
 //	  .env.secrets, source/      --   gitignored deploy artifacts
+//	  .winterflow/storage.env    --   gitignored: referenced WF_STORAGE_ values
+//	storages/{name}.json         -- registered storages (0600, secret encrypted)
 //
 // The folder IS the deployment: compose runs in it directly, every save is a
 // commit, and rollbacks restore old trees as new commits.
 package dockercompose
 
 import (
+	"context"
+	"path/filepath"
 	"sync"
 	"time"
 
+	"winterflow/internal/domain/model"
+	"winterflow/internal/infra/backup/storages"
+	"winterflow/internal/infra/backup/store"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
 )
@@ -40,6 +47,18 @@ type Repository struct {
 	// every listing would get slower for as long as the app lives.
 	versionMu    sync.Mutex
 	versionCache map[string]versionEntry
+
+	// storages is the agent's storage registry ({data}/storages/): what
+	// storage.* commands manage and WF_STORAGE_ variables resolve against.
+	storages      *storages.Registry
+	storageLimits storageLimits
+
+	// The steps of the storage commands that touch a storage or Docker,
+	// replaced in tests: opening a storage's driver (store.Open), which
+	// compose projects are up, and bringing an app up again.
+	openStorage     func(s model.Storage, secret string) (store.Store, error)
+	runningProjects func(ctx context.Context) (map[string]bool, error)
+	redeploy        func(ctx context.Context, appID string) error
 }
 
 // versionEntry is a cached commit count, valid while HEAD is unchanged.
@@ -49,12 +68,18 @@ type versionEntry struct {
 }
 
 func NewRepository(cfg *config.ServerConfig, log *logger.Logger) *Repository {
-	return &Repository{
-		cfg:          cfg,
-		log:          log,
-		sourceChecks: make(map[string]time.Time),
-		versionCache: make(map[string]versionEntry),
+	r := &Repository{
+		cfg:           cfg,
+		log:           log,
+		sourceChecks:  make(map[string]time.Time),
+		versionCache:  make(map[string]versionEntry),
+		storages:      storages.NewRegistry(filepath.Join(cfg.GetAgentDataDir(), "storages")),
+		storageLimits: defaultStorageLimits,
+		openStorage:   store.Open,
 	}
+	r.runningProjects = r.composeProjectsUp
+	r.redeploy = r.deploy
+	return r
 }
 
 // forgetApp drops an app's in-memory bookkeeping after deletion.

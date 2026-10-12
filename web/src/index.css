@@ -284,6 +284,12 @@
     }
 }
 
+/* Toast descriptions keep their line breaks: a multi-warning toast puts one
+   warning per line. (The Toaster itself is vendored in components/ui/.) */
+[data-sonner-toast] [data-description] {
+    white-space: pre-line;
+}
+
 /* The sidebar is frost: near-white with a faint blue tint, darkening a
    touch toward the floor, behind a hairline edge (midnight frost in dark).
    Muted text inside it is re-pointed at the sidebar's own muted ink so

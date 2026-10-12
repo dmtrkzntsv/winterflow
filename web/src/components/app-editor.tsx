@@ -11,6 +11,7 @@ import { ImageTagPicker } from "@/components/image-tag-picker";
 import { IconPicker } from "@/components/icon-picker";
 import { IngressEditor } from "@/components/ingress-editor";
 import { EditorSection } from "@/components/editor-section";
+import { ENCRYPTED } from "@/lib/ecies";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
 import { useServers } from "@/context/use-servers";
@@ -19,6 +20,7 @@ import {
   type AppEditorState,
   type AppFileMeta,
   type AppVariableMeta,
+  type StorageVariable,
 } from "@/types/app-config";
 
 type Props = {
@@ -113,6 +115,8 @@ export function AppEditor({ state, onChange }: Props) {
       variables: rest,
     });
   };
+
+  const storageVars = state.storageVariables;
 
   const source = state.config.source;
   const setSource = (patch: Partial<NonNullable<typeof source>>) =>
@@ -323,9 +327,11 @@ export function AppEditor({ state, onChange }: Props) {
         }
       >
         {state.config.variables.length === 0 ? (
-          <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-            No variables yet.
-          </p>
+          storageVars.length === 0 ? (
+            <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+              No variables yet.
+            </p>
+          ) : null
         ) : (
           <div className="divide-y rounded-md border">
             {state.config.variables.map((v) => {
@@ -382,6 +388,7 @@ export function AppEditor({ state, onChange }: Props) {
             })}
           </div>
         )}
+        <StorageVariableRows vars={storageVars} />
       </EditorSection>
 
       {/* activeServer is null while get-servers is in flight; render neither
@@ -401,6 +408,30 @@ export function AppEditor({ state, onChange }: Props) {
         />
       )}
     </div>
+  );
+}
+
+// StorageVariableRows lists the WF_STORAGE_ variables the compose files
+// reference, read-only: their values come from the server's storages (Settings
+// → Storages), and a secret shows only as <encrypted>.
+function StorageVariableRows({ vars }: { vars: StorageVariable[] }) {
+  if (vars.length === 0) return null;
+  return (
+    <ul aria-label="Storage variables" className="mt-2 divide-y rounded-md border bg-muted/30">
+      {vars.map((v) => (
+        <li key={v.name} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-sm">
+          <code className="font-mono [overflow-wrap:anywhere]">{v.name}</code>
+          {v.secret ? (
+            <span className="flex items-center gap-1 font-mono text-xs text-muted-foreground">
+              <Lock className="size-3" /> {ENCRYPTED}
+            </span>
+          ) : null}
+          <span className="ml-auto text-xs text-muted-foreground">
+            provided by storage <code className="font-mono">{v.storage}</code>
+          </span>
+        </li>
+      ))}
+    </ul>
   );
 }
 

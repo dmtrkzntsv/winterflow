@@ -61,6 +61,7 @@ type Server struct {
 	Name           string
 	CreatedAt      types.DateTime
 	LastSeen       *types.DateTime
+	VarsRevision   int64
 }
 
 type ServerCapability struct {
@@ -103,6 +104,24 @@ type ServerRegistration struct {
 	Certificate          string
 	CertificateExpiresAt types.DateTime
 	CreatedAt            types.DateTime
+}
+
+type SharedSecretCiphertext struct {
+	VariableID string
+	ServerID   string
+	Ciphertext string
+}
+
+type SharedVariable struct {
+	ID          string
+	OrgID       string
+	ServerID    *string
+	Name        string
+	IsSecret    bool
+	Value       *string
+	Description string
+	UpdatedAt   types.DateTime
+	UpdatedBy   string
 }
 
 type User struct {

@@ -18,6 +18,8 @@ import (
 	serverrepo "winterflow/internal/infra/db/repository/server"
 	serverdomainrepo "winterflow/internal/infra/db/repository/serverdomain"
 	userrepo "winterflow/internal/infra/db/repository/user"
+	sqlitegen "winterflow/internal/infra/db/sqlc/gen/sqlite"
+	"winterflow/internal/infra/db/types"
 )
 
 // sqliteDateTime matches the only timestamp format SQLite may hold:
@@ -98,6 +100,14 @@ func TestSQLiteTimestampsAreDateTimeText(t *testing.T) {
 	}
 
 	if err := metricSamples.InsertSample(ctx, srv.ID, at, metrics.Values{"cpu": 1}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	// No shared-variable repository yet: write through the generated query.
+	if err := sqlitegen.New(d.SQL).InsertSharedVariable(ctx, sqlitegen.InsertSharedVariableParams{
+		ID: dbtest.ID(401), OrgID: orgID, Name: "TZ_VAR", Description: "d",
+		UpdatedAt: types.DateTime(at),
+	}); err != nil {
 		t.Fatal(err)
 	}
 

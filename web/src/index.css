@@ -58,9 +58,8 @@
     --color-sidebar: var(--sidebar);
     --color-sidebar-foreground: var(--sidebar-foreground);
     --color-sidebar-primary: var(--sidebar-primary);
-    --color-brand: var(--brand);
-    --color-brand-soft: var(--brand-soft);
     --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+    --color-sidebar-primary-soft: var(--sidebar-primary-soft);
     --color-sidebar-accent: var(--sidebar-accent);
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
     --color-sidebar-border: var(--sidebar-border);
@@ -96,11 +95,12 @@
 }
 
 :root {
-    /* "Frost": winterflow's own light, icy palette (the snowflake's
-       periwinkle), on twillingate's layout. An airy blue-white page with
-       white cards, a frosted light sidebar, periwinkle accents and a deeper
-       step of it for filled buttons so white text passes AA. Chart series:
-       sky, glacier teal, soft amber, rose, lavender (checked for
+    /* "Frost": winterflow's own light, icy palette, on twillingate's
+       layout. An airy blue-white page with white cards and a frosted light
+       sidebar; the blues are built around the snowflake (#60a5fa family,
+       --sidebar-primary-soft) but sit a step or two deeper and calmer than
+       it, so the logo stays the brightest blue on screen. Chart series:
+       steel blue, glacier teal, amber, rose, lavender (checked for
        colour-blind separation). Contrast pairs are verified at >= 4.5:1 for
        text and >= 3:1 for the focus ring. */
     --radius: 0.75rem;
@@ -110,49 +110,48 @@
     --card-foreground: #0b2540;
     --popover: #ffffff;
     --popover-foreground: #0b2540;
-    --primary: #2474cc;
+    --primary: #1f63b4;
     --primary-foreground: #ffffff;
-    --secondary: #eaf3fd;
-    --secondary-foreground: #1a64b4;
-    --muted: #eef4fb;
+    --secondary: #e9f0f8;
+    --secondary-foreground: #1a5499;
+    --muted: #eef3f9;
     --muted-foreground: #506b8a;
-    --accent: #e2effd;
-    --accent-foreground: #1a64b4;
+    --accent: #e4edf7;
+    --accent-foreground: #1a5499;
     --destructive: #d03a3a;
     --destructive-foreground: #ffffff;
     --border: #dfe8f2;
     --input: #c9d8e8;
-    --ring: #3a8ad9;
-    --brand: #4c9be8;
-    --brand-soft: #7cb8ff;
-    --chart-1: #4c9be8;
-    --chart-2: #1fa89a;
-    --chart-3: #e0a032;
-    --chart-4: #e06a8c;
-    --chart-5: #7d62e0;
-    --sky: #a8d2fb;
-    --skeleton: #e7f0fa;
-    --skeleton-shine: #f6faff;
+    --ring: #3473c0;
+    --chart-1: #3a7fd0;
+    --chart-2: #1b9488;
+    --chart-3: #d4952c;
+    --chart-4: #cf5f80;
+    --chart-5: #6a4fc8;
+    --sky: #b3cbe6;
+    --skeleton: #e8eff7;
+    --skeleton-shine: #f6f9fc;
     /* Card elevation: a hairline contact shadow plus a soft, blue-tinted
        drop. Dark mode has none (the border carries the edge). */
-    --card-shadow: 0 1px 2px rgb(36 116 204 / 0.04), 0 8px 20px -12px rgb(36 116 204 / 0.18);
-    --sidebar: #f3f8fe;
+    --card-shadow: 0 1px 2px rgb(26 72 128 / 0.04), 0 8px 20px -12px rgb(26 72 128 / 0.18);
+    --sidebar: #f2f6fb;
     --sidebar-foreground: #1c3654;
-    --sidebar-primary: #2f86de;
+    --sidebar-primary: #1f63b4;
     --sidebar-primary-foreground: #ffffff;
-    --sidebar-accent: #e2effd;
-    --sidebar-accent-foreground: #1a64b4;
-    --sidebar-border: #dde8f4;
-    --sidebar-ring: #3a8ad9;
+    --sidebar-primary-soft: oklch(0.75 0.14 259.815);
+    --sidebar-accent: #e4edf7;
+    --sidebar-accent-foreground: #1a5499;
+    --sidebar-border: #dde6f0;
+    --sidebar-ring: #3473c0;
     --sidebar-muted-foreground: #58708d;
     /* The logs console: a pale ice panel in light, deep midnight in dark. */
-    --console: #f5f9fe;
+    --console: #f5f8fc;
     --console-foreground: #1c3654;
     --console-muted: #506b8a;
     --console-border: #dfe8f2;
-    --console-hover: #e8f1fc;
-    --sidebar-top: #f8fbff;
-    --sidebar-bottom: #eef5fd;
+    --console-hover: #e9f0f8;
+    --sidebar-top: #f8fafd;
+    --sidebar-bottom: #edf3fa;
 }
 
 .dark {
@@ -165,7 +164,7 @@
     --card-foreground: #e7f1fb;
     --popover: #172b44;
     --popover-foreground: #e7f1fb;
-    --primary: #7cb8ff;
+    --primary: #6ea8e8;
     --primary-foreground: #0a1c30;
     --secondary: #1a3150;
     --secondary-foreground: #e7f1fb;
@@ -177,26 +176,25 @@
     --destructive-foreground: #2a0806;
     --border: rgb(159 212 255 / 12%);
     --input: rgb(159 212 255 / 20%);
-    --ring: #7cb8ff;
-    --brand: #7cb8ff;
-    --brand-soft: #9fd4ff;
-    --chart-1: #5aa6f0;
-    --chart-2: #3cc4b1;
-    --chart-3: #e2ae4c;
-    --chart-4: #ef84a3;
-    --chart-5: #c2b2ff;
-    --sky: #7cb8ff;
+    --ring: #6ea8e8;
+    --chart-1: #4a8cd6;
+    --chart-2: #34ad9e;
+    --chart-3: #d6a24a;
+    --chart-4: #de7a97;
+    --chart-5: #c0b0fa;
+    --sky: #5f8fc4;
     --skeleton: #1a2f4a;
     --skeleton-shine: #24405f;
     --card-shadow: 0 0 #0000;
     --sidebar: #0b1725;
     --sidebar-foreground: #c9dcf0;
-    --sidebar-primary: #9fd4ff;
+    --sidebar-primary: #8fbdee;
     --sidebar-primary-foreground: #0a1c30;
+    --sidebar-primary-soft: oklch(0.68 0.19 262.881);
     --sidebar-accent: #1b3150;
-    --sidebar-accent-foreground: #bfe1ff;
+    --sidebar-accent-foreground: #b6d3f0;
     --sidebar-border: rgb(159 212 255 / 10%);
-    --sidebar-ring: #7cb8ff;
+    --sidebar-ring: #6ea8e8;
     --sidebar-muted-foreground: #8ea6c0;
     --console: #0a1522;
     --console-foreground: #d6e5f5;
@@ -294,14 +292,6 @@
     background-image: linear-gradient(180deg, var(--sidebar-top) 0%, var(--sidebar-bottom) 100%);
     --muted: var(--sidebar-accent);
     --muted-foreground: var(--sidebar-muted-foreground);
-}
-
-/* The snowflake's tile: periwinkle ice, so the logo stands out by colour on
-   the pale sidebar. */
-.brand-tile {
-    color: #ffffff;
-    background-image: linear-gradient(140deg, #8cc4ff 0%, #4c9be8 55%, #2f86de 100%);
-    box-shadow: 0 4px 12px -4px rgb(47 134 222 / 0.55), inset 0 1px 0 rgb(255 255 255 / 0.35);
 }
 
 /* A wash of sky blue behind the page title, gone by the time the content

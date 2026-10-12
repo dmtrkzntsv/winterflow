@@ -50,8 +50,8 @@ function placeholderRow(title: string, subtitle: string) {
         <SidebarMenuButton size="lg">
           <LogoSpinner
             size="md"
-            containerClassName="brand-tile flex aspect-square size-8 items-center justify-center rounded-lg"
-            iconClassName="text-white"
+            containerClassName="bg-white text-sidebar-primary-soft flex aspect-square size-8 items-center justify-center rounded-lg border border-sidebar-border/50"
+            iconClassName="text-sidebar-primary-soft"
           />
           <div className="grid flex-1 text-left text-sm leading-tight">
             <span className="truncate font-medium">{title}</span>
@@ -117,8 +117,8 @@ export function ServerSwitcher({
           <SidebarMenuButton size="lg">
             <LogoSpinner
               size="md"
-              containerClassName="brand-tile flex aspect-square size-8 items-center justify-center rounded-lg"
-              iconClassName="text-white"
+              containerClassName="bg-white text-sidebar-primary-soft flex aspect-square size-8 items-center justify-center rounded-lg border border-sidebar-border/50"
+              iconClassName="text-sidebar-primary-soft"
             />
             <div className="grid flex-1 text-left text-sm leading-tight">
               <span className="truncate font-medium">{activeServer.name}</span>
@@ -143,8 +143,8 @@ export function ServerSwitcher({
             >
               <LogoSpinner
                 size="md"
-                containerClassName="brand-tile flex aspect-square size-8 items-center justify-center rounded-lg"
-                iconClassName="text-white"
+                containerClassName="bg-white text-sidebar-primary-soft flex aspect-square size-8 items-center justify-center rounded-lg border border-sidebar-border/50"
+                iconClassName="text-sidebar-primary-soft"
               />
               <div className="grid flex-1 text-left text-sm leading-tight">
                 <span className="truncate font-medium">
@@ -174,8 +174,8 @@ export function ServerSwitcher({
               >
                 <LogoSpinner
                   size="sm"
-                  containerClassName="brand-tile flex size-6 items-center justify-center rounded-md"
-                  iconClassName="text-white shrink-0"
+                  containerClassName="bg-white text-sidebar-primary-soft flex size-6 items-center justify-center rounded-md border border-sidebar-border/50"
+                  iconClassName="text-sidebar-primary-soft shrink-0"
                 />
                 {server.name}
                 <DropdownMenuShortcut>⌘{index + 1}</DropdownMenuShortcut>

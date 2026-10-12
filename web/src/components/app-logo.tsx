@@ -31,7 +31,7 @@ export function LogoIcon({ size = 'md', className, ...props }: LogoIconProps) {
 
   return (
     <svg
-      className={cn('text-brand', sizeClasses[size], className)}
+      className={`text-blue-400 ${sizeClasses[size]} ${className || ''}`}
       aria-hidden="true"
       {...props}
     >

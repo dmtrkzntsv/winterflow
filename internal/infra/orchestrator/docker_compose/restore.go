@@ -257,7 +257,9 @@ func (r *Repository) removeRestoreDownloads() {
 // helper never ran or failed cleanly (exit 1, docker's own 125-127, a
 // helper that did not start), or when a files helper was stopped from
 // outside before it printed its swapping line (it had only written its temp
-// folders). Any other end — a crash, a kill, a swap that failed half-way, a
+// folders) and that is certain: its container is confirmed removed, the
+// docker CLI's output was read in full, and no .old folder is on a bind
+// mount (see notSwapped). Any other end — a crash, a kill, a swap that failed half-way, a
 // "success" with no result, the agent stopping the helper — may have left
 // the data partly replaced: the app is left stopped
 // and removed (compose down, never -v, so nothing can start it on that
@@ -429,7 +431,7 @@ func (r *Repository) RestoreBackup(ctx context.Context, job RestoreJob) (command
 		return resp, fail(fmt.Errorf("the restore failed, the app's data is unchanged: %s", reason(res, stderr, exit)))
 	case notStarted:
 		return resp, fail(fmt.Errorf("the restore could not start, the app's data is unchanged: %w", err))
-	case err != nil && ctx.Err() != nil && b.Type == recipe.TypeFiles && !helper.Swapping(stderr):
+	case err != nil && ctx.Err() != nil && b.Type == recipe.TypeFiles && r.notSwapped(plan, name, stderr, err):
 		// Stopped from outside before the first rename into place: the
 		// helper had only written into its own temp folders.
 		return resp, fail(fmt.Errorf("the restore was stopped (%w) before it replaced any data, so the app's data is unchanged", err))
@@ -449,6 +451,51 @@ func (r *Repository) RestoreBackup(ctx context.Context, job RestoreJob) (command
 		}
 	}
 	return resp, nil
+}
+
+// oldFolderProbe bounds the look for a restore's .old folder on the host.
+const oldFolderProbe = 10 * time.Second
+
+// notSwapped is true only when a files helper stopped from outside is known
+// not to have begun replacing data: the helper's container is confirmed
+// removed and the CLI's output was read in full (helperGone), the output
+// has no swapping line, and none of the plan's bind mounts holds the
+// restore's .old folder (the swap moves the old data into it, so it is the
+// disk's own witness; a Docker volume's root can't be looked at without a
+// docker exec and is not checked). Anything unknown counts as swapped: the
+// app is then left stopped, as for any helper that ended in doubt.
+func (r *Repository) notSwapped(plan helperPlan, name string, stderr []byte, err error) bool {
+	if !helperGone(err) || helper.Swapping(stderr) {
+		return false
+	}
+	aside := ".wf-restore-" + strings.TrimPrefix(name, "wf-restore-") + ".old"
+	var paths []string
+	for _, m := range plan.Mounts {
+		if m.Bind != "" {
+			paths = append(paths, filepath.Join(m.Bind, aside))
+		}
+	}
+	if len(paths) == 0 {
+		return true
+	}
+	found := make(chan bool, 1)
+	go func() {
+		for _, p := range paths {
+			if _, err := r.hostStat(p); !errors.Is(err, os.ErrNotExist) {
+				found <- true // it is there, or could not be told
+				return
+			}
+		}
+		found <- false
+	}()
+	t := time.NewTimer(oldFolderProbe)
+	defer t.Stop()
+	select {
+	case f := <-found:
+		return !f
+	case <-t.C:
+		return false
+	}
 }
 
 // checkLocation refuses a copy made under entries the backup's location no

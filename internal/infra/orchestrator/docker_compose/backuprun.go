@@ -37,6 +37,9 @@ const (
 	helperStopGrace    = 10 * time.Second // after a kill, for docker's output to drain
 )
 
+// helperWaitDelay is helperStopGrace (a variable for tests).
+var helperWaitDelay = helperStopGrace
+
 // putAbortGrace is how long an aborted upload gets to clean up after itself
 // (an S3 multipart abort) on a live context before that context is cancelled.
 var putAbortGrace = 30 * time.Second
@@ -595,32 +598,66 @@ func runDockerRestoreHelper(ctx context.Context, name string, args []string, in 
 // touched.
 var errHelperNotStarted = errors.New("the helper did not start")
 
+// helperStopped is the error of a helper run ended from outside (its context
+// ended). gone says the run can be trusted to have stopped for good: the
+// container is confirmed removed (docker rm exited 0, or the container did
+// not exist) and the docker CLI exited by itself after relaying all it had
+// read, so stderr holds everything the helper printed. Without it a missing
+// line in stderr proves nothing: the container may outlive the CLI, and the
+// CLI's last bytes may be lost with it.
+type helperStopped struct {
+	cause error
+	gone  bool
+}
+
+func (e *helperStopped) Error() string { return "stopped after its time limit: " + e.cause.Error() }
+func (e *helperStopped) Unwrap() error { return e.cause }
+
+// helperGone reports whether err says a helper run ended from outside with
+// its container confirmed removed and its output read in full.
+func helperGone(err error) bool {
+	var hs *helperStopped
+	return errors.As(err, &hs) && hs.gone
+}
+
 // runDockerIO runs a helper's `docker run` with stdin in (nil: none) and
 // stdout out.
 func runDockerIO(ctx context.Context, name string, args []string, in io.Reader, out io.Writer) (int, []byte, error) {
 	stderr := &tailBuffer{max: 64 << 10}
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = in, out, stderr
+	// Removing the container ends the CLI by itself, once it has relayed
+	// what it read: it is not killed here (that could drop the last bytes
+	// of its output), only by WaitDelay if it does not end.
 	cmd.Cancel = func() error {
 		removeHelper(name)
-		return cmd.Process.Kill()
+		return nil
 	}
-	cmd.WaitDelay = helperStopGrace
+	cmd.WaitDelay = helperWaitDelay
 	err := cmd.Start()
 	if err != nil && ctx.Err() == nil {
 		// docker itself could not be started: no container exists.
 		return -1, nil, fmt.Errorf("%w: %w", errHelperNotStarted, err)
 	}
+	// drained: the CLI ended by itself and its pipes were read to the end
+	// (not killed by WaitDelay, not cut at its limit). Never started: there
+	// was nothing to read.
+	drained := err != nil
 	if err == nil {
 		err = cmd.Wait()
+		drained = !errors.Is(err, exec.ErrWaitDelay)
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && ee.ExitCode() < 0 {
+			drained = false // killed by a signal
+		}
 	}
 	if ctx.Err() != nil {
 		// The container may still have been being created when the CLI was
 		// killed: remove it again once the daemon has had time to finish.
 		removeHelper(name)
 		time.Sleep(time.Second)
-		removeHelper(name)
-		return -1, stderr.buf, fmt.Errorf("stopped after its time limit: %w", ctx.Err())
+		gone := removeHelper(name)
+		return -1, stderr.buf, &helperStopped{cause: ctx.Err(), gone: gone && drained}
 	}
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
@@ -637,11 +674,14 @@ func runDockerIO(ctx context.Context, name string, args []string, in io.Reader, 
 	return 0, stderr.buf, nil
 }
 
-// removeHelper force-removes a helper container (best effort, bounded).
-func removeHelper(name string) {
+// removeHelper force-removes a helper container (bounded). It reports
+// whether the container is confirmed gone: docker rm exited 0, or said there
+// is no such container.
+func removeHelper(name string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), dockerCallTimeout)
 	defer cancel()
-	_ = exec.CommandContext(ctx, "docker", "rm", "-f", name).Run()
+	out, err := exec.CommandContext(ctx, "docker", "rm", "-f", name).CombinedOutput()
+	return err == nil || strings.Contains(string(out), "No such container")
 }
 
 // ensureHelperImage pulls the helper image once (5 minutes); later runs

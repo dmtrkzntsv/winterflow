@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -971,24 +972,40 @@ func TestRestoreBudgetIsCheckedAgainAfterThePreRestoreCopy(t *testing.T) {
 // only written temp folders: the app is started again. After the line the
 // data may be partly replaced, and the app is left stopped.
 func TestRestoreStoppedBeforeTheSwapStartsTheAppAgain(t *testing.T) {
+	oldOnDisk := func(p string) (fs.FileInfo, error) {
+		if strings.HasSuffix(p, ".old") {
+			return os.Stat(t.TempDir())
+		}
+		return nil, os.ErrNotExist
+	}
 	for name, tc := range map[string]struct {
 		stderr  string
+		gone    bool
+		stat    func(string) (fs.FileInfo, error)
 		compose []string
 		want    string
 	}{
-		"before":  {"progress\n", []string{"stop", "start"}, "before it replaced any data, so the app's data is unchanged"},
-		"during":  {helper.SwappingLine + "\n", []string{"stop", "down"}, "the paths may be partly replaced. The app was left stopped"},
-		"no line": {"", []string{"stop", "start"}, "before it replaced any data"},
+		"before":  {"progress\n", true, nil, []string{"stop", "start"}, "before it replaced any data, so the app's data is unchanged"},
+		"during":  {helper.SwappingLine + "\n", true, nil, []string{"stop", "down"}, "the paths may be partly replaced. The app was left stopped"},
+		"no line": {"", true, nil, []string{"stop", "start"}, "before it replaced any data"},
+		// Without the container's confirmed removal and the CLI's output in
+		// full, a missing line proves nothing.
+		"no line, removal not confirmed": {"", false, nil, []string{"stop", "down"}, "the paths may be partly replaced. The app was left stopped"},
+		// The swap moves the old data into .wf-restore-<id>.old first.
+		"no line, old folder on disk": {"", true, oldOnDisk, []string{"stop", "down"}, "the paths may be partly replaced. The app was left stopped"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			rr := newRestoreRepo(t)
 			id := rr.filesPoint(t)
+			if tc.stat != nil {
+				rr.hostStat = tc.stat
+			}
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			rr.runRestoreHelper = func(_ context.Context, _ string, _ []string, in io.Reader) (int, []byte, error) {
 				_, _ = io.Copy(io.Discard, in)
 				cancel() // the agent stops, or the time limit passes
-				return -1, []byte(tc.stderr), fmt.Errorf("stopped after its time limit: %w", ctx.Err())
+				return -1, []byte(tc.stderr), &helperStopped{cause: ctx.Err(), gone: tc.gone}
 			}
 			_, err := rr.restore(ctx, "media", id)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
@@ -996,6 +1013,64 @@ func TestRestoreStoppedBeforeTheSwapStartsTheAppAgain(t *testing.T) {
 			}
 			if !slices.Equal(rr.compose, tc.compose) {
 				t.Fatalf("compose calls = %v, want %v", rr.compose, tc.compose)
+			}
+		})
+	}
+}
+
+// writeFakeDocker puts a docker script on PATH. `docker run` waits for the
+// container's removal (a flag file), then prints runOut on stderr after a
+// short while and exits 137, as the CLI does for a removed container; with
+// hang it never exits. `docker rm -f` makes the flag and prints rmOut,
+// exiting rmExit.
+func writeFakeDocker(t *testing.T, runOut string, hang bool, rmExit int, rmOut string) {
+	t.Helper()
+	dir := t.TempDir()
+	flag := filepath.Join(dir, "removed")
+	run := `while [ ! -e ` + flag + ` ]; do sleep 0.02; done; sleep 0.3; echo '` + runOut + `' >&2; exit 137`
+	if hang {
+		run = `exec sleep 60`
+	}
+	script := "#!/bin/sh\ncase \"$1\" in\nrun) " + run + " ;;\nrm) touch " + flag + "; echo '" + rmOut + "' >&2; exit " + strconv.Itoa(rmExit) + " ;;\nesac\n"
+	if err := os.WriteFile(filepath.Join(dir, "docker"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// A helper stopped from outside is only known to have stopped for good when
+// its container is confirmed removed and the CLI ended on its own with its
+// output read in full: the CLI is not killed the moment the container is
+// removed (its last bytes, the swapping line, would be lost with it).
+func TestRunDockerIOStoppedHelperIsConfirmedGone(t *testing.T) {
+	old := helperWaitDelay
+	helperWaitDelay = 500 * time.Millisecond
+	t.Cleanup(func() { helperWaitDelay = old })
+	for name, tc := range map[string]struct {
+		hang   bool
+		rmExit int
+		rmOut  string
+		gone   bool
+		line   bool
+	}{
+		"removed, output read":     {false, 0, "wf-restore-x", true, true},
+		"no such container":        {false, 1, "Error response from daemon: No such container: wf-restore-x", true, true},
+		"removal failed":           {false, 1, "Error response from daemon: timeout", false, true},
+		"the CLI had to be killed": {true, 0, "wf-restore-x", false, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			writeFakeDocker(t, helper.SwappingLine, tc.hang, tc.rmExit, tc.rmOut)
+			ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+			defer cancel()
+			exit, stderr, err := runDockerIO(ctx, "wf-restore-x", []string{"run", "x"}, nil, io.Discard)
+			if exit != -1 || !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("exit %d, err %v", exit, err)
+			}
+			if got := helperGone(err); got != tc.gone {
+				t.Fatalf("gone = %v, want %v (err %v)", got, tc.gone, err)
+			}
+			if got := helper.Swapping(stderr); got != tc.line {
+				t.Fatalf("swapping line seen = %v, want %v (stderr %q)", got, tc.line, stderr)
 			}
 		})
 	}

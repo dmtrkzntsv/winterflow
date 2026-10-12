@@ -20,20 +20,20 @@ export type LogLine = {
 };
 
 const LEVEL_CLASS: Record<number, string> = {
-  4: "text-amber-300",
-  5: "text-red-400",
-  6: "text-red-400 font-semibold",
+  4: "text-amber-800 dark:text-amber-300",
+  5: "text-red-700 dark:text-red-400",
+  6: "text-red-700 dark:text-red-400 font-semibold",
 };
 
 // Container name colors, in the spirit of `docker compose logs`: each service
 // keeps one hue so interleaved output stays easy to follow.
 const CONTAINER_COLORS = [
-  "text-sky-400",
-  "text-emerald-400",
-  "text-violet-400",
-  "text-amber-400",
-  "text-pink-400",
-  "text-teal-300",
+  "text-sky-700 dark:text-sky-400",
+  "text-emerald-700 dark:text-emerald-400",
+  "text-violet-700 dark:text-violet-400",
+  "text-amber-800 dark:text-amber-400",
+  "text-pink-700 dark:text-pink-400",
+  "text-teal-700 dark:text-teal-300",
 ];
 
 const TAIL_OPTIONS = [200, 500, 1000] as const;
@@ -157,7 +157,7 @@ export function LogsView({
         </div>
       ) : error ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
-          <p className="text-sm text-red-400">{error}</p>
+          <p className="text-sm text-red-700 dark:text-red-400">{error}</p>
           <Button
             size="sm"
             variant="outline"
@@ -210,7 +210,7 @@ export function LogsView({
       {!stickToBottom && lines.length > 0 ? (
         <Button
           size="sm"
-          className="absolute right-4 bottom-4 h-7 gap-1 rounded-full bg-console-foreground px-3 text-xs text-console shadow-lg hover:bg-white"
+          className="absolute right-4 bottom-4 h-7 gap-1 rounded-full bg-console-foreground px-3 text-xs text-console shadow-lg hover:bg-console-foreground/90"
           onClick={jumpToBottom}
         >
           <ArrowDown className="size-3.5" /> Latest

@@ -145,12 +145,12 @@
     --sidebar-border: #dde8f4;
     --sidebar-ring: #3a8ad9;
     --sidebar-muted-foreground: #58708d;
-    /* The logs console: a deep frost-navy panel in both schemes. */
-    --console: #12233a;
-    --console-foreground: #d6e5f5;
-    --console-muted: #94acc7;
-    --console-border: #213955;
-    --console-hover: #182d48;
+    /* The logs console: a pale ice panel in light, deep midnight in dark. */
+    --console: #f5f9fe;
+    --console-foreground: #1c3654;
+    --console-muted: #506b8a;
+    --console-border: #dfe8f2;
+    --console-hover: #e8f1fc;
     --sidebar-top: #f8fbff;
     --sidebar-bottom: #eef5fd;
 }

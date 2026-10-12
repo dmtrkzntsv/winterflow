@@ -498,24 +498,17 @@ func (r *Repository) notSwapped(plan helperPlan, name string, stderr []byte, err
 	if len(paths) == 0 {
 		return true
 	}
-	found := make(chan bool, 1)
-	go func() {
+	// The restore's own context has usually ended by now: the probe has its
+	// own bound.
+	found, err := withDeadlineValue(context.Background(), oldFolderProbe, "look for the old data folder", func(context.Context) (bool, error) {
 		for _, p := range paths {
 			if _, err := r.hostStat(p); !errors.Is(err, os.ErrNotExist) {
-				found <- true // it is there, or could not be told
-				return
+				return true, nil // it is there, or could not be told
 			}
 		}
-		found <- false
-	}()
-	t := time.NewTimer(oldFolderProbe)
-	defer t.Stop()
-	select {
-	case f := <-found:
-		return !f
-	case <-t.C:
-		return false
-	}
+		return false, nil
+	})
+	return err == nil && !found
 }
 
 // checkLocation refuses a copy made under entries the backup's location no

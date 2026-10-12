@@ -26,16 +26,27 @@ type VarsRevisionSource interface {
 // statusReport is the apps.status body for apps from src.
 func statusReport(apps []command.AppStatus, src StatusSource) command.GetAppsStatusResponse {
 	resp := command.GetAppsStatusResponse{Apps: apps}
-	// A StatusSnapshot (shared with the metrics reporter) wraps the real
-	// source; the revision lives on the wrapped one.
-	if w, ok := src.(*StatusSnapshot); ok {
-		src = w.src
-	}
-	if vr, ok := src.(VarsRevisionSource); ok {
-		rev := vr.VarsRevision()
-		resp.VarsRevision = &rev
+	// Wrappers (the StatusSnapshot shared with the metrics reporter, the
+	// backup health decoration) sit around the real source; the revision
+	// lives on the innermost one that has it.
+	for src != nil {
+		if vr, ok := src.(VarsRevisionSource); ok {
+			rev := vr.VarsRevision()
+			resp.VarsRevision = &rev
+			break
+		}
+		w, ok := src.(wrappedSource)
+		if !ok {
+			break
+		}
+		src = w.unwrap()
 	}
 	return resp
+}
+
+// wrappedSource is a StatusSource that decorates another one.
+type wrappedSource interface {
+	unwrap() StatusSource
 }
 
 // EventSink delivers one agent-initiated event upstream. The gRPC agent wraps
@@ -48,7 +59,12 @@ type EventSink func(kind bus.EventKind, payload []byte) error
 // interval until ctx is done. It is the producer side of the live-status
 // pipeline: events feed the API's status cache and are fanned out to browsers
 // over SSE. Source errors (e.g. Docker briefly unavailable) skip the tick.
-func RunStatusReporter(ctx context.Context, src StatusSource, sink EventSink, interval time.Duration, log *logger.Logger) {
+// It also reports whenever nudge delivers (a backup run ended, the backups
+// were reloaded): a change the user has just been told about shows at once
+// instead of at the next tick. Nudges that arrive while a report is being
+// collected coalesce into one more; the status cache fans out only what
+// changed. A nil nudge never fires.
+func RunStatusReporter(ctx context.Context, src StatusSource, sink EventSink, interval time.Duration, nudge <-chan struct{}, log *logger.Logger) {
 	report := func() {
 		apps, err := src.GetAppsStatus(ctx)
 		if err != nil {
@@ -73,6 +89,8 @@ func RunStatusReporter(ctx context.Context, src StatusSource, sink EventSink, in
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			report()
+		case <-nudge:
 			report()
 		}
 	}

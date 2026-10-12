@@ -19,14 +19,6 @@ type refEntry struct {
 	refs map[string]bool
 }
 
-// composeCandidates are the files compose loads from the app dir when no
-// -f is given (base files plus overrides); scanning every existing one
-// over-reports at worst.
-var composeCandidates = []string{
-	"compose.yaml", "compose.yml", "docker-compose.yaml", "docker-compose.yml",
-	"compose.override.yaml", "compose.override.yml", "docker-compose.override.yaml", "docker-compose.override.yml",
-}
-
 // hostTimezone names the host's IANA zone for WF_TZ: /etc/timezone, else
 // the /etc/localtime link target, else "UTC". ($TZ is deliberately not
 // read: no new env var.)
@@ -82,12 +74,9 @@ func (r *Repository) appRefs(appID string) map[string]bool {
 
 func (r *Repository) scanRefs(dir string) map[string]bool {
 	refs := map[string]bool{}
-	files := []string{envRel}
-	if f := r.composeFile(dir, r.appSourceSpec(dir)); f != "" {
-		files = append(files, f)
-	} else {
-		files = append(files, composeCandidates...)
-	}
+	// The compose files every invocation passes explicitly (override
+	// included), plus the committed .env.
+	files := append([]string{envRel}, r.appComposeFiles(dir)...)
 	for _, f := range files {
 		if raw, err := os.ReadFile(filepath.Join(dir, f)); err == nil {
 			agentvars.References(raw, refs)

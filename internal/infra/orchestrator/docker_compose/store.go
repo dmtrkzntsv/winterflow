@@ -10,6 +10,7 @@ import (
 
 	"winterflow/internal/domain/command"
 	"winterflow/pkg/crypto"
+	"winterflow/pkg/fsutil"
 )
 
 // Committed layout inside an app's data dir. Everything except the
@@ -115,10 +116,7 @@ func (r *Repository) writeAppStore(dir string, app command.AppPayload) (secretSt
 	// Variables: split plain vs secret.
 	var plainVars []resolvedItem
 	for _, v := range app.Variables {
-		name := v.Name
-		if name == "" {
-			name = v.ID
-		}
+		name := v.ItemName()
 		if name == managedEnvVar {
 			r.log.Warn("dropping reserved variable", "name", name)
 			continue
@@ -160,10 +158,7 @@ func (r *Repository) writeAppStore(dir string, app command.AppPayload) (secretSt
 	}
 	var plainFiles []plainFile
 	for _, f := range app.Files {
-		name := f.Name
-		if name == "" {
-			name = f.ID
-		}
+		name := f.ItemName()
 		rel, err := safeRel(name)
 		if err != nil {
 			return secretStore{}, err
@@ -208,7 +203,8 @@ func (r *Repository) writeAppStore(dir string, app command.AppPayload) (secretSt
 	if err := os.MkdirAll(filepath.Join(dir, filepath.Dir(configRel)), 0o755); err != nil {
 		return secretStore{}, err
 	}
-	if err := os.WriteFile(filepath.Join(dir, configRel), app.Config, 0o644); err != nil {
+	prevConfig, _ := os.ReadFile(filepath.Join(dir, configRel))
+	if err := fsutil.WriteFile(filepath.Join(dir, configRel), keepBackups(app.Config, prevConfig), 0o644); err != nil {
 		return secretStore{}, err
 	}
 	secretsJSON, err := json.MarshalIndent(next, "", "  ")
@@ -231,7 +227,7 @@ func (r *Repository) writeAppStore(dir string, app command.AppPayload) (secretSt
 		return secretStore{}, err
 	}
 
-	ignored := []string{envSecretsRel, envSharedRel, envSharedSecretsRel, deployedRel, runRel}
+	ignored := append([]string(nil), derivedArtifacts...)
 	if app.Source != nil {
 		ignored = append(ignored, sourceDirRel+"/")
 	}
@@ -326,6 +322,9 @@ func (r *Repository) readAppConfig(dir string) (map[string]any, []byte, error) {
 	var cfg map[string]any
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return nil, nil, fmt.Errorf("parse %s: %w", configRel, err)
+	}
+	if cfg == nil { // a config.json of `null`: callers write keys into the map
+		cfg = map[string]any{}
 	}
 	return cfg, raw, nil
 }

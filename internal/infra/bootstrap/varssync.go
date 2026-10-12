@@ -21,7 +21,7 @@ import (
 //     capabilities are stored, and the purged snapshot is pushed;
 //   - agent-reported reload outcomes fan out to the org.
 type varsSync struct {
-	*domainSync
+	*indexSync
 	uc  *sharedvars.UseCase
 	log *logger.Logger
 
@@ -30,12 +30,12 @@ type varsSync struct {
 }
 
 func newVarsSync(ctx context.Context, d port.CommandDispatcher, deps sharedvars.Deps, log *logger.Logger) *varsSync {
-	online := &domainSync{ctx: ctx, name: "sync shared variables", retryDelay: domainSyncRetryDelay, log: log, pending: map[string]*syncState{}}
+	online := &indexSync{what: "shared variables", ctx: ctx, retryDelay: indexSyncRetryDelay, log: log, pending: map[string]*syncState{}}
 	deps.Dispatcher = resultTap{d, online.result}
 	if deps.Log == nil {
 		deps.Log = log
 	}
-	s := &varsSync{domainSync: online, uc: sharedvars.New(&deps), log: log, pushed: map[string]int64{}}
+	s := &varsSync{indexSync: online, uc: sharedvars.New(&deps), log: log, pushed: map[string]int64{}}
 	online.list = func(ctx context.Context, serverID string) error { return s.uc.Sync(ctx, serverID, nil) }
 	return s
 }
@@ -48,9 +48,9 @@ func (s *varsSync) capabilities(ctx context.Context, serverID string, caps map[s
 	if !s.uc.KeyObserved(ctx, serverID, caps) {
 		return
 	}
-	s.domainSync.mu.Lock()
+	s.indexSync.mu.Lock()
 	delete(s.pending, serverID)
-	s.domainSync.mu.Unlock()
+	s.indexSync.mu.Unlock()
 	s.online(serverID)
 }
 
@@ -69,7 +69,7 @@ func (s *varsSync) revision(ctx context.Context, serverID string, agentRev int64
 	}
 	s.pushed[serverID] = dbRev
 	s.mu.Unlock()
-	pctx, cancel := context.WithTimeout(s.ctx, domainSyncPublishTimeout)
+	pctx, cancel := context.WithTimeout(s.ctx, indexSyncPublishTimeout)
 	defer cancel()
 	if err := s.uc.Sync(pctx, serverID, nil); err != nil {
 		s.log.Warn("sync shared variables: drift push", "error", err, "server_id", serverID)

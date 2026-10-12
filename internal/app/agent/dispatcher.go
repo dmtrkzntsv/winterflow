@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/port"
@@ -25,6 +26,8 @@ type Dispatcher struct {
 	orch     *dockercompose.Repository
 	ingress  port.IngressManager
 	reloads  *ReloadWorker
+	backups  Backups
+	runWait  time.Duration // bound of a backup.run / backup.restore
 	log      *logger.Logger
 	handlers map[command.Type]handlerFunc
 }
@@ -37,7 +40,7 @@ func NewDispatcher(orch *dockercompose.Repository, ingress port.IngressManager, 
 	if ingress == nil {
 		ingress = noIngress{}
 	}
-	d := &Dispatcher{orch: orch, ingress: ingress, log: log}
+	d := &Dispatcher{orch: orch, ingress: ingress, backups: noBackups{}, runWait: command.BackupRunWait, log: log}
 	d.handlers = d.newHandlers()
 	return d
 }
@@ -131,15 +134,12 @@ func handle[Req any, Resp any](d *Dispatcher, fn func(context.Context, Req) (Res
 func (d *Dispatcher) newHandlers() map[command.Type]handlerFunc {
 	return map[command.Type]handlerFunc{
 		command.TypeAppSave: handle(d, func(ctx context.Context, in command.SaveAppRequest) (command.SaveAppResponse, error) {
-			save := d.orch.SaveApp
-			if in.Draft {
-				save = d.orch.SaveAppDraft
-			}
-			hash, err := save(ctx, in.App)
-			resp := command.SaveAppResponse{AppID: in.App.AppID, Revision: hash}
+			hash, warnings, err := d.orch.SaveAppResult(ctx, in.App, in.Draft)
+			resp := command.SaveAppResponse{AppID: in.App.AppID, Revision: hash, Warnings: warnings}
 			if err == nil {
-				resp.Warnings = d.reloadIngress(ctx)
+				resp.Warnings = append(resp.Warnings, d.reloadIngress(ctx)...)
 			}
+			d.backups.Reload()
 			return resp, err
 		}),
 		command.TypeAppsList: handle(d, func(ctx context.Context, _ command.ListAppsRequest) (command.ListAppsResponse, error) {
@@ -149,7 +149,7 @@ func (d *Dispatcher) newHandlers() map[command.Type]handlerFunc {
 		command.TypeAppsStatus: handle(d, func(ctx context.Context, _ command.GetAppsStatusRequest) (command.GetAppsStatusResponse, error) {
 			apps, err := d.orch.GetAppsStatus(ctx)
 			rev := d.orch.VarsRevision()
-			return command.GetAppsStatusResponse{Apps: apps, VarsRevision: &rev}, err
+			return command.GetAppsStatusResponse{Apps: d.backups.Decorate(apps, time.Now()), VarsRevision: &rev}, err
 		}),
 		command.TypeAppGet: handle(d, func(ctx context.Context, in command.GetAppRequest) (command.GetAppResponse, error) {
 			return d.orch.GetApp(ctx, in.AppID)
@@ -168,11 +168,17 @@ func (d *Dispatcher) newHandlers() map[command.Type]handlerFunc {
 			default:
 				err = fmt.Errorf("unknown control action %q", in.Action)
 			}
+			if in.Action == command.ControlUpdate {
+				d.backups.Reload() // a git-sourced app's compose file may have moved
+			}
 			return command.ControlAppResponse{AppID: in.AppID, Action: in.Action}, err
 		}),
 		command.TypeAppDelete: handle(d, func(ctx context.Context, in command.DeleteAppRequest) (command.DeleteAppResponse, error) {
-			res, err := d.orch.DeleteApp(ctx, in.AppID, in.DeleteVolumes)
-			resp := command.DeleteAppResponse{AppID: in.AppID, Warnings: res.Warnings, VolumesDeleted: res.VolumesDeleted}
+			d.backups.Forget(in.AppID) // stop a backup of it before its volumes go
+			res, err := d.orch.DeleteApp(ctx, in.AppID, in.DeleteVolumes, in.DeleteBackups)
+			d.backups.Forget(in.AppID) // and drop what a reload meanwhile read back
+			resp := command.DeleteAppResponse{AppID: in.AppID, Warnings: res.Warnings,
+				VolumesDeleted: res.VolumesDeleted, BackupsDeleted: res.BackupsDeleted}
 			if err != nil {
 				// handle drops the body on error, so fold the warnings in.
 				if len(res.Warnings) > 0 {
@@ -191,6 +197,7 @@ func (d *Dispatcher) newHandlers() map[command.Type]handlerFunc {
 				return command.RenameAppResponse{AppID: in.AppID, Name: in.Name}, err
 			}
 			d.reloadIngress(ctx)
+			d.backups.Reload()
 			return command.RenameAppResponse{AppID: in.AppID, Name: in.Name}, nil
 		}),
 		command.TypeAppLogs: handle(d, func(ctx context.Context, in command.GetLogsRequest) (command.GetLogsResponse, error) {
@@ -207,6 +214,7 @@ func (d *Dispatcher) newHandlers() map[command.Type]handlerFunc {
 		}),
 		command.TypeAppRollback: handle(d, func(ctx context.Context, in command.RollbackAppRequest) (command.RollbackAppResponse, error) {
 			newHead, err := d.orch.Rollback(ctx, in.AppID, in.Hash)
+			d.backups.Reload() // the restored revision has its own backups
 			if err != nil {
 				return command.RollbackAppResponse{AppID: in.AppID, Revision: newHead}, err
 			}
@@ -274,6 +282,44 @@ func (d *Dispatcher) newHandlers() map[command.Type]handlerFunc {
 			}
 			d.reloads.Enqueue(in)
 			return command.ReloadVarsResponse{Queued: true}, nil
+		}),
+		command.TypeStorageList: handle(d, func(ctx context.Context, in command.ListStoragesRequest) (command.ListStoragesResponse, error) {
+			list, err := d.orch.ListStorages(ctx, !in.RegistryOnly)
+			return command.ListStoragesResponse{Storages: list}, err
+		}),
+		command.TypeStorageTest: handle(d, func(ctx context.Context, in command.TestStorageRequest) (command.TestStorageResponse, error) {
+			return d.orch.TestStorage(ctx, in.Storage)
+		}),
+		command.TypeStorageSave: handle(d, func(ctx context.Context, in command.SaveStorageRequest) (command.SaveStorageResponse, error) {
+			defer d.backups.Reload()
+			return d.orch.SaveStorage(ctx, in.Storage, in.Create)
+		}),
+		command.TypeStorageDelete: handle(d, func(ctx context.Context, in command.DeleteStorageRequest) (command.DeleteStorageResponse, error) {
+			defer d.backups.Reload()
+			return command.DeleteStorageResponse{Name: in.Name}, d.orch.DeleteStorage(ctx, in.Name)
+		}),
+		command.TypeStorageOrphans: handle(d, func(ctx context.Context, in command.ListOrphansRequest) (command.ListOrphansResponse, error) {
+			orphans, err := d.orch.ListOrphans(ctx, in.Name)
+			return command.ListOrphansResponse{Name: in.Name, Orphans: orphans}, err
+		}),
+		command.TypeStorageDeleteOrphan: handle(d, func(ctx context.Context, in command.DeleteOrphanRequest) (command.DeleteOrphanResponse, error) {
+			n, err := d.orch.DeleteOrphan(ctx, in.Name, in.AppID)
+			return command.DeleteOrphanResponse{Name: in.Name, AppID: in.AppID, Deleted: n}, err
+		}),
+
+		command.TypeBackupUpdate: handle(d, func(ctx context.Context, in command.UpdateBackupsRequest) (command.UpdateBackupsResponse, error) {
+			defer d.backups.Reload()
+			return d.orch.UpdateBackups(ctx, in.AppID, in.Backups, in.Base)
+		}),
+		command.TypeBackupPoints: handle(d, func(ctx context.Context, in command.ListRestorePointsRequest) (command.ListRestorePointsResponse, error) {
+			points, err := d.orch.ListRestorePoints(ctx, in.AppID, in.Backup)
+			return command.ListRestorePointsResponse{AppID: in.AppID, Backup: in.Backup, Points: points}, err
+		}),
+		command.TypeBackupRun:     handle(d, d.runBackup),
+		command.TypeBackupRestore: handle(d, d.restoreBackup),
+		command.TypeBackupDeletePoint: handle(d, func(ctx context.Context, in command.DeleteRestorePointRequest) (command.DeleteRestorePointResponse, error) {
+			err := d.orch.DeleteRestorePoint(ctx, in.AppID, in.Backup, in.Point)
+			return command.DeleteRestorePointResponse{AppID: in.AppID, Backup: in.Backup, Point: in.Point}, err
 		}),
 
 		command.TypeImageTags: handle(d, func(ctx context.Context, in command.ImageTagsRequest) (command.ImageTagsResponse, error) {

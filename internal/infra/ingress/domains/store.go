@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"winterflow/internal/domain/model"
+	"winterflow/pkg/fsutil"
 )
 
 // Registration is one stored registration. In certificate mode the .json
@@ -187,7 +188,7 @@ func (s *Store) Put(name string, mode model.DomainTLS, certPEM, keyPEM []byte) (
 		}
 	}
 	raw, _ := json.Marshal(reg)
-	if err := writeAtomic(s.jsonPath(name), raw, 0o644); err != nil {
+	if err := fsutil.WriteFile(s.jsonPath(name), raw, 0o644); err != nil {
 		return Registration{}, err
 	}
 	s.prunePairs(name, reg.Fingerprint)
@@ -202,9 +203,9 @@ func writePair(crt, key string, certPEM, keyPEM []byte) error {
 	if loadPair(crt, key) == nil {
 		return nil
 	}
-	err := writeAtomic(crt, certPEM, 0o644)
+	err := fsutil.WriteFile(crt, certPEM, 0o644)
 	if err == nil {
-		err = writeAtomic(key, keyPEM, 0o600)
+		err = fsutil.WriteFile(key, keyPEM, 0o600)
 	}
 	if err != nil {
 		_ = os.Remove(crt)
@@ -260,7 +261,7 @@ func (s *Store) Delete(name string) (bool, error) {
 	if err != nil {
 		return false, nil
 	}
-	syncDir(s.dir)
+	fsutil.SyncDir(s.dir)
 	return true, nil
 }
 
@@ -292,54 +293,8 @@ func (s *Store) Seed(regs []model.RegisteredDomain) (bool, error) {
 		_ = os.RemoveAll(tmp)
 		return false, fmt.Errorf("seed domains: %w", err)
 	}
-	syncDir(filepath.Dir(s.dir))
+	fsutil.SyncDir(filepath.Dir(s.dir))
 	return true, nil
-}
-
-// writeAtomic writes data to path via a temp file that is fsynced, renamed
-// into place, and made durable by fsyncing the directory, removing the temp
-// file when a step fails. After a power cut path holds the old content or
-// the new, never a truncated file.
-func writeAtomic(path string, data []byte, perm os.FileMode) error {
-	tmp := path + ".tmp"
-	err := writeSynced(tmp, data, perm)
-	if err == nil {
-		err = os.Rename(tmp, path)
-	}
-	if err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("write %s: %w", filepath.Base(path), err)
-	}
-	syncDir(filepath.Dir(path))
-	return nil
-}
-
-// writeSynced is os.WriteFile plus an fsync before the close.
-func writeSynced(path string, data []byte, perm os.FileMode) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
-	if err != nil {
-		return err
-	}
-	_, err = f.Write(data)
-	if err == nil {
-		err = f.Sync()
-	}
-	if cerr := f.Close(); err == nil {
-		err = cerr
-	}
-	return err
-}
-
-// syncDir fsyncs a directory so the renames and removals in it are durable.
-// Best effort: some filesystems refuse to sync a directory, and the files
-// themselves are already synced.
-func syncDir(dir string) {
-	d, err := os.Open(dir)
-	if err != nil {
-		return
-	}
-	_ = d.Sync()
-	_ = d.Close()
 }
 
 // CheckCertificate validates an uploaded pair for name at now: the key must

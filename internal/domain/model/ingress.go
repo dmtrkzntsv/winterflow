@@ -2,18 +2,17 @@ package model
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/url"
 	"regexp"
 	"strings"
 )
 
-// Ingress-related sentinel errors, matched by the HTTP layer to map failures
-// to 400s with the underlying message.
+// Ingress-related sentinel errors; both match ErrRejected (a 400 with the
+// underlying message).
 var (
-	ErrIngressInvalid = errors.New("invalid ingress")
-	ErrDomainTaken    = errors.New("domain already in use")
+	ErrIngressInvalid = rejected("invalid ingress")
+	ErrDomainTaken    = rejected("domain already in use")
 )
 
 // Ingress is the app's routing config, stored under the "ingress" key of the

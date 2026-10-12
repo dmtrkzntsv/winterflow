@@ -18,21 +18,32 @@ type resolvedItem struct {
 // double-quoted with \n and \" escapes (the dotenv dialect docker compose
 // reads); plain values stay unquoted so the file diffs nicely in git.
 func marshalEnv(vars []resolvedItem) []byte {
-	sorted := append([]resolvedItem(nil), vars...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].name < sorted[j].name })
-
-	var b bytes.Buffer
-	for _, v := range sorted {
-		val := string(v.content)
+	out, _ := writeEnvLines(vars, func(_, val string) (string, error) {
 		if strings.ContainsAny(val, "\n\"") {
 			val = "\"" + strings.NewReplacer("\\", "\\\\", "\"", "\\\"", "\n", "\\n").Replace(val) + "\""
+		}
+		return val, nil
+	})
+	return out
+}
+
+// writeEnvLines renders NAME=VALUE lines sorted by name, each value written
+// by quote, which may refuse it.
+func writeEnvLines(vars []resolvedItem, quote func(name, val string) (string, error)) ([]byte, error) {
+	sorted := append([]resolvedItem(nil), vars...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].name < sorted[j].name })
+	var b bytes.Buffer
+	for _, v := range sorted {
+		val, err := quote(v.name, string(v.content))
+		if err != nil {
+			return nil, err
 		}
 		b.WriteString(v.name)
 		b.WriteByte('=')
 		b.WriteString(val)
 		b.WriteByte('\n')
 	}
-	return b.Bytes()
+	return b.Bytes(), nil
 }
 
 // marshalSharedEnv renders shared variables as an env file whose values

@@ -1,10 +1,11 @@
 import { Link } from "react-router-dom";
-import { Boxes } from "lucide-react";
+import { Boxes, TriangleAlert } from "lucide-react";
 
 import { Card } from "@/components/ui/card";
 import { AppIcon } from "@/components/app-icon";
 import { AppStatusCode } from "@/context/apps-context-base";
 import { useApps } from "@/context/use-apps";
+import { needsAttention } from "@/lib/backups";
 import { appLabel } from "@/lib/kpi";
 import { TILE_GRID } from "@/lib/grid";
 import { cn } from "@/lib/utils";
@@ -38,7 +39,7 @@ function AppTileSkeleton() {
 // (or, for an app without a name yet, its id). Each card links to the app.
 export function AppGrid() {
   const toServer = useServerPath();
-  const { apps, statusByApp, loading, error } = useApps();
+  const { apps, statusByApp, backupsByApp, loading, error } = useApps();
 
   if (loading && apps.length === 0) {
     return (
@@ -73,11 +74,16 @@ export function AppGrid() {
         const named = Boolean(app.name?.trim());
         const label = appLabel(app.name, app.id);
         const routes = app.domains?.filter((d) => d.kind === "route") ?? [];
+        // A late or failing backup: a small warning triangle (a shape, not just a
+        // color, so it reads without hover), never the status dot (backup
+        // health doesn't change the app's status).
+        const backupWarning = needsAttention(backupsByApp?.[app.id]);
         return (
           <Link
             key={app.id}
-            to={toServer(`/app/${app.id}`)}
-            title={`${label}: ${status.label}`}
+            // The warning leads to the backup that needs attention.
+            to={toServer(`/app/${app.id}${backupWarning ? "?tab=backups" : ""}`)}
+            title={`${label}: ${status.label}${backupWarning ? " (a backup is late or failing)" : ""}`}
             className="app-card-in block min-w-0"
             style={{ animationDelay: `${index * 40}ms` }}
           >
@@ -100,6 +106,13 @@ export function AppGrid() {
                     {label}
                   </span>
                   <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+                    {backupWarning ? (
+                      <TriangleAlert
+                        role="img"
+                        aria-label="A backup is late or failing"
+                        className="size-3.5 text-amber-500"
+                      />
+                    ) : null}
                     <span aria-hidden className={cn("size-2 shrink-0 rounded-full", status.dot)} />
                     {unknown ? null : status.label}
                   </span>

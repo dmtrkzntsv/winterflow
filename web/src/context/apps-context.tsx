@@ -10,12 +10,15 @@ import {
 import { useAuth } from "@/context/use-auth";
 import { useServers } from "@/context/use-servers";
 import { useNotifications } from "@/context/use-notifications";
-import { apiBaseUrl } from "@/config";
+import { apiBase as base } from "@/config";
+import { dispatchCommand } from "@/lib/api";
+import type { BackupHealth } from "@/lib/backups";
 import { createSharedVariablesApi, type VarsReloaded } from "@/lib/shared-variables";
 import { splitStatus, type AppStatusWire } from "@/lib/app-status";
 
 import {
   AppsContext,
+  DELETE_APP_TIMEOUT_MS,
   type App,
   type AppDetailPayload,
   type AppRevisions,
@@ -45,6 +48,14 @@ type GetAppsResponse = {
   data?: { apps?: AppResponse[] | null };
 };
 
+// keepIfSame is a state update that keeps the previous value when the new
+// one reads the same: every agent report re-sends the whole snapshot, and a
+// new object would re-render every consumer for nothing.
+const keepIfSame =
+  <T,>(next: T) =>
+  (prev: T): T =>
+    JSON.stringify(prev) === JSON.stringify(next) ? prev : next;
+
 type GetAppsStatusResponse = {
   data?: { apps?: AppStatusWire[] | null };
 };
@@ -53,7 +64,6 @@ type AcceptedResponse = {
   data?: { request_id?: string };
 };
 
-const base = apiBaseUrl.endsWith("/") ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
 
 const toApp = (a: AppResponse): App => ({
   id: a.id,
@@ -73,6 +83,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
   const [apps, setApps] = useState<App[]>([]);
   const [statusByApp, setStatusByApp] = useState<Record<string, number>>({});
   const [staleVarsByApp, setStaleVarsByApp] = useState<Record<string, string[]>>({});
+  const [backupsByApp, setBackupsByApp] = useState<Record<string, BackupHealth[]>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const mounted = useRef(false);
@@ -154,6 +165,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       if (mounted.current) {
         setStatusByApp({});
         setStaleVarsByApp({});
+        setBackupsByApp({});
       }
       return;
     }
@@ -165,9 +177,10 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       if (!res.ok) return;
       const result = (await res.json()) as GetAppsStatusResponse;
       if (!mounted.current) return;
-      const { status, stale } = splitStatus(result.data?.apps);
-      setStatusByApp(status);
-      setStaleVarsByApp(stale);
+      const { status, stale, backups } = splitStatus(result.data?.apps);
+      setStatusByApp(keepIfSame(status));
+      setStaleVarsByApp(keepIfSame(stale));
+      setBackupsByApp(keepIfSame(backups));
     } catch {
       // Status is best-effort; absence renders as "unknown".
     }
@@ -207,9 +220,10 @@ export function AppsProvider({ children }: { children: ReactNode }) {
           }
         | undefined;
       if (!p?.server_id || p.server_id !== activeServerId) return;
-      const { status, stale } = splitStatus(p.apps);
-      setStatusByApp(status);
-      setStaleVarsByApp(stale);
+      const { status, stale, backups } = splitStatus(p.apps);
+      setStatusByApp(keepIfSame(status));
+      setStaleVarsByApp(keepIfSame(stale));
+      setBackupsByApp(keepIfSame(backups));
     });
   }, [subscribe, activeServerId]);
 
@@ -220,25 +234,20 @@ export function AppsProvider({ children }: { children: ReactNode }) {
     async (
       path: string,
       body: Record<string, unknown>,
+      opts: { timeoutMs?: number } = {},
     ): Promise<{ list: App[]; payload: unknown }> => {
       if (!activeServerId) throw new Error("No active server");
-      const res = await fetch(`${base}/api/v1/app/${path}`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...body, server_id: activeServerId }),
-      });
-      if (!res.ok) throw new Error(`Request failed: ${res.status}`);
-      const accepted = (await res.json()) as AcceptedResponse;
-      const ref = accepted.data?.request_id;
-      let payload: unknown;
-      if (ref) {
-        const result = await waitFor(ref);
-        if (result.status && result.status !== 0) {
-          throw new Error(result.error || "Operation failed");
-        }
-        payload = result.payload;
-      }
+      // A refused command (400) carries the reason, e.g. an unknown storage.
+      const payload = await dispatchCommand(
+        waitFor,
+        `${base}/api/v1/app/${path}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...body, server_id: activeServerId }),
+        },
+        { timeoutMs: opts.timeoutMs, refOptional: true },
+      );
       const [list] = await Promise.all([loadApps(), loadStatus()]);
       return { list, payload };
     },
@@ -255,18 +264,28 @@ export function AppsProvider({ children }: { children: ReactNode }) {
   const remove = useCallback(
     async (
       appId: string,
-      opts?: { deleteVolumes?: boolean },
+      opts?: { deleteVolumes?: boolean; deleteBackups?: boolean },
     ): Promise<DeleteAppResult> => {
-      const { payload } = await dispatchAndWait("delete-app", {
-        app_id: appId,
-        delete_volumes: opts?.deleteVolumes ?? false,
-      });
+      // The agent can take minutes to delete an app (it waits for a running
+      // backup or restore, settles the backups in every storage): wait
+      // longer than that, so its answer, warnings included, is what the user
+      // sees.
+      const { payload } = await dispatchAndWait(
+        "delete-app",
+        {
+          app_id: appId,
+          delete_volumes: opts?.deleteVolumes ?? false,
+          delete_backups: opts?.deleteBackups ?? false,
+        },
+        { timeoutMs: DELETE_APP_TIMEOUT_MS },
+      );
       const res = payload as
-        | { warnings?: string[]; volumes_deleted?: boolean }
+        | { warnings?: string[]; volumes_deleted?: boolean; backups_deleted?: boolean }
         | undefined;
       return {
         warnings: res?.warnings ?? [],
         volumesDeleted: res?.volumes_deleted ?? false,
+        backupsDeleted: res?.backups_deleted ?? false,
       };
     },
     [dispatchAndWait],
@@ -438,6 +457,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       statusByApp,
       staleVarsByApp,
       reloadSharedVars,
+      backupsByApp,
       loading,
       error,
       refresh,
@@ -456,6 +476,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       statusByApp,
       staleVarsByApp,
       reloadSharedVars,
+      backupsByApp,
       loading,
       error,
       refresh,

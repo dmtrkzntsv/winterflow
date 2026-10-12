@@ -25,6 +25,8 @@ type Deps struct {
 	AppDomainRepository port.AppDomainRepository
 	// ServerDomainRepository indexes each server's domain registrations.
 	ServerDomainRepository port.ServerDomainRepository
+	// ServerStorageRepository indexes each server's storages (no secrets).
+	ServerStorageRepository port.ServerStorageRepository
 	// SharedVariableRepository stores org- and server-level shared variables.
 	SharedVariableRepository port.SharedVariableRepository
 	CommandDispatcher        port.CommandDispatcher

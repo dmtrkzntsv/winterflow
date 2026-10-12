@@ -120,6 +120,13 @@ func (r *Repository) ReloadSharedVars(ctx context.Context, appID string) (names 
 		return nil, false, err
 	}
 	defer unlock()
+	// A reload starts containers: it is refused while a restore of the app
+	// runs, and a restore does not begin while it does.
+	end, err := r.beginOp(appID)
+	if err != nil {
+		return nil, false, err
+	}
+	defer end()
 	if !r.appExists(appID) {
 		return nil, false, fmt.Errorf("app %s not found", appID)
 	}

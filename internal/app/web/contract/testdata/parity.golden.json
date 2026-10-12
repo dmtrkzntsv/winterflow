@@ -115,6 +115,38 @@
     }
   },
   {
+    "name": "save storage (result)",
+    "status": 0,
+    "body": {
+      "redeployed": [],
+      "storage": {
+        "apps": [],
+        "local": {
+          "path": "/mnt/usb"
+        },
+        "location": "/mnt/usb",
+        "name": "disk",
+        "type": "local"
+      }
+    }
+  },
+  {
+    "name": "list storages",
+    "status": 200,
+    "body": {
+      "data": {
+        "storages": [
+          {
+            "location": "/mnt/usb",
+            "name": "disk",
+            "type": "local"
+          }
+        ]
+      },
+      "success": true
+    }
+  },
+  {
     "name": "list members",
     "status": 200,
     "body": {

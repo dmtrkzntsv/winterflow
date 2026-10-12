@@ -2,7 +2,6 @@ package dockercompose
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -14,20 +13,40 @@ import (
 // app management; the caller gets ErrAppBusy and retries instead.
 const appBusyWait = 30 * time.Second
 
-// ErrAppBusy is returned by a mutator that could not take the app's lock
-// within the busy deadline (another operation, e.g. a shared-variable
-// reload, holds it).
-var ErrAppBusy = errors.New("is busy with another operation, try again")
+// appBusyError is returned by a mutator that could not take the app's
+// operation lock within the busy deadline (another operation, e.g. a
+// shared-variable reload, holds it). It matches ErrAppBusy.
+type appBusyError struct{ appID string }
 
-// appSem returns appID's lock: a one-slot semaphore, so a wait can be
-// bounded by a deadline and a ctx.
+func (e appBusyError) Error() string {
+	return "app " + e.appID + " is busy with another operation, try again"
+}
+
+func (e appBusyError) Is(target error) bool { return target == ErrAppBusy }
+
+// The operation lock (opLocks, this file) and the file lock (lockApp,
+// lockSource in repository.go) are distinct. Lock order:
+//
+//	operation lock -> beginOp/beginRestore bookkeeping -> lockSource -> lockApp
+//	-> sharedMu -> refMu/staleMu
+//
+// The operation lock is held for a public mutator's whole run (compose
+// included) and by the shared-variable reload worker; the file lock only for
+// file work and one commit. A restore never takes the operation lock: it is
+// excluded from the mutators by beginRestore/beginOp instead.
+
+// appSem returns appID's operation lock: a one-slot semaphore, so a wait can
+// be bounded by a deadline and a ctx.
 func (r *Repository) appSem(appID string) chan struct{} {
-	r.lockMu.Lock()
-	defer r.lockMu.Unlock()
-	sem, ok := r.appLocks[appID]
+	r.opMu.Lock()
+	defer r.opMu.Unlock()
+	if r.opLocks == nil {
+		r.opLocks = map[string]chan struct{}{}
+	}
+	sem, ok := r.opLocks[appID]
 	if !ok {
 		sem = make(chan struct{}, 1)
-		r.appLocks[appID] = sem
+		r.opLocks[appID] = sem
 	}
 	return sem
 }
@@ -56,19 +75,24 @@ func (r *Repository) acquireApp(ctx context.Context, appID string, limit time.Du
 	case <-ctx.Done():
 		return nil, fmt.Errorf("app %s: %w", appID, ctx.Err())
 	case <-deadline:
-		return nil, fmt.Errorf("app %s %w", appID, ErrAppBusy)
+		return nil, appBusyError{appID: appID}
 	}
 }
 
 // lockForMutation takes appID's lock for a public mutator (save, start,
 // stop, restart, update, delete, rollback, rename, source auto-update),
-// held for its whole run, giving up after r.busyWait.
+// held for its whole run, giving up after r.busyWait (appBusyWait when
+// unset).
 func (r *Repository) lockForMutation(ctx context.Context, appID string) (func(), error) {
-	return r.acquireApp(ctx, appID, r.busyWait)
+	wait := r.busyWait
+	if wait <= 0 {
+		wait = appBusyWait
+	}
+	return r.acquireApp(ctx, appID, wait)
 }
 
-// lockApp takes appID's lock, waiting as long as it takes.
-func (r *Repository) lockApp(appID string) func() {
+// lockAppOp takes appID's operation lock, waiting as long as it takes.
+func (r *Repository) lockAppOp(appID string) func() {
 	release, _ := r.acquireApp(context.Background(), appID, 0)
 	return release
 }

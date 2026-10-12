@@ -11,8 +11,19 @@ describe("splitStatus", () => {
         { app_id: "c", status_code: 2, stale_vars: null },
         { app_id: "d", status_code: 1 },
       ]),
-    ).toEqual({ status: { a: 1, b: 5, c: 2, d: 1 }, stale: { a: ["SMTP_PASS"] } });
-    expect(splitStatus(null)).toEqual({ status: {}, stale: {} });
+    ).toEqual({ status: { a: 1, b: 5, c: 2, d: 1 }, stale: { a: ["SMTP_PASS"] }, backups: {} });
+    expect(splitStatus(null)).toEqual({ status: {}, stale: {}, backups: {} });
+  });
+
+  it("keeps the backup health of apps that have backups", () => {
+    const health = [{ name: "db", state: "ok" as const, last_success: 10 }];
+    expect(
+      splitStatus([
+        { app_id: "a", status_code: 1, backups: health, stale_vars: ["X"] },
+        { app_id: "b", status_code: 1, backups: [] },
+        { app_id: "c", status_code: 1, backups: null },
+      ]),
+    ).toEqual({ status: { a: 1, b: 1, c: 1 }, stale: { a: ["X"] }, backups: { a: health } });
   });
 });
 

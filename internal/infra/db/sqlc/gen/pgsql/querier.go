@@ -20,6 +20,8 @@ type Querier interface {
 	DeleteRegistration(ctx context.Context, serverID string) error
 	DeleteServerDomain(ctx context.Context, arg DeleteServerDomainParams) error
 	DeleteServerDomainsByServer(ctx context.Context, serverID string) error
+	DeleteServerStorage(ctx context.Context, arg DeleteServerStorageParams) error
+	DeleteServerStoragesByServer(ctx context.Context, serverID string) error
 	DeleteSharedCiphertext(ctx context.Context, arg DeleteSharedCiphertextParams) error
 	DeleteSharedCiphertextsByServer(ctx context.Context, serverID string) error
 	DeleteSharedCiphertextsByVariable(ctx context.Context, variableID string) error
@@ -60,6 +62,7 @@ type Querier interface {
 	InsertRegistration(ctx context.Context, arg InsertRegistrationParams) error
 	InsertServer(ctx context.Context, arg InsertServerParams) error
 	InsertServerDomain(ctx context.Context, arg InsertServerDomainParams) error
+	InsertServerStorage(ctx context.Context, arg InsertServerStorageParams) error
 	// Gap fill: never overwrites a copy (a concurrent rotation's new value wins).
 	InsertSharedCiphertextIfAbsent(ctx context.Context, arg InsertSharedCiphertextIfAbsentParams) error
 	InsertSharedVariable(ctx context.Context, arg InsertSharedVariableParams) error
@@ -86,6 +89,8 @@ type Querier interface {
 	// The server_domains index (mirrors each agent's domain registrations).
 	ListServerDomains(ctx context.Context, serverID string) ([]ServerDomain, error)
 	ListServerSharedVariables(ctx context.Context, serverID *string) ([]SharedVariable, error)
+	// The server_storages index (mirrors each agent's storages; never a secret).
+	ListServerStorages(ctx context.Context, serverID string) ([]ServerStorage, error)
 	ListServerUserIDs(ctx context.Context, serverID string) ([]string, error)
 	// Servers, their capabilities/features, registrations and certificates.
 	ListServersByUser(ctx context.Context, userID string) ([]Server, error)
@@ -108,6 +113,7 @@ type Querier interface {
 	UpsertCapability(ctx context.Context, arg UpsertCapabilityParams) error
 	UpsertFeature(ctx context.Context, arg UpsertFeatureParams) error
 	UpsertServerDomain(ctx context.Context, arg UpsertServerDomainParams) error
+	UpsertServerStorage(ctx context.Context, arg UpsertServerStorageParams) error
 	UpsertSharedCiphertext(ctx context.Context, arg UpsertSharedCiphertextParams) error
 	UserOwnsServer(ctx context.Context, arg UserOwnsServerParams) (bool, error)
 }

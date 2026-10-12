@@ -12,24 +12,24 @@ import (
 )
 
 const (
-	// domainSyncRetryDelay is the pause before the one retry of a sync the
+	// indexSyncRetryDelay is the pause before the one retry of a sync the
 	// hub bounced because the agent's stream was not active yet.
-	domainSyncRetryDelay = 3 * time.Second
-	// domainSyncTimeout bounds one attempt: past it an attempt whose result
+	indexSyncRetryDelay = 3 * time.Second
+	// indexSyncTimeout bounds one attempt: past it an attempt whose result
 	// never arrived no longer blocks the next one.
-	domainSyncTimeout = time.Minute
-	// domainSyncMaxAttempts caps the attempts per online period (the first
+	indexSyncTimeout = time.Minute
+	// indexSyncMaxAttempts caps the attempts per online period (the first
 	// dispatch, its retry, re-fires on heartbeats), so a server the hub keeps
 	// reporting as not connected is not asked again on every heartbeat.
-	domainSyncMaxAttempts = 3
-	// domainSyncPublishTimeout bounds the publish of one domain.list.
-	domainSyncPublishTimeout = 10 * time.Second
+	indexSyncMaxAttempts = 3
+	// indexSyncPublishTimeout bounds the publish of one list command.
+	indexSyncPublishTimeout = 10 * time.Second
 )
 
-// domainSync fills a server's server_domains index when its agent comes
-// online: a domain.list dispatched for no user (the result reaches no SSE
-// stream) whose result replaces the index rows, unchanged rows costing no
-// write.
+// indexSync fills one of a server's API indexes (server_domains,
+// server_storages) when its agent comes online: a list command dispatched
+// for no user (the result reaches no SSE stream) whose result replaces the
+// index rows, unchanged rows costing no write.
 //
 // In the distributed topology the hub publishes the capabilities event from
 // RegisterAgent, before the agent's stream is active, so the first attempt
@@ -37,17 +37,17 @@ const (
 // until a result arrives: a not-connected result is retried once after a
 // short delay, and the agent's next heartbeat (EventServerOnline, sent as
 // soon as the stream is up) re-fires a pending sync, up to
-// domainSyncMaxAttempts. Any other result clears it — an agent without
-// domain commands answers an error that a retry would not change.
+// indexSyncMaxAttempts. Any other result clears it — an agent without the
+// list command answers an error that a retry would not change.
 // Standalone's in-process bridge answers the first attempt, so it syncs once.
 //
 // Only the result of the sync's own current attempt settles it: list's
 // dispatch carries the attempt in its context (see resultTap), so other
 // commands sent through the same dispatcher, and late answers to an attempt
 // already superseded, never clear or retry a pending sync.
-type domainSync struct {
+type indexSync struct {
+	what       string // what is synced, for logs: "registered domains"
 	ctx        context.Context
-	name       string
 	list       func(ctx context.Context, serverID string) error
 	retryDelay time.Duration
 	log        *logger.Logger
@@ -70,20 +70,48 @@ type syncAttempt struct {
 
 type syncAttemptKey struct{}
 
-// newDomainSync wires the sync through the app usecase's ListServerDomains,
-// observing each result via a dispatcher tap.
-func newDomainSync(ctx context.Context, d port.CommandDispatcher, repo port.ServerDomainRepository, log *logger.Logger) *domainSync {
-	s := &domainSync{ctx: ctx, name: "sync registered domains", retryDelay: domainSyncRetryDelay, log: log, pending: map[string]*syncState{}}
-	uc := appuc.NewUseCase(&appuc.Deps{CommandDispatcher: resultTap{d, s.result}, ServerDomainRepository: repo, Log: log})
+// newIndexSync builds a sync whose list is an app usecase method (built on
+// deps) dispatching a list command for no user; a dispatcher tap observes
+// each result.
+func newIndexSync(ctx context.Context, what string, d port.CommandDispatcher, deps appuc.Deps,
+	list func(uc *appuc.UseCase, ctx context.Context, userID, serverID string) (string, error), log *logger.Logger) *indexSync {
+	s := &indexSync{what: what, ctx: ctx, retryDelay: indexSyncRetryDelay, log: log, pending: map[string]*syncState{}}
+	deps.CommandDispatcher, deps.Log = resultTap{d, s.result}, log
+	uc := appuc.NewUseCase(&deps)
 	s.list = func(ctx context.Context, serverID string) error {
-		_, err := uc.ListServerDomains(ctx, "", serverID)
+		_, err := list(uc, ctx, "", serverID)
 		return err
 	}
 	return s
 }
 
+// newDomainSync fills server_domains through ListServerDomains.
+func newDomainSync(ctx context.Context, d port.CommandDispatcher, repo port.ServerDomainRepository, log *logger.Logger) *indexSync {
+	return newIndexSync(ctx, "registered domains", d, appuc.Deps{ServerDomainRepository: repo}, (*appuc.UseCase).ListServerDomains, log)
+}
+
+// newStorageSync fills server_storages through ListServerStorages.
+func newStorageSync(ctx context.Context, d port.CommandDispatcher, repo port.ServerStorageRepository, log *logger.Logger) *indexSync {
+	return newIndexSync(ctx, "storages", d, appuc.Deps{ServerStorageRepository: repo}, (*appuc.UseCase).ListServerStorages, log)
+}
+
+// indexSyncs drives every index sync from the same server events.
+type indexSyncs []serverSync
+
+func (all indexSyncs) online(serverID string) {
+	for _, s := range all {
+		s.online(serverID)
+	}
+}
+
+func (all indexSyncs) heartbeat(serverID string) {
+	for _, s := range all {
+		s.heartbeat(serverID)
+	}
+}
+
 // online starts a fresh sync for a server that came online or (re)registered.
-func (s *domainSync) online(serverID string) {
+func (s *indexSync) online(serverID string) {
 	s.mu.Lock()
 	st, ok := s.pending[serverID]
 	if !ok || time.Now().After(st.inFlightUntil) {
@@ -98,7 +126,7 @@ func (s *domainSync) online(serverID string) {
 }
 
 // heartbeat re-fires a pending sync: the agent's stream is active now.
-func (s *domainSync) heartbeat(serverID string) {
+func (s *indexSync) heartbeat(serverID string) {
 	s.mu.Lock()
 	st, ok := s.pending[serverID]
 	var a syncAttempt
@@ -114,27 +142,27 @@ func (s *domainSync) heartbeat(serverID string) {
 
 // claimLocked reserves an attempt unless one is in flight or the budget is
 // spent.
-func (s *domainSync) claimLocked(st *syncState) (syncAttempt, bool) {
+func (s *indexSync) claimLocked(st *syncState) (syncAttempt, bool) {
 	now := time.Now()
-	if now.Before(st.inFlightUntil) || st.attempts >= domainSyncMaxAttempts {
+	if now.Before(st.inFlightUntil) || st.attempts >= indexSyncMaxAttempts {
 		return syncAttempt{}, false
 	}
 	st.attempts++
-	st.inFlightUntil = now.Add(domainSyncTimeout)
+	st.inFlightUntil = now.Add(indexSyncTimeout)
 	return syncAttempt{state: st, n: st.attempts}, true
 }
 
 // currentLocked reports whether a is the pending sync's latest attempt.
-func (s *domainSync) currentLocked(serverID string, a syncAttempt) bool {
+func (s *indexSync) currentLocked(serverID string, a syncAttempt) bool {
 	st, ok := s.pending[serverID]
 	return ok && st == a.state && st.attempts == a.n
 }
 
-func (s *domainSync) dispatch(serverID string, a syncAttempt) {
-	ctx, cancel := context.WithTimeout(s.ctx, domainSyncPublishTimeout)
+func (s *indexSync) dispatch(serverID string, a syncAttempt) {
+	ctx, cancel := context.WithTimeout(s.ctx, indexSyncPublishTimeout)
 	defer cancel()
 	if err := s.list(context.WithValue(ctx, syncAttemptKey{}, a), serverID); err != nil {
-		s.log.Warn(s.name+": dispatch", "error", err, "server_id", serverID)
+		s.log.Warn("sync "+s.what+": dispatch", "error", err, "server_id", serverID)
 		s.mu.Lock()
 		if s.currentLocked(serverID, a) {
 			a.state.inFlightUntil = time.Time{}
@@ -146,7 +174,7 @@ func (s *domainSync) dispatch(serverID string, a syncAttempt) {
 // result settles the current attempt: anything but not-connected clears
 // the pending sync; not-connected keeps it for the next heartbeat and
 // schedules the one retry. Results of other dispatches are ignored.
-func (s *domainSync) result(serverID string, a syncAttempt, res port.CommandResult) {
+func (s *indexSync) result(serverID string, a syncAttempt, res port.CommandResult) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.currentLocked(serverID, a) {
@@ -155,14 +183,14 @@ func (s *domainSync) result(serverID string, a syncAttempt, res port.CommandResu
 	st := a.state
 	if res.Success || res.Error != bus.ErrAgentNotConnected {
 		if !res.Success {
-			s.log.Debug(s.name+": agent answered an error", "error", res.Error, "server_id", serverID)
+			s.log.Debug("sync "+s.what+": agent answered an error", "error", res.Error, "server_id", serverID)
 		}
 		delete(s.pending, serverID)
 		return
 	}
 	st.inFlightUntil = time.Time{}
-	if st.attempts >= domainSyncMaxAttempts {
-		s.log.Warn(s.name+": agent not connected, giving up until it comes online again", "server_id", serverID)
+	if st.attempts >= indexSyncMaxAttempts {
+		s.log.Warn("sync "+s.what+": agent not connected, giving up until it comes online again", "server_id", serverID)
 		delete(s.pending, serverID)
 		return
 	}

@@ -13,6 +13,7 @@ import (
 	metricrepo "winterflow/internal/infra/db/repository/metric"
 	serverrepo "winterflow/internal/infra/db/repository/server"
 	serverdomainrepo "winterflow/internal/infra/db/repository/serverdomain"
+	serverstoragerepo "winterflow/internal/infra/db/repository/serverstorage"
 	sharedvarrepo "winterflow/internal/infra/db/repository/sharedvar"
 	userrepo "winterflow/internal/infra/db/repository/user"
 	"winterflow/internal/infra/transport/bus"
@@ -53,7 +54,10 @@ func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerCon
 	vars := newVarsSync(ctx, dispatcher, sharedvars.Deps{
 		Repo: r.sharedVar, Servers: r.server, Notifications: nm, Revisions: statusCache, Log: log,
 	}, log)
-	startEventsSubscriber(ctx, b, statusCache, r.server, nm, cfg, log, newDomainSync(ctx, dispatcher, r.serverDomain, log), vars, ms, latest)
+	startEventsSubscriber(ctx, b, statusCache, r.server, nm, cfg, log, indexSyncs{
+		newDomainSync(ctx, dispatcher, r.serverDomain, log),
+		newStorageSync(ctx, dispatcher, r.serverStorage, log),
+	}, vars, ms, latest)
 
 	return &Deps{
 		Log:                      log,
@@ -63,6 +67,7 @@ func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerCon
 		AppRepository:            r.app,
 		AppDomainRepository:      r.appDomain,
 		ServerDomainRepository:   r.serverDomain,
+		ServerStorageRepository:  r.serverStorage,
 		SharedVariableRepository: r.sharedVar,
 		CommandDispatcher:        dispatcher,
 		NotificationManager:      nm,
@@ -74,13 +79,14 @@ func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerCon
 
 // repos are the DB repositories, built for the connection's driver.
 type repos struct {
-	user         *userrepo.Repo
-	server       *serverrepo.Repo
-	app          *apprepo.Repo
-	appDomain    *appdomainrepo.Repo
-	serverDomain *serverdomainrepo.Repo
-	metric       *metricrepo.Repo
-	sharedVar    *sharedvarrepo.Repo
+	user          *userrepo.Repo
+	server        *serverrepo.Repo
+	app           *apprepo.Repo
+	appDomain     *appdomainrepo.Repo
+	serverDomain  *serverdomainrepo.Repo
+	serverStorage *serverstoragerepo.Repo
+	metric        *metricrepo.Repo
+	sharedVar     *sharedvarrepo.Repo
 }
 
 func newRepos(conn *db.DB, log *logger.Logger) (repos, error) {
@@ -101,6 +107,9 @@ func newRepos(conn *db.DB, log *logger.Logger) (repos, error) {
 		return r, err
 	}
 	if r.serverDomain, err = serverdomainrepo.New(conn.Tx, conn.Driver, log); err != nil {
+		return r, err
+	}
+	if r.serverStorage, err = serverstoragerepo.New(conn.Tx, conn.Driver, log); err != nil {
 		return r, err
 	}
 	if r.metric, err = metricrepo.New(conn.Tx, conn.Driver, log); err != nil {

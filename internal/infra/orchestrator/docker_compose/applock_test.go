@@ -23,7 +23,7 @@ func TestLockAppSerializesOneAppOnly(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			defer r.lockApp("a")()
+			defer r.lockAppOp("a")()
 			n := atomic.AddInt32(&inside, 1)
 			for {
 				m := atomic.LoadInt32(&maxInside)
@@ -40,9 +40,9 @@ func TestLockAppSerializesOneAppOnly(t *testing.T) {
 		t.Fatalf("%d holders of one app's lock at once", maxInside)
 	}
 	// Another app's lock is independent.
-	unlockA := r.lockApp("a")
+	unlockA := r.lockAppOp("a")
 	done := make(chan struct{})
-	go func() { r.lockApp("b")(); close(done) }()
+	go func() { r.lockAppOp("b")(); close(done) }()
 	select {
 	case <-done:
 	case <-time.After(time.Second):
@@ -51,7 +51,7 @@ func TestLockAppSerializesOneAppOnly(t *testing.T) {
 	unlockA()
 	r.forgetApp("a")
 	r.lockMu.Lock()
-	_, kept := r.appLocks["a"]
+	_, kept := r.opLocks["a"]
 	r.lockMu.Unlock()
 	if kept {
 		t.Fatal("forgetApp kept the lock entry")
@@ -88,9 +88,9 @@ func stubDockerApp(t *testing.T, appID, state string, composeCode int) {
 // holder has since taken.
 func TestReleaseIsIdempotent(t *testing.T) {
 	r := newTestRepo(t)
-	release := r.lockApp("app-1")
+	release := r.lockAppOp("app-1")
 	release()
-	held := r.lockApp("app-1")
+	held := r.lockAppOp("app-1")
 	release()
 	if _, err := r.acquireApp(context.Background(), "app-1", 10*time.Millisecond); !errors.Is(err, ErrAppBusy) {
 		t.Fatalf("a stale release freed the current holder's lock: %v", err)
@@ -117,14 +117,18 @@ func mutators(r *Repository, appID string) map[string]func(context.Context) erro
 		"RestartApp":   func(ctx context.Context) error { return r.RestartApp(ctx, appID) },
 		"UpdateApp":    func(ctx context.Context) error { return r.UpdateApp(ctx, appID) },
 		"RenameApp":    func(ctx context.Context) error { return r.RenameApp(ctx, appID, "New Name") },
-		"DeleteApp":    func(ctx context.Context) error { _, err := r.DeleteApp(ctx, appID, false); return err },
+		"DeleteApp":    func(ctx context.Context) error { _, err := r.DeleteApp(ctx, appID, false, false); return err },
+		"UpdateBackups": func(ctx context.Context) error {
+			_, err := r.UpdateBackups(ctx, appID, nil, "")
+			return err
+		},
 	}
 }
 
 func TestMutatorsGiveUpWhenAppBusy(t *testing.T) {
 	r := newTestRepo(t)
 	r.busyWait = 20 * time.Millisecond
-	unlock := r.lockApp("app-1")
+	unlock := r.lockAppOp("app-1")
 	defer unlock()
 	for name, call := range mutators(r, "app-1") {
 		start := time.Now()
@@ -196,12 +200,12 @@ func TestDeleteAppPrunesTheLockEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 	stubDocker(t, 0)
-	if _, err := r.DeleteApp(context.Background(), "app-1", false); err != nil {
+	if _, err := r.DeleteApp(context.Background(), "app-1", false, false); err != nil {
 		t.Fatal(err)
 	}
-	r.lockMu.Lock()
-	_, kept := r.appLocks["app-1"]
-	r.lockMu.Unlock()
+	r.opMu.Lock()
+	_, kept := r.opLocks["app-1"]
+	r.opMu.Unlock()
 	if kept {
 		t.Fatal("DeleteApp kept the lock entry")
 	}
@@ -210,7 +214,7 @@ func TestDeleteAppPrunesTheLockEntry(t *testing.T) {
 func TestReloadWaitsForTheLockPastTheBusyDeadline(t *testing.T) {
 	r := newTestRepo(t)
 	r.busyWait = 10 * time.Millisecond
-	unlock := r.lockApp("app-1")
+	unlock := r.lockAppOp("app-1")
 	done := make(chan error, 1)
 	go func() { _, _, err := r.ReloadSharedVars(context.Background(), "app-1"); done <- err }()
 	select {
@@ -223,7 +227,7 @@ func TestReloadWaitsForTheLockPastTheBusyDeadline(t *testing.T) {
 		t.Fatalf("err = %v, want app not found", err)
 	}
 	// ... but it gives up when its ctx ends.
-	unlock = r.lockApp("app-1")
+	unlock = r.lockAppOp("app-1")
 	defer unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
@@ -258,4 +262,61 @@ func TestForgetAppWaitsForAStaleRecompute(t *testing.T) {
 	if cached || len(r.StaleApps()["app-1"]) != 0 {
 		t.Fatal("a deleted app's shared-variable entries survived forgetApp")
 	}
+}
+
+// A shared-variable reload starts containers, so it registers as an
+// operation: it is refused while a restore of the app runs, and a restore
+// does not begin while a reload holds the app.
+func TestReloadAndRestoreExcludeEachOther(t *testing.T) {
+	r := newTestRepo(t)
+	end, err := r.beginRestore("app-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := r.ReloadSharedVars(context.Background(), "app-1"); !errors.Is(err, ErrRestoring) {
+		t.Fatalf("reload during a restore: %v, want ErrRestoring", err)
+	}
+	lockFree(t, r, "app-1", "a reload refused by a restore")
+	end()
+
+	// The reload registers its operation once it holds the app's lock.
+	if _, err := r.SaveAppDraft(context.Background(), draftPayload("app-1")); err != nil {
+		t.Fatal(err)
+	}
+	unlock := r.lockAppOp("app-1")
+	done := make(chan struct{})
+	stubDocker(t, 0)
+	go func() {
+		defer close(done)
+		_, _, _ = r.ReloadSharedVars(context.Background(), "app-1")
+	}()
+	// Held op lock: the reload waits and has not registered yet, so a
+	// restore may begin (a restore never takes the operation lock).
+	time.Sleep(20 * time.Millisecond)
+	endRestore, err := r.beginRestore("app-1")
+	if err != nil {
+		t.Fatalf("restore refused while the reload only waits for the lock: %v", err)
+	}
+	unlock()
+	<-done
+	endRestore()
+}
+
+// A storage redeploy takes the app's operation lock, so it never runs
+// beside a reload or a user action; a busy app is reported, not waited on
+// past the busy deadline.
+func TestRedeployLockedRespectsTheOperationLock(t *testing.T) {
+	r := newTestRepo(t)
+	r.busyWait = 10 * time.Millisecond
+	calls := 0
+	r.redeploy = func(context.Context, string) error { calls++; return nil }
+	unlock := r.lockAppOp("app-1")
+	if err := r.redeployLocked(context.Background(), "app-1"); !errors.Is(err, ErrAppBusy) {
+		t.Fatalf("redeploy of a busy app: %v, want ErrAppBusy", err)
+	}
+	unlock()
+	if err := r.redeployLocked(context.Background(), "app-1"); err != nil || calls != 1 {
+		t.Fatalf("redeploy = %v, calls %d", err, calls)
+	}
+	lockFree(t, r, "app-1", "redeployLocked")
 }

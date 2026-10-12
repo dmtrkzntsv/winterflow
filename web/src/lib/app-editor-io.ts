@@ -4,7 +4,7 @@
 // touched secrets, passing the "<encrypted>" placeholder through so the agent
 // preserves stored values).
 import { validHostname } from "@/lib/domains";
-import { encryptSecret } from "@/lib/ecies";
+import { ENCRYPTED, encryptSecret } from "@/lib/ecies";
 import type { AppDetailPayload } from "@/context/apps-context-base";
 import {
   DEFAULT_COMPOSE,
@@ -25,6 +25,7 @@ export function emptyEditorState(): AppEditorState {
     },
     files: { [composeId]: DEFAULT_COMPOSE },
     variables: {},
+    storageVariables: [],
   };
 }
 
@@ -75,7 +76,7 @@ export function stateFromDetail(
     const encrypted = f.encrypted ?? encFile.get(f.name) ?? false;
     // Encrypted content is masked by the agent ("<encrypted>"); keep it as the
     // placeholder so save preserves the stored secret unless re-entered.
-    files[id] = encrypted ? "<encrypted>" : b64ToString(f.content);
+    files[id] = encrypted ? ENCRYPTED : b64ToString(f.content);
     return { id, filename: f.name, is_encrypted: encrypted };
   });
 
@@ -83,7 +84,7 @@ export function stateFromDetail(
   const varMetas = (d.app.variables ?? []).map((v) => {
     const id = localId("var");
     const encrypted = v.encrypted ?? encVar.get(v.name) ?? false;
-    variables[id] = encrypted ? "<encrypted>" : b64ToString(v.content);
+    variables[id] = encrypted ? ENCRYPTED : b64ToString(v.content);
     return { id, name: v.name, is_encrypted: encrypted };
   });
 
@@ -129,6 +130,7 @@ export function stateFromDetail(
     },
     files,
     variables,
+    storageVariables: d.storage_variables ?? [],
   };
 }
 
@@ -218,7 +220,7 @@ async function mapItem(
   publicKey: string,
 ) {
   let content = rawContent;
-  if (encrypted && rawContent !== "<encrypted>") {
+  if (encrypted && rawContent !== ENCRYPTED) {
     content = await encryptSecret(rawContent, publicKey);
   }
   return { name: name.trim(), encrypted, content };
@@ -233,10 +235,10 @@ export async function buildSavePayload(
 ) {
   const needsKey =
     state.config.files.some(
-      (f) => f.is_encrypted && (state.files[f.id] ?? "") !== "<encrypted>",
+      (f) => f.is_encrypted && (state.files[f.id] ?? "") !== ENCRYPTED,
     ) ||
     state.config.variables.some(
-      (v) => v.is_encrypted && (state.variables[v.id] ?? "") !== "<encrypted>",
+      (v) => v.is_encrypted && (state.variables[v.id] ?? "") !== ENCRYPTED,
     );
   const publicKey = needsKey ? await getPublicKey() : "";
 
@@ -300,7 +302,7 @@ export async function buildSavePayload(
     if (state.sourceToken) {
       token = await encryptSecret(state.sourceToken, await getPublicKey());
     } else if (src.token_set) {
-      token = "<encrypted>";
+      token = ENCRYPTED;
     }
     source = {
       repo_url: src.repo_url.trim(),

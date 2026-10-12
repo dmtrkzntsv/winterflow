@@ -17,24 +17,42 @@ type UseCase struct {
 	repo          port.AppRepository
 	domains       port.AppDomainRepository
 	serverDomains port.ServerDomainRepository
-	log           *logger.Logger
+	// serverStorages indexes each server's storages: the storage
+	// routes keep it current; save-app checks WF_STORAGE_ references
+	// against it.
+	serverStorages port.ServerStorageRepository
+	// servers answers whether a user's organizations own a server (nil: no
+	// server is known to be theirs).
+	servers ServerAccess
+	log     *logger.Logger
 }
+
+// ServerAccess answers whether a server belongs to one of a user's
+// organizations (port.ServerRepository satisfies it).
+type ServerAccess = port.ServerOwnership
 
 type Deps struct {
 	CommandDispatcher      port.CommandDispatcher
 	AppRepository          port.AppRepository
 	AppDomainRepository    port.AppDomainRepository
 	ServerDomainRepository port.ServerDomainRepository
-	Log                    *logger.Logger
+	// ServerStorageRepository indexes each server's storages.
+	ServerStorageRepository port.ServerStorageRepository
+	// Servers lets a lookup in the catalog stay within the caller's
+	// organizations.
+	Servers ServerAccess
+	Log     *logger.Logger
 }
 
 func NewUseCase(d *Deps) *UseCase {
 	return &UseCase{
-		dispatcher:    d.CommandDispatcher,
-		repo:          d.AppRepository,
-		domains:       d.AppDomainRepository,
-		serverDomains: d.ServerDomainRepository,
-		log:           d.Log,
+		dispatcher:     d.CommandDispatcher,
+		repo:           d.AppRepository,
+		domains:        d.AppDomainRepository,
+		serverDomains:  d.ServerDomainRepository,
+		serverStorages: d.ServerStorageRepository,
+		servers:        d.Servers,
+		log:            d.Log,
 	}
 }
 
@@ -96,13 +114,14 @@ func (uc *UseCase) ControlApp(ctx context.Context, userID, serverID, appID strin
 }
 
 // DeleteApp dispatches an app.delete to the agent and, on success, removes the
-// app from the DB cache.
-func (uc *UseCase) DeleteApp(ctx context.Context, userID, serverID, appID string, deleteVolumes bool) (string, error) {
+// app from the DB cache. deleteBackups also deletes the app's backups (else
+// the agent marks them as a deleted app's).
+func (uc *UseCase) DeleteApp(ctx context.Context, userID, serverID, appID string, deleteVolumes, deleteBackups bool) (string, error) {
 	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
 		AgentID: serverID,
 		UserID:  userID,
 		Type:    command.TypeAppDelete,
-		Payload: command.DeleteAppRequest{AppID: appID, DeleteVolumes: deleteVolumes},
+		Payload: command.DeleteAppRequest{AppID: appID, DeleteVolumes: deleteVolumes, DeleteBackups: deleteBackups},
 		OnResult: func(res port.CommandResult) {
 			if !res.Success {
 				return
@@ -335,7 +354,8 @@ func (uc *UseCase) SaveApp(ctx context.Context, userID, serverID string, app mod
 	// New apps have no id yet; the API owns identity, so assign one here and use
 	// it both on the wire (the agent keys its on-disk storage by app id) and on
 	// the persisted catalog record.
-	if app.ID == "" {
+	isNew := app.ID == ""
+	if isNew {
 		app.ID = util.GenerateID()
 	}
 	payload.AppID = app.ID
@@ -344,6 +364,13 @@ func (uc *UseCase) SaveApp(ctx context.Context, userID, serverID string, app mod
 		// didn't supply a richer config (keeps older callers working).
 		cfgBytes, _ := json.Marshal(app)
 		payload.Config = cfgBytes
+	}
+
+	// The agent runs the same Validate; here a reserved variable name is a
+	// synchronous 400 instead of an async failure.
+	req := command.SaveAppRequest{App: payload, Draft: draft}
+	if err := req.Validate(); err != nil {
+		return "", err
 	}
 
 	// Ingress rides the config blob. Parse + validate + conflict-check here so
@@ -376,7 +403,10 @@ func (uc *UseCase) SaveApp(ctx context.Context, userID, serverID string, app mod
 		}
 	}
 
-	req := command.SaveAppRequest{App: payload, Draft: draft}
+	if err := uc.requireStorageRefs(ctx, serverID, payload, isNew); err != nil {
+		return "", err
+	}
+
 	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
 		AgentID: serverID,
 		UserID:  userID,

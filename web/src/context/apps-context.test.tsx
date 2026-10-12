@@ -1,102 +1,120 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { useState } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ReactNode } from "react";
+import { act, renderHook, waitFor as waitUntil } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppsProvider } from "@/context/apps-context";
-import { AuthContext, type AuthContextValue } from "@/context/auth-context-base";
-import {
-  NotificationsContext,
-  type Notification,
-  type NotificationHandler,
-  type NotificationsContextValue,
-} from "@/context/notifications-context-base";
-import { ServersContext, type ServersContextValue } from "@/context/servers-context-base";
+import { DELETE_APP_TIMEOUT_MS } from "@/context/apps-context-base";
 import { useApps } from "@/context/use-apps";
 
-function Probe() {
-  const { staleVarsByApp, reloadSharedVars } = useApps();
-  const [err, setErr] = useState("");
-  return (
-    <>
-      <pre data-testid="stale">{JSON.stringify(staleVarsByApp)}</pre>
-      <button onClick={() => reloadSharedVars("a1").catch((e: Error) => setErr(e.message))}>reload</button>
-      <p data-testid="err">{err}</p>
-    </>
-  );
-}
-
-function setup(reloadStatus = 200) {
-  const handlers = new Set<NotificationHandler>();
-  const notifications: NotificationsContextValue = {
-    connected: true,
-    subscribe: (h) => {
-      handlers.add(h);
-      return () => handlers.delete(h);
+vi.mock("@/context/use-auth", () => ({ useAuth: () => ({ isAuthenticated: true }) }));
+vi.mock("@/context/use-servers", () => ({ useServers: () => ({ activeServerId: "srv-1" }) }));
+const waitFor = vi.fn();
+const handlers: ((n: { type: string; ref?: string; payload?: unknown }) => void)[] = [];
+vi.mock("@/context/use-notifications", () => ({
+  useNotifications: () => ({
+    subscribe: (h: (typeof handlers)[number]) => {
+      handlers.push(h);
+      return () => {};
     },
-    waitFor: vi.fn(),
-  };
-  const calls: { url: string; body?: string }[] = [];
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (url: string, init?: RequestInit) => {
-      calls.push({ url, body: init?.body as string | undefined });
-      if (url.includes("/shared-variables/reload")) {
-        if (reloadStatus !== 200) {
-          return new Response(JSON.stringify({ success: false, message: "boom" }), { status: reloadStatus });
-        }
-        return new Response(JSON.stringify({ success: true, message: "ok", data: { servers: ["s1"] } }));
-      }
-      if (url.includes("get-apps-status")) {
-        return new Response(
-          JSON.stringify({ success: true, message: "", data: { apps: [{ app_id: "a1", status_code: 1, stale_vars: ["X"] }] } }),
-        );
-      }
-      return new Response(JSON.stringify({ success: true, message: "", data: { apps: [] } }));
-    }),
-  );
-  render(
-    <AuthContext.Provider value={{ isAuthenticated: true } as AuthContextValue}>
-      <ServersContext.Provider value={{ activeServerId: "s1" } as unknown as ServersContextValue}>
-        <NotificationsContext.Provider value={notifications}>
-          <AppsProvider>
-            <Probe />
-          </AppsProvider>
-        </NotificationsContext.Provider>
-      </ServersContext.Provider>
-    </AuthContext.Provider>,
-  );
-  const emit = (n: Notification) => act(() => handlers.forEach((h) => h(n)));
-  return { calls, emit };
-}
+    waitFor,
+    connected: true,
+  }),
+}));
 
-const reloaded = (p: object): Notification => ({ type: "vars.reloaded", ref: "", payload: p });
+const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status });
 
-describe("AppsProvider shared variable reload", () => {
+// The API refuses a save whose compose file references a storage the server
+// doesn't have with a 400 and the reason.
+const refusal = "unresolved storage variable: ${WF_STORAGE_NOPE_PATH}: there is no storage \"nope\" on this server";
+
+const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+  const url = String(input);
+  if (url.includes("/api/v1/app/get-apps?")) return json(200, { data: { apps: [] } });
+  if (url.includes("/api/v1/app/get-apps-status")) {
+    return json(200, {
+      data: {
+        apps: [
+          { app_id: "a1", status_code: 1, backups: [{ name: "db", state: "late", last_success: 1 }] },
+          { app_id: "a2", status_code: 5, backups: null },
+        ],
+      },
+    });
+  }
+  if (url.includes("/api/v1/app/delete-app")) return json(202, { data: { request_id: "del-1" } });
+  if (url.includes("/api/v1/app/refresh-apps")) return json(202, { data: {} });
+  if (url.includes("/api/v1/app/save-app")) return json(400, { success: false, message: refusal });
+  if (url.includes("/api/v1/app/control-app")) return new Response("bad gateway", { status: 502 });
+  return json(500, {});
+});
+
+const wrapper = ({ children }: { children: ReactNode }) => <AppsProvider>{children}</AppsProvider>;
+
+describe("AppsProvider commands", () => {
+  beforeEach(() => vi.stubGlobal("fetch", fetchMock));
   afterEach(() => vi.unstubAllGlobals());
 
-  it("posts the reload for one app and clears stale only on its own successful report", async () => {
-    const { calls, emit } = setup();
-    await waitFor(() => expect(screen.getByTestId("stale")).toHaveTextContent('"a1":["X"]'));
-
-    await userEvent.click(screen.getByRole("button", { name: "reload" }));
-    await waitFor(() => expect(calls.some((c) => c.url.includes("/shared-variables/reload"))).toBe(true));
-    const call = calls.find((c) => c.url.includes("/shared-variables/reload"));
-    expect(JSON.parse(call?.body ?? "{}")).toEqual({ server_id: "s1", app_ids: ["a1"] });
-
-    emit(reloaded({ server_id: "s1", app_id: "a1", ok: false, error: "x", names: [] }));
-    emit(reloaded({ server_id: "s1", app_id: "other", ok: true, names: [] }));
-    emit(reloaded({ server_id: "s2", app_id: "a1", ok: true, names: [] }));
-    expect(screen.getByTestId("stale")).toHaveTextContent('"a1":["X"]');
-
-    emit(reloaded({ server_id: "s1", app_id: "a1", ok: true, names: ["X"] }));
-    expect(screen.getByTestId("stale")).toHaveTextContent("{}");
+  it("rejects a refused save with the server's reason, which the editor shows", async () => {
+    const { result } = renderHook(() => useApps(), { wrapper });
+    await waitUntil(() => expect(result.current.loading).toBe(false));
+    await expect(
+      result.current.saveApp({ app: { id: "a1" }, config: {}, files: [], variables: [] }),
+    ).rejects.toThrow(refusal);
+    expect(waitFor).not.toHaveBeenCalled();
   });
 
-  it("surfaces a failed reload request", async () => {
-    setup(500);
-    await waitFor(() => expect(screen.getByTestId("stale")).toHaveTextContent('"a1"'));
-    await userEvent.click(screen.getByRole("button", { name: "reload" }));
-    await waitFor(() => expect(screen.getByTestId("err")).not.toBeEmptyDOMElement());
+  it("falls back to the status when the refusal has no message", async () => {
+    const { result } = renderHook(() => useApps(), { wrapper });
+    await waitUntil(() => expect(result.current.loading).toBe(false));
+    await expect(result.current.control("a1", "start")).rejects.toThrow("Request failed: 502");
+  });
+});
+
+describe("AppsProvider backups", () => {
+  beforeEach(() => vi.stubGlobal("fetch", fetchMock));
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("keeps each app's backup health from the status and its pushes", async () => {
+    const { result } = renderHook(() => useApps(), { wrapper });
+    await waitUntil(() => expect(result.current.backupsByApp.a1).toEqual([{ name: "db", state: "late", last_success: 1 }]));
+    expect(result.current.statusByApp).toEqual({ a1: 1, a2: 5 });
+    expect(result.current.backupsByApp.a2).toBeUndefined();
+
+    act(() => {
+      for (const h of handlers) {
+        h({ type: "apps_status", payload: { server_id: "srv-1", apps: [{ app_id: "a2", status_code: 1, backups: [{ name: "media", state: "failing" }] }] } });
+        h({ type: "apps_status", payload: { server_id: "other", apps: [] } });
+      }
+    });
+    await waitUntil(() => expect(result.current.backupsByApp).toEqual({ a2: [{ name: "media", state: "failing" }] }));
+  });
+
+  it("asks to delete the backups with the app and reports whether they were", async () => {
+    const { result } = renderHook(() => useApps(), { wrapper });
+    await waitUntil(() => expect(result.current.loading).toBe(false));
+    waitFor.mockResolvedValueOnce({ status: 0, payload: { warnings: [], volumes_deleted: false, backups_deleted: true } });
+    await expect(result.current.remove("a1", { deleteBackups: true })).resolves.toEqual({
+      warnings: [],
+      volumesDeleted: false,
+      backupsDeleted: true,
+    });
+    // fetch's second argument, which the mock's signature leaves out.
+    const del = fetchMock.mock.calls.find(([u]) => String(u).includes("/api/v1/app/delete-app")) as unknown as [string, RequestInit];
+    expect(JSON.parse(String(del[1].body))).toEqual({
+      app_id: "a1",
+      delete_volumes: false,
+      delete_backups: true,
+      server_id: "srv-1",
+    });
+  });
+
+  it("waits for a delete longer than the agent can take", async () => {
+    const { result } = renderHook(() => useApps(), { wrapper });
+    await waitUntil(() => expect(result.current.loading).toBe(false));
+    waitFor.mockClear();
+    waitFor.mockResolvedValueOnce({ status: 0, payload: {} });
+    await result.current.remove("a1");
+    // The agent's worst case is about 8 minutes (backups settled in every storage).
+    expect(waitFor).toHaveBeenLastCalledWith("del-1", DELETE_APP_TIMEOUT_MS);
+    expect(DELETE_APP_TIMEOUT_MS).toBeGreaterThanOrEqual(9 * 60_000);
   });
 });

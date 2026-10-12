@@ -69,23 +69,24 @@ func TestGetAppHidesManagedProjectName(t *testing.T) {
 }
 
 func TestRunHelperScript(t *testing.T) {
-	got := string(runHelperScript("wf-app-1", ""))
+	got := string(runHelperScript("wf-app-1", []string{"compose.yml", "compose.override.yml"}, nil))
 	for _, want := range []string{
 		"#!/bin/sh\n",
 		`cd "$(dirname "$0")/.." || exit 1`,
-		// Prepended in reverse, so the final order is
-		// .env.shared .env.shared.secrets .env .env.secrets <args>.
+		// Prepended in reverse, so the final order is .env.shared
+		// .env.shared.secrets .env storage.env .env.secrets <args>.
 		`if [ -f .env.secrets ]; then set -- --env-file .env.secrets "$@"; fi`,
+		`if [ -f .winterflow/storage.env ]; then set -- --env-file .winterflow/storage.env "$@"; fi`,
 		`set -- --env-file .env "$@"`,
 		`if [ -f .env.shared.secrets ]; then set -- --env-file .env.shared.secrets "$@"; fi`,
 		`if [ -f .env.shared ]; then set -- --env-file .env.shared "$@"; fi`,
-		`exec docker compose --project-name wf-app-1 "$@"`,
+		`exec docker compose --project-name wf-app-1 -f 'compose.yml' -f 'compose.override.yml' "$@"`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("script missing %q:\n%s", want, got)
 		}
 	}
-	order := []string{".env.secrets \"$@\"", "--env-file .env \"$@\"", ".env.shared.secrets \"$@\"", "--env-file .env.shared \"$@\""}
+	order := []string{".env.secrets \"$@\"", "storage.env \"$@\"", "--env-file .env \"$@\"", ".env.shared.secrets \"$@\"", "--env-file .env.shared \"$@\""}
 	last := -1
 	for _, o := range order {
 		i := strings.Index(got, o)
@@ -94,51 +95,49 @@ func TestRunHelperScript(t *testing.T) {
 		}
 		last = i
 	}
-	if strings.Contains(got, ` -f "`) {
-		t.Fatalf("no compose file expected:\n%s", got)
-	}
-	withFile := string(runHelperScript("wf-app-1", "source/compose.yml"))
-	if !strings.Contains(withFile, `exec docker compose --project-name wf-app-1 -f "source/compose.yml" "$@"`) {
-		t.Fatalf("script missing -f flag:\n%s", withFile)
+
+	// A compose path is quoted for the shell, whatever it contains.
+	odd := string(runHelperScript("wf-app-1", []string{"source/it's $(here).yml"}, nil))
+	if !strings.Contains(odd, `-f 'source/it'\''s $(here).yml' "$@"`) {
+		t.Fatalf("path not quoted:\n%s", odd)
 	}
 }
 
-// TestRunHelperScriptRunsWithEnvFileOrder executes the script with a fake
-// docker on PATH and checks the exact argv it receives.
-func TestRunHelperScriptRunsWithEnvFileOrder(t *testing.T) {
-	app := t.TempDir()
+// TestRunHelperScriptRuns executes the script with a fake docker on PATH:
+// it must pass exactly winterflow's flags, env files included.
+func TestRunHelperScriptRuns(t *testing.T) {
+	dir := t.TempDir()
 	bin := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(app, ".winterflow"), 0o755); err != nil {
+	writeFileT(t, bin, "docker", "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\"; done\n")
+	if err := os.Chmod(filepath.Join(bin, "docker"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(app, runRel), runHelperScript("wf-a", ""), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	argv := filepath.Join(bin, "argv")
-	fake := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argv + "\n"
-	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(fake), 0o755); err != nil {
+	writeFileT(t, dir, runRel, string(runHelperScript("wf-x", []string{"compose.yml"}, nil)))
+	if err := os.Chmod(filepath.Join(dir, runRel), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	run := func() string {
-		cmd := exec.Command(filepath.Join(app, runRel), "up", "-d")
+		cmd := exec.Command(filepath.Join(dir, runRel), "up", "-d")
 		cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"))
-		if out, err := cmd.CombinedOutput(); err != nil {
+		out, err := cmd.CombinedOutput()
+		if err != nil {
 			t.Fatalf("run.sh: %v: %s", err, out)
 		}
-		raw, _ := os.ReadFile(argv)
-		return strings.Join(strings.Fields(string(raw)), " ")
+		return strings.ReplaceAll(strings.TrimSpace(string(out)), "\n", " ")
 	}
-	if got := run(); got != "compose --project-name wf-a --env-file .env up -d" {
-		t.Fatalf("without optional files: %s", got)
+	if got := run(); got != "compose --project-name wf-x -f compose.yml --env-file .env up -d" {
+		t.Fatalf("without extra env files: %s", got)
 	}
-	for _, f := range []string{".env.shared", ".env.shared.secrets", ".env.secrets"} {
-		if err := os.WriteFile(filepath.Join(app, f), nil, 0o600); err != nil {
-			t.Fatal(err)
-		}
+	writeFileT(t, dir, envSecretsRel, "")
+	writeFileT(t, dir, storageEnvRel, "")
+	if got := run(); got != "compose --project-name wf-x -f compose.yml --env-file .env --env-file .winterflow/storage.env --env-file .env.secrets up -d" {
+		t.Fatalf("with env files: %s", got)
 	}
-	want := "compose --project-name wf-a --env-file .env.shared --env-file .env.shared.secrets --env-file .env --env-file .env.secrets up -d"
+	writeFileT(t, dir, envSharedRel, "")
+	writeFileT(t, dir, envSharedSecretsRel, "")
+	want := "compose --project-name wf-x -f compose.yml --env-file .env.shared --env-file .env.shared.secrets --env-file .env --env-file .winterflow/storage.env --env-file .env.secrets up -d"
 	if got := run(); got != want {
-		t.Fatalf("with all files:\n got %s\nwant %s", got, want)
+		t.Fatalf("with shared env files:\n got %s\nwant %s", got, want)
 	}
 }
 
@@ -152,7 +151,7 @@ func TestWriteRunHelper(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := r.writeRunHelper("app-1"); err != nil {
+	if err := r.writeRunHelper("app-1", r.appComposeFiles(dir), nil); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(filepath.Join(dir, runRel))

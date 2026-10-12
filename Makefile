@@ -6,10 +6,12 @@ API_BIN := $(BIN_DIR)/api
 .PHONY: build lint standalone api web web-build third-party-licenses test web-test cover diffcov openapi test-pg sqlc sqlc-check
 
 # Release build: bundle the SPA first so go:embed picks up a fresh web/dist,
-# then compile. The binaries are fully self-contained (API + web UI).
+# then compile. The binaries are fully self-contained (API + web UI) and
+# static (CGO_ENABLED=0): the backup helper runs the binary inside alpine,
+# which has no glibc loader.
 build: web-build
-	$(GO) build -o $(STANDALONE_BIN) ./cmd/standalone
-	$(GO) build -o $(API_BIN) ./cmd/api
+	CGO_ENABLED=0 $(GO) build -o $(STANDALONE_BIN) ./cmd/standalone
+	CGO_ENABLED=0 $(GO) build -o $(API_BIN) ./cmd/api
 
 # Production SPA bundle into web/dist (what go:embed ships). web/.env.production
 # pins the bundle to same-origin + standalone mode; override via shell env, e.g.
@@ -69,16 +71,16 @@ mod:
 	$(GO) mod tidy
 
 standalone:
-	$(GO) run ./cmd/standalone serve
+	CGO_ENABLED=0 $(GO) run ./cmd/standalone serve
 
 api:
-	$(GO) run ./cmd/api
+	CGO_ENABLED=0 $(GO) run ./cmd/api
 
 hub:
-	$(GO) run ./cmd/hub
+	CGO_ENABLED=0 $(GO) run ./cmd/hub
 
 agent:
-	$(GO) run ./cmd/agent
+	CGO_ENABLED=0 $(GO) run ./cmd/agent
 
 web:
 	pnpm --dir web dev

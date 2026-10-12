@@ -223,16 +223,16 @@ func TestUnrelatedResultKeepsConnectSyncPending(t *testing.T) {
 	}
 	// A late repeat of attempt 1's answer settles nothing either.
 	answerSync(connect, 1)
-	e.s.domainSync.mu.Lock()
+	e.s.indexSync.mu.Lock()
 	_, pending := e.s.pending[varsSrv]
-	e.s.domainSync.mu.Unlock()
+	e.s.indexSync.mu.Unlock()
 	if !pending {
 		t.Fatal("a superseded attempt's result settled the sync")
 	}
 	answerSync(e.disp.syncs()[2], 1)
-	e.s.domainSync.mu.Lock()
+	e.s.indexSync.mu.Lock()
 	_, pending = e.s.pending[varsSrv]
-	e.s.domainSync.mu.Unlock()
+	e.s.indexSync.mu.Unlock()
 	if pending {
 		t.Fatal("the current attempt's result did not settle the sync")
 	}

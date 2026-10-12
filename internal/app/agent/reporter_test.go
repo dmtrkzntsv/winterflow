@@ -55,7 +55,7 @@ func TestStatusReporterSendsImmediatelyAndOnTick(t *testing.T) {
 
 	src := &fakeStatusSource{}
 	got := make(chan sinkCall, 16)
-	go RunStatusReporter(ctx, src, collectSink(got), 30*time.Millisecond, log)
+	go RunStatusReporter(ctx, src, collectSink(got), 30*time.Millisecond, nil, log)
 
 	// Immediate first report.
 	select {
@@ -89,7 +89,7 @@ func TestStatusReporterSurvivesSourceErrors(t *testing.T) {
 
 	src := &fakeStatusSource{fail: true}
 	got := make(chan sinkCall, 16)
-	go RunStatusReporter(ctx, src, collectSink(got), 20*time.Millisecond, log)
+	go RunStatusReporter(ctx, src, collectSink(got), 20*time.Millisecond, nil, log)
 
 	// Give it several ticks to prove the loop keeps polling despite errors.
 	time.Sleep(120 * time.Millisecond)
@@ -111,7 +111,7 @@ func TestStatusReporterStopsOnCancel(t *testing.T) {
 	got := make(chan sinkCall, 16)
 	done := make(chan struct{})
 	go func() {
-		RunStatusReporter(ctx, src, collectSink(got), 10*time.Millisecond, log)
+		RunStatusReporter(ctx, src, collectSink(got), 10*time.Millisecond, nil, log)
 		close(done)
 	}()
 
@@ -133,7 +133,7 @@ func TestStatusReporterAddsVarsRevision(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	got := make(chan sinkCall, 4)
-	go RunStatusReporter(ctx, revisionSource{&fakeStatusSource{}}, collectSink(got), time.Hour, testLog())
+	go RunStatusReporter(ctx, revisionSource{&fakeStatusSource{}}, collectSink(got), time.Hour, nil, testLog())
 	call := <-got
 	var body command.GetAppsStatusResponse
 	if err := json.Unmarshal(call.payload, &body); err != nil || body.VarsRevision == nil || *body.VarsRevision != 9 {
@@ -141,14 +141,46 @@ func TestStatusReporterAddsVarsRevision(t *testing.T) {
 	}
 	// Wrapped in the snapshot the metrics reporter shares, it still does.
 	wrapped := make(chan sinkCall, 4)
-	go RunStatusReporter(ctx, NewStatusSnapshot(revisionSource{&fakeStatusSource{}}), collectSink(wrapped), time.Hour, testLog())
+	go RunStatusReporter(ctx, NewStatusSnapshot(revisionSource{&fakeStatusSource{}}), collectSink(wrapped), time.Hour, nil, testLog())
 	if c := <-wrapped; !strings.Contains(string(c.payload), `"vars_revision":9`) {
 		t.Fatalf("wrapped report = %s", c.payload)
 	}
+	// Inside the backup-health decoration too (the production wiring).
+	decorated := make(chan sinkCall, 4)
+	go RunStatusReporter(ctx, NewStatusSnapshot(WithBackupHealth(revisionSource{&fakeStatusSource{}}, noBackups{})), collectSink(decorated), time.Hour, nil, testLog())
+	if c := <-decorated; !strings.Contains(string(c.payload), `"vars_revision":9`) {
+		t.Fatalf("decorated report = %s", c.payload)
+	}
 	// A source without revisions (an old orchestrator) sends none.
 	plain := make(chan sinkCall, 4)
-	go RunStatusReporter(ctx, &fakeStatusSource{}, collectSink(plain), time.Hour, testLog())
+	go RunStatusReporter(ctx, &fakeStatusSource{}, collectSink(plain), time.Hour, nil, testLog())
 	if c := <-plain; strings.Contains(string(c.payload), "vars_revision") {
 		t.Fatalf("report = %s", c.payload)
+	}
+}
+
+// A nudge makes the reporter publish at once, long before its tick.
+func TestStatusReporterReportsOnNudge(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
+	got := make(chan sinkCall, 16)
+	nudge := make(chan struct{}, 1)
+	go RunStatusReporter(ctx, &fakeStatusSource{}, collectSink(got), time.Hour, nudge, log)
+	select {
+	case <-got: // the immediate first report
+	case <-time.After(2 * time.Second):
+		t.Fatal("no immediate report")
+	}
+	nudge <- struct{}{}
+	select {
+	case <-got:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a nudge did not trigger a report")
+	}
+	select {
+	case call := <-got:
+		t.Fatalf("an extra report: %+v", call)
+	case <-time.After(100 * time.Millisecond):
 	}
 }

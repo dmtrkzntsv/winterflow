@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/filemode"
+	"github.com/go-git/go-git/v5/plumbing/format/gitignore"
 	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
@@ -38,9 +40,33 @@ func gitEnsure(dir string) error {
 	return err
 }
 
-// gitCommitAll stages everything (honoring .gitignore) and commits. A clean
-// worktree is a no-op that returns the current HEAD hash, so callers can
-// commit unconditionally after a save.
+// derivedArtifacts are the files a deploy derives in the app folder (some
+// hold plaintext secrets). They never belong in the app's history: the
+// .gitignore lists them, and every commit excludes them (neverCommitted)
+// whatever .gitignore says — a rollback restores an old .gitignore that may
+// not list them.
+var derivedArtifacts = []string{envSecretsRel, envSharedRel, envSharedSecretsRel, deployedRel, runRel, storageEnvRel}
+
+// tempArtifacts are the temp files of the agent's own atomic writes in
+// .winterflow/ (fsutil.WriteFile's config.json.tmp): a crash mid-write
+// leaves one behind, and the next commit must not pick it up. App files
+// can't live in .winterflow/ (safeRel), so the glob takes nothing of theirs.
+const tempArtifacts = ".winterflow/*.tmp"
+
+// neverCommitted are derivedArtifacts and tempArtifacts as go-git
+// patterns. go-git does not read .git/info/exclude, so they ride on every
+// commit's worktree.
+var neverCommitted = func() []gitignore.Pattern {
+	out := make([]gitignore.Pattern, 0, len(derivedArtifacts)+1)
+	for _, rel := range append(slices.Clone(derivedArtifacts), tempArtifacts) {
+		out = append(out, gitignore.ParsePattern("/"+rel, nil))
+	}
+	return out
+}()
+
+// gitCommitAll stages everything (honoring .gitignore and neverCommitted)
+// and commits. A clean worktree is a no-op that returns the current HEAD
+// hash, so callers can commit unconditionally after a save.
 func gitCommitAll(dir, subject string) (string, error) {
 	if err := ensureIgnored(dir); err != nil {
 		return "", fmt.Errorf("guard .gitignore: %w", err)
@@ -53,6 +79,7 @@ func gitCommitAll(dir, subject string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	wt.Excludes = append(wt.Excludes, neverCommitted...)
 	if err := wt.AddWithOptions(&git.AddOptions{All: true}); err != nil {
 		return "", err
 	}
@@ -74,6 +101,19 @@ func gitCommitAll(dir, subject string) (string, error) {
 		return "", err
 	}
 	return hash.String(), nil
+}
+
+// gitHead returns the hash HEAD points at.
+func gitHead(dir string) (string, error) {
+	repo, err := git.PlainOpen(dir)
+	if err != nil {
+		return "", err
+	}
+	head, err := repo.Head()
+	if err != nil {
+		return "", err
+	}
+	return head.Hash().String(), nil
 }
 
 // gitLog returns the app's history, newest first.
@@ -129,15 +169,10 @@ func gitCount(dir string) (int, error) {
 
 // commitCount is gitCount behind the per-app HEAD-keyed cache.
 func (r *Repository) commitCount(appID, dir string) (int, error) {
-	repo, err := git.PlainOpen(dir)
+	h, err := gitHead(dir)
 	if err != nil {
 		return 0, err
 	}
-	head, err := repo.Head()
-	if err != nil {
-		return 0, err
-	}
-	h := head.Hash().String()
 
 	r.versionMu.Lock()
 	if e, ok := r.versionCache[appID]; ok && e.head == h {
@@ -154,6 +189,20 @@ func (r *Repository) commitCount(appID, dir string) (int, error) {
 	r.versionCache[appID] = versionEntry{head: h, count: count}
 	r.versionMu.Unlock()
 	return count, nil
+}
+
+// gitTracked reports whether commit hash has the file rel.
+func gitTracked(dir, hash, rel string) bool {
+	repo, err := git.PlainOpen(dir)
+	if err != nil {
+		return false
+	}
+	c, err := repo.CommitObject(plumbing.NewHash(hash))
+	if err != nil {
+		return false
+	}
+	_, err = c.File(filepath.ToSlash(rel))
+	return err == nil
 }
 
 // gitRestore makes the worktree match the tree of the given commit: files in
@@ -230,7 +279,9 @@ func firstLine(s string) string {
 
 // alwaysIgnored are deploy artifacts holding plaintext. They must never be
 // committed, whatever the worktree's .gitignore says: a rollback restores
-// a .gitignore written before some of them existed.
+// a .gitignore written before some of them existed. neverCommitted already
+// keeps them (and every other derived artifact) out of each commit; listing
+// them in .gitignore too keeps a manual `git add -A` in the folder honest.
 var alwaysIgnored = []string{envSecretsRel, envSharedRel, envSharedSecretsRel}
 
 // ensureIgnored appends any of alwaysIgnored missing from dir/.gitignore.
@@ -258,17 +309,4 @@ func ensureIgnored(dir string) error {
 		out += "\n"
 	}
 	return os.WriteFile(path, []byte(out+strings.Join(add, "\n")+"\n"), 0o644)
-}
-
-// gitHead returns the HEAD commit hash without walking history.
-func gitHead(dir string) (string, error) {
-	repo, err := git.PlainOpen(dir)
-	if err != nil {
-		return "", err
-	}
-	head, err := repo.Head()
-	if err != nil {
-		return "", err
-	}
-	return head.Hash().String(), nil
 }

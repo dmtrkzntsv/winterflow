@@ -160,6 +160,9 @@ paths:
         $ref: '#/components/schemas/ControlAppResponse'
   /api/v1/app/delete-app:
     post:
+      description: 'Without `delete_backups` the app''s backups are kept, marked as
+        a deleted app''s: the agent''s daily sweep deletes them once older than its
+        BACKUP_RETENTION_DAYS.'
       operationId: appDeleteApp
       requestBody:
         content:
@@ -208,11 +211,66 @@ paths:
       security:
       - bearer: []
       - cookie: []
-      summary: Delete an app (optionally its volumes)
+      summary: Delete an app (optionally its volumes and its backups)
       tags:
       - apps
       x-operation-result:
         $ref: '#/components/schemas/DeleteAppResponse'
+  /api/v1/app/delete-restore-point:
+    post:
+      operationId: appDeleteRestorePoint
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteRestorePointRequest'
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Delete one restore point (any kind)
+      tags:
+      - backups
+      x-operation-result:
+        $ref: '#/components/schemas/DeleteRestorePointResponse'
   /api/v1/app/get-app:
     get:
       operationId: appGetApp
@@ -522,6 +580,74 @@ paths:
       - apps
       x-operation-result:
         $ref: '#/components/schemas/GetRevisionsResponse'
+  /api/v1/app/list-restore-points:
+    get:
+      operationId: appListRestorePoints
+      parameters:
+      - in: query
+        name: server_id
+        required: true
+        schema:
+          type: string
+      - in: query
+        name: app_id
+        required: true
+        schema:
+          type: string
+      - description: Backup name.
+        in: query
+        name: backup
+        required: true
+        schema:
+          description: Backup name.
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: List a backup's restore points, newest first (30s deadline)
+      tags:
+      - backups
+      x-operation-result:
+        $ref: '#/components/schemas/ListRestorePointsResponse'
   /api/v1/app/refresh-apps:
     post:
       operationId: appRefreshApps
@@ -635,6 +761,70 @@ paths:
       - apps
       x-operation-result:
         $ref: '#/components/schemas/RenameAppResponse'
+  /api/v1/app/restore-backup:
+    post:
+      description: 'The result arrives when the restore ends. On a failure that leaves
+        the data as it was (the helper failed cleanly, or a files helper was stopped
+        before it began replacing data), the app is started again. Any other end (a
+        crash, a kill, a swap that fails half-way, an agent stop; sqlite as well as
+        files) may have left the data partly replaced: the app is left stopped and
+        removed (never its volumes) and the error names the pre-restore point to restore.
+        A copy made under a location the backup no longer has is refused, and so is
+        a restore that needs more time than is left for the copy''s size.'
+      operationId: appRestoreBackup
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RestoreBackupRequest'
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Restore a restore point in place (the app is stopped, its data saved
+        as a pre-restore point first)
+      tags:
+      - backups
+      x-operation-result:
+        $ref: '#/components/schemas/RestoreBackupResponse'
   /api/v1/app/rollback-app:
     post:
       operationId: appRollbackApp
@@ -690,6 +880,64 @@ paths:
       - apps
       x-operation-result:
         $ref: '#/components/schemas/RollbackAppResponse'
+  /api/v1/app/run-backup:
+    post:
+      description: The result arrives when the run ends, which can take up to 30 minutes
+        after it starts. A second request while the same backup is queued or running
+        fails at once (its result is an error).
+      operationId: appRunBackup
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunBackupRequest'
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Back up now (refused while the same backup is queued or running)
+      tags:
+      - backups
+      x-operation-result:
+        $ref: '#/components/schemas/RunBackupResponse'
   /api/v1/app/save-app:
     post:
       operationId: appSaveApp
@@ -745,6 +993,68 @@ paths:
       - apps
       x-operation-result:
         $ref: '#/components/schemas/SaveAppResponse'
+  /api/v1/app/update-backups:
+    post:
+      description: '`backups` is the whole list of the app''s backup settings: entries
+        named like a backup of the compose file''s `x-winterflow.backups` override
+        it (only the fields that differ, never `type`); other entries are backups
+        added here and carry `type` and every field it needs. `enabled: true` needs
+        `storage`, a storage on the server. `backups` is required: `[]` means no overrides,
+        an absent or null list is a 400.'
+      operationId: appUpdateBackups
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateBackupsRequest'
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Replace an app's backups list (new revision; redeploys only when profiles
+        or storage variables change)
+      tags:
+      - backups
+      x-operation-result:
+        $ref: '#/components/schemas/UpdateBackupsResponse'
   /api/v1/auth/register:
     post:
       operationId: authRegister
@@ -2713,6 +3023,436 @@ paths:
       summary: Notification stream (operation results, status changes)
       tags:
       - system
+  /api/v1/storage/delete:
+    post:
+      operationId: storageDelete
+      parameters:
+      - description: Target server id.
+        in: query
+        name: server_id
+        required: true
+        schema:
+          description: Target server id.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteStorageRequest'
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Remove a storage no app uses
+      tags:
+      - storages
+      x-operation-result:
+        $ref: '#/components/schemas/DeleteStorageResponse'
+  /api/v1/storage/delete-orphan:
+    post:
+      operationId: storageDeleteOrphan
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteOrphanRequest'
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Delete the backups of an app that is not on this server from a storage
+      tags:
+      - storages
+      x-operation-result:
+        $ref: '#/components/schemas/DeleteOrphanResponse'
+  /api/v1/storage/get-storages:
+    get:
+      operationId: storageGetStorages
+      parameters:
+      - description: Target server id.
+        in: query
+        name: server_id
+        required: true
+        schema:
+          description: Target server id.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/GetStoragesResponse'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: A server's storages from the API's index (no agent round-trip, no secrets)
+      tags:
+      - storages
+  /api/v1/storage/list:
+    get:
+      operationId: storageList
+      parameters:
+      - description: Target server id.
+        in: query
+        name: server_id
+        required: true
+        schema:
+          description: Target server id.
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: List the storages on a server, with the apps using each
+      tags:
+      - storages
+      x-operation-result:
+        $ref: '#/components/schemas/ListStoragesResponse'
+  /api/v1/storage/list-orphans:
+    get:
+      operationId: storageListOrphans
+      parameters:
+      - in: query
+        name: server_id
+        required: true
+        schema:
+          type: string
+      - description: Storage name.
+        in: query
+        name: name
+        required: true
+        schema:
+          description: Storage name.
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: List the backups in a storage whose app is not on this server
+      tags:
+      - storages
+      x-operation-result:
+        $ref: '#/components/schemas/ListOrphansResponse'
+  /api/v1/storage/save:
+    post:
+      description: '`create: true` adds a storage and fails when the name exists;
+        otherwise the storage must exist and keep its type. `s3.secret_access_key`
+        is ECIES-encrypted with the server''s public key, or `<encrypted>` to keep
+        the stored one. Nothing is saved when the connection test fails.'
+      operationId: storageSave
+      parameters:
+      - description: Target server id.
+        in: query
+        name: server_id
+        required: true
+        schema:
+          description: Target server id.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaveStorageRequest'
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Add or edit a storage (tested first; redeploys the running apps that
+        use it)
+      tags:
+      - storages
+      x-operation-result:
+        $ref: '#/components/schemas/SaveStorageResponse'
+  /api/v1/storage/test:
+    post:
+      description: '`s3.secret_access_key` is ECIES-encrypted with the server''s public
+        key (GET /api/v1/server/get-public-key), or `<encrypted>` to reuse the secret
+        stored under the same name. A failed probe is a successful result with `ok:
+        false`.'
+      operationId: storageTest
+      parameters:
+      - description: Target server id.
+        in: query
+        name: server_id
+        required: true
+        schema:
+          description: Target server id.
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TestStorageRequest'
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Test a storage by writing and deleting a probe object (30s deadline)
+      tags:
+      - storages
+      x-operation-result:
+        $ref: '#/components/schemas/TestStorageResponse'
   /api/v1/user/change-password:
     post:
       operationId: userChangePassword
@@ -3443,6 +4183,10 @@ components:
       properties:
         app_id:
           type: string
+        backups:
+          items:
+            $ref: '#/components/schemas/BackupHealth'
+          type: array
         containers:
           items:
             $ref: '#/components/schemas/ContainerStatus'
@@ -3520,6 +4264,54 @@ components:
           type: string
       required:
       - status
+      type: object
+    BackupConfig:
+      properties:
+        enabled:
+          type: boolean
+        every:
+          type: string
+        exclude:
+          items:
+            type: string
+          type:
+          - "null"
+          - array
+        keep:
+          $ref: '#/components/schemas/KeepInput'
+        name:
+          type: string
+        path:
+          type: string
+        paths:
+          items:
+            type: string
+          type:
+          - "null"
+          - array
+        service:
+          type: string
+        storage:
+          type: string
+        type:
+          type: string
+        volume:
+          type: string
+      type: object
+    BackupHealth:
+      properties:
+        last_error:
+          type: string
+        last_success:
+          format: int64
+          type: integer
+        name:
+          type: string
+        state:
+          type: string
+      required:
+      - name
+      - state
       type: object
     BuiltinVariable:
       properties:
@@ -3757,6 +4549,8 @@ components:
       properties:
         app_id:
           type: string
+        delete_backups:
+          type: boolean
         delete_volumes:
           type: boolean
         server_id:
@@ -3766,6 +4560,8 @@ components:
       properties:
         app_id:
           type: string
+        backups_deleted:
+          type: boolean
         volumes_deleted:
           type: boolean
         warnings:
@@ -3803,6 +4599,28 @@ components:
       required:
       - name
       type: object
+    DeleteOrphanRequest:
+      properties:
+        app_id:
+          type: string
+        name:
+          type: string
+        server_id:
+          type: string
+      type: object
+    DeleteOrphanResponse:
+      properties:
+        app_id:
+          type: string
+        deleted:
+          type: integer
+        name:
+          type: string
+      required:
+      - name
+      - app_id
+      - deleted
+      type: object
     DeleteRegistryRequest:
       properties:
         address:
@@ -3815,6 +4633,30 @@ components:
       required:
       - address
       type: object
+    DeleteRestorePointRequest:
+      properties:
+        app_id:
+          type: string
+        backup:
+          type: string
+        point:
+          type: string
+        server_id:
+          type: string
+      type: object
+    DeleteRestorePointResponse:
+      properties:
+        app_id:
+          type: string
+        backup:
+          type: string
+        point:
+          type: string
+      required:
+      - app_id
+      - backup
+      - point
+      type: object
     DeleteServerVariableRequest:
       properties:
         id:
@@ -3826,6 +4668,18 @@ components:
       required:
       - server_id
       - id
+      type: object
+    DeleteStorageRequest:
+      properties:
+        name:
+          type: string
+      type: object
+    DeleteStorageResponse:
+      properties:
+        name:
+          type: string
+      required:
+      - name
       type: object
     DeleteTokenRequest:
       properties:
@@ -3939,6 +4793,52 @@ components:
       - app_name
       - server_id
       type: object
+    EffectiveBackup:
+      properties:
+        enabled:
+          type: boolean
+        every:
+          type: string
+        exclude:
+          items:
+            type: string
+          type: array
+        from_recipe:
+          additionalProperties:
+            type: boolean
+          type:
+          - object
+          - "null"
+        in_recipe:
+          type: boolean
+        keep:
+          $ref: '#/components/schemas/Keep'
+        name:
+          type: string
+        path:
+          type: string
+        paths:
+          items:
+            type: string
+          type: array
+        service:
+          type: string
+        storage:
+          type: string
+        template:
+          $ref: '#/components/schemas/Template'
+        type:
+          type: string
+        volume:
+          type: string
+      required:
+      - name
+      - type
+      - enabled
+      - storage
+      - in_recipe
+      - from_recipe
+      type: object
     EncryptionKey:
       properties:
         name:
@@ -3997,6 +4897,22 @@ components:
       properties:
         app:
           $ref: '#/components/schemas/AppPayload'
+        backup_targets:
+          $ref: '#/components/schemas/Targets'
+        backups:
+          items:
+            $ref: '#/components/schemas/EffectiveBackup'
+          type: array
+        backups_base:
+          type: string
+        backups_error:
+          type: string
+        retention_days:
+          type: integer
+        storage_variables:
+          items:
+            $ref: '#/components/schemas/StorageVariable'
+          type: array
       required:
       - app
       type: object
@@ -4092,6 +5008,17 @@ components:
           - "null"
       required:
       - servers
+      type: object
+    GetStoragesResponse:
+      properties:
+        storages:
+          items:
+            $ref: '#/components/schemas/StorageSummary'
+          type:
+          - array
+          - "null"
+      required:
+      - storages
       type: object
     ImageTagsResponse:
       properties:
@@ -4231,6 +5158,32 @@ components:
       - missing_on
       - overridden
       type: object
+    Keep:
+      properties:
+        daily:
+          type:
+          - "null"
+          - integer
+        monthly:
+          type:
+          - "null"
+          - integer
+        recent:
+          type: string
+      type: object
+    KeepInput:
+      properties:
+        daily:
+          type:
+          - "null"
+          - integer
+        monthly:
+          type:
+          - "null"
+          - integer
+        recent:
+          type: string
+      type: object
     Latest:
       properties:
         at:
@@ -4282,6 +5235,20 @@ components:
       required:
       - networks
       type: object
+    ListOrphansResponse:
+      properties:
+        name:
+          type: string
+        orphans:
+          items:
+            $ref: '#/components/schemas/Orphan'
+          type:
+          - array
+          - "null"
+      required:
+      - name
+      - orphans
+      type: object
     ListRegistriesResponse:
       properties:
         registries:
@@ -4293,6 +5260,34 @@ components:
       required:
       - registries
       type: object
+    ListRestorePointsResponse:
+      properties:
+        app_id:
+          type: string
+        backup:
+          type: string
+        points:
+          items:
+            $ref: '#/components/schemas/RestorePoint'
+          type:
+          - array
+          - "null"
+      required:
+      - app_id
+      - backup
+      - points
+      type: object
+    ListStoragesResponse:
+      properties:
+        storages:
+          items:
+            $ref: '#/components/schemas/StorageInfo'
+          type:
+          - array
+          - "null"
+      required:
+      - storages
+      type: object
     ListVolumesResponse:
       properties:
         volumes:
@@ -4303,6 +5298,18 @@ components:
           - "null"
       required:
       - volumes
+      type: object
+    LocalStorage:
+      properties:
+        path:
+          type: string
+      required:
+      - path
+      type: object
+    LocalStorageInput:
+      properties:
+        path:
+          type: string
       type: object
     LogEntry:
       properties:
@@ -4362,6 +5369,19 @@ components:
       properties:
         user_id:
           type: string
+      type: object
+    Mount:
+      properties:
+        source:
+          type: string
+        target:
+          type: string
+        type:
+          type: string
+      required:
+      - type
+      - source
+      - target
       type: object
     Network:
       properties:
@@ -4487,6 +5507,31 @@ components:
       - name
       - icon
       - color
+      type: object
+    Orphan:
+      properties:
+        app_id:
+          type: string
+        app_name:
+          type: string
+        bytes:
+          format: int64
+          type: integer
+        copies:
+          type: integer
+        deleted_at:
+          format: int64
+          type: integer
+        newest:
+          format: int64
+          type: integer
+        purge_at:
+          format: int64
+          type: integer
+      required:
+      - app_id
+      - copies
+      - bytes
       type: object
     OverviewResponse:
       properties:
@@ -4638,6 +5683,57 @@ components:
       - user_id
       - temp_password
       type: object
+    RestoreBackupRequest:
+      properties:
+        app_id:
+          type: string
+        backup:
+          type: string
+        point:
+          type: string
+        server_id:
+          type: string
+      type: object
+    RestoreBackupResponse:
+      properties:
+        app_id:
+          type: string
+        backup:
+          type: string
+        pre_restore_point:
+          type: string
+        restored_point:
+          type: string
+        warnings:
+          items:
+            type: string
+          type: array
+      required:
+      - app_id
+      - backup
+      - restored_point
+      type: object
+    RestorePoint:
+      properties:
+        expires:
+          format: int64
+          type: integer
+        id:
+          type: string
+        kind:
+          type: string
+        size:
+          format: int64
+          type: integer
+        time:
+          format: int64
+          type: integer
+      required:
+      - id
+      - time
+      - kind
+      - size
+      type: object
     ResyncRequest:
       properties:
         server_id:
@@ -4677,6 +5773,76 @@ components:
       required:
       - app_id
       - revision
+      type: object
+    RunBackupRequest:
+      properties:
+        app_id:
+          type: string
+        backup:
+          type: string
+        server_id:
+          type: string
+      type: object
+    RunBackupResponse:
+      properties:
+        app_id:
+          type: string
+        backup:
+          type: string
+        point:
+          $ref: '#/components/schemas/RestorePoint'
+        unchanged:
+          type: boolean
+        warnings:
+          items:
+            type: string
+          type: array
+      required:
+      - app_id
+      - backup
+      - unchanged
+      type: object
+    S3Storage:
+      properties:
+        access_key_id:
+          type: string
+        bucket:
+          type: string
+        endpoint:
+          type: string
+        path_style:
+          type: boolean
+        prefix:
+          type: string
+        region:
+          type: string
+        secret_access_key:
+          type: string
+      required:
+      - endpoint
+      - region
+      - bucket
+      - prefix
+      - access_key_id
+      - secret_access_key
+      - path_style
+      type: object
+    S3StorageInput:
+      properties:
+        access_key_id:
+          type: string
+        bucket:
+          type: string
+        endpoint:
+          type: string
+        path_style:
+          type: boolean
+        prefix:
+          type: string
+        region:
+          type: string
+        secret_access_key:
+          type: string
       type: object
     SaveAppRequest:
       properties:
@@ -4745,6 +5911,37 @@ components:
       required:
       - server_id
       - name
+      type: object
+    SaveStorageRequest:
+      properties:
+        create:
+          type: boolean
+        local:
+          $ref: '#/components/schemas/LocalStorageInput'
+        name:
+          type: string
+        s3:
+          $ref: '#/components/schemas/S3StorageInput'
+        type:
+          type: string
+      type: object
+    SaveStorageResponse:
+      properties:
+        redeployed:
+          items:
+            type: string
+          type:
+          - array
+          - "null"
+        storage:
+          $ref: '#/components/schemas/StorageInfo'
+        warnings:
+          items:
+            type: string
+          type: array
+      required:
+      - storage
+      - redeployed
       type: object
     SaveVariableRequest:
       properties:
@@ -5014,6 +6211,20 @@ components:
       - missing_org_secrets
       - sync
       type: object
+    ServiceMounts:
+      properties:
+        mounts:
+          items:
+            $ref: '#/components/schemas/Mount'
+          type:
+          - array
+          - "null"
+        name:
+          type: string
+      required:
+      - name
+      - mounts
+      type: object
     SessionUser:
       properties:
         attrs:
@@ -5083,6 +6294,117 @@ components:
       - bootstrap
       - registration_enabled
       type: object
+    StorageInfo:
+      properties:
+        apps:
+          items:
+            type: string
+          type:
+          - array
+          - "null"
+        local:
+          $ref: '#/components/schemas/LocalStorage'
+        location:
+          type: string
+        name:
+          type: string
+        s3:
+          $ref: '#/components/schemas/S3Storage'
+        type:
+          type: string
+      required:
+      - name
+      - type
+      - location
+      - apps
+      type: object
+    StorageSummary:
+      properties:
+        location:
+          type: string
+        name:
+          type: string
+        type:
+          type: string
+      required:
+      - name
+      - type
+      - location
+      type: object
+    StorageVariable:
+      properties:
+        backup:
+          type: string
+        name:
+          type: string
+        secret:
+          type: boolean
+        storage:
+          type: string
+      required:
+      - name
+      - storage
+      - secret
+      type: object
+    Targets:
+      properties:
+        services:
+          items:
+            $ref: '#/components/schemas/ServiceMounts'
+          type:
+          - array
+          - "null"
+        volumes:
+          items:
+            type: string
+          type:
+          - array
+          - "null"
+      required:
+      - volumes
+      - services
+      type: object
+    Template:
+      properties:
+        every:
+          type: string
+        exclude:
+          items:
+            type: string
+          type: array
+        keep:
+          $ref: '#/components/schemas/Keep'
+        path:
+          type: string
+        paths:
+          items:
+            type: string
+          type: array
+        service:
+          type: string
+        volume:
+          type: string
+      type: object
+    TestStorageRequest:
+      properties:
+        local:
+          $ref: '#/components/schemas/LocalStorageInput'
+        name:
+          type: string
+        s3:
+          $ref: '#/components/schemas/S3StorageInput'
+        type:
+          type: string
+      type: object
+    TestStorageResponse:
+      properties:
+        error:
+          type: string
+        ok:
+          type: boolean
+      required:
+      - ok
+      type: object
     UpdateAgentRequest:
       properties:
         version:
@@ -5100,6 +6422,47 @@ components:
       - from_version
       - to_version
       - scheduled
+      type: object
+    UpdateBackupsRequest:
+      properties:
+        app_id:
+          type: string
+        backups:
+          items:
+            $ref: '#/components/schemas/BackupConfig'
+          type:
+          - array
+          - "null"
+        base:
+          type: string
+        server_id:
+          type: string
+      type: object
+    UpdateBackupsResponse:
+      properties:
+        app_id:
+          type: string
+        backups:
+          items:
+            $ref: '#/components/schemas/EffectiveBackup'
+          type:
+          - array
+          - "null"
+        backups_base:
+          type: string
+        redeployed:
+          type: boolean
+        revision:
+          type: string
+        warnings:
+          items:
+            type: string
+          type: array
+      required:
+      - app_id
+      - revision
+      - redeployed
+      - backups
       type: object
     UpdateOrganizationRequest:
       properties:

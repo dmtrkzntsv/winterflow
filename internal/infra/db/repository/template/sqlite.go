@@ -63,11 +63,11 @@ func (sqliteQuerier) ListLiveTemplateInstances(ctx context.Context, db backend.D
 	return sqlitegen.New(db).ListLiveTemplateInstances(ctx, orgID)
 }
 
-func (sqliteQuerier) MarkTemplateInstanceSaved(ctx context.Context, db backend.DBTX, p savedParams) (int64, error) {
+func (sqliteQuerier) MarkTemplateInstanceSaved(ctx context.Context, db backend.DBTX, p savedParams) error {
 	return sqlitegen.New(db).MarkTemplateInstanceSaved(ctx, p)
 }
 
-func (sqliteQuerier) SetTemplateInstanceState(ctx context.Context, db backend.DBTX, p stateParams) (int64, error) {
+func (sqliteQuerier) SetTemplateInstanceState(ctx context.Context, db backend.DBTX, p stateParams) error {
 	return sqlitegen.New(db).SetTemplateInstanceState(ctx, p)
 }
 
@@ -79,10 +79,10 @@ func (sqliteQuerier) GetTemplateInstanceByID(ctx context.Context, db backend.DBT
 	return sqlitegen.New(db).GetTemplateInstanceByID(ctx, id)
 }
 
-func (sqliteQuerier) GetLiveTemplateInstanceForApp(ctx context.Context, db backend.DBTX, p forAppParams) (forAppRow, error) {
+func (sqliteQuerier) GetLiveTemplateInstanceForApp(ctx context.Context, db backend.DBTX, p forAppParams) (string, error) {
 	return sqlitegen.New(db).GetLiveTemplateInstanceForApp(ctx, p)
 }
 
-func (sqliteQuerier) RetireTemplateInstancesForApp(ctx context.Context, db backend.DBTX, p retireParams) (int64, error) {
+func (sqliteQuerier) RetireTemplateInstancesForApp(ctx context.Context, db backend.DBTX, p retireParams) error {
 	return sqlitegen.New(db).RetireTemplateInstancesForApp(ctx, p)
 }

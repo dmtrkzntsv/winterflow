@@ -1,6 +1,7 @@
 package template
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -30,8 +31,11 @@ func TestEncodeRoundTrip(t *testing.T) {
 	if !strings.Contains(string(raw), `"port":8080`) || !strings.Contains(string(raw), `"port":"${PORT}"`) {
 		t.Fatalf("encoded = %s", raw)
 	}
-	back, err := Parse(raw)
-	if err != nil {
+	var back Body
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatal(err)
+	}
+	if err := Validate(back); err != nil {
 		t.Fatal(err)
 	}
 	if back.Ingress[0].Port != "${PORT}" || back.Ingress[1].Port != "8080" {

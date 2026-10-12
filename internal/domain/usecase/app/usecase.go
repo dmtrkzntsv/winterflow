@@ -124,10 +124,7 @@ func (uc *UseCase) ControlAppObserved(ctx context.Context, userID, serverID, app
 		Type:    command.TypeAppControl,
 		Payload: command.ControlAppRequest{AppID: appID, Action: action},
 	}
-	if observe != nil {
-		in.OnResult = func(res port.CommandResult) { observe(res) }
-		in.Wait = ObservedResultTTL
-	}
+	observed(&in, observe)
 	return uc.dispatcher.Dispatch(ctx, in)
 }
 
@@ -148,7 +145,6 @@ func (uc *UseCase) DeleteAppObserved(ctx context.Context, userID, serverID, appI
 		Type:    command.TypeAppDelete,
 		Payload: command.DeleteAppRequest{AppID: appID, DeleteVolumes: deleteVolumes, DeleteBackups: deleteBackups},
 		OnResult: func(res port.CommandResult) {
-			defer notify(observe, res)
 			if !res.Success {
 				return
 			}
@@ -167,9 +163,7 @@ func (uc *UseCase) DeleteAppObserved(ctx context.Context, userID, serverID, appI
 			}
 		},
 	}
-	if observe != nil {
-		in.Wait = ObservedResultTTL
-	}
+	observed(&in, observe)
 	return uc.dispatcher.Dispatch(ctx, in)
 }
 
@@ -515,7 +509,6 @@ func (uc *UseCase) DispatchSave(ctx context.Context, userID string, s CheckedSav
 		Type:    command.TypeAppSave,
 		Payload: s.req,
 		OnResult: func(res port.CommandResult) {
-			defer notify(observe, res)
 			if !res.Success {
 				return
 			}
@@ -542,15 +535,25 @@ func (uc *UseCase) DispatchSave(ctx context.Context, userID string, s CheckedSav
 			}
 		},
 	}
-	if observe != nil {
-		in.Wait = ObservedResultTTL
-	}
+	observed(&in, observe)
 	return uc.dispatcher.Dispatch(ctx, in)
 }
 
-// notify runs observe, when set, with res.
-func notify(observe Observer, res port.CommandResult) {
-	if observe != nil {
-		observe(res)
+// observed hooks observe, when set, onto in: it runs after in's own
+// OnResult (even one that returned early), and the result is awaited for
+// ObservedResultTTL.
+func observed(in *port.DispatchInput, observe Observer) {
+	if observe == nil {
+		return
+	}
+	in.Wait = ObservedResultTTL
+	own := in.OnResult
+	if own == nil {
+		in.OnResult = observe
+		return
+	}
+	in.OnResult = func(res port.CommandResult) {
+		defer observe(res)
+		own(res)
 	}
 }

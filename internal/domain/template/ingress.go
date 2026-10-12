@@ -59,19 +59,19 @@ func renderIngress(rows []IngressRow, plain map[string]string, lenient bool) ([]
 		port, ok := canonicalPort(expand(string(row.Port), plain))
 		if !ok {
 			if !lenient {
-				return nil, invalid(valueField(string(row.Port), fmt.Sprintf("ingress[%d].port", i)),
+				return nil, Invalid(valueField(string(row.Port), fmt.Sprintf("ingress[%d].port", i)),
 					"%q is not a port 1-65535", expand(string(row.Port), plain))
 			}
 			port = 1
 		}
 		d := model.IngressDomain{Domain: expand(row.Host, plain), UpstreamPort: port}
 		if err := (&model.Ingress{Domains: []model.IngressDomain{d}}).Validate(); err != nil {
-			return nil, invalid(valueField(row.Host, fmt.Sprintf("ingress[%d].host", i)), "%v", err)
+			return nil, Invalid(valueField(row.Host, fmt.Sprintf("ingress[%d].host", i)), "%v", err)
 		}
 		out = append(out, d)
 	}
 	if err := (&model.Ingress{Domains: out}).Validate(); err != nil {
-		return nil, invalid("ingress", "%v", err)
+		return nil, Invalid("ingress", "%v", err)
 	}
 	return out, nil
 }

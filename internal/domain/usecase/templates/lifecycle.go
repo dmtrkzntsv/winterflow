@@ -3,11 +3,9 @@ package templates
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
-	"winterflow/internal/domain/port"
 	"winterflow/internal/domain/template"
 )
 
@@ -16,20 +14,15 @@ func (uc *UseCase) ControlInstance(ctx context.Context, userID, orgID, serverID,
 	switch action {
 	case command.ControlStart, command.ControlStop, command.ControlRestart:
 	default:
-		return Outcome{}, fmt.Errorf("%w: action: one of start, stop, restart", template.ErrInvalid)
+		return Outcome{}, template.Invalid("action", "one of start, stop, restart")
 	}
 	inst, err := uc.live(ctx, orgID, serverID, key)
 	if err != nil {
 		return Outcome{}, err
 	}
-	observer, done := uc.observe(inst, func(ctx context.Context, res port.CommandResult) error {
-		return uc.repo.SetError(ctx, inst.ID, res.Error)
-	})
-	id, err := uc.apps.ControlAppObserved(ctx, userID, serverID, inst.AppID, action, observer)
-	if err != nil {
-		return Outcome{}, err
-	}
-	return Outcome{RequestID: id, Done: done, Final: uc.reread(inst)}, nil
+	observer, done := uc.observe(inst, nil)
+	requestID, err := uc.apps.ControlAppObserved(ctx, userID, serverID, inst.AppID, action, observer)
+	return outcome(requestID, err, done, uc.reread(inst))
 }
 
 // DeleteInstance deletes the instance's app (and, as asked, its volumes and
@@ -44,17 +37,12 @@ func (uc *UseCase) DeleteInstance(ctx context.Context, userID, orgID, serverID, 
 	if err != nil {
 		return Outcome{}, err
 	}
-	observer, done := uc.observe(inst, func(ctx context.Context, res port.CommandResult) error {
-		if !res.Success {
-			return uc.repo.SetError(ctx, inst.ID, res.Error)
-		}
-		return uc.repo.SetState(ctx, inst.ID, model.InstanceDeleted)
+	id := inst.ID
+	observer, done := uc.observe(inst, func(ctx context.Context) error {
+		return uc.repo.SetState(ctx, id, model.InstanceDeleted)
 	})
-	id, err := uc.apps.DeleteAppObserved(ctx, userID, serverID, inst.AppID, deleteVolumes, deleteBackups, observer)
-	if err != nil {
-		return Outcome{}, err
-	}
-	return Outcome{RequestID: id, Done: done, Final: uc.reread(inst)}, nil
+	requestID, err := uc.apps.DeleteAppObserved(ctx, userID, serverID, inst.AppID, deleteVolumes, deleteBackups, observer)
+	return outcome(requestID, err, done, uc.reread(inst))
 }
 
 // UnlinkInstance saves the app as an ordinary app (no marker, no template
@@ -67,7 +55,7 @@ func (uc *UseCase) UnlinkInstance(ctx context.Context, userID, orgID, serverID, 
 	if inst.State != model.InstanceCreated {
 		return Outcome{}, model.ErrInstanceNotCreated
 	}
-	_, body, err := uc.revision(ctx, inst.TemplateID, inst.Revision)
+	body, err := uc.revision(ctx, inst.TemplateID, inst.Revision)
 	if err != nil {
 		return Outcome{}, err
 	}
@@ -83,24 +71,22 @@ func (uc *UseCase) UnlinkInstance(ctx context.Context, userID, orgID, serverID, 
 	if err != nil {
 		return Outcome{}, err
 	}
-	observer, done := uc.observe(inst, func(ctx context.Context, res port.CommandResult) error {
-		if !res.Success {
-			return uc.repo.SetError(ctx, inst.ID, res.Error)
-		}
-		return uc.repo.SetState(ctx, inst.ID, model.InstanceUnlinked)
+	id := inst.ID
+	observer, done := uc.observe(inst, func(ctx context.Context) error {
+		return uc.repo.SetState(ctx, id, model.InstanceUnlinked)
 	})
-	id, err := uc.apps.DispatchSave(ctx, userID, checked, observer)
+	requestID, err := uc.apps.DispatchSave(ctx, userID, checked, observer)
 	if err != nil {
 		return Outcome{}, err
 	}
 	name := uc.templateName(ctx, orgID, inst.TemplateID)
 	final := func(ctx context.Context) (InstanceView, error) {
 		// The key no longer finds an unlinked instance: read it by id.
-		got, err := uc.repo.GetInstanceByID(ctx, inst.ID)
+		got, err := uc.repo.GetInstanceByID(ctx, id)
 		if err != nil {
 			return InstanceView{}, err
 		}
 		return uc.view(got, name), nil
 	}
-	return Outcome{RequestID: id, Done: done, Final: final}, nil
+	return outcome(requestID, nil, done, final)
 }

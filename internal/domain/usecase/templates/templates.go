@@ -31,7 +31,7 @@ func (uc *UseCase) SaveTemplate(ctx context.Context, userID, orgID string, in Sa
 		return SavedTemplate{}, err
 	}
 	if len(in.Note) > maxNote {
-		return SavedTemplate{}, fmt.Errorf("%w: note: at most %d characters", template.ErrInvalid, maxNote)
+		return SavedTemplate{}, template.Invalid("note", "at most %d characters", maxNote)
 	}
 	if err := template.Validate(in.Body); err != nil {
 		return SavedTemplate{}, err
@@ -47,12 +47,9 @@ func (uc *UseCase) SaveTemplate(ctx context.Context, userID, orgID string, in Sa
 	rev := model.TemplateRevision{Body: raw, Note: in.Note, CreatedBy: userID}
 	out := SavedTemplate{ID: in.ID, Name: in.Name}
 	out.Warnings = template.Warnings(in.Body, func(name string) bool { return shared[name] })
-	if out.Warnings == nil {
-		out.Warnings = []string{}
-	}
 	if in.ID == "" {
 		if in.BaseRevision != 0 {
-			return SavedTemplate{}, fmt.Errorf("%w: base_revision: a new template has none (0)", template.ErrInvalid)
+			return SavedTemplate{}, template.Invalid("base_revision", "a new template has none (0)")
 		}
 		out.ID, out.Revision = util.GenerateID(), 1
 		err = uc.repo.CreateTemplate(ctx, model.Template{ID: out.ID, OrgID: orgID, Name: in.Name, CreatedBy: userID}, rev)
@@ -105,7 +102,11 @@ func (uc *UseCase) GetTemplate(ctx context.Context, orgID, id string, revision i
 	if revision == 0 {
 		revision = t.LatestRevision
 	}
-	rev, body, err := uc.revision(ctx, id, revision)
+	rev, err := uc.repo.GetRevision(ctx, id, revision)
+	if err != nil {
+		return TemplateView{}, err
+	}
+	body, err := decodeRevision(rev)
 	if err != nil {
 		return TemplateView{}, err
 	}
@@ -123,17 +124,22 @@ func (uc *UseCase) GetTemplate(ctx context.Context, orgID, id string, revision i
 	return out, nil
 }
 
-// revision loads and decodes one stored revision.
-func (uc *UseCase) revision(ctx context.Context, templateID string, revision int64) (model.TemplateRevision, template.Body, error) {
+// revision loads and decodes one stored revision's body.
+func (uc *UseCase) revision(ctx context.Context, templateID string, revision int64) (template.Body, error) {
 	rev, err := uc.repo.GetRevision(ctx, templateID, revision)
 	if err != nil {
-		return model.TemplateRevision{}, template.Body{}, err
+		return template.Body{}, err
 	}
+	return decodeRevision(rev)
+}
+
+// decodeRevision decodes a stored revision's body.
+func decodeRevision(rev model.TemplateRevision) (template.Body, error) {
 	var body template.Body
 	if err := json.Unmarshal(rev.Body, &body); err != nil {
-		return model.TemplateRevision{}, template.Body{}, fmt.Errorf("template %s r%d: %w", templateID, revision, err)
+		return template.Body{}, fmt.Errorf("template %s r%d: %w", rev.TemplateID, rev.Revision, err)
 	}
-	return rev, body, nil
+	return body, nil
 }
 
 // DeleteTemplate deletes a template without live instances.

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"winterflow/internal/domain/command"
+	"winterflow/internal/domain/varref"
 	agentvars "winterflow/internal/infra/vars"
 	"winterflow/pkg/crypto"
 )
@@ -79,7 +80,7 @@ func (r *Repository) scanRefs(dir string) map[string]bool {
 	files := append([]string{envRel}, r.appComposeFiles(dir)...)
 	for _, f := range files {
 		if raw, err := os.ReadFile(filepath.Join(dir, f)); err == nil {
-			agentvars.References(raw, refs)
+			varref.References(raw, refs)
 		}
 	}
 	if raw, err := os.ReadFile(filepath.Join(dir, envRel)); err == nil {

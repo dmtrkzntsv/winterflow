@@ -3,13 +3,12 @@ package templates
 import (
 	"context"
 	"errors"
-	"fmt"
+	"maps"
 	"regexp"
-	"sort"
+	"slices"
 
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
-	"winterflow/internal/domain/port"
 	"winterflow/internal/domain/template"
 	appuc "winterflow/internal/domain/usecase/app"
 	"winterflow/pkg/util"
@@ -21,7 +20,7 @@ var keyRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}$`)
 // ValidateKey checks an instance key.
 func ValidateKey(key string) error {
 	if !keyRE.MatchString(key) {
-		return fmt.Errorf("%w: key: 1-128 letters, digits and . _ : @ -, starting with a letter or digit", template.ErrInvalid)
+		return template.Invalid("key", "1-128 letters, digits and . _ : @ -, starting with a letter or digit")
 	}
 	return nil
 }
@@ -57,7 +56,7 @@ func (uc *UseCase) CreateInstance(ctx context.Context, userID, orgID string, in 
 	if revision == 0 {
 		revision = tpl.LatestRevision
 	}
-	_, body, err := uc.revision(ctx, tpl.ID, revision)
+	body, err := uc.revision(ctx, tpl.ID, revision)
 	if err != nil {
 		return Outcome{}, err
 	}
@@ -71,7 +70,7 @@ func (uc *UseCase) CreateInstance(ctx context.Context, userID, orgID string, in 
 	}
 	hash := template.RequestHash(template.HashInput{
 		ServerID: in.ServerID, TemplateID: tpl.ID, Revision: in.Revision,
-		Params: in.Params, SecretNames: sortedNames(in.Secrets), Backups: in.Backups,
+		Params: in.Params, SecretNames: slices.Collect(maps.Keys(in.Secrets)), Backups: in.Backups,
 	})
 	render := func(appID string) (appuc.CheckedSave, error) {
 		app, payload, err := template.Render(body, template.Input{
@@ -134,17 +133,11 @@ func (uc *UseCase) dispatchSave(ctx context.Context, userID string, inst model.I
 	// The hook lives as long as the result is awaited: it keeps only what
 	// it records, not the secret ciphertexts.
 	id, stored := inst.ID, values.Stored
-	observer, done := uc.observe(inst, func(ctx context.Context, res port.CommandResult) error {
-		if !res.Success {
-			return uc.repo.SetError(ctx, id, res.Error)
-		}
+	observer, done := uc.observe(inst, func(ctx context.Context) error {
 		return uc.repo.MarkSaved(ctx, id, revision, stored.Params, stored.SecretNames)
 	})
 	requestID, err := uc.apps.DispatchSave(ctx, userID, checked, observer)
-	if err != nil {
-		return Outcome{}, err
-	}
-	return Outcome{RequestID: requestID, Done: done, Final: uc.reread(inst)}, nil
+	return outcome(requestID, err, done, uc.reread(inst))
 }
 
 // reread is an Outcome's Final for an instance that keeps its key.
@@ -208,13 +201,4 @@ func (uc *UseCase) templateName(ctx context.Context, orgID, id string) string {
 		return ""
 	}
 	return t.Name
-}
-
-func sortedNames(m map[string]string) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out
 }

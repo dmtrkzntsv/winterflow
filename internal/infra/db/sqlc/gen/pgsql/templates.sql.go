@@ -138,7 +138,7 @@ func (q *Queries) GetLiveTemplateInstance(ctx context.Context, arg GetLiveTempla
 }
 
 const getLiveTemplateInstanceForApp = `-- name: GetLiveTemplateInstanceForApp :one
-SELECT i.id, CAST(COALESCE(t.name, '') AS TEXT) AS template_name
+SELECT CAST(COALESCE(t.name, '') AS TEXT) AS template_name
 FROM template_instances AS i
 LEFT JOIN templates AS t ON t.id = i.template_id
 WHERE i.server_id = $1 AND i.app_id = $2 AND i.state IN ('pending', 'created')
@@ -151,18 +151,13 @@ type GetLiveTemplateInstanceForAppParams struct {
 	AppID    string
 }
 
-type GetLiveTemplateInstanceForAppRow struct {
-	ID           string
-	TemplateName string
-}
-
 // The pending or created instance an app is, with its template's name
 // (” when the template is gone).
-func (q *Queries) GetLiveTemplateInstanceForApp(ctx context.Context, arg GetLiveTemplateInstanceForAppParams) (GetLiveTemplateInstanceForAppRow, error) {
+func (q *Queries) GetLiveTemplateInstanceForApp(ctx context.Context, arg GetLiveTemplateInstanceForAppParams) (string, error) {
 	row := q.db.QueryRowContext(ctx, getLiveTemplateInstanceForApp, arg.ServerID, arg.AppID)
-	var i GetLiveTemplateInstanceForAppRow
-	err := row.Scan(&i.ID, &i.TemplateName)
-	return i, err
+	var template_name string
+	err := row.Scan(&template_name)
+	return template_name, err
 }
 
 const getTemplate = `-- name: GetTemplate :one
@@ -490,7 +485,7 @@ func (q *Queries) ListTemplates(ctx context.Context, orgID string) ([]ListTempla
 	return items, nil
 }
 
-const markTemplateInstanceSaved = `-- name: MarkTemplateInstanceSaved :execrows
+const markTemplateInstanceSaved = `-- name: MarkTemplateInstanceSaved :exec
 UPDATE template_instances
 SET revision = $1, params = $2, secret_names = $3, state = 'created', last_error = '', updated_at = $4
 WHERE id = $5 AND state IN ('pending', 'created')
@@ -505,21 +500,18 @@ type MarkTemplateInstanceSavedParams struct {
 }
 
 // A save the agent confirmed; a deleted or unlinked row stays as it is.
-func (q *Queries) MarkTemplateInstanceSaved(ctx context.Context, arg MarkTemplateInstanceSavedParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, markTemplateInstanceSaved,
+func (q *Queries) MarkTemplateInstanceSaved(ctx context.Context, arg MarkTemplateInstanceSavedParams) error {
+	_, err := q.db.ExecContext(ctx, markTemplateInstanceSaved,
 		arg.Revision,
 		arg.Params,
 		arg.SecretNames,
 		arg.UpdatedAt,
 		arg.ID,
 	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
+	return err
 }
 
-const retireTemplateInstancesForApp = `-- name: RetireTemplateInstancesForApp :execrows
+const retireTemplateInstancesForApp = `-- name: RetireTemplateInstancesForApp :exec
 UPDATE template_instances
 SET state = 'deleted', last_error = '', updated_at = $1
 WHERE server_id = $2 AND app_id = $3 AND state IN ('pending', 'created')
@@ -533,12 +525,9 @@ type RetireTemplateInstancesForAppParams struct {
 
 // The app was deleted outside the instance routes: its instance's key
 // stays retired.
-func (q *Queries) RetireTemplateInstancesForApp(ctx context.Context, arg RetireTemplateInstancesForAppParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, retireTemplateInstancesForApp, arg.UpdatedAt, arg.ServerID, arg.AppID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
+func (q *Queries) RetireTemplateInstancesForApp(ctx context.Context, arg RetireTemplateInstancesForAppParams) error {
+	_, err := q.db.ExecContext(ctx, retireTemplateInstancesForApp, arg.UpdatedAt, arg.ServerID, arg.AppID)
+	return err
 }
 
 const setTemplateInstanceError = `-- name: SetTemplateInstanceError :exec
@@ -556,7 +545,7 @@ func (q *Queries) SetTemplateInstanceError(ctx context.Context, arg SetTemplateI
 	return err
 }
 
-const setTemplateInstanceState = `-- name: SetTemplateInstanceState :execrows
+const setTemplateInstanceState = `-- name: SetTemplateInstanceState :exec
 UPDATE template_instances
 SET state = $1, last_error = '', updated_at = $2
 WHERE id = $3 AND state IN ('pending', 'created')
@@ -568,10 +557,7 @@ type SetTemplateInstanceStateParams struct {
 	ID        string
 }
 
-func (q *Queries) SetTemplateInstanceState(ctx context.Context, arg SetTemplateInstanceStateParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, setTemplateInstanceState, arg.State, arg.UpdatedAt, arg.ID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
+func (q *Queries) SetTemplateInstanceState(ctx context.Context, arg SetTemplateInstanceStateParams) error {
+	_, err := q.db.ExecContext(ctx, setTemplateInstanceState, arg.State, arg.UpdatedAt, arg.ID)
+	return err
 }

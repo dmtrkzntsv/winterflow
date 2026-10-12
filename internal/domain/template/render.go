@@ -2,7 +2,8 @@ package template
 
 import (
 	"encoding/json"
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 
 	"winterflow/internal/domain/backup/recipe"
@@ -74,13 +75,13 @@ func Render(b Body, in Input) (model.App, command.AppPayload, error) {
 	plain := in.Values.Plain
 	name := expand(b.AppName, plain)
 	if strings.TrimSpace(name) == "" || len(name) > maxRenderedName {
-		return model.App{}, command.AppPayload{}, invalid(valueField(b.AppName, "app_name"), "the app name must be 1-%d characters", maxRenderedName)
+		return model.App{}, command.AppPayload{}, Invalid(valueField(b.AppName, "app_name"), "the app name must be 1-%d characters", maxRenderedName)
 	}
 	app := model.App{ID: in.AppID, Name: name, Icon: b.Icon, Color: b.Color}
 	cfg := config{Name: app.Name, Icon: b.Icon, Color: b.Color, Files: []configFile{}, Variables: []configVar{}}
 	payload := command.AppPayload{AppID: in.AppID, Files: []command.ContentItem{}, Variables: []command.ContentItem{}}
 
-	for _, name := range sortedKeys(b.Files) {
+	for _, name := range slices.Sorted(maps.Keys(b.Files)) {
 		payload.Files = append(payload.Files, command.ContentItem{Name: name, Content: []byte(b.Files[name])})
 		cfg.Files = append(cfg.Files, configFile{Filename: name})
 	}
@@ -108,8 +109,7 @@ func Render(b Body, in Input) (model.App, command.AppPayload, error) {
 		cfg.Instance = in.Marker
 	}
 	if in.Backups != nil {
-		list := in.Backups
-		cfg.Backups = &list
+		cfg.Backups = &in.Backups
 	}
 	raw, err := json.Marshal(cfg)
 	if err != nil {
@@ -123,16 +123,16 @@ func Render(b Body, in Input) (model.App, command.AppPayload, error) {
 // template default by name, its storage replaced by the call's override.
 // An override must name a backup the template has a default for.
 func CreateBackups(b Body, storages map[string]string) ([]recipe.BackupConfig, error) {
-	for _, name := range sortedKeys(storages) {
+	for _, name := range slices.Sorted(maps.Keys(storages)) {
 		if _, ok := b.Backups[name]; !ok {
-			return nil, invalid("backups."+name, "the template has no backup default %q", name)
+			return nil, Invalid("backups."+name, "the template has no backup default %q", name)
 		}
 		if err := model.ValidateStorageName(storages[name]); err != nil {
-			return nil, invalid("backups."+name+".storage", "%v", err)
+			return nil, Invalid("backups."+name+".storage", "%v", err)
 		}
 	}
 	out := []recipe.BackupConfig{}
-	for _, name := range sortedKeys(b.Backups) {
+	for _, name := range slices.Sorted(maps.Keys(b.Backups)) {
 		c := b.Backups[name].config(name)
 		if s, ok := storages[name]; ok {
 			c.Storage = s
@@ -152,11 +152,10 @@ func NewBackupDefaults(prev, next Body) ([]recipe.BackupConfig, error) {
 		return nil, err
 	}
 	var out []recipe.BackupConfig
-	for _, name := range sortedKeys(next.Backups) {
+	for _, name := range slices.Sorted(maps.Keys(next.Backups)) {
 		if !old[name] {
 			out = append(out, next.Backups[name].config(name))
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
 }

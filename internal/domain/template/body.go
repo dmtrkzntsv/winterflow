@@ -22,7 +22,8 @@ const MaxBodyBytes = 1 << 20
 // matches model.ErrRejected: the API answers it with a 400.
 var ErrInvalid = model.Rejected("invalid template")
 
-func invalid(field, format string, args ...any) error {
+// Invalid is an ErrInvalid naming field: "invalid template: field: msg".
+func Invalid(field, format string, args ...any) error {
 	return fmt.Errorf("%w: %s: %s", ErrInvalid, field, fmt.Sprintf(format, args...))
 }
 
@@ -104,18 +105,6 @@ func (Port) JSONSchemaBytes() ([]byte, error) {
 	return []byte(`{"type":["integer","string"],"description":"A host port 1-65535, or \"${PARAM}\" of a plain parameter."}`), nil
 }
 
-// Parse decodes and validates a body. The error names the field.
-func Parse(raw []byte) (Body, error) {
-	if len(raw) > MaxBodyBytes {
-		return Body{}, invalid("body", "larger than %d bytes", MaxBodyBytes)
-	}
-	var b Body
-	if err := json.Unmarshal(raw, &b); err != nil {
-		return Body{}, invalid("body", "%v", err)
-	}
-	return b, Validate(b)
-}
-
 // Encode is the stored form of a validated body.
 func Encode(b Body) ([]byte, error) {
 	raw, err := json.Marshal(b)
@@ -123,7 +112,7 @@ func Encode(b Body) ([]byte, error) {
 		return nil, err
 	}
 	if len(raw) > MaxBodyBytes {
-		return nil, invalid("body", "larger than %d bytes", MaxBodyBytes)
+		return nil, Invalid("body", "larger than %d bytes", MaxBodyBytes)
 	}
 	return raw, nil
 }
@@ -153,11 +142,16 @@ func (b Body) RecipeNames() (map[string]bool, error) {
 	if err != nil {
 		return nil, err
 	}
+	return recipeNames(comp), nil
+}
+
+// recipeNames are the backup names comp declares.
+func recipeNames(comp recipe.Compose) map[string]bool {
 	out := map[string]bool{}
 	for _, r := range comp.Recipe {
 		out[r.Name] = true
 	}
-	return out, nil
+	return out
 }
 
 // trimmed reports whether s has no leading or trailing space.

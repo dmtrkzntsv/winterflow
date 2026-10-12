@@ -121,10 +121,8 @@ func TestValidateName(t *testing.T) {
 	}
 }
 
-func TestParseCapsTheBody(t *testing.T) {
-	raw := []byte(`{"files":{"compose.yaml":"` + strings.Repeat("x", MaxBodyBytes) + `"}}`)
-	wantInvalid(t, func() error { _, err := Parse(raw); return err }(), "body")
-	_, err := Parse([]byte(`{"files": 3}`))
+func TestEncodeCapsTheBody(t *testing.T) {
+	_, err := Encode(Body{Files: map[string]string{"compose.yaml": strings.Repeat("x", MaxBodyBytes)}})
 	wantInvalid(t, err, "body")
 }
 

@@ -70,13 +70,13 @@ SELECT * FROM template_instances
 WHERE org_id = $1 AND state IN ('pending', 'created')
 ORDER BY created_at ASC, id ASC;
 
--- name: MarkTemplateInstanceSaved :execrows
+-- name: MarkTemplateInstanceSaved :exec
 -- A save the agent confirmed; a deleted or unlinked row stays as it is.
 UPDATE template_instances
 SET revision = $1, params = $2, secret_names = $3, state = 'created', last_error = '', updated_at = $4
 WHERE id = $5 AND state IN ('pending', 'created');
 
--- name: SetTemplateInstanceState :execrows
+-- name: SetTemplateInstanceState :exec
 UPDATE template_instances
 SET state = $1, last_error = '', updated_at = $2
 WHERE id = $3 AND state IN ('pending', 'created');
@@ -90,14 +90,14 @@ SELECT * FROM template_instances WHERE id = $1;
 -- name: GetLiveTemplateInstanceForApp :one
 -- The pending or created instance an app is, with its template's name
 -- ('' when the template is gone).
-SELECT i.id, CAST(COALESCE(t.name, '') AS TEXT) AS template_name
+SELECT CAST(COALESCE(t.name, '') AS TEXT) AS template_name
 FROM template_instances AS i
 LEFT JOIN templates AS t ON t.id = i.template_id
 WHERE i.server_id = $1 AND i.app_id = $2 AND i.state IN ('pending', 'created')
 ORDER BY i.created_at ASC, i.id ASC
 LIMIT 1;
 
--- name: RetireTemplateInstancesForApp :execrows
+-- name: RetireTemplateInstancesForApp :exec
 -- The app was deleted outside the instance routes: its instance's key
 -- stays retired.
 UPDATE template_instances

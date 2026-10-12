@@ -16,6 +16,7 @@ import (
 	sqlitegen "winterflow/internal/infra/db/sqlc/gen/sqlite"
 	"winterflow/internal/infra/db/types"
 	"winterflow/pkg/logger"
+	"winterflow/pkg/util"
 )
 
 // Row and parameter types are SQLite's; pgsql.go converts Postgres's
@@ -40,7 +41,6 @@ type (
 	stateParams    = sqlitegen.SetTemplateInstanceStateParams
 	errorParams    = sqlitegen.SetTemplateInstanceErrorParams
 	forAppParams   = sqlitegen.GetLiveTemplateInstanceForAppParams
-	forAppRow      = sqlitegen.GetLiveTemplateInstanceForAppRow
 	retireParams   = sqlitegen.RetireTemplateInstancesForAppParams
 )
 
@@ -58,12 +58,12 @@ type querier interface {
 	ClaimTemplateInstance(ctx context.Context, db backend.DBTX, p claimParams) (int64, error)
 	GetLiveTemplateInstance(ctx context.Context, db backend.DBTX, p liveParams) (instanceRow, error)
 	ListLiveTemplateInstances(ctx context.Context, db backend.DBTX, orgID string) ([]instanceRow, error)
-	MarkTemplateInstanceSaved(ctx context.Context, db backend.DBTX, p savedParams) (int64, error)
-	SetTemplateInstanceState(ctx context.Context, db backend.DBTX, p stateParams) (int64, error)
+	MarkTemplateInstanceSaved(ctx context.Context, db backend.DBTX, p savedParams) error
+	SetTemplateInstanceState(ctx context.Context, db backend.DBTX, p stateParams) error
 	SetTemplateInstanceError(ctx context.Context, db backend.DBTX, p errorParams) error
 	GetTemplateInstanceByID(ctx context.Context, db backend.DBTX, id string) (instanceRow, error)
-	GetLiveTemplateInstanceForApp(ctx context.Context, db backend.DBTX, p forAppParams) (forAppRow, error)
-	RetireTemplateInstancesForApp(ctx context.Context, db backend.DBTX, p retireParams) (int64, error)
+	GetLiveTemplateInstanceForApp(ctx context.Context, db backend.DBTX, p forAppParams) (string, error)
+	RetireTemplateInstancesForApp(ctx context.Context, db backend.DBTX, p retireParams) error
 }
 
 // Repo is the templates repository.
@@ -260,12 +260,8 @@ func (r *Repo) ClaimInstance(ctx context.Context, inst model.Instance) (model.In
 	err = r.tx.WithTx(ctx, func(ctx context.Context) error {
 		p := claimParams{
 			ID: inst.ID, OrgID: inst.OrgID, InstanceKey: inst.Key, AppID: inst.AppID, ServerID: inst.ServerID,
-			Revision: inst.Revision, Params: params, SecretNames: names, RequestHash: inst.RequestHash,
-			CreatedAt: now, UpdatedAt: now,
-		}
-		if inst.TemplateID != "" {
-			id := inst.TemplateID
-			p.TemplateID = &id
+			TemplateID: util.RefString(inst.TemplateID), Revision: inst.Revision, Params: params, SecretNames: names,
+			RequestHash: inst.RequestHash, CreatedAt: now, UpdatedAt: now,
 		}
 		n, err := r.q.ClaimTemplateInstance(ctx, r.tx.Querier(ctx), p)
 		if err != nil {
@@ -309,22 +305,21 @@ func (r *Repo) GetInstanceByID(ctx context.Context, id string) (model.Instance, 
 // LiveInstanceForApp reports whether the app is a pending or created
 // instance, with its template's name.
 func (r *Repo) LiveInstanceForApp(ctx context.Context, serverID, appID string) (string, bool, error) {
-	row, err := r.q.GetLiveTemplateInstanceForApp(ctx, r.tx.Querier(ctx), forAppParams{ServerID: serverID, AppID: appID})
+	name, err := r.q.GetLiveTemplateInstanceForApp(ctx, r.tx.Querier(ctx), forAppParams{ServerID: serverID, AppID: appID})
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
 	}
 	if err != nil {
 		return "", false, err
 	}
-	return row.TemplateName, true, nil
+	return name, true, nil
 }
 
 // RetireForApp moves the app's pending or created instance to deleted.
 func (r *Repo) RetireForApp(ctx context.Context, serverID, appID string) error {
-	_, err := r.q.RetireTemplateInstancesForApp(ctx, r.tx.Querier(ctx), retireParams{
+	return r.q.RetireTemplateInstancesForApp(ctx, r.tx.Querier(ctx), retireParams{
 		UpdatedAt: types.NewDateTime(), ServerID: serverID, AppID: appID,
 	})
-	return err
 }
 
 // ListInstances returns the org's pending and created instances.
@@ -350,18 +345,16 @@ func (r *Repo) MarkSaved(ctx context.Context, id string, revision int64, params 
 	if err != nil {
 		return err
 	}
-	_, err = r.q.MarkTemplateInstanceSaved(ctx, r.tx.Querier(ctx), savedParams{
+	return r.q.MarkTemplateInstanceSaved(ctx, r.tx.Querier(ctx), savedParams{
 		Revision: revision, Params: p, SecretNames: names, UpdatedAt: types.NewDateTime(), ID: id,
 	})
-	return err
 }
 
 // SetState moves a live instance to state.
 func (r *Repo) SetState(ctx context.Context, id string, state model.InstanceState) error {
-	_, err := r.q.SetTemplateInstanceState(ctx, r.tx.Querier(ctx), stateParams{
+	return r.q.SetTemplateInstanceState(ctx, r.tx.Querier(ctx), stateParams{
 		State: string(state), UpdatedAt: types.NewDateTime(), ID: id,
 	})
-	return err
 }
 
 // SetError records the last failed command's error.
@@ -400,11 +393,9 @@ func hydrateTemplate(row templateRow) model.Template {
 func hydrateInstance(row instanceRow) (model.Instance, error) {
 	inst := model.Instance{
 		ID: row.ID, OrgID: row.OrgID, Key: row.InstanceKey, AppID: row.AppID, ServerID: row.ServerID,
-		Revision: row.Revision, RequestHash: row.RequestHash, State: model.InstanceState(row.State),
-		LastError: row.LastError, CreatedAt: row.CreatedAt.Time(), UpdatedAt: row.UpdatedAt.Time(),
-	}
-	if row.TemplateID != nil {
-		inst.TemplateID = *row.TemplateID
+		TemplateID: util.DerefString(row.TemplateID), Revision: row.Revision, RequestHash: row.RequestHash,
+		State: model.InstanceState(row.State), LastError: row.LastError,
+		CreatedAt: row.CreatedAt.Time(), UpdatedAt: row.UpdatedAt.Time(),
 	}
 	if err := json.Unmarshal([]byte(row.Params), &inst.Params); err != nil {
 		return model.Instance{}, fmt.Errorf("instance %s: params: %w", row.ID, err)

@@ -67,14 +67,14 @@ func (uc *UseCase) UpdateInstance(ctx context.Context, userID, orgID string, in 
 	if upgrade {
 		revision = in.Revision
 	}
-	_, body, err := uc.revision(ctx, tpl.ID, revision)
+	body, err := uc.revision(ctx, tpl.ID, revision)
 	if err != nil {
 		return Outcome{}, err
 	}
 	marker := &template.Marker{TemplateID: tpl.ID, TemplateName: tpl.Name, Revision: revision, Key: inst.Key}
 	if upgrade && !pending {
 		// The current revision matters only here: which backups are new.
-		_, current, err := uc.revision(ctx, tpl.ID, inst.Revision)
+		current, err := uc.revision(ctx, tpl.ID, inst.Revision)
 		if err != nil {
 			return Outcome{}, err
 		}

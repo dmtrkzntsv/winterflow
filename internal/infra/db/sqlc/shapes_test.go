@@ -188,8 +188,6 @@ var (
 	_ = pgsqlgen.SetTemplateInstanceErrorParams(sqlitegen.SetTemplateInstanceErrorParams{})
 	_ = sqlitegen.GetLiveTemplateInstanceForAppParams(pgsqlgen.GetLiveTemplateInstanceForAppParams{})
 	_ = pgsqlgen.GetLiveTemplateInstanceForAppParams(sqlitegen.GetLiveTemplateInstanceForAppParams{})
-	_ = sqlitegen.GetLiveTemplateInstanceForAppRow(pgsqlgen.GetLiveTemplateInstanceForAppRow{})
-	_ = pgsqlgen.GetLiveTemplateInstanceForAppRow(sqlitegen.GetLiveTemplateInstanceForAppRow{})
 	_ = sqlitegen.RetireTemplateInstancesForAppParams(pgsqlgen.RetireTemplateInstancesForAppParams{})
 	_ = pgsqlgen.RetireTemplateInstancesForAppParams(sqlitegen.RetireTemplateInstancesForAppParams{})
 )

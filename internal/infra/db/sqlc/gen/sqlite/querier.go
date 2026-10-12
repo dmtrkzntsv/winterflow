@@ -48,7 +48,7 @@ type Querier interface {
 	GetLiveTemplateInstance(ctx context.Context, arg GetLiveTemplateInstanceParams) (TemplateInstance, error)
 	// The pending or created instance an app is, with its template's name
 	// ('' when the template is gone).
-	GetLiveTemplateInstanceForApp(ctx context.Context, arg GetLiveTemplateInstanceForAppParams) (GetLiveTemplateInstanceForAppRow, error)
+	GetLiveTemplateInstanceForApp(ctx context.Context, arg GetLiveTemplateInstanceForAppParams) (string, error)
 	GetOrgSharedVariableByName(ctx context.Context, arg GetOrgSharedVariableByNameParams) (SharedVariable, error)
 	GetOrganization(ctx context.Context, organizationID string) (Organization, error)
 	GetPrimaryOrganizationID(ctx context.Context, userID string) (string, error)
@@ -126,16 +126,16 @@ type Querier interface {
 	// serialized), so this is a plain SELECT; Postgres adds FOR UPDATE.
 	LockOrganizationMember(ctx context.Context, arg LockOrganizationMemberParams) (string, error)
 	// A save the agent confirmed; a deleted or unlinked row stays as it is.
-	MarkTemplateInstanceSaved(ctx context.Context, arg MarkTemplateInstanceSavedParams) (int64, error)
+	MarkTemplateInstanceSaved(ctx context.Context, arg MarkTemplateInstanceSavedParams) error
 	// Lifts vars_revision past an agent-reported revision the API never issued
 	// (the API database was restored); never lowers it.
 	RaiseServerVarsRevision(ctx context.Context, arg RaiseServerVarsRevisionParams) error
 	RenameApp(ctx context.Context, arg RenameAppParams) error
 	// The app was deleted outside the instance routes: its instance's key
 	// stays retired.
-	RetireTemplateInstancesForApp(ctx context.Context, arg RetireTemplateInstancesForAppParams) (int64, error)
+	RetireTemplateInstancesForApp(ctx context.Context, arg RetireTemplateInstancesForAppParams) error
 	SetTemplateInstanceError(ctx context.Context, arg SetTemplateInstanceErrorParams) error
-	SetTemplateInstanceState(ctx context.Context, arg SetTemplateInstanceStateParams) (int64, error)
+	SetTemplateInstanceState(ctx context.Context, arg SetTemplateInstanceStateParams) error
 	TouchServerLastSeen(ctx context.Context, arg TouchServerLastSeenParams) error
 	TouchTokenLastUsed(ctx context.Context, arg TouchTokenLastUsedParams) error
 	UpdateOrganization(ctx context.Context, arg UpdateOrganizationParams) (int64, error)

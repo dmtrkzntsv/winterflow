@@ -98,11 +98,11 @@ func (pgsqlQuerier) ListLiveTemplateInstances(ctx context.Context, db backend.DB
 	return out, nil
 }
 
-func (pgsqlQuerier) MarkTemplateInstanceSaved(ctx context.Context, db backend.DBTX, p savedParams) (int64, error) {
+func (pgsqlQuerier) MarkTemplateInstanceSaved(ctx context.Context, db backend.DBTX, p savedParams) error {
 	return pgsqlgen.New(db).MarkTemplateInstanceSaved(ctx, pgsqlgen.MarkTemplateInstanceSavedParams(p))
 }
 
-func (pgsqlQuerier) SetTemplateInstanceState(ctx context.Context, db backend.DBTX, p stateParams) (int64, error) {
+func (pgsqlQuerier) SetTemplateInstanceState(ctx context.Context, db backend.DBTX, p stateParams) error {
 	return pgsqlgen.New(db).SetTemplateInstanceState(ctx, pgsqlgen.SetTemplateInstanceStateParams(p))
 }
 
@@ -115,11 +115,10 @@ func (pgsqlQuerier) GetTemplateInstanceByID(ctx context.Context, db backend.DBTX
 	return instanceRow(row), err
 }
 
-func (pgsqlQuerier) GetLiveTemplateInstanceForApp(ctx context.Context, db backend.DBTX, p forAppParams) (forAppRow, error) {
-	row, err := pgsqlgen.New(db).GetLiveTemplateInstanceForApp(ctx, pgsqlgen.GetLiveTemplateInstanceForAppParams(p))
-	return forAppRow(row), err
+func (pgsqlQuerier) GetLiveTemplateInstanceForApp(ctx context.Context, db backend.DBTX, p forAppParams) (string, error) {
+	return pgsqlgen.New(db).GetLiveTemplateInstanceForApp(ctx, pgsqlgen.GetLiveTemplateInstanceForAppParams(p))
 }
 
-func (pgsqlQuerier) RetireTemplateInstancesForApp(ctx context.Context, db backend.DBTX, p retireParams) (int64, error) {
+func (pgsqlQuerier) RetireTemplateInstancesForApp(ctx context.Context, db backend.DBTX, p retireParams) error {
 	return pgsqlgen.New(db).RetireTemplateInstancesForApp(ctx, pgsqlgen.RetireTemplateInstancesForAppParams(p))
 }

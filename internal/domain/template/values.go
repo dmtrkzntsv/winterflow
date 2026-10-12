@@ -1,8 +1,9 @@
 package template
 
 import (
+	"maps"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 
 	"winterflow/internal/domain/command"
@@ -43,28 +44,28 @@ type Values struct {
 // app's .env), a secret that is not an ECIES ciphertext (the agent would
 // commit a plaintext to the app's history).
 func Resolve(b Body, stored Stored, given Given) (Values, error) {
-	for _, name := range sortedKeys(given.Params) {
+	for _, name := range slices.Sorted(maps.Keys(given.Params)) {
 		p, ok := b.param(name)
 		switch {
 		case !ok:
-			return Values{}, invalid("parameters."+name, "the template has no parameter %s", name)
+			return Values{}, Invalid("parameters."+name, "the template has no parameter %s", name)
 		case p.Secret:
-			return Values{}, invalid("parameters."+name, "%s is a secret: send it in secrets, encrypted for the server", name)
+			return Values{}, Invalid("parameters."+name, "%s is a secret: send it in secrets, encrypted for the server", name)
 		case strings.Contains(given.Params[name], "$"):
-			return Values{}, invalid("parameters."+name, "may not contain $")
+			return Values{}, Invalid("parameters."+name, "may not contain $")
 		}
 	}
-	for _, name := range sortedKeys(given.Secrets) {
+	for _, name := range slices.Sorted(maps.Keys(given.Secrets)) {
 		p, ok := b.param(name)
 		switch {
 		case !ok:
-			return Values{}, invalid("secrets."+name, "the template has no parameter %s", name)
+			return Values{}, Invalid("secrets."+name, "the template has no parameter %s", name)
 		case !p.Secret:
-			return Values{}, invalid("secrets."+name, "%s is not a secret parameter: send it in parameters", name)
+			return Values{}, Invalid("secrets."+name, "%s is not a secret parameter: send it in parameters", name)
 		case given.Secrets[name] == "" || given.Secrets[name] == command.EncryptedPlaceholder:
-			return Values{}, invalid("secrets."+name, "a ciphertext is required (leave the secret out to keep its value)")
+			return Values{}, Invalid("secrets."+name, "a ciphertext is required (leave the secret out to keep its value)")
 		case crypto.CheckCiphertext(given.Secrets[name]) != nil:
-			return Values{}, invalid("secrets."+name, "not a ciphertext: encrypt the value with the server's public key")
+			return Values{}, Invalid("secrets."+name, "not a ciphertext: encrypt the value with the server's public key")
 		}
 	}
 	had := map[string]bool{}
@@ -80,7 +81,7 @@ func Resolve(b Body, stored Stored, given Given) (Values, error) {
 			case had[p.Name]:
 				out.Secrets[p.Name] = command.EncryptedPlaceholder
 			case p.Required:
-				return Values{}, invalid("secrets."+p.Name, "required")
+				return Values{}, Invalid("secrets."+p.Name, "required")
 			default:
 				continue
 			}
@@ -97,16 +98,16 @@ func Resolve(b Body, stored Stored, given Given) (Values, error) {
 			v = *p.Default
 		}
 		if p.Required && v == "" {
-			return Values{}, invalid("parameters."+p.Name, "required")
+			return Values{}, Invalid("parameters."+p.Name, "required")
 		}
 		if set && p.Pattern != "" {
 			re, err := regexp.Compile(p.Pattern)
 			if err != nil || !re.MatchString(v) {
-				return Values{}, invalid("parameters."+p.Name, "%q does not match the pattern %s", v, p.Pattern)
+				return Values{}, Invalid("parameters."+p.Name, "%q does not match the pattern %s", v, p.Pattern)
 			}
 		}
 		out.Plain[p.Name] = v
 	}
-	sort.Strings(out.Stored.SecretNames)
+	slices.Sort(out.Stored.SecretNames)
 	return out, nil
 }

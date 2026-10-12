@@ -53,14 +53,17 @@ export type EncryptionKey = { server_id: string; name: string; public_key: strin
 export type PendingServer = { server_id: string; name: string };
 export type EncryptionKeys = { servers: EncryptionKey[]; pending_servers: PendingServer[] };
 
-export type SaveVariable = {
+type SaveVariableBase = {
   name: string;
-  is_secret: boolean;
-  value?: string;
-  ciphertexts?: Record<string, string>;
   description: string;
   reload?: boolean;
 };
+
+// Ruling P9a: a secret save never carries a plaintext value (the API 400s on
+// "<encrypted>"); a plain save must carry one.
+export type SaveVariable =
+  | (SaveVariableBase & { is_secret: true; value?: never; ciphertexts?: Record<string, string> })
+  | (SaveVariableBase & { is_secret: false; value: string; ciphertexts?: never });
 
 export type ResyncTarget = { server_id?: string; variable_id?: string };
 export type ReloadTarget = { server_id?: string; variable_id?: string; names?: string[]; app_ids?: string[] };
@@ -173,7 +176,7 @@ export function createSharedVariablesApi(fetchImpl?: typeof fetch): SharedVariab
       body: JSON.stringify(payload),
     });
   }
-  const servers = (d: { servers?: string[] | null } | null) => d?.servers ?? [];
+  const dispatched = (d: { servers?: string[] | null } | null) => d?.servers ?? [];
   return {
     listOrg: () => call<OrgVariables>("/api/v1/org/list-shared-variables"),
     listServer: (serverId) =>
@@ -191,7 +194,7 @@ export function createSharedVariablesApi(fetchImpl?: typeof fetch): SharedVariab
         reload ? { server_id: serverId, id, reload } : { server_id: serverId, id },
       );
     },
-    resync: (target) => post<{ servers?: string[] | null }>("/api/v1/shared-variables/resync", target).then(servers),
-    reload: (target) => post<{ servers?: string[] | null }>("/api/v1/shared-variables/reload", target).then(servers),
+    resync: (target) => post<{ servers?: string[] | null }>("/api/v1/shared-variables/resync", target).then(dispatched),
+    reload: (target) => post<{ servers?: string[] | null }>("/api/v1/shared-variables/reload", target).then(dispatched),
   };
 }

@@ -110,8 +110,21 @@ describe("createSharedVariablesApi", () => {
     expect(f.mock.calls[0][1]?.credentials).toBe("include");
   });
 
+  it("secret saves omit value and forward ciphertexts; plain saves send value", async () => {
+    const f = fakeFetch({});
+    const api = createSharedVariablesApi(f);
+    await api.saveOrg({ name: "S", is_secret: true, description: "", ciphertexts: { a: "ct" } });
+    await api.saveOrg({ name: "P", is_secret: false, value: "v", description: "" });
+    // @ts-expect-error a secret save cannot carry a value
+    await api.saveOrg({ name: "Bad", is_secret: true, value: "x", description: "" });
+    const bodies = f.mock.calls.map(([, init]) => JSON.parse(String(init?.body)));
+    expect(bodies[0]).toEqual({ name: "S", is_secret: true, description: "", ciphertexts: { a: "ct" } });
+    expect("value" in bodies[0]).toBe(false);
+    expect(bodies[1].value).toBe("v");
+  });
+
   it("surfaces the API's refusal message", async () => {
     const api = createSharedVariablesApi(fakeFetch(null, 400));
-    await expect(api.saveOrg({ name: "X", is_secret: false, description: "" })).rejects.toThrow("nope");
+    await expect(api.saveOrg({ name: "X", is_secret: false, value: "1", description: "" })).rejects.toThrow("nope");
   });
 });

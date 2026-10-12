@@ -16,12 +16,12 @@ func (r *Repository) appExists(appID string) bool {
 	return err == nil
 }
 
-// deploy (re)materializes secrets and brings the app up — the folder is the
-// deployment, so nothing needs rendering.
+// deploy (re)materializes secrets and shared variables and brings the app
+// up — the folder is the deployment, so nothing else needs rendering.
 func (r *Repository) deploy(ctx context.Context, appID string) error {
 	dir := r.appDataDir(appID)
-	if err := r.materializeSecrets(dir, loadSecretStore(dir)); err != nil {
-		return fmt.Errorf("materialize secrets: %w", err)
+	if err := r.materializeForDeploy(dir, loadSecretStore(dir)); err != nil {
+		return err
 	}
 	if err := r.composeUp(ctx, appID); err != nil {
 		return err

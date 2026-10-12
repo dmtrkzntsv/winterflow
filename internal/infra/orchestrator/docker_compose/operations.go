@@ -33,7 +33,7 @@ func (r *Repository) SaveApp(ctx context.Context, app command.AppPayload) (strin
 // SaveAppDraft persists and commits without deploying: the commit becomes a
 // draft sitting ahead of the deployed mark until the user deploys it.
 func (r *Repository) SaveAppDraft(ctx context.Context, app command.AppPayload) (string, error) {
-	return r.saveWithoutDeploy(app)
+	return r.persistApp(app, false)
 }
 
 // DeployedRevision returns the last successfully deployed commit ("" when
@@ -60,9 +60,16 @@ func (r *Repository) markDeployed(appID, sha string) {
 }
 
 // saveWithoutDeploy is SaveApp minus the compose invocation: write the store,
-// commit, materialize secrets, and fix the symlink. Split out so the full
-// persistence path is testable without Docker.
+// commit, materialize secrets and shared variables, and fix the symlink.
+// Split out so the full persistence path is testable without Docker.
 func (r *Repository) saveWithoutDeploy(app command.AppPayload) (string, error) {
+	return r.persistApp(app, true)
+}
+
+// persistApp writes the store, commits, materializes the app's secrets and
+// fixes the symlink. forDeploy also renders the shared variables: a draft
+// deploys nothing, so its shared files (and stale flag) stay as deployed.
+func (r *Repository) persistApp(app command.AppPayload, forDeploy bool) (string, error) {
 	dir := r.appDataDir(app.AppID)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
@@ -90,8 +97,13 @@ func (r *Repository) saveWithoutDeploy(app command.AppPayload) (string, error) {
 		return "", fmt.Errorf("commit: %w", err)
 	}
 
-	if err := r.materializeSecrets(dir, store); err != nil {
-		return "", fmt.Errorf("materialize secrets: %w", err)
+	if forDeploy {
+		err = r.materializeForDeploy(dir, store)
+	} else if err = r.materializeSecrets(dir, store); err != nil {
+		err = fmt.Errorf("materialize secrets: %w", err)
+	}
+	if err != nil {
+		return "", err
 	}
 	if _, err := ensureAppSymlink(r.cfg.GetAppsDir(), "apps-data", app.AppID, name); err != nil {
 		r.log.Warn("failed to update app symlink", "app_id", app.AppID, "error", err)
@@ -162,8 +174,8 @@ func (r *Repository) rollbackWithoutDeploy(appID, hash string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("commit rollback: %w", err)
 	}
-	if err := r.materializeSecrets(dir, loadSecretStore(dir)); err != nil {
-		return "", fmt.Errorf("materialize secrets: %w", err)
+	if err := r.materializeForDeploy(dir, loadSecretStore(dir)); err != nil {
+		return "", err
 	}
 	// The restored config may carry a different name — keep the symlink true.
 	if _, err := ensureAppSymlink(r.cfg.GetAppsDir(), "apps-data", appID, r.appName(dir, appID)); err != nil {
@@ -204,7 +216,7 @@ func (r *Repository) GetAppsStatus(ctx context.Context) ([]command.AppStatus, er
 			Containers: cs,
 		})
 	}
-	return out, nil
+	return r.withStale(out), nil
 }
 
 // ListApps returns the apps present on disk (the agent's filesystem is the

@@ -14,6 +14,8 @@ type Querier interface {
 	DeleteApp(ctx context.Context, appID string) error
 	DeleteAppDomainsByApp(ctx context.Context, appID string) error
 	DeleteAppDomainsByServer(ctx context.Context, serverID string) error
+	DeleteMetricSamplesBefore(ctx context.Context, arg DeleteMetricSamplesBeforeParams) (int64, error)
+	DeleteMetricSamplesByApp(ctx context.Context, appID string) error
 	DeleteRegistration(ctx context.Context, serverID string) error
 	DeleteServerDomain(ctx context.Context, arg DeleteServerDomainParams) error
 	DeleteServerDomainsByServer(ctx context.Context, serverID string) error
@@ -41,6 +43,8 @@ type Querier interface {
 	InsertCertificate(ctx context.Context, arg InsertCertificateParams) error
 	InsertConnectedAccount(ctx context.Context, arg InsertConnectedAccountParams) error
 	InsertCredentials(ctx context.Context, arg InsertCredentialsParams) error
+	// metric_samples: monitoring time series (see migration 0010).
+	InsertMetricSample(ctx context.Context, arg InsertMetricSampleParams) error
 	// Organizations and memberships.
 	InsertOrganization(ctx context.Context, arg InsertOrganizationParams) error
 	InsertOrganizationUser(ctx context.Context, arg InsertOrganizationUserParams) error
@@ -58,7 +62,10 @@ type Querier interface {
 	ListAppsByServer(ctx context.Context, serverID string) ([]App, error)
 	ListCapabilitiesByUser(ctx context.Context, userID string) ([]ListCapabilitiesByUserRow, error)
 	ListFeaturesByUser(ctx context.Context, userID string) ([]ServerFeature, error)
+	ListMetricSamples(ctx context.Context, arg ListMetricSamplesParams) ([]MetricSample, error)
+	ListMetricSamplesInRange(ctx context.Context, arg ListMetricSamplesInRangeParams) ([]MetricSample, error)
 	ListOrganizationMembers(ctx context.Context, organizationID string) ([]User, error)
+	ListServerAppMetricSamples(ctx context.Context, arg ListServerAppMetricSamplesParams) ([]MetricSample, error)
 	// The server_domains index (mirrors each agent's domain registrations).
 	ListServerDomains(ctx context.Context, serverID string) ([]ServerDomain, error)
 	ListServerUserIDs(ctx context.Context, serverID string) ([]string, error)

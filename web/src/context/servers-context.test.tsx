@@ -1,5 +1,5 @@
 import { act, render, screen } from "@testing-library/react";
-import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
+import { MemoryRouter, Outlet, Route, Routes, useLocation, useOutletContext } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { NotFound } from "@/components/not-found";
@@ -57,6 +57,7 @@ function renderAt(url: string) {
           <Route path="/" element={<DefaultServer fallback={<Probe />} />} />
           <Route path="/server/:serverId" element={<ServerScope />}>
             <Route index element={<Probe />} />
+            <Route path="monitoring" element={<Probe />} />
             <Route path="settings" element={<Probe />} />
             <Route path="app/:appId" element={<Probe />} />
           </Route>
@@ -109,6 +110,48 @@ describe("server-scoped URLs", () => {
     await screen.findByText("Alpha");
     act(() => screen.getByText("switch").click());
     expect(at()).toBe("/server/s2");
+  });
+
+  it("scopes monitoring to the URL's server and keeps it when switching", async () => {
+    renderAt("/server/s1/monitoring");
+    await screen.findByText("Alpha");
+    act(() => screen.getByText("switch").click());
+    expect(at()).toBe("/server/s2/monitoring");
+    expect(server()).toBe("Beta");
+  });
+
+  it("shows an error page for monitoring of an unknown server", async () => {
+    renderAt("/server/nope/monitoring");
+    expect(await screen.findByText("Server not found")).toBeInTheDocument();
+  });
+
+  it("has no unscoped /monitoring", async () => {
+    renderAt("/monitoring");
+    expect(await screen.findByText("Page not found")).toBeInTheDocument();
+  });
+
+  it("passes the layout's outlet context through to the server's pages", async () => {
+    function Layout() {
+      return <Outlet context={{ marker: "layout" }} />;
+    }
+    function Page() {
+      const ctx = useOutletContext<{ marker?: string } | undefined>();
+      return <span>context: {ctx?.marker ?? "none"}</span>;
+    }
+    render(
+      <MemoryRouter initialEntries={["/server/s1"]}>
+        <ServersProvider>
+          <Routes>
+            <Route element={<Layout />}>
+              <Route path="/server/:serverId" element={<ServerScope />}>
+                <Route index element={<Page />} />
+              </Route>
+            </Route>
+          </Routes>
+        </ServersProvider>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("context: layout")).toBeInTheDocument();
   });
 
   it("falls back to the first server outside a server's scope", async () => {

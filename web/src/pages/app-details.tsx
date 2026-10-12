@@ -35,6 +35,7 @@ import { AppIcon } from "@/components/app-icon";
 import { LogsView, type LogLine } from "@/components/logs-view";
 import { AppEditorPanel } from "@/components/app-editor-panel";
 import { AppStatusIndicator } from "@/components/app-status-badge";
+import { AppMetricBlocks, AppMetricsTab } from "@/components/app-metrics";
 import { useApps } from "@/context/use-apps";
 import { useNotifications } from "@/context/use-notifications";
 import { useServers } from "@/context/use-servers";
@@ -45,16 +46,17 @@ import {
   type ControlAction,
   type DeleteAppResult,
 } from "@/context/apps-context-base";
+import { appLabel } from "@/lib/kpi";
 import { cn } from "@/lib/utils";
 import { useServerPath } from "@/context/use-server-path";
 import { NotFound } from "@/components/not-found";
 
 const base = apiBaseUrl.endsWith("/") ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
 
-const TABS = ["logs", "editor", "history", "settings"] as const;
+const TABS = ["logs", "metrics", "editor", "history", "settings"] as const;
 
 const tabTriggerClass =
-  "-mb-px rounded-none border-b-2 border-transparent px-1 pt-1 pb-2.5 text-muted-foreground shadow-none hover:text-foreground data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none";
+  "-mb-px rounded-none border-b-2 border-transparent px-0.5 pt-1 sm:px-1 pb-2.5 text-muted-foreground shadow-none hover:text-foreground data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none";
 
 export default function AppDetailsPage() {
   const { appId } = useParams();
@@ -76,7 +78,7 @@ export default function AppDetailsPage() {
   const breadcrumbs = useMemo(
     () => [
       { label: "Apps", href: toServer() },
-      { label: app?.name ?? appId ?? "App" },
+      { label: appId ? appLabel(app?.name, appId) : "App" },
     ],
     [app?.name, appId, toServer],
   );
@@ -145,13 +147,20 @@ export default function AppDetailsPage() {
       <header className="flex flex-wrap items-center gap-x-4 gap-y-3">
         <AppIcon
           name={app.name}
+          id={app.id}
           icon={app.icon}
           color={app.color}
           className="size-14 shrink-0 rounded-xl text-xl"
         />
         <div className="min-w-0 flex-1">
-          <h1 className="truncate text-2xl font-semibold tracking-tight">
-            {app.name}
+          {/* An app not reconciled yet has no name: its id prefix stands in. */}
+          <h1
+            className={cn(
+              "truncate text-2xl font-semibold tracking-tight",
+              !app.name?.trim() && "font-mono text-muted-foreground",
+            )}
+          >
+            {appLabel(app.name, app.id)}
           </h1>
           <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
             <AppStatusIndicator status={status} />
@@ -184,10 +193,15 @@ export default function AppDetailsPage() {
         </div>
       </header>
 
+      <AppMetricBlocks serverId={app.serverId} appId={app.id} />
+
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="h-auto w-full justify-start gap-6 rounded-none border-b bg-transparent p-0">
+        <TabsList className="h-auto w-full justify-start gap-3 overflow-x-auto sm:gap-6 overflow-y-hidden rounded-none border-b bg-transparent p-0">
           <TabsTrigger value="logs" className={tabTriggerClass}>
             Logs
+          </TabsTrigger>
+          <TabsTrigger value="metrics" className={tabTriggerClass}>
+            Metrics
           </TabsTrigger>
           <TabsTrigger value="editor" className={tabTriggerClass}>
             Configuration
@@ -201,6 +215,9 @@ export default function AppDetailsPage() {
         </TabsList>
         <TabsContent value="logs" className="mt-6">
           <LogsTab appId={app.id} />
+        </TabsContent>
+        <TabsContent value="metrics" className="mt-6">
+          <AppMetricsTab serverId={app.serverId} appId={app.id} />
         </TabsContent>
         <TabsContent value="editor" className="mt-0">
           <AppEditorPanel appId={app.id} />

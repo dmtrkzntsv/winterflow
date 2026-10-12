@@ -70,13 +70,21 @@ func BootstrapStandalone(ctx context.Context, log *logger.Logger, cfg *config.Se
 	// feeds the status cache (doubling as the liveness pulse) and the SSE push.
 	// Until the embedded server is claimed there is no server id to report as,
 	// so ticks are skipped silently.
-	go appagent.RunStatusReporter(ctx, orchestrator, func(kind bus.EventKind, payload []byte) error {
+	sink := func(kind bus.EventKind, payload []byte) error {
 		id, ok, err := serverRepo.FirstServerID(ctx)
 		if err != nil || !ok {
 			return err
 		}
 		return b.Publish(ctx, cfg.GetBusEventsQueue(), bus.EventMessage{ServerID: id, Kind: kind, Payload: payload})
-	}, 30*time.Second, log)
+	}
+	// The snapshot lets the metrics reporter reuse the status reporter's
+	// `docker ps` instead of running its own.
+	statusSnapshot := appagent.NewStatusSnapshot(orchestrator)
+	go appagent.RunStatusReporter(ctx, statusSnapshot, sink, 30*time.Second, log)
+
+	// Resource metrics (server.metrics every 60 s, disk scan hourly) through
+	// the same events path; off with METRICS_ENABLED=false.
+	appagent.StartMetrics(ctx, cfg, statusSnapshot, orchestrator, sink, log)
 
 	// Auto-update for git-sourced apps.
 	go appagent.RunSourcePoller(ctx, orchestrator, log)

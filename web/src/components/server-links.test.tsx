@@ -62,6 +62,7 @@ function renderAt(url: string) {
               <Route path="/" element={<DefaultServer fallback={<p>no servers</p>} />} />
               <Route path="/server/s1" element={<HomePage />} />
               <Route path="/server/s1/create-app" element={<p>create page</p>} />
+              <Route path="/server/s2/monitoring" element={<p>beta monitoring</p>} />
             </Route>
           </Routes>
         </SidebarContext.Provider>
@@ -74,6 +75,10 @@ describe("server-scoped links", () => {
   it("points the sidebar and the app grid into the active server", async () => {
     renderAt("/server/s1");
     expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute("href", "/server/s1");
+    expect(screen.getByRole("link", { name: "Monitoring" })).toHaveAttribute(
+      "href",
+      "/server/s1/monitoring",
+    );
     expect(screen.getByRole("link", { name: "Server Settings" })).toHaveAttribute(
       "href",
       "/server/s1/settings",
@@ -83,13 +88,16 @@ describe("server-scoped links", () => {
     }
   });
 
-  it("switches servers from the cards and the switcher", async () => {
+  it("opens a server card's monitoring in that server's scope", async () => {
     const user = userEvent.setup();
     renderAt("/server/s1");
     await user.click(screen.getByTitle(/^Beta:/));
-    expect(selectServer).toHaveBeenLastCalledWith("s2");
+    expect(await screen.findByText("beta monitoring")).toBeInTheDocument();
+  });
 
-    selectServer.mockClear();
+  it("switches servers from the switcher", async () => {
+    const user = userEvent.setup();
+    renderAt("/server/s1");
     await user.click(screen.getAllByRole("button", { name: /Alpha/ })[0]);
     await user.click(within(await screen.findByRole("menu")).getByText("Beta"));
     expect(selectServer).toHaveBeenLastCalledWith("s2");

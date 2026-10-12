@@ -5,9 +5,12 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme {
+    /* Inter is bundled (the latin subsets of @fontsource-variable/inter,
+       in styles/inter.css), so every machine renders the same face. */
     --font-sans:
-        "Inter", "SF Pro Display", -apple-system, BlinkMacSystemFont,
-        "Segoe UI", system-ui, sans-serif;
+        "Inter Variable", "Inter", ui-sans-serif, system-ui, -apple-system,
+        BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+        sans-serif;
 }
 
 @layer base {
@@ -18,6 +21,8 @@
     body {
         font-family: var(--font-sans);
         min-height: 100vh;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
     }
 }
 
@@ -53,12 +58,20 @@
     --color-sidebar: var(--sidebar);
     --color-sidebar-foreground: var(--sidebar-foreground);
     --color-sidebar-primary: var(--sidebar-primary);
-    --color-sidebar-primary-soft: var(--sidebar-primary-soft);
     --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+    --color-sidebar-primary-soft: var(--sidebar-primary-soft);
     --color-sidebar-accent: var(--sidebar-accent);
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-ring: var(--sidebar-ring);
+    --color-console: var(--console);
+    --color-console-foreground: var(--console-foreground);
+    --color-console-muted: var(--console-muted);
+    --color-console-border: var(--console-border);
+    --color-console-hover: var(--console-hover);
+    --color-skeleton: var(--skeleton);
+    --color-skeleton-shine: var(--skeleton-shine);
+    --shadow-card: var(--card-shadow);
     --animate-accordion-down: accordion-down 0.2s ease-out;
     --animate-accordion-up: accordion-up 0.2s ease-out;
 
@@ -82,76 +95,114 @@
 }
 
 :root {
-    --radius: 0.5rem;
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.141 0.005 285.823);
-    --card: oklch(1 0 0);
-    --card-foreground: oklch(0.141 0.005 285.823);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.141 0.005 285.823);
-    --primary: oklch(0.623 0.214 259.815);
-    --primary-foreground: oklch(0.97 0.014 254.604);
-    --secondary: oklch(0.967 0.001 286.375);
-    --secondary-foreground: oklch(0.21 0.006 285.885);
-    --muted: oklch(0.967 0.001 286.375);
-    --muted-foreground: oklch(0.552 0.016 285.938);
-    --accent: oklch(0.967 0.001 286.375);
-    --accent-foreground: oklch(0.21 0.006 285.885);
-    --destructive: oklch(0.65 0.15 35);
-    --destructive-foreground: oklch(0.97 0.014 254.604);
-    --border: oklch(0.92 0.004 286.32);
-    --input: oklch(0.92 0.004 286.32);
-    --ring: oklch(0.623 0.214 259.815);
-    --chart-1: oklch(0.646 0.222 41.116);
-    --chart-2: oklch(0.6 0.118 184.704);
-    --chart-3: oklch(0.398 0.07 227.392);
-    --chart-4: oklch(0.828 0.189 84.429);
-    --chart-5: oklch(0.769 0.188 70.08);
-    --sidebar: oklch(0.985 0 0);
-    --sidebar-foreground: oklch(0.141 0.005 285.823);
-    --sidebar-primary: oklch(0.623 0.214 259.815);
+    /* "Frost": winterflow's own light, icy palette, on twillingate's
+       layout. An airy blue-white page with white cards and a frosted light
+       sidebar; the blues are built around the snowflake (#60a5fa family,
+       --sidebar-primary-soft) but sit a step or two deeper and calmer than
+       it, so the logo stays the brightest blue on screen. Chart series:
+       steel blue, glacier teal, amber, rose, lavender (checked for
+       colour-blind separation). Contrast pairs are verified at >= 4.5:1 for
+       text and >= 3:1 for the focus ring. */
+    --radius: 0.75rem;
+    --background: #f6f9fd;
+    --foreground: #0b2540;
+    --card: #ffffff;
+    --card-foreground: #0b2540;
+    --popover: #ffffff;
+    --popover-foreground: #0b2540;
+    --primary: #1f63b4;
+    --primary-foreground: #ffffff;
+    --secondary: #e9f0f8;
+    --secondary-foreground: #1a5499;
+    --muted: #eef3f9;
+    --muted-foreground: #506b8a;
+    --accent: #e4edf7;
+    --accent-foreground: #1a5499;
+    --destructive: #d03a3a;
+    --destructive-foreground: #ffffff;
+    --border: #dfe8f2;
+    --input: #c9d8e8;
+    --ring: #3473c0;
+    --chart-1: #3a7fd0;
+    --chart-2: #1b9488;
+    --chart-3: #d4952c;
+    --chart-4: #cf5f80;
+    --chart-5: #6a4fc8;
+    --sky: #b3cbe6;
+    --skeleton: #e8eff7;
+    --skeleton-shine: #f6f9fc;
+    /* Card elevation: a hairline contact shadow plus a soft, blue-tinted
+       drop. Dark mode has none (the border carries the edge). */
+    --card-shadow: 0 1px 2px rgb(26 72 128 / 0.04), 0 8px 20px -12px rgb(26 72 128 / 0.18);
+    --sidebar: #f2f6fb;
+    --sidebar-foreground: #1c3654;
+    --sidebar-primary: #1f63b4;
+    --sidebar-primary-foreground: #ffffff;
     --sidebar-primary-soft: oklch(0.75 0.14 259.815);
-    --sidebar-primary-foreground: oklch(0.97 0.014 254.604);
-    --sidebar-accent: oklch(0.967 0.001 286.375);
-    --sidebar-accent-foreground: oklch(0.21 0.006 285.885);
-    --sidebar-border: oklch(0.92 0.004 286.32);
-    --sidebar-ring: oklch(0.623 0.214 259.815);
+    --sidebar-accent: #e4edf7;
+    --sidebar-accent-foreground: #1a5499;
+    --sidebar-border: #dde6f0;
+    --sidebar-ring: #3473c0;
+    --sidebar-muted-foreground: #58708d;
+    /* The logs console: a pale ice panel in light, deep midnight in dark. */
+    --console: #f5f8fc;
+    --console-foreground: #1c3654;
+    --console-muted: #506b8a;
+    --console-border: #dfe8f2;
+    --console-hover: #e9f0f8;
+    --sidebar-top: #f8fafd;
+    --sidebar-bottom: #edf3fa;
 }
 
 .dark {
-    --background: oklch(0.141 0.005 285.823);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0.21 0.006 285.885);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.21 0.006 285.885);
-    --popover-foreground: oklch(0.985 0 0);
-    --primary: oklch(0.546 0.245 262.881);
-    --primary-foreground: oklch(0.379 0.146 265.522);
-    --secondary: oklch(0.274 0.006 286.033);
-    --secondary-foreground: oklch(0.985 0 0);
-    --muted: oklch(0.274 0.006 286.033);
-    --muted-foreground: oklch(0.705 0.015 286.067);
-    --accent: oklch(0.274 0.006 286.033);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.72 0.12 35);
-    --destructive-foreground: oklch(0.985 0 0);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.488 0.243 264.376);
-    --chart-1: oklch(0.488 0.243 264.376);
-    --chart-2: oklch(0.696 0.17 162.48);
-    --chart-3: oklch(0.769 0.188 70.08);
-    --chart-4: oklch(0.627 0.265 303.9);
-    --chart-5: oklch(0.645 0.246 16.439);
-    --sidebar: oklch(0.21 0.006 285.885);
-    --sidebar-foreground: oklch(0.985 0 0);
-    --sidebar-primary: oklch(0.546 0.245 262.881);
+    /* "Midnight frost": slate-navy surfaces, not near-black, with icy
+       accents. */
+    color-scheme: dark;
+    --background: #0e1b2b;
+    --foreground: #e7f1fb;
+    --card: #13243a;
+    --card-foreground: #e7f1fb;
+    --popover: #172b44;
+    --popover-foreground: #e7f1fb;
+    --primary: #6ea8e8;
+    --primary-foreground: #0a1c30;
+    --secondary: #1a3150;
+    --secondary-foreground: #e7f1fb;
+    --muted: #1a2e47;
+    --muted-foreground: #97afc9;
+    --accent: #1b3150;
+    --accent-foreground: #f3f9ff;
+    --destructive: #ff7d73;
+    --destructive-foreground: #2a0806;
+    --border: rgb(159 212 255 / 12%);
+    --input: rgb(159 212 255 / 20%);
+    --ring: #6ea8e8;
+    --chart-1: #4a8cd6;
+    --chart-2: #34ad9e;
+    --chart-3: #d6a24a;
+    --chart-4: #de7a97;
+    --chart-5: #c0b0fa;
+    --sky: #5f8fc4;
+    --skeleton: #1a2f4a;
+    --skeleton-shine: #24405f;
+    --card-shadow: 0 0 #0000;
+    --sidebar: #0b1725;
+    --sidebar-foreground: #c9dcf0;
+    --sidebar-primary: #8fbdee;
+    --sidebar-primary-foreground: #0a1c30;
     --sidebar-primary-soft: oklch(0.68 0.19 262.881);
-    --sidebar-primary-foreground: oklch(0.379 0.146 265.522);
-    --sidebar-accent: oklch(0.274 0.006 286.033);
-    --sidebar-accent-foreground: oklch(0.985 0 0);
-    --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.488 0.243 264.376);
+    --sidebar-accent: #1b3150;
+    --sidebar-accent-foreground: #b6d3f0;
+    --sidebar-border: rgb(159 212 255 / 10%);
+    --sidebar-ring: #6ea8e8;
+    --sidebar-muted-foreground: #8ea6c0;
+    --console: #0a1522;
+    --console-foreground: #d6e5f5;
+    --console-muted: #8ea6c0;
+    --console-border: rgb(159 212 255 / 12%);
+    --console-hover: #12233a;
+    --sidebar-top: #10202f;
+    --sidebar-bottom: #0a1522;
 }
 
 @layer base {
@@ -230,5 +281,64 @@
     to {
         opacity: 1;
         transform: none;
+    }
+}
+
+/* The sidebar is frost: near-white with a faint blue tint, darkening a
+   touch toward the floor, behind a hairline edge (midnight frost in dark).
+   Muted text inside it is re-pointed at the sidebar's own muted ink so
+   shared components stay on its contrast budget. */
+[data-sidebar="sidebar"] {
+    background-image: linear-gradient(180deg, var(--sidebar-top) 0%, var(--sidebar-bottom) 100%);
+    --muted: var(--sidebar-accent);
+    --muted-foreground: var(--sidebar-muted-foreground);
+}
+
+/* A wash of sky blue behind the page title, gone by the time the content
+   starts. */
+.sky-wash {
+    background-repeat: no-repeat;
+    background-size: 100% 18rem;
+    background-image: linear-gradient(
+        180deg,
+        color-mix(in oklab, var(--sky) 22%, transparent) 0%,
+        transparent 100%
+    );
+}
+.dark .sky-wash {
+    background-image: linear-gradient(
+        180deg,
+        color-mix(in oklab, var(--sky) 12%, transparent) 0%,
+        transparent 100%
+    );
+}
+
+/* Loading placeholders: a cool frost with light passing across it, the same
+   sweep on every shape so a loading grid moves as one. */
+.frost {
+    background-color: var(--skeleton);
+    background-image: linear-gradient(
+        100deg,
+        transparent 30%,
+        var(--skeleton-shine) 50%,
+        transparent 70%
+    );
+    background-size: 200% 100%;
+    background-attachment: fixed;
+    animation: frost 1.6s ease-in-out infinite;
+}
+@keyframes frost {
+    from {
+        background-position: 150% 0;
+    }
+    to {
+        background-position: -50% 0;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .frost,
+    .app-card-in {
+        animation: none;
     }
 }

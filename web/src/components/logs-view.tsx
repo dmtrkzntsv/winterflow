@@ -20,20 +20,20 @@ export type LogLine = {
 };
 
 const LEVEL_CLASS: Record<number, string> = {
-  4: "text-amber-300",
-  5: "text-red-400",
-  6: "text-red-400 font-semibold",
+  4: "text-amber-800 dark:text-amber-300",
+  5: "text-red-700 dark:text-red-400",
+  6: "text-red-700 dark:text-red-400 font-semibold",
 };
 
 // Container name colors, in the spirit of `docker compose logs`: each service
 // keeps one hue so interleaved output stays easy to follow.
 const CONTAINER_COLORS = [
-  "text-sky-400",
-  "text-emerald-400",
-  "text-violet-400",
-  "text-amber-400",
-  "text-pink-400",
-  "text-teal-300",
+  "text-sky-700 dark:text-sky-400",
+  "text-emerald-700 dark:text-emerald-400",
+  "text-violet-700 dark:text-violet-400",
+  "text-amber-800 dark:text-amber-400",
+  "text-pink-700 dark:text-pink-400",
+  "text-teal-700 dark:text-teal-300",
 ];
 
 const TAIL_OPTIONS = [200, 500, 1000] as const;
@@ -103,11 +103,11 @@ export function LogsView({
   };
 
   return (
-    <div className="relative flex h-[calc(100svh-16rem)] min-h-80 flex-col overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950 text-zinc-300">
-      <div className="flex items-center gap-3 border-b border-zinc-800 px-3 py-2">
+    <div className="relative flex h-[calc(100svh-16rem)] min-h-80 flex-col overflow-hidden rounded-lg border border-console-border bg-console text-console-foreground">
+      <div className="flex items-center gap-3 border-b border-console-border px-3 py-2">
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-4 gap-y-1 text-xs">
           {containers.length === 0 ? (
-            <span className="text-zinc-500">Container output</span>
+            <span className="text-console-muted">Container output</span>
           ) : (
             containers.map((c) => (
               <span key={c} className="flex items-center gap-1.5 font-mono">
@@ -115,7 +115,7 @@ export function LogsView({
                   className={cn("size-2 rounded-full bg-current", colorOf(c))}
                   aria-hidden
                 />
-                <span className="text-zinc-400">{c}</span>
+                <span className="text-console-muted">{c}</span>
               </span>
             ))
           )}
@@ -126,7 +126,7 @@ export function LogsView({
         >
           <SelectTrigger
             aria-label="Number of lines"
-            className="h-7 w-36 border-zinc-800 bg-zinc-900 text-xs text-zinc-300"
+            className="h-7 w-36 border-console-border bg-console-hover text-xs text-console-foreground"
           >
             <SelectValue />
           </SelectTrigger>
@@ -143,7 +143,7 @@ export function LogsView({
           variant="ghost"
           aria-label="Refresh logs"
           title="Refresh logs"
-          className="size-7 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
+          className="size-7 text-console-muted hover:bg-console-hover hover:text-console-foreground"
           onClick={onRefresh}
           disabled={loading}
         >
@@ -157,18 +157,18 @@ export function LogsView({
         </div>
       ) : error ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
-          <p className="text-sm text-red-400">{error}</p>
+          <p className="text-sm text-red-700 dark:text-red-400">{error}</p>
           <Button
             size="sm"
             variant="outline"
-            className="border-zinc-700 bg-transparent text-zinc-200 hover:bg-zinc-800"
+            className="border-console-border bg-transparent text-console-foreground hover:bg-console-hover hover:text-console-foreground"
             onClick={onRefresh}
           >
             Try again
           </Button>
         </div>
       ) : lines.length === 0 ? (
-        <div className="flex flex-1 items-center justify-center p-6 text-sm text-zinc-500">
+        <div className="flex flex-1 items-center justify-center p-6 text-sm text-console-muted">
           No output yet. Start the app, then refresh.
         </div>
       ) : (
@@ -180,9 +180,9 @@ export function LogsView({
           {lines.map((l, i) => (
             <div
               key={i}
-              className="flex gap-3 px-3 hover:bg-zinc-900"
+              className="flex gap-3 px-3 hover:bg-console-hover"
             >
-              <span className="shrink-0 text-zinc-600 tabular-nums select-none">
+              <span className="shrink-0 text-console-muted tabular-nums select-none">
                 {timeFormat.format(new Date(l.timestamp * 1000))}
               </span>
               {l.container ? (
@@ -210,7 +210,7 @@ export function LogsView({
       {!stickToBottom && lines.length > 0 ? (
         <Button
           size="sm"
-          className="absolute right-4 bottom-4 h-7 gap-1 rounded-full bg-zinc-100 px-3 text-xs text-zinc-900 shadow-lg hover:bg-white"
+          className="absolute right-4 bottom-4 h-7 gap-1 rounded-full bg-console-foreground px-3 text-xs text-console shadow-lg hover:bg-console-foreground/90"
           onClick={jumpToBottom}
         >
           <ArrowDown className="size-3.5" /> Latest

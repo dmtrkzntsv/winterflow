@@ -2,6 +2,7 @@ import { StrictMode } from "react"
 import { createRoot } from "react-dom/client"
 import { createBrowserRouter, Outlet, RouterProvider } from "react-router-dom"
 
+import "@/styles/inter.css"
 import "@/lib/i18n"
 
 import { RequireAuth } from "@/components/require-auth"
@@ -19,13 +20,18 @@ import { AppLayout } from "@/layouts/app-layout"
 import HomePage from "@/pages/home"
 import CreateAppPage from "@/pages/create-app"
 import AppDetailsPage from "@/pages/app-details"
+import MonitoringPage from "@/pages/monitoring"
 import SettingsPage from "@/pages/settings"
 import UserTokensPage from "@/pages/user-tokens"
 import UserPasswordPage from "@/pages/user-password"
 import OrgMembersPage from "@/pages/org-members"
 import LoginPage from "@/pages/login"
 import RegisterPage from "@/pages/register"
+import { followSystemTheme } from "@/lib/theme"
 import "./index.css"
+
+// Dark mode follows the OS; set before the first render so nothing flashes.
+followSystemTheme()
 
 // The servers and apps providers sit inside the router: the active server is
 // read from the URL.
@@ -57,6 +63,7 @@ const router = createBrowserRouter([
               { index: true, element: <HomePage /> },
               { path: "create-app", element: <CreateAppPage /> },
               { path: "app/:appId", element: <AppDetailsPage /> },
+              { path: "monitoring", element: <MonitoringPage /> },
               { path: "settings", element: <SettingsPage /> },
             ],
           },

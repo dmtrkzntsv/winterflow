@@ -1,13 +1,13 @@
 "use client"
 
 import * as React from "react"
-import { LayoutDashboard, Settings2 } from "lucide-react"
 
 import { NavMain } from "@/components/nav-main"
 import { NavApps } from "@/components/nav-apps"
 import { NavSecondary } from "@/components/nav-secondary"
 import { NavUser } from "@/components/nav-user"
 import { ServerSwitcher } from "@/components/server-switcher"
+import { navBottom, navMain, scopeNav } from "@/lib/nav"
 import {
     Sidebar,
     SidebarContent,
@@ -17,39 +17,25 @@ import {
 } from "@/components/ui/sidebar"
 import { useServerPath } from "@/context/use-server-path"
 
-// Platform navigation: Dashboard + the live Apps group, with Server Settings
-// (Docker registries/networks + agent update) pinned to the bottom — mirroring
-// v1's primary/secondary split. Catalog and organization management remain out
-// of scope for v2. Both links point into the active server's scope.
+// Platform navigation (lib/nav): Dashboard and the live Apps group on top,
+// Monitoring + Server Settings pinned to the bottom, all pointing into the
+// active server's scope.
 export function AppSidebar({
     onAddServer,
     ...props
 }: React.ComponentProps<typeof Sidebar> & { onAddServer?: () => void }) {
     const toServer = useServerPath()
-    const navMain = [
-        {
-            title: "Dashboard",
-            url: toServer(),
-            icon: LayoutDashboard,
-            isActive: true,
-        },
-    ]
-    const navSecondary = [
-        {
-            title: "Server Settings",
-            url: toServer("/settings"),
-            icon: Settings2,
-        },
-    ]
+    const main = React.useMemo(() => scopeNav(navMain, toServer), [toServer])
+    const bottom = React.useMemo(() => scopeNav(navBottom, toServer), [toServer])
     return (
         <Sidebar collapsible="icon" {...props}>
             <SidebarHeader>
                 <ServerSwitcher onAddServer={onAddServer} />
             </SidebarHeader>
             <SidebarContent>
-                <NavMain items={navMain} />
+                <NavMain items={main} />
                 <NavApps />
-                <NavSecondary items={navSecondary} className="mt-auto" />
+                <NavSecondary items={bottom} className="mt-auto" />
             </SidebarContent>
             <SidebarFooter>
                 <NavUser />

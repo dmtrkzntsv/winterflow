@@ -1189,6 +1189,198 @@ paths:
       - apps
       x-operation-result:
         $ref: '#/components/schemas/ImageTagsResponse'
+  /api/v1/metrics/app:
+    get:
+      operationId: metricsApp
+      parameters:
+      - description: Server the app runs on.
+        in: query
+        name: server_id
+        required: true
+        schema:
+          description: Server the app runs on.
+          type: string
+      - description: Target app id.
+        in: query
+        name: app_id
+        required: true
+        schema:
+          description: Target app id.
+          type: string
+      - description: Chart range (see /api/v1/metrics/server).
+        in: query
+        name: range
+        required: true
+        schema:
+          description: Chart range (see /api/v1/metrics/server).
+          enum:
+          - 1h
+          - 12h
+          - 24h
+          - 7d
+          - 30d
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/SeriesResponse'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: An app's resource charts
+      tags:
+      - metrics
+  /api/v1/metrics/overview:
+    get:
+      operationId: metricsOverview
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/OverviewResponse'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Dashboard health of the caller's servers
+      tags:
+      - metrics
+  /api/v1/metrics/server:
+    get:
+      description: Average and peak (`<field>_max`) per point; `interval_seconds`
+        is the point spacing, so a larger gap between two points means the server
+        did not report. `apps` holds each app's CPU and memory for the stacked charts.
+      operationId: metricsServer
+      parameters:
+      - description: Target server id.
+        in: query
+        name: server_id
+        required: true
+        schema:
+          description: Target server id.
+          type: string
+      - description: 'Chart range: 1h (1-minute points), 12h (10 min), 24h (20 min),
+          7d (2 h), 30d (8 h).'
+        in: query
+        name: range
+        required: true
+        schema:
+          description: 'Chart range: 1h (1-minute points), 12h (10 min), 24h (20 min),
+            7d (2 h), 30d (8 h).'
+          enum:
+          - 1h
+          - 12h
+          - 24h
+          - 7d
+          - 30d
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ServerSeriesResponse'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: A server's resource charts
+      tags:
+      - metrics
   /api/v1/network/create:
     post:
       operationId: networkCreate
@@ -2684,6 +2876,19 @@ components:
       - color
       - created_at
       type: object
+    AppCounts:
+      properties:
+        problematic:
+          type: integer
+        running:
+          type: integer
+        stopped:
+          type: integer
+      required:
+      - running
+      - stopped
+      - problematic
+      type: object
     AppDomainInfo:
       properties:
         domain:
@@ -2747,6 +2952,20 @@ components:
       - config
       - variables
       - files
+      type: object
+    AppSeries:
+      properties:
+        app_id:
+          type: string
+        points:
+          items:
+            $ref: '#/components/schemas/Point'
+          type:
+          - array
+          - "null"
+      required:
+      - app_id
+      - points
       type: object
     AppStatus:
       properties:
@@ -3124,6 +3343,41 @@ components:
       required:
       - name
       type: object
+    Disk:
+      properties:
+        mount:
+          type: string
+        total:
+          format: double
+          type: number
+        used:
+          format: double
+          type: number
+      required:
+      - mount
+      - used
+      - total
+      type: object
+    DockerDF:
+      properties:
+        build_cache:
+          format: double
+          type: number
+        images:
+          format: double
+          type: number
+        reclaimable:
+          format: double
+          type: number
+        volumes:
+          format: double
+          type: number
+      required:
+      - images
+      - volumes
+      - build_cache
+      - reclaimable
+      type: object
     Domain:
       properties:
         apps:
@@ -3382,6 +3636,17 @@ components:
         to:
           type: string
       type: object
+    Latest:
+      properties:
+        at:
+          format: date-time
+          type: string
+        server:
+          $ref: '#/components/schemas/ServerSample'
+      required:
+      - at
+      - server
+      type: object
     LibraryError:
       properties:
         error:
@@ -3577,6 +3842,22 @@ components:
       - icon
       - color
       type: object
+    OverviewResponse:
+      properties:
+        servers:
+          items:
+            $ref: '#/components/schemas/ServerOverview'
+          type:
+          - array
+          - "null"
+      required:
+      - servers
+      type: object
+    Point:
+      additionalProperties:
+        format: double
+        type: number
+      type: object
     Profile:
       properties:
         email:
@@ -3760,6 +4041,20 @@ components:
       - app_id
       - revision
       type: object
+    SeriesResponse:
+      properties:
+        interval_seconds:
+          type: integer
+        points:
+          items:
+            $ref: '#/components/schemas/Point'
+          type:
+          - array
+          - "null"
+      required:
+      - interval_seconds
+      - points
+      type: object
     Server:
       properties:
         capabilities:
@@ -3790,6 +4085,122 @@ components:
       - name
       - created_at
       - last_seen_at
+      type: object
+    ServerOverview:
+      properties:
+        apps:
+          $ref: '#/components/schemas/AppCounts'
+        latest:
+          anyOf:
+          - type: "null"
+          - $ref: '#/components/schemas/Latest'
+        liveness:
+          type: string
+        server_id:
+          type: string
+        sparkline:
+          items:
+            $ref: '#/components/schemas/Point'
+          type:
+          - array
+          - "null"
+      required:
+      - server_id
+      - liveness
+      - latest
+      - sparkline
+      - apps
+      type: object
+    ServerSample:
+      properties:
+        cpu:
+          type:
+          - "null"
+          - number
+        disk_read_bps:
+          type:
+          - "null"
+          - number
+        disk_write_bps:
+          type:
+          - "null"
+          - number
+        disks:
+          items:
+            $ref: '#/components/schemas/Disk'
+          type:
+          - array
+          - "null"
+        docker_df:
+          $ref: '#/components/schemas/DockerDF'
+        load1:
+          format: double
+          type: number
+        load5:
+          format: double
+          type: number
+        load15:
+          format: double
+          type: number
+        mem_total:
+          format: double
+          type: number
+        mem_used:
+          format: double
+          type: number
+        net_rx_bps:
+          type:
+          - "null"
+          - number
+        net_tx_bps:
+          type:
+          - "null"
+          - number
+        swap_total:
+          format: double
+          type: number
+        swap_used:
+          format: double
+          type: number
+        temp:
+          type:
+          - "null"
+          - number
+        temps:
+          additionalProperties:
+            format: double
+            type: number
+          type: object
+      required:
+      - mem_used
+      - mem_total
+      - swap_used
+      - swap_total
+      - load1
+      - load5
+      - load15
+      - disks
+      type: object
+    ServerSeriesResponse:
+      properties:
+        apps:
+          items:
+            $ref: '#/components/schemas/AppSeries'
+          type:
+          - array
+          - "null"
+        interval_seconds:
+          type: integer
+        points:
+          items:
+            $ref: '#/components/schemas/Point'
+          type:
+          - array
+          - "null"
+      required:
+      - interval_seconds
+      - points
+      - apps
       type: object
     ServerStatus:
       properties:

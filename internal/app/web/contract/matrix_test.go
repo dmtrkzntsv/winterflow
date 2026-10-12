@@ -99,6 +99,13 @@ var probes = map[string]probe{
 		return call{Method: http.MethodPost, Path: "/api/v1/agent/update", Query: sq(s), Body: map[string]any{"version": "v1"}}
 	}, malformed: bad("POST", "/api/v1/agent/update")},
 
+	"GET /api/v1/metrics/server": {valid: func(s string) call {
+		return get("/api/v1/metrics/server", url.Values{"server_id": {s}, "range": {"1h"}})
+	}, malformed: bad("GET", "/api/v1/metrics/server")},
+	"GET /api/v1/metrics/app": {valid: func(s string) call {
+		return get("/api/v1/metrics/app", url.Values{"server_id": {s}, "app_id": {anApp}, "range": {"24h"}})
+	}, malformed: bad("GET", "/api/v1/metrics/app")},
+
 	"GET /api/v1/server/get-public-key": {valid: func(s string) call { return get("/api/v1/server/get-public-key", sq(s)) }, malformed: bad("GET", "/api/v1/server/get-public-key")},
 	"POST /api/v1/server/register":      {malformed: post("/api/v1/server/register", map[string]any{"code": "1"})},
 

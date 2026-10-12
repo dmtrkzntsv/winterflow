@@ -133,6 +133,8 @@ export function AppEditor({ state, onChange }: Props) {
           <IconPicker
             value={state.config.icon}
             color={state.config.color}
+            name={state.config.name}
+            id={state.config.id || undefined}
             onChange={(icon) => setConfig({ icon })}
           />
           <Input

@@ -33,6 +33,11 @@ func (r *Repository) deploy(ctx context.Context, appID string) error {
 
 // StartApp brings an app up.
 func (r *Repository) StartApp(ctx context.Context, appID string) error {
+	unlock, err := r.lockForMutation(ctx, appID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	if !r.appExists(appID) {
 		return fmt.Errorf("app %s not found", appID)
 	}
@@ -42,11 +47,21 @@ func (r *Repository) StartApp(ctx context.Context, appID string) error {
 // StopApp stops all containers of the app (compose down). Missing app is a
 // no-op.
 func (r *Repository) StopApp(ctx context.Context, appID string) error {
+	unlock, err := r.lockForMutation(ctx, appID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	return r.composeDown(ctx, appID, false)
 }
 
 // RestartApp restarts the app's containers in place.
 func (r *Repository) RestartApp(ctx context.Context, appID string) error {
+	unlock, err := r.lockForMutation(ctx, appID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	if !r.appExists(appID) {
 		return fmt.Errorf("app %s not found", appID)
 	}
@@ -56,6 +71,11 @@ func (r *Repository) RestartApp(ctx context.Context, appID string) error {
 // UpdateApp refreshes a git-sourced app's upstream, then pulls the latest
 // images and recreates the app's containers.
 func (r *Repository) UpdateApp(ctx context.Context, appID string) error {
+	unlock, err := r.lockForMutation(ctx, appID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	if !r.appExists(appID) {
 		return fmt.Errorf("app %s not found", appID)
 	}
@@ -89,6 +109,11 @@ type DeleteResult struct {
 // destroy orphan volumes an admin deliberately kept (those go through the
 // volume registry).
 func (r *Repository) DeleteApp(ctx context.Context, appID string, deleteVolumes bool) (DeleteResult, error) {
+	unlock, err := r.lockForMutation(ctx, appID)
+	if err != nil {
+		return DeleteResult{}, err
+	}
+	defer unlock()
 	// Decided before anything is removed: sweep only an app this agent has.
 	res := DeleteResult{VolumesDeleted: deleteVolumes && r.appExists(appID)}
 	downErr := r.composeDown(ctx, appID, deleteVolumes)
@@ -241,6 +266,11 @@ func encryptedNames(cfg []byte) (vars map[string]bool, files map[string]bool) {
 // commit) and swaps the symlink. The compose project name is id-based, so no
 // restart is needed.
 func (r *Repository) RenameApp(ctx context.Context, appID, newName string) error {
+	unlock, err := r.lockForMutation(ctx, appID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	dir := r.appDataDir(appID)
 	cfg, _, err := r.readAppConfig(dir)
 	if err != nil {

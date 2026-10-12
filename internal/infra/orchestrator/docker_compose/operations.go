@@ -19,6 +19,11 @@ import (
 // deployment up. The folder IS the deployment: compose runs in it directly.
 // Every save is a commit; the commit hash is returned as the revision.
 func (r *Repository) SaveApp(ctx context.Context, app command.AppPayload) (string, error) {
+	unlock, err := r.lockForMutation(ctx, app.AppID)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
 	hash, err := r.saveWithoutDeploy(app)
 	if err != nil {
 		return "", err
@@ -33,6 +38,11 @@ func (r *Repository) SaveApp(ctx context.Context, app command.AppPayload) (strin
 // SaveAppDraft persists and commits without deploying: the commit becomes a
 // draft sitting ahead of the deployed mark until the user deploys it.
 func (r *Repository) SaveAppDraft(ctx context.Context, app command.AppPayload) (string, error) {
+	unlock, err := r.lockForMutation(ctx, app.AppID)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
 	return r.persistApp(app, false)
 }
 
@@ -136,6 +146,11 @@ func (r *Repository) Revisions(ctx context.Context, appID string) ([]command.Rev
 // linear), re-materializes secrets from the restored store, and redeploys.
 // Returns the new HEAD hash.
 func (r *Repository) Rollback(ctx context.Context, appID, hash string) (string, error) {
+	unlock, err := r.lockForMutation(ctx, appID)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
 	newHead, err := r.rollbackWithoutDeploy(appID, hash)
 	if err != nil {
 		return "", err
@@ -339,19 +354,29 @@ func (r *Repository) RefreshDueSources(ctx context.Context) []string {
 			continue
 		}
 
-		changed, sha, err := r.refreshSourceWithoutDeploy(appID)
-		if err != nil {
-			r.log.Warn("source poll failed", "app_id", appID, "error", err)
-			continue
-		}
-		if !changed {
-			continue
-		}
-		r.log.Info("source updated, redeploying", "app_id", appID, "sha", sha)
-		if err := r.deploy(ctx, appID); err != nil {
-			r.log.Warn("redeploy after source update failed", "app_id", appID, "error", err)
-		}
-		updated = append(updated, appID)
+		func() {
+			// Busy (a reload or a user action holds the app): skip this
+			// round rather than stall polling for every other app.
+			unlock, err := r.lockForMutation(ctx, appID)
+			if err != nil {
+				r.log.Info("source poll skipped", "app_id", appID, "error", err)
+				return
+			}
+			defer unlock()
+			changed, sha, err := r.refreshSourceWithoutDeploy(appID)
+			if err != nil {
+				r.log.Warn("source poll failed", "app_id", appID, "error", err)
+				return
+			}
+			if !changed {
+				return
+			}
+			r.log.Info("source updated, redeploying", "app_id", appID, "sha", sha)
+			if err := r.deploy(ctx, appID); err != nil {
+				r.log.Warn("redeploy after source update failed", "app_id", appID, "error", err)
+			}
+			updated = append(updated, appID)
+		}()
 	}
 	return updated
 }

@@ -65,6 +65,14 @@ type Repository struct {
 	staleMu    sync.Mutex
 	stale      map[string][]string
 	staleReady bool
+
+	// appLocks serialize mutations of one app: the distributed agent runs
+	// commands concurrently and the reload worker runs beside them. Lock
+	// order: an app's lock, then sharedMu, then refMu/staleMu. busyWait
+	// bounds a mutator's wait (appBusyWait; tests shorten it).
+	lockMu   sync.Mutex
+	appLocks map[string]chan struct{}
+	busyWait time.Duration
 }
 
 // versionEntry is a cached commit count, valid while HEAD is unchanged.
@@ -83,10 +91,14 @@ func NewRepository(cfg *config.ServerConfig, log *logger.Logger) *Repository {
 		tz:           hostTimezone(),
 		refCache:     make(map[string]refEntry),
 		stale:        make(map[string][]string),
+		appLocks:     make(map[string]chan struct{}),
+		busyWait:     appBusyWait,
 	}
 }
 
-// forgetApp drops an app's in-memory bookkeeping after deletion.
+// forgetApp drops an app's in-memory bookkeeping after deletion. The
+// shared-variable entries are pruned under sharedMu, so a RecomputeStale
+// already running cannot store them again afterwards.
 func (r *Repository) forgetApp(appID string) {
 	r.sourceMu.Lock()
 	delete(r.sourceChecks, appID)
@@ -94,10 +106,15 @@ func (r *Repository) forgetApp(appID string) {
 	r.versionMu.Lock()
 	delete(r.versionCache, appID)
 	r.versionMu.Unlock()
+	r.sharedMu.Lock()
 	r.refMu.Lock()
 	delete(r.refCache, appID)
 	r.refMu.Unlock()
 	r.staleMu.Lock()
 	delete(r.stale, appID)
 	r.staleMu.Unlock()
+	r.sharedMu.Unlock()
+	r.lockMu.Lock()
+	delete(r.appLocks, appID)
+	r.lockMu.Unlock()
 }

@@ -258,7 +258,7 @@ func TestDeleteAppRemovesItsMetricSamples(t *testing.T) {
 }
 
 // An empty app id addresses no app: it must not reach the samples delete,
-// where app_id = '' matches every server's own rows.
+// where app_id = ” matches every server's own rows.
 func TestDeleteAppWithEmptyIDKeepsServerSamples(t *testing.T) {
 	repo, d := newRepo(t)
 	ctx := dbtest.Ctx(t)

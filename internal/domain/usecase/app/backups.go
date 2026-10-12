@@ -144,8 +144,10 @@ func (uc *UseCase) ListOrphans(ctx context.Context, userID, serverID string, req
 
 // DeleteOrphan dispatches storage.delete-orphan. The agent only knows its own
 // server's apps; the API's catalog knows the others', so a folder of an app
-// that is live on another server (the usual way storages are shared) is
-// refused here: its backups are not orphans.
+// that is live on another server of the caller's organizations (the usual way
+// storages are shared) is refused here: its backups are not orphans. An app
+// of another organization is not looked at: the answer would tell a caller
+// that an id is a live app elsewhere, so it is dispatched like an unknown one.
 func (uc *UseCase) DeleteOrphan(ctx context.Context, userID, serverID string, req command.DeleteOrphanRequest) (string, error) {
 	switch app, err := uc.repo.GetApp(ctx, req.AppID); {
 	case errors.Is(err, model.ErrAppNotFound):
@@ -156,10 +158,20 @@ func (uc *UseCase) DeleteOrphan(ctx context.Context, userID, serverID string, re
 		if uc.log != nil {
 			uc.log.Debug("delete-orphan: the catalog could not be asked about the app", "app_id", req.AppID, "error", err)
 		}
-	case app.ID != "" && app.ServerID != serverID:
+	case app.ID != "" && app.ServerID != serverID && uc.ownsServer(ctx, userID, app.ServerID):
 		return "", model.Rejected("that app is live on another server: its backups are not orphans, and are deleted with the app")
 	}
 	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
 		AgentID: serverID, UserID: userID, Type: command.TypeStorageDeleteOrphan, Payload: req,
 	})
+}
+
+// ownsServer reports whether the server is one of the user's organizations'
+// (an unknown answer is no).
+func (uc *UseCase) ownsServer(ctx context.Context, userID, serverID string) bool {
+	if uc.servers == nil {
+		return false
+	}
+	owns, err := uc.servers.UserOwnsServer(ctx, userID, serverID)
+	return err == nil && owns
 }

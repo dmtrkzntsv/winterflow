@@ -39,6 +39,7 @@ func NewHandler(d *Deps) *Handler {
 		AppDomainRepository:     d.AppDomainRepository,
 		ServerDomainRepository:  d.ServerDomainRepository,
 		ServerStorageRepository: d.ServerStorageRepository,
+		Servers:                 d.Servers,
 		Log:                     d.Logger,
 	})
 	return &Handler{usecase: *uc, status: d.StatusCache, servers: d.Servers, log: d.Logger}

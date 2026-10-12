@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -129,17 +130,28 @@ func (c catalogRepo) GetApp(_ context.Context, id string) (model.App, error) {
 	return model.App{}, model.ErrAppNotFound
 }
 
-// An orphan's folder of an app that is live on another server is refused
-// before it reaches the agent (which only knows its own server's apps); an
-// unknown app, or one the catalog puts on this server, goes to the agent.
+// fakeOwnership is the servers each user's organizations own.
+type fakeOwnership map[string][]string
+
+func (f fakeOwnership) UserOwnsServer(_ context.Context, userID, serverID string) (bool, error) {
+	return slices.Contains(f[userID], serverID), nil
+}
+
+// An orphan's folder of an app that is live on another server of the
+// caller's organizations is refused before it reaches the agent (which only
+// knows its own server's apps); an unknown app, or one the catalog puts on
+// this server, goes to the agent. So does an app of another organization,
+// with nothing to tell it apart from an unknown one.
 func TestDeleteOrphanRefusesAnAppLiveElsewhere(t *testing.T) {
 	repo := catalogRepo{byID: map[string]model.App{
 		"elsewhere": {ID: "elsewhere", ServerID: "srv-2", Name: "Shop"},
 		"here":      {ID: "here", ServerID: "srv-1"},
+		"foreign":   {ID: "foreign", ServerID: "srv-9", Name: "Other org's"},
 	}}
-	for app, wantRejected := range map[string]bool{"elsewhere": true, "here": false, "gone": false} {
+	servers := fakeOwnership{"u": {"srv-1", "srv-2"}}
+	for app, wantRejected := range map[string]bool{"elsewhere": true, "here": false, "gone": false, "foreign": false} {
 		disp := &recordingDispatcher{}
-		uc := NewUseCase(&Deps{CommandDispatcher: disp, AppRepository: repo})
+		uc := NewUseCase(&Deps{CommandDispatcher: disp, AppRepository: repo, Servers: servers})
 		_, err := uc.DeleteOrphan(context.Background(), "u", "srv-1", command.DeleteOrphanRequest{Name: "disk", AppID: app})
 		if wantRejected {
 			if !errors.Is(err, model.ErrRejected) || !strings.Contains(err.Error(), "live on another server") || len(disp.all) != 0 {
@@ -154,10 +166,16 @@ func TestDeleteOrphanRefusesAnAppLiveElsewhere(t *testing.T) {
 			t.Errorf("%s: err %v, dispatches %d", app, err, len(disp.all))
 		}
 	}
+	// Without a way to tell whose server it is, nothing is refused.
+	disp := &recordingDispatcher{}
+	uc := NewUseCase(&Deps{CommandDispatcher: disp, AppRepository: repo})
+	if _, err := uc.DeleteOrphan(context.Background(), "u", "srv-1", command.DeleteOrphanRequest{Name: "disk", AppID: "elsewhere"}); err != nil || len(disp.all) != 1 {
+		t.Errorf("no ownership check: err %v, dispatches %d", err, len(disp.all))
+	}
 	// The check is advisory: a catalog that can't answer (Postgres rejects an
 	// id that is no uuid) leaves the decision to the agent.
-	disp := &recordingDispatcher{}
-	uc := NewUseCase(&Deps{CommandDispatcher: disp, AppRepository: catalogRepo{err: errors.New("invalid input syntax for type uuid")}})
+	disp = &recordingDispatcher{}
+	uc = NewUseCase(&Deps{CommandDispatcher: disp, AppRepository: catalogRepo{err: errors.New("invalid input syntax for type uuid")}, Servers: servers})
 	if _, err := uc.DeleteOrphan(context.Background(), "u", "srv-1", command.DeleteOrphanRequest{Name: "disk", AppID: "x"}); err != nil || len(disp.all) != 1 {
 		t.Errorf("a catalog error: err %v, dispatches %d", err, len(disp.all))
 	}

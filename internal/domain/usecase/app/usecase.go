@@ -21,7 +21,16 @@ type UseCase struct {
 	// routes keep it current; save-app checks WF_STORAGE_ references
 	// against it.
 	serverStorages port.ServerStorageRepository
-	log            *logger.Logger
+	// servers answers whether a user's organizations own a server (nil: no
+	// server is known to be theirs).
+	servers ServerAccess
+	log     *logger.Logger
+}
+
+// ServerAccess answers whether a server belongs to one of a user's
+// organizations (port.ServerRepository satisfies it).
+type ServerAccess interface {
+	UserOwnsServer(ctx context.Context, userID, serverID string) (bool, error)
 }
 
 type Deps struct {
@@ -31,7 +40,10 @@ type Deps struct {
 	ServerDomainRepository port.ServerDomainRepository
 	// ServerStorageRepository indexes each server's storages.
 	ServerStorageRepository port.ServerStorageRepository
-	Log                     *logger.Logger
+	// Servers lets a lookup in the catalog stay within the caller's
+	// organizations.
+	Servers ServerAccess
+	Log     *logger.Logger
 }
 
 func NewUseCase(d *Deps) *UseCase {
@@ -41,6 +53,7 @@ func NewUseCase(d *Deps) *UseCase {
 		domains:        d.AppDomainRepository,
 		serverDomains:  d.ServerDomainRepository,
 		serverStorages: d.ServerStorageRepository,
+		servers:        d.Servers,
 		log:            d.Log,
 	}
 }

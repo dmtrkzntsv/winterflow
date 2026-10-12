@@ -139,6 +139,7 @@ export default function AppDetailsPage() {
       <header className="flex flex-wrap items-center gap-x-4 gap-y-3">
         <AppIcon
           name={app.name}
+          id={app.id}
           icon={app.icon}
           color={app.color}
           className="size-14 shrink-0 rounded-xl text-xl"

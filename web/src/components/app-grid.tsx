@@ -83,6 +83,7 @@ export function AppGrid() {
             <Card className="flex h-full items-center gap-3 p-3.5 transition-colors hover:border-primary/40">
               <AppIcon
                 name={app.name}
+                id={app.id}
                 icon={app.icon}
                 color={app.color}
                 className="size-10 shrink-0 rounded-lg text-base"

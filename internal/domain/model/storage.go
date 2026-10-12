@@ -1,6 +1,8 @@
 package model
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -23,6 +25,25 @@ var ErrStorageRef = rejected("unresolved storage variable")
 // ErrReservedVariable marks a user variable whose name a storage provides.
 // It matches ErrRejected.
 var ErrReservedVariable = rejected("reserved variable name")
+
+// ErrConfigInvalid marks an app config blob that is not a JSON object. It
+// matches ErrRejected.
+var ErrConfigInvalid = rejected("invalid app config")
+
+// CheckConfigObject refuses an app config blob that is not a JSON object
+// (`null`, an array, a number): the agent keeps keys in it and would crash
+// on a nil map. An empty blob is fine (no config).
+func CheckConfigObject(raw []byte) error {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 {
+		return nil
+	}
+	var obj map[string]json.RawMessage
+	if raw[0] != '{' || json.Unmarshal(raw, &obj) != nil {
+		return fmt.Errorf("%w: config must be a JSON object", ErrConfigInvalid)
+	}
+	return nil
+}
 
 // StorageType is the kind of a storage.
 type StorageType string
@@ -308,12 +329,21 @@ func StorageVarName(name, field string) string {
 	return storageVarPrefix + varToken(name) + "_" + field
 }
 
+// BackupVarName is the variable for field of the storage the app's backup
+// named name uses.
+func BackupVarName(name, field string) string {
+	return backupVarPrefix + varToken(name) + "_" + field
+}
+
 func varToken(name string) string { return strings.ToUpper(strings.ReplaceAll(name, "-", "_")) }
 
-// StorageRef is one parsed WF_STORAGE_<STORAGE>_<FIELD> reference.
+// StorageRef is one parsed WF_STORAGE_<STORAGE>_<FIELD> or
+// WF_BACKUP_<BACKUP>_<FIELD> reference: exactly one of Storage and Backup
+// is set.
 type StorageRef struct {
 	Var     string // the variable name, e.g. WF_STORAGE_BACKUP_DISK_PATH
 	Storage string // the storage name, e.g. backup-disk
+	Backup  string // the backup name of a WF_BACKUP_ reference, e.g. database
 	Field   string // e.g. PATH
 }
 
@@ -349,18 +379,20 @@ func ScanStorageRefs(contents ...[]byte) []string {
 	return out
 }
 
-// ParseStorageRef splits a referenced variable into storage and field. A
-// WF_BACKUP_ reference names a backup of the app; there are none until
-// backups exist (C2), so it is refused like any undeclared backup.
+// ParseStorageRef splits a referenced variable into storage (WF_STORAGE_)
+// or backup (WF_BACKUP_) and field.
 func ParseStorageRef(v string) (StorageRef, error) {
+	if rest, ok := strings.CutPrefix(v, backupVarPrefix); ok {
+		token, field, ok := splitField(rest)
+		name := tokenName(token)
+		if !ok || ValidateStorageName(name) != nil {
+			return StorageRef{}, fmt.Errorf("%w: ${%s} is not a backup variable: use WF_BACKUP_<BACKUP>_<FIELD> with FIELD one of %s",
+				ErrStorageRef, v, strings.Join(storageFields, ", "))
+		}
+		return StorageRef{Var: v, Backup: name, Field: field}, nil
+	}
 	rest, isStorage := strings.CutPrefix(v, storageVarPrefix)
 	if !isStorage {
-		if backup, ok := strings.CutPrefix(v, backupVarPrefix); ok {
-			if token, _, ok := splitField(backup); ok {
-				backup = token
-			}
-			return StorageRef{}, fmt.Errorf("%w: ${%s}: there is no backup %q in this app", ErrStorageRef, v, tokenName(backup))
-		}
 		return StorageRef{}, fmt.Errorf("%w: %s is not a storage variable", ErrStorageRef, v)
 	}
 	token, field, ok := splitField(rest)
@@ -384,16 +416,22 @@ func splitField(s string) (token, field string, ok bool) {
 
 func tokenName(token string) string { return strings.ToLower(strings.ReplaceAll(token, "_", "-")) }
 
-// CheckStorageRefs parses every reference and requires its storage to
-// exist; the first problem is returned (wrapping ErrStorageRef).
-func CheckStorageRefs(refs []string, exists func(name string) bool) ([]StorageRef, error) {
+// CheckStorageRefs parses every reference: a WF_STORAGE_ one must name a
+// storage that exists, a WF_BACKUP_ one a backup the app declares
+// (backupDeclared; nil declares none). The first problem is returned
+// (wrapping ErrStorageRef).
+func CheckStorageRefs(refs []string, exists func(name string) bool, backupDeclared func(name string) bool) ([]StorageRef, error) {
 	out := make([]StorageRef, 0, len(refs))
 	for _, v := range refs {
 		ref, err := ParseStorageRef(v)
 		if err != nil {
 			return nil, err
 		}
-		if !exists(ref.Storage) {
+		if ref.Backup != "" {
+			if backupDeclared == nil || !backupDeclared(ref.Backup) {
+				return nil, fmt.Errorf("%w: ${%s}: there is no backup %q in this app", ErrStorageRef, v, ref.Backup)
+			}
+		} else if !exists(ref.Storage) {
 			return nil, fmt.Errorf("%w: ${%s}: there is no storage %q on this server", ErrStorageRef, v, ref.Storage)
 		}
 		out = append(out, ref)
@@ -431,6 +469,16 @@ func StorageFieldValue(s Storage, field, secret string) string {
 		return secret
 	}
 	return ""
+}
+
+// BackupFieldValue is the value of field for the app's backup named backup,
+// stored in s: the storage's values, with PREFIX narrowed to the backup's
+// own folder, <storage prefix><app-id>/<backup>/.
+func BackupFieldValue(s Storage, field, secret, appID, backup string) string {
+	if field == FieldPrefix {
+		return StorageFieldValue(s, FieldPrefix, "") + appID + "/" + backup + "/"
+	}
+	return StorageFieldValue(s, field, secret)
 }
 
 // ReservedVariableError refuses a user variable named like a storage

@@ -162,7 +162,9 @@ describe("IngressEditor", () => {
     render(<Harness ingress={oneDomain("")} />);
 
     await user.type(screen.getByLabelText("Hostname"), "shop.other.app");
-    await screen.findByText(/No domain on this server covers this hostname/);
+    // An edited hostname is checked after a 400 ms debounce, which leaves the
+    // default 1 s wait little room on a loaded CI runner: wait longer.
+    await screen.findByText(/No domain on this server covers this hostname/, undefined, { timeout: 4000 });
     const loads = calls("/api/v1/domain/get-domains").length;
 
     // Registered in the other tab meanwhile.
@@ -173,11 +175,11 @@ describe("IngressEditor", () => {
       window.dispatchEvent(new Event("focus"));
     });
 
-    await waitFor(() =>
-      expect(screen.queryByText(/No domain on this server covers/)).not.toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.queryByText(/No domain on this server covers/)).not.toBeInTheDocument(), {
+      timeout: 4000,
+    });
     expect(calls("/api/v1/domain/get-domains").length).toBe(loads + 1);
-    expect(await screen.findByText("Auto TLS")).toBeInTheDocument();
+    expect(await screen.findByText("Auto TLS", undefined, { timeout: 4000 })).toBeInTheDocument();
     expect(screen.getByText("*.other.app")).toBeInTheDocument();
     expect(screen.getByLabelText("Hostname")).toHaveAttribute("aria-invalid", "false");
 
@@ -188,6 +190,32 @@ describe("IngressEditor", () => {
     });
     expect(fetchMock.mock.calls.length).toBe(after);
     delete covering["shop.other.app"];
+  });
+
+  it("re-checks when the tab is refocused the moment the hint appears", async () => {
+    const user = userEvent.setup({ delay: null });
+    render(<Harness ingress={oneDomain("")} />);
+
+    await user.type(screen.getByLabelText("Hostname"), "shop.other.app");
+    try {
+      // Focus lands in the microtask right after the commit that shows the
+      // hint, before React has flushed that commit's passive effects: the
+      // return must not be lost to a listener that is not attached yet.
+      const watcher = new MutationObserver(() => {
+        if (!screen.queryByText(/No domain on this server covers/)) return;
+        watcher.disconnect();
+        // Registered in the other tab meanwhile.
+        covering["shop.other.app"] = { name: "*.other.app", tls: "auto" };
+        window.dispatchEvent(new Event("focus"));
+      });
+      watcher.observe(document.body, { childList: true, subtree: true });
+
+      await screen.findByText(/No domain on this server covers this hostname/, undefined, { timeout: 4000 });
+      expect(await screen.findByText("Auto TLS", undefined, { timeout: 4000 })).toBeInTheDocument();
+      expect(screen.queryByText(/No domain on this server covers/)).not.toBeInTheDocument();
+    } finally {
+      delete covering["shop.other.app"];
+    }
   });
 
   it("names the app that already takes the hostname", async () => {

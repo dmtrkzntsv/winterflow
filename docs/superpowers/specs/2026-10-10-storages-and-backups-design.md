@@ -479,8 +479,8 @@ manifest. Any kind can be deleted by hand.
 
 `backup.run {app_id, backup}` queues a `manual` run at the front of the
 scheduler. It works at any time on any enabled backup, scheduled or
-`every: manual`; a request while the same backup is already running or queued
-joins that run instead of adding another. The command returns once the run is queued; the outcome arrives as
+`every: manual`; a second request while the same backup is already queued or
+running is refused (an error result), so waiters never pile up behind one run. The command returns once the run is queued; the outcome arrives as
 SSE `operation_result` when the run ends. Further pushes are not needed beyond
 the existing health change.
 
@@ -576,23 +576,49 @@ with the result as SSE `operation_result`.
 
 ## UI (C2)
 
-- **App page → Backups section**, shown when the app has any backup:
-  - **Each row** shows the backup name, type, storage, schedule, "last backup
-    4 min ago" and a health badge (`ok`, `late`, `failing`, `running`, `never`,
-    `off`). The schedule reads "Manual" for `every: manual`.
-  - **Enable switch:** opens a storage picker of this server's storages, with
-    a link to Settings → Storages when there are none.
-  - **Edit:** schedule (Manual, or an interval), retention (with the note
-    "capped at N days on this server" when tiers reach past the ceiling),
-    location (volume or service) and paths. Each field is badged "from
-    template" or "changed", with *Reset to template*.
-  - **Back up now.**
+- **App page → Backups section**, shown when the app has any backup, under
+  the line "Backups copy this app's data to one of the server's storages on a
+  schedule. Backups the compose file declares are listed ready to set up."
+  - **The table** has three columns and no header row: the backup, its
+    status, and its actions.
+  - **Backup cell:** the name, and one muted line under it, "<Folders|SQLite
+    database> · <location> → <storage> · <schedule>" ("→ storage" is left out
+    while there is none; the schedule reads "Manual" for `every: manual`).
+  - **Status cell:** the state badge (`OK`, `Late`, `Failing`, `Running`, `Not
+    run yet`, `Off`) with "· <time of the last success>", and "next <time>"
+    on a second muted line. A failing backup adds its error in a line, the
+    agent's full text behind Details.
+  - **Actions** are text buttons, "Back up now", "Copies & restore" and
+    "Edit"; below the `sm` breakpoint they collapse into one "⋯" menu with the
+    same items and the same disabled rules (no storage: no copies; off or
+    running: no Back up now). A custom backup (its own tool
+    runs it) has Edit only, which shows just a "Run its backup tool" switch
+    and the storage with "Change storage…".
+  - **Set up…:** a backup that has no storage yet (a compose-declared one)
+    has this button first in its actions. It opens a storage picker of this
+    server's storages (a link to Settings → Storages when there are none) and
+    turns the backup on with the pick.
+  - **Edit:** a "Back up on schedule" switch (the on/off of the backup, saved
+    with the rest; disabled until the backup has a storage, with "Pick a
+    storage…" leading to the picker), the storage with "Change storage…"
+    (the change keeps the backup on or off as it is), schedule (Manual, or an
+    interval), retention (with the note "capped at N days on this server" when
+    tiers reach past the ceiling), location (volume or service) and paths. Each
+    of those is badged "from template" or "changed", with *Reset to template*.
   - **Restore:** a points list (time, kind, size, with a Delete action per
     point), then a confirmation stating that the app stops and the current
     database is first saved as a `pre-restore` point.
-  - **Add backup:** a UI-added `sqlite` or `files` entry. A picker lists the
-    compose file's volumes and each service's mounts (volumes and bind
-    mounts), then takes the path or paths.
+  - **Add backup:** a UI-added `sqlite` or `files` entry, created **on** with
+    its storage in the one update. The fields run: where the data is (a
+    picker of the compose file's volumes and each service's mounts, volumes
+    and bind mounts), the paths, the type ("Folders and files" or "SQLite
+    database file"), the storage (required: a select of this server's
+    storages, preselected when there is exactly one; with none, the dialog
+    says so, links to Settings → Storages ("Add storage") and Add is
+    disabled), the schedule, and the name last. The name is filled in from what
+    was picked (the first path's last segment, else the volume or mount name;
+    lowercase, a valid backup name, not already taken) until the user types
+    their own.
 - **App grid:** a small warning dot on cards with a `late` or `failing`
   backup.
 - **Delete app dialog:** an "Also delete backups" checkbox, unchecked, under

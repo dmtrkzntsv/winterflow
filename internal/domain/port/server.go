@@ -41,6 +41,13 @@ type ServerRepository interface {
 	// if the server has no such capability recorded.
 	GetCapability(ctx context.Context, serverID, name string) (value string, ok bool, err error)
 
+	ServerOwnership
+}
+
+// ServerOwnership answers whether a server belongs to one of a user's
+// organizations: the narrow slice of ServerRepository that callers needing
+// only the authorization check depend on.
+type ServerOwnership interface {
 	// UserOwnsServer reports whether the server belongs to one of the user's
 	// organizations. Every server-addressed API operation must pass this check
 	// before dispatching — server ids alone are not authorization.

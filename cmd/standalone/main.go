@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+	backupcli "winterflow/internal/app/backup/cli"
 	"winterflow/internal/app/web"
 	"winterflow/internal/infra/bootstrap"
 	"winterflow/pkg/config"
@@ -47,6 +48,9 @@ func main() {
 	switch cmd {
 	case "serve":
 		serve(args)
+	case "backup":
+		// Hidden: what the agent runs inside a backup helper container.
+		os.Exit(backupcli.Main(args, os.Stdout, os.Stderr))
 	case "version", "-v", "--version":
 		fmt.Println(version.GetVersion())
 	case "help", "-h", "--help":

@@ -21,8 +21,15 @@ type UseCase struct {
 	// routes keep it current; save-app checks WF_STORAGE_ references
 	// against it.
 	serverStorages port.ServerStorageRepository
-	log            *logger.Logger
+	// servers answers whether a user's organizations own a server (nil: no
+	// server is known to be theirs).
+	servers ServerAccess
+	log     *logger.Logger
 }
+
+// ServerAccess answers whether a server belongs to one of a user's
+// organizations (port.ServerRepository satisfies it).
+type ServerAccess = port.ServerOwnership
 
 type Deps struct {
 	CommandDispatcher      port.CommandDispatcher
@@ -31,7 +38,10 @@ type Deps struct {
 	ServerDomainRepository port.ServerDomainRepository
 	// ServerStorageRepository indexes each server's storages.
 	ServerStorageRepository port.ServerStorageRepository
-	Log                     *logger.Logger
+	// Servers lets a lookup in the catalog stay within the caller's
+	// organizations.
+	Servers ServerAccess
+	Log     *logger.Logger
 }
 
 func NewUseCase(d *Deps) *UseCase {
@@ -41,6 +51,7 @@ func NewUseCase(d *Deps) *UseCase {
 		domains:        d.AppDomainRepository,
 		serverDomains:  d.ServerDomainRepository,
 		serverStorages: d.ServerStorageRepository,
+		servers:        d.Servers,
 		log:            d.Log,
 	}
 }
@@ -103,13 +114,14 @@ func (uc *UseCase) ControlApp(ctx context.Context, userID, serverID, appID strin
 }
 
 // DeleteApp dispatches an app.delete to the agent and, on success, removes the
-// app from the DB cache.
-func (uc *UseCase) DeleteApp(ctx context.Context, userID, serverID, appID string, deleteVolumes bool) (string, error) {
+// app from the DB cache. deleteBackups also deletes the app's backups (else
+// the agent marks them as a deleted app's).
+func (uc *UseCase) DeleteApp(ctx context.Context, userID, serverID, appID string, deleteVolumes, deleteBackups bool) (string, error) {
 	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
 		AgentID: serverID,
 		UserID:  userID,
 		Type:    command.TypeAppDelete,
-		Payload: command.DeleteAppRequest{AppID: appID, DeleteVolumes: deleteVolumes},
+		Payload: command.DeleteAppRequest{AppID: appID, DeleteVolumes: deleteVolumes, DeleteBackups: deleteBackups},
 		OnResult: func(res port.CommandResult) {
 			if !res.Success {
 				return
@@ -342,7 +354,8 @@ func (uc *UseCase) SaveApp(ctx context.Context, userID, serverID string, app mod
 	// New apps have no id yet; the API owns identity, so assign one here and use
 	// it both on the wire (the agent keys its on-disk storage by app id) and on
 	// the persisted catalog record.
-	if app.ID == "" {
+	isNew := app.ID == ""
+	if isNew {
 		app.ID = util.GenerateID()
 	}
 	payload.AppID = app.ID
@@ -390,7 +403,7 @@ func (uc *UseCase) SaveApp(ctx context.Context, userID, serverID string, app mod
 		}
 	}
 
-	if err := uc.requireStorageRefs(ctx, serverID, payload); err != nil {
+	if err := uc.requireStorageRefs(ctx, serverID, payload, isNew); err != nil {
 		return "", err
 	}
 

@@ -64,7 +64,11 @@ func (m *Manager) Dispatch(ctx context.Context, in port.DispatchInput) (string, 
 		return "", err
 	}
 
-	m.remember(requestID, in.UserID, in.OnResult)
+	ttl := pendingTTL
+	if in.Wait > ttl {
+		ttl = in.Wait
+	}
+	m.remember(requestID, in.UserID, in.OnResult, ttl)
 
 	if err := m.bus.Publish(ctx, m.cfg.GetBusRequestQueue(), bus.CommandMessage{
 		AgentID:   in.AgentID,
@@ -114,11 +118,11 @@ func rawPayload(v any) []byte {
 	}
 }
 
-func (m *Manager) remember(requestID, userID string, onResult func(port.CommandResult)) {
+func (m *Manager) remember(requestID, userID string, onResult func(port.CommandResult), ttl time.Duration) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.evictExpiredLocked()
-	m.pending[requestID] = pending{userID: userID, expires: time.Now().Add(pendingTTL), onResult: onResult}
+	m.pending[requestID] = pending{userID: userID, expires: time.Now().Add(ttl), onResult: onResult}
 }
 
 func (m *Manager) forget(requestID string) {

@@ -58,9 +58,15 @@ func storageFoldersExist(t *testing.T, r *Repository) {
 	}
 }
 
-// materialize is materializeStorageEnv for the app in dir.
+// materialize is materializeStorageEnv for the app in dir, with its
+// backups.
 func materialize(ctx context.Context, r *Repository, dir string) error {
-	return r.materializeStorageEnv(ctx, dir, r.appComposeFiles(dir))
+	files := r.appComposeFiles(dir)
+	cfg, err := r.appBackups(dir, files)
+	if err != nil {
+		return err
+	}
+	return r.materializeStorageEnv(ctx, dir, files, cfg.backups)
 }
 
 func TestMaterializeStorageEnv(t *testing.T) {
@@ -179,6 +185,7 @@ func TestGetAppReportsStorageVariables(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []command.StorageVariable{
+		{Name: "WF_BACKUP_DB_PATH", Backup: "db"},
 		{Name: "WF_STORAGE_BACKUP_DISK_PATH", Storage: "backup-disk"},
 		{Name: "WF_STORAGE_HETZNER_ACCESS_KEY_ID", Storage: "hetzner"},
 		{Name: "WF_STORAGE_HETZNER_BUCKET", Storage: "hetzner"},

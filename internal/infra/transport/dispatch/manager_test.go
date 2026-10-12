@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"time"
 
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
@@ -90,5 +91,31 @@ func TestResultDeliveredOnlyOnce(t *testing.T) {
 	defer nm.mu.Unlock()
 	if len(nm.seen) != 1 {
 		t.Errorf("expected exactly 1 delivery, got %d", len(nm.seen))
+	}
+}
+
+// A command whose result comes when long work ends is awaited longer; a
+// shorter Wait never cuts the default.
+func TestDispatchWait(t *testing.T) {
+	m, _ := newManager(t)
+	long := portInput("agent-1", "user-1", command.TypeBackupRun, command.RunBackupRequest{})
+	long.Wait = 2 * time.Hour
+	short := portInput("agent-1", "user-1", command.TypeAppGet, command.GetAppRequest{})
+	short.Wait = time.Second
+	ids := map[string]time.Duration{}
+	for in, want := range map[*port.DispatchInput]time.Duration{&long: 2 * time.Hour, &short: pendingTTL} {
+		id, err := m.Dispatch(context.Background(), *in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids[id] = want
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for id, want := range ids {
+		left := time.Until(m.pending[id].expires)
+		if left < want-time.Minute || left > want {
+			t.Errorf("%s waits %s, want %s", id, left, want)
+		}
 	}
 }

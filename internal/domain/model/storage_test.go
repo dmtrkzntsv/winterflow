@@ -188,6 +188,8 @@ func TestParseStorageRef(t *testing.T) {
 		"WF_STORAGE_EU_REGION":                 {Storage: "eu", Field: FieldRegion},
 		"WF_STORAGE_HETZNER_ACCESS_KEY_ID":     {Storage: "hetzner", Field: FieldAccessKeyID},
 		"WF_STORAGE_HETZNER_SECRET_ACCESS_KEY": {Storage: "hetzner", Field: FieldSecretAccessKey},
+		"WF_BACKUP_DB_PATH":                    {Backup: "db", Field: FieldPath},
+		"WF_BACKUP_MEDIA_FILES_PREFIX":         {Backup: "media-files", Field: FieldPrefix},
 	}
 	for v, want := range cases {
 		want.Var = v
@@ -203,8 +205,8 @@ func TestParseStorageRef(t *testing.T) {
 		"WF_STORAGE_HETZNER_COLOR": "is not a storage variable",
 		"WF_STORAGE_TYPE":          "is not a storage variable",
 		"WF_STORAGE__X_TYPE":       "is not a storage variable",
-		"WF_BACKUP_DB_PATH":        `there is no backup "db" in this app`,
-		"WF_BACKUP_MEDIA_FILES":    `there is no backup "media-files" in this app`,
+		"WF_BACKUP_MEDIA_FILES":    "is not a backup variable",
+		"WF_BACKUP__X_TYPE":        "is not a backup variable",
 		"PATH":                     "is not a storage variable",
 	} {
 		_, err := ParseStorageRef(v)
@@ -216,16 +218,27 @@ func TestParseStorageRef(t *testing.T) {
 
 func TestCheckStorageRefs(t *testing.T) {
 	exists := func(n string) bool { return n == "hetzner" }
-	refs, err := CheckStorageRefs([]string{"WF_STORAGE_HETZNER_BUCKET", "WF_STORAGE_HETZNER_TYPE"}, exists)
+	refs, err := CheckStorageRefs([]string{"WF_STORAGE_HETZNER_BUCKET", "WF_STORAGE_HETZNER_TYPE"}, exists, nil)
 	if err != nil || len(refs) != 2 || refs[0].Field != FieldBucket {
 		t.Fatalf("refs = %+v, %v", refs, err)
 	}
-	_, err = CheckStorageRefs([]string{"WF_STORAGE_HETZNER_BUCKET", "WF_STORAGE_GONE_PATH"}, exists)
+	_, err = CheckStorageRefs([]string{"WF_STORAGE_HETZNER_BUCKET", "WF_STORAGE_GONE_PATH"}, exists, nil)
 	if !errors.Is(err, ErrStorageRef) || err.Error() != `unresolved storage variable: ${WF_STORAGE_GONE_PATH}: there is no storage "gone" on this server` {
 		t.Fatalf("err = %v", err)
 	}
-	if _, err := CheckStorageRefs([]string{"WF_BACKUP_DB_PATH"}, exists); !errors.Is(err, ErrStorageRef) {
-		t.Fatalf("backup ref: %v", err)
+	// WF_BACKUP_ references resolve against the app's declared backups,
+	// whatever storages exist.
+	_, err = CheckStorageRefs([]string{"WF_BACKUP_DB_PATH"}, exists, nil)
+	if !errors.Is(err, ErrStorageRef) || !strings.Contains(err.Error(), `${WF_BACKUP_DB_PATH}: there is no backup "db" in this app`) {
+		t.Fatalf("undeclared backup: %v", err)
+	}
+	declared := func(n string) bool { return n == "db" }
+	refs, err = CheckStorageRefs([]string{"WF_BACKUP_DB_PATH", "WF_STORAGE_HETZNER_TYPE"}, exists, declared)
+	if err != nil || len(refs) != 2 || refs[0].Backup != "db" || refs[0].Storage != "" {
+		t.Fatalf("declared backup: %+v, %v", refs, err)
+	}
+	if _, err := CheckStorageRefs([]string{"WF_BACKUP_MEDIA_PATH"}, exists, declared); err == nil {
+		t.Fatal("another backup passed")
 	}
 }
 
@@ -250,6 +263,22 @@ func TestStorageFieldValue(t *testing.T) {
 	}
 	if got := StorageVarName("backup-disk", FieldPath); got != "WF_STORAGE_BACKUP_DISK_PATH" {
 		t.Fatalf("var name = %q", got)
+	}
+	if got := BackupVarName("media-files", FieldPrefix); got != "WF_BACKUP_MEDIA_FILES_PREFIX" {
+		t.Fatalf("backup var name = %q", got)
+	}
+	// A backup's PREFIX is its own folder in the storage; other fields are
+	// the storage's.
+	for _, tc := range []struct {
+		s           Storage
+		field, want string
+	}{
+		{s, FieldPrefix, "p/app-1/db/"}, {l, FieldPrefix, "app-1/db/"}, {s, FieldBucket, "backups"},
+		{s, FieldSecretAccessKey, "plain"}, {l, FieldPath, "/mnt/b"},
+	} {
+		if got := BackupFieldValue(tc.s, tc.field, "plain", "app-1", "db"); got != tc.want {
+			t.Errorf("backup %s %s = %q, want %q", tc.s.Type, tc.field, got, tc.want)
+		}
 	}
 }
 

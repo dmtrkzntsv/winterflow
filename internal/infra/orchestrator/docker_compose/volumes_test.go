@@ -136,7 +136,7 @@ func TestDeleteAppWithVolumesNeverFailsOnCleanup(t *testing.T) {
 	r := newTestRepo(t)
 	savedApp(t, r, "app-1", "demo", "x\n")
 	t.Setenv("PATH", t.TempDir()) // no docker binary → every exec fails
-	res, err := r.DeleteApp(context.Background(), "app-1", true)
+	res, err := r.DeleteApp(context.Background(), "app-1", true, false)
 	if err != nil {
 		t.Fatalf("delete must not fail on cleanup errors: %v", err)
 	}
@@ -156,7 +156,7 @@ func TestDeleteAppWithVolumesNeverFailsOnCleanup(t *testing.T) {
 func TestDeleteAppMissingNeverSweeps(t *testing.T) {
 	r := newTestRepo(t)
 	t.Setenv("PATH", t.TempDir()) // any docker exec would yield a warning
-	res, err := r.DeleteApp(context.Background(), "missing", true)
+	res, err := r.DeleteApp(context.Background(), "missing", true, false)
 	if err != nil {
 		t.Fatalf("deleting a missing app is a no-op: %v", err)
 	}

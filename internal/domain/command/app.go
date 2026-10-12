@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"winterflow/internal/domain/backup/recipe"
 	"winterflow/internal/domain/model"
 )
 
@@ -93,10 +94,14 @@ type SaveAppRequest struct {
 	Draft bool `json:"draft,omitempty"`
 }
 
-// Validate checks the app id and refuses user variables named like storage
-// variables (WF_STORAGE_, WF_BACKUP_): those only come from storages.
+// Validate checks the app id, that the config blob is a JSON object, and
+// refuses user variables named like storage variables (WF_STORAGE_,
+// WF_BACKUP_): those only come from storages.
 func (r SaveAppRequest) Validate() error {
 	if err := validateAppID(r.App.AppID); err != nil {
+		return err
+	}
+	if err := model.CheckConfigObject(r.App.Config); err != nil {
 		return err
 	}
 	for _, v := range r.App.Variables {
@@ -128,6 +133,19 @@ type GetAppResponse struct {
 	// StorageVariables are the WF_STORAGE_ variables the app's compose files
 	// reference: shown read-only in the Variables panel, never with values.
 	StorageVariables []StorageVariable `json:"storage_variables,omitempty"`
+	// Backups are the app's effective backups (recipe + overrides);
+	// BackupsError says why they could not be read (an invalid recipe).
+	Backups      []recipe.EffectiveBackup `json:"backups,omitempty"`
+	BackupsError string                   `json:"backups_error,omitempty"`
+	// BackupsBase identifies the stored backups list (the overrides): the
+	// base an update-backups sent from this view carries.
+	BackupsBase string `json:"backups_base,omitempty"`
+	// BackupTargets are where a backup added in the UI can point (the
+	// compose files' volumes and each service's mounts); nil when a compose
+	// file can't be read.
+	BackupTargets *recipe.Targets `json:"backup_targets,omitempty"`
+	// RetentionDays is the server's BACKUP_RETENTION_DAYS (0: no ceiling).
+	RetentionDays int `json:"retention_days,omitempty"`
 }
 
 // --- app.revisions --------------------------------------------------------
@@ -192,6 +210,9 @@ type AppStatus struct {
 	AppID      string              `json:"app_id"`
 	StatusCode ContainerStatusCode `json:"status_code"`
 	Containers []ContainerStatus   `json:"containers"`
+	// Backups is the health of each of the app's backups (none: omitted).
+	// It never changes StatusCode.
+	Backups []BackupHealth `json:"backups,omitempty"`
 }
 
 type GetAppsStatusRequest struct{}
@@ -251,6 +272,10 @@ type DeleteAppRequest struct {
 	// DeleteVolumes also removes the app's compose-owned Docker volumes
 	// (never external ones). False keeps them, as before.
 	DeleteVolumes bool `json:"delete_volumes,omitempty"`
+	// DeleteBackups also deletes the app's backups (every copy, in every
+	// storage its backups use). False keeps them, marked as a deleted app's,
+	// for BACKUP_RETENTION_DAYS.
+	DeleteBackups bool `json:"delete_backups,omitempty"`
 }
 
 func (r DeleteAppRequest) Validate() error { return validateAppID(r.AppID) }
@@ -264,6 +289,9 @@ type DeleteAppResponse struct {
 	// (the volume sweep ran). An agent that predates the flag never sets it,
 	// which lets the UI tell "volumes removed" from "request ignored".
 	VolumesDeleted bool `json:"volumes_deleted,omitempty"`
+	// BackupsDeleted is true only when the agent honoured delete_backups
+	// (an agent that predates the flag keeps them).
+	BackupsDeleted bool `json:"backups_deleted,omitempty"`
 }
 
 // --- app.rename ---------------------------------------------------------------

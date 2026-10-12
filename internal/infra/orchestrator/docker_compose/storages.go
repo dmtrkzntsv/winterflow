@@ -16,6 +16,7 @@ import (
 
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
+	"winterflow/internal/infra/backup/store"
 	"winterflow/pkg/crypto"
 )
 
@@ -63,11 +64,6 @@ func detached(fn func() error) <-chan error {
 	return done
 }
 
-// mountRoots are the folders the systemd unit lets the agent write
-// (ReadWritePaths=-/mnt -/media): the usual mount points of USB disks and
-// network shares.
-var mountRoots = []string{"/mnt", "/media"}
-
 // ListStorages reports every storage (secret masked) with the apps whose
 // compose files reference it; withApps false skips finding those (a read of
 // every app's compose files) and reports none.
@@ -99,10 +95,10 @@ func describeStorage(s model.Storage, apps []string) command.StorageInfo {
 }
 
 // storageUsers maps each storage name to the ids of the apps (in id order)
-// whose compose files reference it. File reads only, on request — never
-// polled. An app whose compose files can't be read is reported in the error
-// while the map keeps every app read; callers that must not miss a user
-// refuse on the error.
+// whose compose files reference it or whose enabled backups use it. File
+// reads only, on request — never polled. An app whose compose files can't
+// be read is reported in the error while the map keeps every app read;
+// callers that must not miss a user refuse on the error.
 func (r *Repository) storageUsers() (map[string][]string, error) {
 	users := map[string][]string{}
 	entries, err := os.ReadDir(r.cfg.GetAppsDataDir())
@@ -118,19 +114,33 @@ func (r *Repository) storageUsers() (map[string][]string, error) {
 			continue
 		}
 		dir := filepath.Join(r.cfg.GetAppsDataDir(), e.Name())
-		refs, err := r.storageRefs(dir, r.appComposeFiles(dir))
+		files := r.appComposeFiles(dir)
+		refs, err := r.storageRefs(dir, files)
 		if err != nil {
 			problems = append(problems, e.Name()+": "+err.Error())
 			continue
 		}
-		seen := map[string]bool{}
+		var used []string
 		for _, v := range refs {
-			ref, err := model.ParseStorageRef(v)
-			if err != nil || seen[ref.Storage] {
-				continue
+			if ref, err := model.ParseStorageRef(v); err == nil && ref.Storage != "" {
+				used = append(used, ref.Storage)
 			}
-			seen[ref.Storage] = true
-			users[ref.Storage] = append(users[ref.Storage], e.Name())
+		}
+		cfg, err := r.appBackups(dir, files)
+		if err != nil {
+			problems = append(problems, e.Name()+": "+err.Error())
+		}
+		for _, b := range cfg.backups {
+			if b.Enabled {
+				used = append(used, b.Storage)
+			}
+		}
+		seen := map[string]bool{}
+		for _, name := range used {
+			if !seen[name] {
+				seen[name] = true
+				users[name] = append(users[name], e.Name())
+			}
 		}
 	}
 	if len(problems) > 0 {
@@ -234,7 +244,7 @@ func explainWrite(s model.Storage, err error) error {
 	if s.Type != model.StorageLocal || !(errors.Is(err, fs.ErrPermission) || errors.Is(err, syscall.EROFS)) {
 		return fmt.Errorf("write a test file: %w", err)
 	}
-	for _, root := range mountRoots {
+	for _, root := range store.MountRoots {
 		if within(s.Local.Path, root) {
 			return fmt.Errorf("cannot write to %s: %w — make the folder writable by the user winterflow runs as", s.Local.Path, err)
 		}
@@ -343,7 +353,11 @@ func (r *Repository) redeployStorageUsers(ctx context.Context, ids []string) (re
 			continue
 		}
 		name := r.appName(r.appDataDir(id), id)
-		if r.hasDraft(id) {
+		switch r.redeployCheck(id, r.hasDraft(id)) {
+		case redeployRestoring:
+			warnings = append(warnings, name+" is being restored and was not redeployed: deploy it afterwards to use the new storage settings")
+			continue
+		case redeployDraft:
 			warnings = append(warnings, name+" has undeployed changes and was not redeployed: deploy it to use the new storage settings")
 			continue
 		}
@@ -363,6 +377,29 @@ func (r *Repository) redeployStorageUsers(ctx context.Context, ids []string) (re
 		redeployed = append(redeployed, id)
 	}
 	return redeployed, warnings
+}
+
+// redeploySkip is why a running app is not brought up again after a config
+// change (storage.save, backup.update).
+type redeploySkip int
+
+const (
+	redeployAllowed   redeploySkip = iota
+	redeployRestoring              // a restore of the app runs: it owns the containers
+	redeployDraft                  // undeployed changes: bringing it up would deploy them
+)
+
+// redeployCheck decides whether a running app may be brought up again after
+// a config change; draft says it has undeployed changes. Both redeploying
+// paths use it.
+func (r *Repository) redeployCheck(appID string, draft bool) redeploySkip {
+	switch {
+	case r.restoreRunning(appID):
+		return redeployRestoring
+	case draft:
+		return redeployDraft
+	}
+	return redeployAllowed
 }
 
 // composeProjectsUp is the set of compose projects with containers (one
@@ -405,7 +442,7 @@ func (r *Repository) DeleteStorage(_ context.Context, name string) error {
 		for _, id := range ids {
 			names = append(names, r.appName(r.appDataDir(id), id))
 		}
-		return fmt.Errorf("%s is used by %s: remove its WF_STORAGE_ variables from those apps first", name, strings.Join(names, ", "))
+		return fmt.Errorf("%s is used by %s: remove its WF_STORAGE_ variables from those apps and turn off their backups to it first", name, strings.Join(names, ", "))
 	}
 	existed, err := r.storages.Delete(name)
 	if err != nil {

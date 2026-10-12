@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	appagent "winterflow/internal/app/agent"
+	"winterflow/internal/domain/backup/recipe"
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
 	"winterflow/internal/infra/transport/codec"
@@ -253,7 +254,7 @@ func defaultScript(typ command.Type) script {
 	case command.TypeAppGet:
 		return func(raw json.RawMessage) reply {
 			in := decode[command.GetAppRequest](raw)
-			return reply{Payload: command.GetAppResponse{App: command.AppPayload{AppID: in.AppID, Config: []byte(`{}`), Variables: []command.ContentItem{}, Files: []command.ContentItem{}}}}
+			return reply{Payload: command.GetAppResponse{App: command.AppPayload{AppID: in.AppID, Config: []byte(`{}`), Variables: []command.ContentItem{}, Files: []command.ContentItem{}}, BackupsBase: "base-0"}}
 		}
 	case command.TypeAppControl:
 		return func(raw json.RawMessage) reply {
@@ -324,6 +325,44 @@ func defaultScript(typ command.Type) script {
 		return func(raw json.RawMessage) reply {
 			return reply{Payload: command.ImageTagsResponse{Image: decode[command.ImageTagsRequest](raw).Image, Tags: []string{"latest"}}}
 		}
+	case command.TypeBackupUpdate:
+		return func(raw json.RawMessage) reply {
+			in := decode[command.UpdateBackupsRequest](raw)
+			return reply{Payload: command.UpdateBackupsResponse{AppID: in.AppID, Revision: "rev-2", Backups: []recipe.EffectiveBackup{}, BackupsBase: "base-" + in.Base}}
+		}
+	case command.TypeBackupPoints:
+		return func(raw json.RawMessage) reply {
+			in := decode[command.ListRestorePointsRequest](raw)
+			return reply{Payload: command.ListRestorePointsResponse{AppID: in.AppID, Backup: in.Backup, Points: []command.RestorePoint{
+				{ID: "20261011T120000Z-scheduled", Time: 1791720000, Kind: command.PointScheduled, Size: 1024, Expires: 1807272000}}}}
+		}
+	case command.TypeBackupRun:
+		return func(raw json.RawMessage) reply {
+			in := decode[command.RunBackupRequest](raw)
+			return reply{Payload: command.RunBackupResponse{AppID: in.AppID, Backup: in.Backup,
+				Point: &command.RestorePoint{ID: "20261011T130000Z-manual", Time: 1791723600, Kind: command.PointManual, Size: 2048}}}
+		}
+	case command.TypeBackupDeletePoint:
+		return func(raw json.RawMessage) reply {
+			in := decode[command.DeleteRestorePointRequest](raw)
+			return reply{Payload: command.DeleteRestorePointResponse{AppID: in.AppID, Backup: in.Backup, Point: in.Point}}
+		}
+	case command.TypeBackupRestore:
+		return func(raw json.RawMessage) reply {
+			in := decode[command.RestoreBackupRequest](raw)
+			return reply{Payload: command.RestoreBackupResponse{AppID: in.AppID, Backup: in.Backup, RestoredPoint: in.Point,
+				PreRestorePoint: "20261011T140000Z-pre-restore"}}
+		}
+	case command.TypeStorageOrphans:
+		return func(raw json.RawMessage) reply {
+			return reply{Payload: command.ListOrphansResponse{Name: decode[command.ListOrphansRequest](raw).Name, Orphans: []command.Orphan{
+				{AppID: "gone-app", AppName: "Shop", DeletedAt: 1790812800, PurgeAt: 1806364800, Copies: 3, Bytes: 4096, Newest: 1790812000}}}}
+		}
+	case command.TypeStorageDeleteOrphan:
+		return func(raw json.RawMessage) reply {
+			in := decode[command.DeleteOrphanRequest](raw)
+			return reply{Payload: command.DeleteOrphanResponse{Name: in.Name, AppID: in.AppID, Deleted: 6}}
+		}
 	case command.TypeAgentUpdate:
 		return func(raw json.RawMessage) reply {
 			return reply{Payload: command.UpdateAgentResponse{FromVersion: "v1", ToVersion: decode[command.UpdateAgentRequest](raw).Version, Scheduled: true}}
@@ -346,6 +385,8 @@ func TestFakeAgentAnswersEveryCommandType(t *testing.T) {
 		command.TypeVolumeCreate, command.TypeVolumeDelete, command.TypeImageTags, command.TypeAgentUpdate,
 		command.TypeDomainList, command.TypeDomainCreate, command.TypeDomainDelete,
 		command.TypeStorageList, command.TypeStorageTest, command.TypeStorageSave, command.TypeStorageDelete,
+		command.TypeBackupUpdate, command.TypeBackupPoints, command.TypeBackupRun, command.TypeBackupDeletePoint,
+		command.TypeBackupRestore, command.TypeStorageOrphans, command.TypeStorageDeleteOrphan,
 	} {
 		payload := []byte(`{}`)
 		if typ == command.TypeStorageSave {

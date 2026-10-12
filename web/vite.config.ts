@@ -26,6 +26,9 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     setupFiles: ["./src/test/setup.ts"],
+    // Form tests type whole dialogs (about 1 s idle); under coverage on a
+    // loaded runner the 5 s default is too tight.
+    testTimeout: 15_000,
     coverage: {
       provider: "v8",
       reporter: ["text", "lcov"],

@@ -196,11 +196,16 @@ func (r *Repository) ensureSource(ctx context.Context, dir string, spec sourceSp
 // sourceTokenPlaintext decrypts the stored repo token; empty when absent or
 // undecryptable (anonymous access is attempted then).
 func (r *Repository) sourceTokenPlaintext(dir string) string {
-	store := loadSecretStore(dir)
-	if store.SourceToken == "" {
+	return r.decryptSourceToken(loadSecretStore(dir).SourceToken)
+}
+
+// decryptSourceToken decrypts a repo token's ciphertext; empty when there is
+// none or it can't be decrypted (anonymous access is attempted then).
+func (r *Repository) decryptSourceToken(ciphertext string) string {
+	if ciphertext == "" {
 		return ""
 	}
-	plaintext, err := crypto.DecryptWithPrivateKey(r.cfg.GetAgentKeyPath(), store.SourceToken)
+	plaintext, err := crypto.DecryptWithPrivateKey(r.cfg.GetAgentKeyPath(), ciphertext)
 	if err != nil {
 		r.log.Warn("failed to decrypt source token, trying anonymous", "error", err)
 		return ""

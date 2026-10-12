@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"winterflow/internal/domain/command"
+	"winterflow/pkg/fsutil"
 )
 
 // appExists reports whether the app's data dir is present.
@@ -19,6 +20,11 @@ func (r *Repository) appExists(appID string) bool {
 // deploy (re)materializes secrets and brings the app up — the folder is the
 // deployment, so nothing needs rendering.
 func (r *Repository) deploy(ctx context.Context, appID string) error {
+	end, err := r.beginOp(appID)
+	if err != nil {
+		return err
+	}
+	defer end()
 	dir := r.appDataDir(appID)
 	if err := r.materializeSecrets(dir, loadSecretStore(dir)); err != nil {
 		return fmt.Errorf("materialize secrets: %w", err)
@@ -33,6 +39,11 @@ func (r *Repository) deploy(ctx context.Context, appID string) error {
 
 // StartApp brings an app up.
 func (r *Repository) StartApp(ctx context.Context, appID string) error {
+	end, err := r.beginOp(appID)
+	if err != nil {
+		return err
+	}
+	defer end()
 	if !r.appExists(appID) {
 		return fmt.Errorf("app %s not found", appID)
 	}
@@ -42,11 +53,19 @@ func (r *Repository) StartApp(ctx context.Context, appID string) error {
 // StopApp stops all containers of the app (compose down). Missing app is a
 // no-op.
 func (r *Repository) StopApp(ctx context.Context, appID string) error {
+	if err := r.refuseDuringRestore(appID); err != nil {
+		return err
+	}
 	return r.composeDown(ctx, appID, false)
 }
 
 // RestartApp restarts the app's containers in place.
 func (r *Repository) RestartApp(ctx context.Context, appID string) error {
+	end, err := r.beginOp(appID)
+	if err != nil {
+		return err
+	}
+	defer end()
 	if !r.appExists(appID) {
 		return fmt.Errorf("app %s not found", appID)
 	}
@@ -56,6 +75,11 @@ func (r *Repository) RestartApp(ctx context.Context, appID string) error {
 // UpdateApp refreshes a git-sourced app's upstream, then pulls the latest
 // images and recreates the app's containers.
 func (r *Repository) UpdateApp(ctx context.Context, appID string) error {
+	end, err := r.beginOp(appID)
+	if err != nil {
+		return err
+	}
+	defer end()
 	if !r.appExists(appID) {
 		return fmt.Errorf("app %s not found", appID)
 	}
@@ -75,10 +99,12 @@ func (r *Repository) UpdateApp(ctx context.Context, appID string) error {
 
 // DeleteResult is the outcome of DeleteApp. Warnings are cleanup steps that
 // failed (never an error); VolumesDeleted reports whether the volume sweep
-// actually ran.
+// actually ran, BackupsDeleted whether the backups were deleted (not just
+// marked).
 type DeleteResult struct {
 	Warnings       []string
 	VolumesDeleted bool
+	BackupsDeleted bool
 }
 
 // DeleteApp stops the app's containers and removes its folder and symlink.
@@ -87,10 +113,38 @@ type DeleteResult struct {
 // failures come back as warnings, never as an error. The sweep is skipped for
 // an app this agent does not have, so a delete request cannot be used to
 // destroy orphan volumes an admin deliberately kept (those go through the
-// volume registry).
-func (r *Repository) DeleteApp(ctx context.Context, appID string, deleteVolumes bool) (DeleteResult, error) {
+// volume registry). The app's backups, in every storage its backups use,
+// are deleted with deleteBackups, else marked as a deleted app's (the daily
+// sweep removes them past BACKUP_RETENTION_DAYS); failures there are
+// warnings too.
+//
+// A restore of the app that is running is waited for (it is being cancelled:
+// see ErrAppDeleted), for at most restoreWaitForDelete and ctx: the delete
+// never runs beside the helper swapping the app's data. If the restore is
+// still running then, the delete fails with ErrRestoring and can be retried.
+func (r *Repository) DeleteApp(ctx context.Context, appID string, deleteVolumes, deleteBackups bool) (DeleteResult, error) {
+	if err := r.waitForRestore(ctx, appID); err != nil {
+		return DeleteResult{}, err
+	}
 	// Decided before anything is removed: sweep only an app this agent has.
-	res := DeleteResult{VolumesDeleted: deleteVolumes && r.appExists(appID)}
+	exists := r.appExists(appID)
+	res := DeleteResult{VolumesDeleted: deleteVolumes && exists, BackupsDeleted: deleteBackups && exists}
+	var backupStorages []string
+	appName := appID
+	if exists {
+		var err error
+		if backupStorages, err = r.appBackupStorages(appID); err != nil {
+			res.BackupsDeleted = false
+			res.Warnings = append(res.Warnings, "backups: the app's backup settings can't be read, so its backup folders are left as they are: "+err.Error())
+		} else {
+			// Copies in a storage the app's backups no longer name are its
+			// copies too: settled with the rest, instead of left as orphans.
+			extra, warns := r.storagesHoldingBackups(ctx, appID, backupStorages)
+			backupStorages = append(backupStorages, extra...)
+			res.Warnings = append(res.Warnings, warns...)
+		}
+		appName = r.appName(r.appDataDir(appID), appID)
+	}
 	downErr := r.composeDown(ctx, appID, deleteVolumes)
 	if downErr != nil {
 		// Best-effort stop; continue with removal so a broken deployment can
@@ -98,15 +152,21 @@ func (r *Repository) DeleteApp(ctx context.Context, appID string, deleteVolumes 
 		r.log.Warn("delete: compose down failed, continuing", "app_id", appID, "error", downErr)
 	}
 	if res.VolumesDeleted {
-		res.Warnings = r.sweepAppVolumes(ctx, appID, downErr != nil)
+		res.Warnings = append(res.Warnings, r.sweepAppVolumes(ctx, appID, downErr != nil)...)
 	}
 	if err := removeAppSymlink(r.cfg.GetAppsDir(), appID); err != nil {
 		r.log.Warn("delete: symlink removal failed, continuing", "app_id", appID, "error", err)
 	}
 	if err := os.RemoveAll(r.appDataDir(appID)); err != nil {
+		res.BackupsDeleted = false // nothing of the backups was touched
 		return res, fmt.Errorf("remove app dir: %w", err)
 	}
 	r.forgetApp(appID)
+	warnings, purged := r.settleBackups(ctx, appID, appName, backupStorages, deleteBackups)
+	res.Warnings = append(res.Warnings, warnings...)
+	if len(backupStorages) > 0 { // else nothing to delete: res stands as it was
+		res.BackupsDeleted = deleteBackups && purged
+	}
 	return res, nil
 }
 
@@ -184,11 +244,28 @@ func (r *Repository) GetApp(ctx context.Context, appID string) (command.GetAppRe
 	}
 
 	resp.App = payload
-	// The WF_STORAGE_ variables the compose files reference: read-only rows
-	// in the editor. An unreadable compose file just shows none.
-	if refs, err := r.storageRefs(dir, r.appComposeFiles(dir)); err == nil {
-		resp.StorageVariables = storageVariables(refs)
+	files := r.appComposeFiles(dir)
+	cfg, err := r.appBackups(dir, files)
+	if err != nil {
+		resp.BackupsError = err.Error()
 	}
+	resp.Backups = cfg.backups
+	if cfg.overridesOK {
+		resp.BackupsBase = backupsBase(cfg.overrides)
+	}
+	// The WF_STORAGE_ / WF_BACKUP_ variables the compose files reference:
+	// read-only rows in the editor. An unreadable compose file just shows
+	// none.
+	if refs, err := r.storageRefs(dir, files); err == nil {
+		resp.StorageVariables = storageVariables(refs, cfg.backups)
+	}
+	// Where a backup added in the UI can point, and the server's ceiling
+	// (the UI notes retention tiers that reach past it).
+	if cfg.composeOK && !cfg.compose.Unparsed {
+		t := cfg.compose.Targets()
+		resp.BackupTargets = &t
+	}
+	resp.RetentionDays = r.cfg.GetBackupRetentionDays()
 	return resp, nil
 }
 
@@ -246,21 +323,39 @@ func encryptedNames(cfg []byte) (vars map[string]bool, files map[string]bool) {
 // commit) and swaps the symlink. The compose project name is id-based, so no
 // restart is needed.
 func (r *Repository) RenameApp(ctx context.Context, appID, newName string) error {
+	if err := r.refuseDuringRestore(appID); err != nil {
+		return err
+	}
+	unlock, err := r.lockApp(ctx, appID)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	dir := r.appDataDir(appID)
 	cfg, _, err := r.readAppConfig(dir)
 	if err != nil {
 		return fmt.Errorf("read config: %w", err)
 	}
+	// A rename changes nothing that runs: an app deployed at the previous
+	// HEAD stays deployed at the new one (it would otherwise read as having
+	// undeployed changes).
+	prevHead, _ := gitHead(dir)
+	mark, marked := readDeployedMark(dir)
+	wasDeployed := marked && mark == prevHead
 	cfg["name"] = newName
 	updated, err := json.Marshal(cfg)
 	if err != nil {
 		return fmt.Errorf("encode config: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, configRel), updated, 0o644); err != nil {
+	if err := fsutil.WriteFile(filepath.Join(dir, configRel), updated, 0o644); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
-	if _, err := gitCommitAll(dir, "rename to "+newName); err != nil {
+	hash, err := gitCommitAll(dir, "rename to "+newName)
+	if err != nil {
 		return fmt.Errorf("commit rename: %w", err)
+	}
+	if wasDeployed {
+		r.markDeployed(appID, hash)
 	}
 	if _, err := ensureAppSymlink(r.cfg.GetAppsDir(), "apps-data", appID, newName); err != nil {
 		r.log.Warn("failed to update app symlink", "app_id", appID, "error", err)

@@ -10,6 +10,7 @@ import (
 
 	"winterflow/internal/domain/command"
 	"winterflow/pkg/crypto"
+	"winterflow/pkg/fsutil"
 )
 
 // Committed layout inside an app's data dir. Everything except the
@@ -197,7 +198,8 @@ func (r *Repository) writeAppStore(dir string, app command.AppPayload) (secretSt
 	if err := os.MkdirAll(filepath.Join(dir, filepath.Dir(configRel)), 0o755); err != nil {
 		return secretStore{}, err
 	}
-	if err := os.WriteFile(filepath.Join(dir, configRel), app.Config, 0o644); err != nil {
+	prevConfig, _ := os.ReadFile(filepath.Join(dir, configRel))
+	if err := fsutil.WriteFile(filepath.Join(dir, configRel), keepBackups(app.Config, prevConfig), 0o644); err != nil {
 		return secretStore{}, err
 	}
 	secretsJSON, err := json.MarshalIndent(next, "", "  ")
@@ -315,6 +317,9 @@ func (r *Repository) readAppConfig(dir string) (map[string]any, []byte, error) {
 	var cfg map[string]any
 	if err := json.Unmarshal(raw, &cfg); err != nil {
 		return nil, nil, fmt.Errorf("parse %s: %w", configRel, err)
+	}
+	if cfg == nil { // a config.json of `null`: callers write keys into the map
+		cfg = map[string]any{}
 	}
 	return cfg, raw, nil
 }

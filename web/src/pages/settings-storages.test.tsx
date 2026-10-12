@@ -23,6 +23,9 @@ vi.mock("sonner", () => ({
   },
 }));
 
+const backups = vi.hoisted(() => ({ listOrphans: vi.fn(), deleteOrphan: vi.fn() }));
+vi.mock("@/context/use-backups", () => ({ useBackups: () => backups }));
+
 const setupUser = () => userEvent.setup({ delay: null });
 
 const STORAGES: Storage[] = [
@@ -584,6 +587,37 @@ describe("StorageDialog form", () => {
     await user.clear(endpoint);
     await user.type(endpoint, "https://s3.other.example.com");
     expect(pathStyle).toBeChecked();
+  });
+
+  it("keeps the user's path-style when the endpoint moves to an IP and back", async () => {
+    const user = setupUser();
+    const dialog = await openAdd(user);
+    await user.click(within(dialog).getByRole("radio", { name: "S3-compatible" }));
+    const endpoint = within(dialog).getByLabelText("Endpoint");
+    const pathStyle = within(dialog).getByRole("checkbox", { name: "Path-style addressing" });
+    await user.type(endpoint, "https://s3.example.com");
+    await user.click(pathStyle); // ticked on a host name: the user's choice
+    await user.clear(endpoint);
+    await user.type(endpoint, "http://10.0.0.5:9000");
+    expect(pathStyle).toBeChecked();
+    await user.clear(endpoint);
+    await user.type(endpoint, "https://s3.example.com");
+    expect(pathStyle).toBeChecked();
+  });
+
+  it("shows a storage's backups of apps not on this server", async () => {
+    const user = setupUser();
+    backups.listOrphans.mockResolvedValue([{ app_id: "gone-1", app_name: "Old shop", copies: 2, bytes: 2048, deleted_at: 1790812800, purge_at: 1806364800 }]);
+    renderCard(fakeDocker());
+    // A labeled entry point, not an unlabeled icon.
+    expect(await screen.findByRole("button", { name: "Other apps' backups in disk" })).toHaveTextContent("Other apps' backups");
+    await user.click(screen.getByRole("button", { name: "Other apps' backups in disk" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText("Old shop")).toBeInTheDocument();
+    expect(backups.listOrphans).toHaveBeenCalledWith("disk");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Other apps' backups in disk" })).toHaveFocus();
   });
 
   it("announces only the test result, not the button", async () => {

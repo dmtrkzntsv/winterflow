@@ -1,17 +1,16 @@
 package util
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
+
+	"winterflow/internal/domain/port"
 )
 
 // ServerAccess answers whether a user may act on a server: the server must
 // belong to one of the user's organizations. port.ServerRepository satisfies
 // it; handlers depend on this narrow slice so tests can fake it in one line.
-type ServerAccess interface {
-	UserOwnsServer(ctx context.Context, userID, serverID string) (bool, error)
-}
+type ServerAccess = port.ServerOwnership
 
 // Forbidden writes a 403 JSON error: authenticated, but not allowed to act on
 // the target resource.

@@ -10,6 +10,10 @@ import (
 
 type Querier interface {
 	BumpServerVarsRevision(ctx context.Context, serverID string) error
+	// Optimistic: 0 rows when latest_revision moved past the caller's base.
+	BumpTemplateRevision(ctx context.Context, arg BumpTemplateRevisionParams) (int64, error)
+	// A live key (the partial unique index) inserts nothing (0 rows).
+	ClaimTemplateInstance(ctx context.Context, arg ClaimTemplateInstanceParams) (int64, error)
 	CountUsers(ctx context.Context) (int64, error)
 	DeleteAllRegistrations(ctx context.Context) error
 	DeleteApp(ctx context.Context, appID string) error
@@ -26,6 +30,8 @@ type Querier interface {
 	DeleteSharedCiphertextsByServer(ctx context.Context, serverID string) error
 	DeleteSharedCiphertextsByVariable(ctx context.Context, variableID string) error
 	DeleteSharedVariable(ctx context.Context, id string) error
+	// Refused (0 rows) while an instance is pending or created.
+	DeleteTemplate(ctx context.Context, arg DeleteTemplateParams) (int64, error)
 	DeleteToken(ctx context.Context, arg DeleteTokenParams) (int64, error)
 	DeleteUser(ctx context.Context, userID string) error
 	EmailTaken(ctx context.Context, email string) (bool, error)
@@ -39,6 +45,7 @@ type Querier interface {
 	GetFirstConnectedAccountProvider(ctx context.Context, userID string) (string, error)
 	GetFirstServerID(ctx context.Context) (string, error)
 	GetLatestRegistrationCode(ctx context.Context) (string, error)
+	GetLiveTemplateInstance(ctx context.Context, arg GetLiveTemplateInstanceParams) (TemplateInstance, error)
 	GetOrgSharedVariableByName(ctx context.Context, arg GetOrgSharedVariableByNameParams) (SharedVariable, error)
 	GetOrganization(ctx context.Context, organizationID string) (Organization, error)
 	GetPrimaryOrganizationID(ctx context.Context, userID string) (string, error)
@@ -46,6 +53,9 @@ type Querier interface {
 	GetServerSharedVariableByName(ctx context.Context, arg GetServerSharedVariableByNameParams) (SharedVariable, error)
 	GetServerVarsInfo(ctx context.Context, serverID string) (GetServerVarsInfoRow, error)
 	GetSharedVariable(ctx context.Context, id string) (SharedVariable, error)
+	GetTemplate(ctx context.Context, arg GetTemplateParams) (Template, error)
+	GetTemplateIDByName(ctx context.Context, arg GetTemplateIDByNameParams) (string, error)
+	GetTemplateRevision(ctx context.Context, arg GetTemplateRevisionParams) (TemplateRevision, error)
 	GetTokenByHash(ctx context.Context, tokenHash string) (UserToken, error)
 	// Users, their connected accounts and local credentials.
 	GetUser(ctx context.Context, userID string) (User, error)
@@ -66,6 +76,10 @@ type Querier interface {
 	// Gap fill: never overwrites a copy (a concurrent rotation's new value wins).
 	InsertSharedCiphertextIfAbsent(ctx context.Context, arg InsertSharedCiphertextIfAbsentParams) error
 	InsertSharedVariable(ctx context.Context, arg InsertSharedVariableParams) error
+	// Templates, their immutable revisions and their instances.
+	// A taken name inserts nothing (0 rows): the caller answers 400.
+	InsertTemplate(ctx context.Context, arg InsertTemplateParams) (int64, error)
+	InsertTemplateRevision(ctx context.Context, arg InsertTemplateRevisionParams) error
 	// Personal access tokens (hashed at rest).
 	InsertToken(ctx context.Context, arg InsertTokenParams) error
 	InsertUser(ctx context.Context, arg InsertUserParams) error
@@ -78,6 +92,7 @@ type Querier interface {
 	ListCapabilitiesByUser(ctx context.Context, userID string) ([]ListCapabilitiesByUserRow, error)
 	ListCiphertextServersByOrg(ctx context.Context, orgID string) ([]ListCiphertextServersByOrgRow, error)
 	ListFeaturesByUser(ctx context.Context, userID string) ([]ServerFeature, error)
+	ListLiveTemplateInstances(ctx context.Context, orgID string) ([]TemplateInstance, error)
 	ListMetricSamples(ctx context.Context, arg ListMetricSamplesParams) ([]MetricSample, error)
 	ListMetricSamplesInRange(ctx context.Context, arg ListMetricSamplesInRangeParams) ([]MetricSample, error)
 	ListOrgPublicKeys(ctx context.Context, organizationID string) ([]ListOrgPublicKeysRow, error)
@@ -95,15 +110,21 @@ type Querier interface {
 	// Servers, their capabilities/features, registrations and certificates.
 	ListServersByUser(ctx context.Context, userID string) ([]Server, error)
 	ListSharedCiphertextsForServer(ctx context.Context, serverID string) ([]ListSharedCiphertextsForServerRow, error)
+	ListTemplateRevisions(ctx context.Context, templateID string) ([]ListTemplateRevisionsRow, error)
+	ListTemplates(ctx context.Context, orgID string) ([]ListTemplatesRow, error)
 	ListTokensByUser(ctx context.Context, userID string) ([]UserToken, error)
 	// LockOrganizationMember re-reads and row-locks the caller's membership
 	// inside RemoveMember's transaction, so two members removing each other
 	// concurrently cannot empty the org.
 	LockOrganizationMember(ctx context.Context, arg LockOrganizationMemberParams) (string, error)
+	// A save the agent confirmed; a deleted or unlinked row stays as it is.
+	MarkTemplateInstanceSaved(ctx context.Context, arg MarkTemplateInstanceSavedParams) (int64, error)
 	// Lifts vars_revision past an agent-reported revision the API never issued
 	// (the API database was restored); never lowers it.
 	RaiseServerVarsRevision(ctx context.Context, arg RaiseServerVarsRevisionParams) error
 	RenameApp(ctx context.Context, arg RenameAppParams) error
+	SetTemplateInstanceError(ctx context.Context, arg SetTemplateInstanceErrorParams) error
+	SetTemplateInstanceState(ctx context.Context, arg SetTemplateInstanceStateParams) (int64, error)
 	TouchServerLastSeen(ctx context.Context, arg TouchServerLastSeenParams) error
 	TouchTokenLastUsed(ctx context.Context, arg TouchTokenLastUsedParams) error
 	UpdateOrganization(ctx context.Context, arg UpdateOrganizationParams) (int64, error)

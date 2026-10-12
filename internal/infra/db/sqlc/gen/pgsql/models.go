@@ -132,6 +132,42 @@ type SharedVariable struct {
 	UpdatedBy   string
 }
 
+type Template struct {
+	ID             string
+	OrgID          string
+	Name           string
+	LatestRevision int64
+	CreatedAt      types.DateTime
+	CreatedBy      string
+	UpdatedAt      types.DateTime
+}
+
+type TemplateInstance struct {
+	ID          string
+	OrgID       string
+	InstanceKey string
+	AppID       string
+	ServerID    string
+	TemplateID  *string
+	Revision    int64
+	Params      string
+	SecretNames string
+	RequestHash string
+	State       string
+	LastError   string
+	CreatedAt   types.DateTime
+	UpdatedAt   types.DateTime
+}
+
+type TemplateRevision struct {
+	TemplateID string
+	Revision   int64
+	Body       string
+	Note       string
+	CreatedAt  types.DateTime
+	CreatedBy  string
+}
+
 type User struct {
 	UserID    string
 	Name      string

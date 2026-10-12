@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"winterflow/pkg/fsutil"
 )
 
 // lchown changes an owner without following a symlink; fchown changes the
@@ -119,7 +121,7 @@ func restoreSQLite(path, entry string, in io.Reader) (Result, error) {
 	for _, ext := range restoreOldExts {
 		_ = os.Remove(path + ext + restoreOld) // also the leftovers of a killed run
 	}
-	syncDir(filepath.Dir(path))
+	fsutil.SyncDir(filepath.Dir(path))
 	return Result{RawSize: n}, nil
 }
 
@@ -212,12 +214,4 @@ func writeNew(path string, in io.Reader) (*os.File, int64, error) {
 		return nil, n, fmt.Errorf("write the copy: %w", scrub(err))
 	}
 	return f, n, nil
-}
-
-// syncDir makes a rename in dir durable (best effort).
-func syncDir(dir string) {
-	if d, err := os.Open(dir); err == nil {
-		_ = d.Sync()
-		_ = d.Close()
-	}
 }

@@ -21,6 +21,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"winterflow/internal/infra/backup/helper"
+	"winterflow/pkg/fsutil"
 )
 
 // errPartial is a files restore that failed while swapping and could not put
@@ -258,7 +259,7 @@ func restoreFilesNotify(targets []target, id string, need map[string]uint64, exc
 		}
 	}
 	for root := range roots {
-		syncDir(root)
+		fsutil.SyncDir(root)
 	}
 	return Result{RawSize: n, Warnings: warns.result()}, nil
 }
@@ -794,7 +795,7 @@ func swap(targets []target, roots, asides map[string]string, seen map[int]bool, 
 		}
 	}
 	for root := range roots {
-		syncDir(root)
+		fsutil.SyncDir(root)
 	}
 	return false, nil
 }

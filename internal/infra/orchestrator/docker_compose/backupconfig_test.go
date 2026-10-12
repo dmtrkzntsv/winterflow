@@ -592,3 +592,67 @@ func TestRenameAppOnNullConfig(t *testing.T) {
 		t.Fatalf("config = %v, %v", cfg, err)
 	}
 }
+
+func TestApplyBackupDefaults(t *testing.T) {
+	const marker = `"instance":{"template_id":"t","template_name":"shop","revision":2,"key":"k"`
+	// The rewritten blob is re-encoded from maps: keys come out sorted.
+	const stored = `"instance":{"key":"k","revision":2,"template_id":"t","template_name":"shop"}`
+	cases := []struct{ name, in, want string }{
+		{"adds a default with no entry",
+			`{"name":"a",` + marker + `,"backup_defaults":[{"name":"media","enabled":true,"storage":"s3"}]},"backups":[{"name":"database","storage":"disk"}]}`,
+			`{"backups":[{"name":"database","storage":"disk"},{"name":"media","enabled":true,"storage":"s3"}],` + stored + `,"name":"a"}`},
+		{"a stored entry wins",
+			`{` + marker + `,"backup_defaults":[{"name":"database","enabled":true,"storage":"s3"}]},"backups":[{"name":"database"}]}`,
+			`{"backups":[{"name":"database"}],` + stored + `}`},
+		{"no backups list yet",
+			`{` + marker + `,"backup_defaults":[{"name":"media","enabled":true,"storage":"s3"}]}}`,
+			`{"backups":[{"name":"media","enabled":true,"storage":"s3"}],` + stored + `}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := applyBackupDefaults([]byte(tc.in)); string(got) != tc.want {
+				t.Fatalf("got  %s\nwant %s", got, tc.want)
+			}
+		})
+	}
+	for _, same := range []string{`{"name":"plain"}`, `not json`, `{"instance":{"key":"k"}}`, `{"instance":{"backup_defaults":"x"}}`} {
+		if got := applyBackupDefaults([]byte(same)); string(got) != same {
+			t.Errorf("%s -> %s", same, got)
+		}
+	}
+}
+
+// An upgrade's defaults reach the stored backups through a save that, like
+// every instance update, carries no backups list: the stored settings are
+// kept and only the new backup is added; the marker keeps no defaults.
+func TestSaveAppliesInstanceBackupDefaults(t *testing.T) {
+	r := newTestRepo(t)
+	if _, err := saveConfig(t, r, "app-1", backupCompose, withBackups(`[{"name":"database","enabled":true,"storage":"hetzner"}]`)); err != nil {
+		t.Fatal(err)
+	}
+	upgrade := `{"name":"demo","files":[{"filename":"compose.yml"}],"instance":{"template_id":"t","template_name":"shop","revision":2,"key":"k",` +
+		`"backup_defaults":[{"name":"database","enabled":true,"storage":"other"},{"name":"media","enabled":true,"storage":"disk","every":"6h"}]}}`
+	if _, err := saveConfig(t, r, "app-1", backupCompose, upgrade); err != nil {
+		t.Fatal(err)
+	}
+	dir := r.appDataDir("app-1")
+	got, err := r.readOverrides(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []recipe.BackupConfig{
+		{Name: "database", Enabled: true, Storage: "hetzner"},
+		{Name: "media", Enabled: true, Storage: "disk", Every: "6h"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("overrides = %+v", got)
+	}
+	cfg, _, err := r.readAppConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst, _ := cfg["instance"].(map[string]any)
+	if inst == nil || inst["key"] != "k" || inst["backup_defaults"] != nil {
+		t.Fatalf("stored marker = %v", cfg["instance"])
+	}
+}

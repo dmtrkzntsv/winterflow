@@ -204,7 +204,7 @@ func (r *Repository) writeAppStore(dir string, app command.AppPayload) (secretSt
 		return secretStore{}, err
 	}
 	prevConfig, _ := os.ReadFile(filepath.Join(dir, configRel))
-	if err := fsutil.WriteFile(filepath.Join(dir, configRel), keepBackups(app.Config, prevConfig), 0o644); err != nil {
+	if err := fsutil.WriteFile(filepath.Join(dir, configRel), applyBackupDefaults(keepBackups(app.Config, prevConfig)), 0o644); err != nil {
 		return secretStore{}, err
 	}
 	secretsJSON, err := json.MarshalIndent(next, "", "  ")

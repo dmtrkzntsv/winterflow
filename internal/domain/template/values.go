@@ -3,8 +3,10 @@ package template
 import (
 	"regexp"
 	"sort"
+	"strings"
 
 	"winterflow/internal/domain/command"
+	"winterflow/pkg/crypto"
 )
 
 // Given are the values one call sends: plain values by name, and secret
@@ -37,7 +39,9 @@ type Values struct {
 // longer has, or that changed between plain and secret, is dropped). The
 // error names the parameter: unknown, a secret sent as a plain value or the
 // other way round, a required one missing, a value that doesn't match its
-// pattern.
+// pattern, a plain value with a $ (compose would interpolate it from the
+// app's .env), a secret that is not an ECIES ciphertext (the agent would
+// commit a plaintext to the app's history).
 func Resolve(b Body, stored Stored, given Given) (Values, error) {
 	for _, name := range sortedKeys(given.Params) {
 		p, ok := b.param(name)
@@ -46,6 +50,8 @@ func Resolve(b Body, stored Stored, given Given) (Values, error) {
 			return Values{}, invalid("parameters."+name, "the template has no parameter %s", name)
 		case p.Secret:
 			return Values{}, invalid("parameters."+name, "%s is a secret: send it in secrets, encrypted for the server", name)
+		case strings.Contains(given.Params[name], "$"):
+			return Values{}, invalid("parameters."+name, "may not contain $")
 		}
 	}
 	for _, name := range sortedKeys(given.Secrets) {
@@ -57,6 +63,8 @@ func Resolve(b Body, stored Stored, given Given) (Values, error) {
 			return Values{}, invalid("secrets."+name, "%s is not a secret parameter: send it in parameters", name)
 		case given.Secrets[name] == "" || given.Secrets[name] == command.EncryptedPlaceholder:
 			return Values{}, invalid("secrets."+name, "a ciphertext is required (leave the secret out to keep its value)")
+		case crypto.CheckCiphertext(given.Secrets[name]) != nil:
+			return Values{}, invalid("secrets."+name, "not a ciphertext: encrypt the value with the server's public key")
 		}
 	}
 	had := map[string]bool{}

@@ -67,3 +67,15 @@ func Encrypt(t testing.TB, pub *ecdsa.PublicKey, plaintext string) string {
 	payload := append(append(append([]byte{}, ephPoint...), iv...), ct...)
 	return base64.StdEncoding.EncodeToString(payload)
 }
+
+// Ciphertext encrypts plaintext for a throwaway key: a well-formed
+// ciphertext (new bytes on every call) for tests of code that only checks
+// a ciphertext's shape.
+func Ciphertext(t testing.TB, plaintext string) string {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return Encrypt(t, &key.PublicKey, plaintext)
+}

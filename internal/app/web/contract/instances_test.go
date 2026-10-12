@@ -13,6 +13,7 @@ import (
 	"winterflow/internal/domain/template"
 	tuc "winterflow/internal/domain/usecase/templates"
 	"winterflow/internal/infra/transport/bus"
+	"winterflow/pkg/crypto/cryptotest"
 )
 
 // instanceOf reads get-instance; no answer may carry a secret.
@@ -26,12 +27,14 @@ func instanceOf(t *testing.T, c *client, serverID, key string) tuc.InstanceView 
 }
 
 // instanceEnv is an owner whose server covers *.example.test and has the
-// storage "disk", with template "shop" (shopBody) saved.
+// storage "disk", with template "shop" (shopBody) saved. secret is the
+// ciphertext its creates send.
 type instanceEnv struct {
-	e     *env
-	owner *client
-	sid   string
-	tplID string
+	e      *env
+	owner  *client
+	sid    string
+	tplID  string
+	secret string
 }
 
 func newInstanceEnv(t *testing.T) instanceEnv {
@@ -42,14 +45,14 @@ func newInstanceEnv(t *testing.T) instanceEnv {
 	registerDomain(t, owner, sid, "*.example.test", model.DomainTLSOff)
 	addStorage(t, owner, sid, model.Storage{Name: "disk", Type: model.StorageLocal, Local: &model.LocalStorage{Path: "/mnt/usb"}})
 	saved := saveTemplate(t, owner, htpl.SaveTemplateRequest{Name: "shop", Body: shopBody(shopCompose)})
-	return instanceEnv{e: e, owner: owner, sid: sid, tplID: saved.ID}
+	return instanceEnv{e: e, owner: owner, sid: sid, tplID: saved.ID, secret: cryptotest.Ciphertext(t, "s3cret")}
 }
 
 // create is a waited create of key with NAME and PORT.
 func (ie instanceEnv) create(key, name, port string) htpl.CreateInstanceRequest {
 	return htpl.CreateInstanceRequest{
 		ServerID: ie.sid, Key: key, TemplateID: ie.tplID, Parameters: map[string]string{"NAME": name, "PORT": port},
-		Secrets: map[string]string{"SECRET_KEY": "CT-secret"}, Wait: true,
+		Secrets: map[string]string{"SECRET_KEY": ie.secret}, Wait: true,
 	}
 }
 
@@ -105,7 +108,9 @@ func TestInstanceCreate(t *testing.T) {
 	t.Run("a replay makes no second app; other values are a conflict", func(t *testing.T) {
 		n := len(e.agent.seen(command.TypeAppSave))
 		var again htpl.InstanceResult
-		owner.post(t, "/api/v1/instance/create-instance", ie.create("tenant-1", "acme", "9001")).expect(t, http.StatusOK).data(t, &again)
+		replay := ie.create("tenant-1", "acme", "9001")
+		replay.Secrets = map[string]string{"SECRET_KEY": cryptotest.Ciphertext(t, "s3cret")} // new bytes, the same secret
+		owner.post(t, "/api/v1/instance/create-instance", replay).expect(t, http.StatusOK).data(t, &again)
 		if again.Instance.AppID != appID || again.RequestID != "" || len(e.agent.seen(command.TypeAppSave)) != n {
 			t.Fatalf("replay = %+v", again)
 		}
@@ -280,16 +285,22 @@ func TestInstanceUpdatePending(t *testing.T) {
 	if !strings.Contains(string(r.Body), "secrets.SECRET_KEY") {
 		t.Fatalf("a pending update without the secret: %s", r.Body)
 	}
+	r = owner.post(t, "/api/v1/instance/update-instance", htpl.UpdateInstanceRequest{ServerID: sid, Key: "tenant-p",
+		Secrets: map[string]string{"SECRET_KEY": "s3cret"}}).expect(t, http.StatusBadRequest)
+	if !strings.Contains(string(r.Body), "secrets.SECRET_KEY: not a ciphertext") {
+		t.Fatalf("a plaintext secret: %s", r.Body)
+	}
+	again := cryptotest.Ciphertext(t, "s3cret")
 	var res htpl.InstanceResult
 	owner.post(t, "/api/v1/instance/update-instance", htpl.UpdateInstanceRequest{ServerID: sid, Key: "tenant-p",
-		Parameters: map[string]string{"VERSION": "3.0"}, Secrets: map[string]string{"SECRET_KEY": "CT-again"},
+		Parameters: map[string]string{"VERSION": "3.0"}, Secrets: map[string]string{"SECRET_KEY": again},
 		Backups: map[string]string{"db": "disk"}, Wait: true}).expect(t, http.StatusOK).data(t, &res)
 	if res.Instance.State != "created" || res.Instance.Parameters["VERSION"] != "3.0" {
 		t.Fatalf("updated = %+v", res.Instance)
 	}
 	save := lastSave(t, e)
 	for _, v := range save.App.Variables {
-		if v.Name == "SECRET_KEY" && (string(v.Content) != "CT-again" || !v.Encrypted) {
+		if v.Name == "SECRET_KEY" && (string(v.Content) != again || !v.Encrypted) {
 			t.Fatalf("the secret = %+v", v)
 		}
 	}

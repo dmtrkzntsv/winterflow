@@ -84,6 +84,7 @@ func TestValidateRules(t *testing.T) {
 		{"bad pattern", func(b *Body) { b.Parameters[0].Pattern = "([a-z" }, "parameters[0].pattern"},
 		{"long pattern", func(b *Body) { b.Parameters[0].Pattern = strings.Repeat("a", 513) }, "parameters[0].pattern"},
 		{"default off pattern", func(b *Body) { b.Parameters[0].Default = strp("UPPER") }, "parameters[0].default"},
+		{"default with $", func(b *Body) { b.Parameters[3].Default = strp("$HOME") }, "parameters[3].default"},
 		{"secret default", func(b *Body) { b.Parameters[5].Default = strp("x") }, "parameters[5].default"},
 		{"empty app name", func(b *Body) { b.AppName = " " }, "app_name"},
 		{"app name uses a secret", func(b *Body) { b.AppName = "${SESSION_KEY}" }, "app_name"},

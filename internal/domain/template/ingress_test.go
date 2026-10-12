@@ -54,7 +54,7 @@ func renderWith(t *testing.T, name string) error {
 	t.Helper()
 	b := tenant()
 	b.Parameters[0].Pattern = ""
-	v, err := Resolve(b, Stored{}, given(map[string]string{"NAME": name, "VERSION": "v1", "PORT": "9001"}, map[string]string{"SESSION_KEY": "CT"}))
+	v, err := Resolve(b, Stored{}, given(map[string]string{"NAME": name, "VERSION": "v1", "PORT": "9001"}, map[string]string{"SESSION_KEY": ct(t)}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,14 +100,14 @@ func TestRenderBoundsTheAppName(t *testing.T) {
 	b.Parameters[0].Pattern = ""
 	b.Ingress = nil
 	for _, name := range []string{strings.Repeat("a", 256), " "} {
-		v, err := Resolve(b, Stored{}, given(map[string]string{"NAME": name, "VERSION": "v1", "PORT": "9001"}, map[string]string{"SESSION_KEY": "CT"}))
+		v, err := Resolve(b, Stored{}, given(map[string]string{"NAME": name, "VERSION": "v1", "PORT": "9001"}, map[string]string{"SESSION_KEY": ct(t)}))
 		if err != nil {
 			t.Fatal(err)
 		}
 		_, _, err = Render(b, Input{AppID: "a", Values: v})
 		wantInvalid(t, err, "parameters.NAME")
 	}
-	v, _ := Resolve(b, Stored{}, given(map[string]string{"NAME": strings.Repeat("a", 255), "VERSION": "v1", "PORT": "9001"}, map[string]string{"SESSION_KEY": "CT"}))
+	v, _ := Resolve(b, Stored{}, given(map[string]string{"NAME": strings.Repeat("a", 255), "VERSION": "v1", "PORT": "9001"}, map[string]string{"SESSION_KEY": ct(t)}))
 	if _, _, err := Render(b, Input{AppID: "a", Values: v}); err != nil {
 		t.Fatal(err)
 	}

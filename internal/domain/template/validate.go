@@ -134,6 +134,9 @@ func validateParameters(params []Parameter) (map[string]Parameter, error) {
 			}
 			continue
 		}
+		if p.Default != nil && strings.Contains(*p.Default, "$") {
+			return nil, invalid(field+".default", "may not contain $")
+		}
 		if p.Default != nil && re != nil && !re.MatchString(*p.Default) {
 			return nil, invalid(field+".default", "%q does not match the pattern", *p.Default)
 		}

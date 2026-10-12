@@ -16,6 +16,7 @@ import (
 	"winterflow/internal/infra/db/dbtest"
 	apprepo "winterflow/internal/infra/db/repository/app"
 	templaterepo "winterflow/internal/infra/db/repository/template"
+	"winterflow/pkg/crypto/cryptotest"
 )
 
 var (
@@ -78,6 +79,8 @@ type fixture struct {
 	uc   *templates.UseCase
 	disp *dispatcher
 	tpl  templates.SavedTemplate
+	// secret is the KEY ciphertext create sends.
+	secret string
 }
 
 const compose = `services:
@@ -131,5 +134,5 @@ func newFixture(t *testing.T, storages port.ServerStorageRepository) fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return fixture{uc: uc, disp: disp, tpl: tpl}
+	return fixture{uc: uc, disp: disp, tpl: tpl, secret: cryptotest.Ciphertext(t, "key")}
 }

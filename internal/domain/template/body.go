@@ -48,7 +48,7 @@ type Parameter struct {
 	Secret   bool   `json:"secret,omitempty" description:"Values arrive ECIES-encrypted for the server and are never returned."`
 	Required bool   `json:"required,omitempty"`
 	// Default is nil when the parameter has none ("" is a default).
-	Default     *string `json:"default,omitempty" description:"Plain parameters only; must match pattern."`
+	Default     *string `json:"default,omitempty" description:"Plain parameters only; must match pattern and may not contain $."`
 	Pattern     string  `json:"pattern,omitempty" description:"Go RE2 regular expression a value must match, at most 512 bytes."`
 	Description string  `json:"description,omitempty"`
 }

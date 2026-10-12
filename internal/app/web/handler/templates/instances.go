@@ -13,7 +13,7 @@ type CreateInstanceRequest struct {
 	Key        string            `json:"key" required:"true" description:"The caller's id for the instance, unique in the org among instances not unlinked; a retried create with the same key and values makes no second app."`
 	TemplateID string            `json:"template_id" required:"true"`
 	Revision   int64             `json:"revision,omitempty" description:"Absent or 0: the latest."`
-	Parameters map[string]string `json:"parameters,omitempty" description:"Plain parameter values by name."`
+	Parameters map[string]string `json:"parameters,omitempty" description:"Plain parameter values by name; a value may not contain $."`
 	Secrets    map[string]string `json:"secrets,omitempty" description:"Secret parameter values by name, ECIES-encrypted with the server's public key."`
 	Backups    map[string]string `json:"backups,omitempty" description:"Backup name -> storage name, replacing the template default's storage."`
 	Wait       bool              `json:"wait,omitempty" description:"Hold the request for the outcome (at most 10 minutes)."`

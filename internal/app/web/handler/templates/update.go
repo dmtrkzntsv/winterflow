@@ -11,7 +11,7 @@ import (
 type UpdateInstanceRequest struct {
 	ServerID   string            `json:"server_id" required:"true"`
 	Key        string            `json:"key" required:"true"`
-	Parameters map[string]string `json:"parameters,omitempty" description:"New plain values, merged over the stored ones."`
+	Parameters map[string]string `json:"parameters,omitempty" description:"New plain values, merged over the stored ones; a value may not contain $."`
 	Secrets    map[string]string `json:"secrets,omitempty" description:"New secret values; a secret left out keeps its value (a pending instance holds none: send every required secret again)."`
 	Backups    map[string]string `json:"backups,omitempty" description:"Backup name -> storage name, replacing the template default's storage. Accepted only while the instance is pending; afterwards change backups in the app's Backups tab."`
 	Wait       bool              `json:"wait,omitempty"`
@@ -22,7 +22,7 @@ type UpgradeInstanceRequest struct {
 	ServerID   string            `json:"server_id" required:"true"`
 	Key        string            `json:"key" required:"true"`
 	Revision   int64             `json:"revision" required:"true" minimum:"1"`
-	Parameters map[string]string `json:"parameters,omitempty" description:"Values for parameters the revision adds or changes."`
+	Parameters map[string]string `json:"parameters,omitempty" description:"Values for parameters the revision adds or changes; a value may not contain $."`
 	Secrets    map[string]string `json:"secrets,omitempty" description:"Secret values for the revision; a secret left out keeps its value (a pending instance holds none: send every required secret again)."`
 	Backups    map[string]string `json:"backups,omitempty" description:"Backup name -> storage name, replacing the template default's storage. Accepted only while the instance is pending; afterwards change backups in the app's Backups tab."`
 	Wait       bool              `json:"wait,omitempty"`

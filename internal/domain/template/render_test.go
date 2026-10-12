@@ -1,6 +1,7 @@
 package template
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"reflect"
 	"strings"
@@ -9,21 +10,26 @@ import (
 	"winterflow/internal/domain/backup/recipe"
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
+	"winterflow/pkg/crypto/cryptotest"
 )
 
 func given(params map[string]string, secrets map[string]string) Given {
 	return Given{Params: params, Secrets: secrets}
 }
 
+// ct is a well-formed ciphertext (new bytes on every call).
+func ct(t testing.TB) string { return cryptotest.Ciphertext(t, "secret") }
+
 func TestResolveCreate(t *testing.T) {
+	key := ct(t)
 	v, err := Resolve(tenant(), Stored{}, given(
 		map[string]string{"NAME": "acme", "VERSION": "v1", "PORT": "9001"},
-		map[string]string{"SESSION_KEY": "CT-1"}))
+		map[string]string{"SESSION_KEY": key}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	wantPlain := map[string]string{"NAME": "acme", "VERSION": "v1", "PORT": "9001", "MEMORY_MAX": "256m", "INGEST_DISABLED": ""}
-	if !reflect.DeepEqual(v.Plain, wantPlain) || !reflect.DeepEqual(v.Secrets, map[string]string{"SESSION_KEY": "CT-1"}) {
+	if !reflect.DeepEqual(v.Plain, wantPlain) || !reflect.DeepEqual(v.Secrets, map[string]string{"SESSION_KEY": key}) {
 		t.Fatalf("values = %+v", v)
 	}
 	// Defaults are not recorded: an upgrade follows the template's default.
@@ -42,7 +48,8 @@ func TestResolveRefusals(t *testing.T) {
 		m[k] = v
 		return m
 	}
-	key := map[string]string{"SESSION_KEY": "CT-1"}
+	key := map[string]string{"SESSION_KEY": ct(t)}
+	b64 := base64.StdEncoding.EncodeToString
 	cases := []struct {
 		name  string
 		g     Given
@@ -50,9 +57,13 @@ func TestResolveRefusals(t *testing.T) {
 	}{
 		{"unknown", given(with("NOPE", "1"), key), "parameters.NOPE"},
 		{"secret as plain", given(with("SESSION_KEY", "x"), key), "parameters.SESSION_KEY"},
-		{"plain as secret", given(base, map[string]string{"SESSION_KEY": "CT", "NAME": "CT"}), "secrets.NAME"},
-		{"unknown secret", given(base, map[string]string{"SESSION_KEY": "CT", "NOPE": "CT"}), "secrets.NOPE"},
+		{"plain as secret", given(base, map[string]string{"SESSION_KEY": ct(t), "NAME": ct(t)}), "secrets.NAME"},
+		{"unknown secret", given(base, map[string]string{"SESSION_KEY": ct(t), "NOPE": ct(t)}), "secrets.NOPE"},
 		{"placeholder secret", given(base, map[string]string{"SESSION_KEY": command.EncryptedPlaceholder}), "secrets.SESSION_KEY"},
+		{"plaintext secret", given(base, map[string]string{"SESSION_KEY": "hunter2"}), "secrets.SESSION_KEY"},
+		{"base64 plaintext secret", given(base, map[string]string{"SESSION_KEY": b64([]byte(strings.Repeat("x", 120)))}), "secrets.SESSION_KEY"},
+		{"short secret", given(base, map[string]string{"SESSION_KEY": b64(append([]byte{0x04}, make([]byte, 64+12+15)...))}), "secrets.SESSION_KEY"},
+		{"dollar in a value", given(with("VERSION", "v$1"), key), "parameters.VERSION"},
 		{"missing required", given(map[string]string{"NAME": "acme", "PORT": "1"}, key), "parameters.VERSION"},
 		{"empty required", given(with("VERSION", ""), key), "parameters.VERSION"},
 		{"missing secret", given(base, nil), "secrets.SESSION_KEY"},
@@ -87,7 +98,8 @@ func TestResolveUpdateKeepsStoredValuesAndSecrets(t *testing.T) {
 
 func TestRender(t *testing.T) {
 	b := tenant()
-	v, err := Resolve(b, Stored{}, given(map[string]string{"NAME": "acme", "VERSION": "v1", "PORT": "9001"}, map[string]string{"SESSION_KEY": "CT-1"}))
+	key := ct(t)
+	v, err := Resolve(b, Stored{}, given(map[string]string{"NAME": "acme", "VERSION": "v1", "PORT": "9001"}, map[string]string{"SESSION_KEY": key}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +123,7 @@ func TestRender(t *testing.T) {
 		vars[it.Name] = it
 	}
 	if len(vars) != 6 || string(vars["NAME"].Content) != "acme" || vars["NAME"].Encrypted ||
-		string(vars["SESSION_KEY"].Content) != "CT-1" || !vars["SESSION_KEY"].Encrypted || string(vars["MEMORY_MAX"].Content) != "256m" {
+		string(vars["SESSION_KEY"].Content) != key || !vars["SESSION_KEY"].Encrypted || string(vars["MEMORY_MAX"].Content) != "256m" {
 		t.Fatalf("variables = %+v", payload.Variables)
 	}
 	if _, ok := vars["API_TOKEN"]; ok {
@@ -171,7 +183,7 @@ func TestRenderUpdateAndUnlink(t *testing.T) {
 func TestRenderRefusesANonPortValue(t *testing.T) {
 	b := tenant()
 	b.Parameters[2].Pattern = ""
-	v, err := Resolve(b, Stored{}, given(map[string]string{"NAME": "acme", "VERSION": "v1", "PORT": "http"}, map[string]string{"SESSION_KEY": "CT"}))
+	v, err := Resolve(b, Stored{}, given(map[string]string{"NAME": "acme", "VERSION": "v1", "PORT": "http"}, map[string]string{"SESSION_KEY": ct(t)}))
 	if err != nil {
 		t.Fatal(err)
 	}

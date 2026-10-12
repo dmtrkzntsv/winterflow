@@ -96,3 +96,26 @@ func TestDecryptRejectsShortPayload(t *testing.T) {
 		t.Fatal("expected error for short payload")
 	}
 }
+
+func TestCheckCiphertext(t *testing.T) {
+	if err := CheckCiphertext(cryptotest.Ciphertext(t, "s")); err != nil {
+		t.Fatalf("a real ciphertext: %v", err)
+	}
+	if err := CheckCiphertext(cryptotest.Ciphertext(t, "")); err != nil {
+		t.Fatalf("a ciphertext of an empty value: %v", err)
+	}
+	b64 := func(b []byte) string { return base64.StdEncoding.EncodeToString(b) }
+	point := append([]byte{0x04}, make([]byte, 64+12+16)...)
+	odd := append([]byte{0x02}, make([]byte, 64+12+16)...)
+	for name, s := range map[string]string{
+		"plaintext":   "hunter2",
+		"url base64":  base64.URLEncoding.EncodeToString([]byte{0xfb, 0xff}) + b64(point),
+		"too short":   b64(point[:rawPubKeyLen+ivLen+gcmTagLen-1]),
+		"not a point": b64(odd),
+		"empty":       "",
+	} {
+		if err := CheckCiphertext(s); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}

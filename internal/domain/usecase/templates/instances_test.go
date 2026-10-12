@@ -13,11 +13,12 @@ import (
 	appuc "winterflow/internal/domain/usecase/app"
 	"winterflow/internal/domain/usecase/templates"
 	"winterflow/internal/infra/db/dbtest"
+	"winterflow/pkg/crypto/cryptotest"
 )
 
 // create is a create-instance of key k1 on srv1 with the given values.
 func (f fixture) create(params map[string]string) templates.CreateInput {
-	return templates.CreateInput{ServerID: srv1, Key: "k1", TemplateID: f.tpl.ID, Params: params, Secrets: map[string]string{"KEY": "CT"}}
+	return templates.CreateInput{ServerID: srv1, Key: "k1", TemplateID: f.tpl.ID, Params: params, Secrets: map[string]string{"KEY": f.secret}}
 }
 
 // received waits for an outcome's result.
@@ -85,7 +86,7 @@ func TestCreateReplays(t *testing.T) {
 
 	// Pending (never confirmed): the same request dispatches the save again,
 	// with the same app id.
-	in.Secrets = map[string]string{"KEY": "CT-other-bytes"}
+	in.Secrets = map[string]string{"KEY": cryptotest.Ciphertext(t, "key")}
 	again, err := f.uc.CreateInstance(ctx, "u1", org1, in)
 	if err != nil || again.RequestID == "" || f.disp.count() != 2 ||
 		f.disp.last(t).Payload.(command.SaveAppRequest).App.AppID != appID {

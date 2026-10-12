@@ -12,6 +12,7 @@ import (
 	"winterflow/internal/domain/template"
 	"winterflow/internal/domain/usecase/templates"
 	"winterflow/internal/infra/db/dbtest"
+	"winterflow/pkg/crypto/cryptotest"
 )
 
 // created is fixture f with instance k1 created (NAME=acme).
@@ -141,13 +142,14 @@ func TestUpdatePendingSendsSecretsAndBackups(t *testing.T) {
 		t.Fatalf("a refused update dispatched: %d commands", f.disp.count())
 	}
 
-	in.Secrets = map[string]string{"KEY": "CT2"}
+	again := cryptotest.Ciphertext(t, "key")
+	in.Secrets = map[string]string{"KEY": again}
 	out, err := f.uc.UpdateInstance(ctx, "u1", org1, in)
 	if err != nil {
 		t.Fatal(err)
 	}
 	vars, cfg := saved(t, f)
-	if k := vars["KEY"]; string(k.Content) != "CT2" || !k.Encrypted {
+	if k := vars["KEY"]; string(k.Content) != again || !k.Encrypted {
 		t.Fatalf("the secret = %+v", k)
 	}
 	if len(cfg.Backups) != 1 || cfg.Backups[0].Name != "db" || len(cfg.Instance.BackupDefaults) != 0 {
@@ -165,7 +167,7 @@ func TestUpdatePendingBackupsOverride(t *testing.T) {
 	ctx := dbtest.Ctx(t)
 	pendingInstance(t, f)
 
-	in := templates.UpdateInput{ServerID: srv1, Key: "k1", Secrets: map[string]string{"KEY": "CT"}, Backups: map[string]string{"nope": "disk"}}
+	in := templates.UpdateInput{ServerID: srv1, Key: "k1", Secrets: map[string]string{"KEY": f.secret}, Backups: map[string]string{"nope": "disk"}}
 	if _, err := f.uc.UpdateInstance(ctx, "u1", org1, in); !errors.Is(err, model.ErrRejected) {
 		t.Fatalf("an override of an unknown backup: %v", err)
 	}
@@ -190,7 +192,7 @@ func TestUpgradePendingSendsTheWholeBackupsList(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := f.uc.UpdateInstance(ctx, "u1", org1, templates.UpdateInput{ServerID: srv1, Key: "k1", Revision: 2,
-		Secrets: map[string]string{"KEY": "CT"}, Backups: map[string]string{"media": "disk"}}); err != nil {
+		Secrets: map[string]string{"KEY": f.secret}, Backups: map[string]string{"media": "disk"}}); err != nil {
 		t.Fatal(err)
 	}
 	_, cfg := saved(t, f)

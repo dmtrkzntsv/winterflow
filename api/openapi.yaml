@@ -5519,7 +5519,7 @@ components:
         parameters:
           additionalProperties:
             type: string
-          description: Plain parameter values by name.
+          description: Plain parameter values by name; a value may not contain $.
           type: object
         revision:
           description: 'Absent or 0: the latest.'
@@ -6780,7 +6780,8 @@ components:
     Parameter:
       properties:
         default:
-          description: Plain parameters only; must match pattern.
+          description: Plain parameters only; must match pattern and may not contain
+            $.
           type:
           - "null"
           - string
@@ -6804,7 +6805,8 @@ components:
     ParameterInput:
       properties:
         default:
-          description: Plain parameters only; must match pattern.
+          description: Plain parameters only; must match pattern and may not contain
+            $.
           type:
           - "null"
           - string
@@ -7913,7 +7915,8 @@ components:
         parameters:
           additionalProperties:
             type: string
-          description: New plain values, merged over the stored ones.
+          description: New plain values, merged over the stored ones; a value may
+            not contain $.
           type: object
         secrets:
           additionalProperties:
@@ -7952,7 +7955,8 @@ components:
         parameters:
           additionalProperties:
             type: string
-          description: Values for parameters the revision adds or changes.
+          description: Values for parameters the revision adds or changes; a value
+            may not contain $.
           type: object
         revision:
           format: int64

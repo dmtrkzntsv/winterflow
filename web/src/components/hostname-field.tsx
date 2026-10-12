@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { Input } from "@/components/ui/input";
 import { HostHints, Suggestions, type HostCheck, type Issue } from "@/components/host-hints";
@@ -127,17 +127,25 @@ export function HostnameField({
 
   // An "uncovered" hint links to the Domains tab in a new tab. When the user
   // comes back, re-check so a domain registered meanwhile clears the hint.
-  // Only while flagged: a plain focus change costs nothing.
+  // Only while flagged: a plain focus change costs nothing. The listener
+  // stays attached for the row's life and reads the flag from a ref set at
+  // commit: attaching it in a passive effect keyed on the flag leaves a gap
+  // after the hint is painted in which a return would be lost, and the hint
+  // would never clear.
   const uncovered = issue?.kind === "uncovered";
+  const flagged = useRef(false);
+  useLayoutEffect(() => {
+    flagged.current = uncovered;
+  });
   useEffect(() => {
-    if (!uncovered) return;
     const onFocus = () => {
+      if (!flagged.current) return;
       onReturn();
       setRechecks((n) => n + 1);
     };
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
-  }, [uncovered, onReturn]);
+  }, [onReturn]);
 
   const edit = (next: string) => {
     edited.current = true;

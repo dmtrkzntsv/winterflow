@@ -2,7 +2,7 @@ import { useCallback, useMemo, useRef } from "react";
 
 import { useNotifications } from "@/context/use-notifications";
 import { useServers } from "@/context/use-servers";
-import { readApiError } from "@/lib/api";
+import { dispatchCommand } from "@/lib/api";
 import { ENCRYPTED, encryptSecret } from "@/lib/ecies";
 import type { Domain, DomainTLS } from "@/lib/domains";
 import {
@@ -12,9 +12,7 @@ import {
   type StorageSaved,
   type StorageTest,
 } from "@/lib/storages";
-import { apiBaseUrl } from "@/config";
-
-const base = apiBaseUrl.endsWith("/") ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
+import { apiBase as base } from "@/config";
 
 export type Registry = { address: string };
 export type Network = {
@@ -37,8 +35,6 @@ export type Volume = {
 // DomainCreated is domain.create's result: the stored registration (to
 // splice into a list) and the proxy reload's warnings.
 export type DomainCreated = { domain: Domain; warnings: string[] };
-
-type Accepted = { data?: { request_id?: string } };
 
 // fetchPublicKey reads a server's ECIES public key.
 async function fetchPublicKey(serverId: string): Promise<string> {
@@ -79,22 +75,17 @@ export function useDocker() {
       if (!serverId) throw new Error("No active server");
       const sep = path.includes("?") ? "&" : "?";
       const url = `${base}${path}${sep}server_id=${encodeURIComponent(serverId)}`;
-      const res = await fetch(url, {
-        method: opts.method ?? "GET",
-        credentials: "include",
-        headers: opts.body ? { "Content-Type": "application/json" } : undefined,
-        body: opts.body ? JSON.stringify(opts.body) : undefined,
-      });
       // The API explains a refusal (e.g. an invalid domain) in `message`.
-      if (!res.ok) throw await readApiError(res);
-      const accepted = (await res.json()) as Accepted;
-      const ref = accepted.data?.request_id;
-      if (!ref) throw new Error("No request id");
-      const result = await waitFor(ref, opts.timeoutMs);
-      if (result.status && result.status !== 0) {
-        throw new Error(result.error || "Operation failed");
-      }
-      return result.payload as T;
+      return (await dispatchCommand(
+        waitFor,
+        url,
+        {
+          method: opts.method ?? "GET",
+          headers: opts.body ? { "Content-Type": "application/json" } : undefined,
+          body: opts.body ? JSON.stringify(opts.body) : undefined,
+        },
+        { timeoutMs: opts.timeoutMs },
+      )) as T;
     },
     [serverId, waitFor],
   );

@@ -10,8 +10,8 @@ import {
 import { useAuth } from "@/context/use-auth";
 import { useServers } from "@/context/use-servers";
 import { useNotifications } from "@/context/use-notifications";
-import { apiBaseUrl } from "@/config";
-import { readApiError } from "@/lib/api";
+import { apiBase as base } from "@/config";
+import { dispatchCommand } from "@/lib/api";
 import type { BackupHealth } from "@/lib/backups";
 
 import {
@@ -72,7 +72,6 @@ type AcceptedResponse = {
   data?: { request_id?: string };
 };
 
-const base = apiBaseUrl.endsWith("/") ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
 
 const toApp = (a: AppResponse): App => ({
   id: a.id,
@@ -242,24 +241,17 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       opts: { timeoutMs?: number } = {},
     ): Promise<{ list: App[]; payload: unknown }> => {
       if (!activeServerId) throw new Error("No active server");
-      const res = await fetch(`${base}/api/v1/app/${path}`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...body, server_id: activeServerId }),
-      });
       // A refused command (400) carries the reason, e.g. an unknown storage.
-      if (!res.ok) throw await readApiError(res);
-      const accepted = (await res.json()) as AcceptedResponse;
-      const ref = accepted.data?.request_id;
-      let payload: unknown;
-      if (ref) {
-        const result = await waitFor(ref, opts.timeoutMs);
-        if (result.status && result.status !== 0) {
-          throw new Error(result.error || "Operation failed");
-        }
-        payload = result.payload;
-      }
+      const payload = await dispatchCommand(
+        waitFor,
+        `${base}/api/v1/app/${path}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...body, server_id: activeServerId }),
+        },
+        { timeoutMs: opts.timeoutMs, refOptional: true },
+      );
       const [list] = await Promise.all([loadApps(), loadStatus()]);
       return { list, payload };
     },

@@ -2,7 +2,7 @@ import { useCallback, useMemo } from "react";
 
 import { useNotifications } from "@/context/use-notifications";
 import { useServers } from "@/context/use-servers";
-import { readApiError } from "@/lib/api";
+import { dispatchCommand, readApiError } from "@/lib/api";
 import {
   AgentError,
   type BackupConfig,
@@ -12,9 +12,7 @@ import {
   type RestoreResult,
   type RunBackupResult,
 } from "@/lib/backups";
-import { apiBaseUrl } from "@/config";
-
-const base = apiBaseUrl.endsWith("/") ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
+import { apiBase as base } from "@/config";
 
 // How long to wait for a result. A Back up now or a restore answers when it
 // ends, after any backup queued ahead of it: the agent bounds the wait at 2
@@ -56,14 +54,7 @@ export function useBackups() {
         for (const [k, v] of Object.entries(params)) q.set(k, String(v));
         url += `?${q.toString()}`;
       }
-      const res = await fetch(url, init);
-      if (!res.ok) throw await readApiError(res);
-      const accepted = (await res.json()) as { data?: { request_id?: string } };
-      const ref = accepted.data?.request_id;
-      if (!ref) throw new Error("No request id");
-      const result = await waitFor(ref, opts.timeoutMs);
-      if (result.status && result.status !== 0) throw new AgentError(result.error || "Operation failed");
-      return result.payload as T;
+      return (await dispatchCommand(waitFor, url, init, { timeoutMs: opts.timeoutMs, failure: AgentError })) as T;
     },
     [serverId, waitFor],
   );

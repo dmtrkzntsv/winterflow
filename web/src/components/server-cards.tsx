@@ -125,9 +125,9 @@ function HealthCard({
           onOpen();
         }
       }}
-      className="flex min-w-0 cursor-pointer flex-col gap-2.5 p-3.5 transition-colors outline-none hover:border-primary/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+      className="grid min-w-0 cursor-pointer gap-x-6 gap-y-2 p-3.5 transition-colors outline-none lg:grid-cols-[13rem_1fr] hover:border-primary/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
     >
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex items-center justify-between gap-3 lg:flex-col lg:items-start lg:justify-center lg:gap-1">
         <div className="truncate text-base font-semibold tracking-tight">{server.name}</div>
         <span
           className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground"
@@ -139,7 +139,8 @@ function HealthCard({
         </span>
       </div>
 
-      <div className="space-y-1.5">
+      <div className="min-w-0 space-y-2">
+      <div className="grid gap-x-6 gap-y-1.5 lg:grid-cols-3">
         <Meter label="CPU" percent={cpu} color={chartColor(0)} />
         <Meter
           label="Memory"
@@ -154,7 +155,7 @@ function HealthCard({
         />
       </div>
 
-      <div className="space-y-1">
+      <div className="space-y-0.5">
         <div className="text-xs text-muted-foreground tabular-nums">
           {meta.join(" · ")}
           {apps ? (
@@ -173,6 +174,7 @@ function HealthCard({
             {quiet.join(" · ")}
           </div>
         ) : null}
+      </div>
       </div>
     </Card>
   );
@@ -196,7 +198,7 @@ function HealthCardSkeleton() {
   );
 }
 
-const GRID = "grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4";
+const GRID = "grid gap-3";
 
 // ServerCards renders the org's servers as a compact health strip above the
 // apps on the dashboard: presence, usage bars, load, temperature and app

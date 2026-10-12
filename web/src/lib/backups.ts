@@ -420,10 +420,6 @@ export function isStaleTab(message: string): boolean {
   return STALE_TAB_MARKERS.some((m) => message.includes(m));
 }
 
-// selectClass styles a native <select> like the design system's inputs.
-export const selectClass =
-  "h-9 w-full min-w-0 rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50";
-
 // pathsFrom splits a paths field (one per line) into its trimmed, non-empty
 // paths. Commas stay: a file name may have one.
 export function pathsFrom(text: string): string[] {

@@ -10,6 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { AddBackupDialog } from "@/components/add-backup-dialog";
 import { BackupEditDialog } from "@/components/backup-edit-dialog";
 import { BackupStorageDialog } from "@/components/backup-storage-dialog";
+import { InlineError } from "@/components/inline-error";
 import { RestorePointsDialog } from "@/components/restore-points-dialog";
 import { useApps } from "@/context/use-apps";
 import {
@@ -262,9 +263,9 @@ export function AppBackups({ appId }: { appId: string }) {
         </p>
       ) : null}
       {detail?.error ? (
-        <p role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive [overflow-wrap:anywhere]">
+        <InlineError className="rounded-md bg-destructive/10 px-3 py-2 [overflow-wrap:anywhere]">
           The backups can't be read: {detail.error}. Fix the compose file, or roll back in History, before changing the backups.
-        </p>
+        </InlineError>
       ) : null}
       {list.length === 0 && locked ? null : list.length === 0 ? (
         <p className="rounded-lg border border-dashed px-4 py-10 text-center text-sm text-muted-foreground">

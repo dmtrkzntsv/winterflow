@@ -1,11 +1,10 @@
 import { useState, type ReactNode, type RefObject } from "react";
-import { CircleX, RotateCcw } from "lucide-react";
+import { RotateCcw } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogContent,
@@ -14,6 +13,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { InlineError } from "@/components/inline-error";
+import { NativeSelect } from "@/components/native-select";
+import { PathsField, ScheduleSelect } from "@/components/backup-fields";
 import {
   cappedNote,
   changed,
@@ -23,11 +25,8 @@ import {
   humanDuration,
   keepError,
   locationError,
-  MANUAL,
   parseKeepRecent,
   pathsFrom,
-  SCHEDULES,
-  selectClass,
   type BackupConfig,
   type BackupTargets,
   type EffectiveBackup,
@@ -42,6 +41,14 @@ const GROUP_FIELDS = {
   retention: ["keep"],
   location: ["volume", "service", "path", "paths"],
 } as const;
+
+// keepFields is a retention as the form's text fields; 24h0m0s as Go prints it
+// reads "24 hours".
+const keepFields = (k: EffectiveBackup["keep"]) => ({
+  recent: humanDuration(compactDuration(k?.recent || "24h")),
+  daily: String(k?.daily ?? 14),
+  monthly: String(k?.monthly ?? 6),
+});
 
 // BackupEditDialog edits a sqlite or files backup's schedule, retention and
 // location. For a backup of the compose file each part is badged "from
@@ -75,10 +82,9 @@ export function BackupEditDialog({
 }) {
   const b = backup;
   const [every, setEvery] = useState(b.every ?? "1h");
-  // 24h0m0s as Go prints it reads "24 hours".
-  const [recent, setRecent] = useState(humanDuration(compactDuration(b.keep?.recent || "24h")));
-  const [daily, setDaily] = useState(String(b.keep?.daily ?? 14));
-  const [monthly, setMonthly] = useState(String(b.keep?.monthly ?? 6));
+  const [recent, setRecent] = useState(keepFields(b.keep).recent);
+  const [daily, setDaily] = useState(keepFields(b.keep).daily);
+  const [monthly, setMonthly] = useState(keepFields(b.keep).monthly);
   const [where, setWhere] = useState<"volume" | "service">(b.volume ? "volume" : "service");
   const [target, setTarget] = useState(b.volume ?? b.service ?? "");
   const [pathsText, setPathsText] = useState(b.type === "sqlite" ? (b.path ?? "") : (b.paths ?? []).join("\n"));
@@ -89,25 +95,19 @@ export function BackupEditDialog({
   // The paths typed for each kind of location, so switching away and back
   // finds them again.
   const [pathsByKind, setPathsByKind] = useState<Partial<Record<"volume" | "service", string>>>({});
-  const [edited, setEdited] = useState<Set<Group>>(new Set());
-  const [reset, setReset] = useState<Set<Group>>(new Set());
+  // A group the user changed, or reset to the template; never both.
+  const [marks, setMarks] = useState<Map<Group, "edited" | "reset">>(new Map());
 
-  const touch = (g: Group) => {
-    setEdited((s) => new Set(s).add(g));
-    setReset((s) => {
-      const next = new Set(s);
-      next.delete(g);
-      return next;
-    });
-  };
+  const touch = (g: Group) => setMarks((m) => new Map(m).set(g, "edited"));
   // resetGroup goes back to the compose file's value, shown at once.
   const resetGroup = (g: Group) => {
     const t = b.template;
     if (t && g === "schedule" && t.every) setEvery(t.every);
     if (t && g === "retention" && t.keep) {
-      setRecent(humanDuration(compactDuration(t.keep.recent || "24h")));
-      setDaily(String(t.keep.daily ?? 14));
-      setMonthly(String(t.keep.monthly ?? 6));
+      const k = keepFields(t.keep);
+      setRecent(k.recent);
+      setDaily(k.daily);
+      setMonthly(k.monthly);
     }
     if (t && g === "location") {
       setWhere(t.volume ? "volume" : "service");
@@ -115,20 +115,18 @@ export function BackupEditDialog({
       setPathsText(b.type === "sqlite" ? (t.path ?? "") : (t.paths ?? []).join("\n"));
       setPathsEdited(false);
     }
-    setReset((s) => new Set(s).add(g));
-    setEdited((s) => {
-      const next = new Set(s);
-      next.delete(g);
-      return next;
-    });
+    setMarks((m) => new Map(m).set(g, "reset"));
   };
-  const isChanged = (g: Group) => !reset.has(g) && (edited.has(g) || GROUP_FIELDS[g].some((f) => changed(b, f)));
+  const isChanged = (g: Group) => {
+    const mark = marks.get(g);
+    return mark !== "reset" && (mark === "edited" || GROUP_FIELDS[g].some((f) => changed(b, f)));
+  };
 
   const pathList = pathsFrom(pathsText);
   const problem =
     everyError(every) ||
     keepError(recent, daily, monthly) ||
-    (reset.has("location") ? "" : locationError(b.type, where, target, pathList));
+    (marks.get("location") === "reset" ? "" : locationError(b.type, where, target, pathList));
   const keep = { recent: parseKeepRecent(recent) || "24h", daily: Number(daily), monthly: Number(monthly) };
   const note = cappedNote(keep, retentionDays);
 
@@ -137,10 +135,10 @@ export function BackupEditDialog({
     const c = configOf(b);
     for (const g of Object.keys(GROUP_FIELDS) as Group[]) {
       const fields = GROUP_FIELDS[g];
-      if (b.in_recipe && !edited.has(g)) {
+      if (b.in_recipe && marks.get(g) !== "edited") {
         // Untouched: what is stored stays as it is, never rewritten from the
         // form; a reset drops the override, so the compose file's value applies.
-        if (reset.has(g)) for (const f of fields) delete c[f];
+        if (marks.get(g) === "reset") for (const f of fields) delete c[f];
         continue;
       }
       const [path, paths] = [c.path, c.paths];
@@ -176,7 +174,7 @@ export function BackupEditDialog({
               </Button>
             </>
           ) : (
-            <Badge variant="outline">{reset.has(g) ? (b.template ? "template's value, applied on save" : "template's value on save") : "from template"}</Badge>
+            <Badge variant="outline">{marks.get(g) === "reset" ? (b.template ? "template's value, applied on save" : "template's value on save") : "from template"}</Badge>
           )}
         </div>
       ) : null}
@@ -208,23 +206,14 @@ export function BackupEditDialog({
             {section(
               "schedule",
               "Schedule",
-              <select
+              <ScheduleSelect
                 aria-label="Schedule"
-                className={selectClass}
                 value={every}
-                onChange={(e) => {
-                  setEvery(e.target.value);
+                onChange={(v) => {
+                  setEvery(v);
                   touch("schedule");
                 }}
-              >
-                {(SCHEDULES.some((s) => s.value === every) ? SCHEDULES : [...SCHEDULES, { value: every, label: `Every ${every}` }]).map(
-                  (s) => (
-                    <option key={s.value} value={s.value}>
-                      {s.value === MANUAL ? "Manual (Back up now only)" : s.label}
-                    </option>
-                  ),
-                )}
-              </select>,
+              />,
             )}
             {section(
               "retention",
@@ -261,9 +250,8 @@ export function BackupEditDialog({
               "Location",
               <>
                 <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-2">
-                  <select
+                  <NativeSelect
                     aria-label="Location kind"
-                    className={selectClass}
                     value={where}
                     onChange={(e) => {
                       const next = e.target.value as "volume" | "service";
@@ -282,10 +270,9 @@ export function BackupEditDialog({
                   >
                     <option value="volume">Volume</option>
                     <option value="service">Service</option>
-                  </select>
-                  <select
+                  </NativeSelect>
+                  <NativeSelect
                     aria-label={where === "volume" ? "Volume" : "Service"}
-                    className={selectClass}
                     value={target}
                     onChange={(e) => {
                       setTarget(e.target.value);
@@ -299,26 +286,20 @@ export function BackupEditDialog({
                           {n}
                         </option>
                       ))}
-                  </select>
+                  </NativeSelect>
                 </div>
-                <div className="grid gap-1">
-                  <Label htmlFor="backup-paths" className="text-xs font-normal text-muted-foreground">
-                    {b.type === "sqlite" ? "Database file" : "Paths, one per line"}
-                    {where === "volume" ? " (inside the volume)" : " (in the container)"}
-                  </Label>
-                  <Textarea
-                    id="backup-paths"
-                    rows={b.type === "sqlite" ? 1 : 3}
-                    className="font-mono text-sm"
-                    placeholder={where === "volume" ? (b.type === "sqlite" ? "app.db" : "empty: the whole volume") : "/app/data"}
-                    value={pathsText}
-                    onChange={(e) => {
-                      setPathsText(e.target.value);
-                      setPathsEdited(true);
-                      touch("location");
-                    }}
-                  />
-                </div>
+                <PathsField
+                  id="backup-paths"
+                  compact
+                  type={b.type}
+                  where={where}
+                  value={pathsText}
+                  onChange={(v) => {
+                    setPathsText(v);
+                    setPathsEdited(true);
+                    touch("location");
+                  }}
+                />
                 {b.type === "files" && (b.exclude ?? []).length > 0 ? (
                   <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
                     Skipped{b.in_recipe && b.from_recipe?.exclude ? " (set by the compose file)" : ""}:{" "}
@@ -334,15 +315,11 @@ export function BackupEditDialog({
             )}
           </fieldset>
           {error ? (
-            <p role="alert" className="flex items-start gap-1.5 text-sm text-destructive [overflow-wrap:anywhere]">
-              <CircleX className="mt-0.5 size-4 shrink-0" /> {error}
-            </p>
+            <InlineError icon className="[overflow-wrap:anywhere]">
+              {error}
+            </InlineError>
           ) : null}
-          {problem ? (
-            <p role="alert" className="flex items-start gap-1.5 text-sm text-destructive">
-              <CircleX className="mt-0.5 size-4 shrink-0" /> {problem}
-            </p>
-          ) : null}
+          {problem ? <InlineError icon>{problem}</InlineError> : null}
           <DialogFooter className="gap-2 sm:justify-between sm:space-x-0">
             {onRemove ? (
               <Button type="button" variant="ghost" className="text-destructive hover:text-destructive" disabled={busy} onClick={onRemove}>

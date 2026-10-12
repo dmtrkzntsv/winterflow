@@ -14,6 +14,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Spinner } from "@/components/ui/spinner";
+import { InlineError } from "@/components/inline-error";
 import {
   Dialog,
   DialogContent,
@@ -109,9 +110,7 @@ export function OrphansDialog({
         </DialogHeader>
         {error ? (
           <div className="grid justify-items-start gap-2">
-            <p role="alert" className="text-sm text-destructive">
-              {error}
-            </p>
+            <InlineError>{error}</InlineError>
             <Button variant="outline" size="sm" onClick={() => void load()}>
               Try again
             </Button>

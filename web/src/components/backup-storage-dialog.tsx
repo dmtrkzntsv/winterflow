@@ -3,6 +3,8 @@ import { Link } from "react-router-dom";
 
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { InlineError } from "@/components/inline-error";
+import { NativeSelect } from "@/components/native-select";
 import { Spinner } from "@/components/ui/spinner";
 import {
   Dialog,
@@ -12,7 +14,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { selectClass } from "@/lib/backups";
 import { returnFocusTo } from "@/lib/focus";
 
 // BackupStorageDialog turns a backup on: it picks one of the server's
@@ -67,9 +68,7 @@ export function BackupStorageDialog({
           <DialogDescription>Pick the storage its copies go to.</DialogDescription>
         </DialogHeader>
         {error ? (
-          <p role="alert" className="text-sm text-destructive">
-            {error}
-          </p>
+          <InlineError>{error}</InlineError>
         ) : names === null ? (
           <div className="flex h-16 items-center justify-center">
             <Spinner />
@@ -85,19 +84,17 @@ export function BackupStorageDialog({
         ) : (
           <div className="grid gap-1.5">
             <Label htmlFor="backup-storage">Storage</Label>
-            <select id="backup-storage" className={selectClass} value={picked} onChange={(e) => setPicked(e.target.value)}>
+            <NativeSelect id="backup-storage" value={picked} onChange={(e) => setPicked(e.target.value)}>
               {names.map((n) => (
                 <option key={n} value={n}>
                   {n}
                 </option>
               ))}
-            </select>
+            </NativeSelect>
           </div>
         )}
         {saveError ? (
-          <p role="alert" className="text-sm text-destructive [overflow-wrap:anywhere]">
-            {saveError}
-          </p>
+          <InlineError className="[overflow-wrap:anywhere]">{saveError}</InlineError>
         ) : null}
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>

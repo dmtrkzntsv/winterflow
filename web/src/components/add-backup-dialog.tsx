@@ -1,10 +1,8 @@
 import { useState, type RefObject } from "react";
-import { CircleX } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   Dialog,
@@ -14,14 +12,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { InlineError } from "@/components/inline-error";
+import { NativeSelect } from "@/components/native-select";
+import { PathsField, ScheduleSelect } from "@/components/backup-fields";
 import {
   backupNameError,
   everyError,
   locationError,
-  MANUAL,
   pathsFrom,
-  SCHEDULES,
-  selectClass,
   type BackupConfig,
   type BackupTargets,
 } from "@/lib/backups";
@@ -155,7 +153,7 @@ export function AddBackupDialog({
             </div>
             <div className="grid gap-1.5">
               <Label htmlFor="add-backup-place">Where the data is</Label>
-              <select id="add-backup-place" className={selectClass} value={place} onChange={(e) => pick(e.target.value)}>
+              <NativeSelect id="add-backup-place" value={place} onChange={(e) => pick(e.target.value)}>
                 <option value="" disabled>
                   Pick a volume or a mount…
                 </option>
@@ -178,7 +176,7 @@ export function AddBackupDialog({
                     ))}
                   </optgroup>
                 ))}
-              </select>
+              </NativeSelect>
               {kind === "mount" ? (
                 <p className="text-xs text-muted-foreground">Paths are in the {key} container.</p>
               ) : null}
@@ -189,38 +187,18 @@ export function AddBackupDialog({
                 </p>
               ) : null}
             </div>
-            <div className="grid gap-1.5">
-              <Label htmlFor="add-backup-paths">{type === "sqlite" ? "Database file" : "Paths, one per line"}</Label>
-              <Textarea
-                id="add-backup-paths"
-                rows={type === "sqlite" ? 1 : 3}
-                className="font-mono text-sm"
-                placeholder={where === "volume" ? (type === "sqlite" ? "app.db" : "empty: the whole volume") : "/app/data"}
-                value={pathsText}
-                onChange={(e) => setPathsText(e.target.value)}
-              />
-            </div>
+            <PathsField id="add-backup-paths" type={type} where={where} value={pathsText} onChange={setPathsText} />
             <div className="grid gap-1.5">
               <Label htmlFor="add-backup-every">Schedule</Label>
-              <select id="add-backup-every" className={selectClass} value={every} onChange={(e) => setEvery(e.target.value)}>
-                {SCHEDULES.map((s) => (
-                  <option key={s.value} value={s.value}>
-                    {s.value === MANUAL ? "Manual (Back up now only)" : s.label}
-                  </option>
-                ))}
-              </select>
+              <ScheduleSelect id="add-backup-every" value={every} onChange={setEvery} />
             </div>
           </fieldset>
           {error ? (
-            <p role="alert" className="flex items-start gap-1.5 text-sm text-destructive [overflow-wrap:anywhere]">
-              <CircleX className="mt-0.5 size-4 shrink-0" /> {error}
-            </p>
+            <InlineError icon className="[overflow-wrap:anywhere]">
+              {error}
+            </InlineError>
           ) : null}
-          {shown && problem ? (
-            <p role="alert" className="flex items-start gap-1.5 text-sm text-destructive">
-              <CircleX className="mt-0.5 size-4 shrink-0" /> {problem}
-            </p>
-          ) : null}
+          {shown && problem ? <InlineError icon>{problem}</InlineError> : null}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
               Cancel

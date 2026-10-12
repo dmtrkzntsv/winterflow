@@ -15,6 +15,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Spinner } from "@/components/ui/spinner";
+import { InlineError } from "@/components/inline-error";
 import {
   Dialog,
   DialogContent,
@@ -175,9 +176,7 @@ export function RestorePointsDialog({
         ) : null}
         {error ? (
           <div className="grid justify-items-start gap-2">
-            <p role="alert" className="text-sm text-destructive [overflow-wrap:anywhere]">
-              {error}
-            </p>
+            <InlineError className="[overflow-wrap:anywhere]">{error}</InlineError>
             <Button variant="outline" size="sm" onClick={() => void load()}>
               Try again
             </Button>
@@ -292,9 +291,7 @@ export function RestorePointsDialog({
               </p>
             ) : null}
             {failure ? (
-              <p role="alert" className="text-sm text-destructive [overflow-wrap:anywhere]">
-                {failure}
-              </p>
+              <InlineError className="[overflow-wrap:anywhere]">{failure}</InlineError>
             ) : null}
             <AlertDialogFooter>
               <AlertDialogCancel disabled={busy === "delete"}>{busy === "restore" ? "Close" : "Cancel"}</AlertDialogCancel>

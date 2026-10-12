@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { InlineError } from "@/components/inline-error";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
   Dialog,
@@ -382,12 +383,9 @@ export function StorageDialog({
             </p>
           ) : null}
           {saveError ? (
-            <p
-              role="alert"
-              className="flex items-start gap-1.5 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive [overflow-wrap:anywhere]"
-            >
-              <CircleX className="mt-0.5 size-4 shrink-0" /> {saveError}
-            </p>
+            <InlineError icon className="rounded-md bg-destructive/10 px-3 py-2 [overflow-wrap:anywhere]">
+              {saveError}
+            </InlineError>
           ) : null}
 
           <DialogFooter>

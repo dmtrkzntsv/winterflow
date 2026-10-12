@@ -48,7 +48,7 @@ describe("AddBackupDialog", () => {
 
   it("says what is missing once the user tries", async () => {
     const user = userEvent.setup({ delay: null });
-    const onAdd = renderDialog(null);
+    const onAdd = renderDialog(targets);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     await user.type(screen.getByLabelText("Name"), "database");
     await user.click(screen.getByRole("button", { name: "Add backup" }));
@@ -80,15 +80,19 @@ describe("AddBackupDialog", () => {
     expect(screen.queryByRole("option", { name: /\/data \(volume data\)/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Service worker" })).not.toBeInTheDocument();
     expect(screen.getByRole("option", { name: "/app/uploads (./uploads)" })).toBeInTheDocument();
-    expect(screen.queryByText(/has no volumes or bind mounts/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("note")).not.toBeInTheDocument();
   });
 
-  it("explains an empty picker", () => {
+  it("explains instead of asking for a place when the app has none", () => {
     renderDialog({ volumes: [], services: [{ name: "web", mounts: [] }] });
-    expect(screen.getByText(/has no volumes or bind mounts/)).toBeInTheDocument();
+    expect(screen.getByRole("note")).toHaveTextContent(/has none/);
+    expect(screen.getByRole("note")).toHaveTextContent(/web:\s+volumes:/);
+    expect(screen.queryByLabelText("Where the data is")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add backup" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Got it" })).toBeInTheDocument();
     cleanup();
     renderDialog(null);
-    expect(screen.getByText(/has no volumes or bind mounts/)).toBeInTheDocument();
+    expect(screen.getByRole("note")).toHaveTextContent(/app:\s+volumes:/);
   });
 
   it("keeps the reason an add was refused next to the button", () => {

@@ -97,6 +97,17 @@ export function AddBackupDialog({
     onAdd(entry);
   };
 
+  if (nothing) {
+    return (
+      <NoPlacesDialog
+        service={targets?.services[0]?.name ?? "app"}
+        open={open}
+        returnFocus={returnFocus}
+        onOpenChange={onOpenChange}
+      />
+    );
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
@@ -180,12 +191,6 @@ export function AddBackupDialog({
               {kind === "mount" ? (
                 <p className="text-xs text-muted-foreground">Paths are in the {key} container.</p>
               ) : null}
-              {nothing ? (
-                <p className="text-xs text-muted-foreground">
-                  This app's compose file has no volumes or bind mounts. A container's own files can't be backed up: add a
-                  volume to the compose file first.
-                </p>
-              ) : null}
             </div>
             <PathsField id="add-backup-paths" type={type} where={where} value={pathsText} onChange={setPathsText} />
             <div className="grid gap-1.5">
@@ -208,6 +213,55 @@ export function AddBackupDialog({
             </Button>
           </DialogFooter>
         </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// NoPlacesDialog stands in for the form when the app's compose file has no
+// volume or bind mount: a backup reads data through the app's mounts, so a
+// folder that lives only inside a container (its image's /var/log, say)
+// can't be reached until the compose file mounts it.
+function NoPlacesDialog({
+  service,
+  open,
+  returnFocus,
+  onOpenChange,
+}: {
+  service: string;
+  open: boolean;
+  returnFocus?: RefObject<HTMLElement | null>;
+  onOpenChange: (open: boolean) => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg" onCloseAutoFocus={returnFocusTo(returnFocus)}>
+        <DialogHeader>
+          <DialogTitle>Add backup</DialogTitle>
+          <DialogDescription>This app has nothing a backup can reach yet.</DialogDescription>
+        </DialogHeader>
+        <div className="grid gap-3 text-sm" role="note">
+          <p>
+            Backups read data through the app&apos;s volumes and bind mounts, and its compose file has none. Files that
+            live only inside a container can&apos;t be reached.
+          </p>
+          <p>Mount the folder you want to keep in the compose file (Edit the app), then add the backup here. For example:</p>
+          <pre className="overflow-x-auto rounded-md border bg-muted/40 p-3 font-mono text-xs leading-relaxed">{`services:
+  ${service}:
+    volumes:
+      - data:/path/in/the/container
+volumes:
+  data:`}</pre>
+          <p className="text-muted-foreground">
+            A new named volume starts with the image&apos;s files at that path; a bind mount starts with the host
+            folder&apos;s.
+          </p>
+        </div>
+        <DialogFooter>
+          <Button type="button" onClick={() => onOpenChange(false)}>
+            Got it
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

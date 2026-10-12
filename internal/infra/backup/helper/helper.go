@@ -27,6 +27,22 @@ const (
 	ExitPartial   = 5 // a restore failed while swapping and could not undo it: a files restore's paths are partly replaced, a sqlite restore's old -wal/-journal stay set aside
 )
 
+// LeftDataUnchanged reports whether a restore's exit code says the helper
+// changed nothing: it failed cleanly (ExitFailed) or never ran (docker's own
+// 125 to 127: the daemon failed, the command could not be invoked or found).
+// Anything else (a crash, a kill, a swap that failed) may have left the data
+// partly replaced.
+func LeftDataUnchanged(exit int) bool {
+	return exit == ExitFailed || (exit >= 125 && exit <= 127)
+}
+
+// ContainerGone reports whether exit is one of the codes a helper ends with
+// when it ran to its own result, so `--rm` has removed the container. Any
+// other code (a crash, a kill, docker's own failure) may have left it behind.
+func ContainerGone(exit int) bool {
+	return exit == ExitOK || exit == ExitUnchanged || exit == ExitMissing || exit == ExitPartial
+}
+
 // Result is the JSON line a dump ends stderr with.
 type Result struct {
 	Unchanged   bool     `json:"unchanged,omitempty"`

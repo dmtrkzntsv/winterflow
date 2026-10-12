@@ -677,7 +677,7 @@ func runDockerIO(ctx context.Context, name string, args []string, in io.Reader, 
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
 		code := ee.ExitCode()
-		if code != helper.ExitOK && code != helper.ExitUnchanged && code != helper.ExitMissing && code != helper.ExitPartial {
+		if !helper.ContainerGone(code) {
 			removeHelper(name)
 		}
 		return code, stderr.buf, nil

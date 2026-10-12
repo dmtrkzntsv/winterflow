@@ -450,7 +450,7 @@ func (r *Repository) RestoreBackup(ctx context.Context, job RestoreJob) (command
 	// a swap that failed, a "success" with no result — may have left it
 	// partly replaced (a files swap; a database's WAL set aside), and the
 	// app stays stopped.
-	unchanged := err == nil && (exit == helper.ExitFailed || exit == 125 || exit == 126 || exit == 127)
+	unchanged := err == nil && helper.LeftDataUnchanged(exit)
 	notStarted := errors.Is(err, errHelperNotStarted)
 	stopped := func(e error) error {
 		inDoubt = true

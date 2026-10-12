@@ -22,6 +22,7 @@ export function NavSecondary({
         title: string
         url: string
         icon: LucideIcon
+        exact?: boolean
     }[]
 } & React.ComponentPropsWithoutRef<typeof SidebarGroup>) {
     const { pathname } = useLocation()
@@ -34,7 +35,7 @@ export function NavSecondary({
                             <SidebarMenuButton
                                 asChild
                                 tooltip={item.title}
-                                isActive={isNavActive(pathname, item.url)}
+                                isActive={isNavActive(pathname, item.url, item.exact)}
                                 className={navItemClass}
                             >
                                 <Link to={item.url}>

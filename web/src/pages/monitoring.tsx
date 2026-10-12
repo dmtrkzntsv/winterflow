@@ -10,6 +10,7 @@ import { ChartCardSkeleton, MetricChartCard, type ChartSeries } from "@/componen
 import { RangeMenu } from "@/components/range-menu";
 import { useApps } from "@/context/use-apps";
 import { useServers } from "@/context/use-servers";
+import { useServerPath } from "@/context/use-server-path";
 import { useMetricsOverview, useServerMetrics } from "@/hooks/use-metrics";
 import { appLabel, deltaLabel, isSignificant, kpiNow, latestValue, percentCeiling, periodDelta, withNetTotal } from "@/lib/kpi";
 import {
@@ -122,6 +123,7 @@ function DockerDisk({ df }: { df: DockerDF | undefined }) {
 // CPU and memory stack, and Docker's disk usage.
 export default function MonitoringPage() {
   const { activeServer, activeServerId } = useServers();
+  const toServer = useServerPath();
   const { apps } = useApps();
   // 1h is served from raw samples, so it has data from the first minute;
   // coarser ranges fill in once their rollup buckets close.
@@ -131,8 +133,11 @@ export default function MonitoringPage() {
   const { data: overview, refresh: refreshOverview } = useMetricsOverview();
 
   const breadcrumbs = useMemo(
-    () => [{ label: "Monitoring", href: "#", hideOnMobile: true }, { label: activeServer?.name ?? "Server" }],
-    [activeServer?.name],
+    () => [
+      { label: "Monitoring", href: toServer("/monitoring"), hideOnMobile: true },
+      { label: activeServer?.name ?? "Server" },
+    ],
+    [activeServer?.name, toServer],
   );
   useAppBreadcrumbs(breadcrumbs);
 

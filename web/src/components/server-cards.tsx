@@ -17,6 +17,7 @@ import {
   toChartRows,
   type ServerOverview,
 } from "@/lib/metrics";
+import { serverPath } from "@/lib/server-paths";
 import { cn, formatBytes } from "@/lib/utils";
 
 const SPARK_INTERVAL = 60; // the overview sparkline is tier 1: one point a minute
@@ -205,10 +206,10 @@ function HealthCardSkeleton() {
 
 // ServerCards renders the org's servers as a compact health strip above the
 // apps on the dashboard: presence, usage bars, load, temperature and app
-// counts. Clicking one makes it the active server and opens its
-// Monitoring page.
+// counts. Clicking one opens that server's Monitoring page (its
+// /server/:serverId/monitoring URL).
 export function ServerCards() {
-  const { servers, setActiveServerId, statusByServer, loading } = useServers();
+  const { servers, statusByServer, loading } = useServers();
   const { data } = useMetricsOverview();
   const navigate = useNavigate();
   const now = useNow();
@@ -239,10 +240,7 @@ export function ServerCards() {
           overview={byId.get(s.id)}
           online={statusByServer[s.id] === "online"}
           now={now}
-          onOpen={() => {
-            setActiveServerId(s.id);
-            navigate("/monitoring");
-          }}
+          onOpen={() => navigate(serverPath(s.id, "/monitoring"))}
         />
       ))}
     </div>

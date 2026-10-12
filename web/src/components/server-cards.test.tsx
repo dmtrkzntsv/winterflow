@@ -1,20 +1,19 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useParams } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ServerCards } from "@/components/server-cards";
 import type { Server } from "@/context/servers-context-base";
 import type { ServerOverview } from "@/lib/metrics";
 
-const setActiveServerId = vi.fn();
 let servers: Server[] = [];
 let overview: ServerOverview[] = [];
 let statusByServer: Record<string, "online" | "unknown"> = {};
 let loading = false;
 
 vi.mock("@/context/use-servers", () => ({
-  useServers: () => ({ servers, activeServerId: "s1", setActiveServerId, statusByServer, loading }),
+  useServers: () => ({ servers, activeServerId: "s1", statusByServer, loading }),
 }));
 vi.mock("@/hooks/use-metrics", () => ({
   useMetricsOverview: () => ({ data: { servers: overview }, loading: false, error: null, refresh: vi.fn() }),
@@ -29,12 +28,17 @@ const server = (id: string, name: string, lastSeenAt: string | null = null): Ser
   capabilities: {},
 });
 
+function MonitoringStub() {
+  const { serverId } = useParams();
+  return <div>monitoring page of {serverId}</div>;
+}
+
 function renderCards() {
   return render(
     <MemoryRouter>
       <Routes>
         <Route path="/" element={<ServerCards />} />
-        <Route path="/monitoring" element={<div>monitoring page</div>} />
+        <Route path="/server/:serverId/monitoring" element={<MonitoringStub />} />
       </Routes>
     </MemoryRouter>,
   );
@@ -42,7 +46,6 @@ function renderCards() {
 
 describe("ServerCards", () => {
   beforeEach(() => {
-    setActiveServerId.mockClear();
     loading = false;
     servers = [server("s1", "prod-1"), server("s2", "backup", "2026-10-11T10:00:00Z")];
     statusByServer = { s1: "online" };
@@ -132,8 +135,7 @@ describe("ServerCards", () => {
   it("opens the server's Monitoring page on click", async () => {
     renderCards();
     await userEvent.click(screen.getByTitle("backup: offline"));
-    expect(setActiveServerId).toHaveBeenCalledWith("s2");
-    expect(await screen.findByText("monitoring page")).toBeInTheDocument();
+    expect(await screen.findByText("monitoring page of s2")).toBeInTheDocument();
   });
 
   it("opens the Monitoring page from the keyboard", async () => {
@@ -142,8 +144,7 @@ describe("ServerCards", () => {
     card.focus();
     expect(card).toHaveFocus();
     await userEvent.keyboard("{Enter}");
-    expect(setActiveServerId).toHaveBeenCalledWith("s2");
-    expect(await screen.findByText("monitoring page")).toBeInTheDocument();
+    expect(await screen.findByText("monitoring page of s2")).toBeInTheDocument();
   });
 
   it("keeps the specs line and agent version", () => {

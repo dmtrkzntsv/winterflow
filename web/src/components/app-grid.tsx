@@ -8,6 +8,7 @@ import { useApps } from "@/context/use-apps";
 import { appLabel } from "@/lib/kpi";
 import { TILE_GRID } from "@/lib/grid";
 import { cn } from "@/lib/utils";
+import { useServerPath } from "@/context/use-server-path";
 
 // Status → a small dot and a word (twillingate's status treatment, not a
 // coloured outline); unknown is just a neutral dot.
@@ -36,6 +37,7 @@ function AppTileSkeleton() {
 // language: icon, name, a status dot with its word, and the public route
 // (or, for an app without a name yet, its id). Each card links to the app.
 export function AppGrid() {
+  const toServer = useServerPath();
   const { apps, statusByApp, loading, error } = useApps();
 
   if (loading && apps.length === 0) {
@@ -74,7 +76,7 @@ export function AppGrid() {
         return (
           <Link
             key={app.id}
-            to={`/app/${app.id}`}
+            to={toServer(`/app/${app.id}`)}
             title={`${label}: ${status.label}`}
             className="app-card-in block min-w-0"
             style={{ animationDelay: `${index * 40}ms` }}

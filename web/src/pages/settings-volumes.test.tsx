@@ -7,6 +7,9 @@ import { AppsContext, type AppsContextValue } from "@/context/apps-context-base"
 import type { Docker, Volume } from "@/context/use-docker";
 import { VolumesCard } from "@/pages/settings-volumes";
 
+// Links point into the active server's scope (/server/:id/...).
+vi.mock("@/context/use-servers", () => ({ useServers: () => ({ activeServerId: "srv-1" }) }));
+
 const HASH = "fedcba9876543210".repeat(4);
 
 const VOLUMES: Volume[] = [
@@ -54,7 +57,7 @@ describe("VolumesCard", () => {
     // The owning app links to its page (once per layout: desktop + phone).
     expect(screen.getAllByRole("link", { name: "Nextcloud" })[0]).toHaveAttribute(
       "href",
-      "/app/a1",
+      "/server/srv-1/app/a1",
     );
     expect(screen.getByText(/3 volumes/)).toBeInTheDocument();
     expect(screen.getByText(/1 orphaned/)).toBeInTheDocument();

@@ -24,6 +24,7 @@ type NavItem = {
     url: string
     icon?: LucideIcon
     isActive?: boolean
+    exact?: boolean
     items?: { title: string; url: string }[]
 }
 
@@ -69,7 +70,7 @@ export function NavMain({ items }: { items: NavItem[] }) {
                             <SidebarMenuButton
                                 asChild
                                 tooltip={item.title}
-                                isActive={isNavActive(pathname, item.url)}
+                                isActive={isNavActive(pathname, item.url, item.exact)}
                                 className={navItemClass}
                             >
                                 <Link to={item.url}>

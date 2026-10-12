@@ -17,9 +17,8 @@ import (
 	metricrepo "winterflow/internal/infra/db/repository/metric"
 	serverrepo "winterflow/internal/infra/db/repository/server"
 	serverdomainrepo "winterflow/internal/infra/db/repository/serverdomain"
+	sharedvarrepo "winterflow/internal/infra/db/repository/sharedvar"
 	userrepo "winterflow/internal/infra/db/repository/user"
-	sqlitegen "winterflow/internal/infra/db/sqlc/gen/sqlite"
-	"winterflow/internal/infra/db/types"
 )
 
 // sqliteDateTime matches the only timestamp format SQLite may hold:
@@ -46,6 +45,7 @@ func TestSQLiteTimestampsAreDateTimeText(t *testing.T) {
 	appDomains := must(appdomainrepo.New(d.Tx, d.Driver, dbtest.Log))
 	serverDomains := must(serverdomainrepo.New(d.Tx, d.Driver, dbtest.Log))
 	metricSamples := must(metricrepo.New(d.Tx, d.Driver, dbtest.Log))
+	sharedVars := must(sharedvarrepo.New(d.Tx, d.Driver, dbtest.Log))
 
 	admin := must(users.BootstrapLocalAdmin(ctx, "Admin", "admin@example.com", "correct horse battery"))
 	orgID := must(users.PrimaryOrganizationID(ctx, admin.ID))
@@ -103,11 +103,9 @@ func TestSQLiteTimestampsAreDateTimeText(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// No shared-variable repository yet: write through the generated query.
-	if err := sqlitegen.New(d.SQL).InsertSharedVariable(ctx, sqlitegen.InsertSharedVariableParams{
-		ID: dbtest.ID(401), OrgID: orgID, Name: "TZ_VAR", Description: "d",
-		UpdatedAt: types.DateTime(at),
-	}); err != nil {
+	if err := sharedVars.Save(ctx, model.SharedVariableSave{Create: true, Variable: model.SharedVariable{
+		ID: dbtest.ID(401), OrgID: orgID, Name: "TZ_VAR", Description: "d", UpdatedAt: at,
+	}}); err != nil {
 		t.Fatal(err)
 	}
 

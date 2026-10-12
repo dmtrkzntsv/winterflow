@@ -183,17 +183,24 @@ function HealthCard({
 // HealthCardSkeleton holds a server card's place while the list loads.
 function HealthCardSkeleton() {
   return (
-    <Card role="status" aria-label="Loading servers" className="flex flex-col gap-3 p-4">
-      <div className="flex items-center justify-between">
-        <div className="frost h-4 w-28 rounded" />
-        <div className="frost h-3 w-14 rounded" />
+    <Card
+      role="status"
+      aria-label="Loading servers"
+      data-testid="server-card-skeleton"
+      className="grid min-w-0 gap-x-6 gap-y-2 p-3.5 lg:grid-cols-[13rem_1fr]"
+    >
+      <div data-testid="skeleton-head" className="flex items-center justify-between gap-3 lg:flex-col lg:items-start lg:justify-center lg:gap-1">
+        <div className="frost h-5 w-28 rounded" />
+        <div className="frost h-4 w-14 rounded" />
       </div>
-      <div className="space-y-2.5">
-        {[0, 1, 2].map((i) => (
-          <div key={i} className="frost h-1.5 rounded-full" />
-        ))}
+      <div data-testid="skeleton-body" className="min-w-0 space-y-2">
+        <div className="grid gap-x-6 gap-y-1.5 lg:grid-cols-3">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="frost h-4 rounded" />
+          ))}
+        </div>
+        <div className="frost h-4 w-3/4 rounded" />
       </div>
-      <div className="frost h-3 w-3/4 rounded" />
     </Card>
   );
 }

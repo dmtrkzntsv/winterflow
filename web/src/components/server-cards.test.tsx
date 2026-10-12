@@ -115,6 +115,9 @@ describe("ServerCards", () => {
     loading = true;
     renderCards();
     expect(screen.getByRole("status", { name: "Loading servers" })).toBeInTheDocument();
+    const skeleton = screen.getByTestId("server-card-skeleton");
+    expect(within(skeleton).getByTestId("skeleton-head")).toBeInTheDocument();
+    expect(within(skeleton).getByTestId("skeleton-body")).toBeInTheDocument();
   });
 
   it("hides temperature without sensors and problematic when zero", () => {

@@ -118,23 +118,37 @@ const TIME_STEPS = [
 ];
 
 // timeTicks returns time-axis ticks on round local boundaries (every 10
-// minutes, 3 hours, midnight...) inside [start, end] ms: the finest step
-// that keeps at most maxTicks, evenly spaced. The newest point is not forced
-// in, so the last gap never crowds. tzOffsetMinutes is
-// Date#getTimezoneOffset (local by default).
+// minutes, 3 hours, midnight, Monday...) inside [start, end] ms: the finest
+// step that keeps at most maxTicks, evenly spaced. The newest point is not
+// forced in, so the last gap never crowds. Steps are taken on the local
+// wall clock and the zone offset is resolved per tick, so ticks stay round
+// across a DST change. tzOffsetMinutes pins a fixed offset (as
+// Date#getTimezoneOffset); by default the runtime's local zone applies.
 export function timeTicks(
   start: number,
   end: number,
   maxTicks = 8,
-  tzOffsetMinutes = new Date(Number.isFinite(start) ? start : 0).getTimezoneOffset(),
+  tzOffsetMinutes?: number,
 ): number[] {
   if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return [];
   const span = end - start;
   const step = TIME_STEPS.find((s) => span / s < maxTicks) ?? TIME_STEPS[TIME_STEPS.length - 1];
-  const shift = -tzOffsetMinutes * MINUTE; // local = utc + shift
-  const first = Math.ceil((start + shift) / step) * step - shift;
+  const offset = (utc: number) => (tzOffsetMinutes ?? new Date(utc).getTimezoneOffset()) * MINUTE;
+  const toWall = (utc: number) => utc - offset(utc);
+  // Wall time to the instant it names; a wall time skipped by a spring-forward
+  // lands just after the gap, a repeated one resolves to a single instant.
+  const toUtc = (wall: number) => {
+    const guess = wall + offset(wall);
+    return wall + offset(guess);
+  };
+  // Weeks start on Monday (epoch day 0 is a Thursday).
+  const anchor = step >= 7 * DAY ? 4 * DAY : 0;
+  const endWall = toWall(end);
   const ticks: number[] = [];
-  for (let t = first; t <= end; t += step) ticks.push(t);
+  for (let w = Math.ceil((toWall(start) - anchor) / step) * step + anchor; w <= endWall; w += step) {
+    const t = toUtc(w);
+    if (t >= start && t <= end && (ticks.length === 0 || t > ticks[ticks.length - 1])) ticks.push(t);
+  }
   return ticks;
 }
 

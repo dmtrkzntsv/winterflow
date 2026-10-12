@@ -19,14 +19,20 @@ SELECT * FROM templates WHERE id = $1 AND org_id = $2;
 SELECT id FROM templates WHERE org_id = $1 AND name = $2;
 
 -- name: ListTemplates :many
+-- One pass over the live instances: instances counts them, behind those on
+-- a revision older than the latest.
 SELECT t.id, t.org_id, t.name, t.latest_revision, t.created_at, t.created_by, t.updated_at,
-    (SELECT COUNT(*) FROM template_instances AS i
-     WHERE i.template_id = t.id AND i.state IN ('pending', 'created')) AS instances,
-    (SELECT COUNT(*) FROM template_instances AS i
-     WHERE i.template_id = t.id AND i.state IN ('pending', 'created') AND i.revision < t.latest_revision) AS behind
+    COUNT(i.id) AS instances,
+    CAST(COALESCE(SUM(CASE WHEN i.revision < t.latest_revision THEN 1 ELSE 0 END), 0) AS BIGINT) AS behind
 FROM templates AS t
+LEFT JOIN template_instances AS i ON i.template_id = t.id AND i.state IN ('pending', 'created')
 WHERE t.org_id = $1
+GROUP BY t.id, t.org_id, t.name, t.latest_revision, t.created_at, t.created_by, t.updated_at
 ORDER BY t.name ASC;
+
+-- name: ListTemplateNames :many
+-- Names only (the instance list shows them).
+SELECT id, name FROM templates WHERE org_id = $1;
 
 -- name: DeleteTemplate :execrows
 -- Refused (0 rows) while an instance is pending or created.

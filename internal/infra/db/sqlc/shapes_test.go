@@ -166,6 +166,8 @@ var (
 	_ = pgsqlgen.GetTemplateIDByNameParams(sqlitegen.GetTemplateIDByNameParams{})
 	_ = sqlitegen.ListTemplatesRow(pgsqlgen.ListTemplatesRow{})
 	_ = pgsqlgen.ListTemplatesRow(sqlitegen.ListTemplatesRow{})
+	_ = sqlitegen.ListTemplateNamesRow(pgsqlgen.ListTemplateNamesRow{})
+	_ = pgsqlgen.ListTemplateNamesRow(sqlitegen.ListTemplateNamesRow{})
 	_ = sqlitegen.DeleteTemplateParams(pgsqlgen.DeleteTemplateParams{})
 	_ = pgsqlgen.DeleteTemplateParams(sqlitegen.DeleteTemplateParams{})
 	_ = sqlitegen.InsertTemplateRevisionParams(pgsqlgen.InsertTemplateRevisionParams{})

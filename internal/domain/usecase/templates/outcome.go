@@ -30,11 +30,12 @@ type Outcome struct {
 // app usecase calls, and the channel it then delivers the result on.
 func (uc *UseCase) observe(inst model.Instance, record func(ctx context.Context, res port.CommandResult) error) (appuc.Observer, <-chan port.CommandResult) {
 	done := make(chan port.CommandResult, 1)
+	id, key := inst.ID, inst.Key // not inst: the hook may live 15 minutes
 	return func(res port.CommandResult) {
 		ctx, cancel := context.WithTimeout(context.Background(), recordTimeout)
 		defer cancel()
 		if err := record(ctx, res); err != nil {
-			uc.log.Error("instance: record a result", "error", err, "instance_id", inst.ID, "key", inst.Key)
+			uc.log.Error("instance: record a result", "error", err, "instance_id", id, "key", key)
 		}
 		select {
 		case done <- res:

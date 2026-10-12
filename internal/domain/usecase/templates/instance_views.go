@@ -34,6 +34,24 @@ type InstanceList struct {
 
 // view builds an instance's view; templateName is "" when it is gone.
 func (uc *UseCase) view(inst model.Instance, templateName string) InstanceView {
+	return buildView(inst, templateName, uc.statusCodes(inst.ServerID))
+}
+
+// statusCodes are the latest container status codes of serverID's apps by
+// app id (nil without a status cache).
+func (uc *UseCase) statusCodes(serverID string) map[string]command.ContainerStatusCode {
+	if uc.status == nil {
+		return nil
+	}
+	out := map[string]command.ContainerStatusCode{}
+	for _, st := range uc.status.AppStatuses(serverID, time.Now()) {
+		out[st.AppID] = st.StatusCode
+	}
+	return out
+}
+
+// buildView builds an instance's view with its server's status codes.
+func buildView(inst model.Instance, templateName string, codes map[string]command.ContainerStatusCode) InstanceView {
 	secrets := map[string]string{}
 	for _, n := range inst.SecretNames {
 		secrets[n] = command.EncryptedPlaceholder
@@ -42,17 +60,10 @@ func (uc *UseCase) view(inst model.Instance, templateName string) InstanceView {
 	if params == nil {
 		params = map[string]string{}
 	}
-	v := InstanceView{
+	return InstanceView{
 		Key: inst.Key, ServerID: inst.ServerID, AppID: inst.AppID, TemplateID: inst.TemplateID,
 		TemplateName: templateName, Revision: inst.Revision, Parameters: params, Secrets: secrets,
-		State: string(inst.State), LastError: inst.LastError, CreatedAt: inst.CreatedAt, UpdatedAt: inst.UpdatedAt,
+		State: string(inst.State), StatusCode: codes[inst.AppID], LastError: inst.LastError,
+		CreatedAt: inst.CreatedAt, UpdatedAt: inst.UpdatedAt,
 	}
-	if uc.status != nil {
-		for _, st := range uc.status.AppStatuses(inst.ServerID, time.Now()) {
-			if st.AppID == inst.AppID {
-				v.StatusCode = st.StatusCode
-			}
-		}
-	}
-	return v
 }

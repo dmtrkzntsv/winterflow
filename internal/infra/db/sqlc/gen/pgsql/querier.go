@@ -114,7 +114,11 @@ type Querier interface {
 	// Servers, their capabilities/features, registrations and certificates.
 	ListServersByUser(ctx context.Context, userID string) ([]Server, error)
 	ListSharedCiphertextsForServer(ctx context.Context, serverID string) ([]ListSharedCiphertextsForServerRow, error)
+	// Names only (the instance list shows them).
+	ListTemplateNames(ctx context.Context, orgID string) ([]ListTemplateNamesRow, error)
 	ListTemplateRevisions(ctx context.Context, templateID string) ([]ListTemplateRevisionsRow, error)
+	// One pass over the live instances: instances counts them, behind those on
+	// a revision older than the latest.
 	ListTemplates(ctx context.Context, orgID string) ([]ListTemplatesRow, error)
 	ListTokensByUser(ctx context.Context, userID string) ([]UserToken, error)
 	// LockOrganizationMember re-reads and row-locks the caller's membership

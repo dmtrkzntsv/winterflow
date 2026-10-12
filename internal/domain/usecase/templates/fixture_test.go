@@ -113,6 +113,12 @@ func body() template.Body {
 // storages, when set, is the server storage index save-app checks.
 func newFixture(t *testing.T, storages port.ServerStorageRepository) fixture {
 	t.Helper()
+	return newFixtureWith(t, storages, nil)
+}
+
+// newFixtureWith is newFixture with a status cache (status may be nil).
+func newFixtureWith(t *testing.T, storages port.ServerStorageRepository, status templates.AppStatuses) fixture {
+	t.Helper()
 	d := dbtest.Open(t)
 	dbtest.SeedServer(t, d, org1, srv1)
 	dbtest.SeedServer(t, d, org2, srv2)
@@ -129,7 +135,7 @@ func newFixture(t *testing.T, storages port.ServerStorageRepository) fixture {
 	if storages != nil {
 		appDeps.ServerStorageRepository = storages
 	}
-	uc := templates.New(templates.Deps{Repo: repo, Apps: appuc.NewUseCase(appDeps), Log: dbtest.Log})
+	uc := templates.New(templates.Deps{Repo: repo, Apps: appuc.NewUseCase(appDeps), Status: status, Log: dbtest.Log})
 	tpl, err := uc.SaveTemplate(dbtest.Ctx(t), "u1", org1, templates.SaveInput{Name: "shop", Body: body()})
 	if err != nil {
 		t.Fatal(err)

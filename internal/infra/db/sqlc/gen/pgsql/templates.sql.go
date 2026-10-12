@@ -357,6 +357,39 @@ func (q *Queries) ListLiveTemplateInstances(ctx context.Context, orgID string) (
 	return items, nil
 }
 
+const listTemplateNames = `-- name: ListTemplateNames :many
+SELECT id, name FROM templates WHERE org_id = $1
+`
+
+type ListTemplateNamesRow struct {
+	ID   string
+	Name string
+}
+
+// Names only (the instance list shows them).
+func (q *Queries) ListTemplateNames(ctx context.Context, orgID string) ([]ListTemplateNamesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listTemplateNames, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListTemplateNamesRow{}
+	for rows.Next() {
+		var i ListTemplateNamesRow
+		if err := rows.Scan(&i.ID, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTemplateRevisions = `-- name: ListTemplateRevisions :many
 SELECT revision, note, created_at, created_by
 FROM template_revisions
@@ -401,12 +434,12 @@ func (q *Queries) ListTemplateRevisions(ctx context.Context, templateID string) 
 
 const listTemplates = `-- name: ListTemplates :many
 SELECT t.id, t.org_id, t.name, t.latest_revision, t.created_at, t.created_by, t.updated_at,
-    (SELECT COUNT(*) FROM template_instances AS i
-     WHERE i.template_id = t.id AND i.state IN ('pending', 'created')) AS instances,
-    (SELECT COUNT(*) FROM template_instances AS i
-     WHERE i.template_id = t.id AND i.state IN ('pending', 'created') AND i.revision < t.latest_revision) AS behind
+    COUNT(i.id) AS instances,
+    CAST(COALESCE(SUM(CASE WHEN i.revision < t.latest_revision THEN 1 ELSE 0 END), 0) AS BIGINT) AS behind
 FROM templates AS t
+LEFT JOIN template_instances AS i ON i.template_id = t.id AND i.state IN ('pending', 'created')
 WHERE t.org_id = $1
+GROUP BY t.id, t.org_id, t.name, t.latest_revision, t.created_at, t.created_by, t.updated_at
 ORDER BY t.name ASC
 `
 
@@ -422,6 +455,8 @@ type ListTemplatesRow struct {
 	Behind         int64
 }
 
+// One pass over the live instances: instances counts them, behind those on
+// a revision older than the latest.
 func (q *Queries) ListTemplates(ctx context.Context, orgID string) ([]ListTemplatesRow, error) {
 	rows, err := q.db.QueryContext(ctx, listTemplates, orgID)
 	if err != nil {

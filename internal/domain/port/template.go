@@ -21,6 +21,8 @@ type TemplateRepository interface {
 	AddRevision(ctx context.Context, orgID, templateID, name string, base int64, rev model.TemplateRevision) (int64, error)
 	GetTemplate(ctx context.Context, orgID, templateID string) (model.Template, error)
 	ListTemplates(ctx context.Context, orgID string) ([]model.TemplateSummary, error)
+	// ListTemplateNames returns the org's template names by id.
+	ListTemplateNames(ctx context.Context, orgID string) (map[string]string, error)
 	// GetRevision returns one revision; model.ErrTemplateRevisionGone when
 	// the template has no such revision.
 	GetRevision(ctx context.Context, templateID string, revision int64) (model.TemplateRevision, error)

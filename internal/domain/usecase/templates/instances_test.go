@@ -191,3 +191,51 @@ func TestResultRecordedWithoutAWaiter(t *testing.T) {
 		t.Fatalf("after an unwatched result = %+v", got)
 	}
 }
+
+// statuses is a status cache with fixed statuses; reads counts its reads
+// per server.
+type statuses struct {
+	by    map[string][]command.AppStatus
+	reads map[string]int
+}
+
+func (s *statuses) AppStatuses(serverID string, _ time.Time) []command.AppStatus {
+	s.reads[serverID]++
+	return s.by[serverID]
+}
+
+// A view carries its app's status; a list reads each server's statuses once.
+func TestViewsCarryTheAppStatus(t *testing.T) {
+	st := &statuses{by: map[string][]command.AppStatus{}, reads: map[string]int{}}
+	f := newFixtureWith(t, nil, st)
+	ctx := dbtest.Ctx(t)
+	for _, key := range []string{"k1", "k2"} {
+		in := f.create(map[string]string{"NAME": "acme"})
+		in.Key = key
+		if _, err := f.uc.CreateInstance(ctx, "u1", org1, in); err != nil {
+			t.Fatal(err)
+		}
+	}
+	k1, err := f.uc.GetInstance(ctx, org1, srv1, "k1")
+	if err != nil || k1.StatusCode != command.ContainerStatusUnknown {
+		t.Fatalf("k1 without a status = %+v, %v", k1, err)
+	}
+	st.by[srv1] = []command.AppStatus{{AppID: k1.AppID, StatusCode: command.ContainerStatusActive}}
+	if got, _ := f.uc.GetInstance(ctx, org1, srv1, "k1"); got.StatusCode != command.ContainerStatusActive {
+		t.Fatalf("k1 status = %v", got.StatusCode)
+	}
+	st.reads[srv1] = 0
+	list, err := f.uc.ListInstances(ctx, org1, "", "")
+	if err != nil || len(list.Instances) != 2 || st.reads[srv1] != 1 {
+		t.Fatalf("list = %+v, %v (%d status reads)", list, err, st.reads[srv1])
+	}
+	for _, v := range list.Instances {
+		want := command.ContainerStatusUnknown
+		if v.Key == "k1" {
+			want = command.ContainerStatusActive
+		}
+		if v.StatusCode != want {
+			t.Errorf("%s status = %v, want %v", v.Key, v.StatusCode, want)
+		}
+	}
+}

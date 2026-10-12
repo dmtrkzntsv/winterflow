@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"sort"
 
+	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/port"
 	"winterflow/internal/domain/template"
@@ -130,17 +131,20 @@ func (uc *UseCase) replay(ctx context.Context, userID string, inst model.Instanc
 // dispatchSave dispatches a rendered save; its confirmation records the
 // revision and values (state created), a failure the error.
 func (uc *UseCase) dispatchSave(ctx context.Context, userID string, inst model.Instance, checked appuc.CheckedSave, revision int64, values template.Values) (Outcome, error) {
+	// The hook lives as long as the result is awaited: it keeps only what
+	// it records, not the secret ciphertexts.
+	id, stored := inst.ID, values.Stored
 	observer, done := uc.observe(inst, func(ctx context.Context, res port.CommandResult) error {
 		if !res.Success {
-			return uc.repo.SetError(ctx, inst.ID, res.Error)
+			return uc.repo.SetError(ctx, id, res.Error)
 		}
-		return uc.repo.MarkSaved(ctx, inst.ID, revision, values.Stored.Params, values.Stored.SecretNames)
+		return uc.repo.MarkSaved(ctx, id, revision, stored.Params, stored.SecretNames)
 	})
-	id, err := uc.apps.DispatchSave(ctx, userID, checked, observer)
+	requestID, err := uc.apps.DispatchSave(ctx, userID, checked, observer)
 	if err != nil {
 		return Outcome{}, err
 	}
-	return Outcome{RequestID: id, Done: done, Final: uc.reread(inst)}, nil
+	return Outcome{RequestID: requestID, Done: done, Final: uc.reread(inst)}, nil
 }
 
 // reread is an Outcome's Final for an instance that keeps its key.
@@ -167,29 +171,29 @@ func (uc *UseCase) GetInstance(ctx context.Context, orgID, serverID, key string)
 // to a server and/or a template when given (another org's template is
 // model.ErrTemplateNotFound).
 func (uc *UseCase) ListInstances(ctx context.Context, orgID, serverID, templateID string) (InstanceList, error) {
-	if templateID != "" {
-		if _, err := uc.repo.GetTemplate(ctx, orgID, templateID); err != nil {
-			return InstanceList{}, err
-		}
-	}
-	names := map[string]string{}
-	tpls, err := uc.repo.ListTemplates(ctx, orgID)
+	names, err := uc.repo.ListTemplateNames(ctx, orgID)
 	if err != nil {
 		return InstanceList{}, err
 	}
-	for _, t := range tpls {
-		names[t.ID] = t.Name
+	if _, ok := names[templateID]; templateID != "" && !ok {
+		return InstanceList{}, model.ErrTemplateNotFound
 	}
 	all, err := uc.repo.ListInstances(ctx, orgID)
 	if err != nil {
 		return InstanceList{}, err
 	}
 	out := InstanceList{Instances: []InstanceView{}}
+	codes := map[string]map[string]command.ContainerStatusCode{} // by server
 	for _, inst := range all {
 		if (serverID != "" && inst.ServerID != serverID) || (templateID != "" && inst.TemplateID != templateID) {
 			continue
 		}
-		out.Instances = append(out.Instances, uc.view(inst, names[inst.TemplateID]))
+		byApp, ok := codes[inst.ServerID]
+		if !ok {
+			byApp = uc.statusCodes(inst.ServerID)
+			codes[inst.ServerID] = byApp
+		}
+		out.Instances = append(out.Instances, buildView(inst, names[inst.TemplateID], byApp))
 	}
 	return out, nil
 }

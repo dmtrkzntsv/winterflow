@@ -70,6 +70,17 @@ func TestTemplateNamesAreUniquePerOrg(t *testing.T) {
 	}
 }
 
+func TestListTemplateNamesIsScopedToTheOrg(t *testing.T) {
+	r, _ := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	mustCreate(t, r, org1, tpl1, "shop")
+	mustCreate(t, r, org2, tpl2, "blog")
+	names, err := r.ListTemplateNames(ctx, org1)
+	if err != nil || len(names) != 1 || names[tpl1] != "shop" {
+		t.Fatalf("org1 names = %v, %v", names, err)
+	}
+}
+
 func TestAddRevisionIsOptimistic(t *testing.T) {
 	r, _ := newRepo(t)
 	ctx := dbtest.Ctx(t)

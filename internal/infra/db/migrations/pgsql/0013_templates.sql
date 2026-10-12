@@ -50,5 +50,10 @@ CREATE TABLE template_instances (
 
 -- One live key per org: an unlinked instance frees its key.
 CREATE UNIQUE INDEX idx_template_instances_key ON template_instances (org_id, instance_key) WHERE state <> 'unlinked';
-CREATE INDEX idx_template_instances_template ON template_instances (template_id);
-CREATE INDEX idx_template_instances_server ON template_instances (server_id);
+-- The live instances of a template (its counts, the delete guard).
+CREATE INDEX idx_template_instances_template ON template_instances (template_id) WHERE state IN ('pending', 'created');
+-- The org's live instances in list order.
+CREATE INDEX idx_template_instances_live ON template_instances (org_id, created_at, id) WHERE state IN ('pending', 'created');
+-- An app's instance (the save-app guard, delete-app's retire). Not partial:
+-- its leading column also serves the servers foreign key's cascade.
+CREATE INDEX idx_template_instances_app ON template_instances (server_id, app_id);

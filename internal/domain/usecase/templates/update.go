@@ -62,25 +62,26 @@ func (uc *UseCase) UpdateInstance(ctx context.Context, userID, orgID string, in 
 	if err != nil {
 		return Outcome{}, err
 	}
-	_, current, err := uc.revision(ctx, tpl.ID, inst.Revision)
+	revision := inst.Revision
+	upgrade := in.Revision != 0 && in.Revision != inst.Revision
+	if upgrade {
+		revision = in.Revision
+	}
+	_, body, err := uc.revision(ctx, tpl.ID, revision)
 	if err != nil {
 		return Outcome{}, err
 	}
-	revision, body := inst.Revision, current
-	marker := &template.Marker{TemplateID: tpl.ID, TemplateName: tpl.Name, Key: inst.Key}
-	upgrade := in.Revision != 0 && in.Revision != inst.Revision
-	if upgrade {
-		if _, body, err = uc.revision(ctx, tpl.ID, in.Revision); err != nil {
+	marker := &template.Marker{TemplateID: tpl.ID, TemplateName: tpl.Name, Revision: revision, Key: inst.Key}
+	if upgrade && !pending {
+		// The current revision matters only here: which backups are new.
+		_, current, err := uc.revision(ctx, tpl.ID, inst.Revision)
+		if err != nil {
 			return Outcome{}, err
 		}
-		revision = in.Revision
-		if !pending {
-			if marker.BackupDefaults, err = template.NewBackupDefaults(current, body); err != nil {
-				return Outcome{}, err
-			}
+		if marker.BackupDefaults, err = template.NewBackupDefaults(current, body); err != nil {
+			return Outcome{}, err
 		}
 	}
-	marker.Revision = revision
 	stored := template.Stored{Params: inst.Params, SecretNames: inst.SecretNames}
 	input := template.Input{AppID: inst.AppID, Marker: marker}
 	if pending {

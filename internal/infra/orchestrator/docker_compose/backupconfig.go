@@ -1,6 +1,7 @@
 package dockercompose
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -160,6 +161,9 @@ const (
 // from the marker: it is an instruction for this save, not state. A blob
 // without defaults, or one that doesn't parse, comes back unchanged.
 func applyBackupDefaults(cfg []byte) []byte {
+	if !bytes.Contains(cfg, []byte(backupDefaultsKey)) {
+		return cfg // nearly every save: skip decoding the blob
+	}
 	var top map[string]json.RawMessage
 	if json.Unmarshal(cfg, &top) != nil || top == nil {
 		return cfg

@@ -31,6 +31,10 @@ func (sqliteQuerier) ListTemplates(ctx context.Context, db backend.DBTX, orgID s
 	return sqlitegen.New(db).ListTemplates(ctx, orgID)
 }
 
+func (sqliteQuerier) ListTemplateNames(ctx context.Context, db backend.DBTX, orgID string) ([]nameRow, error) {
+	return sqlitegen.New(db).ListTemplateNames(ctx, orgID)
+}
+
 func (sqliteQuerier) DeleteTemplate(ctx context.Context, db backend.DBTX, p deleteParams) (int64, error) {
 	return sqlitegen.New(db).DeleteTemplate(ctx, p)
 }

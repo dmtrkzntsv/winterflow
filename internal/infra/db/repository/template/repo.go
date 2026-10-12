@@ -23,6 +23,7 @@ import (
 type (
 	templateRow    = sqlitegen.Template
 	summaryRow     = sqlitegen.ListTemplatesRow
+	nameRow        = sqlitegen.ListTemplateNamesRow
 	revisionRow    = sqlitegen.TemplateRevision
 	revisionInfo   = sqlitegen.ListTemplateRevisionsRow
 	instanceRow    = sqlitegen.TemplateInstance
@@ -49,6 +50,7 @@ type querier interface {
 	GetTemplate(ctx context.Context, db backend.DBTX, p getParams) (templateRow, error)
 	GetTemplateIDByName(ctx context.Context, db backend.DBTX, p byNameParams) (string, error)
 	ListTemplates(ctx context.Context, db backend.DBTX, orgID string) ([]summaryRow, error)
+	ListTemplateNames(ctx context.Context, db backend.DBTX, orgID string) ([]nameRow, error)
 	DeleteTemplate(ctx context.Context, db backend.DBTX, p deleteParams) (int64, error)
 	InsertTemplateRevision(ctx context.Context, db backend.DBTX, p insertRevision) error
 	GetTemplateRevision(ctx context.Context, db backend.DBTX, p getRevision) (revisionRow, error)
@@ -176,6 +178,19 @@ func (r *Repo) ListTemplates(ctx context.Context, orgID string) ([]model.Templat
 			Instances: row.Instances,
 			Behind:    row.Behind,
 		})
+	}
+	return out, nil
+}
+
+// ListTemplateNames returns the org's template names by id.
+func (r *Repo) ListTemplateNames(ctx context.Context, orgID string) (map[string]string, error) {
+	rows, err := r.q.ListTemplateNames(ctx, r.tx.Querier(ctx), orgID)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string, len(rows))
+	for _, row := range rows {
+		out[row.ID] = row.Name
 	}
 	return out, nil
 }

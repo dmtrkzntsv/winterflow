@@ -2,7 +2,7 @@ package notify
 
 import (
 	"context"
-	"errors"
+	"github.com/nicholas-fedor/shoutrrr/pkg/router"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -46,21 +46,6 @@ func TestGuardRefusesPrivateTargets(t *testing.T) {
 		!strings.Contains(err.Error(), "private") {
 		t.Fatalf("smtp to loopback: %v", err)
 	}
-	// Matrix connects while its sender is created, so its host is
-	// checked up front; everything else is checked at dial time.
-	if err := checkHost(ctx, "matrix://u:p@10.0.0.5/?rooms=!r:x"); !errors.Is(err, ErrPrivateTarget) {
-		t.Fatalf("matrix to RFC 1918: %v", err)
-	}
-	if err := checkHost(ctx, "matrix://u:p@203.0.113.7/?rooms=!r:x"); err != nil {
-		t.Fatalf("public matrix refused: %v", err)
-	}
-	if err := checkHost(ctx, "smtp://u:p@10.0.0.5:25/"); err != nil {
-		t.Fatalf("smtp is guarded at dial time, not by checkHost: %v", err)
-	}
-	// telegram://token@telegram has no real host.
-	if err := checkHost(ctx, "telegram://1:a@telegram?chats=1"); err != nil {
-		t.Fatalf("telegram refused: %v", err)
-	}
 	// Allowed (standalone): the same loopback send goes through.
 	if err := NewShoutrrr(2*time.Second, true).Send(ctx, raw, "T", "B"); err != nil || hits.Load() != 1 {
 		t.Fatalf("allowed send: err=%v hits=%d", err, hits.Load())
@@ -96,31 +81,6 @@ func TestPrivateReservedAndEmbeddedRanges(t *testing.T) {
 
 // Services that send through the injected client are guarded at dial
 // time; resolving their "host" (a secret key) would fail and leak it.
-func TestCheckHostSkipsHTTPServices(t *testing.T) {
-	ctx := context.Background()
-	for _, raw := range []string{
-		"ifttt://SECRETWEBHOOKKEY/?events=ev",
-		"pushbullet://SECRETACCESSTOKEN/dev",
-		"notifiarr://SECRETAPIKEY123",
-		"signalgrid://SECRETCLIENTKEY/phone",
-		"homeassistant://10.0.0.5:8123/SECRETTOKEN",
-	} {
-		if err := checkHost(ctx, raw); err != nil {
-			t.Errorf("%s: %v", raw, err)
-		}
-	}
-}
-
-func TestCheckHostErrorOmitsHost(t *testing.T) {
-	err := checkHost(context.Background(), "matrix://u:p@secret-host-xyz.invalid/?rooms=!r:x")
-	if err == nil {
-		t.Fatal("an unresolvable host was accepted")
-	}
-	if strings.Contains(err.Error(), "secret-host-xyz") {
-		t.Fatalf("host leaked: %v", err)
-	}
-}
-
 // connCounter is a TCP listener that counts the connections it accepts and
 // answers each with a minimal HTTP 200, so every service gets as far as it
 // can.
@@ -162,14 +122,19 @@ func loopbackURLs(addr string) map[string]string {
 		"googlechat": "googlechat://" + addr + "/v1/spaces/foo/messages?key=k&token=t",
 		"smtp":       "smtp://u:p@" + addr + "/?fromaddress=a@b.c&toaddresses=d@e.f&encryption=None&usestarttls=no",
 		"mqtt":       "mqtt://" + addr + "/topic?disabletls=yes",
-		"xmpp":       "xmpp://u@x.y:p@" + addr + "/?toaddresses=a@b.c",
+		"xmpp":       "xmpp://u@x.y:p@" + addr + "/?to=a@b.c",
 	}
 }
+
+// settle gives a connection the kernel already accepted time to reach
+// the counter, so a send that connects and returns at once is counted.
+func settle() { time.Sleep(100 * time.Millisecond) }
 
 func TestServiceNeverConnects(t *testing.T) {
 	addr, n := connCounter(t)
 	for name, raw := range loopbackURLs(addr) {
 		_, _ = Service(raw)
+		settle()
 		if got := n.Load(); got != 0 {
 			t.Fatalf("validating a %s URL opened %d connection(s)", name, got)
 		}
@@ -179,16 +144,68 @@ func TestServiceNeverConnects(t *testing.T) {
 func TestGuardedSendNeverConnectsToPrivate(t *testing.T) {
 	addr, n := connCounter(t)
 	guarded := NewShoutrrr(2*time.Second, false)
+	allowed := NewShoutrrr(2*time.Second, true)
 	for name, raw := range loopbackURLs(addr) {
 		_ = guarded.Send(context.Background(), raw, "T", "B")
+		settle()
 		if got := n.Load(); got != 0 {
 			t.Fatalf("a guarded %s send reached a loopback listener (%d connection(s))", name, got)
 		}
+		// The URL really aims at the listener: allowed, it connects.
+		_ = allowed.Send(context.Background(), raw, "T", "B")
+		settle()
+		if n.Load() == 0 {
+			t.Fatalf("an allowed %s send never reached the listener: the test URL proves nothing", name)
+		}
+		n.Store(0)
 	}
-	// The listener itself works: allowed sends do reach it.
-	allowed := NewShoutrrr(2*time.Second, true)
-	_ = allowed.Send(context.Background(), loopbackURLs(addr)["generic"], "T", "B")
-	if n.Load() == 0 {
-		t.Fatal("an allowed send never reached the listener")
+}
+
+// A redirect from an allowed host to a refused one is refused too, the
+// Matrix login included (it runs before Shoutrrr injects a client).
+func TestGuardedSendRefusesRedirectsToPrivate(t *testing.T) {
+	target, n := connCounter(t)
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://"+target+"/stolen", http.StatusFound)
+	}))
+	defer redirector.Close()
+	// Allow the redirector (a public host in real life), refuse the target.
+	old := refused
+	refused = func(address string) bool { return address == target }
+	defer func() { refused = old }()
+
+	from := strings.TrimPrefix(redirector.URL, "http://")
+	guarded := NewShoutrrr(2*time.Second, false)
+	for name, raw := range map[string]string{
+		"generic": "generic://" + from + "/hook?disabletls=yes",
+		"matrix":  "matrix://user:pass@" + from + "/?rooms=!r:x&disableTLS=yes",
+		"ntfy":    "ntfy://" + from + "/topic?scheme=http",
+	} {
+		_ = guarded.Send(context.Background(), raw, "T", "B")
+		settle()
+		if got := n.Load(); got != 0 {
+			t.Fatalf("a guarded %s send followed a redirect to a refused address (%d connection(s))", name, got)
+		}
+	}
+}
+
+func TestEveryShoutrrrSchemeIsReviewed(t *testing.T) {
+	for _, s := range (&router.ServiceRouter{}).ListServices() {
+		if _, ok := reviewedSchemes[s]; !ok {
+			t.Errorf("Shoutrrr scheme %q is not reviewed: check whether its sender connects while it is created "+
+				"(before our client and dialer are injected) and add it to reviewedSchemes", s)
+		}
+	}
+}
+
+func TestServiceValidatesMatrixWithoutConnecting(t *testing.T) {
+	if _, err := Service("matrix://user@example.org/?rooms=!r:x"); err == nil {
+		t.Fatal("a matrix URL without a password or token was accepted")
+	}
+	if name, err := Service("matrix://user:pass@example.org/?rooms=!r:x"); err != nil || name != "matrix" {
+		t.Fatalf("valid matrix URL: %q, %v", name, err)
+	}
+	if _, err := Service("matrix+https://user:pass@example.org/"); err == nil {
+		t.Fatal("a matrix URL with a transport suffix was accepted")
 	}
 }

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/nicholas-fedor/shoutrrr"
+	"github.com/nicholas-fedor/shoutrrr/pkg/services/chat/matrix"
 	"github.com/nicholas-fedor/shoutrrr/pkg/types"
 )
 
@@ -46,9 +47,8 @@ func NewShoutrrr(timeout time.Duration, allowPrivate bool) *Shoutrrr {
 
 // Service validates rawURL as a Shoutrrr URL and returns its service name:
 // the scheme without a "+transport" suffix ("generic+https" -> "generic").
-// It never connects anywhere: a service that would connect while being
-// created (dialsOnCreate) is only checked for a host, and its other
-// mistakes surface on the first send, which is guarded.
+// It never connects anywhere: Matrix, whose sender logs in while it is
+// created, is checked from its config alone.
 func Service(rawURL string) (string, error) {
 	if rawURL == "" || len(rawURL) > maxURLLength {
 		return "", errors.New("the notification URL is empty or too long")
@@ -58,9 +58,12 @@ func Service(rawURL string) (string, error) {
 		return "", errors.New("the notification URL is not a valid URL")
 	}
 	name := scheme(u)
-	if dialsOnCreate[name] {
-		if u.Hostname() == "" {
-			return "", fmt.Errorf("invalid %s URL: it has no host", u.Scheme)
+	if name == "matrix" {
+		if u.Scheme != "matrix" {
+			return "", fmt.Errorf("invalid %s URL: matrix takes no transport suffix", u.Scheme)
+		}
+		if err := (&matrix.Config{}).SetURL(u); err != nil {
+			return "", fmt.Errorf("invalid %s URL: %s", u.Scheme, Redact(err.Error(), rawURL))
 		}
 		return name, nil
 	}
@@ -70,31 +73,16 @@ func Service(rawURL string) (string, error) {
 	return name, nil
 }
 
+// noTitle are the services that refuse a "title" param: the title leads
+// the body instead.
+var noTitle = map[string]bool{"mqtt": true, "mqtts": true}
+
 // Send delivers one notification. It returns when the service answers, the
-// sender's timeout passes or ctx ends, whichever is first.
+// sender's timeout passes or ctx ends, whichever is first (creating the
+// sender included: Matrix logs in then).
 func (s *Shoutrrr) Send(ctx context.Context, rawURL, title, body string) error {
-	opts := types.SenderOptions{Timeout: s.timeout}
-	if s.client != nil {
-		if err := checkHost(ctx, rawURL); err != nil {
-			return errors.New(Redact(err.Error(), rawURL))
-		}
-		opts.HTTPClient = s.client
-		opts.DialContext = s.dial
-	}
-	r, err := shoutrrr.CreateSenderWithOptions(opts, rawURL)
-	if err != nil {
-		return errors.New(Redact(err.Error(), rawURL))
-	}
 	done := make(chan error, 1)
-	go func() {
-		for _, e := range r.Send(body, &types.Params{"title": title}) {
-			if e != nil {
-				done <- e
-				return
-			}
-		}
-		done <- nil
-	}()
+	go func() { done <- s.send(ctx, rawURL, title, body) }()
 	select {
 	case err := <-done:
 		if err != nil {
@@ -104,6 +92,56 @@ func (s *Shoutrrr) Send(ctx context.Context, rawURL, title, body string) error {
 	case <-ctx.Done():
 		return fmt.Errorf("send aborted: %w", ctx.Err())
 	}
+}
+
+func (s *Shoutrrr) send(ctx context.Context, rawURL, title, body string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return errors.New("the notification URL is not a valid URL")
+	}
+	params := &types.Params{"title": title}
+	if noTitle[scheme(u)] {
+		body, params = title+"\n\n"+body, nil
+	}
+	if scheme(u) == "matrix" {
+		return s.sendMatrix(ctx, u, body, params)
+	}
+	opts := types.SenderOptions{Timeout: s.timeout}
+	if s.client != nil {
+		opts.HTTPClient = s.client
+		opts.DialContext = s.dial
+	}
+	r, err := shoutrrr.CreateSenderWithOptions(opts, rawURL)
+	if err != nil {
+		return err
+	}
+	for _, e := range r.Send(body, params) {
+		if e != nil {
+			return e
+		}
+	}
+	return nil
+}
+
+// sendMatrix builds the Matrix sender itself: it logs in from Initialize,
+// and Shoutrrr's router injects a client only after that, so the login
+// would use Matrix's own client (no guard, following redirects anywhere).
+// Setting our client first makes the login and every later request go
+// through it.
+func (s *Shoutrrr) sendMatrix(ctx context.Context, u *url.URL, body string, params *types.Params) error {
+	if u.Scheme != "matrix" {
+		return errors.New("matrix takes no transport suffix")
+	}
+	client := s.client
+	if client == nil {
+		client = &http.Client{Timeout: s.timeout}
+	}
+	svc := &matrix.Service{}
+	svc.SetHTTPClient(client)
+	if err := svc.Initialize(u, nil); err != nil {
+		return fmt.Errorf("matrix: %w", err)
+	}
+	return svc.SendWithContext(ctx, body, params)
 }
 
 // minSecretLen is the shortest URL part Redact masks; shorter parts (a

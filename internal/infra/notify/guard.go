@@ -1,7 +1,6 @@
 package notify
 
 import (
-	"context"
 	"errors"
 	"net"
 	"net/http"
@@ -68,26 +67,43 @@ func Private(ip net.IP) bool {
 	return false
 }
 
-// dialsOnCreate are the Shoutrrr schemes whose sender connects while it is
-// being created, before Shoutrrr injects our client and dialer: Matrix logs
-// in from its Initialize. Their host is resolved and checked up front, and
-// Service never creates them. Every other service connects only when
-// sending, through the guarded HTTP client or dialer (no DNS-rebinding
-// window).
-var dialsOnCreate = map[string]bool{"matrix": true}
+// reviewedSchemes is every Shoutrrr scheme, with how its connections are
+// guarded. A Shoutrrr upgrade that adds a scheme fails
+// TestEveryShoutrrrSchemeIsReviewed until someone checks whether the new
+// service connects while it is being created (before Shoutrrr injects our
+// client and dialer) and adds it here.
+var reviewedSchemes = map[string]string{
+	"matrix": "logs in from Initialize: built directly, our client set first",
+	"logger": "no network",
+	"smtp":   "dialer", "mqtt": "dialer", "mqtts": "dialer", "xmpp": "dialer", "xmpps": "dialer",
+	"bark": "client", "discord": "client", "generic": "client", "googlechat": "client", "gotify": "client",
+	"hangouts": "client", "homeassistant": "client", "ifttt": "client", "join": "client", "lark": "client",
+	"mattermost": "client", "notifiarr": "client", "ntfy": "client", "opsgenie": "client", "pagerduty": "client",
+	"pushbullet": "client", "pushover": "client", "rocketchat": "client", "signal": "client", "signalgrid": "client",
+	"slack": "client", "teams": "client", "telegram": "client", "twilio": "client", "wecom": "client", "zulip": "client",
+}
+
+// refused reports whether a connection to address (host:port, the
+// resolved IP) must fail; a variable so tests can refuse a specific
+// listener.
+var refused = func(address string) bool {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip == nil || Private(ip)
+}
 
 // guardedDialer is a dialer whose connections to private addresses fail.
 // Control sees the resolved address, so a name that resolves (or later
-// re-resolves) to a private address is refused too.
+// re-resolves) to a private address is refused too, and so is every hop
+// of a redirect.
 func guardedDialer(timeout time.Duration) *net.Dialer {
 	return &net.Dialer{
 		Timeout: timeout,
 		Control: func(_, address string, _ syscall.RawConn) error {
-			host, _, err := net.SplitHostPort(address)
-			if err != nil {
-				return err
-			}
-			if ip := net.ParseIP(host); ip == nil || Private(ip) {
+			if refused(address) {
 				return ErrPrivateTarget
 			}
 			return nil
@@ -104,39 +120,8 @@ func guardedClient(d *net.Dialer, timeout time.Duration) *http.Client {
 	return &http.Client{Transport: transport, Timeout: timeout}
 }
 
-// scheme is rawURL's service name: the scheme without a "+transport"
+// scheme is a URL's service name: the scheme without a "+transport"
 // suffix ("generic+https" -> "generic").
 func scheme(u *url.URL) string {
 	return strings.SplitN(strings.ToLower(u.Scheme), "+", 2)[0]
-}
-
-// checkHost resolves the host of a service that connects while it is
-// being created (dialsOnCreate) and refuses private addresses. Other
-// services are guarded at dial time instead.
-func checkHost(ctx context.Context, rawURL string) error {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return errors.New("the notification URL is not a valid URL")
-	}
-	host := u.Hostname()
-	if !dialsOnCreate[scheme(u)] || host == "" {
-		return nil
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		if Private(ip) {
-			return ErrPrivateTarget
-		}
-		return nil
-	}
-	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
-	if err != nil {
-		// Not the host itself: for some services it is a secret.
-		return errors.New("cannot resolve the notification host")
-	}
-	for _, a := range addrs {
-		if Private(a.IP) {
-			return ErrPrivateTarget
-		}
-	}
-	return nil
 }

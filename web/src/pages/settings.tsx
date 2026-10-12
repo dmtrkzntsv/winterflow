@@ -76,32 +76,35 @@ export default function SettingsPage() {
   }
 
   return (
-    <Tabs value={tab} onValueChange={setTab}>
-      <TabsList>
-        <TabsTrigger value="registries">Registries</TabsTrigger>
-        <TabsTrigger value="networks">Networks</TabsTrigger>
-        <TabsTrigger value="volumes">Volumes</TabsTrigger>
-        {hasIngress ? <TabsTrigger value="domains">Domains</TabsTrigger> : null}
-        <TabsTrigger value="agent">Agent</TabsTrigger>
-      </TabsList>
-      <TabsContent value="registries">
-        <RegistriesCard docker={docker} />
-      </TabsContent>
-      <TabsContent value="networks">
-        <NetworksCard docker={docker} />
-      </TabsContent>
-      <TabsContent value="volumes">
-        <VolumesCard docker={docker} />
-      </TabsContent>
-      {hasIngress ? (
-        <TabsContent value="domains">
-          <DomainsCard docker={docker} />
+    <div className="space-y-6">
+      <h1 className="text-2xl font-semibold tracking-tight">Server settings</h1>
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList>
+          <TabsTrigger value="registries">Registries</TabsTrigger>
+          <TabsTrigger value="networks">Networks</TabsTrigger>
+          <TabsTrigger value="volumes">Volumes</TabsTrigger>
+          {hasIngress ? <TabsTrigger value="domains">Domains</TabsTrigger> : null}
+          <TabsTrigger value="agent">Agent</TabsTrigger>
+        </TabsList>
+        <TabsContent value="registries">
+          <RegistriesCard docker={docker} />
         </TabsContent>
-      ) : null}
-      <TabsContent value="agent">
-        <AgentCard docker={docker} />
-      </TabsContent>
-    </Tabs>
+        <TabsContent value="networks">
+          <NetworksCard docker={docker} />
+        </TabsContent>
+        <TabsContent value="volumes">
+          <VolumesCard docker={docker} />
+        </TabsContent>
+        {hasIngress ? (
+          <TabsContent value="domains">
+            <DomainsCard docker={docker} />
+          </TabsContent>
+        ) : null}
+        <TabsContent value="agent">
+          <AgentCard docker={docker} />
+        </TabsContent>
+      </Tabs>
+    </div>
   );
 }
 

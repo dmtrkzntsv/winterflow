@@ -1,6 +1,5 @@
 import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { Server as ServerIcon } from "lucide-react";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
@@ -35,7 +34,7 @@ function specsLine(caps: Record<string, string>): string {
   if (mem) parts.push(mem);
   const disk = formatBytes(caps.system_disk_total);
   if (disk) parts.push(`${disk} disk`);
-  return parts.join(" • ");
+  return parts.join(" · ");
 }
 
 // Meter is one labelled usage bar with its 1-hour sparkline.
@@ -74,13 +73,11 @@ function HealthCard({
   server,
   overview,
   online,
-  selected,
   onOpen,
 }: {
   server: Server;
   overview: ServerOverview | undefined;
   online: boolean;
-  selected: boolean;
   onOpen: () => void;
 }) {
   const latest = overview?.latest?.server;
@@ -96,42 +93,44 @@ function HealthCard({
   const apps = overview?.apps;
   const specs = specsLine(server.capabilities);
 
+  const status = online
+    ? "Online"
+    : server.lastSeenAt
+      ? "Offline"
+      : "Waiting";
+  const meta = [
+    online
+      ? server.capabilities.server_ip
+      : server.lastSeenAt
+        ? `Offline since ${formatSince(server.lastSeenAt)}`
+        : "Waiting for the agent to connect…",
+    specs,
+    server.capabilities.version ? `Agent v${server.capabilities.version}` : "",
+  ].filter(Boolean);
+
+  // State is a small dot plus a word, not a coloured outline (twillingate's
+  // project card); the whole card opens the server's Monitoring page.
   return (
     <Card
       title={`${server.name}: ${online ? "online" : "offline"}`}
       onClick={onOpen}
-      className={cn(
-        "w-[340px] cursor-pointer transition-all hover:bg-muted/50",
-        selected && "border-primary ring-1 ring-primary",
-      )}
+      className="w-full cursor-pointer transition-colors hover:border-primary/40 sm:w-[340px]"
     >
       <CardContent className="space-y-3 p-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <span
-                className={cn("size-2 shrink-0 rounded-full", online ? "bg-green-500" : "bg-gray-400")}
-              />
-              <span className="truncate font-medium">{server.name}</span>
-            </div>
-            <div className="mt-1 text-xs text-muted-foreground">
-              {online
-                ? `Online${server.capabilities.server_ip ? ` · ${server.capabilities.server_ip}` : ""}`
-                : server.lastSeenAt
-                  ? `Offline since ${formatSince(server.lastSeenAt)}`
-                  : "Waiting for the agent to connect…"}
-              {specs ? <div>{specs}</div> : null}
-              {server.capabilities.version ? <div>Agent v{server.capabilities.version}</div> : null}
-            </div>
+            <div className="truncate text-base font-semibold tracking-tight">{server.name}</div>
+            {meta.length > 0 ? (
+              <div className="mt-0.5 text-xs text-muted-foreground">{meta.join(" · ")}</div>
+            ) : null}
           </div>
-          <div
-            className={cn(
-              "flex size-10 shrink-0 items-center justify-center rounded-lg",
-              online ? "bg-primary/10" : "bg-muted",
-            )}
-          >
-            <ServerIcon className={cn("size-5", online ? "text-primary" : "text-muted-foreground")} />
-          </div>
+          <span className="mt-1 flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+            <span
+              aria-hidden
+              className={cn("size-2 rounded-full", online ? "bg-emerald-500" : "bg-muted-foreground/40")}
+            />
+            {status}
+          </span>
         </div>
 
         <div className="space-y-2">
@@ -182,7 +181,7 @@ function HealthCard({
 // temperature and app counts. Clicking one makes it the active server and
 // opens its Monitoring page.
 export function ServerCards() {
-  const { servers, activeServerId, setActiveServerId, statusByServer, loading } = useServers();
+  const { servers, setActiveServerId, statusByServer, loading } = useServers();
   const { data } = useMetricsOverview();
   const navigate = useNavigate();
 
@@ -193,21 +192,20 @@ export function ServerCards() {
   }, [data]);
 
   if (loading && servers.length === 0) {
-    return <div className="bg-muted/50 h-[220px] w-[340px] rounded-xl" />;
+    return <div className="frost h-[220px] w-full rounded-xl sm:w-[340px]" />;
   }
   if (servers.length === 0) {
     return null;
   }
 
   return (
-    <div className="flex flex-wrap gap-4">
+    <div className="flex flex-wrap gap-3">
       {servers.map((s) => (
         <HealthCard
           key={s.id}
           server={s}
           overview={byId.get(s.id)}
           online={statusByServer[s.id] === "online"}
-          selected={s.id === activeServerId}
           onOpen={() => {
             setActiveServerId(s.id);
             navigate("/monitoring");

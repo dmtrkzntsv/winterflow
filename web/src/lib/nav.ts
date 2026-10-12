@@ -17,3 +17,14 @@ export const navMain = [
     icon: Activity,
   },
 ];
+
+// isNavActive reports whether a sidebar link matches the current path: the
+// Dashboard ("/") only on itself, any other entry on itself or a subpath.
+export function isNavActive(pathname: string, url: string): boolean {
+  if (url === "/") return pathname === "/";
+  return pathname === url || pathname.startsWith(`${url}/`);
+}
+
+// The active sidebar entry is a pill (the sidebar accent) with its icon lit
+// in the sidebar's sky blue, as in twillingate's shell.
+export const navItemClass = "data-[active=true]:[&>svg]:text-sidebar-primary";

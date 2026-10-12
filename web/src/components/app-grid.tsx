@@ -6,62 +6,28 @@ import { AppStatusCode } from "@/context/apps-context-base";
 import { useApps } from "@/context/use-apps";
 import { cn } from "@/lib/utils";
 
-// Status → card accents, mirroring v1's AppCard: the border and label carry
-// the container status color; unknown stays neutral.
-const STATUS_STYLE: Record<
-  number,
-  { label: string; border: string; text: string; dot: string }
-> = {
-  [AppStatusCode.Active]: {
-    label: "Running",
-    border: "border-green-500",
-    text: "text-green-600",
-    dot: "bg-green-500",
-  },
-  [AppStatusCode.Idle]: {
-    label: "Idle",
-    border: "border-gray-400",
-    text: "text-gray-500",
-    dot: "bg-gray-400",
-  },
-  [AppStatusCode.Restarting]: {
-    label: "Restarting",
-    border: "border-yellow-500",
-    text: "text-yellow-600",
-    dot: "bg-yellow-500",
-  },
-  [AppStatusCode.Problematic]: {
-    label: "Problematic",
-    border: "border-red-500",
-    text: "text-red-600",
-    dot: "bg-red-500",
-  },
-  [AppStatusCode.Stopped]: {
-    label: "Stopped",
-    border: "border-gray-400",
-    text: "text-gray-500",
-    dot: "bg-gray-400",
-  },
-  [AppStatusCode.Unknown]: {
-    label: "Unknown",
-    border: "border-gray-300",
-    text: "text-gray-400",
-    dot: "bg-gray-300",
-  },
+// Status → a small dot and a word under the tile (twillingate's status
+// treatment, not a coloured outline); unknown is just a neutral dot.
+const STATUS_STYLE: Record<number, { label: string; dot: string }> = {
+  [AppStatusCode.Active]: { label: "Running", dot: "bg-emerald-500" },
+  [AppStatusCode.Idle]: { label: "Idle", dot: "bg-muted-foreground/40" },
+  [AppStatusCode.Restarting]: { label: "Restarting", dot: "bg-amber-500" },
+  [AppStatusCode.Problematic]: { label: "Problematic", dot: "bg-red-500" },
+  [AppStatusCode.Stopped]: { label: "Stopped", dot: "bg-muted-foreground/40" },
+  [AppStatusCode.Unknown]: { label: "Unknown", dot: "bg-muted-foreground/25" },
 };
 
-// AppGrid renders the active server's apps as v1-style square tiles: colored
-// icon block, status-colored border, status label, hover tilt, staggered
-// entrance animation. Each tile links to the app's details page.
+// AppGrid renders the active server's apps as square tiles: colored icon
+// block, name, a status dot with its label, staggered entrance animation. Each tile links to the app's details page.
 export function AppGrid() {
   const { apps, statusByApp, loading, error } = useApps();
 
   if (loading && apps.length === 0) {
     return (
-      <div className="flex flex-wrap gap-4">
-        <div className="bg-muted/50 h-32 w-32 rounded-xl" />
-        <div className="bg-muted/50 h-32 w-32 rounded-xl" />
-        <div className="bg-muted/50 h-32 w-32 rounded-xl" />
+      <div className="flex flex-wrap gap-3">
+        <div className="frost h-32 w-32 rounded-xl" />
+        <div className="frost h-32 w-32 rounded-xl" />
+        <div className="frost h-32 w-32 rounded-xl" />
       </div>
     );
   }
@@ -82,7 +48,7 @@ export function AppGrid() {
   }
 
   return (
-    <div className="flex flex-wrap gap-4">
+    <div className="flex flex-wrap gap-3">
       {apps.map((app, index) => {
         const status =
           STATUS_STYLE[statusByApp[app.id] ?? AppStatusCode.Unknown] ??
@@ -98,12 +64,7 @@ export function AppGrid() {
             className="app-card-in block"
             style={{ animationDelay: `${index * 40}ms` }}
           >
-            <Card
-              className={cn(
-                "flex h-32 w-32 flex-col items-center border-2 p-4 transition-all hover:rotate-3 hover:bg-muted/50",
-                status.border,
-              )}
-            >
+            <Card className="flex h-32 w-32 flex-col items-center p-3.5 transition-colors hover:border-primary/40">
               <div className="flex flex-1 flex-col items-center gap-2">
                 <AppIcon
                   name={app.name}
@@ -137,17 +98,13 @@ export function AppGrid() {
                     </button>
                   ))}
               </div>
-              {unknown ? (
-                <div className="mt-auto flex items-center justify-center">
-                  <div className={cn("size-2 rounded-full", status.dot)} />
-                </div>
-              ) : (
+              <span className="mt-auto flex items-center gap-1.5 text-[11px] text-muted-foreground">
                 <span
-                  className={cn("mt-auto text-[10px] font-medium", status.text)}
-                >
-                  {status.label}
-                </span>
-              )}
+                  aria-hidden
+                  className={cn("size-2 shrink-0 rounded-full", status.dot)}
+                />
+                {unknown ? null : status.label}
+              </span>
             </Card>
           </Link>
         );

@@ -26,6 +26,7 @@ export default function HomePage() {
 
   return (
     <div className="space-y-6">
+      <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
       {/* Servers row (v1 AgentList). Adding servers is a cloud capability; the
           standalone build ships one embedded server, so the action is hidden. */}
       <div className="flex items-center justify-between">

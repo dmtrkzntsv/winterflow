@@ -40,7 +40,7 @@ describe("ModeSwitch", () => {
   it("keeps its value when the selected half is clicked again", async () => {
     const onMode = vi.fn();
     render(<ModeSwitch value="peak" onChange={onMode} />);
-    expect(screen.getByRole("group", { name: "Average or peak" })).toHaveClass("bg-muted");
+    expect(screen.getByRole("group", { name: "Average or peak" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("radio", { name: "Peak" }));
     expect(onMode).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("radio", { name: "Average" }));

@@ -133,6 +133,16 @@ describe("ServerCards", () => {
     expect(await screen.findByText("monitoring page")).toBeInTheDocument();
   });
 
+  it("opens the Monitoring page from the keyboard", async () => {
+    renderCards();
+    const card = screen.getByRole("link", { name: "backup: offline, open monitoring" });
+    card.focus();
+    expect(card).toHaveFocus();
+    await userEvent.keyboard("{Enter}");
+    expect(setActiveServerId).toHaveBeenCalledWith("s2");
+    expect(await screen.findByText("monitoring page")).toBeInTheDocument();
+  });
+
   it("keeps the specs line and agent version", () => {
     servers[0].capabilities = { system_cpu_cores: "4", version: "1.2.3", server_ip: "10.0.0.5" };
     renderCards();

@@ -4,6 +4,7 @@ import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from "recharts";
 
 import { Card } from "@/components/ui/card";
 import { ChartContainer, ChartTooltip, type ChartConfig } from "@/components/ui/chart";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ChartEmpty, MetricLegend, MetricTooltip } from "@/components/chart-parts";
 import { cn } from "@/lib/utils";
 import { axisWidth, niceAxis, scaleFor, stackTotals, timeTicks, valuesOf, type AxisScale } from "@/lib/chart-scale";
@@ -37,8 +38,6 @@ type MetricChartCardProps = {
   // height is the plot's height in px (default 200), or "fill" to take
   // whatever height the card is given (a grid row, an h-* class).
   height?: number | "fill";
-  // actions sit at the card's top right (refresh, menus).
-  actions?: ReactNode;
   className?: string;
 };
 
@@ -55,14 +54,12 @@ function lastIndex(rows: ChartRow[], key: string): number {
 function ChartCardFrame({
   title,
   description,
-  actions,
   className,
   testId,
   children,
 }: {
   title: string;
   description?: string;
-  actions?: ReactNode;
   className?: string;
   testId?: string;
   children: ReactNode;
@@ -78,11 +75,20 @@ function ChartCardFrame({
       <div className="flex min-h-5 items-center gap-1.5 pr-1">
         <h3 className="truncate text-sm font-medium text-muted-foreground">{title}</h3>
         {description ? (
-          <span title={description} aria-label={description} className="text-muted-foreground/70">
-            <Info className="size-3.5" aria-hidden />
-          </span>
+          // A focusable hint: keyboard and touch users reach it too.
+          <TooltipProvider delayDuration={150}>
+            <Tooltip>
+              <TooltipTrigger
+                type="button"
+                aria-label={description}
+                className="rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <Info className="size-3.5" aria-hidden />
+              </TooltipTrigger>
+              <TooltipContent>{description}</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         ) : null}
-        {actions ? <div className="ml-auto flex items-center gap-1">{actions}</div> : null}
       </div>
       {children}
     </Card>
@@ -104,7 +110,6 @@ export function MetricChartCard({
   lines,
   empty,
   height = 200,
-  actions,
   className,
 }: MetricChartCardProps) {
   const stack = Boolean(stacked && !lines);
@@ -129,7 +134,6 @@ export function MetricChartCard({
     <ChartCardFrame
       title={title}
       description={description}
-      actions={actions}
       className={cn(fill && "h-full", className)}
       testId={`chart-${title}`}
     >

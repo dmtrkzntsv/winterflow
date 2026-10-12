@@ -98,7 +98,6 @@ function HealthCard({
   // The newest host sample may lack CPU (the first one after a restart has
   // no delta yet); the sparkline's newest minute stands in.
   const cpu = latest?.cpu ?? latestValue(rows, "cpu");
-  const hasSpark = rows.filter((r) => typeof r.cpu === "number").length >= 2;
 
   const meta: string[] = [];
   if (latest) {
@@ -115,10 +114,20 @@ function HealthCard({
   ].filter(Boolean);
 
   return (
+    // The whole card opens the server's Monitoring page, by mouse or keyboard.
     <Card
+      role="link"
+      tabIndex={0}
+      aria-label={`${server.name}: ${online ? "online" : "offline"}, open monitoring`}
       title={`${server.name}: ${online ? "online" : "offline"}`}
       onClick={onOpen}
-      className="flex min-w-0 cursor-pointer flex-col gap-3 p-4 transition-colors hover:border-primary/40"
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
+      className="flex min-w-0 cursor-pointer flex-col gap-3 p-4 transition-colors outline-none hover:border-primary/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
     >
       <div className="flex items-center justify-between gap-3">
         <div className="truncate text-base font-semibold tracking-tight">{server.name}</div>
@@ -132,8 +141,8 @@ function HealthCard({
         </span>
       </div>
 
-      <div className="relative h-12" aria-label="CPU, last hour">
-        {hasSpark ? (
+      <div className="relative h-12" role="img" aria-label="CPU, last hour">
+        {rows.filter((r) => typeof r.cpu === "number").length >= 2 ? (
           <Sparkline
             rows={rows}
             field="cpu"
@@ -177,7 +186,7 @@ function HealthCard({
           ) : null}
         </div>
         {quiet.length > 0 ? (
-          <div className="text-xs text-muted-foreground/75">
+          <div className="text-xs text-muted-foreground">
             {quiet.join(" · ")}
           </div>
         ) : null}

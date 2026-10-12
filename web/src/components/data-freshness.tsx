@@ -18,7 +18,10 @@ export function DataFreshness({
   className?: string;
 }) {
   const [busy, setBusy] = useState(false);
+  // Busy, the button stays focusable (a disabled one would drop keyboard
+  // focus to <body>) and ignores repeat presses.
   const refresh = async () => {
+    if (busy) return;
     setBusy(true);
     try {
       await onRefresh();
@@ -35,7 +38,8 @@ export function DataFreshness({
         size="icon"
         aria-label="Refresh data"
         title="Refresh data"
-        disabled={busy}
+        aria-busy={busy}
+        aria-disabled={busy}
         onClick={() => void refresh()}
         className="size-6 text-muted-foreground hover:text-foreground"
       >

@@ -1,5 +1,5 @@
 import { cloneElement, type ReactElement } from "react";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -230,6 +230,21 @@ describe("MonitoringPage", { timeout: 20_000 }, () => {
     await userEvent.click(screen.getByRole("button", { name: "Refresh data" }));
     expect(refreshServer).toHaveBeenCalledTimes(1);
     expect(refreshOverview).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps focus on the refresh button and ignores presses while refreshing", async () => {
+    let finish: () => void = () => {};
+    refreshServer.mockImplementationOnce(() => new Promise<void>((r) => (finish = r)));
+    renderPage();
+    const button = screen.getByRole("button", { name: "Refresh data" });
+    button.focus();
+    await userEvent.keyboard("{Enter}");
+    expect(button).toHaveFocus();
+    expect(button).toHaveAttribute("aria-busy", "true");
+    await userEvent.keyboard("{Enter}");
+    expect(refreshServer).toHaveBeenCalledTimes(1);
+    finish();
+    await waitFor(() => expect(button).toHaveAttribute("aria-busy", "false"));
   });
 
   it("shows skeletons shaped like the tiles and charts while loading", () => {

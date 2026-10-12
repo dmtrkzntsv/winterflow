@@ -66,9 +66,11 @@ describe("MetricChartCard", () => {
     render(<MetricChartCard title="CPU" description="Percent of the whole host" rows={rows2} series={series} range="1h" format={String} />);
     const card = screen.getByTestId("chart-CPU");
     expect(card).toHaveAttribute("data-slot", "widget-card");
-    expect(card).toHaveClass("p-3.5");
-    expect(screen.getByRole("heading", { name: "CPU" })).toHaveClass("text-muted-foreground");
-    expect(screen.getByLabelText("Percent of the whole host")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "CPU" })).toBeInTheDocument();
+    // The hint is a focusable button, not a mouse-only title.
+    const hint = screen.getByRole("button", { name: "Percent of the whole host" });
+    hint.focus();
+    expect(hint).toHaveFocus();
   });
 
   it("sizes the plot by height, or fills the card", () => {

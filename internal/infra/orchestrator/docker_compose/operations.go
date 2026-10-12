@@ -478,8 +478,14 @@ func (r *Repository) composePull(ctx context.Context, appID string) error {
 // dockerPSByProject lists every compose-managed container on the host in one
 // `docker ps` exec and groups them by compose project name.
 func (r *Repository) dockerPSByProject(ctx context.Context) (map[string][]composePS, error) {
+	return r.dockerPSLabel(ctx, composeProjectLabel)
+}
+
+// dockerPSLabel is dockerPSByProject restricted to containers matching a
+// `--filter label=` expression ("key" or "key=value").
+func (r *Repository) dockerPSLabel(ctx context.Context, label string) (map[string][]composePS, error) {
 	cmd := exec.CommandContext(ctx, "docker", "ps", "--all", "--no-trunc",
-		"--filter", "label="+composeProjectLabel, "--format", "json")
+		"--filter", "label="+label, "--format", "json")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, err

@@ -69,6 +69,35 @@ func stubDocker(t *testing.T, code int) {
 	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
 }
 
+// stubDockerApp puts a `docker` first on PATH whose `ps` lists one
+// container of appID's project in state, and whose other calls (compose)
+// exit with composeCode.
+func stubDockerApp(t *testing.T, appID, state string, composeCode int) {
+	t.Helper()
+	bin := t.TempDir()
+	line := `{"ID":"c1","Names":"web","State":"` + state + `","Status":"","Labels":"` +
+		composeProjectLabel + `=` + projectName(appID) + `"}`
+	script := "#!/bin/sh\nif [ \"$1\" = ps ]; then echo '" + line + "'; exit 0; fi\nexit " + strconv.Itoa(composeCode) + "\n"
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
+}
+
+// TestReleaseIsIdempotent: a doubled release must not free a lock another
+// holder has since taken.
+func TestReleaseIsIdempotent(t *testing.T) {
+	r := newTestRepo(t)
+	release := r.lockApp("app-1")
+	release()
+	held := r.lockApp("app-1")
+	release()
+	if _, err := r.acquireApp(context.Background(), "app-1", 10*time.Millisecond); !errors.Is(err, ErrAppBusy) {
+		t.Fatalf("a stale release freed the current holder's lock: %v", err)
+	}
+	held()
+}
+
 func draftPayload(appID string) command.AppPayload {
 	return command.AppPayload{
 		AppID:  appID,
@@ -104,7 +133,7 @@ func TestMutatorsGiveUpWhenAppBusy(t *testing.T) {
 			t.Errorf("%s: err = %v, want ErrAppBusy", name, err)
 			continue
 		}
-		if !strings.Contains(err.Error(), "app app-1 is busy (reloading shared variables), try again") {
+		if !strings.Contains(err.Error(), "app app-1 is busy with another operation, try again") {
 			t.Errorf("%s: message %q", name, err)
 		}
 		if waited := time.Since(start); waited > time.Second {
@@ -155,7 +184,7 @@ func TestMutatorsReleaseTheLockOnEveryPath(t *testing.T) {
 		}
 		lockFree(t, r, "app-1", name)
 	}
-	if _, err := r.ReloadSharedVars(context.Background(), "missing"); err == nil {
+	if _, _, err := r.ReloadSharedVars(context.Background(), "missing"); err == nil {
 		t.Fatal("reload of a missing app succeeded")
 	}
 	lockFree(t, r, "missing", "ReloadSharedVars")
@@ -183,7 +212,7 @@ func TestReloadWaitsForTheLockPastTheBusyDeadline(t *testing.T) {
 	r.busyWait = 10 * time.Millisecond
 	unlock := r.lockApp("app-1")
 	done := make(chan error, 1)
-	go func() { _, err := r.ReloadSharedVars(context.Background(), "app-1"); done <- err }()
+	go func() { _, _, err := r.ReloadSharedVars(context.Background(), "app-1"); done <- err }()
 	select {
 	case err := <-done:
 		t.Fatalf("reload did not wait for the lock: %v", err)
@@ -198,7 +227,7 @@ func TestReloadWaitsForTheLockPastTheBusyDeadline(t *testing.T) {
 	defer unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
-	if _, err := r.ReloadSharedVars(ctx, "app-1"); !errors.Is(err, context.DeadlineExceeded) {
+	if _, _, err := r.ReloadSharedVars(ctx, "app-1"); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("err = %v, want deadline exceeded", err)
 	}
 }

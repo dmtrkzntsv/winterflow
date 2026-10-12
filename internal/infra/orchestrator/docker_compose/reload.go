@@ -88,33 +88,65 @@ func (r *Repository) ReloadCandidates(ctx context.Context, req command.ReloadVar
 	return pickCandidates(req, running, r.StaleApps(), r.appExists), nil
 }
 
+// appRunning reports whether appID's compose project has a running
+// container, from one `docker ps` scoped to that project (reload path
+// only; never polled).
+func (r *Repository) appRunning(ctx context.Context, appID string) (bool, error) {
+	project := projectName(appID)
+	byProject, err := r.dockerPSLabel(ctx, composeProjectLabel+"="+project)
+	if err != nil {
+		return false, fmt.Errorf("docker ps: %w", err)
+	}
+	for _, c := range byProject[project] {
+		if c.State == "running" {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // ReloadSharedVars re-renders appID's shared-variable files and runs
 // `compose up -d`, which recreates only the services whose resolved
 // config changed. It returns the names that were stale before the reload.
-// A failed compose up leaves the previous containers running, as for any
-// failed deploy. Unlike the mutators it waits for the app's lock as long
-// as ctx allows (the reload worker bounds ctx per app).
-func (r *Repository) ReloadSharedVars(ctx context.Context, appID string) ([]string, error) {
+// An app that is no longer running once the lock is held (stopped since
+// the candidates were picked) is skipped: skipped is true and nothing is
+// rendered or started — its next start renders anyway. A failed compose up
+// leaves the previous containers running, as for any failed deploy.
+// Unlike the mutators it waits for the app's lock as long as ctx allows
+// (the reload worker bounds ctx per app).
+func (r *Repository) ReloadSharedVars(ctx context.Context, appID string) (names []string, skipped bool, err error) {
 	unlock, err := r.acquireApp(ctx, appID, 0)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer unlock()
 	if !r.appExists(appID) {
-		return nil, fmt.Errorf("app %s not found", appID)
+		return nil, false, fmt.Errorf("app %s not found", appID)
 	}
-	names := r.StaleApps()[appID]
+	names = r.StaleApps()[appID]
+	running, err := r.appRunning(ctx, appID)
+	if err != nil {
+		return names, false, err
+	}
+	if !running {
+		r.log.Info("shared-variable reload skipped: app not running", "app_id", appID)
+		return names, true, nil
+	}
 	dir := r.appDataDir(appID)
 	if deployed, ok := readDeployedMark(dir); ok {
-		if head, err := gitHead(dir); err == nil && head != deployed {
-			return names, ErrDraftPending
+		head, err := gitHead(dir)
+		if err != nil {
+			return names, false, fmt.Errorf("read HEAD: %w", err)
+		}
+		if head != deployed {
+			return names, false, ErrDraftPending
 		}
 	}
 	if err := r.renderShared(appID); err != nil {
-		return names, fmt.Errorf("render shared variables: %w", err)
+		return names, false, fmt.Errorf("render shared variables: %w", err)
 	}
 	if err := r.composeUp(ctx, appID); err != nil {
-		return names, fmt.Errorf("docker compose up: %w", err)
+		return names, false, fmt.Errorf("docker compose up: %w", err)
 	}
-	return names, nil
+	return names, false, nil
 }

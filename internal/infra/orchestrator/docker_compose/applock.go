@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 )
 
@@ -14,8 +15,9 @@ import (
 const appBusyWait = 30 * time.Second
 
 // ErrAppBusy is returned by a mutator that could not take the app's lock
-// within the busy deadline.
-var ErrAppBusy = errors.New("is busy (reloading shared variables), try again")
+// within the busy deadline (another operation, e.g. a shared-variable
+// reload, holds it).
+var ErrAppBusy = errors.New("is busy with another operation, try again")
 
 // appSem returns appID's lock: a one-slot semaphore, so a wait can be
 // bounded by a deadline and a ctx.
@@ -35,7 +37,8 @@ func (r *Repository) appSem(appID string) chan struct{} {
 // Internal helpers never take the lock (no re-entry).
 func (r *Repository) acquireApp(ctx context.Context, appID string, limit time.Duration) (func(), error) {
 	sem := r.appSem(appID)
-	release := func() { <-sem }
+	var once sync.Once
+	release := func() { once.Do(func() { <-sem }) }
 	select {
 	case sem <- struct{}{}:
 		return release, nil

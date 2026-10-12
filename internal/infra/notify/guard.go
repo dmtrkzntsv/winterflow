@@ -77,7 +77,7 @@ var httpServices = map[string]bool{
 	"lark": true, "matrix": true, "mattermost": true, "ntfy": true, "opsgenie": true, "pagerduty": true,
 	"pushover": true, "rocketchat": true, "signal": true, "slack": true, "teams": true, "telegram": true,
 	"twilio": true, "wecom": true, "zulip": true, "ifttt": true, "pushbullet": true, "notifiarr": true,
-	"signalgrid": true,
+	"signalgrid": true, "homeassistant": true,
 }
 
 // guardedClient is an HTTP client whose connections to private addresses

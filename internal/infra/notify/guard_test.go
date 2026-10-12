@@ -99,6 +99,7 @@ func TestCheckHostSkipsHTTPServices(t *testing.T) {
 		"pushbullet://SECRETACCESSTOKEN/dev",
 		"notifiarr://SECRETAPIKEY123",
 		"signalgrid://SECRETCLIENTKEY/phone",
+		"homeassistant://10.0.0.5:8123/SECRETTOKEN",
 	} {
 		if err := checkHost(ctx, raw); err != nil {
 			t.Errorf("%s: %v", raw, err)

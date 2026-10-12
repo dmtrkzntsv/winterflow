@@ -19,6 +19,8 @@ export type MetricsState<T> = {
   data: T | null;
   loading: boolean;
   error: string | null;
+  // updatedAt is when data last arrived (ms), for a "Data as of" line.
+  updatedAt: number | null;
   refresh: () => Promise<void>;
 };
 
@@ -45,6 +47,7 @@ export function usePolled<T>(
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(path !== null);
   const [error, setError] = useState<string | null>(null);
+  const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   const [prevPath, setPrevPath] = useState(path);
   const loadRef = useRef<() => Promise<void>>(async () => {});
 
@@ -53,6 +56,7 @@ export function usePolled<T>(
     setPrevPath(path);
     setData(null);
     setError(null);
+    setUpdatedAt(null);
     setLoading(path !== null);
   }
 
@@ -73,6 +77,7 @@ export function usePolled<T>(
         const next = await getData<T>(path, ctl.signal);
         if (!active || inflight !== ctl) return;
         setData(normalize ? normalize(next) : next);
+        setUpdatedAt(Date.now());
         setError(null);
       } catch (e) {
         if (!active || inflight !== ctl) return;
@@ -100,7 +105,7 @@ export function usePolled<T>(
 
   const refresh = useCallback(() => loadRef.current(), []);
 
-  return { data, loading, error, refresh };
+  return { data, loading, error, updatedAt, refresh };
 }
 
 // Go may encode a nil slice as null; consumers always see arrays.

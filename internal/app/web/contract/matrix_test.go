@@ -183,6 +183,12 @@ var probes = map[string]probe{
 	"POST /api/v1/instance/create-instance": {valid: func(s string) call {
 		return post("/api/v1/instance/create-instance", map[string]any{"server_id": s, "key": "k", "template_id": anApp})
 	}, malformed: bad("POST", "/api/v1/instance/create-instance")},
+	"POST /api/v1/instance/update-instance": {valid: func(s string) call {
+		return post("/api/v1/instance/update-instance", map[string]any{"server_id": s, "key": "k"})
+	}, malformed: bad("POST", "/api/v1/instance/update-instance")},
+	"POST /api/v1/instance/upgrade-instance": {valid: func(s string) call {
+		return post("/api/v1/instance/upgrade-instance", map[string]any{"server_id": s, "key": "k", "revision": 2})
+	}, malformed: bad("POST", "/api/v1/instance/upgrade-instance")},
 	"GET /api/v1/instance/get-instance": {valid: func(s string) call {
 		return get("/api/v1/instance/get-instance", url.Values{"server_id": {s}, "key": {"k"}})
 	}, malformed: bad("GET", "/api/v1/instance/get-instance")},

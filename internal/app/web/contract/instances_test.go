@@ -10,6 +10,7 @@ import (
 	htpl "winterflow/internal/app/web/handler/templates"
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
+	"winterflow/internal/domain/template"
 	tuc "winterflow/internal/domain/usecase/templates"
 	"winterflow/internal/infra/transport/bus"
 )
@@ -184,4 +185,119 @@ func TestInstancesOfAnotherOrgAreNotFound(t *testing.T) {
 		t.Fatalf("mallory sees %+v", list)
 	}
 	ie.owner.get(t, "/api/v1/instance/get-instance", url.Values{"server_id": {ie.sid}, "key": {"nope"}}).expect(t, http.StatusNotFound)
+}
+
+func TestInstanceUpdateAndUpgrade(t *testing.T) {
+	t.Parallel()
+	ie := newInstanceEnv(t)
+	e, owner, sid := ie.e, ie.owner, ie.sid
+	ie.created(t, "tenant-1", "acme", "9001")
+
+	t.Run("update without wait answers 202 and keeps the secret", func(t *testing.T) {
+		owner.succeed(t, call{Method: http.MethodPost, Path: "/api/v1/instance/update-instance",
+			Body: htpl.UpdateInstanceRequest{ServerID: sid, Key: "tenant-1", Parameters: map[string]string{"VERSION": "2.0"}}}, nil)
+		got := instanceOf(t, owner, sid, "tenant-1")
+		if got.Parameters["VERSION"] != "2.0" || got.Parameters["NAME"] != "acme" {
+			t.Fatalf("after update = %+v", got)
+		}
+		save := lastSave(t, e)
+		for _, v := range save.App.Variables {
+			if v.Name == "SECRET_KEY" && string(v.Content) != command.EncryptedPlaceholder {
+				t.Fatalf("an update re-sent the secret: %q", v.Content)
+			}
+		}
+		if strings.Contains(string(save.App.Config), `"backups"`) {
+			t.Fatalf("an update replaced the backups list: %s", save.App.Config)
+		}
+	})
+	t.Run("update checks the values", func(t *testing.T) {
+		owner.post(t, "/api/v1/instance/update-instance", htpl.UpdateInstanceRequest{ServerID: sid, Key: "tenant-1",
+			Parameters: map[string]string{"NOPE": "1"}}).expect(t, http.StatusBadRequest)
+		owner.post(t, "/api/v1/instance/update-instance", htpl.UpdateInstanceRequest{ServerID: sid, Key: "nope"}).
+			expect(t, http.StatusNotFound)
+	})
+	t.Run("a created instance's backups are changed in the Backups tab", func(t *testing.T) {
+		for _, path := range []string{"/api/v1/instance/update-instance", "/api/v1/instance/upgrade-instance"} {
+			r := owner.post(t, path, map[string]any{"server_id": sid, "key": "tenant-1", "revision": 1,
+				"backups": map[string]string{"db": "disk"}}).expect(t, http.StatusBadRequest)
+			if !strings.Contains(string(r.Body), "backups can only be set while the instance is pending") {
+				t.Fatalf("%s body = %s", path, r.Body)
+			}
+		}
+	})
+	t.Run("upgrade adds the defaults of new backups only", func(t *testing.T) {
+		next := shopBody(strings.Replace(shopCompose, "path: shop.db }\n", "path: shop.db }\n    - { name: media, type: files, volume: data }\n", 1))
+		next.Backups["media"] = template.BackupDefault{Enabled: true, Storage: "disk", Every: "6h"}
+		next.Backups["db"] = template.BackupDefault{Enabled: true, Storage: "elsewhere"}
+		if saved := saveTemplate(t, owner, htpl.SaveTemplateRequest{ID: ie.tplID, Name: "shop", Body: next, BaseRevision: 1}); saved.Revision != 2 {
+			t.Fatalf("saved = %+v", saved)
+		}
+		var res htpl.InstanceResult
+		owner.post(t, "/api/v1/instance/upgrade-instance", htpl.UpgradeInstanceRequest{ServerID: sid, Key: "tenant-1", Revision: 2, Wait: true}).
+			expect(t, http.StatusOK).data(t, &res)
+		if res.Instance.Revision != 2 || res.Instance.Parameters["VERSION"] != "2.0" {
+			t.Fatalf("upgraded = %+v", res.Instance)
+		}
+		var cfg struct {
+			Backups  json.RawMessage `json:"backups"`
+			Instance template.Marker `json:"instance"`
+		}
+		_ = json.Unmarshal(lastSave(t, e).App.Config, &cfg)
+		if cfg.Backups != nil || len(cfg.Instance.BackupDefaults) != 1 || cfg.Instance.BackupDefaults[0].Name != "media" || cfg.Instance.Revision != 2 {
+			t.Fatalf("upgrade config = %s", lastSave(t, e).App.Config)
+		}
+	})
+	t.Run("an upgrade checks the new defaults' storages and revision", func(t *testing.T) {
+		next := shopBody(strings.Replace(shopCompose, "path: shop.db }\n", "path: shop.db }\n    - { name: logs, type: files, volume: data }\n", 1))
+		next.Backups["logs"] = template.BackupDefault{Enabled: true, Storage: "nowhere"}
+		saveTemplate(t, owner, htpl.SaveTemplateRequest{ID: ie.tplID, Name: "shop", Body: next, BaseRevision: 2})
+		r := owner.post(t, "/api/v1/instance/upgrade-instance", htpl.UpgradeInstanceRequest{ServerID: sid, Key: "tenant-1", Revision: 3}).
+			expect(t, http.StatusBadRequest)
+		if !strings.Contains(string(r.Body), "there is no storage") || !strings.Contains(string(r.Body), "nowhere") {
+			t.Fatalf("body = %s", r.Body)
+		}
+		owner.post(t, "/api/v1/instance/upgrade-instance", htpl.UpgradeInstanceRequest{ServerID: sid, Key: "tenant-1", Revision: 9}).
+			expect(t, http.StatusNotFound)
+	})
+}
+
+// A pending instance (its first save failed) was never confirmed: the agent
+// holds none of its secrets and no backups list, so an update sends both.
+func TestInstanceUpdatePending(t *testing.T) {
+	t.Parallel()
+	ie := newInstanceEnv(t)
+	e, owner, sid := ie.e, ie.owner, ie.sid
+
+	e.agent.fail(command.TypeAppSave, "pull access denied")
+	owner.post(t, "/api/v1/instance/create-instance", ie.create("tenant-p", "pending", "9100")).expect(t, http.StatusBadGateway)
+	if got := instanceOf(t, owner, sid, "tenant-p"); got.State != "pending" {
+		t.Fatalf("tenant-p = %+v", got)
+	}
+	e.agent.on(command.TypeAppSave, defaultScript(command.TypeAppSave))
+
+	r := owner.post(t, "/api/v1/instance/update-instance", htpl.UpdateInstanceRequest{ServerID: sid, Key: "tenant-p",
+		Parameters: map[string]string{"VERSION": "3.0"}}).expect(t, http.StatusBadRequest)
+	if !strings.Contains(string(r.Body), "secrets.SECRET_KEY") {
+		t.Fatalf("a pending update without the secret: %s", r.Body)
+	}
+	var res htpl.InstanceResult
+	owner.post(t, "/api/v1/instance/update-instance", htpl.UpdateInstanceRequest{ServerID: sid, Key: "tenant-p",
+		Parameters: map[string]string{"VERSION": "3.0"}, Secrets: map[string]string{"SECRET_KEY": "CT-again"},
+		Backups: map[string]string{"db": "disk"}, Wait: true}).expect(t, http.StatusOK).data(t, &res)
+	if res.Instance.State != "created" || res.Instance.Parameters["VERSION"] != "3.0" {
+		t.Fatalf("updated = %+v", res.Instance)
+	}
+	save := lastSave(t, e)
+	for _, v := range save.App.Variables {
+		if v.Name == "SECRET_KEY" && (string(v.Content) != "CT-again" || !v.Encrypted) {
+			t.Fatalf("the secret = %+v", v)
+		}
+	}
+	var cfg struct {
+		Backups []struct{ Name, Storage string } `json:"backups"`
+	}
+	_ = json.Unmarshal(save.App.Config, &cfg)
+	if len(cfg.Backups) != 1 || cfg.Backups[0].Name != "db" || cfg.Backups[0].Storage != "disk" {
+		t.Fatalf("a pending update's backups = %s", save.App.Config)
+	}
 }

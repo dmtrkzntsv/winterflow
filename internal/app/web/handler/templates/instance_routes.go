@@ -26,6 +26,18 @@ func (h *Handler) instanceRoutes() []api.Route {
 			Errors: instance,
 		},
 		{
+			Method: http.MethodPost, Path: "/api/v1/instance/update-instance", Handler: h.UpdateInstance, Auth: api.User,
+			Summary: "Redeploy an instance with new parameter values", Tag: "instances", Description: waits,
+			Request: UpdateInstanceRequest{}, Accepted: true, Result: command.SaveAppResponse{}, Response: InstanceResult{},
+			Errors: instance,
+		},
+		{
+			Method: http.MethodPost, Path: "/api/v1/instance/upgrade-instance", Handler: h.UpgradeInstance, Auth: api.User,
+			Summary: "Move an instance to another template revision", Tag: "instances", Description: waits,
+			Request: UpgradeInstanceRequest{}, Accepted: true, Result: command.SaveAppResponse{}, Response: InstanceResult{},
+			Errors: instance,
+		},
+		{
 			Method: http.MethodGet, Path: "/api/v1/instance/get-instance", Handler: h.GetInstance, Auth: api.User,
 			Summary: "An instance: template, revision, values (secrets masked), state, status, last error", Tag: "instances",
 			Query: InstanceQuery{}, Response: tuc.InstanceView{}, Errors: read,

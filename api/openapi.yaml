@@ -1728,6 +1728,192 @@ paths:
       summary: The org's pending and created instances
       tags:
       - instances
+  /api/v1/instance/update-instance:
+    post:
+      description: 'Answers 202 with a request_id (the outcome arrives over SSE),
+        or with wait:true the outcome: 200 with the instance, 502 with the agent''s
+        error, or 202 once 10 minutes pass (read get-instance).'
+      operationId: instanceUpdateInstance
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateInstanceRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/InstanceResult'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Conflict
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Gateway
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Redeploy an instance with new parameter values
+      tags:
+      - instances
+      x-operation-result:
+        $ref: '#/components/schemas/SaveAppResponse'
+  /api/v1/instance/upgrade-instance:
+    post:
+      description: 'Answers 202 with a request_id (the outcome arrives over SSE),
+        or with wait:true the outcome: 200 with the instance, 502 with the agent''s
+        error, or 202 once 10 minutes pass (read get-instance).'
+      operationId: instanceUpgradeInstance
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpgradeInstanceRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/InstanceResult'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Conflict
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Gateway
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Move an instance to another template revision
+      tags:
+      - instances
+      x-operation-result:
+        $ref: '#/components/schemas/SaveAppResponse'
   /api/v1/metrics/app:
     get:
       operationId: metricsApp
@@ -7387,6 +7573,36 @@ components:
       - redeployed
       - backups
       type: object
+    UpdateInstanceRequest:
+      properties:
+        backups:
+          additionalProperties:
+            type: string
+          description: Backup name -> storage name, replacing the template default's
+            storage. Accepted only while the instance is pending; afterwards change
+            backups in the app's Backups tab.
+          type: object
+        key:
+          type: string
+        parameters:
+          additionalProperties:
+            type: string
+          description: New plain values, merged over the stored ones.
+          type: object
+        secrets:
+          additionalProperties:
+            type: string
+          description: 'New secret values; a secret left out keeps its value (a pending
+            instance holds none: send every required secret again).'
+          type: object
+        server_id:
+          type: string
+        wait:
+          type: boolean
+      required:
+      - server_id
+      - key
+      type: object
     UpdateOrganizationRequest:
       properties:
         color:
@@ -7395,6 +7611,41 @@ components:
           type: string
         name:
           type: string
+      type: object
+    UpgradeInstanceRequest:
+      properties:
+        backups:
+          additionalProperties:
+            type: string
+          description: Backup name -> storage name, replacing the template default's
+            storage. Accepted only while the instance is pending; afterwards change
+            backups in the app's Backups tab.
+          type: object
+        key:
+          type: string
+        parameters:
+          additionalProperties:
+            type: string
+          description: Values for parameters the revision adds or changes.
+          type: object
+        revision:
+          format: int64
+          minimum: 1
+          type: integer
+        secrets:
+          additionalProperties:
+            type: string
+          description: 'Secret values for the revision; a secret left out keeps its
+            value (a pending instance holds none: send every required secret again).'
+          type: object
+        server_id:
+          type: string
+        wait:
+          type: boolean
+      required:
+      - server_id
+      - key
+      - revision
       type: object
     UserToken:
       properties:

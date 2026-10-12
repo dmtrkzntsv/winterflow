@@ -80,7 +80,9 @@ export function VariablesTable({
                 <TableHead>Value</TableHead>
                 {showCoverage ? <TableHead>Coverage</TableHead> : null}
                 <TableHead>Description</TableHead>
-                <TableHead className="w-0" />
+                <TableHead className="w-0">
+                  <span className="sr-only">Actions</span>
+                </TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

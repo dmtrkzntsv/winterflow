@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -69,11 +69,18 @@ export function SharedVariableDialog({
   const lockedSecret = mode.kind === "edit" && secret && !replace;
   const trimmed = name.trim();
   const nameError = mode.kind === "create" && trimmed ? variableNameError(trimmed) : "";
-  const noKey = typingSecret && !provide && serverId !== undefined && scopeKeys.length === 0;
+  // Who actually receives the new value: keyed servers only.
+  const targets = provide ? keys.servers.filter((k) => existing?.missing_on.includes(k.server_id)) : scopeKeys;
+  const keyless = provide ? (existing?.missing_on ?? []).filter((id) => !targets.some((k) => k.server_id === id)) : [];
+  const noKey = typingSecret && targets.length === 0;
   const canSave = !busy && trimmed !== "" && !nameError && !noKey && (!typingSecret || value !== "");
   const pushesEverywhere = typingSecret && !provide && serverId === undefined;
 
   // The typed value must not outlive the dialog.
+  useEffect(() => {
+    if (!open) setValue("");
+  }, [open]);
+
   const changeOpen = (next: boolean) => {
     if (!next) setValue("");
     onOpenChange(next);
@@ -87,9 +94,9 @@ export function SharedVariableDialog({
       if (!secret) {
         body = { ...common, is_secret: false, value };
       } else if (provide && existing) {
-        body = { ...common, is_secret: true, ciphertexts: await encryptForServers(value, keys.servers, existing.missing_on) };
+        body = { ...common, is_secret: true, ciphertexts: await encryptForServers(value, targets) };
       } else if (typingSecret) {
-        body = { ...common, is_secret: true, ciphertexts: await encryptForServers(value, scopeKeys) };
+        body = { ...common, is_secret: true, ciphertexts: await encryptForServers(value, targets) };
       } else {
         body = { ...common, is_secret: true };
       }
@@ -105,7 +112,9 @@ export function SharedVariableDialog({
   };
 
   const title = provide ? `Provide ${existing?.name}` : existing ? `Edit ${existing.name}` : "Add variable";
-  const missingNames = existing?.missing_on.map((id) => names.get(id) ?? id).join(", ") ?? "";
+  const label = (id: string) => names.get(id) ?? id;
+  const targetNames = targets.map((k) => k.name).join(", ");
+  const keylessNames = keyless.map(label).join(", ");
 
   return (
     <Dialog open={open} onOpenChange={changeOpen}>
@@ -114,7 +123,7 @@ export function SharedVariableDialog({
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
             {provide
-              ? `Encrypts the value for: ${missingNames}`
+              ? `Encrypts the value for: ${targetNames || "no server"}${keylessNames ? `. Pending (no key yet): ${keylessNames}` : ""}`
               : "Apps use it as ${NAME}. Secret values are encrypted in your browser, once per server."}
           </DialogDescription>
         </DialogHeader>
@@ -127,9 +136,11 @@ export function SharedVariableDialog({
               disabled={existing !== null}
               placeholder="SMTP_PASS"
               className="font-mono"
+              aria-invalid={nameError ? true : undefined}
+              aria-describedby={nameError ? "sv-name-error" : undefined}
               onChange={(e) => setName(e.target.value)}
             />
-            {nameError ? <p className="text-sm text-destructive">{nameError}</p> : null}
+            {nameError ? <p id="sv-name-error" className="text-sm text-destructive">{nameError}</p> : null}
           </div>
           {provide ? null : (
             <div className="flex items-center gap-2">
@@ -147,10 +158,10 @@ export function SharedVariableDialog({
           ) : (
             <div className="space-y-2">
               <Label htmlFor="sv-value">Value</Label>
-              <Textarea id="sv-value" rows={3} value={value} className="font-mono" onChange={(e) => setValue(e.target.value)} />
+              <Textarea id="sv-value" rows={3} value={value} className="font-mono" autoComplete="off" spellCheck={false} onChange={(e) => setValue(e.target.value)} />
               {typingSecret && !provide ? (
                 <p className="text-sm text-muted-foreground">
-                  {noKey ? "This server has no public key yet, so it can't receive secrets." : pushSummary(scopeKeys.length, pending.length)}
+                  {noKey ? (serverId !== undefined ? "This server has no public key yet, so it can't receive secrets." : "No server has a public key yet, so there is nobody to receive this secret.") : pushSummary(scopeKeys.length, pending.length)}
                 </p>
               ) : null}
             </div>

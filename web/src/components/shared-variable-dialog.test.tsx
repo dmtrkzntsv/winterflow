@@ -101,4 +101,32 @@ describe("SharedVariableDialog", () => {
     expect(screen.getByText("WF_X is reserved")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   });
+
+  it("provide names only keyed servers and lists keyless ones as pending", async () => {
+    const user = userEvent.setup();
+    const onSave = renderDialog({ kind: "provide", variable: { ...SECRET, missing_on: ["b", "p"] } });
+    expect(screen.getByText("Encrypts the value for: beta. Pending (no key yet): new-box")).toBeInTheDocument();
+    await user.type(screen.getByLabelText("Value"), "x");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(onSave).toHaveBeenCalledWith({ name: "SMTP_PASS", is_secret: true, description: "old", ciphertexts: { b: "ct(KB):x" } });
+  });
+
+  it("disables Save when no target server has a key", async () => {
+    const user = userEvent.setup();
+    renderDialog({ kind: "provide", variable: { ...SECRET, missing_on: ["p"] } });
+    await user.type(screen.getByLabelText("Value"), "x");
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  });
+
+  it("disables Save for an org secret when no server is keyed", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(
+      <SharedVariableDialog open mode={{ kind: "create" }} keys={{ servers: [], pending_servers: KEYS.pending_servers }} onOpenChange={() => {}} onSave={onSave} />,
+    );
+    await user.type(screen.getByLabelText("Name"), "A");
+    await user.click(screen.getByRole("switch", { name: "Secret" }));
+    await user.type(screen.getByLabelText("Value"), "x");
+    expect(screen.getByRole("button", { name: "Save and push" })).toBeDisabled();
+  });
 });

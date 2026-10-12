@@ -40,6 +40,14 @@ describe("AppMetricBlocks", () => {
     expect(screen.getByTestId("kpi-Network")).toHaveTextContent("In 1.0 KB/s · Out 1.0 KB/s");
   });
 
+  it("reads past a newest point that lacks a field", () => {
+    data!.points = [...data!.points, { t: 120, mem_used: 600 * 1024 ** 2 }];
+    render(<AppMetricBlocks serverId="s1" appId="a1" />);
+    expect(screen.getByTestId("kpi-CPU")).toHaveTextContent("13%");
+    expect(screen.getByTestId("kpi-Memory")).toHaveTextContent("600.0 MB");
+    expect(screen.getByTestId("kpi-Network")).toHaveTextContent("2.0 KB/s");
+  });
+
   it("shows tile skeletons until the first fetch lands", () => {
     data = null;
     loading = true;

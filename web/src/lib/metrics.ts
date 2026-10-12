@@ -221,12 +221,6 @@ export function chartColor(i: number): string {
   return `hsl(${hue} 65% 55%)`;
 }
 
-// compactTick shortens a formatted axis tick: a value of 10 or more loses
-// its decimals ("11.4 MB/s" -> "11 MB/s"), so ticks fit the axis on one line.
-export function compactTick(label: string): string {
-  return label.replace(/^(\d{2,}\.\d+)/, (n) => String(Math.round(Number(n))));
-}
-
 // isUnavailable reports whether container metrics were unavailable for
 // most of a point's bucket: rolled-up points carry the flagged fraction.
 export function isUnavailable(p: MetricPoint | undefined): boolean {

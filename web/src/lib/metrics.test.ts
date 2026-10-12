@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   chartColor,
-  compactTick,
   dockerDiskUsage,
   fieldKey,
   isUnavailable,
@@ -134,17 +133,6 @@ describe("chartColor", () => {
     expect(chartColor(4)).toBe("var(--chart-5)");
     const colors = Array.from({ length: 12 }, (_, i) => chartColor(i));
     expect(new Set(colors).size).toBe(12);
-  });
-});
-
-describe("compactTick", () => {
-  it("drops decimals from values of 10 and more", () => {
-    expect(compactTick("11.4 MB/s")).toBe("11 MB/s");
-    expect(compactTick("390.6 KB")).toBe("391 KB");
-    expect(compactTick("1.5 MB/s")).toBe("1.5 MB/s");
-    expect(compactTick("94%")).toBe("94%");
-    expect(compactTick("0.52")).toBe("0.52");
-    expect(compactTick("12.50")).toBe("13");
   });
 });
 

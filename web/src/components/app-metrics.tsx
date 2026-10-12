@@ -17,7 +17,7 @@ import {
   type MetricsMode,
   type MetricsRange,
 } from "@/lib/metrics";
-import { percentCeiling, withNetTotal } from "@/lib/kpi";
+import { latestValue, percentCeiling, withNetTotal } from "@/lib/kpi";
 
 // Fixed rows with plots that fill them: cards in a row end level whether
 // or not they carry a legend.
@@ -48,7 +48,15 @@ export function AppMetricBlocks({ serverId, appId }: { serverId: string; appId: 
   }
   const last = lastPoint(points);
   if (!last) return null;
-  const rows = toChartRows(points, data?.interval_seconds ?? 60, ["cpu", "mem_used", "disk", "net_bps"], "avg");
+  const rows = toChartRows(
+    points,
+    data?.interval_seconds ?? 60,
+    ["cpu", "mem_used", "disk", "net_bps", "net_rx_bps", "net_tx_bps"],
+    "avg",
+  );
+  // A newest point may lack a field (rates need two samples): the newest
+  // value that exists stands in, as on /monitoring.
+  const now = (field: string) => latestValue(rows, field);
   // Container metrics come from cgroups; the disk figure comes from the
   // hourly scan, so it stays meaningful when cgroups are unavailable.
   const blind = isUnavailable(last);
@@ -65,13 +73,13 @@ export function AppMetricBlocks({ serverId, appId }: { serverId: string; appId: 
           <>
             <KpiTile
               label="CPU"
-              value={formatPercent(last.cpu)}
+              value={formatPercent(now("cpu"))}
               sub="of host"
               spark={spark("cpu", 0, percentCeiling(rows, "cpu"))}
             />
             <KpiTile
               label="Memory"
-              value={formatSize(last.mem_used)}
+              value={formatSize(now("mem_used"))}
               sub={last.mem_limit ? `of ${formatSize(last.mem_limit)} limit` : "no limit"}
               // Against a limit the line reads as headroom: 0 to the limit.
               spark={spark("mem_used", 1, last.mem_limit || undefined)}
@@ -89,10 +97,10 @@ export function AppMetricBlocks({ serverId, appId }: { serverId: string; appId: 
         {blind ? null : (
           <KpiTile
             label="Network"
-            value={formatRate(last.net_bps)}
+            value={formatRate(now("net_bps"))}
             sub={
-              last.net_bps !== undefined
-                ? `In ${formatRate(last.net_rx_bps)} · Out ${formatRate(last.net_tx_bps)}`
+              now("net_bps") !== undefined
+                ? `In ${formatRate(now("net_rx_bps"))} · Out ${formatRate(now("net_tx_bps"))}`
                 : undefined
             }
             spark={spark("net_bps", 4)}

@@ -54,7 +54,7 @@ const base = apiBaseUrl.endsWith("/") ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
 const TABS = ["logs", "metrics", "editor", "history", "settings"] as const;
 
 const tabTriggerClass =
-  "-mb-px rounded-none border-b-2 border-transparent px-1 pt-1 pb-2.5 text-muted-foreground shadow-none hover:text-foreground data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none";
+  "-mb-px rounded-none border-b-2 border-transparent px-0.5 pt-1 sm:px-1 pb-2.5 text-muted-foreground shadow-none hover:text-foreground data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none";
 
 export default function AppDetailsPage() {
   const { appId } = useParams();
@@ -188,7 +188,7 @@ export default function AppDetailsPage() {
       <AppMetricBlocks serverId={app.serverId} appId={app.id} />
 
       <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="h-auto w-full justify-start gap-6 overflow-x-auto overflow-y-hidden rounded-none border-b bg-transparent p-0">
+        <TabsList className="h-auto w-full justify-start gap-3 overflow-x-auto sm:gap-6 overflow-y-hidden rounded-none border-b bg-transparent p-0">
           <TabsTrigger value="logs" className={tabTriggerClass}>
             Logs
           </TabsTrigger>

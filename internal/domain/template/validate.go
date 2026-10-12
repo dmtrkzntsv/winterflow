@@ -5,7 +5,6 @@ import (
 	"path"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 
 	"winterflow/internal/domain/backup/recipe"
@@ -187,7 +186,7 @@ func validateIngress(b Body, plain map[string]Parameter) error {
 			return err
 		}
 		if m := refRE.FindStringSubmatch(string(row.Port)); m == nil {
-			if n, err := strconv.Atoi(string(row.Port)); err != nil || n < 1 || n > 65535 {
+			if _, ok := canonicalPort(string(row.Port)); !ok {
 				return invalid(field+".port", "%q is neither a port 1-65535 nor ${PARAM}", row.Port)
 			}
 		} else if m[0] != string(row.Port) {
@@ -197,15 +196,8 @@ func validateIngress(b Body, plain map[string]Parameter) error {
 			return invalid(field+".service", "at most 64 characters")
 		}
 	}
-	rows, err := renderIngress(b.Ingress, example, true)
-	if err != nil {
-		return err
-	}
-	ing := model.Ingress{Domains: rows, Redirects: []model.IngressRedirect{}}
-	if err := ing.Validate(); err != nil {
-		return invalid("ingress", "%v", err)
-	}
-	return nil
+	_, err := renderIngress(b.Ingress, example, true)
+	return err
 }
 
 // validateBackups checks the compose recipe and that every default names a
@@ -243,6 +235,9 @@ func (d BackupDefault) config(name string) recipe.BackupConfig {
 // parameter, not a WF_ or COMPOSE_PROJECT_NAME name, not an org shared
 // variable (shared reports those), and without a fallback of their own.
 func Warnings(b Body, shared func(name string) bool) []string {
+	if shared == nil {
+		shared = func(string) bool { return false }
+	}
 	refs := map[string]bool{}
 	for _, name := range sortedKeys(b.Files) {
 		varref.Undefaulted([]byte(b.Files[name]), refs)

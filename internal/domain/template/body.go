@@ -89,9 +89,10 @@ func (p *Port) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// MarshalJSON writes a number when the port is one.
+// MarshalJSON writes a number when the port is a canonical integer, any
+// other spelling ("+80", "080", "${PORT}") as a string.
 func (p Port) MarshalJSON() ([]byte, error) {
-	if _, err := strconv.Atoi(string(p)); err == nil {
+	if n, err := strconv.Atoi(string(p)); err == nil && strconv.Itoa(n) == string(p) {
 		return []byte(p), nil
 	}
 	return json.Marshal(string(p))

@@ -3,11 +3,16 @@ package template
 import (
 	"encoding/json"
 	"sort"
+	"strings"
 
 	"winterflow/internal/domain/backup/recipe"
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
 )
+
+// maxRenderedName caps the app name a render produces (parameter values
+// are free text).
+const maxRenderedName = 255
 
 // Marker is the "instance" key of an instance's config blob: the editor
 // and the app page know from it that the app is an instance. The agent
@@ -67,7 +72,11 @@ type config struct {
 // from it) and the marker.
 func Render(b Body, in Input) (model.App, command.AppPayload, error) {
 	plain := in.Values.Plain
-	app := model.App{ID: in.AppID, Name: expand(b.AppName, plain), Icon: b.Icon, Color: b.Color}
+	name := expand(b.AppName, plain)
+	if strings.TrimSpace(name) == "" || len(name) > maxRenderedName {
+		return model.App{}, command.AppPayload{}, invalid(valueField(b.AppName, "app_name"), "the app name must be 1-%d characters", maxRenderedName)
+	}
+	app := model.App{ID: in.AppID, Name: name, Icon: b.Icon, Color: b.Color}
 	cfg := config{Name: app.Name, Icon: b.Icon, Color: b.Color, Files: []configFile{}, Variables: []configVar{}}
 	payload := command.AppPayload{AppID: in.AppID, Files: []command.ContentItem{}, Variables: []command.ContentItem{}}
 

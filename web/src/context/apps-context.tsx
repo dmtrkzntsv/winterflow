@@ -64,6 +64,14 @@ function byApp(list: AppStatusResponse[]) {
   return { status, backups };
 }
 
+// keepIfSame is a state update that keeps the previous value when the new
+// one reads the same: every agent report re-sends the whole snapshot, and a
+// new object would re-render every consumer for nothing.
+const keepIfSame =
+  <T,>(next: T) =>
+  (prev: T): T =>
+    JSON.stringify(prev) === JSON.stringify(next) ? prev : next;
+
 type GetAppsStatusResponse = {
   data?: { apps?: AppStatusResponse[] | null };
 };
@@ -184,8 +192,8 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       const result = (await res.json()) as GetAppsStatusResponse;
       if (!mounted.current) return;
       const { status, backups } = byApp(result.data?.apps ?? []);
-      setStatusByApp(status);
-      setBackupsByApp(backups);
+      setStatusByApp(keepIfSame(status));
+      setBackupsByApp(keepIfSame(backups));
     } catch {
       // Status is best-effort; absence renders as "unknown".
     }
@@ -226,8 +234,8 @@ export function AppsProvider({ children }: { children: ReactNode }) {
         | undefined;
       if (!p?.server_id || p.server_id !== activeServerId) return;
       const { status, backups } = byApp(p.apps ?? []);
-      setStatusByApp(status);
-      setBackupsByApp(backups);
+      setStatusByApp(keepIfSame(status));
+      setBackupsByApp(keepIfSame(backups));
     });
   }, [subscribe, activeServerId]);
 

@@ -58,6 +58,9 @@ export type AppsContextValue = {
   // staleVarsByApp maps app id -> the shared variables changed since it
   // was last rendered (stale apps only; live from apps_status).
   staleVarsByApp: Record<string, string[]>;
+  // reloadSharedVars queues a vars.reload for one app (re-render + compose
+  // up -d); its outcome arrives as a vars.reloaded notification.
+  reloadSharedVars: (appId: string) => Promise<void>;
   loading: boolean;
   error: string | null;
   refresh: () => Promise<void>;

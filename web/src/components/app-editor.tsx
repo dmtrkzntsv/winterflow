@@ -13,6 +13,8 @@ import { IngressEditor } from "@/components/ingress-editor";
 import { EditorSection } from "@/components/editor-section";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
+import { SharedVariablesHint, useSharedNames } from "@/components/shared-variables-hint";
+import { overrideNote } from "@/lib/shared-variables";
 import { useServers } from "@/context/use-servers";
 import {
   localId,
@@ -32,6 +34,7 @@ type Props = {
 export function AppEditor({ state, onChange }: Props) {
   const [revealed, setRevealed] = useState<Record<string, boolean>>({});
   const { activeServer, loading: serversLoading } = useServers();
+  const shared = useSharedNames(activeServer?.id);
 
   const setConfig = (patch: Partial<AppEditorState["config"]>) =>
     onChange({ ...state, config: { ...state.config, ...patch } });
@@ -290,7 +293,7 @@ export function AppEditor({ state, onChange }: Props) {
               value={state.files[f.id] ?? ""}
               onChange={(content) => updateFileContent(f.id, content)}
               filename={f.filename}
-              placeholder="file contents (use ${VAR} for variables)"
+              placeholder="file contents (use ${VAR}, including org/server variables)"
               className="rounded-none border-0"
             />
             {isComposeFilename(f.filename) ? (
@@ -312,8 +315,8 @@ export function AppEditor({ state, onChange }: Props) {
         title="Variables"
         description={
           <>
-            Substituted into files as <code>{"${NAME}"}</code>. Secret values
-            are encrypted in your browser.
+            Substituted into files as <code>{"${NAME}"}</code>, including org and
+            server variables. Secret values are encrypted in your browser.
           </>
         }
         action={
@@ -339,6 +342,9 @@ export function AppEditor({ state, onChange }: Props) {
                     className="h-8 w-32 shrink-0 border-transparent font-mono shadow-none focus-visible:border-input sm:w-56"
                     onChange={(e) => updateVarMeta(v.id, { name: e.target.value })}
                   />
+                  {overrideNote(v.name, shared) ? (
+                    <span className="shrink-0 text-xs text-muted-foreground">{overrideNote(v.name, shared)}</span>
+                  ) : null}
                   <Input
                     aria-label={`Value of ${v.name || "variable"}`}
                     value={state.variables[v.id] ?? ""}
@@ -382,6 +388,7 @@ export function AppEditor({ state, onChange }: Props) {
             })}
           </div>
         )}
+        <SharedVariablesHint shared={shared} />
       </EditorSection>
 
       {/* activeServer is null while get-servers is in flight; render neither

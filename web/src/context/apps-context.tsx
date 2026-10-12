@@ -11,6 +11,8 @@ import { useAuth } from "@/context/use-auth";
 import { useServers } from "@/context/use-servers";
 import { useNotifications } from "@/context/use-notifications";
 import { apiBaseUrl } from "@/config";
+import { readApiError } from "@/lib/api";
+import type { VarsReloaded } from "@/lib/shared-variables";
 import { splitStatus, type AppStatusWire } from "@/lib/app-status";
 
 import {
@@ -278,6 +280,36 @@ export function AppsProvider({ children }: { children: ReactNode }) {
     [dispatchAndWait],
   );
 
+  const reloadSharedVars = useCallback(
+    async (appId: string) => {
+      if (!activeServerId) throw new Error("No active server");
+      const res = await fetch(`${base}/api/v1/shared-variables/reload`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ server_id: activeServerId, app_ids: [appId] }),
+      });
+      if (!res.ok) throw await readApiError(res);
+    },
+    [activeServerId],
+  );
+
+  // A successful reload applied the new values: the app is fresh until the
+  // next apps_status says otherwise.
+  useEffect(() => {
+    return subscribe((n) => {
+      if (n.type !== "vars.reloaded") return;
+      const p = n.payload as VarsReloaded | undefined;
+      if (!p?.ok || p.server_id !== activeServerId) return;
+      setStaleVarsByApp((prev) => {
+        if (!(p.app_id in prev)) return prev;
+        const next = { ...prev };
+        delete next[p.app_id];
+        return next;
+      });
+    });
+  }, [subscribe, activeServerId]);
+
   // getPublicKey fetches the server's ECIES public key (for encrypting secrets).
   const getPublicKey = useCallback(async (): Promise<string> => {
     if (!activeServerId) throw new Error("No active server");
@@ -412,6 +444,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       apps,
       statusByApp,
       staleVarsByApp,
+      reloadSharedVars,
       loading,
       error,
       refresh,
@@ -429,6 +462,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       apps,
       statusByApp,
       staleVarsByApp,
+      reloadSharedVars,
       loading,
       error,
       refresh,

@@ -18,7 +18,9 @@ vi.mock("@/context/use-docker", () => ({
   }),
 }));
 vi.mock("@/pages/settings-domains", () => ({ DomainsCard: () => <p>domains card</p> }));
-vi.mock("@/pages/settings-variables", () => ({ VariablesCard: () => <p>variables card</p> }));
+vi.mock("@/pages/settings-variables", () => ({
+  VariablesCard: ({ serverId }: { serverId: string }) => <p>variables card {serverId}</p>,
+}));
 vi.mock("@/pages/settings-volumes", () => ({ VolumesCard: () => <p>volumes card</p> }));
 
 function renderAt(url: string) {
@@ -45,10 +47,10 @@ describe("SettingsPage", () => {
     expect(screen.queryByText("domains card")).not.toBeInTheDocument();
   });
 
-  it("offers the Variables tab", () => {
+  it("offers the Variables tab for the URL's server", () => {
     ingress = false;
-    renderAt("/settings?tab=variables");
+    renderAt("/server/s1/settings?tab=variables");
     expect(screen.getByRole("tab", { name: "Variables" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByText("variables card")).toBeInTheDocument();
+    expect(screen.getByText("variables card s1")).toBeInTheDocument();
   });
 });

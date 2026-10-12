@@ -80,6 +80,10 @@ const router = createBrowserRouter([
             path: "/org/members",
             element: <OrgMembersPage />,
           },
+          {
+            path: "/org/variables",
+            element: <OrgVariablesPage />,
+          },
           { path: "*", element: <NotFound /> },
         ],
       },
@@ -90,10 +94,6 @@ const router = createBrowserRouter([
       {
         path: "/register",
         element: <RegisterPage />,
-      },
-      {
-        path: "/org/variables",
-        element: <OrgVariablesPage />,
       },
     ],
   },

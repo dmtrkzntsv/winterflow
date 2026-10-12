@@ -1499,6 +1499,235 @@ paths:
       - apps
       x-operation-result:
         $ref: '#/components/schemas/ImageTagsResponse'
+  /api/v1/instance/create-instance:
+    post:
+      description: 'The same key with the same request makes no second app: a created
+        instance answers 200, a pending one is saved again. A different request is
+        409. Answers 202 with a request_id (the outcome arrives over SSE), or with
+        wait:true the outcome: 200 with the instance, 502 with the agent''s error,
+        or 202 once 10 minutes pass (read get-instance).'
+      operationId: instanceCreateInstance
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateInstanceRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/InstanceResult'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Conflict
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Gateway
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Create an app from a template revision, or replay a create with the
+        same key
+      tags:
+      - instances
+      x-operation-result:
+        $ref: '#/components/schemas/SaveAppResponse'
+  /api/v1/instance/get-instance:
+    get:
+      operationId: instanceGetInstance
+      parameters:
+      - in: query
+        name: server_id
+        required: true
+        schema:
+          type: string
+      - in: query
+        name: key
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/InstanceView'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not Found
+      security:
+      - bearer: []
+      - cookie: []
+      summary: 'An instance: template, revision, values (secrets masked), state, status,
+        last error'
+      tags:
+      - instances
+  /api/v1/instance/get-instances:
+    get:
+      operationId: instanceGetInstances
+      parameters:
+      - description: Only this server's instances.
+        in: query
+        name: server_id
+        schema:
+          description: Only this server's instances.
+          type: string
+      - description: Only this template's instances.
+        in: query
+        name: template_id
+        schema:
+          description: Only this template's instances.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/InstanceList'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not Found
+      security:
+      - bearer: []
+      - cookie: []
+      summary: The org's pending and created instances
+      tags:
+      - instances
   /api/v1/metrics/app:
     get:
       operationId: metricsApp
@@ -4790,6 +5019,46 @@ components:
       required:
       - domain
       type: object
+    CreateInstanceRequest:
+      properties:
+        backups:
+          additionalProperties:
+            type: string
+          description: Backup name -> storage name, replacing the template default's
+            storage.
+          type: object
+        key:
+          description: The caller's id for the instance, unique in the org among instances
+            not unlinked; a retried create with the same key and values makes no second
+            app.
+          type: string
+        parameters:
+          additionalProperties:
+            type: string
+          description: Plain parameter values by name.
+          type: object
+        revision:
+          description: 'Absent or 0: the latest.'
+          format: int64
+          type: integer
+        secrets:
+          additionalProperties:
+            type: string
+          description: Secret parameter values by name, ECIES-encrypted with the server's
+            public key.
+          type: object
+        server_id:
+          type: string
+        template_id:
+          type: string
+        wait:
+          description: Hold the request for the outcome (at most 10 minutes).
+          type: boolean
+      required:
+      - server_id
+      - key
+      - template_id
+      type: object
     CreateNetworkRequest:
       properties:
         driver:
@@ -5522,6 +5791,93 @@ components:
       - updated_by
       - missing_on
       - overridden
+      type: object
+    InstanceList:
+      properties:
+        instances:
+          items:
+            $ref: '#/components/schemas/InstanceView'
+          type:
+          - array
+          - "null"
+      required:
+      - instances
+      type: object
+    InstanceResult:
+      properties:
+        instance:
+          $ref: '#/components/schemas/InstanceView'
+        request_id:
+          type: string
+        warnings:
+          items:
+            type: string
+          type:
+          - array
+          - "null"
+      required:
+      - instance
+      - request_id
+      - warnings
+      type: object
+    InstanceView:
+      properties:
+        app_id:
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        key:
+          type: string
+        last_error:
+          description: The last failed command's error; empty after a success.
+          type: string
+        parameters:
+          additionalProperties:
+            type: string
+          description: Values the callers set; the others use the revision's default.
+          type:
+          - object
+          - "null"
+        revision:
+          format: int64
+          type: integer
+        secrets:
+          additionalProperties:
+            type: string
+          description: 'Each secret given, as "<encrypted>": values are never returned.'
+          type:
+          - object
+          - "null"
+        server_id:
+          type: string
+        state:
+          description: pending, created or deleted.
+          type: string
+        status_code:
+          type: integer
+        template_id:
+          description: Empty once the template is deleted.
+          type: string
+        template_name:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+      required:
+      - key
+      - server_id
+      - app_id
+      - template_id
+      - template_name
+      - revision
+      - parameters
+      - secrets
+      - state
+      - status_code
+      - last_error
+      - created_at
+      - updated_at
       type: object
     Keep:
       properties:

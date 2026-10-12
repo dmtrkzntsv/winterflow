@@ -1,0 +1,187 @@
+package contract_test
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/url"
+	"strings"
+	"testing"
+
+	htpl "winterflow/internal/app/web/handler/templates"
+	"winterflow/internal/domain/command"
+	"winterflow/internal/domain/model"
+	tuc "winterflow/internal/domain/usecase/templates"
+	"winterflow/internal/infra/transport/bus"
+)
+
+// instanceOf reads get-instance; no answer may carry a secret.
+func instanceOf(t *testing.T, c *client, serverID, key string) tuc.InstanceView {
+	t.Helper()
+	var v tuc.InstanceView
+	r := c.get(t, "/api/v1/instance/get-instance", url.Values{"server_id": {serverID}, "key": {key}}).expect(t, http.StatusOK)
+	noSecrets(t, string(r.Body))
+	r.data(t, &v)
+	return v
+}
+
+// instanceEnv is an owner whose server covers *.example.test and has the
+// storage "disk", with template "shop" (shopBody) saved.
+type instanceEnv struct {
+	e     *env
+	owner *client
+	sid   string
+	tplID string
+}
+
+func newInstanceEnv(t *testing.T) instanceEnv {
+	t.Helper()
+	e := newEnv(t)
+	owner := e.claim(t)
+	sid := owner.serverID(t)
+	registerDomain(t, owner, sid, "*.example.test", model.DomainTLSOff)
+	addStorage(t, owner, sid, model.Storage{Name: "disk", Type: model.StorageLocal, Local: &model.LocalStorage{Path: "/mnt/usb"}})
+	saved := saveTemplate(t, owner, htpl.SaveTemplateRequest{Name: "shop", Body: shopBody(shopCompose)})
+	return instanceEnv{e: e, owner: owner, sid: sid, tplID: saved.ID}
+}
+
+// create is a waited create of key with NAME and PORT.
+func (ie instanceEnv) create(key, name, port string) htpl.CreateInstanceRequest {
+	return htpl.CreateInstanceRequest{
+		ServerID: ie.sid, Key: key, TemplateID: ie.tplID, Parameters: map[string]string{"NAME": name, "PORT": port},
+		Secrets: map[string]string{"SECRET_KEY": "CT-secret"}, Wait: true,
+	}
+}
+
+// created creates key and returns the waited result.
+func (ie instanceEnv) created(t *testing.T, key, name, port string) htpl.InstanceResult {
+	t.Helper()
+	var res htpl.InstanceResult
+	r := ie.owner.post(t, "/api/v1/instance/create-instance", ie.create(key, name, port)).expect(t, http.StatusOK)
+	noSecrets(t, string(r.Body))
+	r.data(t, &res)
+	return res
+}
+
+// lastSave is the last app.save the fake agent received.
+func lastSave(t *testing.T, e *env) command.SaveAppRequest {
+	t.Helper()
+	saves := e.agent.seen(command.TypeAppSave)
+	if len(saves) == 0 {
+		t.Fatal("no app.save reached the agent")
+	}
+	return decode[command.SaveAppRequest](saves[len(saves)-1].Payload)
+}
+
+func TestInstanceCreate(t *testing.T) {
+	t.Parallel()
+	ie := newInstanceEnv(t)
+	e, owner, sid := ie.e, ie.owner, ie.sid
+
+	res := ie.created(t, "tenant-1", "acme", "9001")
+	appID := res.Instance.AppID
+	t.Run("create with wait answers the instance", func(t *testing.T) {
+		if res.Instance.State != "created" || res.Instance.Revision != 1 || res.Instance.Secrets["SECRET_KEY"] != command.EncryptedPlaceholder ||
+			res.Instance.Parameters["NAME"] != "acme" || res.Instance.TemplateName != "shop" || res.RequestID == "" {
+			t.Fatalf("result = %+v", res)
+		}
+		req := lastSave(t, e)
+		var cfg map[string]json.RawMessage
+		_ = json.Unmarshal(req.App.Config, &cfg)
+		if req.App.AppID != appID || string(cfg["template_id"]) != `"`+ie.tplID+`"` ||
+			string(cfg["backups"]) != `[{"name":"db","enabled":true,"storage":"disk"}]` {
+			t.Fatalf("dispatched config = %s", req.App.Config)
+		}
+		apps := listApps(t, owner, sid)
+		if len(apps) != 1 || apps[0].ID != appID || apps[0].Name != "shop-acme" || apps[0].TemplateID != ie.tplID || len(apps[0].Domains) != 1 {
+			t.Fatalf("apps = %+v", apps)
+		}
+	})
+	t.Run("get-instance shows the app's live status", func(t *testing.T) {
+		body, _ := json.Marshal(command.GetAppsStatusResponse{Apps: []command.AppStatus{{AppID: appID, StatusCode: command.ContainerStatusActive, Containers: []command.ContainerStatus{}}}})
+		e.publishEvent(t, bus.EventMessage{ServerID: sid, Kind: bus.EventAppsStatus, Payload: body})
+		eventually(t, func() bool { return instanceOf(t, owner, sid, "tenant-1").StatusCode == command.ContainerStatusActive })
+	})
+	t.Run("a replay makes no second app; other values are a conflict", func(t *testing.T) {
+		n := len(e.agent.seen(command.TypeAppSave))
+		var again htpl.InstanceResult
+		owner.post(t, "/api/v1/instance/create-instance", ie.create("tenant-1", "acme", "9001")).expect(t, http.StatusOK).data(t, &again)
+		if again.Instance.AppID != appID || again.RequestID != "" || len(e.agent.seen(command.TypeAppSave)) != n {
+			t.Fatalf("replay = %+v", again)
+		}
+		owner.post(t, "/api/v1/instance/create-instance", ie.create("tenant-1", "acme", "9002")).expect(t, http.StatusConflict)
+	})
+	t.Run("a host another app holds is refused before the key is claimed", func(t *testing.T) {
+		owner.post(t, "/api/v1/instance/create-instance", ie.create("tenant-x", "acme", "9009")).expect(t, http.StatusBadRequest)
+		owner.get(t, "/api/v1/instance/get-instance", url.Values{"server_id": {sid}, "key": {"tenant-x"}}).expect(t, http.StatusNotFound)
+	})
+	t.Run("without wait the result arrives over SSE", func(t *testing.T) {
+		in := ie.create("tenant-2", "bravo", "9002")
+		in.Wait = false
+		var saved command.SaveAppResponse
+		owner.succeed(t, call{Method: http.MethodPost, Path: "/api/v1/instance/create-instance", Body: in}, &saved)
+		if got := instanceOf(t, owner, sid, "tenant-2"); got.AppID != saved.AppID || got.State != "created" {
+			t.Fatalf("tenant-2 = %+v (saved %+v)", got, saved)
+		}
+	})
+	t.Run("a failed deploy answers 502; the same request retries it", func(t *testing.T) {
+		e.agent.fail(command.TypeAppSave, "pull access denied")
+		r := owner.post(t, "/api/v1/instance/create-instance", ie.create("tenant-3", "charlie", "9003")).expect(t, http.StatusBadGateway)
+		if !strings.Contains(string(r.Body), "pull access denied") {
+			t.Fatalf("502 body = %s", r.Body)
+		}
+		if got := instanceOf(t, owner, sid, "tenant-3"); got.State != "pending" || got.LastError != "pull access denied" {
+			t.Fatalf("after a failure = %+v", got)
+		}
+		e.agent.on(command.TypeAppSave, defaultScript(command.TypeAppSave))
+		var retried htpl.InstanceResult
+		owner.post(t, "/api/v1/instance/create-instance", ie.create("tenant-3", "charlie", "9003")).expect(t, http.StatusOK).data(t, &retried)
+		if retried.Instance.State != "created" || retried.Instance.LastError != "" {
+			t.Fatalf("retried = %+v", retried.Instance)
+		}
+	})
+	t.Run("list by template and by server", func(t *testing.T) {
+		var list tuc.InstanceList
+		owner.get(t, "/api/v1/instance/get-instances", url.Values{"template_id": {ie.tplID}}).expect(t, http.StatusOK).data(t, &list)
+		if len(list.Instances) != 3 || list.Instances[0].Key != "tenant-1" {
+			t.Fatalf("by template = %+v", list)
+		}
+		owner.get(t, "/api/v1/instance/get-instances", url.Values{"server_id": {sid}}).expect(t, http.StatusOK).data(t, &list)
+		if len(list.Instances) != 3 {
+			t.Fatalf("by server = %+v", list)
+		}
+		var tpls tuc.TemplateList
+		owner.get(t, "/api/v1/template/get-templates", nil).expect(t, http.StatusOK).data(t, &tpls)
+		if tpls.Templates[0].Instances != 3 {
+			t.Fatalf("templates = %+v", tpls)
+		}
+	})
+	t.Run("parameters are checked", func(t *testing.T) {
+		bad := ie.create("tenant-4", "UPPER", "9004")
+		r := owner.post(t, "/api/v1/instance/create-instance", bad).expect(t, http.StatusBadRequest)
+		if !strings.Contains(string(r.Body), "parameters.NAME") {
+			t.Fatalf("body = %s", r.Body)
+		}
+		bad = ie.create("tenant-4", "delta", "9004")
+		bad.Secrets = nil
+		owner.post(t, "/api/v1/instance/create-instance", bad).expect(t, http.StatusBadRequest)
+	})
+}
+
+// Another org's template and keys read as unknown.
+func TestInstancesOfAnotherOrgAreNotFound(t *testing.T) {
+	t.Parallel()
+	ie := newInstanceEnv(t)
+	ie.created(t, "tenant-1", "acme", "9001")
+	mallory, foreign := ie.e.foreignClient(t)
+	in := ie.create("k", "acme", "9001")
+	in.ServerID = foreign
+	mallory.post(t, "/api/v1/instance/create-instance", in).expect(t, http.StatusNotFound)
+	mallory.get(t, "/api/v1/instance/get-instances", url.Values{"template_id": {ie.tplID}}).expect(t, http.StatusNotFound)
+	mallory.get(t, "/api/v1/instance/get-instance", url.Values{"server_id": {foreign}, "key": {"tenant-1"}}).expect(t, http.StatusNotFound)
+	var list tuc.InstanceList
+	mallory.get(t, "/api/v1/instance/get-instances", nil).expect(t, http.StatusOK).data(t, &list)
+	if len(list.Instances) != 0 {
+		t.Fatalf("mallory sees %+v", list)
+	}
+	ie.owner.get(t, "/api/v1/instance/get-instance", url.Values{"server_id": {ie.sid}, "key": {"nope"}}).expect(t, http.StatusNotFound)
+}

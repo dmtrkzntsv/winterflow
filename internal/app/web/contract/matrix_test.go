@@ -177,6 +177,17 @@ var probes = map[string]probe{
 	"GET /api/v1/template/get-template":     {malformed: bad("GET", "/api/v1/template/get-template")},
 	"POST /api/v1/template/save-template":   {malformed: bad("POST", "/api/v1/template/save-template")},
 	"POST /api/v1/template/delete-template": {malformed: bad("POST", "/api/v1/template/delete-template")},
+
+	// The template and key do not exist, so the own-server control answers
+	// 404, not 403.
+	"POST /api/v1/instance/create-instance": {valid: func(s string) call {
+		return post("/api/v1/instance/create-instance", map[string]any{"server_id": s, "key": "k", "template_id": anApp})
+	}, malformed: bad("POST", "/api/v1/instance/create-instance")},
+	"GET /api/v1/instance/get-instance": {valid: func(s string) call {
+		return get("/api/v1/instance/get-instance", url.Values{"server_id": {s}, "key": {"k"}})
+	}, malformed: bad("GET", "/api/v1/instance/get-instance")},
+	"GET /api/v1/instance/get-instances": {valid: func(s string) call { return get("/api/v1/instance/get-instances", sq(s)) },
+		malformed: call{Method: http.MethodGet, Path: "/api/v1/instance/get-instances", Query: url.Values{"template_id": {"not-an-id"}}}},
 }
 
 // carriesServerID reports whether t, or a struct nested in it by embedding,

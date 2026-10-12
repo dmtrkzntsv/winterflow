@@ -9,7 +9,7 @@ import (
 
 // Routes is the templates and instances slice of the route table.
 func (h *Handler) Routes(api.Guards) []api.Route {
-	return h.templateRoutes()
+	return append(h.templateRoutes(), h.instanceRoutes()...)
 }
 
 // templateRoutes are the org-scoped template routes.

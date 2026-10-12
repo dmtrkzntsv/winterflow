@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/port"
@@ -118,6 +119,7 @@ func (uc *UseCase) ControlAppObserved(ctx context.Context, userID, serverID, app
 	}
 	if observe != nil {
 		in.OnResult = func(res port.CommandResult) { observe(res) }
+		in.Wait = ObservedResultTTL
 	}
 	return uc.dispatcher.Dispatch(ctx, in)
 }
@@ -132,7 +134,7 @@ func (uc *UseCase) DeleteApp(ctx context.Context, userID, serverID, appID string
 // DeleteAppObserved is DeleteApp with an observer on the result (it runs
 // after the app's rows are removed).
 func (uc *UseCase) DeleteAppObserved(ctx context.Context, userID, serverID, appID string, deleteVolumes, deleteBackups bool, observe Observer) (string, error) {
-	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
+	in := port.DispatchInput{
 		AgentID: serverID,
 		UserID:  userID,
 		Type:    command.TypeAppDelete,
@@ -151,7 +153,11 @@ func (uc *UseCase) DeleteAppObserved(ctx context.Context, userID, serverID, appI
 				}
 			}
 		},
-	})
+	}
+	if observe != nil {
+		in.Wait = ObservedResultTTL
+	}
+	return uc.dispatcher.Dispatch(ctx, in)
 }
 
 // RenameApp dispatches an app.rename to the agent and, on success, updates the
@@ -363,6 +369,13 @@ func (uc *UseCase) heldHostnames(ctx context.Context, serverID, appID string) (m
 // then). It must not block.
 type Observer func(port.CommandResult)
 
+// ObservedResultTTL is how long the dispatcher keeps the result of a command
+// that has an observer: its caller may hold the request for the handler's
+// wait bound (10 minutes) and the observer must still run after it, while the
+// dispatcher's default (10 minutes) would drop a late result unseen. It is
+// the wait bound plus 5 minutes of slack.
+const ObservedResultTTL = 15 * time.Minute
+
 // CheckedSave is an app.save that passed every save-app check, ready to
 // dispatch.
 type CheckedSave struct {
@@ -459,7 +472,7 @@ func (uc *UseCase) CheckSave(ctx context.Context, serverID string, app model.App
 // runs.
 func (uc *UseCase) DispatchSave(ctx context.Context, userID string, s CheckedSave, observe Observer) (string, error) {
 	serverID, app, ing := s.serverID, s.app, s.ing
-	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
+	in := port.DispatchInput{
 		AgentID: serverID,
 		UserID:  userID,
 		Type:    command.TypeAppSave,
@@ -491,7 +504,11 @@ func (uc *UseCase) DispatchSave(ctx context.Context, userID string, s CheckedSav
 				}
 			}
 		},
-	})
+	}
+	if observe != nil {
+		in.Wait = ObservedResultTTL
+	}
+	return uc.dispatcher.Dispatch(ctx, in)
 }
 
 // notify runs observe, when set, with res.

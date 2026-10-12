@@ -448,3 +448,24 @@ func TestResponseTypes(t *testing.T) {
 		t.Error("saveThing is request-only (and json:\"-\" in cyclic) but was collected")
 	}
 }
+
+// An Accepted route with a Response documents both answers: 202 with the
+// request id, and 200 with the Response when the call waited.
+func TestAcceptedRouteThatCanWait(t *testing.T) {
+	const path = "/api/v1/thing/make-thing"
+	route := api.Route{Method: http.MethodPost, Path: path, Handler: noop, Auth: api.User,
+		Summary: "make", Tag: "things", Request: saveThing{}, Accepted: true, Result: thingResult{}, Response: thing{}}
+	doc := load(t, []api.Route{route})
+	if err := visit(schemaFor(t, doc, http.MethodPost, path, http.StatusAccepted, "application/json"),
+		`{"success":true,"data":{"request_id":"r"}}`); err != nil {
+		t.Fatalf("202: %v", err)
+	}
+	if err := visit(schemaFor(t, doc, http.MethodPost, path, http.StatusOK, "application/json"),
+		`{"success":true,"data":{"name":"x"}}`); err != nil {
+		t.Fatalf("200: %v", err)
+	}
+	route.Response = nil
+	if load(t, []api.Route{route}).Paths.Find(path).Post.Responses.Status(http.StatusOK) != nil {
+		t.Fatal("an Accepted route without a Response documents a 200")
+	}
+}

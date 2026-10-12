@@ -327,6 +327,9 @@ func TestOpenAPIMatchesWire(t *testing.T) {
 		{"conflict", http.MethodPost, "/api/v1/template/delete-template", 409, "application/json", func(w http.ResponseWriter) {
 			util.ErrorStatus(w, http.StatusConflict, "the template has live instances")
 		}},
+		{"agent failed", http.MethodPost, "/api/v1/instance/create-instance", 502, "application/json", func(w http.ResponseWriter) {
+			util.ErrorStatus(w, http.StatusBadGateway, "pull access denied")
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

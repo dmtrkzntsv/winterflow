@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"winterflow/internal/domain/backup/recipe"
 	"winterflow/internal/domain/command"
@@ -108,4 +109,39 @@ func mustJSON(t *testing.T, v any) string {
 		t.Fatal(err)
 	}
 	return string(raw)
+}
+
+// A command with an observer keeps its result past the dispatcher's default
+// (an instance call may be waited on for the handler's bound); one without
+// (the web UI's) is left at the dispatcher's default.
+func TestObservedDispatchesKeepTheirResult(t *testing.T) {
+	disp := &recordingDispatcher{}
+	uc := newTestUseCase(disp)
+	ctx := context.Background()
+	observe := func(port.CommandResult) {}
+	checked, err := uc.CheckSave(ctx, "srv", model.App{ID: "a1", Name: "x"}, command.AppPayload{Config: []byte(`{}`)}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, dispatch := range map[string]func(Observer) error{
+		"save": func(o Observer) error { _, err := uc.DispatchSave(ctx, "u", checked, o); return err },
+		"control": func(o Observer) error {
+			_, err := uc.ControlAppObserved(ctx, "u", "srv", "a1", command.ControlStop, o)
+			return err
+		},
+		"delete": func(o Observer) error {
+			_, err := uc.DeleteAppObserved(ctx, "u", "srv", "a1", false, false, o)
+			return err
+		},
+	} {
+		if err := dispatch(observe); err != nil || disp.last().Wait != ObservedResultTTL {
+			t.Errorf("%s with an observer: wait %v, %v", name, disp.last().Wait, err)
+		}
+		if err := dispatch(nil); err != nil || disp.last().Wait != 0 {
+			t.Errorf("%s without one: wait %v, %v", name, disp.last().Wait, err)
+		}
+	}
+	if ObservedResultTTL != 15*time.Minute {
+		t.Errorf("ObservedResultTTL = %v", ObservedResultTTL)
+	}
 }

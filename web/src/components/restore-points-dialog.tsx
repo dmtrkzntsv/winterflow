@@ -35,16 +35,13 @@ type Confirm = { action: "restore" | "delete"; point: RestorePoint };
 
 const when = (p: RestorePoint) => new Date(p.time * 1000).toLocaleString();
 
-// RestorePointsDialog lists a backup's copies (time, kind, size; "expires
-// in N days" near the server's ceiling), each restorable — after a
-// confirmation saying the app stops and its current data is first saved as
-// a pre-restore copy — and deletable. The confirmation is a dialog of its
-// own (always on screen, Cancel focused, Escape closes only it). A backup that is off can't be
-// restored (its storage and mounts are only resolved while it is on).
-// A restore can run for a long while (its result arrives over SSE): the
-// dialog may be closed meanwhile, the page shows the restore under way
-// (backup-activity), and the toast reports the end. onRestored runs after a
-// restore (the app's status changed). The parent remounts it per opening.
+// RestorePointsDialog lists a backup's copies, each restorable (after a
+// confirmation: the app stops and its current data is first saved as a
+// pre-restore copy) and deletable. A backup that is off can't be restored
+// (its storage and mounts are only resolved while it is on). A restore can
+// run for a long while: the dialog may be closed meanwhile, the page shows
+// it under way (backup-activity) and a toast reports the end. The parent
+// remounts it per opening.
 export function RestorePointsDialog({
   appId,
   backup,

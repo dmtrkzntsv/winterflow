@@ -14,6 +14,7 @@ import (
 	"winterflow/internal/app/web/handler/notification"
 	horg "winterflow/internal/app/web/handler/org"
 	"winterflow/internal/app/web/handler/server"
+	hsharedvars "winterflow/internal/app/web/handler/sharedvars"
 	huser "winterflow/internal/app/web/handler/user"
 	"winterflow/internal/app/web/middleware/patauth"
 	"winterflow/internal/app/web/middleware/ratelimit"
@@ -99,6 +100,15 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 	})
 	usersAPI := huser.NewHandler(&huser.Deps{Logger: d.Log, Tokens: d.UserService, Users: d.UserService})
 	orgAPI := horg.NewHandler(&horg.Deps{Logger: d.Log, Users: d.UserService})
+	sharedVarsAPI := hsharedvars.NewHandler(&hsharedvars.Deps{
+		Logger:              d.Log,
+		Repo:                d.SharedVariableRepository,
+		Servers:             d.ServerRepository,
+		Users:               d.UserService,
+		CommandDispatcher:   d.CommandDispatcher,
+		NotificationManager: d.NotificationManager,
+		StatusCache:         d.StatusCache,
+	})
 
 	routes := []api.Route{{
 		Method: http.MethodGet, Path: "/_/health", Handler: health, Auth: api.Public,
@@ -113,6 +123,7 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 		monitoringAPI.Routes(g),
 		usersAPI.Routes(g),
 		orgAPI.Routes(g),
+		sharedVarsAPI.Routes(g),
 		authprvd.Routes(),
 	} {
 		routes = append(routes, table...)

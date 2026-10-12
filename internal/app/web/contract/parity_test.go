@@ -15,9 +15,11 @@ import (
 
 	happ "winterflow/internal/app/web/handler/app"
 	"winterflow/internal/app/web/handler/server"
+	hsv "winterflow/internal/app/web/handler/sharedvars"
 	"winterflow/internal/app/web/handler/user"
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
+	"winterflow/internal/domain/usecase/sharedvars"
 )
 
 var (
@@ -121,6 +123,10 @@ func TestParity(t *testing.T) {
 		Body: happ.DeleteAppRequest{ServerID: sid, AppID: ids[1]}})
 	rec("list apps again", p.get(t, "/api/v1/app/get-apps", q)).expect(t, http.StatusOK)
 	rec("list members", p.get(t, "/api/v1/org/get-members", nil)).expect(t, http.StatusOK)
+	var saved sharedvars.VariableView
+	rec("save org variable", p.post(t, "/api/v1/org/save-shared-variable",
+		hsv.SaveVariableRequest{Name: "PARITY", Value: strp("1"), Description: "parity"})).
+		expect(t, http.StatusOK).data(t, &saved)
 
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)

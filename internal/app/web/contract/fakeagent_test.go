@@ -258,6 +258,13 @@ func defaultScript(typ command.Type) script {
 		return func(raw json.RawMessage) reply {
 			return reply{Payload: command.UpdateAgentResponse{FromVersion: "v1", ToVersion: decode[command.UpdateAgentRequest](raw).Version, Scheduled: true}}
 		}
+	case command.TypeVarsSync:
+		return func(raw json.RawMessage) reply {
+			in := decode[command.SyncVarsRequest](raw)
+			return reply{Payload: command.SyncVarsResponse{Revision: in.Revision, Undecryptable: []command.VarRef{}}}
+		}
+	case command.TypeVarsReload:
+		return func(json.RawMessage) reply { return reply{Payload: command.ReloadVarsResponse{Queued: true}} }
 	}
 	return func(json.RawMessage) reply { return reply{Err: "fake agent: unsupported command type " + string(typ)} }
 }
@@ -275,6 +282,7 @@ func TestFakeAgentAnswersEveryCommandType(t *testing.T) {
 		command.TypeNetworkCreate, command.TypeNetworkDelete, command.TypeVolumeList,
 		command.TypeVolumeCreate, command.TypeVolumeDelete, command.TypeImageTags, command.TypeAgentUpdate,
 		command.TypeDomainList, command.TypeDomainCreate, command.TypeDomainDelete,
+		command.TypeVarsSync, command.TypeVarsReload,
 	} {
 		resp := a.Dispatch(context.Background(), &proto.RequestEnvelope{Type: string(typ), RequestId: "r", Payload: []byte(`{}`)})
 		if resp.Base.ResponseCode != proto.ResponseCode_RESPONSE_CODE_SUCCESS {

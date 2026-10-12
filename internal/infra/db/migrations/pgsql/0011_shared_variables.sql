@@ -2,7 +2,6 @@
 -- keeps one ECIES ciphertext per server it was encrypted for (browser
 -- fan-out; the API never sees plaintext). servers.vars_revision counts the
 -- changes that affect a server, so a behind agent is pushed again.
--- Renumber this file at merge time if another branch took 0010.
 
 ALTER TABLE servers ADD COLUMN vars_revision INTEGER NOT NULL DEFAULT 0;
 

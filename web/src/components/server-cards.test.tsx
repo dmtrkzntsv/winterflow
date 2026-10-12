@@ -90,6 +90,13 @@ describe("ServerCards", () => {
     expect(within(card).getByTestId("app-counts")).toHaveTextContent("3 running · 1 problematic");
   });
 
+  it("badges a server with firing alerts", () => {
+    overview[0].alerts_firing = 2;
+    renderCards();
+    expect(within(screen.getByTitle("prod-1: online")).getByTestId("firing-badge")).toHaveTextContent("2");
+    expect(within(screen.getByTitle("backup: offline")).queryByTestId("firing-badge")).not.toBeInTheDocument();
+  });
+
   it("says when a server is offline and has no data", () => {
     renderCards();
     const card = screen.getByTitle("backup: offline");

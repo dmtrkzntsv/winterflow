@@ -156,7 +156,7 @@ note: "bump image to v0.15"   # optional, per revision
 
 ## Data model
 
-One migration, `0013_templates.sql`, identical in `migrations/sqlite` and
+One migration, `0014_templates.sql`, identical in `migrations/sqlite` and
 `migrations/pgsql` (renumbered at merge if something lands first).
 
 ```

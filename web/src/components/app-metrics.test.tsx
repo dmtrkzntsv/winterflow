@@ -10,6 +10,12 @@ const refresh = vi.fn(async () => {});
 let data: Series | null = null;
 let loading = false;
 
+// The Alerts card has its own tests; here it only has to be placed.
+vi.mock("@/components/alerts/target-alerts-card", () => ({
+  TargetAlertsCard: (p: { serverId: string; appId?: string }) => (
+    <div data-testid="alerts-card">{`${p.serverId}/${p.appId ?? ""}`}</div>
+  ),
+}));
 vi.mock("@/hooks/use-metrics", () => ({
   useAppMetrics: (...args: unknown[]) => {
     calls.push(args);
@@ -96,6 +102,7 @@ describe("AppMetricsTab", () => {
   it("charts the app over the chosen range", async () => {
     render(<AppMetricsTab serverId="s1" appId="a1" />);
     expect(calls.at(-1)).toEqual(["s1", "a1", "1h"]);
+    expect(screen.getByTestId("alerts-card")).toHaveTextContent("s1/a1");
     for (const title of ["CPU", "Memory", "Network", "Disk"]) {
       expect(screen.getByTestId(`chart-${title}`)).toBeInTheDocument();
     }

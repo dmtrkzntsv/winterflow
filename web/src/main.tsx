@@ -25,6 +25,7 @@ import SettingsPage from "@/pages/settings"
 import UserTokensPage from "@/pages/user-tokens"
 import UserPasswordPage from "@/pages/user-password"
 import OrgMembersPage from "@/pages/org-members"
+import OrgAlertsPage from "@/pages/org-alerts"
 import OrgVariablesPage from "@/pages/org-variables";
 import LoginPage from "@/pages/login"
 import RegisterPage from "@/pages/register"
@@ -79,6 +80,10 @@ const router = createBrowserRouter([
           {
             path: "/org/members",
             element: <OrgMembersPage />,
+          },
+          {
+            path: "/org/alerts",
+            element: <OrgAlertsPage />,
           },
           {
             path: "/org/variables",

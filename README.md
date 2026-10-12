@@ -84,7 +84,7 @@ curl -fsSL https://raw.githubusercontent.com/dmtrkzntsv/winterflow/main/scripts/
 
 ## Build from source
 
-Requires Go 1.25+ and (for the web UI) node + pnpm:
+Requires Go 1.27+ and (for the web UI) node + pnpm:
 
 ```sh
 git clone https://github.com/dmtrkzntsv/winterflow.git

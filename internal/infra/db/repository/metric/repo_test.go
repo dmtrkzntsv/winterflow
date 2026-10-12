@@ -186,3 +186,27 @@ func TestInsertSampleSkipsEmptyServerRow(t *testing.T) {
 		t.Fatalf("rows = %s, want only appA", got)
 	}
 }
+
+func TestTier1RangeReturnsAllTargets(t *testing.T) {
+	repo, _ := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	mustInsert(t, ctx, repo, srv1, t0.Add(time.Minute), metrics.Values{"cpu": 1}, map[string]metrics.Values{appA: {"cpu": 2}})
+	mustInsert(t, ctx, repo, srv2, t0, metrics.Values{"cpu": 3}, nil)
+	mustInsert(t, ctx, repo, srv1, t0.Add(-2*time.Hour), metrics.Values{"cpu": 9}, nil) // before the range
+	got, err := repo.Tier1Range(ctx, t0.Add(-time.Hour), t0.Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []struct {
+		server, app string
+		cpu         float64
+	}{{srv1, "", 1}, {srv1, appA, 2}, {srv2, "", 3}}
+	if len(got) != len(want) {
+		t.Fatalf("rows = %+v", got)
+	}
+	for i, w := range want {
+		if got[i].ServerID != w.server || got[i].AppID != w.app || got[i].Data["cpu"] != w.cpu {
+			t.Errorf("row %d = %+v, want %+v", i, got[i], w)
+		}
+	}
+}

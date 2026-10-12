@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-Backend (Go 1.25):
+Backend (Go 1.27):
 - `make build` — bundles the SPA (`make web-build` → `web/dist`, embedded via `go:embed`) then compiles `standalone` + `api` into `bin/`. Note: `hub` and `agent` are NOT in this target; build them with `go build ./cmd/hub ./cmd/agent`. A bare `go build` embeds whatever is in `web/dist` — the committed placeholder on a fresh checkout, i.e. an API-only binary.
 - `make standalone | api | hub | agent` — `go run` the chosen binary.
 - `make lint` — `go vet ./...` plus the web ESLint suite.

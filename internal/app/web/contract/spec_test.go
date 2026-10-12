@@ -25,10 +25,13 @@ import (
 // package.
 var specPath = filepath.Join("..", "..", "..", "..", "api", "openapi.yaml")
 
-// The avatar route answers image/* (go-pkgz's type for unsniffable bytes);
-// kin-openapi has no decoder for it, so its body is validated as a file.
+// The avatar route answers the stored image's sniffed type (documented as
+// image/*); kin-openapi has no decoder for image types, so those bodies are
+// validated as files.
 func init() {
-	openapi3filter.RegisterBodyDecoder("image/*", openapi3filter.FileBodyDecoder)
+	for _, ct := range []string{"image/*", "image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp", "image/x-icon", "image/vnd.microsoft.icon"} {
+		openapi3filter.RegisterBodyDecoder(ct, openapi3filter.FileBodyDecoder)
+	}
 }
 
 var (

@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { Card } from "@/components/ui/card";
 import { useServers } from "@/context/use-servers";
 import type { Server } from "@/context/servers-context-base";
+import { FiringBadge } from "@/components/alerts/active-alerts";
 import { useMetricsOverview } from "@/hooks/use-metrics";
 import { useNow } from "@/hooks/use-now";
 import { TILE_GRID } from "@/lib/grid";
@@ -131,7 +132,10 @@ function HealthCard({
       className="flex min-w-0 cursor-pointer flex-col gap-2 p-3.5 transition-colors outline-none hover:border-primary/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
     >
       <div className="flex items-center justify-between gap-3">
-        <div className="truncate text-base font-semibold tracking-tight">{server.name}</div>
+        <div className="flex min-w-0 items-center gap-2">
+          <div className="truncate text-base font-semibold tracking-tight">{server.name}</div>
+          <FiringBadge count={overview?.alerts_firing ?? 0} />
+        </div>
         <span
           className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground"
           title={presence.title}

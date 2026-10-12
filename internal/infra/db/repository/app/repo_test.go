@@ -258,7 +258,7 @@ func TestDeleteAppRemovesItsMetricSamples(t *testing.T) {
 }
 
 // An empty app id addresses no app: it must not reach the samples delete,
-// where app_id = ” matches every server's own rows.
+// where app_id = "" matches every server's own rows.
 func TestDeleteAppWithEmptyIDKeepsServerSamples(t *testing.T) {
 	repo, d := newRepo(t)
 	ctx := dbtest.Ctx(t)
@@ -268,5 +268,52 @@ func TestDeleteAppWithEmptyIDKeepsServerSamples(t *testing.T) {
 	}
 	if got := samples(t, d, ""); got != "1" {
 		t.Fatalf("server samples after DeleteApp(\"\") = %s, want 1", got)
+	}
+}
+
+// seedAlertData writes a rule plus an override, a state and an event for
+// target (server, app) with raw SQL (the alert repository is another
+// package).
+func seedAlertData(t *testing.T, d *db.DB, orgID, ruleID, serverID, appID string) {
+	t.Helper()
+	dbtest.Exec(t, d, `INSERT INTO alert_rules (rule_id, organization_id, target_kind, metric, threshold, duration_minutes, enabled, created_at)
+		VALUES (?, ?, 'app', 'cpu', 90, 10, TRUE, '2026-10-11 12:00:00') ON CONFLICT DO NOTHING`, ruleID, orgID)
+	dbtest.Exec(t, d, `INSERT INTO alert_overrides (rule_id, server_id, app_id, disabled) VALUES (?, ?, ?, TRUE)`, ruleID, serverID, appID)
+	dbtest.Exec(t, d, `INSERT INTO alert_states (rule_id, server_id, app_id, state, since) VALUES (?, ?, ?, 'firing', '2026-10-11 12:00:00')`,
+		ruleID, serverID, appID)
+	dbtest.Exec(t, d, `INSERT INTO alert_events (event_id, organization_id, rule_id, server_id, app_id, target_kind, metric, kind, title, message, created_at)
+		VALUES (?, ?, ?, ?, ?, 'app', 'cpu', 'fired', 't', 'm', '2026-10-11 12:00:00')`, appID, orgID, ruleID, serverID, appID)
+}
+
+func TestDeleteAppRemovesItsAlertData(t *testing.T) {
+	repo, d := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	rule := dbtest.ID(40)
+	for _, id := range []string{appA, appB} {
+		if err := repo.SaveApp(ctx, model.App{ID: id, ServerID: srv1, Name: id}); err != nil {
+			t.Fatal(err)
+		}
+		seedAlertData(t, d, org1, rule, srv1, id)
+	}
+	alertRows := func(appID string) string {
+		return dbtest.QueryString(t, d, `SELECT CAST(
+			(SELECT COUNT(*) FROM alert_overrides WHERE app_id = ?) +
+			(SELECT COUNT(*) FROM alert_states WHERE app_id = ?) +
+			(SELECT COUNT(*) FROM alert_events WHERE app_id = ?) AS TEXT)`, appID, appID, appID)
+	}
+	if err := repo.DeleteApp(ctx, appA); err != nil {
+		t.Fatal(err)
+	}
+	if got := alertRows(appA); got != "0" {
+		t.Fatalf("deleted app keeps %s alert rows", got)
+	}
+	if got := alertRows(appB); got != "3" {
+		t.Fatalf("other app's alert rows = %s, want 3", got)
+	}
+	if err := repo.SyncApps(ctx, srv1, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := alertRows(appB); got != "0" {
+		t.Fatalf("reconciled-away app keeps %s alert rows", got)
 	}
 }

@@ -8,6 +8,7 @@ import { DataFreshness } from "@/components/data-freshness";
 import { KpiTile, KpiTileSkeleton } from "@/components/kpi-tile";
 import { ChartCardSkeleton, MetricChartCard, type ChartSeries } from "@/components/metric-chart";
 import { RangeMenu } from "@/components/range-menu";
+import { TargetAlertsCard } from "@/components/alerts/target-alerts-card";
 import { useApps } from "@/context/use-apps";
 import { useServers } from "@/context/use-servers";
 import { useServerPath } from "@/context/use-server-path";
@@ -354,6 +355,7 @@ export default function MonitoringPage() {
       )}
 
       <DockerDisk df={df} />
+      <TargetAlertsCard serverId={activeServerId} targetLabel={activeServer?.name ?? "this server"} />
     </div>
   );
 }

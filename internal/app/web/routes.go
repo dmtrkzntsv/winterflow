@@ -7,6 +7,7 @@ import (
 
 	"winterflow/internal/app/web/api"
 	authprvd "winterflow/internal/app/web/auth"
+	halerts "winterflow/internal/app/web/handler/alerts"
 	happ "winterflow/internal/app/web/handler/app"
 	hauth "winterflow/internal/app/web/handler/auth"
 	hdocker "winterflow/internal/app/web/handler/docker"
@@ -100,6 +101,26 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 		Latest:      d.LatestMetrics,
 		StatusCache: d.StatusCache,
 		Disabled:    !d.Cfg.IsMetricsEnabled(),
+		Alerts:      d.AlertRepository,
+	})
+	// Typed nils must not become non-nil interfaces: without JWT_SECRET
+	// there is no box, and the spec-only route table has no notifier.
+	var box halerts.Sealer
+	if d.ChannelBox != nil {
+		box = d.ChannelBox
+	}
+	var tester halerts.Tester
+	if d.AlertNotifier != nil {
+		tester = d.AlertNotifier
+	}
+	alertsAPI := halerts.NewHandler(&halerts.Deps{
+		Logger:  d.Log,
+		Users:   d.UserService,
+		Servers: d.ServerRepository,
+		Apps:    d.AppRepository,
+		Alerts:  d.AlertRepository,
+		Box:     box,
+		Tester:  tester,
 	})
 	usersAPI := huser.NewHandler(&huser.Deps{Logger: d.Log, Tokens: d.UserService, Users: d.UserService})
 	orgAPI := horg.NewHandler(&horg.Deps{Logger: d.Log, Users: d.UserService})
@@ -138,6 +159,7 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 		dockerAPI.Routes(g),
 		serversAPI.Routes(g),
 		monitoringAPI.Routes(g),
+		alertsAPI.Routes(g),
 		usersAPI.Routes(g),
 		orgAPI.Routes(g),
 		sharedVarsAPI.Routes(g),

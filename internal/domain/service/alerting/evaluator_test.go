@@ -1,0 +1,421 @@
+package alerting
+
+import (
+	"context"
+	"errors"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	"winterflow/internal/domain/alert"
+	"winterflow/internal/domain/metrics"
+)
+
+func cpuRule(s *fakeStore, threshold float64, minutes int) alert.Rule {
+	return s.addRule(alert.Rule{TargetKind: alert.TargetServer, Metric: alert.MetricCPU, Threshold: threshold, DurationMinutes: minutes})
+}
+
+func TestThresholdFiresAndResolves(t *testing.T) {
+	store := newStore()
+	rule := cpuRule(store, 90, 10)
+	h := newHarness(store)
+	for i := 0; i < 7; i++ {
+		h.sample(95, nil)
+	}
+	if len(store.events) != 0 {
+		t.Fatalf("fired on 7 of 10 samples: %v", store.eventKinds())
+	}
+	h.sample(95, nil) // 8 of 10: enough coverage
+	if got := store.eventKinds(); !reflect.DeepEqual(got, []string{"fired:cpu:"}) {
+		t.Fatalf("events = %v", got)
+	}
+	ev := store.events[0]
+	if ev.Title != "🔥 prod-1 · CPU 95% > 90% for 10m" || ev.ServerName != "prod-1" || ev.Threshold != 90 ||
+		!strings.Contains(ev.Message, "https://wf.example/server/srv-1/monitoring") {
+		t.Fatalf("event = %+v", ev)
+	}
+	for i := 0; i < 3; i++ { // keeps firing, no repeats
+		h.sample(95, nil)
+	}
+	h.sample(50, nil) // last 10: 9×95 + 50 → 90.5, still above
+	if len(store.events) != 1 {
+		t.Fatalf("events = %v", store.eventKinds())
+	}
+	h.sample(50, nil) // 8×95 + 2×50 → 86
+	if got := store.eventKinds(); !reflect.DeepEqual(got, []string{"fired:cpu:", "resolved:cpu:"}) {
+		t.Fatalf("events = %v", got)
+	}
+	if h.queue.len() != 2 || len(h.notices) != 2 || h.notices[1].Kind != alert.EventResolved || h.notices[1].RuleID != rule.ID {
+		t.Fatalf("jobs=%d notices=%+v", h.queue.len(), h.notices)
+	}
+	if h.queue.jobs[0].ChannelIDs != nil || h.queue.jobs[0].OrgID != org {
+		t.Fatalf("job = %+v", h.queue.jobs[0])
+	}
+}
+
+func TestThresholdKeepsStateWithoutCoverage(t *testing.T) {
+	store := newStore()
+	cpuRule(store, 90, 5)
+	h := newHarness(store)
+	for i := 0; i < 5; i++ {
+		h.sample(99, nil)
+	}
+	if len(store.events) != 1 {
+		t.Fatalf("events = %v", store.eventKinds())
+	}
+	// The server goes quiet for 20 minutes, then one low sample: one point
+	// in a 5-minute window is not a decision either way.
+	h.clock.t = h.clock.t.Add(20 * time.Minute)
+	h.sample(10, nil)
+	if len(store.events) != 1 {
+		t.Fatalf("decided on a sparse window: %v", store.eventKinds())
+	}
+	// A sample without the metric (first one after a restart has no CPU)
+	// does not count either.
+	h.ev.ObserveMetrics(context.Background(), srv, h.clock.t, metrics.Values{"mem_used": 1}, nil)
+	if len(store.events) != 1 {
+		t.Fatalf("events = %v", store.eventKinds())
+	}
+}
+
+func TestOverrideChangesThresholdAndDisables(t *testing.T) {
+	store := newStore()
+	rule := cpuRule(store, 90, 2)
+	high := 99.0
+	store.overrides = []alert.Override{{RuleID: rule.ID, ServerID: srv, Threshold: &high, ChannelIDs: []string{"ch-9"}}}
+	h := newHarness(store)
+	h.sample(95, nil)
+	h.sample(95, nil)
+	if len(store.events) != 0 {
+		t.Fatalf("override threshold ignored: %v", store.eventKinds())
+	}
+	h.sample(100, nil)
+	h.sample(100, nil)
+	if len(store.events) != 1 || store.events[0].Threshold != 99 || h.queue.jobs[0].ChannelIDs[0] != "ch-9" {
+		t.Fatalf("events=%v jobs=%+v", store.eventKinds(), h.queue.jobs)
+	}
+	// Disabling while firing clears the state silently.
+	store.overrides[0].Disabled = true
+	h.sample(100, nil)
+	if len(store.events) != 1 || len(store.cleared) != 1 || h.queue.len() != 1 {
+		t.Fatalf("events=%v cleared=%v jobs=%d", store.eventKinds(), store.cleared, h.queue.len())
+	}
+}
+
+func TestAppMetricsUseHostMemoryAndNames(t *testing.T) {
+	store := newStore()
+	store.addRule(alert.Rule{TargetKind: alert.TargetApp, Metric: alert.MetricMemory, Threshold: 50, DurationMinutes: 1})
+	h := newHarness(store)
+	// No limit: 6 GB of the host's 8 GB = 75 %. The unknown app is ignored.
+	h.sample(10, map[string]metrics.Values{app: {"mem_used": 6e9}, "ghost": {"mem_used": 8e9}})
+	if got := store.eventKinds(); !reflect.DeepEqual(got, []string{"fired:memory:app-1"}) {
+		t.Fatalf("events = %v", got)
+	}
+	if ev := store.events[0]; ev.AppName != "nextcloud" || !strings.HasPrefix(ev.Title, "🔥 prod-1 / nextcloud · Memory 75%") ||
+		!strings.Contains(ev.Message, "/server/srv-1/app/app-1?tab=metrics") {
+		t.Fatalf("event = %+v", ev)
+	}
+}
+
+func TestDownFiresAfterGraceAndResolvesOnEvent(t *testing.T) {
+	store := newStore()
+	store.addRule(alert.Rule{TargetKind: alert.TargetServer, Metric: alert.MetricDown, DurationMinutes: 5})
+	h := newHarness(store)
+	ctx := context.Background()
+	h.ev.ObserveHeartbeat(ctx, srv)
+	h.clock.t = t0.Add(4*time.Minute + 59*time.Second)
+	h.ev.Sweep(ctx)
+	if len(store.events) != 0 {
+		t.Fatalf("fired early: %v", store.eventKinds())
+	}
+	h.clock.t = t0.Add(5 * time.Minute)
+	h.ev.Sweep(ctx)
+	h.ev.Sweep(ctx) // no repeat
+	if got := store.eventKinds(); !reflect.DeepEqual(got, []string{"fired:down:"}) || store.events[0].Title != "🔥 prod-1 is down for 5m" {
+		t.Fatalf("events = %v (%q)", got, store.events[0].Title)
+	}
+	h.ev.ObserveAppStatus(ctx, srv, map[string]bool{app: false})
+	if got := store.eventKinds(); !reflect.DeepEqual(got, []string{"fired:down:", "resolved:down:"}) {
+		t.Fatalf("events = %v", got)
+	}
+}
+
+func TestDownWaitsForGraceOnShortRules(t *testing.T) {
+	store := newStore()
+	store.addRule(alert.Rule{TargetKind: alert.TargetServer, Metric: alert.MetricDown, DurationMinutes: 1})
+	h := newHarness(store)
+	h.ev.ObserveHeartbeat(context.Background(), srv)
+	h.clock.t = t0.Add(80 * time.Second) // past 1 min, inside the 90 s grace
+	h.ev.Sweep(context.Background())
+	if len(store.events) != 0 {
+		t.Fatalf("fired inside the liveness grace: %v", store.eventKinds())
+	}
+	h.clock.t = t0.Add(90 * time.Second)
+	h.ev.Sweep(context.Background())
+	if len(store.events) != 1 {
+		t.Fatalf("events = %v", store.eventKinds())
+	}
+}
+
+func TestDownCountsFromStartWhenNeverHeard(t *testing.T) {
+	store := newStore()
+	store.addRule(alert.Rule{TargetKind: alert.TargetServer, Metric: alert.MetricDown, DurationMinutes: 5})
+	h := newHarness(store)
+	h.clock.t = t0.Add(10 * time.Minute)
+	if err := h.ev.Load(context.Background()); err != nil { // the API starts at t0+10m
+		t.Fatal(err)
+	}
+	h.clock.t = t0.Add(14 * time.Minute)
+	h.ev.Sweep(context.Background())
+	if len(store.events) != 0 {
+		t.Fatalf("fired from before the start: %v", store.eventKinds())
+	}
+	h.clock.t = t0.Add(15 * time.Minute)
+	h.ev.Sweep(context.Background())
+	if len(store.events) != 1 {
+		t.Fatalf("events = %v", store.eventKinds())
+	}
+}
+
+func TestAppDownFiresAfterDuration(t *testing.T) {
+	store := newStore()
+	store.addRule(alert.Rule{TargetKind: alert.TargetApp, Metric: alert.MetricDown, DurationMinutes: 5})
+	h := newHarness(store)
+	ctx := context.Background()
+	h.ev.ObserveAppStatus(ctx, srv, map[string]bool{app: true})
+	h.clock.t = t0.Add(3 * time.Minute)
+	h.ev.ObserveAppStatus(ctx, srv, map[string]bool{app: true})
+	if len(store.events) != 0 {
+		t.Fatalf("fired early: %v", store.eventKinds())
+	}
+	h.clock.t = t0.Add(5 * time.Minute)
+	h.ev.ObserveAppStatus(ctx, srv, map[string]bool{app: true})
+	if got := store.eventKinds(); !reflect.DeepEqual(got, []string{"fired:down:app-1"}) {
+		t.Fatalf("events = %v", got)
+	}
+	// Stopped (not problematic) resolves; a fresh problem restarts the clock.
+	h.clock.t = t0.Add(6 * time.Minute)
+	h.ev.ObserveAppStatus(ctx, srv, map[string]bool{app: false})
+	h.clock.t = t0.Add(7 * time.Minute)
+	h.ev.ObserveAppStatus(ctx, srv, map[string]bool{app: true})
+	h.clock.t = t0.Add(11 * time.Minute)
+	h.ev.ObserveAppStatus(ctx, srv, map[string]bool{app: true})
+	if got := store.eventKinds(); !reflect.DeepEqual(got, []string{"fired:down:app-1", "resolved:down:app-1"}) {
+		t.Fatalf("events = %v", got)
+	}
+}
+
+func TestTwoEvaluatorsOneEvent(t *testing.T) {
+	store := newStore()
+	cpuRule(store, 90, 1)
+	a, b := newHarness(store), newHarness(store)
+	a.sample(95, nil)
+	b.sample(95, nil)
+	if len(store.events) != 1 || a.queue.len()+b.queue.len() != 1 {
+		t.Fatalf("events=%d jobs=%d+%d", len(store.events), a.queue.len(), b.queue.len())
+	}
+	// Each replica tells its own browsers.
+	if len(a.notices) != 1 || len(b.notices) != 1 {
+		t.Fatalf("notices = %d, %d", len(a.notices), len(b.notices))
+	}
+}
+
+func TestLoadRestoresFiringAndBuffers(t *testing.T) {
+	store := newStore()
+	rule := cpuRule(store, 90, 10)
+	store.states[alert.Key{RuleID: rule.ID, Target: alert.Target{ServerID: srv}}] = alert.StateFiring
+	var hist fakeHistory
+	for i := 0; i < 9; i++ {
+		at := t0.Add(time.Duration(i-9) * time.Minute)
+		hist = append(hist,
+			metrics.TargetBucket{ServerID: srv, Bucket: metrics.Bucket{Start: at, Samples: 1, Data: metrics.Values{"cpu": 95, "mem_total": 8e9}}},
+			metrics.TargetBucket{ServerID: srv, AppID: app, Bucket: metrics.Bucket{Start: at, Samples: 1, Data: metrics.Values{"mem_used": 6e9}}},
+		)
+	}
+	h := newHarness(store)
+	h.ev.cfg.History = hist
+	if err := h.ev.Load(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	h.sample(95, nil) // already firing: no repeat
+	if len(store.events) != 0 {
+		t.Fatalf("re-fired after restart: %v", store.eventKinds())
+	}
+	if got := h.ev.buffers[alert.Target{ServerID: srv, AppID: app}]; got == nil || got.Len() != 9 {
+		t.Fatalf("app buffer not refilled: %+v", got)
+	}
+	avg, ok := h.ev.buffers[alert.Target{ServerID: srv, AppID: app}].Average(alert.MetricMemory, 5*time.Minute)
+	if !ok || avg != 75 {
+		t.Fatalf("app memory from host total = %v, %v", avg, ok)
+	}
+	for i := 0; i < 8; i++ {
+		h.sample(10, nil)
+	}
+	if got := store.eventKinds(); !reflect.DeepEqual(got, []string{"resolved:cpu:"}) {
+		t.Fatalf("events = %v", got)
+	}
+}
+
+func TestStoreErrorRetriesNextSample(t *testing.T) {
+	store := newStore()
+	cpuRule(store, 90, 1)
+	h := newHarness(store)
+	// Fire error: first sample fails, local state unchanged, next sample retries
+	store.failTransitions = errStore
+	h.sample(95, nil)
+	if len(store.events) != 0 || h.queue.len() != 0 || len(h.ev.firing) != 0 {
+		t.Fatalf("fire error should leave state unchanged: events=%d jobs=%d firing=%d", len(store.events), h.queue.len(), len(h.ev.firing))
+	}
+	store.failTransitions = nil
+	h.sample(95, nil)
+	if len(store.events) != 1 {
+		t.Fatalf("after retry: events = %v", store.eventKinds())
+	}
+}
+
+func TestStoreResolveErrorRetriesNextSample(t *testing.T) {
+	store := newStore()
+	cpuRule(store, 90, 1)
+	h := newHarness(store)
+	// Fire the rule
+	h.sample(95, nil)
+	if len(store.events) != 1 {
+		t.Fatalf("should have fired: %v", store.eventKinds())
+	}
+	// Drop below threshold and try to resolve, but fail
+	store.failTransitions = errStore
+	h.sample(10, nil) // would resolve, but fails
+	if len(store.events) != 1 || len(h.ev.firing) != 1 {
+		t.Fatalf("resolve error should keep firing: events=%d firing=%d", len(store.events), len(h.ev.firing))
+	}
+	store.failTransitions = nil
+	h.sample(10, nil) // try again, should succeed
+	if len(store.events) != 2 || len(h.ev.firing) != 0 {
+		t.Fatalf("after resolve retry: events=%v firing=%d", store.eventKinds(), len(h.ev.firing))
+	}
+}
+
+func TestUnknownTargetsAreIgnoredAndPruned(t *testing.T) {
+	store := newStore()
+	cpuRule(store, 90, 1)
+	h := newHarness(store)
+	h.ev.ObserveMetrics(context.Background(), "srv-ghost", t0, metrics.Values{"cpu": 99}, nil)
+	if len(store.events) != 0 || h.ev.buffers[alert.Target{ServerID: "srv-ghost"}] != nil {
+		t.Fatal("an unknown server was evaluated")
+	}
+	h.sample(10, map[string]metrics.Values{app: {"cpu": 1}})
+	if h.ev.buffers[alert.Target{ServerID: srv, AppID: app}] == nil {
+		t.Fatal("known app not buffered")
+	}
+	// The app is deleted; the next directory reload drops its buffer.
+	store.mu.Lock()
+	store.dir.Apps = map[string]alert.AppRef{}
+	store.mu.Unlock()
+	h.clock.t = h.clock.t.Add(directoryTTL)
+	h.sample(10, nil)
+	if h.ev.buffers[alert.Target{ServerID: srv, AppID: app}] != nil {
+		t.Fatal("deleted app's buffer kept")
+	}
+}
+
+func TestDeletedRulesAreForget(t *testing.T) {
+	store := newStore()
+	rule := cpuRule(store, 90, 1)
+	h := newHarness(store)
+	// Fire the rule
+	h.sample(95, nil)
+	if len(store.events) != 1 {
+		t.Fatalf("rule should have fired: %v", store.eventKinds())
+	}
+	if _, firing := h.ev.firing[alert.Key{RuleID: rule.ID, Target: alert.Target{ServerID: srv}}]; !firing {
+		t.Fatal("rule not in firing")
+	}
+	// Delete the rule from the store
+	store.mu.Lock()
+	store.rules = []alert.Rule{}
+	store.mu.Unlock()
+	// Next sample should remove it from firing
+	h.sample(95, nil)
+	if _, firing := h.ev.firing[alert.Key{RuleID: rule.ID, Target: alert.Target{ServerID: srv}}]; firing {
+		t.Fatal("deleted rule still in firing")
+	}
+	// No additional event or job should be produced
+	if len(store.events) != 1 {
+		t.Fatalf("deleted rule produced event: %v", store.eventKinds())
+	}
+	if h.queue.len() != 1 {
+		t.Fatalf("deleted rule produced job: %d", h.queue.len())
+	}
+}
+
+func TestDownRuleDisabledDoesNotResolve(t *testing.T) {
+	store := newStore()
+	store.addRule(alert.Rule{TargetKind: alert.TargetServer, Metric: alert.MetricDown, DurationMinutes: 5})
+	h := newHarness(store)
+	ctx := context.Background()
+	// Mark server as heard and then let it go silent
+	h.ev.ObserveHeartbeat(ctx, srv)
+	h.clock.t = t0.Add(5 * time.Minute)
+	h.ev.Sweep(ctx)
+	if len(store.events) != 1 {
+		t.Fatalf("down rule should have fired: %v", store.eventKinds())
+	}
+	// Disable the rule in the store
+	store.mu.Lock()
+	store.rules[0].Enabled = false
+	store.mu.Unlock()
+	// ObserveHeartbeat should clear the state silently, not send resolved
+	h.ev.ObserveHeartbeat(ctx, srv)
+	if len(store.events) != 1 {
+		t.Fatalf("disabled rule should not resolve: events=%v", store.eventKinds())
+	}
+	if len(store.cleared) != 1 {
+		t.Fatalf("disabled rule should be cleared: cleared=%v", store.cleared)
+	}
+}
+
+// A warm start that cannot read the firing states must not strand them:
+// Sweep retries until it succeeds, and the alert then resolves once.
+func TestSweepRetriesFiringStatesAfterFailedLoad(t *testing.T) {
+	store := newStore()
+	rule := cpuRule(store, 90, 10)
+	k := alert.Key{RuleID: rule.ID, Target: alert.Target{ServerID: srv}}
+	store.states[k] = alert.StateFiring
+	store.failFiring = errStore
+	h := newHarness(store)
+	if err := h.ev.Load(context.Background()); !errors.Is(err, errStore) {
+		t.Fatalf("Load = %v", err)
+	}
+	h.ev.Sweep(context.Background()) // still failing: retried later
+	store.mu.Lock()
+	store.failFiring = nil
+	store.mu.Unlock()
+	h.ev.Sweep(context.Background())
+	for i := 0; i < 10; i++ {
+		h.sample(10, nil)
+	}
+	if got := store.eventKinds(); !reflect.DeepEqual(got, []string{"resolved:cpu:"}) {
+		t.Fatalf("events = %v", got)
+	}
+	if store.states[k] != alert.StateOK {
+		t.Fatalf("state = %v", store.states[k])
+	}
+}
+
+// Load's reads have independent deadlines: time the firing-states read
+// spent (a connection held by another writer) is not taken from the
+// history read.
+func TestLoadReadsHaveIndependentDeadlines(t *testing.T) {
+	store := newStore()
+	store.firingDelay = 300 * time.Millisecond
+	var left time.Duration
+	h := newHarness(store)
+	h.ev.cfg.History = deadlineHistory{left: &left}
+	if err := h.ev.Load(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if left < storeTimeout-100*time.Millisecond {
+		t.Fatalf("the history read had %v of its %v", left, storeTimeout)
+	}
+}

@@ -56,6 +56,12 @@ func (m *metricsMaintenance) tick(ctx context.Context, now time.Time) {
 	m.latest.Prune(now.Add(-latestTTL))
 }
 
+// startMetricsMaintenance runs the maintenance loop on its own goroutine.
+// A variable so tests can observe when WireCore starts it.
+var startMetricsMaintenance = func(ctx context.Context, repo metricsMaintainer, latest *metrics.LatestStore, log *logger.Logger) {
+	go runMetricsMaintenance(ctx, repo, latest, metricsMaintenanceInterval, log)
+}
+
 // runMetricsMaintenance ticks immediately (catching up after downtime) and
 // then every interval until ctx is done.
 func runMetricsMaintenance(ctx context.Context, repo metricsMaintainer, latest *metrics.LatestStore, interval time.Duration, log *logger.Logger) {

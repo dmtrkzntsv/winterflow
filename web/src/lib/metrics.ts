@@ -68,6 +68,8 @@ export type ServerOverview = {
   latest: { at: string; server: ServerSample } | null;
   sparkline: MetricPoint[];
   apps: AppCounts;
+  // alerts_firing counts the server's (and its apps') firing alerts.
+  alerts_firing?: number;
 };
 
 // TEMP_PREFIX prefixes one sensor's field ("temp:Composite").

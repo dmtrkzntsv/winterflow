@@ -26,4 +26,7 @@ type MetricRepository interface {
 	Rollup(ctx context.Context, now time.Time) (int, error)
 	// Prune deletes rows past their tier's retention and reports how many.
 	Prune(ctx context.Context, now time.Time) (int64, error)
+	// Tier1Range returns every target's tier-1 rows in [from, to), ordered
+	// by server, app and time: the alert evaluator's warm start.
+	Tier1Range(ctx context.Context, from, to time.Time) ([]metrics.TargetBucket, error)
 }

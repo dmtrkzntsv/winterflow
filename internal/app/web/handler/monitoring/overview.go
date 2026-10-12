@@ -29,6 +29,8 @@ type ServerOverview struct {
 	Latest    *metrics.Latest `json:"latest"`
 	Sparkline []metrics.Point `json:"sparkline"`
 	Apps      AppCounts       `json:"apps"`
+	// AlertsFiring counts the server's (and its apps') firing alerts.
+	AlertsFiring int `json:"alerts_firing"`
 }
 
 // OverviewResponse is the data of GET /api/v1/metrics/overview.
@@ -66,13 +68,20 @@ func (h *Handler) Overview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := h.now()
+	firing := map[string]int{}
+	if h.alerts != nil {
+		if firing, err = h.alerts.CountFiring(r.Context()); err != nil {
+			h.log.Error("metrics: overview alert counts", "error", err)
+		}
+	}
 	out := make([]ServerOverview, 0, len(servers))
 	for _, s := range servers {
 		o := ServerOverview{
-			ServerID:  s.ID,
-			Liveness:  h.status.ServerLiveness(s.ID, now),
-			Sparkline: []metrics.Point{},
-			Apps:      countApps(h.status.AppStatuses(s.ID, now)),
+			ServerID:     s.ID,
+			Liveness:     h.status.ServerLiveness(s.ID, now),
+			Sparkline:    []metrics.Point{},
+			Apps:         countApps(h.status.AppStatuses(s.ID, now)),
+			AlertsFiring: firing[s.ID],
 		}
 		if h.disabled {
 			// Nothing is stored: keep liveness and app counts, skip the

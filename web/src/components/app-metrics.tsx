@@ -4,6 +4,7 @@ import { DataFreshness } from "@/components/data-freshness";
 import { KpiTile, KpiTileSkeleton } from "@/components/kpi-tile";
 import { ChartCardSkeleton, MetricChartCard } from "@/components/metric-chart";
 import { RangeMenu } from "@/components/range-menu";
+import { TargetAlertsCard } from "@/components/alerts/target-alerts-card";
 import { useAppMetrics } from "@/hooks/use-metrics";
 import {
   chartColor,
@@ -113,7 +114,7 @@ export function AppMetricBlocks({ serverId, appId }: { serverId: string; appId: 
 
 // AppMetricsTab is the app page's Metrics tab: CPU, memory, network and
 // disk growth over the selected range.
-export function AppMetricsTab({ serverId, appId }: { serverId: string; appId: string }) {
+export function AppMetricsTab({ serverId, appId, appName }: { serverId: string; appId: string; appName?: string }) {
   // 1h has data from the first minute (raw samples); see MonitoringPage.
   const [range, setRange] = useState<MetricsRange>("1h");
   const [mode, setMode] = useState<MetricsMode>("avg");
@@ -183,6 +184,7 @@ export function AppMetricsTab({ serverId, appId }: { serverId: string; appId: st
           />
         </div>
       )}
+      <TargetAlertsCard serverId={serverId} appId={appId} targetLabel={appName || "this app"} />
     </div>
   );
 }

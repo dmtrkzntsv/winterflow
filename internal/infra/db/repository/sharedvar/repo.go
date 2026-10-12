@@ -32,6 +32,7 @@ type (
 	upsertCtParams = sqlitegen.UpsertSharedCiphertextParams
 	deleteCtParams = sqlitegen.DeleteSharedCiphertextParams
 	infoRow        = sqlitegen.GetServerVarsInfoRow
+	raiseParams    = sqlitegen.RaiseServerVarsRevisionParams
 	orgServerRow   = sqlitegen.ListOrgServersRow
 	pubKeyRow      = sqlitegen.ListOrgPublicKeysRow
 )
@@ -52,6 +53,7 @@ type querier interface {
 	DeleteSharedCiphertext(ctx context.Context, db backend.DBTX, p deleteCtParams) error
 	DeleteSharedCiphertextsByServer(ctx context.Context, db backend.DBTX, serverID string) error
 	BumpServerVarsRevision(ctx context.Context, db backend.DBTX, serverID string) error
+	RaiseServerVarsRevision(ctx context.Context, db backend.DBTX, p raiseParams) error
 	GetServerVarsInfo(ctx context.Context, db backend.DBTX, serverID string) (infoRow, error)
 	ListOrgServers(ctx context.Context, db backend.DBTX, orgID string) ([]orgServerRow, error)
 	ListOrgPublicKeys(ctx context.Context, db backend.DBTX, orgID string) ([]pubKeyRow, error)
@@ -222,6 +224,10 @@ func (r *Repo) PurgeServerCiphertexts(ctx context.Context, serverID string) erro
 		}
 		return r.bump(ctx, []string{serverID})
 	})
+}
+
+func (r *Repo) RaiseVarsRevision(ctx context.Context, serverID string, rev int64) error {
+	return r.q.RaiseServerVarsRevision(ctx, r.tx.Querier(ctx), raiseParams{Revision: rev, ServerID: serverID})
 }
 
 func (r *Repo) ServerVarsInfo(ctx context.Context, serverID string) (model.ServerVarsInfo, error) {

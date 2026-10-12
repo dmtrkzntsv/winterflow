@@ -400,6 +400,23 @@ func (q *Queries) ListSharedCiphertextsForServer(ctx context.Context, serverID s
 	return items, nil
 }
 
+const raiseServerVarsRevision = `-- name: RaiseServerVarsRevision :exec
+UPDATE servers SET vars_revision = ?1
+WHERE server_id = ?2 AND vars_revision < ?1
+`
+
+type RaiseServerVarsRevisionParams struct {
+	Revision int64
+	ServerID string
+}
+
+// Lifts vars_revision past an agent-reported revision the API never issued
+// (the API database was restored); never lowers it.
+func (q *Queries) RaiseServerVarsRevision(ctx context.Context, arg RaiseServerVarsRevisionParams) error {
+	_, err := q.db.ExecContext(ctx, raiseServerVarsRevision, arg.Revision, arg.ServerID)
+	return err
+}
+
 const updateSharedVariable = `-- name: UpdateSharedVariable :exec
 UPDATE shared_variables SET value = ?, description = ?, updated_at = ?, updated_by = ? WHERE id = ?
 `

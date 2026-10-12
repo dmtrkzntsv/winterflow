@@ -93,6 +93,9 @@ type Querier interface {
 	// RemoveMember's transaction. SQLite has no row locks (its writers are
 	// serialized), so this is a plain SELECT; Postgres adds FOR UPDATE.
 	LockOrganizationMember(ctx context.Context, arg LockOrganizationMemberParams) (string, error)
+	// Lifts vars_revision past an agent-reported revision the API never issued
+	// (the API database was restored); never lowers it.
+	RaiseServerVarsRevision(ctx context.Context, arg RaiseServerVarsRevisionParams) error
 	RenameApp(ctx context.Context, arg RenameAppParams) error
 	TouchServerLastSeen(ctx context.Context, arg TouchServerLastSeenParams) error
 	TouchTokenLastUsed(ctx context.Context, arg TouchTokenLastUsedParams) error

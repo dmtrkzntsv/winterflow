@@ -69,8 +69,11 @@ func entries(vs []model.SharedVariable, cts map[string]string) []command.SharedV
 
 // synced handles a vars.sync result: a bounce from an unconnected agent
 // stays pending silently; any other failure is vars.sync_failed; success
-// drops the copies the agent cannot decrypt, records the agent's revision,
-// announces vars.synced and sends the follow-up reload.
+// drops the copies the agent cannot decrypt (only when the result is for
+// the current revision: a late result for an older snapshot may name
+// ciphertexts replaced since), records the agent's revision (never moving
+// the cached one back), announces vars.synced and sends the follow-up
+// reload.
 func (u *UseCase) synced(serverID string, reload []string, res port.CommandResult) {
 	ctx, cancel := context.WithTimeout(context.Background(), notifyTimeout)
 	defer cancel()
@@ -86,9 +89,18 @@ func (u *UseCase) synced(serverID string, reload []string, res port.CommandResul
 		u.d.Log.Error("vars.sync result: decode", "error", err, "server_id", serverID)
 		return
 	}
-	names := u.dropUndecryptable(ctx, serverID, out.Undecryptable)
+	names := []string{}
+	if len(out.Undecryptable) > 0 {
+		if info, err := u.d.Repo.ServerVarsInfo(ctx, serverID); err != nil {
+			u.d.Log.Warn("drop undecryptable shared secrets", "server_id", serverID, "error", err)
+		} else if info.Revision == out.Revision {
+			names = u.dropUndecryptable(ctx, serverID, out.Undecryptable)
+		}
+	}
 	if u.d.Revisions != nil {
-		u.d.Revisions.SetVarsRevision(serverID, out.Revision)
+		if cur, ok := u.d.Revisions.VarsRevision(serverID); !ok || out.Revision > cur {
+			u.d.Revisions.SetVarsRevision(serverID, out.Revision)
+		}
 	}
 	u.notify(ctx, serverID, model.NotificationVarsSynced, model.VarsSyncedPayload{ServerID: serverID, Revision: out.Revision, Undecryptable: names})
 	if len(reload) > 0 {
@@ -158,25 +170,33 @@ func (u *UseCase) dispatchReload(ctx context.Context, serverID string, req comma
 // public_key different from the stored one invalidates every ciphertext
 // encrypted for the old key, so those rows are deleted (the secrets show as
 // missing and must be entered again) and the revision is bumped. Pushing
-// undecryptable ciphertext is never attempted.
-func (u *UseCase) KeyObserved(ctx context.Context, serverID string, caps map[string]string) {
+// undecryptable ciphertext is never attempted. It reports whether it
+// purged; the caller pushes the new snapshot.
+func (u *UseCase) KeyObserved(ctx context.Context, serverID string, caps map[string]string) bool {
 	next := caps["public_key"]
 	if next == "" || u.d.Servers == nil {
-		return
+		return false
 	}
 	prev, ok, err := u.d.Servers.GetCapability(ctx, serverID, "public_key")
 	if err != nil || !ok || prev == "" || prev == next {
-		return
+		return false
 	}
 	if err := u.d.Repo.PurgeServerCiphertexts(ctx, serverID); err != nil {
 		u.d.Log.Error("purge shared secrets after key change", "error", err, "server_id", serverID)
-		return
+		return false
 	}
 	u.d.Log.Warn("server key changed: its shared secrets must be entered again", "server_id", serverID)
+	return true
 }
 
 // ObserveRevision records an agent's reported snapshot revision and says
-// whether it is behind servers.vars_revision.
+// whether it is behind servers.vars_revision, returning that revision.
+//
+// An agent ahead of servers.vars_revision holds a revision this API never
+// issued (its database was restored, or the server re-registered). Agents
+// ignore snapshots older than the one they hold, so the revision is raised
+// past the agent's and the agent counts as behind: the next push replaces
+// its snapshot instead of being ignored forever.
 func (u *UseCase) ObserveRevision(ctx context.Context, serverID string, agentRev int64) (int64, bool, error) {
 	if u.d.Revisions != nil {
 		u.d.Revisions.SetVarsRevision(serverID, agentRev)
@@ -184,6 +204,15 @@ func (u *UseCase) ObserveRevision(ctx context.Context, serverID string, agentRev
 	info, err := u.d.Repo.ServerVarsInfo(ctx, serverID)
 	if err != nil {
 		return 0, false, err
+	}
+	if agentRev > info.Revision {
+		if err := u.d.Repo.RaiseVarsRevision(ctx, serverID, agentRev+1); err != nil {
+			return 0, false, err
+		}
+		if info, err = u.d.Repo.ServerVarsInfo(ctx, serverID); err != nil {
+			return 0, false, err
+		}
+		u.d.Log.Warn("agent holds a newer shared-variables revision than the database; raised it", "server_id", serverID, "agent_revision", agentRev, "revision", info.Revision)
 	}
 	return info.Revision, agentRev < info.Revision, nil
 }

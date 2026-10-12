@@ -71,6 +71,10 @@ func (sqliteQuerier) BumpServerVarsRevision(ctx context.Context, db backend.DBTX
 	return sqlitegen.New(db).BumpServerVarsRevision(ctx, serverID)
 }
 
+func (sqliteQuerier) RaiseServerVarsRevision(ctx context.Context, db backend.DBTX, p raiseParams) error {
+	return sqlitegen.New(db).RaiseServerVarsRevision(ctx, p)
+}
+
 func (sqliteQuerier) GetServerVarsInfo(ctx context.Context, db backend.DBTX, serverID string) (infoRow, error) {
 	return sqlitegen.New(db).GetServerVarsInfo(ctx, serverID)
 }

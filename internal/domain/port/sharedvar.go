@@ -31,6 +31,10 @@ type SharedVariableRepository interface {
 	// PurgeServerCiphertexts deletes every ciphertext of serverID (its key
 	// changed) and bumps its revision.
 	PurgeServerCiphertexts(ctx context.Context, serverID string) error
+	// RaiseVarsRevision sets serverID's vars_revision to rev when it is
+	// lower (an agent reports a revision the API never issued, e.g. after a
+	// database restore); it never lowers it.
+	RaiseVarsRevision(ctx context.Context, serverID string, rev int64) error
 	// ServerVarsInfo returns the server's org, name and vars_revision;
 	// model.ErrServerNotFound when unknown.
 	ServerVarsInfo(ctx context.Context, serverID string) (model.ServerVarsInfo, error)

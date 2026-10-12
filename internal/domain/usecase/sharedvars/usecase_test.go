@@ -490,14 +490,25 @@ func TestKeyChangePurgesThatServersCopies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.uc.KeyObserved(ctx, srvA, map[string]string{"public_key": "KEY-A", "os": "linux"}) // unchanged
-	e.uc.KeyObserved(ctx, srvA, map[string]string{"os": "linux"})                        // no key reported
-	e.uc.KeyObserved(ctx, srvP, map[string]string{"public_key": "FIRST-KEY"})            // first report
+	for _, c := range []struct {
+		server string
+		caps   map[string]string
+	}{
+		{srvA, map[string]string{"public_key": "KEY-A", "os": "linux"}}, // unchanged
+		{srvA, map[string]string{"os": "linux"}},                        // no key reported
+		{srvP, map[string]string{"public_key": "FIRST-KEY"}},            // first report
+	} {
+		if e.uc.KeyObserved(ctx, c.server, c.caps) {
+			t.Fatalf("reported a purge for %s %v", c.server, c.caps)
+		}
+	}
 	if cts, _ := e.repo.CiphertextsForServer(ctx, srvA); cts[v.ID] != "T-A" {
 		t.Fatal("purged without a key change")
 	}
 	before, _ := e.repo.ServerVarsInfo(ctx, srvA)
-	e.uc.KeyObserved(ctx, srvA, map[string]string{"public_key": "KEY-A2"})
+	if !e.uc.KeyObserved(ctx, srvA, map[string]string{"public_key": "KEY-A2"}) {
+		t.Fatal("a key change did not report its purge")
+	}
 	if cts, _ := e.repo.CiphertextsForServer(ctx, srvA); len(cts) != 0 {
 		t.Fatalf("copies for the old key kept: %v", cts)
 	}
@@ -604,5 +615,65 @@ func TestPlainSaveRequiresValue(t *testing.T) {
 	// An explicit empty value is a real value.
 	if v, err := e.uc.SaveOrg(ctx, "u1", org1, sharedvars.SaveInput{Name: "SMTP_HOST", Value: ptr("")}); err != nil || v.Value != "" {
 		t.Fatalf("explicit empty value = %+v, %v", v, err)
+	}
+}
+
+// TestObserveRevisionRaisesPastAnAheadAgent: an agent holding a revision the
+// database never issued (restored DB) would ignore every push at or below
+// it, so the revision is raised past the agent's and the agent is behind.
+func TestObserveRevisionRaisesPastAnAheadAgent(t *testing.T) {
+	e := newEnv(t)
+	ctx := dbtest.Ctx(t)
+	rev, behind, err := e.uc.ObserveRevision(ctx, srvA, 5)
+	if err != nil || rev != 6 || !behind {
+		t.Fatalf("ahead agent = %d %v %v, want 6 behind", rev, behind, err)
+	}
+	if info, _ := e.repo.ServerVarsInfo(ctx, srvA); info.Revision != 6 {
+		t.Fatalf("stored revision = %d, want 6", info.Revision)
+	}
+	if rev, behind, _ := e.uc.ObserveRevision(ctx, srvA, 6); rev != 6 || behind {
+		t.Fatalf("caught-up agent = %d %v", rev, behind)
+	}
+	if info, _ := e.repo.ServerVarsInfo(ctx, srvB); info.Revision != 0 {
+		t.Fatalf("another server raised to %d", info.Revision)
+	}
+}
+
+// TestLateSyncResultKeepsNewerCiphertexts: a vars.sync result for an older
+// revision must not drop a ciphertext replaced since; the result for the
+// current revision does. The cached agent revision never moves back.
+func TestLateSyncResultKeepsNewerCiphertexts(t *testing.T) {
+	e := newEnv(t)
+	ctx := dbtest.Ctx(t)
+	v, err := e.uc.SaveOrg(ctx, "u1", org1, sharedvars.SaveInput{Name: "TOKEN", IsSecret: true, Ciphertexts: map[string]string{srvA: "T-A", srvB: "T-B"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := e.disp.lastTo(t, command.TypeVarsSync, srvA)
+	if _, err := e.uc.SaveOrg(ctx, "u1", org1, sharedvars.SaveInput{Name: "TOKEN", IsSecret: true, Ciphertexts: map[string]string{srvA: "T-A2", srvB: "T-B2"}}); err != nil {
+		t.Fatal(err)
+	}
+	cur := e.disp.lastTo(t, command.TypeVarsSync, srvA)
+	curRev := cur.Payload.(command.SyncVarsRequest).Revision
+	if curRev != 2 {
+		t.Fatalf("current revision = %d", curRev)
+	}
+	undecryptable := []command.VarRef{{Scope: "org", Name: "TOKEN"}}
+
+	answer(t, cur, true, "", command.SyncVarsResponse{Revision: 2})
+	answer(t, old, true, "", command.SyncVarsResponse{Revision: 1, Undecryptable: undecryptable})
+	if cts, _ := e.repo.CiphertextsForServer(ctx, srvA); cts[v.ID] != "T-A2" {
+		t.Fatalf("a stale result dropped the newer ciphertext: %v", cts)
+	}
+	if got := e.pub.of(model.NotificationVarsSynced); len(got) == 0 || len(got[len(got)-1].Payload.(model.VarsSyncedPayload).Undecryptable) != 0 {
+		t.Fatalf("a stale result announced undecryptable names: %+v", got)
+	}
+	if rev, _ := e.revs.VarsRevision(srvA); rev != 2 {
+		t.Fatalf("cached revision moved back to %d", rev)
+	}
+
+	answer(t, cur, true, "", command.SyncVarsResponse{Revision: 2, Undecryptable: undecryptable})
+	if cts, _ := e.repo.CiphertextsForServer(ctx, srvA); len(cts) != 0 {
+		t.Fatalf("the current result kept an undecryptable copy: %v", cts)
 	}
 }

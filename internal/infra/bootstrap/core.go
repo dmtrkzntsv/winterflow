@@ -6,12 +6,14 @@ import (
 	"winterflow/internal/domain/metrics"
 	notificationsvc "winterflow/internal/domain/service/notification"
 	"winterflow/internal/domain/service/status"
+	"winterflow/internal/domain/usecase/sharedvars"
 	"winterflow/internal/infra/db"
 	apprepo "winterflow/internal/infra/db/repository/app"
 	appdomainrepo "winterflow/internal/infra/db/repository/appdomain"
 	metricrepo "winterflow/internal/infra/db/repository/metric"
 	serverrepo "winterflow/internal/infra/db/repository/server"
 	serverdomainrepo "winterflow/internal/infra/db/repository/serverdomain"
+	sharedvarrepo "winterflow/internal/infra/db/repository/sharedvar"
 	userrepo "winterflow/internal/infra/db/repository/user"
 	"winterflow/internal/infra/transport/bus"
 	"winterflow/internal/infra/transport/dispatch"
@@ -48,25 +50,29 @@ func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerCon
 	}
 
 	startResponseSubscriber(ctx, b, dispatcher, cfg, log)
-	startEventsSubscriber(ctx, b, statusCache, r.server, nm, cfg, log, newDomainSync(ctx, dispatcher, r.serverDomain, log), ms, latest)
+	vars := newVarsSync(ctx, dispatcher, sharedvars.Deps{
+		Repo: r.sharedVar, Servers: r.server, Notifications: nm, Revisions: statusCache, Log: log,
+	}, log)
+	startEventsSubscriber(ctx, b, statusCache, r.server, nm, cfg, log, newDomainSync(ctx, dispatcher, r.serverDomain, log), vars, ms, latest)
 
 	return &Deps{
-		Log:                    log,
-		Cfg:                    cfg,
-		UserService:            r.user,
-		ServerRepository:       r.server,
-		AppRepository:          r.app,
-		AppDomainRepository:    r.appDomain,
-		ServerDomainRepository: r.serverDomain,
-		CommandDispatcher:      dispatcher,
-		NotificationManager:    nm,
-		StatusCache:            statusCache,
-		MetricRepository:       r.metric,
-		LatestMetrics:          latest,
+		Log:                      log,
+		Cfg:                      cfg,
+		UserService:              r.user,
+		ServerRepository:         r.server,
+		AppRepository:            r.app,
+		AppDomainRepository:      r.appDomain,
+		ServerDomainRepository:   r.serverDomain,
+		SharedVariableRepository: r.sharedVar,
+		CommandDispatcher:        dispatcher,
+		NotificationManager:      nm,
+		StatusCache:              statusCache,
+		MetricRepository:         r.metric,
+		LatestMetrics:            latest,
 	}, r.server
 }
 
-// repos are the six DB repositories, built for the connection's driver.
+// repos are the DB repositories, built for the connection's driver.
 type repos struct {
 	user         *userrepo.Repo
 	server       *serverrepo.Repo
@@ -74,6 +80,7 @@ type repos struct {
 	appDomain    *appdomainrepo.Repo
 	serverDomain *serverdomainrepo.Repo
 	metric       *metricrepo.Repo
+	sharedVar    *sharedvarrepo.Repo
 }
 
 func newRepos(conn *db.DB, log *logger.Logger) (repos, error) {
@@ -96,6 +103,9 @@ func newRepos(conn *db.DB, log *logger.Logger) (repos, error) {
 	if r.serverDomain, err = serverdomainrepo.New(conn.Tx, conn.Driver, log); err != nil {
 		return r, err
 	}
-	r.metric, err = metricrepo.New(conn.Tx, conn.Driver, log)
+	if r.metric, err = metricrepo.New(conn.Tx, conn.Driver, log); err != nil {
+		return r, err
+	}
+	r.sharedVar, err = sharedvarrepo.New(conn.Tx, conn.Driver, log)
 	return r, err
 }

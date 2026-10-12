@@ -238,3 +238,23 @@ func TestServerInfoAndKeys(t *testing.T) {
 		t.Fatalf("keys = %+v", keys)
 	}
 }
+
+func TestRaiseVarsRevisionNeverLowers(t *testing.T) {
+	r, _ := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	if err := r.RaiseVarsRevision(ctx, srv1, 7); err != nil {
+		t.Fatal(err)
+	}
+	if info, _ := r.ServerVarsInfo(ctx, srv1); info.Revision != 7 {
+		t.Fatalf("raised to %d, want 7", info.Revision)
+	}
+	if err := r.RaiseVarsRevision(ctx, srv1, 3); err != nil {
+		t.Fatal(err)
+	}
+	if info, _ := r.ServerVarsInfo(ctx, srv1); info.Revision != 7 {
+		t.Fatalf("lowered to %d", info.Revision)
+	}
+	if info, _ := r.ServerVarsInfo(ctx, srv2); info.Revision != 0 {
+		t.Fatalf("another server moved to %d", info.Revision)
+	}
+}

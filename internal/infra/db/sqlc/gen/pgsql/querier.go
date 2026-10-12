@@ -93,6 +93,9 @@ type Querier interface {
 	// inside RemoveMember's transaction, so two members removing each other
 	// concurrently cannot empty the org.
 	LockOrganizationMember(ctx context.Context, arg LockOrganizationMemberParams) (string, error)
+	// Lifts vars_revision past an agent-reported revision the API never issued
+	// (the API database was restored); never lowers it.
+	RaiseServerVarsRevision(ctx context.Context, arg RaiseServerVarsRevisionParams) error
 	RenameApp(ctx context.Context, arg RenameAppParams) error
 	TouchServerLastSeen(ctx context.Context, arg TouchServerLastSeenParams) error
 	TouchTokenLastUsed(ctx context.Context, arg TouchTokenLastUsedParams) error

@@ -46,6 +46,7 @@ type Cache struct {
 	mu      sync.RWMutex
 	servers map[string]serverEntry // server_id → liveness expiry
 	apps    map[string]appEntry    // server_id → app statuses + expiry
+	vars    map[string]int64       // server_id → agent's reported vars revision
 }
 
 // NewCache creates a status cache with the given freshness window. Sized to a
@@ -55,7 +56,27 @@ func NewCache(ttl time.Duration) *Cache {
 		ttl:     ttl,
 		servers: make(map[string]serverEntry),
 		apps:    make(map[string]appEntry),
+		vars:    make(map[string]int64),
 	}
+}
+
+// SetVarsRevision records the shared-variables snapshot revision a
+// server's agent last reported (apps.status or a vars.sync result). It is
+// not liveness: it never expires, and a restart simply waits for the next
+// report.
+func (c *Cache) SetVarsRevision(serverID string, rev int64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.vars[serverID] = rev
+}
+
+// VarsRevision returns the last reported revision; ok is false before the
+// first report.
+func (c *Cache) VarsRevision(serverID string) (int64, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	rev, ok := c.vars[serverID]
+	return rev, ok
 }
 
 // MarkOnline records a liveness pulse for a server. It reports whether the

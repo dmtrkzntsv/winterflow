@@ -94,6 +94,10 @@ func (pgsqlQuerier) BumpServerVarsRevision(ctx context.Context, db backend.DBTX,
 	return pgsqlgen.New(db).BumpServerVarsRevision(ctx, serverID)
 }
 
+func (pgsqlQuerier) RaiseServerVarsRevision(ctx context.Context, db backend.DBTX, p raiseParams) error {
+	return pgsqlgen.New(db).RaiseServerVarsRevision(ctx, pgsqlgen.RaiseServerVarsRevisionParams(p))
+}
+
 func (pgsqlQuerier) GetServerVarsInfo(ctx context.Context, db backend.DBTX, serverID string) (infoRow, error) {
 	row, err := pgsqlgen.New(db).GetServerVarsInfo(ctx, serverID)
 	return infoRow(row), err

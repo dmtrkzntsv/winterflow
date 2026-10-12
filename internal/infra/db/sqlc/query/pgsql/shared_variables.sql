@@ -52,6 +52,12 @@ DELETE FROM shared_secret_ciphertexts WHERE server_id = $1;
 -- name: BumpServerVarsRevision :exec
 UPDATE servers SET vars_revision = vars_revision + 1 WHERE server_id = $1;
 
+-- name: RaiseServerVarsRevision :exec
+-- Lifts vars_revision past an agent-reported revision the API never issued
+-- (the API database was restored); never lowers it.
+UPDATE servers SET vars_revision = sqlc.arg(revision)
+WHERE server_id = sqlc.arg(server_id) AND vars_revision < sqlc.arg(revision);
+
 -- name: GetServerVarsInfo :one
 SELECT server_id, organization_id, name, vars_revision FROM servers WHERE server_id = $1;
 

@@ -133,6 +133,8 @@ var (
 	_ = sqlitegen.DeleteSharedCiphertextParams(pgsqlgen.DeleteSharedCiphertextParams{})
 	_ = pgsqlgen.DeleteSharedCiphertextParams(sqlitegen.DeleteSharedCiphertextParams{})
 	_ = sqlitegen.GetServerVarsInfoRow(pgsqlgen.GetServerVarsInfoRow{})
+	_ = sqlitegen.RaiseServerVarsRevisionParams(pgsqlgen.RaiseServerVarsRevisionParams{})
+	_ = pgsqlgen.RaiseServerVarsRevisionParams(sqlitegen.RaiseServerVarsRevisionParams{})
 	_ = pgsqlgen.GetServerVarsInfoRow(sqlitegen.GetServerVarsInfoRow{})
 	_ = sqlitegen.ListOrgServersRow(pgsqlgen.ListOrgServersRow{})
 	_ = pgsqlgen.ListOrgServersRow(sqlitegen.ListOrgServersRow{})

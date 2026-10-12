@@ -11555,7 +11555,7 @@ Open a draft PR against `main` titled `feat(alerts): alert rules, overrides and 
 - **Summary:** spec §3 and the alert parts of §4.
 - **Rulings:** decisions 1–18 of this plan, in short form. Highlight these:
   - transitions are compare-and-set, and safe with several API replicas;
-  - migration `0012_alerts` collides with #12's `0011_server_storages`, and whichever merges second renumbers;
+  - migration `0012_alerts` (after #12's `0011_server_storages`);
   - `ALERTS_ALLOW_PRIVATE_TARGETS`: the SSRF guard is on for the distributed API and off for standalone;
   - routes use the existing verb style;
   - the active list replaces "firing count in app responses";

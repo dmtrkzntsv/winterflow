@@ -38,6 +38,24 @@ func (h *Handler) instanceRoutes() []api.Route {
 			Errors: instance,
 		},
 		{
+			Method: http.MethodPost, Path: "/api/v1/instance/control-instance", Handler: h.ControlInstance, Auth: api.User,
+			Summary: "Start, stop or restart an instance", Tag: "instances", Description: waits,
+			Request: ControlInstanceRequest{}, Accepted: true, Result: command.ControlAppResponse{}, Response: InstanceResult{},
+			Errors: instance,
+		},
+		{
+			Method: http.MethodPost, Path: "/api/v1/instance/delete-instance", Handler: h.DeleteInstance, Auth: api.User,
+			Summary: "Delete an instance's app; its key stays retired", Tag: "instances", Description: waits,
+			Request: DeleteInstanceRequest{}, Accepted: true, Result: command.DeleteAppResponse{}, Response: InstanceResult{},
+			Errors: instance,
+		},
+		{
+			Method: http.MethodPost, Path: "/api/v1/instance/unlink-instance", Handler: h.UnlinkInstance, Auth: api.User,
+			Summary: "Turn an instance into an ordinary app; its key is freed", Tag: "instances", Description: waits,
+			Request: InstanceKeyRequest{}, Accepted: true, Result: command.SaveAppResponse{}, Response: InstanceResult{},
+			Errors: instance,
+		},
+		{
 			Method: http.MethodGet, Path: "/api/v1/instance/get-instance", Handler: h.GetInstance, Auth: api.User,
 			Summary: "An instance: template, revision, values (secrets masked), state, status, last error", Tag: "instances",
 			Query: InstanceQuery{}, Response: tuc.InstanceView{}, Errors: read,

@@ -1499,6 +1499,99 @@ paths:
       - apps
       x-operation-result:
         $ref: '#/components/schemas/ImageTagsResponse'
+  /api/v1/instance/control-instance:
+    post:
+      description: 'Answers 202 with a request_id (the outcome arrives over SSE),
+        or with wait:true the outcome: 200 with the instance, 502 with the agent''s
+        error, or 202 once 10 minutes pass (read get-instance).'
+      operationId: instanceControlInstance
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControlInstanceRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/InstanceResult'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Conflict
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Gateway
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Start, stop or restart an instance
+      tags:
+      - instances
+      x-operation-result:
+        $ref: '#/components/schemas/ControlAppResponse'
   /api/v1/instance/create-instance:
     post:
       description: 'The same key with the same request makes no second app: a created
@@ -1595,6 +1688,99 @@ paths:
       - instances
       x-operation-result:
         $ref: '#/components/schemas/SaveAppResponse'
+  /api/v1/instance/delete-instance:
+    post:
+      description: 'Answers 202 with a request_id (the outcome arrives over SSE),
+        or with wait:true the outcome: 200 with the instance, 502 with the agent''s
+        error, or 202 once 10 minutes pass (read get-instance).'
+      operationId: instanceDeleteInstance
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteInstanceRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/InstanceResult'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Conflict
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Gateway
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Delete an instance's app; its key stays retired
+      tags:
+      - instances
+      x-operation-result:
+        $ref: '#/components/schemas/DeleteAppResponse'
   /api/v1/instance/get-instance:
     get:
       operationId: instanceGetInstance
@@ -1728,6 +1914,99 @@ paths:
       summary: The org's pending and created instances
       tags:
       - instances
+  /api/v1/instance/unlink-instance:
+    post:
+      description: 'Answers 202 with a request_id (the outcome arrives over SSE),
+        or with wait:true the outcome: 200 with the instance, 502 with the agent''s
+        error, or 202 once 10 minutes pass (read get-instance).'
+      operationId: instanceUnlinkInstance
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InstanceKeyRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/InstanceResult'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Conflict
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Gateway
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Turn an instance into an ordinary app; its key is freed
+      tags:
+      - instances
+      x-operation-result:
+        $ref: '#/components/schemas/SaveAppResponse'
   /api/v1/instance/update-instance:
     post:
       description: 'Answers 202 with a request_id (the outcome arrives over SSE),
@@ -5183,6 +5462,25 @@ components:
       - app_id
       - action
       type: object
+    ControlInstanceRequest:
+      properties:
+        action:
+          enum:
+          - start
+          - stop
+          - restart
+          type: string
+        key:
+          type: string
+        server_id:
+          type: string
+        wait:
+          type: boolean
+      required:
+      - server_id
+      - key
+      - action
+      type: object
     CreateDomainRequest:
       properties:
         certificate:
@@ -5382,6 +5680,22 @@ components:
           type: array
       required:
       - name
+      type: object
+    DeleteInstanceRequest:
+      properties:
+        delete_backups:
+          type: boolean
+        delete_volumes:
+          type: boolean
+        key:
+          type: string
+        server_id:
+          type: string
+        wait:
+          type: boolean
+      required:
+      - server_id
+      - key
       type: object
     DeleteNetworkRequest:
       properties:
@@ -5977,6 +6291,18 @@ components:
       - updated_by
       - missing_on
       - overridden
+      type: object
+    InstanceKeyRequest:
+      properties:
+        key:
+          type: string
+        server_id:
+          type: string
+        wait:
+          type: boolean
+      required:
+      - server_id
+      - key
       type: object
     InstanceList:
       properties:

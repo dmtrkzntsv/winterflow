@@ -189,6 +189,15 @@ var probes = map[string]probe{
 	"POST /api/v1/instance/upgrade-instance": {valid: func(s string) call {
 		return post("/api/v1/instance/upgrade-instance", map[string]any{"server_id": s, "key": "k", "revision": 2})
 	}, malformed: bad("POST", "/api/v1/instance/upgrade-instance")},
+	"POST /api/v1/instance/control-instance": {valid: func(s string) call {
+		return post("/api/v1/instance/control-instance", map[string]any{"server_id": s, "key": "k", "action": "start"})
+	}, malformed: bad("POST", "/api/v1/instance/control-instance")},
+	"POST /api/v1/instance/delete-instance": {valid: func(s string) call {
+		return post("/api/v1/instance/delete-instance", map[string]any{"server_id": s, "key": "k"})
+	}, malformed: bad("POST", "/api/v1/instance/delete-instance")},
+	"POST /api/v1/instance/unlink-instance": {valid: func(s string) call {
+		return post("/api/v1/instance/unlink-instance", map[string]any{"server_id": s, "key": "k"})
+	}, malformed: bad("POST", "/api/v1/instance/unlink-instance")},
 	"GET /api/v1/instance/get-instance": {valid: func(s string) call {
 		return get("/api/v1/instance/get-instance", url.Values{"server_id": {s}, "key": {"k"}})
 	}, malformed: bad("GET", "/api/v1/instance/get-instance")},

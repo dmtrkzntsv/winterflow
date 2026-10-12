@@ -301,3 +301,68 @@ func TestInstanceUpdatePending(t *testing.T) {
 		t.Fatalf("a pending update's backups = %s", save.App.Config)
 	}
 }
+
+func TestInstanceLifecycle(t *testing.T) {
+	t.Parallel()
+	ie := newInstanceEnv(t)
+	e, owner, sid := ie.e, ie.owner, ie.sid
+	appID := ie.created(t, "tenant-1", "acme", "9001").Instance.AppID
+
+	t.Run("control", func(t *testing.T) {
+		owner.succeed(t, call{Method: http.MethodPost, Path: "/api/v1/instance/control-instance",
+			Body: htpl.ControlInstanceRequest{ServerID: sid, Key: "tenant-1", Action: command.ControlRestart}}, nil)
+		owner.do(t, call{Method: http.MethodPost, Path: "/api/v1/instance/control-instance", Invalid: true,
+			Body: htpl.ControlInstanceRequest{ServerID: sid, Key: "tenant-1", Action: command.ControlUpdate}}).expect(t, http.StatusBadRequest)
+		e.agent.fail(command.TypeAppControl, "docker compose stop: boom")
+		r := owner.post(t, "/api/v1/instance/control-instance", htpl.ControlInstanceRequest{ServerID: sid, Key: "tenant-1", Action: command.ControlStop, Wait: true}).
+			expect(t, http.StatusBadGateway)
+		if !strings.Contains(string(r.Body), "boom") || instanceOf(t, owner, sid, "tenant-1").LastError != "docker compose stop: boom" {
+			t.Fatalf("502 body = %s", r.Body)
+		}
+	})
+	t.Run("a template with live instances is not deleted", func(t *testing.T) {
+		owner.post(t, "/api/v1/template/delete-template", htpl.TemplateIDRequest{ID: ie.tplID}).expect(t, http.StatusConflict)
+	})
+	t.Run("unlink frees the key", func(t *testing.T) {
+		var res htpl.InstanceResult
+		owner.post(t, "/api/v1/instance/unlink-instance", htpl.InstanceKeyRequest{ServerID: sid, Key: "tenant-1", Wait: true}).
+			expect(t, http.StatusOK).data(t, &res)
+		if res.Instance.State != "unlinked" || res.Instance.AppID != appID {
+			t.Fatalf("unlinked = %+v", res.Instance)
+		}
+		cfg := string(lastSave(t, e).App.Config)
+		if strings.Contains(cfg, `"instance"`) || strings.Contains(cfg, `"template_id"`) {
+			t.Fatalf("unlink config = %s", cfg)
+		}
+		owner.get(t, "/api/v1/instance/get-instance", url.Values{"server_id": {sid}, "key": {"tenant-1"}}).expect(t, http.StatusNotFound)
+		if apps := listApps(t, owner, sid); apps[0].ID != appID || apps[0].TemplateID != "" {
+			t.Fatalf("unlinked app = %+v", apps[0])
+		}
+	})
+	t.Run("a freed key makes a new app; delete retires it", func(t *testing.T) {
+		again := ie.created(t, "tenant-1", "bravo", "9002")
+		if again.Instance.AppID == appID || again.RequestID == "" {
+			t.Fatalf("a freed key took over the unlinked app: %+v", again)
+		}
+		var res htpl.InstanceResult
+		owner.post(t, "/api/v1/instance/delete-instance", htpl.DeleteInstanceRequest{ServerID: sid, Key: "tenant-1", DeleteVolumes: true, Wait: true}).
+			expect(t, http.StatusOK).data(t, &res)
+		if res.Instance.State != "deleted" {
+			t.Fatalf("deleted = %+v", res.Instance)
+		}
+		dels := e.agent.seen(command.TypeAppDelete)
+		if req := decode[command.DeleteAppRequest](dels[len(dels)-1].Payload); req.AppID != again.Instance.AppID || !req.DeleteVolumes {
+			t.Fatalf("app.delete = %+v", req)
+		}
+		owner.post(t, "/api/v1/instance/create-instance", ie.create("tenant-1", "bravo", "9002")).expect(t, http.StatusConflict)
+		n := len(e.agent.seen(command.TypeAppDelete))
+		owner.post(t, "/api/v1/instance/delete-instance", htpl.DeleteInstanceRequest{ServerID: sid, Key: "tenant-1"}).expect(t, http.StatusOK)
+		if len(e.agent.seen(command.TypeAppDelete)) != n {
+			t.Fatal("deleting a deleted instance reached the agent")
+		}
+		owner.post(t, "/api/v1/instance/unlink-instance", htpl.InstanceKeyRequest{ServerID: sid, Key: "tenant-1"}).expect(t, http.StatusConflict)
+	})
+	t.Run("without live instances the template is deleted", func(t *testing.T) {
+		owner.post(t, "/api/v1/template/delete-template", htpl.TemplateIDRequest{ID: ie.tplID}).expect(t, http.StatusOK)
+	})
+}

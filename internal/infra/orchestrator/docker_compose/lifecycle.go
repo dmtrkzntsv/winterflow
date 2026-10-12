@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"winterflow/internal/domain/backup/recipe"
 	"winterflow/internal/domain/command"
 	"winterflow/pkg/fsutil"
 )
@@ -251,8 +250,8 @@ func (r *Repository) GetApp(ctx context.Context, appID string) (command.GetAppRe
 		resp.BackupsError = err.Error()
 	}
 	resp.Backups = cfg.backups
-	if stored, err := r.readOverrides(dir); err == nil {
-		resp.BackupsBase = backupsBase(stored)
+	if cfg.overridesOK {
+		resp.BackupsBase = backupsBase(cfg.overrides)
 	}
 	// The WF_STORAGE_ / WF_BACKUP_ variables the compose files reference:
 	// read-only rows in the editor. An unreadable compose file just shows
@@ -262,11 +261,9 @@ func (r *Repository) GetApp(ctx context.Context, appID string) (command.GetAppRe
 	}
 	// Where a backup added in the UI can point, and the server's ceiling
 	// (the UI notes retention tiers that reach past it).
-	if contents, err := composeContents(dir, files); err == nil {
-		if comp, err := recipe.ParseCompose(contents...); err == nil && !comp.Unparsed {
-			t := comp.Targets()
-			resp.BackupTargets = &t
-		}
+	if cfg.composeOK && !cfg.compose.Unparsed {
+		t := cfg.compose.Targets()
+		resp.BackupTargets = &t
 	}
 	resp.RetentionDays = r.cfg.GetBackupRetentionDays()
 	return resp, nil

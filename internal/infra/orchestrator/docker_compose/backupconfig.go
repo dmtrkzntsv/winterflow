@@ -34,6 +34,10 @@ type appBackupConfig struct {
 	compose   recipe.Compose
 	overrides []recipe.BackupConfig
 	backups   []recipe.EffectiveBackup
+	// composeOK and overridesOK say that compose / overrides were read and
+	// parsed, so they are usable even when the effective list is not (an
+	// invalid override still leaves the compose targets and the base).
+	composeOK, overridesOK bool
 }
 
 // readOverrides is the backups list of the app's config.json (none when it
@@ -71,25 +75,33 @@ func backupsBase(overrides []recipe.BackupConfig) string {
 }
 
 // appBackups reads and validates an app's backups: the recipe in its compose
-// files with the config.json overrides on top. File reads only.
+// files with the config.json overrides on top. File reads only. On an error
+// the parts that did read are still returned (composeOK, overridesOK).
 func (r *Repository) appBackups(dir string, files []string) (appBackupConfig, error) {
-	contents, err := composeContents(dir, files)
-	if err != nil {
-		return appBackupConfig{}, fmt.Errorf("read compose files: %w", err)
+	var cfg appBackupConfig
+	contents, readErr := composeContents(dir, files)
+	var parseErr error
+	if readErr == nil {
+		cfg.compose, parseErr = recipe.ParseCompose(contents...)
+		cfg.composeOK = parseErr == nil
 	}
-	comp, err := recipe.ParseCompose(contents...)
-	if err != nil {
-		return appBackupConfig{}, err
+	overrides, overridesErr := r.readOverrides(dir)
+	cfg.overrides, cfg.overridesOK = overrides, overridesErr == nil
+	if readErr != nil {
+		return cfg, fmt.Errorf("read compose files: %w", readErr)
 	}
-	overrides, err := r.readOverrides(dir)
-	if err != nil {
-		return appBackupConfig{}, err
+	if parseErr != nil {
+		return cfg, parseErr
 	}
-	backups, err := recipe.Effective(comp, overrides)
-	if err != nil {
-		return appBackupConfig{}, err
+	if overridesErr != nil {
+		return cfg, overridesErr
 	}
-	return appBackupConfig{compose: comp, overrides: overrides, backups: backups}, nil
+	backups, err := recipe.Effective(cfg.compose, overrides)
+	if err != nil {
+		return cfg, err
+	}
+	cfg.backups = backups
+	return cfg, nil
 }
 
 // writeOverrides replaces the backups list in the app's config.json (none:

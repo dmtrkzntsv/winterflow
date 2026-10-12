@@ -6,16 +6,28 @@ package pgsqlgen
 
 import (
 	"context"
+
+	"winterflow/internal/infra/db/types"
 )
 
 type Querier interface {
+	CountFiringAlertsByServer(ctx context.Context) ([]CountFiringAlertsByServerRow, error)
 	CountUsers(ctx context.Context) (int64, error)
+	DeleteAlertEventsBefore(ctx context.Context, createdAt types.DateTime) (int64, error)
+	DeleteAlertEventsByApp(ctx context.Context, appID string) error
+	DeleteAlertEventsUpTo(ctx context.Context, arg DeleteAlertEventsUpToParams) (int64, error)
+	DeleteAlertOverride(ctx context.Context, arg DeleteAlertOverrideParams) (int64, error)
+	DeleteAlertOverridesByApp(ctx context.Context, appID string) error
+	DeleteAlertRule(ctx context.Context, arg DeleteAlertRuleParams) (int64, error)
+	DeleteAlertState(ctx context.Context, arg DeleteAlertStateParams) error
+	DeleteAlertStatesByApp(ctx context.Context, appID string) error
 	DeleteAllRegistrations(ctx context.Context) error
 	DeleteApp(ctx context.Context, appID string) error
 	DeleteAppDomainsByApp(ctx context.Context, appID string) error
 	DeleteAppDomainsByServer(ctx context.Context, serverID string) error
 	DeleteMetricSamplesBefore(ctx context.Context, arg DeleteMetricSamplesBeforeParams) (int64, error)
 	DeleteMetricSamplesByApp(ctx context.Context, appID string) error
+	DeleteNotificationChannel(ctx context.Context, arg DeleteNotificationChannelParams) (int64, error)
 	DeleteRegistration(ctx context.Context, serverID string) error
 	DeleteServerDomain(ctx context.Context, arg DeleteServerDomainParams) error
 	DeleteServerDomainsByServer(ctx context.Context, serverID string) error
@@ -24,6 +36,15 @@ type Querier interface {
 	DeleteToken(ctx context.Context, arg DeleteTokenParams) (int64, error)
 	DeleteUser(ctx context.Context, userID string) error
 	EmailTaken(ctx context.Context, email string) (bool, error)
+	// FireAlertState moves a (rule, target) to firing unless it already is;
+	// the row count says whether this call made the transition (several API
+	// replicas evaluate the same events).
+	FireAlertState(ctx context.Context, arg FireAlertStateParams) (int64, error)
+	// GetAlertEventTrimCutoff is the newest event of an org that falls outside
+	// the newest `keep` (none when the org has at most `keep`).
+	GetAlertEventTrimCutoff(ctx context.Context, arg GetAlertEventTrimCutoffParams) (GetAlertEventTrimCutoffRow, error)
+	GetAlertRule(ctx context.Context, arg GetAlertRuleParams) (AlertRule, error)
+	GetAlertServerOrganizationID(ctx context.Context, serverID string) (string, error)
 	GetApp(ctx context.Context, appID string) (App, error)
 	GetCapability(ctx context.Context, arg GetCapabilityParams) (string, error)
 	GetConnectedAccountUserID(ctx context.Context, arg GetConnectedAccountUserIDParams) (string, error)
@@ -34,6 +55,7 @@ type Querier interface {
 	GetFirstConnectedAccountProvider(ctx context.Context, userID string) (string, error)
 	GetFirstServerID(ctx context.Context) (string, error)
 	GetLatestRegistrationCode(ctx context.Context) (string, error)
+	GetNotificationChannel(ctx context.Context, arg GetNotificationChannelParams) (NotificationChannel, error)
 	GetOrganization(ctx context.Context, organizationID string) (Organization, error)
 	GetPrimaryOrganizationID(ctx context.Context, userID string) (string, error)
 	GetRegistrationByCode(ctx context.Context, code string) (ServerRegistration, error)
@@ -41,12 +63,15 @@ type Querier interface {
 	// Users, their connected accounts and local credentials.
 	GetUser(ctx context.Context, userID string) (User, error)
 	HasAnyServer(ctx context.Context) (bool, error)
+	InsertAlertEvent(ctx context.Context, arg InsertAlertEventParams) error
+	InsertAlertRule(ctx context.Context, arg InsertAlertRuleParams) error
 	InsertAppDomain(ctx context.Context, arg InsertAppDomainParams) error
 	InsertCertificate(ctx context.Context, arg InsertCertificateParams) error
 	InsertConnectedAccount(ctx context.Context, arg InsertConnectedAccountParams) error
 	InsertCredentials(ctx context.Context, arg InsertCredentialsParams) error
 	// metric_samples: monitoring time series (see migration 0010).
 	InsertMetricSample(ctx context.Context, arg InsertMetricSampleParams) error
+	InsertNotificationChannel(ctx context.Context, arg InsertNotificationChannelParams) error
 	// Organizations and memberships.
 	InsertOrganization(ctx context.Context, arg InsertOrganizationParams) error
 	InsertOrganizationUser(ctx context.Context, arg InsertOrganizationUserParams) error
@@ -58,6 +83,14 @@ type Querier interface {
 	InsertToken(ctx context.Context, arg InsertTokenParams) error
 	InsertUser(ctx context.Context, arg InsertUserParams) error
 	IsOrganizationMember(ctx context.Context, arg IsOrganizationMemberParams) (bool, error)
+	ListAlertDirectoryApps(ctx context.Context) ([]ListAlertDirectoryAppsRow, error)
+	ListAlertDirectoryServers(ctx context.Context) ([]ListAlertDirectoryServersRow, error)
+	// ListAlertEvents pages an org's history newest first; an empty filter
+	// matches everything, and the page starts strictly before
+	// (before_at, before_id).
+	ListAlertEvents(ctx context.Context, arg ListAlertEventsParams) ([]AlertEvent, error)
+	ListAlertOverrides(ctx context.Context, organizationID string) ([]AlertOverride, error)
+	ListAlertRules(ctx context.Context, organizationID string) ([]AlertRule, error)
 	ListAppDomainNames(ctx context.Context, arg ListAppDomainNamesParams) ([]string, error)
 	ListAppDomainsByServer(ctx context.Context, serverID string) ([]AppDomain, error)
 	ListAppIDsByServer(ctx context.Context, serverID string) ([]string, error)
@@ -65,9 +98,16 @@ type Querier interface {
 	ListAppsByServer(ctx context.Context, serverID string) ([]App, error)
 	ListCapabilitiesByUser(ctx context.Context, userID string) ([]ListCapabilitiesByUserRow, error)
 	ListFeaturesByUser(ctx context.Context, userID string) ([]ServerFeature, error)
+	ListFiringAlertStates(ctx context.Context) ([]ListFiringAlertStatesRow, error)
 	ListMetricSamples(ctx context.Context, arg ListMetricSamplesParams) ([]MetricSample, error)
 	ListMetricSamplesInRange(ctx context.Context, arg ListMetricSamplesInRangeParams) ([]MetricSample, error)
+	ListNotificationChannels(ctx context.Context, organizationID string) ([]NotificationChannel, error)
+	ListOrgFiringAlertStates(ctx context.Context, organizationID string) ([]ListOrgFiringAlertStatesRow, error)
 	ListOrganizationMembers(ctx context.Context, organizationID string) ([]User, error)
+	// ListOversizedAlertOrganizations lists the orgs past the history cap. The
+	// literal is alert repository's EventsPerOrg (sqlc cannot bind a HAVING
+	// parameter); keep them in step.
+	ListOversizedAlertOrganizations(ctx context.Context) ([]string, error)
 	ListServerAppMetricSamples(ctx context.Context, arg ListServerAppMetricSamplesParams) ([]MetricSample, error)
 	// The server_domains index (mirrors each agent's domain registrations).
 	ListServerDomains(ctx context.Context, serverID string) ([]ServerDomain, error)
@@ -76,16 +116,27 @@ type Querier interface {
 	ListServerUserIDs(ctx context.Context, serverID string) ([]string, error)
 	// Servers, their capabilities/features, registrations and certificates.
 	ListServersByUser(ctx context.Context, userID string) ([]Server, error)
+	ListTargetAlertOverrides(ctx context.Context, arg ListTargetAlertOverridesParams) ([]AlertOverride, error)
 	ListTokensByUser(ctx context.Context, userID string) ([]UserToken, error)
+	// Alerts: channels, rules, overrides, states, events (see migration 0012).
+	ListUnseededOrganizationIDs(ctx context.Context) ([]string, error)
 	// LockOrganizationMember re-reads and row-locks the caller's membership
 	// inside RemoveMember's transaction, so two members removing each other
 	// concurrently cannot empty the org.
 	LockOrganizationMember(ctx context.Context, arg LockOrganizationMemberParams) (string, error)
+	MarkAlertDefaultsSeeded(ctx context.Context, organizationID string) (int64, error)
+	RecordChannelFailure(ctx context.Context, arg RecordChannelFailureParams) error
+	RecordChannelSuccess(ctx context.Context, arg RecordChannelSuccessParams) error
 	RenameApp(ctx context.Context, arg RenameAppParams) error
+	ResolveAlertState(ctx context.Context, arg ResolveAlertStateParams) (int64, error)
+	SetAlertEventDeliveries(ctx context.Context, arg SetAlertEventDeliveriesParams) error
 	TouchServerLastSeen(ctx context.Context, arg TouchServerLastSeenParams) error
 	TouchTokenLastUsed(ctx context.Context, arg TouchTokenLastUsedParams) error
+	UpdateAlertRule(ctx context.Context, arg UpdateAlertRuleParams) (int64, error)
+	UpdateNotificationChannel(ctx context.Context, arg UpdateNotificationChannelParams) (int64, error)
 	UpdateOrganization(ctx context.Context, arg UpdateOrganizationParams) (int64, error)
 	UpdatePassword(ctx context.Context, arg UpdatePasswordParams) (int64, error)
+	UpsertAlertOverride(ctx context.Context, arg UpsertAlertOverrideParams) error
 	UpsertApp(ctx context.Context, arg UpsertAppParams) error
 	UpsertCapability(ctx context.Context, arg UpsertCapabilityParams) error
 	UpsertFeature(ctx context.Context, arg UpsertFeatureParams) error

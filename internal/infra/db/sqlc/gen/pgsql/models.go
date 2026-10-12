@@ -8,6 +8,57 @@ import (
 	"winterflow/internal/infra/db/types"
 )
 
+type AlertEvent struct {
+	EventID        string
+	OrganizationID string
+	RuleID         string
+	ServerID       string
+	AppID          string
+	ServerName     string
+	AppName        string
+	TargetKind     string
+	Metric         string
+	Kind           string
+	Value          float64
+	Threshold      float64
+	Title          string
+	Message        string
+	Deliveries     string
+	CreatedAt      types.DateTime
+}
+
+type AlertOverride struct {
+	RuleID          string
+	ServerID        string
+	AppID           string
+	Disabled        bool
+	Threshold       *float64
+	DurationMinutes *int64
+	ChannelIds      *string
+}
+
+type AlertRule struct {
+	RuleID          string
+	OrganizationID  string
+	TargetKind      string
+	Metric          string
+	Threshold       float64
+	DurationMinutes int64
+	ChannelIds      *string
+	Enabled         bool
+	CreatedAt       types.DateTime
+}
+
+type AlertState struct {
+	RuleID    string
+	ServerID  string
+	AppID     string
+	State     string
+	Since     types.DateTime
+	Value     float64
+	Threshold float64
+}
+
 type App struct {
 	AppID      string
 	ServerID   string
@@ -40,12 +91,27 @@ type MetricSample struct {
 	Data        string
 }
 
-type Organization struct {
+type NotificationChannel struct {
+	ChannelID      string
 	OrganizationID string
 	Name           string
+	Service        string
+	Fields         string
+	UrlEncrypted   string
+	IsDefault      bool
+	Enabled        bool
+	LastError      string
+	LastSentAt     *types.DateTime
 	CreatedAt      types.DateTime
-	Icon           string
-	Color          string
+}
+
+type Organization struct {
+	OrganizationID      string
+	Name                string
+	CreatedAt           types.DateTime
+	Icon                string
+	Color               string
+	AlertDefaultsSeeded bool
 }
 
 type OrganizationUser struct {

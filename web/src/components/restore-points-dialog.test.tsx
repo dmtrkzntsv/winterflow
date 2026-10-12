@@ -50,7 +50,7 @@ describe("RestorePointsDialog", () => {
     render(<RestorePointsDialog appId="a1" backup={database} backups={fake()} open onOpenChange={() => {}} />);
     expect(await screen.findByText(when(POINTS[0]))).toBeInTheDocument();
     expect(screen.getByText("Manual")).toBeInTheDocument();
-    expect(screen.getByText("Before a restore")).toBeInTheDocument();
+    expect(screen.getByText("Pre-restore")).toBeInTheDocument();
     expect(screen.getByText("2.0 kB")).toBeInTheDocument();
     expect(screen.getByText(/expires in 3 days/)).toBeInTheDocument();
   });
@@ -70,7 +70,7 @@ describe("RestorePointsDialog", () => {
     await waitFor(() => expect(onRestored).toHaveBeenCalled());
     expect(backups.restoreBackup).toHaveBeenCalledWith("a1", "database", "p2");
     expect(toastSuccess).toHaveBeenCalledWith(`database restored to ${when(POINTS[0])}`, {
-      description: "The data it replaced was saved as p3.\n/x: skipped",
+      description: "The data it replaced was saved as a pre-restore copy.\n/x: skipped",
     });
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   });
@@ -84,6 +84,7 @@ describe("RestorePointsDialog", () => {
     await user.click(await screen.findByRole("button", { name: `Restore the copy of ${when(POINTS[1])}` }));
     expect(screen.getByRole("alertdialog")).toHaveTextContent("while its files are replaced");
     expect(screen.getByRole("alertdialog")).toHaveTextContent("Files this backup excludes are kept as they are.");
+    expect(screen.getByRole("alertdialog")).toHaveTextContent("Files added to these paths since this copy was made are removed.");
     await user.click(screen.getByRole("button", { name: "Restore" }));
     await waitFor(() =>
       expect(toastError).toHaveBeenCalledWith("Restore failed", {
@@ -107,16 +108,20 @@ describe("RestorePointsDialog", () => {
     );
     await user.click(await screen.findByRole("button", { name: `Restore the copy of ${when(POINTS[0])}` }));
     await user.click(screen.getByRole("button", { name: "Restore" }));
-    expect(await screen.findByText(/the app is stopped until it is done/)).toBeInTheDocument();
-    const [close] = screen.getAllByRole("button", { name: "Close" });
-    expect(close).toBeEnabled();
-    await user.click(close);
+    expect(await screen.findByText(/Restoring: the app is stopped until it is done/)).toBeInTheDocument();
+    // The confirmation closes (its Cancel reads Close), then the dialog.
+    const confirm = screen.getByRole("alertdialog");
+    await user.click(within(confirm).getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(screen.getByText(/A restore of this app is running/)).toBeInTheDocument();
+    const footerClose = screen.getAllByRole("button", { name: "Close" }).find((b) => !b.querySelector("svg"))!;
+    await user.click(footerClose);
     expect(onOpenChange).toHaveBeenCalledWith(false);
     unmount();
     finish({ restored_point: "p2", pre_restore_point: "p3", warnings: [] });
     await waitFor(() => expect(onRestored).toHaveBeenCalled());
     expect(toastSuccess).toHaveBeenCalledWith(`database restored to ${when(POINTS[0])}`, {
-      description: "The data it replaced was saved as p3.",
+      description: "The data it replaced was saved as a pre-restore copy.",
     });
     expect(backups.listRestorePoints).toHaveBeenCalledTimes(1); // not refreshed once closed
   });
@@ -148,6 +153,33 @@ describe("RestorePointsDialog", () => {
     expect(restore()).toBeDisabled();
   });
 
+  it("confirms in a dialog of its own: Cancel is focused, Escape closes only it, focus goes back to the row", async () => {
+    const user = userEvent.setup({ delay: null });
+    const onOpenChange = vi.fn();
+    render(<RestorePointsDialog appId="a1" backup={database} backups={fake()} open onOpenChange={onOpenChange} />);
+    const row = await screen.findByRole("button", { name: `Restore the copy of ${when(POINTS[0])}` });
+    await user.click(row);
+    const confirm = await screen.findByRole("alertdialog");
+    expect(within(confirm).getByRole("button", { name: "Cancel" })).toHaveFocus();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: `Restore the copy of ${when(POINTS[0])}` })).toHaveFocus());
+  });
+
+  it("names the stored copy for a pre-restore point and lets a failed list be retried", async () => {
+    const user = userEvent.setup({ delay: null });
+    const list = vi.fn().mockRejectedValueOnce(new Error("the storage did not answer")).mockResolvedValue(POINTS);
+    render(<RestorePointsDialog appId="a1" backup={database} backups={fake({ listRestorePoints: list })} open onOpenChange={() => {}} />);
+    expect(await screen.findByText(/Stored in/)).toHaveTextContent("Stored in disk · newest first");
+    expect(await screen.findByText("the storage did not answer")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText(when(POINTS[0]))).toBeInTheDocument();
+    // The size is shown on a phone too.
+    expect(screen.getByRole("columnheader", { name: "Size" })).not.toHaveClass("hidden");
+  });
+
   it("deletes a copy after a confirmation", async () => {
     const user = userEvent.setup({ delay: null });
     const backups = fake();
@@ -158,7 +190,7 @@ describe("RestorePointsDialog", () => {
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     await user.click(screen.getByRole("button", { name: `Delete the copy of ${when(POINTS[1])}` }));
     await user.click(screen.getByRole("button", { name: "Delete copy" }));
-    await waitFor(() => expect(screen.queryByText("Before a restore")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText("Pre-restore")).not.toBeInTheDocument());
     expect(backups.deleteRestorePoint).toHaveBeenCalledWith("a1", "database", "p1");
     expect(toastSuccess).toHaveBeenCalledWith("Copy deleted");
   });

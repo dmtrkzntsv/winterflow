@@ -207,6 +207,20 @@ export function StoragesCard({ docker }: { docker: Docker }) {
                           <AppLinks ids={used} names={names} chips />
                         </div>
                       ) : null}
+                      {/* Copies of deleted apps stay in the storage: a labeled
+                          entry point, so they can be found. */}
+                      <Button
+                        variant="link"
+                        size="sm"
+                        className="mt-1 h-auto p-0 text-xs text-muted-foreground hover:text-foreground"
+                        aria-label={`Other apps' backups in ${s.name}`}
+                        onClick={(e) => {
+                          opener.current = e.currentTarget;
+                          setOrphansOf(s.name);
+                        }}
+                      >
+                        <Archive className="size-3.5" /> Other apps' backups
+                      </Button>
                     </TableCell>
                     <TableCell className="hidden sm:table-cell">{type}</TableCell>
                     <TableCell className="hidden font-mono text-xs [overflow-wrap:anywhere] md:table-cell">
@@ -216,19 +230,6 @@ export function StoragesCard({ docker }: { docker: Docker }) {
                       <AppLinks ids={used} names={names} chips />
                     </TableCell>
                     <TableCell className="whitespace-nowrap py-0.5 text-right">
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="size-8 text-muted-foreground"
-                        aria-label={`Backups of apps not on this server in ${s.name}`}
-                        title="Backups of apps not on this server"
-                        onClick={(e) => {
-                          opener.current = e.currentTarget;
-                          setOrphansOf(s.name);
-                        }}
-                      >
-                        <Archive className="size-4" />
-                      </Button>
                       <Button
                         size="icon"
                         variant="ghost"

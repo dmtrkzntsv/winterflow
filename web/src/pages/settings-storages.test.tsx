@@ -611,13 +611,15 @@ describe("StorageDialog form", () => {
     const user = setupUser();
     backups.listOrphans.mockResolvedValue([{ app_id: "gone-1", app_name: "Old shop", copies: 2, bytes: 2048, deleted_at: 1790812800, purge_at: 1806364800 }]);
     renderCard(fakeDocker());
-    await user.click(await screen.findByRole("button", { name: "Backups of apps not on this server in disk" }));
+    // A labeled entry point, not an unlabeled icon.
+    expect(await screen.findByRole("button", { name: "Other apps' backups in disk" })).toHaveTextContent("Other apps' backups");
+    await user.click(screen.getByRole("button", { name: "Other apps' backups in disk" }));
     const dialog = await screen.findByRole("dialog");
     expect(await within(dialog).findByText("Old shop")).toBeInTheDocument();
     expect(backups.listOrphans).toHaveBeenCalledWith("disk");
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    expect(screen.getByRole("button", { name: "Backups of apps not on this server in disk" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Other apps' backups in disk" })).toHaveFocus();
   });
 
   it("announces only the test result, not the button", async () => {

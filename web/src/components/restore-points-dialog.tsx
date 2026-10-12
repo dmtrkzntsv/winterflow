@@ -1,9 +1,19 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { buttonVariants } from "@/components/ui/button-variants";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Spinner } from "@/components/ui/spinner";
 import {
   Dialog,
@@ -16,7 +26,8 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { Backups } from "@/context/use-backups";
 import { isRunning, restoringBackup, trackActivity, useActivity } from "@/lib/backup-activity";
-import { expiresNote, formatBytes, KIND_LABELS, relativeAge, type EffectiveBackup, type RestorePoint } from "@/lib/backups";
+import { expiresNote, formatBytes, KIND_LABELS, pointLabel, relativeAge, type EffectiveBackup, type RestorePoint } from "@/lib/backups";
+import { returnFocusTo } from "@/lib/focus";
 
 type Confirm = { action: "restore" | "delete"; point: RestorePoint };
 
@@ -25,7 +36,8 @@ const when = (p: RestorePoint) => new Date(p.time * 1000).toLocaleString();
 // RestorePointsDialog lists a backup's copies (time, kind, size; "expires
 // in N days" near the server's ceiling), each restorable — after a
 // confirmation saying the app stops and its current data is first saved as
-// a pre-restore point — and deletable. A backup that is off can't be
+// a pre-restore copy — and deletable. The confirmation is a dialog of its
+// own (always on screen, Cancel focused, Escape closes only it). A backup that is off can't be
 // restored (its storage and mounts are only resolved while it is on).
 // A restore can run for a long while (its result arrives over SSE): the
 // dialog may be closed meanwhile, the page shows the restore under way
@@ -38,6 +50,7 @@ export function RestorePointsDialog({
   open,
   busy: saving = false,
   running = false,
+  returnFocus,
   onOpenChange,
   onRestored,
 }: {
@@ -47,6 +60,7 @@ export function RestorePointsDialog({
   open: boolean;
   busy?: boolean; // a change to the app's backups is being saved
   running?: boolean; // the agent reports a run of this backup
+  returnFocus?: RefObject<HTMLElement | null>; // where focus goes back when the dialog closes
   onOpenChange: (open: boolean) => void;
   onRestored?: () => void;
 }) {
@@ -55,6 +69,10 @@ export function RestorePointsDialog({
   const [confirm, setConfirm] = useState<Confirm | null>(null);
   const [busy, setBusy] = useState<"restore" | "delete" | null>(null);
   const [failure, setFailure] = useState("");
+  // The row button that opened the confirmation, and the footer's Close:
+  // focus goes back to the first one still on the page.
+  const opener = useRef<HTMLElement | null>(null);
+  const closeButton = useRef<HTMLButtonElement>(null);
   // Any restore of this app, started here or before (a restore stops the app,
   // and the agent refuses a second one).
   const activity = useActivity(appId);
@@ -92,7 +110,9 @@ export function RestorePointsDialog({
     try {
       if (action === "restore") {
         const res = await backups.restoreBackup(appId, backup.name, point.id);
-        const saved = res.pre_restore_point ? `The data it replaced was saved as ${res.pre_restore_point}.` : "";
+        const saved = res.pre_restore_point
+          ? `The data it replaced was saved as a ${pointLabel(res.pre_restore_point, "pre-restore")}.`
+          : "";
         toast.success(`${backup.name} restored to ${when(point)}`, {
           description: [saved, ...res.warnings].filter(Boolean).join("\n") || undefined,
         });
@@ -121,75 +141,29 @@ export function RestorePointsDialog({
 
   const what = backup.type === "sqlite" ? "database" : "files";
   const hasExclude = (backup.exclude ?? []).length > 0;
+  const toggleOpener = (e: { currentTarget: HTMLElement }, next: Confirm) => {
+    opener.current = e.currentTarget;
+    setFailure("");
+    setConfirm(next);
+  };
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl">
+      <DialogContent
+        className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl"
+        onCloseAutoFocus={returnFocusTo(returnFocus)}
+      >
         <DialogHeader>
           <DialogTitle>Copies of {backup.name}</DialogTitle>
-          <DialogDescription>Newest first, in {backup.storage || "its storage"}.</DialogDescription>
+          <DialogDescription>
+            Stored in <code className="font-mono text-foreground">{backup.storage || "its storage"}</code> · newest first
+          </DialogDescription>
         </DialogHeader>
-        {confirm ? (
-          <div
-            role="alertdialog"
-            aria-labelledby="point-confirm-title"
-            aria-describedby="point-confirm"
-            className="grid gap-3 rounded-md border border-destructive/40 bg-destructive/5 p-4"
-          >
-            <h3 id="point-confirm-title" className="text-sm font-medium">
-              {confirm.action === "restore" ? "Restore this copy?" : "Delete this copy?"}
-            </h3>
-            {confirm.action === "restore" ? (
-              <div id="point-confirm" className="grid gap-2 text-sm">
-                <p>
-                  Restore {backup.name} to the copy of <strong>{when(confirm.point)}</strong>.
-                </p>
-                <ul className="list-disc space-y-1 pl-5">
-                  <li>
-                    The app stops while its {what} {what === "database" ? "is" : "are"} replaced, then starts again if it was running.
-                  </li>
-                  <li>
-                    The current {what} {what === "database" ? "is" : "are"} first saved as a <strong>pre-restore</strong> copy, so
-                    you can go back.
-                  </li>
-                  {hasExclude ? <li>Files this backup excludes are kept as they are.</li> : null}
-                  <li>It can take a while for a large backup. You can close this window; the result shows up as a notification.</li>
-                </ul>
-              </div>
-            ) : (
-              <p id="point-confirm" className="text-sm">
-                Delete the copy of <strong>{when(confirm.point)}</strong> ({formatBytes(confirm.point.size)})? It can't be restored
-                afterwards.
-                {confirm.point.kind === "pre-restore"
-                  ? " This is the data a restore replaced: it may be the only way back from that restore."
-                  : ""}
-              </p>
-            )}
-            {busy === "restore" ? (
-              <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Spinner aria-hidden className="size-4" /> Restoring: the app is stopped until it is done.
-              </p>
-            ) : null}
-            {failure ? (
-              <p role="alert" className="text-sm text-destructive [overflow-wrap:anywhere]">
-                {failure}
-              </p>
-            ) : null}
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" size="sm" autoFocus onClick={() => setConfirm(null)} disabled={busy !== null}>
-                Cancel
-              </Button>
-              <Button size="sm" className={buttonVariants({ variant: "destructive", size: "sm" })} onClick={() => void run(confirm)} disabled={busy !== null}>
-                {confirm.action === "restore" ? (busy ? "Restoring…" : "Restore") : busy ? "Deleting…" : "Delete copy"}
-              </Button>
-            </div>
-          </div>
-        ) : null}
         {!backup.enabled ? (
           <p className="text-sm text-muted-foreground">
             Turn the backup on to restore a copy: the app's mounts and the storage are only used while it is on. You can still
             delete copies.
           </p>
-        ) : restoring && busy !== "restore" ? (
+        ) : restoring ? (
           <p role="status" className="text-sm text-muted-foreground">
             A restore of this app is running: copies can't be restored or deleted until it is done.
           </p>
@@ -199,9 +173,14 @@ export function RestorePointsDialog({
           </p>
         ) : null}
         {error ? (
-          <p role="alert" className="text-sm text-destructive">
-            {error}
-          </p>
+          <div className="grid justify-items-start gap-2">
+            <p role="alert" className="text-sm text-destructive [overflow-wrap:anywhere]">
+              {error}
+            </p>
+            <Button variant="outline" size="sm" onClick={() => void load()}>
+              Try again
+            </Button>
+          </div>
         ) : points === null ? (
           <div className="flex h-24 items-center justify-center">
             <Spinner />
@@ -216,7 +195,7 @@ export function RestorePointsDialog({
               <TableRow>
                 <TableHead>Time</TableHead>
                 <TableHead>Kind</TableHead>
-                <TableHead className="hidden sm:table-cell">Size</TableHead>
+                <TableHead>Size</TableHead>
                 <TableHead className="w-px">
                   <span className="sr-only">Actions</span>
                 </TableHead>
@@ -237,7 +216,7 @@ export function RestorePointsDialog({
                     <TableCell>
                       <Badge variant={p.kind === "pre-restore" ? "secondary" : "outline"}>{KIND_LABELS[p.kind]}</Badge>
                     </TableCell>
-                    <TableCell className="hidden sm:table-cell">{formatBytes(p.size)}</TableCell>
+                    <TableCell className="whitespace-nowrap">{formatBytes(p.size)}</TableCell>
                     <TableCell className="whitespace-nowrap py-0.5 text-right">
                       <Button
                         size="sm"
@@ -245,7 +224,7 @@ export function RestorePointsDialog({
                         aria-label={`Restore the copy of ${when(p)}`}
                         disabled={busy !== null || !backup.enabled || restoring || runBusy}
                         title={backup.enabled ? undefined : "Turn the backup on to restore"}
-                        onClick={() => setConfirm({ action: "restore", point: p })}
+                        onClick={(e) => toggleOpener(e, { action: "restore", point: p })}
                       >
                         Restore
                       </Button>
@@ -255,7 +234,7 @@ export function RestorePointsDialog({
                         className="text-destructive hover:text-destructive"
                         aria-label={`Delete the copy of ${when(p)}`}
                         disabled={busy !== null || restoring}
-                        onClick={() => setConfirm({ action: "delete", point: p })}
+                        onClick={(e) => toggleOpener(e, { action: "delete", point: p })}
                       >
                         Delete
                       </Button>
@@ -267,11 +246,73 @@ export function RestorePointsDialog({
           </Table>
         )}
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button ref={closeButton} variant="outline" onClick={() => onOpenChange(false)}>
             Close
           </Button>
         </DialogFooter>
       </DialogContent>
+      <AlertDialog open={confirm !== null} onOpenChange={(o) => !o && busy !== "delete" && setConfirm(null)}>
+        {confirm ? (
+          <AlertDialogContent onCloseAutoFocus={returnFocusTo(opener, closeButton)}>
+            <AlertDialogHeader>
+              <AlertDialogTitle>{confirm.action === "restore" ? "Restore this copy?" : "Delete this copy?"}</AlertDialogTitle>
+              <AlertDialogDescription asChild>
+                {confirm.action === "restore" ? (
+                  <div className="grid gap-2 text-left">
+                    <p>
+                      Restore {backup.name} to the copy of <strong>{when(confirm.point)}</strong>.
+                    </p>
+                    <ul className="list-disc space-y-1 pl-5">
+                      <li>
+                        The app stops while its {what} {what === "database" ? "is" : "are"} replaced, then starts again if it was
+                        running.
+                      </li>
+                      <li>
+                        The current {what} {what === "database" ? "is" : "are"} first saved as a <strong>pre-restore</strong> copy,
+                        so you can go back.
+                      </li>
+                      {what === "files" ? <li>Files added to these paths since this copy was made are removed.</li> : null}
+                      {hasExclude ? <li>Files this backup excludes are kept as they are.</li> : null}
+                      <li>It can take a while for a large backup. You can close this window; the result shows up as a notification.</li>
+                    </ul>
+                  </div>
+                ) : (
+                  <p>
+                    Delete the copy of <strong>{when(confirm.point)}</strong> ({formatBytes(confirm.point.size)})? It can't be restored
+                    afterwards.
+                    {confirm.point.kind === "pre-restore"
+                      ? " This is the data a restore replaced: it may be the only way back from that restore."
+                      : ""}
+                  </p>
+                )}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            {busy === "restore" ? (
+              <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Spinner aria-hidden className="size-4" /> Restoring: the app is stopped until it is done.
+              </p>
+            ) : null}
+            {failure ? (
+              <p role="alert" className="text-sm text-destructive [overflow-wrap:anywhere]">
+                {failure}
+              </p>
+            ) : null}
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={busy === "delete"}>{busy === "restore" ? "Close" : "Cancel"}</AlertDialogCancel>
+              <AlertDialogAction
+                className={buttonVariants({ variant: "destructive" })}
+                disabled={busy !== null}
+                onClick={(e) => {
+                  e.preventDefault();
+                  void run(confirm);
+                }}
+              >
+                {confirm.action === "restore" ? (busy ? "Restoring…" : "Restore") : busy ? "Deleting…" : "Delete copy"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        ) : null}
+      </AlertDialog>
     </Dialog>
   );
 }

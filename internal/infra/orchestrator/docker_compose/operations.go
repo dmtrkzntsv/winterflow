@@ -84,14 +84,34 @@ func (r *Repository) saveWithoutDeploy(app command.AppPayload) (string, error) {
 
 // save is saveWithoutDeploy with the warnings of the save: backup settings
 // dropped because the compose file no longer has their backup.
+//
+// A git-sourced app's upstream is synced first, before the app's lock is
+// taken (the clone or fetch can take minutes and must not hold up the other
+// writers of the app's files); the files are then written and committed in one
+// step under it.
 func (r *Repository) save(app command.AppPayload) (string, []string, error) {
-	// One writer of the app's files at a time (a backups update checks its
-	// base against them); a source sync under it is bounded.
-	unlock, _ := r.lockApp(context.Background(), app.AppID)
-	defer unlock()
 	dir := r.appDataDir(app.AppID)
 	_, statErr := os.Stat(dir)
 	created := errors.Is(statErr, fs.ErrNotExist) // this save creates the app's folder
+	if spec := payloadSourceSpec(app.Config); spec != nil {
+		if err := r.syncSourceForSave(dir, app, *spec); err != nil {
+			if created {
+				// No half-saved app is ever listed.
+				_ = os.RemoveAll(dir)
+			}
+			return "", nil, fmt.Errorf("sync source: %w", err)
+		}
+	}
+
+	// One writer of the app's files at a time (a backups update checks its
+	// base against them).
+	unlock, _ := r.lockApp(context.Background(), app.AppID)
+	locked := true
+	defer func() {
+		if locked {
+			unlock()
+		}
+	}()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", nil, err
 	}
@@ -104,19 +124,16 @@ func (r *Repository) save(app command.AppPayload) (string, []string, error) {
 		return "", nil, fmt.Errorf("write app store: %w", err)
 	}
 
-	// Git-sourced app: sync the upstream and pin its head BEFORE committing,
-	// so the lock lands inside this save's commit.
-	if spec := r.appSourceSpec(dir); spec != nil {
-		if _, err := r.ensureSource(context.Background(), dir, *spec, r.sourceTokenPlaintext(dir), ""); err != nil {
-			return "", nil, fmt.Errorf("sync source: %w", err)
-		}
-	}
-
 	// The backups must be valid against the compose file being saved (for
 	// a git-sourced app, the one just pulled); nothing is committed if not.
 	warnings, err := r.cleanBackups(dir)
 	if err != nil {
-		r.undoSave(dir, created, savedPaths(app))
+		restoreSource := r.undoSave(dir, created, savedPaths(app))
+		unlock()
+		locked = false
+		if restoreSource {
+			r.restoreSource(app.AppID, dir)
+		}
 		return "", nil, err
 	}
 
@@ -133,6 +150,59 @@ func (r *Repository) save(app command.AppPayload) (string, []string, error) {
 		r.log.Warn("failed to update app symlink", "app_id", app.AppID, "error", err)
 	}
 	return hash, warnings, nil
+}
+
+// payloadSourceSpec is the source configuration of the config blob a save
+// carries; nil for an editor-authored app (or an unreadable blob, which
+// writeAppStore and cleanBackups then report).
+func payloadSourceSpec(config []byte) *sourceSpec {
+	var cfg map[string]any
+	if json.Unmarshal(config, &cfg) != nil {
+		return nil
+	}
+	return sourceFromConfig(cfg)
+}
+
+// syncSourceForSave syncs the upstream of the app being saved and pins its
+// head, so source.lock lands in the save's commit. It runs before the app's
+// lock is taken, on the source's own (see lockSource), with the token the
+// payload carries (the stored one for the placeholder) as writeAppStore will
+// store it.
+func (r *Repository) syncSourceForSave(dir string, app command.AppPayload, spec sourceSpec) error {
+	token := ""
+	if app.Source != nil {
+		ct := string(app.Source.Token)
+		if ct == command.EncryptedPlaceholder {
+			ct = loadSecretStore(dir).SourceToken
+		}
+		token = r.decryptSourceToken(ct)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	unlock, _ := r.lockSource(context.Background(), app.AppID)
+	defer unlock()
+	_, err := r.ensureSource(context.Background(), dir, spec, token, "")
+	return err
+}
+
+// restoreSource puts source/ back at the commit the app's lock (restored by
+// an undone save) names, on the source's own lock: ensureSource is bounded,
+// but is network work.
+func (r *Repository) restoreSource(appID, dir string) {
+	spec := r.appSourceSpec(dir)
+	if spec == nil {
+		return
+	}
+	lock, ok := readSourceLock(dir)
+	if !ok {
+		return
+	}
+	unlock, _ := r.lockSource(context.Background(), appID)
+	defer unlock()
+	if _, err := r.ensureSource(context.Background(), dir, *spec, r.sourceTokenPlaintext(dir), lock.SHA); err != nil {
+		r.log.Warn("undo a refused save: restore source", "dir", dir, "error", err)
+	}
 }
 
 // savedPaths are the committed-state files writeAppStore writes for app
@@ -153,16 +223,18 @@ func savedPaths(app command.AppPayload) []string {
 // undoSave puts an app's folder back the way its last commit left it after
 // a save that was refused before committing: tracked files are restored,
 // the files the save wrote (written) that the last commit doesn't have are
-// removed, and a git-sourced app's source/ goes back to the restored lock.
-// A folder this save created (created) is removed whole, so no half-saved
-// app is ever listed; a folder that existed before (even without a commit
-// yet) only loses what the save wrote.
-func (r *Repository) undoSave(dir string, created bool, written []string) {
+// removed. A folder this save created (created) is removed whole, so no
+// half-saved app is ever listed; a folder that existed before (even without
+// a commit yet) only loses what the save wrote. It reports whether a
+// git-sourced app's source/ is to go back to the restored lock
+// (restoreSource, which is network work: the caller does it once it has
+// released the app's lock), since the save moved it to the new upstream head.
+func (r *Repository) undoSave(dir string, created bool, written []string) (restoreSource bool) {
 	if created {
 		if err := os.RemoveAll(dir); err != nil {
 			r.log.Warn("undo a refused save", "dir", dir, "error", err)
 		}
-		return
+		return false
 	}
 	head, headErr := gitHead(dir)
 	if headErr == nil {
@@ -178,17 +250,7 @@ func (r *Repository) undoSave(dir string, created bool, written []string) {
 			r.log.Warn("undo a refused save", "file", rel, "error", err)
 		}
 	}
-	if headErr != nil {
-		return
-	}
-	// ensureSource already moved source/ to the new upstream head.
-	if spec := r.appSourceSpec(dir); spec != nil {
-		if lock, ok := readSourceLock(dir); ok {
-			if _, err := r.ensureSource(context.Background(), dir, *spec, r.sourceTokenPlaintext(dir), lock.SHA); err != nil {
-				r.log.Warn("undo a refused save: restore source", "dir", dir, "error", err)
-			}
-		}
-	}
+	return headErr == nil
 }
 
 // Revisions returns the app's git history (newest first) and the current HEAD.
@@ -248,7 +310,10 @@ func (r *Repository) rollbackWithoutDeploy(appID, hash string) (string, error) {
 	// that revision — put source/ back exactly there.
 	if spec := r.appSourceSpec(dir); spec != nil {
 		if lock, ok := readSourceLock(dir); ok {
-			if _, err := r.ensureSource(context.Background(), dir, *spec, r.sourceTokenPlaintext(dir), lock.SHA); err != nil {
+			unlockSource, _ := r.lockSource(context.Background(), appID)
+			_, err := r.ensureSource(context.Background(), dir, *spec, r.sourceTokenPlaintext(dir), lock.SHA)
+			unlockSource()
+			if err != nil {
 				return "", fmt.Errorf("restore source: %w", err)
 			}
 		}
@@ -369,7 +434,9 @@ func (r *Repository) refreshSourceWithoutDeploy(appID string) (bool, string, err
 		return false, "", fmt.Errorf("app %s is not git-sourced", appID)
 	}
 	prev, _ := readSourceLock(dir)
+	unlockSource, _ := r.lockSource(context.Background(), appID)
 	sha, err := r.ensureSource(context.Background(), dir, *spec, r.sourceTokenPlaintext(dir), "")
+	unlockSource()
 	if err != nil {
 		return false, "", err
 	}
@@ -380,6 +447,14 @@ func (r *Repository) refreshSourceWithoutDeploy(appID string) (bool, string, err
 	if len(short) > 8 {
 		short = short[:8]
 	}
+	// The commit stages everything, so it is made under the app's lock, with
+	// no writer between its files and its own commit: it would otherwise take
+	// in that writer's half-written files, and two go-git writes to one
+	// repository can corrupt its index. It waits without a deadline (the
+	// holders are bounded): a poll that gave up would not retry, as the lock
+	// it just wrote makes the next poll see nothing new.
+	unlock, _ := r.lockApp(context.Background(), appID)
+	defer unlock()
 	if _, err := gitCommitAll(dir, "update source to "+short); err != nil {
 		return false, "", fmt.Errorf("commit source update: %w", err)
 	}

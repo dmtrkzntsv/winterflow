@@ -3,10 +3,13 @@ package dockercompose
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -298,5 +301,123 @@ func TestRefreshDueSourcesHonorsIntervalAndFlag(t *testing.T) {
 	upHead, _ := gitLog(up)
 	if lock.SHA != upHead[0].Hash {
 		t.Fatalf("lock not advanced: %s vs %s", lock.SHA, upHead[0].Hash)
+	}
+}
+
+// The upstream sync of a save (a clone or fetch that can take minutes) does
+// not hold the app's lock: the other writers of the app's files (backup
+// settings, a rename) are not kept waiting for it. A refused sync of a new
+// app leaves no folder behind.
+func TestSaveSyncsTheSourceWithoutHoldingTheAppLock(t *testing.T) {
+	r := newTestRepo(t)
+	entered, release := make(chan struct{}, 8), make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		entered <- struct{}{}
+		<-release
+		http.Error(w, "gone", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	var once sync.Once
+	releaseAll := func() { once.Do(func() { close(release) }) }
+	defer releaseAll()
+
+	errc := make(chan error, 1)
+	go func() {
+		_, err := r.saveWithoutDeploy(sourcePayload(srv.URL+"/up.git", ""))
+		errc <- err
+	}()
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the save never reached the upstream")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	unlock, err := r.lockApp(ctx, "git-app")
+	if err != nil {
+		t.Fatalf("the app's lock is held across the sync: %v", err)
+	}
+	unlock()
+	// The source's own lock is.
+	sctx, scancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer scancel()
+	if _, err := r.lockSource(sctx, "git-app"); err == nil {
+		t.Fatal("two operations on source/ at once")
+	}
+	releaseAll()
+	if err := <-errc; err == nil || !strings.Contains(err.Error(), "sync source") {
+		t.Fatalf("save err = %v", err)
+	}
+	if _, err := os.Stat(r.appDataDir("git-app")); !os.IsNotExist(err) {
+		t.Fatalf("a refused save of a new app left its folder: %v", err)
+	}
+}
+
+// A source poll's commit stages everything, so it is made under the app's
+// lock: with a writer between its files and its commit, the poll must not
+// commit them under its own message.
+func TestSourcePollCommitWaitsForTheAppLock(t *testing.T) {
+	r := newTestRepo(t)
+	up, commit := newUpstream(t)
+	commit("compose.yml", "services: {}\n")
+	if _, err := r.saveWithoutDeploy(sourcePayload(up, "")); err != nil {
+		t.Fatal(err)
+	}
+	dir := r.appDataDir("git-app")
+	c2 := commit("marker.txt", "v2\n")
+
+	unlock, err := r.lockApp(context.Background(), "git-app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFileT(t, dir, "half-written.txt", "a writer's files\n") // not committed yet
+	type result struct {
+		changed bool
+		err     error
+	}
+	done := make(chan result, 1)
+	go func() {
+		changed, _, err := r.refreshSourceWithoutDeploy("git-app")
+		done <- result{changed, err}
+	}()
+	// The poll has synced the upstream (source.lock moved) and waits.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if lock, _ := readSourceLock(dir); lock.SHA == c2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the poll never synced the upstream")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	select {
+	case res := <-done:
+		t.Fatalf("the poll committed while a writer held the app's lock: %+v", res)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if _, err := gitCommitAll(dir, "writer commit"); err != nil {
+		t.Fatal(err)
+	}
+	unlock()
+	select {
+	case res := <-done:
+		if res.err != nil || !res.changed {
+			t.Fatalf("poll = %+v", res)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the poll never committed")
+	}
+	log, err := gitLog(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range log {
+		if strings.HasPrefix(c.Subject, "update source") {
+			t.Fatalf("the poll's commit took in the writer's files: %v", log)
+		}
+	}
+	if log[0].Subject != "writer commit" {
+		t.Fatalf("log = %v", log)
 	}
 }

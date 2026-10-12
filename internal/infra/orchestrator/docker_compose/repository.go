@@ -66,9 +66,10 @@ type Repository struct {
 	// no restore begins then, the agent is about to exit.
 	updating bool
 	// appLocks serialize the writers of an app's committed files (see
-	// lockApp), one lock per app, under lockMu; forgetApp prunes them.
+	// lockApp) and the operations on its source/ checkout (lockSource),
+	// under lockMu. An entry lives only while the lock is held or awaited.
 	lockMu   sync.Mutex
-	appLocks map[string]chan struct{}
+	appLocks map[string]*appLock
 	// marks are the restores in progress, mirrored in backups/restoring.json
 	// (see RestoreMark), under markMu.
 	markMu sync.Mutex
@@ -169,32 +170,67 @@ func (r *Repository) forgetApp(appID string) {
 	delete(r.ops, appID)
 	r.restoreMu.Unlock()
 	r.clearRestoreMark(appID)
+	// The app's locks are not dropped here: a holder or waiter may still be
+	// on them, and a second holder on a new lock would run beside it (an app
+	// created again under the id); an idle lock removes itself.
+}
+
+// appLock is one keyed lock; refs counts its holder and waiters.
+type appLock struct {
+	ch   chan struct{}
+	refs int
+}
+
+// lockKeyed takes the lock named key, waiting until it is free or ctx is
+// done. The entry is shared by everyone holding or awaiting it and removed
+// when the last lets go, so an idle app costs nothing and a lock is never
+// replaced under a holder.
+func (r *Repository) lockKeyed(ctx context.Context, key string) (unlock func(), err error) {
 	r.lockMu.Lock()
-	delete(r.appLocks, appID)
+	l := r.appLocks[key]
+	if l == nil {
+		if r.appLocks == nil {
+			r.appLocks = map[string]*appLock{}
+		}
+		l = &appLock{ch: make(chan struct{}, 1)}
+		r.appLocks[key] = l
+	}
+	l.refs++
 	r.lockMu.Unlock()
+	drop := func() {
+		r.lockMu.Lock()
+		if l.refs--; l.refs == 0 {
+			delete(r.appLocks, key)
+		}
+		r.lockMu.Unlock()
+	}
+	select {
+	case l.ch <- struct{}{}:
+		return func() { <-l.ch; drop() }, nil
+	case <-ctx.Done():
+		drop()
+		return nil, fmt.Errorf("another change to the app is still being written: %w", ctx.Err())
+	}
 }
 
 // lockApp serializes the writers of an app's committed files (save, rename,
-// rollback, backup settings): the check of a backups base and the commit that
-// follows it, in particular, must not interleave with another writer's. The
-// distributed agent runs each request on its own goroutine. It waits until
-// the lock is free or ctx is done; release it with the returned func, before
-// any redeploy (it is held for file work and one commit, never for compose).
+// rollback, backup settings, a source poll's commit): the check of a backups
+// base and the commit that follows it, in particular, must not interleave
+// with another writer's. The distributed agent runs each request on its own
+// goroutine. It waits until the lock is free or ctx is done; release it with
+// the returned func, before any redeploy. It is held for file work and one
+// commit, never for compose or for a clone or fetch of the upstream
+// (lockSource covers those); only a rollback, which writes files and moves
+// source/ in one step, holds it across the checkout.
 func (r *Repository) lockApp(ctx context.Context, appID string) (unlock func(), err error) {
-	r.lockMu.Lock()
-	ch := r.appLocks[appID]
-	if ch == nil {
-		if r.appLocks == nil {
-			r.appLocks = map[string]chan struct{}{}
-		}
-		ch = make(chan struct{}, 1)
-		r.appLocks[appID] = ch
-	}
-	r.lockMu.Unlock()
-	select {
-	case ch <- struct{}{}:
-		return func() { <-ch }, nil
-	case <-ctx.Done():
-		return nil, fmt.Errorf("another change to the app is still being written: %w", ctx.Err())
-	}
+	return r.lockKeyed(ctx, appID)
+}
+
+// lockSource serializes the operations on an app's source/ checkout (clone,
+// fetch, checkout, the source.lock they write). They are the slow, networked
+// part of a save and must not run beside one another, but must not hold up
+// the writers of the app's files either. Where both are needed (a rollback)
+// lockApp is taken first.
+func (r *Repository) lockSource(ctx context.Context, appID string) (unlock func(), err error) {
+	return r.lockKeyed(ctx, "source:"+appID)
 }

@@ -370,9 +370,45 @@ func TestLockAppSerializesAndHonorsContext(t *testing.T) {
 	}
 	again()
 	r.forgetApp("app-1")
-	if len(r.appLocks) != 1 { // app-2's remains; app-1's is pruned
-		t.Fatalf("locks left: %d", len(r.appLocks))
+	r.lockMu.Lock()
+	left := len(r.appLocks)
+	r.lockMu.Unlock()
+	if left != 0 { // a lock exists only while it is held or awaited
+		t.Fatalf("locks left: %d", left)
 	}
+}
+
+// forgetApp (a delete) must not hand a second holder the lock of an app id
+// that is created again while the first still holds it: the lock stays one
+// entry, and goes only when nobody holds or awaits it.
+func TestForgetAppKeepsAHeldLock(t *testing.T) {
+	r := newTestRepo(t)
+	unlock, err := r.lockApp(context.Background(), "app-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.forgetApp("app-1")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	if _, err := r.lockApp(ctx, "app-1"); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("a second holder got the lock of the app while it was held: %v", err)
+	}
+	// A waiter that gave up leaves no entry behind; the holder's release does.
+	unlock()
+	r.lockMu.Lock()
+	left := len(r.appLocks)
+	r.lockMu.Unlock()
+	if left != 0 {
+		t.Fatalf("locks left: %d", left)
+	}
+	// The source's lock is a separate one.
+	a, _ := r.lockApp(context.Background(), "app-1")
+	defer a()
+	src, err := r.lockSource(context.Background(), "app-1")
+	if err != nil {
+		t.Fatalf("source lock beside the app's: %v", err)
+	}
+	src()
 }
 
 // The base in an update's answer is the written list's even when the stored

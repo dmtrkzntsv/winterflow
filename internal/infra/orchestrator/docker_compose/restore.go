@@ -3,7 +3,6 @@ package dockercompose
 import (
 	"archive/tar"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -603,13 +602,11 @@ func (r *Repository) downloadPoint(ctx context.Context, st store.Store, p layout
 	if need := uint64(max(m.Size, 0)) + restoreDownloadMargin; free < need {
 		return "", fmt.Errorf("not enough free space to download the restore point: it takes %d bytes and %d bytes are free in %s (%d are kept spare)", m.Size, free, r.restoreTmpDir(), uint64(restoreDownloadMargin))
 	}
-	var rnd [6]byte
-	_, _ = rand.Read(rnd[:])
-	local := filepath.Join(r.restoreTmpDir(), p.ID+"-"+hex.EncodeToString(rnd[:])+".zst")
-	f, err := os.OpenFile(local, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	f, err := os.CreateTemp(r.restoreTmpDir(), p.ID+"-*.zst") // 0600, O_EXCL
 	if err != nil {
 		return "", err
 	}
+	local := f.Name()
 	ok := false
 	defer func() {
 		if !ok {

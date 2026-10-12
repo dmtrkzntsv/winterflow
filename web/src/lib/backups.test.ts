@@ -255,10 +255,24 @@ describe("durations for people", () => {
     expect(humanDuration("48h")).toBe("2 days");
     expect(humanDuration("36h")).toBe("36 hours");
     expect(humanDuration("1h")).toBe("1 hour");
-    expect(humanDuration("90m")).toBe("1 hour 30 minutes");
+    expect(humanDuration("90m")).toBe("90 minutes");
+    expect(humanDuration("1h30m0s")).toBe("90 minutes");
+    expect(humanDuration("25h30m")).toBe("25h30m");
+    expect(humanDuration("1m30s")).toBe("1m30s");
+    expect(humanDuration("3h5m")).toBe("3h5m");
     expect(humanDuration("45s")).toBe("45 seconds");
     expect(humanDuration("soon")).toBe("soon");
     expect(humanDuration("0s")).toBe("0s");
+  });
+
+  it("reads back everything it writes", () => {
+    for (const d of ["24h", "24h0m0s", "168h", "7d", "36h", "48h", "90m", "1h30m0s", "25h30m", "3h5m", "1m30s", "30s", "45s", "15m", "5m0s", "1h", "72h", "100m", "121m"]) {
+      const words = humanDuration(d.endsWith("d") ? "168h" : d);
+      const back = parseKeepRecent(words);
+      expect(back, `${d} -> ${words}`).not.toBe("");
+      expect(durationMs(back), `${d} -> ${words} -> ${back}`).toBe(durationMs(d.endsWith("d") ? "168h" : d));
+    }
+    expect(keepError("1 hour 30 minutes", "14", "6")).toBe("");
   });
 
   it("reads what a person types for how long to keep every copy", () => {
@@ -269,9 +283,17 @@ describe("durations for people", () => {
     expect(parseKeepRecent("7 days")).toBe("168h");
     expect(parseKeepRecent("7d")).toBe("168h");
     expect(parseKeepRecent("2 weeks")).toBe("336h");
-    expect(parseKeepRecent("90 minutes")).toBe("90m");
+    expect(parseKeepRecent("90 minutes")).toBe("1h30m");
+    expect(parseKeepRecent("1 hour 30 minutes")).toBe("1h30m");
+    expect(parseKeepRecent("1 hour, 30 minutes")).toBe("1h30m");
+    expect(parseKeepRecent("1 day and 2 hours")).toBe("26h");
+    expect(parseKeepRecent("30 seconds")).toBe("30s");
+    expect(parseKeepRecent("25h30m")).toBe("25h30m");
+    expect(parseKeepRecent("1 hour 30")).toBe("");
+    expect(parseKeepRecent("0 hours")).toBe("");
     expect(parseKeepRecent("1.5 days")).toBe("36h");
-    expect(parseKeepRecent("1.3 hours")).toBe("");
+    expect(parseKeepRecent("1.3 hours")).toBe("1h18m");
+    expect(parseKeepRecent("1.3333 hours")).toBe("");
     expect(parseKeepRecent("a day")).toBe("");
     expect(parseKeepRecent("")).toBe("");
     expect(keepError("7 days", "14", "6")).toBe("");

@@ -57,6 +57,23 @@ describe("BackupEditDialog", () => {
     expect(onSave).toHaveBeenCalledWith({ name: "database", enabled: true, storage: "disk" });
   });
 
+  it("opens with a retention that is not whole hours or days, and Save enabled", () => {
+    for (const recent of ["1h30m0s", "90m", "25h30m0s", "30s", "1m30s"]) {
+      cleanup();
+      renderDialog({ ...database, from_recipe: all, keep: { recent, daily: 14, monthly: 6 } });
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+    }
+    expect(screen.getByLabelText("Every copy for")).toHaveValue("1m30s");
+  });
+
+  it("says the template's value applies on save even when the agent sent no template", async () => {
+    const user = userEvent.setup({ delay: null });
+    renderDialog({ ...database, template: undefined });
+    await user.click(screen.getByRole("button", { name: /Reset to template/ }));
+    expect(screen.getByText("template's value on save")).toBeInTheDocument();
+  });
+
   it("shows the template's retention and location when they are reset", async () => {
     const user = userEvent.setup({ delay: null });
     const changedAll: EffectiveBackup = {

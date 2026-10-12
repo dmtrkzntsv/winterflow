@@ -176,8 +176,9 @@ describe("RestorePointsDialog", () => {
     expect(await screen.findByText("the storage did not answer")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByText(when(POINTS[0]))).toBeInTheDocument();
-    // The size is shown on a phone too.
-    expect(screen.getByRole("columnheader", { name: "Size" })).not.toHaveClass("hidden");
+    // Kind and size sit under the time, in every size, so the table stays narrow.
+    expect(screen.queryByRole("columnheader", { name: "Size" })).not.toBeInTheDocument();
+    expect(screen.getByText("2.0 kB")).toBeInTheDocument();
   });
 
   it("deletes a copy after a confirmation", async () => {

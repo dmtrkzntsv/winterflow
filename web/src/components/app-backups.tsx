@@ -282,7 +282,7 @@ export function AppBackups({ appId }: { appId: string }) {
               <TableHead>Backup</TableHead>
               <TableHead className="hidden md:table-cell md:w-28">Storage</TableHead>
               <TableHead className="hidden sm:table-cell sm:w-36">Schedule</TableHead>
-              <TableHead className="min-w-40 sm:w-64">Last backup</TableHead>
+              <TableHead className="sm:w-64">Last backup</TableHead>
               <TableHead className="w-px">
                 <span className="sr-only">Actions</span>
               </TableHead>

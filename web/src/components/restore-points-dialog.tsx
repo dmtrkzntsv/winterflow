@@ -193,9 +193,7 @@ export function RestorePointsDialog({
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Time</TableHead>
-                <TableHead>Kind</TableHead>
-                <TableHead>Size</TableHead>
+                <TableHead>Copy</TableHead>
                 <TableHead className="w-px">
                   <span className="sr-only">Actions</span>
                 </TableHead>
@@ -208,15 +206,15 @@ export function RestorePointsDialog({
                   <TableRow key={p.id}>
                     <TableCell>
                       <div>{when(p)}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {relativeAge(p.time)}
-                        {expires ? <span className="text-amber-700 dark:text-amber-400"> · {expires}</span> : null}
+                      {/* Kind and size sit under the time, so the table is
+                          two columns wide and the actions fit a phone. */}
+                      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                        <Badge variant={p.kind === "pre-restore" ? "secondary" : "outline"}>{KIND_LABELS[p.kind]}</Badge>
+                        <span>{formatBytes(p.size)}</span>
+                        <span>{relativeAge(p.time)}</span>
+                        {expires ? <span className="text-amber-700 dark:text-amber-400">{expires}</span> : null}
                       </div>
                     </TableCell>
-                    <TableCell>
-                      <Badge variant={p.kind === "pre-restore" ? "secondary" : "outline"}>{KIND_LABELS[p.kind]}</Badge>
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap">{formatBytes(p.size)}</TableCell>
                     <TableCell className="whitespace-nowrap py-0.5 text-right">
                       <Button
                         size="sm"

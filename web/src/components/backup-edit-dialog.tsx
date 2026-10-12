@@ -176,7 +176,7 @@ export function BackupEditDialog({
               </Button>
             </>
           ) : (
-            <Badge variant="outline">{reset.has(g) ? "template's value, applied on save" : "from template"}</Badge>
+            <Badge variant="outline">{reset.has(g) ? (b.template ? "template's value, applied on save" : "template's value on save") : "from template"}</Badge>
           )}
         </div>
       ) : null}
@@ -230,7 +230,7 @@ export function BackupEditDialog({
               "retention",
               "Keep",
               <>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                   {(
                     [
                       ["Every copy for", recent, setRecent, "keep-recent"],

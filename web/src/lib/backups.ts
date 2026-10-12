@@ -146,39 +146,44 @@ export function compactDuration(d: string): string {
 const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? "" : "s"}`;
 
 // humanDuration reads a Go duration for people: "24 hours", "7 days",
-// "1 hour 30 minutes"; a value that isn't one comes back as is.
+// "90 minutes", "30 seconds". Only a single natural unit is written in words;
+// anything else ("25h30m", "1m30s") keeps its short Go form. Everything it
+// writes parseKeepRecent reads back.
 export function humanDuration(d: string): string {
   const ms = durationMs(d);
   if (Number.isNaN(ms) || ms <= 0 || ms % 1000 !== 0) return d;
-  let secs = ms / 1000;
+  const secs = ms / 1000;
   const day = 86_400;
   // A day is 24 hours: the default reads as the compose file writes it.
   if (secs % day === 0 && secs >= 2 * day) return plural(secs / day, "day");
-  const parts: string[] = [];
-  for (const [unit, size] of [["hour", 3600], ["minute", 60], ["second", 1]] as const) {
-    const n = Math.floor(secs / size);
-    secs -= n * size;
-    if (n > 0) parts.push(plural(n, unit));
-  }
-  return parts.join(" ");
+  if (secs % 3600 === 0) return plural(secs / 3600, "hour");
+  if (secs % 60 === 0 && secs <= 120 * 60) return plural(secs / 60, "minute");
+  if (secs < 60) return plural(secs, "second");
+  return compactDuration(d);
 }
 
 // parseKeepRecent reads what a person types for "Every copy for": a Go
-// duration (24h, 90m) or plain words (24 hours, 7 days, 2 weeks, 7d); the
-// result is the short Go form the agent takes (7 days -> 168h), "" when it
-// isn't a duration.
+// duration (24h, 25h30m, 90s) or words (24 hours, 7 days, 2 weeks, 7d,
+// 1 hour 30 minutes); the result is the short Go form the agent takes
+// (7 days -> 168h), "" when it isn't a duration.
 export function parseKeepRecent(text: string): string {
   const t = text.trim().toLowerCase();
   if (!t) return "";
-  const ms = durationMs(t);
-  if (!Number.isNaN(ms)) return compactDuration(t);
-  const m = /^(\d+(?:\.\d+)?)\s*(minutes?|mins?|hours?|hrs?|days?|d|weeks?|w)$/.exec(t);
-  if (!m) return "";
-  const n = parseFloat(m[1]);
-  const unit = m[2][0] === "m" ? 1 / 60 : m[2][0] === "h" ? 1 : m[2][0] === "d" ? 24 : 168;
-  const hours = n * unit;
-  if (m[2][0] === "m") return `${Math.round(hours * 60)}m`;
-  return Number.isInteger(hours) ? `${hours}h` : "";
+  const go = durationMs(t);
+  if (!Number.isNaN(go)) return compactDuration(t);
+  const unit: Record<string, number> = { m: 60, h: 3600, d: 86_400, w: 604_800, s: 1 };
+  const re = /(\d+(?:\.\d+)?)\s*(seconds?|secs?|minutes?|mins?|hours?|hrs?|days?|d|weeks?|w)\b\s*(?:,|and)?\s*/gy;
+  let secs = 0;
+  let consumed = 0;
+  for (const m of t.matchAll(re)) {
+    secs += parseFloat(m[1]) * unit[m[2][0]];
+    consumed += m[0].length;
+  }
+  if (consumed !== t.length || secs <= 0 || !Number.isInteger(secs)) return "";
+  const h = Math.floor(secs / 3600);
+  const mi = Math.floor((secs % 3600) / 60);
+  const se = secs % 60;
+  return `${h ? `${h}h` : ""}${mi ? `${mi}m` : ""}${se ? `${se}s` : ""}`;
 }
 
 // scheduleLabel reads a backup's every: "Manual", a picker label, or

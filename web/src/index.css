@@ -58,7 +58,8 @@
     --color-sidebar: var(--sidebar);
     --color-sidebar-foreground: var(--sidebar-foreground);
     --color-sidebar-primary: var(--sidebar-primary);
-    --color-sidebar-primary-soft: var(--sidebar-primary-soft);
+    --color-brand: var(--brand);
+    --color-brand-soft: var(--brand-soft);
     --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
     --color-sidebar-accent: var(--sidebar-accent);
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -91,84 +92,104 @@
 }
 
 :root {
-    /* Twillingate's palette: a cool blue-grey page with white cards on it,
-       the brand ocean blue as primary and lead chart series, then teal,
-       saffron, raspberry and violet. The sidebar is a deep navy sea. */
+    /* "Frost": winterflow's own light, icy palette (the snowflake's
+       periwinkle), on twillingate's layout. An airy blue-white page with
+       white cards, a frosted light sidebar, periwinkle accents and a deeper
+       step of it for filled buttons so white text passes AA. Chart series:
+       sky, glacier teal, soft amber, rose, lavender (checked for
+       colour-blind separation). Contrast pairs are verified at >= 4.5:1 for
+       text and >= 3:1 for the focus ring. */
     --radius: 0.75rem;
-    --background: #f3f7fb;
-    --foreground: #0b1f36;
+    --background: #f6f9fd;
+    --foreground: #0b2540;
     --card: #ffffff;
-    --card-foreground: #0b1f36;
+    --card-foreground: #0b2540;
     --popover: #ffffff;
-    --popover-foreground: #0b1f36;
-    --primary: #1478c9;
+    --popover-foreground: #0b2540;
+    --primary: #2474cc;
     --primary-foreground: #ffffff;
-    --secondary: #e6f0f9;
-    --secondary-foreground: #0a4d8c;
-    --muted: #eaf1f7;
-    --muted-foreground: #587089;
-    --accent: #e3effa;
-    --accent-foreground: #0a4d8c;
-    --destructive: #d23b3b;
+    --secondary: #eaf3fd;
+    --secondary-foreground: #1a64b4;
+    --muted: #eef4fb;
+    --muted-foreground: #506b8a;
+    --accent: #e2effd;
+    --accent-foreground: #1a64b4;
+    --destructive: #d03a3a;
     --destructive-foreground: #ffffff;
-    --border: #dbe5ee;
-    --input: #d0dce8;
-    --ring: #2e9fe5;
-    --chart-1: #1478c9;
-    --chart-2: #11a08a;
-    --chart-3: #e9a524;
-    --chart-4: #d6457a;
-    --chart-5: #7c5ce6;
-    --sky: #8fd3ff;
-    --skeleton: #e3edf6;
-    --skeleton-shine: #f4f9fd;
-    /* Card elevation: a hairline contact shadow plus a soft drop. Dark mode
-       has none (the border carries the edge). */
-    --card-shadow: 0 1px 2px rgb(11 31 54 / 0.04), 0 6px 16px -10px rgb(11 31 54 / 0.14);
-    --sidebar: #061a30;
-    --sidebar-foreground: #c4def2;
-    --sidebar-primary: #8fd3ff;
-    --sidebar-primary-soft: #1478c9;
-    --sidebar-primary-foreground: #06223f;
-    --sidebar-accent: rgb(143 211 255 / 12%);
-    --sidebar-accent-foreground: #f8fcff;
-    --sidebar-border: rgb(143 211 255 / 12%);
-    --sidebar-ring: #62c3f3;
+    --border: #dfe8f2;
+    --input: #c9d8e8;
+    --ring: #3a8ad9;
+    --brand: #4c9be8;
+    --brand-soft: #7cb8ff;
+    --chart-1: #4c9be8;
+    --chart-2: #1fa89a;
+    --chart-3: #e0a032;
+    --chart-4: #e06a8c;
+    --chart-5: #7d62e0;
+    --sky: #a8d2fb;
+    --skeleton: #e7f0fa;
+    --skeleton-shine: #f6faff;
+    /* Card elevation: a hairline contact shadow plus a soft, blue-tinted
+       drop. Dark mode has none (the border carries the edge). */
+    --card-shadow: 0 1px 2px rgb(36 116 204 / 0.04), 0 8px 20px -12px rgb(36 116 204 / 0.18);
+    --sidebar: #f3f8fe;
+    --sidebar-foreground: #1c3654;
+    --sidebar-primary: #2f86de;
+    --sidebar-primary-foreground: #ffffff;
+    --sidebar-accent: #e2effd;
+    --sidebar-accent-foreground: #1a64b4;
+    --sidebar-border: #dde8f4;
+    --sidebar-ring: #3a8ad9;
+    --sidebar-muted-foreground: #58708d;
+    --sidebar-top: #f8fbff;
+    --sidebar-bottom: #eef5fd;
 }
 
 .dark {
+    /* "Midnight frost": slate-navy surfaces, not near-black, with icy
+       accents. */
     color-scheme: dark;
-    --background: #071a2f;
-    --foreground: #e6f2fb;
-    --card: #0c233b;
-    --card-foreground: #e6f2fb;
-    --popover: #0e2742;
-    --popover-foreground: #e6f2fb;
-    --primary: #8fd3ff;
-    --primary-foreground: #06223f;
-    --secondary: #12304e;
-    --secondary-foreground: #e6f2fb;
-    --muted: #10294a;
-    --muted-foreground: #8aa6c1;
-    --accent: #143556;
-    --accent-foreground: #f8fcff;
-    --destructive: #ff7a70;
+    --background: #0e1b2b;
+    --foreground: #e7f1fb;
+    --card: #13243a;
+    --card-foreground: #e7f1fb;
+    --popover: #172b44;
+    --popover-foreground: #e7f1fb;
+    --primary: #7cb8ff;
+    --primary-foreground: #0a1c30;
+    --secondary: #1a3150;
+    --secondary-foreground: #e7f1fb;
+    --muted: #1a2e47;
+    --muted-foreground: #97afc9;
+    --accent: #1b3150;
+    --accent-foreground: #f3f9ff;
+    --destructive: #ff7d73;
     --destructive-foreground: #2a0806;
-    --border: rgb(143 211 255 / 11%);
-    --input: rgb(143 211 255 / 18%);
-    --ring: #62c3f3;
-    /* OKLCH L 0.66, inside the dark band; checked for colour-blind and
-       normal-vision separation against the card. */
-    --chart-1: #3899e2;
-    --chart-2: #05ab86;
-    --chart-3: #c38300;
-    --chart-4: #dc6292;
-    --chart-5: #927fe7;
-    --sky: #2e9fe5;
-    --skeleton: #11304f;
-    --skeleton-shine: #1a4169;
+    --border: rgb(159 212 255 / 12%);
+    --input: rgb(159 212 255 / 20%);
+    --ring: #7cb8ff;
+    --brand: #7cb8ff;
+    --brand-soft: #9fd4ff;
+    --chart-1: #5aa6f0;
+    --chart-2: #3cc4b1;
+    --chart-3: #e2ae4c;
+    --chart-4: #ef84a3;
+    --chart-5: #c2b2ff;
+    --sky: #7cb8ff;
+    --skeleton: #1a2f4a;
+    --skeleton-shine: #24405f;
     --card-shadow: 0 0 #0000;
-    --sidebar: #030d19;
+    --sidebar: #0b1725;
+    --sidebar-foreground: #c9dcf0;
+    --sidebar-primary: #9fd4ff;
+    --sidebar-primary-foreground: #0a1c30;
+    --sidebar-accent: #1b3150;
+    --sidebar-accent-foreground: #bfe1ff;
+    --sidebar-border: rgb(159 212 255 / 10%);
+    --sidebar-ring: #7cb8ff;
+    --sidebar-muted-foreground: #8ea6c0;
+    --sidebar-top: #10202f;
+    --sidebar-bottom: #0a1522;
 }
 
 @layer base {
@@ -250,15 +271,22 @@
     }
 }
 
-/* The sidebar is a deep sea: lit from the top, darkening toward the floor
-   (twillingate's shell). Muted text and fills inside it are re-pointed at
-   the sidebar's light ink so shared components stay legible on navy. */
+/* The sidebar is frost: near-white with a faint blue tint, darkening a
+   touch toward the floor, behind a hairline edge (midnight frost in dark).
+   Muted text inside it is re-pointed at the sidebar's own muted ink so
+   shared components stay on its contrast budget. */
 [data-sidebar="sidebar"] {
-    background-image:
-        radial-gradient(120% 55% at 50% 0%, rgb(46 159 229 / 22%), transparent 70%),
-        linear-gradient(180deg, #0b3a66 0%, #061a30 45%, #030b15 100%);
-    --muted: rgb(143 211 255 / 12%);
-    --muted-foreground: rgb(196 222 242 / 62%);
+    background-image: linear-gradient(180deg, var(--sidebar-top) 0%, var(--sidebar-bottom) 100%);
+    --muted: var(--sidebar-accent);
+    --muted-foreground: var(--sidebar-muted-foreground);
+}
+
+/* The snowflake's tile: periwinkle ice, so the logo stands out by colour on
+   the pale sidebar. */
+.brand-tile {
+    color: #ffffff;
+    background-image: linear-gradient(140deg, #8cc4ff 0%, #4c9be8 55%, #2f86de 100%);
+    box-shadow: 0 4px 12px -4px rgb(47 134 222 / 0.55), inset 0 1px 0 rgb(255 255 255 / 0.35);
 }
 
 /* A wash of sky blue behind the page title, gone by the time the content

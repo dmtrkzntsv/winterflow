@@ -43,3 +43,15 @@ func Error(w http.ResponseWriter, message string, data interface{}) {
 		Data:    data,
 	})
 }
+
+// ErrorStatus writes a JSON error with the given status (404 an unknown
+// resource, 409 a conflict, 502 an agent's failure).
+func ErrorStatus(w http.ResponseWriter, status int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(APIResponse{
+		Success: false,
+		Message: message,
+		Data:    nil,
+	})
+}

@@ -173,6 +173,10 @@ var probes = map[string]probe{
 	"POST /api/v1/shared-variables/reload": {valid: func(s string) call {
 		return post("/api/v1/shared-variables/reload", map[string]any{"server_id": s})
 	}, malformed: bad("POST", "/api/v1/shared-variables/reload")},
+
+	"GET /api/v1/template/get-template":     {malformed: bad("GET", "/api/v1/template/get-template")},
+	"POST /api/v1/template/save-template":   {malformed: bad("POST", "/api/v1/template/save-template")},
+	"POST /api/v1/template/delete-template": {malformed: bad("POST", "/api/v1/template/delete-template")},
 }
 
 // carriesServerID reports whether t, or a struct nested in it by embedding,

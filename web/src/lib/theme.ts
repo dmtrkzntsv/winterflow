@@ -11,3 +11,21 @@ export function followSystemTheme(): () => void {
   dark.addEventListener("change", apply)
   return () => dark.removeEventListener("change", apply)
 }
+
+/** Whether the page is currently in dark mode (`.dark` on <html>). */
+export function isDarkMode(): boolean {
+  return document.documentElement.classList.contains("dark")
+}
+
+/**
+ * Calls onChange whenever `.dark` on <html> may have flipped. Returns the
+ * unsubscribe function (a useSyncExternalStore subscriber).
+ */
+export function subscribeDarkMode(onChange: () => void): () => void {
+  const observer = new MutationObserver(onChange)
+  observer.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ["class"],
+  })
+  return () => observer.disconnect()
+}

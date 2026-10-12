@@ -6381,7 +6381,8 @@ components:
         server_id:
           type: string
         state:
-          description: pending, created or deleted.
+          description: 'pending, created, deleted or unlinked (only an unlink''s own
+            answer shows unlinked: the key then finds nothing).'
           type: string
         status_code:
           type: integer

@@ -130,7 +130,7 @@ func (uc *UseCase) replay(ctx context.Context, userID string, inst model.Instanc
 // dispatchSave dispatches a rendered save; its confirmation records the
 // revision and values (state created), a failure the error.
 func (uc *UseCase) dispatchSave(ctx context.Context, userID string, inst model.Instance, checked appuc.CheckedSave, revision int64, values template.Values) (Outcome, error) {
-	observer, done := uc.observe(func(ctx context.Context, res port.CommandResult) error {
+	observer, done := uc.observe(inst, func(ctx context.Context, res port.CommandResult) error {
 		if !res.Success {
 			return uc.repo.SetError(ctx, inst.ID, res.Error)
 		}

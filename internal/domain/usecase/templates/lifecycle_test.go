@@ -1,6 +1,7 @@
 package templates_test
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -32,7 +33,7 @@ func TestControlInstance(t *testing.T) {
 	f.disp.reply(t, port.CommandResult{Success: true})
 	received(t, out.Done)
 	if v, _ := out.Final(ctx); v.LastError != "" {
-		t.Fatalf("a success keeps the old error: %+v", v)
+		t.Fatalf("a success did not clear the old error: %+v", v)
 	}
 }
 
@@ -87,5 +88,86 @@ func TestDeleteRetiresAndUnlinkFrees(t *testing.T) {
 	}
 	if _, err := f.uc.ControlInstance(ctx, "u1", org1, srv1, "k1", command.ControlStart); !errors.Is(err, model.ErrKeyRetired) {
 		t.Fatalf("control of a deleted instance: %v", err)
+	}
+}
+
+// A failed delete leaves the instance created with the agent's error: the
+// key is not retired and a replayed create still answers the instance.
+func TestDeleteFailureKeepsTheInstance(t *testing.T) {
+	f := newFixture(t, nil)
+	ctx := dbtest.Ctx(t)
+	created(t, f)
+	del, err := f.uc.DeleteInstance(ctx, "u1", org1, srv1, "k1", false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.disp.reply(t, port.CommandResult{Error: "compose down failed"})
+	if res := received(t, del.Done); res.Success {
+		t.Fatal("a failure was delivered as a success")
+	}
+	got, err := f.uc.GetInstance(ctx, org1, srv1, "k1")
+	if err != nil || got.State != "created" || got.LastError != "compose down failed" {
+		t.Fatalf("after a failed delete = %+v, %v", got, err)
+	}
+	n := f.disp.count()
+	replay, err := f.uc.CreateInstance(ctx, "u1", org1, f.create(map[string]string{"NAME": "acme"}))
+	if err != nil || replay.Instance == nil || replay.Instance.State != "created" || f.disp.count() != n {
+		t.Fatalf("a replay after a failed delete = %+v, %v", replay, err)
+	}
+}
+
+// A failed unlink leaves the instance created: its key is not freed.
+func TestUnlinkFailureKeepsTheKey(t *testing.T) {
+	f := newFixture(t, nil)
+	ctx := dbtest.Ctx(t)
+	created(t, f)
+	un, err := f.uc.UnlinkInstance(ctx, "u1", org1, srv1, "k1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.disp.reply(t, port.CommandResult{Error: "commit failed"})
+	received(t, un.Done)
+	got, err := f.uc.GetInstance(ctx, org1, srv1, "k1")
+	if err != nil || got.State != "created" || got.LastError != "commit failed" {
+		t.Fatalf("after a failed unlink = %+v, %v", got, err)
+	}
+	other := f.create(map[string]string{"NAME": "other"})
+	if _, err := f.uc.CreateInstance(ctx, "u1", org1, other); !errors.Is(err, model.ErrKeyInUse) {
+		t.Fatalf("the key after a failed unlink: %v", err)
+	}
+}
+
+// Unlink saves the app as it is: the agent keeps its secrets (sent as the
+// keep placeholder) and its backups (no list in the config). Its result is
+// read back from the database.
+func TestUnlinkKeepsSecretsAndBackups(t *testing.T) {
+	f := newFixture(t, nil)
+	ctx := dbtest.Ctx(t)
+	created(t, f)
+	stop, _ := f.uc.ControlInstance(ctx, "u1", org1, srv1, "k1", command.ControlStop)
+	f.disp.reply(t, port.CommandResult{Error: "stop failed"})
+	received(t, stop.Done)
+
+	un, err := f.uc.UnlinkInstance(ctx, "u1", org1, srv1, "k1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	vars, _ := saved(t, f)
+	if k := vars["KEY"]; string(k.Content) != command.EncryptedPlaceholder || !k.Encrypted {
+		t.Fatalf("unlink sent the secret as %+v", k)
+	}
+	req := f.disp.last(t).Payload.(command.SaveAppRequest)
+	var cfg map[string]json.RawMessage
+	if err := json.Unmarshal(req.App.Config, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cfg["backups"]; ok {
+		t.Fatalf("unlink replaced the backups list: %s", req.App.Config)
+	}
+	f.disp.reply(t, port.CommandResult{Success: true})
+	received(t, un.Done)
+	v, err := un.Final(ctx)
+	if err != nil || v.State != "unlinked" || v.LastError != "" {
+		t.Fatalf("unlinked = %+v, %v", v, err)
 	}
 }

@@ -24,7 +24,8 @@ type SaveInput struct {
 const maxNote = 1000
 
 // SaveTemplate validates the body and stores it as a new revision. The
-// warnings name file references nothing provides.
+// warnings name file references nothing provides; they are computed before
+// the write, so an error never follows a stored revision.
 func (uc *UseCase) SaveTemplate(ctx context.Context, userID, orgID string, in SaveInput) (SavedTemplate, error) {
 	if err := template.ValidateName(in.Name); err != nil {
 		return SavedTemplate{}, err
@@ -39,8 +40,16 @@ func (uc *UseCase) SaveTemplate(ctx context.Context, userID, orgID string, in Sa
 	if err != nil {
 		return SavedTemplate{}, err
 	}
+	shared, err := uc.sharedNames(ctx, orgID)
+	if err != nil {
+		return SavedTemplate{}, err
+	}
 	rev := model.TemplateRevision{Body: raw, Note: in.Note, CreatedBy: userID}
 	out := SavedTemplate{ID: in.ID, Name: in.Name}
+	out.Warnings = template.Warnings(in.Body, func(name string) bool { return shared[name] })
+	if out.Warnings == nil {
+		out.Warnings = []string{}
+	}
 	if in.ID == "" {
 		if in.BaseRevision != 0 {
 			return SavedTemplate{}, fmt.Errorf("%w: base_revision: a new template has none (0)", template.ErrInvalid)
@@ -52,14 +61,6 @@ func (uc *UseCase) SaveTemplate(ctx context.Context, userID, orgID string, in Sa
 	}
 	if err != nil {
 		return SavedTemplate{}, err
-	}
-	shared, err := uc.sharedNames(ctx, orgID)
-	if err != nil {
-		return SavedTemplate{}, err
-	}
-	out.Warnings = template.Warnings(in.Body, func(name string) bool { return shared[name] })
-	if out.Warnings == nil {
-		out.Warnings = []string{}
 	}
 	return out, nil
 }

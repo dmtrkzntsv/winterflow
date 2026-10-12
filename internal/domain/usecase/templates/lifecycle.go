@@ -22,7 +22,7 @@ func (uc *UseCase) ControlInstance(ctx context.Context, userID, orgID, serverID,
 	if err != nil {
 		return Outcome{}, err
 	}
-	observer, done := uc.observe(func(ctx context.Context, res port.CommandResult) error {
+	observer, done := uc.observe(inst, func(ctx context.Context, res port.CommandResult) error {
 		return uc.repo.SetError(ctx, inst.ID, res.Error)
 	})
 	id, err := uc.apps.ControlAppObserved(ctx, userID, serverID, inst.AppID, action, observer)
@@ -44,7 +44,7 @@ func (uc *UseCase) DeleteInstance(ctx context.Context, userID, orgID, serverID, 
 	if err != nil {
 		return Outcome{}, err
 	}
-	observer, done := uc.observe(func(ctx context.Context, res port.CommandResult) error {
+	observer, done := uc.observe(inst, func(ctx context.Context, res port.CommandResult) error {
 		if !res.Success {
 			return uc.repo.SetError(ctx, inst.ID, res.Error)
 		}
@@ -83,7 +83,7 @@ func (uc *UseCase) UnlinkInstance(ctx context.Context, userID, orgID, serverID, 
 	if err != nil {
 		return Outcome{}, err
 	}
-	observer, done := uc.observe(func(ctx context.Context, res port.CommandResult) error {
+	observer, done := uc.observe(inst, func(ctx context.Context, res port.CommandResult) error {
 		if !res.Success {
 			return uc.repo.SetError(ctx, inst.ID, res.Error)
 		}
@@ -94,9 +94,13 @@ func (uc *UseCase) UnlinkInstance(ctx context.Context, userID, orgID, serverID, 
 		return Outcome{}, err
 	}
 	name := uc.templateName(ctx, orgID, inst.TemplateID)
-	final := func(context.Context) (InstanceView, error) {
-		inst.State = model.InstanceUnlinked
-		return uc.view(inst, name), nil
+	final := func(ctx context.Context) (InstanceView, error) {
+		// The key no longer finds an unlinked instance: read it by id.
+		got, err := uc.repo.GetInstanceByID(ctx, inst.ID)
+		if err != nil {
+			return InstanceView{}, err
+		}
+		return uc.view(got, name), nil
 	}
 	return Outcome{RequestID: id, Done: done, Final: final}, nil
 }

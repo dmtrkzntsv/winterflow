@@ -70,6 +70,11 @@ func TestRespond(t *testing.T) {
 	if w := answer(r, out, true); w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), "pull failed") {
 		t.Fatalf("waited failure = %d %s", w.Code, w.Body)
 	}
+	out, done = outcome()
+	done <- port.CommandResult{}
+	if w := answer(r, out, true); w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), `"message":"the agent reported a failure"`) {
+		t.Fatalf("a failure without a message = %d %s", w.Code, w.Body)
+	}
 	out, _ = outcome()
 	if w := answer(r, out, true); w.Code != http.StatusAccepted {
 		t.Fatalf("past the bound = %d %s", w.Code, w.Body)

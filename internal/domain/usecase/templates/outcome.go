@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/port"
 	appuc "winterflow/internal/domain/usecase/app"
 )
@@ -25,15 +26,15 @@ type Outcome struct {
 	Final func(ctx context.Context) (InstanceView, error)
 }
 
-// observe wraps record (the DB side of a result) into the observer the
+// observe wraps record (the DB side of inst's result) into the observer the
 // app usecase calls, and the channel it then delivers the result on.
-func (uc *UseCase) observe(record func(ctx context.Context, res port.CommandResult) error) (appuc.Observer, <-chan port.CommandResult) {
+func (uc *UseCase) observe(inst model.Instance, record func(ctx context.Context, res port.CommandResult) error) (appuc.Observer, <-chan port.CommandResult) {
 	done := make(chan port.CommandResult, 1)
 	return func(res port.CommandResult) {
 		ctx, cancel := context.WithTimeout(context.Background(), recordTimeout)
 		defer cancel()
 		if err := record(ctx, res); err != nil {
-			uc.log.Error("instance: record a result", "error", err)
+			uc.log.Error("instance: record a result", "error", err, "instance_id", inst.ID, "key", inst.Key)
 		}
 		select {
 		case done <- res:

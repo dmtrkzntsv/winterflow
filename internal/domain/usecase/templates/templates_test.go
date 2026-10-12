@@ -1,6 +1,7 @@
 package templates_test
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -8,6 +9,7 @@ import (
 	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/usecase/templates"
 	"winterflow/internal/infra/db/dbtest"
+	templaterepo "winterflow/internal/infra/db/repository/template"
 )
 
 func TestSaveTemplateConflictsAndWarnings(t *testing.T) {
@@ -61,5 +63,31 @@ func TestValidID(t *testing.T) {
 		if templates.ValidID(bad) {
 			t.Errorf("%q accepted", bad)
 		}
+	}
+}
+
+// failingShared is a shared variables index that cannot be read.
+type failingShared struct{}
+
+func (failingShared) ListOrg(context.Context, string) ([]model.SharedVariable, error) {
+	return nil, errors.New("db down")
+}
+
+// The warnings are computed before the write: a save never answers an
+// error after it stored the revision.
+func TestSaveTemplateWarningsBeforeTheWrite(t *testing.T) {
+	d := dbtest.Open(t)
+	dbtest.SeedServer(t, d, org1, srv1)
+	repo, err := templaterepo.New(d.Tx, d.Driver, dbtest.Log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uc := templates.New(templates.Deps{Repo: repo, Shared: failingShared{}, Log: dbtest.Log})
+	ctx := dbtest.Ctx(t)
+	if _, err := uc.SaveTemplate(ctx, "u1", org1, templates.SaveInput{Name: "shop", Body: body()}); err == nil {
+		t.Fatal("a failed shared variables read was not reported")
+	}
+	if list, err := uc.ListTemplates(ctx, org1); err != nil || len(list.Templates) != 0 {
+		t.Fatalf("the failed save stored %+v, %v", list, err)
 	}
 }

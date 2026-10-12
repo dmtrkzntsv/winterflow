@@ -19,7 +19,7 @@ type InstanceView struct {
 	// revision's default.
 	Parameters map[string]string `json:"parameters" description:"Values the callers set; the others use the revision's default."`
 	Secrets    map[string]string `json:"secrets" description:"Each secret given, as \"<encrypted>\": values are never returned."`
-	State      string            `json:"state" description:"pending, created or deleted."`
+	State      string            `json:"state" description:"pending, created, deleted or unlinked (only an unlink's own answer shows unlinked: the key then finds nothing)."`
 	// StatusCode is the app's latest container status (0 unknown).
 	StatusCode command.ContainerStatusCode `json:"status_code"`
 	LastError  string                      `json:"last_error" description:"The last failed command's error; empty after a success."`

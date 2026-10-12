@@ -62,7 +62,11 @@ func (h *Handler) respond(w http.ResponseWriter, r *http.Request, out tuc.Outcom
 		webutil.Accepted(w, msg, acceptedData{RequestID: out.RequestID})
 		return
 	case !res.Success:
-		webutil.ErrorStatus(w, http.StatusBadGateway, res.Error)
+		msg := res.Error
+		if msg == "" {
+			msg = "the agent reported a failure"
+		}
+		webutil.ErrorStatus(w, http.StatusBadGateway, msg)
 		return
 	}
 	view, err := out.Final(r.Context())

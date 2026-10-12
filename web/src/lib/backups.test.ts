@@ -22,7 +22,6 @@ import {
   keepDays,
   isBackupsChanged,
   keepError,
-  keepLabel,
   locationError,
   locationLabel,
   needsAttention,
@@ -31,7 +30,6 @@ import {
   pathsFrom,
   pointLabel,
   pointTime,
-  resetField,
   scheduleLabel,
   type EffectiveBackup,
 } from "@/lib/backups";
@@ -146,11 +144,6 @@ describe("the backups list", () => {
       { name: "new", type: "files", volume: "data" },
     ]);
   });
-  it("resets a field to the recipe, the location as a whole", () => {
-    const c = { name: "media", enabled: true, every: "1h", service: "web", paths: ["/x"], exclude: [] };
-    expect(resetField(c, "every")).toEqual({ name: "media", enabled: true, service: "web", paths: ["/x"], exclude: [] });
-    expect(resetField(c, "paths")).toEqual({ name: "media", enabled: true, every: "1h", exclude: [] });
-  });
 });
 
 describe("retention", () => {
@@ -163,12 +156,6 @@ describe("retention", () => {
     expect(cappedNote(undefined, 180)).toBe("Capped at 180 days on this server.");
     expect(cappedNote({ daily: 7, monthly: 0 }, 180)).toBe("");
     expect(cappedNote(undefined, 0)).toBe("");
-  });
-  it("reads as a label", () => {
-    expect(keepLabel({ recent: "24h0m0s", daily: 14, monthly: 6 })).toBe("24h, 14 daily, 6 monthly");
-    expect(keepLabel({ recent: "36h30m0s", daily: 1, monthly: 0 })).toBe("36h30m, 1 daily, 0 monthly");
-    expect(keepLabel({ recent: "45m0s" })).toBe("45m, 14 daily, 6 monthly");
-    expect(keepLabel(null)).toBe("24h, 14 daily, 6 monthly");
   });
 });
 

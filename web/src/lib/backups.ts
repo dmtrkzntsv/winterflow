@@ -257,16 +257,6 @@ export function configsWith(backups: EffectiveBackup[], name: string, next: Back
   return out.filter((c) => Object.keys(c).length > 1);
 }
 
-// resetField drops a field's override from a backup's entry, so it follows
-// the recipe again. The location fields go together.
-export function resetField(c: BackupConfig, field: RecipeField): BackupConfig {
-  const next = { ...c };
-  const drop: RecipeField[] =
-    field === "volume" || field === "service" || field === "path" || field === "paths" ? ["volume", "service", "path", "paths"] : [field];
-  for (const f of drop) delete next[f];
-  return next;
-}
-
 // keepDays is how far back a retention reaches, in days: the recent window,
 // the daily tier and the monthly one (31 days a month).
 export function keepDays(keep: Keep | null | undefined): number {
@@ -278,12 +268,6 @@ export function keepDays(keep: Keep | null | undefined): number {
 // ceiling (retention days, 0 = none), else "".
 export function cappedNote(keep: Keep | null | undefined, ceiling: number): string {
   return ceiling > 0 && keepDays(keep) > ceiling ? `Capped at ${ceiling} days on this server.` : "";
-}
-
-// keepLabel reads a retention: "24h, 14 daily, 6 monthly".
-export function keepLabel(keep: Keep | null | undefined): string {
-  const recent = keep?.recent ? compactDuration(keep.recent) : "24h";
-  return `${recent}, ${keep?.daily ?? 14} daily, ${keep?.monthly ?? 6} monthly`;
 }
 
 // locationLabel reads where a backup's data is: "volume data: app.db" or

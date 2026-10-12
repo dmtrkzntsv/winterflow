@@ -1,12 +1,13 @@
 import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 
-import { Card, CardContent } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
+import { Card } from "@/components/ui/card";
 import { Sparkline } from "@/components/sparkline";
 import { useServers } from "@/context/use-servers";
 import type { Server } from "@/context/servers-context-base";
 import { useMetricsOverview } from "@/hooks/use-metrics";
+import { useNow } from "@/hooks/use-now";
+import { latestValue, percentCeiling, serverPresence, type Presence } from "@/lib/kpi";
 import {
   chartColor,
   formatPercent,
@@ -14,176 +15,207 @@ import {
   fullestDisk,
   percentOf,
   toChartRows,
-  type ChartRow,
   type ServerOverview,
 } from "@/lib/metrics";
 import { cn, formatBytes } from "@/lib/utils";
 
 const SPARK_INTERVAL = 60; // the overview sparkline is tier 1: one point a minute
 
-function formatSince(iso: string | null): string {
-  if (!iso) return "never";
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? "never" : d.toLocaleString();
-}
+const DOT: Record<Presence["tone"], string> = {
+  live: "bg-emerald-500",
+  offline: "bg-muted-foreground/40",
+  waiting: "bg-muted-foreground/25",
+};
 
-function specsLine(caps: Record<string, string>): string {
+function specsLine(caps: Record<string, string>): string[] {
   const parts: string[] = [];
   if (caps.system_cpu_cores) parts.push(`${caps.system_cpu_cores} cores`);
   const mem = formatBytes(caps.system_memory_total);
-  if (mem) parts.push(mem);
+  if (mem) parts.push(`${mem} RAM`);
   const disk = formatBytes(caps.system_disk_total);
   if (disk) parts.push(`${disk} disk`);
-  return parts.join(" · ");
+  return parts;
 }
 
-// Meter is one labelled usage bar with its 1-hour sparkline.
+// Meter is one slim usage bar: label, a thin bar in the series colour (red
+// past 90 %), the percentage. Without a figure the bar stays empty and the
+// value reads "–", never a fake 0 %.
 function Meter({
   label,
   percent,
-  detail,
-  rows,
-  field,
   color,
+  title,
 }: {
   label: string;
   percent: number | undefined;
-  detail?: string;
-  rows: ChartRow[];
-  field: string;
   color: string;
+  title?: string;
 }) {
+  const width = percent === undefined ? 0 : Math.min(100, Math.max(0, percent));
   return (
-    <div className="space-y-1" data-testid={`meter-${label}`}>
-      <div className="flex items-baseline justify-between text-xs">
-        <span className="text-muted-foreground">{label}</span>
-        <span className="font-medium tabular-nums">
-          {formatPercent(percent)}
-          {detail ? <span className="ml-1 font-normal text-muted-foreground">{detail}</span> : null}
-        </span>
+    <div
+      className="grid grid-cols-[3.75rem_1fr_2.75rem] items-center gap-2 text-xs"
+      data-testid={`meter-${label}`}
+      title={title}
+    >
+      <span className="text-muted-foreground">{label}</span>
+      <div className="h-1.5 overflow-hidden rounded-full bg-muted" aria-hidden>
+        <div
+          className="h-full rounded-full"
+          style={{ width: `${width}%`, backgroundColor: width >= 90 ? "var(--destructive)" : color }}
+        />
       </div>
-      <Progress value={percent ?? 0} className="h-1.5" />
-      <Sparkline rows={rows} field={field} color={color} max={100} />
+      <span className="text-right font-medium tabular-nums">{formatPercent(percent)}</span>
     </div>
   );
 }
 
-// HealthCard is one server's dashboard widget.
+// HealthCard is one server's dashboard card in twillingate's project-card
+// shape: name and a presence dot, the last hour of CPU as one sparkline,
+// slim usage bars, then a meta line and a quieter specs line. The whole
+// card opens the server's Monitoring page.
 function HealthCard({
   server,
   overview,
   online,
+  now,
   onOpen,
 }: {
   server: Server;
   overview: ServerOverview | undefined;
   online: boolean;
+  now: number;
   onOpen: () => void;
 }) {
   const latest = overview?.latest?.server;
-  const rows = useMemo(() => {
-    // Every sparkline is a percentage; memory's is derived from used/total.
-    const pts = (overview?.sparkline ?? []).map((p) => {
-      const mem = percentOf(p.mem_used, p.mem_total);
-      return mem === undefined ? p : { ...p, mem_pct: mem };
-    });
-    return toChartRows(pts, SPARK_INTERVAL, ["cpu", "mem_pct", "disk_pct"], "avg");
-  }, [overview?.sparkline]);
+  const rows = useMemo(
+    () => toChartRows(overview?.sparkline ?? [], SPARK_INTERVAL, ["cpu"], "avg"),
+    [overview?.sparkline],
+  );
   const disk = fullestDisk(latest?.disks);
   const apps = overview?.apps;
-  const specs = specsLine(server.capabilities);
+  const presence = serverPresence(online, server.lastSeenAt, now);
+  // The newest host sample may lack CPU (the first one after a restart has
+  // no delta yet); the sparkline's newest minute stands in.
+  const cpu = latest?.cpu ?? latestValue(rows, "cpu");
+  const hasSpark = rows.filter((r) => typeof r.cpu === "number").length >= 2;
 
-  const status = online
-    ? "Online"
-    : server.lastSeenAt
-      ? "Offline"
-      : "Waiting";
-  const meta = [
-    online
-      ? server.capabilities.server_ip
-      : server.lastSeenAt
-        ? `Offline since ${formatSince(server.lastSeenAt)}`
-        : "Waiting for the agent to connect…",
-    specs,
+  const meta: string[] = [];
+  if (latest) {
+    meta.push(`Load ${latest.load1.toFixed(2)} / ${latest.load5.toFixed(2)} / ${latest.load15.toFixed(2)}`);
+    if (latest.temp !== undefined) meta.push(formatTemp(latest.temp));
+  } else {
+    // Metrics off or not reported yet: app counts still show.
+    meta.push("No data yet");
+  }
+  const quiet = [
+    server.capabilities.server_ip,
+    ...specsLine(server.capabilities),
     server.capabilities.version ? `Agent v${server.capabilities.version}` : "",
   ].filter(Boolean);
 
-  // State is a small dot plus a word, not a coloured outline (twillingate's
-  // project card); the whole card opens the server's Monitoring page.
   return (
     <Card
       title={`${server.name}: ${online ? "online" : "offline"}`}
       onClick={onOpen}
-      className="w-full cursor-pointer transition-colors hover:border-primary/40 sm:w-[340px]"
+      className="flex min-w-0 cursor-pointer flex-col gap-3 p-4 transition-colors hover:border-primary/40"
     >
-      <CardContent className="space-y-3 p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="truncate text-base font-semibold tracking-tight">{server.name}</div>
-            {meta.length > 0 ? (
-              <div className="mt-0.5 text-xs text-muted-foreground">{meta.join(" · ")}</div>
-            ) : null}
-          </div>
-          <span className="mt-1 flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-            <span
-              aria-hidden
-              className={cn("size-2 rounded-full", online ? "bg-emerald-500" : "bg-muted-foreground/40")}
-            />
-            {status}
-          </span>
-        </div>
+      <div className="flex items-center justify-between gap-3">
+        <div className="truncate text-base font-semibold tracking-tight">{server.name}</div>
+        <span
+          className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground"
+          title={presence.title}
+          data-testid="presence"
+        >
+          <span aria-hidden className={cn("size-2 rounded-full", DOT[presence.tone])} />
+          {presence.label}
+        </span>
+      </div>
 
-        <div className="space-y-2">
-          <Meter label="CPU" percent={latest?.cpu} rows={rows} field="cpu" color={chartColor(0)} />
-          <Meter
-            label="Memory"
-            percent={percentOf(latest?.mem_used, latest?.mem_total)}
+      <div className="relative h-12" aria-label="CPU, last hour">
+        {hasSpark ? (
+          <Sparkline
             rows={rows}
-            field="mem_pct"
-            color={chartColor(1)}
+            field="cpu"
+            color={chartColor(0)}
+            max={percentCeiling(rows, "cpu")}
+            className="h-12"
           />
-          <Meter
-            label="Disk"
-            percent={disk ? percentOf(disk.used, disk.total) : undefined}
-            detail={disk?.mount}
-            rows={rows}
-            field="disk_pct"
-            color={chartColor(2)}
-          />
-          {latest ? (
-            <div className="flex flex-wrap gap-x-3 text-xs text-muted-foreground">
-              <span>
-                Load {latest.load1.toFixed(2)} / {latest.load5.toFixed(2)} / {latest.load15.toFixed(2)}
-              </span>
-              {latest.temp !== undefined ? <span>{formatTemp(latest.temp)}</span> : null}
-            </div>
-          ) : (
-            <div className="text-xs text-muted-foreground">No data yet</div>
-          )}
-        </div>
+        ) : (
+          // twillingate's quiet card: a hairline where the trend will be.
+          <div className="absolute inset-x-0 bottom-1 border-b border-primary/30" />
+        )}
+      </div>
 
-        {apps ? (
-          <div className="flex gap-3 text-xs" data-testid="app-counts">
-            <span>{apps.running} running</span>
-            <span className="text-muted-foreground">{apps.stopped} stopped</span>
-            {apps.problematic > 0 ? (
-              <span className="text-destructive">{apps.problematic} problematic</span>
-            ) : null}
+      <div className="space-y-1.5">
+        <Meter label="CPU" percent={cpu} color={chartColor(0)} />
+        <Meter
+          label="Memory"
+          percent={percentOf(latest?.mem_used, latest?.mem_total)}
+          color={chartColor(1)}
+        />
+        <Meter
+          label="Disk"
+          percent={disk ? percentOf(disk.used, disk.total) : undefined}
+          color={chartColor(2)}
+          title={disk ? `Fullest filesystem: ${disk.mount}` : undefined}
+        />
+      </div>
+
+      <div className="space-y-1">
+        <div className="text-xs text-muted-foreground tabular-nums">
+          {meta.join(" · ")}
+          {apps ? (
+            <span data-testid="app-counts">
+              {" · "}
+              <span className="text-foreground">{apps.running} running</span>
+              {` · ${apps.stopped} stopped`}
+              {apps.problematic > 0 ? (
+                <span className="text-destructive">{` · ${apps.problematic} problematic`}</span>
+              ) : null}
+            </span>
+          ) : null}
+        </div>
+        {quiet.length > 0 ? (
+          <div className="text-xs text-muted-foreground/75">
+            {quiet.join(" · ")}
           </div>
         ) : null}
-      </CardContent>
+      </div>
     </Card>
   );
 }
 
-// ServerCards renders the org's servers as health widgets at the top of the
-// dashboard: liveness, CPU/memory/disk meters with 1-hour sparklines, load,
-// temperature and app counts. Clicking one makes it the active server and
-// opens its Monitoring page.
+// HealthCardSkeleton holds a server card's place while the list loads.
+function HealthCardSkeleton() {
+  return (
+    <Card role="status" aria-label="Loading servers" className="flex flex-col gap-3 p-4">
+      <div className="flex items-center justify-between">
+        <div className="frost h-4 w-28 rounded" />
+        <div className="frost h-3 w-14 rounded" />
+      </div>
+      <div className="frost h-12 rounded-md opacity-70" />
+      <div className="space-y-2.5">
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="frost h-1.5 rounded-full" />
+        ))}
+      </div>
+      <div className="frost h-3 w-3/4 rounded" />
+    </Card>
+  );
+}
+
+const GRID = "grid gap-3 sm:grid-cols-2 xl:grid-cols-3";
+
+// ServerCards renders the org's servers as health cards at the top of the
+// dashboard: presence, the last hour of CPU, usage bars, load, temperature
+// and app counts. Clicking one makes it the active server and opens its
+// Monitoring page.
 export function ServerCards() {
   const { servers, setActiveServerId, statusByServer, loading } = useServers();
   const { data } = useMetricsOverview();
   const navigate = useNavigate();
+  const now = useNow();
 
   const byId = useMemo(() => {
     const m = new Map<string, ServerOverview>();
@@ -192,20 +224,25 @@ export function ServerCards() {
   }, [data]);
 
   if (loading && servers.length === 0) {
-    return <div className="frost h-[220px] w-full rounded-xl sm:w-[340px]" />;
+    return (
+      <div className={GRID}>
+        <HealthCardSkeleton />
+      </div>
+    );
   }
   if (servers.length === 0) {
     return null;
   }
 
   return (
-    <div className="flex flex-wrap gap-3">
+    <div className={GRID}>
       {servers.map((s) => (
         <HealthCard
           key={s.id}
           server={s}
           overview={byId.get(s.id)}
           online={statusByServer[s.id] === "online"}
+          now={now}
           onOpen={() => {
             setActiveServerId(s.id);
             navigate("/monitoring");

@@ -35,7 +35,9 @@ function DeltaPill({ delta, label, goodWhen }: { delta: number; label: string; g
   const good = goodWhen === "neutral" ? undefined : up === (goodWhen === "up");
   const Arrow = up ? ArrowUpRight : ArrowDownRight;
   return (
-    <div className="flex items-center gap-1.5 text-xs" data-testid="kpi-delta">
+    // On a narrow tile the label drops under the pill as one line instead
+    // of wrapping word by word beside it.
+    <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs" data-testid="kpi-delta">
       <span
         data-tone={good === undefined ? "neutral" : good ? "good" : "bad"}
         className={cn(
@@ -48,7 +50,7 @@ function DeltaPill({ delta, label, goodWhen }: { delta: number; label: string; g
         <Arrow className="size-3" aria-hidden />
         {formatDelta(delta)}
       </span>
-      <span className="text-muted-foreground">{label}</span>
+      <span className="truncate whitespace-nowrap text-muted-foreground">{label}</span>
     </div>
   );
 }
@@ -83,7 +85,7 @@ export function KpiTile({
       {typeof delta === "number" && Number.isFinite(delta) ? (
         <DeltaPill delta={delta} label={deltaLabel} goodWhen={goodWhen} />
       ) : null}
-      {sub ? <div className="truncate text-xs text-muted-foreground">{sub}</div> : null}
+      {sub ? <div className="line-clamp-2 text-xs text-muted-foreground">{sub}</div> : null}
       {spark ? (
         <div className="-mx-1 mt-auto min-h-8 flex-1">
           <Sparkline rows={spark.rows} field={spark.field} color={spark.color} max={spark.max} className="h-10" />

@@ -4,7 +4,6 @@ import { Plus } from "lucide-react"
 
 import { useAppBreadcrumbs } from "@/layouts/use-app-layout"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { ServerSelectionDialog } from "@/components/server-creation-dialog"
 import { ServerCards } from "@/components/server-cards"
 import { AppGrid } from "@/components/app-grid"
@@ -25,11 +24,11 @@ export default function HomePage() {
   useAppBreadcrumbs(breadcrumbs)
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <h1 className="text-2xl font-semibold tracking-tight">Dashboard</h1>
       {/* Servers row (v1 AgentList). Adding servers is a cloud capability; the
           standalone build ships one embedded server, so the action is hidden. */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between pt-2">
         <h2 className="text-sm font-medium text-muted-foreground">Servers</h2>
         {!isStandalone ? (
           <Button
@@ -43,18 +42,14 @@ export default function HomePage() {
       </div>
       <ServerCards />
 
-      {/* Apps section, wrapped in a titled Card (v1 dashboard-app-list). */}
-      <Card>
-        <CardHeader className="flex-row items-center justify-between space-y-0">
-          <CardTitle>Apps</CardTitle>
-          <Button size="sm" onClick={() => navigate("/create-app")}>
-            <Plus className="size-4" /> New App
-          </Button>
-        </CardHeader>
-        <CardContent>
-          <AppGrid />
-        </CardContent>
-      </Card>
+      {/* Apps: the same section shape as Servers, each app its own card. */}
+      <div className="flex items-center justify-between pt-4">
+        <h2 className="text-sm font-medium text-muted-foreground">Apps</h2>
+        <Button size="sm" onClick={() => navigate("/create-app")}>
+          <Plus className="size-4" /> New App
+        </Button>
+      </div>
+      <AppGrid />
 
       {!isStandalone ? (
         <ServerSelectionDialog

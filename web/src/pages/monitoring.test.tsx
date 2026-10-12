@@ -8,7 +8,10 @@ import MonitoringPage from "@/pages/monitoring";
 import type { DockerDF, ServerSeries } from "@/lib/metrics";
 
 const useServerMetrics = vi.fn();
+const refreshServer = vi.fn(async () => {});
+const refreshOverview = vi.fn(async () => {});
 let data: ServerSeries | null = null;
+let loading = false;
 let latestDF: DockerDF | undefined;
 
 // jsdom has no layout: a fixed-size ResponsiveContainer makes recharts draw.
@@ -31,7 +34,7 @@ vi.mock("@/context/use-apps", () => ({
 vi.mock("@/hooks/use-metrics", () => ({
   useServerMetrics: (...args: unknown[]) => {
     useServerMetrics(...args);
-    return { data, loading: false, error: null, refresh: vi.fn() };
+    return { data, loading, error: null, updatedAt: data ? Date.parse("2026-10-11T17:06:00") : null, refresh: refreshServer };
   },
   useMetricsOverview: () => ({
     data: {
@@ -42,7 +45,8 @@ vi.mock("@/hooks/use-metrics", () => ({
     },
     loading: false,
     error: null,
-    refresh: vi.fn(),
+    updatedAt: null,
+    refresh: refreshOverview,
   }),
 }));
 
@@ -68,6 +72,9 @@ function renderPage() {
 describe("MonitoringPage", { timeout: 20_000 }, () => {
   beforeEach(() => {
     useServerMetrics.mockClear();
+    refreshServer.mockClear();
+    refreshOverview.mockClear();
+    loading = false;
     latestDF = undefined;
     data = {
       interval_seconds: 60,
@@ -160,5 +167,47 @@ describe("MonitoringPage", { timeout: 20_000 }, () => {
     await userEvent.click(screen.getByRole("button", { name: "Range: Last hour" }));
     await userEvent.click(await screen.findByRole("menuitemradio", { name: "Last 7 days" }));
     expect(useServerMetrics).toHaveBeenLastCalledWith("s1", "7d");
+  });
+
+  it("leads with KPI tiles: the newest value and the trend within the range", () => {
+    data!.points = [
+      { t: 0, cpu: 10, mem_used: 1, mem_total: 4, net_rx_bps: 100, net_tx_bps: 100 },
+      { t: 60, cpu: 10, mem_used: 1, mem_total: 4, net_rx_bps: 100, net_tx_bps: 100 },
+      { t: 120, cpu: 20, mem_used: 2, mem_total: 4, net_rx_bps: 100, net_tx_bps: 100 },
+      { t: 180, cpu: 20, mem_used: 2, mem_total: 4, net_rx_bps: 1024, net_tx_bps: 1024 },
+    ];
+    renderPage();
+    const cpu = screen.getByTestId("kpi-CPU");
+    expect(cpu).toHaveTextContent("20%");
+    // Usage rising is bad news: a red pill.
+    expect(cpu.querySelector("[data-testid=kpi-delta]")).toHaveTextContent("+100%vs previous 30 min");
+    expect(cpu.querySelector("[data-tone]")).toHaveAttribute("data-tone", "bad");
+    expect(screen.getByTestId("kpi-Memory")).toHaveTextContent("50%");
+    expect(screen.getByTestId("kpi-Memory")).toHaveTextContent("2 B of 4 B");
+    expect(screen.getByTestId("kpi-Network")).toHaveTextContent("2.0 KB/s");
+    expect(screen.getByTestId("kpi-Network")).toHaveTextContent("In 1.0 KB/s · Out 1.0 KB/s");
+    expect(screen.getByTestId("kpi-Network").querySelector("[data-tone]")).toHaveAttribute("data-tone", "neutral");
+    // Two points are too few for a trend: no pill rather than a wild one.
+    expect(screen.getByTestId("kpi-Disk")).toHaveTextContent("–");
+    expect(screen.getByTestId("kpi-Disk").querySelector("[data-testid=kpi-delta]")).toBeNull();
+  });
+
+  it("states freshness and re-fetches on refresh", async () => {
+    renderPage();
+    expect(screen.getByTestId("data-as-of")).toHaveTextContent(/^Data as of /);
+    await userEvent.click(screen.getByRole("button", { name: "Refresh data" }));
+    expect(refreshServer).toHaveBeenCalledTimes(1);
+    expect(refreshOverview).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows skeletons shaped like the tiles and charts while loading", () => {
+    data = null;
+    loading = true;
+    renderPage();
+    // The CPU tile and the big CPU chart.
+    expect(screen.getAllByRole("status", { name: "Loading CPU" })).toHaveLength(2);
+    expect(screen.getAllByRole("status").length).toBeGreaterThan(4);
+    expect(screen.queryByTestId("chart-CPU")).not.toBeInTheDocument();
+    expect(screen.getByTestId("data-as-of")).toHaveTextContent("Loading data");
   });
 });

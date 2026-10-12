@@ -1,13 +1,15 @@
 import { Link } from "react-router-dom";
+import { Boxes } from "lucide-react";
 
 import { Card } from "@/components/ui/card";
 import { AppIcon } from "@/components/app-icon";
 import { AppStatusCode } from "@/context/apps-context-base";
 import { useApps } from "@/context/use-apps";
+import { appLabel } from "@/lib/kpi";
 import { cn } from "@/lib/utils";
 
-// Status → a small dot and a word under the tile (twillingate's status
-// treatment, not a coloured outline); unknown is just a neutral dot.
+// Status → a small dot and a word (twillingate's status treatment, not a
+// coloured outline); unknown is just a neutral dot.
 const STATUS_STYLE: Record<number, { label: string; dot: string }> = {
   [AppStatusCode.Active]: { label: "Running", dot: "bg-emerald-500" },
   [AppStatusCode.Idle]: { label: "Idle", dot: "bg-muted-foreground/40" },
@@ -17,17 +19,32 @@ const STATUS_STYLE: Record<number, { label: string; dot: string }> = {
   [AppStatusCode.Unknown]: { label: "Unknown", dot: "bg-muted-foreground/25" },
 };
 
-// AppGrid renders the active server's apps as square tiles: colored icon
-// block, name, a status dot with its label, staggered entrance animation. Each tile links to the app's details page.
+const GRID = "grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4";
+
+function AppTileSkeleton() {
+  return (
+    <Card role="status" aria-label="Loading apps" className="flex items-center gap-3 p-3.5">
+      <div className="frost size-10 shrink-0 rounded-lg" />
+      <div className="flex-1 space-y-2">
+        <div className="frost h-3.5 w-24 rounded" />
+        <div className="frost h-3 w-32 rounded" />
+      </div>
+    </Card>
+  );
+}
+
+// AppGrid renders the active server's apps as cards in the server cards'
+// language: icon, name, a status dot with its word, and the public route
+// (or, for an app without a name yet, its id). Each card links to the app.
 export function AppGrid() {
   const { apps, statusByApp, loading, error } = useApps();
 
   if (loading && apps.length === 0) {
     return (
-      <div className="flex flex-wrap gap-3">
-        <div className="frost h-32 w-32 rounded-xl" />
-        <div className="frost h-32 w-32 rounded-xl" />
-        <div className="frost h-32 w-32 rounded-xl" />
+      <div className={GRID}>
+        <AppTileSkeleton />
+        <AppTileSkeleton />
+        <AppTileSkeleton />
       </div>
     );
   }
@@ -38,48 +55,60 @@ export function AppGrid() {
 
   if (apps.length === 0) {
     return (
-      <div className="flex min-h-40 flex-col items-center justify-center rounded-xl border border-dashed text-center">
-        <p className="font-medium">No apps yet</p>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Deploy an application to see it here.
-        </p>
-      </div>
+      <Card className="flex min-h-40 flex-col items-center justify-center gap-2 p-6 text-center text-muted-foreground">
+        <Boxes className="size-5 opacity-70" aria-hidden />
+        <p className="text-sm font-medium">No apps yet</p>
+        <p className="text-xs">Deploy an application to see it here.</p>
+      </Card>
     );
   }
 
   return (
-    <div className="flex flex-wrap gap-3">
+    <div className={GRID}>
       {apps.map((app, index) => {
-        const status =
-          STATUS_STYLE[statusByApp[app.id] ?? AppStatusCode.Unknown] ??
-          STATUS_STYLE[AppStatusCode.Unknown];
-        const unknown =
-          (statusByApp[app.id] ?? AppStatusCode.Unknown) ===
-          AppStatusCode.Unknown;
+        const code = statusByApp[app.id] ?? AppStatusCode.Unknown;
+        const status = STATUS_STYLE[code] ?? STATUS_STYLE[AppStatusCode.Unknown];
+        const unknown = code === AppStatusCode.Unknown;
+        const named = Boolean(app.name?.trim());
+        const label = appLabel(app.name, app.id);
+        const routes = app.domains?.filter((d) => d.kind === "route") ?? [];
         return (
           <Link
             key={app.id}
             to={`/app/${app.id}`}
-            title={`${app.name}: ${status.label}`}
-            className="app-card-in block"
+            title={`${label}: ${status.label}`}
+            className="app-card-in block min-w-0"
             style={{ animationDelay: `${index * 40}ms` }}
           >
-            <Card className="flex h-32 w-32 flex-col items-center p-3.5 transition-colors hover:border-primary/40">
-              <div className="flex flex-1 flex-col items-center gap-2">
-                <AppIcon
-                  name={app.name}
-                  icon={app.icon}
-                  color={app.color}
-                  className="size-12 rounded-lg"
-                />
-                <span className="w-full truncate text-center text-sm font-medium">
-                  {app.name}
-                </span>
-                {/* Buttons, not anchors: the tile is already a Link (<a>), and
-                    nesting an <a> inside it is invalid interactive content. */}
-                {app.domains
-                  ?.filter((d) => d.kind === "route")
-                  .map((d) => (
+            <Card className="flex h-full items-center gap-3 p-3.5 transition-colors hover:border-primary/40">
+              <AppIcon
+                name={app.name}
+                icon={app.icon}
+                color={app.color}
+                className="size-10 shrink-0 rounded-lg text-base"
+              />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center justify-between gap-2">
+                  <span
+                    className={cn(
+                      "truncate text-sm font-semibold tracking-tight",
+                      !named && "font-mono font-medium text-muted-foreground",
+                    )}
+                  >
+                    {label}
+                  </span>
+                  <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+                    <span aria-hidden className={cn("size-2 shrink-0 rounded-full", status.dot)} />
+                    {unknown ? null : status.label}
+                  </span>
+                </div>
+                <div className="mt-0.5 flex min-w-0 gap-2 text-xs text-muted-foreground">
+                  {routes.length === 0 ? (
+                    <span className="truncate">{named ? "No public route" : "Not reconciled yet"}</span>
+                  ) : null}
+                  {/* Buttons, not anchors: the card is already a Link (<a>),
+                      and nesting an <a> inside it is invalid interactive content. */}
+                  {routes.slice(0, 2).map((d) => (
                     <button
                       key={d.domain}
                       type="button"
@@ -92,19 +121,13 @@ export function AppGrid() {
                           "noopener,noreferrer",
                         );
                       }}
-                      className="w-full truncate text-center text-xs text-muted-foreground hover:text-foreground hover:underline"
+                      className="min-w-0 truncate hover:text-foreground hover:underline"
                     >
                       {d.domain}
                     </button>
                   ))}
+                </div>
               </div>
-              <span className="mt-auto flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                <span
-                  aria-hidden
-                  className={cn("size-2 shrink-0 rounded-full", status.dot)}
-                />
-                {unknown ? null : status.label}
-              </span>
             </Card>
           </Link>
         );

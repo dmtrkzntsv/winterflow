@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 
-import { Card, CardContent } from "@/components/ui/card";
-import { MetricChartCard } from "@/components/metric-chart";
+import { DataFreshness } from "@/components/data-freshness";
+import { KpiTile, KpiTileSkeleton } from "@/components/kpi-tile";
+import { ChartCardSkeleton, MetricChartCard } from "@/components/metric-chart";
 import { RangeMenu } from "@/components/range-menu";
 import { useAppMetrics } from "@/hooks/use-metrics";
 import {
@@ -16,6 +17,11 @@ import {
   type MetricsMode,
   type MetricsRange,
 } from "@/lib/metrics";
+import { percentCeiling, withNetTotal } from "@/lib/kpi";
+
+// Fixed rows with plots that fill them: cards in a row end level whether
+// or not they carry a legend.
+const CHART_GRID = "grid auto-rows-[18.5rem] gap-3 md:grid-cols-2";
 
 // UNAVAILABLE is shown when the host's cgroups resolve under no known
 // layout (rootless Docker, exotic drivers): the agent sends
@@ -23,57 +29,75 @@ import {
 // carries the flagged fraction; see isUnavailable).
 const UNAVAILABLE = "Container metrics are unavailable on this host";
 
-function Block({ label, value, detail }: { label: string; value: string; detail?: string }) {
-  return (
-    <Card className="min-w-[150px] flex-1" data-testid={`block-${label}`}>
-      <CardContent className="p-3">
-        <div className="text-xs text-muted-foreground">{label}</div>
-        <div className="text-lg font-semibold tabular-nums">{value}</div>
-        {detail ? <div className="text-xs text-muted-foreground">{detail}</div> : null}
-      </CardContent>
-    </Card>
-  );
-}
+const KPI_GRID = "grid grid-cols-2 gap-3 lg:grid-cols-4";
 
-// AppMetricBlocks is the app header's row of info blocks: CPU now, memory
-// against its limit, disk and network rate, from the newest 1-minute point.
+// AppMetricBlocks is the app header's KPI row: CPU now, memory against its
+// limit, disk and network rate, each from the newest 1-minute point with
+// the last hour as a sparkline.
 export function AppMetricBlocks({ serverId, appId }: { serverId: string; appId: string }) {
-  const { data } = useAppMetrics(serverId, appId, "1h");
-  const last = lastPoint(data?.points ?? []);
+  const { data, loading } = useAppMetrics(serverId, appId, "1h");
+  const points = useMemo(() => withNetTotal(data?.points ?? []), [data]);
+  if (loading && !data) {
+    return (
+      <div className={KPI_GRID}>
+        {["CPU", "Memory", "Disk", "Network"].map((l) => (
+          <KpiTileSkeleton key={l} label={l} />
+        ))}
+      </div>
+    );
+  }
+  const last = lastPoint(points);
   if (!last) return null;
+  const rows = toChartRows(points, data?.interval_seconds ?? 60, ["cpu", "mem_used", "disk", "net_bps"], "avg");
   // Container metrics come from cgroups; the disk figure comes from the
   // hourly scan, so it stays meaningful when cgroups are unavailable.
   const blind = isUnavailable(last);
-  const net =
-    last.net_rx_bps !== undefined || last.net_tx_bps !== undefined
-      ? (last.net_rx_bps ?? 0) + (last.net_tx_bps ?? 0)
-      : undefined;
   const hasDisk = last.disk !== undefined;
   if (blind && !hasDisk) {
     return <p className="text-sm text-muted-foreground">{UNAVAILABLE}</p>;
   }
+  const spark = (field: string, i: number, max?: number) => ({ rows, field, color: chartColor(i), max });
   return (
     <div className="space-y-2">
       {blind ? <p className="text-sm text-muted-foreground">{UNAVAILABLE}</p> : null}
-      <div className="flex flex-wrap gap-3">
+      <div className={KPI_GRID}>
         {blind ? null : (
           <>
-            <Block label="CPU" value={formatPercent(last.cpu)} detail="of host" />
-            <Block
+            <KpiTile
+              label="CPU"
+              value={formatPercent(last.cpu)}
+              sub="of host"
+              spark={spark("cpu", 0, percentCeiling(rows, "cpu"))}
+            />
+            <KpiTile
               label="Memory"
               value={formatSize(last.mem_used)}
-              detail={last.mem_limit ? `of ${formatSize(last.mem_limit)} limit` : "no limit"}
+              sub={last.mem_limit ? `of ${formatSize(last.mem_limit)} limit` : "no limit"}
+              // Against a limit the line reads as headroom: 0 to the limit.
+              spark={spark("mem_used", 1, last.mem_limit || undefined)}
             />
           </>
         )}
         {hasDisk || !blind ? (
-          <Block
+          <KpiTile
             label="Disk"
             value={formatSize(last.disk)}
-            detail={last.image ? `+ ${formatSize(last.image)} images (may be shared)` : undefined}
+            sub={last.image ? `+ ${formatSize(last.image)} images (may be shared)` : undefined}
+            spark={spark("disk", 2)}
           />
         ) : null}
-        {blind ? null : <Block label="Network" value={formatRate(net)} />}
+        {blind ? null : (
+          <KpiTile
+            label="Network"
+            value={formatRate(last.net_bps)}
+            sub={
+              last.net_bps !== undefined
+                ? `In ${formatRate(last.net_rx_bps)} · Out ${formatRate(last.net_tx_bps)}`
+                : undefined
+            }
+            spark={spark("net_bps", 4)}
+          />
+        )}
       </div>
     </div>
   );
@@ -85,7 +109,7 @@ export function AppMetricsTab({ serverId, appId }: { serverId: string; appId: st
   // 1h has data from the first minute (raw samples); see MonitoringPage.
   const [range, setRange] = useState<MetricsRange>("1h");
   const [mode, setMode] = useState<MetricsMode>("avg");
-  const { data, error } = useAppMetrics(serverId, appId, range);
+  const { data, error, loading, updatedAt, refresh } = useAppMetrics(serverId, appId, range);
   const points = useMemo(() => data?.points ?? [], [data]);
   const interval = data?.interval_seconds ?? 60;
   const rows = (fields: string[]) => toChartRows(points, interval, fields, mode);
@@ -95,47 +119,62 @@ export function AppMetricsTab({ serverId, appId }: { serverId: string; appId: st
   if (hasData(points, ["mem_limit"])) memSeries.push({ key: "mem_limit", label: "Limit", color: chartColor(3) });
 
   return (
-    <div className="space-y-4">
-      <RangeMenu className="justify-end" range={range} onRangeChange={setRange} mode={mode} onModeChange={setMode} />
-      {error ? <p className="text-sm text-destructive">{error}</p> : null}
-      <div className="grid gap-4 md:grid-cols-2">
-        <MetricChartCard
-          title="CPU"
-          description="Percent of the whole host"
-          rows={rows(["cpu"])}
-          series={[{ key: "cpu", label: "CPU", color: chartColor(0) }]}
-          format={formatPercent}
-          range={range}
-          empty={blind}
-        />
-        <MetricChartCard
-          title="Memory"
-          rows={rows(memSeries.map((m) => m.key))}
-          series={memSeries}
-          format={formatSize}
-          range={range}
-          empty={blind}
-        />
-        <MetricChartCard
-          title="Network"
-          rows={rows(["net_rx_bps", "net_tx_bps"])}
-          series={[
-            { key: "net_rx_bps", label: "In", color: chartColor(1) },
-            { key: "net_tx_bps", label: "Out", color: chartColor(3) },
-          ]}
-          format={formatRate}
-          range={range}
-          empty={blind}
-        />
-        <MetricChartCard
-          title="Disk"
-          description="Volumes, app directory and writable layers (hourly)"
-          rows={rows(["disk"])}
-          series={[{ key: "disk", label: "Disk", color: chartColor(2) }]}
-          format={formatSize}
-          range={range}
-        />
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <DataFreshness updatedAt={updatedAt} onRefresh={refresh} />
+        <RangeMenu range={range} onRangeChange={setRange} mode={mode} onModeChange={setMode} />
       </div>
+      {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      {loading && !data ? (
+        <div className={CHART_GRID}>
+          {["CPU", "Memory", "Network", "Disk"].map((t) => (
+            <ChartCardSkeleton key={t} title={t} className="h-full" />
+          ))}
+        </div>
+      ) : (
+        <div className={CHART_GRID}>
+          <MetricChartCard
+            height="fill"
+            title="CPU"
+            description="Percent of the whole host"
+            rows={rows(["cpu"])}
+            series={[{ key: "cpu", label: "CPU", color: chartColor(0) }]}
+            format={formatPercent}
+            range={range}
+            empty={blind}
+          />
+          <MetricChartCard
+            height="fill"
+            title="Memory"
+            rows={rows(memSeries.map((m) => m.key))}
+            series={memSeries}
+            format={formatSize}
+            range={range}
+            empty={blind}
+          />
+          <MetricChartCard
+            height="fill"
+            title="Network"
+            rows={rows(["net_rx_bps", "net_tx_bps"])}
+            series={[
+              { key: "net_rx_bps", label: "In", color: chartColor(1) },
+              { key: "net_tx_bps", label: "Out", color: chartColor(3) },
+            ]}
+            format={formatRate}
+            range={range}
+            empty={blind}
+          />
+          <MetricChartCard
+            height="fill"
+            title="Disk"
+            description="Volumes, app directory and writable layers (hourly)"
+            rows={rows(["disk"])}
+            series={[{ key: "disk", label: "Disk", color: chartColor(2) }]}
+            format={formatSize}
+            range={range}
+          />
+        </div>
+      )}
     </div>
   );
 }

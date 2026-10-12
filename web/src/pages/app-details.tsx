@@ -46,6 +46,7 @@ import {
   type ControlAction,
   type DeleteAppResult,
 } from "@/context/apps-context-base";
+import { appLabel } from "@/lib/kpi";
 import { cn } from "@/lib/utils";
 
 const base = apiBaseUrl.endsWith("/") ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
@@ -72,7 +73,7 @@ export default function AppDetailsPage() {
   const app = useMemo(() => apps.find((a) => a.id === appId), [apps, appId]);
 
   const breadcrumbs = useMemo(
-    () => [{ label: "Apps", href: "/" }, { label: app?.name ?? appId ?? "App" }],
+    () => [{ label: "Apps", href: "/" }, { label: appId ? appLabel(app?.name, appId) : "App" }],
     [app?.name, appId],
   );
   useAppBreadcrumbs(breadcrumbs);
@@ -143,8 +144,14 @@ export default function AppDetailsPage() {
           className="size-14 shrink-0 rounded-xl text-xl"
         />
         <div className="min-w-0 flex-1">
-          <h1 className="truncate text-2xl font-semibold tracking-tight">
-            {app.name}
+          {/* An app not reconciled yet has no name: its id prefix stands in. */}
+          <h1
+            className={cn(
+              "truncate text-2xl font-semibold tracking-tight",
+              !app.name?.trim() && "font-mono text-muted-foreground",
+            )}
+          >
+            {appLabel(app.name, app.id)}
           </h1>
           <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
             <AppStatusIndicator status={status} />

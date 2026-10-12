@@ -11,9 +11,10 @@ const setActiveServerId = vi.fn();
 let servers: Server[] = [];
 let overview: ServerOverview[] = [];
 let statusByServer: Record<string, "online" | "unknown"> = {};
+let loading = false;
 
 vi.mock("@/context/use-servers", () => ({
-  useServers: () => ({ servers, activeServerId: "s1", setActiveServerId, statusByServer, loading: false }),
+  useServers: () => ({ servers, activeServerId: "s1", setActiveServerId, statusByServer, loading }),
 }));
 vi.mock("@/hooks/use-metrics", () => ({
   useMetricsOverview: () => ({ data: { servers: overview }, loading: false, error: null, refresh: vi.fn() }),
@@ -42,6 +43,7 @@ function renderCards() {
 describe("ServerCards", () => {
   beforeEach(() => {
     setActiveServerId.mockClear();
+    loading = false;
     servers = [server("s1", "prod-1"), server("s2", "backup", "2026-10-11T10:00:00Z")];
     statusByServer = { s1: "online" };
     overview = [
@@ -77,18 +79,42 @@ describe("ServerCards", () => {
     const card = screen.getByTitle("prod-1: online");
     expect(within(card).getByTestId("meter-CPU")).toHaveTextContent("42%");
     expect(within(card).getByTestId("meter-Memory")).toHaveTextContent("75%");
-    // The fullest filesystem, labelled by its mount.
-    expect(within(card).getByTestId("meter-Disk")).toHaveTextContent("90%/srv");
+    // The fullest filesystem, its mount in the row's title.
+    expect(within(card).getByTestId("meter-Disk")).toHaveTextContent("90%");
+    expect(within(card).getByTestId("meter-Disk")).toHaveAttribute("title", "Fullest filesystem: /srv");
     expect(card).toHaveTextContent("Load 0.50 / 0.25 / 0.13");
     expect(card).toHaveTextContent("55°C");
-    expect(within(card).getByTestId("app-counts")).toHaveTextContent("3 running1 stopped1 problematic");
+    expect(within(card).getByTestId("app-counts")).toHaveTextContent("3 running · 1 stopped · 1 problematic");
   });
 
   it("says when a server is offline and has no data", () => {
     renderCards();
     const card = screen.getByTitle("backup: offline");
-    expect(card).toHaveTextContent("Offline since");
+    // A relative age beside a muted dot; the full date on hover.
+    expect(within(card).getByTestId("presence")).toHaveTextContent(/^offline \d+[mhd]$/);
+    expect(within(card).getByTestId("presence").getAttribute("title")).toMatch(/^Offline since /);
     expect(card).toHaveTextContent("No data yet");
+  });
+
+  it("says just now while the agent is connected, waiting before it ever was", () => {
+    servers.push(server("s3", "fresh"));
+    renderCards();
+    expect(within(screen.getByTitle("prod-1: online")).getByTestId("presence")).toHaveTextContent("just now");
+    expect(within(screen.getByTitle("fresh: offline")).getByTestId("presence")).toHaveTextContent("waiting");
+  });
+
+  it("falls back to the sparkline's newest CPU minute", () => {
+    overview[0].latest!.server.cpu = undefined;
+    overview[0].sparkline = [{ t: 0, cpu: 10 }, { t: 60, cpu: 33 }];
+    renderCards();
+    expect(within(screen.getByTitle("prod-1: online")).getByTestId("meter-CPU")).toHaveTextContent("33%");
+  });
+
+  it("shows a card-shaped skeleton while the servers load", () => {
+    servers = [];
+    loading = true;
+    renderCards();
+    expect(screen.getByRole("status", { name: "Loading servers" })).toBeInTheDocument();
   });
 
   it("hides temperature without sensors and problematic when zero", () => {

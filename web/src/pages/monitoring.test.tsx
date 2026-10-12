@@ -157,7 +157,8 @@ describe("MonitoringPage", { timeout: 20_000 }, () => {
 
   it("refetches for a new range", async () => {
     renderPage();
-    await userEvent.click(screen.getByRole("radio", { name: "7 days" }));
+    await userEvent.click(screen.getByRole("button", { name: "Range: Last hour" }));
+    await userEvent.click(await screen.findByRole("menuitemradio", { name: "Last 7 days" }));
     expect(useServerMetrics).toHaveBeenLastCalledWith("s1", "7d");
   });
 });

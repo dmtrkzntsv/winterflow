@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 
 import { Card, CardContent } from "@/components/ui/card";
-import { MetricChartCard, ModeToggle, RangeSelect } from "@/components/metric-chart";
+import { MetricChartCard } from "@/components/metric-chart";
+import { RangeMenu } from "@/components/range-menu";
 import { useAppMetrics } from "@/hooks/use-metrics";
 import {
   chartColor,
@@ -95,10 +96,7 @@ export function AppMetricsTab({ serverId, appId }: { serverId: string; appId: st
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap justify-end gap-2">
-        <RangeSelect value={range} onChange={setRange} />
-        <ModeToggle value={mode} onChange={setMode} />
-      </div>
+      <RangeMenu className="justify-end" range={range} onRangeChange={setRange} mode={mode} onModeChange={setMode} />
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
       <div className="grid gap-4 md:grid-cols-2">
         <MetricChartCard

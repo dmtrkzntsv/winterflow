@@ -78,7 +78,8 @@ describe("AppMetricsTab", () => {
       expect(screen.getByTestId(`chart-${title}`)).toBeInTheDocument();
     }
     expect(screen.getByTestId("chart-Memory")).toHaveTextContent("No data yet");
-    await userEvent.click(screen.getByRole("radio", { name: "30 days" }));
+    await userEvent.click(screen.getByRole("button", { name: "Range: Last hour" }));
+    await userEvent.click(await screen.findByRole("menuitemradio", { name: "Last 30 days" }));
     expect(calls.at(-1)).toEqual(["s1", "a1", "30d"]);
   });
 

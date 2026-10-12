@@ -2,7 +2,8 @@ import { useMemo, useState } from "react";
 
 import { useAppBreadcrumbs } from "@/layouts/use-app-layout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { MetricChartCard, ModeToggle, RangeSelect, type ChartSeries } from "@/components/metric-chart";
+import { MetricChartCard, type ChartSeries } from "@/components/metric-chart";
+import { RangeMenu } from "@/components/range-menu";
 import { useApps } from "@/context/use-apps";
 import { useServers } from "@/context/use-servers";
 import { useMetricsOverview, useServerMetrics } from "@/hooks/use-metrics";
@@ -82,10 +83,7 @@ export default function MonitoringPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold tracking-tight">{activeServer?.name ?? "Server"}</h1>
-        <div className="flex flex-wrap gap-2">
-          <RangeSelect value={range} onChange={setRange} />
-          <ModeToggle value={mode} onChange={setMode} />
-        </div>
+        <RangeMenu range={range} onRangeChange={setRange} mode={mode} onModeChange={setMode} />
       </div>
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
       {loading && !data ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
@@ -104,6 +102,7 @@ export default function MonitoringPage() {
           rows={rows(["load1", "load5", "load15"])}
           series={[s("load1", "1 min", 0), s("load5", "5 min", 1), s("load15", "15 min", 2)]}
           format={(v) => v.toFixed(2)}
+          scale="integer"
           range={range}
           lines
         />

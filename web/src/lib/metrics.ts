@@ -5,13 +5,19 @@
 
 export type MetricsRange = "1h" | "12h" | "24h" | "7d" | "30d";
 
+// label names the range in the range menu ("Last 7 days").
 export const METRICS_RANGES: { value: MetricsRange; label: string }[] = [
-  { value: "1h", label: "1 hour" },
-  { value: "12h", label: "12 hours" },
-  { value: "24h", label: "24 hours" },
-  { value: "7d", label: "7 days" },
-  { value: "30d", label: "30 days" },
+  { value: "1h", label: "Last hour" },
+  { value: "12h", label: "Last 12 hours" },
+  { value: "24h", label: "Last 24 hours" },
+  { value: "7d", label: "Last 7 days" },
+  { value: "30d", label: "Last 30 days" },
 ];
+
+// rangeLabel is the menu label of a range.
+export function rangeLabel(range: MetricsRange): string {
+  return METRICS_RANGES.find((r) => r.value === range)?.label ?? range;
+}
 
 // "avg" plots each point's average, "peak" its "<field>_max".
 export type MetricsMode = "avg" | "peak";

@@ -55,6 +55,9 @@ export type AppsContextValue = {
   apps: App[];
   // statusByApp maps app id -> latest container status code (live, in-memory).
   statusByApp: Record<string, number>;
+  // staleVarsByApp maps app id -> the shared variables changed since it
+  // was last rendered (stale apps only; live from apps_status).
+  staleVarsByApp: Record<string, string[]>;
   loading: boolean;
   error: string | null;
   refresh: () => Promise<void>;

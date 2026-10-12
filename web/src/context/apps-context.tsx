@@ -11,6 +11,7 @@ import { useAuth } from "@/context/use-auth";
 import { useServers } from "@/context/use-servers";
 import { useNotifications } from "@/context/use-notifications";
 import { apiBaseUrl } from "@/config";
+import { splitStatus, type AppStatusWire } from "@/lib/app-status";
 
 import {
   AppsContext,
@@ -43,13 +44,8 @@ type GetAppsResponse = {
   data?: { apps?: AppResponse[] | null };
 };
 
-type AppStatusResponse = {
-  app_id: string;
-  status_code: number;
-};
-
 type GetAppsStatusResponse = {
-  data?: { apps?: AppStatusResponse[] | null };
+  data?: { apps?: AppStatusWire[] | null };
 };
 
 type AcceptedResponse = {
@@ -75,6 +71,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
   const { subscribe, waitFor, connected } = useNotifications();
   const [apps, setApps] = useState<App[]>([]);
   const [statusByApp, setStatusByApp] = useState<Record<string, number>>({});
+  const [staleVarsByApp, setStaleVarsByApp] = useState<Record<string, string[]>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const mounted = useRef(false);
@@ -153,7 +150,10 @@ export function AppsProvider({ children }: { children: ReactNode }) {
   // loadStatus pulls the live container-status snapshot (in-memory, TTL'd).
   const loadStatus = useCallback(async () => {
     if (!isAuthenticated || !activeServerId) {
-      if (mounted.current) setStatusByApp({});
+      if (mounted.current) {
+        setStatusByApp({});
+        setStaleVarsByApp({});
+      }
       return;
     }
     try {
@@ -164,11 +164,9 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       if (!res.ok) return;
       const result = (await res.json()) as GetAppsStatusResponse;
       if (!mounted.current) return;
-      const map: Record<string, number> = {};
-      for (const s of result.data?.apps ?? []) {
-        map[s.app_id] = s.status_code;
-      }
-      setStatusByApp(map);
+      const { status, stale } = splitStatus(result.data?.apps);
+      setStatusByApp(status);
+      setStaleVarsByApp(stale);
     } catch {
       // Status is best-effort; absence renders as "unknown".
     }
@@ -204,15 +202,13 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       const p = n.payload as
         | {
             server_id?: string;
-            apps?: { app_id: string; status_code: number }[] | null;
+            apps?: AppStatusWire[] | null;
           }
         | undefined;
       if (!p?.server_id || p.server_id !== activeServerId) return;
-      const map: Record<string, number> = {};
-      for (const s of p.apps ?? []) {
-        map[s.app_id] = s.status_code;
-      }
-      setStatusByApp(map);
+      const { status, stale } = splitStatus(p.apps);
+      setStatusByApp(status);
+      setStaleVarsByApp(stale);
     });
   }, [subscribe, activeServerId]);
 
@@ -415,6 +411,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
     () => ({
       apps,
       statusByApp,
+      staleVarsByApp,
       loading,
       error,
       refresh,
@@ -431,6 +428,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
     [
       apps,
       statusByApp,
+      staleVarsByApp,
       loading,
       error,
       refresh,

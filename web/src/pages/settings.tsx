@@ -34,13 +34,15 @@ import {
 } from "@/context/use-docker";
 import { useServers } from "@/context/use-servers";
 import { DomainsCard } from "@/pages/settings-domains";
+import { VariablesCard } from "@/pages/settings-variables";
+import { createSharedVariablesApi } from "@/lib/shared-variables";
 import { VolumesCard } from "@/pages/settings-volumes";
 
-const TABS = ["registries", "networks", "volumes", "domains", "agent"] as const;
+const TABS = ["registries", "networks", "volumes", "domains", "variables", "agent"] as const;
 
 // SettingsPage is the server-level settings view (v1 "Server Settings"):
 // Docker registries, networks and volumes, registered domains (servers with
-// ingress only), plus agent self-update — one tab per section, synced to
+// ingress only), shared variables, plus agent self-update — one tab per section, synced to
 // ?tab= like the app details page.
 export default function SettingsPage() {
   const breadcrumbs = useMemo(
@@ -50,6 +52,7 @@ export default function SettingsPage() {
   useAppBreadcrumbs(breadcrumbs);
 
   const docker = useDocker();
+  const sharedApi = useMemo(() => createSharedVariablesApi(), []);
   const { activeServer } = useServers();
   // Domains configure the embedded ingress: only servers running it.
   const hasIngress = Boolean(activeServer?.features?.ingress);
@@ -84,6 +87,7 @@ export default function SettingsPage() {
           <TabsTrigger value="networks">Networks</TabsTrigger>
           <TabsTrigger value="volumes">Volumes</TabsTrigger>
           {hasIngress ? <TabsTrigger value="domains">Domains</TabsTrigger> : null}
+          <TabsTrigger value="variables">Variables</TabsTrigger>
           <TabsTrigger value="agent">Agent</TabsTrigger>
         </TabsList>
         <TabsContent value="registries">
@@ -100,6 +104,9 @@ export default function SettingsPage() {
             <DomainsCard docker={docker} />
           </TabsContent>
         ) : null}
+        <TabsContent value="variables">
+          {activeServer ? <VariablesCard serverId={activeServer.id} api={sharedApi} /> : null}
+        </TabsContent>
         <TabsContent value="agent">
           <AgentCard docker={docker} />
         </TabsContent>

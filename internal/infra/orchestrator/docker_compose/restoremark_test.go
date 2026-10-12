@@ -101,6 +101,7 @@ func TestRestoreMarkerKeptWhenTheAgentStopsInDoubt(t *testing.T) {
 		kept   bool
 	}{
 		"stop during the swap":                 {helper.SwappingLine + "\n", nil, true, true},
+		"stop by a signal during the swap":     {helper.SwappingLine + "\n", errors.New("terminated signal received"), true, true},
 		"stop, helper not confirmed gone":      {"", nil, false, true},
 		"stop before the swap, data unchanged": {"", nil, true, false},
 		"time limit during the swap":           {helper.SwappingLine + "\n", context.DeadlineExceeded, true, false},

@@ -137,6 +137,25 @@ func (f fakeOwnership) UserOwnsServer(_ context.Context, userID, serverID string
 	return slices.Contains(f[userID], serverID), nil
 }
 
+// failingOwnership can't answer whose a server is.
+type failingOwnership struct{}
+
+func (failingOwnership) UserOwnsServer(context.Context, string, string) (bool, error) {
+	return false, errors.New("database is closed")
+}
+
+// A deletion never goes ahead on an unanswered ownership question: the app
+// may be live on another server of the caller's organizations.
+func TestDeleteOrphanFailsClosedWhenOwnershipIsUnknown(t *testing.T) {
+	repo := catalogRepo{byID: map[string]model.App{"elsewhere": {ID: "elsewhere", ServerID: "srv-2"}}}
+	disp := &recordingDispatcher{}
+	uc := NewUseCase(&Deps{CommandDispatcher: disp, AppRepository: repo, Servers: failingOwnership{}})
+	_, err := uc.DeleteOrphan(context.Background(), "u", "srv-1", command.DeleteOrphanRequest{Name: "disk", AppID: "elsewhere"})
+	if err == nil || errors.Is(err, model.ErrRejected) || len(disp.all) != 0 {
+		t.Fatalf("err %v, dispatches %d", err, len(disp.all))
+	}
+}
+
 // An orphan's folder of an app that is live on another server of the
 // caller's organizations is refused before it reaches the agent (which only
 // knows its own server's apps); an unknown app, or one the catalog puts on

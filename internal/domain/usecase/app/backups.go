@@ -158,20 +158,25 @@ func (uc *UseCase) DeleteOrphan(ctx context.Context, userID, serverID string, re
 		if uc.log != nil {
 			uc.log.Debug("delete-orphan: the catalog could not be asked about the app", "app_id", req.AppID, "error", err)
 		}
-	case app.ID != "" && app.ServerID != serverID && uc.ownsServer(ctx, userID, app.ServerID):
-		return "", model.Rejected("that app is live on another server: its backups are not orphans, and are deleted with the app")
+	case app.ID != "" && app.ServerID != serverID:
+		owns, err := uc.ownsServer(ctx, userID, app.ServerID)
+		if err != nil {
+			// A deletion must not go ahead on an unanswered question.
+			return "", fmt.Errorf("check the app's server: %w", err)
+		}
+		if owns {
+			return "", model.Rejected("that app is live on another server: its backups are not orphans, and are deleted with the app")
+		}
 	}
 	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
 		AgentID: serverID, UserID: userID, Type: command.TypeStorageDeleteOrphan, Payload: req,
 	})
 }
 
-// ownsServer reports whether the server is one of the user's organizations'
-// (an unknown answer is no).
-func (uc *UseCase) ownsServer(ctx context.Context, userID, serverID string) bool {
+// ownsServer reports whether the server is one of the user's organizations'.
+func (uc *UseCase) ownsServer(ctx context.Context, userID, serverID string) (bool, error) {
 	if uc.servers == nil {
-		return false
+		return false, nil
 	}
-	owns, err := uc.servers.UserOwnsServer(ctx, userID, serverID)
-	return err == nil && owns
+	return uc.servers.UserOwnsServer(ctx, userID, serverID)
 }

@@ -362,7 +362,11 @@ func (r *Repository) RestoreBackup(ctx context.Context, job RestoreJob) (command
 	// stopping agent may never get out, and the next start tells the user.
 	inDoubt := false
 	defer func() {
-		if inDoubt && context.Cause(ctx) == context.Canceled {
+		// The cause of an agent stop varies (Go 1.26's signal.NotifyContext
+		// cancels with its own cause), so rule out the time limit and the
+		// delete instead of matching the stop's cause.
+		if cause := context.Cause(ctx); inDoubt && ctx.Err() != nil &&
+			!errors.Is(cause, context.DeadlineExceeded) && !errors.Is(cause, ErrAppDeleted) {
 			return
 		}
 		r.clearRestoreMark(job.AppID)

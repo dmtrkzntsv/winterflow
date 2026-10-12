@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	git "github.com/go-git/go-git/v5"
@@ -41,6 +42,9 @@ func gitEnsure(dir string) error {
 // worktree is a no-op that returns the current HEAD hash, so callers can
 // commit unconditionally after a save.
 func gitCommitAll(dir, subject string) (string, error) {
+	if err := ensureIgnored(dir); err != nil {
+		return "", fmt.Errorf("guard .gitignore: %w", err)
+	}
 	repo, err := git.PlainOpen(dir)
 	if err != nil {
 		return "", err
@@ -222,4 +226,49 @@ func firstLine(s string) string {
 		}
 	}
 	return s
+}
+
+// alwaysIgnored are deploy artifacts holding plaintext. They must never be
+// committed, whatever the worktree's .gitignore says: a rollback restores
+// a .gitignore written before some of them existed.
+var alwaysIgnored = []string{envSecretsRel, envSharedRel, envSharedSecretsRel}
+
+// ensureIgnored appends any of alwaysIgnored missing from dir/.gitignore.
+func ensureIgnored(dir string) error {
+	path := filepath.Join(dir, gitignoreRel)
+	raw, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	have := map[string]bool{}
+	for _, line := range strings.Split(string(raw), "\n") {
+		have[strings.TrimSpace(line)] = true
+	}
+	var add []string
+	for _, p := range alwaysIgnored {
+		if !have[p] {
+			add = append(add, p)
+		}
+	}
+	if len(add) == 0 {
+		return nil
+	}
+	out := string(raw)
+	if out != "" && !strings.HasSuffix(out, "\n") {
+		out += "\n"
+	}
+	return os.WriteFile(path, []byte(out+strings.Join(add, "\n")+"\n"), 0o644)
+}
+
+// gitHead returns the HEAD commit hash without walking history.
+func gitHead(dir string) (string, error) {
+	repo, err := git.PlainOpen(dir)
+	if err != nil {
+		return "", err
+	}
+	head, err := repo.Head()
+	if err != nil {
+		return "", err
+	}
+	return head.Hash().String(), nil
 }

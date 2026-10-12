@@ -383,12 +383,18 @@ func (r *Repository) composeFile(dir string, spec *sourceSpec) string {
 
 // composeArgs builds the common CLI prefix. Env files are always explicit:
 // with -f pointing into source/, compose's implicit project directory moves
-// there and would stop auto-loading the app's committed .env.
+// there and would stop auto-loading the app's committed .env. Later files
+// override earlier ones: shared values first, so the app's own win.
 func (r *Repository) composeArgs(appID string, verb ...string) []string {
 	args := []string{"compose", "--project-name", projectName(appID)}
 	dir := r.appDataDir(appID)
 	if f := r.composeFile(dir, r.appSourceSpec(dir)); f != "" {
 		args = append(args, "-f", f)
+	}
+	for _, f := range []string{envSharedRel, envSharedSecretsRel} {
+		if _, err := os.Stat(filepath.Join(dir, f)); err == nil {
+			args = append(args, "--env-file", f)
+		}
 	}
 	args = append(args, "--env-file", envRel)
 	if _, err := os.Stat(filepath.Join(dir, envSecretsRel)); err == nil {

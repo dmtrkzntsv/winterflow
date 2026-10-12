@@ -20,7 +20,12 @@ const (
 	secretsRel    = ".winterflow/secrets.json"
 	envRel        = ".env"
 	envSecretsRel = ".env.secrets"
-	gitignoreRel  = ".gitignore"
+
+	// Shared-variable deploy artifacts: rendered from the agent's snapshot,
+	// gitignored (plaintext secrets live in the second one), never history.
+	envSharedRel        = ".env.shared"
+	envSharedSecretsRel = ".env.shared.secrets"
+	gitignoreRel        = ".gitignore"
 	// deployedRel marks the commit that is actually running (written after a
 	// successful compose up). Runtime state, not history — gitignored, so
 	// drafts (commits ahead of it) don't churn the repo.
@@ -226,7 +231,7 @@ func (r *Repository) writeAppStore(dir string, app command.AppPayload) (secretSt
 		return secretStore{}, err
 	}
 
-	ignored := []string{envSecretsRel, deployedRel, runRel}
+	ignored := []string{envSecretsRel, envSharedRel, envSharedSecretsRel, deployedRel, runRel}
 	if app.Source != nil {
 		ignored = append(ignored, sourceDirRel+"/")
 	}

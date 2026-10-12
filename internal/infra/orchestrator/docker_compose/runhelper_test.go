@@ -3,6 +3,7 @@ package dockercompose
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -72,21 +73,72 @@ func TestRunHelperScript(t *testing.T) {
 	for _, want := range []string{
 		"#!/bin/sh\n",
 		`cd "$(dirname "$0")/.." || exit 1`,
-		"if [ -f .env.secrets ]; then",
-		`exec docker compose --project-name wf-app-1 --env-file .env --env-file .env.secrets "$@"`,
-		`exec docker compose --project-name wf-app-1 --env-file .env "$@"`,
+		// Prepended in reverse, so the final order is
+		// .env.shared .env.shared.secrets .env .env.secrets <args>.
+		`if [ -f .env.secrets ]; then set -- --env-file .env.secrets "$@"; fi`,
+		`set -- --env-file .env "$@"`,
+		`if [ -f .env.shared.secrets ]; then set -- --env-file .env.shared.secrets "$@"; fi`,
+		`if [ -f .env.shared ]; then set -- --env-file .env.shared "$@"; fi`,
+		`exec docker compose --project-name wf-app-1 "$@"`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("script missing %q:\n%s", want, got)
 		}
 	}
+	order := []string{".env.secrets \"$@\"", "--env-file .env \"$@\"", ".env.shared.secrets \"$@\"", "--env-file .env.shared \"$@\""}
+	last := -1
+	for _, o := range order {
+		i := strings.Index(got, o)
+		if i < last {
+			t.Fatalf("prepend order wrong at %q:\n%s", o, got)
+		}
+		last = i
+	}
 	if strings.Contains(got, ` -f "`) {
 		t.Fatalf("no compose file expected:\n%s", got)
 	}
-
 	withFile := string(runHelperScript("wf-app-1", "source/compose.yml"))
-	if !strings.Contains(withFile, `-f "source/compose.yml" --env-file .env`) {
+	if !strings.Contains(withFile, `exec docker compose --project-name wf-app-1 -f "source/compose.yml" "$@"`) {
 		t.Fatalf("script missing -f flag:\n%s", withFile)
+	}
+}
+
+// TestRunHelperScriptRunsWithEnvFileOrder executes the script with a fake
+// docker on PATH and checks the exact argv it receives.
+func TestRunHelperScriptRunsWithEnvFileOrder(t *testing.T) {
+	app := t.TempDir()
+	bin := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(app, ".winterflow"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(app, runRel), runHelperScript("wf-a", ""), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	argv := filepath.Join(bin, "argv")
+	fake := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argv + "\n"
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(fake), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run := func() string {
+		cmd := exec.Command(filepath.Join(app, runRel), "up", "-d")
+		cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"))
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("run.sh: %v: %s", err, out)
+		}
+		raw, _ := os.ReadFile(argv)
+		return strings.Join(strings.Fields(string(raw)), " ")
+	}
+	if got := run(); got != "compose --project-name wf-a --env-file .env up -d" {
+		t.Fatalf("without optional files: %s", got)
+	}
+	for _, f := range []string{".env.shared", ".env.shared.secrets", ".env.secrets"} {
+		if err := os.WriteFile(filepath.Join(app, f), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := "compose --project-name wf-a --env-file .env.shared --env-file .env.shared.secrets --env-file .env --env-file .env.secrets up -d"
+	if got := run(); got != want {
+		t.Fatalf("with all files:\n got %s\nwant %s", got, want)
 	}
 }
 

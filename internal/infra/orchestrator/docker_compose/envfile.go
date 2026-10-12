@@ -35,6 +35,23 @@ func marshalEnv(vars []resolvedItem) []byte {
 	return b.Bytes()
 }
 
+// marshalSharedEnv renders shared variables as an env file whose values
+// compose reads literally: every value is double-quoted with \\, \", \n and
+// \$ escapes, so a secret like pa$word is not interpolated. Sorted by name.
+func marshalSharedEnv(vars []resolvedItem) []byte {
+	sorted := append([]resolvedItem(nil), vars...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].name < sorted[j].name })
+	esc := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`, `$`, `\$`)
+	var b bytes.Buffer
+	for _, v := range sorted {
+		b.WriteString(v.name)
+		b.WriteString(`="`)
+		b.WriteString(esc.Replace(string(v.content)))
+		b.WriteString("\"\n")
+	}
+	return b.Bytes()
+}
+
 // parseEnv is marshalEnv's inverse: NAME=VALUE lines into a map, tolerating
 // comments and blank lines. Double-quoted values are unescaped.
 func parseEnv(raw []byte) map[string]string {
@@ -49,7 +66,7 @@ func parseEnv(raw []byte) map[string]string {
 			continue
 		}
 		if len(val) >= 2 && strings.HasPrefix(val, "\"") && strings.HasSuffix(val, "\"") {
-			val = strings.NewReplacer("\\n", "\n", "\\\"", "\"", "\\\\", "\\").Replace(val[1 : len(val)-1])
+			val = strings.NewReplacer("\\n", "\n", "\\\"", "\"", "\\$", "$", "\\\\", "\\").Replace(val[1 : len(val)-1])
 		}
 		out[name] = val
 	}

@@ -279,3 +279,23 @@ func TestRefreshDueSourcesHonorsIntervalAndFlag(t *testing.T) {
 		t.Fatalf("lock not advanced: %s vs %s", lock.SHA, upHead[0].Hash)
 	}
 }
+
+func TestComposeArgsSharedEnvFileOrder(t *testing.T) {
+	r := newTestRepo(t)
+	savedApp(t, r, "app-1", "demo", "x\n")
+	dir := r.appDataDir("app-1")
+	for _, f := range []string{envSharedRel, envSharedSecretsRel, envSecretsRel} {
+		if err := os.WriteFile(filepath.Join(dir, f), []byte("X=\"1\"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	args := strings.Join(r.composeArgs("app-1", "up"), " ")
+	want := "--env-file .env.shared --env-file .env.shared.secrets --env-file .env --env-file .env.secrets up"
+	if !strings.HasSuffix(args, want) {
+		t.Fatalf("args = %s\nwant suffix %s", args, want)
+	}
+	_ = os.Remove(filepath.Join(dir, envSharedSecretsRel))
+	if args := strings.Join(r.composeArgs("app-1", "up"), " "); strings.Contains(args, envSharedSecretsRel) || !strings.Contains(args, "--env-file .env.shared --env-file .env ") {
+		t.Fatalf("missing file not omitted: %s", args)
+	}
+}

@@ -38,3 +38,15 @@ func (sqliteQuerier) RenameApp(ctx context.Context, db backend.DBTX, p renamePar
 func (sqliteQuerier) DeleteMetricSamplesByApp(ctx context.Context, db backend.DBTX, appID string) error {
 	return sqlitegen.New(db).DeleteMetricSamplesByApp(ctx, appID)
 }
+
+func (sqliteQuerier) DeleteAlertOverridesByApp(ctx context.Context, db backend.DBTX, appID string) error {
+	return sqlitegen.New(db).DeleteAlertOverridesByApp(ctx, appID)
+}
+
+func (sqliteQuerier) DeleteAlertStatesByApp(ctx context.Context, db backend.DBTX, appID string) error {
+	return sqlitegen.New(db).DeleteAlertStatesByApp(ctx, appID)
+}
+
+func (sqliteQuerier) DeleteAlertEventsByApp(ctx context.Context, db backend.DBTX, appID string) error {
+	return sqlitegen.New(db).DeleteAlertEventsByApp(ctx, appID)
+}

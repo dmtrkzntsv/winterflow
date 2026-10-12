@@ -47,3 +47,15 @@ func (pgsqlQuerier) RenameApp(ctx context.Context, db backend.DBTX, p renamePara
 func (pgsqlQuerier) DeleteMetricSamplesByApp(ctx context.Context, db backend.DBTX, appID string) error {
 	return pgsqlgen.New(db).DeleteMetricSamplesByApp(ctx, appID)
 }
+
+func (pgsqlQuerier) DeleteAlertOverridesByApp(ctx context.Context, db backend.DBTX, appID string) error {
+	return pgsqlgen.New(db).DeleteAlertOverridesByApp(ctx, appID)
+}
+
+func (pgsqlQuerier) DeleteAlertStatesByApp(ctx context.Context, db backend.DBTX, appID string) error {
+	return pgsqlgen.New(db).DeleteAlertStatesByApp(ctx, appID)
+}
+
+func (pgsqlQuerier) DeleteAlertEventsByApp(ctx context.Context, db backend.DBTX, appID string) error {
+	return pgsqlgen.New(db).DeleteAlertEventsByApp(ctx, appID)
+}

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"winterflow/internal/domain/alert"
+	"winterflow/internal/domain/port"
 	"winterflow/internal/infra/db/backend"
 	sqlitegen "winterflow/internal/infra/db/sqlc/gen/sqlite"
 	"winterflow/internal/infra/db/types"
@@ -107,6 +108,8 @@ type Repo struct {
 	// newID mints channel, rule and event ids (util.GenerateID).
 	newID func() string
 }
+
+var _ port.AlertRepository = (*Repo)(nil)
 
 // New builds the repository for driver (backend.SQLite or backend.Postgres).
 func New(tx *backend.TxManager, driver string, log *logger.Logger, newID func() string) (*Repo, error) {

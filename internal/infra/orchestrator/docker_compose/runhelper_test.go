@@ -73,23 +73,32 @@ func TestRunHelperScript(t *testing.T) {
 	for _, want := range []string{
 		"#!/bin/sh\n",
 		`cd "$(dirname "$0")/.." || exit 1`,
+		// Prepended in reverse, so the final order is .env.shared
+		// .env.shared.secrets .env storage.env .env.secrets <args>.
 		`if [ -f .env.secrets ]; then set -- --env-file .env.secrets "$@"; fi`,
 		`if [ -f .winterflow/storage.env ]; then set -- --env-file .winterflow/storage.env "$@"; fi`,
-		`exec docker compose --project-name wf-app-1 -f 'compose.yml' -f 'compose.override.yml' --env-file .env "$@"`,
+		`set -- --env-file .env "$@"`,
+		`if [ -f .env.shared.secrets ]; then set -- --env-file .env.shared.secrets "$@"; fi`,
+		`if [ -f .env.shared ]; then set -- --env-file .env.shared "$@"; fi`,
+		`exec docker compose --project-name wf-app-1 -f 'compose.yml' -f 'compose.override.yml' "$@"`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("script missing %q:\n%s", want, got)
 		}
 	}
-	// The env files are prepended last-first, so compose sees .env,
-	// storage.env, .env.secrets in that order (later ones win).
-	if strings.Index(got, ".env.secrets \"$@\"; fi") > strings.Index(got, "storage.env \"$@\"; fi") {
-		t.Fatalf("storage.env must be prepended after .env.secrets:\n%s", got)
+	order := []string{".env.secrets \"$@\"", "storage.env \"$@\"", "--env-file .env \"$@\"", ".env.shared.secrets \"$@\"", "--env-file .env.shared \"$@\""}
+	last := -1
+	for _, o := range order {
+		i := strings.Index(got, o)
+		if i < last {
+			t.Fatalf("prepend order wrong at %q:\n%s", o, got)
+		}
+		last = i
 	}
 
 	// A compose path is quoted for the shell, whatever it contains.
 	odd := string(runHelperScript("wf-app-1", []string{"source/it's $(here).yml"}, nil))
-	if !strings.Contains(odd, `-f 'source/it'\''s $(here).yml' --env-file .env`) {
+	if !strings.Contains(odd, `-f 'source/it'\''s $(here).yml' "$@"`) {
 		t.Fatalf("path not quoted:\n%s", odd)
 	}
 }
@@ -123,6 +132,12 @@ func TestRunHelperScriptRuns(t *testing.T) {
 	writeFileT(t, dir, storageEnvRel, "")
 	if got := run(); got != "compose --project-name wf-x -f compose.yml --env-file .env --env-file .winterflow/storage.env --env-file .env.secrets up -d" {
 		t.Fatalf("with env files: %s", got)
+	}
+	writeFileT(t, dir, envSharedRel, "")
+	writeFileT(t, dir, envSharedSecretsRel, "")
+	want := "compose --project-name wf-x -f compose.yml --env-file .env.shared --env-file .env.shared.secrets --env-file .env --env-file .winterflow/storage.env --env-file .env.secrets up -d"
+	if got := run(); got != want {
+		t.Fatalf("with shared env files:\n got %s\nwant %s", got, want)
 	}
 }
 

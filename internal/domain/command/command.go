@@ -54,6 +54,9 @@ const (
 	TypeDomainCreate Type = "domain.create"
 	TypeDomainDelete Type = "domain.delete"
 
+	// Shared variables (org- and server-level).
+	TypeVarsSync   Type = "vars.sync"   // store the server's full shared-variables snapshot
+	TypeVarsReload Type = "vars.reload" // re-render and compose up the selected apps
 	// Storages (local folders and S3-compatible buckets).
 	TypeStorageList   Type = "storage.list"
 	TypeStorageTest   Type = "storage.test"

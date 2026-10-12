@@ -121,6 +121,8 @@ type healthSource struct {
 	backups Backups
 }
 
+func (h healthSource) unwrap() StatusSource { return h.src }
+
 func (h healthSource) GetAppsStatus(ctx context.Context) ([]command.AppStatus, error) {
 	apps, err := h.src.GetAppsStatus(ctx)
 	if err != nil {

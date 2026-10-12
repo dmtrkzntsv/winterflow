@@ -56,7 +56,7 @@ func saveConfig(t *testing.T, r *Repository, appID, compose, config string) ([]s
 		AppID:  appID,
 		Config: []byte(config),
 		Files:  []command.ContentItem{{Name: "compose.yml", Content: []byte(compose)}},
-	})
+	}, true)
 	return warnings, err
 }
 
@@ -151,7 +151,7 @@ func TestSaveRefusesInvalidBackups(t *testing.T) {
 	_, _, err = r.save(command.AppPayload{AppID: "app-1", Config: []byte(plainConfig),
 		Files: []command.ContentItem{
 			{Name: "compose.yml", Content: []byte(backupCompose)},
-			{Name: "compose.override.yml", Content: []byte(strings.Replace(backupCompose, "volume: data", "volume: gone", 1))}}})
+			{Name: "compose.override.yml", Content: []byte(strings.Replace(backupCompose, "volume: data", "volume: gone", 1))}}}, true)
 	if err == nil {
 		t.Fatal("an invalid override file was saved")
 	}
@@ -508,11 +508,11 @@ func TestSaveRefusedRepinsSource(t *testing.T) {
 	r := newTestRepo(t)
 	up, commit := newUpstream(t)
 	c1 := commit("compose.yml", backupCompose)
-	if _, _, err := r.save(sourcePayload(up, "")); err != nil {
+	if _, _, err := r.save(sourcePayload(up, ""), true); err != nil {
 		t.Fatal(err)
 	}
 	commit("compose.yml", strings.Replace(backupCompose, "volume: data", "volume: gone", 1))
-	if _, _, err := r.save(sourcePayload(up, "")); err == nil {
+	if _, _, err := r.save(sourcePayload(up, ""), true); err == nil {
 		t.Fatal("upstream with invalid backups was saved")
 	}
 	dir := r.appDataDir("git-app")

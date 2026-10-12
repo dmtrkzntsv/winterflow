@@ -11,6 +11,7 @@ import (
 )
 
 type Querier interface {
+	BumpServerVarsRevision(ctx context.Context, serverID string) error
 	CountFiringAlertsByServer(ctx context.Context) ([]CountFiringAlertsByServerRow, error)
 	CountUsers(ctx context.Context) (int64, error)
 	DeleteAlertEventsBefore(ctx context.Context, createdAt types.DateTime) (int64, error)
@@ -33,6 +34,10 @@ type Querier interface {
 	DeleteServerDomainsByServer(ctx context.Context, serverID string) error
 	DeleteServerStorage(ctx context.Context, arg DeleteServerStorageParams) error
 	DeleteServerStoragesByServer(ctx context.Context, serverID string) error
+	DeleteSharedCiphertext(ctx context.Context, arg DeleteSharedCiphertextParams) error
+	DeleteSharedCiphertextsByServer(ctx context.Context, serverID string) error
+	DeleteSharedCiphertextsByVariable(ctx context.Context, variableID string) error
+	DeleteSharedVariable(ctx context.Context, id string) error
 	DeleteToken(ctx context.Context, arg DeleteTokenParams) (int64, error)
 	DeleteUser(ctx context.Context, userID string) error
 	EmailTaken(ctx context.Context, email string) (bool, error)
@@ -56,9 +61,13 @@ type Querier interface {
 	GetFirstServerID(ctx context.Context) (string, error)
 	GetLatestRegistrationCode(ctx context.Context) (string, error)
 	GetNotificationChannel(ctx context.Context, arg GetNotificationChannelParams) (NotificationChannel, error)
+	GetOrgSharedVariableByName(ctx context.Context, arg GetOrgSharedVariableByNameParams) (SharedVariable, error)
 	GetOrganization(ctx context.Context, organizationID string) (Organization, error)
 	GetPrimaryOrganizationID(ctx context.Context, userID string) (string, error)
 	GetRegistrationByCode(ctx context.Context, code string) (ServerRegistration, error)
+	GetServerSharedVariableByName(ctx context.Context, arg GetServerSharedVariableByNameParams) (SharedVariable, error)
+	GetServerVarsInfo(ctx context.Context, serverID string) (GetServerVarsInfoRow, error)
+	GetSharedVariable(ctx context.Context, id string) (SharedVariable, error)
 	GetTokenByHash(ctx context.Context, tokenHash string) (UserToken, error)
 	// Users, their connected accounts and local credentials.
 	GetUser(ctx context.Context, userID string) (User, error)
@@ -79,6 +88,9 @@ type Querier interface {
 	InsertServer(ctx context.Context, arg InsertServerParams) error
 	InsertServerDomain(ctx context.Context, arg InsertServerDomainParams) error
 	InsertServerStorage(ctx context.Context, arg InsertServerStorageParams) error
+	// Gap fill: never overwrites a copy (a concurrent rotation's new value wins).
+	InsertSharedCiphertextIfAbsent(ctx context.Context, arg InsertSharedCiphertextIfAbsentParams) error
+	InsertSharedVariable(ctx context.Context, arg InsertSharedVariableParams) error
 	// Personal access tokens (hashed at rest).
 	InsertToken(ctx context.Context, arg InsertTokenParams) error
 	InsertUser(ctx context.Context, arg InsertUserParams) error
@@ -97,12 +109,17 @@ type Querier interface {
 	// The apps catalog (a reconciled cache of what agents report).
 	ListAppsByServer(ctx context.Context, serverID string) ([]App, error)
 	ListCapabilitiesByUser(ctx context.Context, userID string) ([]ListCapabilitiesByUserRow, error)
+	ListCiphertextServersByOrg(ctx context.Context, orgID string) ([]ListCiphertextServersByOrgRow, error)
 	ListFeaturesByUser(ctx context.Context, userID string) ([]ServerFeature, error)
 	ListFiringAlertStates(ctx context.Context) ([]ListFiringAlertStatesRow, error)
 	ListMetricSamples(ctx context.Context, arg ListMetricSamplesParams) ([]MetricSample, error)
 	ListMetricSamplesInRange(ctx context.Context, arg ListMetricSamplesInRangeParams) ([]MetricSample, error)
 	ListNotificationChannels(ctx context.Context, organizationID string) ([]NotificationChannel, error)
 	ListOrgFiringAlertStates(ctx context.Context, organizationID string) ([]ListOrgFiringAlertStatesRow, error)
+	ListOrgPublicKeys(ctx context.Context, organizationID string) ([]ListOrgPublicKeysRow, error)
+	ListOrgServers(ctx context.Context, organizationID string) ([]ListOrgServersRow, error)
+	// Org- and server-level shared variables and their per-server ciphertexts.
+	ListOrgSharedVariables(ctx context.Context, orgID string) ([]SharedVariable, error)
 	ListOrganizationMembers(ctx context.Context, organizationID string) ([]User, error)
 	// ListOversizedAlertOrganizations lists the orgs past the history cap. The
 	// literal is alert repository's EventsPerOrg (sqlc cannot bind a HAVING
@@ -111,20 +128,25 @@ type Querier interface {
 	ListServerAppMetricSamples(ctx context.Context, arg ListServerAppMetricSamplesParams) ([]MetricSample, error)
 	// The server_domains index (mirrors each agent's domain registrations).
 	ListServerDomains(ctx context.Context, serverID string) ([]ServerDomain, error)
+	ListServerSharedVariables(ctx context.Context, serverID *string) ([]SharedVariable, error)
 	// The server_storages index (mirrors each agent's storages; never a secret).
 	ListServerStorages(ctx context.Context, serverID string) ([]ServerStorage, error)
 	ListServerUserIDs(ctx context.Context, serverID string) ([]string, error)
 	// Servers, their capabilities/features, registrations and certificates.
 	ListServersByUser(ctx context.Context, userID string) ([]Server, error)
+	ListSharedCiphertextsForServer(ctx context.Context, serverID string) ([]ListSharedCiphertextsForServerRow, error)
 	ListTargetAlertOverrides(ctx context.Context, arg ListTargetAlertOverridesParams) ([]AlertOverride, error)
 	ListTokensByUser(ctx context.Context, userID string) ([]UserToken, error)
-	// Alerts: channels, rules, overrides, states, events (see migration 0012).
+	// Alerts: channels, rules, overrides, states, events (see migration 0013).
 	ListUnseededOrganizationIDs(ctx context.Context) ([]string, error)
 	// LockOrganizationMember re-reads the caller's membership inside
 	// RemoveMember's transaction. SQLite has no row locks (its writers are
 	// serialized), so this is a plain SELECT; Postgres adds FOR UPDATE.
 	LockOrganizationMember(ctx context.Context, arg LockOrganizationMemberParams) (string, error)
 	MarkAlertDefaultsSeeded(ctx context.Context, organizationID string) (int64, error)
+	// Lifts vars_revision past an agent-reported revision the API never issued
+	// (the API database was restored); never lowers it.
+	RaiseServerVarsRevision(ctx context.Context, arg RaiseServerVarsRevisionParams) error
 	RecordChannelFailure(ctx context.Context, arg RecordChannelFailureParams) error
 	RecordChannelSuccess(ctx context.Context, arg RecordChannelSuccessParams) error
 	RenameApp(ctx context.Context, arg RenameAppParams) error
@@ -136,12 +158,14 @@ type Querier interface {
 	UpdateNotificationChannel(ctx context.Context, arg UpdateNotificationChannelParams) (int64, error)
 	UpdateOrganization(ctx context.Context, arg UpdateOrganizationParams) (int64, error)
 	UpdatePassword(ctx context.Context, arg UpdatePasswordParams) (int64, error)
+	UpdateSharedVariable(ctx context.Context, arg UpdateSharedVariableParams) error
 	UpsertAlertOverride(ctx context.Context, arg UpsertAlertOverrideParams) error
 	UpsertApp(ctx context.Context, arg UpsertAppParams) error
 	UpsertCapability(ctx context.Context, arg UpsertCapabilityParams) error
 	UpsertFeature(ctx context.Context, arg UpsertFeatureParams) error
 	UpsertServerDomain(ctx context.Context, arg UpsertServerDomainParams) error
 	UpsertServerStorage(ctx context.Context, arg UpsertServerStorageParams) error
+	UpsertSharedCiphertext(ctx context.Context, arg UpsertSharedCiphertextParams) error
 	UserOwnsServer(ctx context.Context, arg UserOwnsServerParams) (bool, error)
 }
 

@@ -17,7 +17,31 @@ const (
 	// NotificationAlert is an alert transition (fired/resolved) on one of
 	// the org's servers or apps (Ref is empty; Payload is alert.Notice).
 	NotificationAlert NotificationType = "alert"
+	// NotificationVarsSynced reports that a server's agent stored a
+	// shared-variables snapshot (Payload is VarsSyncedPayload).
+	NotificationVarsSynced NotificationType = "vars.synced"
+	// NotificationVarsSyncFailed reports that an agent refused a snapshot
+	// (Payload is VarsSyncFailedPayload).
+	NotificationVarsSyncFailed NotificationType = "vars.sync_failed"
+	// NotificationVarsReloaded is one app's shared-variable reload outcome
+	// (Payload is command.VarsReloadedPayload).
+	NotificationVarsReloaded NotificationType = "vars.reloaded"
 )
+
+// VarsSyncedPayload is the payload of a vars.synced notification:
+// Undecryptable names the secrets the agent could not decrypt (their
+// ciphertexts were dropped, so they now show as missing on this server).
+type VarsSyncedPayload struct {
+	ServerID      string   `json:"server_id"`
+	Revision      int64    `json:"revision"`
+	Undecryptable []string `json:"undecryptable"`
+}
+
+// VarsSyncFailedPayload is the payload of a vars.sync_failed notification.
+type VarsSyncFailedPayload struct {
+	ServerID string `json:"server_id"`
+	Error    string `json:"error"`
+}
 
 // ServerStatusPayload is the payload of a server_status notification.
 type ServerStatusPayload struct {

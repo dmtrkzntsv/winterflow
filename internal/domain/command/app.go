@@ -210,6 +210,10 @@ type AppStatus struct {
 	AppID      string              `json:"app_id"`
 	StatusCode ContainerStatusCode `json:"status_code"`
 	Containers []ContainerStatus   `json:"containers"`
+	// StaleVars names the shared variables whose rendered values differ from
+	// the agent's current snapshot; empty = fresh. A stale app needs a
+	// vars.reload (or its next deploy) to pick the new values up.
+	StaleVars []string `json:"stale_vars,omitempty"`
 	// Backups is the health of each of the app's backups (none: omitted).
 	// It never changes StatusCode.
 	Backups []BackupHealth `json:"backups,omitempty"`
@@ -219,6 +223,10 @@ type GetAppsStatusRequest struct{}
 
 type GetAppsStatusResponse struct {
 	Apps []AppStatus `json:"apps"`
+	// VarsRevision is the agent's shared-variables snapshot revision. Nil
+	// from agents that predate shared variables: the API never drift-pushes
+	// vars.sync to those.
+	VarsRevision *int64 `json:"vars_revision,omitempty"`
 }
 
 // AppsStatusPayload is the payload of an apps_status SSE notification

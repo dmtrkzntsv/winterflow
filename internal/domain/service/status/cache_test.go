@@ -143,3 +143,19 @@ func TestExpireStaleThenReonlineTransitionsAgain(t *testing.T) {
 		t.Fatalf("second expiry cycle: want [srv-1], got %v", got)
 	}
 }
+
+func TestVarsRevision(t *testing.T) {
+	c := NewCache(time.Minute)
+	if _, ok := c.VarsRevision("s1"); ok {
+		t.Fatal("unknown server has a revision")
+	}
+	c.SetVarsRevision("s1", 4)
+	if rev, ok := c.VarsRevision("s1"); !ok || rev != 4 {
+		t.Fatalf("revision = %d %v", rev, ok)
+	}
+	// Liveness expiry does not forget the revision (it is not liveness).
+	c.ExpireStale(time.Now().Add(time.Hour))
+	if _, ok := c.VarsRevision("s1"); !ok {
+		t.Fatal("revision expired with liveness")
+	}
+}

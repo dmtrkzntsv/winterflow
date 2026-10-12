@@ -14,6 +14,9 @@ import { EditorSection } from "@/components/editor-section";
 import { ENCRYPTED } from "@/lib/ecies";
 import { cn } from "@/lib/utils";
 import { useState } from "react";
+import { SharedVariablesHint } from "@/components/shared-variables-hint";
+import { useSharedNames } from "@/hooks/use-shared-names";
+import { overrideNote } from "@/lib/shared-variables";
 import { useServers } from "@/context/use-servers";
 import {
   localId,
@@ -34,6 +37,7 @@ type Props = {
 export function AppEditor({ state, onChange }: Props) {
   const [revealed, setRevealed] = useState<Record<string, boolean>>({});
   const { activeServer, loading: serversLoading } = useServers();
+  const shared = useSharedNames(activeServer?.id);
 
   const setConfig = (patch: Partial<AppEditorState["config"]>) =>
     onChange({ ...state, config: { ...state.config, ...patch } });
@@ -294,7 +298,7 @@ export function AppEditor({ state, onChange }: Props) {
               value={state.files[f.id] ?? ""}
               onChange={(content) => updateFileContent(f.id, content)}
               filename={f.filename}
-              placeholder="file contents (use ${VAR} for variables)"
+              placeholder="file contents (use ${VAR}, including org/server variables)"
               className="rounded-none border-0"
             />
             {isComposeFilename(f.filename) ? (
@@ -316,8 +320,8 @@ export function AppEditor({ state, onChange }: Props) {
         title="Variables"
         description={
           <>
-            Substituted into files as <code>{"${NAME}"}</code>. Secret values
-            are encrypted in your browser.
+            Substituted into files as <code>{"${NAME}"}</code>, including org and
+            server variables. Secret values are encrypted in your browser.
           </>
         }
         action={
@@ -336,6 +340,7 @@ export function AppEditor({ state, onChange }: Props) {
           <div className="divide-y rounded-md border">
             {state.config.variables.map((v) => {
               const isRevealed = revealed[v.id] || !v.is_encrypted;
+              const note = overrideNote(v.name, shared);
               return (
                 <div key={v.id} className="flex items-center gap-1 p-1">
                   <Input
@@ -345,6 +350,7 @@ export function AppEditor({ state, onChange }: Props) {
                     className="h-8 w-32 shrink-0 border-transparent font-mono shadow-none focus-visible:border-input sm:w-56"
                     onChange={(e) => updateVarMeta(v.id, { name: e.target.value })}
                   />
+                  {note ? <span className="shrink-0 text-xs text-muted-foreground">{note}</span> : null}
                   <Input
                     aria-label={`Value of ${v.name || "variable"}`}
                     value={state.variables[v.id] ?? ""}
@@ -388,6 +394,7 @@ export function AppEditor({ state, onChange }: Props) {
             })}
           </div>
         )}
+        <SharedVariablesHint shared={shared} />
         <StorageVariableRows vars={storageVars} />
       </EditorSection>
 

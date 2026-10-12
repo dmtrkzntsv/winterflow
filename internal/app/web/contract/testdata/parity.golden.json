@@ -164,5 +164,24 @@
       "message": "members",
       "success": true
     }
+  },
+  {
+    "name": "save org variable",
+    "status": 200,
+    "body": {
+      "data": {
+        "description": "parity",
+        "id": "<id-7>",
+        "is_secret": false,
+        "missing_on": [],
+        "name": "PARITY",
+        "scope": "org",
+        "updated_at": "<time>Z",
+        "updated_by": "<id-6>",
+        "value": "1"
+      },
+      "message": "shared variable saved",
+      "success": true
+    }
   }
 ]

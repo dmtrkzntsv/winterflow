@@ -2,6 +2,9 @@ package dockercompose
 
 import (
 	"bytes"
+	"reflect"
+	"sort"
+	"strings"
 	"testing"
 )
 
@@ -49,5 +52,36 @@ func TestMarshalEnvDeterministic(t *testing.T) {
 	b := marshalEnv([]resolvedItem{{name: "A", content: []byte("1")}, {name: "B", content: []byte("2")}})
 	if !bytes.Equal(a, b) {
 		t.Fatalf("order-dependent output:\n%q\n%q", a, b)
+	}
+}
+
+// TestMarshalSharedEnvRoundTripsAwkwardValues: compose interpolates
+// unquoted and double-quoted env-file values, so a shared value with $ must
+// be escaped to arrive literally (checked against docker compose v5.5.1:
+// "pa\$word" -> pa$word, "a\\b" -> a\b, "\n" -> newline).
+func TestMarshalSharedEnvRoundTripsAwkwardValues(t *testing.T) {
+	values := map[string]string{
+		"DOLLAR": "pa$word and ${NOT_A_REF}",
+		"QUOTES": `say "hi" it's`,
+		"BACK":   `C:\temp\new`,
+		"PEM":    "-----BEGIN KEY-----\nabc\n-----END KEY-----\n",
+		"SPACES": "  padded # not a comment  ",
+		"EMPTY":  "",
+		"WF_TZ":  "Europe/Berlin",
+	}
+	var items []resolvedItem
+	for k, v := range values {
+		items = append(items, resolvedItem{name: k, content: []byte(v)})
+	}
+	raw := marshalSharedEnv(items)
+	if !strings.Contains(string(raw), `DOLLAR="pa\$word and \${NOT_A_REF}"`) {
+		t.Fatalf("$ not escaped:\n%s", raw)
+	}
+	lines := strings.Split(strings.TrimSuffix(string(raw), "\n"), "\n")
+	if len(lines) != len(values) || !sort.StringsAreSorted(lines) {
+		t.Fatalf("want one sorted line per value:\n%s", raw)
+	}
+	if got := parseEnv(raw); !reflect.DeepEqual(got, values) {
+		t.Fatalf("round trip:\n got %q\nwant %q", got, values)
 	}
 }

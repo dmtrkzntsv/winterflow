@@ -2592,6 +2592,61 @@ paths:
       summary: Create an account in the caller's org (temp password)
       tags:
       - org
+  /api/v1/org/delete-shared-variable:
+    post:
+      description: Answers once the change is stored; each affected server's agent
+        then gets the new snapshot (vars.synced / vars.sync_failed over SSE).
+      operationId: orgDeleteSharedVariable
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteVariableRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    type: "null"
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Delete an org-level shared variable
+      tags:
+      - variables
   /api/v1/org/get-members:
     get:
       operationId: orgGetMembers
@@ -2680,6 +2735,91 @@ paths:
       summary: The caller's org name, icon and color
       tags:
       - org
+  /api/v1/org/list-encryption-keys:
+    get:
+      operationId: orgListEncryptionKeys
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/EncryptionKeys'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Public keys of the org's servers for encrypting secrets in the browser
+      tags:
+      - variables
+  /api/v1/org/list-shared-variables:
+    get:
+      operationId: orgListSharedVariables
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/OrgVariables'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+      security:
+      - bearer: []
+      - cookie: []
+      summary: The org's shared variables (secrets masked) with coverage and per-server
+        sync state
+      tags:
+      - variables
   /api/v1/org/remove-member:
     post:
       operationId: orgRemoveMember
@@ -2774,6 +2914,61 @@ paths:
       summary: Issue a member a new temp password
       tags:
       - org
+  /api/v1/org/save-shared-variable:
+    post:
+      description: Answers once the change is stored; each affected server's agent
+        then gets the new snapshot (vars.synced / vars.sync_failed over SSE).
+      operationId: orgSaveSharedVariable
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaveVariableRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/VariableView'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Create or update an org-level shared variable
+      tags:
+      - variables
   /api/v1/org/update-organization:
     post:
       operationId: orgUpdateOrganization
@@ -3005,6 +3200,61 @@ paths:
       - docker
       x-operation-result:
         $ref: '#/components/schemas/ListRegistriesResponse'
+  /api/v1/server/delete-shared-variable:
+    post:
+      description: Answers once the change is stored; each affected server's agent
+        then gets the new snapshot (vars.synced / vars.sync_failed over SSE).
+      operationId: serverDeleteSharedVariable
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteServerVariableRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    type: "null"
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Delete a server-level shared variable
+      tags:
+      - variables
   /api/v1/server/get-public-key:
     get:
       operationId: serverGetPublicKey
@@ -3145,6 +3395,63 @@ paths:
       summary: Live liveness of the caller's servers
       tags:
       - server
+  /api/v1/server/list-shared-variables:
+    get:
+      operationId: serverListSharedVariables
+      parameters:
+      - description: Target server id.
+        in: query
+        name: server_id
+        required: true
+        schema:
+          description: Target server id.
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ServerVariables'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: A server's shared variables, the org's as inherited, built-ins and
+        missing org secrets
+      tags:
+      - variables
   /api/v1/server/register:
     post:
       operationId: serverRegister
@@ -3192,12 +3499,177 @@ paths:
       summary: Claim a pending server by its pairing code
       tags:
       - server
+  /api/v1/server/save-shared-variable:
+    post:
+      description: Answers once the change is stored; each affected server's agent
+        then gets the new snapshot (vars.synced / vars.sync_failed over SSE).
+      operationId: serverSaveSharedVariable
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaveServerVariableRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/VariableView'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Create or update a server-level shared variable
+      tags:
+      - variables
+  /api/v1/shared-variables/reload:
+    post:
+      description: Answers with the servers dispatched to; each app's outcome arrives
+        as vars.reloaded over SSE.
+      operationId: sharedVariablesReload
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReloadRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/DispatchedServers'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Reload running apps whose shared variables changed
+      tags:
+      - variables
+  /api/v1/shared-variables/resync:
+    post:
+      description: Answers with the servers dispatched to; outcomes arrive as vars.synced
+        / vars.sync_failed over SSE.
+      operationId: sharedVariablesResync
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResyncRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/DispatchedServers'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Push the full shared-variables snapshot again
+      tags:
+      - variables
   /api/v1/sse:
     get:
       description: |-
         Server-sent events, each `data: <Notification JSON>`.
 
-        Subscribe BEFORE dispatching a 202 operation: results are best-effort, not buffered or replayed. A result produced while no stream is open, or while this stream is not being read, is dropped. An operation_result is delivered only to the open streams of the user who dispatched it; match it on ref == the 202's data.request_id. server_status, apps_status and alert events go to every member of the server's organization and interleave with results; ignore types you do not handle.
+        Subscribe BEFORE dispatching a 202 operation: results are best-effort, not buffered or replayed. A result produced while no stream is open, or while this stream is not being read, is dropped. An operation_result is delivered only to the open streams of the user who dispatched it; match it on ref == the 202's data.request_id. server_status, apps_status, alert and vars.* events go to every member of the server's organization and interleave with results; ignore types you do not handle.
       operationId: sse
       responses:
         "200":
@@ -4428,6 +4900,10 @@ components:
           type:
           - array
           - "null"
+        stale_vars:
+          items:
+            type: string
+          type: array
         status_code:
           type: integer
       required:
@@ -4543,6 +5019,19 @@ components:
       required:
       - name
       - state
+      type: object
+    BuiltinVariable:
+      properties:
+        description:
+          type: string
+        name:
+          type: string
+        value:
+          type: string
+      required:
+      - name
+      - value
+      - description
       type: object
     Capability:
       properties:
@@ -4923,6 +5412,18 @@ components:
       - backup
       - point
       type: object
+    DeleteServerVariableRequest:
+      properties:
+        id:
+          type: string
+        reload:
+          type: boolean
+        server_id:
+          type: string
+      required:
+      - server_id
+      - id
+      type: object
     DeleteStorageRequest:
       properties:
         name:
@@ -4939,6 +5440,15 @@ components:
       properties:
         token_id:
           type: string
+      type: object
+    DeleteVariableRequest:
+      properties:
+        id:
+          type: string
+        reload:
+          type: boolean
+      required:
+      - id
       type: object
     DeleteVolumeRequest:
       properties:
@@ -4982,6 +5492,17 @@ components:
       - mount
       - used
       - total
+      type: object
+    DispatchedServers:
+      properties:
+        servers:
+          items:
+            type: string
+          type:
+          - array
+          - "null"
+      required:
+      - servers
       type: object
     DockerDF:
       properties:
@@ -5088,6 +5609,37 @@ components:
       - storage
       - in_recipe
       - from_recipe
+      type: object
+    EncryptionKey:
+      properties:
+        name:
+          type: string
+        public_key:
+          type: string
+        server_id:
+          type: string
+      required:
+      - server_id
+      - name
+      - public_key
+      type: object
+    EncryptionKeys:
+      properties:
+        pending_servers:
+          items:
+            $ref: '#/components/schemas/PendingServer'
+          type:
+          - array
+          - "null"
+        servers:
+          items:
+            $ref: '#/components/schemas/EncryptionKey'
+          type:
+          - array
+          - "null"
+      required:
+      - servers
+      - pending_servers
       type: object
     Error:
       properties:
@@ -5224,6 +5776,10 @@ components:
           type:
           - array
           - "null"
+        vars_revision:
+          type:
+          - "null"
+          - integer
       required:
       - apps
       type: object
@@ -5408,6 +5964,45 @@ components:
           type: boolean
         to:
           type: string
+      type: object
+    InheritedVariable:
+      properties:
+        description:
+          type: string
+        id:
+          type: string
+        is_secret:
+          type: boolean
+        missing_on:
+          items:
+            type: string
+          type:
+          - array
+          - "null"
+        name:
+          type: string
+        overridden:
+          type: boolean
+        scope:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+        updated_by:
+          type: string
+        value:
+          type: string
+      required:
+      - id
+      - name
+      - scope
+      - is_secret
+      - value
+      - description
+      - updated_at
+      - updated_by
+      - missing_on
+      - overridden
       type: object
     Keep:
       properties:
@@ -5712,6 +6307,36 @@ components:
         - properties:
             payload:
               $ref: '#/components/schemas/Notice'
+      - anyOf:
+        - not:
+            properties:
+              type:
+                const: vars.synced
+            required:
+            - type
+        - properties:
+            payload:
+              $ref: '#/components/schemas/VarsSyncedPayload'
+      - anyOf:
+        - not:
+            properties:
+              type:
+                const: vars.sync_failed
+            required:
+            - type
+        - properties:
+            payload:
+              $ref: '#/components/schemas/VarsSyncFailedPayload'
+      - anyOf:
+        - not:
+            properties:
+              type:
+                const: vars.reloaded
+            required:
+            - type
+        - properties:
+            payload:
+              $ref: '#/components/schemas/VarsReloadedPayload'
       properties:
         error:
           type: string
@@ -5722,6 +6347,9 @@ components:
             - server_status: #/components/schemas/ServerStatusPayload
             - apps_status: #/components/schemas/AppsStatusPayload
             - alert: #/components/schemas/Notice
+            - vars.synced: #/components/schemas/VarsSyncedPayload
+            - vars.sync_failed: #/components/schemas/VarsSyncFailedPayload
+            - vars.reloaded: #/components/schemas/VarsReloadedPayload
         ref:
           type: string
         status:
@@ -5735,6 +6363,24 @@ components:
       - type
       - ref
       - timestamp
+      type: object
+    OrgVariables:
+      properties:
+        servers:
+          items:
+            $ref: '#/components/schemas/ServerSync'
+          type:
+          - array
+          - "null"
+        variables:
+          items:
+            $ref: '#/components/schemas/VariableView'
+          type:
+          - array
+          - "null"
+      required:
+      - variables
+      - servers
       type: object
     Organization:
       properties:
@@ -5846,6 +6492,16 @@ components:
       required:
       - servers
       type: object
+    PendingServer:
+      properties:
+        name:
+          type: string
+        server_id:
+          type: string
+      required:
+      - server_id
+      - name
+      type: object
     Point:
       additionalProperties:
         format: double
@@ -5931,6 +6587,21 @@ components:
       required:
       - address
       type: object
+    ReloadRequest:
+      properties:
+        app_ids:
+          items:
+            type: string
+          type: array
+        names:
+          items:
+            type: string
+          type: array
+        server_id:
+          type: string
+        variable_id:
+          type: string
+      type: object
     RenameAppRequest:
       properties:
         app_id:
@@ -6010,6 +6681,13 @@ components:
       - time
       - kind
       - size
+      type: object
+    ResyncRequest:
+      properties:
+        server_id:
+          type: string
+        variable_id:
+          type: string
       type: object
     RevisionInfo:
       properties:
@@ -6243,6 +6921,33 @@ components:
           format: double
           type: number
       type: object
+    SaveServerVariableRequest:
+      properties:
+        ciphertexts:
+          additionalProperties:
+            type: string
+          description: 'Secrets only: exactly one entry, for server_id.'
+          type: object
+        description:
+          type: string
+        is_secret:
+          type: boolean
+        name:
+          description: Env-var name; COMPOSE_PROJECT_NAME and WF_* are reserved.
+          type: string
+        reload:
+          type: boolean
+        server_id:
+          type: string
+        value:
+          description: Plain variables only.
+          type:
+          - "null"
+          - string
+      required:
+      - server_id
+      - name
+      type: object
     SaveStorageRequest:
       properties:
         create:
@@ -6273,6 +6978,33 @@ components:
       required:
       - storage
       - redeployed
+      type: object
+    SaveVariableRequest:
+      properties:
+        ciphertexts:
+          additionalProperties:
+            type: string
+          description: 'Secrets only: server_id -> ECIES ciphertext for that server''s
+            key (GET /api/v1/org/list-encryption-keys). A new value covers every keyed
+            server; a gap fill only servers missing it; none keeps every stored copy.'
+          type: object
+        description:
+          type: string
+        is_secret:
+          type: boolean
+        name:
+          description: Env-var name; COMPOSE_PROJECT_NAME and WF_* are reserved.
+          type: string
+        reload:
+          description: Reload the affected apps after each server stored the change.
+          type: boolean
+        value:
+          description: Plain variables only.
+          type:
+          - "null"
+          - string
+      required:
+      - name
       type: object
     SeriesResponse:
       properties:
@@ -6457,6 +7189,66 @@ components:
       required:
       - server_id
       - liveness
+      type: object
+    ServerSync:
+      properties:
+        agent_revision:
+          type:
+          - "null"
+          - integer
+        has_key:
+          type: boolean
+        name:
+          type: string
+        revision:
+          format: int64
+          type: integer
+        server_id:
+          type: string
+        state:
+          type: string
+      required:
+      - server_id
+      - name
+      - has_key
+      - revision
+      - agent_revision
+      - state
+      type: object
+    ServerVariables:
+      properties:
+        builtins:
+          items:
+            $ref: '#/components/schemas/BuiltinVariable'
+          type:
+          - array
+          - "null"
+        inherited:
+          items:
+            $ref: '#/components/schemas/InheritedVariable'
+          type:
+          - array
+          - "null"
+        missing_org_secrets:
+          items:
+            type: string
+          type:
+          - array
+          - "null"
+        sync:
+          $ref: '#/components/schemas/ServerSync'
+        variables:
+          items:
+            $ref: '#/components/schemas/VariableView'
+          type:
+          - array
+          - "null"
+      required:
+      - variables
+      - inherited
+      - builtins
+      - missing_org_secrets
+      - sync
       type: object
     ServiceMounts:
       properties:
@@ -6765,6 +7557,92 @@ components:
       - expires_at
       - last_used_at
       - created_at
+      type: object
+    VariableView:
+      properties:
+        description:
+          type: string
+        id:
+          type: string
+        is_secret:
+          type: boolean
+        missing_on:
+          items:
+            type: string
+          type:
+          - array
+          - "null"
+        name:
+          type: string
+        scope:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+        updated_by:
+          type: string
+        value:
+          type: string
+      required:
+      - id
+      - name
+      - scope
+      - is_secret
+      - value
+      - description
+      - updated_at
+      - updated_by
+      - missing_on
+      type: object
+    VarsReloadedPayload:
+      properties:
+        app_id:
+          type: string
+        error:
+          type: string
+        names:
+          items:
+            type: string
+          type:
+          - array
+          - "null"
+        ok:
+          type: boolean
+        server_id:
+          type: string
+      required:
+      - server_id
+      - app_id
+      - ok
+      - names
+      type: object
+    VarsSyncFailedPayload:
+      properties:
+        error:
+          type: string
+        server_id:
+          type: string
+      required:
+      - server_id
+      - error
+      type: object
+    VarsSyncedPayload:
+      properties:
+        revision:
+          format: int64
+          type: integer
+        server_id:
+          type: string
+        undecryptable:
+          items:
+            type: string
+          type:
+          - array
+          - "null"
+      required:
+      - server_id
+      - revision
+      - undecryptable
       type: object
     Volume:
       properties:

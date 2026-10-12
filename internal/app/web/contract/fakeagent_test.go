@@ -367,6 +367,13 @@ func defaultScript(typ command.Type) script {
 		return func(raw json.RawMessage) reply {
 			return reply{Payload: command.UpdateAgentResponse{FromVersion: "v1", ToVersion: decode[command.UpdateAgentRequest](raw).Version, Scheduled: true}}
 		}
+	case command.TypeVarsSync:
+		return func(raw json.RawMessage) reply {
+			in := decode[command.SyncVarsRequest](raw)
+			return reply{Payload: command.SyncVarsResponse{Revision: in.Revision, Undecryptable: []command.VarRef{}}}
+		}
+	case command.TypeVarsReload:
+		return func(json.RawMessage) reply { return reply{Payload: command.ReloadVarsResponse{Queued: true}} }
 	}
 	return func(json.RawMessage) reply { return reply{Err: "fake agent: unsupported command type " + string(typ)} }
 }
@@ -384,6 +391,7 @@ func TestFakeAgentAnswersEveryCommandType(t *testing.T) {
 		command.TypeNetworkCreate, command.TypeNetworkDelete, command.TypeVolumeList,
 		command.TypeVolumeCreate, command.TypeVolumeDelete, command.TypeImageTags, command.TypeAgentUpdate,
 		command.TypeDomainList, command.TypeDomainCreate, command.TypeDomainDelete,
+		command.TypeVarsSync, command.TypeVarsReload,
 		command.TypeStorageList, command.TypeStorageTest, command.TypeStorageSave, command.TypeStorageDelete,
 		command.TypeBackupUpdate, command.TypeBackupPoints, command.TypeBackupRun, command.TypeBackupDeletePoint,
 		command.TypeBackupRestore, command.TypeStorageOrphans, command.TypeStorageDeleteOrphan,

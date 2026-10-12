@@ -1,4 +1,4 @@
-// Package alert implements port.AlertRepository over migration 0012:
+// Package alert implements port.AlertRepository over migration 0013:
 // notification channels, alert rules with per-target overrides, the state
 // of each (rule, target) and the event history. State transitions are
 // compare-and-set, so several API replicas that evaluate the same events

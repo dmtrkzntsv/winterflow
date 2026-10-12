@@ -353,12 +353,11 @@ func (r *Repository) redeployStorageUsers(ctx context.Context, ids []string) (re
 			continue
 		}
 		name := r.appName(r.appDataDir(id), id)
-		switch r.redeployCheck(id, r.hasDraft(id)) {
-		case redeployRestoring:
-			warnings = append(warnings, name+" is being restored and was not redeployed: deploy it afterwards to use the new storage settings")
-			continue
-		case redeployDraft:
-			warnings = append(warnings, name+" has undeployed changes and was not redeployed: deploy it to use the new storage settings")
+		// Checked here so a skipped app costs no lock wait, and again under
+		// the lock (redeployLocked): a draft saved or a restore begun while
+		// this waited must not be deployed over.
+		if skip := r.redeployCheck(id, r.hasDraft(id)); skip != redeployAllowed {
+			warnings = append(warnings, storageSkipWarning(name, skip))
 			continue
 		}
 		// Starting a redeploy that the budget would cut short could leave
@@ -368,15 +367,45 @@ func (r *Repository) redeployStorageUsers(ctx context.Context, ids []string) (re
 			continue
 		}
 		upCtx, cancel := context.WithTimeout(ctx, r.storageLimits.redeploy)
-		err := r.redeploy(upCtx, id)
+		skip, err := r.redeployLocked(upCtx, id)
 		cancel()
-		if err != nil {
+		switch {
+		case err != nil:
 			warnings = append(warnings, fmt.Sprintf("%s: redeploy failed: %v", name, err))
+			continue
+		case skip != redeployAllowed:
+			warnings = append(warnings, storageSkipWarning(name, skip))
 			continue
 		}
 		redeployed = append(redeployed, id)
 	}
 	return redeployed, warnings
+}
+
+// storageSkipWarning is why storage.save left a running app as it was.
+func storageSkipWarning(name string, skip redeploySkip) string {
+	if skip == redeployRestoring {
+		return name + " is being restored and was not redeployed: deploy it afterwards to use the new storage settings"
+	}
+	return name + " has undeployed changes and was not redeployed: deploy it to use the new storage settings"
+}
+
+// redeployLocked is redeploy under the app's operation lock, so it never
+// runs beside another mutator or a shared-variable reload of the app. Once
+// the lock is held it checks again whether the app may be redeployed (a
+// draft saved or a restore begun while it waited): if not, it returns the
+// reason and deploys nothing. It gives up after the busy wait (the error
+// says so, and the caller reports it as a warning).
+func (r *Repository) redeployLocked(ctx context.Context, appID string) (redeploySkip, error) {
+	unlock, err := r.lockForMutation(ctx, appID)
+	if err != nil {
+		return redeployAllowed, err
+	}
+	defer unlock()
+	if skip := r.redeployCheck(appID, r.hasDraft(appID)); skip != redeployAllowed {
+		return skip, nil
+	}
+	return redeployAllowed, r.redeploy(ctx, appID)
 }
 
 // redeploySkip is why a running app is not brought up again after a config

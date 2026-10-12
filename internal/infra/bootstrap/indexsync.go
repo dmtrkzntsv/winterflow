@@ -40,6 +40,11 @@ const (
 // indexSyncMaxAttempts. Any other result clears it — an agent without the
 // list command answers an error that a retry would not change.
 // Standalone's in-process bridge answers the first attempt, so it syncs once.
+//
+// Only the result of the sync's own current attempt settles it: list's
+// dispatch carries the attempt in its context (see resultTap), so other
+// commands sent through the same dispatcher, and late answers to an attempt
+// already superseded, never clear or retry a pending sync.
 type indexSync struct {
 	what       string // what is synced, for logs: "registered domains"
 	ctx        context.Context
@@ -56,6 +61,14 @@ type syncState struct {
 	retried       bool
 	inFlightUntil time.Time
 }
+
+// syncAttempt identifies one dispatch of a pending sync.
+type syncAttempt struct {
+	state *syncState
+	n     int
+}
+
+type syncAttemptKey struct{}
 
 // newIndexSync builds a sync whose list is an app usecase method (built on
 // deps) dispatching a list command for no user; a dispatcher tap observes
@@ -105,10 +118,10 @@ func (s *indexSync) online(serverID string) {
 		st = &syncState{}
 		s.pending[serverID] = st
 	}
-	fire := s.claimLocked(st)
+	a, fire := s.claimLocked(st)
 	s.mu.Unlock()
 	if fire {
-		s.dispatch(serverID)
+		s.dispatch(serverID, a)
 	}
 }
 
@@ -116,48 +129,58 @@ func (s *indexSync) online(serverID string) {
 func (s *indexSync) heartbeat(serverID string) {
 	s.mu.Lock()
 	st, ok := s.pending[serverID]
-	fire := ok && s.claimLocked(st)
+	var a syncAttempt
+	var fire bool
+	if ok {
+		a, fire = s.claimLocked(st)
+	}
 	s.mu.Unlock()
 	if fire {
-		s.dispatch(serverID)
+		s.dispatch(serverID, a)
 	}
 }
 
 // claimLocked reserves an attempt unless one is in flight or the budget is
 // spent.
-func (s *indexSync) claimLocked(st *syncState) bool {
+func (s *indexSync) claimLocked(st *syncState) (syncAttempt, bool) {
 	now := time.Now()
 	if now.Before(st.inFlightUntil) || st.attempts >= indexSyncMaxAttempts {
-		return false
+		return syncAttempt{}, false
 	}
 	st.attempts++
 	st.inFlightUntil = now.Add(indexSyncTimeout)
-	return true
+	return syncAttempt{state: st, n: st.attempts}, true
 }
 
-func (s *indexSync) dispatch(serverID string) {
+// currentLocked reports whether a is the pending sync's latest attempt.
+func (s *indexSync) currentLocked(serverID string, a syncAttempt) bool {
+	st, ok := s.pending[serverID]
+	return ok && st == a.state && st.attempts == a.n
+}
+
+func (s *indexSync) dispatch(serverID string, a syncAttempt) {
 	ctx, cancel := context.WithTimeout(s.ctx, indexSyncPublishTimeout)
 	defer cancel()
-	if err := s.list(ctx, serverID); err != nil {
-		s.log.Warn("sync "+s.what+": dispatch the list", "error", err, "server_id", serverID)
+	if err := s.list(context.WithValue(ctx, syncAttemptKey{}, a), serverID); err != nil {
+		s.log.Warn("sync "+s.what+": dispatch", "error", err, "server_id", serverID)
 		s.mu.Lock()
-		if st, ok := s.pending[serverID]; ok {
-			st.inFlightUntil = time.Time{}
+		if s.currentLocked(serverID, a) {
+			a.state.inFlightUntil = time.Time{}
 		}
 		s.mu.Unlock()
 	}
 }
 
-// result settles an attempt: anything but not-connected clears the pending
-// sync; not-connected keeps it for the next heartbeat and schedules the one
-// retry.
-func (s *indexSync) result(serverID string, res port.CommandResult) {
+// result settles the current attempt: anything but not-connected clears
+// the pending sync; not-connected keeps it for the next heartbeat and
+// schedules the one retry. Results of other dispatches are ignored.
+func (s *indexSync) result(serverID string, a syncAttempt, res port.CommandResult) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	st, ok := s.pending[serverID]
-	if !ok {
+	if !s.currentLocked(serverID, a) {
 		return
 	}
+	st := a.state
 	if res.Success || res.Error != bus.ErrAgentNotConnected {
 		if !res.Success {
 			s.log.Debug("sync "+s.what+": agent answered an error", "error", res.Error, "server_id", serverID)
@@ -181,20 +204,27 @@ func (s *indexSync) result(serverID string, res port.CommandResult) {
 	}
 }
 
-// resultTap is a dispatcher that reports every command's result, after the
-// command's own OnResult, to tap.
+// resultTap is a dispatcher that reports the result of every command a sync
+// attempt dispatched (its context carries the syncAttempt), after the
+// command's own OnResult, to tap. Commands dispatched without an attempt
+// pass through untouched. The attempt rides the context rather than the
+// returned request id because a result can arrive before Dispatch returns.
 type resultTap struct {
 	port.CommandDispatcher
-	tap func(serverID string, res port.CommandResult)
+	tap func(serverID string, a syncAttempt, res port.CommandResult)
 }
 
 func (d resultTap) Dispatch(ctx context.Context, in port.DispatchInput) (string, error) {
+	a, ok := ctx.Value(syncAttemptKey{}).(syncAttempt)
+	if !ok {
+		return d.CommandDispatcher.Dispatch(ctx, in)
+	}
 	own, serverID := in.OnResult, in.AgentID
 	in.OnResult = func(res port.CommandResult) {
 		if own != nil {
 			own(res)
 		}
-		d.tap(serverID, res)
+		d.tap(serverID, a, res)
 	}
 	return d.CommandDispatcher.Dispatch(ctx, in)
 }

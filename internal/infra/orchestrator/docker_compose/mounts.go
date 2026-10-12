@@ -296,7 +296,7 @@ func (r *Repository) composeModelKey(dir string) string {
 	}
 	h := sha256.New()
 	h.Write([]byte(head))
-	for _, rel := range []string{storageEnvRel, envSecretsRel} {
+	for _, rel := range []string{envSharedRel, envSharedSecretsRel, storageEnvRel, envSecretsRel} {
 		raw, _ := os.ReadFile(filepath.Join(dir, rel))
 		h.Write([]byte{0})
 		h.Write(raw)

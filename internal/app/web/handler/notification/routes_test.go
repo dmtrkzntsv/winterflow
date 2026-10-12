@@ -32,6 +32,9 @@ func TestRoutes(t *testing.T) {
 		"server_status":    model.ServerStatusPayload{},
 		"apps_status":      command.AppsStatusPayload{},
 		"alert":            alert.Notice{},
+		"vars.synced":      model.VarsSyncedPayload{},
+		"vars.sync_failed": model.VarsSyncFailedPayload{},
+		"vars.reloaded":    command.VarsReloadedPayload{},
 	}
 	if len(rt.EventPayloads) != len(want) {
 		t.Fatalf("EventPayloads = %+v, want %d entries", rt.EventPayloads, len(want))

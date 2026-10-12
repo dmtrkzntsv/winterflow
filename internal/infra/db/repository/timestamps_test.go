@@ -20,6 +20,7 @@ import (
 	serverrepo "winterflow/internal/infra/db/repository/server"
 	serverdomainrepo "winterflow/internal/infra/db/repository/serverdomain"
 	serverstoragerepo "winterflow/internal/infra/db/repository/serverstorage"
+	sharedvarrepo "winterflow/internal/infra/db/repository/sharedvar"
 	userrepo "winterflow/internal/infra/db/repository/user"
 	"winterflow/pkg/util"
 )
@@ -49,6 +50,7 @@ func TestSQLiteTimestampsAreDateTimeText(t *testing.T) {
 	serverDomains := must(serverdomainrepo.New(d.Tx, d.Driver, dbtest.Log))
 	serverStorages := must(serverstoragerepo.New(d.Tx, d.Driver, dbtest.Log))
 	metricSamples := must(metricrepo.New(d.Tx, d.Driver, dbtest.Log))
+	sharedVars := must(sharedvarrepo.New(d.Tx, d.Driver, dbtest.Log))
 
 	admin := must(users.BootstrapLocalAdmin(ctx, "Admin", "admin@example.com", "correct horse battery"))
 	orgID := must(users.PrimaryOrganizationID(ctx, admin.ID))
@@ -122,6 +124,12 @@ func TestSQLiteTimestampsAreDateTimeText(t *testing.T) {
 	key := alert.Key{RuleID: rule.ID, Target: alert.Target{ServerID: srv.ID}}
 	if _, err := alerts.Fire(ctx, key, 93, 90, alert.Event{ID: util.GenerateID(), OrgID: orgID, RuleID: rule.ID,
 		ServerID: srv.ID, TargetKind: alert.TargetServer, Metric: alert.MetricCPU, Kind: alert.EventFired, CreatedAt: at}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sharedVars.Save(ctx, model.SharedVariableSave{Create: true, Variable: model.SharedVariable{
+		ID: dbtest.ID(401), OrgID: orgID, Name: "TZ_VAR", Description: "d", UpdatedAt: at,
+	}}); err != nil {
 		t.Fatal(err)
 	}
 

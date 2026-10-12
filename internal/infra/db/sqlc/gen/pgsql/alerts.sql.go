@@ -857,7 +857,7 @@ WHERE alert_defaults_seeded = FALSE
 ORDER BY organization_id ASC
 `
 
-// Alerts: channels, rules, overrides, states, events (see migration 0012).
+// Alerts: channels, rules, overrides, states, events (see migration 0013).
 func (q *Queries) ListUnseededOrganizationIDs(ctx context.Context) ([]string, error) {
 	rows, err := q.db.QueryContext(ctx, listUnseededOrganizationIDs)
 	if err != nil {

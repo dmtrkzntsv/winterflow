@@ -21,8 +21,10 @@ const managedEnvVar = "COMPOSE_PROJECT_NAME"
 
 // runHelperScript renders the helper for a project, its compose files and
 // the profiles winterflow activates (names are single-quoted for the
-// shell). The env files are added in the order winterflow passes them, each
-// only when it exists.
+// shell). The env files are added in the order winterflow passes them
+// (composeArgsFor), each optional one only when it exists: they are
+// prepended to "$@" last-first, so compose sees .env.shared
+// .env.shared.secrets .env .winterflow/storage.env .env.secrets.
 func runHelperScript(project string, files, profiles []string) []byte {
 	cmd := "exec docker compose --project-name " + project
 	for _, f := range files {
@@ -38,7 +40,10 @@ func runHelperScript(project string, files, profiles []string) []byte {
 cd "$(dirname "$0")/.." || exit 1
 if [ -f ` + envSecretsRel + ` ]; then set -- --env-file ` + envSecretsRel + ` "$@"; fi
 if [ -f ` + storageEnvRel + ` ]; then set -- --env-file ` + storageEnvRel + ` "$@"; fi
-` + cmd + ` --env-file ` + envRel + ` "$@"
+set -- --env-file ` + envRel + ` "$@"
+if [ -f ` + envSharedSecretsRel + ` ]; then set -- --env-file ` + envSharedSecretsRel + ` "$@"; fi
+if [ -f ` + envSharedRel + ` ]; then set -- --env-file ` + envSharedRel + ` "$@"; fi
+` + cmd + ` "$@"
 `)
 }
 

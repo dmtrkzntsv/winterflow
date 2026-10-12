@@ -1,4 +1,4 @@
--- Alerts: channels, rules, overrides, states, events (see migration 0012).
+-- Alerts: channels, rules, overrides, states, events (see migration 0013).
 
 -- name: ListUnseededOrganizationIDs :many
 SELECT organization_id FROM organizations

@@ -36,6 +36,7 @@ import { AppStatusIndicator } from "@/components/app-status-badge";
 import { DeleteAppDialog } from "@/components/delete-app-dialog";
 import { AppAlertsBadge } from "@/components/alerts/active-alerts";
 import { AppMetricBlocks, AppMetricsTab } from "@/components/app-metrics";
+import { StaleVarsBadge } from "@/components/stale-vars-badge";
 import { useApps } from "@/context/use-apps";
 import { useNotifications } from "@/context/use-notifications";
 import { useServers } from "@/context/use-servers";
@@ -203,6 +204,8 @@ export default function AppDetailsPage() {
           )}
         </div>
       </header>
+
+      <StaleVarsBadge key={app.id} appId={app.id} />
 
       <AppMetricBlocks serverId={app.serverId} appId={app.id} />
 

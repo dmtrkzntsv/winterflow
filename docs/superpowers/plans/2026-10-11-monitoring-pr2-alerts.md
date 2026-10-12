@@ -148,7 +148,7 @@ Prototype status: unlike PR 1, this code was **not** compiled in a scratch copy.
 
 `feat/alerts` merged `main` @ b8caadb, which added #12 (storages) and #14 (backups). The prototype was cut from 8497b38, so these places differ. Apply each step's **intent** there; do not reproduce old context lines.
 
-- **Migration:** it is `0012_alerts` (`0011_server_storages` exists).
+- **Migration:** it is `0013_alerts` (`0012_shared_variables` exists).
 - **`internal/infra/bootstrap/core.go` (Task 7):** main changed the code the Task 7 diff edits.
   - `startEventsSubscriber` now takes `indexSyncs{newDomainSync(…), newStorageSync(…)}`; add `al.evaluator` as the new last argument.
   - `repos` and `Deps` gained `serverStorage` / `ServerStorageRepository`; add `alert` / `AlertRepository`, `AlertNotifier` and `ChannelBox` beside them.
@@ -165,7 +165,7 @@ Prototype status: unlike PR 1, this code was **not** compiled in a scratch copy.
 
 ## Global Constraints
 
-- Migration `0012_alerts.sql` (PR #12 merged `0011_server_storages`), identical in `migrations/sqlite` and `migrations/pgsql` except types, as for `0010`. Keep `.sql` files ASCII. `TestVersionsAreASequence` requires contiguous versions.
+- Migration `0013_alerts.sql` (PR #16 merged `0012_shared_variables`), identical in `migrations/sqlite` and `migrations/pgsql` except types, as for `0010`. Keep `.sql` files ASCII. `TestVersionsAreASequence` requires contiguous versions.
 - SQL is written per engine. Every query has the same `-- name:` in `query/sqlite/alerts.sql` and `query/pgsql/alerts.sql`. Run `make sqlc` after any change, never edit `sqlc/gen`, and add every new row/param type pair to `internal/infra/db/sqlc/shapes_test.go`.
 - Inside `Tx.WithTx(ctx, fn)`, every query uses `r.tx.Querier(ctx)` with `fn`'s ctx.
 - Every DB and network operation has a deadline:
@@ -1919,10 +1919,10 @@ git commit -m "feat(alerts): encrypted channel URLs and a guarded, redacting Sho
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
-### Task 3: Migration 0012, queries and the alert repository
+### Task 3: Migration 0013, queries and the alert repository
 
 **Files:**
-- Create: `internal/infra/db/migrations/sqlite/0012_alerts.sql`, `internal/infra/db/migrations/pgsql/0012_alerts.sql`
+- Create: `internal/infra/db/migrations/sqlite/0013_alerts.sql`, `internal/infra/db/migrations/pgsql/0013_alerts.sql`
 - Create: `internal/infra/db/sqlc/query/sqlite/alerts.sql`, `internal/infra/db/sqlc/query/pgsql/alerts.sql`
 - Modify: `internal/infra/db/sqlc/sqlc.yaml` (nullable Postgres `int4`/`float8`), `internal/infra/db/sqlc/shapes_test.go`
 - Generated (by `make sqlc`, never by hand): `internal/infra/db/sqlc/gen/{sqlite,pgsql}/alerts.sql.go`, `models.go`, `querier.go`, `organizations.sql.go`
@@ -1978,7 +1978,7 @@ Notes from prototyping on SQLite and Postgres 16:
 
 - [ ] **Step 1: Write the migrations**
 
-`internal/infra/db/migrations/sqlite/0012_alerts.sql`:
+`internal/infra/db/migrations/sqlite/0013_alerts.sql`:
 
 ```sql
 -- Alerts (monitoring PR 2): org-wide notification channels and rules,
@@ -2072,7 +2072,7 @@ CREATE INDEX idx_alert_events_org_created ON alert_events (organization_id, crea
 CREATE INDEX idx_alert_events_created ON alert_events (created_at);
 ```
 
-`internal/infra/db/migrations/pgsql/0012_alerts.sql`:
+`internal/infra/db/migrations/pgsql/0013_alerts.sql`:
 
 ```sql
 -- Alerts (monitoring PR 2): org-wide notification channels and rules,
@@ -2171,7 +2171,7 @@ CREATE INDEX idx_alert_events_created ON alert_events (created_at);
 `internal/infra/db/sqlc/query/sqlite/alerts.sql`:
 
 ```sql
--- Alerts: channels, rules, overrides, states, events (see migration 0012).
+-- Alerts: channels, rules, overrides, states, events (see migration 0013).
 
 -- name: ListUnseededOrganizationIDs :many
 SELECT organization_id FROM organizations
@@ -2361,7 +2361,7 @@ DELETE FROM alert_events WHERE app_id = ?;
 `internal/infra/db/sqlc/query/pgsql/alerts.sql`:
 
 ```sql
--- Alerts: channels, rules, overrides, states, events (see migration 0012).
+-- Alerts: channels, rules, overrides, states, events (see migration 0013).
 
 -- name: ListUnseededOrganizationIDs :many
 SELECT organization_id FROM organizations
@@ -3054,7 +3054,7 @@ Expected: FAIL to compile (`undefined: New` in package `alert`).
 `internal/infra/db/repository/alert/repo.go`:
 
 ```go
-// Package alert implements port.AlertRepository over migration 0012:
+// Package alert implements port.AlertRepository over migration 0013:
 // notification channels, alert rules with per-target overrides, the state
 // of each (rule, target) and the event history. State transitions are
 // compare-and-set, so several API replicas that evaluate the same events
@@ -4278,7 +4278,7 @@ import (
 	"winterflow/internal/domain/alert"
 )
 
-// AlertRepository persists alerting (migration 0012): an org's
+// AlertRepository persists alerting (migration 0013): an org's
 // notification channels (URL stored encrypted by the caller), its rules
 // and per-target overrides, the state of each (rule, target) and the event
 // history. Lookups scoped by org return alert.ErrNotFound for another
@@ -11555,7 +11555,7 @@ Open a draft PR against `main` titled `feat(alerts): alert rules, overrides and 
 - **Summary:** spec §3 and the alert parts of §4.
 - **Rulings:** decisions 1–18 of this plan, in short form. Highlight these:
   - transitions are compare-and-set, and safe with several API replicas;
-  - migration `0012_alerts` (after #12's `0011_server_storages`);
+  - migration `0013_alerts` (after #16's `0012_shared_variables`);
   - `ALERTS_ALLOW_PRIVATE_TARGETS`: the SSRF guard is on for the distributed API and off for standalone;
   - routes use the existing verb style;
   - the active list replaces "firing count in app responses";

@@ -7,7 +7,7 @@ import (
 	"winterflow/internal/domain/alert"
 )
 
-// AlertRepository persists alerting (migration 0012): an org's
+// AlertRepository persists alerting (migration 0013): an org's
 // notification channels (URL stored encrypted by the caller), its rules
 // and per-target overrides, the state of each (rule, target) and the event
 // history. Lookups scoped by org return alert.ErrNotFound for another

@@ -29,9 +29,11 @@ type Deps struct {
 	ServerDomainRepository port.ServerDomainRepository
 	// ServerStorageRepository indexes each server's storages (no secrets).
 	ServerStorageRepository port.ServerStorageRepository
-	CommandDispatcher       port.CommandDispatcher
-	NotificationManager     port.NotificationManager
-	StatusCache             *status.Cache
+	// SharedVariableRepository stores org- and server-level shared variables.
+	SharedVariableRepository port.SharedVariableRepository
+	CommandDispatcher        port.CommandDispatcher
+	NotificationManager      port.NotificationManager
+	StatusCache              *status.Cache
 	// MetricRepository serves the monitoring charts; LatestMetrics holds
 	// each server's newest host sample for the dashboard.
 	MetricRepository port.MetricRepository

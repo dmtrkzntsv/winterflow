@@ -39,7 +39,7 @@ func NewDispatcher(orch *dockercompose.Repository, ingress port.IngressManager, 
 	if ingress == nil {
 		ingress = noIngress{}
 	}
-	d := &Dispatcher{orch: orch, ingress: ingress, backups: noBackups{}, runWait: backupRunWait, log: log}
+	d := &Dispatcher{orch: orch, ingress: ingress, backups: noBackups{}, runWait: command.BackupRunWait, log: log}
 	d.handlers = d.newHandlers()
 	return d
 }

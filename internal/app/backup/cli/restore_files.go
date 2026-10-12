@@ -149,7 +149,7 @@ func restoreFilesCmd(args []string, stdin io.Reader, stderr io.Writer) (Result, 
 		}
 		need[filepath.Clean(n[:i])] += bytes
 	}
-	return restoreFilesNotify(targets, *id, need, exclude, stdin, func() { fmt.Fprintln(stderr, helper.SwappingLine) })
+	return restoreFiles(targets, *id, need, exclude, stdin, func() { fmt.Fprintln(stderr, helper.SwappingLine) })
 }
 
 // restoreFiles replaces the targets' paths with the archive read from in.
@@ -165,15 +165,10 @@ func restoreFilesCmd(args []string, stdin io.Reader, stderr io.Writer) (Result, 
 // restored tree. A failed rename puts everything back (exit 1, nothing
 // changed); only when that fails too is the restore errPartial, and the old
 // data then stays in .wf-restore-<id>.old/. Paths the archive doesn't hold
-// are left as they are, with a warning.
-func restoreFiles(targets []target, id string, need map[string]uint64, exclude []string, in io.Reader) (Result, error) {
-	return restoreFilesNotify(targets, id, need, exclude, in, nil)
-}
-
-// restoreFilesNotify is restoreFiles that calls swapping (if set) just
+// are left as they are, with a warning. It calls swapping (if set) just
 // before the first path is moved into place: everything before it only wrote
 // into the restore's temp folders.
-func restoreFilesNotify(targets []target, id string, need map[string]uint64, exclude []string, in io.Reader, swapping func()) (Result, error) {
+func restoreFiles(targets []target, id string, need map[string]uint64, exclude []string, in io.Reader, swapping func()) (Result, error) {
 	var warns warner
 	tmpName := restoreTmpPrefix + id
 	roots := map[string]string{}  // mount root -> its temp folder

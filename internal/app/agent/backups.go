@@ -37,14 +37,14 @@ var errNoBackups = errors.New("backups are not available on this agent")
 // noBackups is the Backups of a dispatcher built without a scheduler.
 type noBackups struct{}
 
-func (noBackups) Reload()       {}
-func (noBackups) Forget(string) {}
-func (noBackups) RunNow(string, string) <-chan backup.Outcome {
-	ch := make(chan backup.Outcome, 1)
-	ch <- backup.Outcome{Err: errNoBackups}
-	return ch
-}
+func (noBackups) Reload()                                     {}
+func (noBackups) Forget(string)                               {}
+func (noBackups) RunNow(string, string) <-chan backup.Outcome { return unavailable() }
 func (noBackups) Restore(string, string, string) <-chan backup.Outcome {
+	return unavailable()
+}
+
+func unavailable() <-chan backup.Outcome {
 	ch := make(chan backup.Outcome, 1)
 	ch <- backup.Outcome{Err: errNoBackups}
 	return ch
@@ -55,37 +55,37 @@ func (noBackups) Decorate(apps []command.AppStatus, _ time.Time) []command.AppSt
 // may not).
 func (d *Dispatcher) SetBackups(b Backups) { d.backups = b }
 
-// backupRunWait bounds how long a Back up now request waits for its run;
-// the API waits command.BackupRunWait plus slack, so this answer arrives
-// before the API gives up.
-const backupRunWait = command.BackupRunWait
-
-// runBackup waits for a Back up now request's run (on the backup scheduler,
-// never on the command pipeline: backup.run is a detached command).
-func (d *Dispatcher) runBackup(ctx context.Context, in command.RunBackupRequest) (command.RunBackupResponse, error) {
-	// A detached command still has a limit: a scheduler that never answers
-	// (not started, wedged) must not hold the request forever.
-	ctx, cancel := context.WithTimeout(ctx, d.runWait)
+// awaitOutcome waits for a detached backup command's outcome (on the backup
+// scheduler, never on the command pipeline), at most the dispatcher's run
+// wait: a scheduler that never answers (not started, wedged) must not hold
+// the request forever. The API waits command.BackupRunWait plus slack, so the
+// timeout answer arrives before the API gives up. pick takes the response
+// out of the outcome; fallback is the response of a timeout.
+func awaitOutcome[T any](ctx context.Context, wait time.Duration, ch <-chan backup.Outcome, pick func(backup.Outcome) T, fallback T) (T, error) {
+	ctx, cancel := context.WithTimeout(ctx, wait)
 	defer cancel()
 	select {
-	case o := <-d.backups.RunNow(in.AppID, in.Backup):
-		return o.Result, o.Err
+	case o := <-ch:
+		return pick(o), o.Err
 	case <-ctx.Done():
-		return command.RunBackupResponse{AppID: in.AppID, Backup: in.Backup}, ctx.Err()
+		return fallback, ctx.Err()
 	}
 }
 
-// restoreBackup waits for a restore request (on the backup scheduler, like
-// backup.run: backup.restore is a detached command), bounded like it.
+// runBackup waits for a Back up now request's run (backup.run is a detached
+// command).
+func (d *Dispatcher) runBackup(ctx context.Context, in command.RunBackupRequest) (command.RunBackupResponse, error) {
+	return awaitOutcome(ctx, d.runWait, d.backups.RunNow(in.AppID, in.Backup),
+		func(o backup.Outcome) command.RunBackupResponse { return o.Result },
+		command.RunBackupResponse{AppID: in.AppID, Backup: in.Backup})
+}
+
+// restoreBackup waits for a restore request (backup.restore is a detached
+// command), bounded like runBackup.
 func (d *Dispatcher) restoreBackup(ctx context.Context, in command.RestoreBackupRequest) (command.RestoreBackupResponse, error) {
-	ctx, cancel := context.WithTimeout(ctx, d.runWait)
-	defer cancel()
-	select {
-	case o := <-d.backups.Restore(in.AppID, in.Backup, in.Point):
-		return o.Restore, o.Err
-	case <-ctx.Done():
-		return command.RestoreBackupResponse{AppID: in.AppID, Backup: in.Backup, RestoredPoint: in.Point}, ctx.Err()
-	}
+	return awaitOutcome(ctx, d.runWait, d.backups.Restore(in.AppID, in.Backup, in.Point),
+		func(o backup.Outcome) command.RestoreBackupResponse { return o.Restore },
+		command.RestoreBackupResponse{AppID: in.AppID, Backup: in.Backup, RestoredPoint: in.Point})
 }
 
 // HelperCleaner removes leftover backup helper containers, and reports the

@@ -107,7 +107,7 @@ func main() {
 
 	// Periodic apps-status push: feeds the API's status cache and the SSE
 	// live-status pipeline. Ticks while the stream is down are skipped.
-	go appagent.RunStatusReporterOn(ctx, appagent.WithBackupHealth(orchestrator, backups), func(kind bus.EventKind, payload []byte) error {
+	go appagent.RunStatusReporter(ctx, appagent.WithBackupHealth(orchestrator, backups), func(kind bus.EventKind, payload []byte) error {
 		return agent.SendEvent(string(kind), payload)
 	}, 30*time.Second, backups.Changed(), log)
 

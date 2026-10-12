@@ -58,6 +58,9 @@ const (
 	// EventServerMetrics carries one minute's resource sample of a server
 	// and its apps (payload: metrics.Sample).
 	EventServerMetrics EventKind = "server.metrics"
+	// EventVarsReloaded reports one app's shared-variable reload outcome
+	// (payload: command.VarsReloadedPayload without server_id).
+	EventVarsReloaded EventKind = "vars.reloaded"
 )
 
 // EventMessage is the events-queue payload: an unsolicited event from a server's

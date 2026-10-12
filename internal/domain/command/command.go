@@ -54,6 +54,10 @@ const (
 	TypeDomainCreate Type = "domain.create"
 	TypeDomainDelete Type = "domain.delete"
 
+	// Shared variables (org- and server-level).
+	TypeVarsSync   Type = "vars.sync"   // store the server's full shared-variables snapshot
+	TypeVarsReload Type = "vars.reload" // re-render and compose up the selected apps
+
 	// Container images.
 	TypeImageTags Type = "image.tags" // list available registry tags for an image
 

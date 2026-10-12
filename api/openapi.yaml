@@ -2977,6 +2977,10 @@ components:
           type:
           - array
           - "null"
+        stale_vars:
+          items:
+            type: string
+          type: array
         status_code:
           type: integer
       required:
@@ -3467,6 +3471,10 @@ components:
           type:
           - array
           - "null"
+        vars_revision:
+          type:
+          - "null"
+          - integer
       required:
       - apps
       type: object

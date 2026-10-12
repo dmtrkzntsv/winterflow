@@ -26,18 +26,18 @@ const (
 // fakeStore is an in-memory alert repository with the real
 // compare-and-set semantics of Fire and Resolve.
 type fakeStore struct {
-	mu               sync.Mutex
-	rules            []alert.Rule
-	overrides        []alert.Override
-	states           map[alert.Key]alert.State
-	events           []alert.Event
-	cleared          []alert.Key
-	channels         []alert.Channel
-	delivered        map[string][]alert.Delivery
-	records          []string // "channel:error"
-	dir              alert.Directory
-	fail             error      // returned by ListRules/ListOverrides
-	failTransitions  error      // returned by Fire and Resolve
+	mu              sync.Mutex
+	rules           []alert.Rule
+	overrides       []alert.Override
+	states          map[alert.Key]alert.State
+	events          []alert.Event
+	cleared         []alert.Key
+	channels        []alert.Channel
+	delivered       map[string][]alert.Delivery
+	records         []string // "channel:error"
+	dir             alert.Directory
+	fail            error // returned by ListRules/ListOverrides
+	failTransitions error // returned by Fire and Resolve
 }
 
 func newStore() *fakeStore {

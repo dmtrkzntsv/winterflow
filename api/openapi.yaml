@@ -103,6 +103,347 @@ paths:
       - docker
       x-operation-result:
         $ref: '#/components/schemas/UpdateAgentResponse'
+  /api/v1/alerts/delete-channel:
+    post:
+      operationId: alertsDeleteChannel
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IDRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    type: "null"
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Delete a notification channel
+      tags:
+      - alerts
+  /api/v1/alerts/delete-rule:
+    post:
+      operationId: alertsDeleteRule
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IDRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    type: "null"
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Delete an alert rule
+      tags:
+      - alerts
+  /api/v1/alerts/get-channels:
+    get:
+      description: 'Channel URLs carry secrets and are never returned: `service` is
+        the URL scheme and `fields` the non-secret form values the client stored with
+        it.'
+      operationId: alertsGetChannels
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    items:
+                      $ref: '#/components/schemas/Channel'
+                    type:
+                    - array
+                    - "null"
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+      security:
+      - bearer: []
+      - cookie: []
+      summary: List the org's notification channels
+      tags:
+      - alerts
+  /api/v1/alerts/get-rules:
+    get:
+      operationId: alertsGetRules
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    items:
+                      $ref: '#/components/schemas/Rule'
+                    type:
+                    - array
+                    - "null"
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+      security:
+      - bearer: []
+      - cookie: []
+      summary: List the org's alert rules
+      tags:
+      - alerts
+  /api/v1/alerts/save-channel:
+    post:
+      description: '`url` is a Shoutrrr URL (telegram://, discord://, ntfy://, smtp://,
+        generic://, …), stored encrypted. An empty `id` creates. On update an empty
+        `url` keeps the stored destination (url, service and fields); only name, default
+        and enabled change.'
+      operationId: alertsSaveChannel
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaveChannelRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Channel'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Create or update a notification channel
+      tags:
+      - alerts
+  /api/v1/alerts/save-rule:
+    post:
+      description: 'Fires when the metric''s average over `duration_minutes` (1-60)
+        is above `threshold` (down rules: when the server or app is down that long).
+        `channel_ids`: null = the org''s default channels, [] = none (History only).
+        `target_kind` and `metric` cannot change on update.'
+      operationId: alertsSaveRule
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SaveRuleRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Rule'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Create or update an alert rule
+      tags:
+      - alerts
+  /api/v1/alerts/test-channel:
+    post:
+      description: Send exactly one of `id` (a saved channel; the outcome is recorded
+        on it) or `url` (a draft). Answers 200 with `ok` false and the error when
+        the service refuses.
+      operationId: alertsTestChannel
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TestChannelRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/TestChannelResponse'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Send a test notification
+      tags:
+      - alerts
   /api/v1/app/control-app:
     post:
       operationId: appControlApp
@@ -3854,6 +4195,45 @@ components:
         new_password:
           type: string
       type: object
+    Channel:
+      properties:
+        created_at:
+          format: date-time
+          type: string
+        enabled:
+          type: boolean
+        fields:
+          additionalProperties:
+            type: string
+          type:
+          - object
+          - "null"
+        id:
+          type: string
+        is_default:
+          type: boolean
+        last_error:
+          type: string
+        last_sent_at:
+          format: date-time
+          type:
+          - "null"
+          - string
+        name:
+          type: string
+        service:
+          type: string
+      required:
+      - id
+      - name
+      - service
+      - fields
+      - is_default
+      - enabled
+      - last_error
+      - last_sent_at
+      - created_at
+      type: object
     CheckDomainResponse:
       properties:
         available:
@@ -4463,6 +4843,11 @@ components:
           - "null"
       required:
       - storages
+      type: object
+    IDRequest:
+      properties:
+        id:
+          type: string
       type: object
     ImageTagsResponse:
       properties:
@@ -5140,6 +5525,40 @@ components:
       - app_id
       - revision
       type: object
+    Rule:
+      properties:
+        channel_ids:
+          items:
+            type: string
+          type:
+          - array
+          - "null"
+        created_at:
+          format: date-time
+          type: string
+        duration_minutes:
+          type: integer
+        enabled:
+          type: boolean
+        id:
+          type: string
+        metric:
+          type: string
+        target_kind:
+          type: string
+        threshold:
+          format: double
+          type: number
+      required:
+      - id
+      - target_kind
+      - metric
+      - threshold
+      - duration_minutes
+      - channel_ids
+      - enabled
+      - created_at
+      type: object
     RunBackupRequest:
       properties:
         app_id:
@@ -5250,6 +5669,60 @@ components:
       required:
       - app_id
       - revision
+      type: object
+    SaveChannelRequest:
+      properties:
+        enabled:
+          type: boolean
+        fields:
+          additionalProperties:
+            type: string
+          type:
+          - object
+          - "null"
+        id:
+          type: string
+        is_default:
+          type: boolean
+        name:
+          type: string
+        url:
+          type: string
+      type: object
+    SaveRuleRequest:
+      properties:
+        channel_ids:
+          items:
+            type: string
+          type:
+          - array
+          - "null"
+        duration_minutes:
+          type: integer
+        enabled:
+          type: boolean
+        id:
+          type: string
+        metric:
+          enum:
+          - down
+          - cpu
+          - memory
+          - disk
+          - load1
+          - load5
+          - load15
+          - bandwidth
+          - temperature
+          type: string
+        target_kind:
+          enum:
+          - server
+          - app
+          type: string
+        threshold:
+          format: double
+          type: number
       type: object
     SaveStorageRequest:
       properties:
@@ -5636,6 +6109,23 @@ components:
           type: string
         volume:
           type: string
+      type: object
+    TestChannelRequest:
+      properties:
+        id:
+          type: string
+        url:
+          type: string
+      type: object
+    TestChannelResponse:
+      properties:
+        error:
+          type: string
+        ok:
+          type: boolean
+      required:
+      - ok
+      - error
       type: object
     TestStorageRequest:
       properties:

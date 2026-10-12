@@ -60,6 +60,8 @@ type Querier interface {
 	InsertRegistration(ctx context.Context, arg InsertRegistrationParams) error
 	InsertServer(ctx context.Context, arg InsertServerParams) error
 	InsertServerDomain(ctx context.Context, arg InsertServerDomainParams) error
+	// Gap fill: never overwrites a copy (a concurrent rotation's new value wins).
+	InsertSharedCiphertextIfAbsent(ctx context.Context, arg InsertSharedCiphertextIfAbsentParams) error
 	InsertSharedVariable(ctx context.Context, arg InsertSharedVariableParams) error
 	// Personal access tokens (hashed at rest).
 	InsertToken(ctx context.Context, arg InsertTokenParams) error

@@ -177,6 +177,29 @@ func TestUpdateReplaceAndGapFill(t *testing.T) {
 	}
 }
 
+// A gap fill decided before a concurrent rotation committed must not
+// overwrite the rotation's new ciphertext for the same server.
+func TestGapFillNeverOverwritesRotation(t *testing.T) {
+	r, _ := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	v := model.SharedVariable{ID: dbtest.ID(302), OrgID: org1, Name: "RACE", IsSecret: true}
+	if err := r.Save(ctx, model.SharedVariableSave{Variable: v, Create: true, Ciphertexts: map[string]string{srv1: "OLD-1"}}); err != nil {
+		t.Fatal(err)
+	}
+	// The rotation lands first and covers srv2 too.
+	if err := r.Save(ctx, model.SharedVariableSave{Variable: v, ReplaceCiphertexts: true,
+		Ciphertexts: map[string]string{srv1: "ROT-1", srv2: "ROT-2"}}); err != nil {
+		t.Fatal(err)
+	}
+	// The stale gap fill (srv2 looked missing when it was decided) arrives.
+	if err := r.Save(ctx, model.SharedVariableSave{Variable: v, Ciphertexts: map[string]string{srv2: "GAP-2"}}); err != nil {
+		t.Fatal(err)
+	}
+	if cts, _ := r.CiphertextsForServer(ctx, srv2); cts[v.ID] != "ROT-2" {
+		t.Fatalf("gap fill overwrote the rotation: %v", cts)
+	}
+}
+
 func TestDeleteDropPurgeAndCascade(t *testing.T) {
 	r, d := newRepo(t)
 	ctx := dbtest.Ctx(t)

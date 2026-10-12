@@ -30,6 +30,7 @@ type (
 	ctServerRow    = sqlitegen.ListCiphertextServersByOrgRow
 	ctRow          = sqlitegen.ListSharedCiphertextsForServerRow
 	upsertCtParams = sqlitegen.UpsertSharedCiphertextParams
+	insertCtParams = sqlitegen.InsertSharedCiphertextIfAbsentParams
 	deleteCtParams = sqlitegen.DeleteSharedCiphertextParams
 	infoRow        = sqlitegen.GetServerVarsInfoRow
 	raiseParams    = sqlitegen.RaiseServerVarsRevisionParams
@@ -49,6 +50,7 @@ type querier interface {
 	ListCiphertextServersByOrg(ctx context.Context, db backend.DBTX, orgID string) ([]ctServerRow, error)
 	ListSharedCiphertextsForServer(ctx context.Context, db backend.DBTX, serverID string) ([]ctRow, error)
 	UpsertSharedCiphertext(ctx context.Context, db backend.DBTX, p upsertCtParams) error
+	InsertSharedCiphertextIfAbsent(ctx context.Context, db backend.DBTX, p insertCtParams) error
 	DeleteSharedCiphertextsByVariable(ctx context.Context, db backend.DBTX, variableID string) error
 	DeleteSharedCiphertext(ctx context.Context, db backend.DBTX, p deleteCtParams) error
 	DeleteSharedCiphertextsByServer(ctx context.Context, db backend.DBTX, serverID string) error
@@ -177,7 +179,16 @@ func (r *Repo) Save(ctx context.Context, s model.SharedVariableSave) error {
 		}
 		sort.Strings(servers)
 		for _, serverID := range servers {
-			if err := r.q.UpsertSharedCiphertext(ctx, db, upsertCtParams{VariableID: v.ID, ServerID: serverID, Ciphertext: s.Ciphertexts[serverID]}); err != nil {
+			ct := s.Ciphertexts[serverID]
+			var err error
+			if s.ReplaceCiphertexts {
+				err = r.q.UpsertSharedCiphertext(ctx, db, upsertCtParams{VariableID: v.ID, ServerID: serverID, Ciphertext: ct})
+			} else {
+				// Gap fill: the caller decided which servers lack a copy outside
+				// this tx, so a rotation committed meanwhile must not be overwritten.
+				err = r.q.InsertSharedCiphertextIfAbsent(ctx, db, insertCtParams{VariableID: v.ID, ServerID: serverID, Ciphertext: ct})
+			}
+			if err != nil {
 				return err
 			}
 		}

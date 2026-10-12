@@ -130,6 +130,8 @@ var (
 	_ = pgsqlgen.ListSharedCiphertextsForServerRow(sqlitegen.ListSharedCiphertextsForServerRow{})
 	_ = sqlitegen.UpsertSharedCiphertextParams(pgsqlgen.UpsertSharedCiphertextParams{})
 	_ = pgsqlgen.UpsertSharedCiphertextParams(sqlitegen.UpsertSharedCiphertextParams{})
+	_ = sqlitegen.InsertSharedCiphertextIfAbsentParams(pgsqlgen.InsertSharedCiphertextIfAbsentParams{})
+	_ = pgsqlgen.InsertSharedCiphertextIfAbsentParams(sqlitegen.InsertSharedCiphertextIfAbsentParams{})
 	_ = sqlitegen.DeleteSharedCiphertextParams(pgsqlgen.DeleteSharedCiphertextParams{})
 	_ = pgsqlgen.DeleteSharedCiphertextParams(sqlitegen.DeleteSharedCiphertextParams{})
 	_ = sqlitegen.GetServerVarsInfoRow(pgsqlgen.GetServerVarsInfoRow{})

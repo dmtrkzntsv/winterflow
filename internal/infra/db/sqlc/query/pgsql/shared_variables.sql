@@ -40,6 +40,12 @@ INSERT INTO shared_secret_ciphertexts (variable_id, server_id, ciphertext)
 VALUES ($1, $2, $3)
 ON CONFLICT (variable_id, server_id) DO UPDATE SET ciphertext = EXCLUDED.ciphertext;
 
+-- name: InsertSharedCiphertextIfAbsent :exec
+-- Gap fill: never overwrites a copy (a concurrent rotation's new value wins).
+INSERT INTO shared_secret_ciphertexts (variable_id, server_id, ciphertext)
+VALUES ($1, $2, $3)
+ON CONFLICT (variable_id, server_id) DO NOTHING;
+
 -- name: DeleteSharedCiphertextsByVariable :exec
 DELETE FROM shared_secret_ciphertexts WHERE variable_id = $1;
 

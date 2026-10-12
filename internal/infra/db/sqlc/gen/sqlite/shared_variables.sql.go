@@ -157,6 +157,24 @@ func (q *Queries) GetSharedVariable(ctx context.Context, id string) (SharedVaria
 	return i, err
 }
 
+const insertSharedCiphertextIfAbsent = `-- name: InsertSharedCiphertextIfAbsent :exec
+INSERT INTO shared_secret_ciphertexts (variable_id, server_id, ciphertext)
+VALUES (?, ?, ?)
+ON CONFLICT (variable_id, server_id) DO NOTHING
+`
+
+type InsertSharedCiphertextIfAbsentParams struct {
+	VariableID string
+	ServerID   string
+	Ciphertext string
+}
+
+// Gap fill: never overwrites a copy (a concurrent rotation's new value wins).
+func (q *Queries) InsertSharedCiphertextIfAbsent(ctx context.Context, arg InsertSharedCiphertextIfAbsentParams) error {
+	_, err := q.db.ExecContext(ctx, insertSharedCiphertextIfAbsent, arg.VariableID, arg.ServerID, arg.Ciphertext)
+	return err
+}
+
 const insertSharedVariable = `-- name: InsertSharedVariable :exec
 INSERT INTO shared_variables (id, org_id, server_id, name, is_secret, value, description, updated_at, updated_by)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)

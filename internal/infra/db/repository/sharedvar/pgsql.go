@@ -120,3 +120,7 @@ func (pgsqlQuerier) ListOrgPublicKeys(ctx context.Context, db backend.DBTX, orgI
 	}
 	return out, err
 }
+
+func (pgsqlQuerier) InsertSharedCiphertextIfAbsent(ctx context.Context, db backend.DBTX, p insertCtParams) error {
+	return pgsqlgen.New(db).InsertSharedCiphertextIfAbsent(ctx, pgsqlgen.InsertSharedCiphertextIfAbsentParams(p))
+}

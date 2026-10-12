@@ -70,7 +70,7 @@ type SharedVariableSave struct {
 	Variable           SharedVariable
 	Create             bool
 	Ciphertexts        map[string]string // server_id -> ciphertext
-	ReplaceCiphertexts bool
+	ReplaceCiphertexts bool              // true: drop every copy, then write Ciphertexts; false: insert only where absent
 	Bump               []string
 }
 

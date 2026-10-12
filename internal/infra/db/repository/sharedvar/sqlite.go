@@ -86,3 +86,7 @@ func (sqliteQuerier) ListOrgServers(ctx context.Context, db backend.DBTX, orgID 
 func (sqliteQuerier) ListOrgPublicKeys(ctx context.Context, db backend.DBTX, orgID string) ([]pubKeyRow, error) {
 	return sqlitegen.New(db).ListOrgPublicKeys(ctx, orgID)
 }
+
+func (sqliteQuerier) InsertSharedCiphertextIfAbsent(ctx context.Context, db backend.DBTX, p insertCtParams) error {
+	return sqlitegen.New(db).InsertSharedCiphertextIfAbsent(ctx, p)
+}

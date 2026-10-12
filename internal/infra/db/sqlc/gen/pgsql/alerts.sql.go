@@ -12,9 +12,11 @@ import (
 )
 
 const countFiringAlertsByServer = `-- name: CountFiringAlertsByServer :many
-SELECT server_id, COUNT(*) AS firing FROM alert_states
-WHERE state = 'firing'
-GROUP BY server_id
+SELECT s.server_id, COUNT(*) AS firing
+FROM alert_states AS s
+JOIN alert_rules AS r ON r.rule_id = s.rule_id
+WHERE s.state = 'firing' AND r.enabled
+GROUP BY s.server_id
 `
 
 type CountFiringAlertsByServerRow struct {
@@ -726,10 +728,13 @@ func (q *Queries) ListNotificationChannels(ctx context.Context, organizationID s
 }
 
 const listOrgFiringAlertStates = `-- name: ListOrgFiringAlertStates :many
-SELECT s.rule_id, s.server_id, s.app_id, s.since, s.value, s.threshold, r.target_kind, r.metric
+SELECT s.rule_id, s.server_id, s.app_id, s.since, s.value, s.threshold, r.target_kind, r.metric,
+    sv.name AS server_name, COALESCE(a.name, '') AS app_name
 FROM alert_states AS s
 JOIN alert_rules AS r ON r.rule_id = s.rule_id
-WHERE r.organization_id = $1 AND s.state = 'firing'
+JOIN servers AS sv ON sv.server_id = s.server_id
+LEFT JOIN apps AS a ON a.app_id::text = s.app_id
+WHERE r.organization_id = $1 AND s.state = 'firing' AND r.enabled
 ORDER BY s.since DESC, s.rule_id ASC
 `
 
@@ -742,8 +747,12 @@ type ListOrgFiringAlertStatesRow struct {
 	Threshold  float64
 	TargetKind string
 	Metric     string
+	ServerName string
+	AppName    string
 }
 
+// ListOrgFiringAlertStates is an org's firing alerts of enabled rules
+// with their target names (app_name is ” for server targets).
 func (q *Queries) ListOrgFiringAlertStates(ctx context.Context, organizationID string) ([]ListOrgFiringAlertStatesRow, error) {
 	rows, err := q.db.QueryContext(ctx, listOrgFiringAlertStates, organizationID)
 	if err != nil {
@@ -762,6 +771,8 @@ func (q *Queries) ListOrgFiringAlertStates(ctx context.Context, organizationID s
 			&i.Threshold,
 			&i.TargetKind,
 			&i.Metric,
+			&i.ServerName,
+			&i.AppName,
 		); err != nil {
 			return nil, err
 		}

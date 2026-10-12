@@ -115,6 +115,8 @@ type Querier interface {
 	ListMetricSamples(ctx context.Context, arg ListMetricSamplesParams) ([]MetricSample, error)
 	ListMetricSamplesInRange(ctx context.Context, arg ListMetricSamplesInRangeParams) ([]MetricSample, error)
 	ListNotificationChannels(ctx context.Context, organizationID string) ([]NotificationChannel, error)
+	// ListOrgFiringAlertStates is an org's firing alerts of enabled rules
+	// with their target names (app_name is '' for server targets).
 	ListOrgFiringAlertStates(ctx context.Context, organizationID string) ([]ListOrgFiringAlertStatesRow, error)
 	ListOrgPublicKeys(ctx context.Context, organizationID string) ([]ListOrgPublicKeysRow, error)
 	ListOrgServers(ctx context.Context, organizationID string) ([]ListOrgServersRow, error)

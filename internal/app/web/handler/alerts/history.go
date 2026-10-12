@@ -42,8 +42,6 @@ type ActiveQuery struct {
 // ActiveAlert is a firing alert with its target's names.
 type ActiveAlert struct {
 	alert.Active
-	ServerName string `json:"server_name"`
-	AppName    string `json:"app_name"`
 }
 
 // scope reads the optional server_id/app_id filter and authorizes it.
@@ -123,21 +121,12 @@ func (h *Handler) GetActive(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, "load firing alerts", err)
 		return
 	}
-	dir, err := h.store.Directory(r.Context())
-	if err != nil {
-		h.fail(w, "load names", err)
-		return
-	}
 	out := []ActiveAlert{}
 	for _, a := range active {
 		if (t.ServerID != "" && a.ServerID != t.ServerID) || (t.AppID != "" && a.AppID != t.AppID) {
 			continue
 		}
-		item := ActiveAlert{Active: a, ServerName: dir.Servers[a.ServerID].Name}
-		if a.AppID != "" {
-			item.AppName = dir.Apps[a.AppID].Name
-		}
-		out = append(out, item)
+		out = append(out, ActiveAlert{Active: a})
 	}
 	webutil.Success(w, "ok", out)
 }

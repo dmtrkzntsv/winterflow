@@ -187,3 +187,46 @@ func TestDirectory(t *testing.T) {
 		t.Fatalf("directory = %+v, %v", dir, err)
 	}
 }
+
+// ListActive carries the target names (no directory scan needed), and a
+// disabled rule's lingering firing row counts nowhere.
+func TestListActiveNamesAndSkipsDisabledRules(t *testing.T) {
+	r, _ := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	srvRule := cpuRule(t, r, org1)
+	appRule, err := r.CreateRule(ctx, alert.Rule{OrgID: org1, TargetKind: alert.TargetApp,
+		Metric: alert.MetricCPU, Threshold: 80, DurationMinutes: 5, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Fire(ctx, alert.Key{RuleID: srvRule.ID, Target: alert.Target{ServerID: srv1}}, 93, 90,
+		event(r, org1, srvRule.ID, srv1, "", alert.EventFired, t0)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Fire(ctx, alert.Key{RuleID: appRule.ID, Target: alert.Target{ServerID: srv1, AppID: appA}}, 85, 80,
+		event(r, org1, appRule.ID, srv1, appA, alert.EventFired, t0.Add(time.Minute))); err != nil {
+		t.Fatal(err)
+	}
+	active, err := r.ListActive(ctx, org1)
+	if err != nil || len(active) != 2 {
+		t.Fatalf("active = %+v, %v", active, err)
+	}
+	if a := active[0]; a.AppID != appA || a.ServerName != "box" || a.AppName != "nextcloud" {
+		t.Fatalf("app alert = %+v", a)
+	}
+	if a := active[1]; a.AppID != "" || a.ServerName != "box" || a.AppName != "" {
+		t.Fatalf("server alert = %+v", a)
+	}
+
+	srvRule.Enabled = false
+	if err := r.UpdateRule(ctx, srvRule); err != nil {
+		t.Fatal(err)
+	}
+	active, _ = r.ListActive(ctx, org1)
+	if len(active) != 1 || active[0].RuleID != appRule.ID {
+		t.Fatalf("active after disable = %+v", active)
+	}
+	if counts, _ := r.CountFiring(ctx); counts[srv1] != 1 {
+		t.Fatalf("counts after disable = %v", counts)
+	}
+}

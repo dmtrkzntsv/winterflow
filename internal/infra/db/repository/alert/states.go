@@ -64,7 +64,8 @@ func (r *Repo) FiringStates(ctx context.Context) ([]alert.StateRow, error) {
 	return out, nil
 }
 
-// ListActive returns an org's firing alerts, newest first.
+// ListActive returns an org's firing alerts of enabled rules with their
+// target names, newest first.
 func (r *Repo) ListActive(ctx context.Context, orgID string) ([]alert.Active, error) {
 	rows, err := r.q.ListOrgFiringAlertStates(ctx, r.tx.Querier(ctx), orgID)
 	if err != nil {
@@ -75,13 +76,14 @@ func (r *Repo) ListActive(ctx context.Context, orgID string) ([]alert.Active, er
 		out = append(out, alert.Active{
 			RuleID: row.RuleID, TargetKind: alert.TargetKind(row.TargetKind), Metric: alert.Metric(row.Metric),
 			ServerID: row.ServerID, AppID: row.AppID, Since: utc(row.Since), Value: row.Value, Threshold: row.Threshold,
+			ServerName: row.ServerName, AppName: row.AppName,
 		})
 	}
 	return out, nil
 }
 
-// CountFiring returns the number of firing alerts per server (servers
-// without any are absent).
+// CountFiring returns the number of firing alerts of enabled rules per
+// server (servers without any are absent).
 func (r *Repo) CountFiring(ctx context.Context) (map[string]int, error) {
 	rows, err := r.q.CountFiringAlertsByServer(ctx, r.tx.Querier(ctx))
 	if err != nil {

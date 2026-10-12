@@ -9,8 +9,9 @@ import (
 
 // Routes is the alerts slice of the route table. Everything acts on the
 // caller's org; target-addressed routes also check the server is the
-// caller's (403).
-func (h *Handler) Routes(api.Guards) []api.Route {
+// caller's (403). test-channel sends outbound traffic on demand, so it
+// sits behind the per-IP limiter (429).
+func (h *Handler) Routes(g api.Guards) []api.Route {
 	bad := []int{http.StatusBadRequest}
 	target := []int{http.StatusBadRequest, http.StatusForbidden}
 	return []api.Route{
@@ -36,10 +37,12 @@ func (h *Handler) Routes(api.Guards) []api.Route {
 		},
 		{
 			Method: http.MethodPost, Path: "/api/v1/alerts/test-channel", Handler: h.TestChannel, Auth: api.User,
-			Summary: "Send a test notification", Tag: "alerts",
+			Middleware: []api.Middleware{g.AuthLimit},
+			Summary:    "Send a test notification", Tag: "alerts",
 			Description: "Send exactly one of `id` (a saved channel; the outcome is recorded on it) or `url` " +
 				"(a draft). Answers 200 with `ok` false and the error when the service refuses.",
-			Request: TestChannelRequest{}, Response: TestChannelResponse{}, Errors: bad,
+			Request: TestChannelRequest{}, Response: TestChannelResponse{},
+			Errors: []int{http.StatusBadRequest, http.StatusTooManyRequests},
 		},
 		{
 			Method: http.MethodGet, Path: "/api/v1/alerts/get-rules", Handler: h.GetRules, Auth: api.User,

@@ -101,7 +101,8 @@ type StateRow struct {
 	Threshold  float64
 }
 
-// Active is a firing alert for the badges, strip and cards.
+// Active is a firing alert of an enabled rule for the badges, strip and
+// cards, with its target's names (AppName is "" for a server target).
 type Active struct {
 	RuleID     string     `json:"rule_id"`
 	TargetKind TargetKind `json:"target_kind"`
@@ -111,6 +112,8 @@ type Active struct {
 	Since      time.Time  `json:"since"`
 	Value      float64    `json:"value"`
 	Threshold  float64    `json:"threshold"`
+	ServerName string     `json:"server_name"`
+	AppName    string     `json:"app_name"`
 }
 
 // Notice is the payload of the SSE "alert" notification.

@@ -105,7 +105,7 @@ export default function SettingsPage() {
           </TabsContent>
         ) : null}
         <TabsContent value="variables">
-          {activeServer ? <VariablesCard serverId={activeServer.id} api={sharedApi} /> : null}
+          {activeServer ? <VariablesCard key={activeServer.id} serverId={activeServer.id} api={sharedApi} /> : null}
         </TabsContent>
         <TabsContent value="agent">
           <AgentCard docker={docker} />

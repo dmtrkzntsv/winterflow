@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import type { DialogMode } from "@/components/shared-variable-dialog";
@@ -36,13 +36,31 @@ function errorText(e: unknown): string | undefined {
 export function useSharedVariablesPage(api: SharedVariablesApi, scope: Scope) {
   const { subscribe } = useNotifications();
   const serverId = scope.kind === "server" ? scope.serverId : null;
-  const [org, setOrg] = useState<OrgVariables | null>(null);
-  const [server, setServer] = useState<ServerVariables | null>(null);
-  const [keys, setKeys] = useState<EncryptionKeys>(NO_KEYS);
+  const scopeKey = serverId ?? "org";
+  // Everything scope-bound is stored with the scope it belongs to and only
+  // exposed while that is still the current scope, so switching servers
+  // never shows (or acts on) the previous server's rows.
+  const [loaded, setLoaded] = useState<{
+    key: string;
+    org?: OrgVariables;
+    server?: ServerVariables;
+    keys: EncryptionKeys;
+  } | null>(null);
   const [sync, setSync] = useState<Record<string, SyncState>>({});
-  const [dialog, setDialog] = useState<DialogMode | null>(null);
+  const [dialogState, setDialogState] = useState<{ key: string; mode: DialogMode } | null>(null);
   const [dialogKey, setDialogKey] = useState(0);
-  const [toDelete, setToDelete] = useState<SharedVariable | null>(null);
+  const [deleteState, setDeleteState] = useState<{ key: string; variable: SharedVariable } | null>(null);
+  const current = loaded?.key === scopeKey ? loaded : null;
+  const org = current?.org ?? null;
+  const server = current?.server ?? null;
+  const keys = current?.keys ?? NO_KEYS;
+  const dialog = dialogState?.key === scopeKey ? dialogState.mode : null;
+  const toDelete = deleteState?.key === scopeKey ? deleteState.variable : null;
+  const setToDelete = (variable: SharedVariable | null) =>
+    setDeleteState(variable ? { key: scopeKey, variable } : null);
+
+  // Only the latest request's response may land.
+  const token = useRef(0);
 
   // fetchPage reads the scope's variables and the encryption keys; apply
   // puts them in state (a mount-time load must not set state synchronously).
@@ -57,18 +75,14 @@ export function useSharedVariablesPage(api: SharedVariablesApi, scope: Scope) {
 
   const apply = useCallback(
     (r: { server?: ServerVariables; org?: OrgVariables; keys: EncryptionKeys }) => {
-      setKeys(r.keys);
+      setLoaded({ key: scopeKey, ...r });
       if (r.server && serverId) {
         const state = r.server.sync.state;
-        setServer(r.server);
         setSync((s) => ({ ...s, [serverId]: state }));
       }
-      if (r.org) {
-        setOrg(r.org);
-        setSync(Object.fromEntries(r.org.servers.map((s) => [s.server_id, s.state])));
-      }
+      if (r.org) setSync(Object.fromEntries(r.org.servers.map((s) => [s.server_id, s.state])));
     },
-    [serverId],
+    [scopeKey, serverId],
   );
 
   const failed = useCallback(
@@ -79,27 +93,31 @@ export function useSharedVariablesPage(api: SharedVariablesApi, scope: Scope) {
     [serverId],
   );
 
-  // load re-reads after a change.
+  // load (after a change) and the mount/scope-change effect each take a
+  // token; only the latest request's response may land.
   const load = useCallback(async () => {
+    const mine = ++token.current;
     try {
-      apply(await fetchPage());
+      const r = await fetchPage();
+      if (mine === token.current) apply(r);
     } catch (e) {
-      failed(e);
+      if (mine === token.current) failed(e);
     }
   }, [fetchPage, apply, failed]);
 
   useEffect(() => {
-    let live = true;
+    let mounted = true;
+    const mine = ++token.current;
     fetchPage().then(
       (r) => {
-        if (live) apply(r);
+        if (mounted && mine === token.current) apply(r);
       },
       (e: unknown) => {
-        if (live) failed(e);
+        if (mounted && mine === token.current) failed(e);
       },
     );
     return () => {
-      live = false;
+      mounted = false;
     };
   }, [fetchPage, apply, failed]);
 
@@ -110,7 +128,8 @@ export function useSharedVariablesPage(api: SharedVariablesApi, scope: Scope) {
         if (n.type !== "vars.reloaded") return;
         const r = n.payload as VarsReloaded | undefined;
         if (!r || r.ok || (serverId && r.server_id !== serverId)) return;
-        toast.error("Couldn't reload an app", { description: r.error });
+        // One toast per burst (a fixed id replaces the previous one).
+        toast.error("Couldn't reload an app", { id: "vars-reload-failed", description: r.error });
       }),
     [subscribe, serverId],
   );
@@ -119,9 +138,9 @@ export function useSharedVariablesPage(api: SharedVariablesApi, scope: Scope) {
 
   const openDialog = (mode: DialogMode) => {
     setDialogKey((k) => k + 1);
-    setDialog(mode);
+    setDialogState({ key: scopeKey, mode });
   };
-  const closeDialog = () => setDialog(null);
+  const closeDialog = () => setDialogState(null);
 
   // A provide dialog on an inherited (org) row fills the org secret's gap;
   // everything else saves in the page's own scope.
@@ -133,10 +152,13 @@ export function useSharedVariablesPage(api: SharedVariablesApi, scope: Scope) {
     await load();
   };
 
-  const act = (done: string, fn: () => Promise<unknown>) => {
+  const act = (done: string, fn: () => Promise<unknown>, onError?: () => void) => {
     fn().then(
       () => toast.success(done),
-      (e: unknown) => toast.error("Request failed", { description: errorText(e) }),
+      (e: unknown) => {
+        onError?.();
+        toast.error("Request failed", { description: errorText(e) });
+      },
     );
   };
 
@@ -152,11 +174,19 @@ export function useSharedVariablesPage(api: SharedVariablesApi, scope: Scope) {
   };
 
   // Marks the server (or every server) pending right away, then asks the API.
-  const resync = (target: { variable_id?: string } = {}) =>
-    act("Resync sent", () => {
-      if (serverId) setSync((s) => ({ ...s, [serverId]: "pending" }));
-      return api.resync(serverId ? { server_id: serverId } : target);
-    });
+  const resync = (target: { variable_id?: string } = {}) => {
+    const prev = serverId ? sync[serverId] : undefined;
+    act(
+      "Resync sent",
+      () => {
+        if (serverId) setSync((s) => ({ ...s, [serverId]: "pending" }));
+        return api.resync(serverId ? { server_id: serverId } : target);
+      },
+      () => {
+        if (serverId && prev) setSync((s) => ({ ...s, [serverId]: prev }));
+      },
+    );
+  };
 
   const reload = (target: { names?: string[]; variable_id?: string } = {}) =>
     act("Reload queued", () => api.reload(serverId ? { server_id: serverId, ...target } : target));

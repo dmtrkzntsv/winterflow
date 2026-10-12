@@ -52,7 +52,7 @@ function fakeApi() {
   };
 }
 
-function renderCard(api: ReturnType<typeof fakeApi>) {
+function renderCard(api: ReturnType<typeof fakeApi>, serverId = "srv-a") {
   const hub: { h?: NotificationHandler } = {};
   const notifications: NotificationsContextValue = {
     connected: true,
@@ -65,16 +65,17 @@ function renderCard(api: ReturnType<typeof fakeApi>) {
     waitFor: vi.fn(),
   };
   const apps = { staleVarsByApp: { a1: ["SMTP_PASS"], a2: ["SMTP_HOST"], a3: [] } } as unknown as AppsContextValue;
-  render(
+  const tree = (id: string) => (
     <MemoryRouter>
       <NotificationsContext.Provider value={notifications}>
         <AppsContext.Provider value={apps}>
-          <VariablesCard serverId="srv-a" api={api as unknown as SharedVariablesApi} />
+          <VariablesCard serverId={id} api={api as unknown as SharedVariablesApi} />
         </AppsContext.Provider>
       </NotificationsContext.Provider>
-    </MemoryRouter>,
+    </MemoryRouter>
   );
-  return { emit: (n: Notification) => act(() => hub.h?.(n)) };
+  const view = render(tree(serverId));
+  return { switchTo: (id: string) => view.rerender(tree(id)), emit: (n: Notification) => act(() => hub.h?.(n)) };
 }
 
 describe("VariablesCard", () => {
@@ -134,7 +135,7 @@ describe("VariablesCard", () => {
     emit({ type: "vars.reloaded", ref: "", payload: { server_id: "srv-b", app_id: "x", ok: false, error: "other", names: [] } });
     emit({ type: "vars.reloaded", ref: "", payload: { server_id: "srv-a", app_id: "y", ok: false, error: "compose failed", names: [] } });
     expect(toast.error).toHaveBeenCalledTimes(1);
-    expect(toast.error).toHaveBeenCalledWith("Couldn't reload an app", { description: "compose failed" });
+    expect(toast.error).toHaveBeenCalledWith("Couldn't reload an app", { id: "vars-reload-failed", description: "compose failed" });
   });
 
   it("adds a server variable", async () => {
@@ -157,5 +158,43 @@ describe("VariablesCard", () => {
     await user.click(screen.getByRole("button", { name: "Delete SMTP_HOST" }));
     await user.click(screen.getByRole("button", { name: "Delete" }));
     expect(api.deleteServer).toHaveBeenCalledWith("srv-a", "s1");
+  });
+
+  it("never shows the previous server's variables after switching servers", async () => {
+    const api = fakeApi();
+    const { switchTo } = renderCard(api);
+    expect(await screen.findByText("local")).toBeInTheDocument();
+    api.listServer.mockReturnValue(new Promise(() => {})); // the new server's fetch never lands
+    switchTo("srv-b");
+    expect(screen.queryByText("local")).not.toBeInTheDocument();
+    expect(screen.queryByText("Synced")).not.toBeInTheDocument();
+    expect(screen.queryByText("Sync pending")).not.toBeInTheDocument();
+  });
+
+  it("ignores a late response for a server that was switched away from", async () => {
+    const api = fakeApi();
+    let lateA: (v: ServerVariables) => void = () => {};
+    api.listServer.mockImplementation((id: string) =>
+      id === "srv-a"
+        ? new Promise<ServerVariables>((r) => (lateA = r))
+        : Promise.resolve({ ...SERVER, variables: [{ ...SERVER.variables[0], value: "from-b" }] }),
+    );
+    const { switchTo } = renderCard(api);
+    switchTo("srv-b");
+    expect(await screen.findByText("from-b")).toBeInTheDocument();
+    await act(async () => lateA(SERVER));
+    expect(screen.getByText("from-b")).toBeInTheDocument();
+    expect(screen.queryByText("local")).not.toBeInTheDocument();
+  });
+
+  it("reverts the pending badge when a resync fails", async () => {
+    const user = userEvent.setup();
+    const api = fakeApi();
+    api.listServer.mockResolvedValue({ ...SERVER, sync: { ...SERVER.sync, state: "synced" } });
+    api.resync.mockRejectedValue(new Error("nope"));
+    renderCard(api);
+    await screen.findByText("Synced");
+    await user.click(screen.getByRole("button", { name: "Resync" }));
+    expect(await screen.findByText("Synced")).toBeInTheDocument();
   });
 });

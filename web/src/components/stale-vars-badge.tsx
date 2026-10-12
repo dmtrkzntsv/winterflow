@@ -7,6 +7,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { useApps } from "@/context/use-apps";
 import { useServers } from "@/context/use-servers";
 import { useNotifications } from "@/context/use-notifications";
+import { hasRunningContainers } from "@/lib/app-status";
 import type { VarsReloaded } from "@/lib/shared-variables";
 
 // The agent reports nothing for an app it skipped (e.g. stopped meanwhile),
@@ -17,7 +18,7 @@ const RELOAD_REPORT_TIMEOUT_MS = 2 * 60 * 1000;
 // last rendered and offers the reload that applies them. The button stays
 // busy until the agent reports the outcome (vars.reloaded).
 export function StaleVarsBadge({ appId }: { appId: string }) {
-  const { staleVarsByApp, reloadSharedVars } = useApps();
+  const { staleVarsByApp, statusByApp, reloadSharedVars } = useApps();
   const { subscribe } = useNotifications();
   const { activeServerId } = useServers();
   const [busy, setBusy] = useState(false);
@@ -53,6 +54,8 @@ export function StaleVarsBadge({ appId }: { appId: string }) {
   );
 
   if (fresh) return null;
+  // The agent reloads running apps only; a stopped one renders on start.
+  const running = hasRunningContainers(statusByApp[appId]);
 
   const reload = async () => {
     setBusy(true);
@@ -70,12 +73,14 @@ export function StaleVarsBadge({ appId }: { appId: string }) {
       role="status"
       className="flex flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200"
     >
-      <span>Shared variables changed — reload to apply</span>
+      <span>{running ? "Shared variables changed — reload to apply" : "Shared variables changed — applies on next start"}</span>
       <span className="font-mono text-xs">{names.join(", ")}</span>
-      <Button size="sm" variant="outline" className="ml-auto" disabled={busy} onClick={() => void reload()}>
-        {busy ? <Spinner className="size-4" /> : <RotateCw className="size-4" />}
-        Reload
-      </Button>
+      {running ? (
+        <Button size="sm" variant="outline" className="ml-auto" disabled={busy} onClick={() => void reload()}>
+          {busy ? <Spinner className="size-4" /> : <RotateCw className="size-4" />}
+          Reload
+        </Button>
+      ) : null}
     </div>
   );
 }

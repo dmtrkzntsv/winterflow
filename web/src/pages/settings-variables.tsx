@@ -11,6 +11,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Spinner } from "@/components/ui/spinner";
 import { useApps } from "@/context/use-apps";
 import { useSharedVariablesPage, type Scope } from "@/hooks/use-shared-variables-page";
+import { reloadableStaleCount } from "@/lib/app-status";
 import type { SharedVariablesApi, SyncState } from "@/lib/shared-variables";
 
 const SYNC_LABEL: Record<SyncState, string> = { synced: "Synced", pending: "Sync pending", failed: "Sync failed" };
@@ -22,12 +23,13 @@ const SYNC_LABEL: Record<SyncState, string> = { synced: "Synced", pending: "Sync
 // then from vars.synced / vars.sync_failed events). The logic lives in
 // useSharedVariablesPage; this is the layout.
 export function VariablesCard({ serverId, api }: { serverId: string; api: SharedVariablesApi }) {
-  const { staleVarsByApp } = useApps();
+  const { staleVarsByApp, statusByApp } = useApps();
   const scope = useMemo<Scope>(() => ({ kind: "server", serverId }), [serverId]);
   const page = useSharedVariablesPage(api, scope);
   const { server: data } = page;
 
-  const staleCount = Object.values(staleVarsByApp).filter((names) => names.length > 0).length;
+  // Stopped stale apps apply on their next start; the agent skips them.
+  const staleCount = reloadableStaleCount(staleVarsByApp, statusByApp);
   const state = page.sync[serverId] ?? "pending";
   const missing = data?.missing_org_secrets ?? [];
   const firstMissing = data?.inherited.find((v) => missing.includes(v.name));

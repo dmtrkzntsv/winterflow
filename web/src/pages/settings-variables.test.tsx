@@ -64,7 +64,11 @@ function renderCard(api: ReturnType<typeof fakeApi>, serverId = "srv-a") {
     },
     waitFor: vi.fn(),
   };
-  const apps = { staleVarsByApp: { a1: ["SMTP_PASS"], a2: ["SMTP_HOST"], a3: [] } } as unknown as AppsContextValue;
+  // a4 is stale but stopped: the agent skips it, so it is not counted.
+  const apps = {
+    staleVarsByApp: { a1: ["SMTP_PASS"], a2: ["SMTP_HOST"], a3: [], a4: ["SMTP_HOST"] },
+    statusByApp: { a1: 1, a2: 2, a3: 1, a4: 5 },
+  } as unknown as AppsContextValue;
   const tree = (id: string) => (
     <MemoryRouter>
       <NotificationsContext.Provider value={notifications}>

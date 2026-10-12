@@ -12,7 +12,11 @@ import {
   type NotificationsContextValue,
 } from "@/context/notifications-context-base";
 
-function renderBadge(stale: Record<string, string[]>, reload = vi.fn().mockResolvedValue(undefined)) {
+function renderBadge(
+  stale: Record<string, string[]>,
+  reload = vi.fn().mockResolvedValue(undefined),
+  status: Record<string, number> = { a1: 1 },
+) {
   const hub: { h?: NotificationHandler } = {};
   const notifications: NotificationsContextValue = {
     connected: true,
@@ -24,7 +28,7 @@ function renderBadge(stale: Record<string, string[]>, reload = vi.fn().mockResol
     },
     waitFor: vi.fn(),
   };
-  const apps = { staleVarsByApp: stale, reloadSharedVars: reload } as unknown as AppsContextValue;
+  const apps = { staleVarsByApp: stale, statusByApp: status, reloadSharedVars: reload } as unknown as AppsContextValue;
   const servers = { activeServerId: "s" } as unknown as ServersContextValue;
   render(
     <ServersContext.Provider value={servers}>
@@ -58,6 +62,13 @@ describe("StaleVarsBadge", () => {
     expect(reloadButton()).toBeDisabled();
     emit({ type: "vars.reloaded", ref: "", payload: { server_id: "s", app_id: "a1", ok: false, error: "compose up failed", names: ["SMTP_HOST"] } });
     expect(reloadButton()).toBeEnabled();
+  });
+
+  it("says a stopped app applies on its next start, without a Reload", () => {
+    renderBadge({ a1: ["SMTP_PASS"] }, undefined, { a1: 5 });
+    expect(screen.getByText("Shared variables changed — applies on next start")).toBeInTheDocument();
+    expect(screen.getByText("SMTP_PASS")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /reload/i })).not.toBeInTheDocument();
   });
 
   it("ignores a report for the same app id on another server", async () => {

@@ -257,3 +257,65 @@ func TestListInstancesAndBehind(t *testing.T) {
 		t.Fatalf("org2 sees %+v", other)
 	}
 }
+
+// The app routes see an app that is a live instance; delete-app retires
+// its key. An unlinked instance is no longer the app's, yet still read by
+// id.
+func TestInstanceLinksForApp(t *testing.T) {
+	r, _ := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	mustCreate(t, r, org1, tpl1, "shop")
+	inst := instance(1, "k1")
+	if _, _, err := r.ClaimInstance(ctx, inst); err != nil {
+		t.Fatal(err)
+	}
+	if name, ok, err := r.LiveInstanceForApp(ctx, srv1, inst.AppID); err != nil || !ok || name != "shop" {
+		t.Fatalf("a pending instance's app = %q, %v, %v", name, ok, err)
+	}
+	if _, ok, err := r.LiveInstanceForApp(ctx, srv2, inst.AppID); err != nil || ok {
+		t.Fatalf("the app id on another server = %v, %v", ok, err)
+	}
+	if _, ok, err := r.LiveInstanceForApp(ctx, srv1, dbtest.ID(999)); err != nil || ok {
+		t.Fatalf("an ordinary app = %v, %v", ok, err)
+	}
+	if err := r.RetireForApp(ctx, srv2, inst.AppID); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := r.GetInstance(ctx, org1, "k1"); got.State != model.InstancePending {
+		t.Fatalf("a delete on another server retired the key: %+v", got)
+	}
+	if err := r.SetError(ctx, inst.ID, "boom"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.RetireForApp(ctx, srv1, inst.AppID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.GetInstance(ctx, org1, "k1")
+	if err != nil || got.State != model.InstanceDeleted || got.LastError != "" {
+		t.Fatalf("after delete-app = %+v, %v", got, err)
+	}
+	if _, ok, _ := r.LiveInstanceForApp(ctx, srv1, inst.AppID); ok {
+		t.Fatal("a deleted instance still holds its app")
+	}
+
+	other := instance(2, "k2")
+	if _, _, err := r.ClaimInstance(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.SetState(ctx, other.ID, model.InstanceUnlinked); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := r.LiveInstanceForApp(ctx, srv1, other.AppID); ok {
+		t.Fatal("an unlinked instance still holds its app")
+	}
+	if err := r.RetireForApp(ctx, srv1, other.AppID); err != nil {
+		t.Fatal(err)
+	}
+	byID, err := r.GetInstanceByID(ctx, other.ID)
+	if err != nil || byID.State != model.InstanceUnlinked || byID.Key != "k2" {
+		t.Fatalf("by id = %+v, %v", byID, err)
+	}
+	if _, err := r.GetInstanceByID(ctx, dbtest.ID(998)); !errors.Is(err, model.ErrInstanceNotFound) {
+		t.Fatalf("an unknown id: %v", err)
+	}
+}

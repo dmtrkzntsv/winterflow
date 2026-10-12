@@ -38,6 +38,9 @@ type (
 	savedParams    = sqlitegen.MarkTemplateInstanceSavedParams
 	stateParams    = sqlitegen.SetTemplateInstanceStateParams
 	errorParams    = sqlitegen.SetTemplateInstanceErrorParams
+	forAppParams   = sqlitegen.GetLiveTemplateInstanceForAppParams
+	forAppRow      = sqlitegen.GetLiveTemplateInstanceForAppRow
+	retireParams   = sqlitegen.RetireTemplateInstancesForAppParams
 )
 
 type querier interface {
@@ -56,6 +59,9 @@ type querier interface {
 	MarkTemplateInstanceSaved(ctx context.Context, db backend.DBTX, p savedParams) (int64, error)
 	SetTemplateInstanceState(ctx context.Context, db backend.DBTX, p stateParams) (int64, error)
 	SetTemplateInstanceError(ctx context.Context, db backend.DBTX, p errorParams) error
+	GetTemplateInstanceByID(ctx context.Context, db backend.DBTX, id string) (instanceRow, error)
+	GetLiveTemplateInstanceForApp(ctx context.Context, db backend.DBTX, p forAppParams) (forAppRow, error)
+	RetireTemplateInstancesForApp(ctx context.Context, db backend.DBTX, p retireParams) (int64, error)
 }
 
 // Repo is the templates repository.
@@ -271,6 +277,39 @@ func (r *Repo) GetInstance(ctx context.Context, orgID, key string) (model.Instan
 		return model.Instance{}, err
 	}
 	return hydrateInstance(row)
+}
+
+// GetInstanceByID returns an instance in any state.
+func (r *Repo) GetInstanceByID(ctx context.Context, id string) (model.Instance, error) {
+	row, err := r.q.GetTemplateInstanceByID(ctx, r.tx.Querier(ctx), id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.Instance{}, model.ErrInstanceNotFound
+	}
+	if err != nil {
+		return model.Instance{}, err
+	}
+	return hydrateInstance(row)
+}
+
+// LiveInstanceForApp reports whether the app is a pending or created
+// instance, with its template's name.
+func (r *Repo) LiveInstanceForApp(ctx context.Context, serverID, appID string) (string, bool, error) {
+	row, err := r.q.GetLiveTemplateInstanceForApp(ctx, r.tx.Querier(ctx), forAppParams{ServerID: serverID, AppID: appID})
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return row.TemplateName, true, nil
+}
+
+// RetireForApp moves the app's pending or created instance to deleted.
+func (r *Repo) RetireForApp(ctx context.Context, serverID, appID string) error {
+	_, err := r.q.RetireTemplateInstancesForApp(ctx, r.tx.Querier(ctx), retireParams{
+		UpdatedAt: types.NewDateTime(), ServerID: serverID, AppID: appID,
+	})
+	return err
 }
 
 // ListInstances returns the org's pending and created instances.

@@ -25,7 +25,9 @@ type UseCase struct {
 	// servers answers whether a user's organizations own a server (nil: no
 	// server is known to be theirs).
 	servers ServerAccess
-	log     *logger.Logger
+	// instances knows the apps template instances manage (nil: none do).
+	instances port.InstanceLinks
+	log       *logger.Logger
 }
 
 // ServerAccess answers whether a server belongs to one of a user's
@@ -42,7 +44,11 @@ type Deps struct {
 	// Servers lets a lookup in the catalog stay within the caller's
 	// organizations.
 	Servers ServerAccess
-	Log     *logger.Logger
+	// Instances knows the apps template instances manage: save-app and
+	// rollback-app refuse them, delete-app retires their keys (nil: no
+	// templates).
+	Instances port.InstanceLinks
+	Log       *logger.Logger
 }
 
 func NewUseCase(d *Deps) *UseCase {
@@ -53,6 +59,7 @@ func NewUseCase(d *Deps) *UseCase {
 		serverDomains:  d.ServerDomainRepository,
 		serverStorages: d.ServerStorageRepository,
 		servers:        d.Servers,
+		instances:      d.Instances,
 		log:            d.Log,
 	}
 }
@@ -132,7 +139,8 @@ func (uc *UseCase) DeleteApp(ctx context.Context, userID, serverID, appID string
 }
 
 // DeleteAppObserved is DeleteApp with an observer on the result (it runs
-// after the app's rows are removed).
+// after the app's rows are removed). On success the app's live template
+// instance, if any, is retired: its key stays taken.
 func (uc *UseCase) DeleteAppObserved(ctx context.Context, userID, serverID, appID string, deleteVolumes, deleteBackups bool, observe Observer) (string, error) {
 	in := port.DispatchInput{
 		AgentID: serverID,
@@ -150,6 +158,11 @@ func (uc *UseCase) DeleteAppObserved(ctx context.Context, userID, serverID, appI
 			if uc.domains != nil {
 				if err := uc.domains.DeleteForApp(context.Background(), appID); err != nil {
 					uc.log.Error("DeleteApp: remove domain rows", "error", err, "app_id", appID)
+				}
+			}
+			if uc.instances != nil {
+				if err := uc.instances.RetireForApp(context.Background(), serverID, appID); err != nil {
+					uc.log.Error("DeleteApp: retire the template instance", "error", err, "app_id", appID)
 				}
 			}
 		},
@@ -204,8 +217,11 @@ func (uc *UseCase) GetRevisions(ctx context.Context, userID, serverID, appID str
 // RollbackApp dispatches an app.rollback: the agent restores the given commit
 // as a new revision and redeploys. The result is delivered over SSE. On
 // success the restored config is re-fetched so the domain index follows the
-// rollback.
+// rollback. An app a live template instance manages is refused.
 func (uc *UseCase) RollbackApp(ctx context.Context, userID, serverID, appID, hash string) (string, error) {
+	if err := uc.requireUnmanaged(ctx, serverID, appID); err != nil {
+		return "", err
+	}
 	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
 		AgentID: serverID,
 		UserID:  userID,
@@ -395,13 +411,34 @@ func (s CheckedSave) AppID() string { return s.app.ID }
 // variables (secrets pre-encrypted by the browser); app is the catalog record
 // persisted to the DB on success. When the agent confirms the save, the
 // OnResult hook persists the app and the result is delivered to the user
-// over SSE.
+// over SSE. An app a live template instance manages is refused: it changes
+// through its instance (the instance routes use CheckSave and DispatchSave).
 func (uc *UseCase) SaveApp(ctx context.Context, userID, serverID string, app model.App, payload command.AppPayload, draft bool) (string, error) {
+	if err := uc.requireUnmanaged(ctx, serverID, app.ID); err != nil {
+		return "", err
+	}
 	checked, err := uc.CheckSave(ctx, serverID, app, payload, draft)
 	if err != nil {
 		return "", err
 	}
 	return uc.DispatchSave(ctx, userID, checked, nil)
+}
+
+// requireUnmanaged refuses an app a live template instance manages
+// (model.ManagedByTemplate, a conflict).
+func (uc *UseCase) requireUnmanaged(ctx context.Context, serverID, appID string) error {
+	if uc.instances == nil || appID == "" {
+		return nil
+	}
+	name, ok, err := uc.instances.LiveInstanceForApp(ctx, serverID, appID)
+	if err != nil {
+		uc.log.Error("look up the app's template instance", "error", err, "app_id", appID)
+		return err
+	}
+	if ok {
+		return model.ManagedByTemplate(name)
+	}
+	return nil
 }
 
 // CheckSave runs save-app's checks (reserved variables, ingress syntax,

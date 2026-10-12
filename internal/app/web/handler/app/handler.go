@@ -30,6 +30,8 @@ type Deps struct {
 	// Servers authorizes server-addressed operations: every handler that takes
 	// a server_id verifies the caller's org owns it before acting.
 	Servers webutil.ServerAccess
+	// Instances knows the apps template instances manage (nil: none do).
+	Instances port.InstanceLinks
 }
 
 func NewHandler(d *Deps) *Handler {
@@ -40,6 +42,7 @@ func NewHandler(d *Deps) *Handler {
 		ServerDomainRepository:  d.ServerDomainRepository,
 		ServerStorageRepository: d.ServerStorageRepository,
 		Servers:                 d.Servers,
+		Instances:               d.Instances,
 		Log:                     d.Logger,
 	})
 	return &Handler{usecase: *uc, status: d.StatusCache, servers: d.Servers, log: d.Logger}

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	happ "winterflow/internal/app/web/handler/app"
 	htpl "winterflow/internal/app/web/handler/templates"
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
@@ -376,4 +377,37 @@ func TestInstanceLifecycle(t *testing.T) {
 	t.Run("without live instances the template is deleted", func(t *testing.T) {
 		owner.post(t, "/api/v1/template/delete-template", htpl.TemplateIDRequest{ID: ie.tplID}).expect(t, http.StatusOK)
 	})
+}
+
+// The app routes leave an instance's app to its instance: save-app and
+// rollback-app answer 409, rename goes on, and delete-app deletes the
+// instance (its key stays retired).
+func TestInstanceAppThroughTheAppRoutes(t *testing.T) {
+	t.Parallel()
+	ie := newInstanceEnv(t)
+	e, owner, sid := ie.e, ie.owner, ie.sid
+	appID := ie.created(t, "tenant-1", "acme", "9001").Instance.AppID
+	saves := len(e.agent.seen(command.TypeAppSave))
+
+	r := owner.post(t, "/api/v1/app/save-app", happ.SaveAppRequest{ServerID: sid, App: model.App{ID: appID, Name: "hijack"},
+		Config: json.RawMessage(`{}`)}).expect(t, http.StatusConflict)
+	if !strings.Contains(string(r.Body), "this app is managed by template shop: update the instance or unlink it") {
+		t.Fatalf("save-app body = %s", r.Body)
+	}
+	owner.post(t, "/api/v1/app/rollback-app", happ.RollbackAppRequest{ServerID: sid, AppID: appID, Hash: "rev-1"}).
+		expect(t, http.StatusConflict)
+	if len(e.agent.seen(command.TypeAppSave)) != saves || len(e.agent.seen(command.TypeAppRollback)) != 0 {
+		t.Fatal("a refused call reached the agent")
+	}
+	owner.succeed(t, call{Method: http.MethodPost, Path: "/api/v1/app/rename-app",
+		Body: happ.RenameAppRequest{ServerID: sid, AppID: appID, Name: "renamed"}}, nil)
+
+	owner.succeed(t, call{Method: http.MethodPost, Path: "/api/v1/app/delete-app",
+		Body: happ.DeleteAppRequest{ServerID: sid, AppID: appID}}, nil)
+	eventually(t, func() bool { return instanceOf(t, owner, sid, "tenant-1").State == "deleted" })
+	r = owner.post(t, "/api/v1/instance/create-instance", ie.create("tenant-1", "acme", "9001")).expect(t, http.StatusConflict)
+	if !strings.Contains(string(r.Body), "this key belonged to a deleted instance") {
+		t.Fatalf("replay body = %s", r.Body)
+	}
+	owner.post(t, "/api/v1/template/delete-template", htpl.TemplateIDRequest{ID: ie.tplID}).expect(t, http.StatusOK)
 }

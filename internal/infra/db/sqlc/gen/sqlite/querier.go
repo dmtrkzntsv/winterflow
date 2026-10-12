@@ -46,6 +46,9 @@ type Querier interface {
 	GetFirstServerID(ctx context.Context) (string, error)
 	GetLatestRegistrationCode(ctx context.Context) (string, error)
 	GetLiveTemplateInstance(ctx context.Context, arg GetLiveTemplateInstanceParams) (TemplateInstance, error)
+	// The pending or created instance an app is, with its template's name
+	// ('' when the template is gone).
+	GetLiveTemplateInstanceForApp(ctx context.Context, arg GetLiveTemplateInstanceForAppParams) (GetLiveTemplateInstanceForAppRow, error)
 	GetOrgSharedVariableByName(ctx context.Context, arg GetOrgSharedVariableByNameParams) (SharedVariable, error)
 	GetOrganization(ctx context.Context, organizationID string) (Organization, error)
 	GetPrimaryOrganizationID(ctx context.Context, userID string) (string, error)
@@ -55,6 +58,7 @@ type Querier interface {
 	GetSharedVariable(ctx context.Context, id string) (SharedVariable, error)
 	GetTemplate(ctx context.Context, arg GetTemplateParams) (Template, error)
 	GetTemplateIDByName(ctx context.Context, arg GetTemplateIDByNameParams) (string, error)
+	GetTemplateInstanceByID(ctx context.Context, id string) (TemplateInstance, error)
 	GetTemplateRevision(ctx context.Context, arg GetTemplateRevisionParams) (TemplateRevision, error)
 	GetTokenByHash(ctx context.Context, tokenHash string) (UserToken, error)
 	// Users, their connected accounts and local credentials.
@@ -123,6 +127,9 @@ type Querier interface {
 	// (the API database was restored); never lowers it.
 	RaiseServerVarsRevision(ctx context.Context, arg RaiseServerVarsRevisionParams) error
 	RenameApp(ctx context.Context, arg RenameAppParams) error
+	// The app was deleted outside the instance routes: its instance's key
+	// stays retired.
+	RetireTemplateInstancesForApp(ctx context.Context, arg RetireTemplateInstancesForAppParams) (int64, error)
 	SetTemplateInstanceError(ctx context.Context, arg SetTemplateInstanceErrorParams) error
 	SetTemplateInstanceState(ctx context.Context, arg SetTemplateInstanceStateParams) (int64, error)
 	TouchServerLastSeen(ctx context.Context, arg TouchServerLastSeenParams) error

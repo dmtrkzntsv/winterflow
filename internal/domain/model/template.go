@@ -36,6 +36,17 @@ var (
 	ErrInstanceNotCreated   = &classified{"the instance was never created: retry the create or delete it", ErrConflict}
 )
 
+// ManagedByTemplate refuses save-app or rollback-app on an app a live
+// (pending or created) instance manages: its changes go through the
+// instance. name is the template's ("" when it is gone).
+func ManagedByTemplate(name string) error {
+	by := "a template"
+	if name != "" {
+		by = "template " + name
+	}
+	return &classified{"this app is managed by " + by + ": update the instance or unlink it", ErrConflict}
+}
+
 // Template is an org's stack definition; its body lives in revisions.
 type Template struct {
 	ID             string

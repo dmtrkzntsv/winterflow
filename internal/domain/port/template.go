@@ -10,6 +10,7 @@ import (
 // Every template read is scoped to an org: another org's id is
 // model.ErrTemplateNotFound.
 type TemplateRepository interface {
+	InstanceLinks
 	// CreateTemplate inserts the template and its revision 1 in one
 	// transaction; model.ErrTemplateNameTaken when the org has the name.
 	CreateTemplate(ctx context.Context, t model.Template, rev model.TemplateRevision) error
@@ -37,6 +38,9 @@ type TemplateRepository interface {
 	// GetInstance returns the org's live instance with key (pending,
 	// created or deleted); model.ErrInstanceNotFound when none.
 	GetInstance(ctx context.Context, orgID, key string) (model.Instance, error)
+	// GetInstanceByID returns an instance in any state (an unlinked one
+	// too); model.ErrInstanceNotFound when none.
+	GetInstanceByID(ctx context.Context, id string) (model.Instance, error)
 	// ListInstances returns the org's pending and created instances,
 	// oldest first.
 	ListInstances(ctx context.Context, orgID string) ([]model.Instance, error)
@@ -49,4 +53,16 @@ type TemplateRepository interface {
 	SetState(ctx context.Context, id string, state model.InstanceState) error
 	// SetError records the last failed command's error.
 	SetError(ctx context.Context, id, msg string) error
+}
+
+// InstanceLinks is what the app routes know of template instances: an
+// app that is a live (pending or created) instance is changed through its
+// instance, and deleting it through delete-app retires its key.
+type InstanceLinks interface {
+	// LiveInstanceForApp reports whether the app on serverID is a live
+	// instance, and its template's name ("" when the template is gone).
+	LiveInstanceForApp(ctx context.Context, serverID, appID string) (templateName string, ok bool, err error)
+	// RetireForApp moves the app's live instance, if any, to deleted: its
+	// key stays retired.
+	RetireForApp(ctx context.Context, serverID, appID string) error
 }

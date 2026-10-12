@@ -39,6 +39,9 @@ func (h *Handler) Routes(api.Guards) []api.Route {
 	// Every server-addressed route: 400 on bad input or a failed dispatch,
 	// 403 when the caller's org doesn't own the server.
 	server := []int{http.StatusBadRequest, http.StatusForbidden}
+	// save-app and rollback-app also answer 409 for an app a template
+	// instance manages.
+	managed := []int{http.StatusBadRequest, http.StatusForbidden, http.StatusConflict}
 	return []api.Route{
 		{
 			Method: http.MethodGet, Path: "/api/v1/app/get-apps", Handler: h.GetApps,
@@ -61,7 +64,8 @@ func (h *Handler) Routes(api.Guards) []api.Route {
 		{
 			Method: http.MethodPost, Path: "/api/v1/app/save-app", Handler: h.SaveApp, Auth: api.User,
 			Summary: "Create or edit an app (new revision, redeploy unless draft)", Tag: "apps",
-			Request: SaveAppRequest{}, Accepted: true, Result: command.SaveAppResponse{}, Errors: server,
+			Description: "An app a template instance manages (pending or created) is refused with 409: update the instance or unlink it.",
+			Request:     SaveAppRequest{}, Accepted: true, Result: command.SaveAppResponse{}, Errors: managed,
 		},
 		{
 			Method: http.MethodGet, Path: "/api/v1/app/get-app", Handler: h.GetApp, Auth: api.User,
@@ -81,7 +85,8 @@ func (h *Handler) Routes(api.Guards) []api.Route {
 		{
 			Method: http.MethodPost, Path: "/api/v1/app/rollback-app", Handler: h.RollbackApp, Auth: api.User,
 			Summary: "Restore a revision as a new commit and redeploy", Tag: "apps",
-			Request: RollbackAppRequest{}, Accepted: true, Result: command.RollbackAppResponse{}, Errors: server,
+			Description: "An app a template instance manages (pending or created) is refused with 409: update the instance or unlink it.",
+			Request:     RollbackAppRequest{}, Accepted: true, Result: command.RollbackAppResponse{}, Errors: managed,
 		},
 		{
 			Method: http.MethodGet, Path: "/api/v1/image/get-tags", Handler: h.GetImageTags, Auth: api.User,
@@ -97,7 +102,8 @@ func (h *Handler) Routes(api.Guards) []api.Route {
 			Method: http.MethodPost, Path: "/api/v1/app/delete-app", Handler: h.DeleteApp, Auth: api.User,
 			Summary: "Delete an app (optionally its volumes and its backups)", Tag: "apps",
 			Description: "Without `delete_backups` the app's backups are kept, marked as a deleted app's: the agent's daily sweep " +
-				"deletes them once older than its BACKUP_RETENTION_DAYS.",
+				"deletes them once older than its BACKUP_RETENTION_DAYS. Deleting an app a template instance manages deletes the " +
+				"instance: its key stays retired.",
 			Request: DeleteAppRequest{}, Accepted: true, Result: command.DeleteAppResponse{}, Errors: server,
 		},
 		{

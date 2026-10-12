@@ -137,6 +137,34 @@ func (q *Queries) GetLiveTemplateInstance(ctx context.Context, arg GetLiveTempla
 	return i, err
 }
 
+const getLiveTemplateInstanceForApp = `-- name: GetLiveTemplateInstanceForApp :one
+SELECT i.id, CAST(COALESCE(t.name, '') AS TEXT) AS template_name
+FROM template_instances AS i
+LEFT JOIN templates AS t ON t.id = i.template_id
+WHERE i.server_id = $1 AND i.app_id = $2 AND i.state IN ('pending', 'created')
+ORDER BY i.created_at ASC, i.id ASC
+LIMIT 1
+`
+
+type GetLiveTemplateInstanceForAppParams struct {
+	ServerID string
+	AppID    string
+}
+
+type GetLiveTemplateInstanceForAppRow struct {
+	ID           string
+	TemplateName string
+}
+
+// The pending or created instance an app is, with its template's name
+// (” when the template is gone).
+func (q *Queries) GetLiveTemplateInstanceForApp(ctx context.Context, arg GetLiveTemplateInstanceForAppParams) (GetLiveTemplateInstanceForAppRow, error) {
+	row := q.db.QueryRowContext(ctx, getLiveTemplateInstanceForApp, arg.ServerID, arg.AppID)
+	var i GetLiveTemplateInstanceForAppRow
+	err := row.Scan(&i.ID, &i.TemplateName)
+	return i, err
+}
+
 const getTemplate = `-- name: GetTemplate :one
 SELECT id, org_id, name, latest_revision, created_at, created_by, updated_at FROM templates WHERE id = $1 AND org_id = $2
 `
@@ -175,6 +203,32 @@ func (q *Queries) GetTemplateIDByName(ctx context.Context, arg GetTemplateIDByNa
 	var id string
 	err := row.Scan(&id)
 	return id, err
+}
+
+const getTemplateInstanceByID = `-- name: GetTemplateInstanceByID :one
+SELECT id, org_id, instance_key, app_id, server_id, template_id, revision, params, secret_names, request_hash, state, last_error, created_at, updated_at FROM template_instances WHERE id = $1
+`
+
+func (q *Queries) GetTemplateInstanceByID(ctx context.Context, id string) (TemplateInstance, error) {
+	row := q.db.QueryRowContext(ctx, getTemplateInstanceByID, id)
+	var i TemplateInstance
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.InstanceKey,
+		&i.AppID,
+		&i.ServerID,
+		&i.TemplateID,
+		&i.Revision,
+		&i.Params,
+		&i.SecretNames,
+		&i.RequestHash,
+		&i.State,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const getTemplateRevision = `-- name: GetTemplateRevision :one
@@ -424,6 +478,28 @@ func (q *Queries) MarkTemplateInstanceSaved(ctx context.Context, arg MarkTemplat
 		arg.UpdatedAt,
 		arg.ID,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const retireTemplateInstancesForApp = `-- name: RetireTemplateInstancesForApp :execrows
+UPDATE template_instances
+SET state = 'deleted', last_error = '', updated_at = $1
+WHERE server_id = $2 AND app_id = $3 AND state IN ('pending', 'created')
+`
+
+type RetireTemplateInstancesForAppParams struct {
+	UpdatedAt types.DateTime
+	ServerID  string
+	AppID     string
+}
+
+// The app was deleted outside the instance routes: its instance's key
+// stays retired.
+func (q *Queries) RetireTemplateInstancesForApp(ctx context.Context, arg RetireTemplateInstancesForAppParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, retireTemplateInstancesForApp, arg.UpdatedAt, arg.ServerID, arg.AppID)
 	if err != nil {
 		return 0, err
 	}

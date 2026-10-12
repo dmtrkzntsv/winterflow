@@ -77,3 +77,23 @@ WHERE id = ? AND state IN ('pending', 'created');
 
 -- name: SetTemplateInstanceError :exec
 UPDATE template_instances SET last_error = ?, updated_at = ? WHERE id = ?;
+
+-- name: GetTemplateInstanceByID :one
+SELECT * FROM template_instances WHERE id = ?;
+
+-- name: GetLiveTemplateInstanceForApp :one
+-- The pending or created instance an app is, with its template's name
+-- ('' when the template is gone).
+SELECT i.id, CAST(COALESCE(t.name, '') AS TEXT) AS template_name
+FROM template_instances AS i
+LEFT JOIN templates AS t ON t.id = i.template_id
+WHERE i.server_id = ? AND i.app_id = ? AND i.state IN ('pending', 'created')
+ORDER BY i.created_at ASC, i.id ASC
+LIMIT 1;
+
+-- name: RetireTemplateInstancesForApp :execrows
+-- The app was deleted outside the instance routes: its instance's key
+-- stays retired.
+UPDATE template_instances
+SET state = 'deleted', last_error = '', updated_at = ?
+WHERE server_id = ? AND app_id = ? AND state IN ('pending', 'created');

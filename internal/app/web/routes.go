@@ -79,6 +79,7 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 		ServerStorageRepository: d.ServerStorageRepository,
 		StatusCache:             d.StatusCache,
 		Servers:                 d.ServerRepository,
+		Instances:               d.TemplateRepository,
 	})
 	dockerAPI := hdocker.NewHandler(&hdocker.Deps{
 		Logger:            d.Log,

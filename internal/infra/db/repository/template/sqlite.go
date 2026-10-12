@@ -70,3 +70,15 @@ func (sqliteQuerier) SetTemplateInstanceState(ctx context.Context, db backend.DB
 func (sqliteQuerier) SetTemplateInstanceError(ctx context.Context, db backend.DBTX, p errorParams) error {
 	return sqlitegen.New(db).SetTemplateInstanceError(ctx, p)
 }
+
+func (sqliteQuerier) GetTemplateInstanceByID(ctx context.Context, db backend.DBTX, id string) (instanceRow, error) {
+	return sqlitegen.New(db).GetTemplateInstanceByID(ctx, id)
+}
+
+func (sqliteQuerier) GetLiveTemplateInstanceForApp(ctx context.Context, db backend.DBTX, p forAppParams) (forAppRow, error) {
+	return sqlitegen.New(db).GetLiveTemplateInstanceForApp(ctx, p)
+}
+
+func (sqliteQuerier) RetireTemplateInstancesForApp(ctx context.Context, db backend.DBTX, p retireParams) (int64, error) {
+	return sqlitegen.New(db).RetireTemplateInstancesForApp(ctx, p)
+}

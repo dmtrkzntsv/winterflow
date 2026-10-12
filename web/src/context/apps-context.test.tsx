@@ -3,6 +3,7 @@ import { act, renderHook, waitFor as waitUntil } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppsProvider } from "@/context/apps-context";
+import { DELETE_APP_TIMEOUT_MS } from "@/context/apps-context-base";
 import { useApps } from "@/context/use-apps";
 
 vi.mock("@/context/use-auth", () => ({ useAuth: () => ({ isAuthenticated: true }) }));
@@ -104,5 +105,16 @@ describe("AppsProvider backups", () => {
       delete_backups: true,
       server_id: "srv-1",
     });
+  });
+
+  it("waits for a delete longer than the agent can take", async () => {
+    const { result } = renderHook(() => useApps(), { wrapper });
+    await waitUntil(() => expect(result.current.loading).toBe(false));
+    waitFor.mockClear();
+    waitFor.mockResolvedValueOnce({ status: 0, payload: {} });
+    await result.current.remove("a1");
+    // The agent's worst case is about 8 minutes (backups settled in every storage).
+    expect(waitFor).toHaveBeenLastCalledWith("del-1", DELETE_APP_TIMEOUT_MS);
+    expect(DELETE_APP_TIMEOUT_MS).toBeGreaterThanOrEqual(9 * 60_000);
   });
 });

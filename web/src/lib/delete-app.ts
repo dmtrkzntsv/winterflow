@@ -9,7 +9,9 @@ export type DeleteOutcome = { level: "success" | "warning"; title: string; descr
 // deleteOutcome reads a delete's result. An agent that predates volume or
 // backup deletion ignores the flag (it reports false): the user must not be
 // told the data is gone.
-export function deleteOutcome(choice: DeleteChoice, res: DeleteAppResult): DeleteOutcome {
+// hadBackups: the app had backups, so a delete that keeps them says where
+// they went.
+export function deleteOutcome(choice: DeleteChoice, res: DeleteAppResult, opts: { hadBackups?: boolean } = {}): DeleteOutcome {
   const kept: string[] = [];
   if (choice.withVolumes && !res.volumesDeleted) kept.push("volumes");
   if (choice.withBackups && !res.backupsDeleted) kept.push("backups");
@@ -32,5 +34,9 @@ export function deleteOutcome(choice: DeleteChoice, res: DeleteAppResult): Delet
   const items = ["app", ...also] as string[];
   const last = items.pop();
   const named = items.length ? `${items.join(", ")} and ${last}` : last;
-  return { level: "success", title: `${named![0].toUpperCase()}${named!.slice(1)} deleted` };
+  const title = `${named![0].toUpperCase()}${named!.slice(1)} deleted`;
+  if (opts.hadBackups && !choice.withBackups) {
+    return { level: "success", title, description: "Its backups are kept in their storages: see Server Settings → Storages → Other apps' backups." };
+  }
+  return { level: "success", title };
 }

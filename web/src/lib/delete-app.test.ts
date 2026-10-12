@@ -37,4 +37,13 @@ describe("deleteOutcome", () => {
       description: "a\nb",
     });
   });
+
+  it("says where the backups went when an app that had them is deleted without them", () => {
+    const out = deleteOutcome({ withVolumes: false, withBackups: false }, res(), { hadBackups: true });
+    expect(out).toMatchObject({ level: "success", title: "App deleted" });
+    expect(out.description).toContain("Other apps' backups");
+    // Nothing to say when they were deleted too, or there were none.
+    expect(deleteOutcome({ withVolumes: false, withBackups: true }, res({ backupsDeleted: true }), { hadBackups: true }).description).toBeUndefined();
+    expect(deleteOutcome({ withVolumes: false, withBackups: false }, res()).description).toBeUndefined();
+  });
 });

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { buttonVariants } from "@/components/ui/button-variants";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
+import { Spinner } from "@/components/ui/spinner";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -24,27 +25,37 @@ import { cn } from "@/lib/utils";
 export function DeleteAppDialog({
   name,
   disabled,
+  deleting = false,
   onConfirm,
 }: {
   name: string;
   disabled: boolean;
+  deleting?: boolean; // the delete is under way: it can take minutes
   onConfirm: (choice: DeleteChoice) => void;
 }) {
   return (
-    <AlertDialog>
-      <AlertDialogTrigger asChild>
-        <Button
-          variant="outline"
-          className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
-          disabled={disabled}
-        >
-          <Trash2 className="size-4" /> Delete {name}
-        </Button>
-      </AlertDialogTrigger>
-      <AlertDialogContent>
-        <DeleteAppConfirm name={name} onConfirm={onConfirm} />
-      </AlertDialogContent>
-    </AlertDialog>
+    <div className="grid justify-items-start gap-2">
+      <AlertDialog>
+        <AlertDialogTrigger asChild>
+          <Button
+            variant="outline"
+            className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+            disabled={disabled || deleting}
+          >
+            {deleting ? <Spinner aria-hidden className="size-4" /> : <Trash2 className="size-4" />}{" "}
+            {deleting ? `Deleting ${name}…` : `Delete ${name}`}
+          </Button>
+        </AlertDialogTrigger>
+        <AlertDialogContent>
+          <DeleteAppConfirm name={name} onConfirm={onConfirm} />
+        </AlertDialogContent>
+      </AlertDialog>
+      {deleting ? (
+        <p role="status" className="text-sm text-muted-foreground">
+          Deleting the app. This can take a few minutes, longer when its backups are deleted from a storage. Keep this page open.
+        </p>
+      ) : null}
+    </div>
   );
 }
 

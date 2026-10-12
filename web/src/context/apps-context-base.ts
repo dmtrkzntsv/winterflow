@@ -32,6 +32,11 @@ export type AppRevisions = {
   revisions: AppRevision[];
 };
 
+// How long to wait for the agent's answer to delete-app. Its worst case is
+// about 8 minutes (a backup or restore of the app ending, then the backups
+// settled in every storage, each probe bounded).
+export const DELETE_APP_TIMEOUT_MS = 10 * 60_000;
+
 export type ControlAction = "start" | "stop" | "restart" | "update";
 
 // Container status codes mirror command.ContainerStatusCode on the backend.

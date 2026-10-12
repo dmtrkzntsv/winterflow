@@ -36,4 +36,15 @@ describe("DeleteAppDialog", () => {
     await user.click(screen.getByRole("button", { name: "Delete app and volumes" }));
     expect(onConfirm).toHaveBeenLastCalledWith({ withVolumes: true, withBackups: false });
   });
+
+  it("shows progress while the delete runs, and can't be sent again", () => {
+    render(<DeleteAppDialog name="Shop" disabled={false} deleting onConfirm={vi.fn()} />);
+    expect(screen.getByRole("button", { name: /Deleting Shop/ })).toBeDisabled();
+    expect(screen.getByRole("status")).toHaveTextContent("This can take a few minutes");
+  });
+
+  it("shows no progress when idle", () => {
+    render(<DeleteAppDialog name="Shop" disabled={false} onConfirm={vi.fn()} />);
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
 });

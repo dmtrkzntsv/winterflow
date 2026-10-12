@@ -16,6 +16,7 @@ import type { BackupHealth } from "@/lib/backups";
 
 import {
   AppsContext,
+  DELETE_APP_TIMEOUT_MS,
   type App,
   type AppDetailPayload,
   type AppRevisions,
@@ -238,6 +239,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
     async (
       path: string,
       body: Record<string, unknown>,
+      opts: { timeoutMs?: number } = {},
     ): Promise<{ list: App[]; payload: unknown }> => {
       if (!activeServerId) throw new Error("No active server");
       const res = await fetch(`${base}/api/v1/app/${path}`, {
@@ -252,7 +254,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       const ref = accepted.data?.request_id;
       let payload: unknown;
       if (ref) {
-        const result = await waitFor(ref);
+        const result = await waitFor(ref, opts.timeoutMs);
         if (result.status && result.status !== 0) {
           throw new Error(result.error || "Operation failed");
         }
@@ -276,11 +278,19 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       appId: string,
       opts?: { deleteVolumes?: boolean; deleteBackups?: boolean },
     ): Promise<DeleteAppResult> => {
-      const { payload } = await dispatchAndWait("delete-app", {
-        app_id: appId,
-        delete_volumes: opts?.deleteVolumes ?? false,
-        delete_backups: opts?.deleteBackups ?? false,
-      });
+      // The agent can take minutes to delete an app (it waits for a running
+      // backup or restore, settles the backups in every storage): wait
+      // longer than that, so its answer, warnings included, is what the user
+      // sees.
+      const { payload } = await dispatchAndWait(
+        "delete-app",
+        {
+          app_id: appId,
+          delete_volumes: opts?.deleteVolumes ?? false,
+          delete_backups: opts?.deleteBackups ?? false,
+        },
+        { timeoutMs: DELETE_APP_TIMEOUT_MS },
+      );
       const res = payload as
         | { warnings?: string[]; volumes_deleted?: boolean; backups_deleted?: boolean }
         | undefined;

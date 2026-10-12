@@ -8,6 +8,7 @@ import {
   RefreshCw,
   RotateCw,
   Square,
+  TriangleAlert,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -44,6 +45,7 @@ import {
   type DeleteAppResult,
 } from "@/context/apps-context-base";
 import { readApiError } from "@/lib/api";
+import { needsAttention } from "@/lib/backups";
 import { deleteOutcome, type DeleteChoice } from "@/lib/delete-app";
 import { cn } from "@/lib/utils";
 
@@ -58,7 +60,7 @@ export default function AppDetailsPage() {
   const { appId } = useParams();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { apps, statusByApp, control, remove, rename } = useApps();
+  const { apps, statusByApp, backupsByApp, control, remove, rename } = useApps();
 
   const tabParam = searchParams.get("tab") ?? "logs";
   const tab = (TABS as readonly string[]).includes(tabParam)
@@ -196,6 +198,13 @@ export default function AppDetailsPage() {
             </TabsTrigger>
             <TabsTrigger value="backups" className={tabTriggerClass}>
               Backups
+              {needsAttention(backupsByApp?.[app.id]) ? (
+                <TriangleAlert
+                  role="img"
+                  aria-label="A backup is late or failing"
+                  className="ml-1.5 inline size-3.5 align-text-bottom text-amber-500"
+                />
+              ) : null}
             </TabsTrigger>
             <TabsTrigger value="history" className={tabTriggerClass}>
               History
@@ -509,8 +518,10 @@ function SettingsTab({
   onRename: (appId: string, name: string) => Promise<void>;
   onDelete: (opts: { deleteVolumes: boolean; deleteBackups: boolean }) => Promise<DeleteAppResult>;
 }) {
+  const { backupsByApp } = useApps();
   const [newName, setNewName] = useState(name);
   const [busy, setBusy] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const save = async () => {
     setBusy(true);
@@ -528,13 +539,15 @@ function SettingsTab({
 
   const del = async (choice: DeleteChoice) => {
     setBusy(true);
+    setDeleting(true);
     try {
+      const hadBackups = (backupsByApp?.[appId]?.length ?? 0) > 0;
       const res = await onDelete({ deleteVolumes: choice.withVolumes, deleteBackups: choice.withBackups });
-      const out = deleteOutcome(choice, res);
+      const out = deleteOutcome(choice, res, { hadBackups });
       if (out.level === "warning") {
         toast.warning(out.title, { description: out.description });
       } else {
-        toast.success(out.title);
+        toast.success(out.title, { description: out.description });
       }
     } catch (e) {
       toast.error("Delete failed", {
@@ -542,6 +555,7 @@ function SettingsTab({
       });
     } finally {
       setBusy(false);
+      setDeleting(false);
     }
   };
 
@@ -588,6 +602,7 @@ function SettingsTab({
           <DeleteAppDialog
             name={name}
             disabled={busy}
+            deleting={deleting}
             onConfirm={(choice) => void del(choice)}
           />
         </div>

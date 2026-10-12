@@ -34,6 +34,12 @@ describe("AppGrid", () => {
     expect(screen.getByRole("link", { name: /Blog/ })).toHaveAttribute("title", "Blog: Running");
   });
 
+  it("links the warning to the app's Backups tab, and the others to the app", () => {
+    renderGrid({ backupsByApp: { a1: [{ name: "db", state: "late" }], a2: [{ name: "db", state: "ok" }] } });
+    expect(screen.getByRole("link", { name: /Shop/ })).toHaveAttribute("href", "/app/a1?tab=backups");
+    expect(screen.getByRole("link", { name: /Blog/ })).toHaveAttribute("href", "/app/a2");
+  });
+
   it("shows no dot without backups", () => {
     renderGrid({});
     expect(screen.queryByRole("img", { name: "A backup is late or failing" })).not.toBeInTheDocument();

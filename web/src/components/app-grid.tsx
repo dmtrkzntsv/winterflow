@@ -99,7 +99,8 @@ export function AppGrid() {
         return (
           <Link
             key={app.id}
-            to={`/app/${app.id}`}
+            // The warning leads to the backup that needs attention.
+            to={`/app/${app.id}${backupWarning ? "?tab=backups" : ""}`}
             title={`${app.name}: ${status.label}${backupWarning ? " (a backup is late or failing)" : ""}`}
             className="app-card-in block"
             style={{ animationDelay: `${index * 40}ms` }}

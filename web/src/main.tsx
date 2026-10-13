@@ -28,6 +28,7 @@ import OrgMembersPage from "@/pages/org-members"
 import OrgAlertsPage from "@/pages/org-alerts"
 import OrgVariablesPage from "@/pages/org-variables";
 import OrgTemplatesPage from "@/pages/org-templates"
+import TemplatePage from "@/pages/template-page"
 import LoginPage from "@/pages/login"
 import RegisterPage from "@/pages/register"
 import { followSystemTheme } from "@/lib/theme"
@@ -93,6 +94,14 @@ const router = createBrowserRouter([
           {
             path: "/org/templates",
             element: <OrgTemplatesPage />,
+          },
+          {
+            path: "/org/templates/new",
+            element: <TemplatePage />,
+          },
+          {
+            path: "/org/templates/:templateId",
+            element: <TemplatePage />,
           },
           { path: "*", element: <NotFound /> },
         ],

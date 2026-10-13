@@ -1,0 +1,222 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { toast } from "sonner";
+
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Spinner } from "@/components/ui/spinner";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { InlineError } from "@/components/inline-error";
+import { NotFound } from "@/components/not-found";
+import { TemplateEditor } from "@/components/template-editor";
+import { useTemplatesApi } from "@/hooks/use-templates-api";
+import { useAppBreadcrumbs } from "@/layouts/use-app-layout";
+import { bodyFromDraft, draftFromBody, draftProblem, emptyDraft, type TemplateDraft } from "@/lib/template-draft";
+import { ApiError, type InstanceView, type TemplateView } from "@/lib/templates";
+
+// DraftState is what "Save as template" hands the new template's editor.
+export type DraftState = { draft: TemplateDraft; notes: string[] };
+
+// TemplatePage is one template (/org/templates/:templateId) or a new one
+// (/org/templates/new, optionally prefilled by Save as template): its
+// editor, where Save adds a revision.
+export default function TemplatePage() {
+  const { templateId } = useParams();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const api = useTemplatesApi();
+  const prefill = (location.state as DraftState | null) ?? null;
+
+  const [view, setView] = useState<TemplateView | null>(null);
+  const [instances, setInstances] = useState<InstanceView[]>([]);
+  const [draft, setDraft] = useState<TemplateDraft>(() => prefill?.draft ?? emptyDraft());
+  const [baseline, setBaseline] = useState(() => (prefill ? "" : JSON.stringify(draft)));
+  const [loadError, setLoadError] = useState<ApiError | Error | null>(null);
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+  // conflict is the revision someone saved while this editor was open.
+  const [conflict, setConflict] = useState<number | null>(null);
+
+  const breadcrumbs = useMemo(
+    () => [{ label: "Templates", href: "/org/templates" }, { label: view?.name ?? (templateId ? "Template" : "New template") }],
+    [view?.name, templateId],
+  );
+  useAppBreadcrumbs(breadcrumbs);
+
+  const load = useCallback(async () => {
+    if (!templateId) return;
+    setLoadError(null);
+    try {
+      const [v, list] = await Promise.all([api.getTemplate(templateId), api.listInstances({ templateId })]);
+      const loaded = draftFromBody(v.name, v.body);
+      setView(v);
+      setInstances(list);
+      setDraft(loaded);
+      setBaseline(JSON.stringify(loaded));
+      setConflict(null);
+    } catch (e) {
+      setLoadError(e instanceof Error ? e : new Error("Failed to load the template"));
+    }
+  }, [api, templateId]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const dirty = JSON.stringify(draft) !== baseline;
+
+  const save = async () => {
+    const problem = draftProblem(draft);
+    if (problem) {
+      toast.error(problem);
+      return;
+    }
+    setSaving(true);
+    try {
+      const saved = await api.saveTemplate({
+        ...(view ? { id: view.id } : {}),
+        name: draft.name,
+        body: bodyFromDraft(draft),
+        ...(note.trim() ? { note: note.trim() } : {}),
+        base_revision: view?.latest_revision ?? 0,
+      });
+      toast.success(`Saved r${saved.revision}`);
+      if (saved.warnings?.length) {
+        toast.warning("Check these references", { description: saved.warnings.join("\n") });
+      }
+      setNote("");
+      if (!view) {
+        navigate(`/org/templates/${saved.id}`, { replace: true });
+        return;
+      }
+      await load();
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409 && view) {
+        // Someone saved meanwhile: name their revision; Reload takes it.
+        const latest = await api.getTemplate(view.id).catch(() => null);
+        setConflict(latest?.latest_revision ?? view.latest_revision + 1);
+      } else {
+        toast.error("Couldn't save the template", { description: e instanceof Error ? e.message : undefined });
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const remove = async () => {
+    if (!view) return;
+    try {
+      await api.deleteTemplate(view.id);
+      toast.success(`Template ${view.name} deleted`);
+      navigate("/org/templates");
+    } catch (e) {
+      toast.error("Couldn't delete the template", { description: e instanceof Error ? e.message : undefined });
+    }
+  };
+
+  if (loadError) {
+    if (loadError instanceof ApiError && loadError.status === 404) {
+      return <NotFound title="Template not found" description="This template doesn't exist in your organization." />;
+    }
+    return (
+      <div className="flex min-h-60 flex-col items-center justify-center gap-3">
+        <InlineError>{loadError.message}</InlineError>
+        <Button variant="outline" size="sm" onClick={() => void load()}>
+          Retry
+        </Button>
+      </div>
+    );
+  }
+  if (templateId && !view) {
+    return (
+      <div className="flex min-h-60 items-center justify-center">
+        <Spinner />
+      </div>
+    );
+  }
+
+  const live = instances.length;
+
+  return (
+    <div className="mx-auto w-full max-w-5xl space-y-4">
+      <header className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <div className="mr-auto min-w-0">
+          <h1 className="truncate text-2xl font-semibold tracking-tight">{view?.name ?? "Add template"}</h1>
+          <p className="text-sm text-muted-foreground">
+            {view
+              ? `Revision ${view.latest_revision} · ${live} ${live === 1 ? "app" : "apps"} use it`
+              : "Saving adds revision 1."}
+          </p>
+        </div>
+        {view ? (
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-destructive"
+                disabled={live > 0}
+                title={live > 0 ? "Delete or unlink its apps first" : undefined}
+              >
+                Delete template
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Delete {view.name}?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Its revisions are deleted. No app uses it; apps unlinked from it stay as they are.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction onClick={() => void remove()}>Delete</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        ) : null}
+      </header>
+
+      {prefill?.notes.length ? (
+        <ul className="list-disc space-y-1 rounded-md border bg-muted/30 py-3 pr-4 pl-8 text-sm text-muted-foreground">
+          {prefill.notes.map((n) => (
+            <li key={n}>{n}</li>
+          ))}
+        </ul>
+      ) : null}
+
+      <div className="sticky top-0 z-10 -mx-4 flex flex-wrap items-center gap-2 border-b bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+        {conflict !== null ? (
+          <p role="alert" className="mr-auto flex items-center gap-2 text-sm text-destructive">
+            Someone saved r{conflict} meanwhile; reload to get it (your changes here are dropped).
+            <Button size="sm" variant="outline" onClick={() => void load()}>
+              Reload
+            </Button>
+          </p>
+        ) : (
+          <Input
+            aria-label="Revision note"
+            value={note}
+            placeholder="What changed (optional)"
+            className="mr-auto max-w-md"
+            onChange={(e) => setNote(e.target.value)}
+          />
+        )}
+        <Button onClick={() => void save()} disabled={saving || (!dirty && !!view) || conflict !== null}>
+          {saving ? "Saving…" : view ? `Save as r${view.latest_revision + 1}` : "Save template"}
+        </Button>
+      </div>
+      <TemplateEditor draft={draft} onChange={setDraft} />
+    </div>
+  );
+}

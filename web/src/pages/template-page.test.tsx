@@ -1,0 +1,240 @@
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { NotificationsContext, type NotificationsContextValue } from "@/context/notifications-context-base";
+import { draftFromBody } from "@/lib/template-draft";
+import { ApiError, type TemplateBody, type TemplateView } from "@/lib/templates";
+import TemplatePage from "@/pages/template-page";
+import { fakeAPI } from "@/test/fake-api";
+
+const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }));
+vi.mock("sonner", () => ({ toast }));
+vi.mock("@/layouts/use-app-layout", () => ({ useAppBreadcrumbs: () => {} }));
+vi.mock("@/components/code-editor", () => ({
+  CodeEditor: ({ value, onChange, filename }: { value: string; onChange?: (v: string) => void; filename?: string }) => (
+    <textarea aria-label={`Content of ${filename || "file"}`} value={value} onChange={(e) => onChange?.(e.target.value)} />
+  ),
+}));
+
+const COMPOSE = `services:
+  app:
+    image: ghcr.io/dmtrkzntsv/twillingate:\${VERSION}
+    ports: ["127.0.0.1:\${PORT}:8080"]
+x-winterflow:
+  backups:
+    - { name: db, type: sqlite, volume: data, path: twillingate.db }
+`;
+
+const BODY: TemplateBody = {
+  files: { "compose.yaml": COMPOSE },
+  parameters: [
+    { name: "NAME", required: true, pattern: "^[a-z]{3,20}$" },
+    { name: "PORT", required: true },
+    { name: "VERSION", required: true },
+  ],
+  app_name: "${NAME}",
+  icon: "chart",
+  color: "#2563eb",
+  ingress: [{ host: "${NAME}.twillingate.app", port: "${PORT}" }],
+  backups: { db: { enabled: true, storage: "tenants" } },
+};
+
+function view(revision: number): TemplateView {
+  return {
+    id: "t1",
+    name: "twillingate",
+    latest_revision: revision,
+    revision,
+    body: BODY,
+    note: "",
+    created_at: "2026-10-12T10:00:00Z",
+    created_by: "u1",
+    revisions: [{ revision, note: "", created_at: "2026-10-12T10:00:00Z", created_by: "u1" }],
+  };
+}
+
+const notifications = { connected: true, subscribe: () => () => {}, waitFor: vi.fn() } as NotificationsContextValue;
+
+function renderPage(url: string, state?: unknown) {
+  return render(
+    <MemoryRouter initialEntries={[{ pathname: url, state }]}>
+      <NotificationsContext.Provider value={notifications}>
+        <Routes>
+          <Route path="/org/templates" element={<p>the list</p>} />
+          <Route path="/org/templates/new" element={<TemplatePage />} />
+          <Route path="/org/templates/:templateId" element={<TemplatePage />} />
+        </Routes>
+      </NotificationsContext.Provider>
+    </MemoryRouter>,
+  );
+}
+
+beforeEach(() => {
+  for (const f of Object.values(toast)) f.mockReset();
+});
+afterEach(() => vi.unstubAllGlobals());
+
+describe("TemplatePage", () => {
+  it("adds a template as revision 1, then opens it", async () => {
+    const user = userEvent.setup();
+    const api = fakeAPI({
+      "/api/v1/template/save-template": { id: "t9", name: "shop", revision: 1, warnings: ["SMTP_PASS is not a parameter"] },
+      "/api/v1/template/get-template": { ...view(1), id: "t9", name: "shop" },
+      "/api/v1/instance/get-instances": { instances: [] },
+    });
+    renderPage("/org/templates/new");
+    await user.type(screen.getByLabelText("Template name"), "shop");
+    await user.type(screen.getByLabelText("App name"), "Shop");
+    await user.click(screen.getByRole("button", { name: "Save template" }));
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Saved r1"));
+    expect(toast.warning).toHaveBeenCalledWith("Check these references", { description: "SMTP_PASS is not a parameter" });
+    const [sent] = api.posted("/api/v1/template/save-template") as { name: string; base_revision: number; id?: string }[];
+    expect(sent).toMatchObject({ name: "shop", base_revision: 0 });
+    expect(sent.id).toBeUndefined();
+    expect(await screen.findByRole("heading", { name: "shop" })).toBeInTheDocument();
+  });
+
+  it("refuses to save what the API would refuse, naming it", async () => {
+    const user = userEvent.setup();
+    const api = fakeAPI({});
+    renderPage("/org/templates/new");
+    await user.type(screen.getByLabelText("Template name"), "Shop");
+    await user.click(screen.getByRole("button", { name: "Save template" }));
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("Name: lowercase"));
+    expect(api.calls).toEqual([]);
+  });
+
+  it("adds a revision on top of the one it read, with a note", async () => {
+    const user = userEvent.setup();
+    const api = fakeAPI({
+      "/api/v1/template/get-template": view(3),
+      "/api/v1/instance/get-instances": { instances: [] },
+      "/api/v1/template/save-template": { id: "t1", name: "twillingate", revision: 4, warnings: null },
+    });
+    renderPage("/org/templates/t1");
+    const save = await screen.findByRole("button", { name: "Save as r4" });
+    expect(save).toBeDisabled();
+    await user.click(screen.getAllByRole("button", { name: /Add parameter/ })[0]);
+    await user.type(screen.getAllByLabelText("Parameter name").at(-1)!, "MEMORY_MAX");
+    await user.type(screen.getByLabelText("Revision note"), "memory cap");
+    await user.click(save);
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Saved r4"));
+    const [sent] = api.posted("/api/v1/template/save-template") as {
+      id: string;
+      base_revision: number;
+      note: string;
+      body: TemplateBody;
+    }[];
+    expect(sent).toMatchObject({ id: "t1", base_revision: 3, note: "memory cap" });
+    expect(sent.body.parameters?.map((p) => p.name)).toEqual(["NAME", "PORT", "VERSION", "MEMORY_MAX"]);
+    expect(sent.body.backups).toEqual({ db: { enabled: true, storage: "tenants" } });
+  });
+
+  it("says who saved meanwhile on a concurrent edit, and reloads", async () => {
+    const user = userEvent.setup();
+    let latest = 3;
+    fakeAPI({
+      "/api/v1/template/get-template": () => view(latest),
+      "/api/v1/instance/get-instances": { instances: [] },
+      "/api/v1/template/save-template": () => {
+        latest = 4;
+        return new ApiError("someone saved the template meanwhile: reload it and save again", 409);
+      },
+    });
+    renderPage("/org/templates/t1");
+    await user.type(await screen.findByLabelText("App name"), "-x");
+    await user.click(screen.getByRole("button", { name: "Save as r4" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Someone saved r4 meanwhile; reload");
+    await user.click(screen.getByRole("button", { name: "Reload" }));
+    expect(await screen.findByRole("button", { name: "Save as r5" })).toBeInTheDocument();
+    expect(screen.getByLabelText("App name")).toHaveValue("${NAME}");
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("reports any other failed save", async () => {
+    const user = userEvent.setup();
+    fakeAPI({
+      "/api/v1/template/get-template": view(3),
+      "/api/v1/instance/get-instances": { instances: [] },
+      "/api/v1/template/save-template": new Error("invalid template: files: x-winterflow.backups[0]: unknown type"),
+    });
+    renderPage("/org/templates/t1");
+    await user.type(await screen.findByLabelText("App name"), "-x");
+    await user.click(screen.getByRole("button", { name: "Save as r4" }));
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith("Couldn't save the template", {
+        description: "invalid template: files: x-winterflow.backups[0]: unknown type",
+      }),
+    );
+  });
+
+  it("offers Delete only without live instances", async () => {
+    fakeAPI({
+      "/api/v1/template/get-template": view(3),
+      "/api/v1/instance/get-instances": { instances: [{ key: "k1" }] },
+    });
+    renderPage("/org/templates/t1");
+    expect(await screen.findByRole("button", { name: "Delete template" })).toBeDisabled();
+    expect(screen.getByText("Revision 3 · 1 app use it")).toBeInTheDocument();
+  });
+
+  it("deletes a template no app uses", async () => {
+    const user = userEvent.setup();
+    const api = fakeAPI({
+      "/api/v1/template/get-template": view(3),
+      "/api/v1/instance/get-instances": { instances: [] },
+      "/api/v1/template/delete-template": null,
+    });
+    renderPage("/org/templates/t1");
+    await user.click(await screen.findByRole("button", { name: "Delete template" }));
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    expect(await screen.findByText("the list")).toBeInTheDocument();
+    expect(api.posted("/api/v1/template/delete-template")).toEqual([{ id: "t1" }]);
+  });
+
+  it("explains a refused delete", async () => {
+    const user = userEvent.setup();
+    fakeAPI({
+      "/api/v1/template/get-template": view(3),
+      "/api/v1/instance/get-instances": { instances: [] },
+      "/api/v1/template/delete-template": new ApiError("the template has live instances: delete or unlink them first", 409),
+    });
+    renderPage("/org/templates/t1");
+    await user.click(await screen.findByRole("button", { name: "Delete template" }));
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith("Couldn't delete the template", {
+        description: "the template has live instances: delete or unlink them first",
+      }),
+    );
+  });
+
+  it("shows Not found for another org's template, and retries other failures", async () => {
+    fakeAPI({ "/api/v1/template/get-template": new ApiError("template not found", 404), "/api/v1/instance/get-instances": { instances: [] } });
+    renderPage("/org/templates/t1");
+    expect(await screen.findByText("Template not found")).toBeInTheDocument();
+    vi.unstubAllGlobals();
+
+    const user = userEvent.setup();
+    let fail = true;
+    fakeAPI({
+      "/api/v1/template/get-template": () => (fail ? new Error("database down") : view(3)),
+      "/api/v1/instance/get-instances": { instances: [] },
+    });
+    renderPage("/org/templates/t2");
+    expect(await screen.findByText("database down")).toBeInTheDocument();
+    fail = false;
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findAllByRole("heading", { name: "twillingate" })).not.toHaveLength(0);
+  });
+
+  it("opens prefilled from Save as template, with its notes", async () => {
+    const draft = draftFromBody("shop-front", BODY);
+    renderPage("/org/templates/new", { draft, notes: ["Redirects aren't part of templates; they were left out."] });
+    expect(screen.getByLabelText("Template name")).toHaveValue("shop-front");
+    expect(screen.getByText("Redirects aren't part of templates; they were left out.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save template" })).toBeEnabled();
+  });
+});

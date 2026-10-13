@@ -29,8 +29,9 @@ import { ApiError, type InstanceView, type TemplateView } from "@/lib/templates"
 
 const TABS = ["editor", "revisions", "instances"] as const;
 
-// DraftState is what "Save as template" hands the new template's editor.
-export type DraftState = { draft: TemplateDraft; notes: string[] };
+// DraftState is what "Save as template" hands the new template's editor:
+// the draft, what was left out of it, and the app it was built from.
+export type DraftState = { draft: TemplateDraft; notes: string[]; appName: string };
 
 // TemplatePage is one template (/org/templates/:templateId) or a new one
 // (/org/templates/new, optionally prefilled by Save as template): its
@@ -52,11 +53,14 @@ export default function TemplatePage() {
   const [loadError, setLoadError] = useState<ApiError | Error | null>(null);
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
+  // tried: a save was refused in the browser, so the draft's problem shows
+  // (and follows the edits) beside Save.
+  const [tried, setTried] = useState(false);
   // conflict is the revision someone saved while this editor was open.
   const [conflict, setConflict] = useState<number | null>(null);
 
   const breadcrumbs = useMemo(
-    () => [{ label: "Templates", href: "/org/templates" }, { label: view?.name ?? (templateId ? "Template" : "New template") }],
+    () => [{ label: "Templates", href: "/org/templates" }, { label: view?.name ?? (templateId ? "Template" : "Add template") }],
     [view?.name, templateId],
   );
   useAppBreadcrumbs(breadcrumbs);
@@ -88,10 +92,11 @@ export default function TemplatePage() {
 
   const dirty = JSON.stringify(draft) !== baseline;
 
+  const problem = tried ? draftProblem(draft) : null;
+
   const save = async () => {
-    const problem = draftProblem(draft);
-    if (problem) {
-      toast.error(problem);
+    if (draftProblem(draft)) {
+      setTried(true);
       return;
     }
     setSaving(true);
@@ -169,7 +174,7 @@ export default function TemplatePage() {
               Reload
             </Button>
           </p>
-        ) : (
+        ) : view ? (
           <Input
             aria-label="Revision note"
             value={note}
@@ -177,7 +182,15 @@ export default function TemplatePage() {
             className="mr-auto max-w-md"
             onChange={(e) => setNote(e.target.value)}
           />
+        ) : (
+          // Revision 1 has nothing to note.
+          <span className="mr-auto" />
         )}
+        {problem ? (
+          <InlineError icon className="max-w-md">
+            {problem}
+          </InlineError>
+        ) : null}
         <Button onClick={() => void save()} disabled={saving || (!dirty && !!view) || conflict !== null}>
           {saving ? "Saving…" : view ? `Save as r${view.latest_revision + 1}` : "Save template"}
         </Button>
@@ -226,12 +239,20 @@ export default function TemplatePage() {
         ) : null}
       </header>
 
-      {prefill?.notes.length ? (
-        <ul className="list-disc space-y-1 rounded-md border bg-muted/30 py-3 pr-4 pl-8 text-sm text-muted-foreground">
-          {prefill.notes.map((n) => (
-            <li key={n}>{n}</li>
-          ))}
-        </ul>
+      {prefill ? (
+        <div className="space-y-2 rounded-md border bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
+          <p>
+            Built from <span className="font-medium text-foreground">{prefill.appName}</span>. Replace the parts that
+            differ per app — hosts, ports — with <code className="font-mono">{"${PARAM}"}</code> parameters before saving.
+          </p>
+          {prefill.notes.length ? (
+            <ul className="list-disc space-y-1 pl-4">
+              {prefill.notes.map((n) => (
+                <li key={n}>{n}</li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
       ) : null}
 
       {view ? (

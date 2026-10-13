@@ -687,7 +687,7 @@ function SettingsTab({
   const saveAsTemplate = async () => {
     setBusy(true);
     try {
-      const state: DraftState = templateFromApp(appId, await getApp(appId));
+      const state: DraftState = { ...templateFromApp(appId, await getApp(appId)), appName: appLabel(name, appId) };
       navigate("/org/templates/new", { state });
     } catch (e) {
       toast.error("Couldn't read the app", { description: e instanceof Error ? e.message : undefined });

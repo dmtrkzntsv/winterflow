@@ -17,6 +17,12 @@ import {
   type TemplateDraft,
 } from "@/lib/template-draft";
 import { compilePattern } from "@/lib/template-params";
+import { cn } from "@/lib/utils";
+
+// PARAM_GRID lays a parameter row (and the column heads) out on one line
+// where the section is wide enough.
+const PARAM_GRID =
+  "@2xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.4fr)_3rem_3.75rem_2rem] @2xl:gap-x-2";
 
 type Props = {
   draft: TemplateDraft;
@@ -43,7 +49,7 @@ export function TemplateEditor({ draft, onChange }: Props) {
           <Input
             id="template-name"
             value={draft.name}
-            placeholder="twillingate"
+            placeholder="my-stack"
             className="font-mono"
             onChange={(e) => set({ name: e.target.value })}
           />
@@ -67,7 +73,7 @@ export function TemplateEditor({ draft, onChange }: Props) {
           <Input
             id="template-app-name"
             value={draft.appName}
-            placeholder="${NAME}"
+            placeholder="my-app or ${NAME}"
             onChange={(e) => set({ appName: e.target.value })}
           />
           <Input
@@ -106,84 +112,101 @@ export function TemplateEditor({ draft, onChange }: Props) {
         {draft.parameters.length === 0 ? (
           <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">No parameters yet.</p>
         ) : (
-          <div className="divide-y rounded-md border">
-            {draft.parameters.map((p) => {
-              const label = p.name || "parameter";
-              const unchecked = p.pattern !== "" && compilePattern(p.pattern) === null;
-              return (
-                <div key={p.id} className="grid gap-2 p-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
-                  <Input
-                    aria-label="Parameter name"
-                    value={p.name}
-                    placeholder="NAME"
-                    className="font-mono"
-                    onChange={(e) => setParam(p.id, { name: e.target.value })}
-                  />
-                  <Input
-                    aria-label={`Default of ${label}`}
-                    value={p.secret ? "" : p.default}
-                    disabled={p.secret}
-                    placeholder={p.secret ? "Secrets have no default" : "Default (optional)"}
-                    className="font-mono"
-                    onChange={(e) => setParam(p.id, { default: e.target.value })}
-                  />
-                  <div className="flex items-center gap-4 text-sm">
-                    <label className="flex items-center gap-2">
-                      <Checkbox
-                        aria-label={`${label} is secret`}
-                        checked={p.secret}
-                        onCheckedChange={(c) => setParam(p.id, { secret: c === true, default: c === true ? "" : p.default })}
-                      />
-                      Secret
-                    </label>
-                    <label className="flex items-center gap-2">
-                      <Checkbox
-                        aria-label={`${label} is required`}
-                        checked={p.required}
-                        onCheckedChange={(c) => setParam(p.id, { required: c === true })}
-                      />
-                      Required
-                    </label>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="ml-auto size-8 text-muted-foreground hover:text-destructive"
-                      aria-label={`Remove ${label}`}
-                      onClick={() => set({ parameters: draft.parameters.filter((x) => x.id !== p.id) })}
-                    >
-                      <Trash2 className="size-4" />
-                    </Button>
-                  </div>
-                  <div className="grid gap-1">
+          // One line per parameter under column heads where the section is
+          // wide enough; narrower, each row wraps and names its checkboxes.
+          <div className="@container">
+            <div className="divide-y rounded-md border">
+              <div
+                role="group"
+                aria-label="Parameter columns"
+                className={cn(PARAM_GRID, "hidden px-3 py-2 text-xs font-medium text-muted-foreground @2xl:grid")}
+              >
+                <span>Name</span>
+                <span>Default</span>
+                <span>Pattern</span>
+                <span>Description</span>
+                <span className="text-center">Secret</span>
+                <span className="text-center">Required</span>
+              </div>
+              {draft.parameters.map((p) => {
+                const label = p.name || "parameter";
+                const unchecked = p.pattern !== "" && compilePattern(p.pattern) === null;
+                return (
+                  <div key={p.id} className={cn(PARAM_GRID, "grid grid-cols-2 items-center gap-2 p-3")}>
+                    <Input
+                      aria-label="Parameter name"
+                      value={p.name}
+                      placeholder="NAME"
+                      className="font-mono"
+                      onChange={(e) => setParam(p.id, { name: e.target.value })}
+                    />
+                    <Input
+                      aria-label={`Default of ${label}`}
+                      value={p.secret ? "" : p.default}
+                      disabled={p.secret}
+                      placeholder={p.secret ? "No default" : "Default"}
+                      className="font-mono"
+                      onChange={(e) => setParam(p.id, { default: e.target.value })}
+                    />
                     <Input
                       aria-label={`Pattern of ${label}`}
                       value={p.pattern}
-                      placeholder="Pattern, e.g. ^[a-z]{3,20}$ (optional)"
+                      placeholder="Pattern"
                       className="font-mono"
                       onChange={(e) => setParam(p.id, { pattern: e.target.value })}
                     />
+                    <Input
+                      aria-label={`Description of ${label}`}
+                      value={p.description}
+                      placeholder="Description"
+                      onChange={(e) => setParam(p.id, { description: e.target.value })}
+                    />
+                    <div className="col-span-2 flex items-center gap-4 text-sm @2xl:contents">
+                      <label className="flex items-center gap-2 @2xl:justify-center">
+                        <Checkbox
+                          aria-label={`${label} is secret`}
+                          className="rounded-[4px]"
+                          checked={p.secret}
+                          onCheckedChange={(c) =>
+                            setParam(p.id, { secret: c === true, default: c === true ? "" : p.default })
+                          }
+                        />
+                        <span className="@2xl:sr-only">Secret</span>
+                      </label>
+                      <label className="flex items-center gap-2 @2xl:justify-center">
+                        <Checkbox
+                          aria-label={`${label} is required`}
+                          className="rounded-[4px]"
+                          checked={p.required}
+                          onCheckedChange={(c) => setParam(p.id, { required: c === true })}
+                        />
+                        <span className="@2xl:sr-only">Required</span>
+                      </label>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="ml-auto size-8 text-muted-foreground hover:text-destructive @2xl:ml-0"
+                        aria-label={`Remove ${label}`}
+                        onClick={() => set({ parameters: draft.parameters.filter((x) => x.id !== p.id) })}
+                      >
+                        <Trash2 className="size-4" />
+                      </Button>
+                    </div>
                     {unchecked ? (
-                      <p className="text-xs text-muted-foreground">
+                      <p className="col-span-full text-xs text-muted-foreground">
                         The browser can't check this pattern; values are checked when the app is saved.
                       </p>
                     ) : null}
                   </div>
-                  <Input
-                    aria-label={`Description of ${label}`}
-                    value={p.description}
-                    placeholder="Description (optional)"
-                    className="sm:col-span-2"
-                    onChange={(e) => setParam(p.id, { description: e.target.value })}
-                  />
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
         )}
       </EditorSection>
 
       <EditorSection
-        title="Ingress"
+        title="Domains & Routing"
         description={
           <>
             Hostnames routed to a port the compose file publishes on the host. Host and port may use{" "}
@@ -192,12 +215,12 @@ export function TemplateEditor({ draft, onChange }: Props) {
         }
         action={
           <Button size="sm" variant="outline" onClick={() => set({ ingress: [...draft.ingress, ingressRow()] })}>
-            <Plus className="size-4" /> Add host
+            <Plus className="size-4" /> Add hostname
           </Button>
         }
       >
         {draft.ingress.length === 0 ? (
-          <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">No hosts.</p>
+          <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">No hostnames.</p>
         ) : (
           <div className="divide-y rounded-md border">
             {draft.ingress.map((r) => (

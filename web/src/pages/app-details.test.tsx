@@ -38,7 +38,11 @@ const notifications = { connected: true, subscribe: () => () => {}, waitFor: vi.
 // NewTemplate stands in for the template editor Save as template opens.
 function NewTemplate() {
   const state = useLocation().state as DraftState;
-  return <p>new template {state.draft.name} with {state.draft.parameters.length} parameters</p>;
+  return (
+    <p>
+      new template {state.draft.name} with {state.draft.parameters.length} parameters from {state.appName}
+    </p>
+  );
 }
 
 function renderPage(
@@ -501,7 +505,7 @@ describe("AppDetailsPage: Save as template", () => {
     }));
     renderPage("/app/a1?tab=settings", {}, { ctx: { getApp } });
     await user.click(await screen.findByRole("button", { name: "Save as template" }));
-    expect(await screen.findByText("new template shop with 1 parameters")).toBeInTheDocument();
+    expect(await screen.findByText("new template shop with 1 parameters from Shop")).toBeInTheDocument();
   });
 
   it("reports an app it can't read", async () => {

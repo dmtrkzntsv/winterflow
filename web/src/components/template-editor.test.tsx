@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -62,6 +62,28 @@ describe("TemplateEditor", () => {
     expect(screen.getByText("No parameters yet.")).toBeInTheDocument();
   });
 
+  it("heads the parameter columns and uses square checkboxes", () => {
+    start();
+    const head = screen.getByRole("group", { name: "Parameter columns" });
+    expect(within(head).getAllByText(/./).map((e) => e.textContent)).toEqual([
+      "Name",
+      "Default",
+      "Pattern",
+      "Description",
+      "Secret",
+      "Required",
+    ]);
+    expect(screen.getByRole("checkbox", { name: "NAME is secret" })).toHaveClass("rounded-[4px]");
+    expect(screen.getByRole("checkbox", { name: "NAME is required" })).toHaveClass("rounded-[4px]");
+  });
+
+  it("has placeholders that fit and say what goes there", () => {
+    start();
+    expect(screen.getByLabelText("Template name")).toHaveAttribute("placeholder", "my-stack");
+    expect(screen.getByLabelText("App name")).toHaveAttribute("placeholder", "my-app or ${NAME}");
+    expect(screen.getByLabelText("Pattern of NAME")).toHaveAttribute("placeholder", "Pattern");
+  });
+
   it("edits the app record and the files", async () => {
     const user = start();
     await user.clear(screen.getByLabelText("Template name"));
@@ -76,8 +98,9 @@ describe("TemplateEditor", () => {
 
   it("edits ingress rows", async () => {
     const user = start();
-    expect(screen.getByText("No hosts.")).toBeInTheDocument();
-    await user.click(screen.getAllByRole("button", { name: /Add host/ })[0]);
+    expect(screen.getByRole("heading", { name: "Domains & Routing" })).toBeInTheDocument();
+    expect(screen.getByText("No hostnames.")).toBeInTheDocument();
+    await user.click(screen.getAllByRole("button", { name: "Add hostname" })[0]);
     await user.click(screen.getByLabelText("Host"));
     await user.paste("${NAME}.example.com");
     await user.type(screen.getByLabelText("Port of ${NAME}.example.com"), "8080");

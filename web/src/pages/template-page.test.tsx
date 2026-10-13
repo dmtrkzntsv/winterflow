@@ -12,7 +12,8 @@ import { fakeAPI } from "@/test/fake-api";
 
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
-vi.mock("@/layouts/use-app-layout", () => ({ useAppBreadcrumbs: () => {} }));
+const crumbs = vi.hoisted(() => vi.fn());
+vi.mock("@/layouts/use-app-layout", () => ({ useAppBreadcrumbs: crumbs }));
 vi.mock("@/context/use-auth", () => ({ useAuth: () => ({ isAuthenticated: true }) }));
 vi.mock("@/context/use-servers", () => ({ useServers: () => ({ servers: [{ id: "s1", name: "alpha" }] }) }));
 vi.mock("@/components/code-editor", () => ({
@@ -103,10 +104,21 @@ describe("TemplatePage", () => {
     const user = userEvent.setup();
     const api = fakeAPI({});
     renderPage("/org/templates/new");
+    expect(crumbs).toHaveBeenLastCalledWith([{ label: "Templates", href: "/org/templates" }, { label: "Add template" }]);
+    // A new template saves as revision 1: there is nothing to note yet.
+    expect(screen.queryByLabelText("Revision note")).not.toBeInTheDocument();
     await user.type(screen.getByLabelText("Template name"), "Shop");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Save template" }));
-    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("Name: lowercase"));
+    expect(screen.getByRole("alert")).toHaveTextContent("Name: lowercase");
+    expect(toast.error).not.toHaveBeenCalled();
     expect(api.calls).toEqual([]);
+    // The message follows the draft: the next problem, then none.
+    await user.clear(screen.getByLabelText("Template name"));
+    await user.type(screen.getByLabelText("Template name"), "shop");
+    expect(screen.getByRole("alert")).toHaveTextContent("App name is required.");
+    await user.type(screen.getByLabelText("App name"), "Shop");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("adds a revision on top of the one it read, with a note", async () => {
@@ -274,9 +286,18 @@ describe("TemplatePage", () => {
 
   it("opens prefilled from Save as template, with its notes", async () => {
     const draft = draftFromBody("shop-front", BODY);
-    renderPage("/org/templates/new", { draft, notes: ["Redirects aren't part of templates; they were left out."] });
+    renderPage("/org/templates/new", {
+      draft,
+      notes: ["Redirects aren't part of templates; they were left out."],
+      appName: "Shop front",
+    });
     expect(screen.getByLabelText("Template name")).toHaveValue("shop-front");
-    expect(screen.getByText("Redirects aren't part of templates; they were left out.")).toBeInTheDocument();
+    const banner = screen.getByText((_, el) => el?.tagName === "P" && !!el.textContent?.startsWith("Built from Shop front."));
+    expect(banner).toHaveTextContent(
+      "Built from Shop front. Replace the parts that differ per app — hosts, ports — with ${PARAM} parameters before saving.",
+    );
+    const note = screen.getByText("Redirects aren't part of templates; they were left out.");
+    expect(banner.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByRole("button", { name: "Save template" })).toBeEnabled();
   });
 

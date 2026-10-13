@@ -35,6 +35,7 @@ func TestRoutes(t *testing.T) {
 		"vars.synced":      model.VarsSyncedPayload{},
 		"vars.sync_failed": model.VarsSyncFailedPayload{},
 		"vars.reloaded":    command.VarsReloadedPayload{},
+		"rollout":          model.RolloutView{},
 	}
 	if len(rt.EventPayloads) != len(want) {
 		t.Fatalf("EventPayloads = %+v, want %d entries", rt.EventPayloads, len(want))

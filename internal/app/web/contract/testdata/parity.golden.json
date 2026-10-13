@@ -243,5 +243,60 @@
       },
       "success": true
     }
+  },
+  {
+    "name": "upgrade all instances",
+    "status": 200,
+    "body": {
+      "data": {
+        "created_at": "<time>Z",
+        "created_by": "<id-6>",
+        "current_app_id": "",
+        "current_app_name": "",
+        "current_server_id": "",
+        "done": 0,
+        "error": "",
+        "finished_at": null,
+        "id": "<id-11>",
+        "kind": "template_upgrade",
+        "revision": 1,
+        "scope_key": "<id-8>",
+        "skipped": 0,
+        "state": "queued",
+        "stop_requested": false,
+        "total": 0
+      },
+      "message": "upgrade queued",
+      "success": true
+    }
+  },
+  {
+    "name": "list rollouts",
+    "status": 200,
+    "body": {
+      "data": {
+        "rollouts": [
+          {
+            "created_at": "<time>Z",
+            "created_by": "<id-6>",
+            "current_app_id": "",
+            "current_app_name": "",
+            "current_server_id": "",
+            "done": 0,
+            "error": "",
+            "finished_at": "<time>Z",
+            "id": "<id-11>",
+            "kind": "template_upgrade",
+            "revision": 1,
+            "scope_key": "<id-8>",
+            "skipped": 0,
+            "state": "done",
+            "stop_requested": false,
+            "total": 0
+          }
+        ]
+      },
+      "success": true
+    }
   }
 ]

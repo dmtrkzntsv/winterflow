@@ -33,6 +33,11 @@ type InstanceServers interface {
 	ServerInOrg(ctx context.Context, serverID, orgID string) (bool, error)
 }
 
+// RolloutQueue queues "Upgrade all" (*rollouts.UseCase).
+type RolloutQueue interface {
+	QueueUpgrade(ctx context.Context, userID, orgID, templateID string, revision int64) (model.RolloutView, error)
+}
+
 // Deps wires the handler; with zero Deps (route documentation) it is never
 // called.
 type Deps struct {
@@ -47,11 +52,13 @@ type Deps struct {
 	ServerDomainRepository  port.ServerDomainRepository
 	ServerStorageRepository port.ServerStorageRepository
 	StatusCache             *status.Cache
+	Rollouts                RolloutQueue
 }
 
 // Handler serves the template and instance routes.
 type Handler struct {
 	uc        *tuc.UseCase
+	rollouts  RolloutQueue
 	users     webutil.OrgResolver
 	servers   InstanceServers
 	log       *logger.Logger
@@ -73,7 +80,7 @@ func NewHandler(d *Deps) *Handler {
 	if d.StatusCache != nil { // a nil *status.Cache must not become a non-nil interface
 		deps.Status = d.StatusCache
 	}
-	return &Handler{uc: tuc.New(deps), users: d.Users, servers: d.Servers, log: d.Logger, waitBound: WaitBound}
+	return &Handler{uc: tuc.New(deps), rollouts: d.Rollouts, users: d.Users, servers: d.Servers, log: d.Logger, waitBound: WaitBound}
 }
 
 // callerOrg resolves the caller and their org, writing 401/400 itself.

@@ -14,6 +14,7 @@ import (
 	"winterflow/internal/app/web/handler/monitoring"
 	"winterflow/internal/app/web/handler/notification"
 	horg "winterflow/internal/app/web/handler/org"
+	hrollouts "winterflow/internal/app/web/handler/rollouts"
 	"winterflow/internal/app/web/handler/server"
 	hsharedvars "winterflow/internal/app/web/handler/sharedvars"
 	htemplates "winterflow/internal/app/web/handler/templates"
@@ -146,7 +147,9 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 		ServerDomainRepository:  d.ServerDomainRepository,
 		ServerStorageRepository: d.ServerStorageRepository,
 		StatusCache:             d.StatusCache,
+		Rollouts:                d.Rollouts,
 	})
+	rolloutsAPI := hrollouts.NewHandler(&hrollouts.Deps{Logger: d.Log, Users: d.UserService, Rollouts: d.Rollouts})
 
 	routes := []api.Route{{
 		Method: http.MethodGet, Path: "/_/health", Handler: health, Auth: api.Public,
@@ -164,6 +167,7 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 		orgAPI.Routes(g),
 		sharedVarsAPI.Routes(g),
 		templatesAPI.Routes(g),
+		rolloutsAPI.Routes(g),
 		authprvd.Routes(),
 	} {
 		routes = append(routes, table...)

@@ -75,6 +75,11 @@ func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerCon
 		newStorageSync(ctx, dispatcher, r.serverStorage, log),
 	}, vars, ms, latest, al.evaluator)
 
+	// The rollout queue: one worker per API process (standalone included);
+	// an idle one costs one indexed query a minute.
+	queue := newRollouts(r, dispatcher, statusCache, nm, log)
+	go queue.Run(ctx)
+
 	return &Deps{
 		Log:                      log,
 		Cfg:                      cfg,
@@ -87,6 +92,7 @@ func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerCon
 		SharedVariableRepository: r.sharedVar,
 		TemplateRepository:       r.template,
 		RolloutRepository:        r.rollout,
+		Rollouts:                 queue,
 		CommandDispatcher:        dispatcher,
 		NotificationManager:      nm,
 		StatusCache:              statusCache,

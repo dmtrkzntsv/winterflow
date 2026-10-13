@@ -5,6 +5,7 @@ import (
 	"winterflow/internal/domain/port"
 	"winterflow/internal/domain/service/alerting"
 	"winterflow/internal/domain/service/status"
+	"winterflow/internal/domain/usecase/rollouts"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
 	"winterflow/pkg/secretbox"
@@ -34,7 +35,11 @@ type Deps struct {
 	// TemplateRepository stores templates, their revisions and instances.
 	TemplateRepository port.TemplateRepository
 	// RolloutRepository stores the rollout queue.
-	RolloutRepository   port.RolloutRepository
+	RolloutRepository port.RolloutRepository
+	// Rollouts is the rollout queue whose worker WireCore started: every
+	// handler that queues a rollout must use this one value (its Wake
+	// reaches that worker).
+	Rollouts            *rollouts.UseCase
 	CommandDispatcher   port.CommandDispatcher
 	NotificationManager port.NotificationManager
 	StatusCache         *status.Cache

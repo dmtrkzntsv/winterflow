@@ -150,9 +150,9 @@ func (d *Dispatcher) newHandlers() map[command.Type]handlerFunc {
 			return command.ListAppsResponse{Apps: apps}, err
 		}),
 		command.TypeAppsStatus: handle(d, func(ctx context.Context, _ command.GetAppsStatusRequest) (command.GetAppsStatusResponse, error) {
-			apps, err := d.orch.GetAppsStatus(ctx)
-			rev := d.orch.VarsRevision()
-			return command.GetAppsStatusResponse{Apps: d.backups.Decorate(apps, time.Now()), VarsRevision: &rev}, err
+			resp, err := d.orch.StatusReport(ctx)
+			resp.Apps = d.backups.Decorate(resp.Apps, time.Now())
+			return resp, err
 		}),
 		command.TypeAppGet: handle(d, func(ctx context.Context, in command.GetAppRequest) (command.GetAppResponse, error) {
 			return d.orch.GetApp(ctx, in.AppID)

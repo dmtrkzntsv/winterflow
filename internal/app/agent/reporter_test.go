@@ -124,30 +124,39 @@ func TestStatusReporterStopsOnCancel(t *testing.T) {
 	}
 }
 
-// revisionSource embeds a pointer so the fake's mutex is never copied.
-type revisionSource struct{ *fakeStatusSource }
+// reportSource embeds a pointer so the fake's mutex is never copied; its
+// report carries revision 9.
+type reportSource struct{ *fakeStatusSource }
 
-func (revisionSource) VarsRevision() int64 { return 9 }
+func (s reportSource) StatusReport(ctx context.Context) (command.GetAppsStatusResponse, error) {
+	apps, err := s.GetAppsStatus(ctx)
+	rev := int64(9)
+	return command.GetAppsStatusResponse{Apps: apps, VarsRevision: &rev}, err
+}
 
 func TestStatusReporterAddsVarsRevision(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	got := make(chan sinkCall, 4)
-	go RunStatusReporter(ctx, revisionSource{&fakeStatusSource{}}, collectSink(got), time.Hour, nil, testLog())
+	go RunStatusReporter(ctx, reportSource{&fakeStatusSource{}}, collectSink(got), time.Hour, nil, testLog())
 	call := <-got
 	var body command.GetAppsStatusResponse
-	if err := json.Unmarshal(call.payload, &body); err != nil || body.VarsRevision == nil || *body.VarsRevision != 9 {
+	if err := json.Unmarshal(call.payload, &body); err != nil || body.VarsRevision == nil || *body.VarsRevision != 9 || len(body.Apps) != 1 {
 		t.Fatalf("report = %s", call.payload)
 	}
 	// Wrapped in the snapshot the metrics reporter shares, it still does.
+	snap := NewStatusSnapshot(reportSource{&fakeStatusSource{}})
 	wrapped := make(chan sinkCall, 4)
-	go RunStatusReporter(ctx, NewStatusSnapshot(revisionSource{&fakeStatusSource{}}), collectSink(wrapped), time.Hour, nil, testLog())
+	go RunStatusReporter(ctx, snap, collectSink(wrapped), time.Hour, nil, testLog())
 	if c := <-wrapped; !strings.Contains(string(c.payload), `"vars_revision":9`) {
 		t.Fatalf("wrapped report = %s", c.payload)
 	}
+	if apps, ok := snap.Latest(); !ok || len(apps) != 1 {
+		t.Fatalf("snapshot did not cache the report's apps: %v %v", apps, ok)
+	}
 	// Inside the backup-health decoration too (the production wiring).
 	decorated := make(chan sinkCall, 4)
-	go RunStatusReporter(ctx, NewStatusSnapshot(WithBackupHealth(revisionSource{&fakeStatusSource{}}, noBackups{})), collectSink(decorated), time.Hour, nil, testLog())
+	go RunStatusReporter(ctx, NewStatusSnapshot(WithBackupHealth(reportSource{&fakeStatusSource{}}, noBackups{})), collectSink(decorated), time.Hour, nil, testLog())
 	if c := <-decorated; !strings.Contains(string(c.payload), `"vars_revision":9`) {
 		t.Fatalf("decorated report = %s", c.payload)
 	}
@@ -156,6 +165,11 @@ func TestStatusReporterAddsVarsRevision(t *testing.T) {
 	go RunStatusReporter(ctx, &fakeStatusSource{}, collectSink(plain), time.Hour, nil, testLog())
 	if c := <-plain; strings.Contains(string(c.payload), "vars_revision") {
 		t.Fatalf("report = %s", c.payload)
+	}
+	// A failing report fails each wrapper.
+	failing := reportSource{&fakeStatusSource{fail: true}}
+	if _, err := NewStatusSnapshot(WithBackupHealth(failing, noBackups{})).GetAppsStatus(ctx); err == nil {
+		t.Fatal("a failing report succeeded through the wrappers")
 	}
 }
 

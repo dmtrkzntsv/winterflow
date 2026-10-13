@@ -360,17 +360,30 @@ func (r *Repository) rollbackWithoutDeploy(appID, hash string) (string, error) {
 // table. An exec failure fails the whole collection: the reporter skips the
 // tick rather than flooding "unknown" while Docker restarts.
 func (r *Repository) GetAppsStatus(ctx context.Context) ([]command.AppStatus, error) {
+	resp, err := r.StatusReport(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Apps, nil
+}
+
+// StatusReport is GetAppsStatus as an apps.status body: each app's stale
+// names come with the shared-variables revision they were computed against
+// (one consistent pair), so the API never reads a just-applied revision
+// beside the previous snapshot's stale set.
+func (r *Repository) StatusReport(ctx context.Context) (command.GetAppsStatusResponse, error) {
 	entries, err := os.ReadDir(r.cfg.GetAppsDataDir())
 	if err != nil {
 		if os.IsNotExist(err) {
-			return []command.AppStatus{}, nil
+			_, rev := r.staleSet()
+			return command.GetAppsStatusResponse{Apps: []command.AppStatus{}, VarsRevision: &rev}, nil
 		}
-		return nil, err
+		return command.GetAppsStatusResponse{}, err
 	}
 
 	byProject, err := r.dockerPSByProject(ctx)
 	if err != nil {
-		return nil, err
+		return command.GetAppsStatusResponse{}, err
 	}
 
 	out := make([]command.AppStatus, 0, len(entries))
@@ -386,7 +399,8 @@ func (r *Repository) GetAppsStatus(ctx context.Context) ([]command.AppStatus, er
 			Containers: cs,
 		})
 	}
-	return r.withStale(out), nil
+	apps, rev := r.withStale(out)
+	return command.GetAppsStatusResponse{Apps: apps, VarsRevision: &rev}, nil
 }
 
 // ListApps returns the apps present on disk (the agent's filesystem is the

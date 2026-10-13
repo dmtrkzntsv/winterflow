@@ -32,18 +32,26 @@ type StatusSnapshot struct {
 // NewStatusSnapshot wraps src.
 func NewStatusSnapshot(src StatusSource) *StatusSnapshot { return &StatusSnapshot{src: src} }
 
-func (s *StatusSnapshot) unwrap() StatusSource { return s.src }
-
 // GetAppsStatus queries the wrapped source and caches a successful answer.
 func (s *StatusSnapshot) GetAppsStatus(ctx context.Context) ([]command.AppStatus, error) {
-	apps, err := s.src.GetAppsStatus(ctx)
+	resp, err := s.StatusReport(ctx)
 	if err != nil {
 		return nil, err
 	}
+	return resp.Apps, nil
+}
+
+// StatusReport is the wrapped source's report; its apps are cached like
+// GetAppsStatus's.
+func (s *StatusSnapshot) StatusReport(ctx context.Context) (command.GetAppsStatusResponse, error) {
+	resp, err := collectReport(ctx, s.src)
+	if err != nil {
+		return command.GetAppsStatusResponse{}, err
+	}
 	s.mu.Lock()
-	s.apps, s.ok = apps, true
+	s.apps, s.ok = resp.Apps, true
 	s.mu.Unlock()
-	return apps, nil
+	return resp, nil
 }
 
 // Latest returns the last good answer; ok is false before the first one.

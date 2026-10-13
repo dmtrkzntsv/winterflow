@@ -97,6 +97,13 @@ func (r *Repository) scanRefs(dir string) map[string]bool {
 // sharedResolution resolves the current snapshot with this server's
 // built-ins, decrypting secrets with the agent key.
 func (r *Repository) sharedResolution() agentvars.Resolution {
+	res, _ := r.sharedResolutionRev()
+	return res
+}
+
+// sharedResolutionRev is sharedResolution plus the revision of the snapshot
+// it resolved (one read, so the two always match).
+func (r *Repository) sharedResolutionRev() (agentvars.Resolution, int64) {
 	snap := r.vars.Current()
 	dataDir, err := filepath.Abs(r.cfg.GetAgentDataDir())
 	if err != nil {
@@ -104,7 +111,7 @@ func (r *Repository) sharedResolution() agentvars.Resolution {
 	}
 	return agentvars.Resolve(snap, agentvars.ServerBuiltins(snap, dataDir, r.tz), func(ct string) (string, error) {
 		return crypto.DecryptWithPrivateKey(r.cfg.GetAgentKeyPath(), ct)
-	})
+	}), snap.Revision
 }
 
 // desiredShared is what appID's two shared files should hold under res:
@@ -240,15 +247,17 @@ func (r *Repository) setStale(appID string, names []string) {
 }
 
 // RecomputeStale rebuilds the stale set for every app from the current
-// snapshot. File reads only: no process is forked and reference scans are
-// cached by HEAD. Holds sharedMu throughout so it never interleaves with a
-// render.
+// snapshot and records that snapshot's revision with it, so a status
+// report pairs a stale set with the revision it was computed against —
+// never a just-applied revision with the previous stale set. File reads
+// only: no process is forked and reference scans are cached by HEAD. Holds
+// sharedMu throughout so it never interleaves with a render.
 func (r *Repository) RecomputeStale() {
 	r.sharedMu.Lock()
 	defer r.sharedMu.Unlock()
 	next := map[string][]string{}
+	res, rev := r.sharedResolutionRev()
 	if entries, err := os.ReadDir(r.cfg.GetAppsDataDir()); err == nil {
-		res := r.sharedResolution()
 		for _, e := range entries {
 			if !e.IsDir() {
 				continue
@@ -260,6 +269,7 @@ func (r *Repository) RecomputeStale() {
 	}
 	r.staleMu.Lock()
 	r.stale = next
+	r.staleRev = rev
 	r.staleReady = true
 	r.staleMu.Unlock()
 }
@@ -267,6 +277,15 @@ func (r *Repository) RecomputeStale() {
 // StaleApps returns a copy of the stale set (app id -> stale names),
 // computing it on first use after a start.
 func (r *Repository) StaleApps() map[string][]string {
+	stale, _ := r.staleSet()
+	return stale
+}
+
+// staleSet returns a copy of the stale set and the snapshot revision it
+// was computed against, read together under staleMu (computed on first use
+// after a start). A render since only clears entries, which keeps the pair
+// conservative: never fresher than the revision says.
+func (r *Repository) staleSet() (map[string][]string, int64) {
 	r.staleMu.Lock()
 	ready := r.staleReady
 	r.staleMu.Unlock()
@@ -279,16 +298,17 @@ func (r *Repository) StaleApps() map[string][]string {
 	for k, v := range r.stale {
 		out[k] = append([]string(nil), v...)
 	}
-	return out
+	return out, r.staleRev
 }
 
-// withStale attaches each app's stale names to a status report.
-func (r *Repository) withStale(apps []command.AppStatus) []command.AppStatus {
-	stale := r.StaleApps()
+// withStale attaches each app's stale names to a status report and returns
+// the snapshot revision those names were computed against.
+func (r *Repository) withStale(apps []command.AppStatus) ([]command.AppStatus, int64) {
+	stale, rev := r.staleSet()
 	for i := range apps {
 		apps[i].StaleVars = stale[apps[i].AppID]
 	}
-	return apps
+	return apps, rev
 }
 
 // SyncVars stores a vars.sync snapshot (an older revision is ignored),
@@ -312,4 +332,6 @@ func (r *Repository) SyncVars(_ context.Context, in command.SyncVarsRequest) (co
 }
 
 // VarsRevision is the stored snapshot's revision (0 before the first sync).
+// A status report carries StatusReport's revision instead: the one its
+// stale sets were computed against.
 func (r *Repository) VarsRevision() int64 { return r.vars.Current().Revision }

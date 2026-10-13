@@ -319,8 +319,10 @@ func TestAwaitRunning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("active: %v", err)
 	}
+	// The agent names a container wf-<appID>-<service>-<n>; a failure names
+	// the compose service.
 	ctr := func(name string, code command.ContainerStatusCode, exit int32) command.ContainerStatus {
-		return command.ContainerStatus{Name: name, StatusCode: code, ExitCode: exit}
+		return command.ContainerStatus{Name: "wf-a1-" + name + "-1", StatusCode: code, ExitCode: exit}
 	}
 	withContainers := func(agg command.ContainerStatusCode, cs ...command.ContainerStatus) []command.AppStatus {
 		return []command.AppStatus{{AppID: "a1", StatusCode: agg, Containers: cs}}
@@ -424,5 +426,22 @@ func TestTimingDefaults(t *testing.T) {
 	want.HealthSettle = time.Second
 	if got := New(Deps{Timing: Timing{HealthSettle: time.Second}}).t; got != want {
 		t.Fatalf("partial Timing = %+v", got)
+	}
+}
+
+func TestServiceName(t *testing.T) {
+	for name, tc := range map[string]struct{ app, container, want string }{
+		"plain":            {"a1", "wf-a1-web-1", "web"},
+		"hyphenated":       {"a1", "wf-a1-web-api-12", "web-api"},
+		"uuid app":         {"01a1-fba1", "wf-01a1-fba1-web-1", "web"},
+		"other app":        {"a1", "wf-b2-web-1", "wf-b2-web-1"},
+		"no number":        {"a1", "wf-a1-web", "wf-a1-web"},
+		"not a number":     {"a1", "wf-a1-web-x", "wf-a1-web-x"},
+		"no service":       {"a1", "wf-a1--1", "wf-a1--1"},
+		"not a wf project": {"a1", "web", "web"},
+	} {
+		if got := serviceName(tc.app, tc.container); got != tc.want {
+			t.Errorf("%s: serviceName(%q, %q) = %q, want %q", name, tc.app, tc.container, got, tc.want)
+		}
 	}
 }

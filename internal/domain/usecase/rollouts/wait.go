@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"winterflow/internal/domain/command"
@@ -107,9 +109,9 @@ func judgeApp(a command.AppStatus) judgment {
 	for _, c := range a.Containers {
 		switch c.StatusCode {
 		case command.ContainerStatusRestarting:
-			return judgment{crashed: true, reason: fmt.Sprintf("container %s is restarting", c.Name)}
+			return judgment{crashed: true, reason: fmt.Sprintf("container %s is restarting", serviceName(a.AppID, c.Name))}
 		case command.ContainerStatusProblematic:
-			return judgment{crashed: true, reason: fmt.Sprintf("container %s exited with code %d", c.Name, c.ExitCode)}
+			return judgment{crashed: true, reason: fmt.Sprintf("container %s exited with code %d", serviceName(a.AppID, c.Name), c.ExitCode)}
 		}
 	}
 	if a.StatusCode == command.ContainerStatusActive {
@@ -129,6 +131,25 @@ func judgeApp(a command.AppStatus) judgment {
 		}
 	}
 	return judgment{healthy: active}
+}
+
+// serviceName is the compose service of a container named
+// wf-<appID>-<service>-<n> (the compose project is wf-<appID>), so a failure
+// names what the user wrote in the compose file, not Docker's container name.
+// A name of another shape is returned as it is.
+func serviceName(appID, name string) string {
+	rest, ok := strings.CutPrefix(name, "wf-"+appID+"-")
+	if !ok {
+		return name
+	}
+	i := strings.LastIndexByte(rest, '-')
+	if i <= 0 || i == len(rest)-1 {
+		return name
+	}
+	if _, err := strconv.ParseUint(rest[i+1:], 10, 32); err != nil {
+		return name
+	}
+	return rest[:i]
 }
 
 // findApp is appID's status in a report.

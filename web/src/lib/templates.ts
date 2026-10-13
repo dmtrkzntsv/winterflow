@@ -154,6 +154,9 @@ export type TemplatesApi = {
   updateInstance(body: UpdateInstanceBody): Promise<void>;
   upgradeInstance(body: UpgradeInstanceBody): Promise<void>;
   unlinkInstance(serverId: string, key: string): Promise<void>;
+  // deleteInstance deletes the instance's app (what a failed deploy left of
+  // it, for a pending one) and retires its key.
+  deleteInstance(serverId: string, key: string): Promise<void>;
   // publicKey is the server's ECIES public key, read when a secret is about
   // to be encrypted (never cached: a re-keyed server must not get
   // ciphertexts for its old key).
@@ -209,6 +212,7 @@ export function createTemplatesApi(waitFor: WaitFor, fetchImpl?: typeof fetch): 
     updateInstance: (body) => command("/api/v1/instance/update-instance", body),
     upgradeInstance: (body) => command("/api/v1/instance/upgrade-instance", body),
     unlinkInstance: (serverId, key) => command("/api/v1/instance/unlink-instance", { server_id: serverId, key }),
+    deleteInstance: (serverId, key) => command("/api/v1/instance/delete-instance", { server_id: serverId, key }),
     publicKey: (serverId) =>
       call<{ public_key: string }>(`/api/v1/server/get-public-key${qs({ server_id: serverId })}`).then((d) => d.public_key),
   };

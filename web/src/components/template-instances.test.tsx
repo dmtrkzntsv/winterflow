@@ -76,6 +76,7 @@ function renderInstances(instances: InstanceView[]) {
 beforeEach(() => {
   onChanged.mockReset();
   toast.success.mockReset();
+  toast.error.mockReset();
 });
 afterEach(() => vi.unstubAllGlobals());
 
@@ -146,6 +147,33 @@ describe("TemplateInstances", () => {
     expect(api.posted("/api/v1/instance/upgrade-instance")).toEqual([]);
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("shows a pending instance's failure and deletes it after confirming", async () => {
+    const user = userEvent.setup();
+    const api = fakeAPI({ "/api/v1/instance/delete-instance": { instance: inst({ state: "deleted" }), request_id: "", warnings: [] } });
+    renderInstances([inst({}), inst({ key: "k2", app_id: "a2", state: "pending", last_error: "pull access denied" })]);
+    const rows = screen.getAllByRole("listitem");
+    expect(within(rows[0]).queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
+    expect(within(rows[1]).getByText("pull access denied")).toBeInTheDocument();
+    await user.click(within(rows[1]).getByRole("button", { name: "Delete" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(api.calls).toEqual([]);
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(onChanged).toHaveBeenCalled());
+    expect(api.posted("/api/v1/instance/delete-instance")).toEqual([{ server_id: "s1", key: "k2" }]);
+    expect(toast.success).toHaveBeenCalledWith("Deleted bakomi");
+  });
+
+  it("reports a failed delete of a pending instance", async () => {
+    const user = userEvent.setup();
+    fakeAPI({ "/api/v1/instance/delete-instance": new Error("server offline") });
+    renderInstances([inst({ state: "pending" })]);
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+    await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Couldn't delete bakomi", { description: "server offline" }));
+    expect(onChanged).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Delete" })).toBeEnabled();
   });
 
   it("says when no app uses the template", () => {

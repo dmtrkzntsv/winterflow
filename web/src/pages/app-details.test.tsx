@@ -314,6 +314,13 @@ describe("AppDetailsPage of a template instance", () => {
     expect(refresh).toHaveBeenCalled();
   });
 
+  it("offers no Unlink while the instance is pending (the API refuses it)", async () => {
+    instanceAPI({ ...INSTANCE, state: "pending", last_error: "pull access denied" });
+    renderPage("/app/a1?tab=settings", {}, managed);
+    expect(await screen.findByText(/Unlink becomes available once/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Unlink from template" })).not.toBeInTheDocument();
+  });
+
   it("reports a failed unlink", async () => {
     const user = userEvent.setup();
     instanceAPI(INSTANCE, { "/api/v1/instance/unlink-instance": new Error("instance not found") });

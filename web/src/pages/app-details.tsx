@@ -747,27 +747,34 @@ function SettingsTab({
               Managed by template {instance.template_name}: its files and values change through the template.
             </p>
           </div>
-          <div>
-            <AlertDialog>
-              <AlertDialogTrigger asChild>
-                <Button variant="outline" disabled={busy}>
-                  Unlink from template
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Unlink from {instance.template_name}?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    The app becomes an ordinary app you can edit freely; template upgrades no longer reach it.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction onClick={() => void unlink()}>Unlink</AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          </div>
+          {instance.state !== "created" ? (
+            // The API unlinks only a created instance.
+            <p className="text-sm text-muted-foreground">
+              Unlink becomes available once its first deploy from the template succeeds.
+            </p>
+          ) : (
+            <div>
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="outline" disabled={busy}>
+                    Unlink from template
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Unlink from {instance.template_name}?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      The app becomes an ordinary app you can edit freely; template upgrades no longer reach it.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction onClick={() => void unlink()}>Unlink</AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </div>
+          )}
         </div>
       ) : managed ? null : (
         <div className="grid gap-4 p-5 md:grid-cols-[14rem_minmax(0,1fr)] md:gap-8">

@@ -11,13 +11,14 @@ import {
   stateFromDetail,
   validateEditorState,
 } from "@/lib/app-editor-io";
+import { isManagedByTemplate } from "@/lib/templates";
 import type { AppEditorState } from "@/types/app-config";
 
 // AppEditorPanel is the Editor tab on the app details page: it loads the
 // app's current revision, lets the user edit compose/files/variables, and
 // saves in place (app.save with the app id → new revision + redeploy).
 export function AppEditorPanel({ appId }: { appId: string }) {
-  const { saveApp, getApp, getPublicKey } = useApps();
+  const { saveApp, getApp, getPublicKey, refresh } = useApps();
   const [state, setState] = useState<AppEditorState>(emptyEditorState);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -59,8 +60,19 @@ export function AppEditorPanel({ appId }: { appId: string }) {
       // Reload so masked secrets and server-side normalization are reflected.
       await load();
     } catch (e) {
+      const message = e instanceof Error ? e.message : "";
+      if (isManagedByTemplate(message)) {
+        // A template instance took the app over (the list was stale): its
+        // Configuration is the instance's parameters, shown once the list
+        // is read again.
+        toast.error("This app is managed by a template", {
+          description: "Change it through its parameters, or unlink it in Settings first.",
+        });
+        void refresh();
+        return;
+      }
       toast.error(draft ? "Failed to save draft" : "Failed to update app", {
-        description: e instanceof Error ? e.message : undefined,
+        description: message || undefined,
       });
     } finally {
       setSaving(false);

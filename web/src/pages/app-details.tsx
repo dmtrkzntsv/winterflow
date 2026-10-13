@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   ArrowUpCircle,
   ExternalLink,
@@ -13,6 +13,7 @@ import {
 import { toast } from "sonner";
 
 import { useAppBreadcrumbs } from "@/layouts/use-app-layout";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Spinner } from "@/components/ui/spinner";
@@ -32,6 +33,9 @@ import { AppIcon } from "@/components/app-icon";
 import { LogsView, type LogLine } from "@/components/logs-view";
 import { AppBackups } from "@/components/app-backups";
 import { AppEditorPanel } from "@/components/app-editor-panel";
+import { InlineError } from "@/components/inline-error";
+import { InstancePanel } from "@/components/instance-panel";
+import { UpgradeInstanceDialog } from "@/components/upgrade-instance-dialog";
 import { AppStatusIndicator } from "@/components/app-status-badge";
 import { DeleteAppDialog } from "@/components/delete-app-dialog";
 import { AppAlertsBadge } from "@/components/alerts/active-alerts";
@@ -47,10 +51,13 @@ import {
   type ControlAction,
   type DeleteAppResult,
 } from "@/context/apps-context-base";
+import { useAppInstance } from "@/hooks/use-app-instance";
+import { useTemplatesApi } from "@/hooks/use-templates-api";
 import { readApiError } from "@/lib/api";
 import { needsAttention } from "@/lib/backups";
 import { deleteOutcome, type DeleteChoice } from "@/lib/delete-app";
 import { appLabel } from "@/lib/kpi";
+import { isManagedByTemplate, type InstanceView, type TemplateView } from "@/lib/templates";
 import { cn, relativeTime } from "@/lib/utils";
 import { useServerPath } from "@/context/use-server-path";
 import { NotFound } from "@/components/not-found";
@@ -67,7 +74,8 @@ export default function AppDetailsPage() {
   const navigate = useNavigate();
   const toServer = useServerPath();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { apps, statusByApp, backupsByApp, loading, control, remove, rename } = useApps();
+  const { apps, statusByApp, backupsByApp, loading, control, remove, rename, refresh } = useApps();
+  const templatesApi = useTemplatesApi();
 
   const tabParam = searchParams.get("tab") ?? "logs";
   const tab = (TABS as readonly string[]).includes(tabParam)
@@ -85,6 +93,21 @@ export default function AppDetailsPage() {
   }, [tab]);
 
   const app = useMemo(() => apps.find((a) => a.id === appId), [apps, appId]);
+  // managed is the template instance behind the app, when there is one.
+  const managed = useAppInstance(app);
+  const inst = managed.instance;
+  const latest = managed.current?.latest_revision ?? 0;
+  const behind = inst !== null && latest > inst.revision;
+  const [upgradeTarget, setUpgradeTarget] = useState<TemplateView | null>(null);
+  const reloadManaged = () => void Promise.all([managed.reload(), refresh()]);
+  const openUpgrade = async () => {
+    if (!inst) return;
+    try {
+      setUpgradeTarget(await templatesApi.getTemplate(inst.template_id));
+    } catch (e) {
+      toast.error("Couldn't load the template", { description: e instanceof Error ? e.message : undefined });
+    }
+  };
 
   const breadcrumbs = useMemo(
     () => [
@@ -176,6 +199,20 @@ export default function AppDetailsPage() {
           <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
             <AppStatusIndicator status={status} />
             <AppAlertsBadge serverId={app.serverId} appId={app.id} />
+            {inst ? (
+              <span className="inline-flex items-center gap-2">
+                <Link
+                  to={`/org/templates/${inst.template_id}`}
+                  className="rounded-md border px-1.5 py-0.5 text-xs font-medium text-foreground hover:bg-muted"
+                >
+                  {inst.template_name} · r{inst.revision}
+                </Link>
+                {behind ? (
+                  <span className="text-xs text-amber-700 dark:text-amber-400">r{latest} available</span>
+                ) : null}
+                {inst.state === "pending" ? <Badge variant="outline">Not created yet</Badge> : null}
+              </span>
+            ) : null}
             {app.version ? <span>Revision {app.version}</span> : null}
             {routes.slice(0, 2).map((d) => (
               <a
@@ -192,6 +229,11 @@ export default function AppDetailsPage() {
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
+          {behind ? (
+            <Button size="sm" onClick={() => void openUpgrade()}>
+              Upgrade to r{latest}
+            </Button>
+          ) : null}
           {canStop
             ? controlButton("stop", "Stop", Square)
             : controlButton("start", "Start", Play)}
@@ -204,6 +246,25 @@ export default function AppDetailsPage() {
           )}
         </div>
       </header>
+
+      {inst?.state === "pending" && inst.last_error ? (
+        <InlineError icon>
+          The app's last deploy from its template failed: {inst.last_error}. Fix its values under Configuration and
+          save again.
+        </InlineError>
+      ) : null}
+
+      {upgradeTarget && inst ? (
+        <UpgradeInstanceDialog
+          instance={inst}
+          target={upgradeTarget}
+          open
+          onOpenChange={(o) => {
+            if (!o) setUpgradeTarget(null);
+          }}
+          onDone={reloadManaged}
+        />
+      ) : null}
 
       <StaleVarsBadge key={app.id} appId={app.id} />
 
@@ -248,18 +309,40 @@ export default function AppDetailsPage() {
           <AppMetricsTab serverId={app.serverId} appId={app.id} appName={appLabel(app.name, app.id)} />
         </TabsContent>
         <TabsContent value="editor" className="mt-0">
-          <AppEditorPanel appId={app.id} />
+          {app.templateId && managed.error ? (
+            <div className="flex min-h-60 flex-col items-center justify-center gap-3">
+              <InlineError>{managed.error}</InlineError>
+              <Button variant="outline" size="sm" onClick={() => void managed.reload()}>
+                Retry
+              </Button>
+            </div>
+          ) : app.templateId && managed.loading ? (
+            <div className="flex min-h-60 items-center justify-center">
+              <Spinner />
+            </div>
+          ) : inst && managed.current ? (
+            <InstancePanel
+              key={`${inst.revision}-${inst.updated_at}`}
+              instance={inst}
+              current={managed.current}
+              onSaved={reloadManaged}
+            />
+          ) : (
+            <AppEditorPanel appId={app.id} />
+          )}
         </TabsContent>
         <TabsContent value="backups" className="mt-6">
           <AppBackups appId={app.id} />
         </TabsContent>
         <TabsContent value="history" className="mt-6">
-          <HistoryTab appId={app.id} />
+          <HistoryTab appId={app.id} managedBy={inst?.template_name} />
         </TabsContent>
         <TabsContent value="settings" className="mt-6">
           <SettingsTab
             appId={app.id}
             name={app.name}
+            instance={inst}
+            onUnlinked={reloadManaged}
             onRename={rename}
             onDelete={async (opts) => {
               const result = await remove(app.id, opts);
@@ -330,8 +413,8 @@ function LogsTab({ appId }: { appId: string }) {
   );
 }
 
-function HistoryTab({ appId }: { appId: string }) {
-  const { getRevisions, rollback, control } = useApps();
+function HistoryTab({ appId, managedBy }: { appId: string; managedBy?: string }) {
+  const { getRevisions, rollback, control, refresh } = useApps();
   const [data, setData] = useState<AppRevisions | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -363,6 +446,8 @@ function HistoryTab({ appId }: { appId: string }) {
       toast.error("Roll back failed", {
         description: e instanceof Error ? e.message : undefined,
       });
+      // A template took the app over meanwhile: show it as managed.
+      if (e instanceof Error && isManagedByTemplate(e.message)) void refresh();
     } finally {
       setBusy(false);
     }
@@ -417,7 +502,10 @@ function HistoryTab({ appId }: { appId: string }) {
           {data.revisions.length === 1
             ? "1 revision"
             : `${data.revisions.length} revisions`}
-          , newest first. Rolling back adds a new revision; nothing is lost.
+          , newest first.{" "}
+          {managedBy
+            ? `Managed by template ${managedBy}: it changes through its parameters or an upgrade; unlink it to roll back.`
+            : "Rolling back adds a new revision; nothing is lost."}
         </p>
         <Button
           size="icon"
@@ -486,7 +574,7 @@ function HistoryTab({ appId }: { appId: string }) {
                   <Button size="sm" onClick={() => void doDeploy()} disabled={busy}>
                     Deploy draft
                   </Button>
-                ) : !isCurrent ? (
+                ) : !isCurrent && !managedBy ? (
                   <AlertDialog>
                     <AlertDialogTrigger asChild>
                       <Button size="sm" variant="ghost" disabled={busy}>
@@ -526,15 +614,20 @@ function HistoryTab({ appId }: { appId: string }) {
 function SettingsTab({
   appId,
   name,
+  instance,
+  onUnlinked,
   onRename,
   onDelete,
 }: {
   appId: string;
   name: string;
+  instance: InstanceView | null;
+  onUnlinked: () => void;
   onRename: (appId: string, name: string) => Promise<void>;
   onDelete: (opts: { deleteVolumes: boolean; deleteBackups: boolean }) => Promise<DeleteAppResult>;
 }) {
   const { backupsByApp } = useApps();
+  const templatesApi = useTemplatesApi();
   const [newName, setNewName] = useState(name);
   const [busy, setBusy] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -548,6 +641,20 @@ function SettingsTab({
       toast.error("Rename failed", {
         description: e instanceof Error ? e.message : undefined,
       });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const unlink = async () => {
+    if (!instance) return;
+    setBusy(true);
+    try {
+      await templatesApi.unlinkInstance(instance.server_id, instance.key);
+      toast.success("Unlinked from the template");
+      onUnlinked();
+    } catch (e) {
+      toast.error("Unlink failed", { description: e instanceof Error ? e.message : undefined });
     } finally {
       setBusy(false);
     }
@@ -605,6 +712,38 @@ function SettingsTab({
           </Button>
         </form>
       </div>
+
+      {instance ? (
+        <div className="grid gap-4 p-5 md:grid-cols-[14rem_minmax(0,1fr)] md:gap-8">
+          <div className="space-y-1">
+            <h2 className="text-sm font-semibold">Template</h2>
+            <p className="text-sm text-muted-foreground">
+              Managed by template {instance.template_name}: its files and values change through the template.
+            </p>
+          </div>
+          <div>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="outline" disabled={busy}>
+                  Unlink from template
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Unlink from {instance.template_name}?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    The app becomes an ordinary app you can edit freely; template upgrades no longer reach it.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction onClick={() => void unlink()}>Unlink</AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </div>
+        </div>
+      ) : null}
 
       <div className="grid gap-4 p-5 md:grid-cols-[14rem_minmax(0,1fr)] md:gap-8">
         <div className="space-y-1">

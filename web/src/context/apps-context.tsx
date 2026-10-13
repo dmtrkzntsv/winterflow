@@ -41,6 +41,7 @@ type AppResponse = {
   color: string;
   created_at: string;
   domains?: AppDomainResponse[] | null;
+  template_id?: string;
 };
 
 type GetAppsResponse = {
@@ -74,6 +75,7 @@ const toApp = (a: AppResponse): App => ({
   color: a.color,
   createdAt: a.created_at,
   domains: a.domains ?? undefined,
+  templateId: a.template_id || undefined,
 });
 
 export function AppsProvider({ children }: { children: ReactNode }) {

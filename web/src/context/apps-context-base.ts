@@ -18,6 +18,9 @@ export type App = {
   color: string;
   createdAt: string;
   domains?: AppDomain[];
+  // templateId is set while a template instance manages the app (its
+  // Configuration is then the instance's parameters).
+  templateId?: string;
 };
 
 export type AppRevision = {

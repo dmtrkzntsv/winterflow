@@ -118,3 +118,22 @@ describe("AppsProvider backups", () => {
     expect(DELETE_APP_TIMEOUT_MS).toBeGreaterThanOrEqual(9 * 60_000);
   });
 });
+
+describe("AppsProvider apps", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("knows which apps a template manages", async () => {
+    const app = { server_id: "srv-1", name: "shop", version: "1", icon: "", color: "", created_at: "" };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) =>
+        String(input).includes("/api/v1/app/get-apps?")
+          ? json(200, { data: { apps: [{ ...app, id: "a1", template_id: "t1" }, { ...app, id: "a2", template_id: "" }] } })
+          : json(202, { data: {} }),
+      ),
+    );
+    const { result } = renderHook(() => useApps(), { wrapper });
+    await waitUntil(() => expect(result.current.apps).toHaveLength(2));
+    expect(result.current.apps.map((a) => a.templateId)).toEqual(["t1", undefined]);
+  });
+});

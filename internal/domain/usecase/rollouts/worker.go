@@ -48,6 +48,9 @@ const (
 type stepResult struct {
 	outcome outcome
 	err     string
+	// forget puts a done step's skipID on the skip list: the app counts as
+	// done but must not be picked again.
+	forget bool
 }
 
 func done() stepResult             { return stepResult{outcome: stepDone} }
@@ -153,7 +156,11 @@ func (uc *UseCase) drive(parent context.Context, id string) (waiting bool) {
 	}()
 	for ctx.Err() == nil {
 		r, err := uc.d.Repo.GetRollout(ctx, id)
-		if err != nil || r.LeaseOwner != uc.owner || !r.State.Active() {
+		if err != nil {
+			uc.warn(ctx, "rollouts: read the claimed rollout", id, err)
+			return false
+		}
+		if r.LeaseOwner != uc.owner || !r.State.Active() {
 			return false
 		}
 		more, wait := uc.step(ctx, r)
@@ -223,7 +230,7 @@ func (uc *UseCase) step(ctx context.Context, r model.Rollout) (more, wait bool) 
 		return false, false
 	case err != nil:
 		// A database error: the lease expires and a pass retries.
-		uc.d.Log.Warn("rollouts: pick the next app", "rollout_id", r.ID, "error", err)
+		uc.warn(ctx, "rollouts: pick the next app", r.ID, err)
 		return false, false
 	}
 	if p.appID == "" {
@@ -243,6 +250,7 @@ func (uc *UseCase) step(ctx context.Context, r model.Rollout) (more, wait bool) 
 	}
 	total := r.Done + r.Skipped + p.remaining
 	if ok, err := uc.d.Repo.StartStep(ctx, r.ID, uc.owner, p.appID, p.serverID, total); err != nil || !ok {
+		uc.warn(ctx, "rollouts: start the step", r.ID, err)
 		return false, false
 	}
 	uc.changed(ctx, r.ID)
@@ -257,9 +265,14 @@ func (uc *UseCase) step(ctx context.Context, r model.Rollout) (more, wait bool) 
 	case stepSkipped:
 		ok, err = uc.d.Repo.CountStep(ctx, r.ID, uc.owner, 0, 1, append(slices.Clone(r.SkipIDs), p.skipID))
 	default:
-		ok, err = uc.d.Repo.CountStep(ctx, r.ID, uc.owner, 1, 0, r.SkipIDs)
+		skipIDs := r.SkipIDs
+		if res.forget {
+			skipIDs = append(slices.Clone(r.SkipIDs), p.skipID)
+		}
+		ok, err = uc.d.Repo.CountStep(ctx, r.ID, uc.owner, 1, 0, skipIDs)
 	}
 	if err != nil || !ok {
+		uc.warn(ctx, "rollouts: count the step", r.ID, err)
 		return false, false
 	}
 	uc.changed(ctx, r.ID)
@@ -297,11 +310,22 @@ func (uc *UseCase) ended(ctx context.Context, id string) {
 func (uc *UseCase) changed(ctx context.Context, id string) model.Rollout {
 	r, err := uc.d.Repo.GetRollout(ctx, id)
 	if err != nil {
-		uc.d.Log.Warn("rollouts: read for an event", "rollout_id", id, "error", err)
+		uc.warn(ctx, "rollouts: read for an event", id, err)
 		return model.Rollout{}
 	}
 	uc.publish(ctx, r.OrgID, uc.view(ctx, r))
 	return r
+}
+
+// warn logs a worker database error. Nothing is logged without an error
+// (a lost race: the lease or the rollout moved on), for a rollout that is
+// gone (deleted with its template), or once ctx ended (the lease was lost
+// or the process stops: the error is that, not the database).
+func (uc *UseCase) warn(ctx context.Context, msg, id string, err error) {
+	if err == nil || ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, model.ErrRolloutNotFound) {
+		return
+	}
+	uc.d.Log.Warn(msg, "rollout_id", id, "error", err)
 }
 
 // sleep waits d unless ctx ends first; it reports whether ctx is still

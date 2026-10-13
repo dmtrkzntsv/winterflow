@@ -121,9 +121,28 @@ func (k reloader) next(_ context.Context, r model.Rollout) (pick, error) {
 
 // run sends the single-app vars.reload and waits for its outcome (the
 // agent answers when the reload ended) and for the app to run. An app the
-// agent found stopped is skipped. One still stale for the scope at the
-// same snapshot afterwards fails the step instead of being picked again.
+// agent found stopped is skipped, and so is one deleted while its reload
+// was queued or in flight (the step failed and the app is gone from the
+// catalog). One still stale for the scope at the same snapshot afterwards
+// fails the step instead of being picked again.
 func (k reloader) run(ctx context.Context, r model.Rollout, p pick) stepResult {
+	res := k.reload(ctx, r, p)
+	if res.outcome == stepFailed && ctx.Err() == nil && k.deleted(ctx, p.appID) {
+		return skipped()
+	}
+	return res
+}
+
+// deleted reports whether appID is gone from the API's app catalog.
+func (k reloader) deleted(ctx context.Context, appID string) bool {
+	if k.uc.d.Apps == nil {
+		return false
+	}
+	_, err := k.uc.d.Apps.GetApp(ctx, appID)
+	return errors.Is(err, model.ErrAppNotFound)
+}
+
+func (k reloader) reload(ctx context.Context, r model.Rollout, p pick) stepResult {
 	results := make(chan port.CommandResult, 1)
 	if _, err := k.uc.d.Dispatcher.Dispatch(ctx, port.DispatchInput{
 		AgentID: p.serverID, UserID: r.CreatedBy, Type: command.TypeVarsReload,

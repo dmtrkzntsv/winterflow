@@ -1,16 +1,21 @@
 package rollouts
 
 import (
+	"context"
 	"errors"
 	"slices"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
+	"winterflow/internal/domain/port"
 	"winterflow/internal/domain/template"
+	appuc "winterflow/internal/domain/usecase/app"
 	"winterflow/internal/domain/usecase/templates"
 	"winterflow/internal/infra/db/dbtest"
+	apprepo "winterflow/internal/infra/db/repository/app"
 )
 
 const shopCompose = "services:\n  app:\n    image: example/shop:${VERSION}\n"
@@ -179,5 +184,54 @@ func TestUpgradeFailsWhenTheAppDoesNotRunAfterwards(t *testing.T) {
 	// The save itself went through: the instance is on r2.
 	if got := revisions(t, e); got["acme"] != 2 {
 		t.Fatalf("revisions = %v", got)
+	}
+}
+
+// markFails fails MarkSaved once on is set: the agent confirmed the save
+// but recording it did not happen.
+type markFails struct {
+	port.TemplateRepository
+	on atomic.Bool
+}
+
+func (m *markFails) MarkSaved(ctx context.Context, id string, revision int64, params map[string]string, secretNames []string) error {
+	if m.on.Load() {
+		return errors.New("database is locked")
+	}
+	return m.TemplateRepository.MarkSaved(ctx, id, revision, params, secretNames)
+}
+
+// A step that went through but left the instance below the target (its
+// save was not recorded) counts as done and is not picked again.
+func TestUpgradeDoesNotRepickAnInstanceItCouldNotRecord(t *testing.T) {
+	e := newEnv(t)
+	a, _ := e.withAgent(t)
+	apps, err := apprepo.New(e.d.Tx, e.d.Driver, dbtest.Log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mf := &markFails{TemplateRepository: e.tpl}
+	tu := templates.New(templates.Deps{Repo: mf, Apps: appuc.NewUseCase(&appuc.Deps{CommandDispatcher: a, AppRepository: apps, Log: dbtest.Log}), Log: dbtest.Log})
+	e.deps.Instances = tu
+	e.uc = e.newUseCase()
+	ctx := dbtest.Ctx(t)
+	tpl, apps2 := e.shop(t, tu, "acme")
+	revise(t, tu, tpl, "^[a-z]+$")
+	mf.on.Store(true)
+	v, err := e.uc.QueueUpgrade(ctx, "u1", org1, tpl.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.uc.pass(ctx)
+	r := e.get(t, v.ID)
+	if r.State != model.RolloutDone || r.Done != 1 || r.Skipped != 0 || len(r.SkipIDs) != 1 {
+		t.Fatalf("rollout = %+v", r)
+	}
+	if got := revisions(t, e); got["acme"] != 1 {
+		t.Fatalf("revisions = %v", got)
+	}
+	save := "app.save " + apps2["acme"]
+	if got := a.commands(); !slices.Equal(got, []string{save, save}) {
+		t.Fatalf("commands = %v: the instance was saved again", got)
 	}
 }

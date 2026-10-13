@@ -1,8 +1,10 @@
 package rollouts
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"slices"
 	"strings"
 	"sync"
@@ -15,6 +17,7 @@ import (
 	"winterflow/internal/domain/port"
 	"winterflow/internal/domain/service/status"
 	"winterflow/internal/infra/db/dbtest"
+	"winterflow/pkg/logger"
 )
 
 // fakeKind steps through todo in order: run answers results[app] (done
@@ -387,5 +390,27 @@ func TestAwaitResultBounds(t *testing.T) {
 	ch <- port.CommandResult{}
 	if _, err := e.uc.awaitResult(dbtest.Ctx(t), ch); err == nil || err.Error() != "the agent reported a failure" {
 		t.Fatalf("failure without a message: %v", err)
+	}
+}
+
+// The worker logs a dropped database error, but not a lost race (no
+// error), a rollout that is gone, or an error after its context ended.
+func TestWarnLogsOnlyRealDatabaseErrors(t *testing.T) {
+	var buf bytes.Buffer
+	uc := New(Deps{Log: &logger.Logger{Logger: slog.New(slog.NewJSONHandler(&buf, nil))}})
+	live := context.Background()
+	ended, cancel := context.WithCancel(live)
+	cancel()
+	uc.warn(live, "rollouts: quiet", "r1", nil)
+	uc.warn(live, "rollouts: quiet", "r1", context.Canceled)
+	uc.warn(live, "rollouts: quiet", "r1", model.ErrRolloutNotFound)
+	uc.warn(ended, "rollouts: quiet", "r1", errors.New("sql: database is closed"))
+	if buf.Len() != 0 {
+		t.Fatalf("logged: %s", buf.String())
+	}
+	uc.warn(live, "rollouts: start the step", "r1", errors.New("database is locked"))
+	if out := buf.String(); !strings.Contains(out, `"msg":"rollouts: start the step"`) || !strings.Contains(out, `"rollout_id":"r1"`) ||
+		!strings.Contains(out, "database is locked") {
+		t.Fatalf("logged: %s", out)
 	}
 }

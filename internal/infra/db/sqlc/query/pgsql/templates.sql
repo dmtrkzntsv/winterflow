@@ -42,6 +42,10 @@ WHERE templates.id = $1 AND templates.org_id = $2
     SELECT 1 FROM template_instances AS i
     WHERE i.template_id = templates.id AND i.state IN ('pending', 'created'));
 
+-- name: DeleteTemplateRollouts :exec
+-- A deleted template's upgrade rollouts (scope key: the template id).
+DELETE FROM rollouts WHERE kind = 'template_upgrade' AND scope_key = $1;
+
 -- name: InsertTemplateRevision :exec
 INSERT INTO template_revisions (template_id, revision, body, note, created_at, created_by)
 VALUES ($1, $2, $3, $4, $5, $6);

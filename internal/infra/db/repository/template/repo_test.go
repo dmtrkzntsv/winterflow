@@ -8,6 +8,7 @@ import (
 	"winterflow/internal/domain/model"
 	"winterflow/internal/infra/db"
 	"winterflow/internal/infra/db/dbtest"
+	rolloutrepo "winterflow/internal/infra/db/repository/rollout"
 )
 
 var (
@@ -346,5 +347,45 @@ func TestInstanceLinksForApp(t *testing.T) {
 	}
 	if _, err := r.GetInstanceByID(ctx, dbtest.ID(998)); !errors.Is(err, model.ErrInstanceNotFound) {
 		t.Fatalf("an unknown id: %v", err)
+	}
+}
+
+// Deleting a template deletes its upgrade rollouts (scope key: the template
+// id), not another template's nor the org's reloads; a refused delete
+// keeps them.
+func TestDeleteTemplateDeletesItsRollouts(t *testing.T) {
+	r, d := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	rollouts, err := rolloutrepo.New(d.Tx, d.Driver, dbtest.Log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustCreate(t, r, org1, tpl1, "shop")
+	mustCreate(t, r, org1, tpl2, "blog")
+	for i, ro := range []model.Rollout{
+		{Kind: model.RolloutTemplateUpgrade, ScopeKey: tpl1},
+		{Kind: model.RolloutTemplateUpgrade, ScopeKey: tpl2},
+		{Kind: model.RolloutVarsReload, ScopeKey: org1},
+	} {
+		ro.ID, ro.OrgID, ro.Scope = dbtest.ID(300+i), org1, []byte(`{}`)
+		if ok, err := rollouts.InsertRollout(ctx, ro); err != nil || !ok {
+			t.Fatalf("insert %d: %v %v", i, ok, err)
+		}
+	}
+	count := func() string {
+		return dbtest.QueryString(t, d, `SELECT COUNT(*) FROM rollouts`)
+	}
+	live, _, _ := r.ClaimInstance(ctx, instance(1, "live"))
+	if err := r.DeleteTemplate(ctx, org1, tpl1); !errors.Is(err, model.ErrTemplateInUse) || count() != "3" {
+		t.Fatalf("a refused delete: %v, %s rollouts left", err, count())
+	}
+	if err := r.SetState(ctx, live.ID, model.InstanceUnlinked); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.DeleteTemplate(ctx, org1, tpl1); err != nil {
+		t.Fatal(err)
+	}
+	if n := dbtest.QueryString(t, d, `SELECT COUNT(*) FROM rollouts WHERE scope_key = ?`, tpl1); n != "0" || count() != "2" {
+		t.Fatalf("rollouts of the deleted template: %s, all: %s", n, count())
 	}
 }

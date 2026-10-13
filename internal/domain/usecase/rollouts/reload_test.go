@@ -22,7 +22,7 @@ func stale(appID string, names ...string) command.AppStatus {
 }
 
 // reloadEnv is an env whose agent has apps on srv1 at shared-variables
-// revision 3, reported once.
+// revision 3, reported once; the API's catalog knows them.
 func reloadEnv(t *testing.T, apps ...command.AppStatus) (*env, *fakeAgent) {
 	t.Helper()
 	e := newEnv(t)
@@ -31,6 +31,7 @@ func reloadEnv(t *testing.T, apps ...command.AppStatus) (*env, *fakeAgent) {
 	a.varsRev[srv1] = 3
 	a.mu.Unlock()
 	for _, st := range apps {
+		dbtest.SeedApp(t, e.d, st.AppID, srv1, st.AppID)
 		a.set(srv1, st)
 	}
 	a.report(srv1)
@@ -357,6 +358,27 @@ func TestReloadSkipsAStoppedAppAndStopsAtAFailure(t *testing.T) {
 	}
 	if got := a.commands(); !slices.Equal(got, []string{"vars.reload a1", "vars.reload a2"}) {
 		t.Fatalf("commands = %v", got)
+	}
+}
+
+// An app deleted while its reload was queued or in flight is skipped, not
+// a failure; a failure of an app the catalog still has stays one.
+func TestReloadSkipsAnAppDeletedMeanwhile(t *testing.T) {
+	e, a := reloadEnv(t, stale("a1", "SMTP_PASS"), stale("a2", "SMTP_PASS"), stale("a3", "SMTP_PASS"))
+	ctx := dbtest.Ctx(t)
+	dbtest.Exec(t, e.d, `DELETE FROM apps WHERE app_id = ?`, "a1")
+	a.mu.Lock()
+	a.fail["a1"] = "the app was deleted"
+	a.fail["a3"] = "reload failed"
+	a.mu.Unlock()
+	if err := e.uc.QueueReload(ctx, "u1", org1, smtpOnSrv1()); err != nil {
+		t.Fatal(err)
+	}
+	e.uc.pass(ctx)
+	r := e.activeOrLast(t, org1)
+	if r.State != model.RolloutFailed || r.Skipped != 1 || r.Done != 1 || !slices.Equal(r.SkipIDs, []string{"a1"}) ||
+		r.CurrentAppID != "a3" || r.Error != "reload failed" {
+		t.Fatalf("rollout = %+v", r)
 	}
 }
 

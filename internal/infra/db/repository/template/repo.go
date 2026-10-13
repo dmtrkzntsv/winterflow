@@ -52,6 +52,7 @@ type querier interface {
 	ListTemplates(ctx context.Context, db backend.DBTX, orgID string) ([]summaryRow, error)
 	ListTemplateNames(ctx context.Context, db backend.DBTX, orgID string) ([]nameRow, error)
 	DeleteTemplate(ctx context.Context, db backend.DBTX, p deleteParams) (int64, error)
+	DeleteTemplateRollouts(ctx context.Context, db backend.DBTX, templateID string) error
 	InsertTemplateRevision(ctx context.Context, db backend.DBTX, p insertRevision) error
 	GetTemplateRevision(ctx context.Context, db backend.DBTX, p getRevision) (revisionRow, error)
 	ListTemplateRevisions(ctx context.Context, db backend.DBTX, templateID string) ([]revisionInfo, error)
@@ -228,12 +229,16 @@ func (r *Repo) ListRevisions(ctx context.Context, templateID string) ([]model.Te
 }
 
 // DeleteTemplate deletes the template unless an instance is live: one
-// guarded statement, then a read to tell "in use" from "unknown".
+// guarded statement, then a read to tell "in use" from "unknown". Its
+// upgrade rollouts go in the same transaction.
 func (r *Repo) DeleteTemplate(ctx context.Context, orgID, templateID string) error {
 	return r.tx.WithTx(ctx, func(ctx context.Context) error {
 		n, err := r.q.DeleteTemplate(ctx, r.tx.Querier(ctx), deleteParams{ID: templateID, OrgID: orgID})
-		if err != nil || n > 0 {
+		if err != nil {
 			return err
+		}
+		if n > 0 {
+			return r.q.DeleteTemplateRollouts(ctx, r.tx.Querier(ctx), templateID)
 		}
 		_, err = r.q.GetTemplate(ctx, r.tx.Querier(ctx), getParams{ID: templateID, OrgID: orgID})
 		if errors.Is(err, sql.ErrNoRows) {

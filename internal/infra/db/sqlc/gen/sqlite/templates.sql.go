@@ -106,6 +106,16 @@ func (q *Queries) DeleteTemplate(ctx context.Context, arg DeleteTemplateParams) 
 	return result.RowsAffected()
 }
 
+const deleteTemplateRollouts = `-- name: DeleteTemplateRollouts :exec
+DELETE FROM rollouts WHERE kind = 'template_upgrade' AND scope_key = ?
+`
+
+// A deleted template's upgrade rollouts (scope key: the template id).
+func (q *Queries) DeleteTemplateRollouts(ctx context.Context, scopeKey string) error {
+	_, err := q.db.ExecContext(ctx, deleteTemplateRollouts, scopeKey)
+	return err
+}
+
 const getLiveTemplateInstance = `-- name: GetLiveTemplateInstance :one
 SELECT id, org_id, instance_key, app_id, server_id, template_id, revision, params, secret_names, request_hash, state, last_error, created_at, updated_at FROM template_instances WHERE org_id = ? AND instance_key = ? AND state <> 'unlinked'
 `

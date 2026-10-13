@@ -28,7 +28,8 @@ type TemplateRepository interface {
 	GetRevision(ctx context.Context, templateID string, revision int64) (model.TemplateRevision, error)
 	// ListRevisions returns the revisions newest first, without bodies.
 	ListRevisions(ctx context.Context, templateID string) ([]model.TemplateRevision, error)
-	// DeleteTemplate removes the template and its revisions:
+	// DeleteTemplate removes the template, its revisions and its upgrade
+	// rollouts:
 	// model.ErrTemplateInUse while an instance is pending or created,
 	// model.ErrTemplateNotFound when unknown.
 	DeleteTemplate(ctx context.Context, orgID, templateID string) error

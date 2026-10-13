@@ -49,6 +49,8 @@ type Querier interface {
 	DeleteSharedVariable(ctx context.Context, id string) error
 	// Refused (0 rows) while an instance is pending or created.
 	DeleteTemplate(ctx context.Context, arg DeleteTemplateParams) (int64, error)
+	// A deleted template's upgrade rollouts (scope key: the template id).
+	DeleteTemplateRollouts(ctx context.Context, scopeKey string) error
 	DeleteToken(ctx context.Context, arg DeleteTokenParams) (int64, error)
 	DeleteUser(ctx context.Context, userID string) error
 	EmailTaken(ctx context.Context, email string) (bool, error)

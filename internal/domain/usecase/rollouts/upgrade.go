@@ -79,7 +79,9 @@ func (k upgrader) next(ctx context.Context, r model.Rollout) (pick, error) {
 // run re-renders the instance at the target revision with its stored
 // values (the upgrade-instance path) and waits for the save and for the
 // app to run. An instance the revision needs new values for, or one gone
-// meanwhile, is skipped.
+// meanwhile, is skipped. A step that went through but left the instance
+// below the target (recording the save failed) puts it on the skip list
+// too, so it is not picked again.
 func (k upgrader) run(ctx context.Context, r model.Rollout, p pick) stepResult {
 	s, err := upgradeScope(r)
 	if err != nil {
@@ -93,8 +95,6 @@ func (k upgrader) run(ctx context.Context, r model.Rollout, p pick) stepResult {
 		return skipped()
 	case err != nil:
 		return failed(err.Error())
-	case out.Done == nil:
-		return done() // nothing to dispatch
 	}
 	if _, err := k.uc.awaitResult(ctx, out.Done); err != nil {
 		return failed(err.Error())
@@ -102,5 +102,9 @@ func (k upgrader) run(ctx context.Context, r model.Rollout, p pick) stepResult {
 	if _, err := k.uc.awaitRunning(ctx, p.serverID, p.appID, k.uc.now()); err != nil {
 		return failed(err.Error())
 	}
-	return done()
+	res := done()
+	if inst, err := k.uc.d.Templates.GetInstanceByID(ctx, p.inst.ID); err != nil || inst.Revision < s.Revision {
+		res.forget = true
+	}
+	return res
 }

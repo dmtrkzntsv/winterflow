@@ -56,6 +56,10 @@ func (pgsqlQuerier) DeleteTemplate(ctx context.Context, db backend.DBTX, p delet
 	return pgsqlgen.New(db).DeleteTemplate(ctx, pgsqlgen.DeleteTemplateParams(p))
 }
 
+func (pgsqlQuerier) DeleteTemplateRollouts(ctx context.Context, db backend.DBTX, templateID string) error {
+	return pgsqlgen.New(db).DeleteTemplateRollouts(ctx, templateID)
+}
+
 func (pgsqlQuerier) InsertTemplateRevision(ctx context.Context, db backend.DBTX, p insertRevision) error {
 	return pgsqlgen.New(db).InsertTemplateRevision(ctx, pgsqlgen.InsertTemplateRevisionParams(p))
 }

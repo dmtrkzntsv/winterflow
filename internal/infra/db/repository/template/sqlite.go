@@ -39,6 +39,10 @@ func (sqliteQuerier) DeleteTemplate(ctx context.Context, db backend.DBTX, p dele
 	return sqlitegen.New(db).DeleteTemplate(ctx, p)
 }
 
+func (sqliteQuerier) DeleteTemplateRollouts(ctx context.Context, db backend.DBTX, templateID string) error {
+	return sqlitegen.New(db).DeleteTemplateRollouts(ctx, templateID)
+}
+
 func (sqliteQuerier) InsertTemplateRevision(ctx context.Context, db backend.DBTX, p insertRevision) error {
 	return sqlitegen.New(db).InsertTemplateRevision(ctx, p)
 }

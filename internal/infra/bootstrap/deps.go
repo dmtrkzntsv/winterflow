@@ -36,9 +36,10 @@ type Deps struct {
 	TemplateRepository port.TemplateRepository
 	// RolloutRepository stores the rollout queue.
 	RolloutRepository port.RolloutRepository
-	// Rollouts is the rollout queue whose worker WireCore started: every
-	// handler that queues a rollout must use this one value (its Wake
-	// reaches that worker).
+	// Rollouts is the rollout queue WireCore builds; its worker is started
+	// by StartRollouts once commands can flow (after the in-process bridge
+	// or the response subscriber). Every handler that queues a rollout must
+	// use this one value (its Wake reaches that worker).
 	Rollouts            *rollouts.UseCase
 	CommandDispatcher   port.CommandDispatcher
 	NotificationManager port.NotificationManager

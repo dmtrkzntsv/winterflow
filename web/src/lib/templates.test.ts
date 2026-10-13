@@ -5,6 +5,7 @@ vi.mock("@/lib/ecies", () => ({
   encryptSecret: vi.fn(async (value: string, key: string) => `ct(${key}):${value}`),
 }));
 
+import { WAIT_TIMEOUT } from "@/context/notifications-context-base";
 import { fakeAPI } from "@/test/fake-api";
 import {
   ApiError,
@@ -79,6 +80,68 @@ describe("createTemplatesApi", () => {
     await expect(t.upgradeInstance({ server_id: "s1", key: "k1", revision: 2 })).rejects.toThrow(
       "The agent reported a failure",
     );
+  });
+
+  describe("when the SSE wait times out, reads the instance instead", () => {
+    // accepted answers the command with a 202 and get-instance with inst.
+    function accepted(inst: unknown) {
+      const calls: string[] = [];
+      const fetchImpl = vi.fn(async (url: string) => {
+        calls.push(url);
+        if (url.includes("get-instance")) {
+          return inst instanceof Error
+            ? new Response(JSON.stringify({ message: inst.message }), { status: 500 })
+            : new Response(JSON.stringify({ data: inst }));
+        }
+        return new Response(JSON.stringify({ data: { request_id: "r1" } }), { status: 202 });
+      }) as unknown as typeof fetch;
+      const timeout = vi.fn(async () => {
+        throw new Error(WAIT_TIMEOUT);
+      });
+      return { t: createTemplatesApi(timeout, fetchImpl), calls };
+    }
+    const later = () => new Date(Date.now() + 60_000).toISOString();
+    const earlier = "2026-01-01T00:00:00Z";
+
+    it("resolves when the instance was created after the command was sent", async () => {
+      const { t, calls } = accepted({ state: "created", last_error: "", updated_at: later() });
+      await t.updateInstance({ server_id: "s1", key: "k1" });
+      expect(calls.at(-1)).toContain("/api/v1/instance/get-instance?server_id=s1&key=k1");
+    });
+
+    it("resolves a delete when the instance was deleted after it was sent", async () => {
+      const { t } = accepted({ state: "deleted", last_error: "", updated_at: later() });
+      await t.deleteInstance("s1", "k1");
+      const stale = accepted({ state: "created", last_error: "", updated_at: later() });
+      await expect(stale.t.deleteInstance("s1", "k1")).rejects.toThrow(WAIT_TIMEOUT);
+    });
+
+    it("throws the error the command recorded", async () => {
+      const { t } = accepted({ state: "pending", last_error: "pull access denied", updated_at: later() });
+      await expect(t.createInstance({ server_id: "s1", key: "k1", template_id: "t1" })).rejects.toThrow(
+        "pull access denied",
+      );
+    });
+
+    it("rethrows the timeout when nothing changed since, or the read fails", async () => {
+      for (const inst of [
+        { state: "created", last_error: "", updated_at: earlier },
+        { state: "pending", last_error: "an earlier attempt's error", updated_at: earlier },
+        new Error("database down"),
+      ]) {
+        const { t } = accepted(inst);
+        await expect(t.upgradeInstance({ server_id: "s1", key: "k1", revision: 2 })).rejects.toThrow(WAIT_TIMEOUT);
+      }
+    });
+
+    it("passes any other wait failure through without a read", async () => {
+      const fetchImpl = vi.fn(async () =>
+        new Response(JSON.stringify({ data: { request_id: "r1" } }), { status: 202 }),
+      ) as unknown as typeof fetch;
+      const t = createTemplatesApi(vi.fn(async () => Promise.reject(new Error("stream closed"))), fetchImpl);
+      await expect(t.updateInstance({ server_id: "s1", key: "k1" })).rejects.toThrow("stream closed");
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("returns at once when nothing ran, and refuses a 202 without a request id", async () => {

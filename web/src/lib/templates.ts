@@ -5,6 +5,7 @@
 // ECIES ciphertexts for the instance's server (lib/ecies); no route ever
 // returns one.
 import { apiBase } from "@/config";
+import { WAIT_TIMEOUT } from "@/context/notifications-context-base";
 import { readApiError } from "@/lib/api";
 import type { Keep } from "@/lib/backups";
 import { encryptSecret } from "@/lib/ecies";
@@ -177,15 +178,44 @@ export function createTemplatesApi(waitFor: WaitFor, fetchImpl?: typeof fetch): 
   });
   // command posts an instance call without wait: a 202 names the request
   // whose result arrives over SSE; a 200 had nothing to run (a replayed
-  // create of a created instance).
-  async function command(path: string, payload: unknown): Promise<void> {
+  // create of a created instance). The SSE replay buffer covers only
+  // seconds, so a stream that dropped during a long deploy loses the
+  // result: when the wait times out, the instance itself says how the
+  // command ended (done: the state its success leaves).
+  async function command(
+    path: string,
+    payload: { server_id: string; key: string },
+    done: InstanceState = "created",
+  ): Promise<void> {
+    const sentAt = Date.now();
     const res = await doFetch(`${apiBase}${path}`, { credentials: "include", ...post(payload) });
     if (!res.ok) throw await refusal(res);
     if (res.status !== 202) return;
     const ref = ((await res.json()) as { data?: { request_id?: string } }).data?.request_id;
     if (!ref) throw new Error("No request id");
-    const result = await waitFor(ref, INSTANCE_WAIT_MS);
+    let result: Awaited<ReturnType<WaitFor>>;
+    try {
+      result = await waitFor(ref, INSTANCE_WAIT_MS);
+    } catch (e) {
+      if (!(e instanceof Error) || e.message !== WAIT_TIMEOUT) throw e;
+      return settled(payload, sentAt, done, e);
+    }
     if (result.status) throw new Error(result.error || "The agent reported a failure");
+  }
+  // settled reads an instance whose command's result never arrived: an
+  // error or the expected state recorded since sentAt ends the command,
+  // anything else (still running, an older error, a failed read) is the
+  // timeout. The comparison is between the browser's and the API's clocks.
+  async function settled(
+    { server_id, key }: { server_id: string; key: string },
+    sentAt: number,
+    done: InstanceState,
+    timeout: Error,
+  ): Promise<void> {
+    const inst = await getInstance(server_id, key).catch(() => null);
+    if (!inst || !(Date.parse(inst.updated_at) > sentAt)) throw timeout;
+    if (inst.last_error) throw new Error(inst.last_error);
+    if (inst.state !== done) throw timeout;
   }
   const qs = (params: Record<string, string | undefined>) => {
     const q = new URLSearchParams();
@@ -193,6 +223,8 @@ export function createTemplatesApi(waitFor: WaitFor, fetchImpl?: typeof fetch): 
     const s = q.toString();
     return s ? `?${s}` : "";
   };
+  const getInstance = (serverId: string, key: string) =>
+    call<InstanceView>(`/api/v1/instance/get-instance${qs({ server_id: serverId, key })}`);
   return {
     listTemplates: () =>
       call<{ templates: TemplateSummary[] | null }>("/api/v1/template/get-templates").then((d) => d.templates ?? []),
@@ -206,13 +238,16 @@ export function createTemplatesApi(waitFor: WaitFor, fetchImpl?: typeof fetch): 
       call<{ instances: InstanceView[] | null }>(
         `/api/v1/instance/get-instances${qs({ server_id: serverId, template_id: templateId })}`,
       ).then((d) => d.instances ?? []),
-    getInstance: (serverId, key) =>
-      call<InstanceView>(`/api/v1/instance/get-instance${qs({ server_id: serverId, key })}`),
+    getInstance,
     createInstance: (body) => command("/api/v1/instance/create-instance", body),
     updateInstance: (body) => command("/api/v1/instance/update-instance", body),
     upgradeInstance: (body) => command("/api/v1/instance/upgrade-instance", body),
-    unlinkInstance: (serverId, key) => command("/api/v1/instance/unlink-instance", { server_id: serverId, key }),
-    deleteInstance: (serverId, key) => command("/api/v1/instance/delete-instance", { server_id: serverId, key }),
+    // An unlinked instance no longer answers to its key: a lost unlink
+    // result stays the timeout.
+    unlinkInstance: (serverId, key) =>
+      command("/api/v1/instance/unlink-instance", { server_id: serverId, key }, "unlinked"),
+    deleteInstance: (serverId, key) =>
+      command("/api/v1/instance/delete-instance", { server_id: serverId, key }, "deleted"),
     publicKey: (serverId) =>
       call<{ public_key: string }>(`/api/v1/server/get-public-key${qs({ server_id: serverId })}`).then((d) => d.public_key),
   };

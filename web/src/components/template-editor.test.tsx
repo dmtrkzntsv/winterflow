@@ -48,6 +48,8 @@ function start(files: Record<string, string> = { "compose.yaml": COMPOSE }) {
 describe("TemplateEditor", () => {
   it("edits parameters: a secret loses its default, a pattern JS can't read is flagged", async () => {
     const user = start();
+    await user.type(screen.getByLabelText("Default of NAME"), "2");
+    expect(latest().parameters[0].default).toBe("shop2");
     await user.click(screen.getByRole("checkbox", { name: "NAME is required" }));
     await user.click(screen.getByLabelText("Pattern of NAME"));
     await user.paste("[[:alpha:]]+");

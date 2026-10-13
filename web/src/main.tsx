@@ -29,6 +29,7 @@ import OrgAlertsPage from "@/pages/org-alerts"
 import OrgVariablesPage from "@/pages/org-variables";
 import OrgTemplatesPage from "@/pages/org-templates"
 import TemplatePage from "@/pages/template-page"
+import CreateFromTemplatePage from "@/pages/create-from-template"
 import LoginPage from "@/pages/login"
 import RegisterPage from "@/pages/register"
 import { followSystemTheme } from "@/lib/theme"
@@ -66,6 +67,7 @@ const router = createBrowserRouter([
             children: [
               { index: true, element: <HomePage /> },
               { path: "create-app", element: <CreateAppPage /> },
+              { path: "create-app/template", element: <CreateFromTemplatePage /> },
               { path: "app/:appId", element: <AppDetailsPage /> },
               { path: "monitoring", element: <MonitoringPage /> },
               { path: "settings", element: <SettingsPage /> },

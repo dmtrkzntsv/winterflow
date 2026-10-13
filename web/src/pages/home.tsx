@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react"
 import { useNavigate } from "react-router-dom"
-import { Plus } from "lucide-react"
+import { LayoutTemplate, Plus } from "lucide-react"
 
 import { useAppBreadcrumbs } from "@/layouts/use-app-layout"
 import { Button } from "@/components/ui/button"
@@ -28,9 +28,12 @@ export default function HomePage() {
 
   return (
     <div className="space-y-4">
-      {/* The apps page: title and New App share one row. */}
+      {/* The apps page: title, New App and From template share one row. */}
       <div className="flex items-center justify-between gap-3">
-        <h1 className="text-2xl font-semibold tracking-tight">Apps</h1>
+        <h1 className="mr-auto text-2xl font-semibold tracking-tight">Apps</h1>
+        <Button size="sm" variant="outline" onClick={() => navigate(toServer("/create-app/template"))}>
+          <LayoutTemplate className="size-4" /> From template
+        </Button>
         <Button size="sm" onClick={() => navigate(toServer("/create-app"))}>
           <Plus className="size-4" /> New App
         </Button>

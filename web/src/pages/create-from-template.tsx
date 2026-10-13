@@ -1,0 +1,348 @@
+import { useEffect, useMemo, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { toast } from "sonner";
+
+import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Spinner } from "@/components/ui/spinner";
+import { EditorSection } from "@/components/editor-section";
+import { HostHints, type HostCheck } from "@/components/host-hints";
+import { InlineError } from "@/components/inline-error";
+import { NativeSelect } from "@/components/native-select";
+import { ParameterFields } from "@/components/parameter-fields";
+import { useApps } from "@/context/use-apps";
+import { useBackups } from "@/context/use-backups";
+import { useServerPath } from "@/context/use-server-path";
+import { useServers } from "@/context/use-servers";
+import { useTemplatesApi } from "@/hooks/use-templates-api";
+import { useAppBreadcrumbs } from "@/layouts/use-app-layout";
+import { validHostname } from "@/lib/domains";
+import { checkHostname } from "@/lib/host-check";
+import { expand, fieldErrors, newKey, plainValues, previewHosts, type HostPreview } from "@/lib/template-params";
+import { ApiError, sealSecrets, type TemplateSummary, type TemplateView, type UpdateInstanceBody } from "@/lib/templates";
+
+const BREADCRUMBS = [{ label: "Apps", href: "/" }, { label: "From template" }];
+
+// CreateFromTemplatePage is Add app → From template on a server: pick a
+// template and revision, fill in its parameters (secrets encrypted in the
+// browser for this server), pick storages for its backups, see the hosts
+// the app will get, then add the app and open it.
+export default function CreateFromTemplatePage() {
+  useAppBreadcrumbs(BREADCRUMBS);
+  const navigate = useNavigate();
+  const toServer = useServerPath();
+  const { activeServerId } = useServers();
+  const { refresh } = useApps();
+  const { serverStorages } = useBackups();
+  const api = useTemplatesApi();
+
+  const [templates, setTemplates] = useState<TemplateSummary[] | null>(null);
+  const [templateId, setTemplateId] = useState("");
+  const [revision, setRevision] = useState(0); // 0: the latest
+  const [view, setView] = useState<TemplateView | null>(null);
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [storages, setStorages] = useState<string[]>([]);
+  const [backupStorage, setBackupStorage] = useState<Record<string, string>>({});
+  const [loadError, setLoadError] = useState("");
+  // key names this app to the API: a retry after a lost answer replays the
+  // same create instead of adding a second app.
+  const [key] = useState(newKey);
+  // claimed: the API accepted the create (the key is taken), so a retry
+  // after an agent failure is an update of that pending instance.
+  const [claimed, setClaimed] = useState(false);
+  const [tried, setTried] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    api.listTemplates().then(
+      (list) => {
+        setTemplates(list);
+        if (list.length > 0) setTemplateId((id) => id || list[0].id);
+      },
+      (e: unknown) => setLoadError(e instanceof Error ? e.message : "Failed to load templates"),
+    );
+  }, [api]);
+
+  useEffect(() => {
+    serverStorages().then(setStorages, () => setStorages([]));
+  }, [serverStorages]);
+
+  useEffect(() => {
+    if (!templateId) return;
+    let live = true;
+    api.getTemplate(templateId, revision || undefined).then(
+      (v) => {
+        if (!live) return;
+        setView(v);
+        const defaults: Record<string, string> = {};
+        for (const [name, d] of Object.entries(v.body.backups ?? {})) defaults[name] = d.storage ?? "";
+        setBackupStorage(defaults);
+      },
+      (e: unknown) => live && setLoadError(e instanceof Error ? e.message : "Failed to load the template"),
+    );
+    return () => {
+      live = false;
+    };
+  }, [api, templateId, revision]);
+
+  const params = view?.body.parameters ?? [];
+  const plain = useMemo(() => plainValues(view?.body.parameters, values), [view, values]);
+  const hosts = view ? previewHosts(view.body, plain) : [];
+  const appName = view ? expand(view.body.app_name, plain) : "";
+  const backups = Object.entries(view?.body.backups ?? {});
+
+  // send creates the instance, or once the API holds this key (an earlier
+  // attempt whose deploy failed: the instance is pending) updates it. A
+  // refused create (4xx) claimed nothing.
+  const send = async (body: UpdateInstanceBody, template: TemplateView) => {
+    if (claimed) {
+      try {
+        await api.updateInstance(body);
+        return;
+      } catch (e) {
+        if (!(e instanceof ApiError && e.status === 404)) throw e;
+      }
+    }
+    setClaimed(true);
+    try {
+      await api.createInstance({ ...body, template_id: template.id, revision: template.revision });
+    } catch (e) {
+      if (e instanceof ApiError) setClaimed(false);
+      throw e;
+    }
+  };
+
+  const create = async () => {
+    if (!view || !activeServerId) return;
+    setTried(true);
+    if (Object.keys(fieldErrors(params, values)).length > 0) return;
+    setBusy(true);
+    setError("");
+    try {
+      const parameters: Record<string, string> = {};
+      const typed: Record<string, string> = {};
+      for (const p of params) {
+        const v = values[p.name] ?? "";
+        if (p.secret) typed[p.name] = v;
+        else if (v !== "") parameters[p.name] = v;
+      }
+      const secrets = await sealSecrets(api, activeServerId, typed);
+      const overrides: Record<string, string> = {};
+      for (const [name, d] of backups) {
+        if ((backupStorage[name] ?? "") !== (d.storage ?? "")) overrides[name] = backupStorage[name];
+      }
+      const body = {
+        server_id: activeServerId,
+        key,
+        parameters,
+        secrets,
+        ...(Object.keys(overrides).length ? { backups: overrides } : {}),
+      };
+      await send(body, view);
+      const inst = await api.getInstance(activeServerId, key);
+      await refresh();
+      toast.success("App added");
+      navigate(toServer(`/app/${inst.app_id}`));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't add the app");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (loadError) {
+    return <InlineError className="mx-auto max-w-5xl">{loadError}</InlineError>;
+  }
+  if (templates === null || (templateId && !view)) {
+    return (
+      <div className="flex min-h-60 items-center justify-center">
+        <Spinner />
+      </div>
+    );
+  }
+  if (templates.length === 0) {
+    return (
+      <p className="mx-auto max-w-5xl rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
+        The organization has no templates yet.{" "}
+        <Link to="/org/templates" className="underline underline-offset-4">
+          Add one
+        </Link>{" "}
+        or save an app as a template from its Settings.
+      </p>
+    );
+  }
+
+  return (
+    <div className="mx-auto w-full max-w-5xl">
+      <div className="sticky top-0 z-10 -mx-4 mb-6 flex flex-wrap items-center gap-x-4 gap-y-2 border-b bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+        <div className="mr-auto min-w-0">
+          <h1 className="text-xl font-semibold tracking-tight">Add app from template</h1>
+          <p className="text-sm text-muted-foreground">The app keeps the template's files until you unlink it.</p>
+        </div>
+        <Button variant="ghost" onClick={() => navigate(toServer())} disabled={busy}>
+          Cancel
+        </Button>
+        <Button onClick={() => void create()} disabled={busy || !view}>
+          {busy ? "Adding…" : "Add app"}
+        </Button>
+      </div>
+
+      {error ? (
+        <InlineError icon className="mb-4">
+          {error}
+        </InlineError>
+      ) : null}
+
+      <EditorSection title="Template" description="The latest revision unless you pick an older one.">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-2">
+            <Label htmlFor="pick-template">Template</Label>
+            <NativeSelect
+              id="pick-template"
+              value={templateId}
+              disabled={claimed}
+              onChange={(e) => {
+                setTemplateId(e.target.value);
+                setRevision(0);
+                setView(null);
+              }}
+            >
+              {templates.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </NativeSelect>
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="pick-revision">Revision</Label>
+            <NativeSelect
+              id="pick-revision"
+              value={String(revision)}
+              disabled={claimed}
+              onChange={(e) => setRevision(Number(e.target.value))}
+            >
+              <option value="0">Latest (r{view?.latest_revision})</option>
+              {(view?.revisions ?? []).map((r) => (
+                <option key={r.revision} value={String(r.revision)}>
+                  r{r.revision}
+                  {r.note ? ` · ${r.note}` : ""}
+                </option>
+              ))}
+            </NativeSelect>
+          </div>
+        </div>
+      </EditorSection>
+
+      <EditorSection title="Parameters" description="Required ones first. Secret values are encrypted in your browser for this server.">
+        {params.length === 0 ? (
+          <p className="text-sm text-muted-foreground">This template takes no values.</p>
+        ) : (
+          <ParameterFields
+            params={params}
+            values={values}
+            onChange={(name, v) => setValues((prev) => ({ ...prev, [name]: v }))}
+            showRequired={tried}
+          />
+        )}
+      </EditorSection>
+
+      {backups.length > 0 ? (
+        <EditorSection title="Backups" description="Where each backup the template turns on is stored on this server.">
+          <div className="grid gap-3">
+            {backups.map(([name, d]) => {
+              const value = backupStorage[name] ?? "";
+              const missing = value !== "" && !storages.includes(value);
+              return (
+                <div key={name} className="grid gap-1.5">
+                  <Label htmlFor={`storage-${name}`}>
+                    <code className="font-mono">{name}</code>
+                    {d.enabled ? null : <span className="text-xs font-normal text-muted-foreground">off by default</span>}
+                  </Label>
+                  <NativeSelect
+                    id={`storage-${name}`}
+                    aria-label={`Storage for ${name}`}
+                    value={value}
+                    onChange={(e) => setBackupStorage((prev) => ({ ...prev, [name]: e.target.value }))}
+                  >
+                    <option value="">No storage</option>
+                    {missing ? <option value={value}>{value} (not on this server)</option> : null}
+                    {storages.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </NativeSelect>
+                  {missing ? (
+                    <p className="text-xs text-destructive">
+                      This server has no storage named {value}.{" "}
+                      <Link to={toServer("/settings?tab=storages")} className="underline underline-offset-4">
+                        Add it
+                      </Link>{" "}
+                      or pick another.
+                    </p>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        </EditorSection>
+      ) : null}
+
+      <EditorSection title="The app" description="What the app will be called and the hosts it will answer on.">
+        <p className="text-sm">
+          <span className="text-muted-foreground">Name: </span>
+          <span className="font-medium">{appName.trim() || "fill in the parameters"}</span>
+        </p>
+        {hosts.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No hosts.</p>
+        ) : (
+          <ul aria-label="Hosts" className="grid gap-2">
+            {hosts.map((h, i) => (
+              <HostPreviewRow key={i} serverId={activeServerId ?? ""} preview={h} />
+            ))}
+          </ul>
+        )}
+      </EditorSection>
+    </div>
+  );
+}
+
+// HostPreviewRow is one host the app will get, with the live check
+// (another app's host, or no registered domain covering it) once its
+// parameters are filled in.
+function HostPreviewRow({ serverId, preview }: { serverId: string; preview: HostPreview }) {
+  const [result, setResult] = useState<{ host: string; check: HostCheck } | null>(null);
+  const ready = preview.missing.length === 0 && validHostname(preview.host);
+
+  useEffect(() => {
+    if (!ready || !serverId) return;
+    let live = true;
+    const timer = setTimeout(() => {
+      checkHostname(serverId, undefined, preview.host).then(
+        (check) => live && check && setResult({ host: preview.host, check }),
+        () => {},
+      );
+    }, 400);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [ready, serverId, preview.host]);
+
+  const check = result?.host === preview.host ? result.check : null;
+  return (
+    <li className="rounded-md border p-3 text-sm">
+      <span className="font-mono">{preview.host || "…"}</span>
+      {preview.port ? <span className="text-muted-foreground"> → port {preview.port}</span> : null}
+      {preview.missing.length > 0 ? (
+        <p className="mt-1 text-xs text-muted-foreground">Fill in {preview.missing.join(", ")}.</p>
+      ) : !validHostname(preview.host) ? (
+        <p className="mt-1 text-xs text-destructive">Not a valid hostname.</p>
+      ) : check ? (
+        <HostHints id={`host-${preview.host}`} check={check} />
+      ) : null}
+    </li>
+  );
+}

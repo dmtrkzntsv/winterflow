@@ -23,13 +23,15 @@ import (
 // encodes the typed result back into a ResponseEnvelope. Adding a command is
 // one registration line in newHandlers plus the orchestrator method.
 type Dispatcher struct {
-	orch     *dockercompose.Repository
-	ingress  port.IngressManager
-	reloads  *ReloadWorker
-	backups  Backups
-	runWait  time.Duration // bound of a backup.run / backup.restore
-	log      *logger.Logger
-	handlers map[command.Type]handlerFunc
+	orch    *dockercompose.Repository
+	ingress port.IngressManager
+	reloads *ReloadWorker
+	backups Backups
+	runWait time.Duration // bound of a backup.run / backup.restore
+	// reloadWait bounds a single-app vars.reload.
+	reloadWait time.Duration
+	log        *logger.Logger
+	handlers   map[command.Type]handlerFunc
 }
 
 type handlerFunc func(ctx context.Context, agentID string, req *proto.RequestEnvelope) *proto.ResponseEnvelope
@@ -40,7 +42,8 @@ func NewDispatcher(orch *dockercompose.Repository, ingress port.IngressManager, 
 	if ingress == nil {
 		ingress = noIngress{}
 	}
-	d := &Dispatcher{orch: orch, ingress: ingress, backups: noBackups{}, runWait: command.BackupRunWait, log: log}
+	d := &Dispatcher{orch: orch, ingress: ingress, backups: noBackups{}, runWait: command.BackupRunWait,
+		reloadWait: command.ReloadAppWait, log: log}
 	d.handlers = d.newHandlers()
 	return d
 }
@@ -276,13 +279,7 @@ func (d *Dispatcher) newHandlers() map[command.Type]handlerFunc {
 		command.TypeVarsSync: handle(d, func(ctx context.Context, in command.SyncVarsRequest) (command.SyncVarsResponse, error) {
 			return d.orch.SyncVars(ctx, in)
 		}),
-		command.TypeVarsReload: handle(d, func(_ context.Context, in command.ReloadVarsRequest) (command.ReloadVarsResponse, error) {
-			if d.reloads == nil {
-				return command.ReloadVarsResponse{}, errNoReloads
-			}
-			d.reloads.Enqueue(in)
-			return command.ReloadVarsResponse{Queued: true}, nil
-		}),
+		command.TypeVarsReload: handle(d, d.reloadVars),
 		command.TypeStorageList: handle(d, func(ctx context.Context, in command.ListStoragesRequest) (command.ListStoragesResponse, error) {
 			list, err := d.orch.ListStorages(ctx, !in.RegistryOnly)
 			return command.ListStoragesResponse{Storages: list}, err
@@ -348,4 +345,29 @@ func (d *Dispatcher) errResponse(agentID string, req *proto.RequestEnvelope, det
 	resp, _ := codec.EncodeResponse(agentID, req.RequestId, command.Type(req.Type),
 		proto.ResponseCode_RESPONSE_CODE_SERVER_ERROR, detail, nil)
 	return resp
+}
+
+// reloadVars queues a vars.reload. The bulk form answers once queued; the
+// single-app form (exactly one app id) answers with that app's outcome, at
+// most reloadWait later. vars.reload is a detached command, so the wait
+// never holds up the command pipeline.
+func (d *Dispatcher) reloadVars(ctx context.Context, in command.ReloadVarsRequest) (command.ReloadVarsResponse, error) {
+	if d.reloads == nil {
+		return command.ReloadVarsResponse{}, errNoReloads
+	}
+	if len(in.AppIDs) != 1 {
+		d.reloads.Enqueue(in)
+		return command.ReloadVarsResponse{Queued: true}, nil
+	}
+	appID := in.AppIDs[0]
+	resp := command.ReloadVarsResponse{Queued: true, AppID: appID}
+	ctx, cancel := context.WithTimeout(ctx, d.reloadWait)
+	defer cancel()
+	select {
+	case o := <-d.reloads.EnqueueApp(appID):
+		resp.Names, resp.Skipped = o.Names, o.Skipped
+		return resp, o.Err
+	case <-ctx.Done():
+		return resp, fmt.Errorf("the reload of app %s did not end within %s", appID, d.reloadWait)
+	}
 }

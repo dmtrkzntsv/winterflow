@@ -53,9 +53,9 @@ func TestValidPointID(t *testing.T) {
 }
 
 func TestDetached(t *testing.T) {
-	if !TypeBackupRun.Detached() || !TypeBackupRestore.Detached() || TypeBackupPoints.Detached() || TypeAppSave.Detached() ||
-		TypeStorageOrphans.Detached() {
-		t.Fatal("only backup.run and backup.restore wait for long work")
+	if !TypeBackupRun.Detached() || !TypeBackupRestore.Detached() || !TypeVarsReload.Detached() ||
+		TypeBackupPoints.Detached() || TypeAppSave.Detached() || TypeStorageOrphans.Detached() || TypeVarsSync.Detached() {
+		t.Fatal("only backup.run, backup.restore and vars.reload wait for long work")
 	}
 }
 

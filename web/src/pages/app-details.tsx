@@ -57,7 +57,9 @@ import { readApiError } from "@/lib/api";
 import { needsAttention } from "@/lib/backups";
 import { deleteOutcome, type DeleteChoice } from "@/lib/delete-app";
 import { appLabel } from "@/lib/kpi";
+import { templateFromApp } from "@/lib/template-draft";
 import { isManagedByTemplate, type InstanceView, type TemplateView } from "@/lib/templates";
+import type { DraftState } from "@/pages/template-page";
 import { cn, relativeTime } from "@/lib/utils";
 import { useServerPath } from "@/context/use-server-path";
 import { NotFound } from "@/components/not-found";
@@ -345,6 +347,7 @@ export default function AppDetailsPage() {
             appId={app.id}
             name={app.name}
             instance={inst}
+            managed={Boolean(app.templateId)}
             onUnlinked={reloadManaged}
             onRename={rename}
             onDelete={async (opts) => {
@@ -620,6 +623,7 @@ function SettingsTab({
   appId,
   name,
   instance,
+  managed,
   onUnlinked,
   onRename,
   onDelete,
@@ -627,11 +631,15 @@ function SettingsTab({
   appId: string;
   name: string;
   instance: InstanceView | null;
+  // managed: a template owns the app (its instance may still be loading), so
+  // it can't be offered as the source of a new template.
+  managed: boolean;
   onUnlinked: () => void;
   onRename: (appId: string, name: string) => Promise<void>;
   onDelete: (opts: { deleteVolumes: boolean; deleteBackups: boolean }) => Promise<DeleteAppResult>;
 }) {
-  const { backupsByApp } = useApps();
+  const { backupsByApp, getApp } = useApps();
+  const navigate = useNavigate();
   const templatesApi = useTemplatesApi();
   const [newName, setNewName] = useState(name);
   const [busy, setBusy] = useState(false);
@@ -661,6 +669,19 @@ function SettingsTab({
     } catch (e) {
       toast.error("Unlink failed", { description: e instanceof Error ? e.message : undefined });
     } finally {
+      setBusy(false);
+    }
+  };
+
+  // saveAsTemplate opens a new template's editor prefilled from what the
+  // app's editor holds; nothing is saved until the template is.
+  const saveAsTemplate = async () => {
+    setBusy(true);
+    try {
+      const state: DraftState = templateFromApp(appId, await getApp(appId));
+      navigate("/org/templates/new", { state });
+    } catch (e) {
+      toast.error("Couldn't read the app", { description: e instanceof Error ? e.message : undefined });
       setBusy(false);
     }
   };
@@ -748,7 +769,22 @@ function SettingsTab({
             </AlertDialog>
           </div>
         </div>
-      ) : null}
+      ) : managed ? null : (
+        <div className="grid gap-4 p-5 md:grid-cols-[14rem_minmax(0,1fr)] md:gap-8">
+          <div className="space-y-1">
+            <h2 className="text-sm font-semibold">Save as template</h2>
+            <p className="text-sm text-muted-foreground">
+              Start a template from this app: its files, its variables as parameters, its hosts and backup settings.
+              The app stays as it is.
+            </p>
+          </div>
+          <div>
+            <Button variant="outline" disabled={busy} onClick={() => void saveAsTemplate()}>
+              Save as template
+            </Button>
+          </div>
+        </div>
+      )}
 
       <div className="grid gap-4 p-5 md:grid-cols-[14rem_minmax(0,1fr)] md:gap-8">
         <div className="space-y-1">

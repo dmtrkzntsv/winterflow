@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import type { AppDetailPayload } from "@/context/apps-context-base";
+import type { EffectiveBackup } from "@/lib/backups";
 import {
   bodyFromDraft,
   draftFromBody,
@@ -8,6 +10,8 @@ import {
   ingressRow,
   paramRow,
   recipeBackupNames,
+  slugName,
+  templateFromApp,
   type TemplateDraft,
 } from "@/lib/template-draft";
 import type { TemplateBody } from "@/lib/templates";
@@ -122,5 +126,73 @@ describe("draftProblem", () => {
 
   it("accepts a valid draft", () => {
     expect(draftProblem(valid())).toBeNull();
+  });
+});
+
+describe("templateFromApp", () => {
+  const b64 = (s: string) => btoa(s);
+  const config = {
+    name: "Shop Front",
+    icon: "cart",
+    color: "#111111",
+    files: [{ filename: "compose.yml" }, { filename: "key.pem", is_encrypted: true }],
+    variables: [{ name: "NAME" }, { name: "TOKEN", is_encrypted: true }, { name: "PRICE" }],
+    ingress: {
+      domains: [{ domain: "shop.example.com", upstream_port: 8080 }],
+      redirects: [{ domain: "www.shop.example.com", to: "https://shop.example.com", code: 301 }],
+    },
+  };
+  const backup = (b: Partial<EffectiveBackup>): EffectiveBackup =>
+    ({ name: "db", type: "sqlite", enabled: true, storage: "tenants", in_recipe: true, from_recipe: { every: true }, ...b }) as EffectiveBackup;
+  const detail: AppDetailPayload = {
+    app: {
+      app_id: "a1",
+      config: b64(JSON.stringify(config)),
+      files: [
+        { name: "compose.yml", content: b64(COMPOSE) },
+        { name: "key.pem", content: "<encrypted>", encrypted: true },
+      ],
+      variables: [
+        { name: "NAME", content: b64("shop") },
+        { name: "TOKEN", content: "<encrypted>", encrypted: true },
+        { name: "PRICE", content: b64("$5") },
+      ],
+    },
+    backups: [backup({}), backup({ name: "extra", in_recipe: false })],
+    revision: 1,
+    available_revisions: null,
+  };
+
+  it("builds revision 1 from what the editor holds", () => {
+    const { draft, notes } = templateFromApp("a1", detail);
+    expect(draft.name).toBe("shop-front");
+    const body = bodyFromDraft(draft);
+    expect(body).toEqual({
+      files: { "compose.yml": COMPOSE },
+      parameters: [{ name: "NAME", default: "shop" }, { name: "TOKEN", secret: true, required: true }, { name: "PRICE" }],
+      app_name: "Shop Front",
+      icon: "cart",
+      color: "#111111",
+      ingress: [{ host: "shop.example.com", port: 8080 }],
+      // The backup added in the app's Backups tab has no recipe entry.
+      backups: { db: { enabled: true, storage: "tenants" } },
+    });
+    expect(notes).toEqual([
+      "key.pem is a secret file; a template holds no secrets, so it was left out.",
+      "PRICE's value has a $, which a parameter can't hold; it has no default now.",
+      "Redirects aren't part of templates; they were left out.",
+    ]);
+  });
+
+  it("notes that a Git source does not come along", () => {
+    const git = { ...config, source: { repo_url: "https://example.com/r.git", branch: "main", auto_update: false } };
+    const { notes } = templateFromApp("a1", { ...detail, app: { ...detail.app, config: b64(JSON.stringify(git)) } });
+    expect(notes[0]).toContain("deploys from a Git repository");
+  });
+
+  it("slugs any app name into a template name", () => {
+    expect(slugName("  2 Shop!! Front ")).toBe("shop-front");
+    expect(slugName("123")).toBe("template");
+    expect(slugName("a".repeat(80) + "-b")).toHaveLength(63);
   });
 });

@@ -1,9 +1,13 @@
 // The template editor's working state (TemplateDraft) and its conversions:
-// from a stored revision and to the body save-template takes. The checks
-// give instant feedback; the API checks everything again
-// (internal/domain/template/validate.go).
+// from a stored revision, to the body save-template takes, and from an
+// existing app ("Save as template"). The checks give instant feedback; the
+// API checks everything again (internal/domain/template/validate.go).
 import { yamlLanguage } from "@codemirror/lang-yaml";
 
+import type { AppDetailPayload } from "@/context/apps-context-base";
+import { stateFromDetail } from "@/lib/app-editor-io";
+import { configOf } from "@/lib/backups";
+import { ENCRYPTED } from "@/lib/ecies";
 import { compilePattern } from "@/lib/template-params";
 import type { BackupDefault, Parameter, TemplateBody } from "@/lib/templates";
 import { DEFAULT_COMPOSE, localId, type AppFileMeta } from "@/types/app-config";
@@ -234,4 +238,75 @@ export function draftProblem(d: TemplateDraft): string | null {
     }
   }
   return null;
+}
+
+// slugName makes a template name from an app name.
+export function slugName(appName: string): string {
+  const slug = appName
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^[^a-z]+/, "")
+    .replace(/-+$/, "")
+    .slice(0, 63)
+    .replace(/-+$/, "");
+  return slug || "template";
+}
+
+// templateFromApp builds revision 1 of a template from an app as the editor
+// holds it (Save as template): files copied, each variable a parameter with
+// its value as the default, each secret a required secret parameter, the
+// app's hosts literal ingress rows, its backup overrides the defaults.
+// notes say what could not come along.
+export function templateFromApp(appId: string, detail: AppDetailPayload): { draft: TemplateDraft; notes: string[] } {
+  const state = stateFromDetail(appId, detail);
+  const notes: string[] = [];
+  if (state.config.source) {
+    notes.push("The app deploys from a Git repository; a template holds files only, so the repository is not part of it.");
+  }
+  const files: AppFileMeta[] = [];
+  const contents: Record<string, string> = {};
+  for (const f of state.config.files) {
+    if (f.is_encrypted || state.files[f.id] === ENCRYPTED) {
+      notes.push(`${f.filename} is a secret file; a template holds no secrets, so it was left out.`);
+      continue;
+    }
+    files.push({ ...f, is_encrypted: false });
+    contents[f.id] = state.files[f.id] ?? "";
+  }
+  const parameters = state.config.variables.map((v) => {
+    if (v.is_encrypted) return paramRow({ name: v.name, secret: true, required: true });
+    const value = state.variables[v.id] ?? "";
+    if (value.includes("$")) {
+      notes.push(`${v.name}'s value has a $, which a parameter can't hold; it has no default now.`);
+      return paramRow({ name: v.name });
+    }
+    return paramRow({ name: v.name, default: value });
+  });
+  const ingress = (state.config.ingress?.domains ?? []).map((dom) => ingressRow(dom.domain, String(dom.upstream_port)));
+  if ((state.config.ingress?.redirects.length ?? 0) > 0) notes.push("Redirects aren't part of templates; they were left out.");
+  const backups: Record<string, BackupDefault> = {};
+  for (const b of detail.backups ?? []) {
+    if (!b.in_recipe) continue;
+    const c = configOf(b);
+    backups[b.name] = {
+      enabled: !!c.enabled,
+      ...(c.storage ? { storage: c.storage } : {}),
+      ...(c.every ? { every: c.every } : {}),
+      ...(c.keep ? { keep: c.keep } : {}),
+    };
+  }
+  return {
+    draft: {
+      name: slugName(state.config.name),
+      appName: state.config.name,
+      icon: state.config.icon ?? "",
+      color: state.config.color ?? "#64748b",
+      files,
+      contents,
+      parameters,
+      ingress,
+      backups,
+    },
+    notes,
+  };
 }

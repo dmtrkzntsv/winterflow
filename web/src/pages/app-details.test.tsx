@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { Link, MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
+import { Link, MemoryRouter, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppsContext, type App, type AppsContextValue } from "@/context/apps-context-base";
@@ -8,6 +8,7 @@ import { NotificationsContext, type NotificationsContextValue } from "@/context/
 import AppDetailsPage from "@/pages/app-details";
 import type { BackupHealth } from "@/lib/backups";
 import type { InstanceView, TemplateView } from "@/lib/templates";
+import type { DraftState } from "@/pages/template-page";
 import { fakeAPI } from "@/test/fake-api";
 
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }));
@@ -33,6 +34,12 @@ vi.mock("@/context/use-servers", () => ({ useServers: () => ({ activeServerId: "
 const remove = vi.fn();
 const refresh = vi.fn(async () => {});
 const notifications = { connected: true, subscribe: () => () => {}, waitFor: vi.fn() } as NotificationsContextValue;
+
+// NewTemplate stands in for the template editor Save as template opens.
+function NewTemplate() {
+  const state = useLocation().state as DraftState;
+  return <p>new template {state.draft.name} with {state.draft.parameters.length} parameters</p>;
+}
 
 function renderPage(
   url: string,
@@ -64,6 +71,7 @@ function renderPage(
             >
               <Route path="/app/:appId" element={<AppDetailsPage />} />
               <Route path="/server/srv-1" element={<p>the apps</p>} />
+              <Route path="/org/templates/new" element={<NewTemplate />} />
             </Route>
           </Routes>
         </AppsContext.Provider>
@@ -262,6 +270,13 @@ describe("AppDetailsPage of a template instance", () => {
     expect(await screen.findByText("the plain editor")).toBeInTheDocument();
   });
 
+  it("does not offer Save as template for an app a template manages", async () => {
+    instanceAPI(INSTANCE);
+    renderPage("/app/a1?tab=settings", {}, managed);
+    expect(await screen.findByRole("button", { name: "Unlink from template" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save as template" })).not.toBeInTheDocument();
+  });
+
   it("unlinks from the template after confirming", async () => {
     const user = userEvent.setup();
     const api = instanceAPI(INSTANCE, { "/api/v1/instance/unlink-instance": { instance: INSTANCE, request_id: "", warnings: [] } });
@@ -398,5 +413,37 @@ describe("AppDetailsPage of a template instance", () => {
     expect(screen.queryByText(/Managed by template/)).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "twillingate · r2" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("NAME")).not.toBeInTheDocument();
+  });
+});
+
+describe("AppDetailsPage: Save as template", () => {
+  beforeEach(() => {
+    for (const f of Object.values(toast)) f.mockReset();
+  });
+
+  it("opens a new template's editor built from the app", async () => {
+    const user = userEvent.setup();
+    const getApp = vi.fn(async () => ({
+      app: {
+        app_id: "a1",
+        config: btoa(JSON.stringify({ name: "Shop", files: [{ filename: "compose.yml" }], variables: [{ name: "PORT" }] })),
+        files: [{ name: "compose.yml", content: btoa("services: {}\n") }],
+        variables: [{ name: "PORT", content: btoa("8080") }],
+      },
+      revision: 1,
+      available_revisions: null,
+    }));
+    renderPage("/app/a1?tab=settings", {}, { ctx: { getApp } });
+    await user.click(await screen.findByRole("button", { name: "Save as template" }));
+    expect(await screen.findByText("new template shop with 1 parameters")).toBeInTheDocument();
+  });
+
+  it("reports an app it can't read", async () => {
+    const user = userEvent.setup();
+    const getApp = vi.fn(async () => Promise.reject(new Error("agent offline")));
+    renderPage("/app/a1?tab=settings", {}, { ctx: { getApp } });
+    await user.click(await screen.findByRole("button", { name: "Save as template" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Couldn't read the app", { description: "agent offline" }));
+    expect(screen.getByRole("button", { name: "Save as template" })).toBeEnabled();
   });
 });

@@ -12,6 +12,17 @@ export type Notification = {
   timestamp?: string;
 };
 
+// WaitTimeoutError is waitFor's rejection when no result came in time (the
+// command may still have run); WAIT_TIMEOUT is its message.
+export const WAIT_TIMEOUT = "Timed out waiting for command result";
+
+export class WaitTimeoutError extends Error {
+  constructor() {
+    super(WAIT_TIMEOUT);
+    this.name = "WaitTimeoutError";
+  }
+}
+
 export type NotificationHandler = (n: Notification) => void;
 
 export type NotificationsContextValue = {

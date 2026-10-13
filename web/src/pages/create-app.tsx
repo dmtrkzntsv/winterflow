@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { useAppBreadcrumbs } from "@/layouts/use-app-layout";
 import { Button } from "@/components/ui/button";
 import { AppEditor } from "@/components/app-editor";
+import { StickyActionBar } from "@/components/editor-section";
 import { useApps } from "@/context/use-apps";
 import {
   buildSavePayload,
@@ -53,7 +54,7 @@ export default function CreateAppPage() {
   return (
     <div className="mx-auto w-full max-w-5xl">
       {/* Sticky so Create stays reachable at the bottom of a long form. */}
-      <div className="sticky top-0 z-10 -mx-4 mb-6 flex flex-wrap items-center gap-x-4 gap-y-2 border-b bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+      <StickyActionBar className="mb-6 gap-x-4">
         <div className="mr-auto min-w-0">
           <h1 className="text-xl font-semibold tracking-tight">New app</h1>
           <p className="text-sm text-muted-foreground">
@@ -70,7 +71,7 @@ export default function CreateAppPage() {
         <Button onClick={() => void handleCreate()} disabled={saving}>
           {saving ? "Creating…" : "Create app"}
         </Button>
-      </div>
+      </StickyActionBar>
       <AppEditor state={state} onChange={setState} />
     </div>
   );

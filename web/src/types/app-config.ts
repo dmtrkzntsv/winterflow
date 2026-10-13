@@ -89,6 +89,15 @@ export function localId(prefix: string): string {
   return `${prefix}-${counter}-${Math.floor(performance.now())}`;
 }
 
+// COMPOSE_FILENAMES are the compose file names, in compose's load order
+// (model.ComposeFileNames).
+export const COMPOSE_FILENAMES: readonly string[] = [
+  "compose.yaml",
+  "compose.yml",
+  "docker-compose.yml",
+  "docker-compose.yaml",
+];
+
 export const DEFAULT_COMPOSE = `services:
   app:
     image: nginx:alpine

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { useAuth } from "@/context/use-auth";
 import { apiBaseUrl } from "@/config";
@@ -7,6 +7,7 @@ import {
   NotificationsContext,
   type Notification,
   type NotificationHandler,
+  WaitTimeoutError,
 } from "./notifications-context-base";
 
 const base = apiBaseUrl.endsWith("/") ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
@@ -72,42 +73,48 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
     };
   }, [isAuthenticated]);
 
-  const value = useMemo(() => {
-    const subscribe = (handler: NotificationHandler) => {
-      handlersRef.current.add(handler);
-      return () => {
-        handlersRef.current.delete(handler);
-      };
+  // subscribe and waitFor keep their identity for the provider's lifetime
+  // (they read the refs, never `connected`): consumers memoize on them, and a
+  // reconnect must not look like a new client to them (a template editor
+  // would reload and drop its unsaved edits).
+  const subscribe = useCallback((handler: NotificationHandler) => {
+    handlersRef.current.add(handler);
+    return () => {
+      handlersRef.current.delete(handler);
     };
-    return {
-      connected,
-      subscribe,
-      waitFor(requestId: string, timeoutMs = 60000) {
-        return new Promise<Notification>((resolve, reject) => {
-          // The result may already have arrived while the 202 response was
-          // still being read — check the replay buffer before subscribing.
-          const now = Date.now();
-          const early = replayRef.current.find(
-            (e) => e.n.ref === requestId && now - e.at < REPLAY_TTL_MS,
-          );
-          if (early) {
-            resolve(early.n);
-            return;
-          }
-          const unsubscribe = subscribe((n) => {
-            if (n.ref !== requestId) return;
-            clearTimeout(timer);
-            unsubscribe();
-            resolve(n);
-          });
-          const timer = setTimeout(() => {
-            unsubscribe();
-            reject(new Error("Timed out waiting for command result"));
-          }, timeoutMs);
+  }, []);
+
+  const waitFor = useCallback(
+    (requestId: string, timeoutMs = 60000) =>
+      new Promise<Notification>((resolve, reject) => {
+        // The result may already have arrived while the 202 response was
+        // still being read — check the replay buffer before subscribing.
+        const now = Date.now();
+        const early = replayRef.current.find(
+          (e) => e.n.ref === requestId && now - e.at < REPLAY_TTL_MS,
+        );
+        if (early) {
+          resolve(early.n);
+          return;
+        }
+        const unsubscribe = subscribe((n) => {
+          if (n.ref !== requestId) return;
+          clearTimeout(timer);
+          unsubscribe();
+          resolve(n);
         });
-      },
-    };
-  }, [connected]);
+        const timer = setTimeout(() => {
+          unsubscribe();
+          reject(new WaitTimeoutError());
+        }, timeoutMs);
+      }),
+    [subscribe],
+  );
+
+  const value = useMemo(
+    () => ({ connected, subscribe, waitFor }),
+    [connected, subscribe, waitFor],
+  );
 
   return (
     <NotificationsContext.Provider value={value}>

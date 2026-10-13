@@ -31,7 +31,10 @@ const tokenTheme = Prec.highest(EditorView.theme({
 
 type Props = {
   value: string;
-  onChange: (value: string) => void;
+  onChange?: (value: string) => void;
+  // readOnly shows the content without letting it change (an instance's
+  // files, owned by its template).
+  readOnly?: boolean;
   filename?: string;
   placeholder?: string;
   className?: string;
@@ -44,6 +47,7 @@ type Props = {
 export function CodeEditor({
   value,
   onChange,
+  readOnly = false,
   filename,
   placeholder,
   className,
@@ -67,6 +71,8 @@ export function CodeEditor({
       <CodeMirror
         value={value}
         onChange={onChange}
+        readOnly={readOnly}
+        editable={!readOnly}
         extensions={extensions}
         theme={dark ? "dark" : "light"}
         placeholder={placeholder}

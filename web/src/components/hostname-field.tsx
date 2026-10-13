@@ -1,44 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { Input } from "@/components/ui/input";
-import { HostHints, Suggestions, type HostCheck, type Issue } from "@/components/host-hints";
-import { apiBaseUrl } from "@/config";
+import { HostHints, Suggestions } from "@/components/host-hints";
+import { useHostCheck } from "@/hooks/use-host-check";
 import { validHostname, type RegisteredDomain } from "@/lib/domains";
 import { cn } from "@/lib/utils";
-
-// checkHostname asks the API what it thinks of a hostname on this server:
-// whether another app claims it, and which registration covers it. null
-// when the API refuses (the form validation explains bad input).
-async function checkHostname(
-  serverId: string,
-  appId: string | undefined,
-  host: string,
-): Promise<HostCheck | null> {
-  const qs = new URLSearchParams({ server_id: serverId, domain: host });
-  if (appId) qs.set("app_id", appId);
-  const res = await fetch(`${apiBaseUrl}/api/v1/domains/check?${qs}`, {
-    credentials: "include",
-  });
-  if (!res.ok) return null;
-  const body = (await res.json()) as {
-    data?: {
-      available?: boolean;
-      covered?: boolean;
-      registration?: RegisteredDomain | null;
-      claims?: { app_name: string }[] | null;
-    };
-  };
-  const data = body.data;
-  if (!data) return null;
-  const claim = data.claims?.[0];
-  const issue: Issue | undefined =
-    data.available === false && claim
-      ? { kind: "taken", app: claim.app_name }
-      : data.covered === false
-        ? { kind: "uncovered" }
-        : undefined;
-  return { issue, registration: data.registration ?? undefined };
-}
 
 type Props = {
   rowId: string;
@@ -85,44 +51,24 @@ export function HostnameField({
   onReturn,
   children,
 }: Props) {
-  // The last answer, with the hostname it was for: once the text changes it
-  // no longer shows, with nothing extra to clear.
-  const [result, setResult] = useState<{ host: string; check: HostCheck } | null>(null);
   // Bumped to check the same hostname again (see the focus handler).
   const [rechecks, setRechecks] = useState(0);
   // Whether the user changed the hostname: loaded rows are checked at once
   // and keep their stored values; edits are debounced and report back.
   const edited = useRef(false);
   const input = useRef<HTMLInputElement>(null);
-  const reportRegistration = useRef(onRegistration);
-  useEffect(() => {
-    reportRegistration.current = onRegistration;
+
+  // Bad syntax never reaches the API: the save-time validation says why.
+  const check = useHostCheck(serverId, appId, value, {
+    enabled: checked && validHostname(value),
+    delay: () => (edited.current ? 400 : 0),
+    recheck: rechecks,
+    onResult: (c) => {
+      if (edited.current && c.registration) onRegistration(c.registration);
+    },
   });
 
-  useEffect(() => {
-    // Bad syntax never reaches the API: the save-time validation says why.
-    if (!checked || !validHostname(value)) return;
-    let live = true;
-    const timer = setTimeout(
-      async () => {
-        try {
-          const check = await checkHostname(serverId, appId, value);
-          if (!live || !check) return;
-          setResult({ host: value, check });
-          if (edited.current && check.registration) reportRegistration.current(check.registration);
-        } catch {
-          // Advisory; the save-time check is authoritative.
-        }
-      },
-      edited.current ? 400 : 0,
-    );
-    return () => {
-      live = false;
-      clearTimeout(timer);
-    };
-  }, [checked, value, serverId, appId, rechecks]);
-
-  const shown = checked && result?.host === value ? result.check : undefined;
+  const shown = checked && check ? check : undefined;
   const issue = shown?.issue;
 
   // An "uncovered" hint links to the Domains tab in a new tab. When the user

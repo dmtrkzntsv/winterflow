@@ -1,4 +1,4 @@
-import { Eye, EyeOff, FileText, Lock, LockOpen, Plus, Trash2 } from "lucide-react";
+import { Eye, EyeOff, Lock, Plus, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -6,13 +6,11 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { PasswordInput } from "@/components/ui/password-input";
-import { CodeEditor } from "@/components/code-editor";
-import { ImageTagPicker } from "@/components/image-tag-picker";
+import { FilesSection, SecretToggle } from "@/components/files-section";
 import { IconPicker } from "@/components/icon-picker";
 import { IngressEditor } from "@/components/ingress-editor";
 import { EditorSection } from "@/components/editor-section";
 import { ENCRYPTED } from "@/lib/ecies";
-import { cn } from "@/lib/utils";
 import { useState } from "react";
 import { SharedVariablesHint } from "@/components/shared-variables-hint";
 import { useSharedNames } from "@/hooks/use-shared-names";
@@ -21,7 +19,6 @@ import { useServers } from "@/context/use-servers";
 import {
   localId,
   type AppEditorState,
-  type AppFileMeta,
   type AppVariableMeta,
   type StorageVariable,
 } from "@/types/app-config";
@@ -41,45 +38,6 @@ export function AppEditor({ state, onChange }: Props) {
 
   const setConfig = (patch: Partial<AppEditorState["config"]>) =>
     onChange({ ...state, config: { ...state.config, ...patch } });
-
-  // --- files ---
-  const updateFileMeta = (id: string, patch: Partial<AppFileMeta>) =>
-    setConfig({
-      files: state.config.files.map((f) =>
-        f.id === id ? { ...f, ...patch } : f,
-      ),
-    });
-
-  const updateFileContent = (id: string, content: string) =>
-    onChange({ ...state, files: { ...state.files, [id]: content } });
-
-  const addFile = () => {
-    const id = localId("file");
-    onChange({
-      ...state,
-      config: {
-        ...state.config,
-        files: [
-          ...state.config.files,
-          { id, filename: "", is_encrypted: false },
-        ],
-      },
-      files: { ...state.files, [id]: "" },
-    });
-  };
-
-  const removeFile = (id: string) => {
-    const rest = { ...state.files };
-    delete rest[id];
-    onChange({
-      ...state,
-      config: {
-        ...state.config,
-        files: state.config.files.filter((f) => f.id !== id),
-      },
-      files: rest,
-    });
-  };
 
   // --- variables ---
   const updateVarMeta = (id: string, patch: Partial<AppVariableMeta>) =>
@@ -250,71 +208,19 @@ export function AppEditor({ state, onChange }: Props) {
         ) : null}
       </EditorSection>
 
-      <EditorSection
-        title="Files"
+      <FilesSection
+        files={state.config.files}
+        contents={state.files}
+        onChange={(files, contents) =>
+          onChange({ ...state, config: { ...state.config, files }, files: contents })
+        }
         description={
           <>
             Written into the app directory. Mark a file secret to encrypt it for
             this server only.
           </>
         }
-        action={
-          <Button size="sm" variant="outline" onClick={addFile}>
-            <Plus className="size-4" /> Add file
-          </Button>
-        }
-      >
-        {state.config.files.length === 0 ? (
-          <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-            Add at least a <code>compose.yml</code>.
-          </p>
-        ) : null}
-        {state.config.files.map((f) => (
-          <div key={f.id} className="overflow-hidden rounded-md border">
-            <div className="flex items-center gap-1 border-b bg-muted/40 py-1 pr-1 pl-1">
-              <FileText className="ml-2 size-4 shrink-0 text-muted-foreground" />
-              <Input
-                aria-label="File name"
-                value={f.filename}
-                placeholder="compose.yml"
-                className="h-8 border-transparent bg-transparent font-mono shadow-none focus-visible:border-input focus-visible:bg-background"
-                onChange={(e) => updateFileMeta(f.id, { filename: e.target.value })}
-              />
-              <SecretToggle
-                on={f.is_encrypted}
-                onChange={(on) => updateFileMeta(f.id, { is_encrypted: on })}
-              />
-              <Button
-                size="icon"
-                variant="ghost"
-                className="size-8 shrink-0 text-muted-foreground hover:text-destructive"
-                aria-label={`Remove ${f.filename || "file"}`}
-                onClick={() => removeFile(f.id)}
-              >
-                <Trash2 className="size-4" />
-              </Button>
-            </div>
-            <CodeEditor
-              value={state.files[f.id] ?? ""}
-              onChange={(content) => updateFileContent(f.id, content)}
-              filename={f.filename}
-              placeholder="file contents (use ${VAR}, including org/server variables)"
-              className="rounded-none border-0"
-            />
-            {isComposeFilename(f.filename) ? (
-              <ImageChips
-                content={state.files[f.id] ?? ""}
-                onReplace={(oldRef, newRef) =>
-                  updateFileContent(
-                    f.id,
-                    (state.files[f.id] ?? "").split(oldRef).join(newRef),
-                  )
-                }
-              />
-            ) : null}
-          </div>
-        ))}
-      </EditorSection>
+      />
 
       <EditorSection
         title="Variables"
@@ -439,76 +345,5 @@ function StorageVariableRows({ vars }: { vars: StorageVariable[] }) {
         </li>
       ))}
     </ul>
-  );
-}
-
-// SecretToggle marks a file or variable as secret (encrypted end to end).
-function SecretToggle({
-  on,
-  onChange,
-}: {
-  on: boolean;
-  onChange: (on: boolean) => void;
-}) {
-  return (
-    <Button
-      type="button"
-      size="sm"
-      variant="ghost"
-      aria-pressed={on}
-      title={on ? "Secret: encrypted for this server" : "Mark as secret"}
-      className={cn(
-        "h-8 shrink-0 gap-1.5 px-2 text-xs",
-        on
-          ? "bg-amber-500/10 text-amber-700 hover:bg-amber-500/15 hover:text-amber-800 dark:text-amber-400"
-          : "text-muted-foreground",
-      )}
-      onClick={() => onChange(!on)}
-    >
-      {on ? <Lock className="size-3.5" /> : <LockOpen className="size-3.5" />}
-      <span className="sr-only sm:not-sr-only">Secret</span>
-    </Button>
-  );
-}
-
-// isComposeFilename gates the image-tag chips to compose files.
-function isComposeFilename(name: string): boolean {
-  const n = name.trim();
-  return (
-    n === "compose.yml" ||
-    n === "compose.yaml" ||
-    n === "docker-compose.yml" ||
-    n === "docker-compose.yaml"
-  );
-}
-
-const IMAGE_LINE = /^\s*image:\s*["']?([\w][\w./:@-]*)/gm;
-
-// ImageChips lists the image references found in a compose file, each with a
-// tag browser that rewrites the reference in place.
-function ImageChips({
-  content,
-  onReplace,
-}: {
-  content: string;
-  onReplace: (oldRef: string, newRef: string) => void;
-}) {
-  const refs = Array.from(
-    new Set(
-      Array.from(content.matchAll(IMAGE_LINE), (m) => m[1]).filter(Boolean),
-    ),
-  );
-  if (refs.length === 0) return null;
-  return (
-    <div className="flex flex-wrap items-center gap-2 border-t bg-muted/20 px-3 py-2">
-      <span className="text-xs text-muted-foreground">Images</span>
-      {refs.map((ref) => (
-        <ImageTagPicker
-          key={ref}
-          image={ref}
-          onSelect={(newRef) => onReplace(ref, newRef)}
-        />
-      ))}
-    </div>
   );
 }

@@ -12,7 +12,7 @@ export async function readApiError(res: Response): Promise<Error> {
 // returns the payload. A refusal (non-2xx) carries the API's message; an
 // agent failure throws `failure` (default Error) with the agent's error.
 // With refOptional a 2xx without a request_id resolves undefined, else it
-// throws.
+// throws. (lib/templates.ts's command() is the instance-command variant.)
 export async function dispatchCommand(
   waitFor: (ref: string, timeoutMs?: number) => Promise<{ status?: number; error?: string; payload?: unknown }>,
   url: string,

@@ -54,9 +54,11 @@ export function rolloutLine(r: Rollout, serverName: (id: string) => string): str
   return `${verb} ${step} of ${r.total}: ${appLabel(r)}${where}${stopping}`;
 }
 
-// failureLine names what stopped a failed rollout.
+// failureLine names what stopped a failed rollout: the app it stopped at,
+// or just that it failed when no app was in flight (its error says why).
 export function failureLine(r: Rollout, serverName: (id: string) => string): string {
   const what = r.kind === "template_upgrade" ? `Upgrade to r${r.revision}` : "Reload";
+  if (!r.current_app_id) return `${what} failed`;
   const where = r.kind === "vars_reload" && r.current_server_id ? ` on ${serverName(r.current_server_id)}` : "";
   return `${what} stopped at ${appLabel(r)}${where}`;
 }

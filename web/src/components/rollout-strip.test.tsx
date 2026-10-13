@@ -46,8 +46,24 @@ describe("RolloutStrip", () => {
     expect(alert).toHaveTextContent("Reload stopped at shop on alpha");
     expect(alert).toHaveTextContent("docker compose up: exit status 1");
     expect(screen.getByRole("link", { name: "Open shop" })).toHaveAttribute("href", "/server/s1/app/a1b2c3d4e5f6");
+    expect(alert).toHaveTextContent("Reloads stop at this app until it is fixed or stopped.");
     await userEvent.click(screen.getByRole("button", { name: "Dismiss" }));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("adds the reload hint to reload failures only", () => {
+    renderStrip(rollout({ state: "failed", error: "pull access denied" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Upgrade to r3 stopped at bakomi");
+    expect(screen.getByRole("alert")).not.toHaveTextContent("Reloads stop at this app");
+  });
+
+  it("reads sensibly when a failure has no app", () => {
+    renderStrip(rollout({ kind: "vars_reload", state: "failed", error: "the rollout's scope is unreadable", current_app_id: "", current_server_id: "" }));
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("Reload failed");
+    expect(alert).toHaveTextContent("the rollout's scope is unreadable");
+    expect(alert).not.toHaveTextContent("Reloads stop at this app");
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
   });
 
   it("shows nothing for no rollout, a finished one or a stopped one", () => {

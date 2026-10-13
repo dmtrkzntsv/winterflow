@@ -10,7 +10,8 @@ import { appLabel, failureLine, isActive, rolloutLine, type Rollout } from "@/li
 
 // RolloutStrip shows a rollout in progress ("Upgrading 3 of 12: bakomi…"
 // with Stop) or the failure that ended one, naming the app with a link to
-// it and the error (Dismiss hides it for this visit). Nothing for a
+// it and the error (Dismiss hides it for this visit); a failed reload adds
+// that later reloads stop at the same app (it is picked first again). Nothing for a
 // finished or stopped rollout, or none.
 export function RolloutStrip({
   rollout,
@@ -63,6 +64,9 @@ export function RolloutStrip({
           ) : null}
         </p>
         {rollout.error ? <ErrorText text={rollout.error} className="text-xs" /> : null}
+        {rollout.kind === "vars_reload" && rollout.current_app_id ? (
+          <p className="text-xs text-muted-foreground">Reloads stop at this app until it is fixed or stopped.</p>
+        ) : null}
       </div>
       <Button size="sm" variant="ghost" onClick={() => setDismissed(rollout.id)}>
         Dismiss

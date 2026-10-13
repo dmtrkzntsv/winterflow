@@ -32,6 +32,11 @@ describe("rolloutLine", () => {
     expect(failureLine(rollout({ kind: "vars_reload", state: "failed", current_app_name: "shop", current_server_id: "s2" }), names)).toBe(
       "Reload stopped at shop on srv-2",
     );
+    // No app in flight: no dangling "at".
+    expect(failureLine(rollout({ state: "failed", current_app_id: "", current_app_name: "" }), names)).toBe("Upgrade to r3 failed");
+    expect(failureLine(rollout({ kind: "vars_reload", state: "failed", current_app_id: "", current_server_id: "" }), names)).toBe(
+      "Reload failed",
+    );
     expect(isActive(rollout())).toBe(true);
     expect(isActive(rollout({ state: "failed" }))).toBe(false);
   });

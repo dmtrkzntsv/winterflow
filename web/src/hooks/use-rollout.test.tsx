@@ -1,9 +1,9 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { NotificationsContext, type Notification, type NotificationHandler } from "@/context/notifications-context-base";
-import { useRollout } from "@/hooks/use-rollout";
+import { REREAD_MS, useRollout } from "@/hooks/use-rollout";
 import type { Rollout, RolloutsApi } from "@/lib/rollouts";
 import { rollout } from "@/test/rollouts";
 
@@ -97,9 +97,83 @@ describe("useRollout", () => {
     expect(result.current.rollout).toBeNull();
   });
 
+  it("never shows an ended rollout active again", async () => {
+    const { result, emit } = setup(Promise.resolve([rollout()]), "t1");
+    await waitFor(() => expect(result.current.rollout?.state).toBe("running"));
+    emit({ type: "rollout", ref: "", payload: rollout({ state: "stopped", done: 3 }) });
+    // A late event of the same rollout, or a stale stop answer, is older news.
+    emit({ type: "rollout", ref: "", payload: rollout({ state: "running", done: 2 }) });
+    expect(result.current.rollout?.state).toBe("stopped");
+    act(() => result.current.set(rollout({ stop_requested: true })));
+    expect(result.current.rollout).toMatchObject({ state: "stopped", done: 3 });
+    // Another rollout, active, still replaces it.
+    act(() => result.current.set(rollout({ id: "r2", created_at: "2026-10-13T00:00:00Z", state: "queued" })));
+    expect(result.current.rollout?.id).toBe("r2");
+  });
+
   it("shows nothing when the read fails", async () => {
     const { result, api } = setup(Promise.reject(new Error("down")));
     await waitFor(() => expect(api.list).toHaveBeenCalled());
     expect(result.current.rollout).toBeNull();
+  });
+});
+
+describe("useRollout re-reads an active rollout", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+  });
+
+  const tick = () => act(async () => vi.advanceTimersByTimeAsync(REREAD_MS));
+
+  it("every 15 s while it is active and the page visible, then stops", async () => {
+    vi.useFakeTimers();
+    const { result, api } = setup(Promise.resolve([rollout({ done: 1 })]), "t1");
+    await act(async () => {});
+    expect(result.current.rollout?.done).toBe(1);
+    expect(api.list).toHaveBeenCalledTimes(1);
+
+    api.list.mockImplementation(() => Promise.resolve([rollout({ done: 2 })]));
+    await tick();
+    expect(api.list).toHaveBeenCalledTimes(2);
+    expect(result.current.rollout?.done).toBe(2);
+
+    // A hidden page reads nothing.
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    await tick();
+    expect(api.list).toHaveBeenCalledTimes(2);
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+
+    // A newer rollout of the scope replaces it; a read that lacks the shown one keeps it.
+    api.list.mockImplementation(() => Promise.resolve([]));
+    await tick();
+    expect(result.current.rollout?.done).toBe(2);
+
+    api.list.mockImplementation(() => Promise.resolve([rollout({ state: "done", done: 12 })]));
+    await tick();
+    expect(result.current.rollout).toMatchObject({ state: "done", done: 12 });
+    const calls = api.list.mock.calls.length;
+    await tick();
+    await tick();
+    expect(api.list).toHaveBeenCalledTimes(calls); // ended: no more reads
+  });
+
+  it("takes a newer rollout from a re-read, and never revives an ended one", async () => {
+    vi.useFakeTimers();
+    const { result, api, emit } = setup(Promise.resolve([rollout()]), "t1");
+    await act(async () => {});
+    api.list.mockImplementation(() => Promise.resolve([rollout({ id: "r2", created_at: "2026-10-13T00:00:00Z", state: "queued" }), rollout()]));
+    await tick();
+    expect(result.current.rollout?.id).toBe("r2");
+
+    // A re-read in flight when r2's end arrives does not revive it.
+    let answer: (l: Rollout[]) => void = () => {};
+    api.list.mockImplementation(() => new Promise((resolve) => (answer = resolve)));
+    const reads = api.list.mock.calls.length;
+    await tick();
+    expect(api.list).toHaveBeenCalledTimes(reads + 1);
+    emit({ type: "rollout", ref: "", payload: rollout({ id: "r2", created_at: "2026-10-13T00:00:00Z", state: "failed" }) });
+    await act(async () => answer([rollout({ id: "r2", created_at: "2026-10-13T00:00:00Z", state: "running" })]));
+    expect(result.current.rollout).toMatchObject({ id: "r2", state: "failed" });
   });
 });

@@ -109,14 +109,44 @@ func (f *fakeRevisions) VarsRevision(id string) (int64, bool) {
 	return r, ok
 }
 
+// queued is one reload put on the rollout queue.
+type queued struct {
+	user, org string
+	scope     model.ReloadScope
+}
+
+type fakeQueue struct {
+	mu  sync.Mutex
+	got []queued
+}
+
+func (f *fakeQueue) QueueReload(_ context.Context, userID, orgID string, s model.ReloadScope) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.got = append(f.got, queued{userID, orgID, s})
+	return nil
+}
+
+// last is the last reload queued.
+func (f *fakeQueue) last(t *testing.T) queued {
+	t.Helper()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.got) == 0 {
+		t.Fatal("no reload queued")
+	}
+	return f.got[len(f.got)-1]
+}
+
 type env struct {
-	uc   *sharedvars.UseCase
-	d    *db.DB
-	repo *sharedvar.Repo
-	disp *fakeDispatcher
-	pub  *fakePublisher
-	revs *fakeRevisions
-	caps map[string]string // server -> stored public key
+	uc    *sharedvars.UseCase
+	d     *db.DB
+	repo  *sharedvar.Repo
+	disp  *fakeDispatcher
+	pub   *fakePublisher
+	revs  *fakeRevisions
+	queue *fakeQueue
+	caps  map[string]string // server -> stored public key
 }
 
 // fakeServers answers from env.caps; every server has users u1, u2.
@@ -158,7 +188,7 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	e := &env{d: d, repo: repo, disp: &fakeDispatcher{}, pub: &fakePublisher{},
-		revs: &fakeRevisions{revs: map[string]int64{}}, caps: map[string]string{}}
+		revs: &fakeRevisions{revs: map[string]int64{}}, queue: &fakeQueue{}, caps: map[string]string{}}
 	dbtest.SeedOrg(t, d, org1)
 	dbtest.SeedOrg(t, d, org2)
 	e.seedServer(t, org1, srvA, "alpha", "KEY-A")
@@ -166,7 +196,7 @@ func newEnv(t *testing.T) *env {
 	e.seedServer(t, org1, srvP, "pending", "")
 	e.seedServer(t, org2, srvX, "foreign", "KEY-X")
 	e.uc = sharedvars.New(&sharedvars.Deps{Repo: repo, Servers: fakeServers{e}, Dispatcher: e.disp,
-		Notifications: e.pub, Revisions: e.revs, Log: dbtest.Log})
+		Notifications: e.pub, Revisions: e.revs, Reloads: e.queue, Log: dbtest.Log})
 	return e
 }
 
@@ -401,17 +431,17 @@ func TestServerScopeAndServerListing(t *testing.T) {
 	}
 }
 
-func TestDeleteAndReloadAfterSync(t *testing.T) {
+func TestDeleteQueuesTheReload(t *testing.T) {
 	e := newEnv(t)
 	ctx := dbtest.Ctx(t)
 	v, err := e.uc.SaveOrg(ctx, "u1", org1, sharedvars.SaveInput{Name: "SMTP_HOST", Value: ptr("mail")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	invalid(t, e.uc.DeleteOrg(ctx, org2, v.ID, false), "not found")
-	invalid(t, e.uc.DeleteServer(ctx, srvA, v.ID, false), "not found")
+	invalid(t, e.uc.DeleteOrg(ctx, "u2", org2, v.ID, false), "not found")
+	invalid(t, e.uc.DeleteServer(ctx, "u1", srvA, v.ID, false), "not found")
 	before := len(e.disp.of(command.TypeVarsSync))
-	if err := e.uc.DeleteOrg(ctx, org1, v.ID, true); err != nil {
+	if err := e.uc.DeleteOrg(ctx, "u1", org1, v.ID, true); err != nil {
 		t.Fatal(err)
 	}
 	if n := len(e.disp.of(command.TypeVarsSync)) - before; n != 3 {
@@ -421,13 +451,36 @@ func TestDeleteAndReloadAfterSync(t *testing.T) {
 	if len(syncA.Payload.(command.SyncVarsRequest).Org) != 0 {
 		t.Fatal("the deleted variable is still in the snapshot")
 	}
-	if len(e.disp.of(command.TypeVarsReload)) != 0 {
-		t.Fatal("reload sent before the sync succeeded")
+	// The reload goes on the org's rollout, at the revision the delete
+	// bumped every server to; nothing is sent to the agents directly.
+	q := e.queue.last(t)
+	want := model.ReloadScope{Names: []string{"SMTP_HOST"}, ServerIDs: []string{srvA, srvB, srvP},
+		Revisions: map[string]int64{srvA: 2, srvB: 2, srvP: 2}}
+	if q.user != "u1" || q.org != org1 || !reflect.DeepEqual(q.scope, want) {
+		t.Fatalf("queued = %+v, want %+v", q, want)
 	}
 	answer(t, syncA, true, "", command.SyncVarsResponse{Revision: 2, Undecryptable: []command.VarRef{}})
-	reload := e.disp.lastTo(t, command.TypeVarsReload, srvA)
-	if !reflect.DeepEqual(reload.Payload, command.ReloadVarsRequest{Names: []string{"SMTP_HOST"}}) {
-		t.Fatalf("reload = %+v", reload.Payload)
+	if n := len(e.disp.of(command.TypeVarsReload)); n != 0 {
+		t.Fatalf("%d vars.reload sent directly", n)
+	}
+}
+
+func TestSaveWithReloadQueuesOnlyWhenSomethingChanged(t *testing.T) {
+	e := newEnv(t)
+	ctx := dbtest.Ctx(t)
+	if _, err := e.uc.SaveServer(ctx, "u1", srvB, sharedvars.SaveInput{Name: "LOCAL", Value: ptr("x"), Reload: true}); err != nil {
+		t.Fatal(err)
+	}
+	q := e.queue.last(t)
+	if !reflect.DeepEqual(q.scope, model.ReloadScope{Names: []string{"LOCAL"}, ServerIDs: []string{srvB}, Revisions: map[string]int64{srvB: 1}}) {
+		t.Fatalf("queued = %+v", q)
+	}
+	// A description-only edit changes no server: nothing to reload.
+	if _, err := e.uc.SaveServer(ctx, "u1", srvB, sharedvars.SaveInput{Name: "LOCAL", Value: ptr("x"), Description: "d", Reload: true}); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(e.queue.got); n != 1 {
+		t.Fatalf("queued %d reloads", n)
 	}
 }
 
@@ -553,27 +606,40 @@ func TestResyncAndReloadTargets(t *testing.T) {
 	if got, _ := e.uc.Resync(ctx, org1, sharedvars.ResyncInput{VariableID: local.ID}); !reflect.DeepEqual(got, []string{srvB}) {
 		t.Fatalf("resync by variable = %v", got)
 	}
-	_, err = e.uc.Reload(ctx, org1, sharedvars.ReloadInput{})
+	_, err = e.uc.Reload(ctx, "u1", org1, sharedvars.ReloadInput{})
 	invalid(t, err, "required")
-	_, err = e.uc.Reload(ctx, org1, sharedvars.ReloadInput{ServerID: srvA, AppIDs: []string{"../x"}})
+	_, err = e.uc.Reload(ctx, "u1", org1, sharedvars.ReloadInput{ServerID: srvA, AppIDs: []string{"../x"}})
 	invalid(t, err, "invalid app id")
-	if got, _ := e.uc.Reload(ctx, org1, sharedvars.ReloadInput{ServerID: srvA, AppIDs: []string{"a1"}}); !reflect.DeepEqual(got, []string{srvA}) {
-		t.Fatalf("reload server = %v", got)
+	if _, err := e.uc.Reload(ctx, "u1", org1, sharedvars.ReloadInput{ServerID: srvX}); !errors.Is(err, sharedvars.ErrForbidden) {
+		t.Fatalf("foreign reload err = %v", err)
 	}
-	if p := e.disp.lastTo(t, command.TypeVarsReload, srvA).Payload; !reflect.DeepEqual(p, command.ReloadVarsRequest{AppIDs: []string{"a1"}}) {
-		t.Fatalf("reload payload = %+v", p)
+	cases := []struct {
+		in      sharedvars.ReloadInput
+		servers []string
+		scope   model.ReloadScope
+	}{
+		{sharedvars.ReloadInput{ServerID: srvA, AppIDs: []string{"a1"}}, []string{srvA},
+			model.ReloadScope{AppIDs: []string{"a1"}, ServerIDs: []string{srvA}, Revisions: map[string]int64{srvA: 0}}},
+		{sharedvars.ReloadInput{ServerID: srvA, Names: []string{"SMTP_PASS"}}, []string{srvA},
+			model.ReloadScope{Names: []string{"SMTP_PASS"}, ServerIDs: []string{srvA}, Revisions: map[string]int64{srvA: 0}}},
+		{sharedvars.ReloadInput{ServerID: srvA}, []string{srvA},
+			model.ReloadScope{AllStale: []string{srvA}, Revisions: map[string]int64{srvA: 0}}},
+		{sharedvars.ReloadInput{VariableID: local.ID}, []string{srvB},
+			model.ReloadScope{Names: []string{"LOCAL"}, ServerIDs: []string{srvB}, Revisions: map[string]int64{srvB: 1}}},
 	}
-	if got, _ := e.uc.Reload(ctx, org1, sharedvars.ReloadInput{VariableID: local.ID}); !reflect.DeepEqual(got, []string{srvB}) {
-		t.Fatalf("reload by variable = %v", got)
+	for _, tc := range cases {
+		got, err := e.uc.Reload(ctx, "u1", org1, tc.in)
+		if q := e.queue.last(t); err != nil || !reflect.DeepEqual(got, tc.servers) || !reflect.DeepEqual(q.scope, tc.scope) || q.org != org1 {
+			t.Errorf("%+v: servers %v, queued %+v, %v", tc.in, got, q, err)
+		}
 	}
-	reload := e.disp.lastTo(t, command.TypeVarsReload, srvB)
-	if !reflect.DeepEqual(reload.Payload, command.ReloadVarsRequest{Names: []string{"LOCAL"}}) {
-		t.Fatalf("reload payload = %+v", reload.Payload)
+	if n := len(e.disp.of(command.TypeVarsReload)); n != 0 {
+		t.Fatalf("%d vars.reload sent directly", n)
 	}
-	// An agent refusing the reload (too old) is reported to the org.
-	answer(t, reload, false, "unsupported command type: vars.reload", nil)
-	if got := e.pub.of(model.NotificationVarsReloaded); len(got) != len(users) || got[0].Payload.(command.VarsReloadedPayload).OK {
-		t.Fatalf("refused reload = %+v", got)
+	// Without a queue a reload is refused, not silently dropped.
+	bare := sharedvars.New(&sharedvars.Deps{Repo: e.repo, Servers: fakeServers{e}, Dispatcher: e.disp, Log: dbtest.Log})
+	if _, err := bare.Reload(ctx, "u1", org1, sharedvars.ReloadInput{ServerID: srvA}); err == nil {
+		t.Fatal("a reload without a queue succeeded")
 	}
 }
 

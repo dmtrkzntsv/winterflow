@@ -22,6 +22,7 @@ import (
 	"winterflow/internal/app/web/middleware/patauth"
 	"winterflow/internal/app/web/middleware/ratelimit"
 	"winterflow/internal/app/web/util"
+	svuc "winterflow/internal/domain/usecase/sharedvars"
 	"winterflow/internal/infra/bootstrap"
 )
 
@@ -125,6 +126,12 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 	})
 	usersAPI := huser.NewHandler(&huser.Deps{Logger: d.Log, Tokens: d.UserService, Users: d.UserService})
 	orgAPI := horg.NewHandler(&horg.Deps{Logger: d.Log, Users: d.UserService})
+	// A nil queue (the spec-only route table) must not become a non-nil
+	// interface.
+	var reloads svuc.ReloadQueue
+	if d.Rollouts != nil {
+		reloads = d.Rollouts
+	}
 	sharedVarsAPI := hsharedvars.NewHandler(&hsharedvars.Deps{
 		Logger:              d.Log,
 		Repo:                d.SharedVariableRepository,
@@ -133,6 +140,7 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 		CommandDispatcher:   d.CommandDispatcher,
 		NotificationManager: d.NotificationManager,
 		StatusCache:         d.StatusCache,
+		Reloads:             reloads,
 	})
 
 	templatesAPI := htemplates.NewHandler(&htemplates.Deps{

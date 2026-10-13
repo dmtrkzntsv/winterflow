@@ -24,6 +24,8 @@ type Deps struct {
 	CommandDispatcher   port.CommandDispatcher
 	NotificationManager port.NotificationManager
 	StatusCache         *status.Cache
+	// Reloads is the rollout queue (nil: reload requests fail).
+	Reloads svuc.ReloadQueue
 }
 
 type Handler struct {
@@ -36,7 +38,7 @@ type Handler struct {
 // NewHandler wires the usecase. With zero Deps (route documentation) it
 // builds a handler that is never called.
 func NewHandler(d *Deps) *Handler {
-	deps := svuc.Deps{Repo: d.Repo, Dispatcher: d.CommandDispatcher, Log: d.Logger}
+	deps := svuc.Deps{Repo: d.Repo, Dispatcher: d.CommandDispatcher, Reloads: d.Reloads, Log: d.Logger}
 	var access webutil.ServerAccess
 	if d.Servers != nil {
 		deps.Servers = d.Servers
@@ -138,7 +140,7 @@ func (h *Handler) SaveOrg(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) DeleteOrg(w http.ResponseWriter, r *http.Request) {
-	_, orgID, ok := h.callerOrg(w, r)
+	userID, orgID, ok := h.callerOrg(w, r)
 	if !ok {
 		return
 	}
@@ -146,7 +148,7 @@ func (h *Handler) DeleteOrg(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := h.uc.DeleteOrg(r.Context(), orgID, req.ID, req.Reload); err != nil {
+	if err := h.uc.DeleteOrg(r.Context(), userID, orgID, req.ID, req.Reload); err != nil {
 		h.fail(w, err, "delete shared variable")
 		return
 	}
@@ -196,7 +198,7 @@ func (h *Handler) DeleteServer(w http.ResponseWriter, r *http.Request) {
 	if !ok || !h.serverAccess(w, r, userID, req.ServerID) {
 		return
 	}
-	if err := h.uc.DeleteServer(r.Context(), req.ServerID, req.ID, req.Reload); err != nil {
+	if err := h.uc.DeleteServer(r.Context(), userID, req.ServerID, req.ID, req.Reload); err != nil {
 		h.fail(w, err, "delete shared variable")
 		return
 	}
@@ -237,12 +239,12 @@ func (h *Handler) Reload(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	servers, err := h.uc.Reload(r.Context(), orgID, svuc.ReloadInput{
+	servers, err := h.uc.Reload(r.Context(), userID, orgID, svuc.ReloadInput{
 		ServerID: req.ServerID, VariableID: req.VariableID, Names: req.Names, AppIDs: req.AppIDs,
 	})
 	if err != nil {
 		h.fail(w, err, "reload apps")
 		return
 	}
-	webutil.Success(w, "reload dispatched", svuc.DispatchedServers{Servers: servers})
+	webutil.Success(w, "reload queued", svuc.DispatchedServers{Servers: servers})
 }

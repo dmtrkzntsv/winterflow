@@ -108,7 +108,7 @@ func New(d Deps) *UseCase {
 		lease: leaseFor, renew: renewEvery, idle: idleTick, cmdWait: commandWait,
 		health: healthWait, healthPoll: healthPoll, settle: settleWait, settlePoll: settlePoll,
 	}
-	uc.kinds = map[string]runner{model.RolloutTemplateUpgrade: upgrader{uc}}
+	uc.kinds = map[string]runner{model.RolloutTemplateUpgrade: upgrader{uc}, model.RolloutVarsReload: reloader{uc}}
 	return uc
 }
 

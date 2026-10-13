@@ -2,7 +2,9 @@
 // variables: it validates saves against the browser fan-out coverage rules,
 // stores plain values and per-server ciphertexts (never plaintext secrets),
 // bumps the affected servers' vars_revision and pushes each one its full
-// snapshot as vars.sync.
+// snapshot as vars.sync. Reloads (reload: true, the reload route) queue or
+// extend the org's vars_reload rollout, which reloads the stale running
+// apps one at a time once each server reported the change.
 package sharedvars
 
 import (
@@ -63,13 +65,25 @@ type RevisionCache interface {
 	VarsRevision(serverID string) (int64, bool)
 }
 
+// ReloadQueue queues or extends an org's vars_reload rollout
+// (*rollouts.UseCase).
+type ReloadQueue interface {
+	QueueReload(ctx context.Context, userID, orgID string, s model.ReloadScope) error
+}
+
+// errNoReloads answers a reload on a usecase built without a queue.
+var errNoReloads = errors.New("reloads are not available")
+
 type Deps struct {
 	Repo          port.SharedVariableRepository
 	Servers       ServerDirectory
 	Dispatcher    port.CommandDispatcher
 	Notifications Publisher
 	Revisions     RevisionCache
-	Log           *logger.Logger
+	// Reloads is the rollout queue reloads go to (nil: the usecase only
+	// syncs, as the event sink's does).
+	Reloads ReloadQueue
+	Log     *logger.Logger
 }
 
 type UseCase struct{ d Deps }
@@ -216,12 +230,15 @@ func (u *UseCase) save(ctx context.Context, userID, orgID string, serverID *stri
 	if err := u.d.Repo.Save(ctx, save); err != nil {
 		return VariableView{}, err
 	}
-	u.syncAll(ctx, save.Bump, reloadNames(in.Reload, in.Name))
+	u.syncAll(ctx, save.Bump)
+	if in.Reload {
+		u.queueReload(ctx, userID, orgID, in.Name, save.Bump)
+	}
 	return view(v, keyed), nil
 }
 
 // DeleteOrg removes an org-scope variable of orgID.
-func (u *UseCase) DeleteOrg(ctx context.Context, orgID, id string, reload bool) error {
+func (u *UseCase) DeleteOrg(ctx context.Context, userID, orgID, id string, reload bool) error {
 	v, err := u.lookup(ctx, orgID, id)
 	if err != nil {
 		return err
@@ -233,11 +250,11 @@ func (u *UseCase) DeleteOrg(ctx context.Context, orgID, id string, reload bool) 
 	if err != nil {
 		return err
 	}
-	return u.remove(ctx, v, scopeServers(keys, nil), reload)
+	return u.remove(ctx, userID, v, scopeServers(keys, nil), reload)
 }
 
 // DeleteServer removes a server-scope variable of serverID.
-func (u *UseCase) DeleteServer(ctx context.Context, serverID, id string, reload bool) error {
+func (u *UseCase) DeleteServer(ctx context.Context, userID, serverID, id string, reload bool) error {
 	orgID, err := u.ServerOrg(ctx, serverID)
 	if err != nil {
 		return err
@@ -249,7 +266,7 @@ func (u *UseCase) DeleteServer(ctx context.Context, serverID, id string, reload 
 	if v.ServerID == nil || *v.ServerID != serverID {
 		return invalid("shared variable not found")
 	}
-	return u.remove(ctx, v, []string{serverID}, reload)
+	return u.remove(ctx, userID, v, []string{serverID}, reload)
 }
 
 func (u *UseCase) lookup(ctx context.Context, orgID, id string) (model.SharedVariable, error) {
@@ -260,12 +277,53 @@ func (u *UseCase) lookup(ctx context.Context, orgID, id string) (model.SharedVar
 	return v, err
 }
 
-func (u *UseCase) remove(ctx context.Context, v model.SharedVariable, bump []string, reload bool) error {
+func (u *UseCase) remove(ctx context.Context, userID string, v model.SharedVariable, bump []string, reload bool) error {
 	if err := u.d.Repo.Delete(ctx, v.ID, bump); err != nil {
 		return err
 	}
-	u.syncAll(ctx, bump, reloadNames(reload, v.Name))
+	u.syncAll(ctx, bump)
+	if reload {
+		u.queueReload(ctx, userID, v.OrgID, v.Name, bump)
+	}
 	return nil
+}
+
+// queueReload puts a saved or deleted variable's reload on the org's
+// rollout, logging (not failing) an error: the change is committed and the
+// servers' stale apps can still be reloaded by hand.
+func (u *UseCase) queueReload(ctx context.Context, userID, orgID, name string, servers []string) {
+	if len(servers) == 0 {
+		return
+	}
+	scope, err := u.reloadScope(ctx, model.ReloadScope{Names: []string{name}, ServerIDs: servers})
+	if err == nil {
+		err = u.queue(ctx, userID, orgID, scope)
+	}
+	if err != nil {
+		u.d.Log.Warn("queue the reload after a shared variable change", "name", name, "error", err)
+	}
+}
+
+// reloadScope adds each server's current revision to s: the server's
+// report must reach it before its stale apps count (the change travels
+// as vars.sync first).
+func (u *UseCase) reloadScope(ctx context.Context, s model.ReloadScope) (model.ReloadScope, error) {
+	s.Revisions = map[string]int64{}
+	for _, id := range s.Servers() {
+		info, err := u.d.Repo.ServerVarsInfo(ctx, id)
+		if err != nil {
+			return model.ReloadScope{}, err
+		}
+		s.Revisions[id] = info.Revision
+	}
+	return s, nil
+}
+
+func (u *UseCase) queue(ctx context.Context, userID, orgID string, s model.ReloadScope) error {
+	if u.d.Reloads == nil {
+		return errNoReloads
+	}
+	return u.d.Reloads.QueueReload(ctx, userID, orgID, s)
 }
 
 // Resync pushes the full snapshot to the servers in scope and returns them.
@@ -275,16 +333,18 @@ func (u *UseCase) Resync(ctx context.Context, orgID string, in ResyncInput) ([]s
 		return nil, err
 	}
 	for _, id := range targets {
-		if err := u.Sync(ctx, id, nil); err != nil {
+		if err := u.Sync(ctx, id); err != nil {
 			return nil, err
 		}
 	}
 	return targets, nil
 }
 
-// Reload sends vars.reload to one server (with its names/app_ids filter)
-// or, for a variable, to every server it reaches (filtered to its name).
-func (u *UseCase) Reload(ctx context.Context, orgID string, in ReloadInput) ([]string, error) {
+// Reload queues (or extends) the org's vars_reload rollout: for one server
+// its stale running apps (or those stale for names, or the app ids), for a
+// variable the apps stale for its name on every server it reaches. It
+// returns the servers in scope.
+func (u *UseCase) Reload(ctx context.Context, userID, orgID string, in ReloadInput) ([]string, error) {
 	if in.ServerID == "" && in.VariableID == "" {
 		return nil, invalid("server_id or variable_id is required")
 	}
@@ -299,10 +359,20 @@ func (u *UseCase) Reload(ctx context.Context, orgID string, in ReloadInput) ([]s
 	if err := req.Validate(); err != nil {
 		return nil, &ValidationError{Msg: err.Error()}
 	}
-	for _, id := range targets {
-		if err := u.dispatchReload(ctx, id, req); err != nil {
-			return nil, err
-		}
+	var s model.ReloadScope
+	switch {
+	case len(req.AppIDs) > 0:
+		s = model.ReloadScope{AppIDs: req.AppIDs, ServerIDs: targets}
+	case len(req.Names) > 0:
+		s = model.ReloadScope{Names: req.Names, ServerIDs: targets}
+	default:
+		s = model.ReloadScope{AllStale: targets}
+	}
+	if s, err = u.reloadScope(ctx, s); err != nil {
+		return nil, err
+	}
+	if err := u.queue(ctx, userID, orgID, s); err != nil {
+		return nil, err
 	}
 	return targets, nil
 }
@@ -338,19 +408,12 @@ func (u *UseCase) targets(ctx context.Context, orgID, serverID, variableID strin
 
 // syncAll pushes the snapshot to each server, logging (not failing) a
 // publish error: the save is committed and drift or the next connect heals.
-func (u *UseCase) syncAll(ctx context.Context, servers, reload []string) {
+func (u *UseCase) syncAll(ctx context.Context, servers []string) {
 	for _, id := range servers {
-		if err := u.Sync(ctx, id, reload); err != nil {
+		if err := u.Sync(ctx, id); err != nil {
 			u.d.Log.Warn("push shared variables", "server_id", id, "error", err)
 		}
 	}
-}
-
-func reloadNames(reload bool, name string) []string {
-	if reload {
-		return []string{name}
-	}
-	return nil
 }
 
 func kindOf(secret bool) string {

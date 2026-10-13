@@ -36,6 +36,10 @@ const (
 	healthWait = 5 * time.Minute
 	// healthPoll re-reads the status cache (memory only) while waiting.
 	healthPoll = time.Second
+	// healthSettle is how far apart the receive times of the two healthy
+	// reports a step needs must be (the agent reports every 30 s, so the
+	// second is normally the next one).
+	healthSettle = 20 * time.Second
 	// settleWait is how long a vars_reload waits for a server to report
 	// the change it was pushed; settlePoll how often it looks.
 	settleWait = 5 * time.Minute
@@ -98,7 +102,7 @@ type UseCase struct {
 	now   func() time.Time
 
 	// Bounds, shortened by tests.
-	lease, renew, idle, cmdWait, health, healthPoll, settle, settlePoll time.Duration
+	lease, renew, idle, cmdWait, health, healthPoll, healthSettle, settle, settlePoll time.Duration
 }
 
 // New builds the usecase; Run starts its worker.
@@ -106,7 +110,7 @@ func New(d Deps) *UseCase {
 	uc := &UseCase{
 		d: d, owner: util.GenerateID(), wake: make(chan struct{}, 1), now: time.Now,
 		lease: leaseFor, renew: renewEvery, idle: idleTick, cmdWait: commandWait,
-		health: healthWait, healthPoll: healthPoll, settle: settleWait, settlePoll: settlePoll,
+		health: healthWait, healthPoll: healthPoll, healthSettle: healthSettle, settle: settleWait, settlePoll: settlePoll,
 	}
 	uc.kinds = map[string]runner{model.RolloutTemplateUpgrade: upgrader{uc}, model.RolloutVarsReload: reloader{uc}}
 	return uc

@@ -299,13 +299,21 @@ func TestAwaitRunning(t *testing.T) {
 	app := func(code command.ContainerStatusCode) []command.AppStatus {
 		return []command.AppStatus{{AppID: "a1", StatusCode: code}}
 	}
-	// A report from before the step does not count; a later Active does.
+	// A report from before the step does not count; two later Active ones,
+	// healthSettle apart, do.
 	e.reports.set(srv1, status.Report{Apps: app(command.ContainerStatusActive), Received: since.Add(-time.Second)})
+	stop, fed := make(chan struct{}), make(chan struct{})
 	go func() {
+		defer close(fed)
 		time.Sleep(30 * time.Millisecond)
-		e.reports.set(srv1, status.Report{Apps: app(command.ContainerStatusActive), Received: since.Add(time.Second)})
+		if e.reports.setRead(srv1, status.Report{Apps: app(command.ContainerStatusActive), Received: since.Add(time.Second)}, stop) {
+			e.reports.set(srv1, status.Report{Apps: app(command.ContainerStatusActive), Received: since.Add(time.Second + e.uc.healthSettle)})
+		}
 	}()
-	if _, err := e.uc.awaitRunning(ctx, srv1, "a1", since); err != nil {
+	_, err := e.uc.awaitRunning(ctx, srv1, "a1", since)
+	close(stop)
+	<-fed
+	if err != nil {
 		t.Fatalf("active: %v", err)
 	}
 	ctr := func(name string, code command.ContainerStatusCode, exit int32) command.ContainerStatus {
@@ -314,27 +322,49 @@ func TestAwaitRunning(t *testing.T) {
 	withContainers := func(agg command.ContainerStatusCode, cs ...command.ContainerStatus) []command.AppStatus {
 		return []command.AppStatus{{AppID: "a1", StatusCode: agg, Containers: cs}}
 	}
+	healthy := withContainers(command.ContainerStatusActive, ctr("web", command.ContainerStatusActive, 0))
+	oneShot := withContainers(command.ContainerStatusIdle, ctr("web", command.ContainerStatusActive, 0), ctr("migrate", command.ContainerStatusStopped, 0))
+	restarting := withContainers(command.ContainerStatusIdle, ctr("web", command.ContainerStatusRestarting, 0))
 	cases := []struct {
-		name string
-		apps []command.AppStatus
-		want string // "" passes
-		fast bool   // passes well before the bound
+		name    string
+		reports [][]command.AppStatus // received 10ms apart (healthSettle is 30ms)
+		want    string                // "" passes
+		fast    bool                  // answers well before the bound
 	}{
-		// The agent aggregates a restarting container to Idle.
-		{"crash loop", withContainers(command.ContainerStatusIdle, ctr("web", command.ContainerStatusActive, 0), ctr("worker", command.ContainerStatusRestarting, 0)), "container worker is restarting", false},
-		{"restarting only", withContainers(command.ContainerStatusIdle, ctr("web", command.ContainerStatusRestarting, 0)), "container web is restarting", false},
-		{"one-shot finished", withContainers(command.ContainerStatusIdle, ctr("web", command.ContainerStatusActive, 0), ctr("migrate", command.ContainerStatusStopped, 0)), "", true},
-		{"all active", withContainers(command.ContainerStatusActive, ctr("web", command.ContainerStatusActive, 0)), "", true},
-		{"active beside paused", withContainers(command.ContainerStatusIdle, ctr("web", command.ContainerStatusActive, 0), ctr("side", command.ContainerStatusIdle, 0)), "", false},
-		{"problematic", withContainers(command.ContainerStatusProblematic, ctr("web", command.ContainerStatusActive, 0), ctr("job", command.ContainerStatusProblematic, 3)), "container job exited with code 3", false},
-		{"stopped", withContainers(command.ContainerStatusStopped, ctr("web", command.ContainerStatusStopped, 0)), "not running 200ms later (stopped)", false},
-		{"idle without containers", app(command.ContainerStatusIdle), "the app has no containers", false},
-		{"not listed", nil, "the app has no containers", false},
+		// The agent aggregates a restarting container to Idle; a crash seen
+		// fails at once.
+		{"crash loop", [][]command.AppStatus{withContainers(command.ContainerStatusIdle, ctr("web", command.ContainerStatusActive, 0), ctr("worker", command.ContainerStatusRestarting, 0))}, "container worker is restarting", true},
+		{"restarting only", [][]command.AppStatus{restarting}, "container web is restarting", true},
+		{"problematic", [][]command.AppStatus{withContainers(command.ContainerStatusProblematic, ctr("web", command.ContainerStatusActive, 0), ctr("job", command.ContainerStatusProblematic, 3))}, "container job exited with code 3", true},
+		// One healthy report is not enough, two too close together neither.
+		{"one-shot, one report", [][]command.AppStatus{oneShot}, "healthy on one status report only", false},
+		{"healthy twice, too close", [][]command.AppStatus{healthy, healthy}, "healthy on one status report only", false},
+		{"one-shot finished", [][]command.AppStatus{oneShot, oneShot, oneShot, oneShot}, "", true},
+		{"all active", [][]command.AppStatus{healthy, healthy, healthy, healthy}, "", true},
+		// A crash between two healthy reports fails the step.
+		{"restarting between healthy", [][]command.AppStatus{healthy, restarting, healthy, healthy}, "container web is restarting", true},
+		// Another unhealthy report in between starts the count again.
+		{"stopped between healthy", [][]command.AppStatus{healthy, healthy, withContainers(command.ContainerStatusStopped, ctr("web", command.ContainerStatusStopped, 0)), healthy}, "healthy on one status report only", false},
+		{"active beside paused", [][]command.AppStatus{withContainers(command.ContainerStatusIdle, ctr("web", command.ContainerStatusActive, 0), ctr("side", command.ContainerStatusIdle, 0))}, "", false},
+		{"stopped", [][]command.AppStatus{withContainers(command.ContainerStatusStopped, ctr("web", command.ContainerStatusStopped, 0))}, "not running 200ms later (stopped)", false},
+		{"idle without containers", [][]command.AppStatus{app(command.ContainerStatusIdle)}, "the app has no containers", false},
+		{"not listed", [][]command.AppStatus{nil}, "the app has no containers", false},
 	}
 	for _, tc := range cases {
-		e.reports.set(srv1, status.Report{Apps: tc.apps, Received: since.Add(time.Second)})
+		e.reports.set(srv1, status.Report{Apps: tc.reports[0], Received: since.Add(time.Second)})
+		stop, fed := make(chan struct{}), make(chan struct{})
+		go func() {
+			defer close(fed)
+			for i, apps := range tc.reports[1:] {
+				if !e.reports.setRead(srv1, status.Report{Apps: apps, Received: since.Add(time.Second + time.Duration(i+1)*10*time.Millisecond)}, stop) {
+					return
+				}
+			}
+		}()
 		start := time.Now()
 		_, err := e.uc.awaitRunning(ctx, srv1, "a1", since)
+		close(stop)
+		<-fed
 		if (tc.want == "") != (err == nil) || (err != nil && !strings.Contains(err.Error(), tc.want)) {
 			t.Errorf("%s: %v, want %q", tc.name, err, tc.want)
 		}

@@ -58,6 +58,7 @@ func (f *fakePublisher) events() []model.RolloutView {
 type fakeReports struct {
 	mu      sync.Mutex
 	reports map[string]status.Report
+	reads   int
 }
 
 func (f *fakeReports) set(serverID string, rep status.Report) {
@@ -66,9 +67,32 @@ func (f *fakeReports) set(serverID string, rep status.Report) {
 	f.reports[serverID] = rep
 }
 
+// setRead sets rep and waits until it has been read (false when stop
+// closes first), so a sequence of reports reaches a poller one by one.
+func (f *fakeReports) setRead(serverID string, rep status.Report, stop <-chan struct{}) bool {
+	f.mu.Lock()
+	f.reports[serverID] = rep
+	n := f.reads
+	f.mu.Unlock()
+	for {
+		f.mu.Lock()
+		read := f.reads > n
+		f.mu.Unlock()
+		if read {
+			return true
+		}
+		select {
+		case <-stop:
+			return false
+		case <-time.After(time.Millisecond):
+		}
+	}
+}
+
 func (f *fakeReports) LatestReport(serverID string, _ time.Time) (status.Report, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.reads++
 	rep, ok := f.reports[serverID]
 	return rep, ok
 }
@@ -110,7 +134,7 @@ func (e *env) newUseCase() *UseCase {
 	// Times are stored to the second: a park shorter than that would be over
 	// at once, so the poll is just above one.
 	uc.renew, uc.idle, uc.settlePoll, uc.healthPoll = 10*time.Millisecond, time.Hour, 1100*time.Millisecond, 5*time.Millisecond
-	uc.health, uc.settle = 200*time.Millisecond, 200*time.Millisecond
+	uc.health, uc.healthSettle, uc.settle = 200*time.Millisecond, 30*time.Millisecond, 200*time.Millisecond
 	return uc
 }
 

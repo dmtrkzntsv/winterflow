@@ -31,29 +31,45 @@ func (uc *UseCase) awaitResult(ctx context.Context, ch <-chan port.CommandResult
 	}
 }
 
-// awaitRunning waits, at most uc.health, until a status report received
-// after since shows the app healthy, and returns the last status seen for
-// it. The app-level code alone cannot tell: the agent aggregates a container
-// that is restarting (a crash loop under a restart policy) to Idle, and an
-// app with a finished one-shot container (a migration job, exit 0) is Idle
-// forever. So health is judged from the containers (see judgeApp): healthy
-// reports pass at once. At the bound the step fails when no report came
-// after it, the app has no containers, a container is restarting or exited
-// with an error, or the app reads Stopped, Problematic or unknown; an app
-// that reads Idle for other reasons (paused or created containers beside
-// running ones) passes. A Docker healthcheck's "unhealthy" is not seen: such
-// a container reads running.
+// awaitRunning waits, at most uc.health, until the app reads healthy on
+// two status reports received after since whose receive times are at least
+// uc.healthSettle apart, and returns the last status seen for it. One
+// healthy report is not enough: a crash-looping container reads running
+// between its restarts. The app-level code alone cannot tell either: the
+// agent aggregates a container that is restarting (a crash loop under a
+// restart policy) to Idle, and an app with a finished one-shot container (a
+// migration job, exit 0) is Idle forever. So health is judged from the
+// containers (see judgeApp). A report showing a container restarting or
+// exited with an error fails the step at once, naming the container: a
+// crash seen is a crash. Any other report that is not healthy starts the
+// count again. At the bound the step fails when no report came after
+// since, the app has no containers, it read healthy on one report only, or
+// it reads Stopped or unknown; an app that reads Idle for other reasons
+// (paused or created containers beside running ones) passes. A Docker
+// healthcheck's "unhealthy" is not seen: such a container reads running.
 func (uc *UseCase) awaitRunning(ctx context.Context, serverID, appID string, since time.Time) (command.AppStatus, error) {
 	deadline := uc.now().Add(uc.health)
 	var (
 		last             command.AppStatus
 		reported, listed bool
+		seen, healthyAt  time.Time // the last report read; the first healthy one of the run
 	)
 	for {
-		if rep, ok := uc.d.Status.LatestReport(serverID, uc.now()); ok && rep.Received.After(since) {
-			reported = true
+		if rep, ok := uc.d.Status.LatestReport(serverID, uc.now()); ok && rep.Received.After(since) && !rep.Received.Equal(seen) {
+			seen, reported = rep.Received, true
 			last, listed = findApp(rep.Apps, appID)
-			if listed && judgeApp(last).healthy {
+			j := judgment{}
+			if listed {
+				j = judgeApp(last)
+			}
+			switch {
+			case j.crashed:
+				return last, errors.New(j.reason)
+			case !j.healthy:
+				healthyAt = time.Time{}
+			case healthyAt.IsZero():
+				healthyAt = rep.Received
+			case rep.Received.Sub(healthyAt) >= uc.healthSettle:
 				return last, nil
 			}
 		}
@@ -74,6 +90,8 @@ func (uc *UseCase) awaitRunning(ctx context.Context, serverID, appID string, sin
 	switch {
 	case j.reason != "":
 		return last, fmt.Errorf("%s %s later", j.reason, uc.health)
+	case j.healthy:
+		return last, fmt.Errorf("the app read healthy on one status report only within %s", uc.health)
 	case last.StatusCode == command.ContainerStatusIdle:
 		return last, nil
 	}
@@ -81,10 +99,11 @@ func (uc *UseCase) awaitRunning(ctx context.Context, serverID, appID string, sin
 }
 
 // judgment is a report's verdict on an app: healthy, or the reason it is
-// surely not (empty while undecided).
+// surely not (empty while undecided); crashed when the reason is a
+// container restarting or exited with an error.
 type judgment struct {
-	healthy bool
-	reason  string
+	healthy, crashed bool
+	reason           string
 }
 
 // judgeApp reads an app's containers. Healthy: at least one container, at
@@ -95,9 +114,9 @@ func judgeApp(a command.AppStatus) judgment {
 	for _, c := range a.Containers {
 		switch c.StatusCode {
 		case command.ContainerStatusRestarting:
-			return judgment{reason: fmt.Sprintf("container %s is restarting", c.Name)}
+			return judgment{crashed: true, reason: fmt.Sprintf("container %s is restarting", c.Name)}
 		case command.ContainerStatusProblematic:
-			return judgment{reason: fmt.Sprintf("container %s exited with code %d", c.Name, c.ExitCode)}
+			return judgment{crashed: true, reason: fmt.Sprintf("container %s exited with code %d", c.Name, c.ExitCode)}
 		}
 	}
 	if a.StatusCode == command.ContainerStatusActive {

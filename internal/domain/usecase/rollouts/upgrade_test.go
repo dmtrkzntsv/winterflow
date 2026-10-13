@@ -173,7 +173,7 @@ func TestUpgradeFailsWhenTheAppDoesNotRunAfterwards(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.uc.pass(ctx)
-	if r := e.get(t, v.ID); r.State != model.RolloutFailed || r.Error != "container web is restarting 200ms later" || r.CurrentAppID != apps["acme"] {
+	if r := e.get(t, v.ID); r.State != model.RolloutFailed || r.Error != "container web is restarting" || r.CurrentAppID != apps["acme"] {
 		t.Fatalf("rollout = %+v", r)
 	}
 	// The save itself went through: the instance is on r2.

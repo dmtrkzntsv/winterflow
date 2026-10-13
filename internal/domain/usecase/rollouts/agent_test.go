@@ -19,8 +19,9 @@ import (
 )
 
 // fakeAgent answers app.save and vars.reload on its own goroutine, then
-// reports the server's apps as the status reporter would: the app it
-// touched running (or after[app]) and no longer stale.
+// reports the server's apps twice, healthSettle apart, as the status
+// reporter would: the app it touched running (or after[app]) and no longer
+// stale.
 type fakeAgent struct {
 	mu      sync.Mutex
 	reports *fakeReports
@@ -76,6 +77,8 @@ func (a *fakeAgent) answer(in port.DispatchInput) {
 	}
 	in.OnResult(res)
 	time.Sleep(20 * time.Millisecond) // the next report comes after the answer
+	a.report(in.AgentID)
+	time.Sleep(40 * time.Millisecond) // and one more, healthSettle (30ms) later
 	a.report(in.AgentID)
 }
 

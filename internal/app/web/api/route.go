@@ -56,7 +56,9 @@ type Route struct {
 	Request  any // JSON body type, or nil
 	Response any // `data` payload type of the 200 envelope, or nil (data is null)
 	// Accepted routes answer 202 with data {request_id}; the agent's reply
-	// arrives over SSE as an operation_result whose payload is Result.
+	// arrives over SSE as an operation_result whose payload is Result. An
+	// Accepted route with a Response can also answer 200 with it (a call
+	// that waited for the outcome).
 	Accepted bool
 	Result   any
 	// Events marks a text/event-stream route; each event's data is Events.

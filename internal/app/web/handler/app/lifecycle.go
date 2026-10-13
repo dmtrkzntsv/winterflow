@@ -1,11 +1,13 @@
 package server
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
 	webutil "winterflow/internal/app/web/util"
 	"winterflow/internal/domain/command"
+	"winterflow/internal/domain/model"
 )
 
 // acceptedRequestID is the standard 202 body for fire-and-forward operations.
@@ -231,6 +233,10 @@ func (h *Handler) RollbackApp(w http.ResponseWriter, r *http.Request) {
 	}
 
 	requestID, err := h.usecase.RollbackApp(r.Context(), userID, req.ServerID, req.AppID, req.Hash)
+	if errors.Is(err, model.ErrConflict) {
+		webutil.ErrorStatus(w, webutil.StatusFor(err), err.Error())
+		return
+	}
 	if err != nil {
 		webutil.Error(w, "failed to roll back app", nil)
 		return

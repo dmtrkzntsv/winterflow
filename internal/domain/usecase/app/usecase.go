@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/port"
@@ -24,7 +25,9 @@ type UseCase struct {
 	// servers answers whether a user's organizations own a server (nil: no
 	// server is known to be theirs).
 	servers ServerAccess
-	log     *logger.Logger
+	// instances knows the apps template instances manage (nil: none do).
+	instances port.InstanceLinks
+	log       *logger.Logger
 }
 
 // ServerAccess answers whether a server belongs to one of a user's
@@ -41,7 +44,11 @@ type Deps struct {
 	// Servers lets a lookup in the catalog stay within the caller's
 	// organizations.
 	Servers ServerAccess
-	Log     *logger.Logger
+	// Instances knows the apps template instances manage: save-app and
+	// rollback-app refuse them, delete-app retires their keys (nil: no
+	// templates).
+	Instances port.InstanceLinks
+	Log       *logger.Logger
 }
 
 func NewUseCase(d *Deps) *UseCase {
@@ -52,6 +59,7 @@ func NewUseCase(d *Deps) *UseCase {
 		serverDomains:  d.ServerDomainRepository,
 		serverStorages: d.ServerStorageRepository,
 		servers:        d.Servers,
+		instances:      d.Instances,
 		log:            d.Log,
 	}
 }
@@ -105,19 +113,33 @@ func (uc *UseCase) RefreshApps(ctx context.Context, userID, serverID string) (st
 // ControlApp dispatches a lifecycle action (start/stop/restart/update) to the
 // server's agent. Pure agent operation: no DB change; the result flows over SSE.
 func (uc *UseCase) ControlApp(ctx context.Context, userID, serverID, appID string, action command.ControlAction) (string, error) {
-	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
+	return uc.ControlAppObserved(ctx, userID, serverID, appID, action, nil)
+}
+
+// ControlAppObserved is ControlApp with an observer on the result.
+func (uc *UseCase) ControlAppObserved(ctx context.Context, userID, serverID, appID string, action command.ControlAction, observe Observer) (string, error) {
+	in := port.DispatchInput{
 		AgentID: serverID,
 		UserID:  userID,
 		Type:    command.TypeAppControl,
 		Payload: command.ControlAppRequest{AppID: appID, Action: action},
-	})
+	}
+	observed(&in, observe)
+	return uc.dispatcher.Dispatch(ctx, in)
 }
 
 // DeleteApp dispatches an app.delete to the agent and, on success, removes the
 // app from the DB cache. deleteBackups also deletes the app's backups (else
 // the agent marks them as a deleted app's).
 func (uc *UseCase) DeleteApp(ctx context.Context, userID, serverID, appID string, deleteVolumes, deleteBackups bool) (string, error) {
-	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
+	return uc.DeleteAppObserved(ctx, userID, serverID, appID, deleteVolumes, deleteBackups, nil)
+}
+
+// DeleteAppObserved is DeleteApp with an observer on the result (it runs
+// after the app's rows are removed). On success the app's live template
+// instance, if any, is retired: its key stays taken.
+func (uc *UseCase) DeleteAppObserved(ctx context.Context, userID, serverID, appID string, deleteVolumes, deleteBackups bool, observe Observer) (string, error) {
+	in := port.DispatchInput{
 		AgentID: serverID,
 		UserID:  userID,
 		Type:    command.TypeAppDelete,
@@ -134,8 +156,15 @@ func (uc *UseCase) DeleteApp(ctx context.Context, userID, serverID, appID string
 					uc.log.Error("DeleteApp: remove domain rows", "error", err, "app_id", appID)
 				}
 			}
+			if uc.instances != nil {
+				if err := uc.instances.RetireForApp(context.Background(), serverID, appID); err != nil {
+					uc.log.Error("DeleteApp: retire the template instance", "error", err, "app_id", appID)
+				}
+			}
 		},
-	})
+	}
+	observed(&in, observe)
+	return uc.dispatcher.Dispatch(ctx, in)
 }
 
 // RenameApp dispatches an app.rename to the agent and, on success, updates the
@@ -182,8 +211,11 @@ func (uc *UseCase) GetRevisions(ctx context.Context, userID, serverID, appID str
 // RollbackApp dispatches an app.rollback: the agent restores the given commit
 // as a new revision and redeploys. The result is delivered over SSE. On
 // success the restored config is re-fetched so the domain index follows the
-// rollback.
+// rollback. An app a live template instance manages is refused.
 func (uc *UseCase) RollbackApp(ctx context.Context, userID, serverID, appID, hash string) (string, error) {
+	if err := uc.requireUnmanaged(ctx, serverID, appID); err != nil {
+		return "", err
+	}
 	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
 		AgentID: serverID,
 		UserID:  userID,
@@ -342,6 +374,30 @@ func (uc *UseCase) heldHostnames(ctx context.Context, serverID, appID string) (m
 	return held, nil
 }
 
+// Observer is a caller's extra hook on a dispatched command's result: it
+// runs after the usecase's own result handling (the DB is updated by
+// then). It must not block.
+type Observer func(port.CommandResult)
+
+// ObservedResultTTL is how long the dispatcher keeps the result of a command
+// that has an observer: its caller may hold the request for the handler's
+// wait bound (10 minutes) and the observer must still run after it, while the
+// dispatcher's default (10 minutes) would drop a late result unseen. It is
+// the wait bound plus 5 minutes of slack.
+const ObservedResultTTL = 15 * time.Minute
+
+// CheckedSave is an app.save that passed every save-app check, ready to
+// dispatch.
+type CheckedSave struct {
+	serverID string
+	app      model.App
+	req      command.SaveAppRequest
+	ing      *model.Ingress
+}
+
+// AppID is the id the save addresses (assigned when the app was new).
+func (s CheckedSave) AppID() string { return s.app.ID }
+
 // SaveApp dispatches an app.save command to the server's agent and returns
 // the request id immediately. This call does not block. It is an upsert:
 // an empty app.ID means create (the API assigns identity), a present one
@@ -349,8 +405,41 @@ func (uc *UseCase) heldHostnames(ctx context.Context, serverID, appID string) (m
 // variables (secrets pre-encrypted by the browser); app is the catalog record
 // persisted to the DB on success. When the agent confirms the save, the
 // OnResult hook persists the app and the result is delivered to the user
-// over SSE.
+// over SSE. An app a live template instance manages is refused: it changes
+// through its instance (the instance routes use CheckSave and DispatchSave).
 func (uc *UseCase) SaveApp(ctx context.Context, userID, serverID string, app model.App, payload command.AppPayload, draft bool) (string, error) {
+	if err := uc.requireUnmanaged(ctx, serverID, app.ID); err != nil {
+		return "", err
+	}
+	checked, err := uc.CheckSave(ctx, serverID, app, payload, draft)
+	if err != nil {
+		return "", err
+	}
+	return uc.DispatchSave(ctx, userID, checked, nil)
+}
+
+// requireUnmanaged refuses an app a live template instance manages
+// (model.ManagedByTemplate, a conflict).
+func (uc *UseCase) requireUnmanaged(ctx context.Context, serverID, appID string) error {
+	if uc.instances == nil || appID == "" {
+		return nil
+	}
+	name, ok, err := uc.instances.LiveInstanceForApp(ctx, serverID, appID)
+	if err != nil {
+		uc.log.Error("look up the app's template instance", "error", err, "app_id", appID)
+		return err
+	}
+	if ok {
+		return model.ManagedByTemplate(name)
+	}
+	return nil
+}
+
+// CheckSave runs save-app's checks (reserved variables, ingress syntax,
+// domain coverage and claims, storage and backup references) without
+// dispatching anything: a template instance claims its key only once its
+// rendered app passes them. An empty app.ID gets a new id.
+func (uc *UseCase) CheckSave(ctx context.Context, serverID string, app model.App, payload command.AppPayload, draft bool) (CheckedSave, error) {
 	// New apps have no id yet; the API owns identity, so assign one here and use
 	// it both on the wire (the agent keys its on-disk storage by app id) and on
 	// the persisted catalog record.
@@ -370,7 +459,7 @@ func (uc *UseCase) SaveApp(ctx context.Context, userID, serverID string, app mod
 	// synchronous 400 instead of an async failure.
 	req := command.SaveAppRequest{App: payload, Draft: draft}
 	if err := req.Validate(); err != nil {
-		return "", err
+		return CheckedSave{}, err
 	}
 
 	// Ingress rides the config blob. Parse + validate + conflict-check here so
@@ -378,40 +467,47 @@ func (uc *UseCase) SaveApp(ctx context.Context, userID, serverID string, app mod
 	// (no "ingress" key) means the feature is untouched: skip everything.
 	ing, err := model.ParseIngress(payload.Config)
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", model.ErrIngressInvalid, err)
+		return CheckedSave{}, fmt.Errorf("%w: %v", model.ErrIngressInvalid, err)
 	}
 	if ing != nil {
 		if err := ing.Validate(); err != nil {
-			return "", fmt.Errorf("%w: %v", model.ErrIngressInvalid, err)
+			return CheckedSave{}, fmt.Errorf("%w: %v", model.ErrIngressInvalid, err)
 		}
 		if err := uc.requireCovered(ctx, serverID, app.ID, ing); err != nil {
-			return "", err
+			return CheckedSave{}, err
 		}
 		if uc.domains != nil {
 			claims, err := uc.domains.FindClaims(ctx, serverID, ing.DomainNames(), app.ID)
 			if err != nil {
 				uc.log.Error("SaveApp: find domain claims", "error", err, "app_id", app.ID)
-				return "", err
+				return CheckedSave{}, err
 			}
 			if len(claims) > 0 {
 				var parts []string
 				for _, c := range claims {
 					parts = append(parts, fmt.Sprintf("%s is already used by app %q on this server", c.Domain, c.AppName))
 				}
-				return "", fmt.Errorf("%w: %s", model.ErrDomainTaken, strings.Join(parts, "; "))
+				return CheckedSave{}, fmt.Errorf("%w: %s", model.ErrDomainTaken, strings.Join(parts, "; "))
 			}
 		}
 	}
 
 	if err := uc.requireStorageRefs(ctx, serverID, payload, isNew); err != nil {
-		return "", err
+		return CheckedSave{}, err
 	}
+	return CheckedSave{serverID: serverID, app: app, req: req, ing: ing}, nil
+}
 
-	return uc.dispatcher.Dispatch(ctx, port.DispatchInput{
+// DispatchSave dispatches a checked save. On the agent's confirmation the
+// catalog record and the domain index are updated, then observe (if any)
+// runs.
+func (uc *UseCase) DispatchSave(ctx context.Context, userID string, s CheckedSave, observe Observer) (string, error) {
+	serverID, app, ing := s.serverID, s.app, s.ing
+	in := port.DispatchInput{
 		AgentID: serverID,
 		UserID:  userID,
 		Type:    command.TypeAppSave,
-		Payload: req,
+		Payload: s.req,
 		OnResult: func(res port.CommandResult) {
 			if !res.Success {
 				return
@@ -438,5 +534,26 @@ func (uc *UseCase) SaveApp(ctx context.Context, userID, serverID string, app mod
 				}
 			}
 		},
-	})
+	}
+	observed(&in, observe)
+	return uc.dispatcher.Dispatch(ctx, in)
+}
+
+// observed hooks observe, when set, onto in: it runs after in's own
+// OnResult (even one that returned early), and the result is awaited for
+// ObservedResultTTL.
+func observed(in *port.DispatchInput, observe Observer) {
+	if observe == nil {
+		return
+	}
+	in.Wait = ObservedResultTTL
+	own := in.OnResult
+	if own == nil {
+		in.OnResult = observe
+		return
+	}
+	in.OnResult = func(res port.CommandResult) {
+		defer observe(res)
+		own(res)
+	}
 }

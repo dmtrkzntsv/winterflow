@@ -16,6 +16,7 @@ import (
 	horg "winterflow/internal/app/web/handler/org"
 	"winterflow/internal/app/web/handler/server"
 	hsharedvars "winterflow/internal/app/web/handler/sharedvars"
+	htemplates "winterflow/internal/app/web/handler/templates"
 	huser "winterflow/internal/app/web/handler/user"
 	"winterflow/internal/app/web/middleware/patauth"
 	"winterflow/internal/app/web/middleware/ratelimit"
@@ -79,6 +80,7 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 		ServerStorageRepository: d.ServerStorageRepository,
 		StatusCache:             d.StatusCache,
 		Servers:                 d.ServerRepository,
+		Instances:               d.TemplateRepository,
 	})
 	dockerAPI := hdocker.NewHandler(&hdocker.Deps{
 		Logger:            d.Log,
@@ -132,6 +134,20 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 		StatusCache:         d.StatusCache,
 	})
 
+	templatesAPI := htemplates.NewHandler(&htemplates.Deps{
+		Logger:                  d.Log,
+		Templates:               d.TemplateRepository,
+		SharedVariables:         d.SharedVariableRepository,
+		Users:                   d.UserService,
+		Servers:                 d.ServerRepository,
+		CommandDispatcher:       d.CommandDispatcher,
+		AppRepository:           d.AppRepository,
+		AppDomainRepository:     d.AppDomainRepository,
+		ServerDomainRepository:  d.ServerDomainRepository,
+		ServerStorageRepository: d.ServerStorageRepository,
+		StatusCache:             d.StatusCache,
+	})
+
 	routes := []api.Route{{
 		Method: http.MethodGet, Path: "/_/health", Handler: health, Auth: api.Public,
 		Summary: "Liveness probe", Tag: "system",
@@ -147,6 +163,7 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 		usersAPI.Routes(g),
 		orgAPI.Routes(g),
 		sharedVarsAPI.Routes(g),
+		templatesAPI.Routes(g),
 		authprvd.Routes(),
 	} {
 		routes = append(routes, table...)

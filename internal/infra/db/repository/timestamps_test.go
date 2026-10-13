@@ -21,6 +21,7 @@ import (
 	serverdomainrepo "winterflow/internal/infra/db/repository/serverdomain"
 	serverstoragerepo "winterflow/internal/infra/db/repository/serverstorage"
 	sharedvarrepo "winterflow/internal/infra/db/repository/sharedvar"
+	templaterepo "winterflow/internal/infra/db/repository/template"
 	userrepo "winterflow/internal/infra/db/repository/user"
 	"winterflow/pkg/util"
 )
@@ -51,6 +52,7 @@ func TestSQLiteTimestampsAreDateTimeText(t *testing.T) {
 	serverStorages := must(serverstoragerepo.New(d.Tx, d.Driver, dbtest.Log))
 	metricSamples := must(metricrepo.New(d.Tx, d.Driver, dbtest.Log))
 	sharedVars := must(sharedvarrepo.New(d.Tx, d.Driver, dbtest.Log))
+	templates := must(templaterepo.New(d.Tx, d.Driver, dbtest.Log))
 
 	admin := must(users.BootstrapLocalAdmin(ctx, "Admin", "admin@example.com", "correct horse battery"))
 	orgID := must(users.PrimaryOrganizationID(ctx, admin.ID))
@@ -130,6 +132,17 @@ func TestSQLiteTimestampsAreDateTimeText(t *testing.T) {
 	if err := sharedVars.Save(ctx, model.SharedVariableSave{Create: true, Variable: model.SharedVariable{
 		ID: dbtest.ID(401), OrgID: orgID, Name: "TZ_VAR", Description: "d", UpdatedAt: at,
 	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	tplID := dbtest.ID(501)
+	if err := templates.CreateTemplate(ctx, model.Template{ID: tplID, OrgID: orgID, Name: "shop"},
+		model.TemplateRevision{Body: []byte(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := templates.ClaimInstance(ctx, model.Instance{
+		ID: dbtest.ID(502), OrgID: orgID, Key: "k", AppID: appID, ServerID: srv.ID, TemplateID: tplID, Revision: 1, RequestHash: "h",
+	}); err != nil {
 		t.Fatal(err)
 	}
 

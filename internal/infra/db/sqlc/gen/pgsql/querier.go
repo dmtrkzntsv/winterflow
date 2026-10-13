@@ -12,6 +12,10 @@ import (
 
 type Querier interface {
 	BumpServerVarsRevision(ctx context.Context, serverID string) error
+	// Optimistic: 0 rows when latest_revision moved past the caller's base.
+	BumpTemplateRevision(ctx context.Context, arg BumpTemplateRevisionParams) (int64, error)
+	// A live key (the partial unique index) inserts nothing (0 rows).
+	ClaimTemplateInstance(ctx context.Context, arg ClaimTemplateInstanceParams) (int64, error)
 	CountFiringAlertsByServer(ctx context.Context) ([]CountFiringAlertsByServerRow, error)
 	CountUsers(ctx context.Context) (int64, error)
 	DeleteAlertEventsBefore(ctx context.Context, createdAt types.DateTime) (int64, error)
@@ -38,6 +42,8 @@ type Querier interface {
 	DeleteSharedCiphertextsByServer(ctx context.Context, serverID string) error
 	DeleteSharedCiphertextsByVariable(ctx context.Context, variableID string) error
 	DeleteSharedVariable(ctx context.Context, id string) error
+	// Refused (0 rows) while an instance is pending or created.
+	DeleteTemplate(ctx context.Context, arg DeleteTemplateParams) (int64, error)
 	DeleteToken(ctx context.Context, arg DeleteTokenParams) (int64, error)
 	DeleteUser(ctx context.Context, userID string) error
 	EmailTaken(ctx context.Context, email string) (bool, error)
@@ -60,6 +66,10 @@ type Querier interface {
 	GetFirstConnectedAccountProvider(ctx context.Context, userID string) (string, error)
 	GetFirstServerID(ctx context.Context) (string, error)
 	GetLatestRegistrationCode(ctx context.Context) (string, error)
+	GetLiveTemplateInstance(ctx context.Context, arg GetLiveTemplateInstanceParams) (TemplateInstance, error)
+	// The pending or created instance an app is, with its template's name
+	// ('' when the template is gone).
+	GetLiveTemplateInstanceForApp(ctx context.Context, arg GetLiveTemplateInstanceForAppParams) (string, error)
 	GetNotificationChannel(ctx context.Context, arg GetNotificationChannelParams) (NotificationChannel, error)
 	GetOrgSharedVariableByName(ctx context.Context, arg GetOrgSharedVariableByNameParams) (SharedVariable, error)
 	GetOrganization(ctx context.Context, organizationID string) (Organization, error)
@@ -68,6 +78,10 @@ type Querier interface {
 	GetServerSharedVariableByName(ctx context.Context, arg GetServerSharedVariableByNameParams) (SharedVariable, error)
 	GetServerVarsInfo(ctx context.Context, serverID string) (GetServerVarsInfoRow, error)
 	GetSharedVariable(ctx context.Context, id string) (SharedVariable, error)
+	GetTemplate(ctx context.Context, arg GetTemplateParams) (Template, error)
+	GetTemplateIDByName(ctx context.Context, arg GetTemplateIDByNameParams) (string, error)
+	GetTemplateInstanceByID(ctx context.Context, id string) (TemplateInstance, error)
+	GetTemplateRevision(ctx context.Context, arg GetTemplateRevisionParams) (TemplateRevision, error)
 	GetTokenByHash(ctx context.Context, tokenHash string) (UserToken, error)
 	// Users, their connected accounts and local credentials.
 	GetUser(ctx context.Context, userID string) (User, error)
@@ -91,6 +105,10 @@ type Querier interface {
 	// Gap fill: never overwrites a copy (a concurrent rotation's new value wins).
 	InsertSharedCiphertextIfAbsent(ctx context.Context, arg InsertSharedCiphertextIfAbsentParams) error
 	InsertSharedVariable(ctx context.Context, arg InsertSharedVariableParams) error
+	// Templates, their immutable revisions and their instances.
+	// A taken name inserts nothing (0 rows): the caller answers 400.
+	InsertTemplate(ctx context.Context, arg InsertTemplateParams) (int64, error)
+	InsertTemplateRevision(ctx context.Context, arg InsertTemplateRevisionParams) error
 	// Personal access tokens (hashed at rest).
 	InsertToken(ctx context.Context, arg InsertTokenParams) error
 	InsertUser(ctx context.Context, arg InsertUserParams) error
@@ -112,6 +130,7 @@ type Querier interface {
 	ListCiphertextServersByOrg(ctx context.Context, orgID string) ([]ListCiphertextServersByOrgRow, error)
 	ListFeaturesByUser(ctx context.Context, userID string) ([]ServerFeature, error)
 	ListFiringAlertStates(ctx context.Context) ([]ListFiringAlertStatesRow, error)
+	ListLiveTemplateInstances(ctx context.Context, orgID string) ([]TemplateInstance, error)
 	ListMetricSamples(ctx context.Context, arg ListMetricSamplesParams) ([]MetricSample, error)
 	ListMetricSamplesInRange(ctx context.Context, arg ListMetricSamplesInRangeParams) ([]MetricSample, error)
 	ListNotificationChannels(ctx context.Context, organizationID string) ([]NotificationChannel, error)
@@ -138,6 +157,12 @@ type Querier interface {
 	ListServersByUser(ctx context.Context, userID string) ([]Server, error)
 	ListSharedCiphertextsForServer(ctx context.Context, serverID string) ([]ListSharedCiphertextsForServerRow, error)
 	ListTargetAlertOverrides(ctx context.Context, arg ListTargetAlertOverridesParams) ([]AlertOverride, error)
+	// Names only (the instance list shows them).
+	ListTemplateNames(ctx context.Context, orgID string) ([]ListTemplateNamesRow, error)
+	ListTemplateRevisions(ctx context.Context, templateID string) ([]ListTemplateRevisionsRow, error)
+	// One pass over the live instances: instances counts them, behind those on
+	// a revision older than the latest.
+	ListTemplates(ctx context.Context, orgID string) ([]ListTemplatesRow, error)
 	ListTokensByUser(ctx context.Context, userID string) ([]UserToken, error)
 	// Alerts: channels, rules, overrides, states, events (see migration 0013).
 	ListUnseededOrganizationIDs(ctx context.Context) ([]string, error)
@@ -146,6 +171,8 @@ type Querier interface {
 	// concurrently cannot empty the org.
 	LockOrganizationMember(ctx context.Context, arg LockOrganizationMemberParams) (string, error)
 	MarkAlertDefaultsSeeded(ctx context.Context, organizationID string) (int64, error)
+	// A save the agent confirmed; a deleted or unlinked row stays as it is.
+	MarkTemplateInstanceSaved(ctx context.Context, arg MarkTemplateInstanceSavedParams) error
 	// Lifts vars_revision past an agent-reported revision the API never issued
 	// (the API database was restored); never lowers it.
 	RaiseServerVarsRevision(ctx context.Context, arg RaiseServerVarsRevisionParams) error
@@ -153,7 +180,12 @@ type Querier interface {
 	RecordChannelSuccess(ctx context.Context, arg RecordChannelSuccessParams) error
 	RenameApp(ctx context.Context, arg RenameAppParams) error
 	ResolveAlertState(ctx context.Context, arg ResolveAlertStateParams) (int64, error)
+	// The app was deleted outside the instance routes: its instance's key
+	// stays retired.
+	RetireTemplateInstancesForApp(ctx context.Context, arg RetireTemplateInstancesForAppParams) error
 	SetAlertEventDeliveries(ctx context.Context, arg SetAlertEventDeliveriesParams) error
+	SetTemplateInstanceError(ctx context.Context, arg SetTemplateInstanceErrorParams) error
+	SetTemplateInstanceState(ctx context.Context, arg SetTemplateInstanceStateParams) error
 	TouchServerLastSeen(ctx context.Context, arg TouchServerLastSeenParams) error
 	TouchTokenLastUsed(ctx context.Context, arg TouchTokenLastUsedParams) error
 	UpdateAlertRule(ctx context.Context, arg UpdateAlertRuleParams) (int64, error)

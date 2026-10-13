@@ -48,23 +48,39 @@ func DecryptWithPrivateKey(keyPath, encryptedBase64 string) (string, error) {
 	return decrypt(priv, encryptedBase64)
 }
 
-func decrypt(ecKey *ecdsa.PrivateKey, encryptedBase64 string) (string, error) {
+// CheckCiphertext reports whether s has the wire format's shape: standard
+// base64 of an uncompressed point (first byte 0x04), an IV and at least a
+// GCM tag. It cannot tell whether s decrypts; it tells a plaintext sent
+// where a ciphertext belongs.
+func CheckCiphertext(s string) error {
+	_, err := decodePayload(s)
+	return err
+}
+
+// decodePayload decodes and shape-checks a base64 ECIES payload.
+func decodePayload(encryptedBase64 string) ([]byte, error) {
 	encryptedData, err := base64.StdEncoding.DecodeString(encryptedBase64)
 	if err != nil {
-		return "", fmt.Errorf("decode base64 payload: %w", err)
+		return nil, fmt.Errorf("decode base64 payload: %w", err)
 	}
-
 	if len(encryptedData) < rawPubKeyLen+ivLen+gcmTagLen {
-		return "", fmt.Errorf("encrypted payload too short: got %d bytes", len(encryptedData))
+		return nil, fmt.Errorf("encrypted payload too short: got %d bytes", len(encryptedData))
+	}
+	if encryptedData[0] != 0x04 {
+		return nil, fmt.Errorf("unexpected EC public key format: first byte 0x%02x, want 0x04", encryptedData[0])
+	}
+	return encryptedData, nil
+}
+
+func decrypt(ecKey *ecdsa.PrivateKey, encryptedBase64 string) (string, error) {
+	encryptedData, err := decodePayload(encryptedBase64)
+	if err != nil {
+		return "", err
 	}
 
 	rawPubKey := encryptedData[:rawPubKeyLen]
 	iv := encryptedData[rawPubKeyLen : rawPubKeyLen+ivLen]
 	ciphertext := encryptedData[rawPubKeyLen+ivLen:]
-
-	if rawPubKey[0] != 0x04 {
-		return "", fmt.Errorf("unexpected EC public key format: first byte 0x%02x, want 0x04", rawPubKey[0])
-	}
 
 	x := new(big.Int).SetBytes(rawPubKey[1 : 1+coordSize])
 	y := new(big.Int).SetBytes(rawPubKey[1+coordSize : 1+2*coordSize])

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/usecase/sharedvars"
 	"winterflow/internal/infra/transport/bus"
+	"winterflow/pkg/crypto"
 )
 
 func strp(s string) *string { return &s }
@@ -53,14 +55,23 @@ func findVar(list []sharedvars.VariableView, name string) sharedvars.VariableVie
 	return sharedvars.VariableView{}
 }
 
-// noSecrets fails when a response body carries a ciphertext (every test
-// ciphertext starts with "CT-"); the API never sees a secret's plaintext.
+// noSecrets fails when a response body carries a ciphertext (a test
+// ciphertext that starts with "CT-", or a real ECIES one); the API never
+// sees a secret's plaintext.
 func noSecrets(t *testing.T, body string) {
 	t.Helper()
 	if strings.Contains(body, "CT-") {
 		t.Fatalf("a response carries a ciphertext: %s", body)
 	}
+	for _, run := range base64Run.FindAllString(body, -1) {
+		if crypto.CheckCiphertext(run) == nil {
+			t.Fatalf("a response carries a ciphertext: %s", body)
+		}
+	}
 }
+
+// base64Run is a standard base64 run long enough for an ECIES payload.
+var base64Run = regexp.MustCompile(`[A-Za-z0-9+/]{120,}={0,2}`)
 
 func TestSharedVariableRoutes(t *testing.T) {
 	t.Parallel()

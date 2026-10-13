@@ -334,6 +334,10 @@ func (b *builder) addRoute(rt api.Route) error {
 		oc.AddRespStructure(rt.Response, oapi.WithContentType(rt.ContentType), oapi.WithHTTPStatus(http.StatusOK))
 	case rt.Accepted:
 		oc.AddRespStructure(envelope(AcceptedData{}), oapi.WithHTTPStatus(http.StatusAccepted))
+		if rt.Response != nil {
+			// A route that can also wait for the outcome answers it with 200.
+			oc.AddRespStructure(envelope(rt.Response), oapi.WithHTTPStatus(http.StatusOK))
+		}
 	default:
 		oc.AddRespStructure(envelope(rt.Response), oapi.WithHTTPStatus(http.StatusOK))
 	}

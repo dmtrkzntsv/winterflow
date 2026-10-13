@@ -26,10 +26,16 @@ func ValidateSharedVariableName(name string) error {
 		return fmt.Errorf("name is longer than %d characters", SharedVariableNameMax)
 	case !sharedVariableName.MatchString(name):
 		return fmt.Errorf("invalid name %q: use letters, digits and _, not starting with a digit", name)
-	case name == "COMPOSE_PROJECT_NAME" || strings.HasPrefix(name, "WF_"):
+	case ReservedVariableName(name):
 		return fmt.Errorf("%s is reserved", name)
 	}
 	return nil
+}
+
+// ReservedVariableName reports a name no user variable may take:
+// COMPOSE_PROJECT_NAME and the agent's WF_ built-ins.
+func ReservedVariableName(name string) bool {
+	return name == "COMPOSE_PROJECT_NAME" || strings.HasPrefix(name, "WF_")
 }
 
 // Shared variable scopes as reported to clients.

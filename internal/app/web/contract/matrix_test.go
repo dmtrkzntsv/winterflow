@@ -189,6 +189,36 @@ var probes = map[string]probe{
 	"POST /api/v1/shared-variables/reload": {valid: func(s string) call {
 		return post("/api/v1/shared-variables/reload", map[string]any{"server_id": s})
 	}, malformed: bad("POST", "/api/v1/shared-variables/reload")},
+
+	"GET /api/v1/template/get-template":     {malformed: bad("GET", "/api/v1/template/get-template")},
+	"POST /api/v1/template/save-template":   {malformed: bad("POST", "/api/v1/template/save-template")},
+	"POST /api/v1/template/delete-template": {malformed: bad("POST", "/api/v1/template/delete-template")},
+
+	// The template and key do not exist, so the own-server control answers
+	// 404, not 403.
+	"POST /api/v1/instance/create-instance": {valid: func(s string) call {
+		return post("/api/v1/instance/create-instance", map[string]any{"server_id": s, "key": "k", "template_id": anApp})
+	}, malformed: bad("POST", "/api/v1/instance/create-instance")},
+	"POST /api/v1/instance/update-instance": {valid: func(s string) call {
+		return post("/api/v1/instance/update-instance", map[string]any{"server_id": s, "key": "k"})
+	}, malformed: bad("POST", "/api/v1/instance/update-instance")},
+	"POST /api/v1/instance/upgrade-instance": {valid: func(s string) call {
+		return post("/api/v1/instance/upgrade-instance", map[string]any{"server_id": s, "key": "k", "revision": 2})
+	}, malformed: bad("POST", "/api/v1/instance/upgrade-instance")},
+	"POST /api/v1/instance/control-instance": {valid: func(s string) call {
+		return post("/api/v1/instance/control-instance", map[string]any{"server_id": s, "key": "k", "action": "start"})
+	}, malformed: bad("POST", "/api/v1/instance/control-instance")},
+	"POST /api/v1/instance/delete-instance": {valid: func(s string) call {
+		return post("/api/v1/instance/delete-instance", map[string]any{"server_id": s, "key": "k"})
+	}, malformed: bad("POST", "/api/v1/instance/delete-instance")},
+	"POST /api/v1/instance/unlink-instance": {valid: func(s string) call {
+		return post("/api/v1/instance/unlink-instance", map[string]any{"server_id": s, "key": "k"})
+	}, malformed: bad("POST", "/api/v1/instance/unlink-instance")},
+	"GET /api/v1/instance/get-instance": {valid: func(s string) call {
+		return get("/api/v1/instance/get-instance", url.Values{"server_id": {s}, "key": {"k"}})
+	}, malformed: bad("GET", "/api/v1/instance/get-instance")},
+	"GET /api/v1/instance/get-instances": {valid: func(s string) call { return get("/api/v1/instance/get-instances", sq(s)) },
+		malformed: call{Method: http.MethodGet, Path: "/api/v1/instance/get-instances", Query: url.Values{"template_id": {"not-an-id"}}}},
 }
 
 // carriesServerID reports whether t, or a struct nested in it by embedding,

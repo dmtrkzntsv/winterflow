@@ -21,23 +21,6 @@ func TestObservedResultOutlivesTheWaitBound(t *testing.T) {
 	}
 }
 
-func TestAwait(t *testing.T) {
-	done := make(chan port.CommandResult, 1)
-	done <- port.CommandResult{Success: true}
-	if res, ok := await(context.Background(), done, time.Minute); !ok || !res.Success {
-		t.Fatalf("delivered = %+v, %v", res, ok)
-	}
-	start := time.Now()
-	if _, ok := await(context.Background(), make(chan port.CommandResult), 20*time.Millisecond); ok || time.Since(start) > 5*time.Second {
-		t.Fatal("the bound did not end the wait")
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if _, ok := await(ctx, make(chan port.CommandResult), time.Minute); ok {
-		t.Fatal("a gone client did not end the wait")
-	}
-}
-
 func outcome() (tuc.Outcome, chan port.CommandResult) {
 	done := make(chan port.CommandResult, 1)
 	final := func(context.Context) (tuc.InstanceView, error) {

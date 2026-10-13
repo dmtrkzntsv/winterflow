@@ -1,10 +1,8 @@
 package templates
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
-	"time"
 
 	webutil "winterflow/internal/app/web/util"
 	"winterflow/internal/domain/port"
@@ -27,20 +25,6 @@ type acceptedData struct {
 	RequestID string `json:"request_id"`
 }
 
-// await blocks until done delivers, bound passes, or ctx ends (the client
-// went away). ok reports a delivered result.
-func await(ctx context.Context, done <-chan port.CommandResult, bound time.Duration) (port.CommandResult, bool) {
-	t := time.NewTimer(bound)
-	defer t.Stop()
-	select {
-	case res := <-done:
-		return res, true
-	case <-t.C:
-	case <-ctx.Done():
-	}
-	return port.CommandResult{}, false
-}
-
 // respond answers an instance call: 200 with the instance when nothing was
 // dispatched; without wait 202; with wait the outcome (200 with the
 // instance re-read after the result was recorded, 502 with the agent's
@@ -54,7 +38,7 @@ func (h *Handler) respond(w http.ResponseWriter, r *http.Request, out tuc.Outcom
 		webutil.Accepted(w, msg, acceptedData{RequestID: out.RequestID})
 		return
 	}
-	res, ok := await(r.Context(), out.Done, h.waitBound)
+	res, ok := port.AwaitResult(r.Context(), out.Done, h.waitBound)
 	switch {
 	case !ok && r.Context().Err() != nil:
 		return // the client is gone: there is no one to answer
@@ -62,11 +46,7 @@ func (h *Handler) respond(w http.ResponseWriter, r *http.Request, out tuc.Outcom
 		webutil.Accepted(w, msg, acceptedData{RequestID: out.RequestID})
 		return
 	case !res.Success:
-		msg := res.Error
-		if msg == "" {
-			msg = "the agent reported a failure"
-		}
-		webutil.ErrorStatus(w, http.StatusBadGateway, msg)
+		webutil.ErrorStatus(w, http.StatusBadGateway, res.Err().Error())
 		return
 	}
 	view, err := out.Final(r.Context())

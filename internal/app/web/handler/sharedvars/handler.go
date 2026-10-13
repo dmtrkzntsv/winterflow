@@ -10,7 +10,6 @@ import (
 	"net/http"
 
 	webutil "winterflow/internal/app/web/util"
-	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/port"
 	"winterflow/internal/domain/service/status"
 	svuc "winterflow/internal/domain/usecase/sharedvars"
@@ -83,8 +82,8 @@ func (h *Handler) orgFor(w http.ResponseWriter, r *http.Request, userID, serverI
 }
 
 // fail maps usecase errors: validation 400 with its message, a foreign
-// server 403, a conflict (a stopping reload rollout) 409, anything else a
-// logged generic 400.
+// server 403, a classified error (a stopping reload rollout: 409) with its
+// status, anything else a logged generic 400.
 func (h *Handler) fail(w http.ResponseWriter, err error, what string) {
 	var ve *svuc.ValidationError
 	switch {
@@ -92,11 +91,8 @@ func (h *Handler) fail(w http.ResponseWriter, err error, what string) {
 		webutil.Error(w, ve.Msg, nil)
 	case errors.Is(err, svuc.ErrForbidden):
 		webutil.Forbidden(w)
-	case errors.Is(err, model.ErrConflict):
-		webutil.ErrorStatus(w, webutil.StatusFor(err), err.Error())
 	default:
-		h.log.Error("shared variables: "+what, "error", err)
-		webutil.Error(w, "failed to "+what, nil)
+		webutil.Fail(w, h.log, "shared variables", err, what)
 	}
 }
 

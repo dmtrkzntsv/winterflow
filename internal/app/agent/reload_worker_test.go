@@ -18,7 +18,8 @@ import (
 // stale that has not been reloaded since it went stale", like the real
 // stale filter; block, when set, holds each reload until released or the
 // reload's context ends. Apps in skip report skipped (no longer running);
-// apps in stopped are left out of an app-id lookup (not running).
+// apps in stopped are left out of an app-id lookup and report skipped (not
+// running); apps in gone are not on the server.
 type fakeReloader struct {
 	mu       sync.Mutex
 	stale    map[string][]string
@@ -26,6 +27,8 @@ type fakeReloader struct {
 	failWith map[string]error
 	skip     map[string]bool
 	stopped  map[string]bool
+	gone     map[string]bool
+	lookups  int
 	block    chan struct{}
 	started  chan string
 	// candBlock, when set, holds each ReloadCandidates call until closed or
@@ -34,7 +37,16 @@ type fakeReloader struct {
 	candGaveUp chan error
 }
 
+func (f *fakeReloader) AppExists(appID string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return !f.gone[appID]
+}
+
 func (f *fakeReloader) ReloadCandidates(ctx context.Context, req command.ReloadVarsRequest) ([]string, error) {
+	f.mu.Lock()
+	f.lookups++
+	f.mu.Unlock()
 	if f.candBlock != nil {
 		select {
 		case <-f.candBlock:
@@ -48,7 +60,7 @@ func (f *fakeReloader) ReloadCandidates(ctx context.Context, req command.ReloadV
 	if len(req.AppIDs) > 0 {
 		var out []string
 		for _, id := range req.AppIDs {
-			if !f.stopped[id] {
+			if !f.stopped[id] && !f.gone[id] {
 				out = append(out, id)
 			}
 		}
@@ -78,7 +90,7 @@ func (f *fakeReloader) ReloadSharedVars(ctx context.Context, appID string) ([]st
 	defer f.mu.Unlock()
 	f.reloads = append(f.reloads, appID)
 	names := f.stale[appID]
-	if f.skip[appID] {
+	if f.skip[appID] || f.stopped[appID] {
 		return names, true, nil
 	}
 	delete(f.stale, appID)
@@ -329,17 +341,36 @@ func TestReloadWorkerEnqueueAppDeliversTheOutcome(t *testing.T) {
 	if o := awaitReload(t, w.EnqueueApp("b")); o.Err == nil || !strings.Contains(o.Err.Error(), "S3_KEY") || !strings.Contains(o.Err.Error(), "compose up failed") {
 		t.Fatalf("b = %+v", o)
 	}
-	// Stopped when its turn came (c), or not running at the lookup (d).
+	// Stopped when its turn came (c, d), or gone from the server (e).
 	if o := awaitReload(t, w.EnqueueApp("c")); o.Err != nil || !o.Skipped {
 		t.Fatalf("c = %+v", o)
 	}
 	if o := awaitReload(t, w.EnqueueApp("d")); o.Err != nil || !o.Skipped {
 		t.Fatalf("d = %+v", o)
 	}
-	// The reloads still report as vars.reloaded events (a and b; c and d
-	// were skipped).
+	f.mu.Lock()
+	f.gone = map[string]bool{"e": true}
+	f.mu.Unlock()
+	if o := awaitReload(t, w.EnqueueApp("e")); o.Err != nil || !o.Skipped {
+		t.Fatalf("e = %+v", o)
+	}
+	// The reloads still report as vars.reloaded events (a and b; c, d and
+	// e were skipped).
 	if outs := awaitOutcomes(t, got, 2); outs[0].AppID != "a" || outs[1].AppID != "b" {
 		t.Fatalf("events = %+v", outs)
+	}
+	// The single-app form never ran the candidate lookup (a full docker
+	// ps), and e was never reloaded.
+	f.mu.Lock()
+	lookups := f.lookups
+	f.mu.Unlock()
+	if lookups != 0 {
+		t.Fatalf("lookups = %d, want none", lookups)
+	}
+	for _, id := range f.reloaded() {
+		if id == "e" {
+			t.Fatal("an app gone from the server was reloaded")
+		}
 	}
 	w.mu.Lock()
 	left := len(w.waiters)
@@ -384,13 +415,16 @@ func TestReloadWorkerEndsWaitsOnForgetFailureAndStop(t *testing.T) {
 		t.Fatalf("forgotten = %+v", o)
 	}
 
-	// The lookup fails (a hung docker ps).
+	// The lookup fails (a hung docker ps): a waited app merged into a bulk
+	// batch hears why.
 	f := &fakeReloader{candBlock: make(chan struct{}), candGaveUp: make(chan error, 4)}
 	w = NewReloadWorker(f, func(bus.EventKind, []byte) error { return nil }, testLog())
 	w.candidatesTimeout = 50 * time.Millisecond
+	w.Enqueue(command.ReloadVarsRequest{Names: []string{"X"}})
+	ch = w.EnqueueApp("a")
 	ctx, cancel := context.WithCancel(context.Background())
 	go w.Run(ctx)
-	if o := awaitReload(t, w.EnqueueApp("a")); !errors.Is(o.Err, context.DeadlineExceeded) {
+	if o := awaitReload(t, ch); !errors.Is(o.Err, context.DeadlineExceeded) {
 		t.Fatalf("failed lookup = %+v", o)
 	}
 

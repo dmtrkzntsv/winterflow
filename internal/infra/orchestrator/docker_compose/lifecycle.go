@@ -11,6 +11,10 @@ import (
 	"winterflow/pkg/fsutil"
 )
 
+// AppExists reports whether the app's data dir is present (a stat, no
+// fork).
+func (r *Repository) AppExists(appID string) bool { return r.appExists(appID) }
+
 // appExists reports whether the app's data dir is present.
 func (r *Repository) appExists(appID string) bool {
 	_, err := os.Stat(r.appDataDir(appID))

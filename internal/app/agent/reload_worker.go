@@ -17,6 +17,8 @@ import (
 // Reloader is the orchestrator's shared-variable reload surface.
 type Reloader interface {
 	ReloadCandidates(ctx context.Context, req command.ReloadVarsRequest) ([]string, error)
+	// AppExists reports whether the app is on this server (no fork).
+	AppExists(appID string) bool
 	// ReloadSharedVars reloads one app. skipped reports an app that was no
 	// longer running when its turn came: nothing was done, nothing failed.
 	ReloadSharedVars(ctx context.Context, appID string) (names []string, skipped bool, err error)
@@ -68,11 +70,14 @@ type ReloadWorker struct {
 }
 
 // reloadBatch is merged pending work: all (every stale running app),
-// names (stale apps using them) and explicit app ids.
+// names (stale apps using them) and explicit app ids. waitedOnly marks a
+// taken batch of explicit app ids that each have a waiter (the single-app
+// form).
 type reloadBatch struct {
-	all   bool
-	names map[string]bool
-	apps  map[string]bool
+	all        bool
+	names      map[string]bool
+	apps       map[string]bool
+	waitedOnly bool
 }
 
 func newBatch() reloadBatch {
@@ -194,7 +199,7 @@ func (w *ReloadWorker) drain(ctx context.Context) {
 	queued := map[string]bool{}
 	for {
 		if b, ok := w.take(); ok {
-			for _, id := range w.candidates(ctx, b) {
+			for _, id := range w.resolve(ctx, b) {
 				if !queued[id] {
 					queued[id] = true
 					queue = append(queue, id)
@@ -226,6 +231,10 @@ func (w *ReloadWorker) take() (reloadBatch, bool) {
 		return b, false
 	}
 	w.pending = newBatch()
+	b.waitedOnly = !b.all && len(b.names) == 0
+	for id := range b.apps {
+		b.waitedOnly = b.waitedOnly && len(w.waiters[id]) > 0
+	}
 	return b, true
 }
 
@@ -233,6 +242,26 @@ func (w *ReloadWorker) isDropped(appID string) bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.dropped[appID]
+}
+
+// resolve is the batch's apps to reload, in order. A batch of waited app
+// ids only (the single-app form) skips the candidate lookup (a full docker
+// ps): ReloadSharedVars checks under the app's lock that the app runs and
+// reports a stopped one skipped; one gone from this server is skipped here,
+// as the lookup would. Any other batch takes the lookup.
+func (w *ReloadWorker) resolve(ctx context.Context, b reloadBatch) []string {
+	if !b.waitedOnly {
+		return w.candidates(ctx, b)
+	}
+	var out []string
+	for _, id := range sortedKeys(b.apps) {
+		if w.r.AppExists(id) {
+			out = append(out, id)
+		} else {
+			deliver(w.takeWaiters(id), ReloadOutcome{Skipped: true})
+		}
+	}
+	return out
 }
 
 // candidates resolves a batch to app ids, in request order, without
@@ -289,29 +318,30 @@ func (w *ReloadWorker) reloadOne(ctx context.Context, appID string) {
 	// The waits registered before this reload starts hear its outcome; a
 	// later one waits for the next reload (it may need a newer snapshot).
 	waiting := w.takeWaiters(appID)
+	var out ReloadOutcome
+	defer func() { deliver(waiting, out) }()
 	actx, cancel := context.WithTimeout(ctx, w.timeout)
 	defer cancel()
 	names, skipped, err := w.r.ReloadSharedVars(actx, appID)
+	out.Names = names
 	if ctx.Err() != nil {
-		deliver(waiting, ReloadOutcome{Names: names, Err: ctx.Err()})
+		out.Err = ctx.Err()
 		return // shutting down: no outcome to report
 	}
 	if skipped && err == nil {
 		w.log.Debug("shared variable reload: app no longer running, skipped", "app_id", appID)
-		deliver(waiting, ReloadOutcome{Names: names, Skipped: true})
+		out.Skipped = true
 		return
 	}
 	p := command.VarsReloadedPayload{AppID: appID, OK: err == nil, Names: names}
 	if p.Names == nil {
 		p.Names = []string{}
 	}
-	out := ReloadOutcome{Names: names}
 	if err != nil {
 		p.Error = reloadError(names, err)
 		out.Err = errors.New(p.Error)
 		w.log.Warn("shared variable reload failed", "app_id", appID, "error", err)
 	}
-	deliver(waiting, out)
 	body, mErr := json.Marshal(p)
 	if mErr != nil {
 		w.log.Error("shared variable reload: marshal outcome", "error", mErr)

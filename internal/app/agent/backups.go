@@ -121,17 +121,9 @@ type healthSource struct {
 	backups Backups
 }
 
-func (h healthSource) GetAppsStatus(ctx context.Context) ([]command.AppStatus, error) {
-	resp, err := h.StatusReport(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return resp.Apps, nil
-}
-
 // StatusReport is the wrapped source's report with the health added.
 func (h healthSource) StatusReport(ctx context.Context) (command.GetAppsStatusResponse, error) {
-	resp, err := collectReport(ctx, h.src)
+	resp, err := h.src.StatusReport(ctx)
 	if err != nil {
 		return command.GetAppsStatusResponse{}, err
 	}

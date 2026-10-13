@@ -135,8 +135,8 @@ func TestSyncDoesNotRenderButFlagsStale(t *testing.T) {
 	if got := r.StaleApps(); !reflect.DeepEqual(got, map[string][]string{"app-1": {"SMTP_HOST", "SMTP_PASS"}}) {
 		t.Fatalf("stale = %v", got)
 	}
-	if r.VarsRevision() != 3 {
-		t.Fatalf("revision = %d", r.VarsRevision())
+	if r.vars.Current().Revision != 3 {
+		t.Fatalf("revision = %d", r.vars.Current().Revision)
 	}
 	// An older snapshot is ignored.
 	if resp := syncVars(t, r, testSnapshot(pub, t, 2, "old.example", "old")); resp.Revision != 3 {
@@ -335,7 +335,7 @@ func TestStatusReportPairsRevisionWithItsStaleSet(t *testing.T) {
 		_, _ = r.SyncVars(ctx, testSnapshot(pub, t, 2, "relay.example", "n3w"))
 	}()
 	deadline := time.Now().Add(5 * time.Second)
-	for r.VarsRevision() != 2 {
+	for r.vars.Current().Revision != 2 {
 		if time.Now().After(deadline) {
 			r.sharedMu.Unlock()
 			t.Fatal("the sync never stored its snapshot")

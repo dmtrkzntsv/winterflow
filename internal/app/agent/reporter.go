@@ -10,36 +10,16 @@ import (
 	"winterflow/pkg/logger"
 )
 
-// StatusSource yields the current container status of all deployed apps. The
-// Docker Compose orchestrator satisfies it.
-type StatusSource interface {
-	GetAppsStatus(ctx context.Context) ([]command.AppStatus, error)
-}
-
-// ReportSource is implemented by status sources that build the whole
-// apps.status body: the apps plus the shared-variables revision their
-// stale sets were computed against, as one consistent pair (so the API
-// never reads a just-applied revision beside the previous stale set). The
-// API also re-pushes a missed vars.sync from that revision, without a
-// polling timer. Wrappers (the StatusSnapshot shared with the metrics
-// reporter, the backup health decoration) implement it by passing the
+// StatusSource builds the whole apps.status body: every deployed app's
+// container status plus the shared-variables revision their stale sets were
+// computed against, as one consistent pair (so the API never reads a
+// just-applied revision beside the previous stale set). The API also
+// re-pushes a missed vars.sync from that revision, without a polling timer.
+// The Docker Compose orchestrator satisfies it; wrappers (the StatusSnapshot
+// shared with the metrics reporter, the backup health decoration) pass the
 // inner source's report through.
-type ReportSource interface {
+type StatusSource interface {
 	StatusReport(ctx context.Context) (command.GetAppsStatusResponse, error)
-}
-
-// collectReport is src's apps.status body: its own report when it builds
-// one, else its apps with no revision (an orchestrator without shared
-// variables: the API never drift-pushes vars.sync to it).
-func collectReport(ctx context.Context, src StatusSource) (command.GetAppsStatusResponse, error) {
-	if rs, ok := src.(ReportSource); ok {
-		return rs.StatusReport(ctx)
-	}
-	apps, err := src.GetAppsStatus(ctx)
-	if err != nil {
-		return command.GetAppsStatusResponse{}, err
-	}
-	return command.GetAppsStatusResponse{Apps: apps}, nil
 }
 
 // EventSink delivers one agent-initiated event upstream. The gRPC agent wraps
@@ -59,7 +39,7 @@ type EventSink func(kind bus.EventKind, payload []byte) error
 // changed. A nil nudge never fires.
 func RunStatusReporter(ctx context.Context, src StatusSource, sink EventSink, interval time.Duration, nudge <-chan struct{}, log *logger.Logger) {
 	report := func() {
-		resp, err := collectReport(ctx, src)
+		resp, err := src.StatusReport(ctx)
 		if err != nil {
 			log.Debug("status report: collect failed", "error", err)
 			return

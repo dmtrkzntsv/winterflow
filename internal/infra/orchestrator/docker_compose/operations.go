@@ -354,23 +354,14 @@ func (r *Repository) rollbackWithoutDeploy(appID, hash string) (string, error) {
 	return newHead, nil
 }
 
-// GetAppsStatus reports container status for every app the agent has, using
-// ONE `docker ps` invocation for all of them (grouped by the compose project
-// label) — this runs on a timer forever, so per-app compose forks are off the
-// table. An exec failure fails the whole collection: the reporter skips the
-// tick rather than flooding "unknown" while Docker restarts.
-func (r *Repository) GetAppsStatus(ctx context.Context) ([]command.AppStatus, error) {
-	resp, err := r.StatusReport(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return resp.Apps, nil
-}
-
-// StatusReport is GetAppsStatus as an apps.status body: each app's stale
-// names come with the shared-variables revision they were computed against
-// (one consistent pair), so the API never reads a just-applied revision
-// beside the previous snapshot's stale set.
+// StatusReport is the apps.status body: container status for every app the
+// agent has, using ONE `docker ps` invocation for all of them (grouped by the
+// compose project label) — this runs on a timer forever, so per-app compose
+// forks are off the table. An exec failure fails the whole collection: the
+// reporter skips the tick rather than flooding "unknown" while Docker
+// restarts. Each app's stale names come with the shared-variables revision
+// they were computed against (one consistent pair), so the API never reads a
+// just-applied revision beside the previous snapshot's stale set.
 func (r *Repository) StatusReport(ctx context.Context) (command.GetAppsStatusResponse, error) {
 	entries, err := os.ReadDir(r.cfg.GetAppsDataDir())
 	if err != nil {

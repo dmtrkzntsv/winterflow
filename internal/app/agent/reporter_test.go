@@ -20,14 +20,14 @@ type fakeStatusSource struct {
 	fail  bool
 }
 
-func (f *fakeStatusSource) GetAppsStatus(context.Context) ([]command.AppStatus, error) {
+func (f *fakeStatusSource) StatusReport(context.Context) (command.GetAppsStatusResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
 	if f.fail {
-		return nil, errors.New("docker down")
+		return command.GetAppsStatusResponse{}, errors.New("docker down")
 	}
-	return []command.AppStatus{{AppID: "app-1", StatusCode: command.ContainerStatusActive}}, nil
+	return command.GetAppsStatusResponse{Apps: []command.AppStatus{{AppID: "app-1", StatusCode: command.ContainerStatusActive}}}, nil
 }
 
 func (f *fakeStatusSource) callCount() int {
@@ -129,9 +129,10 @@ func TestStatusReporterStopsOnCancel(t *testing.T) {
 type reportSource struct{ *fakeStatusSource }
 
 func (s reportSource) StatusReport(ctx context.Context) (command.GetAppsStatusResponse, error) {
-	apps, err := s.GetAppsStatus(ctx)
+	resp, err := s.fakeStatusSource.StatusReport(ctx)
 	rev := int64(9)
-	return command.GetAppsStatusResponse{Apps: apps, VarsRevision: &rev}, err
+	resp.VarsRevision = &rev
+	return resp, err
 }
 
 func TestStatusReporterAddsVarsRevision(t *testing.T) {
@@ -160,7 +161,7 @@ func TestStatusReporterAddsVarsRevision(t *testing.T) {
 	if c := <-decorated; !strings.Contains(string(c.payload), `"vars_revision":9`) {
 		t.Fatalf("decorated report = %s", c.payload)
 	}
-	// A source without revisions (an old orchestrator) sends none.
+	// A source without revisions sends none.
 	plain := make(chan sinkCall, 4)
 	go RunStatusReporter(ctx, &fakeStatusSource{}, collectSink(plain), time.Hour, nil, testLog())
 	if c := <-plain; strings.Contains(string(c.payload), "vars_revision") {
@@ -168,7 +169,7 @@ func TestStatusReporterAddsVarsRevision(t *testing.T) {
 	}
 	// A failing report fails each wrapper.
 	failing := reportSource{&fakeStatusSource{fail: true}}
-	if _, err := NewStatusSnapshot(WithBackupHealth(failing, noBackups{})).GetAppsStatus(ctx); err == nil {
+	if _, err := NewStatusSnapshot(WithBackupHealth(failing, noBackups{})).StatusReport(ctx); err == nil {
 		t.Fatal("a failing report succeeded through the wrappers")
 	}
 }

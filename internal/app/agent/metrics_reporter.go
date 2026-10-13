@@ -32,19 +32,10 @@ type StatusSnapshot struct {
 // NewStatusSnapshot wraps src.
 func NewStatusSnapshot(src StatusSource) *StatusSnapshot { return &StatusSnapshot{src: src} }
 
-// GetAppsStatus queries the wrapped source and caches a successful answer.
-func (s *StatusSnapshot) GetAppsStatus(ctx context.Context) ([]command.AppStatus, error) {
-	resp, err := s.StatusReport(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return resp.Apps, nil
-}
-
-// StatusReport is the wrapped source's report; its apps are cached like
-// GetAppsStatus's.
+// StatusReport is the wrapped source's report; a successful answer's apps
+// are cached.
 func (s *StatusSnapshot) StatusReport(ctx context.Context) (command.GetAppsStatusResponse, error) {
-	resp, err := collectReport(ctx, s.src)
+	resp, err := s.src.StatusReport(ctx)
 	if err != nil {
 		return command.GetAppsStatusResponse{}, err
 	}

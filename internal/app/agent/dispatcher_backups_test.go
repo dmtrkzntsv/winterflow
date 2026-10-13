@@ -254,11 +254,12 @@ func (f fakeCleaner) InterruptedRestores() []dockercompose.RestoreMark {
 
 func TestWithBackupHealthAndRunBackups(t *testing.T) {
 	fb := &fakeBackups{}
-	apps, err := WithBackupHealth(&fakeStatus{apps: []command.AppStatus{{AppID: "app-1"}}}, fb).GetAppsStatus(context.Background())
+	resp, err := WithBackupHealth(&fakeStatus{apps: []command.AppStatus{{AppID: "app-1"}}}, fb).StatusReport(context.Background())
+	apps := resp.Apps
 	if err != nil || apps[0].Backups[0].State != command.BackupOK {
 		t.Fatalf("apps = %+v, %v", apps, err)
 	}
-	if _, err := WithBackupHealth(&fakeStatus{err: errors.New("docker down")}, fb).GetAppsStatus(context.Background()); err == nil {
+	if _, err := WithBackupHealth(&fakeStatus{err: errors.New("docker down")}, fb).StatusReport(context.Background()); err == nil {
 		t.Fatal("a failed collection passed")
 	}
 	// RunBackups cleans up, then runs the scheduler until ctx ends.

@@ -145,7 +145,7 @@ func TestMetricsReporterFlagsOnlyUnknownLayouts(t *testing.T) {
 	snap := NewStatusSnapshot(&fakeStatus{apps: []command.AppStatus{{AppID: "a", Containers: []command.ContainerStatus{
 		ctr("c1", command.ContainerStatusActive),
 	}}}})
-	if _, err := snap.GetAppsStatus(context.Background()); err != nil {
+	if _, err := snap.StatusReport(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	cs := &fakeContainers{}
@@ -164,8 +164,8 @@ type fakeStatus struct {
 	err  error
 }
 
-func (f *fakeStatus) GetAppsStatus(context.Context) ([]command.AppStatus, error) {
-	return f.apps, f.err
+func (f *fakeStatus) StatusReport(context.Context) (command.GetAppsStatusResponse, error) {
+	return command.GetAppsStatusResponse{Apps: f.apps}, f.err
 }
 
 func TestStatusSnapshotKeepsLastGoodAnswer(t *testing.T) {
@@ -175,11 +175,11 @@ func TestStatusSnapshotKeepsLastGoodAnswer(t *testing.T) {
 		t.Fatal("snapshot before the first poll")
 	}
 	src.apps = []command.AppStatus{{AppID: "a"}}
-	if _, err := snap.GetAppsStatus(context.Background()); err != nil {
+	if _, err := snap.StatusReport(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	src.err = errors.New("docker down")
-	if _, err := snap.GetAppsStatus(context.Background()); err == nil {
+	if _, err := snap.StatusReport(context.Background()); err == nil {
 		t.Fatal("error swallowed")
 	}
 	if apps, ok := snap.Latest(); !ok || len(apps) != 1 {
@@ -191,7 +191,7 @@ func TestMetricsReporterSampleReadsOnlyRunningContainers(t *testing.T) {
 	snap := NewStatusSnapshot(&fakeStatus{apps: []command.AppStatus{{AppID: "a", Containers: []command.ContainerStatus{
 		ctr("c1", command.ContainerStatusActive), ctr("c2", command.ContainerStatusRestarting), ctr("c3", command.ContainerStatusStopped),
 	}}}})
-	if _, err := snap.GetAppsStatus(context.Background()); err != nil {
+	if _, err := snap.StatusReport(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	host, cs := &fakeHost{}, &fakeContainers{}

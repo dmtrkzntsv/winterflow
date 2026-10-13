@@ -330,8 +330,3 @@ func (r *Repository) SyncVars(_ context.Context, in command.SyncVarsRequest) (co
 	r.RecomputeStale()
 	return command.SyncVarsResponse{Revision: r.vars.Current().Revision, Undecryptable: undecryptable}, nil
 }
-
-// VarsRevision is the stored snapshot's revision (0 before the first sync).
-// A status report carries StatusReport's revision instead: the one its
-// stale sets were computed against.
-func (r *Repository) VarsRevision() int64 { return r.vars.Current().Revision }

@@ -118,14 +118,9 @@ func (c *Cache) markOnlineLocked(serverID string, now time.Time) bool {
 // reports whether the content differs from the previous report — the reporter
 // pushes unconditionally on a timer, and unchanged snapshots should not be
 // re-fanned-out to every browser — and, like MarkOnline, whether this doubled
-// as a liveness transition.
-func (c *Cache) SetAppStatus(serverID string, apps []command.AppStatus, now time.Time) (changed, transition bool) {
-	return c.SetAppReport(serverID, apps, nil, now)
-}
-
-// SetAppReport is SetAppStatus for a report that also carries the agent's
-// shared-variables revision (nil: an agent predating shared variables).
-func (c *Cache) SetAppReport(serverID string, apps []command.AppStatus, varsRev *int64, now time.Time) (changed, transition bool) {
+// as a liveness transition. varsRev is the agent's shared-variables revision
+// the report carries (nil: an agent predating shared variables).
+func (c *Cache) SetAppStatus(serverID string, apps []command.AppStatus, varsRev *int64, now time.Time) (changed, transition bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	prev, had := c.apps[serverID]

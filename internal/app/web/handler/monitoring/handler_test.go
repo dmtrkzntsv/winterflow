@@ -224,7 +224,7 @@ func TestOverview(t *testing.T) {
 		{AppID: "c", StatusCode: command.ContainerStatusStopped},
 		{AppID: "d", StatusCode: command.ContainerStatusProblematic},
 		{AppID: "e", StatusCode: command.ContainerStatusUnknown},
-	}, now)
+	}, nil, now)
 	cpu := 10.0
 	latest.Set("srv-1", metrics.Latest{At: now, Server: metrics.ServerSample{CPU: &cpu}})
 
@@ -299,7 +299,7 @@ func TestDisabledServesEmpty(t *testing.T) {
 		{AppID: "a", StatusCode: command.ContainerStatusActive},
 		{AppID: "c", StatusCode: command.ContainerStatusStopped},
 		{AppID: "d", StatusCode: command.ContainerStatusProblematic},
-	}, now)
+	}, nil, now)
 	cpu := 10.0
 	latest.Set("srv-1", metrics.Latest{At: now, Server: metrics.ServerSample{CPU: &cpu}})
 	w = get(h.Overview, "/x", "u1")

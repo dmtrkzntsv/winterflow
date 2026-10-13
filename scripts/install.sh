@@ -785,9 +785,12 @@ EOF
 
     # --- Enable + start -------------------------------------------------------
 
-    log "Enabling and starting ${SERVICE_NAME}.service"
+    log "Enabling and (re)starting ${SERVICE_NAME}.service"
     systemctl daemon-reload
-    systemctl enable --now "$SERVICE_NAME"
+    systemctl enable "$SERVICE_NAME"
+    # restart, not enable --now: on a reinstall the service is already running
+    # the old binary, and enable --now leaves a running unit alone.
+    systemctl restart "$SERVICE_NAME"
 
     journal_flags=""
     if [ "$HAS_LOG_NAMESPACE" -eq 1 ]; then

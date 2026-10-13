@@ -287,20 +287,38 @@ func TestAwaitRunning(t *testing.T) {
 	if _, err := e.uc.awaitRunning(ctx, srv1, "a1", since); err != nil {
 		t.Fatalf("active: %v", err)
 	}
+	ctr := func(name string, code command.ContainerStatusCode, exit int32) command.ContainerStatus {
+		return command.ContainerStatus{Name: name, StatusCode: code, ExitCode: exit}
+	}
+	withContainers := func(agg command.ContainerStatusCode, cs ...command.ContainerStatus) []command.AppStatus {
+		return []command.AppStatus{{AppID: "a1", StatusCode: agg, Containers: cs}}
+	}
 	cases := []struct {
+		name string
 		apps []command.AppStatus
-		want string
+		want string // "" passes
+		fast bool   // passes well before the bound
 	}{
-		{app(command.ContainerStatusIdle), ""},
-		{app(command.ContainerStatusRestarting), "not running 200ms later (restarting)"},
-		{app(command.ContainerStatusProblematic), "a container exited with an error"},
-		{nil, "the app has no containers"},
+		// The agent aggregates a restarting container to Idle.
+		{"crash loop", withContainers(command.ContainerStatusIdle, ctr("web", command.ContainerStatusActive, 0), ctr("worker", command.ContainerStatusRestarting, 0)), "container worker is restarting", false},
+		{"restarting only", withContainers(command.ContainerStatusIdle, ctr("web", command.ContainerStatusRestarting, 0)), "container web is restarting", false},
+		{"one-shot finished", withContainers(command.ContainerStatusIdle, ctr("web", command.ContainerStatusActive, 0), ctr("migrate", command.ContainerStatusStopped, 0)), "", true},
+		{"all active", withContainers(command.ContainerStatusActive, ctr("web", command.ContainerStatusActive, 0)), "", true},
+		{"active beside paused", withContainers(command.ContainerStatusIdle, ctr("web", command.ContainerStatusActive, 0), ctr("side", command.ContainerStatusIdle, 0)), "", false},
+		{"problematic", withContainers(command.ContainerStatusProblematic, ctr("web", command.ContainerStatusActive, 0), ctr("job", command.ContainerStatusProblematic, 3)), "container job exited with code 3", false},
+		{"stopped", withContainers(command.ContainerStatusStopped, ctr("web", command.ContainerStatusStopped, 0)), "not running 200ms later (stopped)", false},
+		{"idle without containers", app(command.ContainerStatusIdle), "the app has no containers", false},
+		{"not listed", nil, "the app has no containers", false},
 	}
 	for _, tc := range cases {
 		e.reports.set(srv1, status.Report{Apps: tc.apps, Received: since.Add(time.Second)})
+		start := time.Now()
 		_, err := e.uc.awaitRunning(ctx, srv1, "a1", since)
 		if (tc.want == "") != (err == nil) || (err != nil && !strings.Contains(err.Error(), tc.want)) {
-			t.Errorf("%+v: %v, want %q", tc.apps, err, tc.want)
+			t.Errorf("%s: %v, want %q", tc.name, err, tc.want)
+		}
+		if took := time.Since(start); tc.fast && took > 100*time.Millisecond {
+			t.Errorf("%s: took %v, want an answer well before the bound", tc.name, took)
 		}
 	}
 	if _, err := e.uc.awaitRunning(ctx, srv2, "a1", since); err == nil || !strings.Contains(err.Error(), "no status report") {

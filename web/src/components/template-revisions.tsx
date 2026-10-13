@@ -47,7 +47,16 @@ export function TemplateRevisions({ view }: { view: TemplateView }) {
       return;
     }
     setOpen(revision);
-    if (diffs[revision]) return;
+    const cached = diffs[revision];
+    if (Array.isArray(cached)) return;
+    if (cached !== undefined) {
+      // A failed load is not kept: opening again retries it.
+      setDiffs((d) => {
+        const next = { ...d };
+        delete next[revision];
+        return next;
+      });
+    }
     try {
       const [prev, cur] = await Promise.all([api.getTemplate(view.id, revision - 1), api.getTemplate(view.id, revision)]);
       setDiffs((d) => ({ ...d, [revision]: diffBodies(prev.body, cur.body) }));

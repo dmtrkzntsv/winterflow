@@ -90,4 +90,22 @@ describe("TemplateRevisions", () => {
     await user.click(screen.getByRole("button", { name: "Changes from r1" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("template revision not found");
   });
+
+  it("retries a failed load when the changes are opened again", async () => {
+    const user = userEvent.setup();
+    fakeAPI({ "/api/v1/template/get-template": new Error("database down") });
+    renderRevisions();
+    const button = screen.getByRole("button", { name: "Changes from r2" });
+    await user.click(button);
+    expect(await screen.findByRole("alert")).toHaveTextContent("database down");
+    vi.unstubAllGlobals();
+
+    fakeAPI({
+      "/api/v1/template/get-template": (_: unknown, q: URLSearchParams) => ({ ...VIEW, body: BODIES[q.get("revision")!] }),
+    });
+    await user.click(button);
+    await user.click(button);
+    expect(await screen.findByRole("region", { name: "Changes to compose.yaml" })).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
 });

@@ -1,0 +1,183 @@
+package rollouts
+
+import (
+	"errors"
+	"slices"
+	"testing"
+	"time"
+
+	"winterflow/internal/domain/command"
+	"winterflow/internal/domain/model"
+	"winterflow/internal/domain/template"
+	"winterflow/internal/domain/usecase/templates"
+	"winterflow/internal/infra/db/dbtest"
+)
+
+const shopCompose = "services:\n  app:\n    image: example/shop:${VERSION}\n"
+
+func shopBody(pattern string) template.Body {
+	def := "1"
+	return template.Body{
+		Files:      map[string]string{"compose.yaml": shopCompose},
+		Parameters: []template.Parameter{{Name: "NAME", Required: true, Pattern: pattern}, {Name: "VERSION", Default: &def}},
+		AppName:    "shop-${NAME}",
+	}
+}
+
+// shop saves template "shop" (r1) with created instances named names on
+// srv1 and returns it with the instances' app ids by name.
+func (e *env) shop(t *testing.T, tu *templates.UseCase, names ...string) (templates.SavedTemplate, map[string]string) {
+	t.Helper()
+	ctx := dbtest.Ctx(t)
+	tpl, err := tu.SaveTemplate(ctx, "u1", org1, templates.SaveInput{Name: "shop", Body: shopBody("^[a-z]+$")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	apps := map[string]string{}
+	for _, n := range names {
+		out, err := tu.CreateInstance(ctx, "u1", org1, templates.CreateInput{ServerID: srv1, Key: n, TemplateID: tpl.ID, Params: map[string]string{"NAME": n}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case res := <-out.Done:
+			if !res.Success {
+				t.Fatalf("create %s: %s", n, res.Error)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("create %s: no result", n)
+		}
+		v, _ := out.Final(ctx)
+		apps[n] = v.AppID
+	}
+	return tpl, apps
+}
+
+// revise adds revision 2 with NAME's pattern.
+func revise(t *testing.T, tu *templates.UseCase, tpl templates.SavedTemplate, pattern string) {
+	t.Helper()
+	if _, err := tu.SaveTemplate(dbtest.Ctx(t), "u1", org1, templates.SaveInput{ID: tpl.ID, Name: "shop", Body: shopBody(pattern), BaseRevision: 1}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// revisions are the instances' revisions by key.
+func revisions(t *testing.T, e *env) map[string]int64 {
+	t.Helper()
+	all, err := e.tpl.ListInstances(dbtest.Ctx(t), org1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]int64{}
+	for _, inst := range all {
+		out[inst.Key] = inst.Revision
+	}
+	return out
+}
+
+func TestQueueUpgradeChecksTheTemplateAndTheScope(t *testing.T) {
+	e := newEnv(t)
+	_, tu := e.withAgent(t)
+	ctx := dbtest.Ctx(t)
+	tpl, _ := e.shop(t, tu)
+	if _, err := e.uc.QueueUpgrade(ctx, "u1", org2, tpl.ID, 0); !errors.Is(err, model.ErrTemplateNotFound) {
+		t.Fatalf("another org's template: %v", err)
+	}
+	if _, err := e.uc.QueueUpgrade(ctx, "u1", org1, tpl.ID, 7); !errors.Is(err, model.ErrTemplateRevisionGone) {
+		t.Fatalf("an unknown revision: %v", err)
+	}
+	v, err := e.uc.QueueUpgrade(ctx, "u1", org1, tpl.ID, 0)
+	if err != nil || v.State != "queued" || v.Kind != model.RolloutTemplateUpgrade || v.ScopeKey != tpl.ID || v.Revision != 1 || v.CreatedBy != "u1" {
+		t.Fatalf("queued = %+v, %v", v, err)
+	}
+	if _, err := e.uc.QueueUpgrade(ctx, "u1", org1, tpl.ID, 0); !errors.Is(err, model.ErrRolloutActive) || !errors.Is(err, model.ErrConflict) {
+		t.Fatalf("a second upgrade: %v", err)
+	}
+	if list, err := e.uc.List(ctx, org1, model.RolloutTemplateUpgrade, tpl.ID); err != nil || len(list) != 1 || list[0].ID != v.ID {
+		t.Fatalf("list = %+v, %v", list, err)
+	}
+}
+
+func TestUpgradeAllMovesEveryInstanceAndSkipsWhatNeedsValues(t *testing.T) {
+	e := newEnv(t)
+	a, tu := e.withAgent(t)
+	ctx := dbtest.Ctx(t)
+	tpl, apps := e.shop(t, tu, "acme", "bolt", "coda")
+	// r2 refuses "bolt": that instance needs a new value, so it is skipped.
+	revise(t, tu, tpl, "^[ac][a-z]+$")
+	v, err := e.uc.QueueUpgrade(ctx, "u1", org1, tpl.ID, 0)
+	if err != nil || v.Revision != 2 {
+		t.Fatalf("queue = %+v, %v", v, err)
+	}
+	e.uc.pass(ctx)
+
+	r := e.get(t, v.ID)
+	if r.State != model.RolloutDone || r.Done != 2 || r.Skipped != 1 || r.Total != 3 || len(r.SkipIDs) != 1 {
+		t.Fatalf("rollout = %+v", r)
+	}
+	if got := revisions(t, e); got["acme"] != 2 || got["bolt"] != 1 || got["coda"] != 2 {
+		t.Fatalf("revisions = %v", got)
+	}
+	// The three creates, then the upgrades oldest first; the skipped
+	// instance was not saved again.
+	save := func(n string) string { return "app.save " + apps[n] }
+	if got, want := a.commands(), []string{save("acme"), save("bolt"), save("coda"), save("acme"), save("coda")}; !slices.Equal(got, want) {
+		t.Fatalf("commands = %v, want %v", got, want)
+	}
+	evs := e.pub.events()
+	if last := evs[len(evs)-1]; last.State != "done" || last.Revision != 2 || last.Done != 2 || last.Skipped != 1 {
+		t.Fatalf("last event = %+v", last)
+	}
+	if !slices.ContainsFunc(evs, func(v model.RolloutView) bool {
+		return v.CurrentAppID == apps["coda"] && v.CurrentAppName == "shop-coda"
+	}) {
+		t.Fatalf("no event names the app in flight: %+v", evs)
+	}
+}
+
+func TestUpgradeAllStopsAtTheFirstFailure(t *testing.T) {
+	e := newEnv(t)
+	a, tu := e.withAgent(t)
+	ctx := dbtest.Ctx(t)
+	tpl, apps := e.shop(t, tu, "acme", "bolt", "coda")
+	revise(t, tu, tpl, "^[a-z]+$")
+	a.mu.Lock()
+	a.fail[apps["bolt"]] = "pull access denied for example/shop"
+	a.mu.Unlock()
+	v, err := e.uc.QueueUpgrade(ctx, "u1", org1, tpl.ID, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.uc.pass(ctx)
+
+	r := e.get(t, v.ID)
+	if r.State != model.RolloutFailed || r.Error != "pull access denied for example/shop" || r.CurrentAppID != apps["bolt"] || r.Done != 1 {
+		t.Fatalf("rollout = %+v", r)
+	}
+	if got := revisions(t, e); got["acme"] != 2 || got["bolt"] != 1 || got["coda"] != 1 {
+		t.Fatalf("revisions = %v: nothing may follow the failure", got)
+	}
+}
+
+func TestUpgradeFailsWhenTheAppDoesNotRunAfterwards(t *testing.T) {
+	e := newEnv(t)
+	a, tu := e.withAgent(t)
+	ctx := dbtest.Ctx(t)
+	tpl, apps := e.shop(t, tu, "acme")
+	revise(t, tu, tpl, "^[a-z]+$")
+	a.mu.Lock()
+	a.after[apps["acme"]] = command.ContainerStatusRestarting
+	a.mu.Unlock()
+	v, err := e.uc.QueueUpgrade(ctx, "u1", org1, tpl.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.uc.pass(ctx)
+	if r := e.get(t, v.ID); r.State != model.RolloutFailed || r.Error != "container web is restarting 200ms later" || r.CurrentAppID != apps["acme"] {
+		t.Fatalf("rollout = %+v", r)
+	}
+	// The save itself went through: the instance is on r2.
+	if got := revisions(t, e); got["acme"] != 2 {
+		t.Fatalf("revisions = %v", got)
+	}
+}

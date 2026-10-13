@@ -194,5 +194,6 @@ describe("templateFromApp", () => {
     expect(slugName("  2 Shop!! Front ")).toBe("shop-front");
     expect(slugName("123")).toBe("template");
     expect(slugName("a".repeat(80) + "-b")).toHaveLength(63);
+    expect(slugName("a".repeat(62) + "-bbb--")).toBe("a".repeat(62));
   });
 });

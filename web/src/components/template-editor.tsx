@@ -25,6 +25,14 @@ import { cn } from "@/lib/utils";
 const PARAM_GRID =
   "@2xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.4fr)_3rem_3.75rem_2rem] @2xl:gap-x-2";
 
+// patchById and removeById edit one row of a list by its id.
+function patchById<T extends { id: string }>(rows: T[], id: string, patch: Partial<T>): T[] {
+  return rows.map((r) => (r.id === id ? { ...r, ...patch } : r));
+}
+function removeById<T extends { id: string }>(rows: T[], id: string): T[] {
+  return rows.filter((r) => r.id !== id);
+}
+
 type Props = {
   draft: TemplateDraft;
   onChange: (next: TemplateDraft) => void;
@@ -36,10 +44,8 @@ type Props = {
 // backup defaults.
 export function TemplateEditor({ draft, onChange }: Props) {
   const set = (patch: Partial<TemplateDraft>) => onChange({ ...draft, ...patch });
-  const setParam = (id: string, patch: Partial<ParamRow>) =>
-    set({ parameters: draft.parameters.map((p) => (p.id === id ? { ...p, ...patch } : p)) });
-  const setIngress = (id: string, patch: Partial<IngressDraft>) =>
-    set({ ingress: draft.ingress.map((r) => (r.id === id ? { ...r, ...patch } : r)) });
+  const setParam = (id: string, patch: Partial<ParamRow>) => set({ parameters: patchById(draft.parameters, id, patch) });
+  const setIngress = (id: string, patch: Partial<IngressDraft>) => set({ ingress: patchById(draft.ingress, id, patch) });
   const backupNames = recipeBackupNames(draft);
 
   return (
@@ -188,7 +194,7 @@ export function TemplateEditor({ draft, onChange }: Props) {
                         variant="ghost"
                         className="ml-auto size-8 text-muted-foreground hover:text-destructive @2xl:ml-0"
                         aria-label={`Remove ${label}`}
-                        onClick={() => set({ parameters: draft.parameters.filter((x) => x.id !== p.id) })}
+                        onClick={() => set({ parameters: removeById(draft.parameters, p.id) })}
                       >
                         <Trash2 className="size-4" />
                       </Button>
@@ -252,7 +258,7 @@ export function TemplateEditor({ draft, onChange }: Props) {
                   variant="ghost"
                   className="size-8 text-muted-foreground hover:text-destructive"
                   aria-label={`Remove ${r.host || "host"}`}
-                  onClick={() => set({ ingress: draft.ingress.filter((x) => x.id !== r.id) })}
+                  onClick={() => set({ ingress: removeById(draft.ingress, r.id) })}
                 >
                   <Trash2 className="size-4" />
                 </Button>

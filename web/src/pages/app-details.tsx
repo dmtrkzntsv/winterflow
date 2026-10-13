@@ -276,10 +276,7 @@ export default function AppDetailsPage() {
           appName={appLabel(app.name, app.id)}
           current={ownership?.current ?? null}
           target={upgradeTarget}
-          open
-          onOpenChange={(o) => {
-            if (!o) setUpgrade(null);
-          }}
+          onClose={() => setUpgrade(null)}
           onDone={reloadManaged}
         />
       ) : null}

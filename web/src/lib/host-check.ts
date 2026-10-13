@@ -9,11 +9,13 @@ export async function checkHostname(
   serverId: string,
   appId: string | undefined,
   host: string,
+  signal?: AbortSignal,
 ): Promise<HostCheck | null> {
   const qs = new URLSearchParams({ server_id: serverId, domain: host });
   if (appId) qs.set("app_id", appId);
   const res = await fetch(`${apiBaseUrl}/api/v1/domains/check?${qs}`, {
     credentials: "include",
+    signal,
   });
   if (!res.ok) return null;
   const body = (await res.json()) as {

@@ -9,6 +9,7 @@ import {
   plainValues,
   previewHosts,
   requiredFirst,
+  splitValues,
   upgradeNeeds,
   valueError,
 } from "@/lib/template-params";
@@ -103,6 +104,16 @@ describe("rendering", () => {
       { host: "static.example.com", port: "8080", missing: [] },
     ]);
     expect(previewHosts({ ...body, ingress: null }, {})).toEqual([]);
+  });
+});
+
+describe("splitValues", () => {
+  it("splits plain values from typed secrets, blank as empty", () => {
+    expect(splitValues([NAME, MEM, KEY], { NAME: "shop", SESSION_KEY: "s3cret", OTHER: "x" })).toEqual({
+      plain: { NAME: "shop", MEMORY_MAX: "" },
+      typed: { SESSION_KEY: "s3cret" },
+    });
+    expect(splitValues(null, {})).toEqual({ plain: {}, typed: {} });
   });
 });
 

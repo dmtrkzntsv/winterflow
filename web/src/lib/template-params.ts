@@ -58,6 +58,18 @@ export function fieldErrors(
   return out;
 }
 
+// splitValues splits a parameter form's values by name: plain values and
+// the typed secrets (to seal), each "" when blank.
+export function splitValues(
+  params: Parameter[] | null | undefined,
+  values: Record<string, string>,
+): { plain: Record<string, string>; typed: Record<string, string> } {
+  const plain: Record<string, string> = {};
+  const typed: Record<string, string> = {};
+  for (const p of params ?? []) (p.secret ? typed : plain)[p.name] = values[p.name] ?? "";
+  return { plain, typed };
+}
+
 // requiredFirst orders a form: required parameters first, each group in the
 // template's order.
 export function requiredFirst(params: Parameter[] | null | undefined): Parameter[] {
@@ -76,7 +88,8 @@ export function plainValues(params: Parameter[] | null | undefined, given: Recor
   return out;
 }
 
-const REF = /\$\{([^}]*)\}/g;
+// REF matches a ${NAME} reference (global: use it with replace or matchAll).
+export const REF = /\$\{([^}]*)\}/g;
 
 // expand substitutes ${NAME} with plain values, as the API renders the app
 // name, ingress hosts and ports.

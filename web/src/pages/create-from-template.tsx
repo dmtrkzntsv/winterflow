@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { EditorSection, StickyActionBar } from "@/components/editor-section";
 import { ErrorText } from "@/components/error-text";
-import { HostHints, type HostCheck } from "@/components/host-hints";
+import { HostHints } from "@/components/host-hints";
 import { NativeSelect } from "@/components/native-select";
 import { EmptyNote, LoadError, PageSpinner } from "@/components/page-states";
 import { ParameterFields } from "@/components/parameter-fields";
@@ -17,8 +17,16 @@ import { useServers } from "@/context/use-servers";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
 import { useAppBreadcrumbs } from "@/layouts/use-app-layout";
 import { validHostname } from "@/lib/domains";
-import { checkHostname } from "@/lib/host-check";
-import { expand, fieldErrors, newKey, plainValues, previewHosts, type HostPreview } from "@/lib/template-params";
+import { useHostCheck } from "@/hooks/use-host-check";
+import {
+  expand,
+  fieldErrors,
+  newKey,
+  plainValues,
+  previewHosts,
+  splitValues,
+  type HostPreview,
+} from "@/lib/template-params";
 import { ApiError, sealSecrets, type TemplateSummary, type TemplateView, type UpdateInstanceBody } from "@/lib/templates";
 
 const BREADCRUMBS = [{ label: "Apps", href: "/" }, { label: "From template" }];
@@ -128,13 +136,8 @@ export default function CreateFromTemplatePage() {
     setBusy(true);
     setError("");
     try {
-      const parameters: Record<string, string> = {};
-      const typed: Record<string, string> = {};
-      for (const p of params) {
-        const v = values[p.name] ?? "";
-        if (p.secret) typed[p.name] = v;
-        else if (v !== "") parameters[p.name] = v;
-      }
+      const { plain, typed } = splitValues(params, values);
+      const parameters = Object.fromEntries(Object.entries(plain).filter(([, v]) => v !== ""));
       const secrets = await sealSecrets(api, activeServerId, typed);
       const overrides: Record<string, string> = {};
       for (const [name, d] of backups) {
@@ -320,25 +323,8 @@ export default function CreateFromTemplatePage() {
 // (another app's host, or no registered domain covering it) once its
 // parameters are filled in.
 function HostPreviewRow({ serverId, preview }: { serverId: string; preview: HostPreview }) {
-  const [result, setResult] = useState<{ host: string; check: HostCheck } | null>(null);
   const ready = preview.missing.length === 0 && validHostname(preview.host);
-
-  useEffect(() => {
-    if (!ready || !serverId) return;
-    let live = true;
-    const timer = setTimeout(() => {
-      checkHostname(serverId, undefined, preview.host).then(
-        (check) => live && check && setResult({ host: preview.host, check }),
-        () => {},
-      );
-    }, 400);
-    return () => {
-      live = false;
-      clearTimeout(timer);
-    };
-  }, [ready, serverId, preview.host]);
-
-  const check = result?.host === preview.host ? result.check : null;
+  const check = useHostCheck(serverId, undefined, preview.host, { enabled: ready && !!serverId, delay: 400 });
   return (
     <li className="rounded-md border p-3 text-sm">
       <span className="font-mono">{preview.host || "…"}</span>

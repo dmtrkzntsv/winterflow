@@ -8,7 +8,7 @@ import { EditorSection } from "@/components/editor-section";
 import { ImageTagPicker } from "@/components/image-tag-picker";
 import { EmptyNote } from "@/components/page-states";
 import { cn } from "@/lib/utils";
-import { localId, type AppFileMeta } from "@/types/app-config";
+import { COMPOSE_FILENAMES, localId, type AppFileMeta } from "@/types/app-config";
 
 type Props = {
   files: AppFileMeta[];
@@ -129,8 +129,7 @@ export function SecretToggle({ on, onChange }: { on: boolean; onChange: (on: boo
 
 // isComposeFilename gates the image-tag chips to compose files.
 function isComposeFilename(name: string): boolean {
-  const n = name.trim();
-  return n === "compose.yml" || n === "compose.yaml" || n === "docker-compose.yml" || n === "docker-compose.yaml";
+  return COMPOSE_FILENAMES.includes(name.trim());
 }
 
 const IMAGE_LINE = /^\s*image:\s*["']?([\w][\w./:@-]*)/gm;

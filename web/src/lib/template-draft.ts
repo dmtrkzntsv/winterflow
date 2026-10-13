@@ -8,9 +8,9 @@ import type { AppDetailPayload } from "@/context/apps-context-base";
 import { stateFromDetail } from "@/lib/app-editor-io";
 import { configOf } from "@/lib/backups";
 import { ENCRYPTED } from "@/lib/ecies";
-import { compilePattern } from "@/lib/template-params";
+import { compilePattern, REF } from "@/lib/template-params";
 import type { BackupDefault, Parameter, TemplateBody } from "@/lib/templates";
-import { DEFAULT_COMPOSE, localId, type AppFileMeta } from "@/types/app-config";
+import { COMPOSE_FILENAMES, DEFAULT_COMPOSE, localId, type AppFileMeta } from "@/types/app-config";
 
 export type ParamRow = {
   id: string;
@@ -36,9 +36,7 @@ export type TemplateDraft = {
   backups: Record<string, BackupDefault>; // by recipe backup name
 };
 
-// Compose files in compose's load order (model.ComposeFileNames and the
-// overrides).
-const COMPOSE_FILES = ["compose.yaml", "compose.yml", "docker-compose.yml", "docker-compose.yaml"];
+// Compose's override files in its load order.
 const OVERRIDE_FILES = [
   "compose.override.yml",
   "compose.override.yaml",
@@ -49,7 +47,6 @@ const OVERRIDE_FILES = [
 export const TEMPLATE_NAME = /^[a-z][a-z0-9-]{0,62}$/;
 const PARAM_NAME = /^[A-Z][A-Z0-9_]*$/;
 const PORT = /^[1-9][0-9]{0,4}$/;
-const REF = /\$\{([^}]*)\}/g;
 
 export function emptyDraft(): TemplateDraft {
   const id = localId("file");
@@ -107,7 +104,7 @@ export function draftFromBody(name: string, body: TemplateBody): TemplateDraft {
 // first main file and the first override.
 function composeContents(d: TemplateDraft): string[] {
   const byName = new Map(d.files.map((f) => [f.filename.trim(), d.contents[f.id] ?? ""]));
-  const main = COMPOSE_FILES.find((n) => byName.has(n));
+  const main = COMPOSE_FILENAMES.find((n) => byName.has(n));
   if (!main) return [];
   const override = OVERRIDE_FILES.find((n) => byName.has(n));
   return override ? [byName.get(main)!, byName.get(override)!] : [byName.get(main)!];
@@ -209,7 +206,9 @@ export function draftProblem(d: TemplateDraft): string | null {
   const names = d.files.map((f) => f.filename.trim());
   if (names.some((n) => !n)) return "Every file needs a filename.";
   if (new Set(names).size !== names.length) return "Two files have the same name.";
-  if (!names.some((n) => COMPOSE_FILES.includes(n))) return `A compose file is required (${COMPOSE_FILES.join(", ")}).`;
+  if (!names.some((n) => COMPOSE_FILENAMES.includes(n))) {
+    return `A compose file is required (${COMPOSE_FILENAMES.join(", ")}).`;
+  }
   const seen = new Set<string>();
   const plain = new Set<string>();
   for (const p of d.parameters) {
@@ -246,7 +245,6 @@ export function slugName(appName: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9-]+/g, "-")
     .replace(/^[^a-z]+/, "")
-    .replace(/-+$/, "")
     .slice(0, 63)
     .replace(/-+$/, "");
   return slug || "template";

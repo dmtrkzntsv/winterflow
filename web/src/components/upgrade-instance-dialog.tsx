@@ -14,7 +14,7 @@ import { InlineError } from "@/components/inline-error";
 import { ParameterFields } from "@/components/parameter-fields";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
 import { AppStatusCode } from "@/context/apps-context-base";
-import { defaultChanges, fieldErrors, upgradeNeeds } from "@/lib/template-params";
+import { defaultChanges, fieldErrors, splitValues, upgradeNeeds } from "@/lib/template-params";
 import { sealSecrets, type InstanceView, type TemplateView } from "@/lib/templates";
 
 type Props = {
@@ -26,8 +26,8 @@ type Props = {
   // current is the instance's own revision when the caller has it read;
   // otherwise the dialog reads it (to name the defaults that change).
   current?: TemplateView | null;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+  // onClose closes the dialog (the caller mounts it only while open).
+  onClose: () => void;
   onDone: () => void;
 };
 
@@ -35,7 +35,7 @@ type Props = {
 // template, asking only for the values the instance doesn't hold yet
 // (a newly required parameter, a pending instance's secrets), and naming
 // the parameters left on their default whose default the upgrade changes.
-export function UpgradeInstanceDialog({ instance, appName, target, current, open, onOpenChange, onDone }: Props) {
+export function UpgradeInstanceDialog({ instance, appName, target, current, onClose, onDone }: Props) {
   const api = useTemplatesApi();
   const needs = upgradeNeeds(target.body.parameters, instance);
   const given =
@@ -66,9 +66,7 @@ export function UpgradeInstanceDialog({ instance, appName, target, current, open
     setBusy(true);
     setError("");
     try {
-      const plain: Record<string, string> = {};
-      const typed: Record<string, string> = {};
-      for (const p of needs) (p.secret ? typed : plain)[p.name] = values[p.name] ?? "";
+      const { plain, typed } = splitValues(needs, values);
       const secrets = await sealSecrets(api, instance.server_id, typed);
       await api.upgradeInstance({
         server_id: instance.server_id,
@@ -78,7 +76,7 @@ export function UpgradeInstanceDialog({ instance, appName, target, current, open
         ...(Object.keys(secrets).length ? { secrets } : {}),
       });
       toast.success(`Upgraded to r${target.revision}`);
-      onOpenChange(false);
+      onClose();
       onDone();
     } catch (e) {
       setError(e instanceof Error ? e.message : "The upgrade failed");
@@ -88,7 +86,7 @@ export function UpgradeInstanceDialog({ instance, appName, target, current, open
   };
 
   return (
-    <Dialog open={open} onOpenChange={(o) => !busy && onOpenChange(o)}>
+    <Dialog open onOpenChange={(o) => !o && !busy && onClose()}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>
@@ -127,7 +125,7 @@ export function UpgradeInstanceDialog({ instance, appName, target, current, open
         )}
         {error ? <InlineError icon>{error}</InlineError> : null}
         <DialogFooter>
-          <Button variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>
+          <Button variant="outline" disabled={busy} onClick={onClose}>
             Cancel
           </Button>
           <Button disabled={busy} onClick={() => void upgrade()}>

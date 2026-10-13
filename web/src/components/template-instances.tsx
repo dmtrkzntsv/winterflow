@@ -118,10 +118,7 @@ export function TemplateInstances({
           instance={upgrading}
           appName={instanceName(view, upgrading)}
           target={view}
-          open
-          onOpenChange={(o) => {
-            if (!o) setUpgrading(null);
-          }}
+          onClose={() => setUpgrading(null)}
           onDone={onChanged}
         />
       ) : null}

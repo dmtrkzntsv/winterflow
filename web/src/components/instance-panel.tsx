@@ -9,7 +9,7 @@ import { EditorSection, StickyActionBar } from "@/components/editor-section";
 import { InlineError } from "@/components/inline-error";
 import { ParameterFields } from "@/components/parameter-fields";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
-import { fieldErrors } from "@/lib/template-params";
+import { fieldErrors, splitValues } from "@/lib/template-params";
 import { sealSecrets, type InstanceView, type TemplateView } from "@/lib/templates";
 
 // storedValues are the form's starting values: the plain values the
@@ -50,14 +50,14 @@ export function InstancePanel({
     setSaving(true);
     setError("");
     try {
+      const { plain, typed } = splitValues(params, values);
       const parameters: Record<string, string> = {};
-      const typed: Record<string, string> = {};
       for (const p of params) {
-        const v = values[p.name] ?? "";
-        if (p.secret) typed[p.name] = v;
+        const v = plain[p.name];
+        if (v === undefined || v === (initial[p.name] ?? "")) continue;
         // A cleared value means "the default" here (the form says so), but
         // the API keeps a given "" as set: send the default itself.
-        else if (v !== (initial[p.name] ?? "")) parameters[p.name] = v === "" && p.default ? p.default : v;
+        parameters[p.name] = v === "" && p.default ? p.default : v;
       }
       const secrets = await sealSecrets(api, instance.server_id, typed);
       await api.updateInstance({

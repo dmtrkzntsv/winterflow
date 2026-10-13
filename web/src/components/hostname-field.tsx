@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { Input } from "@/components/ui/input";
-import { HostHints, Suggestions, type HostCheck } from "@/components/host-hints";
-import { checkHostname } from "@/lib/host-check";
+import { HostHints, Suggestions } from "@/components/host-hints";
+import { useHostCheck } from "@/hooks/use-host-check";
 import { validHostname, type RegisteredDomain } from "@/lib/domains";
 import { cn } from "@/lib/utils";
 
@@ -51,44 +51,24 @@ export function HostnameField({
   onReturn,
   children,
 }: Props) {
-  // The last answer, with the hostname it was for: once the text changes it
-  // no longer shows, with nothing extra to clear.
-  const [result, setResult] = useState<{ host: string; check: HostCheck } | null>(null);
   // Bumped to check the same hostname again (see the focus handler).
   const [rechecks, setRechecks] = useState(0);
   // Whether the user changed the hostname: loaded rows are checked at once
   // and keep their stored values; edits are debounced and report back.
   const edited = useRef(false);
   const input = useRef<HTMLInputElement>(null);
-  const reportRegistration = useRef(onRegistration);
-  useEffect(() => {
-    reportRegistration.current = onRegistration;
+
+  // Bad syntax never reaches the API: the save-time validation says why.
+  const check = useHostCheck(serverId, appId, value, {
+    enabled: checked && validHostname(value),
+    delay: () => (edited.current ? 400 : 0),
+    recheck: rechecks,
+    onResult: (c) => {
+      if (edited.current && c.registration) onRegistration(c.registration);
+    },
   });
 
-  useEffect(() => {
-    // Bad syntax never reaches the API: the save-time validation says why.
-    if (!checked || !validHostname(value)) return;
-    let live = true;
-    const timer = setTimeout(
-      async () => {
-        try {
-          const check = await checkHostname(serverId, appId, value);
-          if (!live || !check) return;
-          setResult({ host: value, check });
-          if (edited.current && check.registration) reportRegistration.current(check.registration);
-        } catch {
-          // Advisory; the save-time check is authoritative.
-        }
-      },
-      edited.current ? 400 : 0,
-    );
-    return () => {
-      live = false;
-      clearTimeout(timer);
-    };
-  }, [checked, value, serverId, appId, rechecks]);
-
-  const shown = checked && result?.host === value ? result.check : undefined;
+  const shown = checked && check ? check : undefined;
   const issue = shown?.issue;
 
   // An "uncovered" hint links to the Domains tab in a new tab. When the user

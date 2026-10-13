@@ -94,7 +94,8 @@ export default function CreateFromTemplatePage() {
 
   // send creates the instance, or once the API holds this key (an earlier
   // attempt whose deploy failed: the instance is pending) updates it. A
-  // refused create (4xx) claimed nothing.
+  // refused create (a 4xx other than 409) claimed nothing; a 409 (the key is
+  // held) or a 5xx (the claim came before the dispatch failed) may have.
   const send = async (body: UpdateInstanceBody, template: TemplateView) => {
     if (claimed) {
       try {
@@ -108,7 +109,7 @@ export default function CreateFromTemplatePage() {
     try {
       await api.createInstance({ ...body, template_id: template.id, revision: template.revision });
     } catch (e) {
-      if (e instanceof ApiError) setClaimed(false);
+      if (e instanceof ApiError && e.status >= 400 && e.status < 500 && e.status !== 409) setClaimed(false);
       throw e;
     }
   };
@@ -266,7 +267,7 @@ export default function CreateFromTemplatePage() {
                     value={value}
                     onChange={(e) => setBackupStorage((prev) => ({ ...prev, [name]: e.target.value }))}
                   >
-                    <option value="">No storage</option>
+                    {(d.storage ?? "") === "" ? <option value="">No storage</option> : null}
                     {missing ? <option value={value}>{value} (not on this server)</option> : null}
                     {storages.map((s) => (
                       <option key={s} value={s}>

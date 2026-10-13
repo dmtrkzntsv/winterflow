@@ -188,6 +188,45 @@ describe("CreateFromTemplatePage", () => {
     expect(updates).toEqual([expect.objectContaining({ key: creates[0].key, secrets: { SESSION_KEY: "ct(K1):s" } })]);
   });
 
+  it.each([500, 409])("retries a create the API answered %i as an update of the same key", async (status) => {
+    const user = userEvent.setup();
+    const api = fakeAPI(
+      routes({
+        "/api/v1/instance/create-instance": new ApiError("the key may be held", status),
+        "/api/v1/instance/update-instance": { request_id: "r2" },
+      }),
+    );
+    renderPage();
+    await user.type(await screen.findByLabelText("NAME"), "abc");
+    await user.type(screen.getByLabelText("SESSION_KEY"), "s");
+    await user.click(screen.getByRole("button", { name: "Add app" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("the key may be held");
+
+    accepted(api, "/api/v1/instance/update-instance");
+    waitFor_.mockResolvedValueOnce({ status: 0 });
+    await user.click(screen.getByRole("button", { name: "Add app" }));
+    expect(await screen.findByText("the new app")).toBeInTheDocument();
+    const creates = api.posted("/api/v1/instance/create-instance") as { key: string }[];
+    const updates = api.posted("/api/v1/instance/update-instance") as { key: string }[];
+    expect(creates).toHaveLength(1);
+    expect(updates).toEqual([expect.objectContaining({ key: creates[0].key })]);
+  });
+
+  it("offers No storage only when the template's backup has none by default", async () => {
+    fakeAPI(routes());
+    const { unmount } = renderPage();
+    const select = await screen.findByLabelText("Storage for db");
+    expect(within(select).queryByRole("option", { name: "No storage" })).not.toBeInTheDocument();
+    unmount();
+    vi.unstubAllGlobals();
+
+    const bare = { ...VIEW, body: { ...VIEW.body, backups: { db: { enabled: false } } } };
+    fakeAPI(routes({ "/api/v1/template/get-template": bare }));
+    renderPage();
+    const empty = await screen.findByLabelText("Storage for db");
+    expect(within(empty).getByRole("option", { name: "No storage" })).toBeInTheDocument();
+  });
+
   it("flags a template storage this server doesn't have", async () => {
     serverStorages.mockResolvedValueOnce(["local"]);
     fakeAPI(routes());

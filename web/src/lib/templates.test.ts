@@ -1,0 +1,137 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("@/lib/ecies", () => ({
+  ENCRYPTED: "<encrypted>",
+  encryptSecret: vi.fn(async (value: string, key: string) => `ct(${key}):${value}`),
+}));
+
+import { fakeAPI } from "@/test/fake-api";
+import {
+  ApiError,
+  createTemplatesApi,
+  INSTANCE_WAIT_MS,
+  instancesLabel,
+  isManagedByTemplate,
+  sealSecrets,
+} from "@/lib/templates";
+
+const ok = vi.fn(async () => ({ status: 0 }));
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  ok.mockClear();
+});
+
+describe("createTemplatesApi", () => {
+  it("reads templates, revisions and instances", async () => {
+    const api = fakeAPI({
+      "/api/v1/template/get-templates": { templates: null },
+      "/api/v1/template/get-template": { id: "t1", revision: 2 },
+      "/api/v1/instance/get-instances": { instances: [{ key: "k1" }] },
+      "/api/v1/instance/get-instance": { key: "k1" },
+    });
+    const t = createTemplatesApi(ok);
+    expect(await t.listTemplates()).toEqual([]);
+    expect(await t.getTemplate("t1", 2)).toEqual({ id: "t1", revision: 2 });
+    await t.getTemplate("t1");
+    expect(await t.listInstances({ templateId: "t1" })).toEqual([{ key: "k1" }]);
+    await t.listInstances({});
+    expect(await t.getInstance("s1", "k1")).toEqual({ key: "k1" });
+    expect(api.calls.map((c) => c.query)).toEqual([
+      "",
+      "?id=t1&revision=2",
+      "?id=t1",
+      "?template_id=t1",
+      "",
+      "?server_id=s1&key=k1",
+    ]);
+  });
+
+  it("saves and deletes templates, keeping the status of a refusal", async () => {
+    const conflict = new ApiError("someone saved the template meanwhile", 409);
+    const api = fakeAPI({
+      "/api/v1/template/save-template": (b: unknown) =>
+        (b as { base_revision: number }).base_revision === 1 ? conflict : { id: "t1", name: "shop", revision: 3, warnings: null },
+      "/api/v1/template/delete-template": null,
+    });
+    const t = createTemplatesApi(ok);
+    const body = { files: {}, parameters: [], app_name: "x", icon: "", color: "", ingress: [], backups: {} };
+    expect((await t.saveTemplate({ id: "t1", name: "shop", body, base_revision: 2 })).revision).toBe(3);
+    const err = await t.saveTemplate({ id: "t1", name: "shop", body, base_revision: 1 }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).status).toBe(409);
+    await t.deleteTemplate("t1");
+    expect(api.posted("/api/v1/template/delete-template")).toEqual([{ id: "t1" }]);
+  });
+
+  it("waits for an instance command's result over SSE", async () => {
+    const fetchImpl = vi.fn(async () =>
+      new Response(JSON.stringify({ data: { request_id: "r1" } }), { status: 202 }),
+    ) as unknown as typeof fetch;
+    const waitFor = vi.fn(async () => ({ status: 0 }));
+    const t = createTemplatesApi(waitFor, fetchImpl);
+    await t.createInstance({ server_id: "s1", key: "k1", template_id: "t1" });
+    expect(waitFor).toHaveBeenCalledWith("r1", INSTANCE_WAIT_MS);
+
+    waitFor.mockResolvedValueOnce({ status: 1, error: "image not found" } as never);
+    await expect(t.updateInstance({ server_id: "s1", key: "k1" })).rejects.toThrow("image not found");
+    waitFor.mockResolvedValueOnce({ status: 1 } as never);
+    await expect(t.upgradeInstance({ server_id: "s1", key: "k1", revision: 2 })).rejects.toThrow(
+      "The agent reported a failure",
+    );
+  });
+
+  it("returns at once when nothing ran, and refuses a 202 without a request id", async () => {
+    const api = fakeAPI({ "/api/v1/instance/create-instance": { instance: { key: "k1" }, request_id: "" } });
+    const waitFor = vi.fn();
+    await createTemplatesApi(waitFor).createInstance({ server_id: "s1", key: "k1", template_id: "t1" });
+    expect(waitFor).not.toHaveBeenCalled();
+    expect(api.posted("/api/v1/instance/create-instance")).toEqual([{ server_id: "s1", key: "k1", template_id: "t1" }]);
+
+    const bare = vi.fn(async () => new Response(JSON.stringify({ data: {} }), { status: 202 })) as unknown as typeof fetch;
+    await expect(createTemplatesApi(waitFor, bare).unlinkInstance("s1", "k1")).rejects.toThrow("No request id");
+  });
+
+  it("carries the API's message on a refused instance command", async () => {
+    fakeAPI({ "/api/v1/instance/unlink-instance": new ApiError("instance not found", 404) });
+    const err = await createTemplatesApi(ok).unlinkInstance("s1", "k1").catch((e: unknown) => e);
+    expect((err as ApiError).message).toBe("instance not found");
+    expect((err as ApiError).status).toBe(404);
+  });
+});
+
+describe("isManagedByTemplate", () => {
+  it("spots the API's managed-app conflict", () => {
+    expect(isManagedByTemplate("this app is managed by template shop: update the instance or unlink it")).toBe(true);
+    expect(isManagedByTemplate("name taken")).toBe(false);
+  });
+});
+
+describe("instancesLabel", () => {
+  it("counts instances and the ones behind", () => {
+    expect(instancesLabel({ instances: 12, behind: 3 })).toBe("12 instances · 3 behind");
+    expect(instancesLabel({ instances: 1, behind: 0 })).toBe("1 instance");
+  });
+});
+
+describe("sealSecrets", () => {
+  it("encrypts only typed secrets, with the key read at that moment", async () => {
+    const api = fakeAPI({ "/api/v1/server/get-public-key": { public_key: "K1" } });
+    const t = createTemplatesApi(ok);
+    expect(await sealSecrets(t, "s1", { A: "x", B: "" })).toEqual({ A: "ct(K1):x" });
+    expect(await sealSecrets(t, "s1", { B: "" })).toEqual({});
+    expect(api.calls.map((c) => c.query)).toEqual(["?server_id=s1"]);
+  });
+
+  it("explains a server without a key yet", async () => {
+    fakeAPI({ "/api/v1/server/get-public-key": new Error("public key unavailable for this server") });
+    await expect(sealSecrets(createTemplatesApi(ok), "s1", { A: "x" })).rejects.toThrow(
+      "This server has no encryption key yet",
+    );
+  });
+
+  it("passes other failures through", async () => {
+    fakeAPI({ "/api/v1/server/get-public-key": new ApiError("forbidden", 403) });
+    await expect(sealSecrets(createTemplatesApi(ok), "s1", { A: "x" })).rejects.toThrow("forbidden");
+  });
+});

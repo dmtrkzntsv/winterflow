@@ -5,7 +5,7 @@ vi.mock("@/lib/ecies", () => ({
   encryptSecret: vi.fn(async (value: string, key: string) => `ct(${key}):${value}`),
 }));
 
-import { WAIT_TIMEOUT } from "@/context/notifications-context-base";
+import { WAIT_TIMEOUT, WaitTimeoutError } from "@/context/notifications-context-base";
 import { fakeAPI } from "@/test/fake-api";
 import {
   ApiError,
@@ -13,7 +13,9 @@ import {
   INSTANCE_WAIT_MS,
   instancesLabel,
   isManagedByTemplate,
+  LOAD_TIMEOUT_MS,
   sealSecrets,
+  TOO_LONG,
 } from "@/lib/templates";
 
 const ok = vi.fn(async () => ({ status: 0 }));
@@ -48,16 +50,45 @@ describe("createTemplatesApi", () => {
     ]);
   });
 
-  it("passes a read's abort signal to fetch", async () => {
+  it("gives up on a read that never answers, aborting it", async () => {
+    vi.useFakeTimers();
+    try {
+      const signals: AbortSignal[] = [];
+      const fetchImpl = vi.fn((_url: string, init?: RequestInit) => {
+        if (init?.signal) signals.push(init.signal);
+        return new Promise<Response>(() => {});
+      }) as unknown as typeof fetch;
+      const t = createTemplatesApi(ok, fetchImpl);
+      const pending = t.listTemplates();
+      vi.advanceTimersByTime(LOAD_TIMEOUT_MS);
+      await expect(pending).rejects.toThrow(TOO_LONG);
+      expect(signals).toHaveLength(1);
+      expect(signals[0].aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reads each revision once, again after a failed read", async () => {
+    let fail = true;
     const api = fakeAPI({
-      "/api/v1/template/get-templates": { templates: [] },
-      "/api/v1/template/get-template": { id: "t1" },
+      "/api/v1/template/get-template": (_b: unknown, q: URLSearchParams) =>
+        fail ? new Error("bad gateway") : { id: q.get("id"), revision: Number(q.get("revision")) },
     });
     const t = createTemplatesApi(ok);
-    const ctl = new AbortController();
-    await t.listTemplates(ctl.signal);
-    await t.getTemplate("t1", undefined, ctl.signal);
-    expect(api.fetchMock.mock.calls.map(([, init]) => init?.signal)).toEqual([ctl.signal, ctl.signal]);
+    await expect(t.getRevision("t1", 2)).rejects.toThrow("bad gateway");
+    fail = false;
+    expect(await t.getRevision("t1", 2)).toEqual({ id: "t1", revision: 2 });
+    expect(await t.getRevision("t1", 2)).toEqual({ id: "t1", revision: 2 });
+    await t.getRevision("t1", 3);
+    // getTemplate always reads.
+    await t.getTemplate("t1", 2);
+    expect(api.calls.map((c) => c.query)).toEqual([
+      "?id=t1&revision=2",
+      "?id=t1&revision=2",
+      "?id=t1&revision=3",
+      "?id=t1&revision=2",
+    ]);
   });
 
   it("saves and deletes templates, keeping the status of a refusal", async () => {
@@ -108,7 +139,7 @@ describe("createTemplatesApi", () => {
         return new Response(JSON.stringify({ data: { request_id: "r1" } }), { status: 202 });
       }) as unknown as typeof fetch;
       const timeout = vi.fn(async () => {
-        throw new Error(WAIT_TIMEOUT);
+        throw new WaitTimeoutError();
       });
       return { t: createTemplatesApi(timeout, fetchImpl), calls };
     }
@@ -193,7 +224,7 @@ describe("sealSecrets", () => {
   it("encrypts only typed secrets, with the key read at that moment", async () => {
     const api = fakeAPI({ "/api/v1/server/get-public-key": { public_key: "K1" } });
     const t = createTemplatesApi(ok);
-    expect(await sealSecrets(t, "s1", { A: "x", B: "" })).toEqual({ A: "ct(K1):x" });
+    expect(await sealSecrets(t, "s1", { A: "x", B: "", C: "y" })).toEqual({ A: "ct(K1):x", C: "ct(K1):y" });
     expect(await sealSecrets(t, "s1", { B: "" })).toEqual({});
     expect(api.calls.map((c) => c.query)).toEqual(["?server_id=s1"]);
   });

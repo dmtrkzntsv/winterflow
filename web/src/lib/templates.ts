@@ -5,7 +5,7 @@
 // ECIES ciphertexts for the instance's server (lib/ecies); no route ever
 // returns one.
 import { apiBase } from "@/config";
-import { WAIT_TIMEOUT } from "@/context/notifications-context-base";
+import { WaitTimeoutError } from "@/context/notifications-context-base";
 import { readApiError } from "@/lib/api";
 import type { Keep } from "@/lib/backups";
 import { encryptSecret } from "@/lib/ecies";
@@ -142,10 +142,24 @@ export function isManagedByTemplate(message: string): boolean {
 
 export type WaitFor = (ref: string, timeoutMs?: number) => Promise<{ status?: number; error?: string }>;
 
+// LOAD_TIMEOUT_MS bounds every read. Over HTTP/1.1 a browser opens at most
+// six connections to a host, and every open Winterflow tab holds one for its
+// event stream: with enough tabs open a read is queued and never answered,
+// and only a deadline turns that into an error (and aborts the request,
+// freeing its place in the browser's queue).
+export const LOAD_TIMEOUT_MS = 20_000;
+export const TOO_LONG =
+  "The server didn't answer in time. Many open Winterflow tabs can use up the browser's connections to it: close some, then retry.";
+
 export type TemplatesApi = {
-  // A read takes an optional abort signal (a page that gives up on it).
-  listTemplates(signal?: AbortSignal): Promise<TemplateSummary[]>;
-  getTemplate(id: string, revision?: number, signal?: AbortSignal): Promise<TemplateView>;
+  // Every read fails with TOO_LONG after LOAD_TIMEOUT_MS.
+  listTemplates(): Promise<TemplateSummary[]>;
+  // getTemplate reads the latest revision, or the given one (its
+  // latest_revision and revisions as of now).
+  getTemplate(id: string, revision?: number): Promise<TemplateView>;
+  // getRevision reads a revision for its body, which never changes: a
+  // client reads each one once (the rest of the view is as of that read).
+  getRevision(id: string, revision: number): Promise<TemplateView>;
   saveTemplate(body: SaveTemplateBody): Promise<SavedTemplate>;
   deleteTemplate(id: string): Promise<void>;
   listInstances(filter: { serverId?: string; templateId?: string }): Promise<InstanceView[]>;
@@ -172,12 +186,30 @@ export function createTemplatesApi(waitFor: WaitFor, fetchImpl?: typeof fetch): 
     if (!res.ok) throw await refusal(res);
     return ((await res.json()) as { data: T }).data;
   }
+  // read is a GET with the deadline: past it the request is aborted and the
+  // read fails with TOO_LONG (also when the fetch ignores the abort).
+  async function read<T>(path: string): Promise<T> {
+    const ctl = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        reject(new Error(TOO_LONG));
+        ctl.abort();
+      }, LOAD_TIMEOUT_MS);
+    });
+    try {
+      return await Promise.race([call<T>(path, { signal: ctl.signal }), deadline]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
   const post = (payload: unknown): RequestInit => ({
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
-  // command posts an instance call without wait: a 202 names the request
+  // command posts an instance call without wait (lib/api.ts's
+  // dispatchCommand is the general variant): a 202 names the request
   // whose result arrives over SSE; a 200 had nothing to run (a replayed
   // create of a created instance). The SSE replay buffer covers only
   // seconds, so a stream that dropped during a long deploy loses the
@@ -198,7 +230,7 @@ export function createTemplatesApi(waitFor: WaitFor, fetchImpl?: typeof fetch): 
     try {
       result = await waitFor(ref, INSTANCE_WAIT_MS);
     } catch (e) {
-      if (!(e instanceof Error) || e.message !== WAIT_TIMEOUT) throw e;
+      if (!(e instanceof WaitTimeoutError)) throw e;
       return settled(payload, sentAt, done, e);
     }
     if (result.status) throw new Error(result.error || "The agent reported a failure");
@@ -225,23 +257,33 @@ export function createTemplatesApi(waitFor: WaitFor, fetchImpl?: typeof fetch): 
     return s ? `?${s}` : "";
   };
   const getInstance = (serverId: string, key: string) =>
-    call<InstanceView>(`/api/v1/instance/get-instance${qs({ server_id: serverId, key })}`);
+    read<InstanceView>(`/api/v1/instance/get-instance${qs({ server_id: serverId, key })}`);
+  const getTemplate = (id: string, revision?: number) =>
+    read<TemplateView>(`/api/v1/template/get-template${qs({ id, revision: revision ? String(revision) : undefined })}`);
+  // revisions holds getRevision's reads by id and revision; a failed one is
+  // dropped so the next call reads again.
+  const revisions = new Map<string, Promise<TemplateView>>();
+  const getRevision = (id: string, revision: number) => {
+    const k = `${id}@${revision}`;
+    let p = revisions.get(k);
+    if (!p) {
+      p = getTemplate(id, revision);
+      revisions.set(k, p);
+      p.catch(() => revisions.delete(k));
+    }
+    return p;
+  };
   return {
-    listTemplates: (signal) =>
-      call<{ templates: TemplateSummary[] | null }>("/api/v1/template/get-templates", signal && { signal }).then(
-        (d) => d.templates ?? [],
-      ),
-    getTemplate: (id, revision, signal) =>
-      call<TemplateView>(
-        `/api/v1/template/get-template${qs({ id, revision: revision ? String(revision) : undefined })}`,
-        signal && { signal },
-      ),
+    listTemplates: () =>
+      read<{ templates: TemplateSummary[] | null }>("/api/v1/template/get-templates").then((d) => d.templates ?? []),
+    getTemplate,
+    getRevision,
     saveTemplate: (body) => call<SavedTemplate>("/api/v1/template/save-template", post(body)),
     deleteTemplate: async (id) => {
       await call<null>("/api/v1/template/delete-template", post({ id }));
     },
     listInstances: ({ serverId, templateId }) =>
-      call<{ instances: InstanceView[] | null }>(
+      read<{ instances: InstanceView[] | null }>(
         `/api/v1/instance/get-instances${qs({ server_id: serverId, template_id: templateId })}`,
       ).then((d) => d.instances ?? []),
     getInstance,
@@ -255,7 +297,7 @@ export function createTemplatesApi(waitFor: WaitFor, fetchImpl?: typeof fetch): 
     deleteInstance: (serverId, key) =>
       command("/api/v1/instance/delete-instance", { server_id: serverId, key }, "deleted"),
     publicKey: (serverId) =>
-      call<{ public_key: string }>(`/api/v1/server/get-public-key${qs({ server_id: serverId })}`).then((d) => d.public_key),
+      read<{ public_key: string }>(`/api/v1/server/get-public-key${qs({ server_id: serverId })}`).then((d) => d.public_key),
   };
 }
 
@@ -284,7 +326,7 @@ export async function sealSecrets(
     }
     throw e;
   }
-  const out: Record<string, string> = {};
-  for (const [name, value] of given) out[name] = await encryptSecret(value, key);
-  return out;
+  return Object.fromEntries(
+    await Promise.all(given.map(async ([name, value]) => [name, await encryptSecret(value, key)] as const)),
+  );
 }

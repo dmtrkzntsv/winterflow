@@ -58,7 +58,7 @@ export function TemplateRevisions({ view }: { view: TemplateView }) {
       });
     }
     try {
-      const [prev, cur] = await Promise.all([api.getTemplate(view.id, revision - 1), api.getTemplate(view.id, revision)]);
+      const [prev, cur] = await Promise.all([api.getRevision(view.id, revision - 1), api.getRevision(view.id, revision)]);
       setDiffs((d) => ({ ...d, [revision]: diffBodies(prev.body, cur.body) }));
     } catch (e) {
       setDiffs((d) => ({ ...d, [revision]: e instanceof Error ? e.message : "Failed to load the revisions" }));

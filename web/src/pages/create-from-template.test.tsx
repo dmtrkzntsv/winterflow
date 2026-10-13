@@ -4,8 +4,8 @@ import { MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { NotificationsContext, type NotificationsContextValue } from "@/context/notifications-context-base";
-import { ApiError, type TemplateView } from "@/lib/templates";
-import CreateFromTemplatePage, { LOAD_TIMEOUT_MS } from "@/pages/create-from-template";
+import { ApiError, LOAD_TIMEOUT_MS, type TemplateView } from "@/lib/templates";
+import CreateFromTemplatePage from "@/pages/create-from-template";
 import { fakeAPI } from "@/test/fake-api";
 
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));

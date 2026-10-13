@@ -7,7 +7,7 @@ import {
   NotificationsContext,
   type Notification,
   type NotificationHandler,
-  WAIT_TIMEOUT,
+  WaitTimeoutError,
 } from "./notifications-context-base";
 
 const base = apiBaseUrl.endsWith("/") ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
@@ -105,7 +105,7 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
         });
         const timer = setTimeout(() => {
           unsubscribe();
-          reject(new Error(WAIT_TIMEOUT));
+          reject(new WaitTimeoutError());
         }, timeoutMs);
       }),
     [subscribe],

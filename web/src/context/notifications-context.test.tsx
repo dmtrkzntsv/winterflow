@@ -2,7 +2,7 @@ import { act, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { NotificationsProvider } from "@/context/notifications-context";
-import { WAIT_TIMEOUT, type NotificationsContextValue } from "@/context/notifications-context-base";
+import { WAIT_TIMEOUT, WaitTimeoutError, type NotificationsContextValue } from "@/context/notifications-context-base";
 import { useNotifications } from "@/context/use-notifications";
 
 vi.mock("@/context/use-auth", () => ({ useAuth: () => ({ isAuthenticated: true }) }));
@@ -84,11 +84,12 @@ describe("NotificationsProvider", () => {
     await expect(pending).resolves.toMatchObject({ ref: "r2", error: "boom" });
   });
 
-  it("waitFor rejects with WAIT_TIMEOUT when no result comes in time", async () => {
+  it("waitFor rejects with a WaitTimeoutError when no result comes in time", async () => {
     vi.useFakeTimers();
     const { latest } = mount();
     const pending = latest().waitFor("r9", 1000);
     vi.advanceTimersByTime(1000);
     await expect(pending).rejects.toThrow(WAIT_TIMEOUT);
+    await expect(pending).rejects.toBeInstanceOf(WaitTimeoutError);
   });
 });

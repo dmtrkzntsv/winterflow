@@ -44,7 +44,7 @@ export function UpgradeInstanceDialog({ instance, appName, target, current, open
   useEffect(() => {
     if (given) return;
     let live = true;
-    api.getTemplate(instance.template_id, instance.revision).then(
+    api.getRevision(instance.template_id, instance.revision).then(
       (view) => live && setRead({ view, error: "" }),
       (e: unknown) => live && setRead({ view: null, error: e instanceof Error ? e.message : "the read failed" }),
     );

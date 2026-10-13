@@ -24,50 +24,6 @@ import { ApiError, sealSecrets, type TemplateSummary, type TemplateView, type Up
 
 const BREADCRUMBS = [{ label: "Apps", href: "/" }, { label: "From template" }];
 
-// LOAD_TIMEOUT_MS bounds the page's reads. Over HTTP/1.1 a browser opens at
-// most six connections to a host, and every open Winterflow tab holds one
-// for its event stream: with enough tabs open a read is queued and never
-// answered, and only a deadline turns that into an error.
-export const LOAD_TIMEOUT_MS = 20_000;
-const TOO_LONG =
-  "The server didn't answer in time. Many open Winterflow tabs can use up the browser's connections to it: close some, then retry.";
-
-// startRead runs one read with the deadline: it ends in done or failed
-// unless the caller stops it first (the returned cleanup), and either end
-// aborts the request (freeing its place in the browser's queue).
-function startRead<T>(
-  read: (signal: AbortSignal) => Promise<T>,
-  done: (v: T) => void,
-  failed: (message: string) => void,
-  fallback: string,
-): () => void {
-  const ctl = new AbortController();
-  let live = true;
-  const stop = () => {
-    live = false;
-    clearTimeout(timer);
-    ctl.abort();
-  };
-  const timer = setTimeout(() => {
-    if (!live) return;
-    stop();
-    failed(TOO_LONG);
-  }, LOAD_TIMEOUT_MS);
-  read(ctl.signal).then(
-    (v) => {
-      if (!live) return;
-      stop();
-      done(v);
-    },
-    (e: unknown) => {
-      if (!live) return;
-      stop();
-      failed(e instanceof Error ? e.message : fallback);
-    },
-  );
-  return stop;
-}
-
 // CreateFromTemplatePage is Add app → From template on a server: pick a
 // template and revision, fill in its parameters (secrets encrypted in the
 // browser for this server), pick storages for its backups, see the hosts
@@ -101,19 +57,20 @@ export default function CreateFromTemplatePage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  useEffect(
-    () =>
-      startRead(
-        (signal) => api.listTemplates(signal),
-        (list) => {
-          setTemplates(list);
-          if (list.length > 0) setTemplateId((id) => id || list[0].id);
-        },
-        setLoadError,
-        "Failed to load templates",
-      ),
-    [api, attempt],
-  );
+  useEffect(() => {
+    let live = true;
+    api.listTemplates().then(
+      (list) => {
+        if (!live) return;
+        setTemplates(list);
+        if (list.length > 0) setTemplateId((id) => id || list[0].id);
+      },
+      (e: unknown) => live && setLoadError(e instanceof Error ? e.message : "Failed to load templates"),
+    );
+    return () => {
+      live = false;
+    };
+  }, [api, attempt]);
 
   useEffect(() => {
     serverStorages().then(setStorages, () => setStorages([]));
@@ -121,17 +78,20 @@ export default function CreateFromTemplatePage() {
 
   useEffect(() => {
     if (!templateId) return;
-    return startRead(
-      (signal) => api.getTemplate(templateId, revision || undefined, signal),
+    let live = true;
+    api.getTemplate(templateId, revision || undefined).then(
       (v) => {
+        if (!live) return;
         setView(v);
         const defaults: Record<string, string> = {};
         for (const [name, d] of Object.entries(v.body.backups ?? {})) defaults[name] = d.storage ?? "";
         setBackupStorage(defaults);
       },
-      setLoadError,
-      "Failed to load the template",
+      (e: unknown) => live && setLoadError(e instanceof Error ? e.message : "Failed to load the template"),
     );
+    return () => {
+      live = false;
+    };
   }, [api, templateId, revision, attempt]);
 
   const params = view?.body.parameters ?? [];

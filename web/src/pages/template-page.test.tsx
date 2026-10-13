@@ -145,6 +145,23 @@ describe("TemplatePage", () => {
     expect(sent).toMatchObject({ id: "t1", base_revision: 3, note: "memory cap" });
     expect(sent.body.parameters?.map((p) => p.name)).toEqual(["NAME", "PORT", "VERSION", "MEMORY_MAX"]);
     expect(sent.body.backups).toEqual({ db: { enabled: true, storage: "tenants" } });
+    // The save re-reads the template only: its instances didn't change.
+    await waitFor(() => expect(api.calls.filter((c) => c.path === "/api/v1/template/get-template")).toHaveLength(2));
+    expect(api.calls.filter((c) => c.path === "/api/v1/instance/get-instances")).toHaveLength(1);
+  });
+
+  it("is clean again when an edit is taken back", async () => {
+    const user = userEvent.setup();
+    fakeAPI({
+      "/api/v1/template/get-template": view(3),
+      "/api/v1/instance/get-instances": { instances: [] },
+    });
+    renderPage("/org/templates/t1");
+    const save = await screen.findByRole("button", { name: "Save as r4" });
+    await user.type(screen.getByLabelText("App name"), "x");
+    expect(save).toBeEnabled();
+    await user.type(screen.getByLabelText("App name"), "{Backspace}");
+    expect(save).toBeDisabled();
   });
 
   it("says who saved meanwhile on a concurrent edit, and reloads", async () => {

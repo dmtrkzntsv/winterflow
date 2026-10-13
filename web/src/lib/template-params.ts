@@ -9,6 +9,11 @@ import type { InstanceView, Parameter, TemplateBody } from "@/lib/templates";
 // non-breaking space). A pattern using one is left to the API.
 const RE2_ONLY = /\[\[:|\\[pPzAQEC]|\(\?P<|\(\?[imsU]*(-|U)|\\x\{|\\S/;
 
+// compiled holds compilePattern's results by pattern (forms check every
+// value on each keystroke), at most MAX_COMPILED of them.
+const MAX_COMPILED = 256;
+const compiled = new Map<string, RegExp | null>();
+
 // compilePattern turns a parameter's RE2 pattern into a JS RegExp, or null
 // when JavaScript can't be trusted to agree (then only the API checks it).
 // A leading (?i), (?m) or (?s) becomes the matching JS flag; the u flag
@@ -16,7 +21,19 @@ const RE2_ONLY = /\[\[:|\\[pPzAQEC]|\(\?P<|\(\?[imsU]*(-|U)|\\x\{|\\S/;
 // know: those patterns are the API's). A known limit: JS's . also stops
 // at \r (and U+2028/9), RE2's only at \n.
 export function compilePattern(pattern: string | undefined): RegExp | null {
-  if (!pattern || RE2_ONLY.test(pattern)) return null;
+  if (!pattern) return null;
+  let re = compiled.get(pattern);
+  if (re === undefined) {
+    // Shared safely: without g or y a RegExp keeps no state between tests.
+    if (compiled.size >= MAX_COMPILED) compiled.clear();
+    re = compile(pattern);
+    compiled.set(pattern, re);
+  }
+  return re;
+}
+
+function compile(pattern: string): RegExp | null {
+  if (RE2_ONLY.test(pattern)) return null;
   let src = pattern;
   let flags = "";
   const lead = /^\(\?([ims]+)\)/.exec(src);

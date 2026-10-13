@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import type { AppDetailPayload } from "@/context/apps-context-base";
 import type { EffectiveBackup } from "@/lib/backups";
 import {
+  backupNamesIn,
   bodyFromDraft,
+  composeContents,
   draftFromBody,
   draftProblem,
   emptyDraft,
@@ -68,6 +70,16 @@ describe("draftFromBody / bodyFromDraft", () => {
   it("reads null lists from the API", () => {
     const d = draftFromBody("x", { ...BODY, files: null, parameters: null, ingress: null, backups: null });
     expect([d.files, d.parameters, d.ingress, d.backups]).toEqual([[], [], [], {}]);
+  });
+});
+
+describe("composeContents / backupNamesIn", () => {
+  it("picks the compose files compose loads, and reads names only from those given", () => {
+    const d = valid();
+    const [main, override] = composeContents(d);
+    expect(backupNamesIn([main, override])).toEqual(recipeBackupNames(d));
+    expect(backupNamesIn([undefined, undefined])).toEqual([]);
+    expect(composeContents({ ...d, files: [] })).toEqual([]);
   });
 });
 

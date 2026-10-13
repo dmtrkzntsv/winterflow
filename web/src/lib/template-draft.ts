@@ -101,8 +101,8 @@ export function draftFromBody(name: string, body: TemplateBody): TemplateDraft {
 }
 
 // composeContents are the draft's compose files compose would load: the
-// first main file and the first override.
-function composeContents(d: TemplateDraft): string[] {
+// first main file and the first override (cheap: no parsing).
+export function composeContents(d: TemplateDraft): string[] {
   const byName = new Map(d.files.map((f) => [f.filename.trim(), d.contents[f.id] ?? ""]));
   const main = COMPOSE_FILENAMES.find((n) => byName.has(n));
   if (!main) return [];
@@ -150,10 +150,16 @@ function recipeNamesIn(src: string): string[] {
   return names;
 }
 
+// backupNamesIn are the backup names compose contents declare, in order,
+// without duplicates (undefined: no such file).
+export function backupNamesIn(contents: (string | undefined)[]): string[] {
+  return [...new Set(contents.flatMap((src) => (src === undefined ? [] : recipeNamesIn(src))))];
+}
+
 // recipeBackupNames are the backup names the draft's compose files declare
-// (the Backup defaults rows), in order, without duplicates.
+// (the Backup defaults rows).
 export function recipeBackupNames(d: TemplateDraft): string[] {
-  return [...new Set(composeContents(d).flatMap(recipeNamesIn))];
+  return backupNamesIn(composeContents(d));
 }
 
 export function bodyFromDraft(d: TemplateDraft): TemplateBody {
@@ -188,6 +194,8 @@ export function bodyFromDraft(d: TemplateDraft): TemplateBody {
   };
 }
 
+const utf8 = new TextEncoder();
+
 // refProblem names the first ${...} in s that is not a plain parameter.
 function refProblem(field: string, s: string, plain: Set<string>): string | null {
   for (const m of s.matchAll(REF)) {
@@ -217,7 +225,7 @@ export function draftProblem(d: TemplateDraft): string | null {
     if (name === "COMPOSE_PROJECT_NAME" || name.startsWith("WF_")) return `Parameter ${name} is reserved.`;
     if (seen.has(name)) return `Parameter ${name} is declared twice.`;
     seen.add(name);
-    if (new TextEncoder().encode(p.pattern).length > 512) return `Parameter ${name}: the pattern is longer than 512 bytes.`;
+    if (utf8.encode(p.pattern).length > 512) return `Parameter ${name}: the pattern is longer than 512 bytes.`;
     if (p.secret) continue;
     plain.add(name);
     if (p.default.includes("$")) return `Parameter ${name}: the default may not contain $.`;

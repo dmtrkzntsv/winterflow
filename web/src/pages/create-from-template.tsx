@@ -50,7 +50,9 @@ export default function CreateFromTemplatePage() {
   const [view, setView] = useState<TemplateView | null>(null);
   const [values, setValues] = useState<Record<string, string>>({});
   const [storages, setStorages] = useState<string[]>([]);
-  const [backupStorage, setBackupStorage] = useState<Record<string, string>>({});
+  // storageOverrides are the backup storages the user picked (else the
+  // template's default).
+  const [storageOverrides, setStorageOverrides] = useState<Record<string, string>>({});
   const [loadError, setLoadError] = useState("");
   // attempt counts Retry clicks: each one runs the reads again.
   const [attempt, setAttempt] = useState(0);
@@ -90,9 +92,7 @@ export default function CreateFromTemplatePage() {
       (v) => {
         if (!live) return;
         setView(v);
-        const defaults: Record<string, string> = {};
-        for (const [name, d] of Object.entries(v.body.backups ?? {})) defaults[name] = d.storage ?? "";
-        setBackupStorage(defaults);
+        setStorageOverrides({});
       },
       (e: unknown) => live && setLoadError(e instanceof Error ? e.message : "Failed to load the template"),
     );
@@ -141,7 +141,8 @@ export default function CreateFromTemplatePage() {
       const secrets = await sealSecrets(api, activeServerId, typed);
       const overrides: Record<string, string> = {};
       for (const [name, d] of backups) {
-        if ((backupStorage[name] ?? "") !== (d.storage ?? "")) overrides[name] = backupStorage[name];
+        const picked = storageOverrides[name];
+        if (picked !== undefined && picked !== (d.storage ?? "")) overrides[name] = picked;
       }
       const body = {
         server_id: activeServerId,
@@ -151,8 +152,7 @@ export default function CreateFromTemplatePage() {
         ...(Object.keys(overrides).length ? { backups: overrides } : {}),
       };
       await send(body, view);
-      const inst = await api.getInstance(activeServerId, key);
-      await refresh();
+      const [inst] = await Promise.all([api.getInstance(activeServerId, key), refresh()]);
       toast.success("App added");
       navigate(toServer(`/app/${inst.app_id}`));
     } catch (e) {
@@ -262,7 +262,7 @@ export default function CreateFromTemplatePage() {
         <EditorSection title="Backups" description="Where each backup the template turns on is stored on this server.">
           <div className="grid gap-3">
             {backups.map(([name, d]) => {
-              const value = backupStorage[name] ?? "";
+              const value = storageOverrides[name] ?? d.storage ?? "";
               const missing = value !== "" && !storages.includes(value);
               return (
                 <div key={name} className="grid gap-1.5">
@@ -274,7 +274,7 @@ export default function CreateFromTemplatePage() {
                     id={`storage-${name}`}
                     aria-label={`Storage for ${name}`}
                     value={value}
-                    onChange={(e) => setBackupStorage((prev) => ({ ...prev, [name]: e.target.value }))}
+                    onChange={(e) => setStorageOverrides((prev) => ({ ...prev, [name]: e.target.value }))}
                   >
                     {(d.storage ?? "") === "" ? <option value="">No storage</option> : null}
                     {missing ? <option value={value}>{value} (not on this server)</option> : null}

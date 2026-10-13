@@ -20,6 +20,15 @@ import { ApiError, type InstanceView, type TemplateView } from "@/lib/templates"
 
 const TABS = ["editor", "revisions", "instances"] as const;
 
+// sameDraft says whether d still holds what base held. A field the editor
+// didn't touch keeps its reference; only the others are compared by value
+// (typing a change and taking it back is clean again).
+function sameDraft(d: TemplateDraft, base: TemplateDraft): boolean {
+  return (Object.keys(d) as (keyof TemplateDraft)[]).every(
+    (k) => d[k] === base[k] || JSON.stringify(d[k]) === JSON.stringify(base[k]),
+  );
+}
+
 // DraftState is what "Save as template" hands the new template's editor:
 // the draft, what was left out of it, and the app it was built from.
 export type DraftState = { draft: TemplateDraft; notes: string[]; appName: string };
@@ -40,7 +49,8 @@ export default function TemplatePage() {
   const [view, setView] = useState<TemplateView | null>(null);
   const [instances, setInstances] = useState<InstanceView[]>([]);
   const [draft, setDraft] = useState<TemplateDraft>(() => prefill?.draft ?? emptyDraft());
-  const [baseline, setBaseline] = useState(() => (prefill ? "" : JSON.stringify(draft)));
+  // baseline is the draft as loaded (null: a prefilled draft, unsaved).
+  const [baseline, setBaseline] = useState<TemplateDraft | null>(() => (prefill ? null : draft));
   const [loadError, setLoadError] = useState<ApiError | Error | null>(null);
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
@@ -56,21 +66,29 @@ export default function TemplatePage() {
   );
   useAppBreadcrumbs(breadcrumbs);
 
-  const load = useCallback(async () => {
-    if (!templateId) return;
-    setLoadError(null);
-    try {
-      const [v, list] = await Promise.all([api.getTemplate(templateId), api.listInstances({ templateId })]);
-      const loaded = draftFromBody(v.name, v.body);
-      setView(v);
-      setInstances(list);
-      setDraft(loaded);
-      setBaseline(JSON.stringify(loaded));
-      setConflict(null);
-    } catch (e) {
-      setLoadError(e instanceof Error ? e : new Error("Failed to load the template"));
-    }
-  }, [api, templateId]);
+  // load reads the template into the editor, and its instances unless
+  // only the template changed (a save).
+  const load = useCallback(
+    async (withInstances = true) => {
+      if (!templateId) return;
+      setLoadError(null);
+      try {
+        const [v, list] = await Promise.all([
+          api.getTemplate(templateId),
+          withInstances ? api.listInstances({ templateId }) : null,
+        ]);
+        const loaded = draftFromBody(v.name, v.body);
+        setView(v);
+        if (list) setInstances(list);
+        setDraft(loaded);
+        setBaseline(loaded);
+        setConflict(null);
+      } catch (e) {
+        setLoadError(e instanceof Error ? e : new Error("Failed to load the template"));
+      }
+    },
+    [api, templateId],
+  );
 
   useEffect(() => {
     void load();
@@ -81,7 +99,7 @@ export default function TemplatePage() {
     if (templateId) api.listInstances({ templateId }).then(setInstances, () => {});
   }, [api, templateId]);
 
-  const dirty = JSON.stringify(draft) !== baseline;
+  const dirty = baseline === null || !sameDraft(draft, baseline);
 
   const problem = tried ? draftProblem(draft) : null;
 
@@ -108,7 +126,7 @@ export default function TemplatePage() {
         navigate(`/org/templates/${saved.id}`, { replace: true });
         return;
       }
-      await load();
+      await load(false);
     } catch (e) {
       if (e instanceof ApiError && e.status === 409 && view) {
         // Someone saved meanwhile: name their revision; Reload takes it.

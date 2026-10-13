@@ -33,6 +33,17 @@ describe("compilePattern", () => {
     }
     expect(compilePattern(undefined)).toBeNull();
   });
+
+  it("compiles a pattern once, and keeps a bounded number", () => {
+    const re = compilePattern("^cache-[0-9]+$");
+    expect(compilePattern("^cache-[0-9]+$")).toBe(re);
+    expect(compilePattern("(?P<cached>a)")).toBeNull();
+    expect(compilePattern("(?P<cached>a)")).toBeNull();
+    for (let i = 0; i < 300; i++) compilePattern(`^fill-${i}$`);
+    const again = compilePattern("^cache-[0-9]+$");
+    expect(again).not.toBe(re);
+    expect(again?.test("cache-42")).toBe(true);
+  });
 });
 
 describe("compilePattern agrees with RE2 or leaves the pattern to the API", () => {

@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { Plus, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -10,9 +11,10 @@ import { FilesSection } from "@/components/files-section";
 import { IconPicker } from "@/components/icon-picker";
 import { EmptyNote } from "@/components/page-states";
 import {
+  backupNamesIn,
+  composeContents,
   ingressRow,
   paramRow,
-  recipeBackupNames,
   type IngressDraft,
   type ParamRow,
   type TemplateDraft,
@@ -46,7 +48,9 @@ export function TemplateEditor({ draft, onChange }: Props) {
   const set = (patch: Partial<TemplateDraft>) => onChange({ ...draft, ...patch });
   const setParam = (id: string, patch: Partial<ParamRow>) => set({ parameters: patchById(draft.parameters, id, patch) });
   const setIngress = (id: string, patch: Partial<IngressDraft>) => set({ ingress: patchById(draft.ingress, id, patch) });
-  const backupNames = recipeBackupNames(draft);
+  // Parsing the compose files runs only when their contents change.
+  const [main, override] = composeContents(draft);
+  const backupNames = useMemo(() => backupNamesIn([main, override]), [main, override]);
 
   return (
     <div>

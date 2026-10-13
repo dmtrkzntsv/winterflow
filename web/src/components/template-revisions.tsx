@@ -27,6 +27,7 @@ function diffBodies(before: TemplateBody, after: TemplateBody): FileDiff[] {
   const names = [...new Set([...Object.keys(a), ...Object.keys(b)])].sort();
   const out: FileDiff[] = [];
   for (const name of names) {
+    if (a[name] === b[name]) continue;
     const h = hunks(diffLines(a[name] ?? "", b[name] ?? ""));
     if (h.length === 0) continue;
     out.push({ name, status: !(name in a) ? "added" : !(name in b) ? "removed" : "changed", hunks: h });
@@ -39,7 +40,10 @@ function diffBodies(before: TemplateBody, after: TemplateBody): FileDiff[] {
 export function TemplateRevisions({ view }: { view: TemplateView }) {
   const api = useTemplatesApi();
   const [open, setOpen] = useState<number | null>(null);
-  const [diffs, setDiffs] = useState<Record<number, FileDiff[] | string>>({});
+  // diffs keeps the loaded changes by revision; failed is the last failed
+  // load (not kept: opening it again retries).
+  const [diffs, setDiffs] = useState<Record<number, FileDiff[]>>({});
+  const [failed, setFailed] = useState<{ revision: number; message: string } | null>(null);
 
   const toggle = async (revision: number) => {
     if (open === revision) {
@@ -47,21 +51,13 @@ export function TemplateRevisions({ view }: { view: TemplateView }) {
       return;
     }
     setOpen(revision);
-    const cached = diffs[revision];
-    if (Array.isArray(cached)) return;
-    if (cached !== undefined) {
-      // A failed load is not kept: opening again retries it.
-      setDiffs((d) => {
-        const next = { ...d };
-        delete next[revision];
-        return next;
-      });
-    }
+    if (diffs[revision]) return;
+    setFailed((f) => (f?.revision === revision ? null : f));
     try {
       const [prev, cur] = await Promise.all([api.getRevision(view.id, revision - 1), api.getRevision(view.id, revision)]);
       setDiffs((d) => ({ ...d, [revision]: diffBodies(prev.body, cur.body) }));
     } catch (e) {
-      setDiffs((d) => ({ ...d, [revision]: e instanceof Error ? e.message : "Failed to load the revisions" }));
+      setFailed({ revision, message: e instanceof Error ? e.message : "Failed to load the revisions" });
     }
   };
 
@@ -69,6 +65,7 @@ export function TemplateRevisions({ view }: { view: TemplateView }) {
     <ol className="divide-y rounded-md border">
       {(view.revisions ?? []).map((r) => {
         const diff = diffs[r.revision];
+        const error = failed?.revision === r.revision ? failed.message : null;
         return (
           <li key={r.revision} className="px-4 py-3 text-sm">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -88,10 +85,10 @@ export function TemplateRevisions({ view }: { view: TemplateView }) {
             </div>
             {open === r.revision ? (
               <div className="mt-3 space-y-3">
-                {diff === undefined ? (
+                {error !== null ? (
+                  <InlineError>{error}</InlineError>
+                ) : diff === undefined ? (
                   <Spinner />
-                ) : typeof diff === "string" ? (
-                  <InlineError>{diff}</InlineError>
                 ) : diff.length === 0 ? (
                   <p className="text-muted-foreground">No changes.</p>
                 ) : (

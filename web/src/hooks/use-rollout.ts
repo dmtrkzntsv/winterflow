@@ -10,20 +10,30 @@ import { ROLLOUT_EVENT, type Rollout, type RolloutKind, type RolloutsApi } from 
 // leaves no rollout (the page works without it).
 export function useRollout(api: RolloutsApi, kind: RolloutKind, scopeKey?: string | null) {
   const { subscribe } = useNotifications();
-  const [rollout, setRollout] = useState<Rollout | null>(null);
+  // The state is keyed to what it follows: a change of kind or scope shows
+  // nothing until the new one's read or events arrive.
+  const key = `${kind}:${scopeKey ?? ""}:${scopeKey === null ? "none" : "scope"}`;
+  const [state, setState] = useState<{ key: string; rollout: Rollout | null }>({ key, rollout: null });
+  const rollout = state.key === key ? state.rollout : null;
+
+  const update = useCallback(
+    (k: string, next: (cur: Rollout | null) => Rollout | null) =>
+      setState((s) => ({ key: k, rollout: next(s.key === k ? s.rollout : null) })),
+    [],
+  );
 
   useEffect(() => {
     if (scopeKey === null) return;
     let live = true;
     api.list(kind, scopeKey).then(
       // An event that arrived meanwhile is newer than the read.
-      (list) => live && setRollout((cur) => cur ?? list[0] ?? null),
+      (list) => live && update(key, (cur) => cur ?? list[0] ?? null),
       () => {},
     );
     return () => {
       live = false;
     };
-  }, [api, kind, scopeKey]);
+  }, [api, kind, scopeKey, key, update]);
 
   useEffect(
     () =>
@@ -33,17 +43,19 @@ export function useRollout(api: RolloutsApi, kind: RolloutKind, scopeKey?: strin
         if (!r || r.kind !== kind || (scopeKey && r.scope_key !== scopeKey)) return;
         // A newer rollout replaces the shown one; an older one's late event
         // does not.
-        setRollout((cur) => (!cur || cur.id === r.id || r.created_at >= cur.created_at ? r : cur));
+        update(key, (cur) => (!cur || cur.id === r.id || r.created_at >= cur.created_at ? r : cur));
       }),
-    [subscribe, kind, scopeKey],
+    [subscribe, kind, scopeKey, key, update],
   );
+
+  const set = useCallback((r: Rollout | null) => update(key, () => r), [key, update]);
 
   const stop = useCallback(
     async (id: string) => {
-      setRollout(await api.stop(id));
+      set(await api.stop(id));
     },
-    [api],
+    [api, set],
   );
 
-  return { rollout, set: setRollout, stop };
+  return { rollout, set, stop };
 }

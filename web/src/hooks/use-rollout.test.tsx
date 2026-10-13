@@ -30,7 +30,10 @@ function setup(list: Promise<Rollout[]>, scopeKey?: string | null) {
       {children}
     </NotificationsContext.Provider>
   );
-  const view = renderHook(() => useRollout(api, "template_upgrade", scopeKey), { wrapper });
+  const view = renderHook(({ scope }: { scope?: string | null }) => useRollout(api, "template_upgrade", scope), {
+    wrapper,
+    initialProps: { scope: scopeKey },
+  });
   const emit = (n: Notification) => act(() => hub.h?.(n));
   return { ...view, api, emit };
 }
@@ -63,6 +66,28 @@ describe("useRollout", () => {
     await act(() => result.current.stop("r1"));
     expect(api.stop).toHaveBeenCalledWith("r1");
     expect(result.current.rollout?.stop_requested).toBe(true);
+  });
+
+  it("drops the previous scope's rollout when the scope changes", async () => {
+    const t2 = rollout({ id: "r9", scope_key: "t2", created_at: "2026-10-01T00:00:00Z", done: 5 });
+    const { result, api, emit, rerender } = setup(Promise.resolve([rollout()]), "t1");
+    await waitFor(() => expect(result.current.rollout?.scope_key).toBe("t1"));
+
+    api.list.mockImplementation(() => Promise.resolve([t2]));
+    rerender({ scope: "t2" });
+    expect(result.current.rollout).toBeNull();
+    await waitFor(() => expect(result.current.rollout?.id).toBe("r9"));
+    // t2's events apply although t2's rollout is older than the t1 one that was shown.
+    emit({ type: "rollout", ref: "", payload: { ...t2, done: 6 } });
+    expect(result.current.rollout?.done).toBe(6);
+    // t1's events no longer apply.
+    emit({ type: "rollout", ref: "", payload: rollout({ done: 9 }) });
+    expect(result.current.rollout?.id).toBe("r9");
+
+    rerender({ scope: null });
+    expect(result.current.rollout).toBeNull();
+    emit({ type: "rollout", ref: "", payload: t2 });
+    expect(result.current.rollout).toBeNull();
   });
 
   it("follows nothing without a scope yet", () => {

@@ -31,6 +31,7 @@ const VIEW: TemplateView = {
       { name: "NAME", required: true },
       { name: "REGION", required: true },
       { name: "SESSION_KEY", secret: true, required: true },
+      { name: "GREETING", default: "Hiya" },
     ],
     app_name: "${NAME}",
     icon: "",
@@ -43,6 +44,17 @@ const VIEW: TemplateView = {
   created_by: "u1",
   revisions: null,
 };
+
+// R2 is the revision the instances run: GREETING's default changes in r3.
+const R2: TemplateView = {
+  ...VIEW,
+  revision: 2,
+  body: {
+    ...VIEW.body,
+    parameters: [{ name: "NAME", required: true }, { name: "SESSION_KEY", secret: true, required: true }, { name: "GREETING", default: "Howdy" }],
+  },
+};
+const R2_ROUTE = { "/api/v1/template/get-template": R2 };
 
 const inst = (over: Partial<InstanceView>): InstanceView => ({
   key: "k1",
@@ -97,7 +109,10 @@ describe("TemplateInstances", () => {
 
   it("upgrades one instance, asking only for the newly required value", async () => {
     const user = userEvent.setup();
-    const api = fakeAPI({ "/api/v1/instance/upgrade-instance": { instance: inst({ revision: 3 }), request_id: "", warnings: [] } });
+    const api = fakeAPI({
+      ...R2_ROUTE,
+      "/api/v1/instance/upgrade-instance": { instance: inst({ revision: 3 }), request_id: "", warnings: [] },
+    });
     renderInstances([inst({})]);
     await user.click(screen.getByRole("button", { name: "Upgrade" }));
     const dialog = await screen.findByRole("dialog");
@@ -105,7 +120,7 @@ describe("TemplateInstances", () => {
     expect(within(dialog).queryByLabelText("SESSION_KEY")).not.toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: "Upgrade to r3" }));
     expect(within(dialog).getByText("Required")).toBeInTheDocument();
-    expect(api.calls).toEqual([]);
+    expect(api.posted("/api/v1/instance/upgrade-instance")).toEqual([]);
 
     await user.type(within(dialog).getByLabelText("REGION"), "eu");
     await user.click(within(dialog).getByRole("button", { name: "Upgrade to r3" }));
@@ -117,9 +132,44 @@ describe("TemplateInstances", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
+  it("names the parameters left on their default whose value the upgrade changes", async () => {
+    const user = userEvent.setup();
+    const api = fakeAPI(R2_ROUTE);
+    renderInstances([inst({})]);
+    await user.click(screen.getByRole("button", { name: "Upgrade" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("heading")).toHaveTextContent("Upgrade bakomi to r3");
+    expect(dialog).toHaveTextContent("Values you set stay; parameters left on their default take the new default.");
+    const changes = await within(dialog).findByRole("list", { name: "Defaults that change" });
+    expect(changes).toHaveTextContent("GREETING: Howdy → Hiya (follows the template default)");
+    expect(api.calls.find((c) => c.path === "/api/v1/template/get-template")?.query).toBe("?id=t1&revision=2");
+    expect(dialog).not.toHaveTextContent("The app will be started.");
+  });
+
+  it("leaves out a default the instance overrides and says a stopped app starts", async () => {
+    const user = userEvent.setup();
+    fakeAPI(R2_ROUTE);
+    renderInstances([inst({ status_code: 5, parameters: { NAME: "bakomi", GREETING: "Yo" } })]);
+    await user.click(screen.getByRole("button", { name: "Upgrade" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("The app will be started.");
+    await waitFor(() => expect(within(dialog).queryByText(/Checking/)).not.toBeInTheDocument());
+    expect(within(dialog).queryByRole("list", { name: "Defaults that change" })).not.toBeInTheDocument();
+  });
+
+  it("says when the instance's revision can't be read to compare defaults", async () => {
+    const user = userEvent.setup();
+    fakeAPI({ "/api/v1/template/get-template": new Error("boom") });
+    renderInstances([inst({})]);
+    await user.click(screen.getByRole("button", { name: "Upgrade" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText(/Couldn't read r2 to compare its defaults: boom/)).toBeInTheDocument();
+  });
+
   it("asks a pending instance for its secrets again and encrypts them for its server", async () => {
     const user = userEvent.setup();
     const api = fakeAPI({
+      ...R2_ROUTE,
       "/api/v1/server/get-public-key": { public_key: "K2" },
       "/api/v1/instance/upgrade-instance": { instance: inst({}), request_id: "", warnings: [] },
     });
@@ -137,7 +187,7 @@ describe("TemplateInstances", () => {
 
   it("keeps the dialog open with the reason when the server has no key", async () => {
     const user = userEvent.setup();
-    const api = fakeAPI({ "/api/v1/server/get-public-key": new Error("public key unavailable for this server") });
+    const api = fakeAPI({ ...R2_ROUTE, "/api/v1/server/get-public-key": new Error("public key unavailable for this server") });
     renderInstances([inst({ secrets: null, parameters: { NAME: "x", REGION: "eu" } })]);
     await user.click(screen.getByRole("button", { name: "Upgrade" }));
     const dialog = await screen.findByRole("dialog");

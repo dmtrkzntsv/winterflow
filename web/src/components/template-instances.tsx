@@ -23,6 +23,12 @@ import { serverPath } from "@/lib/server-paths";
 import { expand, plainValues } from "@/lib/template-params";
 import type { InstanceView, TemplateView } from "@/lib/templates";
 
+// instanceName is an instance's app name as the latest revision renders it
+// (the app id's prefix until it has one).
+function instanceName(view: TemplateView, inst: InstanceView): string {
+  return expand(view.body.app_name, plainValues(view.body.parameters, inst.parameters ?? {})) || inst.app_id.slice(0, 8);
+}
+
 // TemplateInstances lists the apps a template runs as, across the org's
 // servers: where, on which revision, how they are doing, and Upgrade for
 // the ones behind the latest revision (view is the latest). A pending
@@ -68,8 +74,7 @@ export function TemplateInstances({
     <>
       <ul className="divide-y rounded-md border">
         {instances.map((inst) => {
-          const name =
-            expand(view.body.app_name, plainValues(view.body.parameters, inst.parameters ?? {})) || inst.app_id.slice(0, 8);
+          const name = instanceName(view, inst);
           const behind = inst.revision < view.latest_revision;
           return (
             <li key={inst.key} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3 text-sm">
@@ -128,6 +133,7 @@ export function TemplateInstances({
         <UpgradeInstanceDialog
           key={upgrading.key}
           instance={upgrading}
+          appName={instanceName(view, upgrading)}
           target={view}
           open
           onOpenChange={(o) => {

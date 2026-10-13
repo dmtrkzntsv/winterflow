@@ -113,6 +113,29 @@ export function upgradeNeeds(target: Parameter[] | null | undefined, inst: Insta
   });
 }
 
+export type DefaultChange = { name: string; from: string; to: string };
+
+// defaultChanges are the plain parameters an upgrade from one revision's
+// parameters to another's changes without anyone typing a value: ones the
+// instance holds no value for (a stored "" is a value) whose default differs
+// (no default renders as ""). A parameter new in the target is not a change.
+export function defaultChanges(
+  from: Parameter[] | null | undefined,
+  to: Parameter[] | null | undefined,
+  inst: Pick<InstanceView, "parameters">,
+): DefaultChange[] {
+  const before = new Map((from ?? []).filter((p) => !p.secret).map((p) => [p.name, p.default ?? ""]));
+  const held = inst.parameters ?? {};
+  const out: DefaultChange[] = [];
+  for (const p of to ?? []) {
+    const was = before.get(p.name);
+    if (p.secret || was === undefined || p.name in held) continue;
+    const now = p.default ?? "";
+    if (now !== was) out.push({ name: p.name, from: was, to: now });
+  }
+  return out;
+}
+
 // newKey is the key the browser gives an instance it creates (a UUID v4):
 // the API replays a create with the same key instead of making a second
 // app. crypto.randomUUID exists only on secure contexts, and self-hosted

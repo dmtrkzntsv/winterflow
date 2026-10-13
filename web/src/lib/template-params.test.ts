@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   compilePattern,
+  defaultChanges,
   expand,
   fieldErrors,
   newKey,
@@ -138,5 +139,39 @@ describe("newKey", () => {
     const a = newKey();
     expect(a).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     expect(newKey()).not.toBe(a);
+  });
+});
+
+describe("defaultChanges", () => {
+  const inst = { parameters: { NAME: "shop", COLOR: "" } } as unknown as InstanceView;
+  const from: Parameter[] = [
+    NAME,
+    { name: "GREETING", default: "Howdy" },
+    { name: "COLOR", default: "red" },
+    { name: "MOTTO", default: "hi" },
+    { name: "SAME", default: "x" },
+    { name: "WAS_SECRET", secret: true },
+  ];
+  const to: Parameter[] = [
+    { ...NAME, default: "web" },
+    { name: "GREETING", default: "Hiya" },
+    { name: "COLOR", default: "blue" },
+    { name: "MOTTO", default: null },
+    { name: "SAME", default: "x" },
+    { name: "WAS_SECRET", default: "now plain" },
+    { name: "NEW", default: "fresh" },
+    { name: "TOKEN", secret: true },
+  ];
+
+  it("names the plain parameters on their default whose default changes", () => {
+    expect(defaultChanges(from, to, inst)).toEqual([
+      { name: "GREETING", from: "Howdy", to: "Hiya" },
+      { name: "MOTTO", from: "hi", to: "" },
+    ]);
+  });
+
+  it("is empty without parameters", () => {
+    expect(defaultChanges(null, to, inst)).toEqual([]);
+    expect(defaultChanges(from, undefined, { ...inst, parameters: null })).toEqual([]);
   });
 });

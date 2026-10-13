@@ -218,7 +218,9 @@ export default function AppDetailsPage() {
                 {inst.state === "pending" ? <Badge variant="outline">Not created yet</Badge> : null}
               </span>
             ) : null}
-            {app.version ? <span>Revision {app.version}</span> : null}
+            {/* A templated app's revision is its template's (the badge);
+                its own save count stays in History. */}
+            {app.version && !app.templateId ? <span>Revision {app.version}</span> : null}
             {routes.slice(0, 2).map((d) => (
               <a
                 key={d.domain}
@@ -261,7 +263,10 @@ export default function AppDetailsPage() {
 
       {upgradeTarget && inst ? (
         <UpgradeInstanceDialog
-          instance={inst}
+          // The page's live status says whether the app is stopped now.
+          instance={{ ...inst, status_code: status ?? inst.status_code }}
+          appName={appLabel(app.name, app.id)}
+          current={managed.current}
           target={upgradeTarget}
           open
           onOpenChange={(o) => {

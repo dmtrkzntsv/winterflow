@@ -205,6 +205,30 @@ describe("AppDetailsPage of a template instance", () => {
     ]);
   });
 
+  it("titles the upgrade with the app, reuses the revision read, and says a stopped app starts", async () => {
+    const user = userEvent.setup();
+    const api = instanceAPI();
+    renderPage("/app/a1?tab=backups", {}, { ...managed, ctx: { statusByApp: { a1: 5 } } });
+    await user.click(await screen.findByRole("button", { name: "Upgrade to r3" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("heading")).toHaveTextContent("Upgrade Shop to r3");
+    expect(dialog).toHaveTextContent("The app will be started.");
+    // The page read r2 already: the dialog doesn't read it again.
+    expect(api.calls.filter((c) => c.query.includes("revision=2"))).toHaveLength(1);
+  });
+
+  it("hides the app's own revision for an app a template manages", async () => {
+    instanceAPI();
+    renderPage("/app/a1?tab=backups", {}, managed);
+    expect(await screen.findByRole("link", { name: "twillingate · r2" })).toBeInTheDocument();
+    expect(screen.queryByText("Revision 3")).not.toBeInTheDocument();
+  });
+
+  it("shows the app's own revision for a plain app", async () => {
+    renderPage("/app/a1?tab=backups");
+    expect(await screen.findByText("Revision 3")).toBeInTheDocument();
+  });
+
   it("shows the files read-only and a Parameters form instead of the editor", async () => {
     const user = userEvent.setup();
     const api = instanceAPI(INSTANCE, { "/api/v1/instance/update-instance": { instance: INSTANCE, request_id: "", warnings: [] } });

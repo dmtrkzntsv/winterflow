@@ -271,10 +271,13 @@ describe("AppDetailsPage of a template instance", () => {
   });
 
   it("does not offer Save as template for an app a template manages", async () => {
-    instanceAPI(INSTANCE);
+    // The instance lookup is still pending: the page has the template id but
+    // no instance yet.
+    vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
     renderPage("/app/a1?tab=settings", {}, managed);
-    expect(await screen.findByRole("button", { name: "Unlink from template" })).toBeInTheDocument();
+    expect(await screen.findByRole("textbox", { name: "App name" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save as template" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Unlink from template" })).not.toBeInTheDocument();
   });
 
   it("unlinks from the template after confirming", async () => {

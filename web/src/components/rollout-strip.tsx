@@ -8,7 +8,7 @@ import { ErrorText } from "@/components/error-text";
 import { useRollout } from "@/hooks/use-rollout";
 import { useRolloutsApi } from "@/hooks/use-rollouts-api";
 import { serverPath } from "@/lib/server-paths";
-import { appLabel, failureLine, isActive, rolloutLine, type Rollout, type RolloutsApi } from "@/lib/rollouts";
+import { appLabel, failureLine, isActive, rolloutLine, skippedLine, type Rollout, type RolloutsApi } from "@/lib/rollouts";
 
 // ReloadRolloutStrip is the org's shared-variable reload rollout as a
 // RolloutStrip with Stop (api: a test's client), its servers named by
@@ -21,7 +21,9 @@ export function ReloadRolloutStrip({ api, serverNames }: { api?: RolloutsApi; se
 // RolloutStrip shows a rollout in progress ("Upgrading 3 of 12: bakomi…"
 // with Stop) or the failure that ended one, naming the app with a link to
 // it and the error (Dismiss hides it for this visit); a failed reload adds
-// that later reloads stop at the same app (it is picked first again). Nothing for a
+// that later reloads stop at the same app (it is picked first again). An
+// Upgrade all that ended (done or stopped) with instances skipped shows an
+// info line saying so, dismissible the same way. Nothing for any other
 // finished or stopped rollout, or none.
 export function RolloutStrip({
   rollout,
@@ -33,7 +35,7 @@ export function RolloutStrip({
   onStop: (id: string) => Promise<void>;
 }) {
   const [stopping, setStopping] = useState(false);
-  const [dismissed, setDismissed] = useState<string | null>(null); // a failed rollout's id
+  const [dismissed, setDismissed] = useState<string | null>(null); // an ended rollout's id, failed or with skips
 
   if (!rollout) return null;
   if (isActive(rollout)) {
@@ -57,7 +59,19 @@ export function RolloutStrip({
       </div>
     );
   }
-  if (rollout.state !== "failed" || dismissed === rollout.id) return null;
+  if (dismissed === rollout.id) return null;
+  const skipped = skippedLine(rollout);
+  if (skipped) {
+    return (
+      <div role="status" className="flex flex-wrap items-center gap-3 rounded-md border bg-muted/30 px-4 py-2 text-sm">
+        <span className="mr-auto">{skipped}</span>
+        <Button size="sm" variant="ghost" onClick={() => setDismissed(rollout.id)}>
+          Dismiss
+        </Button>
+      </div>
+    );
+  }
+  if (rollout.state !== "failed") return null;
   const link = rollout.current_app_id ? serverPath(rollout.current_server_id, `/app/${rollout.current_app_id}`) : null;
   return (
     <div role="alert" className="flex flex-wrap items-start gap-3 rounded-md border border-destructive/40 px-4 py-2 text-sm">

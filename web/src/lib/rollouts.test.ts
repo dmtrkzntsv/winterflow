@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createRolloutsApi, failureLine, isActive, rolloutLine } from "@/lib/rollouts";
+import { createRolloutsApi, failureLine, isActive, rolloutLine, skippedLine } from "@/lib/rollouts";
 import { ApiError } from "@/lib/templates";
 import { fakeAPI } from "@/test/fake-api";
 import { rollout } from "@/test/rollouts";
@@ -39,6 +39,33 @@ describe("rolloutLine", () => {
     );
     expect(isActive(rollout())).toBe(true);
     expect(isActive(rollout({ state: "failed" }))).toBe(false);
+  });
+});
+
+describe("skippedLine", () => {
+  it("says what an ended Upgrade all skipped, pluralized", () => {
+    expect(skippedLine(rollout({ state: "done", done: 2, skipped: 1, revision: 5 }))).toBe(
+      "Upgraded 2 apps to r5 · 1 skipped: it needs a new value — upgrade it on its own.",
+    );
+    expect(skippedLine(rollout({ state: "done", done: 1, skipped: 3, revision: 5 }))).toBe(
+      "Upgraded 1 app to r5 · 3 skipped: they need a new value — upgrade them on their own.",
+    );
+    expect(skippedLine(rollout({ state: "done", done: 0, skipped: 1, revision: 5 }))).toBe(
+      "No app upgraded to r5 · 1 skipped: it needs a new value — upgrade it on its own.",
+    );
+    expect(skippedLine(rollout({ state: "stopped", done: 2, skipped: 1, revision: 5 }))).toBe(
+      "Stopped after upgrading 2 apps to r5 · 1 skipped: it needs a new value — upgrade it on its own.",
+    );
+    expect(skippedLine(rollout({ state: "stopped", done: 0, skipped: 2, revision: 5 }))).toBe(
+      "Stopped before upgrading any app to r5 · 2 skipped: they need a new value — upgrade them on their own.",
+    );
+  });
+
+  it("is null when nothing was skipped, the rollout is not an upgrade, or it has not ended well", () => {
+    expect(skippedLine(rollout({ state: "done", done: 2, skipped: 0 }))).toBeNull();
+    expect(skippedLine(rollout({ state: "done", kind: "vars_reload", skipped: 2 }))).toBeNull();
+    expect(skippedLine(rollout({ state: "failed", skipped: 2 }))).toBeNull();
+    expect(skippedLine(rollout({ state: "running", skipped: 2 }))).toBeNull();
   });
 });
 

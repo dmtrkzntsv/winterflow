@@ -62,6 +62,25 @@ export function failureLine(r: Rollout, serverName: (id: string) => string): str
   return `${what} stopped at ${appLabel(r)}${where}`;
 }
 
+const apps = (n: number) => `${n} app${n === 1 ? "" : "s"}`;
+
+// skippedLine says what a finished or stopped Upgrade all left behind:
+// "Upgraded 2 apps to r5 · 1 skipped: it needs a new value — upgrade it on
+// its own." Null for any other rollout, or when nothing was skipped.
+export function skippedLine(r: Rollout): string | null {
+  if (r.kind !== "template_upgrade" || (r.state !== "done" && r.state !== "stopped") || r.skipped <= 0) return null;
+  const upgraded =
+    r.state === "stopped"
+      ? r.done > 0
+        ? `Stopped after upgrading ${apps(r.done)} to r${r.revision}`
+        : `Stopped before upgrading any app to r${r.revision}`
+      : r.done > 0
+        ? `Upgraded ${apps(r.done)} to r${r.revision}`
+        : `No app upgraded to r${r.revision}`;
+  const why = r.skipped === 1 ? "it needs a new value — upgrade it on its own" : "they need a new value — upgrade them on their own";
+  return `${upgraded} · ${r.skipped} skipped: ${why}.`;
+}
+
 export type RolloutsApi = {
   // list reads the newest rollouts of a kind (the active one first); for
   // vars_reload the scope is the caller's org.

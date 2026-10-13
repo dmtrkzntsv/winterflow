@@ -66,8 +66,25 @@ describe("RolloutStrip", () => {
     expect(screen.queryByRole("link")).not.toBeInTheDocument();
   });
 
-  it("shows nothing for no rollout, a finished one or a stopped one", () => {
-    for (const r of [null, rollout({ state: "done" }), rollout({ state: "stopped" })]) {
+  it("tells what an Upgrade all skipped, and can be dismissed", async () => {
+    renderStrip(rollout({ state: "done", done: 2, skipped: 1, revision: 5 }));
+    expect(screen.getByRole("status")).toHaveTextContent("Upgraded 2 apps to r5 · 1 skipped: it needs a new value — upgrade it on its own.");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Dismiss" }));
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("tells what a stopped Upgrade all skipped", () => {
+    renderStrip(rollout({ state: "stopped", done: 1, skipped: 2, revision: 5 }));
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Stopped after upgrading 1 app to r5 · 2 skipped: they need a new value — upgrade them on their own.",
+    );
+  });
+
+  it("shows nothing for no rollout, or a finished or stopped one that skipped nothing or reloaded", () => {
+    const quiet = { done: 3, skipped: 0 };
+    const reload = { kind: "vars_reload" as const, skipped: 2 };
+    for (const r of [null, rollout({ state: "done", ...quiet }), rollout({ state: "stopped", ...quiet }), rollout({ state: "done", ...reload })]) {
       const { container, unmount } = render(
         <MemoryRouter>
           <RolloutStrip rollout={r} serverName={names} onStop={vi.fn()} />

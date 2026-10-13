@@ -88,7 +88,10 @@ func newEnv(t *testing.T) *env {
 	if err := appagent.NewInProcessBridge(b, cfg, agent, testLog).Start(ctx); err != nil {
 		t.Fatal(err)
 	}
-	// As BootstrapStandalone: the rollout worker starts once the bridge consumes.
+	// As BootstrapStandalone: the rollout worker starts once the bridge
+	// consumes. The fake agent reports every 50 ms, so a step's two healthy
+	// reports need not be 20 s apart.
+	deps.Rollouts.SetHealthSettle(100 * time.Millisecond)
 	bootstrap.StartRollouts(ctx, deps)
 
 	// Exclusive: no /auth/ request in any env may run while NewServer writes

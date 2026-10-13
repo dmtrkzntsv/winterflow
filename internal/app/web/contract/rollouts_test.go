@@ -221,6 +221,11 @@ func TestVarsReloadRolloutStopsAtAFailure(t *testing.T) {
 	owner := e.claim(t)
 	sid := owner.serverID(t)
 	e.agent.fail(command.TypeVarsReload, "reload after a change to SMTP_HOST failed: docker compose up: exit status 1")
+	// The app is in the catalog: a failed reload of an app gone from it
+	// would count as skipped (deleted meanwhile).
+	if err := e.deps.AppRepository.SaveApp(e.dbCtx(t), model.App{ID: anApp, ServerID: sid, Name: "shop"}); err != nil {
+		t.Fatal(err)
+	}
 	reportRunning(t, e, sid, fixed(anApp), func(string) []string { return []string{"SMTP_HOST"} }, func() int64 { return 0 })
 	owner.post(t, "/api/v1/shared-variables/reload", hsv.ReloadRequest{ServerID: sid, Names: []string{"SMTP_HOST"}}).expect(t, http.StatusOK)
 	list := rolloutsOf(t, owner, url.Values{"kind": {model.RolloutVarsReload}})

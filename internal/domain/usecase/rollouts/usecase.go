@@ -116,6 +116,11 @@ func New(d Deps) *UseCase {
 	return uc
 }
 
+// SetHealthSettle shortens healthSettle for a test that drives the whole
+// stack (the contract suite, whose fake agent reports every 50 ms). Call it
+// before Run.
+func (uc *UseCase) SetHealthSettle(d time.Duration) { uc.healthSettle = d }
+
 // Wake makes the worker look for work now. It never blocks.
 func (uc *UseCase) Wake() {
 	select {

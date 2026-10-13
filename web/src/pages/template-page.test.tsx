@@ -311,7 +311,10 @@ describe("TemplatePage", () => {
     await user.click(await screen.findByRole("button", { name: "Upgrade to r3" }));
     await waitFor(() => expect(screen.queryByRole("button", { name: "Upgrade" })).not.toBeInTheDocument());
     expect(screen.getByText("r3")).toBeInTheDocument();
-    expect(api.calls.filter((c) => c.path === "/api/v1/template/get-template")).toHaveLength(1);
+    // The editor read the template once (the dialog read r2 to compare
+    // defaults): the upgrade didn't reload it.
+    const reads = api.calls.filter((c) => c.path === "/api/v1/template/get-template");
+    expect(reads.map((c) => c.query)).toEqual(["?id=t1", "?id=t1&revision=2"]);
 
     await user.click(screen.getByRole("tab", { name: "Revisions" }));
     expect(await screen.findByRole("button", { name: "Changes from r2" })).toBeInTheDocument();

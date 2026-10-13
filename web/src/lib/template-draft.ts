@@ -135,7 +135,8 @@ function entries(src: string, n: YamlNode | null | undefined): [string, YamlNode
 // x-winterflow.backups (a list of mappings with a name).
 function recipeNamesIn(src: string): string[] {
   const doc = yamlLanguage.parser.parse(src).topNode.getChild("Document");
-  const root = doc?.firstChild;
+  // A leading "---" is a DirectiveEnd child, so look the mapping up by name.
+  const root = doc?.getChild("BlockMapping") ?? doc?.getChild("FlowMapping");
   const xwf = entries(src, root).find(([k]) => k === "x-winterflow")?.[1];
   const list = entries(src, xwf).find(([k]) => k === "backups")?.[1];
   if (!list || (list.name !== "BlockSequence" && list.name !== "FlowSequence")) return [];

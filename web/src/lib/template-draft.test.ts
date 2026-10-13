@@ -77,6 +77,13 @@ describe("recipeBackupNames", () => {
     expect(recipeBackupNames(d)).toEqual(["db", "uploads", "logs"]);
   });
 
+  it("reads a compose file that starts with a document marker", () => {
+    const d = valid();
+    d.contents[d.files.find((f) => f.filename === "compose.yaml")!.id] =
+      "---\nservices: {}\nx-winterflow:\n  backups:\n    - { name: db, type: sqlite }\n";
+    expect(recipeBackupNames(d)).toEqual(["db"]);
+  });
+
   it("finds none without a compose file or a recipe", () => {
     expect(recipeBackupNames(emptyDraft())).toEqual([]);
     const d = valid();

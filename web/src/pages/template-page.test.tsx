@@ -1,9 +1,10 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { NotificationsContext, type NotificationsContextValue } from "@/context/notifications-context-base";
+import { NotificationsProvider } from "@/context/notifications-context";
 import { draftFromBody } from "@/lib/template-draft";
 import { ApiError, type TemplateBody, type TemplateView } from "@/lib/templates";
 import TemplatePage from "@/pages/template-page";
@@ -12,6 +13,7 @@ import { fakeAPI } from "@/test/fake-api";
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
 vi.mock("@/layouts/use-app-layout", () => ({ useAppBreadcrumbs: () => {} }));
+vi.mock("@/context/use-auth", () => ({ useAuth: () => ({ isAuthenticated: true }) }));
 vi.mock("@/context/use-servers", () => ({ useServers: () => ({ servers: [{ id: "s1", name: "alpha" }] }) }));
 vi.mock("@/components/code-editor", () => ({
   CodeEditor: ({ value, onChange, filename }: { value: string; onChange?: (v: string) => void; filename?: string }) => (
@@ -169,6 +171,45 @@ describe("TemplatePage", () => {
         description: "invalid template: files: x-winterflow.backups[0]: unknown type",
       }),
     );
+  });
+
+  it("keeps unsaved edits when the event stream drops and reconnects", async () => {
+    const streams: { onopen?: () => void; onerror?: () => void }[] = [];
+    vi.stubGlobal(
+      "EventSource",
+      class {
+        onopen?: () => void;
+        onerror?: () => void;
+        onmessage?: () => void;
+        constructor() {
+          streams.push(this);
+        }
+        close() {}
+      },
+    );
+    const user = userEvent.setup();
+    const api = fakeAPI({
+      "/api/v1/template/get-template": view(3),
+      "/api/v1/instance/get-instances": { instances: [] },
+    });
+    render(
+      <MemoryRouter initialEntries={["/org/templates/t1"]}>
+        <NotificationsProvider>
+          <Routes>
+            <Route path="/org/templates/:templateId" element={<TemplatePage />} />
+          </Routes>
+        </NotificationsProvider>
+      </MemoryRouter>,
+    );
+    act(() => streams[0].onopen?.());
+    await user.type(await screen.findByLabelText("App name"), "-x");
+    for (const step of [() => streams[0].onerror?.(), () => streams[0].onopen?.()]) {
+      act(step);
+      await act(() => new Promise((r) => setTimeout(r, 20)));
+    }
+    expect(screen.getByLabelText("App name")).toHaveValue("${NAME}-x");
+    expect(screen.getByRole("button", { name: "Save as r4" })).toBeEnabled();
+    expect(api.calls.filter((c) => c.path === "/api/v1/template/get-template")).toHaveLength(1);
   });
 
   it("offers Delete only without live instances", async () => {

@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { readApiError } from "@/lib/api";
+import { ApiError, createJsonClient, jsonPost, readApiError } from "@/lib/api";
 
 describe("readApiError", () => {
   it("uses the API's message", async () => {
@@ -16,5 +16,27 @@ describe("readApiError", () => {
     expect((await readApiError(new Response(JSON.stringify({ message: 7 }), { status: 500 }))).message).toBe(
       "Request failed: 500",
     );
+  });
+});
+
+describe("createJsonClient", () => {
+  it("sends the cookie and returns the envelope's data", async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ success: true, data: { n: 1 } })));
+    const { call } = createJsonClient("http://api", fetchImpl as unknown as typeof fetch);
+    await expect(call<{ n: number }>("/x", jsonPost({ a: 1 }))).resolves.toEqual({ n: 1 });
+    expect(fetchImpl).toHaveBeenCalledWith("http://api/x", {
+      credentials: "include",
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: '{"a":1}',
+    });
+  });
+
+  it("throws a refusal as an ApiError with its status", async () => {
+    const fetchImpl = async () => new Response(JSON.stringify({ message: "taken" }), { status: 409 });
+    const { request } = createJsonClient("", fetchImpl as typeof fetch);
+    const err = await request("/x").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err).toMatchObject({ message: "taken", status: 409 });
   });
 });

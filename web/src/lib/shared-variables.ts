@@ -1,11 +1,9 @@
 // Org- and server-level shared variables: types mirroring the API, the
 // browser fan-out encryption (one ECIES ciphertext per server key, so the
 // API never sees a secret), small display helpers and the API client.
-import { apiBaseUrl } from "@/config";
-import { readApiError } from "@/lib/api";
+import { apiBase } from "@/config";
+import { createJsonClient, jsonPost } from "@/lib/api";
 import { encryptSecret } from "@/lib/ecies";
-
-const base = apiBaseUrl.endsWith("/") ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
 
 export type VariableScope = "org" | "server";
 
@@ -181,19 +179,8 @@ export type SharedVariablesApi = {
 };
 
 export function createSharedVariablesApi(fetchImpl?: typeof fetch): SharedVariablesApi {
-  const doFetch: typeof fetch = fetchImpl ?? ((input, init) => fetch(input, init));
-  async function call<T>(path: string, init?: RequestInit): Promise<T> {
-    const res = await doFetch(`${base}${path}`, { credentials: "include", ...init });
-    if (!res.ok) throw await readApiError(res);
-    return ((await res.json()) as { data: T }).data;
-  }
-  function post<T>(path: string, payload: unknown): Promise<T> {
-    return call<T>(path, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-  }
+  const { call } = createJsonClient(apiBase, fetchImpl);
+  const post = <T>(path: string, payload: unknown) => call<T>(path, jsonPost(payload));
   const dispatched = (d: { servers?: string[] | null } | null) => d?.servers ?? [];
   return {
     listOrg: () => call<OrgVariables>("/api/v1/org/list-shared-variables"),

@@ -6,7 +6,7 @@
 // returns one.
 import { apiBase } from "@/config";
 import { WaitTimeoutError } from "@/context/notifications-context-base";
-import { readApiError } from "@/lib/api";
+import { createJsonClient, jsonPost } from "@/lib/api";
 import type { Keep } from "@/lib/backups";
 import { encryptSecret } from "@/lib/ecies";
 
@@ -118,19 +118,8 @@ export type UpgradeInstanceBody = UpdateInstanceBody & { revision: number };
 // SSE: a deploy may pull an image for minutes (the API's own wait bound).
 export const INSTANCE_WAIT_MS = 10 * 60_000;
 
-// ApiError is a refused request with its HTTP status (409: a concurrent
-// edit, a key in use, a template with live instances).
-export class ApiError extends Error {
-  status: number;
-  constructor(message: string, status: number) {
-    super(message);
-    this.status = status;
-  }
-}
-
-async function refusal(res: Response): Promise<ApiError> {
-  return new ApiError((await readApiError(res)).message, res.status);
-}
+// ApiError is a refused request with its HTTP status (lib/api).
+export { ApiError } from "@/lib/api";
 
 // MANAGED_MARKER starts the API's 409 to save-app and rollback-app on an
 // app a template instance manages (model.ManagedByTemplate).
@@ -180,12 +169,7 @@ export type TemplatesApi = {
 };
 
 export function createTemplatesApi(waitFor: WaitFor, fetchImpl?: typeof fetch): TemplatesApi {
-  const doFetch: typeof fetch = fetchImpl ?? ((input, init) => fetch(input, init));
-  async function call<T>(path: string, init?: RequestInit): Promise<T> {
-    const res = await doFetch(`${apiBase}${path}`, { credentials: "include", ...init });
-    if (!res.ok) throw await refusal(res);
-    return ((await res.json()) as { data: T }).data;
-  }
+  const { call, request } = createJsonClient(apiBase, fetchImpl);
   // read is a GET with the deadline: past it the request is aborted and the
   // read fails with TOO_LONG (also when the fetch ignores the abort).
   async function read<T>(path: string): Promise<T> {
@@ -203,11 +187,6 @@ export function createTemplatesApi(waitFor: WaitFor, fetchImpl?: typeof fetch): 
       clearTimeout(timer);
     }
   }
-  const post = (payload: unknown): RequestInit => ({
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
   // command posts an instance call without wait (lib/api.ts's
   // dispatchCommand is the general variant): a 202 names the request
   // whose result arrives over SSE; a 200 had nothing to run (a replayed
@@ -221,8 +200,7 @@ export function createTemplatesApi(waitFor: WaitFor, fetchImpl?: typeof fetch): 
     done: InstanceState = "created",
   ): Promise<void> {
     const sentAt = Date.now();
-    const res = await doFetch(`${apiBase}${path}`, { credentials: "include", ...post(payload) });
-    if (!res.ok) throw await refusal(res);
+    const res = await request(path, jsonPost(payload));
     if (res.status !== 202) return;
     const ref = ((await res.json()) as { data?: { request_id?: string } }).data?.request_id;
     if (!ref) throw new Error("No request id");
@@ -278,9 +256,9 @@ export function createTemplatesApi(waitFor: WaitFor, fetchImpl?: typeof fetch): 
       read<{ templates: TemplateSummary[] | null }>("/api/v1/template/get-templates").then((d) => d.templates ?? []),
     getTemplate,
     getRevision,
-    saveTemplate: (body) => call<SavedTemplate>("/api/v1/template/save-template", post(body)),
+    saveTemplate: (body) => call<SavedTemplate>("/api/v1/template/save-template", jsonPost(body)),
     deleteTemplate: async (id) => {
-      await call<null>("/api/v1/template/delete-template", post({ id }));
+      await call<null>("/api/v1/template/delete-template", jsonPost({ id }));
     },
     listInstances: ({ serverId, templateId }) =>
       read<{ instances: InstanceView[] | null }>(

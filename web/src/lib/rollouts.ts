@@ -3,8 +3,7 @@
 // Types mirror model.RolloutView; progress arrives as "rollout" events on
 // the SSE stream, to every member of the org.
 import { apiBase } from "@/config";
-import { ApiError } from "@/lib/templates";
-import { readApiError } from "@/lib/api";
+import { createJsonClient, jsonPost } from "@/lib/api";
 
 export type RolloutKind = "template_upgrade" | "vars_reload";
 export type RolloutState = "queued" | "running" | "done" | "stopped" | "failed";
@@ -74,25 +73,15 @@ export type RolloutsApi = {
 };
 
 export function createRolloutsApi(fetchImpl?: typeof fetch): RolloutsApi {
-  const doFetch: typeof fetch = fetchImpl ?? ((input, init) => fetch(input, init));
-  async function call<T>(path: string, init?: RequestInit): Promise<T> {
-    const res = await doFetch(`${apiBase}${path}`, { credentials: "include", ...init });
-    if (!res.ok) throw new ApiError((await readApiError(res)).message, res.status);
-    return ((await res.json()) as { data: T }).data;
-  }
-  const post = (payload: unknown): RequestInit => ({
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+  const { call } = createJsonClient(apiBase, fetchImpl);
   return {
     list: (kind, scopeKey) => {
       const q = new URLSearchParams({ kind });
       if (scopeKey) q.set("scope_key", scopeKey);
       return call<{ rollouts: Rollout[] | null }>(`/api/v1/rollout/get-rollouts?${q}`).then((d) => d.rollouts ?? []);
     },
-    stop: (id) => call<Rollout>("/api/v1/rollout/stop-rollout", post({ id })),
+    stop: (id) => call<Rollout>("/api/v1/rollout/stop-rollout", jsonPost({ id })),
     upgradeAll: (templateId, revision) =>
-      call<Rollout>("/api/v1/template/upgrade-instances", post({ id: templateId, revision })),
+      call<Rollout>("/api/v1/template/upgrade-instances", jsonPost({ id: templateId, revision })),
   };
 }

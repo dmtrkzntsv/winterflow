@@ -17,9 +17,10 @@ export function diffLines(before: string, after: string): DiffLine[] {
   while (tail < a.length - head && tail < b.length - head && a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail++;
   const midA = a.slice(head, a.length - tail);
   const midB = b.slice(head, b.length - tail);
+  // A loop, not push(...lines): a spread of a huge file overflows the stack.
   const out: DiffLine[] = a.slice(0, head).map((text) => ({ op: " ", text }));
-  out.push(...middle(midA, midB));
-  out.push(...a.slice(a.length - tail).map((text) => ({ op: " " as const, text })));
+  for (const l of middle(midA, midB)) out.push(l);
+  for (let i = a.length - tail; i < a.length; i++) out.push({ op: " ", text: a[i] });
   return out;
 }
 

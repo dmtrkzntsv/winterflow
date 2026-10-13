@@ -13,6 +13,18 @@ describe("diffLines", () => {
     expect(ops("x\na\nb\nc\ny", "x\nb\nc\nd\ny")).toEqual([" x", "-a", " b", " c", "+d", " y"]);
   });
 
+  it("handles files too large for a spread into push", () => {
+    const lines = Array.from({ length: 300_000 }, (_, i) => `line ${i}`);
+    const big = lines.join("\n");
+    const tail = diffLines(`x\n${big}`, `y\n${big}`);
+    expect(tail).toHaveLength(300_002);
+    expect(tail.slice(0, 3).map((l) => l.op + l.text)).toEqual(["-x", "+y", " line 0"]);
+    const coarse = diffLines(big, lines.map((l) => `${l}!`).join("\n"));
+    expect(coarse).toHaveLength(600_000);
+    expect(coarse[0]).toEqual({ op: "-", text: "line 0" });
+    expect(coarse[300_000]).toEqual({ op: "+", text: "line 0!" });
+  });
+
   it("handles empty sides and identical text", () => {
     expect(ops("", "a\nb")).toEqual(["+a", "+b"]);
     expect(ops("a", "")).toEqual(["-a"]);

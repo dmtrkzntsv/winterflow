@@ -276,6 +276,8 @@ var (
 	_ = pgsqlgen.RenewRolloutLeaseParams(sqlitegen.RenewRolloutLeaseParams{})
 	_ = sqlitegen.ReleaseRolloutLeaseParams(pgsqlgen.ReleaseRolloutLeaseParams{})
 	_ = pgsqlgen.ReleaseRolloutLeaseParams(sqlitegen.ReleaseRolloutLeaseParams{})
+	_ = sqlitegen.StopUnleasedRolloutParams(pgsqlgen.StopUnleasedRolloutParams{})
+	_ = pgsqlgen.StopUnleasedRolloutParams(sqlitegen.StopUnleasedRolloutParams{})
 	_ = sqlitegen.StartRolloutStepParams(pgsqlgen.StartRolloutStepParams{})
 	_ = pgsqlgen.StartRolloutStepParams(sqlitegen.StartRolloutStepParams{})
 	_ = sqlitegen.CountRolloutStepParams(pgsqlgen.CountRolloutStepParams{})

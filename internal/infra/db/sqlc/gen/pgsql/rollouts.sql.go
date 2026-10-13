@@ -13,7 +13,7 @@ import (
 
 const claimRollout = `-- name: ClaimRollout :execrows
 UPDATE rollouts SET lease_owner = $1, lease_until = $2, state = 'running'
-WHERE id = $3 AND state IN ('queued', 'running') AND (lease_until IS NULL OR lease_until < $4)
+WHERE id = $3 AND state IN ('queued', 'running') AND (lease_until IS NULL OR lease_until <= $4)
 `
 
 type ClaimRolloutParams struct {
@@ -253,12 +253,14 @@ func (q *Queries) InsertRollout(ctx context.Context, arg InsertRolloutParams) (i
 
 const listClaimableRollouts = `-- name: ListClaimableRollouts :many
 SELECT id FROM rollouts
-WHERE state IN ('queued', 'running') AND (lease_until IS NULL OR lease_until < $1)
+WHERE state IN ('queued', 'running') AND (lease_until IS NULL OR lease_until <= $1)
 ORDER BY created_at ASC, id ASC
 LIMIT 10
 `
 
 // The worker's idle query: active rollouts nobody holds a live lease on.
+// Times are stored to the second, so a lease ending now counts as ended
+// (<=): a parked rollout is due on the poll that follows its park.
 func (q *Queries) ListClaimableRollouts(ctx context.Context, leaseUntil *types.DateTime) ([]string, error) {
 	rows, err := q.db.QueryContext(ctx, listClaimableRollouts, leaseUntil)
 	if err != nil {
@@ -420,19 +422,21 @@ func (q *Queries) PruneRollouts(ctx context.Context, arg PruneRolloutsParams) er
 }
 
 const releaseRolloutLease = `-- name: ReleaseRolloutLease :execrows
-UPDATE rollouts SET lease_owner = '', lease_until = NULL
-WHERE id = $1 AND lease_owner = $2
+UPDATE rollouts SET lease_owner = '', lease_until = $1
+WHERE id = $2 AND lease_owner = $3
 `
 
 type ReleaseRolloutLeaseParams struct {
+	LeaseUntil *types.DateTime
 	ID         string
 	LeaseOwner string
 }
 
-// Gives the lease back (a rollout waiting on a server, a graceful shutdown)
-// so the next pass, here or in another process, may claim it at once.
+// Gives the lease back: lease_until NULL (a graceful shutdown) is claimable
+// at once; a time parks a rollout that waits on a server until the next poll
+// is due, so the claimable list (LIMIT) does not fill with waiting ones.
 func (q *Queries) ReleaseRolloutLease(ctx context.Context, arg ReleaseRolloutLeaseParams) (int64, error) {
-	result, err := q.db.ExecContext(ctx, releaseRolloutLease, arg.ID, arg.LeaseOwner)
+	result, err := q.db.ExecContext(ctx, releaseRolloutLease, arg.LeaseUntil, arg.ID, arg.LeaseOwner)
 	if err != nil {
 		return 0, err
 	}
@@ -496,6 +500,37 @@ func (q *Queries) StartRolloutStep(ctx context.Context, arg StartRolloutStepPara
 		arg.Total,
 		arg.ID,
 		arg.LeaseOwner,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const stopUnleasedRollout = `-- name: StopUnleasedRollout :execrows
+UPDATE rollouts
+SET state = 'stopped', stop_requested = TRUE, current_app_id = '', current_server_id = '',
+    lease_owner = '', lease_until = NULL, finished_at = $1
+WHERE id = $2 AND org_id = $3 AND state IN ('queued', 'running')
+  AND (lease_owner = '' OR lease_until IS NULL OR lease_until <= $4)
+`
+
+type StopUnleasedRolloutParams struct {
+	FinishedAt *types.DateTime
+	ID         string
+	OrgID      string
+	LeaseUntil *types.DateTime
+}
+
+// Ends a rollout nobody is driving (queued, parked, or whose owner's lease
+// expired) as stopped. 0 rows: someone holds a live lease (stop_requested
+// takes over) or it is not the org's / not active.
+func (q *Queries) StopUnleasedRollout(ctx context.Context, arg StopUnleasedRolloutParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, stopUnleasedRollout,
+		arg.FinishedAt,
+		arg.ID,
+		arg.OrgID,
+		arg.LeaseUntil,
 	)
 	if err != nil {
 		return 0, err

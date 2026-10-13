@@ -74,6 +74,10 @@ func (pgsqlQuerier) ReleaseRolloutLease(ctx context.Context, db backend.DBTX, p 
 	return pgsqlgen.New(db).ReleaseRolloutLease(ctx, pgsqlgen.ReleaseRolloutLeaseParams(p))
 }
 
+func (pgsqlQuerier) StopUnleasedRollout(ctx context.Context, db backend.DBTX, p unleasedParam) (int64, error) {
+	return pgsqlgen.New(db).StopUnleasedRollout(ctx, pgsqlgen.StopUnleasedRolloutParams(p))
+}
+
 func (pgsqlQuerier) StartRolloutStep(ctx context.Context, db backend.DBTX, p startParams) (int64, error) {
 	return pgsqlgen.New(db).StartRolloutStep(ctx, pgsqlgen.StartRolloutStepParams(p))
 }

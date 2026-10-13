@@ -146,6 +146,8 @@ type Querier interface {
 	ListCapabilitiesByUser(ctx context.Context, userID string) ([]ListCapabilitiesByUserRow, error)
 	ListCiphertextServersByOrg(ctx context.Context, orgID string) ([]ListCiphertextServersByOrgRow, error)
 	// The worker's idle query: active rollouts nobody holds a live lease on.
+	// Times are stored to the second, so a lease ending now counts as ended
+	// (<=): a parked rollout is due on the poll that follows its park.
 	ListClaimableRollouts(ctx context.Context, leaseUntil *types.DateTime) ([]string, error)
 	ListFeaturesByUser(ctx context.Context, userID string) ([]ServerFeature, error)
 	ListFiringAlertStates(ctx context.Context) ([]ListFiringAlertStatesRow, error)
@@ -205,8 +207,9 @@ type Querier interface {
 	RaiseServerVarsRevision(ctx context.Context, arg RaiseServerVarsRevisionParams) error
 	RecordChannelFailure(ctx context.Context, arg RecordChannelFailureParams) error
 	RecordChannelSuccess(ctx context.Context, arg RecordChannelSuccessParams) error
-	// Gives the lease back (a rollout waiting on a server, a graceful shutdown)
-	// so the next pass, here or in another process, may claim it at once.
+	// Gives the lease back: lease_until NULL (a graceful shutdown) is claimable
+	// at once; a time parks a rollout that waits on a server until the next poll
+	// is due, so the claimable list (LIMIT) does not fill with waiting ones.
 	ReleaseRolloutLease(ctx context.Context, arg ReleaseRolloutLeaseParams) (int64, error)
 	RenameApp(ctx context.Context, arg RenameAppParams) error
 	RenewRolloutLease(ctx context.Context, arg RenewRolloutLeaseParams) (int64, error)
@@ -222,6 +225,10 @@ type Querier interface {
 	SetTemplateInstanceError(ctx context.Context, arg SetTemplateInstanceErrorParams) error
 	SetTemplateInstanceState(ctx context.Context, arg SetTemplateInstanceStateParams) error
 	StartRolloutStep(ctx context.Context, arg StartRolloutStepParams) (int64, error)
+	// Ends a rollout nobody is driving (queued, parked, or whose owner's lease
+	// expired) as stopped. 0 rows: someone holds a live lease (stop_requested
+	// takes over) or it is not the org's / not active.
+	StopUnleasedRollout(ctx context.Context, arg StopUnleasedRolloutParams) (int64, error)
 	TouchServerLastSeen(ctx context.Context, arg TouchServerLastSeenParams) error
 	TouchTokenLastUsed(ctx context.Context, arg TouchTokenLastUsedParams) error
 	UpdateAlertRule(ctx context.Context, arg UpdateAlertRuleParams) (int64, error)

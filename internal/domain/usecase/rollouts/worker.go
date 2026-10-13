@@ -59,17 +59,28 @@ var errBadScope = errors.New("the rollout's scope is unreadable")
 
 // Run drives the queue until ctx is done: a pass now, then one on every
 // Wake and once a minute (the idle cost: one indexed query). While a rollout
-// waits for a server (it gave its lease back, see drive) the next pass comes
-// after settlePoll instead.
+// waits for a server (it is parked, see drive) a pass is also due when its
+// park ends, settlePoll after the pass that parked it; a Wake in between
+// does not move that.
 func (uc *UseCase) Run(ctx context.Context) {
 	tick := time.NewTicker(uc.idle)
 	defer tick.Stop()
+	var (
+		retryTimer *time.Timer
+		retry      <-chan time.Time
+	)
+	defer func() {
+		if retryTimer != nil {
+			retryTimer.Stop()
+		}
+	}()
 	for {
-		var retry <-chan time.Time
-		var t *time.Timer
 		if uc.pass(ctx) {
-			t = time.NewTimer(uc.settlePoll)
-			retry = t.C
+			if retryTimer != nil {
+				retryTimer.Stop()
+			}
+			retryTimer = time.NewTimer(uc.settlePoll)
+			retry = retryTimer.C
 		}
 		select {
 		case <-ctx.Done():
@@ -77,18 +88,15 @@ func (uc *UseCase) Run(ctx context.Context) {
 		case <-uc.wake:
 		case <-tick.C:
 		case <-retry:
-		}
-		if t != nil {
-			t.Stop()
+			retry = nil
 		}
 	}
 }
 
 // pass claims and drives the claimable rollouts, one at a time, until none
-// is left. A rollout that yields because it waits is not taken again in the
-// same pass; pass reports whether any did, so Run looks again shortly.
+// is left, and reports whether any rollout parked itself to wait for a
+// server (the caller looks again when the park ends).
 func (uc *UseCase) pass(ctx context.Context) (waiting bool) {
-	yielded := map[string]bool{}
 	for ctx.Err() == nil {
 		ids, err := uc.d.Repo.ListClaimable(ctx, uc.now())
 		if err != nil {
@@ -97,9 +105,6 @@ func (uc *UseCase) pass(ctx context.Context) (waiting bool) {
 		}
 		claimed := false
 		for _, id := range ids {
-			if yielded[id] {
-				continue
-			}
 			now := uc.now()
 			ok, err := uc.d.Repo.Claim(ctx, id, uc.owner, now, now.Add(uc.lease))
 			if err != nil {
@@ -108,10 +113,7 @@ func (uc *UseCase) pass(ctx context.Context) (waiting bool) {
 			}
 			if ok {
 				claimed = true
-				if uc.drive(ctx, id) {
-					yielded[id] = true
-					waiting = true
-				}
+				waiting = uc.drive(ctx, id) || waiting
 			}
 		}
 		if !claimed {
@@ -124,11 +126,14 @@ func (uc *UseCase) pass(ctx context.Context) (waiting bool) {
 // drive takes the claimed rollout's steps while this process holds its
 // lease. Losing the lease (another process took over after it expired)
 // cancels the step in flight; the new owner re-evaluates it. A rollout that
-// has nothing to do until a server reports (the kind's wait) gives its lease
-// back and drive returns true: sleeping here would hold the one worker (and
-// every other rollout, other orgs' too) for as long as the server stays
-// quiet. The lease is also given back when ctx ends (a graceful shutdown), so
-// a restarted process resumes at once instead of after the lease expires.
+// has nothing to do until a server reports (the kind's wait) is parked and
+// drive returns true: sleeping here would hold the one worker (and every
+// other rollout, other orgs' too) for as long as the server stays quiet, and
+// leaving it claimable would fill the claimable list's limit with waiting
+// rollouts. Parked means unowned with a lease that ends settlePoll from now,
+// so the claimable list skips it until then. On a graceful shutdown the
+// lease is given back outright (claimable at once), so a restarted process
+// resumes without waiting for the lease to expire.
 func (uc *UseCase) drive(parent context.Context, id string) (waiting bool) {
 	ctx, cancel := context.WithCancel(parent)
 	renewing := make(chan struct{})
@@ -139,8 +144,11 @@ func (uc *UseCase) drive(parent context.Context, id string) (waiting bool) {
 	defer func() {
 		cancel()
 		<-renewing
-		if waiting || parent.Err() != nil {
-			uc.release(parent, id)
+		switch {
+		case waiting:
+			uc.release(parent, id, uc.now().Add(uc.settlePoll))
+		case parent.Err() != nil:
+			uc.release(parent, id, time.Time{})
 		}
 	}()
 	for ctx.Err() == nil {
@@ -159,12 +167,13 @@ func (uc *UseCase) drive(parent context.Context, id string) (waiting bool) {
 	return false
 }
 
-// release gives this process's lease on id back. Its context outlives the
-// drive's: it runs when that was cancelled.
-func (uc *UseCase) release(ctx context.Context, id string) {
+// release gives this process's lease on id back (parked until until, or
+// claimable at once when zero). Its context outlives the drive's: it runs
+// when that was cancelled.
+func (uc *UseCase) release(ctx context.Context, id string, until time.Time) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), notifyTimeout)
 	defer cancel()
-	if _, err := uc.d.Repo.ReleaseLease(ctx, id, uc.owner); err != nil {
+	if _, err := uc.d.Repo.ReleaseLease(ctx, id, uc.owner, until); err != nil {
 		uc.d.Log.Warn("rollouts: release lease", "rollout_id", id, "error", err)
 	}
 }

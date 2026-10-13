@@ -31,6 +31,7 @@ type (
 	claimParams   = sqlitegen.ClaimRolloutParams
 	renewParams   = sqlitegen.RenewRolloutLeaseParams
 	releaseParams = sqlitegen.ReleaseRolloutLeaseParams
+	unleasedParam = sqlitegen.StopUnleasedRolloutParams
 	startParams   = sqlitegen.StartRolloutStepParams
 	countParams   = sqlitegen.CountRolloutStepParams
 	finishParams  = sqlitegen.FinishRolloutParams
@@ -50,6 +51,7 @@ type querier interface {
 	ClaimRollout(ctx context.Context, db backend.DBTX, p claimParams) (int64, error)
 	RenewRolloutLease(ctx context.Context, db backend.DBTX, p renewParams) (int64, error)
 	ReleaseRolloutLease(ctx context.Context, db backend.DBTX, p releaseParams) (int64, error)
+	StopUnleasedRollout(ctx context.Context, db backend.DBTX, p unleasedParam) (int64, error)
 	StartRolloutStep(ctx context.Context, db backend.DBTX, p startParams) (int64, error)
 	CountRolloutStep(ctx context.Context, db backend.DBTX, p countParams) (int64, error)
 	FinishRollout(ctx context.Context, db backend.DBTX, p finishParams) (int64, error)
@@ -154,10 +156,22 @@ func (r *Repo) RenewLease(ctx context.Context, id, owner string, until time.Time
 	return affected(r.q.RenewRolloutLease(ctx, r.tx.Querier(ctx), renewParams{LeaseUntil: at(until), ID: id, LeaseOwner: owner}))
 }
 
-// ReleaseLease gives the owner's lease back, so the rollout is claimable at
-// once.
-func (r *Repo) ReleaseLease(ctx context.Context, id, owner string) (bool, error) {
-	return affected(r.q.ReleaseRolloutLease(ctx, r.tx.Querier(ctx), releaseParams{ID: id, LeaseOwner: owner}))
+// ReleaseLease gives the owner's lease back. A zero until leaves the rollout
+// claimable at once; otherwise it is parked until then.
+func (r *Repo) ReleaseLease(ctx context.Context, id, owner string, until time.Time) (bool, error) {
+	var lu *types.DateTime
+	if !until.IsZero() {
+		lu = at(until)
+	}
+	return affected(r.q.ReleaseRolloutLease(ctx, r.tx.Querier(ctx), releaseParams{LeaseUntil: lu, ID: id, LeaseOwner: owner}))
+}
+
+// StopUnleased ends the org's active rollout as stopped when nobody drives
+// it at now.
+func (r *Repo) StopUnleased(ctx context.Context, orgID, id string, now time.Time) (bool, error) {
+	return affected(r.q.StopUnleasedRollout(ctx, r.tx.Querier(ctx), unleasedParam{
+		FinishedAt: at(now), ID: id, OrgID: orgID, LeaseUntil: at(now),
+	}))
 }
 
 // StartStep records the app in flight and the total.

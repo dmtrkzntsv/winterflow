@@ -163,9 +163,22 @@ func (uc *UseCase) List(ctx context.Context, orgID, kind, scopeKey string) ([]mo
 	return out, nil
 }
 
-// Stop asks the org's rollout to stop after the step in flight. An ended
-// rollout answers as it is.
+// Stop ends the org's rollout at once when nobody drives it (queued, parked
+// while it waits for a server, or its owner's lease expired), else asks it
+// to stop after the step in flight. An ended rollout answers as it is.
 func (uc *UseCase) Stop(ctx context.Context, orgID, id string) (model.RolloutView, error) {
+	ended, err := uc.d.Repo.StopUnleased(ctx, orgID, id, uc.now())
+	if err != nil {
+		return model.RolloutView{}, err
+	}
+	if ended {
+		uc.ended(ctx, id) // announces it and prunes the scope's old ones
+		r, err := uc.d.Repo.GetRollout(ctx, id)
+		if err != nil {
+			return model.RolloutView{}, err
+		}
+		return uc.view(ctx, r), nil
+	}
 	ok, err := uc.d.Repo.RequestStop(ctx, orgID, id)
 	if err != nil {
 		return model.RolloutView{}, err

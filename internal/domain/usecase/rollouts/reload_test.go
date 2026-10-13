@@ -3,6 +3,7 @@ package rollouts
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"testing"
@@ -112,18 +113,16 @@ func TestReloadWaitsForTheServerToReportTheChange(t *testing.T) {
 	if got := a.commands(); len(got) != 0 {
 		t.Fatalf("reloaded before the server reported the change: %v", got)
 	}
-	// It gave its lease back: still running, claimable at once.
-	if r := e.get(t, id); r.State != model.RolloutRunning || r.LeaseOwner != "" || r.LeaseUntil != nil {
+	// It is parked: running, unowned, its lease ending at the next poll.
+	if r := e.get(t, id); r.State != model.RolloutRunning || r.LeaseOwner != "" || r.LeaseUntil == nil {
 		t.Fatalf("waiting rollout = %+v", r)
 	}
 	a.mu.Lock()
 	a.varsRev[srv1] = 4
 	a.mu.Unlock()
 	a.report(srv1)
-	if e.uc.pass(ctx) {
-		t.Fatal("the rollout still waits after the server reported")
-	}
-	if r := e.get(t, id); r.State != model.RolloutDone || r.Done != 1 {
+	e.passUntil(t, func() bool { return e.get(t, id).State == model.RolloutDone })
+	if r := e.get(t, id); r.Done != 1 {
 		t.Fatalf("rollout = %+v", r)
 	}
 
@@ -132,12 +131,7 @@ func TestReloadWaitsForTheServerToReportTheChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	start := time.Now()
-	for e.uc.pass(ctx) {
-		if time.Since(start) > 5*time.Second {
-			t.Fatal("the rollout never gave up on the silent server")
-		}
-		time.Sleep(e.uc.settlePoll)
-	}
+	e.passUntil(t, func() bool { return e.activeOrLast(t, org1).State == model.RolloutDone })
 	if r := e.activeOrLast(t, org1); r.State != model.RolloutDone || r.Done != 0 || time.Since(start) < e.uc.settle/2 {
 		t.Fatalf("unsettled rollout = %+v after %s", r, time.Since(start))
 	}
@@ -176,9 +170,105 @@ func TestAWaitingReloadYieldsTheWorkerToOtherRollouts(t *testing.T) {
 	a.varsRev[srv1] = 4
 	a.mu.Unlock()
 	a.report(srv1)
-	e.uc.pass(ctx)
-	if r := e.get(t, reload); r.State != model.RolloutDone || r.Done != 1 {
+	e.passUntil(t, func() bool { return e.get(t, reload).State == model.RolloutDone })
+	if r := e.get(t, reload); r.Done != 1 {
 		t.Fatalf("reload = %+v", r)
+	}
+}
+
+// passUntil runs passes (a parked rollout is due again after the poll, to
+// the second) until cond holds, at most 5 seconds.
+func (e *env) passUntil(t *testing.T, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatal("not done within 5s of passes")
+		}
+		e.uc.pass(dbtest.Ctx(t))
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// waitingScope is a reload scope no server satisfies for the next hour: the
+// server never reported the revision.
+func waitingScope(rev int64) []byte {
+	raw, _ := json.Marshal(model.ReloadScope{Names: []string{"N"}, ServerIDs: []string{srv1}, Revisions: map[string]int64{srv1: rev}, SettleBy: time.Now().Add(time.Hour).UTC()})
+	return raw
+}
+
+// Waiting rollouts are parked, not freed, so they do not fill the claimable
+// list's limit and starve the newer rollouts behind them.
+func TestManyWaitingReloadsDoNotStarveANewerRollout(t *testing.T) {
+	e := newEnv(t)
+	ctx := dbtest.Ctx(t)
+	for n := range 12 {
+		id := dbtest.ID(400 + n)
+		if _, ok, err := e.uc.queue(ctx, model.Rollout{ID: id, OrgID: org1, Kind: model.RolloutVarsReload, Scope: waitingScope(9),
+			ScopeKey: "waiting-" + id, CreatedBy: "u1"}); err != nil || !ok {
+			t.Fatalf("queue %d: %v %v", n, ok, err)
+		}
+	}
+	e.uc.kinds["fake"] = &fakeKind{todo: []string{"x1"}}
+	last := e.queueFake(t, 500, "s") // its id sorts after the waiting ones (created in the same second)
+	if !e.uc.pass(ctx) {
+		t.Fatal("the waiting rollouts were not reported")
+	}
+	if r := e.get(t, last); r.State != model.RolloutDone {
+		t.Fatalf("the 13th rollout = %+v: starved by the waiting ones", r)
+	}
+}
+
+// Stopping a rollout nobody drives (queued, or parked while it waits) ends
+// it at once; one with a live lease only gets stop_requested.
+func TestStopEndsAnUnleasedRolloutAtOnce(t *testing.T) {
+	e := newEnv(t)
+	ctx := dbtest.Ctx(t)
+	if err := e.uc.QueueReload(ctx, "u1", org1, smtpOnSrv1()); err != nil {
+		t.Fatal(err)
+	}
+	queued := e.activeReload(t, org1)
+	v, err := e.uc.Stop(ctx, org1, queued.ID)
+	if err != nil || v.State != "stopped" || !v.StopRequested || v.FinishedAt == nil {
+		t.Fatalf("stop a queued rollout = %+v, %v", v, err)
+	}
+	if evs := e.pub.events(); len(evs) == 0 || evs[len(evs)-1].State != "stopped" {
+		t.Fatalf("events = %+v", evs)
+	}
+	// A new reload queues right away (nothing active to refuse it).
+	if err := e.uc.QueueReload(ctx, "u1", org1, smtpOnSrv1()); err != nil {
+		t.Fatal(err)
+	}
+	// A rollout parked by the worker ends at once too.
+	scope := smtpOnSrv1()
+	scope.Revisions[srv1] = 4 // never reported: it parks
+	if _, err := e.uc.Stop(ctx, org1, e.activeReload(t, org1).ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.uc.QueueReload(ctx, "u1", org1, scope); err != nil {
+		t.Fatal(err)
+	}
+	parked := e.activeReload(t, org1).ID
+	e.uc.pass(ctx)
+	if r := e.get(t, parked); r.LeaseOwner != "" || r.LeaseUntil == nil || r.State != model.RolloutRunning {
+		t.Fatalf("not parked: %+v", r)
+	}
+	if v, err := e.uc.Stop(ctx, org1, parked); err != nil || v.State != "stopped" {
+		t.Fatalf("stop a parked rollout = %+v, %v", v, err)
+	}
+	// Another org cannot stop it, and a leased one only gets the request.
+	if err := e.uc.QueueReload(ctx, "u1", org1, smtpOnSrv1()); err != nil {
+		t.Fatal(err)
+	}
+	leased := e.activeReload(t, org1).ID
+	if ok, err := e.repo.Claim(ctx, leased, "w9", time.Now(), time.Now().Add(time.Minute)); err != nil || !ok {
+		t.Fatalf("claim: %v %v", ok, err)
+	}
+	if _, err := e.uc.Stop(ctx, org2, leased); !errors.Is(err, model.ErrRolloutNotFound) {
+		t.Fatalf("another org's stop: %v", err)
+	}
+	if v, err := e.uc.Stop(ctx, org1, leased); err != nil || v.State != "running" || !v.StopRequested {
+		t.Fatalf("stop a leased rollout = %+v, %v", v, err)
 	}
 }
 
@@ -209,8 +299,12 @@ func TestQueueReloadRefusesAStopRequestedRollout(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := e.activeReload(t, org1)
-	if _, err := e.uc.Stop(ctx, org1, before.ID); err != nil {
-		t.Fatal(err)
+	// A worker holds it, so the stop is only a request.
+	if ok, err := e.repo.Claim(ctx, before.ID, "w9", time.Now(), time.Now().Add(time.Minute)); err != nil || !ok {
+		t.Fatalf("claim: %v %v", ok, err)
+	}
+	if v, err := e.uc.Stop(ctx, org1, before.ID); err != nil || v.State != "running" || !v.StopRequested {
+		t.Fatalf("stop = %+v, %v", v, err)
 	}
 	err := e.uc.QueueReload(ctx, "u1", org1, model.ReloadScope{Names: []string{"S3_KEY"}, ServerIDs: []string{srv1}})
 	if !errors.Is(err, model.ErrRolloutStopping) || !errors.Is(err, model.ErrConflict) {
@@ -221,7 +315,9 @@ func TestQueueReloadRefusesAStopRequestedRollout(t *testing.T) {
 		t.Fatalf("the stopping rollout's scope changed: %+v", after)
 	}
 	// Once it has stopped, a reload queues a new one.
-	e.uc.pass(ctx)
+	if ok, err := e.repo.Finish(ctx, before.ID, "w9", model.RolloutStopped, "", "", ""); err != nil || !ok {
+		t.Fatalf("finish: %v %v", ok, err)
+	}
 	if r := e.get(t, before.ID); r.State != model.RolloutStopped {
 		t.Fatalf("rollout = %+v", r)
 	}

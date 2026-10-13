@@ -39,24 +39,37 @@ WHERE id = ? AND org_id = ? AND state IN ('queued', 'running');
 
 -- name: ListClaimableRollouts :many
 -- The worker's idle query: active rollouts nobody holds a live lease on.
+-- Times are stored to the second, so a lease ending now counts as ended
+-- (<=): a parked rollout is due on the poll that follows its park.
 SELECT id FROM rollouts
-WHERE state IN ('queued', 'running') AND (lease_until IS NULL OR lease_until < ?)
+WHERE state IN ('queued', 'running') AND (lease_until IS NULL OR lease_until <= ?)
 ORDER BY created_at ASC, id ASC
 LIMIT 10;
 
 -- name: ClaimRollout :execrows
 UPDATE rollouts SET lease_owner = ?, lease_until = ?, state = 'running'
-WHERE id = ? AND state IN ('queued', 'running') AND (lease_until IS NULL OR lease_until < ?);
+WHERE id = ? AND state IN ('queued', 'running') AND (lease_until IS NULL OR lease_until <= ?);
 
 -- name: RenewRolloutLease :execrows
 UPDATE rollouts SET lease_until = ?
 WHERE id = ? AND lease_owner = ? AND state = 'running';
 
 -- name: ReleaseRolloutLease :execrows
--- Gives the lease back (a rollout waiting on a server, a graceful shutdown)
--- so the next pass, here or in another process, may claim it at once.
-UPDATE rollouts SET lease_owner = '', lease_until = NULL
+-- Gives the lease back: lease_until NULL (a graceful shutdown) is claimable
+-- at once; a time parks a rollout that waits on a server until the next poll
+-- is due, so the claimable list (LIMIT) does not fill with waiting ones.
+UPDATE rollouts SET lease_owner = '', lease_until = ?
 WHERE id = ? AND lease_owner = ?;
+
+-- name: StopUnleasedRollout :execrows
+-- Ends a rollout nobody is driving (queued, parked, or whose owner's lease
+-- expired) as stopped. 0 rows: someone holds a live lease (stop_requested
+-- takes over) or it is not the org's / not active.
+UPDATE rollouts
+SET state = 'stopped', stop_requested = TRUE, current_app_id = '', current_server_id = '',
+    lease_owner = '', lease_until = NULL, finished_at = ?
+WHERE id = ? AND org_id = ? AND state IN ('queued', 'running')
+  AND (lease_owner = '' OR lease_until IS NULL OR lease_until <= ?);
 
 -- name: StartRolloutStep :execrows
 UPDATE rollouts SET current_app_id = ?, current_server_id = ?, total = ?

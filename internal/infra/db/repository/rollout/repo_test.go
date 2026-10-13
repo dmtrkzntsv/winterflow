@@ -136,9 +136,9 @@ func TestReleaseLeaseAndExtendAfterStop(t *testing.T) {
 
 	// Only the owner gives the lease back; the rollout stays active and is
 	// claimable at once.
-	ok, err = r.ReleaseLease(ctx, id, "w2")
+	ok, err = r.ReleaseLease(ctx, id, "w2", time.Time{})
 	mustFalse(t, "another owner's release", ok, err)
-	ok, err = r.ReleaseLease(ctx, id, "w1")
+	ok, err = r.ReleaseLease(ctx, id, "w1", time.Time{})
 	mustTrue(t, "release", ok, err)
 	got, _ := r.GetRollout(ctx, id)
 	if got.State != model.RolloutRunning || got.LeaseOwner != "" || got.LeaseUntil != nil {
@@ -157,6 +157,42 @@ func TestReleaseLeaseAndExtendAfterStop(t *testing.T) {
 	mustFalse(t, "extend a stop-requested rollout", ok, err)
 	if got, _ = r.GetRollout(ctx, id); got.ScopeRev != 1 {
 		t.Fatalf("scope moved: %+v", got)
+	}
+}
+
+func TestParkAndStopUnleased(t *testing.T) {
+	r := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	id := dbtest.ID(101)
+	mustInsert(t, r, rollout(1, "tpl-a"))
+	org := func() string { g, _ := r.GetRollout(ctx, id); return g.OrgID }()
+
+	// Parked: unowned, skipped by the claimable list until the park ends
+	// (a lease ending at now counts as ended).
+	ok, err := r.Claim(ctx, id, "w1", now, now.Add(2*time.Minute))
+	mustTrue(t, "claim", ok, err)
+	ok, err = r.ReleaseLease(ctx, id, "w1", now.Add(5*time.Second))
+	mustTrue(t, "park", ok, err)
+	if ids, _ := r.ListClaimable(ctx, now.Add(4*time.Second)); len(ids) != 0 {
+		t.Fatalf("a parked rollout is claimable: %v", ids)
+	}
+	if ids, _ := r.ListClaimable(ctx, now.Add(5*time.Second)); len(ids) != 1 {
+		t.Fatalf("a rollout whose park ended is not claimable: %v", ids)
+	}
+	// StopUnleased ends a parked rollout (the org's only), not a leased one.
+	ok, err = r.StopUnleased(ctx, dbtest.ID(999), id, now)
+	mustFalse(t, "another org's stop", ok, err)
+	ok, err = r.Claim(ctx, id, "w1", now.Add(5*time.Second), now.Add(2*time.Minute))
+	mustTrue(t, "claim after the park", ok, err)
+	ok, err = r.StopUnleased(ctx, org, id, now.Add(6*time.Second))
+	mustFalse(t, "stop under a live lease", ok, err)
+	ok, err = r.ReleaseLease(ctx, id, "w1", now.Add(time.Hour))
+	mustTrue(t, "park again", ok, err)
+	ok, err = r.StopUnleased(ctx, org, id, now.Add(6*time.Second))
+	mustTrue(t, "stop a parked rollout", ok, err)
+	if stopped, _ := r.GetRollout(ctx, id); stopped.State != model.RolloutStopped || !stopped.StopRequested || stopped.FinishedAt == nil || stopped.LeaseOwner != "" {
+		t.Fatalf("stopped = %+v", stopped)
 	}
 }
 

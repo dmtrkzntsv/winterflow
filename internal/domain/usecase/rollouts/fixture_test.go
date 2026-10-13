@@ -107,7 +107,9 @@ func newEnv(t *testing.T) *env {
 // newUseCase is another API process on the same database.
 func (e *env) newUseCase() *UseCase {
 	uc := New(e.deps)
-	uc.renew, uc.idle, uc.settlePoll, uc.healthPoll = 10*time.Millisecond, time.Hour, 10*time.Millisecond, 5*time.Millisecond
+	// Times are stored to the second: a park shorter than that would be over
+	// at once, so the poll is just above one.
+	uc.renew, uc.idle, uc.settlePoll, uc.healthPoll = 10*time.Millisecond, time.Hour, 1100*time.Millisecond, 5*time.Millisecond
 	uc.health, uc.settle = 200*time.Millisecond, 200*time.Millisecond
 	return uc
 }

@@ -37,9 +37,14 @@ type RolloutRepository interface {
 	// is active and nobody holds a live lease at now.
 	Claim(ctx context.Context, id, owner string, now, until time.Time) (bool, error)
 	RenewLease(ctx context.Context, id, owner string, until time.Time) (bool, error)
-	// ReleaseLease gives the owner's lease back (a rollout that waits, a
-	// graceful shutdown): the rollout stays active and is claimable at once.
-	ReleaseLease(ctx context.Context, id, owner string) (bool, error)
+	// ReleaseLease gives the owner's lease back; the rollout stays active.
+	// A zero until makes it claimable at once (a graceful shutdown), a time
+	// parks it until then (a rollout waiting for a server).
+	ReleaseLease(ctx context.Context, id, owner string, until time.Time) (bool, error)
+	// StopUnleased ends the org's active rollout as stopped if nobody holds a
+	// live lease on it at now (queued, parked, or its owner's lease expired);
+	// false otherwise (RequestStop then asks the owner).
+	StopUnleased(ctx context.Context, orgID, id string, now time.Time) (bool, error)
 	// StartStep records the app a step works on and the total as of now.
 	StartStep(ctx context.Context, id, owner, appID, serverID string, total int64) (bool, error)
 	// CountStep adds a step's outcome (skipIDs replaces the skip list).

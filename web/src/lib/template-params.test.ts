@@ -33,6 +33,26 @@ describe("compilePattern", () => {
   });
 });
 
+describe("compilePattern agrees with RE2 or leaves the pattern to the API", () => {
+  it.each([
+    // RE2's hex escape; JS reads \x{41} as a literal "x{41}".
+    ["a hex escape", "^\\x{41}$", "A"],
+    // RE2 counts code points, not UTF-16 units.
+    ["a length in code points", "^.{1,3}$", "\u{1F600}\u{1F600}\u{1F600}"],
+    // RE2's \s is ASCII: a non-breaking space is \S there.
+    ["an ASCII \\S", "^\\S+$", "a\u00a0b"],
+  ])("never blocks a value Go accepts: %s", (_, pattern, value) => {
+    expect(valueError({ name: "X", pattern }, value)).toBe("");
+  });
+
+  it("still checks a common pattern in the browser", () => {
+    const re = compilePattern("^[a-z][a-z0-9-]*$");
+    expect(re?.test("shop-1")).toBe(true);
+    expect(re?.test("1shop")).toBe(false);
+    expect(valueError({ name: "X", pattern: "^[a-z][a-z0-9-]*$" }, "Shop")).toBe("Must match ^[a-z][a-z0-9-]*$");
+  });
+});
+
 describe("valueError", () => {
   it("checks a value as typed", () => {
     expect(valueError(NAME, "shop")).toBe("");

@@ -5,12 +5,16 @@ import type { InstanceView, Parameter, TemplateBody } from "@/lib/templates";
 
 // RE2_ONLY matches constructs JavaScript reads differently or not at all:
 // POSIX classes, \p classes, \z \A \Q \E \C, (?P<name>), ungreedy and
-// negated flags. A pattern using one is left to the API.
-const RE2_ONLY = /\[\[:|\\[pPzAQEC]|\(\?P<|\(\?[imsU]*(-|U)/;
+// negated flags, \x{hex} and \S (ASCII in RE2, Unicode in JS: a
+// non-breaking space). A pattern using one is left to the API.
+const RE2_ONLY = /\[\[:|\\[pPzAQEC]|\(\?P<|\(\?[imsU]*(-|U)|\\x\{|\\S/;
 
 // compilePattern turns a parameter's RE2 pattern into a JS RegExp, or null
 // when JavaScript can't be trusted to agree (then only the API checks it).
-// A leading (?i), (?m) or (?s) becomes the matching JS flag.
+// A leading (?i), (?m) or (?s) becomes the matching JS flag; the u flag
+// makes JS count code points as RE2 does (and refuse escapes it doesn't
+// know: those patterns are the API's). A known limit: JS's . also stops
+// at \r (and U+2028/9), RE2's only at \n.
 export function compilePattern(pattern: string | undefined): RegExp | null {
   if (!pattern || RE2_ONLY.test(pattern)) return null;
   let src = pattern;
@@ -21,7 +25,7 @@ export function compilePattern(pattern: string | undefined): RegExp | null {
     src = src.slice(lead[0].length);
   }
   try {
-    return new RegExp(src, flags);
+    return new RegExp(src, flags + "u");
   } catch {
     return null;
   }

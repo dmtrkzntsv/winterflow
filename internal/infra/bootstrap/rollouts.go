@@ -1,6 +1,8 @@
 package bootstrap
 
 import (
+	"context"
+
 	"winterflow/internal/domain/port"
 	"winterflow/internal/domain/service/status"
 	appuc "winterflow/internal/domain/usecase/app"
@@ -8,6 +10,15 @@ import (
 	"winterflow/internal/domain/usecase/templates"
 	"winterflow/pkg/logger"
 )
+
+// StartRollouts starts the rollout worker: one per API process (standalone
+// included); an idle one costs one indexed query a minute. Call it only once
+// commands can flow (standalone: after the in-process bridge subscribed; API:
+// after the response subscriber WireCore starts), because the first pass may
+// resume an expired-lease rollout and dispatch immediately.
+func StartRollouts(ctx context.Context, d *Deps) {
+	go d.Rollouts.Run(ctx)
+}
 
 // newRollouts builds the rollout queue. Its template_upgrade steps render
 // and dispatch through a templates usecase of their own, built exactly as

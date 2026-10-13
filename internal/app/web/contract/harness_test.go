@@ -88,6 +88,8 @@ func newEnv(t *testing.T) *env {
 	if err := appagent.NewInProcessBridge(b, cfg, agent, testLog).Start(ctx); err != nil {
 		t.Fatal(err)
 	}
+	// As BootstrapStandalone: the rollout worker starts once the bridge consumes.
+	bootstrap.StartRollouts(ctx, deps)
 
 	// Exclusive: no /auth/ request in any env may run while NewServer writes
 	// the jwt global (see newServerMu).

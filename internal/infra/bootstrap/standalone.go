@@ -76,6 +76,9 @@ func BootstrapStandalone(ctx context.Context, log *logger.Logger, cfg *config.Se
 	if err := bridge.Start(ctx); err != nil {
 		log.Fatalf("failed to start in-process bridge: %v", err)
 	}
+	// Only now can a dispatched command be consumed (membus drops messages
+	// without a subscriber), so the rollout worker starts after the bridge.
+	StartRollouts(ctx, deps)
 
 	// Report the embedded server's capabilities (specs, IP, version, public
 	// key) through the same events path a distributed agent's registration

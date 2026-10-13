@@ -75,10 +75,12 @@ func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerCon
 		newStorageSync(ctx, dispatcher, r.serverStorage, log),
 	}, vars, ms, latest, al.evaluator)
 
-	// The rollout queue: one worker per API process (standalone included);
-	// an idle one costs one indexed query a minute.
+	// The rollout queue is built here (one value for the routes and the
+	// worker) but its worker is NOT started: its first pass may claim a
+	// rollout whose lease expired and dispatch at once, which is lost while
+	// nothing consumes the request queue (standalone: the in-process bridge).
+	// Each topology calls StartRollouts once commands can flow.
 	queue := newRollouts(r, dispatcher, statusCache, nm, log)
-	go queue.Run(ctx)
 
 	return &Deps{
 		Log:                      log,

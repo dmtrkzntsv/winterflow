@@ -26,14 +26,21 @@ function instanceName(view: TemplateView, inst: InstanceView): string {
 // the ones behind the latest revision (view is the latest). A pending
 // instance (its deploy never succeeded) shows why and offers Delete: no
 // other page reaches it, and it keeps the template from being deleted.
+// With onUpgradeAll, "Upgrade all to rN" (confirmed first) queues the
+// upgrade of every created instance behind; it waits while a rollout of
+// the template is active.
 export function TemplateInstances({
   view,
   instances,
   onChanged,
+  onUpgradeAll,
+  rolloutActive = false,
 }: {
   view: TemplateView;
   instances: InstanceView[];
   onChanged: () => void;
+  onUpgradeAll?: () => void;
+  rolloutActive?: boolean;
 }) {
   const { servers } = useServers();
   const api = useTemplatesApi();
@@ -62,8 +69,28 @@ export function TemplateInstances({
     );
   }
 
+  const behind = instances.filter((i) => i.state === "created" && i.revision < view.latest_revision).length;
+
   return (
     <>
+      {onUpgradeAll && behind > 0 ? (
+        <div className="mb-3 flex items-center justify-end gap-3">
+          <span className="text-sm text-muted-foreground">
+            {behind} {behind === 1 ? "app is" : "apps are"} behind r{view.latest_revision}
+          </span>
+          <ConfirmButton
+            trigger={
+              <Button size="sm" disabled={rolloutActive} title={rolloutActive ? "An upgrade is running" : undefined}>
+                Upgrade all to r{view.latest_revision}
+              </Button>
+            }
+            title={`Upgrade ${behind} ${behind === 1 ? "app" : "apps"} to r${view.latest_revision}?`}
+            description="They are upgraded one at a time, oldest first, each with its own values. Stopped apps will be started. An app that needs a new value is skipped (upgrade it on its own); the first failure stops the rest."
+            confirmLabel="Upgrade all"
+            onConfirm={onUpgradeAll}
+          />
+        </div>
+      ) : null}
       <ul className="divide-y rounded-md border">
         {instances.map((inst) => {
           const name = instanceName(view, inst);

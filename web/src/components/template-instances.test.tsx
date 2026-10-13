@@ -241,4 +241,30 @@ describe("TemplateInstances", () => {
     renderInstances([]);
     expect(screen.getByText(/No app uses this template yet/)).toBeInTheDocument();
   });
+
+  it("upgrades every created instance behind after a confirm, not while a rollout runs", async () => {
+    const user = userEvent.setup();
+    const onUpgradeAll = vi.fn();
+    const list = [inst({}), inst({ key: "k2", app_id: "a2", revision: 3 }), inst({ key: "k3", app_id: "a3", state: "pending", revision: 1 })];
+    const tree = (active: boolean, instances = list) => (
+      <MemoryRouter>
+        <NotificationsContext.Provider value={notifications}>
+          <TemplateInstances view={VIEW} instances={instances} onChanged={onChanged} onUpgradeAll={onUpgradeAll} rolloutActive={active} />
+        </NotificationsContext.Provider>
+      </MemoryRouter>
+    );
+    const { rerender } = render(tree(false));
+    // Only k1 counts: k2 is on r3, k3 was never created.
+    expect(screen.getByText("1 app is behind r3")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Upgrade all to r3" }));
+    expect(screen.getByRole("alertdialog")).toHaveTextContent("Upgrade 1 app to r3?");
+    expect(screen.getByRole("alertdialog")).toHaveTextContent(/stopped apps will be started/i);
+    await user.click(screen.getByRole("button", { name: "Upgrade all" }));
+    expect(onUpgradeAll).toHaveBeenCalledTimes(1);
+
+    rerender(tree(true));
+    expect(screen.getByRole("button", { name: "Upgrade all to r3" })).toBeDisabled();
+    rerender(tree(false, [inst({ revision: 3 })]));
+    expect(screen.queryByRole("button", { name: /Upgrade all/ })).not.toBeInTheDocument();
+  });
 });

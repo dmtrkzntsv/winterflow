@@ -16,8 +16,10 @@ import {
   type NotificationHandler,
   type NotificationsContextValue,
 } from "@/context/notifications-context-base";
+import type { Rollout } from "@/lib/rollouts";
 import type { EncryptionKeys, ServerVariables, SharedVariablesApi } from "@/lib/shared-variables";
 import { VariablesCard } from "@/pages/settings-variables";
+import { rollout } from "@/test/rollouts";
 
 const T = "2026-10-11T00:00:00Z";
 const SERVER: ServerVariables = {
@@ -52,18 +54,21 @@ function fakeApi() {
   };
 }
 
-function renderCard(api: ReturnType<typeof fakeApi>, serverId = "srv-a") {
-  const hub: { h?: NotificationHandler } = {};
+function renderCard(api: ReturnType<typeof fakeApi>, serverId = "srv-a", running: Rollout[] = []) {
+  const rollouts = { list: vi.fn().mockResolvedValue(running), stop: vi.fn(), upgradeAll: vi.fn() };
+  // Every subscriber hears each event (the page and its rollout strip).
+  const handlers = new Set<NotificationHandler>();
   const notifications: NotificationsContextValue = {
     connected: true,
     subscribe: (h) => {
-      hub.h = h;
+      handlers.add(h);
       return () => {
-        hub.h = undefined;
+        handlers.delete(h);
       };
     },
     waitFor: vi.fn(),
   };
+  const emit = (n: Notification) => act(() => handlers.forEach((h) => h(n)));
   // a4 is stale but stopped: the agent skips it, so it is not counted.
   const apps = {
     staleVarsByApp: { a1: ["SMTP_PASS"], a2: ["SMTP_HOST"], a3: [], a4: ["SMTP_HOST"] },
@@ -73,13 +78,13 @@ function renderCard(api: ReturnType<typeof fakeApi>, serverId = "srv-a") {
     <MemoryRouter>
       <NotificationsContext.Provider value={notifications}>
         <AppsContext.Provider value={apps}>
-          <VariablesCard serverId={id} api={api as unknown as SharedVariablesApi} />
+          <VariablesCard serverId={id} api={api as unknown as SharedVariablesApi} rollouts={rollouts} />
         </AppsContext.Provider>
       </NotificationsContext.Provider>
     </MemoryRouter>
   );
   const view = render(tree(serverId));
-  return { switchTo: (id: string) => view.rerender(tree(id)), emit: (n: Notification) => act(() => hub.h?.(n)) };
+  return { switchTo: (id: string) => view.rerender(tree(id)), emit };
 }
 
 describe("VariablesCard", () => {
@@ -200,5 +205,19 @@ describe("VariablesCard", () => {
     await screen.findByText("Synced");
     await user.click(screen.getByRole("button", { name: "Resync" }));
     expect(await screen.findByText("Synced")).toBeInTheDocument();
+  });
+
+  it("shows the org's reload rollout, and a failure naming the app", async () => {
+    const { emit } = renderCard(fakeApi(), "srv-a", [
+      rollout({ kind: "vars_reload", done: 0, skipped: 0, total: 2, current_app_name: "shop", current_server_id: "srv-b" }),
+    ]);
+    expect(await screen.findByText("Reloading 1 of 2: shop on beta…")).toBeInTheDocument();
+    emit({
+      type: "rollout",
+      ref: "",
+      payload: rollout({ kind: "vars_reload", state: "failed", current_app_name: "shop", current_server_id: "srv-b", error: "compose up failed" }),
+    });
+    expect(screen.getByText(/Reload stopped at shop on beta/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open shop" })).toHaveAttribute("href", "/server/srv-b/app/a1b2c3d4e5f6");
   });
 });

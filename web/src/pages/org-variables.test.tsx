@@ -14,8 +14,10 @@ import {
   type NotificationHandler,
   type NotificationsContextValue,
 } from "@/context/notifications-context-base";
+import type { Rollout } from "@/lib/rollouts";
 import type { EncryptionKeys, OrgVariables, SharedVariablesApi } from "@/lib/shared-variables";
 import OrgVariablesPage from "@/pages/org-variables";
+import { rollout } from "@/test/rollouts";
 
 const T = "2026-10-11T00:00:00Z";
 const ORG: OrgVariables = {
@@ -52,26 +54,33 @@ function fakeApi() {
   };
 }
 
-function renderPage(api: ReturnType<typeof fakeApi>) {
-  const hub: { h?: NotificationHandler } = {};
+// noRollouts is a rollouts client with nothing running.
+function noRollouts(list: Rollout[] = []) {
+  return { list: vi.fn().mockResolvedValue(list), stop: vi.fn(async (id: string) => rollout({ id, stop_requested: true })), upgradeAll: vi.fn() };
+}
+
+function renderPage(api: ReturnType<typeof fakeApi>, rollouts = noRollouts()) {
+  // Every subscriber hears each event (the page and its rollout strip).
+  const handlers = new Set<NotificationHandler>();
   const notifications: NotificationsContextValue = {
     connected: true,
     subscribe: (h) => {
-      hub.h = h;
+      handlers.add(h);
       return () => {
-        hub.h = undefined;
+        handlers.delete(h);
       };
     },
     waitFor: vi.fn(),
   };
+  const emit = (n: Notification) => act(() => handlers.forEach((h) => h(n)));
   render(
     <MemoryRouter>
       <NotificationsContext.Provider value={notifications}>
-        <OrgVariablesPage api={api as unknown as SharedVariablesApi} />
+        <OrgVariablesPage api={api as unknown as SharedVariablesApi} rollouts={rollouts} />
       </NotificationsContext.Provider>
     </MemoryRouter>,
   );
-  return { emit: (n: Notification) => act(() => hub.h?.(n)) };
+  return { emit };
 }
 
 describe("OrgVariablesPage", () => {
@@ -135,5 +144,19 @@ describe("OrgVariablesPage", () => {
     await user.click(screen.getByRole("button", { name: "Delete SMTP_HOST" }));
     await user.click(screen.getByRole("button", { name: "Delete" }));
     expect(api.deleteOrg).toHaveBeenCalledWith("v1");
+  });
+
+  it("shows the org's reload rollout and stops it", async () => {
+    const user = userEvent.setup();
+    const rollouts = noRollouts([
+      rollout({ kind: "vars_reload", scope_key: "org-1", done: 1, skipped: 0, total: 5, current_app_name: "shop", current_server_id: "s3" }),
+    ]);
+    const { emit } = renderPage(fakeApi(), rollouts);
+    expect(await screen.findByText("Reloading 2 of 5: shop on gamma…")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Stop" }));
+    expect(rollouts.stop).toHaveBeenCalledWith("r1");
+    expect(screen.getByRole("button", { name: "Stop" })).toBeDisabled();
+    emit({ type: "rollout", ref: "", payload: rollout({ kind: "vars_reload", state: "stopped" }) });
+    expect(screen.queryByText(/Reloading/)).not.toBeInTheDocument();
   });
 });

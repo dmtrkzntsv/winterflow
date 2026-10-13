@@ -27,6 +27,7 @@ import UserPasswordPage from "@/pages/user-password"
 import OrgMembersPage from "@/pages/org-members"
 import OrgAlertsPage from "@/pages/org-alerts"
 import OrgVariablesPage from "@/pages/org-variables";
+import OrgTemplatesPage from "@/pages/org-templates"
 import LoginPage from "@/pages/login"
 import RegisterPage from "@/pages/register"
 import { followSystemTheme } from "@/lib/theme"
@@ -88,6 +89,10 @@ const router = createBrowserRouter([
           {
             path: "/org/variables",
             element: <OrgVariablesPage />,
+          },
+          {
+            path: "/org/templates",
+            element: <OrgTemplatesPage />,
           },
           { path: "*", element: <NotFound /> },
         ],

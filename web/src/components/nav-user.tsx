@@ -1,6 +1,6 @@
 "use client";
 
-import { BellRing, Braces, ChevronsUpDown, KeyRound, LockKeyhole, LogOut, Users } from "lucide-react";
+import { BellRing, Braces, ChevronsUpDown, KeyRound, LayoutTemplate, LockKeyhole, LogOut, Users } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import { useProfile } from "@/context/use-profile";
@@ -97,6 +97,10 @@ export function NavUser() {
               <DropdownMenuItem onClick={() => navigate("/org/variables")}>
                 <Braces />
                 Org variables
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => navigate("/org/templates")}>
+                <LayoutTemplate />
+                Templates
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => navigate("/user/tokens")}>
                 <KeyRound />

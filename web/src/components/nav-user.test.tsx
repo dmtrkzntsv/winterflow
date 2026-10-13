@@ -36,6 +36,7 @@ function renderNav() {
                 <Route path="/" element={<NavUser />} />
                 <Route path="/org/members" element={<p>members page</p>} />
                 <Route path="/org/alerts" element={<p>alerts page</p>} />
+                <Route path="/org/templates" element={<p>templates page</p>} />
               </Routes>
             </ProfileContext.Provider>
           </UserContext.Provider>
@@ -64,5 +65,15 @@ describe("NavUser", () => {
     await user.click(await screen.findByRole("menuitem", { name: "Alerts" }));
 
     expect(await screen.findByText("alerts page")).toBeInTheDocument();
+  });
+
+  it("offers Templates next to the org's variables", async () => {
+    const user = userEvent.setup();
+    renderNav();
+
+    await user.click(screen.getByRole("button", { name: /Ann/ }));
+    await user.click(await screen.findByRole("menuitem", { name: "Templates" }));
+
+    expect(await screen.findByText("templates page")).toBeInTheDocument();
   });
 });

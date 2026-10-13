@@ -31,6 +31,10 @@ func (sqliteQuerier) UserOwnsServer(ctx context.Context, db backend.DBTX, p owns
 	return sqlitegen.New(db).UserOwnsServer(ctx, p)
 }
 
+func (sqliteQuerier) ServerInOrganization(ctx context.Context, db backend.DBTX, p inOrgParams) (bool, error) {
+	return sqlitegen.New(db).ServerInOrganization(ctx, p)
+}
+
 func (sqliteQuerier) HasAnyServer(ctx context.Context, db backend.DBTX) (bool, error) {
 	return sqlitegen.New(db).HasAnyServer(ctx)
 }

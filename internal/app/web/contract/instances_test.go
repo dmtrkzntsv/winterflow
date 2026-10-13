@@ -13,6 +13,7 @@ import (
 	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/template"
 	tuc "winterflow/internal/domain/usecase/templates"
+	"winterflow/internal/infra/db/dbtest"
 	"winterflow/internal/infra/transport/bus"
 	"winterflow/pkg/crypto/cryptotest"
 )
@@ -410,4 +411,23 @@ func TestInstanceAppThroughTheAppRoutes(t *testing.T) {
 		t.Fatalf("replay body = %s", r.Body)
 	}
 	owner.post(t, "/api/v1/template/delete-template", htpl.TemplateIDRequest{ID: ie.tplID}).expect(t, http.StatusOK)
+}
+
+// A member of two orgs acts for their primary one (the oldest membership):
+// the other org's server is theirs to see, but no instance may sit on it.
+func TestInstanceRoutesStayInTheCallersOrg(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	owner := e.claim(t)
+	other := e.foreignServer(t)
+	orgB := dbtest.QueryString(t, e.conn, `SELECT organization_id FROM servers WHERE server_id = ?`, other)
+	dbtest.Exec(t, e.conn, `INSERT INTO organization_users (organization_id, user_id, role, created_at) VALUES (?, ?, 'admin', '2099-01-01 00:00:00')`,
+		orgB, owner.userID)
+	owner.get(t, "/api/v1/app/get-apps", sq(other)).expect(t, http.StatusOK)
+	owner.get(t, "/api/v1/instance/get-instances", sq(other)).expect(t, http.StatusForbidden)
+	owner.post(t, "/api/v1/instance/create-instance", htpl.CreateInstanceRequest{ServerID: other, Key: "k", TemplateID: anApp}).
+		expect(t, http.StatusForbidden)
+	if n := e.agent.count(); n != 0 {
+		t.Fatalf("%d command(s) reached an agent", n)
+	}
 }

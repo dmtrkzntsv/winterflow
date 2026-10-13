@@ -5,6 +5,7 @@
 package templates
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"time"
@@ -23,6 +24,15 @@ import (
 // with get-instance.
 const WaitBound = 10 * time.Minute
 
+// InstanceServers authorizes the instance routes (port.ServerRepository):
+// the server must be one of the caller's organizations' and, beyond that,
+// the organization the call acts for (the caller's primary one), so an
+// instance never sits on another organization's server.
+type InstanceServers interface {
+	webutil.ServerAccess
+	ServerInOrg(ctx context.Context, serverID, orgID string) (bool, error)
+}
+
 // Deps wires the handler; with zero Deps (route documentation) it is never
 // called.
 type Deps struct {
@@ -30,7 +40,7 @@ type Deps struct {
 	Templates               port.TemplateRepository
 	SharedVariables         tuc.SharedNames
 	Users                   webutil.OrgResolver
-	Servers                 webutil.ServerAccess
+	Servers                 InstanceServers
 	CommandDispatcher       port.CommandDispatcher
 	AppRepository           port.AppRepository
 	AppDomainRepository     port.AppDomainRepository
@@ -43,7 +53,7 @@ type Deps struct {
 type Handler struct {
 	uc        *tuc.UseCase
 	users     webutil.OrgResolver
-	servers   webutil.ServerAccess
+	servers   InstanceServers
 	log       *logger.Logger
 	waitBound time.Duration
 }
@@ -81,10 +91,15 @@ func requireID(w http.ResponseWriter, field, id string) bool {
 }
 
 // serverCaller resolves the caller and their org and requires serverID
-// (400) owned by the caller's org (403).
+// (400) owned by the caller's organizations and in the org the call acts
+// for (403 either way; a lookup error denies too).
 func (h *Handler) serverCaller(w http.ResponseWriter, r *http.Request, serverID string) (string, string, bool) {
 	userID, orgID, ok := h.callerOrg(w, r)
 	if !ok || !webutil.RequireOwnedServer(w, r, h.servers, userID, serverID) {
+		return "", "", false
+	}
+	if in, err := h.servers.ServerInOrg(r.Context(), serverID, orgID); err != nil || !in {
+		webutil.Forbidden(w)
 		return "", "", false
 	}
 	return userID, orgID, true

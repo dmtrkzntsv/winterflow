@@ -269,6 +269,24 @@ func TestListInstancesAndBehind(t *testing.T) {
 	}
 }
 
+// A rollout of an org touches only instances on the org's own servers.
+func TestListInstancesOnOrgServers(t *testing.T) {
+	r, _ := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	mustCreate(t, r, org1, tpl1, "shop")
+	_, _, _ = r.ClaimInstance(ctx, instance(1, "own"))
+	stray := instance(2, "stray")
+	stray.ServerID = srv2 // org2's server
+	_, _, _ = r.ClaimInstance(ctx, stray)
+	if all, _ := r.ListInstances(ctx, org1); len(all) != 2 {
+		t.Fatalf("all = %+v", all)
+	}
+	got, err := r.ListInstancesOnOrgServers(ctx, org1)
+	if err != nil || len(got) != 1 || got[0].Key != "own" {
+		t.Fatalf("on org1's servers = %+v, %v", got, err)
+	}
+}
+
 // The app routes see an app that is a live instance; delete-app retires
 // its key. An unlinked instance is no longer the app's, yet still read by
 // id.

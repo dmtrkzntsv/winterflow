@@ -352,6 +352,53 @@ func (q *Queries) ListLiveTemplateInstances(ctx context.Context, orgID string) (
 	return items, nil
 }
 
+const listLiveTemplateInstancesOnOrgServers = `-- name: ListLiveTemplateInstancesOnOrgServers :many
+SELECT i.id, i.org_id, i.instance_key, i.app_id, i.server_id, i.template_id, i.revision, i.params, i.secret_names, i.request_hash, i.state, i.last_error, i.created_at, i.updated_at FROM template_instances AS i
+JOIN servers AS s ON s.server_id = i.server_id AND s.organization_id = i.org_id
+WHERE i.org_id = $1 AND i.state IN ('pending', 'created')
+ORDER BY i.created_at ASC, i.id ASC
+`
+
+// The org's pending and created instances on the org's own servers: what a
+// rollout of the org may touch.
+func (q *Queries) ListLiveTemplateInstancesOnOrgServers(ctx context.Context, orgID string) ([]TemplateInstance, error) {
+	rows, err := q.db.QueryContext(ctx, listLiveTemplateInstancesOnOrgServers, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TemplateInstance{}
+	for rows.Next() {
+		var i TemplateInstance
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.InstanceKey,
+			&i.AppID,
+			&i.ServerID,
+			&i.TemplateID,
+			&i.Revision,
+			&i.Params,
+			&i.SecretNames,
+			&i.RequestHash,
+			&i.State,
+			&i.LastError,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTemplateNames = `-- name: ListTemplateNames :many
 SELECT id, name FROM templates WHERE org_id = $1
 `

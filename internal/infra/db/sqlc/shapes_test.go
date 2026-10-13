@@ -254,6 +254,8 @@ var (
 	_ = pgsqlgen.GetLiveTemplateInstanceForAppParams(sqlitegen.GetLiveTemplateInstanceForAppParams{})
 	_ = sqlitegen.RetireTemplateInstancesForAppParams(pgsqlgen.RetireTemplateInstancesForAppParams{})
 	_ = pgsqlgen.RetireTemplateInstancesForAppParams(sqlitegen.RetireTemplateInstancesForAppParams{})
+	_ = sqlitegen.ServerInOrganizationParams(pgsqlgen.ServerInOrganizationParams{})
+	_ = pgsqlgen.ServerInOrganizationParams(sqlitegen.ServerInOrganizationParams{})
 	_ = sqlitegen.Rollout(pgsqlgen.Rollout{})
 	_ = pgsqlgen.Rollout(sqlitegen.Rollout{})
 	_ = sqlitegen.InsertRolloutParams(pgsqlgen.InsertRolloutParams{})

@@ -63,6 +63,10 @@ func (sqliteQuerier) ListLiveTemplateInstances(ctx context.Context, db backend.D
 	return sqlitegen.New(db).ListLiveTemplateInstances(ctx, orgID)
 }
 
+func (sqliteQuerier) ListLiveTemplateInstancesOnOrgServers(ctx context.Context, db backend.DBTX, orgID string) ([]instanceRow, error) {
+	return sqlitegen.New(db).ListLiveTemplateInstancesOnOrgServers(ctx, orgID)
+}
+
 func (sqliteQuerier) MarkTemplateInstanceSaved(ctx context.Context, db backend.DBTX, p savedParams) error {
 	return sqlitegen.New(db).MarkTemplateInstanceSaved(ctx, p)
 }

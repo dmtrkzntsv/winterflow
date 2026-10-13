@@ -25,6 +25,7 @@ type (
 	featureRow         = sqlitegen.ServerFeature
 	registrationRow    = sqlitegen.ServerRegistration
 	ownsParams         = sqlitegen.UserOwnsServerParams
+	inOrgParams        = sqlitegen.ServerInOrganizationParams
 	insertServerParams = sqlitegen.InsertServerParams
 	touchParams        = sqlitegen.TouchServerLastSeenParams
 	capabilityParams   = sqlitegen.UpsertCapabilityParams
@@ -40,6 +41,7 @@ type querier interface {
 	ListFeaturesByUser(ctx context.Context, db backend.DBTX, userID string) ([]featureRow, error)
 	ListServerUserIDs(ctx context.Context, db backend.DBTX, serverID string) ([]string, error)
 	UserOwnsServer(ctx context.Context, db backend.DBTX, p ownsParams) (bool, error)
+	ServerInOrganization(ctx context.Context, db backend.DBTX, p inOrgParams) (bool, error)
 	HasAnyServer(ctx context.Context, db backend.DBTX) (bool, error)
 	GetFirstServerID(ctx context.Context, db backend.DBTX) (string, error)
 	InsertServer(ctx context.Context, db backend.DBTX, p insertServerParams) error
@@ -160,6 +162,12 @@ func (r *Repo) GetServerUserIDs(ctx context.Context, serverID string) ([]string,
 // organizations. Unknown server or non-member: false, no error.
 func (r *Repo) UserOwnsServer(ctx context.Context, userID, serverID string) (bool, error) {
 	return r.q.UserOwnsServer(ctx, r.tx.Querier(ctx), ownsParams{ServerID: serverID, UserID: userID})
+}
+
+// ServerInOrg reports whether the server belongs to orgID. Unknown server:
+// false, no error.
+func (r *Repo) ServerInOrg(ctx context.Context, serverID, orgID string) (bool, error) {
+	return r.q.ServerInOrganization(ctx, r.tx.Querier(ctx), inOrgParams{ServerID: serverID, OrganizationID: orgID})
 }
 
 // HasAnyServer reports whether any server has been claimed.

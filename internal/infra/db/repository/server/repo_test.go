@@ -170,6 +170,14 @@ func TestOwnershipAndPresence(t *testing.T) {
 			t.Errorf("UserOwnsServer(%s, %s) = %v, %v", c.user, c.server, got, err)
 		}
 	}
+	for _, c := range []struct {
+		server, org string
+		want        bool
+	}{{srv1, org1, true}, {srv1, org2, false}, {srv2, org1, false}} {
+		if got, err := repo.ServerInOrg(ctx, c.server, c.org); got != c.want || err != nil {
+			t.Errorf("ServerInOrg(%s, %s) = %v, %v", c.server, c.org, got, err)
+		}
+	}
 }
 
 func TestTouchLastSeenAndGetCapability(t *testing.T) {

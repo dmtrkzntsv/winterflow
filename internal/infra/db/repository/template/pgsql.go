@@ -87,7 +87,14 @@ func (pgsqlQuerier) GetLiveTemplateInstance(ctx context.Context, db backend.DBTX
 }
 
 func (pgsqlQuerier) ListLiveTemplateInstances(ctx context.Context, db backend.DBTX, orgID string) ([]instanceRow, error) {
-	rows, err := pgsqlgen.New(db).ListLiveTemplateInstances(ctx, orgID)
+	return instanceRows(pgsqlgen.New(db).ListLiveTemplateInstances(ctx, orgID))
+}
+
+func (pgsqlQuerier) ListLiveTemplateInstancesOnOrgServers(ctx context.Context, db backend.DBTX, orgID string) ([]instanceRow, error) {
+	return instanceRows(pgsqlgen.New(db).ListLiveTemplateInstancesOnOrgServers(ctx, orgID))
+}
+
+func instanceRows(rows []pgsqlgen.TemplateInstance, err error) ([]instanceRow, error) {
 	if err != nil {
 		return nil, err
 	}

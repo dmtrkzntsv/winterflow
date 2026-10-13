@@ -58,6 +58,7 @@ type querier interface {
 	ClaimTemplateInstance(ctx context.Context, db backend.DBTX, p claimParams) (int64, error)
 	GetLiveTemplateInstance(ctx context.Context, db backend.DBTX, p liveParams) (instanceRow, error)
 	ListLiveTemplateInstances(ctx context.Context, db backend.DBTX, orgID string) ([]instanceRow, error)
+	ListLiveTemplateInstancesOnOrgServers(ctx context.Context, db backend.DBTX, orgID string) ([]instanceRow, error)
 	MarkTemplateInstanceSaved(ctx context.Context, db backend.DBTX, p savedParams) error
 	SetTemplateInstanceState(ctx context.Context, db backend.DBTX, p stateParams) error
 	SetTemplateInstanceError(ctx context.Context, db backend.DBTX, p errorParams) error
@@ -324,7 +325,16 @@ func (r *Repo) RetireForApp(ctx context.Context, serverID, appID string) error {
 
 // ListInstances returns the org's pending and created instances.
 func (r *Repo) ListInstances(ctx context.Context, orgID string) ([]model.Instance, error) {
-	rows, err := r.q.ListLiveTemplateInstances(ctx, r.tx.Querier(ctx), orgID)
+	return hydrateInstances(r.q.ListLiveTemplateInstances(ctx, r.tx.Querier(ctx), orgID))
+}
+
+// ListInstancesOnOrgServers returns the org's pending and created
+// instances on the org's own servers.
+func (r *Repo) ListInstancesOnOrgServers(ctx context.Context, orgID string) ([]model.Instance, error) {
+	return hydrateInstances(r.q.ListLiveTemplateInstancesOnOrgServers(ctx, r.tx.Querier(ctx), orgID))
+}
+
+func hydrateInstances(rows []instanceRow, err error) ([]model.Instance, error) {
 	if err != nil {
 		return nil, err
 	}

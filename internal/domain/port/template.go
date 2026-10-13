@@ -46,6 +46,9 @@ type TemplateRepository interface {
 	// ListInstances returns the org's pending and created instances,
 	// oldest first.
 	ListInstances(ctx context.Context, orgID string) ([]model.Instance, error)
+	// ListInstancesOnOrgServers is ListInstances without an instance whose
+	// server is not the org's: what a rollout of the org may touch.
+	ListInstancesOnOrgServers(ctx context.Context, orgID string) ([]model.Instance, error)
 	// MarkSaved records a save the agent confirmed: revision, values and
 	// state created, last error cleared. A deleted or unlinked instance is
 	// left alone.

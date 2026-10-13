@@ -149,6 +149,9 @@ type Querier interface {
 	ListFeaturesByUser(ctx context.Context, userID string) ([]ServerFeature, error)
 	ListFiringAlertStates(ctx context.Context) ([]ListFiringAlertStatesRow, error)
 	ListLiveTemplateInstances(ctx context.Context, orgID string) ([]TemplateInstance, error)
+	// The org's pending and created instances on the org's own servers: what a
+	// rollout of the org may touch.
+	ListLiveTemplateInstancesOnOrgServers(ctx context.Context, orgID string) ([]TemplateInstance, error)
 	ListMetricSamples(ctx context.Context, arg ListMetricSamplesParams) ([]MetricSample, error)
 	ListMetricSamplesInRange(ctx context.Context, arg ListMetricSamplesInRangeParams) ([]MetricSample, error)
 	ListNotificationChannels(ctx context.Context, organizationID string) ([]NotificationChannel, error)
@@ -208,6 +211,9 @@ type Querier interface {
 	// The app was deleted outside the instance routes: its instance's key
 	// stays retired.
 	RetireTemplateInstancesForApp(ctx context.Context, arg RetireTemplateInstancesForAppParams) error
+	// Whether the server belongs to the organization (instance routes act for
+	// the caller's primary organization only).
+	ServerInOrganization(ctx context.Context, arg ServerInOrganizationParams) (bool, error)
 	SetAlertEventDeliveries(ctx context.Context, arg SetAlertEventDeliveriesParams) error
 	SetTemplateInstanceError(ctx context.Context, arg SetTemplateInstanceErrorParams) error
 	SetTemplateInstanceState(ctx context.Context, arg SetTemplateInstanceStateParams) error

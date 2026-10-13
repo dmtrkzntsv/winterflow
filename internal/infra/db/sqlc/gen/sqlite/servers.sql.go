@@ -310,6 +310,24 @@ func (q *Queries) ListServersByUser(ctx context.Context, userID string) ([]Serve
 	return items, nil
 }
 
+const serverInOrganization = `-- name: ServerInOrganization :one
+SELECT EXISTS (SELECT 1 FROM servers WHERE server_id = ? AND organization_id = ?)
+`
+
+type ServerInOrganizationParams struct {
+	ServerID       string
+	OrganizationID string
+}
+
+// Whether the server belongs to the organization (instance routes act for
+// the caller's primary organization only).
+func (q *Queries) ServerInOrganization(ctx context.Context, arg ServerInOrganizationParams) (bool, error) {
+	row := q.db.QueryRowContext(ctx, serverInOrganization, arg.ServerID, arg.OrganizationID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const touchServerLastSeen = `-- name: TouchServerLastSeen :exec
 UPDATE servers SET last_seen = ? WHERE server_id = ?
 `

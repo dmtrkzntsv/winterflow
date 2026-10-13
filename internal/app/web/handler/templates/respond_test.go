@@ -128,3 +128,5 @@ func TestInstanceRoutesFailClosed(t *testing.T) {
 type allServers struct{}
 
 func (allServers) UserOwnsServer(context.Context, string, string) (bool, error) { return true, nil }
+
+func (allServers) ServerInOrg(context.Context, string, string) (bool, error) { return true, nil }

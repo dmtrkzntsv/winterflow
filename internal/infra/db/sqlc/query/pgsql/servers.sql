@@ -30,6 +30,11 @@ SELECT EXISTS (
       AND organization_id IN (SELECT organization_id FROM organization_users WHERE user_id = $2)
 );
 
+-- name: ServerInOrganization :one
+-- Whether the server belongs to the organization (instance routes act for
+-- the caller's primary organization only).
+SELECT EXISTS (SELECT 1 FROM servers WHERE server_id = $1 AND organization_id = $2);
+
 -- name: HasAnyServer :one
 SELECT EXISTS (SELECT 1 FROM servers);
 

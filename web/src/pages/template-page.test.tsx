@@ -12,6 +12,7 @@ import { fakeAPI } from "@/test/fake-api";
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
 vi.mock("@/layouts/use-app-layout", () => ({ useAppBreadcrumbs: () => {} }));
+vi.mock("@/context/use-servers", () => ({ useServers: () => ({ servers: [{ id: "s1", name: "alpha" }] }) }));
 vi.mock("@/components/code-editor", () => ({
   CodeEditor: ({ value, onChange, filename }: { value: string; onChange?: (v: string) => void; filename?: string }) => (
     <textarea aria-label={`Content of ${filename || "file"}`} value={value} onChange={(e) => onChange?.(e.target.value)} />
@@ -59,7 +60,7 @@ const notifications = { connected: true, subscribe: () => () => {}, waitFor: vi.
 
 function renderPage(url: string, state?: unknown) {
   return render(
-    <MemoryRouter initialEntries={[{ pathname: url, state }]}>
+    <MemoryRouter initialEntries={[state ? { pathname: url, state } : url]}>
       <NotificationsContext.Provider value={notifications}>
         <Routes>
           <Route path="/org/templates" element={<p>the list</p>} />
@@ -236,5 +237,44 @@ describe("TemplatePage", () => {
     expect(screen.getByLabelText("Template name")).toHaveValue("shop-front");
     expect(screen.getByText("Redirects aren't part of templates; they were left out.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save template" })).toBeEnabled();
+  });
+
+  it("has the revisions and the instances in tabs; Upgrade refreshes the instances only", async () => {
+    const user = userEvent.setup();
+    const at = (revision: number) => ({
+      key: "k1",
+      server_id: "s1",
+      app_id: "a1",
+      template_id: "t1",
+      template_name: "twillingate",
+      revision,
+      parameters: { NAME: "bakomi", PORT: "8081", VERSION: "1.0" },
+      secrets: null,
+      state: "created",
+      status_code: 1,
+      last_error: "",
+      created_at: "2026-10-12T10:00:00Z",
+      updated_at: "2026-10-12T10:00:00Z",
+    });
+    let instances = [at(2)];
+    const api = fakeAPI({
+      "/api/v1/template/get-template": view(3),
+      "/api/v1/instance/get-instances": () => ({ instances }),
+      "/api/v1/instance/upgrade-instance": () => {
+        instances = [at(3)];
+        return { instance: at(3), request_id: "", warnings: [] };
+      },
+    });
+    renderPage("/org/templates/t1?tab=instances");
+    await user.click(await screen.findByRole("button", { name: "Upgrade" }));
+    await user.click(await screen.findByRole("button", { name: "Upgrade to r3" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Upgrade" })).not.toBeInTheDocument());
+    expect(screen.getByText("r3")).toBeInTheDocument();
+    expect(api.calls.filter((c) => c.path === "/api/v1/template/get-template")).toHaveLength(1);
+
+    await user.click(screen.getByRole("tab", { name: "Revisions" }));
+    expect(await screen.findByRole("button", { name: "Changes from r2" })).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "Editor" }));
+    expect(screen.getByLabelText("Template name")).toHaveValue("twillingate");
   });
 });

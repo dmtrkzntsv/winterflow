@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -19,23 +20,30 @@ import {
 import { InlineError } from "@/components/inline-error";
 import { NotFound } from "@/components/not-found";
 import { TemplateEditor } from "@/components/template-editor";
+import { TemplateInstances } from "@/components/template-instances";
+import { TemplateRevisions } from "@/components/template-revisions";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
 import { useAppBreadcrumbs } from "@/layouts/use-app-layout";
 import { bodyFromDraft, draftFromBody, draftProblem, emptyDraft, type TemplateDraft } from "@/lib/template-draft";
 import { ApiError, type InstanceView, type TemplateView } from "@/lib/templates";
+
+const TABS = ["editor", "revisions", "instances"] as const;
 
 // DraftState is what "Save as template" hands the new template's editor.
 export type DraftState = { draft: TemplateDraft; notes: string[] };
 
 // TemplatePage is one template (/org/templates/:templateId) or a new one
 // (/org/templates/new, optionally prefilled by Save as template): its
-// editor, where Save adds a revision.
+// editor, where Save adds a revision, its revisions with their changes and
+// the apps it runs as. The tab lives in ?tab=.
 export default function TemplatePage() {
   const { templateId } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
   const api = useTemplatesApi();
   const prefill = (location.state as DraftState | null) ?? null;
+  const [params, setParams] = useSearchParams();
+  const tab = (TABS as readonly string[]).includes(params.get("tab") ?? "") ? params.get("tab")! : "editor";
 
   const [view, setView] = useState<TemplateView | null>(null);
   const [instances, setInstances] = useState<InstanceView[]>([]);
@@ -72,6 +80,11 @@ export default function TemplatePage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // reloadInstances follows an upgrade without touching the editor.
+  const reloadInstances = useCallback(() => {
+    if (templateId) api.listInstances({ templateId }).then(setInstances, () => {});
+  }, [api, templateId]);
 
   const dirty = JSON.stringify(draft) !== baseline;
 
@@ -146,6 +159,32 @@ export default function TemplatePage() {
   }
 
   const live = instances.length;
+  const editor = (
+    <>
+      <div className="sticky top-0 z-10 -mx-4 flex flex-wrap items-center gap-2 border-b bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+        {conflict !== null ? (
+          <p role="alert" className="mr-auto flex items-center gap-2 text-sm text-destructive">
+            Someone saved r{conflict} meanwhile; reload to get it (your changes here are dropped).
+            <Button size="sm" variant="outline" onClick={() => void load()}>
+              Reload
+            </Button>
+          </p>
+        ) : (
+          <Input
+            aria-label="Revision note"
+            value={note}
+            placeholder="What changed (optional)"
+            className="mr-auto max-w-md"
+            onChange={(e) => setNote(e.target.value)}
+          />
+        )}
+        <Button onClick={() => void save()} disabled={saving || (!dirty && !!view) || conflict !== null}>
+          {saving ? "Saving…" : view ? `Save as r${view.latest_revision + 1}` : "Save template"}
+        </Button>
+      </div>
+      <TemplateEditor draft={draft} onChange={setDraft} />
+    </>
+  );
 
   return (
     <div className="mx-auto w-full max-w-5xl space-y-4">
@@ -195,28 +234,26 @@ export default function TemplatePage() {
         </ul>
       ) : null}
 
-      <div className="sticky top-0 z-10 -mx-4 flex flex-wrap items-center gap-2 border-b bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80">
-        {conflict !== null ? (
-          <p role="alert" className="mr-auto flex items-center gap-2 text-sm text-destructive">
-            Someone saved r{conflict} meanwhile; reload to get it (your changes here are dropped).
-            <Button size="sm" variant="outline" onClick={() => void load()}>
-              Reload
-            </Button>
-          </p>
-        ) : (
-          <Input
-            aria-label="Revision note"
-            value={note}
-            placeholder="What changed (optional)"
-            className="mr-auto max-w-md"
-            onChange={(e) => setNote(e.target.value)}
-          />
-        )}
-        <Button onClick={() => void save()} disabled={saving || (!dirty && !!view) || conflict !== null}>
-          {saving ? "Saving…" : view ? `Save as r${view.latest_revision + 1}` : "Save template"}
-        </Button>
-      </div>
-      <TemplateEditor draft={draft} onChange={setDraft} />
+      {view ? (
+        <Tabs value={tab} onValueChange={(v) => setParams(v === "editor" ? {} : { tab: v }, { replace: true })}>
+          <TabsList>
+            <TabsTrigger value="editor">Editor</TabsTrigger>
+            <TabsTrigger value="revisions">Revisions</TabsTrigger>
+            <TabsTrigger value="instances">Instances</TabsTrigger>
+          </TabsList>
+          <TabsContent value="editor" className="mt-4">
+            {editor}
+          </TabsContent>
+          <TabsContent value="revisions" className="mt-4">
+            <TemplateRevisions view={view} />
+          </TabsContent>
+          <TabsContent value="instances" className="mt-4">
+            <TemplateInstances view={view} instances={instances} onChanged={reloadInstances} />
+          </TabsContent>
+        </Tabs>
+      ) : (
+        editor
+      )}
     </div>
   );
 }

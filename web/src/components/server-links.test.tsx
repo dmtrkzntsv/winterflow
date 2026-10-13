@@ -106,7 +106,7 @@ describe("server-scoped links", () => {
   it("opens the create page of the active server", async () => {
     const user = userEvent.setup();
     renderAt("/server/s1");
-    await user.click(screen.getByRole("button", { name: /New App/ }));
+    await user.click(screen.getByRole("button", { name: "Add app" }));
     expect(await screen.findByText("create page")).toBeInTheDocument();
   });
 

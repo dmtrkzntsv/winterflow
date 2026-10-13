@@ -108,6 +108,11 @@ describe("CreateFromTemplatePage", () => {
     expect(screen.getByLabelText("MEMORY_MAX")).toHaveAttribute("placeholder", "Default: 256m");
     await user.type(screen.getByLabelText("NAME"), "Shop");
     expect(screen.getByText("Must match ^[a-z]{3,20}$")).toBeInTheDocument();
+    // Marked invalid (red border) and pointing at its message.
+    expect(screen.getByLabelText("NAME")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByLabelText("NAME")).toHaveClass("border-destructive");
+    expect(screen.getByLabelText("NAME")).toHaveAccessibleDescription("Must match ^[a-z]{3,20}$");
+    expect(screen.getByLabelText("MEMORY_MAX")).not.toHaveAttribute("aria-invalid");
     expect(screen.queryByText("Required")).not.toBeInTheDocument();
   });
 

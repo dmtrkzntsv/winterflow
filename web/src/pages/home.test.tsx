@@ -12,14 +12,14 @@ vi.mock("@/components/app-grid", () => ({ AppGrid: () => <div data-testid="grid"
 vi.mock("@/components/server-creation-dialog", () => ({ ServerSelectionDialog: () => null }));
 
 describe("HomePage", () => {
-  it("is the apps page: title with New App, server strip above the grid", () => {
+  it("is the apps page: title with Add app, server strip above the grid", () => {
     render(
       <MemoryRouter>
         <HomePage />
       </MemoryRouter>,
     );
     const title = screen.getByRole("heading", { level: 1, name: "Apps" });
-    expect(title.parentElement).toContainElement(screen.getByRole("button", { name: /New App/ }));
+    expect(title.parentElement).toContainElement(screen.getByRole("button", { name: "Add app" }));
     const strip = screen.getByTestId("strip");
     const grid = screen.getByTestId("grid");
     expect(strip.compareDocumentPosition(grid) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();

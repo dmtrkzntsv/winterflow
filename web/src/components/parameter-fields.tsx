@@ -1,6 +1,7 @@
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PasswordInput } from "@/components/ui/password-input";
+import { cn } from "@/lib/utils";
 import { fieldErrors, requiredFirst } from "@/lib/template-params";
 import type { Parameter } from "@/lib/templates";
 
@@ -27,6 +28,13 @@ export function ParameterFields({ params, values, onChange, kept = [], showRequi
         const err = errors[p.name] ?? "";
         const shown = err !== "" && (err !== "Required" || showRequired);
         const value = values[p.name] ?? "";
+        // An invalid field gets the red border (the vendored inputs don't
+        // style aria-invalid) and points at its message.
+        const invalid = {
+          "aria-invalid": shown || undefined,
+          "aria-describedby": shown ? `${id}-error` : undefined,
+          className: cn(shown && "border-destructive focus-visible:ring-destructive"),
+        };
         return (
           <div key={p.name} className="grid gap-1.5">
             <Label htmlFor={id} className="font-mono">
@@ -45,7 +53,7 @@ export function ParameterFields({ params, values, onChange, kept = [], showRequi
                 value={value}
                 autoComplete="new-password"
                 placeholder={kept.includes(p.name) ? "Stored, leave blank to keep" : "Encrypted in your browser"}
-                aria-invalid={shown || undefined}
+                {...invalid}
                 onChange={(e) => onChange(p.name, e.target.value)}
               />
             ) : (
@@ -53,14 +61,18 @@ export function ParameterFields({ params, values, onChange, kept = [], showRequi
                 id={id}
                 aria-label={p.name}
                 value={value}
-                className="font-mono"
                 placeholder={p.default ? `Default: ${p.default}` : undefined}
-                aria-invalid={shown || undefined}
+                {...invalid}
+                className={cn("font-mono", invalid.className)}
                 onChange={(e) => onChange(p.name, e.target.value)}
               />
             )}
             {p.description ? <p className="text-xs text-muted-foreground">{p.description}</p> : null}
-            {shown ? <p className="text-xs text-destructive">{err}</p> : null}
+            {shown ? (
+              <p id={`${id}-error`} className="text-xs text-destructive">
+                {err}
+              </p>
+            ) : null}
           </div>
         );
       })}

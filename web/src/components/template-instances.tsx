@@ -15,7 +15,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { AppStatusBadge } from "@/components/app-status-badge";
+import { AppStatusIndicator } from "@/components/app-status-badge";
 import { ErrorText } from "@/components/error-text";
 import { UpgradeInstanceDialog } from "@/components/upgrade-instance-dialog";
 import { useServers } from "@/context/use-servers";
@@ -97,7 +97,7 @@ export function TemplateInstances({
                   Not created yet
                 </Badge>
               ) : (
-                <AppStatusBadge status={inst.status_code} />
+                <AppStatusIndicator status={inst.status_code} />
               )}
               {behind ? (
                 <Button size="sm" variant="outline" onClick={() => setUpgrading(inst)}>
@@ -115,8 +115,7 @@ export function TemplateInstances({
                     <AlertDialogHeader>
                       <AlertDialogTitle>Delete {name}?</AlertDialogTitle>
                       <AlertDialogDescription>
-                        Its deploy never succeeded. Deleting removes whatever it left on {serverName(inst.server_id)};
-                        its key can't be used again.
+                        Its deploy never succeeded. Deleting removes whatever it left on {serverName(inst.server_id)}.
                       </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>

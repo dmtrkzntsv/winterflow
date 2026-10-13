@@ -102,7 +102,8 @@ describe("TemplateInstances", () => {
     expect(within(rows[0]).getByRole("link", { name: "bakomi" })).toHaveAttribute("href", "/server/s1/app/a1");
     expect(rows[0]).toHaveTextContent("on alpha");
     expect(rows[0]).toHaveTextContent("r2 · behind");
-    expect(within(rows[0]).getByText("Running")).toBeInTheDocument();
+    // The quiet dot the app pages use, not a filled pill.
+    expect(within(rows[0]).getByText("Running").querySelector(".bg-emerald-500")).not.toBeNull();
     expect(within(rows[1]).getByText("Not created yet")).toHaveAttribute("title", "pull failed");
     expect(within(rows[1]).queryByRole("button", { name: "Upgrade" })).not.toBeInTheDocument();
   });
@@ -208,6 +209,8 @@ describe("TemplateInstances", () => {
     expect(within(rows[1]).getByText("pull access denied")).toBeInTheDocument();
     await user.click(within(rows[1]).getByRole("button", { name: "Delete" }));
     const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveTextContent("Its deploy never succeeded. Deleting removes whatever it left on alpha.");
+    expect(dialog).not.toHaveTextContent(/key/i);
     expect(api.calls).toEqual([]);
     await user.click(within(dialog).getByRole("button", { name: "Delete" }));
     await waitFor(() => expect(onChanged).toHaveBeenCalled());

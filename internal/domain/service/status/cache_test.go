@@ -159,3 +159,27 @@ func TestVarsRevision(t *testing.T) {
 		t.Fatal("revision expired with liveness")
 	}
 }
+
+func TestLatestReportKeepsTimeAndRevision(t *testing.T) {
+	c := NewCache(60 * time.Second)
+	now := time.Unix(1000, 0)
+	if _, ok := c.LatestReport("srv-1", now); ok {
+		t.Fatal("a report before any arrived")
+	}
+	rev := int64(7)
+	apps := []command.AppStatus{{AppID: "a1", StatusCode: command.ContainerStatusActive, StaleVars: []string{"SMTP_PASS"}}}
+	c.SetAppReport("srv-1", apps, &rev, now)
+	got, ok := c.LatestReport("srv-1", now.Add(10*time.Second))
+	if !ok || !got.Received.Equal(now) || !got.HasRevision || got.VarsRevision != 7 || len(got.Apps) != 1 || got.Apps[0].StaleVars[0] != "SMTP_PASS" {
+		t.Fatalf("report = %+v, %v", got, ok)
+	}
+	// An agent predating shared variables reports no revision.
+	c.SetAppStatus("srv-1", apps, now.Add(20*time.Second))
+	got, _ = c.LatestReport("srv-1", now.Add(20*time.Second))
+	if got.HasRevision || !got.Received.Equal(now.Add(20*time.Second)) {
+		t.Fatalf("report without a revision = %+v", got)
+	}
+	if _, ok := c.LatestReport("srv-1", now.Add(81*time.Second)); ok {
+		t.Fatal("an expired report is still served")
+	}
+}

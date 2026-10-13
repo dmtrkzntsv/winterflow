@@ -270,21 +270,40 @@ func TestListInstancesAndBehind(t *testing.T) {
 	}
 }
 
-// A rollout of an org touches only instances on the org's own servers.
-func TestListInstancesOnOrgServers(t *testing.T) {
+// An upgrade rollout of an org touches only the template's created
+// instances below the target revision on the org's own servers, oldest
+// first.
+func TestListUpgradableInstances(t *testing.T) {
 	r, _ := newRepo(t)
 	ctx := dbtest.Ctx(t)
 	mustCreate(t, r, org1, tpl1, "shop")
-	_, _, _ = r.ClaimInstance(ctx, instance(1, "own"))
-	stray := instance(2, "stray")
-	stray.ServerID = srv2 // org2's server
-	_, _, _ = r.ClaimInstance(ctx, stray)
-	if all, _ := r.ListInstances(ctx, org1); len(all) != 2 {
-		t.Fatalf("all = %+v", all)
+	mustCreate(t, r, org1, tpl2, "blog")
+	created := func(inst model.Instance, rev int64) {
+		t.Helper()
+		if _, _, err := r.ClaimInstance(ctx, inst); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.MarkSaved(ctx, inst.ID, rev, inst.Params, inst.SecretNames); err != nil {
+			t.Fatal(err)
+		}
 	}
-	got, err := r.ListInstancesOnOrgServers(ctx, org1)
-	if err != nil || len(got) != 1 || got[0].Key != "own" {
-		t.Fatalf("on org1's servers = %+v, %v", got, err)
+	created(instance(1, "old"), 1)
+	created(instance(2, "older-next"), 1)
+	stray := instance(3, "stray")
+	stray.ServerID = srv2 // org2's server
+	created(stray, 1)
+	created(instance(4, "current"), 2)
+	other := instance(5, "other-template")
+	other.TemplateID = tpl2
+	created(other, 1)
+	_, _, _ = r.ClaimInstance(ctx, instance(6, "pending")) // never created
+
+	got, err := r.ListUpgradableInstances(ctx, org1, tpl1, 2)
+	if err != nil || len(got) != 2 || got[0].Key != "old" || got[1].Key != "older-next" {
+		t.Fatalf("upgradable = %+v, %v", got, err)
+	}
+	if got, err := r.ListUpgradableInstances(ctx, org2, tpl1, 2); err != nil || len(got) != 0 {
+		t.Fatalf("another org = %+v, %v", got, err)
 	}
 }
 

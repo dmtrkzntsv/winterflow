@@ -154,9 +154,6 @@ type Querier interface {
 	ListFeaturesByUser(ctx context.Context, userID string) ([]ServerFeature, error)
 	ListFiringAlertStates(ctx context.Context) ([]ListFiringAlertStatesRow, error)
 	ListLiveTemplateInstances(ctx context.Context, orgID string) ([]TemplateInstance, error)
-	// The org's pending and created instances on the org's own servers: what a
-	// rollout of the org may touch.
-	ListLiveTemplateInstancesOnOrgServers(ctx context.Context, orgID string) ([]TemplateInstance, error)
 	ListMetricSamples(ctx context.Context, arg ListMetricSamplesParams) ([]MetricSample, error)
 	ListMetricSamplesInRange(ctx context.Context, arg ListMetricSamplesInRangeParams) ([]MetricSample, error)
 	ListNotificationChannels(ctx context.Context, organizationID string) ([]NotificationChannel, error)
@@ -167,6 +164,8 @@ type Querier interface {
 	ListOrgServers(ctx context.Context, organizationID string) ([]ListOrgServersRow, error)
 	// Org- and server-level shared variables and their per-server ciphertexts.
 	ListOrgSharedVariables(ctx context.Context, orgID string) ([]SharedVariable, error)
+	// The ids of an organization's members (the audience of its rollout events).
+	ListOrgUserIDs(ctx context.Context, organizationID string) ([]string, error)
 	ListOrganizationMembers(ctx context.Context, organizationID string) ([]User, error)
 	// ListOversizedAlertOrganizations lists the orgs past the history cap. The
 	// literal is alert repository's EventsPerOrg (sqlc cannot bind a HAVING
@@ -195,6 +194,10 @@ type Querier interface {
 	ListTokensByUser(ctx context.Context, userID string) ([]UserToken, error)
 	// Alerts: channels, rules, overrides, states, events (see migration 0013).
 	ListUnseededOrganizationIDs(ctx context.Context) ([]string, error)
+	// The org's created instances of a template below a revision on the org's
+	// own servers, oldest first: what a template_upgrade rollout of the org may
+	// still touch.
+	ListUpgradableInstances(ctx context.Context, arg ListUpgradableInstancesParams) ([]TemplateInstance, error)
 	// LockOrganizationMember re-reads the caller's membership inside
 	// RemoveMember's transaction. SQLite has no row locks (its writers are
 	// serialized), so this is a plain SELECT; Postgres adds FOR UPDATE.

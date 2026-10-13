@@ -8,32 +8,25 @@ import (
 
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/port"
+	"winterflow/pkg/util"
 )
 
-// awaitResult waits for a dispatched command's result, at most uc.cmdWait;
+// awaitResult waits for a dispatched command's result, at most uc.t.Command;
 // a failed command is its error.
 func (uc *UseCase) awaitResult(ctx context.Context, ch <-chan port.CommandResult) (port.CommandResult, error) {
-	t := time.NewTimer(uc.cmdWait)
-	defer t.Stop()
-	select {
-	case res := <-ch:
-		if !res.Success {
-			if res.Error == "" {
-				res.Error = "the agent reported a failure"
-			}
-			return res, errors.New(res.Error)
-		}
-		return res, nil
-	case <-t.C:
-		return port.CommandResult{}, fmt.Errorf("no answer from the server within %s", uc.cmdWait)
-	case <-ctx.Done():
-		return port.CommandResult{}, ctx.Err()
+	res, ok := port.AwaitResult(ctx, ch, uc.t.Command)
+	switch {
+	case ok:
+		return res, res.Err()
+	case ctx.Err() != nil:
+		return res, ctx.Err()
 	}
+	return res, fmt.Errorf("no answer from the server within %s", uc.t.Command)
 }
 
-// awaitRunning waits, at most uc.health, until the app reads healthy on
+// awaitRunning waits, at most uc.t.Health, until the app reads healthy on
 // two status reports received after since whose receive times are at least
-// uc.healthSettle apart, and returns the last status seen for it. One
+// uc.t.HealthSettle apart, and returns the last status seen for it. One
 // healthy report is not enough: a crash-looping container reads running
 // between its restarts. The app-level code alone cannot tell either: the
 // agent aggregates a container that is restarting (a crash loop under a
@@ -48,7 +41,7 @@ func (uc *UseCase) awaitResult(ctx context.Context, ch <-chan port.CommandResult
 // (paused or created containers beside running ones) passes. A Docker
 // healthcheck's "unhealthy" is not seen: such a container reads running.
 func (uc *UseCase) awaitRunning(ctx context.Context, serverID, appID string, since time.Time) (command.AppStatus, error) {
-	deadline := uc.now().Add(uc.health)
+	deadline := uc.now().Add(uc.t.Health)
 	var (
 		last             command.AppStatus
 		reported, listed bool
@@ -69,33 +62,33 @@ func (uc *UseCase) awaitRunning(ctx context.Context, serverID, appID string, sin
 				healthyAt = time.Time{}
 			case healthyAt.IsZero():
 				healthyAt = rep.Received
-			case rep.Received.Sub(healthyAt) >= uc.healthSettle:
+			case rep.Received.Sub(healthyAt) >= uc.t.HealthSettle:
 				return last, nil
 			}
 		}
 		if !uc.now().Before(deadline) {
 			break
 		}
-		if !sleep(ctx, uc.healthPoll) {
+		if !util.Sleep(ctx, uc.t.HealthPoll) {
 			return last, ctx.Err()
 		}
 	}
 	switch {
 	case !reported:
-		return last, fmt.Errorf("the server sent no status report within %s", uc.health)
+		return last, fmt.Errorf("the server sent no status report within %s", uc.t.Health)
 	case !listed:
-		return last, fmt.Errorf("the app has no containers %s later", uc.health)
+		return last, fmt.Errorf("the app has no containers %s later", uc.t.Health)
 	}
 	j := judgeApp(last)
 	switch {
 	case j.reason != "":
-		return last, fmt.Errorf("%s %s later", j.reason, uc.health)
+		return last, fmt.Errorf("%s %s later", j.reason, uc.t.Health)
 	case j.healthy:
-		return last, fmt.Errorf("the app read healthy on one status report only within %s", uc.health)
+		return last, fmt.Errorf("the app read healthy on one status report only within %s", uc.t.Health)
 	case last.StatusCode == command.ContainerStatusIdle:
 		return last, nil
 	}
-	return last, fmt.Errorf("the app is not running %s later (%s)", uc.health, statusWord(last.StatusCode))
+	return last, fmt.Errorf("the app is not running %s later (%s)", uc.t.Health, statusWord(last.StatusCode))
 }
 
 // judgment is a report's verdict on an app: healthy, or the reason it is

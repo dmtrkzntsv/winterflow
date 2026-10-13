@@ -58,14 +58,13 @@ func (k upgrader) next(ctx context.Context, r model.Rollout) (pick, error) {
 	if err != nil {
 		return pick{}, err
 	}
-	all, err := k.uc.d.Templates.ListInstancesOnOrgServers(ctx, r.OrgID)
+	all, err := k.uc.d.Templates.ListUpgradableInstances(ctx, r.OrgID, s.TemplateID, s.Revision)
 	if err != nil {
 		return pick{}, err
 	}
 	var todo []model.Instance
 	for _, inst := range all {
-		if inst.TemplateID == s.TemplateID && inst.State == model.InstanceCreated && inst.Revision < s.Revision &&
-			!slices.Contains(r.SkipIDs, inst.ID) {
+		if !slices.Contains(r.SkipIDs, inst.ID) {
 			todo = append(todo, inst)
 		}
 	}

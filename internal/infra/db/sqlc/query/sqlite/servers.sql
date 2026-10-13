@@ -23,6 +23,10 @@ ORDER BY f.server_id ASC, f.name ASC;
 SELECT user_id FROM organization_users
 WHERE organization_id IN (SELECT organization_id FROM servers WHERE server_id = ?);
 
+-- name: ListOrgUserIDs :many
+-- The ids of an organization's members (the audience of its rollout events).
+SELECT user_id FROM organization_users WHERE organization_id = ?;
+
 -- name: UserOwnsServer :one
 SELECT EXISTS (
     SELECT 1 FROM servers

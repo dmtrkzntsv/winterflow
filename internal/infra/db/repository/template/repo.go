@@ -42,6 +42,7 @@ type (
 	errorParams    = sqlitegen.SetTemplateInstanceErrorParams
 	forAppParams   = sqlitegen.GetLiveTemplateInstanceForAppParams
 	retireParams   = sqlitegen.RetireTemplateInstancesForAppParams
+	upgradeParams  = sqlitegen.ListUpgradableInstancesParams
 )
 
 type querier interface {
@@ -59,7 +60,7 @@ type querier interface {
 	ClaimTemplateInstance(ctx context.Context, db backend.DBTX, p claimParams) (int64, error)
 	GetLiveTemplateInstance(ctx context.Context, db backend.DBTX, p liveParams) (instanceRow, error)
 	ListLiveTemplateInstances(ctx context.Context, db backend.DBTX, orgID string) ([]instanceRow, error)
-	ListLiveTemplateInstancesOnOrgServers(ctx context.Context, db backend.DBTX, orgID string) ([]instanceRow, error)
+	ListUpgradableInstances(ctx context.Context, db backend.DBTX, p upgradeParams) ([]instanceRow, error)
 	MarkTemplateInstanceSaved(ctx context.Context, db backend.DBTX, p savedParams) error
 	SetTemplateInstanceState(ctx context.Context, db backend.DBTX, p stateParams) error
 	SetTemplateInstanceError(ctx context.Context, db backend.DBTX, p errorParams) error
@@ -333,10 +334,12 @@ func (r *Repo) ListInstances(ctx context.Context, orgID string) ([]model.Instanc
 	return hydrateInstances(r.q.ListLiveTemplateInstances(ctx, r.tx.Querier(ctx), orgID))
 }
 
-// ListInstancesOnOrgServers returns the org's pending and created
-// instances on the org's own servers.
-func (r *Repo) ListInstancesOnOrgServers(ctx context.Context, orgID string) ([]model.Instance, error) {
-	return hydrateInstances(r.q.ListLiveTemplateInstancesOnOrgServers(ctx, r.tx.Querier(ctx), orgID))
+// ListUpgradableInstances returns the org's created instances of
+// templateID below revision on the org's own servers, oldest first.
+func (r *Repo) ListUpgradableInstances(ctx context.Context, orgID, templateID string, revision int64) ([]model.Instance, error) {
+	return hydrateInstances(r.q.ListUpgradableInstances(ctx, r.tx.Querier(ctx), upgradeParams{
+		OrgID: orgID, TemplateID: &templateID, Revision: revision,
+	}))
 }
 
 func hydrateInstances(rows []instanceRow, err error) ([]model.Instance, error) {

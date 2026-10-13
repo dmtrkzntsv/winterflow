@@ -13,6 +13,7 @@ import (
 	appagent "winterflow/internal/app/agent"
 	"winterflow/internal/app/web"
 	"winterflow/internal/domain/dto"
+	"winterflow/internal/domain/usecase/rollouts"
 	"winterflow/internal/infra/bootstrap"
 	"winterflow/internal/infra/db"
 	"winterflow/internal/infra/db/backend"
@@ -83,15 +84,17 @@ func newEnv(t *testing.T) *env {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	b := membus.NewBus(testLog)
-	deps, _ := bootstrap.WireCore(ctx, b, conn, cfg, testLog)
+	// The fake agent reports every 50 ms, so a rollout step's two healthy
+	// reports need not be 20 s apart, nor polled every 5 s.
+	deps, _ := bootstrap.WireCore(ctx, b, conn, cfg, testLog, bootstrap.WithRolloutTiming(rollouts.Timing{
+		HealthSettle: 100 * time.Millisecond, HealthPoll: 50 * time.Millisecond,
+	}))
 	agent := newFakeAgent()
 	if err := appagent.NewInProcessBridge(b, cfg, agent, testLog).Start(ctx); err != nil {
 		t.Fatal(err)
 	}
 	// As BootstrapStandalone: the rollout worker starts once the bridge
-	// consumes. The fake agent reports every 50 ms, so a step's two healthy
-	// reports need not be 20 s apart.
-	deps.Rollouts.SetHealthSettle(100 * time.Millisecond)
+	// consumes.
 	bootstrap.StartRollouts(ctx, deps)
 
 	// Exclusive: no /auth/ request in any env may run while NewServer writes

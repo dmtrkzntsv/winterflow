@@ -362,53 +362,6 @@ func (q *Queries) ListLiveTemplateInstances(ctx context.Context, orgID string) (
 	return items, nil
 }
 
-const listLiveTemplateInstancesOnOrgServers = `-- name: ListLiveTemplateInstancesOnOrgServers :many
-SELECT i.id, i.org_id, i.instance_key, i.app_id, i.server_id, i.template_id, i.revision, i.params, i.secret_names, i.request_hash, i.state, i.last_error, i.created_at, i.updated_at FROM template_instances AS i
-JOIN servers AS s ON s.server_id = i.server_id AND s.organization_id = i.org_id
-WHERE i.org_id = $1 AND i.state IN ('pending', 'created')
-ORDER BY i.created_at ASC, i.id ASC
-`
-
-// The org's pending and created instances on the org's own servers: what a
-// rollout of the org may touch.
-func (q *Queries) ListLiveTemplateInstancesOnOrgServers(ctx context.Context, orgID string) ([]TemplateInstance, error) {
-	rows, err := q.db.QueryContext(ctx, listLiveTemplateInstancesOnOrgServers, orgID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []TemplateInstance{}
-	for rows.Next() {
-		var i TemplateInstance
-		if err := rows.Scan(
-			&i.ID,
-			&i.OrgID,
-			&i.InstanceKey,
-			&i.AppID,
-			&i.ServerID,
-			&i.TemplateID,
-			&i.Revision,
-			&i.Params,
-			&i.SecretNames,
-			&i.RequestHash,
-			&i.State,
-			&i.LastError,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, err
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listTemplateNames = `-- name: ListTemplateNames :many
 SELECT id, name FROM templates WHERE org_id = $1
 `
@@ -528,6 +481,60 @@ func (q *Queries) ListTemplates(ctx context.Context, orgID string) ([]ListTempla
 			&i.UpdatedAt,
 			&i.Instances,
 			&i.Behind,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUpgradableInstances = `-- name: ListUpgradableInstances :many
+SELECT i.id, i.org_id, i.instance_key, i.app_id, i.server_id, i.template_id, i.revision, i.params, i.secret_names, i.request_hash, i.state, i.last_error, i.created_at, i.updated_at FROM template_instances AS i
+JOIN servers AS s ON s.server_id = i.server_id AND s.organization_id = i.org_id
+WHERE i.org_id = $1 AND i.template_id = $2 AND i.state = 'created' AND i.revision < $3
+ORDER BY i.created_at ASC, i.id ASC
+`
+
+type ListUpgradableInstancesParams struct {
+	OrgID      string
+	TemplateID *string
+	Revision   int64
+}
+
+// The org's created instances of a template below a revision on the org's
+// own servers, oldest first: what a template_upgrade rollout of the org may
+// still touch.
+func (q *Queries) ListUpgradableInstances(ctx context.Context, arg ListUpgradableInstancesParams) ([]TemplateInstance, error) {
+	rows, err := q.db.QueryContext(ctx, listUpgradableInstances, arg.OrgID, arg.TemplateID, arg.Revision)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TemplateInstance{}
+	for rows.Next() {
+		var i TemplateInstance
+		if err := rows.Scan(
+			&i.ID,
+			&i.OrgID,
+			&i.InstanceKey,
+			&i.AppID,
+			&i.ServerID,
+			&i.TemplateID,
+			&i.Revision,
+			&i.Params,
+			&i.SecretNames,
+			&i.RequestHash,
+			&i.State,
+			&i.LastError,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}

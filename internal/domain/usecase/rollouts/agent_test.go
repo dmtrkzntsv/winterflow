@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -111,18 +112,8 @@ func (a *fakeAgent) report(serverID string) {
 	}
 	rev := a.varsRev[serverID]
 	a.mu.Unlock()
-	slices.SortFunc(apps, func(x, y command.AppStatus) int { return compare(x.AppID, y.AppID) })
+	slices.SortFunc(apps, func(x, y command.AppStatus) int { return strings.Compare(x.AppID, y.AppID) })
 	a.reports.set(serverID, status.Report{Apps: apps, VarsRevision: rev, HasRevision: true, Received: time.Now()})
-}
-
-func compare(a, b string) int {
-	switch {
-	case a < b:
-		return -1
-	case a > b:
-		return 1
-	}
-	return 0
 }
 
 func (a *fakeAgent) commands() []string {

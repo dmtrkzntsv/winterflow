@@ -74,12 +74,13 @@ SELECT * FROM template_instances
 WHERE org_id = $1 AND state IN ('pending', 'created')
 ORDER BY created_at ASC, id ASC;
 
--- name: ListLiveTemplateInstancesOnOrgServers :many
--- The org's pending and created instances on the org's own servers: what a
--- rollout of the org may touch.
+-- name: ListUpgradableInstances :many
+-- The org's created instances of a template below a revision on the org's
+-- own servers, oldest first: what a template_upgrade rollout of the org may
+-- still touch.
 SELECT i.* FROM template_instances AS i
 JOIN servers AS s ON s.server_id = i.server_id AND s.organization_id = i.org_id
-WHERE i.org_id = $1 AND i.state IN ('pending', 'created')
+WHERE i.org_id = $1 AND i.template_id = $2 AND i.state = 'created' AND i.revision < $3
 ORDER BY i.created_at ASC, i.id ASC;
 
 -- name: MarkTemplateInstanceSaved :exec

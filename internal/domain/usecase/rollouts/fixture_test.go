@@ -24,12 +24,8 @@ var (
 // fakeMembers: every org has members u1 and u2.
 type fakeMembers struct{}
 
-func (fakeMembers) ListMembers(context.Context, string) ([]model.Member, error) {
-	out := []model.Member{}
-	for _, id := range members {
-		out = append(out, model.Member{User: model.User{ID: id}})
-	}
-	return out, nil
+func (fakeMembers) GetOrgUserIDs(context.Context, string) ([]string, error) {
+	return slices.Clone(members), nil
 }
 
 // fakePublisher records rollout events (u1's copy of each).
@@ -123,20 +119,21 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	e := &env{d: d, repo: repo, tpl: tpl, pub: &fakePublisher{}, reports: &fakeReports{reports: map[string]status.Report{}}}
-	e.deps = Deps{Repo: repo, Templates: tpl, Status: e.reports, Members: fakeMembers{}, Notifications: e.pub, Log: dbtest.Log}
+	e.deps = Deps{Repo: repo, Templates: tpl, Status: e.reports, Members: fakeMembers{}, Notifications: e.pub, Log: dbtest.Log, Timing: testTiming}
 	e.uc = e.newUseCase()
 	return e
 }
 
-// newUseCase is another API process on the same database.
-func (e *env) newUseCase() *UseCase {
-	uc := New(e.deps)
-	// Times are stored to the second: a park shorter than that would be over
-	// at once, so the poll is just above one.
-	uc.renew, uc.idle, uc.settlePoll, uc.healthPoll = 10*time.Millisecond, time.Hour, 1100*time.Millisecond, 5*time.Millisecond
-	uc.health, uc.healthSettle, uc.settle = 200*time.Millisecond, 30*time.Millisecond, 200*time.Millisecond
-	return uc
+// testTiming is the fixtures' short bounds. Times are stored to the
+// second: a park shorter than that would be over at once, so the poll is
+// just above one.
+var testTiming = Timing{
+	Renew: 10 * time.Millisecond, Idle: time.Hour, SettlePoll: 1100 * time.Millisecond, HealthPoll: 5 * time.Millisecond,
+	Health: 200 * time.Millisecond, HealthSettle: 30 * time.Millisecond, Settle: 200 * time.Millisecond,
 }
+
+// newUseCase is another API process on the same database.
+func (e *env) newUseCase() *UseCase { return New(e.deps) }
 
 // get reads a rollout.
 func (e *env) get(t *testing.T, id string) model.Rollout {

@@ -6,7 +6,6 @@ package templates
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"time"
 
@@ -53,6 +52,9 @@ type Deps struct {
 	ServerStorageRepository port.ServerStorageRepository
 	StatusCache             *status.Cache
 	Rollouts                RolloutQueue
+	// Instances is the shared templates usecase (bootstrap.Deps.Instances);
+	// nil builds one from the fields above.
+	Instances *tuc.UseCase
 }
 
 // Handler serves the template and instance routes.
@@ -67,6 +69,15 @@ type Handler struct {
 
 // NewHandler wires the usecases.
 func NewHandler(d *Deps) *Handler {
+	uc := d.Instances
+	if uc == nil {
+		uc = newUseCase(d)
+	}
+	return &Handler{uc: uc, rollouts: d.Rollouts, users: d.Users, servers: d.Servers, log: d.Logger, waitBound: WaitBound}
+}
+
+// newUseCase builds a templates usecase from d's repositories.
+func newUseCase(d *Deps) *tuc.UseCase {
 	apps := appuc.NewUseCase(&appuc.Deps{
 		CommandDispatcher:       d.CommandDispatcher,
 		AppRepository:           d.AppRepository,
@@ -80,7 +91,7 @@ func NewHandler(d *Deps) *Handler {
 	if d.StatusCache != nil { // a nil *status.Cache must not become a non-nil interface
 		deps.Status = d.StatusCache
 	}
-	return &Handler{uc: tuc.New(deps), rollouts: d.Rollouts, users: d.Users, servers: d.Servers, log: d.Logger, waitBound: WaitBound}
+	return tuc.New(deps)
 }
 
 // callerOrg resolves the caller and their org, writing 401/400 itself.
@@ -90,11 +101,7 @@ func (h *Handler) callerOrg(w http.ResponseWriter, r *http.Request) (string, str
 
 // requireID answers 400 unless id is a template id.
 func requireID(w http.ResponseWriter, field, id string) bool {
-	if !tuc.ValidID(id) {
-		webutil.Error(w, field+" must be a template id", nil)
-		return false
-	}
-	return true
+	return webutil.RequireUUID(w, id, field+" must be a template id")
 }
 
 // serverCaller resolves the caller and their org and requires serverID
@@ -129,11 +136,5 @@ func (h *Handler) instanceCaller(w http.ResponseWriter, r *http.Request, serverI
 // 409, a fixable request 400 with its message, anything else a logged
 // generic 400.
 func (h *Handler) fail(w http.ResponseWriter, err error, what string) {
-	switch {
-	case errors.Is(err, model.ErrNotFound), errors.Is(err, model.ErrConflict), errors.Is(err, model.ErrRejected):
-		webutil.ErrorStatus(w, webutil.StatusFor(err), err.Error())
-	default:
-		h.log.Error("templates: "+what, "error", err)
-		webutil.Error(w, "failed to "+what, nil)
-	}
+	webutil.Fail(w, h.log, "templates", err, what)
 }

@@ -5,13 +5,11 @@ package rollouts
 
 import (
 	"context"
-	"errors"
 	"net/http"
 
 	"winterflow/internal/app/web/api"
 	webutil "winterflow/internal/app/web/util"
 	"winterflow/internal/domain/model"
-	tuc "winterflow/internal/domain/usecase/templates"
 	"winterflow/pkg/logger"
 )
 
@@ -87,8 +85,7 @@ func (h *Handler) GetRollouts(w http.ResponseWriter, r *http.Request) {
 		webutil.Error(w, "kind is required", nil)
 		return
 	}
-	if scopeKey != "" && !tuc.ValidID(scopeKey) {
-		webutil.Error(w, "scope_key must be a template or org id", nil)
+	if scopeKey != "" && !webutil.RequireUUID(w, scopeKey, "scope_key must be a template or org id") {
 		return
 	}
 	list, err := h.queue.List(r.Context(), orgID, kind, scopeKey)
@@ -105,11 +102,7 @@ func (h *Handler) StopRollout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req, ok := webutil.DecodeBody[RolloutIDRequest](w, r)
-	if !ok {
-		return
-	}
-	if !tuc.ValidID(req.ID) {
-		webutil.Error(w, "id must be a rollout id", nil)
+	if !ok || !webutil.RequireUUID(w, req.ID, "id must be a rollout id") {
 		return
 	}
 	v, err := h.queue.Stop(r.Context(), orgID, req.ID)
@@ -123,10 +116,5 @@ func (h *Handler) StopRollout(w http.ResponseWriter, r *http.Request) {
 // fail maps usecase errors: unknown (or another org's) 404, a fixable
 // request 400 with its message, anything else a logged generic 400.
 func (h *Handler) fail(w http.ResponseWriter, err error, what string) {
-	if errors.Is(err, model.ErrNotFound) || errors.Is(err, model.ErrRejected) {
-		webutil.ErrorStatus(w, webutil.StatusFor(err), err.Error())
-		return
-	}
-	h.log.Error("rollouts: "+what, "error", err)
-	webutil.Error(w, "failed to "+what, nil)
+	webutil.Fail(w, h.log, "rollouts", err, what)
 }

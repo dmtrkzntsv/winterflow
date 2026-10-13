@@ -126,11 +126,15 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 	})
 	usersAPI := huser.NewHandler(&huser.Deps{Logger: d.Log, Tokens: d.UserService, Users: d.UserService})
 	orgAPI := horg.NewHandler(&horg.Deps{Logger: d.Log, Users: d.UserService})
-	// A nil queue (the spec-only route table) must not become a non-nil
-	// interface.
-	var reloads svuc.ReloadQueue
+	// A nil rollout queue (the spec-only route table) must not become a
+	// non-nil interface in any of its consumers.
+	var (
+		reloads  svuc.ReloadQueue
+		upgrades htemplates.RolloutQueue
+		rollouts hrollouts.Queue
+	)
 	if d.Rollouts != nil {
-		reloads = d.Rollouts
+		reloads, upgrades, rollouts = d.Rollouts, d.Rollouts, d.Rollouts
 	}
 	sharedVarsAPI := hsharedvars.NewHandler(&hsharedvars.Deps{
 		Logger:              d.Log,
@@ -155,9 +159,10 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 		ServerDomainRepository:  d.ServerDomainRepository,
 		ServerStorageRepository: d.ServerStorageRepository,
 		StatusCache:             d.StatusCache,
-		Rollouts:                d.Rollouts,
+		Rollouts:                upgrades,
+		Instances:               d.Instances,
 	})
-	rolloutsAPI := hrollouts.NewHandler(&hrollouts.Deps{Logger: d.Log, Users: d.UserService, Rollouts: d.Rollouts})
+	rolloutsAPI := hrollouts.NewHandler(&hrollouts.Deps{Logger: d.Log, Users: d.UserService, Rollouts: rollouts})
 
 	routes := []api.Route{{
 		Method: http.MethodGet, Path: "/_/health", Handler: health, Auth: api.Public,

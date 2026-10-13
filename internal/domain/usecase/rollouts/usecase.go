@@ -8,7 +8,6 @@ package rollouts
 
 import (
 	"context"
-	"encoding/json"
 	"time"
 
 	"winterflow/internal/domain/model"
@@ -19,31 +18,62 @@ import (
 	"winterflow/pkg/util"
 )
 
-// Bounds. Every wait of a step is bounded; the idle worker costs one
-// indexed query a minute.
-const (
-	// leaseFor is how long a claim (or renewal) holds a rollout.
-	leaseFor = 2 * time.Minute
-	// renewEvery renews the lease well inside it.
-	renewEvery = 30 * time.Second
-	// idleTick is how often the idle worker looks for claimable work.
-	idleTick = time.Minute
-	// commandWait bounds a step's command (an image pull, a reload); the
+// Timing is the worker's bounds. Every wait of a step is bounded; the idle
+// worker costs one indexed query a minute. A zero field takes its default
+// (defaultTiming); tests shorten them.
+type Timing struct {
+	// Lease is how long a claim (or renewal) holds a rollout; Renew renews
+	// it well inside that.
+	Lease, Renew time.Duration
+	// Idle is how often the idle worker looks for claimable work.
+	Idle time.Duration
+	// Command bounds a step's command (an image pull, a reload); the
 	// agent's own bound is the same 10 minutes, so its timeout answer
 	// arrives first.
-	commandWait = 10*time.Minute + 30*time.Second
-	// healthWait bounds the wait for the app to report running.
-	healthWait = 5 * time.Minute
-	// healthPoll re-reads the status cache (memory only) while waiting.
-	healthPoll = time.Second
-	// healthSettle is how far apart the receive times of the two healthy
+	Command time.Duration
+	// Health bounds the wait for the app to report running; HealthPoll is
+	// how often the status cache (memory only) is re-read meanwhile.
+	Health, HealthPoll time.Duration
+	// HealthSettle is how far apart the receive times of the two healthy
 	// reports a step needs must be (the agent reports every 30 s, so the
 	// second is normally the next one).
-	healthSettle = 20 * time.Second
-	// settleWait is how long a vars_reload waits for a server to report
-	// the change it was pushed; settlePoll how often it looks.
-	settleWait = 5 * time.Minute
-	settlePoll = 5 * time.Second
+	HealthSettle time.Duration
+	// Settle is how long a vars_reload waits for a server to report the
+	// change it was pushed; SettlePoll how often it looks.
+	Settle, SettlePoll time.Duration
+}
+
+// defaultTiming is the production Timing.
+var defaultTiming = Timing{
+	Lease:        2 * time.Minute,
+	Renew:        30 * time.Second,
+	Idle:         time.Minute,
+	Command:      10*time.Minute + 30*time.Second,
+	Health:       5 * time.Minute,
+	HealthPoll:   5 * time.Second,
+	HealthSettle: 20 * time.Second,
+	Settle:       5 * time.Minute,
+	SettlePoll:   5 * time.Second,
+}
+
+// withDefaults is t with each zero field set to its default.
+func (t Timing) withDefaults() Timing {
+	for _, f := range []struct {
+		v   *time.Duration
+		def time.Duration
+	}{
+		{&t.Lease, defaultTiming.Lease}, {&t.Renew, defaultTiming.Renew}, {&t.Idle, defaultTiming.Idle},
+		{&t.Command, defaultTiming.Command}, {&t.Health, defaultTiming.Health}, {&t.HealthPoll, defaultTiming.HealthPoll},
+		{&t.HealthSettle, defaultTiming.HealthSettle}, {&t.Settle, defaultTiming.Settle}, {&t.SettlePoll, defaultTiming.SettlePoll},
+	} {
+		if *f.v == 0 {
+			*f.v = f.def
+		}
+	}
+	return t
+}
+
+const (
 	// keepEnded is how many ended rollouts a scope keeps.
 	keepEnded = 20
 	// notifyTimeout bounds the reads a notification needs.
@@ -66,10 +96,10 @@ type AppNames interface {
 	GetApp(ctx context.Context, appID string) (model.App, error)
 }
 
-// Members lists an org's users, the audience of rollout events
-// (port.UserService satisfies it).
+// Members lists an org's user ids, the audience of rollout events (the
+// server repository satisfies it).
 type Members interface {
-	ListMembers(ctx context.Context, orgID string) ([]model.Member, error)
+	GetOrgUserIDs(ctx context.Context, orgID string) ([]string, error)
 }
 
 // Publisher delivers one SSE notification to a user.
@@ -89,6 +119,8 @@ type Deps struct {
 	Members       Members
 	Notifications Publisher
 	Log           *logger.Logger
+	// Timing is the worker's bounds (zero: the defaults).
+	Timing Timing
 }
 
 // UseCase queues, lists and stops rollouts, and drives them (Run). Build
@@ -100,26 +132,17 @@ type UseCase struct {
 	wake  chan struct{}
 	kinds map[string]runner
 	now   func() time.Time
-
-	// Bounds, shortened by tests.
-	lease, renew, idle, cmdWait, health, healthPoll, healthSettle, settle, settlePoll time.Duration
+	t     Timing
 }
 
 // New builds the usecase; Run starts its worker.
 func New(d Deps) *UseCase {
 	uc := &UseCase{
-		d: d, owner: util.GenerateID(), wake: make(chan struct{}, 1), now: time.Now,
-		lease: leaseFor, renew: renewEvery, idle: idleTick, cmdWait: commandWait,
-		health: healthWait, healthPoll: healthPoll, healthSettle: healthSettle, settle: settleWait, settlePoll: settlePoll,
+		d: d, owner: util.GenerateID(), wake: make(chan struct{}, 1), now: time.Now, t: d.Timing.withDefaults(),
 	}
 	uc.kinds = map[string]runner{model.RolloutTemplateUpgrade: upgrader{uc}, model.RolloutVarsReload: reloader{uc}}
 	return uc
 }
-
-// SetHealthSettle shortens healthSettle for a test that drives the whole
-// stack (the contract suite, whose fake agent reports every 50 ms). Call it
-// before Run.
-func (uc *UseCase) SetHealthSettle(d time.Duration) { uc.healthSettle = d }
 
 // Wake makes the worker look for work now. It never blocks.
 func (uc *UseCase) Wake() {
@@ -166,8 +189,14 @@ func (uc *UseCase) List(ctx context.Context, orgID, kind, scopeKey string) ([]mo
 		return nil, err
 	}
 	out := make([]model.RolloutView, 0, len(list))
+	names := map[string]string{} // app id -> name: each app looked up once
 	for _, r := range list {
-		out = append(out, uc.view(ctx, r))
+		name, ok := names[r.CurrentAppID]
+		if !ok {
+			name = uc.appName(ctx, r.CurrentAppID)
+			names[r.CurrentAppID] = name
+		}
+		out = append(out, viewOf(r, name))
 	}
 	return out, nil
 }
@@ -180,17 +209,11 @@ func (uc *UseCase) Stop(ctx context.Context, orgID, id string) (model.RolloutVie
 	if err != nil {
 		return model.RolloutView{}, err
 	}
-	if ended {
-		uc.ended(ctx, id) // announces it and prunes the scope's old ones
-		r, err := uc.d.Repo.GetRollout(ctx, id)
-		if err != nil {
+	requested := false
+	if !ended {
+		if requested, err = uc.d.Repo.RequestStop(ctx, orgID, id); err != nil {
 			return model.RolloutView{}, err
 		}
-		return uc.view(ctx, r), nil
-	}
-	ok, err := uc.d.Repo.RequestStop(ctx, orgID, id)
-	if err != nil {
-		return model.RolloutView{}, err
 	}
 	r, err := uc.d.Repo.GetRollout(ctx, id)
 	if err != nil {
@@ -200,7 +223,10 @@ func (uc *UseCase) Stop(ctx context.Context, orgID, id string) (model.RolloutVie
 		return model.RolloutView{}, model.ErrRolloutNotFound
 	}
 	v := uc.view(ctx, r)
-	if ok {
+	switch {
+	case ended:
+		uc.ended(ctx, id) // announces it and prunes the scope's old ones
+	case requested:
 		uc.Wake()
 		uc.publish(ctx, orgID, v)
 	}
@@ -209,24 +235,35 @@ func (uc *UseCase) Stop(ctx context.Context, orgID, id string) (model.RolloutVie
 
 // view is a rollout as the API shows it.
 func (uc *UseCase) view(ctx context.Context, r model.Rollout) model.RolloutView {
+	return viewOf(r, uc.appName(ctx, r.CurrentAppID))
+}
+
+// viewOf is r as the API shows it, its app in flight named name.
+func viewOf(r model.Rollout, name string) model.RolloutView {
 	v := model.RolloutView{
 		ID: r.ID, Kind: r.Kind, ScopeKey: r.ScopeKey, State: string(r.State), StopRequested: r.StopRequested,
 		Done: r.Done, Skipped: r.Skipped, Total: r.Total, CurrentAppID: r.CurrentAppID,
-		CurrentServerID: r.CurrentServerID, Error: r.Error, CreatedAt: r.CreatedAt, CreatedBy: r.CreatedBy,
-		FinishedAt: r.FinishedAt,
+		CurrentServerID: r.CurrentServerID, CurrentAppName: name, Error: r.Error, CreatedAt: r.CreatedAt,
+		CreatedBy: r.CreatedBy, FinishedAt: r.FinishedAt,
 	}
 	if r.Kind == model.RolloutTemplateUpgrade {
-		var s model.UpgradeScope
-		if json.Unmarshal(r.Scope, &s) == nil {
+		if s, err := upgradeScope(r); err == nil {
 			v.Revision = s.Revision
 		}
 	}
-	if r.CurrentAppID != "" && uc.d.Apps != nil {
-		if app, err := uc.d.Apps.GetApp(ctx, r.CurrentAppID); err == nil {
-			v.CurrentAppName = app.Name
-		}
-	}
 	return v
+}
+
+// appName is the name of appID ("" when there is none or it is unknown).
+func (uc *UseCase) appName(ctx context.Context, appID string) string {
+	if appID == "" || uc.d.Apps == nil {
+		return ""
+	}
+	app, err := uc.d.Apps.GetApp(ctx, appID)
+	if err != nil {
+		return ""
+	}
+	return app.Name
 }
 
 // publish sends a rollout event to every member of the org.
@@ -234,13 +271,13 @@ func (uc *UseCase) publish(ctx context.Context, orgID string, v model.RolloutVie
 	if uc.d.Members == nil || uc.d.Notifications == nil {
 		return
 	}
-	members, err := uc.d.Members.ListMembers(ctx, orgID)
+	users, err := uc.d.Members.GetOrgUserIDs(ctx, orgID)
 	if err != nil {
 		uc.d.Log.Debug("rollout event: list members", "org_id", orgID, "error", err)
 		return
 	}
 	n := model.Notification{Type: model.NotificationRollout, Payload: v, Timestamp: uc.now()}
-	for _, m := range members {
-		uc.d.Notifications.Publish(m.ID, n)
+	for _, id := range users {
+		uc.d.Notifications.Publish(id, n)
 	}
 }

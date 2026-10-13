@@ -34,7 +34,11 @@ import (
 // (standalone: certs, in-process bridge, self-registration; api: nothing).
 // The concrete server repository is returned alongside Deps for standalone's
 // registration flow, which needs methods beyond the port.
-func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerConfig, log *logger.Logger) (*Deps, *serverrepo.Repo) {
+func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerConfig, log *logger.Logger, opts ...CoreOption) (*Deps, *serverrepo.Repo) {
+	var o coreOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
 	r, err := newRepos(conn, log)
 	if err != nil {
 		// Only an unknown driver name fails, which db.Open never returns.
@@ -80,7 +84,8 @@ func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerCon
 	// rollout whose lease expired and dispatch at once, which is lost while
 	// nothing consumes the request queue (standalone: the in-process bridge).
 	// Each topology calls StartRollouts once commands can flow.
-	queue := newRollouts(r, dispatcher, statusCache, nm, log)
+	instances := newInstances(r, dispatcher, statusCache, log)
+	queue := newRollouts(r, instances, dispatcher, statusCache, nm, o.rolloutTiming, log)
 
 	return &Deps{
 		Log:                      log,
@@ -93,7 +98,7 @@ func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerCon
 		ServerStorageRepository:  r.serverStorage,
 		SharedVariableRepository: r.sharedVar,
 		TemplateRepository:       r.template,
-		RolloutRepository:        r.rollout,
+		Instances:                instances,
 		Rollouts:                 queue,
 		CommandDispatcher:        dispatcher,
 		NotificationManager:      nm,

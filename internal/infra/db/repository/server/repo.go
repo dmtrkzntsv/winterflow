@@ -40,6 +40,7 @@ type querier interface {
 	ListCapabilitiesByUser(ctx context.Context, db backend.DBTX, userID string) ([]capabilityRow, error)
 	ListFeaturesByUser(ctx context.Context, db backend.DBTX, userID string) ([]featureRow, error)
 	ListServerUserIDs(ctx context.Context, db backend.DBTX, serverID string) ([]string, error)
+	ListOrgUserIDs(ctx context.Context, db backend.DBTX, orgID string) ([]string, error)
 	UserOwnsServer(ctx context.Context, db backend.DBTX, p ownsParams) (bool, error)
 	ServerInOrganization(ctx context.Context, db backend.DBTX, p inOrgParams) (bool, error)
 	HasAnyServer(ctx context.Context, db backend.DBTX) (bool, error)
@@ -150,6 +151,12 @@ func (r *Repo) RegisterServer(ctx context.Context, d dto.ServerRegistrationDTO) 
 			CreatedAt:            now,
 		})
 	})
+}
+
+// GetOrgUserIDs returns the user ids of every member of the organization
+// (ids only: no credentials are read).
+func (r *Repo) GetOrgUserIDs(ctx context.Context, orgID string) ([]string, error) {
+	return r.q.ListOrgUserIDs(ctx, r.tx.Querier(ctx), orgID)
 }
 
 // GetServerUserIDs returns the user ids of every member of the organization

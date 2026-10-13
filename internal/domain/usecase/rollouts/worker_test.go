@@ -310,7 +310,7 @@ func TestAwaitRunning(t *testing.T) {
 		defer close(fed)
 		time.Sleep(30 * time.Millisecond)
 		if e.reports.setRead(srv1, status.Report{Apps: app(command.ContainerStatusActive), Received: since.Add(time.Second)}, stop) {
-			e.reports.set(srv1, status.Report{Apps: app(command.ContainerStatusActive), Received: since.Add(time.Second + e.uc.healthSettle)})
+			e.reports.set(srv1, status.Report{Apps: app(command.ContainerStatusActive), Received: since.Add(time.Second + e.uc.t.HealthSettle)})
 		}
 	}()
 	_, err := e.uc.awaitRunning(ctx, srv1, "a1", since)
@@ -382,7 +382,7 @@ func TestAwaitRunning(t *testing.T) {
 
 func TestAwaitResultBounds(t *testing.T) {
 	e := newEnv(t)
-	e.uc.cmdWait = 20 * time.Millisecond
+	e.uc.t.Command = 20 * time.Millisecond
 	ch := make(chan port.CommandResult, 1)
 	if _, err := e.uc.awaitResult(dbtest.Ctx(t), ch); err == nil || err.Error() != "no answer from the server within 20ms" {
 		t.Fatalf("silent agent: %v", err)
@@ -412,5 +412,17 @@ func TestWarnLogsOnlyRealDatabaseErrors(t *testing.T) {
 	if out := buf.String(); !strings.Contains(out, `"msg":"rollouts: start the step"`) || !strings.Contains(out, `"rollout_id":"r1"`) ||
 		!strings.Contains(out, "database is locked") {
 		t.Fatalf("logged: %s", out)
+	}
+}
+
+// A zero Timing is the defaults; a set field overrides only itself.
+func TestTimingDefaults(t *testing.T) {
+	if got := New(Deps{}).t; got != defaultTiming {
+		t.Fatalf("zero Timing = %+v", got)
+	}
+	want := defaultTiming
+	want.HealthSettle = time.Second
+	if got := New(Deps{Timing: Timing{HealthSettle: time.Second}}).t; got != want {
+		t.Fatalf("partial Timing = %+v", got)
 	}
 }

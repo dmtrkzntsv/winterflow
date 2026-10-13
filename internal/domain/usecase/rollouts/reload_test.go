@@ -133,7 +133,7 @@ func TestReloadWaitsForTheServerToReportTheChange(t *testing.T) {
 	}
 	start := time.Now()
 	e.passUntil(t, func() bool { return e.activeOrLast(t, org1).State == model.RolloutDone })
-	if r := e.activeOrLast(t, org1); r.State != model.RolloutDone || r.Done != 0 || time.Since(start) < e.uc.settle/2 {
+	if r := e.activeOrLast(t, org1); r.State != model.RolloutDone || r.Done != 0 || time.Since(start) < e.uc.t.Settle/2 {
 		t.Fatalf("unsettled rollout = %+v after %s", r, time.Since(start))
 	}
 }

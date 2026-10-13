@@ -25,7 +25,7 @@ const extendTries = 5
 // SettleBy is set here: servers get settleWait to
 // report the change.
 func (uc *UseCase) QueueReload(ctx context.Context, userID, orgID string, s model.ReloadScope) error {
-	s.SettleBy = uc.now().Add(uc.settle).UTC()
+	s.SettleBy = uc.now().Add(uc.t.Settle).UTC()
 	for range extendTries {
 		active, err := uc.d.Repo.GetActiveRollout(ctx, model.RolloutVarsReload, orgID)
 		if errors.Is(err, model.ErrRolloutNotFound) {
@@ -143,16 +143,11 @@ func (k reloader) deleted(ctx context.Context, appID string) bool {
 }
 
 func (k reloader) reload(ctx context.Context, r model.Rollout, p pick) stepResult {
-	results := make(chan port.CommandResult, 1)
+	results, deliver := port.NewResultChan()
 	if _, err := k.uc.d.Dispatcher.Dispatch(ctx, port.DispatchInput{
 		AgentID: p.serverID, UserID: r.CreatedBy, Type: command.TypeVarsReload,
-		Payload: command.ReloadVarsRequest{AppIDs: []string{p.appID}}, Wait: k.uc.cmdWait,
-		OnResult: func(res port.CommandResult) {
-			select {
-			case results <- res:
-			default:
-			}
-		},
+		Payload: command.ReloadVarsRequest{AppIDs: []string{p.appID}}, Wait: k.uc.t.Command,
+		OnResult: deliver,
 	}); err != nil {
 		return failed(err.Error())
 	}

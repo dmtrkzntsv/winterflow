@@ -74,6 +74,27 @@ func TestGetServerUserIDsReturnsOrgMembers(t *testing.T) {
 	}
 }
 
+func TestGetOrgUserIDsReturnsOrgMembers(t *testing.T) {
+	repo, d := newRepo(t)
+	dbtest.SeedServer(t, d, org1, srv1)
+	dbtest.SeedServer(t, d, org2, srv2)
+	dbtest.SeedMember(t, d, alice, org1)
+	dbtest.SeedMember(t, d, bob, org1)
+	dbtest.SeedMember(t, d, eve, org2)
+
+	got, err := repo.GetOrgUserIDs(dbtest.Ctx(t), org1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(got)
+	if len(got) != 2 || got[0] != alice || got[1] != bob {
+		t.Fatalf("want [alice bob], got %v", got)
+	}
+	if got, err := repo.GetOrgUserIDs(dbtest.Ctx(t), dbtest.ID(99)); err != nil || len(got) != 0 {
+		t.Fatalf("unknown org: want empty, got %v, %v", got, err)
+	}
+}
+
 func TestGetServerUserIDsUnknownServerIsEmpty(t *testing.T) {
 	repo, _ := newRepo(t)
 	got, err := repo.GetServerUserIDs(dbtest.Ctx(t), srv1)

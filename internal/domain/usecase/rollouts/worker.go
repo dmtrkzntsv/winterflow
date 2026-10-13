@@ -66,7 +66,7 @@ var errBadScope = errors.New("the rollout's scope is unreadable")
 // park ends, settlePoll after the pass that parked it; a Wake in between
 // does not move that.
 func (uc *UseCase) Run(ctx context.Context) {
-	tick := time.NewTicker(uc.idle)
+	tick := time.NewTicker(uc.t.Idle)
 	defer tick.Stop()
 	var (
 		retryTimer *time.Timer
@@ -82,7 +82,7 @@ func (uc *UseCase) Run(ctx context.Context) {
 			if retryTimer != nil {
 				retryTimer.Stop()
 			}
-			retryTimer = time.NewTimer(uc.settlePoll)
+			retryTimer = time.NewTimer(uc.t.SettlePoll)
 			retry = retryTimer.C
 		}
 		select {
@@ -109,7 +109,7 @@ func (uc *UseCase) pass(ctx context.Context) (waiting bool) {
 		claimed := false
 		for _, id := range ids {
 			now := uc.now()
-			ok, err := uc.d.Repo.Claim(ctx, id, uc.owner, now, now.Add(uc.lease))
+			ok, err := uc.d.Repo.Claim(ctx, id, uc.owner, now, now.Add(uc.t.Lease))
 			if err != nil {
 				uc.d.Log.Warn("rollouts: claim", "rollout_id", id, "error", err)
 				return waiting
@@ -149,7 +149,7 @@ func (uc *UseCase) drive(parent context.Context, id string) (waiting bool) {
 		<-renewing
 		switch {
 		case waiting:
-			uc.release(parent, id, uc.now().Add(uc.settlePoll))
+			uc.release(parent, id, uc.now().Add(uc.t.SettlePoll))
 		case parent.Err() != nil:
 			uc.release(parent, id, time.Time{})
 		}
@@ -163,11 +163,10 @@ func (uc *UseCase) drive(parent context.Context, id string) (waiting bool) {
 		if r.LeaseOwner != uc.owner || !r.State.Active() {
 			return false
 		}
-		more, wait := uc.step(ctx, r)
-		if wait {
+		switch uc.step(ctx, r) {
+		case park:
 			return true
-		}
-		if !more {
+		case end:
 			return false
 		}
 	}
@@ -189,7 +188,7 @@ func (uc *UseCase) release(ctx context.Context, id string, until time.Time) {
 // lease gone (taken over, or the rollout ended) cancels the drive. A failed
 // write is retried at the next tick: the lease outlives a few.
 func (uc *UseCase) keepLease(ctx context.Context, lost context.CancelFunc, id string) {
-	t := time.NewTicker(uc.renew)
+	t := time.NewTicker(uc.t.Renew)
 	defer t.Stop()
 	for {
 		select {
@@ -197,7 +196,7 @@ func (uc *UseCase) keepLease(ctx context.Context, lost context.CancelFunc, id st
 			return
 		case <-t.C:
 		}
-		ok, err := uc.d.Repo.RenewLease(ctx, id, uc.owner, uc.now().Add(uc.lease))
+		ok, err := uc.d.Repo.RenewLease(ctx, id, uc.owner, uc.now().Add(uc.t.Lease))
 		switch {
 		case ctx.Err() != nil:
 			return
@@ -210,73 +209,84 @@ func (uc *UseCase) keepLease(ctx context.Context, lost context.CancelFunc, id st
 	}
 }
 
-// step takes one step of r and reports whether to take another, or (wait)
-// that the rollout has nothing to do until a server reports and should give
-// its lease back.
-func (uc *UseCase) step(ctx context.Context, r model.Rollout) (more, wait bool) {
+// then is what drive does after a step.
+type then int
+
+const (
+	// again takes another step.
+	again then = iota
+	// end stops driving: the rollout ended, the lease is gone, or an error
+	// a later pass retries.
+	end
+	// park gives the lease back: the rollout has nothing to do until a
+	// server reports.
+	park
+)
+
+// step takes one step of r and says what to do next.
+func (uc *UseCase) step(ctx context.Context, r model.Rollout) then {
 	if r.StopRequested {
 		uc.finish(ctx, r, model.RolloutStopped, "", "", "")
-		return false, false
+		return end
 	}
 	k, ok := uc.kinds[r.Kind]
 	if !ok {
 		uc.finish(ctx, r, model.RolloutFailed, "unknown rollout kind "+r.Kind, "", "")
-		return false, false
+		return end
 	}
 	p, err := k.next(ctx, r)
 	switch {
 	case errors.Is(err, errBadScope):
 		uc.finish(ctx, r, model.RolloutFailed, err.Error(), "", "")
-		return false, false
+		return end
 	case err != nil:
 		// A database error: the lease expires and a pass retries.
 		uc.warn(ctx, "rollouts: pick the next app", r.ID, err)
-		return false, false
+		return end
 	}
 	if p.appID == "" {
 		if p.wait {
-			return false, true
+			return park
 		}
 		ok, err := uc.d.Repo.Complete(ctx, r.ID, uc.owner, r.ScopeRev)
 		if err != nil {
 			uc.d.Log.Warn("rollouts: complete", "rollout_id", r.ID, "error", err)
-			return false, false
+			return end
 		}
 		if ok {
 			uc.ended(ctx, r.ID)
-			return false, false
+			return end
 		}
-		return true, false // the scope was extended meanwhile: look again
+		return again // the scope was extended meanwhile: look again
 	}
 	total := r.Done + r.Skipped + p.remaining
 	if ok, err := uc.d.Repo.StartStep(ctx, r.ID, uc.owner, p.appID, p.serverID, total); err != nil || !ok {
 		uc.warn(ctx, "rollouts: start the step", r.ID, err)
-		return false, false
+		return end
 	}
-	uc.changed(ctx, r.ID)
+	name := uc.appName(ctx, p.appID)
+	uc.changed(ctx, r.ID, p.appID, name)
 	res := k.run(ctx, r, p)
 	if ctx.Err() != nil {
-		return false, false // the lease is gone or the process stops: the step is redone
+		return end // the lease is gone or the process stops: the step is redone
 	}
-	switch res.outcome {
-	case stepFailed:
+	if res.outcome == stepFailed {
 		uc.finish(ctx, r, model.RolloutFailed, res.err, p.appID, p.serverID)
-		return false, false
-	case stepSkipped:
-		ok, err = uc.d.Repo.CountStep(ctx, r.ID, uc.owner, 0, 1, append(slices.Clone(r.SkipIDs), p.skipID))
-	default:
-		skipIDs := r.SkipIDs
-		if res.forget {
-			skipIDs = append(slices.Clone(r.SkipIDs), p.skipID)
-		}
-		ok, err = uc.d.Repo.CountStep(ctx, r.ID, uc.owner, 1, 0, skipIDs)
+		return end
 	}
-	if err != nil || !ok {
+	doneN, skippedN, skipIDs := int64(1), int64(0), r.SkipIDs
+	if res.outcome == stepSkipped {
+		doneN, skippedN = 0, 1
+	}
+	if res.outcome == stepSkipped || res.forget {
+		skipIDs = append(slices.Clone(r.SkipIDs), p.skipID)
+	}
+	if ok, err := uc.d.Repo.CountStep(ctx, r.ID, uc.owner, doneN, skippedN, skipIDs); err != nil || !ok {
 		uc.warn(ctx, "rollouts: count the step", r.ID, err)
-		return false, false
+		return end
 	}
-	uc.changed(ctx, r.ID)
-	return true, false
+	uc.changed(ctx, r.ID, p.appID, name)
+	return again
 }
 
 // finish ends r stopped or failed.
@@ -297,7 +307,7 @@ func (uc *UseCase) finish(ctx context.Context, r model.Rollout, state model.Roll
 func (uc *UseCase) ended(ctx context.Context, id string) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), notifyTimeout)
 	defer cancel()
-	r := uc.changed(ctx, id)
+	r := uc.changed(ctx, id, "", "")
 	if r.ID == "" {
 		return
 	}
@@ -306,14 +316,19 @@ func (uc *UseCase) ended(ctx context.Context, id string) {
 	}
 }
 
-// changed announces the rollout's new counts or state to its org.
-func (uc *UseCase) changed(ctx context.Context, id string) model.Rollout {
+// changed announces the rollout's new counts or state to its org. name is
+// appID's name when the caller has it (a step's app: looked up once per
+// step); any other app in flight is looked up.
+func (uc *UseCase) changed(ctx context.Context, id, appID, name string) model.Rollout {
 	r, err := uc.d.Repo.GetRollout(ctx, id)
 	if err != nil {
 		uc.warn(ctx, "rollouts: read for an event", id, err)
 		return model.Rollout{}
 	}
-	uc.publish(ctx, r.OrgID, uc.view(ctx, r))
+	if appID == "" || r.CurrentAppID != appID {
+		name = uc.appName(ctx, r.CurrentAppID)
+	}
+	uc.publish(ctx, r.OrgID, viewOf(r, name))
 	return r
 }
 
@@ -326,17 +341,4 @@ func (uc *UseCase) warn(ctx context.Context, msg, id string, err error) {
 		return
 	}
 	uc.d.Log.Warn(msg, "rollout_id", id, "error", err)
-}
-
-// sleep waits d unless ctx ends first; it reports whether ctx is still
-// live.
-func sleep(ctx context.Context, d time.Duration) bool {
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-t.C:
-		return true
-	}
 }

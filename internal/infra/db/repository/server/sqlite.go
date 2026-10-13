@@ -27,6 +27,10 @@ func (sqliteQuerier) ListServerUserIDs(ctx context.Context, db backend.DBTX, ser
 	return sqlitegen.New(db).ListServerUserIDs(ctx, serverID)
 }
 
+func (sqliteQuerier) ListOrgUserIDs(ctx context.Context, db backend.DBTX, orgID string) ([]string, error) {
+	return sqlitegen.New(db).ListOrgUserIDs(ctx, orgID)
+}
+
 func (sqliteQuerier) UserOwnsServer(ctx context.Context, db backend.DBTX, p ownsParams) (bool, error) {
 	return sqlitegen.New(db).UserOwnsServer(ctx, p)
 }

@@ -94,8 +94,8 @@ func (pgsqlQuerier) ListLiveTemplateInstances(ctx context.Context, db backend.DB
 	return instanceRows(pgsqlgen.New(db).ListLiveTemplateInstances(ctx, orgID))
 }
 
-func (pgsqlQuerier) ListLiveTemplateInstancesOnOrgServers(ctx context.Context, db backend.DBTX, orgID string) ([]instanceRow, error) {
-	return instanceRows(pgsqlgen.New(db).ListLiveTemplateInstancesOnOrgServers(ctx, orgID))
+func (pgsqlQuerier) ListUpgradableInstances(ctx context.Context, db backend.DBTX, p upgradeParams) ([]instanceRow, error) {
+	return instanceRows(pgsqlgen.New(db).ListUpgradableInstances(ctx, pgsqlgen.ListUpgradableInstancesParams(p)))
 }
 
 func instanceRows(rows []pgsqlgen.TemplateInstance, err error) ([]instanceRow, error) {

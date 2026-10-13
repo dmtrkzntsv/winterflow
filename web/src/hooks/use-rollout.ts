@@ -8,12 +8,26 @@ import { ROLLOUT_EVENT, isActive, type Rollout, type RolloutKind, type RolloutsA
 // browsers on the worker's replica, so the others catch up this way.
 export const REREAD_MS = 15_000;
 
-// settle is what replaces cur with next: the same rollout never goes from
-// ended (done, stopped, failed) back to active — a late stop answer or
-// event, or a re-read that crossed the end, is older news.
+// RANK orders a rollout's progress: it only ever moves up this list.
+const RANK: Record<Rollout["state"], number> = { queued: 0, running: 1, done: 2, stopped: 2, failed: 2 };
+
+// settle is what replaces cur with next: the same rollout never goes back
+// in its progress — queued, then running, then ended (done, stopped,
+// failed) — nor lowers its count, nor clears a stop request while it is
+// active. A late answer (the upgrade's own, queued, after the stream's
+// running event; a stop answer; a re-read that crossed an event) is older
+// news. Another rollout replaces it.
 function settle(cur: Rollout | null, next: Rollout | null): Rollout | null {
-  if (cur && next && cur.id === next.id && !isActive(cur) && isActive(next)) return cur;
-  return next;
+  if (!cur || !next || cur.id !== next.id) return next;
+  const behind =
+    RANK[next.state] < RANK[cur.state] ||
+    (next.state === cur.state && next.done + next.skipped < cur.done + cur.skipped);
+  const winner = behind ? cur : next;
+  // A stop request is never taken back while the rollout is active.
+  if (isActive(winner) && (cur.stop_requested || next.stop_requested) && !winner.stop_requested) {
+    return { ...winner, stop_requested: true };
+  }
+  return winner;
 }
 
 // fromList is what a read shows: its newest rollout when that is a newer

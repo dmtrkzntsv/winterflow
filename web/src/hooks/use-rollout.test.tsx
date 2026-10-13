@@ -111,6 +111,24 @@ describe("useRollout", () => {
     expect(result.current.rollout?.id).toBe("r2");
   });
 
+  it("never shows older progress than it has", async () => {
+    const { result, emit } = setup(Promise.resolve([rollout()]), "t1");
+    await waitFor(() => expect(result.current.rollout?.state).toBe("running"));
+    // The stream's running event beat the upgrade's own queued answer.
+    emit({ type: "rollout", ref: "", payload: rollout({ state: "running", done: 1 }) });
+    act(() => result.current.set(rollout({ state: "queued", done: 0, skipped: 0 })));
+    expect(result.current.rollout).toMatchObject({ state: "running", done: 1 });
+    // A late event with an older count does not lower it.
+    emit({ type: "rollout", ref: "", payload: rollout({ done: 4 }) });
+    emit({ type: "rollout", ref: "", payload: rollout({ done: 2 }) });
+    expect(result.current.rollout?.done).toBe(4);
+    // Nor does a stop request get taken back by an older copy.
+    act(() => result.current.set(rollout({ done: 4, stop_requested: true })));
+    emit({ type: "rollout", ref: "", payload: rollout({ done: 4, stop_requested: false }) });
+    emit({ type: "rollout", ref: "", payload: rollout({ done: 3, stop_requested: false }) });
+    expect(result.current.rollout).toMatchObject({ done: 4, stop_requested: true });
+  });
+
   it("shows nothing when the read fails", async () => {
     const { result, api } = setup(Promise.reject(new Error("down")));
     await waitFor(() => expect(api.list).toHaveBeenCalled());
@@ -175,5 +193,14 @@ describe("useRollout re-reads an active rollout", () => {
     emit({ type: "rollout", ref: "", payload: rollout({ id: "r2", created_at: "2026-10-13T00:00:00Z", state: "failed" }) });
     await act(async () => answer([rollout({ id: "r2", created_at: "2026-10-13T00:00:00Z", state: "running" })]));
     expect(result.current.rollout).toMatchObject({ id: "r2", state: "failed" });
+  });
+
+  it("does not lower the count of the shown rollout", async () => {
+    vi.useFakeTimers();
+    const { result, api } = setup(Promise.resolve([rollout({ done: 5 })]), "t1");
+    await act(async () => {});
+    api.list.mockImplementation(() => Promise.resolve([rollout({ done: 2 })]));
+    await tick();
+    expect(result.current.rollout?.done).toBe(5);
   });
 });

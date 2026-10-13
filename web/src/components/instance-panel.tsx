@@ -55,7 +55,9 @@ export function InstancePanel({
       for (const p of params) {
         const v = values[p.name] ?? "";
         if (p.secret) typed[p.name] = v;
-        else if (v !== (initial[p.name] ?? "")) parameters[p.name] = v;
+        // A cleared value means "the default" here (the form says so), but
+        // the API keeps a given "" as set: send the default itself.
+        else if (v !== (initial[p.name] ?? "")) parameters[p.name] = v === "" && p.default ? p.default : v;
       }
       const secrets = await sealSecrets(api, instance.server_id, typed);
       await api.updateInstance({

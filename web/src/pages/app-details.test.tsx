@@ -223,6 +223,26 @@ describe("AppDetailsPage of a template instance", () => {
     expect(refresh).toHaveBeenCalled();
   });
 
+  it("sends a cleared value's default (the API would keep an empty value), else the empty value", async () => {
+    const user = userEvent.setup();
+    const extra = [{ name: "GREETING", default: "Hello" }, { name: "MOTTO" }];
+    const api = instanceAPI(
+      { ...INSTANCE, parameters: { NAME: "bakomi", GREETING: "Hi", MOTTO: "carpe diem" } },
+      {
+        "/api/v1/template/get-template": (_: unknown, q: URLSearchParams) => template(Number(q.get("revision") || 3), extra),
+        "/api/v1/instance/update-instance": { instance: INSTANCE, request_id: "", warnings: [] },
+      },
+    );
+    renderPage("/app/a1?tab=editor", {}, managed);
+    await user.clear(await screen.findByLabelText("GREETING"));
+    await user.clear(screen.getByLabelText("MOTTO"));
+    await user.click(screen.getByRole("button", { name: "Save & redeploy" }));
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Saved and redeployed"));
+    expect(api.posted("/api/v1/instance/update-instance")).toEqual([
+      { server_id: "s", key: "k1", parameters: { GREETING: "Hello", MOTTO: "" } },
+    ]);
+  });
+
   it("replaces a secret only when a new one is typed, encrypted for the server", async () => {
     const user = userEvent.setup();
     const api = instanceAPI(INSTANCE, { "/api/v1/instance/update-instance": { instance: INSTANCE, request_id: "", warnings: [] } });

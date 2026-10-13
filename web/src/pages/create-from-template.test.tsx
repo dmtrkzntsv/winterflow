@@ -188,6 +188,20 @@ describe("CreateFromTemplatePage", () => {
     expect(updates).toEqual([expect.objectContaining({ key: creates[0].key, secrets: { SESSION_KEY: "ct(K1):s" } })]);
   });
 
+  it("shows an agent failure by its last line, the rest behind Details", async () => {
+    const user = userEvent.setup();
+    const api = fakeAPI(routes({ "/api/v1/instance/create-instance": { request_id: "r1" } }));
+    accepted(api);
+    waitFor_.mockResolvedValueOnce({ status: 1, error: "Container web  Creating\nError: pull access denied\n" });
+    renderPage();
+    await user.type(await screen.findByLabelText("NAME"), "abc");
+    await user.type(screen.getByLabelText("SESSION_KEY"), "s");
+    await user.click(screen.getByRole("button", { name: "Add app" }));
+    expect(await screen.findByText("Error: pull access denied")).toBeVisible();
+    expect(screen.getByRole("alert")).toContainElement(screen.getByText("Details"));
+    expect(screen.getByText(/Container web Creating/)).not.toBeVisible();
+  });
+
   it.each([500, 409])("retries a create the API answered %i as an update of the same key", async (status) => {
     const user = userEvent.setup();
     const api = fakeAPI(

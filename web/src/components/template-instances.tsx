@@ -16,6 +16,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { AppStatusBadge } from "@/components/app-status-badge";
+import { ErrorText } from "@/components/error-text";
 import { UpgradeInstanceDialog } from "@/components/upgrade-instance-dialog";
 import { useServers } from "@/context/use-servers";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
@@ -84,7 +85,7 @@ export function TemplateInstances({
                 </Link>
                 <p className="text-xs text-muted-foreground">on {serverName(inst.server_id)}</p>
                 {inst.state === "pending" && inst.last_error ? (
-                  <p className="text-xs break-words text-destructive">{inst.last_error}</p>
+                  <ErrorText text={inst.last_error} className="text-xs" />
                 ) : null}
               </div>
               <span className={behind ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground"}>

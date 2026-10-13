@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { EditorSection } from "@/components/editor-section";
+import { ErrorText } from "@/components/error-text";
 import { HostHints, type HostCheck } from "@/components/host-hints";
 import { InlineError } from "@/components/inline-error";
 import { NativeSelect } from "@/components/native-select";
@@ -250,11 +251,7 @@ export default function CreateFromTemplatePage() {
         </Button>
       </div>
 
-      {error ? (
-        <InlineError icon className="mb-4">
-          {error}
-        </InlineError>
-      ) : null}
+      {error ? <ErrorText alert icon text={error} className="mb-4" /> : null}
 
       <EditorSection title="Template" description="The latest revision unless you pick an older one.">
         <div className="grid gap-3 sm:grid-cols-2">

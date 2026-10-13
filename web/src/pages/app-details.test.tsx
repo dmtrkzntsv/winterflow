@@ -290,6 +290,18 @@ describe("AppDetailsPage of a template instance", () => {
     expect(screen.getByText("Required")).toBeInTheDocument();
   });
 
+  it("shows a long deploy failure by its last line, the rest behind Details", async () => {
+    instanceAPI({ ...INSTANCE, state: "pending", last_error: "Container web  Creating\nError: pull access denied\n" });
+    renderPage("/app/a1?tab=editor", {}, managed);
+    expect(
+      await screen.findByText(
+        "The app's last deploy from its template failed: Error: pull access denied. Fix its values under Configuration and save again.",
+      ),
+    ).toBeVisible();
+    expect(screen.getByText("Details")).toBeInTheDocument();
+    expect(screen.getByText(/Container web Creating/)).not.toBeVisible();
+  });
+
   it("never offers the plain editor while the instance is being looked up", async () => {
     vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
     renderPage("/app/a1?tab=editor", {}, managed);

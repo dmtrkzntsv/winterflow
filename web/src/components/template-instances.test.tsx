@@ -215,6 +215,14 @@ describe("TemplateInstances", () => {
     expect(toast.success).toHaveBeenCalledWith("Deleted bakomi");
   });
 
+  it("shows a long failure by its last line, the rest behind Details", () => {
+    renderInstances([inst({ state: "pending", last_error: "Container web  Creating\nError: pull access denied\n" })]);
+    const row = screen.getByRole("listitem");
+    expect(within(row).getByText("Error: pull access denied")).toBeVisible();
+    expect(within(row).getByText("Details")).toBeInTheDocument();
+    expect(within(row).getByText(/Container web Creating/)).not.toBeVisible();
+  });
+
   it("reports a failed delete of a pending instance", async () => {
     const user = userEvent.setup();
     fakeAPI({ "/api/v1/instance/delete-instance": new Error("server offline") });

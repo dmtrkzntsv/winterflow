@@ -33,6 +33,7 @@ import { AppIcon } from "@/components/app-icon";
 import { LogsView, type LogLine } from "@/components/logs-view";
 import { AppBackups } from "@/components/app-backups";
 import { AppEditorPanel } from "@/components/app-editor-panel";
+import { ErrorText } from "@/components/error-text";
 import { InlineError } from "@/components/inline-error";
 import { InstancePanel } from "@/components/instance-panel";
 import { UpgradeInstanceDialog } from "@/components/upgrade-instance-dialog";
@@ -255,10 +256,13 @@ export default function AppDetailsPage() {
       </header>
 
       {inst?.state === "pending" && inst.last_error ? (
-        <InlineError icon>
-          The app's last deploy from its template failed: {inst.last_error}. Fix its values under Configuration and
-          save again.
-        </InlineError>
+        <ErrorText
+          alert
+          icon
+          text={inst.last_error}
+          prefix="The app's last deploy from its template failed: "
+          suffix=". Fix its values under Configuration and save again."
+        />
       ) : null}
 
       {upgradeTarget && inst ? (

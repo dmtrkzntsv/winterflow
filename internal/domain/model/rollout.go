@@ -92,6 +92,22 @@ type ReloadScope struct {
 	SettleBy  time.Time        `json:"settle_by"`
 }
 
+// Validate refuses app ids that are not single path elements and names
+// that cannot be shared variables (the vars.reload request's rules).
+func (s ReloadScope) Validate() error {
+	for _, id := range s.AppIDs {
+		if err := ValidateAppID(id); err != nil {
+			return err
+		}
+	}
+	for _, n := range s.Names {
+		if err := ValidateSharedVariableName(n); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Merge is the union of two scopes: lists joined (sorted, no duplicates),
 // the higher revision per server, the later SettleBy.
 func (s ReloadScope) Merge(o ReloadScope) ReloadScope {

@@ -48,3 +48,15 @@ func TestReloadScopeWants(t *testing.T) {
 		t.Fatal("Active")
 	}
 }
+
+func TestReloadScopeValidate(t *testing.T) {
+	if err := (ReloadScope{Names: []string{"SMTP_PASS"}, AppIDs: []string{"a1"}}).Validate(); err != nil {
+		t.Fatalf("valid scope: %v", err)
+	}
+	if err := (ReloadScope{AppIDs: []string{"../x"}}).Validate(); err == nil || err.Error() != `invalid app id "../x"` {
+		t.Fatalf("path-like app id: %v", err)
+	}
+	if err := (ReloadScope{Names: []string{"WF_X"}}).Validate(); err == nil {
+		t.Fatal("reserved name accepted")
+	}
+}

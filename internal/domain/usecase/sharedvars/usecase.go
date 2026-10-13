@@ -15,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/port"
 	"winterflow/pkg/logger"
@@ -352,21 +351,20 @@ func (u *UseCase) Reload(ctx context.Context, userID, orgID string, in ReloadInp
 	if err != nil {
 		return nil, err
 	}
-	req := command.ReloadVarsRequest{Names: in.Names, AppIDs: in.AppIDs}
+	s := model.ReloadScope{Names: in.Names, AppIDs: in.AppIDs}
 	if name != "" {
-		req = command.ReloadVarsRequest{Names: []string{name}}
+		s = model.ReloadScope{Names: []string{name}}
 	}
-	if err := req.Validate(); err != nil {
+	if err := s.Validate(); err != nil {
 		return nil, &ValidationError{Msg: err.Error()}
 	}
-	var s model.ReloadScope
 	switch {
-	case len(req.AppIDs) > 0:
-		s = model.ReloadScope{AppIDs: req.AppIDs, ServerIDs: targets}
-	case len(req.Names) > 0:
-		s = model.ReloadScope{Names: req.Names, ServerIDs: targets}
+	case len(s.AppIDs) > 0: // the app ids, whatever the names
+		s.Names, s.ServerIDs = nil, targets
+	case len(s.Names) > 0:
+		s.ServerIDs = targets
 	default:
-		s = model.ReloadScope{AllStale: targets}
+		s.AllStale = targets
 	}
 	if s, err = u.reloadScope(ctx, s); err != nil {
 		return nil, err

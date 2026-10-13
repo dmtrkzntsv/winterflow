@@ -219,7 +219,7 @@ describe("TemplatePage", () => {
     });
     renderPage("/org/templates/t1");
     expect(await screen.findByRole("button", { name: "Delete template" })).toBeDisabled();
-    expect(screen.getByText("Revision 3 · 1 app use it")).toBeInTheDocument();
+    expect(screen.getByText("Revision 3 · 1 app uses it")).toBeInTheDocument();
   });
 
   it("deletes a template no app uses", async () => {

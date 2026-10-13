@@ -193,7 +193,7 @@ export default function TemplatePage() {
           <h1 className="truncate text-2xl font-semibold tracking-tight">{view?.name ?? "Add template"}</h1>
           <p className="text-sm text-muted-foreground">
             {view
-              ? `Revision ${view.latest_revision} · ${live} ${live === 1 ? "app" : "apps"} use it`
+              ? `Revision ${view.latest_revision} · ${live} ${live === 1 ? "app uses" : "apps use"} it`
               : "Saving adds revision 1."}
           </p>
         </div>

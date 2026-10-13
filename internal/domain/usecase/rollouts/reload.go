@@ -20,7 +20,9 @@ const extendTries = 5
 // QueueReload queues the org's vars_reload rollout for s, or extends the
 // active one: its scope becomes the union, written in one conditional
 // update (the next app is always chosen from live staleness, so a running
-// rollout can take more). SettleBy is set here: servers get settleWait to
+// rollout can take more). A rollout with a stop requested takes nothing
+// (model.ErrRolloutStopping): it would end stopped and drop the reload.
+// SettleBy is set here: servers get settleWait to
 // report the change.
 func (uc *UseCase) QueueReload(ctx context.Context, userID, orgID string, s model.ReloadScope) error {
 	s.SettleBy = uc.now().Add(uc.settle).UTC()
@@ -41,6 +43,10 @@ func (uc *UseCase) QueueReload(ctx context.Context, userID, orgID string, s mode
 		}
 		if err != nil {
 			return err
+		}
+		if active.StopRequested {
+			// It will end stopped: an extension would be dropped with it.
+			return model.ErrRolloutStopping
 		}
 		cur, err := reloadScope(active)
 		if err != nil {

@@ -125,6 +125,41 @@ func TestClaimLeaseAndTakeover(t *testing.T) {
 	}
 }
 
+func TestReleaseLeaseAndExtendAfterStop(t *testing.T) {
+	r := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	id := dbtest.ID(101)
+	mustInsert(t, r, rollout(1, "tpl-a"))
+	ok, err := r.Claim(ctx, id, "w1", now, now.Add(2*time.Minute))
+	mustTrue(t, "claim", ok, err)
+
+	// Only the owner gives the lease back; the rollout stays active and is
+	// claimable at once.
+	ok, err = r.ReleaseLease(ctx, id, "w2")
+	mustFalse(t, "another owner's release", ok, err)
+	ok, err = r.ReleaseLease(ctx, id, "w1")
+	mustTrue(t, "release", ok, err)
+	got, _ := r.GetRollout(ctx, id)
+	if got.State != model.RolloutRunning || got.LeaseOwner != "" || got.LeaseUntil != nil {
+		t.Fatalf("after release = %+v", got)
+	}
+	if ids, _ := r.ListClaimable(ctx, now); len(ids) != 1 || ids[0] != id {
+		t.Fatalf("claimable = %v", ids)
+	}
+	ok, err = r.RenewLease(ctx, id, "w1", now.Add(time.Hour))
+	mustFalse(t, "renewal after release", ok, err)
+
+	// A stop request closes the scope to extensions.
+	ok, err = r.RequestStop(ctx, got.OrgID, id)
+	mustTrue(t, "stop", ok, err)
+	ok, err = r.ExtendRollout(ctx, id, 1, []byte(`{"names":["A"]}`))
+	mustFalse(t, "extend a stop-requested rollout", ok, err)
+	if got, _ = r.GetRollout(ctx, id); got.ScopeRev != 1 {
+		t.Fatalf("scope moved: %+v", got)
+	}
+}
+
 func TestStepsExtendAndFinish(t *testing.T) {
 	r := newRepo(t)
 	ctx := dbtest.Ctx(t)

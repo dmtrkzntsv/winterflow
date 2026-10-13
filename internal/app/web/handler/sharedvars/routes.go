@@ -2,6 +2,7 @@ package sharedvars
 
 import (
 	"net/http"
+	"slices"
 
 	"winterflow/internal/app/web/api"
 	svuc "winterflow/internal/domain/usecase/sharedvars"
@@ -117,9 +118,9 @@ func (h *Handler) Routes(api.Guards) []api.Route {
 			Method: http.MethodPost, Path: "/api/v1/shared-variables/reload", Handler: h.Reload, Auth: api.User,
 			Summary: "Reload running apps whose shared variables changed", Tag: "variables",
 			Description: "Queues, or extends, the org's vars_reload rollout: the stale running apps in scope reload one " +
-				"at a time and the first failure stops it. Answers with the servers in scope; progress arrives as rollout " +
-				"events, each app's outcome as vars.reloaded over SSE.",
-			Request: ReloadRequest{}, Response: svuc.DispatchedServers{}, Errors: both,
+				"at a time and the first failure stops it; 409 while the org's reload rollout is being stopped. Answers with the " +
+				"servers in scope; progress arrives as rollout events, each app's outcome as vars.reloaded over SSE.",
+			Request: ReloadRequest{}, Response: svuc.DispatchedServers{}, Errors: append(slices.Clone(both), http.StatusConflict),
 		},
 	}
 }

@@ -52,8 +52,9 @@ type Querier interface {
 	DeleteToken(ctx context.Context, arg DeleteTokenParams) (int64, error)
 	DeleteUser(ctx context.Context, userID string) error
 	EmailTaken(ctx context.Context, email string) (bool, error)
-	// Optimistic: 0 rows when the scope moved on (another extension) or the
-	// rollout ended.
+	// Optimistic: 0 rows when the scope moved on (another extension), the
+	// rollout ended or a stop was requested (it would end stopped, losing the
+	// extension).
 	ExtendRollout(ctx context.Context, arg ExtendRolloutParams) (int64, error)
 	// Stopped or failed. A failure keeps the current app: it names what failed.
 	FinishRollout(ctx context.Context, arg FinishRolloutParams) (int64, error)
@@ -204,6 +205,9 @@ type Querier interface {
 	RaiseServerVarsRevision(ctx context.Context, arg RaiseServerVarsRevisionParams) error
 	RecordChannelFailure(ctx context.Context, arg RecordChannelFailureParams) error
 	RecordChannelSuccess(ctx context.Context, arg RecordChannelSuccessParams) error
+	// Gives the lease back (a rollout waiting on a server, a graceful shutdown)
+	// so the next pass, here or in another process, may claim it at once.
+	ReleaseRolloutLease(ctx context.Context, arg ReleaseRolloutLeaseParams) (int64, error)
 	RenameApp(ctx context.Context, arg RenameAppParams) error
 	RenewRolloutLease(ctx context.Context, arg RenewRolloutLeaseParams) (int64, error)
 	RequestRolloutStop(ctx context.Context, arg RequestRolloutStopParams) (int64, error)

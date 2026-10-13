@@ -1,7 +1,9 @@
 package rollouts
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"slices"
 	"testing"
 	"time"
@@ -104,17 +106,23 @@ func TestReloadWaitsForTheServerToReportTheChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	id := e.activeReload(t, org1).ID
-	passed := make(chan struct{})
-	go func() { e.uc.pass(context.Background()); close(passed) }()
-	time.Sleep(50 * time.Millisecond)
+	if !e.uc.pass(ctx) {
+		t.Fatal("a rollout waiting for its server did not yield the worker")
+	}
 	if got := a.commands(); len(got) != 0 {
 		t.Fatalf("reloaded before the server reported the change: %v", got)
+	}
+	// It gave its lease back: still running, claimable at once.
+	if r := e.get(t, id); r.State != model.RolloutRunning || r.LeaseOwner != "" || r.LeaseUntil != nil {
+		t.Fatalf("waiting rollout = %+v", r)
 	}
 	a.mu.Lock()
 	a.varsRev[srv1] = 4
 	a.mu.Unlock()
 	a.report(srv1)
-	<-passed
+	if e.uc.pass(ctx) {
+		t.Fatal("the rollout still waits after the server reported")
+	}
 	if r := e.get(t, id); r.State != model.RolloutDone || r.Done != 1 {
 		t.Fatalf("rollout = %+v", r)
 	}
@@ -124,9 +132,104 @@ func TestReloadWaitsForTheServerToReportTheChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	start := time.Now()
-	e.uc.pass(ctx)
+	for e.uc.pass(ctx) {
+		if time.Since(start) > 5*time.Second {
+			t.Fatal("the rollout never gave up on the silent server")
+		}
+		time.Sleep(e.uc.settlePoll)
+	}
 	if r := e.activeOrLast(t, org1); r.State != model.RolloutDone || r.Done != 0 || time.Since(start) < e.uc.settle/2 {
 		t.Fatalf("unsettled rollout = %+v after %s", r, time.Since(start))
+	}
+}
+
+func TestAWaitingReloadYieldsTheWorkerToOtherRollouts(t *testing.T) {
+	e, a := reloadEnv(t, stale("a1", "SMTP_PASS"))
+	ctx := dbtest.Ctx(t)
+	scope := smtpOnSrv1()
+	scope.Revisions[srv1] = 4 // never reported while this test runs
+	if err := e.uc.QueueReload(ctx, "u1", org1, scope); err != nil {
+		t.Fatal(err)
+	}
+	reload := e.activeReload(t, org1).ID
+	k := &fakeKind{todo: []string{"x1", "x2"}}
+	e.uc.kinds["fake"] = k
+	other := e.queueFake(t, 1, "s")
+	// A second org's reload rides the same pass.
+	if err := e.uc.QueueReload(ctx, "u9", org2, model.ReloadScope{Names: []string{"N"}, ServerIDs: []string{srv2}, Revisions: map[string]int64{srv2: 5}}); err != nil {
+		t.Fatal(err)
+	}
+	if !e.uc.pass(ctx) {
+		t.Fatal("the pass did not report the waiting rollouts")
+	}
+	if r := e.get(t, other); r.State != model.RolloutDone || r.Done != 2 {
+		t.Fatalf("the rollout queued behind the waiting reload = %+v", r)
+	}
+	if r := e.get(t, reload); r.State != model.RolloutRunning || r.LeaseOwner != "" {
+		t.Fatalf("waiting reload = %+v", r)
+	}
+	if got := a.commands(); len(got) != 0 {
+		t.Fatalf("commands = %v", got)
+	}
+	// The server reports: the next pass finishes it.
+	a.mu.Lock()
+	a.varsRev[srv1] = 4
+	a.mu.Unlock()
+	a.report(srv1)
+	e.uc.pass(ctx)
+	if r := e.get(t, reload); r.State != model.RolloutDone || r.Done != 1 {
+		t.Fatalf("reload = %+v", r)
+	}
+}
+
+func TestRunLooksAgainShortlyWhileARolloutWaits(t *testing.T) {
+	e, a := reloadEnv(t, stale("a1", "SMTP_PASS"))
+	ctx := dbtest.Ctx(t)
+	scope := smtpOnSrv1()
+	scope.Revisions[srv1] = 4
+	if err := e.uc.QueueReload(ctx, "u1", org1, scope); err != nil {
+		t.Fatal(err)
+	}
+	id := e.activeReload(t, org1).ID
+	runCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go e.uc.Run(runCtx) // idle tick: one hour; only the wait poll can bring the next pass
+	eventually(t, "the first pass", func() bool { return e.get(t, id).State == model.RolloutRunning })
+	a.mu.Lock()
+	a.varsRev[srv1] = 4
+	a.mu.Unlock()
+	a.report(srv1)
+	eventually(t, "the rollout to finish without a wake", func() bool { return e.get(t, id).State == model.RolloutDone })
+}
+
+func TestQueueReloadRefusesAStopRequestedRollout(t *testing.T) {
+	e := newEnv(t)
+	ctx := dbtest.Ctx(t)
+	if err := e.uc.QueueReload(ctx, "u1", org1, smtpOnSrv1()); err != nil {
+		t.Fatal(err)
+	}
+	before := e.activeReload(t, org1)
+	if _, err := e.uc.Stop(ctx, org1, before.ID); err != nil {
+		t.Fatal(err)
+	}
+	err := e.uc.QueueReload(ctx, "u1", org1, model.ReloadScope{Names: []string{"S3_KEY"}, ServerIDs: []string{srv1}})
+	if !errors.Is(err, model.ErrRolloutStopping) || !errors.Is(err, model.ErrConflict) {
+		t.Fatalf("err = %v", err)
+	}
+	after := e.get(t, before.ID)
+	if after.ScopeRev != before.ScopeRev || !bytes.Equal(after.Scope, before.Scope) {
+		t.Fatalf("the stopping rollout's scope changed: %+v", after)
+	}
+	// Once it has stopped, a reload queues a new one.
+	e.uc.pass(ctx)
+	if r := e.get(t, before.ID); r.State != model.RolloutStopped {
+		t.Fatalf("rollout = %+v", r)
+	}
+	if err := e.uc.QueueReload(ctx, "u1", org1, smtpOnSrv1()); err != nil {
+		t.Fatal(err)
+	}
+	if now := e.activeReload(t, org1); now.ID == before.ID {
+		t.Fatal("joined the stopped rollout")
 	}
 }
 

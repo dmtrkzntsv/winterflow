@@ -27,10 +27,11 @@ ORDER BY CASE WHEN state IN ('queued', 'running') THEN 0 ELSE 1 END, created_at 
 LIMIT 100;
 
 -- name: ExtendRollout :execrows
--- Optimistic: 0 rows when the scope moved on (another extension) or the
--- rollout ended.
+-- Optimistic: 0 rows when the scope moved on (another extension), the
+-- rollout ended or a stop was requested (it would end stopped, losing the
+-- extension).
 UPDATE rollouts SET scope = $1, scope_rev = scope_rev + 1
-WHERE id = $2 AND scope_rev = $3 AND state IN ('queued', 'running');
+WHERE id = $2 AND scope_rev = $3 AND state IN ('queued', 'running') AND NOT stop_requested;
 
 -- name: RequestRolloutStop :execrows
 UPDATE rollouts SET stop_requested = TRUE
@@ -50,6 +51,12 @@ WHERE id = $3 AND state IN ('queued', 'running') AND (lease_until IS NULL OR lea
 -- name: RenewRolloutLease :execrows
 UPDATE rollouts SET lease_until = $1
 WHERE id = $2 AND lease_owner = $3 AND state = 'running';
+
+-- name: ReleaseRolloutLease :execrows
+-- Gives the lease back (a rollout waiting on a server, a graceful shutdown)
+-- so the next pass, here or in another process, may claim it at once.
+UPDATE rollouts SET lease_owner = '', lease_until = NULL
+WHERE id = $1 AND lease_owner = $2;
 
 -- name: StartRolloutStep :execrows
 UPDATE rollouts SET current_app_id = $1, current_server_id = $2, total = $3

@@ -24,7 +24,8 @@ type RolloutRepository interface {
 	// first.
 	ListRollouts(ctx context.Context, orgID, kind, scopeKey string) ([]model.Rollout, error)
 	// ExtendRollout replaces an active rollout's scope if its scope_rev is
-	// still rev, bumping it; false when the scope moved on or it ended.
+	// still rev, bumping it; false when the scope moved on, it ended or a stop
+	// was requested.
 	ExtendRollout(ctx context.Context, id string, rev int64, scope []byte) (bool, error)
 	// RequestStop asks an active rollout of the org to stop; false when it
 	// is not active (or not the org's).
@@ -36,6 +37,9 @@ type RolloutRepository interface {
 	// is active and nobody holds a live lease at now.
 	Claim(ctx context.Context, id, owner string, now, until time.Time) (bool, error)
 	RenewLease(ctx context.Context, id, owner string, until time.Time) (bool, error)
+	// ReleaseLease gives the owner's lease back (a rollout that waits, a
+	// graceful shutdown): the rollout stays active and is claimable at once.
+	ReleaseLease(ctx context.Context, id, owner string) (bool, error)
 	// StartStep records the app a step works on and the total as of now.
 	StartStep(ctx context.Context, id, owner, appID, serverID string, total int64) (bool, error)
 	// CountStep adds a step's outcome (skipIDs replaces the skip list).

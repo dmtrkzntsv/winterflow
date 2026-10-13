@@ -194,6 +194,27 @@ func TestAnotherProcessTakesOverAnExpiredLease(t *testing.T) {
 	}
 }
 
+func TestShutdownGivesTheLeaseBack(t *testing.T) {
+	e := newEnv(t)
+	k := &fakeKind{todo: []string{"a1", "a2"}, block: map[string]chan struct{}{"a1": make(chan struct{})}, gaveUp: make(chan error, 1)}
+	e.uc.kinds["fake"] = k
+	id := e.queueFake(t, 1, "s")
+	ctx, cancel := context.WithCancel(context.Background())
+	stopped := make(chan struct{})
+	go func() { e.uc.Run(ctx); close(stopped) }()
+	eventually(t, "a1 in flight", func() bool { return e.get(t, id).CurrentAppID == "a1" })
+	cancel()
+	<-stopped
+	// A restarted process need not wait for the lease to expire.
+	r := e.get(t, id)
+	if r.State != model.RolloutRunning || r.LeaseOwner != "" || r.LeaseUntil != nil {
+		t.Fatalf("rollout after shutdown = %+v", r)
+	}
+	if ids, err := e.repo.ListClaimable(dbtest.Ctx(t), time.Now()); err != nil || !slices.Contains(ids, id) {
+		t.Fatalf("claimable = %v, %v", ids, err)
+	}
+}
+
 func TestUnknownKindFails(t *testing.T) {
 	e := newEnv(t)
 	id := e.queueFake(t, 1, "s") // no runner for "fake"

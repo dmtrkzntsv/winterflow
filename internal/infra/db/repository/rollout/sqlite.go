@@ -52,6 +52,10 @@ func (sqliteQuerier) RenewRolloutLease(ctx context.Context, db backend.DBTX, p r
 	return sqlitegen.New(db).RenewRolloutLease(ctx, p)
 }
 
+func (sqliteQuerier) ReleaseRolloutLease(ctx context.Context, db backend.DBTX, p releaseParams) (int64, error) {
+	return sqlitegen.New(db).ReleaseRolloutLease(ctx, p)
+}
+
 func (sqliteQuerier) StartRolloutStep(ctx context.Context, db backend.DBTX, p startParams) (int64, error) {
 	return sqlitegen.New(db).StartRolloutStep(ctx, p)
 }

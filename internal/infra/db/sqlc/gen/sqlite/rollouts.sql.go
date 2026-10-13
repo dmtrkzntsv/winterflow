@@ -93,7 +93,7 @@ func (q *Queries) CountRolloutStep(ctx context.Context, arg CountRolloutStepPara
 
 const extendRollout = `-- name: ExtendRollout :execrows
 UPDATE rollouts SET scope = ?, scope_rev = scope_rev + 1
-WHERE id = ? AND scope_rev = ? AND state IN ('queued', 'running')
+WHERE id = ? AND scope_rev = ? AND state IN ('queued', 'running') AND NOT stop_requested
 `
 
 type ExtendRolloutParams struct {
@@ -102,8 +102,9 @@ type ExtendRolloutParams struct {
 	ScopeRev int64
 }
 
-// Optimistic: 0 rows when the scope moved on (another extension) or the
-// rollout ended.
+// Optimistic: 0 rows when the scope moved on (another extension), the
+// rollout ended or a stop was requested (it would end stopped, losing the
+// extension).
 func (q *Queries) ExtendRollout(ctx context.Context, arg ExtendRolloutParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, extendRollout, arg.Scope, arg.ID, arg.ScopeRev)
 	if err != nil {
@@ -416,6 +417,26 @@ type PruneRolloutsParams struct {
 func (q *Queries) PruneRollouts(ctx context.Context, arg PruneRolloutsParams) error {
 	_, err := q.db.ExecContext(ctx, pruneRollouts, arg.Kind, arg.ScopeKey, arg.Keep)
 	return err
+}
+
+const releaseRolloutLease = `-- name: ReleaseRolloutLease :execrows
+UPDATE rollouts SET lease_owner = '', lease_until = NULL
+WHERE id = ? AND lease_owner = ?
+`
+
+type ReleaseRolloutLeaseParams struct {
+	ID         string
+	LeaseOwner string
+}
+
+// Gives the lease back (a rollout waiting on a server, a graceful shutdown)
+// so the next pass, here or in another process, may claim it at once.
+func (q *Queries) ReleaseRolloutLease(ctx context.Context, arg ReleaseRolloutLeaseParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, releaseRolloutLease, arg.ID, arg.LeaseOwner)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 const renewRolloutLease = `-- name: RenewRolloutLease :execrows

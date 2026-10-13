@@ -118,13 +118,14 @@ type queued struct {
 type fakeQueue struct {
 	mu  sync.Mutex
 	got []queued
+	err error // answered by every QueueReload
 }
 
 func (f *fakeQueue) QueueReload(_ context.Context, userID, orgID string, s model.ReloadScope) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.got = append(f.got, queued{userID, orgID, s})
-	return nil
+	return f.err
 }
 
 // last is the last reload queued.
@@ -462,6 +463,25 @@ func TestDeleteQueuesTheReload(t *testing.T) {
 	answer(t, syncA, true, "", command.SyncVarsResponse{Revision: 2, Undecryptable: []command.VarRef{}})
 	if n := len(e.disp.of(command.TypeVarsReload)); n != 0 {
 		t.Fatalf("%d vars.reload sent directly", n)
+	}
+}
+
+// A reload the queue refuses (the org's rollout is being stopped) fails the
+// reload route with that error; a save or delete with reload: true has
+// committed already and only logs it.
+func TestAQueueErrorFailsTheReloadRouteButNotASave(t *testing.T) {
+	e := newEnv(t)
+	ctx := dbtest.Ctx(t)
+	e.queue.err = model.ErrRolloutStopping
+	if _, err := e.uc.Reload(ctx, "u1", org1, sharedvars.ReloadInput{ServerID: srvA}); !errors.Is(err, model.ErrRolloutStopping) {
+		t.Fatalf("reload err = %v", err)
+	}
+	v, err := e.uc.SaveServer(ctx, "u1", srvB, sharedvars.SaveInput{Name: "LOCAL", Value: ptr("x"), Reload: true})
+	if err != nil {
+		t.Fatalf("save err = %v", err)
+	}
+	if err := e.uc.DeleteServer(ctx, "u1", srvB, v.ID, true); err != nil {
+		t.Fatalf("delete err = %v", err)
 	}
 }
 

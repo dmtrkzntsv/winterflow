@@ -30,6 +30,7 @@ func (s RolloutState) Active() bool { return s == RolloutQueued || s == RolloutR
 var (
 	ErrRolloutNotFound = &classified{"rollout not found", ErrNotFound}
 	ErrRolloutActive   = &classified{"an upgrade of this template is already running: wait for it or stop it", ErrConflict}
+	ErrRolloutStopping = &classified{"a reload is stopping; reload again once it has stopped", ErrConflict}
 )
 
 // Rollout is one queued, resumable, one-app-at-a-time job.

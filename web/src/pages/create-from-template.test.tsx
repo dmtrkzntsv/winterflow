@@ -1,11 +1,11 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { NotificationsContext, type NotificationsContextValue } from "@/context/notifications-context-base";
 import { ApiError, type TemplateView } from "@/lib/templates";
-import CreateFromTemplatePage from "@/pages/create-from-template";
+import CreateFromTemplatePage, { LOAD_TIMEOUT_MS } from "@/pages/create-from-template";
 import { fakeAPI } from "@/test/fake-api";
 
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
@@ -252,5 +252,50 @@ describe("CreateFromTemplatePage", () => {
     fakeAPI(routes({ "/api/v1/template/get-template": new Error("template not found") }));
     renderPage();
     expect(await screen.findByRole("alert")).toHaveTextContent("template not found");
+  });
+
+  it("retries a failed load", async () => {
+    const user = userEvent.setup();
+    let fail = true;
+    fakeAPI(
+      routes({
+        "/api/v1/template/get-template": () => (fail ? new Error("bad gateway") : VIEW),
+      }),
+    );
+    renderPage();
+    expect(await screen.findByRole("alert")).toHaveTextContent("bad gateway");
+    fail = false;
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByLabelText("NAME")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("gives up on a read that never answers, aborting it, and offers Retry", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      // A browser out of connections to the host queues the request
+      // without ever answering it.
+      const signals: AbortSignal[] = [];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn((_url: string, init?: RequestInit) => {
+          if (init?.signal) signals.push(init.signal);
+          return new Promise<Response>(() => {});
+        }),
+      );
+      renderPage();
+      act(() => {
+        vi.advanceTimersByTime(LOAD_TIMEOUT_MS + 1);
+      });
+      expect(await screen.findByRole("alert")).toHaveTextContent("The server didn't answer in time");
+      expect(signals[0]?.aborted).toBe(true);
+
+      fakeAPI(routes());
+      await user.click(screen.getByRole("button", { name: "Retry" }));
+      expect(await screen.findByLabelText("NAME")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

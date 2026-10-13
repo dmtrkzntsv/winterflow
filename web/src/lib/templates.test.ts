@@ -48,6 +48,18 @@ describe("createTemplatesApi", () => {
     ]);
   });
 
+  it("passes a read's abort signal to fetch", async () => {
+    const api = fakeAPI({
+      "/api/v1/template/get-templates": { templates: [] },
+      "/api/v1/template/get-template": { id: "t1" },
+    });
+    const t = createTemplatesApi(ok);
+    const ctl = new AbortController();
+    await t.listTemplates(ctl.signal);
+    await t.getTemplate("t1", undefined, ctl.signal);
+    expect(api.fetchMock.mock.calls.map(([, init]) => init?.signal)).toEqual([ctl.signal, ctl.signal]);
+  });
+
   it("saves and deletes templates, keeping the status of a refusal", async () => {
     const conflict = new ApiError("someone saved the template meanwhile", 409);
     const api = fakeAPI({

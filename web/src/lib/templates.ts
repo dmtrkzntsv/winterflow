@@ -143,8 +143,9 @@ export function isManagedByTemplate(message: string): boolean {
 export type WaitFor = (ref: string, timeoutMs?: number) => Promise<{ status?: number; error?: string }>;
 
 export type TemplatesApi = {
-  listTemplates(): Promise<TemplateSummary[]>;
-  getTemplate(id: string, revision?: number): Promise<TemplateView>;
+  // A read takes an optional abort signal (a page that gives up on it).
+  listTemplates(signal?: AbortSignal): Promise<TemplateSummary[]>;
+  getTemplate(id: string, revision?: number, signal?: AbortSignal): Promise<TemplateView>;
   saveTemplate(body: SaveTemplateBody): Promise<SavedTemplate>;
   deleteTemplate(id: string): Promise<void>;
   listInstances(filter: { serverId?: string; templateId?: string }): Promise<InstanceView[]>;
@@ -226,10 +227,15 @@ export function createTemplatesApi(waitFor: WaitFor, fetchImpl?: typeof fetch): 
   const getInstance = (serverId: string, key: string) =>
     call<InstanceView>(`/api/v1/instance/get-instance${qs({ server_id: serverId, key })}`);
   return {
-    listTemplates: () =>
-      call<{ templates: TemplateSummary[] | null }>("/api/v1/template/get-templates").then((d) => d.templates ?? []),
-    getTemplate: (id, revision) =>
-      call<TemplateView>(`/api/v1/template/get-template${qs({ id, revision: revision ? String(revision) : undefined })}`),
+    listTemplates: (signal) =>
+      call<{ templates: TemplateSummary[] | null }>("/api/v1/template/get-templates", signal && { signal }).then(
+        (d) => d.templates ?? [],
+      ),
+    getTemplate: (id, revision, signal) =>
+      call<TemplateView>(
+        `/api/v1/template/get-template${qs({ id, revision: revision ? String(revision) : undefined })}`,
+        signal && { signal },
+      ),
     saveTemplate: (body) => call<SavedTemplate>("/api/v1/template/save-template", post(body)),
     deleteTemplate: async (id) => {
       await call<null>("/api/v1/template/delete-template", post({ id }));

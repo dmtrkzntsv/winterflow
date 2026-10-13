@@ -2,17 +2,16 @@ import { useMemo } from "react";
 import { Plus, RefreshCw } from "lucide-react";
 
 import { DeleteVariableDialog } from "@/components/delete-variable-dialog";
-import { RolloutStrip } from "@/components/rollout-strip";
+import { ReloadRolloutStrip } from "@/components/rollout-strip";
 import { SharedVariableDialog } from "@/components/shared-variable-dialog";
 import { VariablesTable } from "@/components/variables-table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
-import { useRollout } from "@/hooks/use-rollout";
 import { useSharedVariablesPage, type Scope } from "@/hooks/use-shared-variables-page";
 import { useAppBreadcrumbs } from "@/layouts/use-app-layout";
-import { createRolloutsApi, type RolloutsApi } from "@/lib/rollouts";
+import type { RolloutsApi } from "@/lib/rollouts";
 import { createSharedVariablesApi, type SharedVariablesApi, type SyncState } from "@/lib/shared-variables";
 
 const SYNC_LABEL: Record<SyncState, string> = { synced: "Synced", pending: "Sync pending", failed: "Sync failed" };
@@ -27,21 +26,19 @@ const BREADCRUMBS = [{ label: "Organization" }, { label: "Variables" }];
 // useSharedVariablesPage; this is the layout.
 export default function OrgVariablesPage({
   api: injected,
-  rollouts: injectedRollouts,
+  rollouts,
 }: {
   api?: SharedVariablesApi;
   rollouts?: RolloutsApi;
 }) {
   useAppBreadcrumbs(BREADCRUMBS);
   const api = useMemo(() => injected ?? createSharedVariablesApi(), [injected]);
-  const rollouts = useMemo(() => injectedRollouts ?? createRolloutsApi(), [injectedRollouts]);
   const page = useSharedVariablesPage(api, ORG_SCOPE);
   const { org: data } = page;
-  const reload = useRollout(rollouts, "vars_reload");
 
   return (
     <div className="space-y-6">
-      <RolloutStrip rollout={reload.rollout} serverName={(id) => page.serverNames.get(id) ?? id} onStop={reload.stop} />
+      <ReloadRolloutStrip api={rollouts} serverNames={page.serverNames} />
       <Card>
         <CardHeader className="flex-row flex-wrap items-start justify-between gap-x-4 gap-y-3 space-y-0">
           <div className="min-w-0 space-y-1.5">

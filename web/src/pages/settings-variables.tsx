@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { Plus, RefreshCw, RotateCw } from "lucide-react";
 
 import { DeleteVariableDialog } from "@/components/delete-variable-dialog";
-import { RolloutStrip } from "@/components/rollout-strip";
+import { ReloadRolloutStrip } from "@/components/rollout-strip";
 import { SharedVariableDialog } from "@/components/shared-variable-dialog";
 import { VariablesTable } from "@/components/variables-table";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -11,10 +11,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
 import { useApps } from "@/context/use-apps";
-import { useRollout } from "@/hooks/use-rollout";
 import { useSharedVariablesPage, type Scope } from "@/hooks/use-shared-variables-page";
 import { reloadableStaleCount } from "@/lib/app-status";
-import { createRolloutsApi, type RolloutsApi } from "@/lib/rollouts";
+import type { RolloutsApi } from "@/lib/rollouts";
 import type { SharedVariablesApi, SyncState } from "@/lib/shared-variables";
 
 const SYNC_LABEL: Record<SyncState, string> = { synced: "Synced", pending: "Sync pending", failed: "Sync failed" };
@@ -29,7 +28,7 @@ const SYNC_LABEL: Record<SyncState, string> = { synced: "Synced", pending: "Sync
 export function VariablesCard({
   serverId,
   api,
-  rollouts: injectedRollouts,
+  rollouts,
 }: {
   serverId: string;
   api: SharedVariablesApi;
@@ -38,8 +37,6 @@ export function VariablesCard({
   const { staleVarsByApp, statusByApp } = useApps();
   const scope = useMemo<Scope>(() => ({ kind: "server", serverId }), [serverId]);
   const page = useSharedVariablesPage(api, scope);
-  const rollouts = useMemo(() => injectedRollouts ?? createRolloutsApi(), [injectedRollouts]);
-  const reload = useRollout(rollouts, "vars_reload");
   const { server: data } = page;
 
   // Stopped stale apps apply on their next start; the agent skips them.
@@ -74,7 +71,7 @@ export function VariablesCard({
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        <RolloutStrip rollout={reload.rollout} serverName={(id) => page.serverNames.get(id) ?? id} onStop={reload.stop} />
+        <ReloadRolloutStrip api={rollouts} serverNames={page.serverNames} />
         {missing.length > 0 ? (
           <Alert>
             <AlertDescription className="flex flex-wrap items-center justify-between gap-2">

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 
@@ -16,9 +16,10 @@ import { TemplateInstances } from "@/components/template-instances";
 import { TemplateRevisions } from "@/components/template-revisions";
 import { useServers } from "@/context/use-servers";
 import { useRollout } from "@/hooks/use-rollout";
+import { useRolloutsApi } from "@/hooks/use-rollouts-api";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
 import { useAppBreadcrumbs } from "@/layouts/use-app-layout";
-import { createRolloutsApi, isActive } from "@/lib/rollouts";
+import { isActive } from "@/lib/rollouts";
 import { bodyFromDraft, draftFromBody, draftProblem, emptyDraft, type TemplateDraft } from "@/lib/template-draft";
 import { ApiError, type InstanceView, type TemplateView } from "@/lib/templates";
 
@@ -46,7 +47,7 @@ export default function TemplatePage() {
   const location = useLocation();
   const navigate = useNavigate();
   const api = useTemplatesApi();
-  const rolloutsApi = useMemo(() => createRolloutsApi(), []);
+  const rolloutsApi = useRolloutsApi();
   const { servers } = useServers();
   const prefill = (location.state as DraftState | null) ?? null;
   const [params, setParams] = useSearchParams();
@@ -106,11 +107,16 @@ export default function TemplatePage() {
   }, [api, templateId]);
 
   // The template's "Upgrade all" rollout: each step it takes (and its end)
-  // moves an instance, so the list follows.
+  // moves an instance, so the list follows. The first progress seen (the
+  // rollout's first read, or one just queued) moved nothing the page's own
+  // load did not read: only a change after it refreshes the list.
   const { rollout, set: setRollout, stop } = useRollout(rolloutsApi, "template_upgrade", templateId ?? null);
   const progress = rollout ? `${rollout.id}:${rollout.done}:${rollout.skipped}:${rollout.state}` : "";
+  const lastProgress = useRef("");
   useEffect(() => {
-    if (progress) reloadInstances();
+    const prev = lastProgress.current;
+    lastProgress.current = progress;
+    if (prev && progress && prev !== progress) reloadInstances();
   }, [progress, reloadInstances]);
   const serverName = (id: string) => servers.find((s) => s.id === id)?.name ?? id;
 

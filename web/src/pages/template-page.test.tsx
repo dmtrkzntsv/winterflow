@@ -60,7 +60,24 @@ function view(revision: number): TemplateView {
   };
 }
 
-const notifications = { connected: true, subscribe: () => () => {}, waitFor: vi.fn() } as NotificationsContextValue;
+type Listener = Parameters<NotificationsContextValue["subscribe"]>[0];
+const listeners = new Set<Listener>();
+const notifications = {
+  connected: true,
+  subscribe: (fn: Listener) => {
+    listeners.add(fn);
+    return () => {
+      listeners.delete(fn);
+    };
+  },
+  waitFor: vi.fn(),
+} as unknown as NotificationsContextValue;
+// emit delivers an SSE notification to the page.
+function emit(n: Parameters<Listener>[0]) {
+  act(() => {
+    for (const fn of listeners) fn(n);
+  });
+}
 
 function renderPage(url: string, state?: unknown) {
   return render(
@@ -380,6 +397,11 @@ describe("TemplatePage", () => {
     expect(api.calls.find((c) => c.path === "/api/v1/rollout/get-rollouts")?.query).toBe("?kind=template_upgrade&scope_key=t1");
     // One upgrade at a time: the button waits for this one.
     expect(screen.getByRole("button", { name: "Upgrade all to r3" })).toBeDisabled();
+    // Queuing moved no instance: the list is not read again until a step.
+    const listReads = () => api.calls.filter((c) => c.path === "/api/v1/instance/get-instances").length;
+    expect(listReads()).toBe(1);
+    emit({ type: "rollout", payload: rollout({ done: 1, skipped: 0 }) } as Parameters<Listener>[0]);
+    await waitFor(() => expect(listReads()).toBe(2));
   });
 
   it("says why an upgrade could not start", async () => {

@@ -210,10 +210,12 @@ func (uc *UseCase) Stop(ctx context.Context, orgID, id string) (model.RolloutVie
 		return model.RolloutView{}, err
 	}
 	requested := false
-	if !ended {
-		if requested, err = uc.d.Repo.RequestStop(ctx, orgID, id); err != nil {
-			return model.RolloutView{}, err
-		}
+	if ended {
+		// Committed: announce it and prune the scope's old ones whatever
+		// the read below does.
+		uc.ended(ctx, id)
+	} else if requested, err = uc.d.Repo.RequestStop(ctx, orgID, id); err != nil {
+		return model.RolloutView{}, err
 	}
 	r, err := uc.d.Repo.GetRollout(ctx, id)
 	if err != nil {
@@ -223,10 +225,7 @@ func (uc *UseCase) Stop(ctx context.Context, orgID, id string) (model.RolloutVie
 		return model.RolloutView{}, model.ErrRolloutNotFound
 	}
 	v := uc.view(ctx, r)
-	switch {
-	case ended:
-		uc.ended(ctx, id) // announces it and prunes the scope's old ones
-	case requested:
+	if requested {
 		uc.Wake()
 		uc.publish(ctx, orgID, v)
 	}

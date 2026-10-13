@@ -33,9 +33,10 @@ import { AppIcon } from "@/components/app-icon";
 import { LogsView, type LogLine } from "@/components/logs-view";
 import { AppBackups } from "@/components/app-backups";
 import { AppEditorPanel } from "@/components/app-editor-panel";
+import { ConfirmButton } from "@/components/confirm-button";
 import { ErrorText } from "@/components/error-text";
-import { InlineError } from "@/components/inline-error";
 import { InstancePanel } from "@/components/instance-panel";
+import { LoadError, PageSpinner } from "@/components/page-states";
 import { UpgradeInstanceDialog } from "@/components/upgrade-instance-dialog";
 import { AppStatusIndicator } from "@/components/app-status-badge";
 import { DeleteAppDialog } from "@/components/delete-app-dialog";
@@ -52,14 +53,14 @@ import {
   type ControlAction,
   type DeleteAppResult,
 } from "@/context/apps-context-base";
-import { useAppInstance } from "@/hooks/use-app-instance";
+import { useAppInstance, type AppInstance } from "@/hooks/use-app-instance";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
 import { readApiError } from "@/lib/api";
 import { needsAttention } from "@/lib/backups";
 import { deleteOutcome, type DeleteChoice } from "@/lib/delete-app";
 import { appLabel } from "@/lib/kpi";
 import { templateFromApp } from "@/lib/template-draft";
-import { isManagedByTemplate, type InstanceView, type TemplateView } from "@/lib/templates";
+import { isManagedByTemplate, type TemplateView } from "@/lib/templates";
 import type { DraftState } from "@/pages/template-page";
 import { cn, relativeTime } from "@/lib/utils";
 import { useServerPath } from "@/context/use-server-path";
@@ -96,16 +97,19 @@ export default function AppDetailsPage() {
   }, [tab]);
 
   const app = useMemo(() => apps.find((a) => a.id === appId), [apps, appId]);
-  // managed is the template instance behind the app, when there is one.
-  const managed = useAppInstance(app);
-  // Only this app's own instance is ever used (the page stays mounted when
-  // the user moves from app to app).
-  const inst = app?.templateId && managed.instance?.app_id === app.id ? managed.instance : null;
-  const latest = managed.current?.latest_revision ?? 0;
+  const lookup = useAppInstance(app);
+  // ownership is the template side of the app (null for a plain app). Only
+  // this app's own instance is ever used (the page stays mounted when the
+  // user moves from app to app).
+  const ownership: Ownership = app?.templateId
+    ? { ...lookup, instance: lookup.instance?.app_id === app.id ? lookup.instance : null }
+    : null;
+  const inst = ownership?.instance ?? null;
+  const latest = ownership?.current?.latest_revision ?? 0;
   const behind = inst !== null && latest > inst.revision;
   const [upgrade, setUpgrade] = useState<{ appId: string; target: TemplateView } | null>(null);
   const upgradeTarget = upgrade && upgrade.appId === app?.id ? upgrade.target : null;
-  const reloadManaged = () => void Promise.all([managed.reload(), refresh()]);
+  const reloadManaged = () => void Promise.all([lookup.reload(), refresh()]);
   const openUpgrade = async () => {
     if (!inst) return;
     try {
@@ -270,7 +274,7 @@ export default function AppDetailsPage() {
           // The page's live status says whether the app is stopped now.
           instance={{ ...inst, status_code: status ?? inst.status_code }}
           appName={appLabel(app.name, app.id)}
-          current={managed.current}
+          current={ownership?.current ?? null}
           target={upgradeTarget}
           open
           onOpenChange={(o) => {
@@ -323,40 +327,19 @@ export default function AppDetailsPage() {
           <AppMetricsTab serverId={app.serverId} appId={app.id} appName={appLabel(app.name, app.id)} />
         </TabsContent>
         <TabsContent value="editor" className="mt-0">
-          {app.templateId && managed.error ? (
-            <div className="flex min-h-60 flex-col items-center justify-center gap-3">
-              <InlineError>{managed.error}</InlineError>
-              <Button variant="outline" size="sm" onClick={() => void managed.reload()}>
-                Retry
-              </Button>
-            </div>
-          ) : app.templateId && managed.loading ? (
-            <div className="flex min-h-60 items-center justify-center">
-              <Spinner />
-            </div>
-          ) : inst && managed.current ? (
-            <InstancePanel
-              key={`${inst.revision}-${inst.updated_at}`}
-              instance={inst}
-              current={managed.current}
-              onSaved={reloadManaged}
-            />
-          ) : (
-            <AppEditorPanel appId={app.id} />
-          )}
+          <ConfigurationTab appId={app.id} ownership={ownership} onSaved={reloadManaged} />
         </TabsContent>
         <TabsContent value="backups" className="mt-6">
           <AppBackups appId={app.id} />
         </TabsContent>
         <TabsContent value="history" className="mt-6">
-          <HistoryTab appId={app.id} managed={Boolean(app.templateId)} managedBy={inst?.template_name} />
+          <HistoryTab appId={app.id} ownership={ownership} />
         </TabsContent>
         <TabsContent value="settings" className="mt-6">
           <SettingsTab
             appId={app.id}
             name={app.name}
-            instance={inst}
-            managed={Boolean(app.templateId)}
+            ownership={ownership}
             onUnlinked={reloadManaged}
             onRename={rename}
             onDelete={async (opts) => {
@@ -428,9 +411,36 @@ function LogsTab({ appId }: { appId: string }) {
   );
 }
 
-// managed: a template owns the app (its instance may still be loading, so
-// managedBy, the template's name, can be unknown).
-function HistoryTab({ appId, managed, managedBy }: { appId: string; managed: boolean; managedBy?: string }) {
+// Ownership is the template side of an app a template manages, with only
+// this app's own instance; null for a plain app. While the instance is
+// read (or when the read failed) the app is still the template's.
+type Ownership = AppInstance | null;
+
+// ConfigurationTab is the app's editor, or for an app a template manages
+// its instance's parameters (never the plain editor, whose save would be
+// refused).
+function ConfigurationTab({ appId, ownership, onSaved }: { appId: string; ownership: Ownership; onSaved: () => void }) {
+  if (ownership?.error) return <LoadError message={ownership.error} onRetry={() => void ownership.reload()} />;
+  if (ownership?.loading) return <PageSpinner />;
+  if (ownership?.instance && ownership.current) {
+    const inst = ownership.instance;
+    return (
+      <InstancePanel
+        key={`${inst.revision}-${inst.updated_at}`}
+        instance={inst}
+        current={ownership.current}
+        onSaved={onSaved}
+      />
+    );
+  }
+  return <AppEditorPanel appId={appId} />;
+}
+
+// A templated app's history explains why it can't be rolled back (the
+// template's name may still be loading).
+function HistoryTab({ appId, ownership }: { appId: string; ownership: Ownership }) {
+  const templated = ownership !== null;
+  const managedBy = ownership?.instance?.template_name;
   const { getRevisions, rollback, control, refresh } = useApps();
   const [data, setData] = useState<AppRevisions | null>(null);
   const [loading, setLoading] = useState(true);
@@ -520,7 +530,7 @@ function HistoryTab({ appId, managed, managedBy }: { appId: string; managed: boo
             ? "1 revision"
             : `${data.revisions.length} revisions`}
           , newest first.{" "}
-          {managed
+          {templated
             ? `Managed by ${managedBy ? `template ${managedBy}` : "a template"}: it changes through its parameters or an upgrade; unlink it to roll back.`
             : "Rolling back adds a new revision; nothing is lost."}
         </p>
@@ -591,7 +601,7 @@ function HistoryTab({ appId, managed, managedBy }: { appId: string; managed: boo
                   <Button size="sm" onClick={() => void doDeploy()} disabled={busy}>
                     Deploy draft
                   </Button>
-                ) : !isCurrent && !managed ? (
+                ) : !isCurrent && !templated ? (
                   <AlertDialog>
                     <AlertDialogTrigger asChild>
                       <Button size="sm" variant="ghost" disabled={busy}>
@@ -631,23 +641,22 @@ function HistoryTab({ appId, managed, managedBy }: { appId: string; managed: boo
 function SettingsTab({
   appId,
   name,
-  instance,
-  managed,
+  ownership,
   onUnlinked,
   onRename,
   onDelete,
 }: {
   appId: string;
   name: string;
-  instance: InstanceView | null;
-  // managed: a template owns the app (its instance may still be loading), so
-  // it can't be offered as the source of a new template.
-  managed: boolean;
+  // A templated app (ownership set, its instance perhaps still loading)
+  // can't be offered as the source of a new template.
+  ownership: Ownership;
   onUnlinked: () => void;
   onRename: (appId: string, name: string) => Promise<void>;
   onDelete: (opts: { deleteVolumes: boolean; deleteBackups: boolean }) => Promise<DeleteAppResult>;
 }) {
   const { backupsByApp, getApp } = useApps();
+  const instance = ownership?.instance ?? null;
   const navigate = useNavigate();
   const templatesApi = useTemplatesApi();
   const [newName, setNewName] = useState(name);
@@ -763,29 +772,21 @@ function SettingsTab({
             </p>
           ) : (
             <div>
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
+              <ConfirmButton
+                trigger={
                   <Button variant="outline" disabled={busy}>
                     Unlink from template
                   </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>Unlink from {instance.template_name}?</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      The app becomes an ordinary app you can edit freely; template upgrades no longer reach it.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                    <AlertDialogAction onClick={() => void unlink()}>Unlink</AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
+                }
+                title={`Unlink from ${instance.template_name}?`}
+                description="The app becomes an ordinary app you can edit freely; template upgrades no longer reach it."
+                confirmLabel="Unlink"
+                onConfirm={() => void unlink()}
+              />
             </div>
           )}
         </div>
-      ) : managed ? null : (
+      ) : ownership ? null : (
         <div className="grid gap-4 p-5 md:grid-cols-[14rem_minmax(0,1fr)] md:gap-8">
           <div className="space-y-1">
             <h2 className="text-sm font-semibold">Save as template</h2>

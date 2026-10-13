@@ -32,7 +32,9 @@ type Deps struct {
 	// SharedVariableRepository stores org- and server-level shared variables.
 	SharedVariableRepository port.SharedVariableRepository
 	// TemplateRepository stores templates, their revisions and instances.
-	TemplateRepository  port.TemplateRepository
+	TemplateRepository port.TemplateRepository
+	// RolloutRepository stores the rollout queue.
+	RolloutRepository   port.RolloutRepository
 	CommandDispatcher   port.CommandDispatcher
 	NotificationManager port.NotificationManager
 	StatusCache         *status.Cache

@@ -121,6 +121,29 @@ type OrganizationUser struct {
 	CreatedAt      types.DateTime
 }
 
+type Rollout struct {
+	ID              string
+	OrgID           string
+	Kind            string
+	Scope           string
+	ScopeKey        string
+	ScopeRev        int64
+	State           string
+	StopRequested   bool
+	CurrentAppID    string
+	CurrentServerID string
+	Done            int64
+	Skipped         int64
+	Total           int64
+	SkipIds         string
+	Error           string
+	LeaseOwner      string
+	LeaseUntil      *types.DateTime
+	CreatedAt       types.DateTime
+	CreatedBy       string
+	FinishedAt      *types.DateTime
+}
+
 type Server struct {
 	ServerID       string
 	OrganizationID string

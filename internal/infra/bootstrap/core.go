@@ -13,6 +13,7 @@ import (
 	apprepo "winterflow/internal/infra/db/repository/app"
 	appdomainrepo "winterflow/internal/infra/db/repository/appdomain"
 	metricrepo "winterflow/internal/infra/db/repository/metric"
+	rolloutrepo "winterflow/internal/infra/db/repository/rollout"
 	serverrepo "winterflow/internal/infra/db/repository/server"
 	serverdomainrepo "winterflow/internal/infra/db/repository/serverdomain"
 	serverstoragerepo "winterflow/internal/infra/db/repository/serverstorage"
@@ -85,6 +86,7 @@ func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerCon
 		ServerStorageRepository:  r.serverStorage,
 		SharedVariableRepository: r.sharedVar,
 		TemplateRepository:       r.template,
+		RolloutRepository:        r.rollout,
 		CommandDispatcher:        dispatcher,
 		NotificationManager:      nm,
 		StatusCache:              statusCache,
@@ -107,6 +109,7 @@ type repos struct {
 	metric        *metricrepo.Repo
 	sharedVar     *sharedvarrepo.Repo
 	template      *templaterepo.Repo
+	rollout       *rolloutrepo.Repo
 	alert         *alertrepo.Repo
 }
 
@@ -140,6 +143,9 @@ func newRepos(conn *db.DB, log *logger.Logger) (repos, error) {
 		return r, err
 	}
 	if r.template, err = templaterepo.New(conn.Tx, conn.Driver, log); err != nil {
+		return r, err
+	}
+	if r.rollout, err = rolloutrepo.New(conn.Tx, conn.Driver, log); err != nil {
 		return r, err
 	}
 	r.alert, err = alertrepo.New(conn.Tx, conn.Driver, log, util.GenerateID)

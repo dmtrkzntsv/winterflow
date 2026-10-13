@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
+import { Link, MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppsContext, type App, type AppsContextValue } from "@/context/apps-context-base";
@@ -54,7 +54,14 @@ function renderPage(
       <NotificationsContext.Provider value={notifications}>
         <AppsContext.Provider value={value}>
           <Routes>
-            <Route element={<Outlet context={{ setBreadcrumbs: () => {} }} />}>
+            <Route
+              element={
+                <>
+                  <Link to="/app/a2?tab=editor">go to a2</Link>
+                  <Outlet context={{ setBreadcrumbs: () => {} }} />
+                </>
+              }
+            >
               <Route path="/app/:appId" element={<AppDetailsPage />} />
               <Route path="/server/srv-1" element={<p>the apps</p>} />
             </Route>
@@ -310,5 +317,86 @@ describe("AppDetailsPage of a template instance", () => {
     await user.click(await screen.findByRole("button", { name: /Roll back/ }));
     await user.click(screen.getByRole("button", { name: "Roll back" }));
     await waitFor(() => expect(refresh).toHaveBeenCalled());
+  });
+
+  it("offers no Roll back while a templated app's instance is still being looked up", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+    const getRevisions = vi.fn(async () => ({
+      current: "bbbbbbbb",
+      deployed: "bbbbbbbb",
+      revisions: [
+        { hash: "bbbbbbbb", subject: "edit", timestamp: 2 },
+        { hash: "aaaaaaaa", subject: "create", timestamp: 1 },
+      ],
+    }));
+    renderPage("/app/a1?tab=history", {}, { ...managed, ctx: { getRevisions } });
+    expect(await screen.findByText(/Managed by a template/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Roll back/ })).not.toBeInTheDocument();
+  });
+
+  it("reports a template that can't be loaded for an upgrade", async () => {
+    const user = userEvent.setup();
+    instanceAPI(INSTANCE, {
+      "/api/v1/template/get-template": (_: unknown, q: URLSearchParams) => {
+        if (q.get("revision")) return template(2);
+        return new Error("boom");
+      },
+    });
+    renderPage("/app/a1?tab=backups", {}, managed);
+    await user.click(await screen.findByRole("button", { name: "Upgrade to r3" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Couldn't load the template", { description: "boom" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("shows a failed save of the parameters", async () => {
+    const user = userEvent.setup();
+    instanceAPI(INSTANCE, { "/api/v1/instance/update-instance": new Error("render failed") });
+    renderPage("/app/a1?tab=editor", {}, managed);
+    await user.clear(await screen.findByLabelText("NAME"));
+    await user.type(screen.getByLabelText("NAME"), "shop");
+    await user.click(screen.getByRole("button", { name: "Save & redeploy" }));
+    expect(await screen.findByText("render failed")).toBeInTheDocument();
+  });
+
+  it("names the lookup failure when the error has no message", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Promise.reject("offline")));
+    renderPage("/app/a1?tab=editor", {}, managed);
+    expect(await screen.findByText("Failed to load the app's template")).toBeInTheDocument();
+  });
+
+  it("never shows the first app's instance on the app the user moved to", async () => {
+    const user = userEvent.setup();
+    let answer: () => void = () => {};
+    const reply = (data: unknown) => new Response(JSON.stringify({ success: true, message: "ok", data }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        const path = new URL(url, "http://x").pathname;
+        if (path === "/api/v1/instance/get-instances") {
+          await new Promise<void>((resolve) => (answer = resolve));
+          return reply({ instances: [INSTANCE] });
+        }
+        if (path === "/api/v1/template/get-template") return reply(template(2));
+        return new Response("{}", { status: 404 });
+      }),
+    );
+    const other = { id: "a2", serverId: "s", name: "Blog", version: "1", icon: "", color: "", createdAt: "" };
+    renderPage("/app/a1?tab=editor", {}, {
+      ctx: {
+        apps: [
+          { id: "a1", serverId: "s", name: "Shop", version: "3", icon: "", color: "", createdAt: "", templateId: "t1" },
+          other,
+        ],
+      },
+    });
+    await user.click(await screen.findByRole("link", { name: "go to a2" }));
+    expect(await screen.findByText("the plain editor")).toBeInTheDocument();
+    await act(async () => answer());
+    // a1's late answer must not reach a2's page.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.getByText("the plain editor")).toBeInTheDocument();
+    expect(screen.queryByText(/Managed by template/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "twillingate · r2" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("NAME")).not.toBeInTheDocument();
   });
 });

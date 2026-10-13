@@ -95,15 +95,18 @@ export default function AppDetailsPage() {
   const app = useMemo(() => apps.find((a) => a.id === appId), [apps, appId]);
   // managed is the template instance behind the app, when there is one.
   const managed = useAppInstance(app);
-  const inst = managed.instance;
+  // Only this app's own instance is ever used (the page stays mounted when
+  // the user moves from app to app).
+  const inst = app?.templateId && managed.instance?.app_id === app.id ? managed.instance : null;
   const latest = managed.current?.latest_revision ?? 0;
   const behind = inst !== null && latest > inst.revision;
-  const [upgradeTarget, setUpgradeTarget] = useState<TemplateView | null>(null);
+  const [upgrade, setUpgrade] = useState<{ appId: string; target: TemplateView } | null>(null);
+  const upgradeTarget = upgrade && upgrade.appId === app?.id ? upgrade.target : null;
   const reloadManaged = () => void Promise.all([managed.reload(), refresh()]);
   const openUpgrade = async () => {
     if (!inst) return;
     try {
-      setUpgradeTarget(await templatesApi.getTemplate(inst.template_id));
+      setUpgrade({ appId: inst.app_id, target: await templatesApi.getTemplate(inst.template_id) });
     } catch (e) {
       toast.error("Couldn't load the template", { description: e instanceof Error ? e.message : undefined });
     }
@@ -260,7 +263,7 @@ export default function AppDetailsPage() {
           target={upgradeTarget}
           open
           onOpenChange={(o) => {
-            if (!o) setUpgradeTarget(null);
+            if (!o) setUpgrade(null);
           }}
           onDone={reloadManaged}
         />
@@ -335,7 +338,7 @@ export default function AppDetailsPage() {
           <AppBackups appId={app.id} />
         </TabsContent>
         <TabsContent value="history" className="mt-6">
-          <HistoryTab appId={app.id} managedBy={inst?.template_name} />
+          <HistoryTab appId={app.id} managed={Boolean(app.templateId)} managedBy={inst?.template_name} />
         </TabsContent>
         <TabsContent value="settings" className="mt-6">
           <SettingsTab
@@ -413,7 +416,9 @@ function LogsTab({ appId }: { appId: string }) {
   );
 }
 
-function HistoryTab({ appId, managedBy }: { appId: string; managedBy?: string }) {
+// managed: a template owns the app (its instance may still be loading, so
+// managedBy, the template's name, can be unknown).
+function HistoryTab({ appId, managed, managedBy }: { appId: string; managed: boolean; managedBy?: string }) {
   const { getRevisions, rollback, control, refresh } = useApps();
   const [data, setData] = useState<AppRevisions | null>(null);
   const [loading, setLoading] = useState(true);
@@ -503,8 +508,8 @@ function HistoryTab({ appId, managedBy }: { appId: string; managedBy?: string })
             ? "1 revision"
             : `${data.revisions.length} revisions`}
           , newest first.{" "}
-          {managedBy
-            ? `Managed by template ${managedBy}: it changes through its parameters or an upgrade; unlink it to roll back.`
+          {managed
+            ? `Managed by ${managedBy ? `template ${managedBy}` : "a template"}: it changes through its parameters or an upgrade; unlink it to roll back.`
             : "Rolling back adds a new revision; nothing is lost."}
         </p>
         <Button
@@ -574,7 +579,7 @@ function HistoryTab({ appId, managedBy }: { appId: string; managedBy?: string })
                   <Button size="sm" onClick={() => void doDeploy()} disabled={busy}>
                     Deploy draft
                   </Button>
-                ) : !isCurrent && !managedBy ? (
+                ) : !isCurrent && !managed ? (
                   <AlertDialog>
                     <AlertDialogTrigger asChild>
                       <Button size="sm" variant="ghost" disabled={busy}>

@@ -1,0 +1,123 @@
+// Parameter values in the browser: instant feedback while a value is typed
+// (the API checks everything again with Go's RE2), the preview of what a
+// value renders into (app name, hosts) and which values an upgrade needs.
+import type { InstanceView, Parameter, TemplateBody } from "@/lib/templates";
+
+// RE2_ONLY matches constructs JavaScript reads differently or not at all:
+// POSIX classes, \p classes, \z \A \Q \E \C, (?P<name>), ungreedy and
+// negated flags. A pattern using one is left to the API.
+const RE2_ONLY = /\[\[:|\\[pPzAQEC]|\(\?P<|\(\?[imsU]*(-|U)/;
+
+// compilePattern turns a parameter's RE2 pattern into a JS RegExp, or null
+// when JavaScript can't be trusted to agree (then only the API checks it).
+// A leading (?i), (?m) or (?s) becomes the matching JS flag.
+export function compilePattern(pattern: string | undefined): RegExp | null {
+  if (!pattern || RE2_ONLY.test(pattern)) return null;
+  let src = pattern;
+  let flags = "";
+  const lead = /^\(\?([ims]+)\)/.exec(src);
+  if (lead) {
+    flags = [...new Set(lead[1])].join("");
+    src = src.slice(lead[0].length);
+  }
+  try {
+    return new RegExp(src, flags);
+  } catch {
+    return null;
+  }
+}
+
+// valueError checks a plain value as typed ("" = not given: the default
+// applies). "" means fine; the API has the last word.
+export function valueError(p: Parameter, value: string): string {
+  if (value.includes("$")) return "May not contain $";
+  if (value === "") return p.required && !p.default ? "Required" : "";
+  const re = compilePattern(p.pattern);
+  if (re && !re.test(value)) return `Must match ${p.pattern}`;
+  return "";
+}
+
+// fieldErrors are a parameter form's problems by name: each plain value as
+// valueError has it, a required secret neither typed nor kept (kept: the
+// secrets the agent already holds, which a blank field leaves as they are).
+export function fieldErrors(
+  params: Parameter[] | null | undefined,
+  values: Record<string, string>,
+  kept: readonly string[] = [],
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const p of params ?? []) {
+    const v = values[p.name] ?? "";
+    const err = p.secret ? (p.required && v === "" && !kept.includes(p.name) ? "Required" : "") : valueError(p, v);
+    if (err) out[p.name] = err;
+  }
+  return out;
+}
+
+// requiredFirst orders a form: required parameters first, each group in the
+// template's order.
+export function requiredFirst(params: Parameter[] | null | undefined): Parameter[] {
+  const list = params ?? [];
+  return [...list.filter((p) => p.required), ...list.filter((p) => !p.required)];
+}
+
+// plainValues are the values a render uses: each plain parameter's given
+// value, else its default, else "".
+export function plainValues(params: Parameter[] | null | undefined, given: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const p of params ?? []) {
+    if (p.secret) continue;
+    out[p.name] = given[p.name] || p.default || "";
+  }
+  return out;
+}
+
+const REF = /\$\{([^}]*)\}/g;
+
+// expand substitutes ${NAME} with plain values, as the API renders the app
+// name, ingress hosts and ports.
+export function expand(s: string, plain: Record<string, string>): string {
+  return s.replace(REF, (_, name: string) => plain[name] ?? "");
+}
+
+// missingRefs are the parameters s references that have no value yet.
+export function missingRefs(s: string, plain: Record<string, string>): string[] {
+  return [...s.matchAll(REF)].map((m) => m[1]).filter((name) => !plain[name]);
+}
+
+export type HostPreview = { host: string; port: string; missing: string[] };
+
+// previewHosts renders the body's ingress rows with the values so far.
+export function previewHosts(body: TemplateBody, plain: Record<string, string>): HostPreview[] {
+  return (body.ingress ?? []).map((row) => ({
+    host: expand(row.host, plain),
+    port: expand(String(row.port), plain),
+    missing: [...missingRefs(row.host, plain), ...missingRefs(String(row.port), plain)],
+  }));
+}
+
+// upgradeNeeds are the parameters of the target revision that need a value
+// the instance doesn't hold: a required plain parameter without a default
+// or a stored value, and a required secret it was never given. A pending
+// instance holds no secret at all: every required secret is asked for.
+export function upgradeNeeds(target: Parameter[] | null | undefined, inst: InstanceView): Parameter[] {
+  const pending = inst.state === "pending";
+  return (target ?? []).filter((p) => {
+    if (!p.required) return false;
+    if (p.secret) return pending || !(p.name in (inst.secrets ?? {}));
+    return !p.default && !inst.parameters?.[p.name];
+  });
+}
+
+// newKey is the key the browser gives an instance it creates (a UUID v4):
+// the API replays a create with the same key instead of making a second
+// app. crypto.randomUUID exists only on secure contexts, and self-hosted
+// installs are often reached over plain http, so it is built from
+// getRandomValues (available everywhere).
+export function newKey(): string {
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const h = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}

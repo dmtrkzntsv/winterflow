@@ -3,15 +3,20 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
 import { ErrorText } from "@/components/error-text";
-import { lastLine } from "@/lib/error-lines";
 
 const COMPOSE = "Container web  Creating\nContainer web  Error\n\nError response from daemon: pull access denied for nope\n  \n";
 
-describe("lastLine", () => {
+describe("the shown line", () => {
   it("is the last non-empty line, trimmed", () => {
-    expect(lastLine(COMPOSE)).toBe("Error response from daemon: pull access denied for nope");
-    expect(lastLine("  one line  ")).toBe("one line");
-    expect(lastLine("")).toBe("");
+    const line = (text: string) => {
+      const { container, unmount } = render(<ErrorText text={text} />);
+      const shown = container.querySelector("p span")?.textContent;
+      unmount();
+      return shown;
+    };
+    expect(line(COMPOSE)).toBe("Error response from daemon: pull access denied for nope");
+    expect(line("  one line  ")).toBe("one line");
+    expect(line("")).toBe("");
   });
 });
 

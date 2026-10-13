@@ -4,12 +4,11 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { Spinner } from "@/components/ui/spinner";
-import { EditorSection } from "@/components/editor-section";
+import { EditorSection, StickyActionBar } from "@/components/editor-section";
 import { ErrorText } from "@/components/error-text";
 import { HostHints, type HostCheck } from "@/components/host-hints";
-import { InlineError } from "@/components/inline-error";
 import { NativeSelect } from "@/components/native-select";
+import { EmptyNote, LoadError, PageSpinner } from "@/components/page-states";
 import { ParameterFields } from "@/components/parameter-fields";
 import { useApps } from "@/context/use-apps";
 import { useBackups } from "@/context/use-backups";
@@ -162,43 +161,32 @@ export default function CreateFromTemplatePage() {
 
   if (loadError) {
     return (
-      <div className="mx-auto flex min-h-60 max-w-5xl flex-col items-center justify-center gap-3 text-center">
-        <InlineError>{loadError}</InlineError>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => {
-            setLoadError("");
-            setAttempt((n) => n + 1);
-          }}
-        >
-          Retry
-        </Button>
-      </div>
+      <LoadError
+        className="mx-auto max-w-5xl text-center"
+        message={loadError}
+        onRetry={() => {
+          setLoadError("");
+          setAttempt((n) => n + 1);
+        }}
+      />
     );
   }
-  if (templates === null || (templateId && !view)) {
-    return (
-      <div className="flex min-h-60 items-center justify-center">
-        <Spinner />
-      </div>
-    );
-  }
+  if (templates === null || (templateId && !view)) return <PageSpinner />;
   if (templates.length === 0) {
     return (
-      <p className="mx-auto max-w-5xl rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
+      <EmptyNote className="mx-auto max-w-5xl p-6 text-center">
         The organization has no templates yet.{" "}
         <Link to="/org/templates" className="underline underline-offset-4">
           Add one
         </Link>{" "}
         or save an app as a template from its Settings.
-      </p>
+      </EmptyNote>
     );
   }
 
   return (
     <div className="mx-auto w-full max-w-5xl">
-      <div className="sticky top-0 z-10 -mx-4 mb-6 flex flex-wrap items-center gap-x-4 gap-y-2 border-b bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+      <StickyActionBar className="mb-6 gap-x-4">
         <div className="mr-auto min-w-0">
           <h1 className="text-xl font-semibold tracking-tight">Add app from template</h1>
           <p className="text-sm text-muted-foreground">The app keeps the template's files until you unlink it.</p>
@@ -209,7 +197,7 @@ export default function CreateFromTemplatePage() {
         <Button onClick={() => void create()} disabled={busy || !view}>
           {busy ? "Adding…" : "Add app"}
         </Button>
-      </div>
+      </StickyActionBar>
 
       {error ? <ErrorText alert icon text={error} className="mb-4" /> : null}
 

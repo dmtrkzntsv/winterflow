@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { CodeEditor } from "@/components/code-editor";
 import { EditorSection } from "@/components/editor-section";
 import { ImageTagPicker } from "@/components/image-tag-picker";
+import { EmptyNote } from "@/components/page-states";
 import { cn } from "@/lib/utils";
 import { localId, type AppFileMeta } from "@/types/app-config";
 
@@ -56,9 +57,9 @@ export function FilesSection({ files, contents, onChange, description, allowSecr
       }
     >
       {files.length === 0 ? (
-        <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+        <EmptyNote>
           Add at least a <code>compose.yml</code>.
-        </p>
+        </EmptyNote>
       ) : null}
       {files.map((f) => (
         <div key={f.id} className="overflow-hidden rounded-md border">

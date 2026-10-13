@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
 import { AppEditor } from "@/components/app-editor";
+import { StickyActionBar } from "@/components/editor-section";
+import { LoadError, PageSpinner } from "@/components/page-states";
 import { useApps } from "@/context/use-apps";
 import {
   buildSavePayload,
@@ -84,28 +85,13 @@ export function AppEditorPanel({ appId }: { appId: string }) {
     [state, baseline],
   );
 
-  if (loading) {
-    return (
-      <div className="flex min-h-60 items-center justify-center">
-        <Spinner />
-      </div>
-    );
-  }
+  if (loading) return <PageSpinner />;
 
-  if (error) {
-    return (
-      <div className="flex min-h-60 flex-col items-center justify-center gap-3">
-        <p className="text-sm text-destructive">{error}</p>
-        <Button variant="outline" size="sm" onClick={() => void load()}>
-          Retry
-        </Button>
-      </div>
-    );
-  }
+  if (error) return <LoadError message={error} onRetry={() => void load()} />;
 
   return (
     <div>
-      <div className="sticky top-0 z-10 -mx-4 mb-6 flex flex-wrap items-center gap-2 border-b bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+      <StickyActionBar className="mb-6">
         <p className="mr-auto text-sm text-muted-foreground">
           {dirty ? (
             <span className="inline-flex items-center gap-2 text-foreground">
@@ -137,7 +123,7 @@ export function AppEditorPanel({ appId }: { appId: string }) {
         >
           {saving ? "Saving…" : "Save & redeploy"}
         </Button>
-      </div>
+      </StickyActionBar>
       <AppEditor state={state} onChange={setState} />
     </div>
   );

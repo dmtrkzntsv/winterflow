@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
 import { InlineError } from "@/components/inline-error";
+import { EmptyNote } from "@/components/page-states";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
 import { useAppBreadcrumbs } from "@/layouts/use-app-layout";
 import { instancesLabel, type TemplateSummary } from "@/lib/templates";
@@ -48,9 +49,9 @@ export default function OrgTemplatesPage() {
             <Spinner />
           </div>
         ) : list.length === 0 ? (
-          <p className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
+          <EmptyNote className="p-6 text-center">
             No templates yet. Add one here, or open an app's Settings and save it as a template.
-          </p>
+          </EmptyNote>
         ) : (
           <ul className="divide-y rounded-md border">
             {list.map((t) => (

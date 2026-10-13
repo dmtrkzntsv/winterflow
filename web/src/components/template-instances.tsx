@@ -4,19 +4,10 @@ import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
 import { AppStatusIndicator } from "@/components/app-status-badge";
+import { ConfirmButton } from "@/components/confirm-button";
 import { ErrorText } from "@/components/error-text";
+import { EmptyNote } from "@/components/page-states";
 import { UpgradeInstanceDialog } from "@/components/upgrade-instance-dialog";
 import { useServers } from "@/context/use-servers";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
@@ -65,9 +56,9 @@ export function TemplateInstances({
 
   if (instances.length === 0) {
     return (
-      <p className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
+      <EmptyNote className="p-6 text-center">
         No app uses this template yet. Add one on a server: Apps → From template.
-      </p>
+      </EmptyNote>
     );
   }
 
@@ -105,25 +96,17 @@ export function TemplateInstances({
                 </Button>
               ) : null}
               {inst.state === "pending" ? (
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
+                <ConfirmButton
+                  trigger={
                     <Button size="sm" variant="outline" className="text-destructive" disabled={deleting === inst.key}>
                       Delete
                     </Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>Delete {name}?</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        Its deploy never succeeded. Deleting removes whatever it left on {serverName(inst.server_id)}.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>Cancel</AlertDialogCancel>
-                      <AlertDialogAction onClick={() => void remove(inst, name)}>Delete</AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
+                  }
+                  title={`Delete ${name}?`}
+                  description={`Its deploy never succeeded. Deleting removes whatever it left on ${serverName(inst.server_id)}.`}
+                  confirmLabel="Delete"
+                  onConfirm={() => void remove(inst, name)}
+                />
               ) : null}
             </li>
           );

@@ -8,6 +8,7 @@ import { Switch } from "@/components/ui/switch";
 import { EditorSection } from "@/components/editor-section";
 import { FilesSection } from "@/components/files-section";
 import { IconPicker } from "@/components/icon-picker";
+import { EmptyNote } from "@/components/page-states";
 import {
   ingressRow,
   paramRow,
@@ -110,7 +111,7 @@ export function TemplateEditor({ draft, onChange }: Props) {
         }
       >
         {draft.parameters.length === 0 ? (
-          <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">No parameters yet.</p>
+          <EmptyNote>No parameters yet.</EmptyNote>
         ) : (
           // One line per parameter under column heads where the section is
           // wide enough; narrower, each row wraps and names its checkboxes.
@@ -220,7 +221,7 @@ export function TemplateEditor({ draft, onChange }: Props) {
         }
       >
         {draft.ingress.length === 0 ? (
-          <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">No hostnames.</p>
+          <EmptyNote>No hostnames.</EmptyNote>
         ) : (
           <div className="divide-y rounded-md border">
             {draft.ingress.map((r) => (
@@ -271,9 +272,7 @@ export function TemplateEditor({ draft, onChange }: Props) {
         }
       >
         {backupNames.length === 0 ? (
-          <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-            The compose file declares no backups.
-          </p>
+          <EmptyNote>The compose file declares no backups.</EmptyNote>
         ) : (
           <div className="divide-y rounded-md border">
             {backupNames.map((name) => {

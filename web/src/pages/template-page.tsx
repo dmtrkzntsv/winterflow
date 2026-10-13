@@ -4,21 +4,12 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
+import { ConfirmButton } from "@/components/confirm-button";
+import { StickyActionBar } from "@/components/editor-section";
 import { InlineError } from "@/components/inline-error";
 import { NotFound } from "@/components/not-found";
+import { LoadError, PageSpinner } from "@/components/page-states";
 import { TemplateEditor } from "@/components/template-editor";
 import { TemplateInstances } from "@/components/template-instances";
 import { TemplateRevisions } from "@/components/template-revisions";
@@ -146,27 +137,14 @@ export default function TemplatePage() {
     if (loadError instanceof ApiError && loadError.status === 404) {
       return <NotFound title="Template not found" description="This template doesn't exist in your organization." />;
     }
-    return (
-      <div className="flex min-h-60 flex-col items-center justify-center gap-3">
-        <InlineError>{loadError.message}</InlineError>
-        <Button variant="outline" size="sm" onClick={() => void load()}>
-          Retry
-        </Button>
-      </div>
-    );
+    return <LoadError message={loadError.message} onRetry={() => void load()} />;
   }
-  if (templateId && !view) {
-    return (
-      <div className="flex min-h-60 items-center justify-center">
-        <Spinner />
-      </div>
-    );
-  }
+  if (templateId && !view) return <PageSpinner />;
 
   const live = instances.length;
   const editor = (
     <>
-      <div className="sticky top-0 z-10 -mx-4 flex flex-wrap items-center gap-2 border-b bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+      <StickyActionBar>
         {conflict !== null ? (
           <p role="alert" className="mr-auto flex items-center gap-2 text-sm text-destructive">
             Someone saved r{conflict} meanwhile; reload to get it (your changes here are dropped).
@@ -194,7 +172,7 @@ export default function TemplatePage() {
         <Button onClick={() => void save()} disabled={saving || (!dirty && !!view) || conflict !== null}>
           {saving ? "Saving…" : view ? `Save as r${view.latest_revision + 1}` : "Save template"}
         </Button>
-      </div>
+      </StickyActionBar>
       <TemplateEditor draft={draft} onChange={setDraft} />
     </>
   );
@@ -211,8 +189,8 @@ export default function TemplatePage() {
           </p>
         </div>
         {view ? (
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
+          <ConfirmButton
+            trigger={
               <Button
                 variant="outline"
                 size="sm"
@@ -222,20 +200,12 @@ export default function TemplatePage() {
               >
                 Delete template
               </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Delete {view.name}?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  Its revisions are deleted. No app uses it; apps unlinked from it stay as they are.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction onClick={() => void remove()}>Delete</AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+            }
+            title={`Delete ${view.name}?`}
+            description="Its revisions are deleted. No app uses it; apps unlinked from it stay as they are."
+            confirmLabel="Delete"
+            onConfirm={() => void remove()}
+          />
         ) : null}
       </header>
 

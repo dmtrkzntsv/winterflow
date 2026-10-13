@@ -5,7 +5,7 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { CodeEditor } from "@/components/code-editor";
-import { EditorSection } from "@/components/editor-section";
+import { EditorSection, StickyActionBar } from "@/components/editor-section";
 import { InlineError } from "@/components/inline-error";
 import { ParameterFields } from "@/components/parameter-fields";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
@@ -77,7 +77,7 @@ export function InstancePanel({
 
   return (
     <div>
-      <div className="sticky top-0 z-10 -mx-4 mb-6 flex flex-wrap items-center gap-2 border-b bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+      <StickyActionBar className="mb-6">
         <p className="mr-auto text-sm text-muted-foreground">
           Managed by template{" "}
           <Link to={`/org/templates/${instance.template_id}`} className="font-medium text-foreground hover:underline">
@@ -88,7 +88,7 @@ export function InstancePanel({
         <Button onClick={() => void save()} disabled={saving || (!dirty && instance.state === "created")}>
           {saving ? "Saving…" : "Save & redeploy"}
         </Button>
-      </div>
+      </StickyActionBar>
       {error ? (
         <InlineError icon className="mb-4">
           {error}

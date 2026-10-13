@@ -1,4 +1,5 @@
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { AppEditor } from "@/components/app-editor";
@@ -40,5 +41,17 @@ describe("AppEditor storage variables", () => {
     renderEditor(emptyEditorState());
     expect(screen.getByText("No variables yet.")).toBeInTheDocument();
     expect(screen.queryByRole("list", { name: "Storage variables" })).not.toBeInTheDocument();
+  });
+});
+
+describe("AppEditor files", () => {
+  it("edits files through the shared files section", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<AppEditor state={emptyEditorState()} onChange={onChange} />);
+    await user.click(screen.getAllByRole("button", { name: /Add file/ })[0]);
+    const next = onChange.mock.lastCall![0] as AppEditorState;
+    expect(next.config.files).toHaveLength(2);
+    expect(Object.keys(next.files)).toHaveLength(2);
   });
 });

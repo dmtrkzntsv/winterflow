@@ -64,6 +64,8 @@ describe("OrgMembersPage", () => {
     expect(screen.queryByText("o-1")).not.toBeInTheDocument();
     // The Icon label stacks above its button, like Name and Colour.
     expect(screen.getByTestId("org-icon-field").className).toContain("grid");
+    // The row aligns at the top, so Icon, Name and Colour labels share a line.
+    expect(screen.getByTestId("org-look-row")).toHaveClass("items-start");
     const save = screen.getByRole("button", { name: "Save" });
     expect(save).toBeDisabled();
     await user.clear(name);

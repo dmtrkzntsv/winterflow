@@ -109,7 +109,9 @@ function OrganizationSettings() {
             if (dirty && trimmed && !busy) void save();
           }}
         >
-          <div className="flex flex-wrap items-end gap-3">
+          {/* Top-aligned: the three labels share one line (the icon button
+              is taller than the fields). */}
+          <div data-testid="org-look-row" className="flex flex-wrap items-start gap-3">
             {/* A grid, so the label sits above its button like the others. */}
             <div data-testid="org-icon-field" className="grid justify-items-start gap-2">
               <Label>Icon</Label>

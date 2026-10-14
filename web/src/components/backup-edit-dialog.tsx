@@ -209,24 +209,22 @@ export function BackupEditDialog({
           {b.in_recipe ? ", declared by the compose file." : ", added here."}
         </>
       }
+      aside={
+        onRemove ? (
+          <Button type="button" variant="ghost" className="text-destructive hover:text-destructive sm:mr-auto" disabled={busy} onClick={onRemove}>
+            Remove backup
+          </Button>
+        ) : null
+      }
       footer={
-        <div className="flex w-full flex-col-reverse gap-2 sm:flex-row sm:justify-between">
-          {onRemove ? (
-            <Button type="button" variant="ghost" className="text-destructive hover:text-destructive" disabled={busy} onClick={onRemove}>
-              Remove backup
-            </Button>
-          ) : (
-            <span />
-          )}
-          <div className="flex flex-col-reverse gap-2 sm:flex-row">
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" form="backup-edit-form" disabled={!!problem || busy}>
-              {busy ? "Saving…" : "Save"}
-            </Button>
-          </div>
-        </div>
+        <>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button type="submit" form="backup-edit-form" disabled={!!problem || busy}>
+            {busy ? "Saving…" : "Save"}
+          </Button>
+        </>
       }
     >
       <form

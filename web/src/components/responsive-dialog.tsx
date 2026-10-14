@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { Children, Fragment, isValidElement, type ReactNode } from "react";
 
 import {
   Dialog,
@@ -28,9 +28,13 @@ export type ResponsiveDialogProps = {
   title: ReactNode;
   description?: ReactNode;
   children: ReactNode;
-  // footer holds the actions (Cancel, then the primary). On a phone's
-  // sheet they stack primary first, Cancel last.
+  // footer holds the actions (Cancel, then the primary), as a fragment. On
+  // a phone's sheet they stack in reverse: primary first, Cancel last, in
+  // the order focus moves too.
   footer?: ReactNode;
+  // aside is a footer's extra action (Reset, Remove): at the left on a
+  // wider screen (the caller adds sm:mr-auto), above Cancel on a phone.
+  aside?: ReactNode;
   className?: string;
   // Focus hooks of the content: where focus goes when it opens (default:
   // its first field) and back to when it closes (default: what was focused
@@ -49,6 +53,7 @@ export function ResponsiveDialog({
   description,
   children,
   footer,
+  aside,
   className,
   onOpenAutoFocus,
   onCloseAutoFocus,
@@ -70,7 +75,7 @@ export function ResponsiveDialog({
             {description ? <DrawerDescription>{description}</DrawerDescription> : null}
           </DrawerHeader>
           <div className="overflow-y-auto px-4 pb-2">{children}</div>
-          {footer ? <DrawerFooter className="flex-col-reverse pb-[max(1rem,env(safe-area-inset-bottom))]">{footer}</DrawerFooter> : null}
+          {footer ? <DrawerFooter className="pb-[max(1rem,env(safe-area-inset-bottom))]">{primaryFirst(footer, aside)}</DrawerFooter> : null}
         </DrawerContent>
       </Drawer>
     );
@@ -94,8 +99,30 @@ export function ResponsiveDialog({
         <div data-testid="dialog-body" className="-mx-6 -my-1 grid min-h-0 flex-1 content-start gap-4 overflow-y-auto px-6 py-1">
           {children}
         </div>
-        {footer ? <DialogFooter className="shrink-0">{footer}</DialogFooter> : null}
+        {footer ? (
+          <DialogFooter className="shrink-0">
+            {aside}
+            {footer}
+          </DialogFooter>
+        ) : null}
       </DialogContent>
     </Dialog>
   );
+}
+
+// primaryFirst is a footer's actions for a phone's sheet, top to bottom:
+// a fragment's in reverse (primary first, Cancel last), with aside just
+// above Cancel; anything else as given (aside first).
+function primaryFirst(footer: ReactNode, aside: ReactNode): ReactNode {
+  if (!isValidElement<{ children?: ReactNode }>(footer) || footer.type !== Fragment) {
+    return (
+      <>
+        {aside}
+        {footer}
+      </>
+    );
+  }
+  const actions = Children.toArray(footer.props.children).reverse();
+  if (aside) actions.splice(Math.max(actions.length - 1, 0), 0, <Fragment key="aside">{aside}</Fragment>);
+  return actions;
 }

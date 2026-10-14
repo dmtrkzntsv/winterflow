@@ -106,13 +106,15 @@ export function OverrideDialog({ open, onOpenChange, rule, override, channels, s
       title={`Adjust for ${targetLabel}`}
       description={`Rule: ${ruleSummary(rule)}, ${routingText(rule.channel_ids, channels).toLowerCase()}. Empty fields keep the rule's values.`}
       className="sm:max-w-lg"
+      aside={
+        override ? (
+          <Button type="button" variant="ghost" className="sm:mr-auto" onClick={() => void reset()} disabled={busy}>
+            Reset to rule
+          </Button>
+        ) : null
+      }
       footer={
         <>
-          {override ? (
-            <Button type="button" variant="ghost" className="sm:mr-auto" onClick={() => void reset()} disabled={busy}>
-              Reset to rule
-            </Button>
-          ) : null}
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>

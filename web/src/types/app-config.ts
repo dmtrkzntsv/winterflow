@@ -13,6 +13,9 @@ export type AppVariableMeta = {
   id: string;
   name: string;
   is_encrypted: boolean;
+  // stored: the agent holds a secret value for this variable (it was read
+  // back as the "<encrypted>" placeholder). Editor-only, never sent.
+  stored?: boolean;
 };
 
 export type AppSourceConfig = {

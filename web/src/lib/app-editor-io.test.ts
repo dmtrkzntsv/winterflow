@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   buildSavePayload,
@@ -12,6 +12,11 @@ import {
 import type { AppEditorState } from "@/types/app-config";
 
 const b64 = (s: string) => btoa(s);
+
+vi.mock("@/lib/ecies", async (original) => ({
+  ...(await original<typeof import("@/lib/ecies")>()),
+  encryptSecret: vi.fn(async (value: string, key: string) => `ct(${key}):${value}`),
+}));
 
 describe("app editor io: storage variables", () => {
   it("reads them from app.get and never sends them back", async () => {
@@ -162,5 +167,90 @@ describe("pruneBlankAddresses", () => {
   it("leaves a state without ingress as it is", () => {
     const s = withConfig({});
     expect(pruneBlankAddresses(s)).toBe(s);
+  });
+});
+
+describe("app editor io: stored secrets", () => {
+  // A stored app with one plain and one secret variable, as app.get answers
+  // (the agent masks the secret as the placeholder).
+  const stored = () =>
+    stateFromDetail("app-1", {
+      app: {
+        app_id: "app-1",
+        config: b64(
+          JSON.stringify({
+            name: "demo",
+            files: [{ filename: "compose.yml" }],
+            variables: [{ name: "PORT" }, { name: "TOKEN", is_encrypted: true }],
+          }),
+        ),
+        files: [{ name: "compose.yml", content: b64("services: {}") }],
+        variables: [
+          { name: "PORT", content: b64("8080") },
+          { name: "TOKEN", content: b64("<encrypted>"), encrypted: true },
+        ],
+      },
+      revision: 1,
+      available_revisions: null,
+    });
+  const tokenId = (s: AppEditorState) => s.config.variables.find((v) => v.name === "TOKEN")!.id;
+
+  it("marks a secret read back from the agent as stored", () => {
+    const s = stored();
+    expect(s.config.variables.map(({ name, is_encrypted, stored }) => ({ name, is_encrypted, stored }))).toEqual([
+      { name: "PORT", is_encrypted: false, stored: undefined },
+      { name: "TOKEN", is_encrypted: true, stored: true },
+    ]);
+  });
+
+  it("sends an untouched stored secret as the placeholder, without reading the key", async () => {
+    const s = stored();
+    let keyReads = 0;
+    const payload = await buildSavePayload(s, async () => {
+      keyReads++;
+      return "PUB";
+    }, "app-1");
+    expect(payload.variables).toEqual([
+      { name: "PORT", encrypted: false, content: "8080" },
+      { name: "TOKEN", encrypted: true, content: "<encrypted>" },
+    ]);
+    expect(keyReads).toBe(0);
+    // The editor-only flag never rides the config.
+    expect(JSON.stringify(payload.config)).not.toContain("stored");
+  });
+
+  it("sends a replaced secret as a new ciphertext, never the placeholder", async () => {
+    const s = stored();
+    const replaced = { ...s, variables: { ...s.variables, [tokenId(s)]: "hunter2" } };
+    const payload = await buildSavePayload(replaced, async () => "PUB", "app-1");
+    const token = payload.variables.find((v) => v.name === "TOKEN")!;
+    expect(token).toEqual({ name: "TOKEN", encrypted: true, content: "ct(PUB):hunter2" });
+    expect(JSON.stringify(payload)).not.toContain("<encrypted>");
+    expect(JSON.stringify(payload)).not.toContain('"hunter2"');
+  });
+
+  it("refuses a value that starts with the placeholder", async () => {
+    const s = stored();
+    const id = tokenId(s);
+    const tampered = { ...s, variables: { ...s.variables, [id]: "<encrypted>x" } };
+    expect(editorErrors(tampered)).toEqual({ [`var:${id}:value`]: "A value can't start with <encrypted>." });
+    await expect(buildSavePayload(tampered, async () => "PUB", "app-1")).rejects.toThrow(
+      "TOKEN: A value can't start with <encrypted>.",
+    );
+  });
+
+  it("refuses the bare placeholder where no secret is stored", () => {
+    const s = stored();
+    const portId = s.config.variables.find((v) => v.name === "PORT")!.id;
+    const plain = { ...s, variables: { ...s.variables, [portId]: "<encrypted>" } };
+    expect(editorErrors(plain)).toEqual({ [`var:${portId}:value`]: "A value can't start with <encrypted>." });
+    const fresh = emptyEditorState();
+    const added = {
+      ...fresh,
+      config: { ...fresh.config, variables: [{ id: "v1", name: "NEW", is_encrypted: true }] },
+      variables: { v1: "<encrypted>" },
+    };
+    expect(editorErrors(added)).toMatchObject({ "var:v1:value": "A value can't start with <encrypted>." });
+    expect(editorErrors(stored())).toEqual({});
   });
 });

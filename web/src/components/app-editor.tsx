@@ -14,7 +14,6 @@ import { useServers } from "@/context/use-servers";
 import { useRegistrations } from "@/hooks/use-registrations";
 import { useSharedNames } from "@/hooks/use-shared-names";
 import { newGitSource } from "@/lib/app-editor-io";
-import { ENCRYPTED } from "@/lib/ecies";
 import { imageRefs } from "@/lib/compose-images";
 import { hasErrorIn, type FieldErrors } from "@/lib/field-errors";
 import {
@@ -223,7 +222,7 @@ function GitSource({
 
 // StorageVariableRows lists the WF_STORAGE_ variables the compose files
 // reference, read-only: their values come from the server's storages (Settings
-// → Storages), and a secret shows only as <encrypted>.
+// → Storages), and a secret only says it is one.
 function StorageVariableRows({ vars }: { vars: StorageVariable[] }) {
   if (vars.length === 0) return null;
   return (
@@ -233,7 +232,7 @@ function StorageVariableRows({ vars }: { vars: StorageVariable[] }) {
           <code className="font-mono [overflow-wrap:anywhere]">{v.name}</code>
           {v.secret ? (
             <span className="flex items-center gap-1 font-mono text-xs text-muted-foreground">
-              <Lock className="size-3" /> {ENCRYPTED}
+              <Lock className="size-3" /> Secret
             </span>
           ) : null}
           <span className="ml-auto text-xs text-muted-foreground">

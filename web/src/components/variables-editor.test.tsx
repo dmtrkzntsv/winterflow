@@ -8,8 +8,27 @@ import { emptyEditorState } from "@/lib/app-editor-io";
 import type { FieldErrors } from "@/lib/field-errors";
 import type { AppEditorState } from "@/types/app-config";
 
-function Harness({ errors = {}, emptyNote }: { errors?: FieldErrors; emptyNote?: boolean }) {
-  const [state, setState] = useState<AppEditorState>(emptyEditorState);
+// withStoredSecret is an app whose TOKEN the agent holds (read back as the
+// placeholder).
+function withStoredSecret(): AppEditorState {
+  const s = emptyEditorState();
+  return {
+    ...s,
+    config: { ...s.config, variables: [{ id: "t", name: "TOKEN", is_encrypted: true, stored: true }] },
+    variables: { t: "<encrypted>" },
+  };
+}
+
+function Harness({
+  errors = {},
+  emptyNote,
+  start = emptyEditorState,
+}: {
+  errors?: FieldErrors;
+  emptyNote?: boolean;
+  start?: () => AppEditorState;
+}) {
+  const [state, setState] = useState<AppEditorState>(start);
   return (
     <>
       <VariablesEditor
@@ -42,6 +61,48 @@ describe("VariablesEditor", () => {
     expect(Object.values(state().values)).toEqual(["mail"]);
     await user.click(screen.getByRole("button", { name: "Remove SMTP_HOST" }));
     expect(state().vars).toEqual([]);
+  });
+
+  it("never shows a stored secret or its placeholder: Replace opens an empty field", async () => {
+    const user = userEvent.setup();
+    render(<Harness start={withStoredSecret} />);
+    expect(screen.getByText("Secret · set")).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("<encrypted>")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Value of TOKEN")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Show value" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Replace TOKEN" }));
+    const field = screen.getByLabelText("Value of TOKEN");
+    expect(field).toHaveValue("");
+    expect(field).toHaveFocus();
+    expect(field).toHaveAttribute("type", "password");
+    // Show value only once there is a new value to show.
+    expect(screen.queryByRole("button", { name: "Show value" })).not.toBeInTheDocument();
+    await user.type(field, "hunter2");
+    await user.click(screen.getByRole("button", { name: "Show value" }));
+    expect(field).toHaveAttribute("type", "text");
+    expect(state().values).toEqual({ t: "hunter2" });
+
+    // Keep current goes back to the stored value.
+    await user.click(screen.getByRole("button", { name: "Keep current" }));
+    expect(screen.getByText("Secret · set")).toBeInTheDocument();
+    expect(state().values).toEqual({ t: "<encrypted>" });
+  });
+
+  it("empties a stored secret turned plain, so the placeholder never shows as text", async () => {
+    const user = userEvent.setup();
+    render(<Harness start={withStoredSecret} />);
+    await user.click(screen.getByRole("button", { name: /Secret$/ }));
+    expect(screen.getByLabelText("Value of TOKEN")).toHaveValue("");
+    expect(state().values).toEqual({ t: "" });
+    expect(state().vars[0]).toMatchObject({ is_encrypted: false });
+  });
+
+  it("shows a value's message under it", async () => {
+    const user = userEvent.setup();
+    render(<Harness start={withStoredSecret} errors={{ "var:t:value": "A value can't start with <encrypted>." }} />);
+    await user.click(screen.getByRole("button", { name: "Replace TOKEN" }));
+    expect(screen.getByLabelText("Value of TOKEN")).toHaveAccessibleDescription("A value can't start with <encrypted>.");
   });
 
   it("shows a variable's message under it", async () => {

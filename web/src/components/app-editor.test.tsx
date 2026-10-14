@@ -68,8 +68,9 @@ describe("AppEditor storage variables", () => {
     expect(rows).toHaveLength(2);
     expect(rows[0]).toHaveTextContent("WF_STORAGE_HETZNER_BUCKET");
     expect(rows[0]).toHaveTextContent("provided by storage hetzner");
-    expect(rows[0]).not.toHaveTextContent("<encrypted>");
-    expect(rows[1]).toHaveTextContent("<encrypted>");
+    expect(rows[0]).not.toHaveTextContent("Secret");
+    expect(rows[1]).toHaveTextContent("Secret");
+    expect(screen.queryByText(/<encrypted>/)).not.toBeInTheDocument();
     expect(within(rows[0]).queryByRole("textbox")).not.toBeInTheDocument();
     expect(screen.queryByText("No variables yet.")).not.toBeInTheDocument();
   });

@@ -13,6 +13,7 @@ import {
   localId,
   type AppEditorState,
   type AppSourceConfig,
+  type AppVariableMeta,
   type IngressDomain,
   type IngressRedirect,
 } from "@/types/app-config";
@@ -90,7 +91,7 @@ export function stateFromDetail(
     const id = localId("var");
     const encrypted = v.encrypted ?? encVar.get(v.name) ?? false;
     variables[id] = encrypted ? ENCRYPTED : b64ToString(v.content);
-    return { id, name: v.name, is_encrypted: encrypted };
+    return encrypted ? { id, name: v.name, is_encrypted: true, stored: true } : { id, name: v.name, is_encrypted: false };
   });
 
   const cfgSource = (cfg as { source?: import("@/types/app-config").AppSourceConfig }).source;
@@ -214,7 +215,10 @@ export function editorErrors(state: AppEditorState): FieldErrors {
   // A Git-deployed app may take its compose file from the repository.
   if (!src && !config.files.some((f) => isComposeFile(f.filename))) out.files = "Add a compose file named compose.yml.";
   for (const f of config.files) if (!f.filename.trim()) out[`file:${f.id}`] = "Name this file.";
-  for (const v of config.variables) if (!v.name.trim()) out[`var:${v.id}`] = "Name this variable.";
+  for (const v of config.variables) {
+    if (!v.name.trim()) out[`var:${v.id}`] = "Name this variable.";
+    if (placeholderMisuse(v, state.variables[v.id] ?? "")) out[`var:${v.id}:value`] = PLACEHOLDER_REFUSED;
+  }
 
   const ing = config.ingress;
   if (!ing) return out;
@@ -248,6 +252,21 @@ export function editorErrors(state: AppEditorState): FieldErrors {
   return out;
 }
 
+// keepsStoredSecret says whether a variable's value stands for the secret
+// the agent already holds (sent as the placeholder, which keeps it).
+export function keepsStoredSecret(v: AppVariableMeta, value: string): boolean {
+  return v.is_encrypted && v.stored === true && value === ENCRYPTED;
+}
+
+// placeholderMisuse is a value that starts with the placeholder without
+// standing for a stored secret: sent, it would keep (or become) the wrong
+// value.
+function placeholderMisuse(v: AppVariableMeta, value: string): boolean {
+  return value.startsWith(ENCRYPTED) && !keepsStoredSecret(v, value);
+}
+
+const PLACEHOLDER_REFUSED = `A value can't start with ${ENCRYPTED}.`;
+
 // mapItem encrypts a secret value/file, passes the "<encrypted>" placeholder
 // through unchanged (preserve the stored secret), and sends plaintext as-is.
 async function mapItem(
@@ -270,12 +289,15 @@ export async function buildSavePayload(
   getPublicKey: () => Promise<string>,
   appId?: string,
 ) {
+  for (const v of state.config.variables) {
+    if (placeholderMisuse(v, state.variables[v.id] ?? "")) throw new Error(`${v.name.trim() || "A variable"}: ${PLACEHOLDER_REFUSED}`);
+  }
   const needsKey =
     state.config.files.some(
       (f) => f.is_encrypted && (state.files[f.id] ?? "") !== ENCRYPTED,
     ) ||
     state.config.variables.some(
-      (v) => v.is_encrypted && (state.variables[v.id] ?? "") !== ENCRYPTED,
+      (v) => v.is_encrypted && !keepsStoredSecret(v, state.variables[v.id] ?? ""),
     );
   const publicKey = needsKey ? await getPublicKey() : "";
 

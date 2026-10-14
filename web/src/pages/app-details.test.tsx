@@ -685,6 +685,19 @@ describe("AppDetailsPage", () => {
     expect(await screen.findByText("the apps")).toBeInTheDocument();
   });
 
+  it("offers to delete backups only for an app that may have some", async () => {
+    const user = userEvent.setup({ delay: null });
+    // The read says no backup is set up, and the agent reports none.
+    const none = renderPage("/app/a1?tab=settings", {}, { ctx: { getApp: withBackups([]) } });
+    await user.click(await screen.findByRole("button", { name: "Delete app…" }));
+    await waitFor(() => expect(screen.queryByRole("checkbox", { name: "Also delete its backups" })).not.toBeInTheDocument());
+    expect(screen.getByRole("checkbox", { name: "Also delete its volumes" })).toBeInTheDocument();
+    none.unmount();
+    renderPage("/app/a1?tab=settings", {}, { ctx: { getApp: withBackups([SQLITE_ON]) } });
+    await user.click(await screen.findByRole("button", { name: "Delete app…" }));
+    expect(await screen.findByRole("checkbox", { name: "Also delete its backups" })).toBeInTheDocument();
+  });
+
   it("keeps the dialog after a failed delete, then reports a delete with warnings", async () => {
     const user = userEvent.setup({ delay: null });
     remove.mockRejectedValueOnce(new Error("timed out"));

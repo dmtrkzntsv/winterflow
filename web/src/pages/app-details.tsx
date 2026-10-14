@@ -171,6 +171,14 @@ export default function AppDetailsPage() {
     }
   };
 
+  // Whether the app may have backup copies to delete with it: a backup set
+  // up with a storage, or one the agent reports. Unknown (no read yet, or
+  // its backups unreadable) counts as maybe.
+  const mayHaveBackups =
+    !detail ||
+    !!detail.backups_error ||
+    (detail.backups ?? []).some((b) => !!b.storage) ||
+    (backupsByApp?.[appId]?.length ?? 0) > 0;
   const status = statusByApp[appId];
   // failure is why the app's deploy failed: a create's in this session, or
   // a pending template instance's (its deploy never succeeded). The banner
@@ -365,7 +373,7 @@ export default function AppDetailsPage() {
         onOpenChange={setHistoryOpen}
         onChanged={() => setHistoryChanges((n) => n + 1)}
       />
-      <DeleteAppDialog name={name} open={deleteOpen} onOpenChange={setDeleteOpen} onConfirm={deleteApp} />
+      <DeleteAppDialog name={name} open={deleteOpen} hasBackups={mayHaveBackups} onOpenChange={setDeleteOpen} onConfirm={deleteApp} />
     </div>
   );
 }

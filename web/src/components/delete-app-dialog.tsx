@@ -7,17 +7,20 @@ import type { DeleteChoice } from "@/lib/delete-app";
 import { cn } from "@/lib/utils";
 
 // DeleteAppDialog confirms deleting an app and, opt-in, its volumes and its
-// backups. Every opening starts with the safe default (unticked). onConfirm
-// runs the delete: the dialog shows it pending (it can take minutes), closes
-// when it resolves and stays open when it rejects.
+// backups (offered only when it may have some: hasBackups). Every opening
+// starts with the safe default (unticked). onConfirm runs the delete: the
+// dialog shows it pending (it can take minutes), closes when it resolves and
+// stays open when it rejects.
 export function DeleteAppDialog({
   name,
   open,
+  hasBackups = true,
   onOpenChange,
   onConfirm,
 }: {
   name: string;
   open: boolean;
+  hasBackups?: boolean;
   onOpenChange: (open: boolean) => void;
   onConfirm: (choice: DeleteChoice) => Promise<void>;
 }) {
@@ -33,12 +36,13 @@ export function DeleteAppDialog({
       setWithBackups(false);
     }
   }
+  const backups = hasBackups && withBackups;
   const label =
-    withVolumes && withBackups
+    withVolumes && backups
       ? "Delete app, volumes and backups"
       : withVolumes
         ? "Delete app and volumes"
-        : withBackups
+        : backups
           ? "Delete app and backups"
           : "Delete app";
   return (
@@ -52,7 +56,7 @@ export function DeleteAppDialog({
       onConfirm={async () => {
         setDeleting(true);
         try {
-          await onConfirm({ withVolumes, withBackups });
+          await onConfirm({ withVolumes, withBackups: backups });
         } finally {
           setDeleting(false);
         }
@@ -64,16 +68,18 @@ export function DeleteAppDialog({
         disabled={deleting}
         onChange={setWithVolumes}
         label="Also delete its volumes"
-        hint="Permanently erases the data in this app's Docker volumes. Unticked, the volumes are kept; you can delete them later in Settings → Docker."
+        hint="Erases the data in its Docker volumes. Unticked, they stay in Settings → Docker."
       />
-      <Choice
-        id="delete-backups"
-        checked={withBackups}
-        disabled={deleting}
-        onChange={setWithBackups}
-        label="Also delete its backups"
-        hint="Permanently deletes every copy of this app in its backup storages. Unticked, the copies stay in the storage and expire per the server's retention settings; you can delete them sooner in Settings → Storages."
-      />
+      {hasBackups ? (
+        <Choice
+          id="delete-backups"
+          checked={withBackups}
+          disabled={deleting}
+          onChange={setWithBackups}
+          label="Also delete its backups"
+          hint="Erases its copies in the storages. Unticked, they expire with the server's retention."
+        />
+      ) : null}
       {deleting ? (
         <p role="status" className="text-sm text-muted-foreground">
           Deleting the app. This can take a few minutes, longer when its backups are deleted from a storage. Keep this page open.

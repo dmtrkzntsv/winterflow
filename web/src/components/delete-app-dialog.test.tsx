@@ -6,14 +6,14 @@ import { describe, expect, it, vi } from "vitest";
 import { DeleteAppDialog } from "@/components/delete-app-dialog";
 import type { DeleteChoice } from "@/lib/delete-app";
 
-function Harness({ onConfirm }: { onConfirm: (c: DeleteChoice) => Promise<void> }) {
+function Harness({ onConfirm, hasBackups }: { onConfirm: (c: DeleteChoice) => Promise<void>; hasBackups?: boolean }) {
   const [open, setOpen] = useState(false);
   return (
     <>
       <button type="button" onClick={() => setOpen(true)}>
         open
       </button>
-      <DeleteAppDialog name="Shop" open={open} onOpenChange={setOpen} onConfirm={onConfirm} />
+      <DeleteAppDialog name="Shop" open={open} hasBackups={hasBackups} onOpenChange={setOpen} onConfirm={onConfirm} />
     </>
   );
 }
@@ -31,6 +31,19 @@ describe("DeleteAppDialog", () => {
     await user.click(screen.getByRole("button", { name: "Delete app" }));
     expect(onConfirm).toHaveBeenLastCalledWith({ withVolumes: false, withBackups: false });
     await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+  });
+
+  it("offers no backups to delete for an app without any", async () => {
+    const user = userEvent.setup({ delay: null });
+    const onConfirm = vi.fn(async () => {});
+    render(<Harness onConfirm={onConfirm} hasBackups={false} />);
+    await user.click(screen.getByRole("button", { name: "open" }));
+    expect(screen.getAllByRole("checkbox").map((c) => c.id)).toEqual(["delete-volumes"]);
+    // Each choice says what it does in one line.
+    expect(screen.getByText("Erases the data in its Docker volumes. Unticked, they stay in Settings → Docker.")).toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: "Also delete its volumes" }));
+    await user.click(screen.getByRole("button", { name: "Delete app and volumes" }));
+    expect(onConfirm).toHaveBeenLastCalledWith({ withVolumes: true, withBackups: false });
   });
 
   it("names what it deletes once ticked, and starts unticked at every opening", async () => {

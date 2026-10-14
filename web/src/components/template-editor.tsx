@@ -6,6 +6,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { Disclosure } from "@/components/disclosure";
 import { EditorSection } from "@/components/editor-section";
 import { FilesSection } from "@/components/files-section";
 import { IconPicker } from "@/components/icon-picker";
@@ -75,6 +76,64 @@ export function TemplateEditor({ draft, onChange }: Props) {
   // Parsing the compose files runs only when their contents change.
   const [main, override] = composeContents(draft);
   const backupNames = useMemo(() => backupNamesIn([main, override]), [main, override]);
+
+  const domains = (
+    <EditorSection
+      title="Domains & Routing"
+      description={
+        <>
+          Hostnames routed to a port the compose file publishes on the host. Host and port may use{" "}
+          <code>{"${PARAM}"}</code> of a plain parameter; the service is a note for people.
+        </>
+      }
+      action={
+        <Button size="sm" variant="outline" onClick={() => set({ ingress: [...draft.ingress, ingressRow()] })}>
+          <Plus className="size-4" /> Add hostname
+        </Button>
+      }
+    >
+      {draft.ingress.length === 0 ? (
+        <EmptyNote>No hostnames.</EmptyNote>
+      ) : (
+        <div className="divide-y rounded-md border">
+          {draft.ingress.map((r) => (
+            <div key={r.id} className="flex flex-wrap items-center gap-2 p-2">
+              <Input
+                aria-label="Host"
+                value={r.host}
+                placeholder="${NAME}.example.com"
+                className="min-w-48 flex-1 font-mono"
+                onChange={(e) => setIngress(r.id, { host: e.target.value })}
+              />
+              <Input
+                aria-label={`Port of ${r.host || "host"}`}
+                value={r.port}
+                placeholder="8080 or ${PORT}"
+                className="w-36 font-mono"
+                onChange={(e) => setIngress(r.id, { port: e.target.value })}
+              />
+              <Input
+                aria-label={`Service of ${r.host || "host"}`}
+                value={r.service}
+                placeholder="Service (optional)"
+                className="w-40"
+                onChange={(e) => setIngress(r.id, { service: e.target.value })}
+              />
+              <Button
+                size="icon"
+                variant="ghost"
+                className="size-8 text-muted-foreground hover:text-destructive"
+                aria-label={`Remove ${r.host || "host"}`}
+                onClick={() => set({ ingress: removeById(draft.ingress, r.id) })}
+              >
+                <Trash2 className="size-4" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+    </EditorSection>
+  );
 
   return (
     <div>
@@ -270,74 +329,26 @@ export function TemplateEditor({ draft, onChange }: Props) {
         )}
       </EditorSection>
 
-      <EditorSection
-        title="Domains & Routing"
-        description={
-          <>
-            Hostnames routed to a port the compose file publishes on the host. Host and port may use{" "}
-            <code>{"${PARAM}"}</code> of a plain parameter; the service is a note for people.
-          </>
-        }
-        action={
-          <Button size="sm" variant="outline" onClick={() => set({ ingress: [...draft.ingress, ingressRow()] })}>
-            <Plus className="size-4" /> Add hostname
-          </Button>
-        }
-      >
-        {draft.ingress.length === 0 ? (
-          <EmptyNote>No hostnames.</EmptyNote>
-        ) : (
-          <div className="divide-y rounded-md border">
-            {draft.ingress.map((r) => (
-              <div key={r.id} className="flex flex-wrap items-center gap-2 p-2">
-                <Input
-                  aria-label="Host"
-                  value={r.host}
-                  placeholder="${NAME}.example.com"
-                  className="min-w-48 flex-1 font-mono"
-                  onChange={(e) => setIngress(r.id, { host: e.target.value })}
-                />
-                <Input
-                  aria-label={`Port of ${r.host || "host"}`}
-                  value={r.port}
-                  placeholder="8080 or ${PORT}"
-                  className="w-36 font-mono"
-                  onChange={(e) => setIngress(r.id, { port: e.target.value })}
-                />
-                <Input
-                  aria-label={`Service of ${r.host || "host"}`}
-                  value={r.service}
-                  placeholder="Service (optional)"
-                  className="w-40"
-                  onChange={(e) => setIngress(r.id, { service: e.target.value })}
-                />
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="size-8 text-muted-foreground hover:text-destructive"
-                  aria-label={`Remove ${r.host || "host"}`}
-                  onClick={() => set({ ingress: removeById(draft.ingress, r.id) })}
-                >
-                  <Trash2 className="size-4" />
-                </Button>
-              </div>
-            ))}
-          </div>
-        )}
-      </EditorSection>
+      {draft.ingress.length > 0 ? (
+        domains
+      ) : (
+        // No hostnames yet: the section waits behind More options (most
+        // templates publish a port and need none).
+        <Disclosure className="border-t py-4">{domains}</Disclosure>
+      )}
 
-      <EditorSection
-        title="Backup defaults"
-        description={
-          <>
-            What each new app starts with, per backup the compose file declares under{" "}
-            <code>x-winterflow.backups</code>. The storage is looked up by name on the app's server.
-          </>
-        }
-      >
-        {backupNames.length === 0 ? (
-          <EmptyNote>The compose file declares no backups.</EmptyNote>
-        ) : (
+      {/* Only for a compose file that declares backups: there is nothing
+          to set otherwise. */}
+      {backupNames.length > 0 ? (
+        <EditorSection
+          title="Backup defaults"
+          description={
+            <>
+              What each new app starts with, per backup the compose file declares under{" "}
+              <code>x-winterflow.backups</code>. The storage is looked up by name on the app's server.
+            </>
+          }
+        >
           <div className="divide-y rounded-md border">
             {backupNames.map((name) => {
               const def = draft.backups[name] ?? { enabled: false };
@@ -358,8 +369,8 @@ export function TemplateEditor({ draft, onChange }: Props) {
               );
             })}
           </div>
-        )}
-      </EditorSection>
+        </EditorSection>
+      ) : null}
     </div>
   );
 }

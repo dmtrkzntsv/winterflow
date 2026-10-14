@@ -17,8 +17,8 @@ import { cn } from "@/lib/utils";
 
 // RulesSection is Notifications → Alert rules: the org's rules, servers
 // first, each with an inline on/off switch and Edit/Delete in its menu.
-// channels come from the page (shared with Channels), so each rule's
-// "notify" line names current channels.
+// channels come from the page (shared with Channels), so a rule's "notify"
+// line names current channels; a rule on the default channels has none.
 export function RulesSection({ channels }: { channels: Channel[] }) {
   const [rules, setRules] = useState<Rule[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -98,7 +98,8 @@ export function RulesSection({ channels }: { channels: Channel[] }) {
                   />
                 }
                 title={<span className={cn(!r.enabled && "opacity-60")}>{ruleSummary(r)}</span>}
-                description={routingText(r.channel_ids, channels)}
+                // Only a rule that overrides the default channels says where it goes.
+                description={r.channel_ids === null ? undefined : routingText(r.channel_ids, channels)}
                 actions={
                   <RowMenu
                     label={`Actions for ${ruleSummary(r)}`}

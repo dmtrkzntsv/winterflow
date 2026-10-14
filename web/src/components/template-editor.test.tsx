@@ -142,11 +142,14 @@ describe("TemplateEditor", () => {
     expect(latest().files).toHaveLength(2);
   });
 
-  it("edits ingress rows", async () => {
+  it("keeps Domains & Routing behind More options until it has a row, and edits the rows", async () => {
     const user = start();
+    expect(screen.queryByRole("heading", { name: "Domains & Routing" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "More options" }));
     expect(screen.getByRole("heading", { name: "Domains & Routing" })).toBeInTheDocument();
     expect(screen.getByText("No hostnames.")).toBeInTheDocument();
     await user.click(screen.getAllByRole("button", { name: "Add hostname" })[0]);
+    expect(screen.queryByRole("button", { name: "More options" })).not.toBeInTheDocument();
     await user.click(screen.getByLabelText("Host"));
     await user.paste("${NAME}.example.com");
     await user.type(screen.getByLabelText("Port of ${NAME}.example.com"), "8080");
@@ -163,8 +166,8 @@ describe("TemplateEditor", () => {
     expect(bodyFromDraft(latest()).backups).toEqual({ db: { enabled: true, storage: "tenants" } });
   });
 
-  it("says when the compose file declares no backups", () => {
+  it("has no Backup defaults when the compose file declares no backups", () => {
     start({ "compose.yaml": "services: {}\n" });
-    expect(screen.getByText("The compose file declares no backups.")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Backup defaults" })).not.toBeInTheDocument();
   });
 });

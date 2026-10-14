@@ -39,13 +39,16 @@ const FORM_ID = "shared-variable-form";
 // Secret values are encrypted here and cleared on close. The Secret switch
 // comes before the Value so a secret is never typed into a plain variable. The parent
 // remounts it (key) per opening; onSave reports nothing itself (it throws
-// to keep the dialog open).
+// to keep the dialog open). singleServer (a standalone install, or an org
+// with one server) leaves out the words about servers: where it is sent
+// and what it applies to.
 export function SharedVariableDialog({
   open,
   mode,
   keys,
   server = null,
   chooseScope = false,
+  singleServer = false,
   onOpenChange,
   onSave,
   onCloseAutoFocus,
@@ -57,6 +60,7 @@ export function SharedVariableDialog({
   server?: { id: string; name: string } | null;
   // chooseScope offers "Applies to" on a new variable.
   chooseScope?: boolean;
+  singleServer?: boolean;
   onOpenChange: (open: boolean) => void;
   onSave: (body: SaveVariable, scope: VariableScope) => Promise<void>;
   // onCloseAutoFocus is where focus goes once it closes (the opener may be gone).
@@ -88,7 +92,7 @@ export function SharedVariableDialog({
   const keyless = provide ? (existing?.missing_on ?? []).filter((id) => !targets.some((k) => k.server_id === id)) : [];
   const noKey = typingSecret && targets.length === 0;
   const canSave = !busy && trimmed !== "" && !nameError && !noKey && (!typingSecret || value !== "");
-  const pushesEverywhere = typingSecret && !provide && !serverOnly;
+  const pushesEverywhere = typingSecret && !provide && !serverOnly && !singleServer;
 
   // The typed value must not outlive the dialog.
   useEffect(() => {
@@ -202,10 +206,10 @@ export function SharedVariableDialog({
               spellCheck={false}
               onChange={(e) => setValue(e.target.value)}
             />
-            {typingSecret && !provide ? (
+            {typingSecret && !provide && (noKey || !singleServer) ? (
               <p className="text-sm text-muted-foreground">
                 {noKey
-                  ? serverOnly
+                  ? serverOnly || singleServer
                     ? "This server has no public key yet, so it can't receive secrets."
                     : "No server has a public key yet, so there is nobody to receive this secret."
                   : pushSummary(scopeKeys.length, pending.length)}
@@ -242,7 +246,7 @@ export function SharedVariableDialog({
                   </label>
                 </RadioGroup>
               </div>
-            ) : existing ? (
+            ) : existing && !singleServer ? (
               <p className="text-sm text-muted-foreground">Applies to {scopeText}.</p>
             ) : null}
           </Disclosure>

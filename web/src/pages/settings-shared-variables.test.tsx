@@ -11,9 +11,11 @@ vi.mock("@/lib/ecies", () => ({
 const active = vi.hoisted(() => ({
   server: null as { id: string; name: string } | null,
   status: {} as Record<string, "online" | "unknown">,
+  // The org's servers: two unless a test says otherwise.
+  servers: [{ id: "srv-a" }, { id: "srv-b" }] as { id: string }[],
 }));
 vi.mock("@/context/use-servers", () => ({
-  useServers: () => ({ activeServer: active.server, statusByServer: active.status }),
+  useServers: () => ({ activeServer: active.server, statusByServer: active.status, servers: active.servers }),
 }));
 
 import { AppsContext, type AppsContextValue } from "@/context/apps-context-base";
@@ -285,6 +287,41 @@ describe("SharedVariablesSettingsPage", () => {
     await waitFor(() =>
       expect(api.saveServer).toHaveBeenCalledWith("srv-a", { name: "LOCAL_DIR", is_secret: false, value: "/srv", description: "" }),
     );
+  });
+
+  it("drops the words about several servers in an org with one server", async () => {
+    const user = setupUser();
+    const api = fakeApi();
+    active.servers = [{ id: "srv-a" }];
+    try {
+      renderPage(api);
+      const rows = await listRows();
+      expect(screen.getByRole("list", { name: "Shared variables" })).not.toHaveTextContent("All servers");
+      expect(screen.queryByRole("button", { name: "More actions for shared variables" })).not.toBeInTheDocument();
+      await user.click(within(rows[0]).getByRole("button", { name: /^Actions for / }));
+      expect(screen.queryByRole("menuitem", { name: "Send to servers again" })).not.toBeInTheDocument();
+      await user.keyboard("{Escape}");
+      await user.click(screen.getByRole("button", { name: /Add variable/ }));
+      const dialog = await screen.findByRole("dialog");
+      await user.click(within(dialog).getByRole("switch", { name: "Secret" }));
+      await user.type(within(dialog).getByLabelText("Value"), "s3cret");
+      expect(dialog).not.toHaveTextContent(/pushed/);
+      expect(within(dialog).getByRole("button", { name: "Save" })).toBeInTheDocument();
+      expect(within(dialog).queryByRole("button", { name: "Save and push" })).not.toBeInTheDocument();
+      await user.click(within(dialog).getByRole("button", { name: "Advanced" }));
+      expect(within(dialog).queryByRole("radiogroup", { name: "Applies to" })).not.toBeInTheDocument();
+    } finally {
+      active.servers = [{ id: "srv-a" }, { id: "srv-b" }];
+    }
+  });
+
+  it("offers Try again, not Send again, after a failed sync in a standalone install", async () => {
+    const user = setupUser();
+    const api = fakeApi();
+    renderPage(api, { standalone: true });
+    await listRows();
+    await user.click(within(screen.getByRole("status", { name: "Sync" })).getByRole("button", { name: "Try again" }));
+    expect(api.resync).toHaveBeenCalled();
   });
 
   it("offers no scope in a standalone install, and edits a server-only variable in its own scope", async () => {

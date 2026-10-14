@@ -151,11 +151,11 @@ describe("AppEditor", () => {
     expect(screen.getByRole("button", { name: "tags of nginx:alpine" })).toBeInTheDocument();
   });
 
-  it("says plainly when the server has no built-in proxy", () => {
+  it("has no Domains section without the built-in proxy, only one quiet line", () => {
     servers = { activeServer: { id: "s1", features: {} }, loading: false };
     render(<Harness initial={emptyEditorState()} />);
-    expect(screen.getByRole("heading", { name: "Domains" })).toBeInTheDocument();
-    expect(screen.getByText(/no built-in web proxy/)).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Domains" })).not.toBeInTheDocument();
+    expect(screen.getByText("People reach the app on the port its compose file publishes.")).toBeInTheDocument();
     expect(screen.queryByLabelText("Hostname")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Addresses" })).not.toBeInTheDocument();
   });

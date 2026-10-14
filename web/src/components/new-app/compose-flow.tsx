@@ -109,7 +109,7 @@ export function ComposeFlow({ serverId }: { serverId: string }) {
         </section>
       ) : (
         <p className="text-sm text-muted-foreground">
-          This server has no built-in web proxy: people reach the app on the port its compose file publishes.
+          People reach the app on the port its compose file publishes.
         </p>
       )}
 

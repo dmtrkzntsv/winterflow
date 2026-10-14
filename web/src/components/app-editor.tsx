@@ -101,23 +101,17 @@ export function AppEditor({ state, onChange, errors = {}, refused = 0 }: Props) 
 
       {/* activeServer is null while get-servers is in flight: render
           nothing until it resolves so a server with the proxy doesn't
-          flash the "no proxy" sentence. */}
-      {serversLoading ? null : (
-        <EditorSection
-          title="Domains"
-          description={
-            ingressOn
-              ? "Where people reach the app. Each domain sets how HTTPS works."
-              : "This server has no built-in web proxy, so domains can't be set here. People reach the app on the port its compose file publishes, or through your own proxy or tunnel."
-          }
-        >
-          {ingressOn ? (
-            <div className="space-y-2">
-              <h3 className="text-sm font-medium">Addresses</h3>
-              <AddressRows {...rows} />
-            </div>
-          ) : null}
+          flash the "no proxy" line. Without the proxy there is no Domains
+          section, only one quiet line. */}
+      {serversLoading ? null : ingressOn ? (
+        <EditorSection title="Domains" description="Where people reach the app. Each domain sets how HTTPS works.">
+          <div className="space-y-2">
+            <h3 className="text-sm font-medium">Addresses</h3>
+            <AddressRows {...rows} />
+          </div>
         </EditorSection>
+      ) : (
+        <p className="text-sm text-muted-foreground">People reach the app on the port its compose file publishes.</p>
       )}
 
       <GitSource state={state} onChange={onChange} errors={errors} />

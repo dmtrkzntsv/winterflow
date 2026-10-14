@@ -323,7 +323,7 @@ describe("ComposeFlow", () => {
     const api = fakeAPI({});
     renderFlow(saveApp);
     expect(screen.queryByLabelText("Hostname")).not.toBeInTheDocument();
-    expect(screen.getByText(/no built-in web proxy/)).toBeInTheDocument();
+    expect(screen.getByText("People reach the app on the port its compose file publishes.")).toBeInTheDocument();
     await user.type(screen.getByLabelText("Name"), "shop");
     await user.click(screen.getByRole("button", { name: "Create app" }));
     await screen.findByText("app new1");

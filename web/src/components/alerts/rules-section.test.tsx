@@ -33,7 +33,8 @@ describe("RulesSection", () => {
     const servers = await screen.findByRole("region", { name: "Servers" });
     expect(within(servers).getAllByTestId("rule-row")).toHaveLength(2);
     expect(within(servers).getByText("CPU above 90% for 10 min")).toBeInTheDocument();
-    expect(within(servers).getAllByText("Default channels")).toHaveLength(2);
+    // On the default channels: no line about them.
+    expect(within(servers).queryByText("Default channels")).not.toBeInTheDocument();
     const apps = screen.getByRole("region", { name: "Apps" });
     expect(within(apps).getByText("App down for 5 min")).toBeInTheDocument();
     expect(within(apps).getByText("Ops")).toBeInTheDocument();

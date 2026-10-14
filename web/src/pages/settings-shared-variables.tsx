@@ -64,7 +64,9 @@ function Notice({
 // ("{server} only"), the built-ins folded away, and banners only while
 // something needs doing (a failed sync, apps on old values, a secret this
 // server lacks). New variables are org-wide; "{server} only" is under
-// Advanced, and not offered in a standalone install. api, rollouts and
+// Advanced. With a single server (a standalone install, or an org with one)
+// the words and controls about several servers go: no scope, no "Send to
+// servers again", a plain Try again after a failed sync. api, rollouts and
 // standalone are for tests.
 export default function SharedVariablesSettingsPage({
   api: injected,
@@ -76,7 +78,8 @@ export default function SharedVariablesSettingsPage({
   standalone?: boolean;
 }) {
   const api = useMemo(() => injected ?? createSharedVariablesApi(), [injected]);
-  const { activeServer, statusByServer } = useServers();
+  const { activeServer, statusByServer, servers } = useServers();
+  const single = standalone || (servers ?? []).length <= 1;
   const { staleVarsByApp, statusByApp } = useApps();
   const page = useSharedVariablesSettings(api, activeServer?.id ?? null);
   const serverName = activeServer?.name ?? "";
@@ -130,10 +133,11 @@ export default function SharedVariablesSettingsPage({
             <RowMenu
               label="More actions for shared variables"
               items={[
-                keyedIds.length > 0 && {
-                  label: "Send to servers again",
-                  onSelect: () => page.sendAgain(keyedIds),
-                },
+                !single &&
+                  keyedIds.length > 0 && {
+                    label: "Send to servers again",
+                    onSelect: () => page.sendAgain(keyedIds),
+                  },
               ]}
             />
             <Button
@@ -156,7 +160,7 @@ export default function SharedVariablesSettingsPage({
           tone={failed.length > 0 ? "bad" : "warn"}
           action={
             <Button size="sm" variant="outline" onClick={() => page.sendAgain(unsynced)}>
-              Send again
+              {single ? "Try again" : "Send again"}
             </Button>
           }
         >
@@ -242,7 +246,7 @@ export default function SharedVariablesSettingsPage({
                     ) : null}
                   </span>
                 }
-                meta={scopeLabel}
+                meta={single ? undefined : scopeLabel}
                 actions={
                   <>
                     {missingCopies ? (
@@ -268,7 +272,8 @@ export default function SharedVariablesSettingsPage({
                           },
                         },
                         { label: "Reload apps using it", onSelect: () => page.reloadVariable(v) },
-                        v.scope === "org" && { label: "Send to servers again", onSelect: () => page.resendVariable(v) },
+                        !single &&
+                          v.scope === "org" && { label: "Send to servers again", onSelect: () => page.resendVariable(v) },
                         {
                           label: "Delete",
                           destructive: true,
@@ -307,7 +312,8 @@ export default function SharedVariablesSettingsPage({
           mode={page.dialog}
           keys={page.keys}
           server={server}
-          chooseScope={!standalone && server !== null}
+          chooseScope={!single && server !== null}
+          singleServer={single}
           onOpenChange={(o) => {
             if (!o) page.closeDialog();
           }}

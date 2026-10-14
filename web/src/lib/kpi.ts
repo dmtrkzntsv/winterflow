@@ -1,10 +1,10 @@
 // Pure helpers behind the KPI rows, the dashboard's server cards and the
-// freshness line: the newest value of a series, its delta within the
-// fetched range, relative ages and presence labels. No DOM, so they test
+// freshness line: the newest value of a series, the live headline figures,
+// relative ages and presence labels. No DOM, so they test
 // in isolation.
 
-import { average, niceTicks } from "@/lib/chart-scale";
-import { fullestDisk, percentOf, type ChartRow, type MetricPoint, type MetricsRange, type ServerSample } from "@/lib/metrics";
+import { niceTicks } from "@/lib/chart-scale";
+import { fullestDisk, percentOf, type ChartRow, type MetricPoint, type ServerSample } from "@/lib/metrics";
 
 // latestValue is the newest numeric value of field, skipping the null gap
 // rows toChartRows inserts.
@@ -14,66 +14,6 @@ export function latestValue(rows: ChartRow[], field: string): number | undefined
     if (typeof v === "number" && Number.isFinite(v)) return v;
   }
   return undefined;
-}
-
-const RANGE_MS: Record<MetricsRange, number> = {
-  "1h": 3600_000,
-  "12h": 12 * 3600_000,
-  "24h": 24 * 3600_000,
-  "7d": 7 * 24 * 3600_000,
-  "30d": 30 * 24 * 3600_000,
-};
-
-// KpiDelta is a period-over-period change: percent relative to the
-// previous half's average, and change, the plain difference of the two
-// averages (percentage points for a percent metric).
-export type KpiDelta = { percent: number; change: number };
-
-// periodDelta compares the newer half of the range with the older half,
-// split at the range's time midpoint (ending with the newest bucket), so
-// the "vs previous 30 min" label is true. Each half must hold at least half
-// the samples its span should (intervalSeconds apart) and two at least:
-// a young install, a restart or an outage hides the pill instead of
-// comparing ten minutes with five. null too on a zero baseline.
-export function periodDelta(
-  rows: ChartRow[],
-  field: string,
-  range: MetricsRange,
-  intervalSeconds: number,
-): KpiDelta | null {
-  if (rows.length === 0 || !(intervalSeconds > 0)) return null;
-  const step = intervalSeconds * 1000;
-  const end = rows[rows.length - 1].t + step;
-  const half = RANGE_MS[range] / 2;
-  const mid = end - half;
-  const previous: number[] = [];
-  const current: number[] = [];
-  for (const r of rows) {
-    const v = r[field];
-    if (typeof v !== "number" || !Number.isFinite(v) || r.t < end - 2 * half) continue;
-    (r.t < mid ? previous : current).push(v);
-  }
-  const needed = Math.max(2, Math.ceil((0.5 * half) / step));
-  if (previous.length < needed || current.length < needed) return null;
-  const prev = average(previous);
-  const cur = average(current);
-  if (prev === null || cur === null || prev === 0) return null;
-  return { percent: (100 * (cur - prev)) / Math.abs(prev), change: cur - prev };
-}
-
-// deltaDirection is where a delta points; one that shows as 0 % is flat
-// (no arrow, no colour).
-export function deltaDirection(percent: number): "up" | "down" | "flat" {
-  if (Math.abs(percent) < 0.5) return "flat";
-  return percent > 0 ? "up" : "down";
-}
-
-// isSignificant tells a move worth colouring from noise: at least one
-// percentage point for a percent metric (idle CPU 0.5 % -> 1.4 % is +180 %
-// but nothing happened), at least 2 % relative for an amount.
-export function isSignificant(delta: KpiDelta, unit: "percent" | "amount"): boolean {
-  if (unit === "percent") return Math.abs(delta.change) >= 1;
-  return Math.abs(delta.percent) >= 2;
 }
 
 export type KpiNow = {
@@ -103,20 +43,6 @@ export function kpiNow(latest: ServerSample | undefined, fallback: KpiNow): KpiN
     net_tx_bps: hasNet ? (latest.net_tx_bps ?? 0) : fallback.net_tx_bps,
     load1: latest.load1 ?? fallback.load1,
   };
-}
-
-const HALF: Record<MetricsRange, string> = {
-  "1h": "30 min",
-  "12h": "6 h",
-  "24h": "12 h",
-  "7d": "3.5 days",
-  "30d": "15 days",
-};
-
-// deltaLabel names what a KPI delta compares against: the older half of
-// the fetched range ("vs previous 30 min").
-export function deltaLabel(range: MetricsRange): string {
-  return `vs previous ${HALF[range]}`;
 }
 
 // withNetTotal adds net_bps (and its peak), received plus sent, so the

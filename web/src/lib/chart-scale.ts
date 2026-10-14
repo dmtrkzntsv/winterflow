@@ -194,21 +194,6 @@ export function valuesOf(rows: Record<string, unknown>[], keys: string[]): numbe
   return rows.flatMap((row) => keys.map((k) => row[k]).filter((v): v is number => typeof v === "number"));
 }
 
-// average is the mean of the finite values, or null without any.
-export function average(values: (number | null | undefined)[]): number | null {
-  const finite = values.filter((v): v is number => typeof v === "number" && Number.isFinite(v));
-  if (finite.length === 0) return null;
-  return finite.reduce((a, b) => a + b, 0) / finite.length;
-}
-
-// formatDelta renders a delta pill's figure: "+12.1%", "-4%", "+130%", "0%".
-export function formatDelta(delta: number): string {
-  const abs = Math.abs(delta);
-  const n = abs < 100 ? Number(abs.toFixed(1)) : Math.round(abs);
-  if (n === 0) return "0%";
-  return `${delta > 0 ? "+" : "-"}${n}%`;
-}
-
 // formatHeading renders a tooltip heading: "Oct 11, 05:06 PM".
 export function formatHeading(ms: number): string {
   return new Date(ms).toLocaleString(undefined, {

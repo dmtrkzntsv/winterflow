@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  average,
   axisWidth,
-  formatDelta,
   niceAxis,
   niceTicks,
   scaleFor,
@@ -115,21 +113,6 @@ describe("stackTotals and valuesOf", () => {
   it("sums a stack per row and lists every numeric value", () => {
     expect(stackTotals(rows, ["a", "b"])).toEqual([3, 4]);
     expect(valuesOf(rows, ["a", "b"])).toEqual([1, 2, 4]);
-  });
-});
-
-describe("average and formatDelta", () => {
-  it("averages the finite values", () => {
-    expect(average([1, null, 3])).toBe(2);
-    expect(average([null])).toBeNull();
-  });
-
-  it("formats the pill figure", () => {
-    expect(formatDelta(12.06)).toBe("+12.1%");
-    expect(formatDelta(-4)).toBe("-4%");
-    expect(formatDelta(-38.64)).toBe("-38.6%");
-    expect(formatDelta(129.6)).toBe("+130%");
-    expect(formatDelta(0.01)).toBe("0%");
   });
 });
 

@@ -223,9 +223,7 @@ describe("MonitoringPage", { timeout: 20_000 }, () => {
     expect(useServerMetrics).toHaveBeenLastCalledWith("s1", "7d");
   });
 
-  it("leads with KPI tiles: the newest value and the trend within the range", () => {
-    // An hour of minutes: the older half at the low values, the newer half
-    // at the high ones.
+  it("leads with KPI tiles: the newest value and what it is out of, no sparkline or trend pill", () => {
     data!.points = Array.from({ length: 60 }, (_, i) =>
       i < 30
         ? { t: i * 60, cpu: 10, mem_used: 1, mem_total: 4, net_rx_bps: 100, net_tx_bps: 100 }
@@ -234,24 +232,14 @@ describe("MonitoringPage", { timeout: 20_000 }, () => {
     renderPage();
     const cpu = screen.getByTestId("kpi-CPU");
     expect(cpu).toHaveTextContent("20%");
-    // Usage rising is bad news: a red pill.
-    expect(cpu.querySelector("[data-testid=kpi-delta]")).toHaveTextContent("+100%vs previous 30 min");
-    expect(cpu.querySelector("[data-tone]")).toHaveAttribute("data-tone", "bad");
+    // The charts below carry the trend.
+    expect(screen.getByTestId("kpi-grid").querySelector("[data-tone], [data-testid^=sparkline]")).toBeNull();
     expect(screen.getByTestId("kpi-Memory")).toHaveTextContent("50%");
     expect(screen.getByTestId("kpi-Memory")).toHaveTextContent("2 B of 4 B");
     expect(screen.getByTestId("kpi-Network")).toHaveTextContent("2.0 KB/s");
     expect(screen.getByTestId("kpi-Network")).toHaveTextContent("In 1.0 KB/s · Out 1.0 KB/s");
-    expect(screen.getByTestId("kpi-Network").querySelector("[data-tone]")).toHaveAttribute("data-tone", "neutral");
-    // No disk series at all: no figure and no pill rather than a wild one.
+    // No disk series at all: no figure rather than a wild one.
     expect(screen.getByTestId("kpi-Disk")).toHaveTextContent("–");
-    expect(screen.getByTestId("kpi-Disk").querySelector("[data-testid=kpi-delta]")).toBeNull();
-  });
-
-  it("hides the trend when the range is mostly empty", () => {
-    // A server that came up five minutes ago, viewed on the last hour.
-    data!.points = Array.from({ length: 5 }, (_, i) => ({ t: i * 60, cpu: 10 + i }));
-    renderPage();
-    expect(screen.getByTestId("kpi-CPU").querySelector("[data-testid=kpi-delta]")).toBeNull();
   });
 
   it("takes headline figures from the live sample, not the range's last bucket", () => {
@@ -270,6 +258,8 @@ describe("MonitoringPage", { timeout: 20_000 }, () => {
     expect(screen.getByTestId("kpi-Memory")).toHaveTextContent("75%");
     expect(screen.getByTestId("kpi-Memory")).toHaveTextContent("3 B of 4 B");
     expect(screen.getByTestId("kpi-Disk")).toHaveTextContent("25%");
+    // Used of total, without the mount point.
+    expect(screen.getByTestId("kpi-Disk")).toHaveTextContent(/1 B of 4 B$/);
     expect(screen.getByTestId("kpi-Network")).toHaveTextContent("2.0 KB/s");
   });
 

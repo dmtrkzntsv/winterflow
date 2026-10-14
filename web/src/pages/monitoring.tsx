@@ -16,7 +16,7 @@ import { Card } from "@/components/ui/card";
 import { useApps } from "@/context/use-apps";
 import { useServers } from "@/context/use-servers";
 import { useMetricsOverview, useServerMetrics } from "@/hooks/use-metrics";
-import { appLabel, deltaLabel, isSignificant, kpiNow, latestValue, percentCeiling, periodDelta, withNetTotal } from "@/lib/kpi";
+import { appLabel, kpiNow, latestValue, withNetTotal } from "@/lib/kpi";
 import {
   chartColor,
   dockerDiskUsage,
@@ -29,7 +29,6 @@ import {
   stackApps,
   temperatureChart,
   toChartRows,
-  type ChartRow,
   type DockerDF,
   type MetricPoint,
   type MetricsMode,
@@ -120,7 +119,7 @@ function DockerDisk({ df }: { df: DockerDF | undefined }) {
 }
 
 // MonitoringPage charts the active server (spec §5): firing alerts on top,
-// four KPI tiles with the range's trend, the four host charts, what each app
+// four KPI tiles (the figure now and what it is out of), the four host charts, what each app
 // uses, then Load, Disk I/O, Temperature and Docker's disk usage under "More
 // details" (not drawn until opened), and the server's alert rules collapsed.
 export default function MonitoringPage() {
@@ -166,7 +165,7 @@ export default function MonitoringPage() {
   const diskRows = rows(["disk_pct"]);
   const netRows = rows(["net_bps", "net_rx_bps", "net_tx_bps"]);
   // Headline figures are live (the overview's latest sample) on every range;
-  // the sparkline and the delta describe the range.
+  // the charts below carry the trend.
   const now = kpiNow(latest, {
     cpu: latestValue(cpuRows, "cpu"),
     mem_pct: latestValue(memRows, "mem_pct"),
@@ -176,11 +175,6 @@ export default function MonitoringPage() {
     net_tx_bps: latestValue(netRows, "net_tx_bps"),
     load1: latestValue(cpuRows, "load1"),
   });
-  const vs = deltaLabel(range);
-  const delta = (r: ChartRow[], field: string, unit: "percent" | "amount") => {
-    const d = periodDelta(r, field, range, interval);
-    return { delta: d?.percent ?? null, significant: d ? isSignificant(d, unit) : true };
-  };
   const memTotal = latest?.mem_total ?? last?.mem_total;
   const memUsed = latest?.mem_total ? latest.mem_used : last?.mem_used;
 
@@ -215,48 +209,30 @@ export default function MonitoringPage() {
         </>
       ) : (
         <>
-          {/* Percent sparks run from zero to a round ceiling: a disk at 56.4 %
-              wobbling by 0.2 % must not draw as a cliff. */}
           <div className={KPI_GRID} data-testid="kpi-grid">
             <KpiTile
               label="CPU"
               value={formatPercent(now.cpu)}
-              {...delta(cpuRows, "cpu", "percent")}
-              deltaLabel={vs}
-              goodWhen="down"
               sub={now.load1 !== undefined ? `Load ${now.load1.toFixed(2)}` : undefined}
-              spark={{ rows: cpuRows, field: "cpu", color: chartColor(0), max: percentCeiling(cpuRows, "cpu") }}
             />
             <KpiTile
               label="Memory"
               value={formatPercent(now.mem_pct)}
-              {...delta(memRows, "mem_pct", "percent")}
-              deltaLabel={vs}
-              goodWhen="down"
               sub={memTotal ? `${formatSize(memUsed)} of ${formatSize(memTotal)}` : undefined}
-              spark={{ rows: memRows, field: "mem_pct", color: chartColor(1), max: percentCeiling(memRows, "mem_pct") }}
             />
             <KpiTile
               label="Disk"
               value={formatPercent(now.disk_pct)}
-              {...delta(diskRows, "disk_pct", "percent")}
-              deltaLabel={vs}
-              goodWhen="down"
-              sub={disk ? `${formatSize(disk.used)} of ${formatSize(disk.total)} · ${disk.mount}` : undefined}
-              spark={{ rows: diskRows, field: "disk_pct", color: chartColor(2), max: percentCeiling(diskRows, "disk_pct") }}
+              sub={disk ? `${formatSize(disk.used)} of ${formatSize(disk.total)}` : undefined}
             />
             <KpiTile
               label="Network"
               value={formatRate(now.net_bps)}
-              {...delta(netRows, "net_bps", "amount")}
-              deltaLabel={vs}
-              goodWhen="neutral"
               sub={
                 now.net_bps !== undefined
                   ? `In ${formatRate(now.net_rx_bps)} · Out ${formatRate(now.net_tx_bps)}`
                   : undefined
               }
-              spark={{ rows: netRows, field: "net_bps", color: chartColor(4) }}
             />
           </div>
 

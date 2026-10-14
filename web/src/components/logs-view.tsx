@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { ArrowDown, RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -62,7 +62,7 @@ function Chip({ pressed, onClick, children }: { pressed: boolean; onClick: () =>
       aria-pressed={pressed}
       onClick={onClick}
       className={cn(
-        "inline-flex min-h-7 items-center gap-1.5 rounded-full border border-console-border px-2.5 font-mono text-xs transition-colors duration-150 motion-reduce:transition-none max-sm:min-h-10",
+        "inline-flex min-h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-console-border px-2.5 font-mono text-xs transition-colors duration-150 motion-reduce:transition-none max-sm:min-h-10",
         pressed ? "bg-console-hover text-console-foreground" : "text-console-muted hover:text-console-foreground",
       )}
     >
@@ -131,9 +131,10 @@ export function LogsView({
   return (
     <div className="relative flex min-h-80 grow basis-0 flex-col overflow-hidden rounded-lg border border-console-border bg-console text-console-foreground">
       <div className="flex flex-wrap items-center gap-2 border-b border-console-border px-3 py-2">
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 text-xs">
+        <div className="flex min-w-0 flex-1 items-center gap-1.5 text-xs max-sm:basis-full">
           {containers.length > 1 ? (
-            <div role="group" aria-label="Containers" className="flex flex-wrap gap-1.5">
+            // One row that scrolls sideways on a narrow screen.
+            <div role="group" aria-label="Containers" className="-my-1 flex min-w-0 gap-1.5 overflow-x-auto py-1">
               <Chip pressed={active === null} onClick={() => setOnly(null)}>
                 All
               </Chip>
@@ -216,25 +217,31 @@ export function LogsView({
           className="flex-1 overflow-y-auto py-2 font-mono focus-visible:ring-2 focus-visible:ring-console-foreground/60 focus-visible:outline-none focus-visible:ring-inset text-xs leading-5"
         >
           {shown.map((l, i) => (
+            // From 640px: time, container and message side by side. On a
+            // phone the time and container (a coloured dot and its name)
+            // go above the message, which gets the full width.
             <div
               key={i}
-              className="flex gap-3 px-3 hover:bg-console-hover"
+              className="flex flex-col px-3 hover:bg-console-hover max-sm:py-0.5 sm:flex-row sm:gap-3"
             >
-              <span className="shrink-0 text-console-muted tabular-nums select-none">
-                {timeFormat.format(new Date(l.timestamp * 1000))}
-              </span>
-              {l.container ? (
-                <span
-                  className={cn("shrink-0 truncate select-none", colorOf(l.container))}
-                  style={{ width: `${labelWidth}ch` }}
-                  title={l.container}
-                >
-                  {l.container}
+              <span data-testid="log-meta" className="flex min-w-0 items-center gap-2 select-none sm:contents">
+                <span className="shrink-0 text-console-muted tabular-nums">
+                  {timeFormat.format(new Date(l.timestamp * 1000))}
                 </span>
-              ) : null}
+                {l.container ? (
+                  <span
+                    className={cn("flex min-w-0 shrink-0 items-center gap-1.5 sm:w-[var(--log-label)]", colorOf(l.container))}
+                    style={{ "--log-label": `${labelWidth}ch` } as CSSProperties}
+                    title={l.container}
+                  >
+                    <span className="size-1.5 shrink-0 rounded-full bg-current sm:hidden" aria-hidden />
+                    <span className="truncate">{l.container}</span>
+                  </span>
+                ) : null}
+              </span>
               <span
                 className={cn(
-                  "min-w-0 flex-1 break-all whitespace-pre-wrap",
+                  "min-w-0 flex-1 whitespace-pre-wrap [overflow-wrap:anywhere]",
                   LEVEL_CLASS[l.level],
                 )}
               >

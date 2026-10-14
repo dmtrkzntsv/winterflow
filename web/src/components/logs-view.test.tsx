@@ -32,6 +32,24 @@ describe("LogsView", () => {
     expect(screen.getByRole("region", { name: "Logs" })).toHaveTextContent("checkpoint");
   });
 
+  it("keeps the chips in one sideways-scrolling row and wraps lines at spaces", () => {
+    const long = "x".repeat(300);
+    renderLogs([line("cache-1", `[notice] ready ${long}`), line("web", "GET /")]);
+    const chips = screen.getByRole("group", { name: "Containers" });
+    expect(chips.className).toContain("overflow-x-auto");
+    expect(chips.className).not.toContain("flex-wrap");
+    expect(within(chips).getByRole("button", { name: "cache-1" }).className).toContain("whitespace-nowrap");
+    const message = screen.getByText(/\[notice\] ready/);
+    // Words stay whole; only a token too long for the line breaks.
+    expect(message.className).toContain("[overflow-wrap:anywhere]");
+    expect(message.className).not.toContain("break-all");
+    // On a phone the container is a coloured dot and its name above the line.
+    const meta = screen.getAllByTestId("log-meta")[0];
+    expect(within(meta).getByText("cache-1")).toBeInTheDocument();
+    expect(meta.querySelector(".rounded-full.bg-current")).not.toBeNull();
+    expect(meta).not.toContainElement(message);
+  });
+
   it("drops the container filter when its container leaves the lines", async () => {
     const user = userEvent.setup();
     const props = { loading: false, error: null, tail: 200, onTailChange: vi.fn(), onRefresh: vi.fn() };

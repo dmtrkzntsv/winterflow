@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { Ownership } from "@/components/app-page/ownership";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { IconPicker } from "@/components/icon-picker";
+import { AppLookPicker } from "@/components/app-look-picker";
 import { InlineError } from "@/components/inline-error";
 import { Section } from "@/components/section";
 import type { App } from "@/context/apps-context-base";
@@ -15,10 +15,8 @@ import { useApps } from "@/context/use-apps";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
 import { saveAppDetails } from "@/lib/app-details-save";
 import { stateFromDetail } from "@/lib/app-editor-io";
+import { DEFAULT_APP_COLOR, suggestAppLook } from "@/lib/app-look";
 import { isManagedByTemplate } from "@/lib/templates";
-
-// The colour an app without one shows (the editor's default too).
-const DEFAULT_COLOR = "#64748b";
 
 // GeneralSection edits how the app appears: name, icon, colour and
 // description, with one Save (see saveAppDetails for what each part does).
@@ -32,7 +30,7 @@ function GeneralSection({ app, ownership, running }: { app: App; ownership: Owne
   // yet (read, or failed): an app whose instance is gone is an ordinary app.
   const managed = ownership !== null && (ownership.instance !== null || ownership.loading || ownership.error !== "");
   const templateName = ownership?.instance?.template_name;
-  const shown = { name: app.name, icon: app.icon ?? "", color: app.color || DEFAULT_COLOR };
+  const shown = { name: app.name, icon: app.icon ?? "", color: app.color || DEFAULT_APP_COLOR };
   const [form, setForm] = useState({ ...shown, description: "" });
   // The stored description: null until read.
   const [description, setDescription] = useState<string | null>(null);
@@ -116,18 +114,15 @@ function GeneralSection({ app, ownership, running }: { app: App; ownership: Owne
           if (canSave) void save();
         }}
       >
-        <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-end gap-3">
-          <div className="grid gap-1.5">
-            <Label>Icon</Label>
-            <IconPicker
-              label="Icon"
-              value={form.icon}
-              color={form.color}
-              name={form.name}
-              disabled={managed || saving}
-              onChange={(icon) => setForm((f) => ({ ...f, icon }))}
-            />
-          </div>
+        <div className="grid grid-cols-[auto_minmax(0,1fr)] items-end gap-3">
+          <AppLookPicker
+            name={form.name}
+            icon={form.icon}
+            color={form.color}
+            disabled={managed || saving}
+            onPick={(look) => setForm((f) => ({ ...f, ...look }))}
+            onReset={() => setForm((f) => ({ ...f, ...suggestAppLook(f.name) }))}
+          />
           <div className="grid gap-1.5">
             <Label htmlFor="app-name">Name</Label>
             <Input
@@ -137,17 +132,6 @@ function GeneralSection({ app, ownership, running }: { app: App; ownership: Owne
               value={form.name}
               disabled={saving}
               onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-            />
-          </div>
-          <div className="grid gap-1.5">
-            <Label htmlFor="app-colour">Colour</Label>
-            <Input
-              id="app-colour"
-              type="color"
-              className="h-10 w-14 cursor-pointer p-1 sm:h-9"
-              value={form.color}
-              disabled={managed || saving}
-              onChange={(e) => setForm((f) => ({ ...f, color: e.target.value }))}
             />
           </div>
         </div>

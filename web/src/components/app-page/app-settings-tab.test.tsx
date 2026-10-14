@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AppSettingsTab } from "@/components/app-page/app-settings-tab";
 import type { Ownership } from "@/components/app-page/ownership";
 import { AppsContext, type App, type AppsContextValue } from "@/context/apps-context-base";
+import { suggestAppLook } from "@/lib/app-look";
 import type { InstanceView } from "@/lib/templates";
 import { fakeNotifications } from "@/test/notifications";
 
@@ -42,6 +43,13 @@ function renderTab(over: { ownership?: Ownership; running?: boolean } = {}) {
   const props = { onDetached: vi.fn(), onSaveAsTemplate: vi.fn(), onDelete: vi.fn() };
   const view = render(tab(APP, over, props));
   return { ...props, unmount: view.unmount, rerender: (app: App) => view.rerender(tab(app, over, props)) };
+}
+
+// pickColour opens the icon and colour picker and sets a custom colour.
+async function pickColour(user: ReturnType<typeof userEvent.setup>, colour: string) {
+  await user.click(screen.getByRole("button", { name: "Change icon and colour" }));
+  fireEvent.change(await screen.findByLabelText("Custom colour"), { target: { value: colour } });
+  await user.keyboard("{Escape}");
 }
 
 describe("AppSettingsTab", () => {
@@ -82,7 +90,7 @@ describe("AppSettingsTab", () => {
     const user = userEvent.setup();
     renderTab();
     const description = await screen.findByDisplayValue("Old");
-    fireEvent.change(screen.getByLabelText("Colour"), { target: { value: "#ff0000" } });
+    await pickColour(user, "#ff0000");
     await user.clear(description);
     await user.type(description, "A small shop");
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -107,6 +115,18 @@ describe("AppSettingsTab", () => {
     expect(ctx.saveApp).toHaveBeenCalledTimes(1);
   });
 
+  it("offers the same icon and colour picker as the create form, and picks automatically from the name", async () => {
+    const user = userEvent.setup();
+    renderTab();
+    await screen.findByDisplayValue("Old");
+    await user.click(screen.getByRole("button", { name: "Change icon and colour" }));
+    await user.click(await screen.findByRole("button", { name: "Database" }));
+    await user.click(screen.getByRole("button", { name: "Pick automatically from the name" }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Saved"));
+    expect(ctx.saveApp.mock.calls[0][0]).toMatchObject({ config: suggestAppLook("Shop") });
+  });
+
   it("keeps the user's colour when the rename went through and the rest failed to save", async () => {
     const user = userEvent.setup();
     const { rerender } = renderTab();
@@ -116,10 +136,12 @@ describe("AppSettingsTab", () => {
     ctx.saveApp.mockRejectedValueOnce(new Error("agent offline"));
     await user.clear(screen.getByRole("textbox", { name: "App name" }));
     await user.type(screen.getByRole("textbox", { name: "App name" }), "Store");
-    fireEvent.change(screen.getByLabelText("Colour"), { target: { value: "#ff0000" } });
+    await pickColour(user, "#ff0000");
     await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Couldn't save", { description: "agent offline" }));
-    expect(screen.getByLabelText("Colour")).toHaveValue("#ff0000");
+    await user.click(screen.getByRole("button", { name: "Change icon and colour" }));
+    expect(await screen.findByLabelText("Custom colour")).toHaveValue("#ff0000");
+    await user.keyboard("{Escape}");
     expect(screen.getByRole("textbox", { name: "App name" })).toHaveValue("Store");
     // Still unsaved: Save is offered again.
     expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
@@ -141,9 +163,8 @@ describe("AppSettingsTab", () => {
     const user = userEvent.setup();
     renderTab({ ownership: managed });
     expect(await screen.findByText("Icon, colour and description are set by template twillingate.")).toBeInTheDocument();
-    expect(screen.getByLabelText("Colour")).toBeDisabled();
     expect(screen.getByLabelText("Description")).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Icon" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Change icon and colour" })).toBeDisabled();
     await user.type(screen.getByRole("textbox", { name: "App name" }), "!");
     await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(ctx.rename).toHaveBeenCalledWith("a1", "Shop!"));
@@ -154,12 +175,12 @@ describe("AppSettingsTab", () => {
     const gone: Ownership = { loading: false, error: "", instance: null, current: null, reload: vi.fn(async () => {}) };
     const { unmount } = renderTab({ ownership: gone });
     expect(await screen.findByDisplayValue("Old")).toBeEnabled();
-    expect(screen.getByLabelText("Colour")).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Change icon and colour" })).toBeEnabled();
     expect(screen.queryByText(/are set by/)).not.toBeInTheDocument();
     unmount();
     renderTab({ ownership: { ...gone, loading: true } });
     await screen.findByDisplayValue("Old");
-    expect(screen.getByLabelText("Colour")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Change icon and colour" })).toBeDisabled();
   });
 
   it("says when the description can't be read, and still renames", async () => {

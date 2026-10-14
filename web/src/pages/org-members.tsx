@@ -1,41 +1,26 @@
-import { useCallback, useEffect, useState } from "react";
-import { Check, Copy, Pencil, Plus, Trash2, KeyRound } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Plus } from "lucide-react";
 import { toast } from "sonner";
 
-import { usePageTitle } from "@/layouts/use-page-title";
-import { apiBaseUrl } from "@/config";
-import { readApiError } from "@/lib/api";
+import { ConfirmDialog } from "@/components/confirm-dialog";
+import { CopyField } from "@/components/copy-field";
+import { IconPicker } from "@/components/icon-picker";
+import { ListPlaceholder } from "@/components/list-placeholder";
+import { PageHeader } from "@/components/page-header";
+import { ResponsiveDialog } from "@/components/responsive-dialog";
+import { RowMenu } from "@/components/row-menu";
+import { Row, RowList } from "@/components/section";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Spinner } from "@/components/ui/spinner";
+import { apiBaseUrl } from "@/config";
 import { useProfile } from "@/context/use-profile";
-import { AppIcon } from "@/components/app-icon";
-import { IconPicker } from "@/components/icon-picker";
+import { readApiError } from "@/lib/api";
+import { returnFocusTo } from "@/lib/focus";
+import { initials } from "@/lib/members";
 
-type Organization = {
-  org_id: string;
-  name: string;
-  icon: string;
-  color: string;
-};
+type Organization = { org_id: string; name: string; icon: string; color: string };
 
 type Member = {
   id: string;
@@ -46,14 +31,16 @@ type Member = {
   created_at: string;
 };
 
+type TempPassword = { name: string; temp_password: string };
+
+const DEFAULT_COLOR = "#64748b";
+
+const errorText = (e: unknown) => (e instanceof Error ? e.message : undefined);
+
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${apiBaseUrl}${path}`, {
-    credentials: "include",
-    ...init,
-  });
+  const res = await fetch(`${apiBaseUrl}${path}`, { credentials: "include", ...init });
   if (!res.ok) throw await readApiError(res);
-  const body = (await res.json()) as { data: T };
-  return body.data;
+  return ((await res.json()) as { data: T }).data;
 }
 
 function postJSON<T>(path: string, payload: unknown): Promise<T> {
@@ -64,438 +51,381 @@ function postJSON<T>(path: string, payload: unknown): Promise<T> {
   });
 }
 
-async function copyText(text: string): Promise<void> {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text);
-    return;
-  }
-  const ta = document.createElement("textarea");
-  ta.value = text;
-  ta.style.position = "fixed";
-  ta.style.opacity = "0";
-  document.body.appendChild(ta);
-  ta.select();
-  try {
-    if (!document.execCommand("copy")) throw new Error("copy rejected");
-  } finally {
-    ta.remove();
-  }
-}
-
-// Reveal shows a just-generated temp password with a copy button — the only
-// time it is visible (the server stores a bcrypt hash).
-function Reveal({ value }: { value: string }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <div className="flex items-center gap-2">
-      <Input
-        readOnly
-        value={value}
-        className="font-mono text-xs"
-        onFocus={(e) => e.currentTarget.select()}
-      />
-      <Button
-        variant="outline"
-        size="icon"
-        onClick={() => {
-          void copyText(value)
-            .then(() => {
-              setCopied(true);
-              toast.success("Copied");
-            })
-            .catch(() =>
-              toast.error("Copy failed — select the text and copy manually"),
-            );
-        }}
-      >
-        {copied ? <Check /> : <Copy />}
-      </Button>
-    </div>
-  );
-}
-
-// OrgMembersPage: any member manages the organization — its name/icon/color
-// and its users: create accounts with one-time temp passwords, reset
-// passwords, remove (anyone but yourself). There are no roles.
-// section picks the half for Settings → Organization / Members (each is its
-// own page, so the card has no title of its own: the page title says it).
-export default function OrgMembersPage({ section }: { section: "organization" | "members" }) {
-  usePageTitle(section === "members" ? "Members" : "Organization");
-  const { profile } = useProfile();
-
+// OrganizationSettings is Settings → Organization → General: the name,
+// icon and colour everyone in the organization sees, edited in place.
+function OrganizationSettings() {
   const [org, setOrg] = useState<Organization | null>(null);
-  const [orgEditOpen, setOrgEditOpen] = useState(false);
-  const [orgName, setOrgName] = useState("");
-  const [orgIcon, setOrgIcon] = useState("");
-  const [orgColor, setOrgColor] = useState("#64748b");
-  const [orgBusy, setOrgBusy] = useState(false);
-
-  const [members, setMembers] = useState<Member[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const [addOpen, setAddOpen] = useState(false);
+  const [failed, setFailed] = useState(false);
   const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
+  const [icon, setIcon] = useState("");
+  const [color, setColor] = useState(DEFAULT_COLOR);
   const [busy, setBusy] = useState(false);
-  const [created, setCreated] = useState<{
-    email: string;
-    temp_password: string;
-  } | null>(null);
-  const [reset, setReset] = useState<{
-    name: string;
-    temp_password: string;
-  } | null>(null);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  const load = useCallback(async () => {
+    setFailed(false);
     try {
-      const data = await api<Member[] | null>("/api/v1/org/get-members");
-      setMembers(data ?? []);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load members");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  const refreshOrg = useCallback(async () => {
-    try {
-      setOrg(await api<Organization>("/api/v1/org/get-organization"));
-    } catch (e) {
-      console.error("Failed to load organization", e);
+      const o = await api<Organization>("/api/v1/org/get-organization");
+      setOrg(o);
+      setName(o.name);
+      setIcon(o.icon);
+      setColor(o.color || DEFAULT_COLOR);
+    } catch {
+      setFailed(true);
     }
   }, []);
 
   useEffect(() => {
-    void refresh();
-    void refreshOrg();
-  }, [refresh, refreshOrg]);
+    void load();
+  }, [load]);
 
-  const openOrgEdit = () => {
-    setOrgName(org?.name ?? "");
-    setOrgIcon(org?.icon ?? "");
-    setOrgColor(org?.color || "#64748b");
-    setOrgEditOpen(true);
-  };
+  const trimmed = name.trim();
+  const dirty = org !== null && (trimmed !== org.name || icon !== org.icon || color !== (org.color || DEFAULT_COLOR));
 
-  const handleOrgSave = async () => {
-    if (!orgName.trim()) {
-      toast.error("Organization name is required");
-      return;
-    }
-    setOrgBusy(true);
-    try {
-      await postJSON("/api/v1/org/update-organization", {
-        name: orgName.trim(),
-        icon: orgIcon,
-        color: orgColor,
-      });
-      toast.success("Organization updated");
-      setOrgEditOpen(false);
-      void refreshOrg();
-    } catch (e) {
-      toast.error("Failed to update organization", {
-        description: e instanceof Error ? e.message : undefined,
-      });
-    } finally {
-      setOrgBusy(false);
-    }
-  };
-
-  const openAdd = () => {
-    setName("");
-    setEmail("");
-    setCreated(null);
-    setAddOpen(true);
-  };
-
-  const handleCreate = async () => {
-    if (!name.trim() || !email.trim()) {
-      toast.error("Name and email are required");
-      return;
-    }
+  const save = async () => {
+    if (!org) return;
     setBusy(true);
     try {
-      const data = await postJSON<{ email: string; temp_password: string }>(
-        "/api/v1/org/create-user",
-        { name: name.trim(), email: email.trim() },
-      );
-      setCreated(data);
-      void refresh();
+      await postJSON("/api/v1/org/update-organization", { name: trimmed, icon, color });
+      toast.success("Organization saved");
+      setOrg({ ...org, name: trimmed, icon, color });
     } catch (e) {
-      toast.error("Failed to create user", {
-        description: e instanceof Error ? e.message : undefined,
-      });
+      toast.error("Couldn't save the organization", { description: errorText(e) });
     } finally {
       setBusy(false);
     }
   };
 
-  const handleReset = async (m: Member) => {
-    if (!window.confirm(`Reset ${m.name}'s password? Their current password stops working immediately.`)) {
+  return (
+    <div className="space-y-6">
+      <PageHeader title="Organization" subtitle="Its name, icon and colour, as everyone in it sees them." />
+      {org === null ? (
+        <ListPlaceholder loading={!failed} failed="Couldn't load the organization." onRetry={() => void load()} />
+      ) : (
+        <form
+          className="max-w-lg space-y-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (dirty && trimmed && !busy) void save();
+          }}
+        >
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="space-y-2">
+              <Label>Icon</Label>
+              <IconPicker value={icon} name={name} color={color} onChange={setIcon} />
+            </div>
+            <div className="min-w-0 flex-1 basis-48 space-y-2">
+              <Label htmlFor="org-name">Name</Label>
+              <Input
+                id="org-name"
+                value={name}
+                maxLength={64}
+                aria-invalid={!trimmed || undefined}
+                aria-describedby={!trimmed ? "org-name-error" : undefined}
+                onChange={(e) => setName(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="org-color">Colour</Label>
+              <Input
+                id="org-color"
+                type="color"
+                className="h-9 w-16 p-1 max-sm:h-10"
+                value={color}
+                onChange={(e) => setColor(e.target.value)}
+              />
+            </div>
+          </div>
+          {!trimmed ? (
+            <p id="org-name-error" role="alert" className="text-xs text-destructive">
+              Give the organization a name.
+            </p>
+          ) : null}
+          <Button type="submit" className="max-sm:h-10" disabled={!dirty || !trimmed || busy}>
+            {busy ? "Saving…" : "Save"}
+          </Button>
+        </form>
+      )}
+    </div>
+  );
+}
+
+// AddMemberDialog creates an account with a one-time temporary password,
+// then shows that password (the only time it is visible: the server keeps
+// a bcrypt hash).
+function AddMemberDialog({
+  open,
+  onOpenChange,
+  onAdded,
+  onCloseAutoFocus,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onAdded: () => void;
+  onCloseAutoFocus: (event: Event) => void;
+}) {
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [created, setCreated] = useState<{ email: string; temp_password: string } | null>(null);
+
+  // Nothing (the temporary password least of all) outlives the dialog.
+  const changeOpen = (next: boolean) => {
+    if (!next) {
+      setName("");
+      setEmail("");
+      setError("");
+      setCreated(null);
+    }
+    onOpenChange(next);
+  };
+
+  const create = async () => {
+    if (!name.trim() || !email.trim()) {
+      setError("Enter a name and an email.");
       return;
     }
+    setBusy(true);
+    setError("");
     try {
-      const data = await postJSON<{ temp_password: string }>(
-        "/api/v1/org/reset-member-password",
-        { user_id: m.id },
+      setCreated(
+        await postJSON<{ email: string; temp_password: string }>("/api/v1/org/create-user", {
+          name: name.trim(),
+          email: email.trim(),
+        }),
       );
-      setReset({ name: m.name, temp_password: data.temp_password });
+      onAdded();
     } catch (e) {
-      toast.error("Failed to reset password", {
-        description: e instanceof Error ? e.message : undefined,
-      });
+      setError(errorText(e) ?? "Couldn't add the member.");
+    } finally {
+      setBusy(false);
     }
   };
 
-  const handleRemove = async (m: Member) => {
-    if (!window.confirm(`Remove ${m.name}? Their account, tokens, and access are deleted permanently.`)) {
-      return;
+  if (created) {
+    return (
+      <ResponsiveDialog
+        open={open}
+        onOpenChange={changeOpen}
+        onCloseAutoFocus={onCloseAutoFocus}
+        title="Member added"
+        description={`Give ${created.email} this temporary password. It's shown only once; they choose their own when they first sign in.`}
+        footer={
+          <Button className="max-sm:h-10" onClick={() => changeOpen(false)}>
+            Done
+          </Button>
+        }
+      >
+        <CopyField value={created.temp_password} label="Temporary password" />
+      </ResponsiveDialog>
+    );
+  }
+
+  return (
+    <ResponsiveDialog
+      open={open}
+      onOpenChange={changeOpen}
+      onCloseAutoFocus={onCloseAutoFocus}
+      title="Add member"
+      description="Creates an account in this organization with a temporary password."
+      footer={
+        <>
+          <Button type="button" variant="outline" className="max-sm:h-10" disabled={busy} onClick={() => changeOpen(false)}>
+            Cancel
+          </Button>
+          <Button type="submit" form="member-form" className="max-sm:h-10" disabled={busy}>
+            {busy ? "Adding…" : "Add"}
+          </Button>
+        </>
+      }
+    >
+      <form
+        id="member-form"
+        className="space-y-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void create();
+        }}
+      >
+        <div className="space-y-2">
+          <Label htmlFor="member-name">Name</Label>
+          <Input id="member-name" value={name} maxLength={64} onChange={(e) => setName(e.target.value)} />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="member-email">Email</Label>
+          <Input id="member-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+        </div>
+        {error ? (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        ) : null}
+      </form>
+    </ResponsiveDialog>
+  );
+}
+
+// MembersSettings is Settings → Organization → Members: everyone in the
+// organization (there are no roles: any member manages the others), with
+// Reset password and Remove for everyone but you, and Add member.
+function MembersSettings() {
+  const { profile } = useProfile();
+  const [members, setMembers] = useState<Member[] | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [adding, setAdding] = useState(false);
+  const [toReset, setToReset] = useState<Member | null>(null);
+  const [toRemove, setToRemove] = useState<Member | null>(null);
+  const [reset, setReset] = useState<TempPassword | null>(null);
+  // The dialogs open from a row's menu, which leaves with its row on a
+  // removal: focus then goes to Add member instead of falling to <body>.
+  const opener = useRef<HTMLElement | null>(null);
+  const addButton = useRef<HTMLButtonElement | null>(null);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    try {
+      setMembers((await api<Member[] | null>("/api/v1/org/get-members")) ?? []);
+    } catch (e) {
+      toast.error("Couldn't load the members", { description: errorText(e) });
+    } finally {
+      setLoading(false);
     }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const resetPassword = async (m: Member) => {
+    try {
+      const data = await postJSON<{ temp_password: string }>("/api/v1/org/reset-member-password", { user_id: m.id });
+      setReset({ name: m.name, temp_password: data.temp_password });
+    } catch (e) {
+      toast.error("Couldn't reset the password", { description: errorText(e) });
+      throw e;
+    }
+  };
+
+  const remove = async (m: Member) => {
     try {
       await postJSON("/api/v1/org/remove-member", { user_id: m.id });
-      toast.success("Member removed");
-      void refresh();
+      toast.success(`${m.name} removed`);
+      // The answer says what changed: patch the list rather than list again.
+      setMembers((prev) => prev && prev.filter((x) => x.id !== m.id));
     } catch (e) {
-      toast.error("Failed to remove member", {
-        description: e instanceof Error ? e.message : undefined,
-      });
+      toast.error("Couldn't remove the member", { description: errorText(e) });
+      throw e;
     }
   };
 
   return (
-    <div className="mx-auto w-full max-w-4xl space-y-6">
-      <h1 className="text-2xl font-semibold tracking-tight">
-        {section === "members" ? "Members" : "Organization"}
-      </h1>
-      {section === "organization" ? (
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
-            <span />
-            <Button size="sm" variant="outline" onClick={openOrgEdit}>
-              <Pencil /> Edit
-            </Button>
-          </CardHeader>
-          <CardContent>
-            {org ? (
-              <div className="flex items-center gap-3">
-                <AppIcon icon={org.icon} color={org.color} className="size-10 rounded-lg" />
-                <div>
-                  <p className="font-medium">{org.name}</p>
-                  <p className="text-xs text-muted-foreground">{org.org_id}</p>
-                </div>
-              </div>
-            ) : (
-              <Spinner />
-            )}
-          </CardContent>
-        </Card>
-      ) : null}
-
-      {section === "members" ? (
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
-            <span />
-            <Button size="sm" onClick={openAdd}>
-              <Plus /> Add user
-            </Button>
-          </CardHeader>
-          <CardContent>
-            {loading ? (
-              <div className="flex min-h-32 items-center justify-center">
-                <Spinner />
-              </div>
-            ) : error ? (
-              <p className="text-sm text-destructive">{error}</p>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Name</TableHead>
-                    <TableHead>Email</TableHead>
-                    <TableHead>Provider</TableHead>
-                    <TableHead />
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {members.map((m) => {
-                    const isSelf = m.id === profile?.user_id;
-                    return (
-                      <TableRow key={m.id}>
-                        <TableCell className="font-medium">
-                          {m.name}
-                          {isSelf ? (
-                            <span className="text-muted-foreground"> (you)</span>
-                          ) : null}
-                        </TableCell>
-                        <TableCell>{m.email || "—"}</TableCell>
-                        <TableCell>{m.provider || "—"}</TableCell>
-                        <TableCell className="text-right">
-                          {!isSelf && m.email ? (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              title="Reset password"
-                              onClick={() => void handleReset(m)}
-                            >
-                              <KeyRound />
-                            </Button>
-                          ) : null}
-                          {!isSelf ? (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              title="Remove"
-                              onClick={() => void handleRemove(m)}
-                            >
-                              <Trash2 className="text-destructive" />
-                            </Button>
-                          ) : null}
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            )}
-          </CardContent>
-        </Card>
-      ) : null}
-
-      <Dialog open={addOpen} onOpenChange={setAddOpen}>
-        <DialogContent>
-          {created ? (
-            <>
-              <DialogHeader>
-                <DialogTitle>User created</DialogTitle>
-                <DialogDescription>
-                  Share these credentials with {created.email}. The temporary
-                  password is shown only once; they must change it on first
-                  login.
-                </DialogDescription>
-              </DialogHeader>
-              <Reveal value={created.temp_password} />
-              <DialogFooter>
-                <Button onClick={() => setAddOpen(false)}>Done</Button>
-              </DialogFooter>
-            </>
-          ) : (
-            <>
-              <DialogHeader>
-                <DialogTitle>Add user</DialogTitle>
-                <DialogDescription>
-                  Creates an account in your organization with a temporary
-                  password.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="member-name">Name</Label>
-                  <Input
-                    id="member-name"
-                    value={name}
-                    maxLength={64}
-                    onChange={(e) => setName(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="member-email">Email</Label>
-                  <Input
-                    id="member-email"
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                  />
-                </div>
-              </div>
-              <DialogFooter>
-                <Button
-                  variant="outline"
-                  onClick={() => setAddOpen(false)}
-                  disabled={busy}
-                >
-                  Cancel
-                </Button>
-                <Button onClick={() => void handleCreate()} disabled={busy}>
-                  {busy ? "Creating…" : "Create"}
-                </Button>
-              </DialogFooter>
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={orgEditOpen} onOpenChange={setOrgEditOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Edit organization</DialogTitle>
-            <DialogDescription>
-              Name, icon, and color — same vocabulary as apps.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="flex items-end gap-3">
-              <div className="space-y-2">
-                <Label>Icon</Label>
-                <IconPicker
-                  value={orgIcon}
-                  color={orgColor}
-                  onChange={setOrgIcon}
-                />
-              </div>
-              <div className="flex-1 space-y-2">
-                <Label htmlFor="org-name">Name</Label>
-                <Input
-                  id="org-name"
-                  value={orgName}
-                  maxLength={64}
-                  onChange={(e) => setOrgName(e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="org-color">Color</Label>
-                <Input
-                  id="org-color"
-                  type="color"
-                  className="h-9 w-16 p-1"
-                  value={orgColor}
-                  onChange={(e) => setOrgColor(e.target.value)}
-                />
-              </div>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setOrgEditOpen(false)}
-              disabled={orgBusy}
-            >
-              Cancel
-            </Button>
-            <Button onClick={() => void handleOrgSave()} disabled={orgBusy}>
-              {orgBusy ? "Saving…" : "Save"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={reset !== null} onOpenChange={(o) => !o && setReset(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Password reset</DialogTitle>
-            <DialogDescription>
-              New temporary password for {reset?.name} — shown only once; they
-              must change it on first login.
-            </DialogDescription>
-          </DialogHeader>
-          {reset ? <Reveal value={reset.temp_password} /> : null}
-          <DialogFooter>
-            <Button onClick={() => setReset(null)}>Done</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+    <div className="space-y-6">
+      <PageHeader
+        title="Members"
+        subtitle="Everyone here can do everything in the organization."
+        actions={
+          <Button ref={addButton} className="max-sm:h-10" onClick={() => setAdding(true)}>
+            <Plus className="size-4" /> Add member
+          </Button>
+        }
+      />
+      {members === null ? (
+        <ListPlaceholder loading={loading} failed="Couldn't load the members." onRetry={() => void refresh()} />
+      ) : (
+        <RowList label="Members">
+          {members.map((m) => {
+            const isSelf = m.id === profile?.user_id;
+            return (
+              <Row
+                key={m.id}
+                leading={
+                  <Avatar className="size-9">
+                    <AvatarFallback className="text-xs">{initials(m.name, m.email)}</AvatarFallback>
+                  </Avatar>
+                }
+                title={
+                  <>
+                    {m.name}
+                    {isSelf ? <span className="font-normal text-muted-foreground"> (you)</span> : null}
+                  </>
+                }
+                description={m.email || `${m.provider || "External"} account`}
+                actions={
+                  isSelf ? null : (
+                    <RowMenu
+                      label={`Actions for ${m.name}`}
+                      items={[
+                        m.email ? {
+                              label: "Reset password",
+                              onSelect: (trigger) => {
+                                opener.current = trigger;
+                                setToReset(m);
+                              },
+                            }
+                          : null,
+                        {
+                          label: "Remove",
+                          destructive: true,
+                          onSelect: (trigger) => {
+                            opener.current = trigger;
+                            setToRemove(m);
+                          },
+                        },
+                      ]}
+                    />
+                  )
+                }
+              />
+            );
+          })}
+        </RowList>
+      )}
+      <AddMemberDialog
+        open={adding}
+        onOpenChange={setAdding}
+        onAdded={() => void refresh()}
+        onCloseAutoFocus={returnFocusTo(addButton)}
+      />
+      <ConfirmDialog
+        open={toReset !== null}
+        onOpenChange={(o) => !o && setToReset(null)}
+        title={`Reset ${toReset?.name ?? "this member"}'s password?`}
+        description="Their current password stops working at once. You get a temporary password to give them; they choose their own when they next sign in."
+        confirmLabel="Reset password"
+        pendingLabel="Resetting…"
+        onCloseAutoFocus={returnFocusTo(opener, addButton)}
+        onConfirm={() => (toReset ? resetPassword(toReset) : undefined)}
+      />
+      <ConfirmDialog
+        open={toRemove !== null}
+        onOpenChange={(o) => !o && setToRemove(null)}
+        title={`Remove ${toRemove?.name ?? "this member"}?`}
+        description="Their account, API tokens and access are deleted for good."
+        confirmLabel="Remove member"
+        pendingLabel="Removing…"
+        onCloseAutoFocus={returnFocusTo(opener, addButton)}
+        onConfirm={() => (toRemove ? remove(toRemove) : undefined)}
+      />
+      <ResponsiveDialog
+        open={reset !== null}
+        onOpenChange={(o) => !o && setReset(null)}
+        title="Password reset"
+        description={`A temporary password for ${reset?.name ?? ""}. It's shown only once; they choose their own when they next sign in.`}
+        footer={
+          <Button className="max-sm:h-10" onClick={() => setReset(null)}>
+            Done
+          </Button>
+        }
+        onCloseAutoFocus={returnFocusTo(opener, addButton)}
+      >
+        {reset ? <CopyField value={reset.temp_password} label="Temporary password" /> : null}
+      </ResponsiveDialog>
     </div>
   );
+}
+
+// OrgMembersPage is Settings → Organization → General (section
+// "organization") or Members (section "members").
+export default function OrgMembersPage({ section }: { section: "organization" | "members" }) {
+  return section === "organization" ? <OrganizationSettings /> : <MembersSettings />;
 }

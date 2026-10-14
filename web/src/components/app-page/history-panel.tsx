@@ -18,8 +18,18 @@ import { cn, relativeTime } from "@/lib/utils";
 // when (the commit hash on hover), which one is live, an undeployed draft
 // with Deploy draft, and Roll back for an older one — not for an app a
 // template manages: its template owns the files (its name may still be
-// loading).
-export function HistoryPanel({ appId, ownership }: { appId: string; ownership: Ownership }) {
+// loading). onChanged is called after a roll back or a draft deploy went
+// through, so what shows the app's files (the Configuration editor) can read
+// them again.
+export function HistoryPanel({
+  appId,
+  ownership,
+  onChanged,
+}: {
+  appId: string;
+  ownership: Ownership;
+  onChanged?: () => void;
+}) {
   const templated = ownership !== null;
   const managedBy = ownership?.instance?.template_name;
   const { rollback, control, refresh } = useApps();
@@ -34,6 +44,7 @@ export function HistoryPanel({ appId, ownership }: { appId: string; ownership: O
     try {
       await rollback(appId, hash);
       toast.success("Rolled back and redeployed");
+      onChanged?.();
     } catch (e) {
       toast.error("Roll back failed", { description: e instanceof Error ? e.message : undefined });
       // A template took the app over meanwhile: show it as managed.
@@ -51,6 +62,7 @@ export function HistoryPanel({ appId, ownership }: { appId: string; ownership: O
     try {
       await control(appId, "start");
       toast.success("Draft deployed");
+      onChanged?.();
     } catch (e) {
       toast.error("Deploy failed", { description: e instanceof Error ? e.message : undefined });
     } finally {

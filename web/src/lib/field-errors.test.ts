@@ -61,6 +61,27 @@ describe("focusFirstInvalid", () => {
     }
   });
 
+  it("focuses a refusal message when no field is invalid, and prefers a field", async () => {
+    document.body.innerHTML = '<div id="root"><input id="a" /><p id="m" tabindex="-1" data-refusal>No file</p></div>';
+    focusFirstInvalid(document.getElementById("root"));
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+    expect(document.activeElement?.id).toBe("m");
+
+    document.body.innerHTML =
+      '<div id="root"><p id="m" tabindex="-1" data-refusal>x</p><input id="b" aria-invalid="true" /></div>';
+    focusFirstInvalid(document.getElementById("root"));
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+    expect(document.activeElement?.id).toBe("b");
+  });
+
+  it("skips a field that only carries a warning (aria-invalid false)", async () => {
+    document.body.innerHTML =
+      '<div id="root"><input id="w" aria-invalid="false" /><input id="bad" aria-invalid="true" /></div>';
+    focusFirstInvalid(document.getElementById("root"));
+    await new Promise((r) => requestAnimationFrame(() => r(null)));
+    expect(document.activeElement?.id).toBe("bad");
+  });
+
   it("does nothing without an invalid field or a root", async () => {
     document.body.innerHTML = '<div id="root"><input id="a" /></div>';
     focusFirstInvalid(document.getElementById("root"));

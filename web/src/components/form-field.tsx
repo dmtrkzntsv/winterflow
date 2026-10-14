@@ -36,11 +36,12 @@ export function FormField({
 }
 
 // FieldMessage is the message under the field with this id (nothing when
-// the field is fine).
+// the field is fine). It can take focus (tabIndex -1), so a refusal whose
+// message has no control of its own (a missing compose file) can focus it.
 export function FieldMessage({ id, message, className }: { id: string; message?: string; className?: string }) {
   if (!message) return null;
   return (
-    <p id={errorId(id)} className={cn("text-xs text-destructive", className)}>
+    <p id={errorId(id)} tabIndex={-1} data-refusal className={cn("text-xs text-destructive outline-none", className)}>
       {message}
     </p>
   );

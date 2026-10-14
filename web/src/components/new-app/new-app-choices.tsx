@@ -1,8 +1,7 @@
-import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { FileCode, GitBranch, LayoutTemplate, type LucideIcon } from "lucide-react";
 
-import { useTemplatesApi } from "@/hooks/use-templates-api";
+import { Skeleton } from "@/components/ui/skeleton";
 import { newAppPath, type NewAppSource } from "@/lib/routes";
 
 const CHOICES: readonly { from: NewAppSource; title: string; text: string; icon: LucideIcon }[] = [
@@ -12,25 +11,26 @@ const CHOICES: readonly { from: NewAppSource; title: string; text: string; icon:
 ];
 
 // NewAppChoices are the ways to start a new app, as link cards. "From a
-// template" shows only when the organization has a template (a failed read
-// counts as none).
-export function NewAppChoices({ serverId, onPick }: { serverId: string; onPick?: () => void }) {
-  const api = useTemplatesApi();
-  const [templates, setTemplates] = useState(0);
-  useEffect(() => {
-    let live = true;
-    api.listTemplates().then(
-      (list) => live && setTemplates(list.length),
-      () => live && setTemplates(0),
-    );
-    return () => {
-      live = false;
-    };
-  }, [api]);
-
-  const shown = CHOICES.filter((c) => c.from !== "template" || templates > 0);
+// template" shows only when the organization has a template; templates is
+// their count (see useTemplateCount), null while unknown, when its slot is
+// held by a skeleton so the other cards don't move under a tap.
+export function NewAppChoices({
+  serverId,
+  templates,
+  onPick,
+}: {
+  serverId: string;
+  templates: number | null;
+  onPick?: () => void;
+}) {
+  const shown = CHOICES.filter((c) => c.from !== "template" || (templates ?? 0) > 0);
   return (
     <ul aria-label="Ways to start" className="grid gap-3 sm:grid-cols-[repeat(auto-fit,minmax(12rem,1fr))]">
+      {templates === null ? (
+        <li aria-hidden data-testid="template-choice-skeleton">
+          <Skeleton className="h-full min-h-24 rounded-xl" />
+        </li>
+      ) : null}
       {shown.map((c) => (
         <li key={c.from}>
           <Link

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowUpCircle, FileText } from "lucide-react";
 import { toast } from "sonner";
@@ -10,6 +10,7 @@ import { EditorSection } from "@/components/editor-section";
 import { InlineError } from "@/components/inline-error";
 import { ParameterFields } from "@/components/parameter-fields";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
+import { focusFirstInvalid } from "@/lib/field-errors";
 import { fieldErrors, splitValues } from "@/lib/template-params";
 import { sealSecrets, type InstanceView, type TemplateView } from "@/lib/templates";
 import { templatePath } from "@/lib/routes";
@@ -52,9 +53,11 @@ export function InstancePanel({
   const [tried, setTried] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const root = useRef<HTMLDivElement>(null);
   const params = current.body.parameters ?? [];
   const kept = instance.state === "created" ? Object.keys(instance.secrets ?? {}) : [];
   const dirty = params.some((p) => (values[p.name] ?? "") !== (initial[p.name] ?? ""));
+  const refused = tried && Object.keys(fieldErrors(params, values, kept)).length > 0;
   const newer = onUpgrade !== undefined && latestRevision !== undefined && latestRevision > instance.revision;
   const note = (
     <>
@@ -68,7 +71,11 @@ export function InstancePanel({
 
   const save = async () => {
     setTried(true);
-    if (Object.keys(fieldErrors(params, values, kept)).length > 0) return;
+    if (Object.keys(fieldErrors(params, values, kept)).length > 0) {
+      // ParameterFields marks each bad field once tried is set.
+      focusFirstInvalid(root.current);
+      return;
+    }
     setSaving(true);
     setError("");
     try {
@@ -98,9 +105,17 @@ export function InstancePanel({
   };
 
   return (
-    <div>
+    <div ref={root}>
       <ConfigBar
-        status={note}
+        status={
+          refused ? (
+            <span role="alert" tabIndex={-1} data-refusal className="text-destructive">
+              Some fields need attention.
+            </span>
+          ) : (
+            note
+          )
+        }
         onOpenHistory={onOpenHistory}
         primary={
           <Button onClick={() => void save()} disabled={saving || (!dirty && instance.state === "created")}>

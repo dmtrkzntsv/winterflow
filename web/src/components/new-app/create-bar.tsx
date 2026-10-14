@@ -13,14 +13,12 @@ export function CreateBar({
   cancelTo,
   invalid = false,
   waiting = false,
-  label = "Create app",
 }: {
   busy: boolean;
   onCreate: () => void;
   cancelTo: string;
   invalid?: boolean;
   waiting?: boolean;
-  label?: string;
 }) {
   const navigate = useNavigate();
   return (
@@ -37,7 +35,7 @@ export function CreateBar({
         Cancel
       </Button>
       <Button className="max-sm:flex-1" disabled={busy || waiting} onClick={onCreate}>
-        {busy ? "Creating…" : label}
+        {busy ? "Creating…" : "Create app"}
       </Button>
     </div>
   );

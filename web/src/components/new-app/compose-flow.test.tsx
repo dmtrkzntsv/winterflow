@@ -167,7 +167,9 @@ describe("ComposeFlow", () => {
     await user.type(screen.getByLabelText("Name"), "shop");
     await user.click(screen.getByRole("button", { name: "Remove compose.yml" }));
     await user.click(screen.getByRole("button", { name: "Create app" }));
-    expect(screen.getByText("Add a compose file named compose.yml.")).toBeInTheDocument();
+    const message = screen.getByText("Add a compose file named compose.yml.");
+    // No control to focus: the message itself takes focus.
+    await waitFor(() => expect(message).toHaveFocus());
     await user.click(screen.getByRole("button", { name: "Add another file" }));
     expect(screen.getByRole("textbox", { name: "File name" })).toBeInTheDocument();
   });

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -45,6 +45,41 @@ function renderPanel(
     </MemoryRouter>,
   );
   return refresh;
+}
+
+// renderLive renders the panel with a reloadSignal the test can raise, and an
+// app.get answer it can change (what a roll back in History does).
+function renderLive(saveApp: AppsContextValue["saveApp"], first: AppDetailPayload = detail) {
+  let current = first;
+  const getApp = vi.fn(async () => current);
+  const value = { getApp, saveApp, getPublicKey: vi.fn(async () => "K"), refresh: vi.fn(async () => {}) } as unknown as AppsContextValue;
+  const ui = (signal: number) => (
+    <MemoryRouter>
+      <AppsContext.Provider value={value}>
+        <AppEditorPanel appId="a1" reloadSignal={signal} />
+      </AppsContext.Provider>
+    </MemoryRouter>
+  );
+  const view = render(ui(0));
+  return {
+    getApp,
+    // rollBack is History changing the app to next.
+    rollBack: (next: AppDetailPayload, signal: number) => {
+      current = next;
+      view.rerender(ui(signal));
+    },
+  };
+}
+
+function withVariable(name: string, value: string): AppDetailPayload {
+  return {
+    ...detail,
+    app: {
+      ...detail.app,
+      config: btoa(JSON.stringify({ name: "shop", files: [{ filename: "compose.yml" }], variables: [{ name }] })),
+      variables: [{ name, content: btoa(value) }],
+    },
+  };
 }
 
 // withStored is the loaded app with a stored ingress (a hostname without a
@@ -120,7 +155,7 @@ describe("AppEditorPanel", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("sends a nameless app to Settings to get a name", async () => {
+  it("says a nameless app needs a name, focuses the message, and doesn't send the user away with unsaved edits", async () => {
     const user = userEvent.setup();
     const saveApp = vi.fn();
     const nameless = { ...detail, app: { ...detail.app, config: btoa(JSON.stringify({ files: [{ filename: "compose.yml" }] })) } };
@@ -128,9 +163,25 @@ describe("AppEditorPanel", () => {
     await user.click(await screen.findByRole("button", { name: /Add variable/ }));
     await user.type(screen.getByRole("textbox", { name: "Variable name" }), "PORT");
     await user.click(screen.getByRole("button", { name: "Save & redeploy" }));
-    expect(screen.getByRole("alert")).toHaveTextContent("This app has no name yet.");
-    expect(screen.getByRole("link", { name: "Name it in Settings" })).toHaveAttribute("href", "/app/a1?tab=settings");
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("This app has no name yet.");
+    // Settings would drop the edits just made: no link while they are unsaved.
+    expect(alert).toHaveTextContent("Save or discard your changes first, then name it in Settings.");
+    expect(screen.queryByRole("link", { name: "Name it in Settings" })).not.toBeInTheDocument();
+    // Nothing to focus but the message itself.
+    await waitFor(() => expect(alert).toHaveFocus());
     expect(saveApp).not.toHaveBeenCalled();
+  });
+
+  it("links a nameless app to Settings once nothing is unsaved", async () => {
+    const user = userEvent.setup();
+    const nameless = { ...detail, app: { ...detail.app, config: btoa(JSON.stringify({ files: [{ filename: "compose.yml" }] })) } };
+    renderPanel(vi.fn(), vi.fn(async () => {}), nameless);
+    await user.click(await screen.findByRole("button", { name: /Add variable/ }));
+    await user.click(screen.getByRole("button", { name: "Save & redeploy" }));
+    // The edit is an empty row: undo it by removing the row; the refusal stays.
+    await user.click(screen.getByRole("button", { name: /Remove variable/ }));
+    expect(screen.getByRole("link", { name: "Name it in Settings" })).toHaveAttribute("href", "/app/a1?tab=settings");
   });
 
   it("opens Advanced for a redirect without a target, names it in the bar, and keeps it open while typing", async () => {
@@ -199,6 +250,18 @@ describe("AppEditorPanel", () => {
     expect(onOpenHistory).toHaveBeenCalled();
   });
 
+  it("says every save is kept in History while idle", async () => {
+    renderPanel(vi.fn());
+    expect(await screen.findByText("Every save is kept in History, so you can roll back.")).toBeInTheDocument();
+  });
+
+  it("keeps that sentence off a phone, where it only pushes the form down", async () => {
+    vi.stubGlobal("matchMedia", () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
+    renderPanel(vi.fn());
+    await screen.findByRole("button", { name: /Add variable/ });
+    expect(screen.queryByText(/Every save is kept in History/)).not.toBeInTheDocument();
+  });
+
   it("reports any other refusal as before", async () => {
     const user = userEvent.setup();
     const refresh = renderPanel(vi.fn(async () => Promise.reject(new Error("no storage nope"))));
@@ -207,5 +270,100 @@ describe("AppEditorPanel", () => {
     await user.click(screen.getByRole("button", { name: "Save & redeploy" }));
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Failed to update app", { description: "no storage nope" }));
     expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("reads the app again after History changed it, so the next Save can't undo a roll back", async () => {
+    const user = userEvent.setup();
+    const saveApp = vi.fn<AppsContextValue["saveApp"]>(async () => []);
+    const live = renderLive(saveApp, withVariable("PORT", "8080"));
+    expect(await screen.findByDisplayValue("8080")).toBeInTheDocument();
+
+    live.rollBack(withVariable("PORT", "9090"), 1);
+    expect(await screen.findByDisplayValue("9090")).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("8080")).not.toBeInTheDocument();
+    expect(screen.queryByText(/This app changed in History/)).not.toBeInTheDocument();
+
+    // A save from here carries the rolled-back value.
+    await user.type(screen.getByRole("textbox", { name: "Value of PORT" }), "1");
+    await user.click(screen.getByRole("button", { name: "Save & redeploy" }));
+    await waitFor(() => expect(saveApp).toHaveBeenCalled());
+    const sent = saveApp.mock.calls[0][0] as unknown as { variables: { name: string; content: string }[] };
+    expect(sent.variables).toEqual([expect.objectContaining({ name: "PORT", content: "90901" })]);
+  });
+
+  it("keeps unsaved edits after History changed the app, says so, and blocks saving until Reload", async () => {
+    const user = userEvent.setup();
+    const saveApp = vi.fn<AppsContextValue["saveApp"]>(async () => []);
+    const live = renderLive(saveApp, withVariable("PORT", "8080"));
+    const value = await screen.findByRole("textbox", { name: "Value of PORT" });
+    await user.type(value, "1");
+
+    live.rollBack(withVariable("PORT", "9090"), 1);
+    const notice = await screen.findByText(
+      "This app changed in History. Reload to see the current version — your unsaved edits will be lost.",
+    );
+    // The edit is still there, not discarded under the user.
+    expect(screen.getByRole("textbox", { name: "Value of PORT" })).toHaveValue("80801");
+    expect(screen.getByRole("button", { name: "Save & redeploy" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
+
+    await user.click(within(notice.closest("[role=alert]") as HTMLElement).getByRole("button", { name: "Reload" }));
+    expect(await screen.findByDisplayValue("9090")).toBeInTheDocument();
+    expect(screen.queryByText(/This app changed in History/)).not.toBeInTheDocument();
+    expect(saveApp).not.toHaveBeenCalled();
+  });
+
+  it("clears the History notice when the edits are discarded", async () => {
+    const user = userEvent.setup();
+    const live = renderLive(vi.fn(), withVariable("PORT", "8080"));
+    await user.type(await screen.findByRole("textbox", { name: "Value of PORT" }), "1");
+    live.rollBack(withVariable("PORT", "9090"), 1);
+    await screen.findByText(/This app changed in History/);
+    await user.click(screen.getByRole("button", { name: "Discard" }));
+    expect(await screen.findByDisplayValue("9090")).toBeInTheDocument();
+    expect(screen.queryByText(/This app changed in History/)).not.toBeInTheDocument();
+  });
+
+  it("sends the stored ingress, name, icon, colour and description unchanged", async () => {
+    const user = userEvent.setup();
+    servers = { activeServer: { id: "s1", features: { ingress: true } }, loading: false };
+    const saveApp = vi.fn<AppsContextValue["saveApp"]>(async () => []);
+    const ingress = {
+      domains: [{ domain: "shop.example.com", upstream_port: 8080, ssl: true }],
+      redirects: [{ domain: "old.example.com", path: "", to: "https://shop.example.com", code: 301 }],
+    };
+    renderPanel(
+      saveApp,
+      vi.fn(async () => {}),
+      withStored(ingress, { icon: "store", color: "#112233", description: "The shop" }),
+    );
+    await user.click(await screen.findByRole("button", { name: /Add variable/ }));
+    await user.type(screen.getByRole("textbox", { name: "Variable name" }), "PORT");
+    await user.click(screen.getByRole("button", { name: "Save & redeploy" }));
+    await waitFor(() => expect(saveApp).toHaveBeenCalled());
+    const sent = saveApp.mock.calls[0][0] as unknown as { app: unknown; config: Record<string, unknown> };
+    expect(sent.app).toEqual({ id: "a1", name: "shop", icon: "store", color: "#112233" });
+    expect(sent.config).toMatchObject({ name: "shop", description: "The shop", icon: "store", color: "#112233" });
+    expect(sent.config.ingress).toMatchObject({
+      domains: [expect.objectContaining({ domain: "shop.example.com", upstream_port: 8080, ssl: true })],
+      redirects: [expect.objectContaining({ domain: "old.example.com", to: "https://shop.example.com", code: 301 })],
+    });
+  });
+
+  it("ends a refused Save draft from the phone ⋯ menu with focus on the first bad field", async () => {
+    vi.stubGlobal("matchMedia", () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
+    const user = userEvent.setup();
+    const saveApp = vi.fn<AppsContextValue["saveApp"]>(async () => []);
+    renderPanel(saveApp);
+    await user.click(await screen.findByRole("button", { name: /Add variable/ }));
+    await user.click(screen.getByRole("button", { name: "More save options" }));
+    await user.click(screen.getByRole("menuitem", { name: "Save draft" }));
+    const name = screen.getByRole("textbox", { name: "Variable name" });
+    expect(name).toHaveAccessibleDescription("Name this variable.");
+    await waitFor(() => expect(name).toHaveFocus());
+    // The menu handed focus back to its button before: it must not take it again.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(name).toHaveFocus();
+    expect(saveApp).not.toHaveBeenCalled();
   });
 });

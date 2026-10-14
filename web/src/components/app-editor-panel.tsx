@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { AppEditor } from "@/components/app-editor";
 import { ConfigBar } from "@/components/config-bar";
 import { LoadError, PageSpinner } from "@/components/page-states";
+import { useIsPhone } from "@/hooks/use-is-phone";
 import { useApps } from "@/context/use-apps";
 import { useServerPath } from "@/context/use-server-path";
 import { useServers } from "@/context/use-servers";
@@ -38,18 +39,24 @@ function panelErrors(state: AppEditorState, domainsShown: boolean): FieldErrors 
 // app's current version, lets the user edit what runs, and saves in place
 // (app.save with the app id → new version + redeploy). A refused save
 // marks each bad field with its message. onOpenHistory opens the page's
-// History from the action bar.
+// History from the action bar. reloadSignal changes when History rolled the
+// app back or deployed its draft: the editor then reads the app again, or,
+// when it holds unsaved edits, says so and blocks saving until Reload (a
+// save from the old tree would silently undo the change).
 export function AppEditorPanel({
   appId,
   onOpenHistory,
+  reloadSignal = 0,
 }: {
   appId: string;
   onOpenHistory?: () => void;
+  reloadSignal?: number;
 }) {
   const { saveApp, getApp, getPublicKey, refresh } = useApps();
   const { activeServer, loading: serversLoading } = useServers();
   const domainsShown = !serversLoading && Boolean(activeServer?.features?.ingress);
   const toServer = useServerPath();
+  const phone = useIsPhone();
   const [state, setState] = useState<AppEditorState>(emptyEditorState);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -62,7 +69,9 @@ export function AppEditorPanel({
   // sections holding a bad field again.
   const [tried, setTried] = useState(false);
   const [refused, setRefused] = useState(0);
-  const form = useRef<HTMLDivElement>(null);
+  // stale: the app changed in History while this editor held edits.
+  const [stale, setStale] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -73,6 +82,7 @@ export function AppEditorPanel({
       setState(loaded);
       setBaseline(JSON.stringify(loaded));
       setTried(false);
+      setStale(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load app");
     } finally {
@@ -85,10 +95,11 @@ export function AppEditorPanel({
   }, [load]);
 
   const handleSave = async (draft: boolean) => {
+    if (stale) return;
     if (Object.keys(panelErrors(state, domainsShown)).length > 0) {
       setTried(true);
       setRefused((n) => n + 1);
-      focusFirstInvalid(form.current);
+      focusFirstInvalid(root.current);
       return;
     }
     setSaving(true);
@@ -123,6 +134,16 @@ export function AppEditorPanel({
     [state, baseline],
   );
 
+  // handled is the last reloadSignal acted on; the first value is the
+  // mount's, whose load is the initial one.
+  const handled = useRef(reloadSignal);
+  useEffect(() => {
+    if (reloadSignal === handled.current) return;
+    handled.current = reloadSignal;
+    if (dirty) setStale(true);
+    else void load();
+  }, [reloadSignal, dirty, load]);
+
   const errors = tried ? panelErrors(state, domainsShown) : NO_ERRORS;
   const [firstKey, firstMessage] = Object.entries(errors)[0] ?? [];
 
@@ -131,19 +152,26 @@ export function AppEditorPanel({
   if (error) return <LoadError message={error} onRetry={() => void load()} />;
 
   return (
-    <div>
+    <div ref={root}>
       <ConfigBar
         status={
           errors.name ? (
-            <span role="alert" className="text-destructive">
+            <span role="alert" tabIndex={-1} data-refusal className="text-destructive">
               This app has no name yet.{" "}
-              <Link to={toServer(appSub(appId, "settings"))} className="font-medium underline underline-offset-4">
-                Name it in Settings
-              </Link>{" "}
-              first.
+              {dirty ? (
+                // Opening Settings would drop the edits made here.
+                <>Save or discard your changes first, then name it in Settings.</>
+              ) : (
+                <>
+                  <Link to={toServer(appSub(appId, "settings"))} className="font-medium underline underline-offset-4">
+                    Name it in Settings
+                  </Link>{" "}
+                  first.
+                </>
+              )}
             </span>
           ) : firstKey ? (
-            <span role="alert" className="text-destructive">
+            <span role="alert" tabIndex={-1} data-refusal className="text-destructive">
               Some fields need attention.
               {/* A redirect sits under "Advanced": say what is wrong there too. */}
               {firstKey.startsWith("redirect-") ? ` ${firstMessage}` : ""}
@@ -154,7 +182,8 @@ export function AppEditorPanel({
               Unsaved changes
             </span>
           ) : (
-            "Every save is kept in History, so you can roll back."
+            // Not on a phone: the line would only push the form down.
+            (phone ? undefined : "Every save is kept in History, so you can roll back.")
           )
         }
         onOpenHistory={onOpenHistory}
@@ -162,20 +191,31 @@ export function AppEditorPanel({
           {
             label: "Save draft",
             onSelect: () => void handleSave(true),
-            disabled: saving || !dirty,
+            disabled: saving || !dirty || stale,
             title: "Save a new version without redeploying",
           },
           { label: "Discard", onSelect: () => void load(), disabled: saving || !dirty },
         ]}
         primary={
-          <Button onClick={() => void handleSave(false)} disabled={saving || !dirty}>
+          <Button onClick={() => void handleSave(false)} disabled={saving || !dirty || stale}>
             {saving ? "Saving…" : "Save & redeploy"}
           </Button>
         }
       />
-      <div ref={form}>
-        <AppEditor state={state} onChange={setState} errors={errors} refused={refused} />
-      </div>
+      {stale ? (
+        <div
+          role="alert"
+          className="mb-6 flex flex-wrap items-center gap-3 rounded-lg border border-status-warn/50 bg-muted/40 px-4 py-3 text-sm"
+        >
+          <span className="mr-auto">
+            This app changed in History. Reload to see the current version — your unsaved edits will be lost.
+          </span>
+          <Button size="sm" variant="outline" onClick={() => void load()}>
+            Reload
+          </Button>
+        </div>
+      ) : null}
+      <AppEditor state={state} onChange={setState} errors={errors} refused={refused} />
     </div>
   );
 }

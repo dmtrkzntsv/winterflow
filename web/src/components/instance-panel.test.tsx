@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -6,7 +6,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { InstancePanel } from "@/components/instance-panel";
 import type { InstanceView, TemplateView } from "@/lib/templates";
 
-vi.mock("@/hooks/use-templates-api", () => ({ useTemplatesApi: () => ({}) }));
+const api = vi.hoisted(() => ({ updateInstance: undefined as unknown, getPublicKey: undefined as unknown }));
+vi.mock("@/hooks/use-templates-api", () => ({ useTemplatesApi: () => api }));
 
 const instance: InstanceView = {
   key: "k1",
@@ -86,6 +87,33 @@ describe("InstancePanel", () => {
     unmount();
     renderPanel({ latestRevision: 3 });
     expect(screen.queryByRole("button", { name: "Update" })).not.toBeInTheDocument();
+  });
+
+  it("says a refused Save needs attention and focuses the first bad field", async () => {
+    const user = userEvent.setup();
+    const updateInstance = vi.fn();
+    api.updateInstance = updateInstance;
+    const withSecret: TemplateView = {
+      ...current,
+      body: {
+        ...current.body,
+        parameters: [
+          { name: "NAME", required: true },
+          { name: "TOKEN", required: true, secret: true },
+        ],
+      },
+    };
+    renderPanel({ instance: { ...instance, state: "pending", secrets: {} }, current: withSecret });
+    await user.click(screen.getByRole("button", { name: "Save & redeploy" }));
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("Some fields need attention.");
+    // NAME is stored, TOKEN is the one a pending instance needs again.
+    await waitFor(() => expect(screen.getByLabelText("TOKEN")).toHaveFocus());
+    expect(updateInstance).not.toHaveBeenCalled();
+    // Typing the secret clears the line.
+    await user.type(screen.getByLabelText("TOKEN"), "s3cret");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByText(/Managed by template/)).toBeInTheDocument();
   });
 
   it("keeps the bar to Save and a ⋯ menu on a phone, with the note under it", async () => {

@@ -23,11 +23,13 @@ const HISTORY: AppRevisions = {
 
 const ctx = { getRevisions: vi.fn(), rollback: vi.fn(), control: vi.fn(), refresh: vi.fn() };
 
+const onChanged = vi.fn();
+
 function renderSheet(ownership: Ownership = null, open = true) {
   const onOpenChange = vi.fn();
   render(
     <AppsContext.Provider value={ctx as unknown as AppsContextValue}>
-      <HistorySheet appId="a1" ownership={ownership} open={open} onOpenChange={onOpenChange} />
+      <HistorySheet appId="a1" ownership={ownership} open={open} onOpenChange={onOpenChange} onChanged={onChanged} />
     </AppsContext.Provider>,
   );
   return onOpenChange;
@@ -37,6 +39,7 @@ describe("HistorySheet", () => {
   beforeEach(() => {
     for (const f of Object.values(ctx)) f.mockReset();
     for (const f of Object.values(toast)) f.mockReset();
+    onChanged.mockReset();
     ctx.getRevisions.mockResolvedValue(HISTORY);
     resetRevisionsCache();
     // The real context forgets the app's history when these succeed, which
@@ -77,6 +80,7 @@ describe("HistorySheet", () => {
     await user.click(within(confirm).getByRole("button", { name: "Roll back" }));
     await waitFor(() => expect(ctx.rollback).toHaveBeenCalledWith("a1", "aaaaaaaa11"));
     expect(toast.success).toHaveBeenCalledWith("Rolled back and redeployed");
+    expect(onChanged).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(ctx.getRevisions).toHaveBeenCalledTimes(2));
   });
 
@@ -90,6 +94,8 @@ describe("HistorySheet", () => {
     const confirm = await screen.findByRole("alertdialog", { name: "Roll back to “create”?" });
     await user.click(within(confirm).getByRole("button", { name: "Roll back" }));
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Roll back failed", { description: "agent offline" }));
+    // Nothing changed, so nobody is told to read the app again.
+    expect(onChanged).not.toHaveBeenCalled();
     expect(screen.getByRole("alertdialog", { name: "Roll back to “create”?" })).toBeInTheDocument();
     expect(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Roll back" })).toBeEnabled();
   });
@@ -100,6 +106,7 @@ describe("HistorySheet", () => {
     await user.click(await screen.findByRole("button", { name: "Deploy draft" }));
     await waitFor(() => expect(ctx.control).toHaveBeenCalledWith("a1", "start"));
     expect(toast.success).toHaveBeenCalledWith("Draft deployed");
+    expect(onChanged).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(ctx.getRevisions).toHaveBeenCalledTimes(2));
   });
 

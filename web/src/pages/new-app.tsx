@@ -5,6 +5,7 @@ import { ComposeFlow } from "@/components/new-app/compose-flow";
 import { GitFlow } from "@/components/new-app/git-flow";
 import { NewAppChoices } from "@/components/new-app/new-app-choices";
 import { TemplateFlow } from "@/components/new-app/template-flow";
+import { useTemplateCount } from "@/hooks/use-template-count";
 import { parseNewAppSource } from "@/lib/new-app";
 import { appsPath, newAppPath, type NewAppSource } from "@/lib/routes";
 
@@ -22,6 +23,7 @@ export default function NewAppPage() {
   // The server is the one in the address, not whichever is active.
   const { serverId = "" } = useParams();
   const from = parseNewAppSource(params.get("from"));
+  const templates = useTemplateCount(!from);
   return (
     <div className="mx-auto w-full max-w-3xl space-y-6">
       <PageHeader
@@ -36,7 +38,7 @@ export default function NewAppPage() {
       ) : from === "git" ? (
         <GitFlow serverId={serverId} />
       ) : (
-        <NewAppChoices serverId={serverId} />
+        <NewAppChoices serverId={serverId} templates={templates} />
       )}
     </div>
   );

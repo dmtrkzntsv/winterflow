@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Lock } from "lucide-react";
 
 import { Switch } from "@/components/ui/switch";
@@ -151,7 +151,9 @@ export function AppEditor({ state, onChange, errors = {}, refused = 0 }: Props) 
 }
 
 // GitSource is the app's Git source when it has one; otherwise a closed
-// "Deploy from Git" holding the switch that adds one.
+// "Deploy from Git" holding the switch that adds one. The switch lives in a
+// different place in the two states, so toggling it hands keyboard focus to
+// its counterpart (the new switch, or the closed disclosure's button).
 function GitSource({
   state,
   onChange,
@@ -164,45 +166,58 @@ function GitSource({
   const source = state.config.source;
   const setSource = (next: AppSourceConfig | undefined) =>
     onChange({ ...state, config: { ...state.config, source: next } });
+  const root = useRef<HTMLDivElement>(null);
+  const keepFocus = useRef(false);
+  const hasSource = Boolean(source);
+  useEffect(() => {
+    if (!keepFocus.current) return;
+    keepFocus.current = false;
+    const el = root.current?.querySelector<HTMLElement>('[role="switch"]') ?? root.current?.querySelector<HTMLElement>("button");
+    el?.focus();
+  }, [hasSource]);
   const toggle = (
     <Switch
       aria-label="Deploy from Git"
       checked={Boolean(source)}
-      onCheckedChange={(on) => setSource(on ? (source ?? newGitSource()) : undefined)}
+      onCheckedChange={(on) => {
+        keepFocus.current = true;
+        setSource(on ? (source ?? newGitSource()) : undefined);
+      }}
     />
   );
-  if (!source) {
-    return (
-      <Disclosure label="Deploy from Git" className="border-t pt-4">
-        <div className="flex items-start justify-between gap-4 rounded-md border p-3">
-          <p className="text-sm text-muted-foreground">
-            Clone a repository and run its compose file, redeploying on new commits. While this is off, the files above
-            are the whole app.
-          </p>
-          {toggle}
-        </div>
-      </Disclosure>
-    );
-  }
   return (
-    <EditorSection
-      title="Git source"
-      description="The repository the app runs. Turn it off to run only the files above."
-      inlineAction
-      action={toggle}
-    >
-      <GitSourceFields
-        source={source}
-        token={state.sourceToken || ""}
-        onSource={(patch) => setSource({ ...source, ...patch })}
-        onToken={(sourceToken) => onChange({ ...state, sourceToken })}
-        errors={errors}
-      />
-      <p className="text-xs text-muted-foreground">
-        No compose file in the repository? Add a root <code>compose.yml</code> under Files — the clone is available at{" "}
-        <code>./source</code>.
-      </p>
-    </EditorSection>
+    <div ref={root}>
+      {source ? (
+        <EditorSection
+          title="Git source"
+          description="The repository the app runs. Turn it off to run only the files above."
+          inlineAction
+          action={toggle}
+        >
+          <GitSourceFields
+            source={source}
+            token={state.sourceToken || ""}
+            onSource={(patch) => setSource({ ...source, ...patch })}
+            onToken={(sourceToken) => onChange({ ...state, sourceToken })}
+            errors={errors}
+          />
+          <p className="text-xs text-muted-foreground">
+            No compose file in the repository? Add a root <code>compose.yml</code> under Files — the clone is available
+            at <code>./source</code>.
+          </p>
+        </EditorSection>
+      ) : (
+        <Disclosure label="Deploy from Git" className="border-t pt-4">
+          <div className="flex items-start justify-between gap-4 rounded-md border p-3">
+            <p className="text-sm text-muted-foreground">
+              Clone a repository and run its compose file, redeploying on new commits. While this is off, the files
+              above are the whole app.
+            </p>
+            {toggle}
+          </div>
+        </Disclosure>
+      )}
+    </div>
   );
 }
 

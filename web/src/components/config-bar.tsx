@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useRef, type ReactNode } from "react";
 import { History, MoreHorizontal } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -39,6 +39,10 @@ export function ConfigBar({
   primary: ReactNode;
 }) {
   const phone = useIsPhone();
+  // A menu item's action runs once the menu has closed: the menu hands focus
+  // back to its ⋯ button as it unmounts, which would take it from the field
+  // a refused Save just focused.
+  const pending = useRef<(() => void) | null>(null);
   if (!phone) {
     return (
       <StickyActionBar className="mb-6">
@@ -75,10 +79,24 @@ export function ConfigBar({
                 <MoreHorizontal className="size-4" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
+            <DropdownMenuContent
+              align="end"
+              onCloseAutoFocus={() => {
+                const run = pending.current;
+                pending.current = null;
+                run?.();
+              }}
+            >
               {onOpenHistory ? <DropdownMenuItem onSelect={onOpenHistory}>History</DropdownMenuItem> : null}
               {secondary.map((a) => (
-                <DropdownMenuItem key={a.label} disabled={a.disabled} title={a.title} onSelect={a.onSelect}>
+                <DropdownMenuItem
+                  key={a.label}
+                  disabled={a.disabled}
+                  title={a.title}
+                  onSelect={() => {
+                    pending.current = a.onSelect;
+                  }}
+                >
                   {a.label}
                 </DropdownMenuItem>
               ))}

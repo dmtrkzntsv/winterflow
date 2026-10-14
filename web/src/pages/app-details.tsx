@@ -86,6 +86,9 @@ export default function AppDetailsPage() {
   const inst = ownership?.instance ?? null;
   const latest = ownership?.current?.latest_revision ?? 0;
   const behind = inst !== null && latest > inst.revision;
+  // historyChanges counts the roll backs and draft deploys done in History;
+  // Configuration reads the app again on each (see AppEditorPanel).
+  const [historyChanges, setHistoryChanges] = useState(0);
   const [upgrade, setUpgrade] = useState<{ appId: string; target: TemplateView } | null>(null);
   const upgradeTarget = upgrade && upgrade.appId === app?.id ? upgrade.target : null;
   const reloadManaged = () => void Promise.all([lookup.reload(), refresh()]);
@@ -267,6 +270,7 @@ export default function AppDetailsPage() {
             ownership={ownership}
             onSaved={reloadManaged}
             onOpenHistory={() => setHistoryOpen(true)}
+            historyChanges={historyChanges}
             onUpgrade={() => void openUpgrade()}
           />
         </TabsContent>
@@ -290,7 +294,14 @@ export default function AppDetailsPage() {
         </TabsContent>
       </UnderlineTabs>
 
-      <HistorySheet key={app.id} appId={app.id} ownership={ownership} open={historyOpen} onOpenChange={setHistoryOpen} />
+      <HistorySheet
+        key={app.id}
+        appId={app.id}
+        ownership={ownership}
+        open={historyOpen}
+        onOpenChange={setHistoryOpen}
+        onChanged={() => setHistoryChanges((n) => n + 1)}
+      />
       <DeleteAppDialog name={name} open={deleteOpen} onOpenChange={setDeleteOpen} onConfirm={deleteApp} />
     </div>
   );
@@ -305,12 +316,16 @@ function ConfigurationTab({
   ownership,
   onSaved,
   onOpenHistory,
+  historyChanges,
   onUpgrade,
 }: {
   appId: string;
   ownership: Ownership;
   onSaved: () => void;
   onOpenHistory?: () => void;
+  // historyChanges counts the roll backs and draft deploys done in History:
+  // the editor reads the app again, or says so when it holds edits.
+  historyChanges: number;
   // onUpgrade opens the page's update dialog (a template-managed app's
   // "A newer version is available").
   onUpgrade: () => void;
@@ -331,5 +346,5 @@ function ConfigurationTab({
       />
     );
   }
-  return <AppEditorPanel appId={appId} onOpenHistory={onOpenHistory} />;
+  return <AppEditorPanel appId={appId} onOpenHistory={onOpenHistory} reloadSignal={historyChanges} />;
 }

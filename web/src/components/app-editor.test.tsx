@@ -110,6 +110,20 @@ describe("AppEditor", () => {
     expect(config().source).toEqual(newGitSource());
   });
 
+  it("keeps keyboard focus on Deploy from Git when it is switched on and off", async () => {
+    const user = userEvent.setup();
+    render(<Harness initial={emptyEditorState()} />);
+    await user.click(screen.getByRole("button", { name: "Deploy from Git" }));
+    screen.getByRole("switch", { name: "Deploy from Git" }).focus();
+    await user.keyboard(" ");
+    expect(screen.getByRole("heading", { name: "Git source" })).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Deploy from Git" })).toHaveFocus();
+    await user.keyboard(" ");
+    expect(config().source).toBeUndefined();
+    // Off again: the closed disclosure's button has it, not the page.
+    expect(screen.getByRole("button", { name: "Deploy from Git" })).toHaveFocus();
+  });
+
   it("shows an app's Git source up front, and says the repository's compose file runs", () => {
     const s = emptyEditorState();
     render(

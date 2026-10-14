@@ -129,7 +129,10 @@ export function HostnameField({
           value={value}
           placeholder={placeholder}
           aria-label={label}
-          aria-invalid={issue !== undefined || Boolean(error)}
+          // A live-check issue is a warning (described by its hint, red), not a
+          // refusal: only the form's own error marks the field invalid, which is
+          // what focusFirstInvalid looks for.
+          aria-invalid={Boolean(error)}
           aria-describedby={describedBy || undefined}
           className={cn(
             "font-mono",

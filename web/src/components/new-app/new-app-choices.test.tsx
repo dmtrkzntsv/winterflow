@@ -32,27 +32,28 @@ function renderIn(ui: ReactNode) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("NewAppChoices", () => {
-  it("offers a template only when the organization has one", async () => {
-    fakeAPI({ "/api/v1/template/get-templates": { templates: ONE } });
-    renderIn(<NewAppChoices serverId="s1" />);
-    expect(await screen.findByRole("link", { name: /From a template/ })).toHaveAttribute("href", "/server/s1/new?from=template");
+  it("offers a template only when the organization has one", () => {
+    renderIn(<NewAppChoices serverId="s1" templates={1} />);
+    expect(screen.getByRole("link", { name: /From a template/ })).toHaveAttribute("href", "/server/s1/new?from=template");
     expect(screen.getByRole("link", { name: /Compose file/ })).toHaveAttribute("href", "/server/s1/new?from=compose");
     expect(screen.getByRole("link", { name: /Git repository/ })).toHaveAttribute("href", "/server/s1/new?from=git");
+    expect(screen.queryByTestId("template-choice-skeleton")).not.toBeInTheDocument();
   });
 
-  it("leaves the template out without templates, or when they can't be read", async () => {
-    const api = fakeAPI({ "/api/v1/template/get-templates": { templates: [] } });
-    const { unmount } = renderIn(<NewAppChoices serverId="s1" />);
-    await waitFor(() => expect(api.calls).toHaveLength(1));
+  it("leaves the template out without templates", () => {
+    renderIn(<NewAppChoices serverId="s1" templates={0} />);
     expect(screen.queryByRole("link", { name: /From a template/ })).not.toBeInTheDocument();
     expect(screen.getAllByRole("link")).toHaveLength(2);
-    unmount();
-    vi.unstubAllGlobals();
+    expect(screen.queryByTestId("template-choice-skeleton")).not.toBeInTheDocument();
+  });
 
-    const failing = fakeAPI({ "/api/v1/template/get-templates": new Error("down") });
-    renderIn(<NewAppChoices serverId="s1" />);
-    await waitFor(() => expect(failing.calls).toHaveLength(1));
+  it("holds the template card's slot with a skeleton while the count is unknown", () => {
+    renderIn(<NewAppChoices serverId="s1" templates={null} />);
+    const items = screen.getAllByRole("listitem", { hidden: true });
+    // The skeleton comes first, where the template card lands.
+    expect(items[0]).toBe(screen.getByTestId("template-choice-skeleton"));
     expect(screen.queryByRole("link", { name: /From a template/ })).not.toBeInTheDocument();
+    expect(screen.getAllByRole("link")).toHaveLength(2);
   });
 });
 
@@ -67,5 +68,32 @@ describe("NewAppButton", () => {
     await user.click(screen.getByRole("link", { name: /Compose file/ }));
     expect(screen.getByTestId("at")).toHaveTextContent("/server/s1/new?from=compose");
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("shows the template card once read, and doesn't read the templates again on a second open", async () => {
+    const user = userEvent.setup();
+    const api = fakeAPI({ "/api/v1/template/get-templates": { templates: ONE } });
+    renderIn(<NewAppButton serverId="s1" />);
+    expect(api.calls).toHaveLength(0);
+    await user.click(screen.getByRole("button", { name: "New app" }));
+    expect(await screen.findByRole("link", { name: /From a template/ })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await user.click(screen.getByRole("button", { name: "New app" }));
+    // Already known: no skeleton, the card is there at once.
+    expect(screen.getByRole("link", { name: /From a template/ })).toBeInTheDocument();
+    expect(screen.queryByTestId("template-choice-skeleton")).not.toBeInTheDocument();
+    expect(api.calls).toHaveLength(1);
+  });
+
+  it("leaves the template out when the templates can't be read", async () => {
+    const user = userEvent.setup();
+    const api = fakeAPI({ "/api/v1/template/get-templates": new Error("down") });
+    renderIn(<NewAppButton serverId="s1" />);
+    await user.click(screen.getByRole("button", { name: "New app" }));
+    await waitFor(() => expect(api.calls).toHaveLength(1));
+    await screen.findByRole("link", { name: /Compose file/ });
+    await waitFor(() => expect(screen.queryByTestId("template-choice-skeleton")).not.toBeInTheDocument());
+    expect(screen.queryByRole("link", { name: /From a template/ })).not.toBeInTheDocument();
   });
 });

@@ -42,8 +42,9 @@ vi.mock("@/context/use-backups", () => ({ useBackups: () => backupsApi }));
 // notifications).
 vi.mock("@/components/stale-vars-badge", () => ({ StaleVarsBadge: () => null }));
 vi.mock("@/components/app-editor-panel", () => ({
-  AppEditorPanel: ({ onOpenHistory }: { onOpenHistory?: () => void }) => (
+  AppEditorPanel: ({ onOpenHistory, reloadSignal }: { onOpenHistory?: () => void; reloadSignal?: number }) => (
     <div>
+      <p>{`reload signal ${reloadSignal}`}</p>
       <button type="button" onClick={onOpenHistory}>
         History
       </button>
@@ -393,6 +394,27 @@ describe("AppDetailsPage", () => {
     await user.click(await screen.findByRole("button", { name: "History" }));
     const sheet = await screen.findByRole("dialog", { name: "History" });
     expect(await within(sheet).findByText("Changed compose.yml")).toBeInTheDocument();
+  });
+
+  it("tells the Configuration editor to read the app again after a roll back in History", async () => {
+    const user = userEvent.setup();
+    const getRevisions = vi.fn(async () => ({
+      current: "bbbbbbbb",
+      deployed: "bbbbbbbb",
+      revisions: [
+        { hash: "bbbbbbbb", subject: "edit", timestamp: 2 },
+        { hash: "aaaaaaaa", subject: "create", timestamp: 1 },
+      ],
+    }));
+    const rollback = vi.fn(async () => {});
+    renderPage("/app/a1?tab=configuration", {}, { ctx: { getRevisions, rollback } });
+    expect(await screen.findByText("reload signal 0")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "History" }));
+    const sheet = await screen.findByRole("dialog", { name: "History" });
+    await user.click(await within(sheet).findByRole("button", { name: /Roll back/ }));
+    await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Roll back" }));
+    await waitFor(() => expect(rollback).toHaveBeenCalledWith("a1", "aaaaaaaa"));
+    expect(await screen.findByText("reload signal 1")).toBeInTheDocument();
   });
 
   it("marks the Backups tab when a backup is late or failing", async () => {

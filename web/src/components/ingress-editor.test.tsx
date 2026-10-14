@@ -146,7 +146,10 @@ describe("ingress rows", () => {
 
     await user.type(screen.getByLabelText("Hostname"), "shop.other.app");
     const hint = await screen.findByText(/No domain on this server covers this hostname/);
-    expect(screen.getByLabelText("Hostname")).toHaveAttribute("aria-invalid", "true");
+    // A warning, not a refusal: described by its hint, not marked invalid
+    // (focusFirstInvalid would stop on it).
+    expect(screen.getByLabelText("Hostname")).toHaveAttribute("aria-invalid", "false");
+    expect(screen.getByLabelText("Hostname")).toHaveClass("border-destructive");
     expect(screen.getByLabelText("Hostname")).toHaveAttribute("aria-describedby", hint.id);
     // A new tab, so following it doesn't lose the unsaved form.
     const link = screen.getByRole("link", { name: /Add it/ });

@@ -26,12 +26,18 @@ export function hasErrorIn(errors: FieldErrors, ...prefixes: string[]): boolean 
   return Object.keys(errors).some((k) => prefixes.some((p) => k === p || k.startsWith(p)));
 }
 
+// REFUSAL_ATTR marks a message that stands for a refusal with no field to
+// focus (tabIndex -1 on it): focusFirstInvalid falls back to it.
+export const REFUSAL_ATTR = "data-refusal";
+
 // focusFirstInvalid moves focus to the first field marked invalid inside
-// root, one frame later: after React painted the messages and opened any
-// disclosure holding one.
+// root (or, when none is, a message marked REFUSAL_ATTR), one frame later:
+// after React painted the messages and opened any disclosure holding one.
 export function focusFirstInvalid(root: HTMLElement | null): void {
   requestAnimationFrame(() => {
-    const el = root?.querySelector<HTMLElement>('[aria-invalid="true"]');
+    const el =
+      root?.querySelector<HTMLElement>('[aria-invalid="true"]') ??
+      root?.querySelector<HTMLElement>(`[${REFUSAL_ATTR}]`);
     if (!el) return;
     el.focus();
     el.scrollIntoView?.({ block: "center" });

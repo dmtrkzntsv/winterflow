@@ -1,8 +1,8 @@
-// Shared load/save plumbing for the app editor, used by both the create-app
-// page and the app-details Editor tab: decoding an app.get payload into
-// editor state, validating it, and building the app.save payload (encrypting
-// touched secrets, passing the "<encrypted>" placeholder through so the agent
-// preserves stored values).
+// Shared load/save plumbing for the app editor, used by the New app forms
+// and the app page's Configuration tab: decoding an app.get payload into
+// editor state, validating it (editorErrors), and building the app.save
+// payload (encrypting touched secrets, passing the "<encrypted>" placeholder
+// through so the agent preserves stored values).
 import { validHostname } from "@/lib/domains";
 import { ENCRYPTED, encryptSecret } from "@/lib/ecies";
 import type { FieldErrors } from "@/lib/field-errors";

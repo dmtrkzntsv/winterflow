@@ -339,8 +339,18 @@ export function errorSummary(error: string): string {
   return short.length > 100 ? `${short.slice(0, 97)}…` : short;
 }
 
-// nextCopyNote says when a backup's next scheduled copy is due ("next 3:00
-// PM"), or that the first one comes within its interval; "" when there is
+// inSpan says how long until something, in the largest whole unit that
+// reads naturally: "52 min", "3 hours", "2 days".
+function inSpan(ms: number): string {
+  const min = Math.max(1, Math.round(ms / 60_000));
+  if (min < 60) return `${min} min`;
+  const hours = Math.round(min / 60);
+  if (hours < 48) return hours === 1 ? "1 hour" : `${hours} hours`;
+  return `${Math.round(hours / 24)} days`;
+}
+
+// nextCopyNote says when a backup's next scheduled copy is due ("next in
+// 52 min", in the same relative terms as "Last copy 9 minutes ago"), or that the first one comes within its interval; "" when there is
 // nothing to say (off, manual, running, failing, late, or not winterflow's
 // to run).
 export function nextCopyNote(
@@ -356,10 +366,7 @@ export function nextCopyNote(
   if (!lastSuccess) return `next within ${humanDuration(b.every)}`;
   const due = lastSuccess * 1000 + ms;
   if (due <= now) return "next due now";
-  const at = new Date(due);
-  const sameDay = at.toDateString() === new Date(now).toDateString();
-  const time = at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-  return `next ${sameDay ? time : `${at.toLocaleDateString()} ${time}`}`;
+  return `next in ${inSpan(due - now)}`;
 }
 
 export const STATE_LABELS: Record<BackupState, string> = {

@@ -2,8 +2,17 @@ import { relativeTime } from "@/lib/utils";
 
 const date = (iso: string) => new Date(iso).toLocaleDateString();
 
-// tokenMeta is a token row's quiet line: when it was made, when it ends
-// (or that it doesn't, or did), and when it was last used.
+// expiresIn says how long a token has left in whole days ("Expires in 30
+// days"), "Expires today" in its last day.
+function expiresIn(ms: number): string {
+  const days = Math.floor(ms / 86_400_000);
+  if (days < 1) return "Expires today";
+  return days === 1 ? "Expires in 1 day" : `Expires in ${days} days`;
+}
+
+// tokenMeta is a token row's quiet line: when it was made, how long it has
+// left (or that it never ends, or when it did), and when it was last used —
+// all relative to now, past a week the date.
 export function tokenMeta(
   t: { created_at: string; expires_at: string | null; last_used_at: string | null },
   now: number,
@@ -12,7 +21,7 @@ export function tokenMeta(
     ? "Never expires"
     : Date.parse(t.expires_at) <= now
       ? `Expired ${date(t.expires_at)}`
-      : `Expires ${date(t.expires_at)}`;
+      : expiresIn(Date.parse(t.expires_at) - now);
   const used = t.last_used_at ? `Last used ${relativeTime(new Date(t.last_used_at), now)}` : "Never used";
-  return [`Created ${date(t.created_at)}`, ends, used].join(" · ");
+  return [`Created ${relativeTime(new Date(t.created_at), now)}`, ends, used].join(" · ");
 }

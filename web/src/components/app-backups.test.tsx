@@ -544,7 +544,7 @@ describe("AppBackups", () => {
     expect(within(row("database")).getByText("Not run yet")).toBeInTheDocument();
     view.setHealth([{ name: "database", state: "ok", last_success: nowSecs() }]);
     expect(within(row("database")).getByText("OK")).toBeInTheDocument();
-    expect(within(row("database")).getByText(/^next \d/)).toBeInTheDocument();
+    expect(within(row("database")).getByText(/^next in \d+ (min|hours?)$/)).toBeInTheDocument();
   });
 
   it("gives up a held state after a while", async () => {

@@ -32,6 +32,24 @@ describe("AppLogsTab", () => {
     expect(screen.getByText("2 lines")).toBeInTheDocument();
   });
 
+  it("names containers by their compose service, like the Overview", async () => {
+    fakeAPI({ "/api/v1/app/get-logs": { request_id: "r1" } });
+    waitFor_.mockResolvedValue({
+      status: 0,
+      payload: {
+        logs: [
+          { timestamp: 1700000000, level: 3, message: "ready", container: "web-1" },
+          { timestamp: 1700000001, level: 3, message: "pong", container: "wf-a1-cache-1" },
+          { timestamp: 1700000002, level: 3, message: "w1", container: "worker-1" },
+          { timestamp: 1700000003, level: 3, message: "w2", container: "worker-2" },
+        ],
+      },
+    } as Notification);
+    render(wrap(<AppLogsTab appId="a1" />));
+    const chips = await screen.findByRole("group", { name: "Containers" });
+    expect([...chips.querySelectorAll("button")].map((b) => b.textContent)).toEqual(["All", "web", "cache", "worker-1", "worker-2"]);
+  });
+
   it("reads again with the number of lines picked, and on Refresh", async () => {
     const user = userEvent.setup();
     const api = fakeAPI({ "/api/v1/app/get-logs": { request_id: "r1" } });

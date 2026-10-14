@@ -68,7 +68,8 @@ export function VariablesEditor({ state, onChange, shared, errors = {}, emptyNot
             const error = errors[`var:${v.id}`];
             return (
               <div key={v.id} className="p-1">
-                <div className="flex items-center gap-1">
+                {/* On a phone the name takes the first line, whole. */}
+                <div className="flex flex-wrap items-center gap-1 sm:flex-nowrap">
                   <Input
                     id={nameId}
                     aria-label="Variable name"
@@ -77,7 +78,7 @@ export function VariablesEditor({ state, onChange, shared, errors = {}, emptyNot
                     {...invalidAttrs(
                       nameId,
                       error,
-                      "h-8 w-32 shrink-0 border-transparent font-mono shadow-none focus-visible:border-input sm:w-56",
+                      "h-8 w-full shrink-0 border-transparent font-mono shadow-none focus-visible:border-input sm:w-56",
                     )}
                     onChange={(e) => updateMeta(v.id, { name: e.target.value })}
                   />
@@ -117,7 +118,7 @@ export function VariablesEditor({ state, onChange, shared, errors = {}, emptyNot
                             el.focus();
                           }
                         }}
-                        {...invalidAttrs(valueId, valueError, "h-8 border-transparent font-mono shadow-none focus-visible:border-input")}
+                        {...invalidAttrs(valueId, valueError, "h-8 min-w-0 flex-1 border-transparent font-mono shadow-none focus-visible:border-input")}
                         onChange={(e) => updateValue(v.id, e.target.value)}
                       />
                       {v.is_encrypted && value !== "" ? (

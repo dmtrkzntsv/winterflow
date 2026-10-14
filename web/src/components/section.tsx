@@ -54,7 +54,9 @@ export function RowList({ children, label, className }: { children: ReactNode; l
 
 // Row is one item of a RowList: leading visual, title (a link covering the
 // row when `to` is set), description, detail (under it, wrapping, above the
-// link: an error with its Details), meta and actions (above the link).
+// link: an error with its Details), meta and actions (above the link). On a
+// phone the actions stay at the end of the title's line, meta goes under
+// the title, and a long title wraps instead of being cut.
 export function Row({
   title,
   leading,
@@ -80,16 +82,16 @@ export function Row({
     <li
       data-testid={testId}
       className={cn(
-        "relative flex flex-col gap-2 px-4 py-3 transition-colors duration-150 sm:flex-row sm:items-center sm:gap-4",
+        "relative grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 gap-y-1.5 px-4 py-3 transition-colors duration-150 sm:flex sm:flex-row sm:items-center sm:gap-4",
         "max-sm:rounded-xl max-sm:border max-sm:bg-card",
         to && "hover:bg-muted/40",
         className,
       )}
     >
-      <div className="flex min-w-0 flex-1 items-center gap-3">
+      <div className="col-start-1 row-start-1 flex min-w-0 flex-1 items-center gap-3">
         {leading ? <div className="shrink-0">{leading}</div> : null}
         <div className="min-w-0">
-          <div className="truncate text-sm font-medium">
+          <div className="text-sm font-medium max-sm:[overflow-wrap:anywhere] sm:truncate">
             {to ? (
               <Link to={to} className="after:absolute after:inset-0 max-sm:after:rounded-xl focus-visible:underline focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-inset focus-visible:after:ring-ring">
                 {title}
@@ -102,8 +104,12 @@ export function Row({
           {detail ? <div className="relative z-10 mt-1">{detail}</div> : null}
         </div>
       </div>
-      {meta ? <div className="text-xs text-muted-foreground sm:text-right">{meta}</div> : null}
-      {actions ? <div className="relative z-10 flex items-center gap-1">{actions}</div> : null}
+      {meta ? <div className="col-span-2 col-start-1 row-start-2 text-xs text-muted-foreground sm:text-right">{meta}</div> : null}
+      {actions ? (
+        <div className="relative z-10 col-start-2 row-start-1 flex items-center justify-end gap-1 max-sm:-my-1 max-sm:-mr-2">
+          {actions}
+        </div>
+      ) : null}
     </li>
   );
 }

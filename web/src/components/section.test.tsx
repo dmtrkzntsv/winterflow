@@ -34,7 +34,11 @@ describe("RowList", () => {
     expect(list).toHaveClass("divide-y", "max-sm:divide-y-0");
     const rows = within(list).getAllByRole("listitem");
     expect(rows).toHaveLength(2);
-    expect(rows[0]).toHaveClass("flex-col", "sm:flex-row", "max-sm:rounded-xl");
+    expect(rows[0]).toHaveClass("grid", "sm:flex-row", "max-sm:rounded-xl");
+    // On a phone the actions stay on the title's line and a long title wraps.
+    expect(within(rows[0]).getByRole("button", { name: "Edit" }).parentElement).toHaveClass("col-start-2", "row-start-1");
+    expect(within(rows[0]).getByText("2 apps")).toHaveClass("row-start-2");
+    expect(within(rows[0]).getByRole("link").parentElement).toHaveClass("max-sm:[overflow-wrap:anywhere]", "sm:truncate");
     expect(within(rows[0]).getByRole("link", { name: "example.com" })).toHaveAttribute("href", "/x");
     expect(within(rows[0]).getByText("Automatic HTTPS")).toBeInTheDocument();
     expect(within(rows[0]).getByText("2 apps")).toBeInTheDocument();

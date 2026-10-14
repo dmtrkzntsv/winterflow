@@ -63,6 +63,13 @@ describe("VariablesEditor", () => {
     expect(state().vars).toEqual([]);
   });
 
+  it("gives the name a whole line on a phone, the value beside it from sm up", () => {
+    render(<Harness start={withStoredSecret} />);
+    const name = screen.getByRole("textbox", { name: "Variable name" });
+    expect(name).toHaveClass("w-full", "sm:w-56");
+    expect(name.parentElement).toHaveClass("flex-wrap", "sm:flex-nowrap");
+  });
+
   it("never shows a stored secret or its placeholder: Replace opens an empty field", async () => {
     const user = userEvent.setup();
     render(<Harness start={withStoredSecret} />);

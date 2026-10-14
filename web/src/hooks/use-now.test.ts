@@ -21,6 +21,9 @@ describe("useNow", () => {
     act(() => vi.advanceTimersByTime(60_000));
     expect(result.current).toBe(1_000_000);
     rerender({ on: true });
+    // Enabled again, it reads the time at once, not a period late.
+    act(() => vi.advanceTimersByTime(0));
+    expect(result.current).toBe(1_060_000);
     expect(vi.getTimerCount()).toBe(1);
     act(() => vi.advanceTimersByTime(10_000));
     expect(result.current).toBe(1_070_000);

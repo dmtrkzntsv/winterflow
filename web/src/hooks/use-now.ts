@@ -8,8 +8,15 @@ export function useNow(periodMs = 60_000, enabled = true): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (!enabled) return;
-    const id = window.setInterval(() => setNow(Date.now()), periodMs);
-    return () => window.clearInterval(id);
+    const tick = () => setNow(Date.now());
+    // Restarted (enabled again, or a new period): the time kept from
+    // before may be long past, so it is read again at once.
+    const first = window.setTimeout(tick, 0);
+    const id = window.setInterval(tick, periodMs);
+    return () => {
+      window.clearTimeout(first);
+      window.clearInterval(id);
+    };
   }, [periodMs, enabled]);
   return now;
 }

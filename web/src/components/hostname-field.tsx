@@ -1,9 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { Input } from "@/components/ui/input";
+import { FieldMessage } from "@/components/form-field";
 import { HostHints, Suggestions } from "@/components/host-hints";
 import { useHostCheck } from "@/hooks/use-host-check";
 import { validHostname, type RegisteredDomain } from "@/lib/domains";
+import { errorId } from "@/lib/field-errors";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -28,6 +30,11 @@ type Props = {
   // onReturn runs when the user comes back to the tab while the hostname is
   // flagged as uncovered (they may have registered a domain meanwhile).
   onReturn: () => void;
+  // error is the hostname's own message (editorErrors): it marks the input
+  // invalid and sits under the row, before the live check's hints.
+  error?: string;
+  // footer goes last in the row's box (the row's other messages).
+  footer?: ReactNode;
   children: ReactNode;
 };
 
@@ -49,6 +56,8 @@ export function HostnameField({
   onChange,
   onRegistration,
   onReturn,
+  error,
+  footer,
   children,
 }: Props) {
   // Bumped to check the same hostname again (see the focus handler).
@@ -111,6 +120,7 @@ export function HostnameField({
   };
 
   const hintId = `${rowId}-hint`;
+  const describedBy = [error ? errorId(rowId) : "", issue || shown?.registration ? hintId : ""].filter(Boolean).join(" ");
   return (
     <div className="rounded-md border p-3">
       <div className={rowClassName}>
@@ -119,22 +129,24 @@ export function HostnameField({
           value={value}
           placeholder={placeholder}
           aria-label={label}
-          aria-invalid={issue !== undefined}
-          aria-describedby={issue || shown?.registration ? hintId : undefined}
+          aria-invalid={issue !== undefined || Boolean(error)}
+          aria-describedby={describedBy || undefined}
           className={cn(
             "font-mono",
             inputClassName,
-            issue && "border-destructive focus-visible:ring-destructive",
+            (issue || error) && "border-destructive focus-visible:ring-destructive",
           )}
           onChange={(e) => edit(e.target.value.trim().toLowerCase())}
         />
         {children}
       </div>
+      <FieldMessage id={rowId} message={error} className="mt-2" />
       {!checked ? null : value === "" ? (
         <Suggestions registrations={registrations} onPick={pick} />
       ) : shown ? (
         <HostHints id={hintId} check={shown} />
       ) : null}
+      {footer}
     </div>
   );
 }

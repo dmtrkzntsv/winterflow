@@ -2,16 +2,17 @@ import { Lock } from "lucide-react";
 
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
-import { PasswordInput } from "@/components/ui/password-input";
 import { FilesSection } from "@/components/files-section";
 import { VariablesEditor } from "@/components/variables-editor";
 import { IconPicker } from "@/components/icon-picker";
-import { IngressEditor } from "@/components/ingress-editor";
+import { GitSourceFields } from "@/components/git-source-fields";
+import { AddressRows, RedirectRows } from "@/components/ingress-editor";
 import { EditorSection } from "@/components/editor-section";
+import { newGitSource } from "@/lib/app-editor-io";
 import { ENCRYPTED } from "@/lib/ecies";
 import { SharedVariablesHint } from "@/components/shared-variables-hint";
+import { useRegistrations } from "@/hooks/use-registrations";
 import { useSharedNames } from "@/hooks/use-shared-names";
 import type { FieldErrors } from "@/lib/field-errors";
 import { useServers } from "@/context/use-servers";
@@ -29,6 +30,8 @@ type Props = {
 export function AppEditor({ state, onChange, errors = {} }: Props) {
   const { activeServer, loading: serversLoading } = useServers();
   const shared = useSharedNames(activeServer?.id);
+  const ingressOn = Boolean(activeServer?.features?.ingress);
+  const { registrations, refresh } = useRegistrations(activeServer?.id ?? "", ingressOn);
 
   const setConfig = (patch: Partial<AppEditorState["config"]>) =>
     onChange({ ...state, config: { ...state.config, ...patch } });
@@ -91,13 +94,7 @@ export function AppEditor({ state, onChange, errors = {} }: Props) {
             onCheckedChange={(on) =>
               setConfig({
                 source: on
-                  ? source ?? {
-                      repo_url: "",
-                      branch: "main",
-                      compose_path: "",
-                      auto_update: true,
-                      poll_seconds: 120,
-                    }
+                  ? source ?? newGitSource()
                   : undefined,
               })
             }
@@ -105,58 +102,19 @@ export function AppEditor({ state, onChange, errors = {} }: Props) {
         }
       >
         {source ? (
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="grid gap-2 sm:col-span-2">
-              <Label htmlFor="src-url">Repository URL</Label>
-              <Input
-                id="src-url"
-                value={source.repo_url}
-                placeholder="https://github.com/org/app"
-                className="font-mono"
-                onChange={(e) => setSource({ repo_url: e.target.value })}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="src-branch">Branch</Label>
-              <Input
-                id="src-branch"
-                value={source.branch}
-                placeholder="main"
-                className="font-mono"
-                onChange={(e) => setSource({ branch: e.target.value })}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="src-compose">Compose file path</Label>
-              <Input
-                id="src-compose"
-                value={source.compose_path || ""}
-                placeholder="Repository root by default"
-                className="font-mono"
-                onChange={(e) => setSource({ compose_path: e.target.value })}
-              />
-            </div>
-            <div className="grid gap-2 sm:col-span-2">
-              <Label htmlFor="src-token">Access token (private repos)</Label>
-              <PasswordInput
-                id="src-token"
-                value={state.sourceToken || ""}
-                placeholder={source.token_set ? "Stored — leave blank to keep" : "Optional"}
-                onChange={(e) => onChange({ ...state, sourceToken: e.target.value })}
-              />
-            </div>
-            <label className="flex items-center gap-2 text-sm sm:col-span-2">
-              <Checkbox
-                checked={source.auto_update}
-                onCheckedChange={(c) => setSource({ auto_update: c === true })}
-              />
-              Redeploy automatically when the branch gets new commits
-            </label>
-            <p className="text-xs text-muted-foreground sm:col-span-2">
+          <>
+            <GitSourceFields
+              source={source}
+              token={state.sourceToken || ""}
+              onSource={setSource}
+              onToken={(sourceToken) => onChange({ ...state, sourceToken })}
+              errors={errors}
+            />
+            <p className="text-xs text-muted-foreground">
               No compose file in the repository? Add a root <code>compose.yml</code> under
               Files — the clone is available at <code>./source</code>.
             </p>
-          </div>
+          </>
         ) : null}
       </EditorSection>
 
@@ -199,12 +157,29 @@ export function AppEditor({ state, onChange, errors = {} }: Props) {
           section until it resolves so supported servers don't flash the
           unsupported fallback. */}
       {serversLoading ? null : activeServer?.features?.ingress ? (
-        <IngressEditor
-          state={state}
-          onChange={onChange}
-          appId={state.config.id || undefined}
-          serverId={activeServer.id}
-        />
+        <EditorSection
+          title="Domains & Routing"
+          description="Serve the app on hostnames under the domains on this server. Each domain sets how HTTPS works."
+        >
+          <AddressRows
+            state={state}
+            onChange={onChange}
+            appId={state.config.id || undefined}
+            serverId={activeServer.id}
+            registrations={registrations}
+            onRefresh={refresh}
+            errors={errors}
+          />
+          <RedirectRows
+            state={state}
+            onChange={onChange}
+            appId={state.config.id || undefined}
+            serverId={activeServer.id}
+            registrations={registrations}
+            onRefresh={refresh}
+            errors={errors}
+          />
+        </EditorSection>
       ) : (
         <EditorSection
           title="Domains & Routing"

@@ -6,11 +6,13 @@ import type { RegisteredDomain } from "@/lib/domains";
 // useRegistrations reads a server's registered domains from the API's index
 // (a plain GET: no agent round-trip). They only drive the editor's
 // suggestions, so a failure just leaves the list empty. refresh re-reads it.
-export function useRegistrations(serverId: string) {
+// enabled false (a server without the built-in proxy) asks nothing.
+export function useRegistrations(serverId: string, enabled = true) {
   const [registrations, setRegistrations] = useState<RegisteredDomain[]>([]);
   const [reloads, setReloads] = useState(0);
 
   useEffect(() => {
+    if (!enabled) return;
     const ctrl = new AbortController();
     const qs = new URLSearchParams({ server_id: serverId });
     fetch(`${apiBaseUrl}/api/v1/domain/get-domains?${qs}`, {
@@ -25,7 +27,7 @@ export function useRegistrations(serverId: string) {
         // Advisory (or aborted): keep what we have.
       });
     return () => ctrl.abort();
-  }, [serverId, reloads]);
+  }, [serverId, reloads, enabled]);
 
   const refresh = useCallback(() => setReloads((n) => n + 1), []);
   return { registrations, refresh };

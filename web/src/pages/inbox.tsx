@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useServers } from "@/context/use-servers";
+import { useAlertChannels } from "@/hooks/use-alert-channels";
 import { useAlertEvents, type EventKindFilter } from "@/hooks/use-alert-events";
 import { useActiveAlerts } from "@/hooks/use-alerts";
 import { useInboxUnread } from "@/hooks/use-inbox-unread";
@@ -32,7 +33,8 @@ const FILTER_ITEM =
 // (a firing newer than the user's last "Mark all as read", kept in this
 // browser; the unread state is the shell's, shared with the sidebar badge).
 // Filters: All / Firing / Resolved, and a server filter when there are
-// several servers.
+// several servers. Without a notification channel one line under the header
+// says alerts only show here (rows don't repeat it).
 export default function InboxPage() {
   const { servers } = useServers();
   const { count, isUnread, markAllRead } = useInboxUnread();
@@ -48,6 +50,8 @@ export default function InboxPage() {
   const firing = show === "resolved" ? [] : active;
   const groups = groupByDay(events, now);
   const quiet = !loading && !error && events.length === 0 && firing.length === 0;
+  const channels = useAlertChannels();
+  const noChannels = !channels.loading && !channels.error && channels.channels.length === 0;
 
   return (
     <div className="space-y-6">
@@ -70,6 +74,15 @@ export default function InboxPage() {
           </>
         }
       />
+
+      {noChannels ? (
+        <p className="text-sm text-muted-foreground">
+          Alerts only show here.{" "}
+          <Link to={settingsPath("notifications")} className="font-medium text-foreground underline-offset-4 hover:underline">
+            Add a notification channel →
+          </Link>
+        </p>
+      ) : null}
 
       <div className="flex flex-wrap items-center gap-2">
         <ToggleGroup

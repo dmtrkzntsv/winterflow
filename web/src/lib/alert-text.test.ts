@@ -7,6 +7,7 @@ import {
   deliveryNote,
   eventTitle,
   groupByDay,
+  placeText,
   targetText,
   type AlertSubject,
 } from "@/lib/alert-text";
@@ -77,10 +78,18 @@ describe("targetText", () => {
   });
 });
 
+describe("placeText", () => {
+  it("names an app alert's server, and nothing for a server alert", () => {
+    expect(placeText(server)).toBe("");
+    expect(placeText(app)).toBe("homelab");
+    expect(placeText({ ...app, server_name: " " })).toBe("a server");
+  });
+});
+
 describe("deliveryNote", () => {
   it("says where the alert went", () => {
-    expect(deliveryNote(null)).toEqual({ text: "Only in the Inbox", failed: false, detail: "" });
-    expect(deliveryNote([])).toEqual({ text: "Only in the Inbox", failed: false, detail: "" });
+    expect(deliveryNote(null)).toEqual({ text: "", failed: false, detail: "" });
+    expect(deliveryNote([])).toEqual({ text: "", failed: false, detail: "" });
     expect(deliveryNote([{ channel_id: "c1", channel_name: "Telegram", ok: true, error: "" }])).toEqual({
       text: "Sent to Telegram",
       failed: false,

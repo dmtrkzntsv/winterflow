@@ -67,12 +67,14 @@ function renderPage(
     events = history,
     active = [firingCPU],
     next = "",
-  }: { events?: AlertEvent[]; active?: ActiveAlert[]; next?: string } = {},
+    channels = [{ id: "c1", name: "Ops" }],
+  }: { events?: AlertEvent[]; active?: ActiveAlert[]; next?: string; channels?: unknown[] } = {},
 ) {
   const api = fakeAPI({
     "/api/v1/alerts/get-events": (_b: unknown, q: URLSearchParams) =>
       q.get("cursor") ? { events: [event("e9", { created_at: at(9, 9) })], next_cursor: "" } : { events, next_cursor: next },
     "/api/v1/alerts/get-active": active,
+    "/api/v1/alerts/get-channels": channels,
   });
   const view = render(
     <MemoryRouter>
@@ -108,6 +110,19 @@ describe("InboxPage", () => {
     expect(markAllRead).toHaveBeenCalled();
   });
 
+  it("says once, under the header, that alerts only show here without a channel", async () => {
+    const { unmount } = renderPage({ channels: [] });
+    const hint = await screen.findByText(/Alerts only show here/);
+    expect(within(hint).getByRole("link", { name: "Add a notification channel →" })).toHaveAttribute(
+      "href",
+      "/settings/notifications",
+    );
+    unmount();
+    renderPage();
+    await screen.findByRole("region", { name: "Today" });
+    expect(screen.queryByText(/Alerts only show here/)).not.toBeInTheDocument();
+  });
+
   it("offers Mark all as read only when something is unread", () => {
     unread = 0;
     renderPage();
@@ -119,7 +134,9 @@ describe("InboxPage", () => {
     const firing = await screen.findByRole("region", { name: "Firing now" });
     const row = within(firing).getByTestId("firing-row");
     expect(within(row).getByRole("link", { name: "homelab CPU above 90%" })).toHaveAttribute("href", "/server/s1/monitoring");
-    expect(row).toHaveTextContent("for 12 min");
+    expect(within(row).getByRole("img", { name: "Firing" })).toBeInTheDocument();
+    // The title names the server: the line under it doesn't again.
+    expect(row).toHaveTextContent(/above 90%for 12 min$/);
     const today = await screen.findByRole("region", { name: "Today" });
     expect(firing.compareDocumentPosition(today) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
@@ -131,14 +148,17 @@ describe("InboxPage", () => {
     expect(rows).toHaveLength(2);
 
     expect(within(rows[0]).getByRole("link", { name: "Website is down" })).toHaveAttribute("href", "/server/s1/app/a1?tab=metrics");
-    expect(rows[0]).toHaveTextContent("Website on homelab");
+    // The title names the app, the line under it the server, once.
+    expect(rows[0]).toHaveTextContent("Website is downhomelab · ");
     expect(rows[0]).toHaveTextContent("Sent to Ops");
     expect(within(rows[0]).getByRole("img", { name: "Fired" })).toBeInTheDocument();
     expect(within(rows[0]).getByRole("img", { name: "Unread" })).toBeInTheDocument();
 
     expect(within(rows[1]).getByRole("link", { name: "homelab CPU back to 41%" })).toHaveAttribute("href", "/server/s1/monitoring");
-    expect(within(rows[1]).getByLabelText("Resolved")).toBeInTheDocument();
-    expect(rows[1]).toHaveTextContent("Only in the Inbox");
+    expect(within(rows[1]).getByRole("img", { name: "Resolved" })).toBeInTheDocument();
+    expect(rows[1]).not.toHaveTextContent("homelab ·");
+    // Sent nowhere: the row says nothing about it.
+    expect(rows[1]).not.toHaveTextContent("Only in the Inbox");
     // Newer than the last visit, but a resolution is no news: no dot.
     expect(within(rows[1]).queryByRole("img", { name: "Unread" })).not.toBeInTheDocument();
 

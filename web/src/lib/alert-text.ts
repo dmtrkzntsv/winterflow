@@ -71,6 +71,12 @@ export function targetText(t: Target): string {
   return `${subjectName(t)} on ${t.server_name.trim() || "a server"}`;
 }
 
+// placeText is where an alert is beyond what its title names: an app
+// alert's server; nothing for a server alert (its title names the server).
+export function placeText(t: Target): string {
+  return t.target_kind === "app" ? t.server_name.trim() || "a server" : "";
+}
+
 export type DeliveryNote = {
   text: string;
   // failed is true when at least one channel could not be reached.
@@ -80,10 +86,11 @@ export type DeliveryNote = {
 };
 
 // deliveryNote is the small line saying where an event's notification went:
-// "Only in the Inbox", "Sent to Telegram", "Sent to Ops · Couldn't send to Mail".
+// "Sent to Telegram", "Sent to Ops · Couldn't send to Mail"; "" when it went
+// nowhere (the Inbox says that once, not per row).
 export function deliveryNote(deliveries: Delivery[] | null): DeliveryNote {
   const list = deliveries ?? [];
-  if (list.length === 0) return { text: "Only in the Inbox", failed: false, detail: "" };
+  if (list.length === 0) return { text: "", failed: false, detail: "" };
   const sent = list.filter((d) => d.ok).map((d) => d.channel_name);
   const failed = list.filter((d) => !d.ok);
   const parts: string[] = [];

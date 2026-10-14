@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { App } from "@/context/apps-context-base";
-import { composeStart, createdApp, gitStart, parseNewAppSource, withHostPort } from "@/lib/new-app";
+import { composeStart, createdApp, gitStart, parseNewAppSource, uniqueAppName, withHostPort } from "@/lib/new-app";
 import { DEFAULT_COMPOSE } from "@/types/app-config";
 
 const app = (id: string, name: string) => ({ id, name, serverId: "s1", version: "1", icon: "", color: "", createdAt: "" }) as App;
@@ -54,5 +54,14 @@ describe("starting states", () => {
     expect(s.config.files).toEqual([]);
     expect(s.files).toEqual({});
     expect(s.config.source).toEqual({ repo_url: "", branch: "main", compose_path: "", auto_update: true, poll_seconds: 120 });
+  });
+});
+
+describe("uniqueAppName", () => {
+  it("numbers a name already used on the server", () => {
+    expect(uniqueAppName("Notes", [])).toBe("Notes");
+    expect(uniqueAppName(" Notes ", ["notes"])).toBe("Notes 2");
+    expect(uniqueAppName("Notes", ["Notes", "Notes 2", "Blog"])).toBe("Notes 3");
+    expect(uniqueAppName("  ", ["x"])).toBe("");
   });
 });

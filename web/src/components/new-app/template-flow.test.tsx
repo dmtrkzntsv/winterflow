@@ -18,7 +18,11 @@ vi.mock("@/context/use-servers", () => ({ useServers: () => ({ activeServerId: "
 const refresh = vi.hoisted(() => vi.fn(async () => {}));
 const reconcile = vi.hoisted(() => vi.fn(async (): Promise<{ id: string }[]> => []));
 const noteDeployFailure = vi.hoisted(() => vi.fn());
-vi.mock("@/context/use-apps", () => ({ useApps: () => ({ refresh, reconcile, noteDeployFailure }) }));
+const rename = vi.hoisted(() => vi.fn(async () => {}));
+const apps = vi.hoisted(() => ({ list: [] as { id: string; name: string; serverId: string }[] }));
+vi.mock("@/context/use-apps", () => ({
+  useApps: () => ({ apps: apps.list, refresh, reconcile, noteDeployFailure, rename }),
+}));
 const serverStorages = vi.hoisted(() => vi.fn(async () => ["tenants", "local"]));
 vi.mock("@/context/use-backups", () => ({ useBackups: () => ({ serverStorages }) }));
 
@@ -120,6 +124,8 @@ beforeEach(() => {
   reconcile.mockReset();
   reconcile.mockImplementation(async () => []);
   noteDeployFailure.mockReset();
+  rename.mockReset();
+  apps.list = [];
   waitFor_.mockReset();
   serverStorages.mockImplementation(async () => ["tenants", "local"]);
 });
@@ -132,7 +138,8 @@ describe("TemplateFlow", () => {
     renderFlow();
     expect(await screen.findByRole("button", { name: /twillingate/ })).toHaveAttribute("aria-pressed", "true");
     const fields = await screen.findAllByRole("textbox");
-    expect(fields[0]).toHaveAccessibleName("NAME");
+    expect(fields[0]).toHaveAccessibleName("App name");
+    expect(fields[1]).toHaveAccessibleName("NAME");
     // Optional values wait under More options, their defaults shown.
     expect(screen.queryByLabelText("MEMORY_MAX")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "More options" }));
@@ -174,7 +181,7 @@ describe("TemplateFlow", () => {
     expect(await within(addresses).findByText(/No domain on this server covers this hostname/)).toBeInTheDocument();
     const checks = api.calls.filter((c) => c.path === "/api/v1/domains/check");
     expect(checks.at(-1)?.query).toBe("?server_id=s1&domain=shop.twillingate.app");
-    expect(screen.getByText("shop", { selector: "span.font-medium" })).toBeInTheDocument();
+    expect(screen.getByLabelText("App name")).toHaveValue("shop");
   });
 
   it("creates the app with encrypted secrets and a browser key, then opens it", async () => {
@@ -206,6 +213,39 @@ describe("TemplateFlow", () => {
     expect(refresh).toHaveBeenCalled();
     expect(toast.success).toHaveBeenCalledWith("App created");
     expect(api.calls.find((c) => c.path === "/api/v1/instance/get-instance")?.query).toBe(`?server_id=s1&key=${sent.key}`);
+    // The name is the template's: nothing to rename.
+    expect(rename).not.toHaveBeenCalled();
+  });
+
+  it("names the app after the template, numbered when the server has one of that name", async () => {
+    const user = userEvent.setup();
+    apps.list = [{ id: "x", name: "shop", serverId: "s1" }, { id: "y", name: "shop 2", serverId: "other" }];
+    const api = fakeAPI(routes({ "/api/v1/instance/create-instance": { request_id: "r1" } }));
+    accepted(api);
+    waitFor_.mockResolvedValue({ status: 0 });
+    renderFlow();
+    await user.type(await screen.findByLabelText("NAME"), "shop");
+    expect(screen.getByLabelText("App name")).toHaveValue("shop 2");
+    await user.type(screen.getByLabelText("SESSION_KEY"), "s");
+    await user.click(screen.getByRole("button", { name: "Create app" }));
+    expect(await screen.findByText("the new app")).toBeInTheDocument();
+    expect(rename).toHaveBeenCalledWith("app-9", "shop 2");
+  });
+
+  it("warns about a name already used, and asks for one when it is cleared", async () => {
+    const user = userEvent.setup();
+    apps.list = [{ id: "x", name: "Blog", serverId: "s1" }];
+    const api = fakeAPI(routes());
+    renderFlow();
+    await fill(user);
+    const field = screen.getByLabelText("App name");
+    await user.clear(field);
+    await user.type(field, "blog");
+    expect(screen.getByText("Another app on this server already has this name.")).toBeInTheDocument();
+    await user.clear(field);
+    await user.click(screen.getByRole("button", { name: "Create app" }));
+    expect(field).toHaveAccessibleDescription("Give the app a name.");
+    expect(api.posted("/api/v1/instance/create-instance")).toEqual([]);
   });
 
   it("opens More options for an optional value that is wrong", async () => {

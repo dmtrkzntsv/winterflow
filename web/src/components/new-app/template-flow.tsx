@@ -4,11 +4,13 @@ import { LayoutTemplate } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AppIcon } from "@/components/app-icon";
 import { Disclosure } from "@/components/disclosure";
 import { EmptyState } from "@/components/empty-state";
+import { FormField } from "@/components/form-field";
 import { HostHints } from "@/components/host-hints";
 import { NativeSelect } from "@/components/native-select";
 import { CreateBar } from "@/components/new-app/create-bar";
@@ -20,7 +22,8 @@ import { useHostCheck } from "@/hooks/use-host-check";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
 import { validHostname } from "@/lib/domains";
 import { errorHeadline } from "@/lib/errors";
-import { focusFirstInvalid } from "@/lib/field-errors";
+import { focusFirstInvalid, invalidAttrs } from "@/lib/field-errors";
+import { uniqueAppName } from "@/lib/new-app";
 import { appPath, appsPath, serverSettingsPath, TEMPLATES_PATH } from "@/lib/routes";
 import {
   expand,
@@ -49,7 +52,7 @@ import { cn } from "@/lib/utils";
 // "Advanced".
 export function TemplateFlow({ serverId }: { serverId: string }) {
   const navigate = useNavigate();
-  const { refresh, reconcile, noteDeployFailure } = useApps();
+  const { apps, refresh, reconcile, noteDeployFailure, rename } = useApps();
   const { serverStorages } = useBackups();
   const api = useTemplatesApi();
 
@@ -75,6 +78,9 @@ export function TemplateFlow({ serverId }: { serverId: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [moreOpen, setMoreOpen] = useState(false);
+  // name is the app name the user typed (null: the template's, made unique
+  // on this server).
+  const [name, setName] = useState<string | null>(null);
   const form = useRef<HTMLDivElement>(null);
   // sending is the synchronous guard against a second Create while one runs.
   const sending = useRef(false);
@@ -119,10 +125,16 @@ export function TemplateFlow({ serverId }: { serverId: string }) {
   const required = params.filter((p) => p.required);
   const optional = params.filter((p) => !p.required);
   const errors = fieldErrors(params, values);
-  const invalid = tried && Object.keys(errors).length > 0;
   const plain = useMemo(() => plainValues(params, values), [params, values]);
   const hosts = view ? previewHosts(view.body, plain) : [];
   const appName = view ? expand(view.body.app_name, plain) : "";
+  const otherNames = apps.filter((a) => a.serverId === serverId).map((a) => a.name);
+  const chosenName = name ?? uniqueAppName(appName, otherNames);
+  const nameTaken =
+    chosenName.trim() !== "" && otherNames.some((n) => n.trim().toLowerCase() === chosenName.trim().toLowerCase());
+  // The name is asked for once the values are fine (it follows them).
+  const nameError = tried && !chosenName.trim() && Object.keys(errors).length === 0 ? "Give the app a name." : undefined;
+  const invalid = tried && (Object.keys(errors).length > 0 || nameError !== undefined);
   const backups = Object.entries(view?.body.backups ?? {});
 
   // storageFor is a backup's storage: the user's pick, else the template's
@@ -156,7 +168,7 @@ export function TemplateFlow({ serverId }: { serverId: string }) {
     if (!view || !serverId) return;
     setTried(true);
     const found = fieldErrors(params, values);
-    if (Object.keys(found).length > 0) {
+    if (Object.keys(found).length > 0 || !chosenName.trim()) {
       // Opened for good, so fixing the value doesn't fold it away under the cursor.
       if (optional.some((p) => found[p.name])) setMoreOpen(true);
       focusFirstInvalid(form.current);
@@ -190,6 +202,7 @@ export function TemplateFlow({ serverId }: { serverId: string }) {
         throw e;
       }
       const [inst] = await Promise.all([api.getInstance(serverId, key), refresh()]);
+      await nameApp(inst.app_id);
       toast.success("App created");
       navigate(appPath(serverId, inst.app_id));
     } catch (e) {
@@ -197,6 +210,19 @@ export function TemplateFlow({ serverId }: { serverId: string }) {
     } finally {
       sending.current = false;
       setBusy(false);
+    }
+  };
+
+  // nameApp gives the new app the name the user chose when the template
+  // renders another (the instance API takes no name: a rename does it). A
+  // failed rename leaves the template's name and says so.
+  const nameApp = async (appId: string) => {
+    const want = chosenName.trim();
+    if (!want || want === appName.trim()) return;
+    try {
+      await rename(appId, want);
+    } catch (e) {
+      toast.error(`Couldn't name the app ${want}`, { description: e instanceof Error ? e.message : undefined });
     }
   };
 
@@ -211,6 +237,7 @@ export function TemplateFlow({ serverId }: { serverId: string }) {
     if (!list.some((a) => a.id === inst.app_id)) return false;
     const message = inst.last_error || (e instanceof Error ? e.message : "");
     if (message) noteDeployFailure(inst.app_id, message);
+    await nameApp(inst.app_id);
     toast.error("The app was created but couldn't start", { description: message ? errorHeadline(message) : undefined });
     navigate(appPath(serverId, inst.app_id));
     return true;
@@ -269,6 +296,7 @@ export function TemplateFlow({ serverId }: { serverId: string }) {
                 setRevision(0);
                 setView(null);
                 setValues({});
+                setName(null);
                 // The next template's form starts untried and folded.
                 setTried(false);
                 setMoreOpen(false);
@@ -300,6 +328,22 @@ export function TemplateFlow({ serverId }: { serverId: string }) {
         <PageSpinner />
       ) : (
         <>
+          <FormField
+            id="instance-name"
+            label="App name"
+            error={nameError}
+            hint={nameTaken ? "Another app on this server already has this name." : undefined}
+            className="sm:max-w-sm"
+          >
+            <Input
+              id="instance-name"
+              value={chosenName}
+              placeholder={appName.trim() || "App name"}
+              {...invalidAttrs("instance-name", nameError)}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </FormField>
+
           <section aria-label="Values" className="space-y-4">
             {required.length > 0 ? (
               <ParameterFields params={required} values={values} onChange={setValue} showRequired={tried} />
@@ -360,19 +404,15 @@ export function TemplateFlow({ serverId }: { serverId: string }) {
             </section>
           ) : null}
 
-          <section aria-label="Summary" className="space-y-2 rounded-xl border bg-muted/30 p-4 text-sm">
-            <p>
-              <span className="text-muted-foreground">Will be called </span>
-              <span className="font-medium">{appName.trim() || "…"}</span>
-            </p>
-            {hosts.length > 0 ? (
+          {hosts.length > 0 ? (
+            <section aria-label="Summary" className="space-y-2 rounded-xl border bg-muted/30 p-4 text-sm">
               <ul aria-label="Addresses" className="space-y-2">
                 {hosts.map((h, i) => (
                   <HostPreviewRow key={i} serverId={serverId} preview={h} />
                 ))}
               </ul>
-            ) : null}
-          </section>
+            </section>
+          ) : null}
 
           <Disclosure label="Advanced">
             <div className="grid gap-1.5 sm:max-w-xs">

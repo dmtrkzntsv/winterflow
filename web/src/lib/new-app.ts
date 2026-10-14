@@ -41,3 +41,16 @@ export function gitStart(): AppEditorState {
   const s = emptyEditorState();
   return { ...s, config: { ...s.config, files: [], source: newGitSource() }, files: {} };
 }
+
+// uniqueAppName is base, or "base 2", "base 3"… when an app of taken
+// already carries it (names compared trimmed, ignoring case).
+export function uniqueAppName(base: string, taken: readonly string[]): string {
+  const name = base.trim();
+  if (!name) return "";
+  const used = new Set(taken.map((t) => t.trim().toLowerCase()));
+  if (!used.has(name.toLowerCase())) return name;
+  for (let n = 2; ; n++) {
+    const next = `${name} ${n}`;
+    if (!used.has(next.toLowerCase())) return next;
+  }
+}

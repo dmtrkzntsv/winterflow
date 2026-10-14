@@ -1,84 +1,37 @@
-import { Eye, EyeOff, Lock, Plus, Trash2 } from "lucide-react";
+import { Lock } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { PasswordInput } from "@/components/ui/password-input";
-import { FilesSection, SecretToggle } from "@/components/files-section";
+import { FilesSection } from "@/components/files-section";
+import { VariablesEditor } from "@/components/variables-editor";
 import { IconPicker } from "@/components/icon-picker";
 import { IngressEditor } from "@/components/ingress-editor";
 import { EditorSection } from "@/components/editor-section";
 import { ENCRYPTED } from "@/lib/ecies";
-import { useState } from "react";
 import { SharedVariablesHint } from "@/components/shared-variables-hint";
 import { useSharedNames } from "@/hooks/use-shared-names";
-import { overrideNote } from "@/lib/shared-variables";
+import type { FieldErrors } from "@/lib/field-errors";
 import { useServers } from "@/context/use-servers";
-import {
-  localId,
-  type AppEditorState,
-  type AppVariableMeta,
-  type StorageVariable,
-} from "@/types/app-config";
+import type { AppEditorState, StorageVariable } from "@/types/app-config";
 
 type Props = {
   state: AppEditorState;
   onChange: (next: AppEditorState) => void;
+  errors?: FieldErrors;
 };
 
 // AppEditor edits an app's compose files and variables (v1 parity, minus
 // extensions). Secrets are flagged with is_encrypted and encrypted on submit by
 // the page; the editor only manages plaintext entry + masking.
-export function AppEditor({ state, onChange }: Props) {
-  const [revealed, setRevealed] = useState<Record<string, boolean>>({});
+export function AppEditor({ state, onChange, errors = {} }: Props) {
   const { activeServer, loading: serversLoading } = useServers();
   const shared = useSharedNames(activeServer?.id);
 
   const setConfig = (patch: Partial<AppEditorState["config"]>) =>
     onChange({ ...state, config: { ...state.config, ...patch } });
-
-  // --- variables ---
-  const updateVarMeta = (id: string, patch: Partial<AppVariableMeta>) =>
-    setConfig({
-      variables: state.config.variables.map((v) =>
-        v.id === id ? { ...v, ...patch } : v,
-      ),
-    });
-
-  const updateVarValue = (id: string, value: string) =>
-    onChange({ ...state, variables: { ...state.variables, [id]: value } });
-
-  const addVar = () => {
-    const id = localId("var");
-    onChange({
-      ...state,
-      config: {
-        ...state.config,
-        variables: [
-          ...state.config.variables,
-          { id, name: "", is_encrypted: false },
-        ],
-      },
-      variables: { ...state.variables, [id]: "" },
-    });
-  };
-
-  const removeVar = (id: string) => {
-    const rest = { ...state.variables };
-    delete rest[id];
-    onChange({
-      ...state,
-      config: {
-        ...state.config,
-        variables: state.config.variables.filter((v) => v.id !== id),
-      },
-      variables: rest,
-    });
-  };
-
-  const storageVars = state.storageVariables;
 
   const source = state.config.source;
   const setSource = (patch: Partial<NonNullable<typeof source>>) =>
@@ -208,6 +161,7 @@ export function AppEditor({ state, onChange }: Props) {
       </EditorSection>
 
       <FilesSection
+        errors={errors}
         files={state.config.files}
         contents={state.files}
         onChange={(files, contents) =>
@@ -229,78 +183,16 @@ export function AppEditor({ state, onChange }: Props) {
             server variables. Secret values are encrypted in your browser.
           </>
         }
-        action={
-          <Button size="sm" variant="outline" onClick={addVar}>
-            <Plus className="size-4" /> Add variable
-          </Button>
-        }
       >
-        {state.config.variables.length === 0 ? (
-          storageVars.length === 0 ? (
-            <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-              No variables yet.
-            </p>
-          ) : null
-        ) : (
-          <div className="divide-y rounded-md border">
-            {state.config.variables.map((v) => {
-              const isRevealed = revealed[v.id] || !v.is_encrypted;
-              const note = overrideNote(v.name, shared);
-              return (
-                <div key={v.id} className="flex items-center gap-1 p-1">
-                  <Input
-                    aria-label="Variable name"
-                    value={v.name}
-                    placeholder="VAR_NAME"
-                    className="h-8 w-32 shrink-0 border-transparent font-mono shadow-none focus-visible:border-input sm:w-56"
-                    onChange={(e) => updateVarMeta(v.id, { name: e.target.value })}
-                  />
-                  {note ? <span className="shrink-0 text-xs text-muted-foreground">{note}</span> : null}
-                  <Input
-                    aria-label={`Value of ${v.name || "variable"}`}
-                    value={state.variables[v.id] ?? ""}
-                    type={isRevealed ? "text" : "password"}
-                    placeholder="value"
-                    className="h-8 border-transparent font-mono shadow-none focus-visible:border-input"
-                    onChange={(e) => updateVarValue(v.id, e.target.value)}
-                  />
-                  {v.is_encrypted ? (
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="size-8 shrink-0 text-muted-foreground"
-                      aria-label={isRevealed ? "Hide value" : "Show value"}
-                      onClick={() =>
-                        setRevealed((r) => ({ ...r, [v.id]: !r[v.id] }))
-                      }
-                    >
-                      {isRevealed ? (
-                        <EyeOff className="size-4" />
-                      ) : (
-                        <Eye className="size-4" />
-                      )}
-                    </Button>
-                  ) : null}
-                  <SecretToggle
-                    on={v.is_encrypted}
-                    onChange={(on) => updateVarMeta(v.id, { is_encrypted: on })}
-                  />
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    className="size-8 shrink-0 text-muted-foreground hover:text-destructive"
-                    aria-label={`Remove ${v.name || "variable"}`}
-                    onClick={() => removeVar(v.id)}
-                  >
-                    <Trash2 className="size-4" />
-                  </Button>
-                </div>
-              );
-            })}
-          </div>
-        )}
+        <VariablesEditor
+          state={state}
+          onChange={onChange}
+          shared={shared}
+          errors={errors}
+          emptyNote={state.storageVariables.length === 0}
+        />
         <SharedVariablesHint shared={shared} />
-        <StorageVariableRows vars={storageVars} />
+        <StorageVariableRows vars={state.storageVariables} />
       </EditorSection>
 
       {/* activeServer is null while get-servers is in flight; render neither

@@ -3,7 +3,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import { FilesSection } from "@/components/files-section";
+import { FileEditors, FilesSection } from "@/components/files-section";
 import type { AppFileMeta } from "@/types/app-config";
 
 vi.mock("@/components/code-editor", () => ({
@@ -17,7 +17,7 @@ vi.mock("@/components/image-tag-picker", () => ({
   ),
 }));
 
-function Harness({ allowSecret, imageChips }: { allowSecret?: boolean; imageChips?: boolean }) {
+function Harness({ allowSecret, imageChips, errors }: { allowSecret?: boolean; imageChips?: boolean; errors?: Record<string, string> }) {
   const [files, setFiles] = useState<AppFileMeta[]>([{ id: "f1", filename: "compose.yml", is_encrypted: false }]);
   const [contents, setContents] = useState<Record<string, string>>({ f1: "services:\n  app:\n    image: nginx:1\n" });
   return (
@@ -32,6 +32,7 @@ function Harness({ allowSecret, imageChips }: { allowSecret?: boolean; imageChip
         description="the files"
         allowSecret={allowSecret}
         imageChips={imageChips}
+        errors={errors}
       />
       <output aria-label="state">{JSON.stringify({ files, contents })}</output>
     </>
@@ -70,5 +71,41 @@ describe("FilesSection", () => {
     expect(screen.queryByRole("button", { name: /tags of/ })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Remove compose.yml" }));
     expect(screen.getByText(/Add at least a/)).toBeInTheDocument();
+  });
+});
+
+describe("FilesSection messages", () => {
+  it("marks a file's name and says why the list is refused", () => {
+    render(<Harness errors={{ "file:f1": "Name this file.", files: "Add a compose file named compose.yml." }} />);
+    const name = screen.getByRole("textbox", { name: "File name" });
+    expect(name).toHaveAttribute("aria-invalid", "true");
+    expect(name).toHaveAccessibleDescription("Name this file.");
+    expect(screen.getByText("Add a compose file named compose.yml.")).toBeInTheDocument();
+  });
+});
+
+describe("FileEditors", () => {
+  it("adds a file from its link and leaves out the image chips on request", async () => {
+    const user = userEvent.setup();
+    function Editors() {
+      const [files, setFiles] = useState<AppFileMeta[]>([{ id: "f1", filename: "compose.yml", is_encrypted: false }]);
+      const [contents, setContents] = useState<Record<string, string>>({ f1: "services:\n  app:\n    image: nginx:1\n" });
+      return (
+        <FileEditors
+          files={files}
+          contents={contents}
+          onChange={(f, c) => {
+            setFiles(f);
+            setContents(c);
+          }}
+          imageChips={false}
+          addLabel="Add another file"
+        />
+      );
+    }
+    render(<Editors />);
+    expect(screen.queryByRole("button", { name: /tags of/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Add another file" }));
+    expect(screen.getAllByRole("textbox", { name: "File name" })).toHaveLength(2);
   });
 });

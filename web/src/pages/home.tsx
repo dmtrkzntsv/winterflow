@@ -21,7 +21,7 @@ import { newAppPath } from "@/lib/routes";
 // servers are one switch away in the sidebar.
 export default function HomePage() {
   const { activeServer, loading, refresh } = useServers();
-  const { apps, statusByApp } = useApps();
+  const { apps, statusByApp, loading: appsLoading } = useApps();
   const [addServerOpen, setAddServerOpen] = useState(false);
 
   if (!activeServer) {
@@ -56,7 +56,12 @@ export default function HomePage() {
     <div className="space-y-6">
       <PageHeader
         title="Apps"
-        subtitle={appsSubtitle(activeServer.name, apps.length, countApps(apps, statusByApp))}
+        // Until the first list arrives "no apps yet" would be a guess.
+        subtitle={
+          appsLoading && apps.length === 0
+            ? activeServer.name
+            : appsSubtitle(activeServer.name, apps.length, countApps(apps, statusByApp))
+        }
         actions={
           <Button asChild>
             <Link to={newAppPath(activeServer.id)}>

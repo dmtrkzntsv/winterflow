@@ -11,6 +11,7 @@ import { StatusPill } from "@/components/status";
 import type { App } from "@/context/apps-context-base";
 import { useApps } from "@/context/use-apps";
 import { useServerPath } from "@/context/use-server-path";
+import { useServers } from "@/context/use-servers";
 import { appTitle, appWarning, filterApps, FILTER_THRESHOLD, primaryAddress, type AppWarning } from "@/lib/app-summary";
 import { TILE_GRID } from "@/lib/grid";
 import { appSub, newAppSub } from "@/lib/routes";
@@ -109,7 +110,15 @@ function AppCard({ app, code, warning, index }: { app: App; code: number | undef
 // are more than FILTER_THRESHOLD), or the invitation to run the first one.
 export function AppGrid() {
   const { apps, statusByApp, backupsByApp, staleVarsByApp, loading, error } = useApps();
+  const { activeServerId } = useServers();
   const [query, setQuery] = useState("");
+  // The page outlives a server switch: a query typed on one server is not
+  // carried to the next.
+  const [queryServer, setQueryServer] = useState(activeServerId);
+  if (queryServer !== activeServerId) {
+    setQueryServer(activeServerId);
+    setQuery("");
+  }
 
   if (loading && apps.length === 0) {
     return (
@@ -127,10 +136,12 @@ export function AppGrid() {
     return <NoApps />;
   }
 
-  const shown = filterApps(apps, query);
+  // Only an app list long enough to show the filter box is filtered by it.
+  const filtering = apps.length > FILTER_THRESHOLD;
+  const shown = filtering ? filterApps(apps, query) : apps;
   return (
     <div className="space-y-3">
-      {apps.length > FILTER_THRESHOLD ? (
+      {filtering ? (
         <Input
           type="search"
           aria-label="Filter apps"

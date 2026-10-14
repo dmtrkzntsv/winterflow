@@ -8,11 +8,9 @@ import HomePage from "@/pages/home";
 const homelab = { id: "s1", organizationId: "o", name: "homelab", createdAt: "", lastSeenAt: null, capabilities: {} };
 let servers: { activeServer: typeof homelab | null; loading: boolean; refresh: () => Promise<void> };
 vi.mock("@/context/use-servers", () => ({ useServers: () => servers }));
+let appsState: { apps: { id: string }[]; loading: boolean };
 vi.mock("@/context/use-apps", () => ({
-  useApps: () => ({
-    apps: [{ id: "a1" }, { id: "a2" }, { id: "a3" }],
-    statusByApp: { a1: 1, a2: 1, a3: 5 },
-  }),
+  useApps: () => ({ ...appsState, statusByApp: { a1: 1, a2: 1, a3: 5 } }),
 }));
 vi.mock("@/components/server-health-strip", () => ({ ServerHealthStrip: () => <div data-testid="strip" /> }));
 vi.mock("@/components/alerts/active-alerts", () => ({ FiringAlertsLine: () => <div data-testid="firing" /> }));
@@ -35,6 +33,20 @@ function renderHome() {
 describe("HomePage", () => {
   beforeEach(() => {
     servers = { activeServer: homelab, loading: false, refresh: vi.fn(async () => {}) };
+    appsState = { apps: [{ id: "a1" }, { id: "a2" }, { id: "a3" }], loading: false };
+  });
+
+  it("names just the server until the first list of apps has arrived", () => {
+    appsState = { apps: [], loading: true };
+    renderHome();
+    expect(screen.getByText("homelab")).toBeInTheDocument();
+    expect(screen.queryByText(/no apps yet/)).not.toBeInTheDocument();
+  });
+
+  it("says there are no apps once the list has loaded empty", () => {
+    appsState = { apps: [], loading: false };
+    renderHome();
+    expect(screen.getByText("homelab · no apps yet")).toBeInTheDocument();
   });
 
   it("is the Apps page: counts under the title, one New app, health and alerts above the apps", () => {

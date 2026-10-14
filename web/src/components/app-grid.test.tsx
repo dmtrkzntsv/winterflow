@@ -7,7 +7,8 @@ import { AppGrid } from "@/components/app-grid";
 import { AppsContext, type App, type AppsContextValue } from "@/context/apps-context-base";
 
 // Links point into the active server's scope (/server/:id/...).
-vi.mock("@/context/use-servers", () => ({ useServers: () => ({ activeServerId: "srv-1" }) }));
+let activeServerId = "srv-1";
+vi.mock("@/context/use-servers", () => ({ useServers: () => ({ activeServerId }) }));
 
 const app = (id: string, name: string, over: Partial<App> = {}): App => ({
   id,
@@ -20,23 +21,28 @@ const app = (id: string, name: string, over: Partial<App> = {}): App => ({
   ...over,
 });
 
+const tree = (over: Partial<AppsContextValue>) => (
+  <MemoryRouter>
+    <AppsContext.Provider
+      value={
+        {
+          apps: [app("a1", "Shop"), app("a2", "Blog")],
+          statusByApp: { a1: 1, a2: 5 },
+          backupsByApp: {},
+          staleVarsByApp: {},
+          loading: false,
+          error: null,
+          ...over,
+        } as unknown as AppsContextValue
+      }
+    >
+      <AppGrid />
+    </AppsContext.Provider>
+  </MemoryRouter>
+);
+
 function renderGrid(over: Partial<AppsContextValue>) {
-  const value = {
-    apps: [app("a1", "Shop"), app("a2", "Blog")],
-    statusByApp: { a1: 1, a2: 5 },
-    backupsByApp: {},
-    staleVarsByApp: {},
-    loading: false,
-    error: null,
-    ...over,
-  } as unknown as AppsContextValue;
-  return render(
-    <MemoryRouter>
-      <AppsContext.Provider value={value}>
-        <AppGrid />
-      </AppsContext.Provider>
-    </MemoryRouter>,
-  );
+  return render(tree(over));
 }
 
 const card = (name: string) => screen.getByRole("link", { name }).closest("li")!;
@@ -94,6 +100,30 @@ describe("AppGrid", () => {
     await user.clear(screen.getByRole("searchbox", { name: "Filter apps" }));
     await user.type(screen.getByRole("searchbox", { name: "Filter apps" }), "nothing like it");
     expect(screen.getByText("No app matches “nothing like it”.")).toBeInTheDocument();
+  });
+
+  it("does not filter by a query the hidden box can no longer clear", async () => {
+    const user = userEvent.setup();
+    const many = Array.from({ length: 9 }, (_, i) => app(`a${i}`, `App ${i}`));
+    const { rerender } = renderGrid({ apps: many });
+    await user.type(screen.getByRole("searchbox", { name: "Filter apps" }), "App 7");
+    expect(within(screen.getByRole("list", { name: "Apps" })).getAllByRole("listitem")).toHaveLength(1);
+    // An app was deleted (or another server shown): three apps, no box.
+    rerender(tree({ apps: many.slice(0, 3) }));
+    expect(screen.queryByRole("searchbox", { name: "Filter apps" })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("list", { name: "Apps" })).getAllByRole("listitem")).toHaveLength(3);
+  });
+
+  it("forgets the query when the active server changes", async () => {
+    const user = userEvent.setup();
+    const many = Array.from({ length: 9 }, (_, i) => app(`a${i}`, `App ${i}`));
+    const { rerender } = renderGrid({ apps: many });
+    await user.type(screen.getByRole("searchbox", { name: "Filter apps" }), "App 7");
+    activeServerId = "srv-2";
+    rerender(tree({ apps: many }));
+    expect(screen.getByRole("searchbox", { name: "Filter apps" })).toHaveValue("");
+    expect(within(screen.getByRole("list", { name: "Apps" })).getAllByRole("listitem")).toHaveLength(9);
+    activeServerId = "srv-1";
   });
 
   it("invites to run the first app from a template or a compose file", () => {

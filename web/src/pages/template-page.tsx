@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useLocation, useNavigate, useParams } from "react-router-dom";
-import { Ellipsis, Trash2 } from "lucide-react";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import { Ellipsis, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -31,7 +31,7 @@ import { useTemplatesApi } from "@/hooks/use-templates-api";
 import { isActive } from "@/lib/rollouts";
 import { bodyFromDraft, draftFromBody, draftProblem, emptyDraft, type DraftState, type TemplateDraft } from "@/lib/template-draft";
 import { ApiError, usageLabel, type InstanceView, type TemplateView } from "@/lib/templates";
-import { TEMPLATES_PATH, templatePath } from "@/lib/routes";
+import { newAppFromTemplatePath, TEMPLATES_PATH, templatePath } from "@/lib/routes";
 
 const TABS = ["editor", "apps", "versions"] as const;
 type Tab = (typeof TABS)[number];
@@ -50,6 +50,48 @@ function sameDraft(d: TemplateDraft, base: TemplateDraft): boolean {
   );
 }
 
+// CreateAppButton is a template page's primary: New app → From a template
+// with this template picked, on the active server; with several servers it
+// asks which one.
+function CreateAppButton({
+  templateId,
+  servers,
+  activeServerId,
+}: {
+  templateId: string;
+  servers: { id: string; name: string }[];
+  activeServerId: string | null;
+}) {
+  const label = (
+    <>
+      <Plus className="size-4" aria-hidden /> Create app
+    </>
+  );
+  if (servers.length > 1) {
+    return (
+      <DropdownMenu modal={false}>
+        <DropdownMenuTrigger asChild>
+          <Button>{label}</Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          {servers.map((s) => (
+            <DropdownMenuItem key={s.id} asChild>
+              <Link to={newAppFromTemplatePath(s.id, templateId)}>On {s.name}</Link>
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+  }
+  const serverId = servers[0]?.id ?? activeServerId;
+  if (!serverId) return null;
+  return (
+    <Button asChild>
+      <Link to={newAppFromTemplatePath(serverId, templateId)}>{label}</Link>
+    </Button>
+  );
+}
+
 // TemplatePage is one template (/templates/:templateId) or a new one
 // (/templates/new, optionally prefilled by Save as template): its editor,
 // where Save adds a version, the apps using it (with Update all apps and
@@ -61,7 +103,7 @@ export default function TemplatePage() {
   const navigate = useNavigate();
   const api = useTemplatesApi();
   const rolloutsApi = useRolloutsApi();
-  const { servers } = useServers();
+  const { servers, activeServerId } = useServers();
   const prefill = (location.state as DraftState | null) ?? null;
   const [tab, setTab] = useTabParam<Tab>(TABS, "editor", { aliases: TAB_ALIASES });
 
@@ -261,29 +303,32 @@ export default function TemplatePage() {
         back={BACK}
         actions={
           view ? (
-            // Not modal: the confirm dialog it opens takes the focus.
-            <DropdownMenu modal={false}>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="icon" className="size-10 sm:size-9" aria-label="More actions">
-                  <Ellipsis className="size-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="max-w-72">
-                <DropdownMenuItem
-                  disabled={live > 0}
-                  className="text-destructive focus:text-destructive"
-                  onSelect={() => setConfirmDelete(true)}
-                >
-                  <Trash2 className="size-4" /> Delete template
-                </DropdownMenuItem>
-                {/* Beside the dimmed item, not in it: full-contrast text. */}
-                {live > 0 ? (
-                  <p className="px-2 py-1.5 text-xs text-muted-foreground">
-                    Delete its apps or detach them from it first
-                  </p>
-                ) : null}
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <>
+              <CreateAppButton templateId={view.id} servers={servers} activeServerId={activeServerId} />
+              {/* Not modal: the confirm dialog it opens takes the focus. */}
+              <DropdownMenu modal={false}>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="icon" className="size-10 sm:size-9" aria-label="More actions">
+                    <Ellipsis className="size-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="max-w-72">
+                  <DropdownMenuItem
+                    disabled={live > 0}
+                    className="text-destructive focus:text-destructive"
+                    onSelect={() => setConfirmDelete(true)}
+                  >
+                    <Trash2 className="size-4" /> Delete template
+                  </DropdownMenuItem>
+                  {/* Beside the dimmed item, not in it: full-contrast text. */}
+                  {live > 0 ? (
+                    <p className="px-2 py-1.5 text-xs text-muted-foreground">
+                      Delete its apps or detach them from it first
+                    </p>
+                  ) : null}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </>
           ) : null
         }
       />
@@ -293,8 +338,8 @@ export default function TemplatePage() {
       {prefill ? (
         <div className="space-y-2 rounded-md border bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
           <p>
-            Built from <span className="font-medium text-foreground">{prefill.appName}</span>. Replace the parts that
-            differ per app — hosts, ports — with <code className="font-mono">{"${PARAM}"}</code> parameters before saving.
+            Built from <span className="font-medium text-foreground">{prefill.appName}</span>. Replace what else differs
+            per app, such as hostnames, with <code className="font-mono">{"${PARAM}"}</code> parameters before saving.
           </p>
           {prefill.notes.length ? (
             <ul className="list-disc space-y-1 pl-4">

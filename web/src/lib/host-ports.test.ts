@@ -8,6 +8,8 @@ import {
   publishedHostPorts,
   publishedPorts,
   randomHostPort,
+  rewriteEntry,
+  rewriteHostPorts,
 } from "@/lib/host-ports";
 
 describe("entryHostPorts", () => {
@@ -93,6 +95,56 @@ describe("publishedPorts", () => {
 
   it("has no service for a top-level ports key", () => {
     expect(publishedPorts('ports: ["80:80"]')).toEqual([{ service: "", host: "", port: 80 }]);
+  });
+});
+
+describe("rewriteEntry", () => {
+  const toParam = (p: number) => (p === 9999 ? null : "${PORT}");
+  it.each([
+    ['"8090:80"', '"${PORT}:80"'],
+    ["'8090:80'", "'${PORT}:80'"],
+    ["8090:80", '"${PORT}:80"'],
+    ["127.0.0.1:8090:80/tcp", '"127.0.0.1:${PORT}:80/tcp"'],
+    ['"[::1]:8090:80"', '"[::1]:${PORT}:80"'],
+    [' "8090:80"', ' "${PORT}:80"'],
+    ['"8090-8091:80-81"', '"8090-8091:80-81"'],
+    ['"${PORT}:80"', '"${PORT}:80"'],
+    ['"80"', '"80"'],
+    ['"[::1]8090:80"', '"[::1]8090:80"'],
+    ['"[::1]:1:2:3"', '"[::1]:1:2:3"'],
+    ['"9999:80"', '"9999:80"'],
+  ])("%s → %s", (entry, out) => {
+    expect(rewriteEntry(entry, toParam)).toBe(out);
+  });
+});
+
+describe("rewriteHostPorts", () => {
+  it("rewrites block and flow lists, keeping comments, line breaks and the rest", () => {
+    const compose = [
+      "services:",
+      "  web:",
+      "    ports:",
+      '      - "8090:80" # the site',
+      "      - 127.0.0.1:8091:80",
+      "    environment:",
+      "      - A=1:2",
+      "  api:",
+      '    ports: ["9000:9000", "${X}:1"] # api',
+      "",
+    ].join("\r\n");
+    const names: Record<number, string> = { 8090: "${PORT}", 8091: "${PORT_2}", 9000: "${PORT_3}" };
+    expect(rewriteHostPorts(compose, (p) => names[p] ?? null).split("\r\n")).toEqual([
+      "services:",
+      "  web:",
+      "    ports:",
+      '      - "${PORT}:80" # the site',
+      '      - "127.0.0.1:${PORT_2}:80"',
+      "    environment:",
+      "      - A=1:2",
+      "  api:",
+      '    ports: ["${PORT_3}:9000", "${X}:1"] # api',
+      "",
+    ]);
   });
 });
 

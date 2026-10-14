@@ -50,8 +50,9 @@ import { cn } from "@/lib/utils";
 // shown), pick storages for its backups, see the name and addresses the
 // app will get, then Create app. Secret values are encrypted in the
 // browser for this server. The version (latest by default) is under
-// "Advanced".
-export function TemplateFlow({ serverId }: { serverId: string }) {
+// "Advanced". initialTemplate is picked to begin with (a template page's
+// Create app).
+export function TemplateFlow({ serverId, initialTemplate = "" }: { serverId: string; initialTemplate?: string }) {
   const navigate = useNavigate();
   const { apps, refresh, reconcile, noteDeployFailure, rename } = useApps();
   const { serverStorages } = useBackups();
@@ -59,7 +60,7 @@ export function TemplateFlow({ serverId }: { serverId: string }) {
 
   const [templates, setTemplates] = useState<TemplateSummary[] | null>(null);
   const looks = useTemplateLooks(api, templates);
-  const [templateId, setTemplateId] = useState("");
+  const [templateId, setTemplateId] = useState(initialTemplate);
   const [revision, setRevision] = useState(0); // 0: the latest
   const [view, setView] = useState<TemplateView | null>(null);
   const [values, setValues] = useState<Record<string, string>>({});

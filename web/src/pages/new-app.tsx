@@ -16,8 +16,8 @@ const TITLES: Record<NewAppSource, string> = {
 };
 
 // NewAppPage is /server/:id/new: ?from=template|compose|git opens that
-// form; anything else shows the ways to start (the same cards the Apps
-// page's New app opens).
+// form (?template=<id> picks a template); anything else shows the ways to
+// start (the same cards the Apps page's New app opens).
 export default function NewAppPage() {
   const [params] = useSearchParams();
   // The server is the one in the address, not whichever is active.
@@ -32,7 +32,7 @@ export default function NewAppPage() {
         back={from ? { to: newAppPath(serverId), label: "New app" } : { to: appsPath(serverId), label: "Apps" }}
       />
       {from === "template" ? (
-        <TemplateFlow serverId={serverId} />
+        <TemplateFlow serverId={serverId} initialTemplate={params.get("template") ?? ""} />
       ) : from === "compose" ? (
         <ComposeFlow serverId={serverId} />
       ) : from === "git" ? (

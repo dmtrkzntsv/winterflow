@@ -193,7 +193,81 @@ describe("templateFromApp", () => {
       "key.pem is a secret file; a template holds no secrets, so it was left out.",
       "PRICE's value has a $, which a parameter can't hold; it has no default now.",
       "Redirects aren't part of templates; they were left out.",
+      // The compose file has its own x-winterflow block: not edited.
+      "The backup extra was added in the app; add it to the compose file's x-winterflow.backups to make it part of the template.",
     ]);
+  });
+
+  it("turns literal host ports into PORT parameters and carries a backup added in the app", () => {
+    const compose = `services:
+  web:
+    image: nginx
+    ports:
+      - "8090:80"
+      - 127.0.0.1:8091:80
+    volumes: [data:/data]
+  admin:
+    ports: ["8090:81", "\${ADMIN}:82"]
+volumes: { data: {} }
+`;
+    const app = {
+      ...config,
+      files: [{ filename: "compose.yml" }, { filename: "notes.txt" }],
+      variables: [{ name: "PORT" }],
+      ingress: { domains: [{ domain: "notes.example.com", upstream_port: 8091 }], redirects: [] },
+    };
+    const added = backup({
+      name: "notes-data",
+      type: "files",
+      in_recipe: false,
+      from_recipe: null,
+      volume: "data",
+      paths: ["uploads"],
+      every: "24h",
+      storage: "disk",
+    });
+    const { draft, notes } = templateFromApp("a1", {
+      ...detail,
+      app: {
+        ...detail.app,
+        config: b64(JSON.stringify(app)),
+        files: [
+          { name: "compose.yml", content: b64(compose) },
+          { name: "notes.txt", content: b64("8090:80 stays") },
+        ],
+        variables: [{ name: "PORT", content: b64("x") }],
+      },
+      backups: [added],
+    });
+    const body = bodyFromDraft(draft);
+    // PORT is the app's own variable: the ports take PORT_2 and PORT_3.
+    expect(body.parameters).toEqual([
+      { name: "PORT", default: "x" },
+      { name: "PORT_2", required: true, default: "8090", description: "Host port" },
+      { name: "PORT_3", required: true, default: "8091", description: "Host port" },
+    ]);
+    expect(body.files?.["compose.yml"]).toBe(`services:
+  web:
+    image: nginx
+    ports:
+      - "\${PORT_2}:80"
+      - "127.0.0.1:\${PORT_3}:80"
+    volumes: [data:/data]
+  admin:
+    ports: ["\${PORT_2}:81", "\${ADMIN}:82"]
+volumes: { data: {} }
+
+x-winterflow:
+  backups:
+    - {"name":"notes-data","type":"files","volume":"data","paths":["uploads"]}
+`);
+    // Only compose files change.
+    expect(body.files?.["notes.txt"]).toBe("8090:80 stays");
+    expect(body.ingress).toEqual([{ host: "notes.example.com", port: "${PORT_3}" }]);
+    expect(body.backups).toEqual({ "notes-data": { enabled: true, storage: "disk", every: "24h" } });
+    expect(recipeBackupNames(draft)).toEqual(["notes-data"]);
+    expect(notes).toContain("Port 8090 is now the PORT_2 parameter, so each app can publish its own.");
+    expect(draftProblem(draft)).toBeNull();
   });
 
   it("notes that a Git source does not come along", () => {

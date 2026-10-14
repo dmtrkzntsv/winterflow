@@ -113,7 +113,7 @@ function renderFlow() {
 
 // fill gives the required values.
 async function fill(user: ReturnType<typeof userEvent.setup>) {
-  await user.type(await screen.findByLabelText("NAME"), "abc");
+  await user.type(await screen.findByLabelText("Instance name (NAME)"), "abc");
   await user.type(screen.getByLabelText("SESSION_KEY"), "s");
 }
 
@@ -139,15 +139,15 @@ describe("TemplateFlow", () => {
     expect(await screen.findByRole("button", { name: /twillingate/ })).toHaveAttribute("aria-pressed", "true");
     const fields = await screen.findAllByRole("textbox");
     expect(fields[0]).toHaveAccessibleName("App name");
-    expect(fields[1]).toHaveAccessibleName("NAME");
+    expect(fields[1]).toHaveAccessibleName("Instance name (NAME)");
     // Optional values wait under More options, their defaults shown.
     expect(screen.queryByLabelText("MEMORY_MAX")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "More options" }));
     expect(screen.getByLabelText("MEMORY_MAX")).toHaveAttribute("placeholder", "Default: 256m");
-    await user.type(screen.getByLabelText("NAME"), "Shop");
+    await user.type(screen.getByLabelText("Instance name (NAME)"), "Shop");
     expect(screen.getByText("Must match ^[a-z]{3,20}$")).toBeInTheDocument();
-    expect(screen.getByLabelText("NAME")).toHaveAttribute("aria-invalid", "true");
-    expect(screen.getByLabelText("NAME")).toHaveAccessibleDescription("Must match ^[a-z]{3,20}$");
+    expect(screen.getByLabelText("Instance name (NAME)")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByLabelText("Instance name (NAME)")).toHaveAccessibleDescription("Must match ^[a-z]{3,20}$");
     expect(screen.getByLabelText("MEMORY_MAX")).not.toHaveAttribute("aria-invalid");
     expect(screen.queryByText("Required")).not.toBeInTheDocument();
   });
@@ -165,11 +165,30 @@ describe("TemplateFlow", () => {
     expect(await screen.findByText("Pick a template to continue.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /blog/ })).toHaveTextContent("Version 4");
     await user.click(screen.getByRole("button", { name: /blog/ }));
-    expect(await screen.findByLabelText("NAME")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Instance name (NAME)")).toBeInTheDocument();
     // Each card's look is read once per revision; the pick reads the latest.
     expect(api.calls.filter((c) => c.path === "/api/v1/template/get-template").map((c) => c.query)).toEqual(
       expect.arrayContaining(["?id=t1&revision=2", "?id=t2&revision=4", "?id=t2"]),
     );
+  });
+
+  it("starts with the template a template page's Create app picked", async () => {
+    fakeAPI(
+      routes({
+        "/api/v1/template/get-templates": { templates: [SUMMARY, { ...SUMMARY, id: "t2", name: "blog", latest_revision: 4 }] },
+        "/api/v1/template/get-template": (_: unknown, q: URLSearchParams) =>
+          q.get("id") === "t2" ? { ...VIEW, id: "t2", name: "blog", latest_revision: 4, revision: 4 } : VIEW,
+      }),
+    );
+    render(
+      <MemoryRouter>
+        <NotificationsContext.Provider value={notifications}>
+          <TemplateFlow serverId="s1" initialTemplate="t2" />
+        </NotificationsContext.Provider>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByRole("button", { name: /blog/ })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByText("Pick a template to continue.")).not.toBeInTheDocument();
   });
 
   it("previews the name and the address with the domain coverage check", async () => {
@@ -177,7 +196,7 @@ describe("TemplateFlow", () => {
     const api = fakeAPI(routes());
     renderFlow();
     expect(await screen.findByText("Fill in NAME to see the address.")).toBeInTheDocument();
-    await user.type(screen.getByLabelText("NAME"), "shop");
+    await user.type(screen.getByLabelText("Instance name (NAME)"), "shop");
     const addresses = screen.getByRole("list", { name: "Addresses" });
     expect(within(addresses).getByText("shop.twillingate.app")).toBeInTheDocument();
     expect(within(addresses).getByText(/Will be available at/)).toBeInTheDocument();
@@ -195,8 +214,8 @@ describe("TemplateFlow", () => {
     renderFlow();
     await user.click(await screen.findByRole("button", { name: "Create app" }));
     expect(screen.getAllByText("Required")).toHaveLength(2);
-    await waitFor(() => expect(screen.getByLabelText("NAME")).toHaveFocus());
-    await user.type(screen.getByLabelText("NAME"), "shop");
+    await waitFor(() => expect(screen.getByLabelText("Instance name (NAME)")).toHaveFocus());
+    await user.type(screen.getByLabelText("Instance name (NAME)"), "shop");
     await user.type(screen.getByLabelText("SESSION_KEY"), "hunter2");
     await user.selectOptions(screen.getByLabelText("Storage for db"), "local");
     await user.click(screen.getByRole("button", { name: "Create app" }));
@@ -227,7 +246,7 @@ describe("TemplateFlow", () => {
     accepted(api);
     waitFor_.mockResolvedValue({ status: 0 });
     renderFlow();
-    await user.type(await screen.findByLabelText("NAME"), "shop");
+    await user.type(await screen.findByLabelText("Instance name (NAME)"), "shop");
     expect(screen.getByLabelText("App name")).toHaveValue("shop 2");
     await user.type(screen.getByLabelText("SESSION_KEY"), "s");
     await user.click(screen.getByRole("button", { name: "Create app" }));
@@ -408,7 +427,7 @@ describe("TemplateFlow", () => {
     const bare = { ...VIEW, body: { ...VIEW.body, backups: { db: { enabled: true } } } };
     const api = fakeAPI(routes({ "/api/v1/template/get-template": bare, "/api/v1/instance/create-instance": { request_id: "" } }));
     renderFlow();
-    await screen.findByLabelText("NAME");
+    await screen.findByLabelText("Instance name (NAME)");
     expect(screen.getByRole("button", { name: "Create app" })).toBeDisabled();
     await act(async () => resolve(["tenants"]));
     expect(screen.getByRole("button", { name: "Create app" })).toBeEnabled();
@@ -436,7 +455,7 @@ describe("TemplateFlow", () => {
     );
     renderFlow();
     await user.click(await screen.findByRole("button", { name: /twillingate/ }));
-    await user.type(await screen.findByLabelText("NAME"), "abc");
+    await user.type(await screen.findByLabelText("Instance name (NAME)"), "abc");
     await user.type(screen.getByLabelText("SESSION_KEY"), "s");
     await user.click(screen.getByRole("button", { name: "More options" }));
     await user.type(screen.getByLabelText("LABEL"), "no");
@@ -444,7 +463,7 @@ describe("TemplateFlow", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("Some fields need attention.");
 
     await user.click(screen.getByRole("button", { name: /blog/ }));
-    await screen.findByLabelText("NAME");
+    await screen.findByLabelText("Instance name (NAME)");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("LABEL")).not.toBeInTheDocument();
     expect(screen.queryByText("Required")).not.toBeInTheDocument();
@@ -489,7 +508,7 @@ describe("TemplateFlow", () => {
     const user = userEvent.setup();
     const api = fakeAPI(routes());
     renderFlow();
-    await screen.findByLabelText("NAME");
+    await screen.findByLabelText("Instance name (NAME)");
     await user.click(screen.getByRole("button", { name: "Advanced" }));
     expect(screen.getByRole("option", { name: "Latest (version 2)" })).toBeInTheDocument();
     expect(screen.getByRole("option", { name: "Version 2 · bump" })).toBeInTheDocument();
@@ -519,7 +538,7 @@ describe("TemplateFlow", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("bad gateway");
     fail = false;
     await user.click(screen.getByRole("button", { name: "Retry" }));
-    expect(await screen.findByLabelText("NAME")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Instance name (NAME)")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
@@ -544,7 +563,7 @@ describe("TemplateFlow", () => {
 
       fakeAPI(routes());
       await user.click(screen.getByRole("button", { name: "Retry" }));
-      expect(await screen.findByLabelText("NAME")).toBeInTheDocument();
+      expect(await screen.findByLabelText("Instance name (NAME)")).toBeInTheDocument();
     } finally {
       vi.useRealTimers();
     }

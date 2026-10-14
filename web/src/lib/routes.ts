@@ -26,6 +26,11 @@ export function newAppPath(serverId: string, from?: NewAppSource): string {
   return serverPath(serverId, newAppSub(from));
 }
 
+// newAppFromTemplatePath opens the template form with templateId picked.
+export function newAppFromTemplatePath(serverId: string, templateId: string): string {
+  return serverPath(serverId, `/new?from=template&template=${encodeURIComponent(templateId)}`);
+}
+
 export function appSub(appId: string, tab?: AppTab): string {
   const base = `/app/${encodeURIComponent(appId)}`;
   return tab ? `${base}?tab=${tab}` : base;

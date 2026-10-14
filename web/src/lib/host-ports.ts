@@ -126,6 +126,82 @@ export function publishedHostPorts(content: string): number[] {
   return [...new Set(publishedPorts(content).map((p) => p.port))];
 }
 
+// rewriteEntry gives a short-syntax entry another host port: replace says
+// what goes where a literal single port is (null leaves it). The quote
+// style is kept; a plain entry gets double quotes when the new text needs
+// them in a flow list ("${PORT}:80").
+export function rewriteEntry(raw: string, replace: (port: number) => string | null): string {
+  const lead = raw.length - raw.trimStart().length;
+  const trimmed = raw.trim();
+  const quote = /^(["'])(.*)\1$/.exec(trimmed);
+  const s = quote ? quote[2] : trimmed;
+  if (s.includes("$") || s.includes("{")) return raw;
+  const proto = /\/[a-z]+$/i.exec(s)?.[0] ?? "";
+  const body = s.slice(0, s.length - proto.length);
+  let prefix = "";
+  let rest = body;
+  if (body.startsWith("[")) {
+    const end = body.indexOf("]:");
+    if (end < 0) return raw;
+    prefix = body.slice(0, end + 2);
+    rest = body.slice(end + 2);
+  }
+  const parts = rest.split(":");
+  if (parts.length < 2 || (prefix && parts.length !== 2)) return raw;
+  const at = parts.length - 2;
+  if (!/^\d+$/.test(parts[at])) return raw;
+  const next = replace(Number(parts[at]));
+  if (next === null) return raw;
+  parts[at] = next;
+  const text = prefix + parts.join(":") + proto;
+  const q = quote ? quote[1] : '"';
+  return raw.slice(0, lead) + q + text + q;
+}
+
+// rewriteHostPorts gives every short-syntax ports entry of a compose file
+// the host port replace says (see rewriteEntry); the rest of the file is
+// kept as it is.
+export function rewriteHostPorts(content: string, replace: (port: number) => string | null): string {
+  const lines = content.split(/(\r?\n)/);
+  // lines alternates text and line breaks: text is at the even indexes.
+  const text = (i: number) => lines[i * 2];
+  const count = Math.ceil(lines.length / 2);
+  const set = (i: number, v: string) => {
+    lines[i * 2] = v;
+  };
+  // rewriteValue rewrites the value part of a line (before a comment).
+  const rewriteLine = (i: number, start: number, fn: (value: string) => string) => {
+    const line = text(i);
+    const bare = stripComment(line);
+    const end = bare.trimEnd().length;
+    set(i, line.slice(0, start) + fn(line.slice(start, end)) + line.slice(end));
+  };
+  for (let i = 0; i < count; i++) {
+    const m = /^(\s*)ports\s*:\s*(.*)$/.exec(stripComment(text(i)));
+    if (!m) continue;
+    const keyIndent = m[1].length;
+    if (m[2].trim().startsWith("[")) {
+      const open = text(i).indexOf("[");
+      rewriteLine(i, open, (v) => {
+        const inner = v.replace(/^\[|\]$/g, "");
+        return `[${inner.split(",").map((item) => rewriteEntry(item, replace)).join(",")}]`;
+      });
+      continue;
+    }
+    for (let j = i + 1; j < count; j++) {
+      const item = stripComment(text(j));
+      if (item.trim() === "") continue;
+      const indent = indentOf(item);
+      const dash = /^(\s*-\s+)(.*)$/.exec(item);
+      if (indent < keyIndent || (indent === keyIndent && !dash)) break;
+      if (!dash) continue;
+      rewriteLine(j, dash[1].length, (v) => rewriteEntry(v, replace));
+      i = j;
+    }
+  }
+  return lines.join("");
+}
+
 // isLoopback: a bind address only the server itself reaches.
 export function isLoopback(host: string): boolean {
   const h = host.toLowerCase();

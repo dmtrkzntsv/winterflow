@@ -21,7 +21,8 @@ vi.mock("@/layouts/use-page-title", () => ({
   useHeadingInView: () => ({ current: null }),
 }));
 vi.mock("@/context/use-auth", () => ({ useAuth: () => ({ isAuthenticated: true }) }));
-vi.mock("@/context/use-servers", () => ({ useServers: () => ({ servers: [{ id: "s1", name: "alpha" }] }) }));
+const serverList = vi.hoisted(() => ({ servers: [{ id: "s1", name: "alpha" }] }));
+vi.mock("@/context/use-servers", () => ({ useServers: () => ({ servers: serverList.servers, activeServerId: "s1" }) }));
 vi.mock("@/components/code-editor", () => ({
   CodeEditor: ({ value, onChange, filename }: { value: string; onChange?: (v: string) => void; filename?: string }) => (
     <textarea aria-label={`Content of ${filename || "file"}`} value={value} onChange={(e) => onChange?.(e.target.value)} />
@@ -171,6 +172,31 @@ describe("TemplatePage", () => {
     // The save re-reads the template only: its instances didn't change.
     await waitFor(() => expect(api.calls.filter((c) => c.path === "/api/v1/template/get-template")).toHaveLength(2));
     expect(api.calls.filter((c) => c.path === "/api/v1/instance/get-instances")).toHaveLength(1);
+  });
+
+  it("creates an app from the template on the server, asking which one when there are several", async () => {
+    const user = userEvent.setup();
+    fakeAPI({ "/api/v1/template/get-template": view(3), "/api/v1/instance/get-instances": { instances: [] } });
+    const { unmount } = renderPage("/templates/t1");
+    expect(await screen.findByRole("link", { name: "Create app" })).toHaveAttribute(
+      "href",
+      "/server/s1/new?from=template&template=t1",
+    );
+    unmount();
+    serverList.servers = [
+      { id: "s1", name: "alpha" },
+      { id: "s2", name: "beta" },
+    ];
+    try {
+      renderPage("/templates/t1");
+      await user.click(await screen.findByRole("button", { name: "Create app" }));
+      expect(await screen.findByRole("menuitem", { name: "On beta" })).toHaveAttribute(
+        "href",
+        "/server/s2/new?from=template&template=t1",
+      );
+    } finally {
+      serverList.servers = [{ id: "s1", name: "alpha" }];
+    }
   });
 
   it("is clean again when an edit is taken back", async () => {
@@ -380,7 +406,7 @@ describe("TemplatePage", () => {
     expect(screen.getByLabelText("Template name")).toHaveValue("shop-front");
     const banner = screen.getByText((_, el) => el?.tagName === "P" && !!el.textContent?.startsWith("Built from Shop front."));
     expect(banner).toHaveTextContent(
-      "Built from Shop front. Replace the parts that differ per app — hosts, ports — with ${PARAM} parameters before saving.",
+      "Built from Shop front. Replace what else differs per app, such as hostnames, with ${PARAM} parameters before saving.",
     );
     const note = screen.getByText("Redirects aren't part of templates; they were left out.");
     expect(banner.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();

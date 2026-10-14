@@ -189,8 +189,10 @@ describe("timeTicks", () => {
 });
 
 describe("sparkDomain", () => {
-  it("spans the data", () => {
-    expect(sparkDomain([2, null, 5, 3])).toEqual([2, 5]);
+  it("runs from zero to the data's top, or spans data below zero", () => {
+    expect(sparkDomain([2, null, 5, 3])).toEqual([0, 5]);
+    expect(sparkDomain([8.1, 8.2, 8.05])).toEqual([0, 8.2]);
+    expect(sparkDomain([-2, 3])).toEqual([-2, 3]);
   });
   it("runs from zero to max when given", () => {
     expect(sparkDomain([2, 5], 100)).toEqual([0, 100]);

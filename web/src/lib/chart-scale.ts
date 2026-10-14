@@ -152,16 +152,18 @@ export function timeTicks(
   return ticks;
 }
 
-// sparkDomain is a sparkline's value axis: zero to max when given, else the
-// data's own span. A flat series is padded so it draws as a solid line at
-// mid-height rather than on a degenerate axis.
+// sparkDomain is a sparkline's value axis: zero to max when given, else
+// zero to the data's top (a memory use wobbling by 0.1 MB stays a calm line
+// instead of dramatic waves); data below zero spans itself. A flat series is
+// padded so it draws as a solid line at mid-height rather than on a
+// degenerate axis.
 export function sparkDomain(values: (number | null | undefined)[], max?: number): [number, number] {
   if (max !== undefined) return [0, max];
   const finite = values.filter((v): v is number => typeof v === "number" && Number.isFinite(v));
   if (finite.length === 0) return [0, 1];
   const lo = Math.min(...finite);
   const hi = Math.max(...finite);
-  if (lo !== hi) return [lo, hi];
+  if (lo !== hi) return lo >= 0 ? [0, hi] : [lo, hi];
   const pad = Math.abs(lo) / 2 || 1;
   return [lo - pad, hi + pad];
 }

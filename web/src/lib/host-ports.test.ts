@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { entryHostPorts, firstFreeHostPort, publishedHostPorts, randomHostPort } from "@/lib/host-ports";
+import {
+  entryBinding,
+  entryHostPorts,
+  firstFreeHostPort,
+  isLoopback,
+  publishedHostPorts,
+  publishedPorts,
+  randomHostPort,
+} from "@/lib/host-ports";
 
 describe("entryHostPorts", () => {
   it.each([
@@ -49,6 +57,56 @@ volumes:
 
   it("finds nothing without a ports key", () => {
     expect(publishedHostPorts("services:\n  app:\n    image: x\n")).toEqual([]);
+  });
+});
+
+describe("entryBinding", () => {
+  it.each([
+    ['"8080:80"', { host: "", ports: [8080] }],
+    ["127.0.0.1:8081:80", { host: "127.0.0.1", ports: [8081] }],
+    ['"0.0.0.0:8082:80/tcp"', { host: "0.0.0.0", ports: [8082] }],
+    ['"[::1]:8083:80"', { host: "::1", ports: [8083] }],
+    ['"[::1]8083:80"', { host: "", ports: [] }],
+    ['"${PORT}:80"', { host: "", ports: [] }],
+  ])("reads %s", (entry, binding) => {
+    expect(entryBinding(entry)).toEqual(binding);
+  });
+});
+
+describe("publishedPorts", () => {
+  it("names each port's service and bind address", () => {
+    const compose = `services:
+  web:
+    image: nginx
+    ports:
+      - "8090:80"
+      - 127.0.0.1:8091:80
+  "api":
+    ports: ["9000:9000"]
+`;
+    expect(publishedPorts(compose)).toEqual([
+      { service: "web", host: "", port: 8090 },
+      { service: "web", host: "127.0.0.1", port: 8091 },
+      { service: "api", host: "", port: 9000 },
+    ]);
+  });
+
+  it("has no service for a top-level ports key", () => {
+    expect(publishedPorts('ports: ["80:80"]')).toEqual([{ service: "", host: "", port: 80 }]);
+  });
+});
+
+describe("isLoopback", () => {
+  it.each([
+    ["127.0.0.1", true],
+    ["127.1.2.3", true],
+    ["::1", true],
+    ["localhost", true],
+    ["", false],
+    ["0.0.0.0", false],
+    ["192.168.1.66", false],
+  ])("%s → %s", (host, loopback) => {
+    expect(isLoopback(host)).toBe(loopback);
   });
 });
 

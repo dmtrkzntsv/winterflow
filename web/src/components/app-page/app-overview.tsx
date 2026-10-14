@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { ArrowRight, ExternalLink } from "lucide-react";
+import { ArrowRight, Copy, ExternalLink } from "lucide-react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -13,18 +14,20 @@ import { StatusDot, StatusPill } from "@/components/status";
 import { AppStatusCode, type App } from "@/context/apps-context-base";
 import { useApps } from "@/context/use-apps";
 import { useBackups } from "@/context/use-backups";
+import type { AppDetailRead } from "@/hooks/use-app-detail";
 import { useServerPath } from "@/context/use-server-path";
 import { useServers } from "@/context/use-servers";
 import { useAppRevisions } from "@/hooks/use-app-revisions";
 import { useRunBackup } from "@/hooks/use-run-backup";
-import { appAddresses, containerHint, containersSummary, serviceLabels } from "@/lib/app-summary";
+import { appAddresses, containerHint, containersSummary, serviceLabels, type AppAddress } from "@/lib/app-summary";
 import { backupRowState, restoringBackup, shownHealth, useActivity, useOverlays } from "@/lib/backup-activity";
 import type { EffectiveBackup } from "@/lib/backups";
+import { copyText } from "@/lib/clipboard";
 import type { RegisteredDomain } from "@/lib/domains";
 import { revisionFlags } from "@/lib/revisions";
 import { appSub } from "@/lib/routes";
 import { appStatus, backupStatus, RESTORING } from "@/lib/status";
-import { relativeTime } from "@/lib/utils";
+import { cn, relativeTime } from "@/lib/utils";
 
 const CARD = "min-w-0 rounded-xl border bg-card p-4";
 const LINK =
@@ -50,13 +53,13 @@ function Retry({ message, onRetry }: { message: string; onRetry: () => void }) {
 // many run, and what is wrong with the ones that don't. The state and
 // Restart/Start are in the header; the API reports no start time, so there
 // is no "since".
-function StatusWidget({ app, status }: { app: App; status: number | undefined }) {
+function StatusWidget({ app, status, className }: { app: App; status: number | undefined; className?: string }) {
   const { containersByApp } = useApps();
   const containers = containersByApp?.[app.id] ?? [];
   const labels = serviceLabels(app.id, containers);
   const stopped = status === AppStatusCode.Stopped;
   return (
-    <Section title="Status" className={CARD}>
+    <Section title="Status" className={cn(CARD, className)}>
       <p className="text-sm font-medium">{containersSummary(status, containers)}</p>
       {containers.length > 0 && !stopped ? (
         <ul aria-label="Containers" className="space-y-1.5">
@@ -81,16 +84,35 @@ function StatusWidget({ app, status }: { app: App; status: number | undefined })
   );
 }
 
-// AccessWidget is where the app is reachable: each address with how it is
+// AccessWidget is where the app is reachable: each domain with how it is
 // served (from its registered domain's TLS mode; nothing when no domain
-// covers it); without one, the way to add a domain (only when this server
+// covers it), then each published port on the server's IP with its
+// service; without one, the way to add a domain (only when this server
 // runs the built-in proxy).
-function AccessWidget({ app, registrations }: { app: App; registrations: RegisteredDomain[] }) {
+function AccessWidget({
+  app,
+  registrations,
+  ports,
+  className,
+}: {
+  app: App;
+  registrations: RegisteredDomain[];
+  ports: AppAddress[];
+  className?: string;
+}) {
   const { activeServer } = useServers();
   const toServer = useServerPath();
-  const addresses = appAddresses(app, registrations);
+  const addresses = appAddresses(app, registrations, ports);
+  const copy = async (url: string) => {
+    try {
+      await copyText(url);
+      toast.success("Copied");
+    } catch {
+      toast.error("Couldn't copy: select the text and copy it yourself");
+    }
+  };
   return (
-    <Section title="Access" className={CARD}>
+    <Section title="Access" className={cn(CARD, className)}>
       {addresses.length === 0 ? (
         <div className="space-y-2">
           <p className="text-sm text-muted-foreground">No public address.</p>
@@ -104,20 +126,34 @@ function AccessWidget({ app, registrations }: { app: App; registrations: Registe
         <ul className="space-y-1.5">
           {addresses.map((a) => (
             <li key={a.host} className="flex min-w-0 items-center justify-between gap-3 text-sm">
-              <a
-                href={a.url}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex min-w-0 items-center gap-1 font-medium hover:underline max-sm:min-h-10"
-              >
-                <span className="truncate">{a.host}</span>
-                <ExternalLink className="size-3.5 shrink-0" aria-hidden />
-              </a>
+              <span className="flex min-w-0 items-center gap-1">
+                <a
+                  href={a.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex min-w-0 items-center gap-1 font-medium hover:underline max-sm:min-h-10"
+                >
+                  <span className="truncate">{a.host}</span>
+                  <ExternalLink className="size-3.5 shrink-0" aria-hidden />
+                </a>
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  className="size-7 shrink-0 text-muted-foreground max-sm:size-10"
+                  aria-label={`Copy ${a.url}`}
+                  onClick={() => void copy(a.url)}
+                >
+                  <Copy className="size-3.5" aria-hidden />
+                </Button>
+              </span>
               {a.tls ? (
                 <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
                   <StatusDot tone={a.tls === "https" ? "ok" : "idle"} />
                   {a.tls === "https" ? "HTTPS" : "Behind your proxy"}
                 </span>
+              ) : a.service ? (
+                <span className="shrink-0 font-mono text-xs text-muted-foreground">{a.service}</span>
               ) : null}
             </li>
           ))}
@@ -129,12 +165,12 @@ function AccessWidget({ app, registrations }: { app: App; registrations: Registe
 
 // ResourcesWidget is the app's CPU, memory, disk and network now, with the
 // last hour as sparklines.
-function ResourcesWidget({ app }: { app: App }) {
+function ResourcesWidget({ app, className }: { app: App; className?: string }) {
   const toServer = useServerPath();
   return (
     <Section
       title="Resources"
-      className={CARD}
+      className={cn(CARD, className)}
       actions={
         <Link to={toServer(appSub(app.id, "metrics"))} className={LINK}>
           View metrics <ArrowRight className="size-4" aria-hidden />
@@ -146,47 +182,26 @@ function ResourcesWidget({ app }: { app: App }) {
   );
 }
 
-// What one read of the app's backups said, for which app and attempt.
-type BackupsRead = { appId: string; attempt: number; list: EffectiveBackup[] | null; error: string };
-
 // BackupsWidget is each set-up backup's health (last copy, next one) with
 // Back up now and Restore for the built-in ones; without any, the way to
-// set one up. The list (and when each runs) is read from the app once;
-// onSettled says when that read ended, so the history can follow it.
-function BackupsWidget({ app, onSettled }: { app: App; onSettled: (appId: string) => void }) {
-  const { getApp, backupsByApp } = useApps();
+// set one up. The list (and when each runs) comes from the page's read of
+// the app (read); Retry and a finished restore read it again.
+function BackupsWidget({ app, read, className }: { app: App; read: AppDetailRead; className?: string }) {
+  const { backupsByApp } = useApps();
   const backups = useBackups();
   const runOne = useRunBackup(app.id);
   const activity = useActivity(app.id);
   const overlays = useOverlays(app.id);
   const toServer = useServerPath();
-  const [attempt, setAttempt] = useState(0);
-  const [read, setRead] = useState<BackupsRead | null>(null);
   const [points, setPoints] = useState<EffectiveBackup | null>(null);
   const opener = useRef<HTMLElement | null>(null);
 
-  // Retry and a finished restore bump the attempt, which reads again.
-  useEffect(() => {
-    let live = true;
-    const settle = (list: EffectiveBackup[] | null, error: string) => {
-      if (!live) return;
-      setRead({ appId: app.id, attempt, list, error });
-      onSettled(app.id);
-    };
-    getApp(app.id).then(
-      // An unreadable recipe comes back as an empty list plus an error:
-      // that is not "no backup is set up".
-      (d) => settle(d.backups ?? [], d.backups_error ? `Backups can't be read right now: ${d.backups_error}` : ""),
-      (e) => settle(null, e instanceof Error ? e.message : "Couldn't read the backups"),
-    );
-    return () => {
-      live = false;
-    };
-  }, [app.id, getApp, attempt, onSettled]);
-
-  const mine = read?.appId === app.id ? read : null;
-  const list = mine?.list ?? null;
-  const error = mine?.attempt === attempt ? mine.error : "";
+  const mine = read.appId === app.id ? read : null;
+  // An unreadable recipe comes back as an empty list plus an error: that
+  // is not "no backup is set up".
+  const list = mine?.detail ? (mine.detail.backups ?? []) : null;
+  const backupsError = mine?.fresh && mine.detail?.backups_error ? `Backups can't be read right now: ${mine.detail.backups_error}` : "";
+  const error = mine?.error ? mine.error : backupsError;
   const reported = backupsByApp?.[app.id] ?? [];
   const restoring = restoringBackup(activity);
   const set = (list ?? []).filter((b) => b.storage);
@@ -194,7 +209,7 @@ function BackupsWidget({ app, onSettled }: { app: App; onSettled: (appId: string
 
   let body: ReactNode;
   if (error) {
-    body = <Retry message={error} onRetry={() => setAttempt((n) => n + 1)} />;
+    body = <Retry message={error} onRetry={read.reload} />;
   } else if (list === null) {
     body = <Spinner aria-label="Loading backups" />;
   } else if (set.length === 0) {
@@ -256,7 +271,7 @@ function BackupsWidget({ app, onSettled }: { app: App; onSettled: (appId: string
   return (
     <Section
       title="Backups"
-      className={CARD}
+      className={cn(CARD, className)}
       actions={
         set.length > 0 ? (
           <Link to={backupsTab} className={LINK}>
@@ -277,7 +292,7 @@ function BackupsWidget({ app, onSettled }: { app: App; onSettled: (appId: string
           onOpenChange={(open) => {
             if (!open) setPoints(null);
           }}
-          onRestored={() => setAttempt((n) => n + 1)}
+          onRestored={read.reload}
         />
       ) : null}
     </Section>
@@ -288,7 +303,17 @@ function BackupsWidget({ app, onSettled }: { app: App; onSettled: (appId: string
 // when, which is live and which is a draft; the rest is in History. The
 // history walk waits for `enabled` (the other widgets come first) and is
 // kept per version of the app, so coming back to the page doesn't repeat it.
-function RecentChangesWidget({ app, enabled, onOpenHistory }: { app: App; enabled: boolean; onOpenHistory: () => void }) {
+function RecentChangesWidget({
+  app,
+  enabled,
+  onOpenHistory,
+  className,
+}: {
+  app: App;
+  enabled: boolean;
+  onOpenHistory: () => void;
+  className?: string;
+}) {
   const { data, loading, error, reload } = useAppRevisions(app.id, enabled, app.version);
   const top = data?.revisions.slice(0, 3) ?? [];
   let body: ReactNode;
@@ -319,7 +344,7 @@ function RecentChangesWidget({ app, enabled, onOpenHistory }: { app: App; enable
   return (
     <Section
       title="Recent changes"
-      className={CARD}
+      className={cn(CARD, className)}
       actions={
         <Button size="sm" variant="ghost" onClick={onOpenHistory}>
           View history
@@ -333,30 +358,36 @@ function RecentChangesWidget({ app, enabled, onOpenHistory }: { app: App; enable
 
 // AppOverview is the app page's default tab: status, resources and recent
 // changes beside access and backups, at a glance (two independent columns
-// from lg, one below).
+// from lg; below, one column ordered Status, Access, Backups, Recent
+// changes, Resources). read is the page's read of the app (its backups;
+// ports are the published ones it found, see portAddresses).
 export function AppOverview({
   app,
   status,
+  read,
+  ports = [],
   registrations = [],
   onOpenHistory,
 }: {
   app: App;
   status: number | undefined;
+  read: AppDetailRead;
+  ports?: AppAddress[];
   registrations?: RegisteredDomain[];
   onOpenHistory: () => void;
 }) {
-  // The app whose backups read has ended: the history is read after it.
-  const [settledFor, setSettledFor] = useState<string | null>(null);
+  // The history is read once the app's read has ended.
+  const settled = read.appId === app.id && read.settled;
   return (
     <div className="grid items-start gap-4 lg:grid-cols-2">
-      <div className="min-w-0 space-y-4">
-        <StatusWidget app={app} status={status} />
-        <ResourcesWidget app={app} />
-        <RecentChangesWidget app={app} enabled={settledFor === app.id} onOpenHistory={onOpenHistory} />
+      <div className="min-w-0 max-lg:contents lg:space-y-4">
+        <StatusWidget app={app} status={status} className="order-1 lg:order-none" />
+        <ResourcesWidget app={app} className="order-5 lg:order-none" />
+        <RecentChangesWidget app={app} enabled={settled} onOpenHistory={onOpenHistory} className="order-4 lg:order-none" />
       </div>
-      <div className="min-w-0 space-y-4">
-        <AccessWidget app={app} registrations={registrations} />
-        <BackupsWidget app={app} onSettled={setSettledFor} />
+      <div className="min-w-0 max-lg:contents lg:space-y-4">
+        <AccessWidget app={app} registrations={registrations} ports={ports} className="order-2 lg:order-none" />
+        <BackupsWidget app={app} read={read} className="order-3 lg:order-none" />
       </div>
     </div>
   );

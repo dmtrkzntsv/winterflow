@@ -87,7 +87,9 @@ describe("AppGrid", () => {
     expect(shop.getByText("Running")).toBeInTheDocument();
     expect(shop.getByRole("link", { name: "shop.example.com" })).toHaveAttribute("href", "https://shop.example.com");
     expect(within(card("Blog")).getByText("Stopped")).toBeInTheDocument();
-    expect(within(card("Blog")).getByText("No public address")).toBeInTheDocument();
+    // No domain: no address line at all.
+    expect(card("Blog")).not.toHaveTextContent("No public address");
+    expect(within(card("Blog")).getAllByRole("link")).toHaveLength(1);
     expect(screen.getByRole("link", { name: "Unnamed app" })).toBeInTheDocument();
     expect(screen.queryByText(/01234567/)).not.toBeInTheDocument();
   });

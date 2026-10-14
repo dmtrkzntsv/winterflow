@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 import type { AppDetailPayload } from "@/context/apps-context-base";
 import { useApps } from "@/context/use-apps";
-import { publishedHostPorts } from "@/lib/host-ports";
+import { publishedPorts, type PublishedPort } from "@/lib/host-ports";
 
 // MAX_READS bounds the apps read for their ports when a form opens.
 const MAX_READS = 25;
@@ -20,15 +20,21 @@ function decode(b64: string): string {
   }
 }
 
-// portsOf are the host ports an app's compose files publish (its YAML
-// files; a Git app's compose file lives in its repository and is not read).
-export function portsOf(detail: AppDetailPayload): number[] {
-  const out = new Set<number>();
-  for (const f of detail.app.files ?? []) {
+// appPublishedPorts are the ports an app's compose files publish (its
+// YAML files; a Git app's compose file lives in its repository and is not
+// read).
+export function appPublishedPorts(detail: AppDetailPayload): PublishedPort[] {
+  const out: PublishedPort[] = [];
+  for (const f of detail.app?.files ?? []) {
     if (f.encrypted || !/\.ya?ml$/i.test(f.name)) continue;
-    for (const p of publishedHostPorts(decode(f.content))) out.add(p);
+    out.push(...publishedPorts(decode(f.content)));
   }
-  return [...out];
+  return out;
+}
+
+// portsOf are the host ports an app's compose files publish, each once.
+export function portsOf(detail: AppDetailPayload): number[] {
+  return [...new Set(appPublishedPorts(detail).map((p) => p.port))];
 }
 
 // useUsedHostPorts reads the host ports the server's apps publish, one app

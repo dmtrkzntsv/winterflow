@@ -1,3 +1,4 @@
+import type { ComponentProps } from "react";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
@@ -5,6 +6,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppOverview } from "@/components/app-page/app-overview";
 import { AppsContext, type App, type AppsContextValue } from "@/context/apps-context-base";
+import { useAppDetail } from "@/hooks/use-app-detail";
+import type { AppAddress } from "@/lib/app-summary";
 import { forgetRevisions, resetRevisionsCache } from "@/lib/revisions";
 import { resetHeldHealth } from "@/lib/backup-activity";
 import type { BackupHealth, EffectiveBackup } from "@/lib/backups";
@@ -59,12 +62,20 @@ const ctx = {
   backupsByApp: { a1: HEALTH } as AppsContextValue["backupsByApp"],
 };
 
-function renderOverview(over: { app?: Partial<App>; status?: number; registrations?: RegisteredDomain[] } = {}) {
-  const props = { onOpenHistory: vi.fn(), registrations: over.registrations };
+// Harness reads the app the way the page does and hands the read over.
+function Harness(props: Omit<ComponentProps<typeof AppOverview>, "read">) {
+  const read = useAppDetail(props.app.id, props.app.version);
+  return <AppOverview {...props} read={read} />;
+}
+
+function renderOverview(
+  over: { app?: Partial<App>; status?: number; registrations?: RegisteredDomain[]; ports?: AppAddress[] } = {},
+) {
+  const props = { onOpenHistory: vi.fn(), registrations: over.registrations, ports: over.ports };
   const view = render(
     <MemoryRouter>
       <AppsContext.Provider value={ctx as unknown as AppsContextValue}>
-        <AppOverview app={{ ...APP, ...over.app }} status={over.status ?? 1} {...props} />
+        <Harness app={{ ...APP, ...over.app }} status={over.status ?? 1} {...props} />
       </AppsContext.Provider>
     </MemoryRouter>,
   );
@@ -78,6 +89,7 @@ describe("AppOverview", () => {
     ingress = true;
     backups.runBackup.mockReset();
     toast.error.mockReset();
+    toast.success.mockReset();
     ctx.getApp.mockReset().mockResolvedValue({ backups: LIST });
     ctx.getRevisions.mockReset().mockResolvedValue(REVISIONS);
     ctx.containersByApp = {
@@ -171,6 +183,46 @@ describe("AppOverview", () => {
     expect(row("shop.lan")).not.toHaveTextContent(/HTTPS|proxy|HTTP only/);
     expect(access).not.toHaveTextContent("HTTP only");
     expect(within(access).queryByRole("link", { name: "Add a domain" })).not.toBeInTheDocument();
+  });
+
+  it("lists the published ports after the domains, with their service, and copies them", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    renderOverview({
+      app: { domains: [{ domain: "shop.example.com", ssl: true, kind: "route" }] },
+      ports: [{ host: "192.168.1.66:8090", url: "http://192.168.1.66:8090", tls: null, service: "web" }],
+    });
+    const access = screen.getByRole("region", { name: "Access" });
+    const links = within(access).getAllByRole("link");
+    expect(links.map((l) => l.getAttribute("href"))).toEqual(["https://shop.example.com", "http://192.168.1.66:8090"]);
+    expect(links[1].closest("li")).toHaveTextContent("web");
+    await user.click(within(access).getByRole("button", { name: "Copy http://192.168.1.66:8090" }));
+    expect(writeText).toHaveBeenCalledWith("http://192.168.1.66:8090");
+    expect(toast.success).toHaveBeenCalledWith("Copied");
+  });
+
+  it("says so when an address can't be copied", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+    const exec = vi.fn().mockReturnValue(false);
+    Object.defineProperty(document, "execCommand", { value: exec, configurable: true });
+    renderOverview({ ports: [{ host: "10.0.0.2:80", url: "http://10.0.0.2:80", tls: null }] });
+    await user.click(screen.getByRole("button", { name: "Copy http://10.0.0.2:80" }));
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("Couldn't copy"));
+  });
+
+  it("puts Access and Backups right after Status below lg, Resources last", () => {
+    renderOverview();
+    const order = (name: string) => [...screen.getByRole("region", { name }).classList].find((c) => /^order-\d$/.test(c));
+    expect(["Status", "Access", "Backups", "Recent changes", "Resources"].map(order)).toEqual([
+      "order-1",
+      "order-2",
+      "order-3",
+      "order-4",
+      "order-5",
+    ]);
+    expect(screen.getByRole("region", { name: "Status" }).parentElement).toHaveClass("max-lg:contents");
   });
 
   it("offers Add a domain without an address, only with the built-in proxy", () => {

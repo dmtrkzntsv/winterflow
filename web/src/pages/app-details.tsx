@@ -27,15 +27,19 @@ import type { ControlAction } from "@/context/apps-context-base";
 import type { PaletteAction } from "@/context/palette-context-base";
 import { useApps } from "@/context/use-apps";
 import { usePaletteActions } from "@/context/use-palette";
+import { useServers } from "@/context/use-servers";
 import { useDeleteApp, useSaveAsTemplate } from "@/hooks/use-app-actions";
+import { useAppDetail } from "@/hooks/use-app-detail";
 import { useAppInstance } from "@/hooks/use-app-instance";
 import { useHistorySheet } from "@/hooks/use-history-sheet";
 import { useAddressRegistrations } from "@/hooks/use-registrations";
 import { useBackUpNow } from "@/hooks/use-run-backup";
 import { useTabParam } from "@/hooks/use-tab-param";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
+import { appPublishedPorts } from "@/hooks/use-used-host-ports";
 import { usePageTitle } from "@/layouts/use-page-title";
 import { hasRunningContainers } from "@/lib/app-status";
+import { portAddresses } from "@/lib/app-summary";
 import { hasActiveBackup, needsAttention } from "@/lib/backups";
 import { appLabel } from "@/lib/kpi";
 import { LEGACY_APP_TABS, type AppTab } from "@/lib/routes";
@@ -88,6 +92,16 @@ export default function AppDetailsPage() {
   const [historyOpen, setHistoryOpen] = useHistorySheet();
 
   const app = useMemo(() => apps.find((a) => a.id === appId), [apps, appId]);
+  const { servers } = useServers();
+  // The page reads the app once per version, and again each time the
+  // Overview is shown (its backups); its compose files give the published
+  // ports the header and Access open.
+  const [visit, setVisit] = useState({ tab, n: 0 });
+  if (visit.tab !== tab) setVisit({ tab, n: tab === "overview" ? visit.n + 1 : visit.n });
+  const read = useAppDetail(app?.id ?? "", `${app?.version ?? ""}:${visit.n}`);
+  const serverIp = servers.find((s) => s.id === app?.serverId)?.capabilities?.server_ip;
+  const detail = read.appId === app?.id ? read.detail : null;
+  const ports = useMemo(() => (detail ? portAddresses(appPublishedPorts(detail), serverIp) : []), [detail, serverIp]);
   // One read of the server's domains for the header's and Overview's HTTPS state.
   const registrations = useAddressRegistrations(app?.serverId);
   const lookup = useAppInstance(app);
@@ -219,6 +233,7 @@ export default function AppDetailsPage() {
       <AppHeader
         app={app}
         registrations={registrations}
+        ports={ports}
         status={status}
         failed={failure !== ""}
         instance={inst}
@@ -296,6 +311,8 @@ export default function AppDetailsPage() {
             key={app.id}
             app={app}
             status={status}
+            read={read}
+            ports={ports}
             registrations={registrations}
             onOpenHistory={() => setHistoryOpen(true)}
           />

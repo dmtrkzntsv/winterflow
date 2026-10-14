@@ -98,26 +98,26 @@ function AppCard({
             </Link>
             <StatusPill status={appStatus(code, failed)} />
           </div>
-          <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-            {address ? (
-              <a
-                href={address.url}
-                target="_blank"
-                rel="noreferrer"
-                className="relative z-10 truncate transition-colors duration-150 hover:text-foreground hover:underline max-sm:-my-2.5 max-sm:py-2.5"
-              >
-                {address.host}
-              </a>
-            ) : (
-              <span className="truncate">No public address</span>
-            )}
-            {warning ? (
-              <span className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-full bg-status-warn/15 px-2 py-0.5 text-[11px] font-medium text-foreground">
-                <TriangleAlert className="size-3 text-status-warn" aria-hidden />
-                {warning.label}
-              </span>
-            ) : null}
-          </div>
+          {address || warning ? (
+            <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+              {address ? (
+                <a
+                  href={address.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="relative z-10 truncate transition-colors duration-150 hover:text-foreground hover:underline max-sm:-my-2.5 max-sm:py-2.5"
+                >
+                  {address.host}
+                </a>
+              ) : null}
+              {warning ? (
+                <span className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-full bg-status-warn/15 px-2 py-0.5 text-[11px] font-medium text-foreground">
+                  <TriangleAlert className="size-3 text-status-warn" aria-hidden />
+                  {warning.label}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       </Card>
     </li>

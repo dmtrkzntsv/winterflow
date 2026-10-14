@@ -2,6 +2,7 @@ import { AppStatusCode, type App, type AppDomain } from "@/context/apps-context-
 import { hasRunningContainers, type ContainerStatusWire } from "@/lib/app-status";
 import type { BackupHealth } from "@/lib/backups";
 import { coveringDomain, type RegisteredDomain } from "@/lib/domains";
+import { isLoopback, type PublishedPort } from "@/lib/host-ports";
 import type { AppTab } from "@/lib/routes";
 
 // What the Apps page and the app page say about an app at a glance: where
@@ -15,9 +16,10 @@ import type { AppTab } from "@/lib/routes";
 // or the server's domains aren't read: no built-in proxy, or not loaded).
 export type AddressTLS = "https" | "proxy" | null;
 
-// AppAddress is a public address of an app: the hostname, the URL that
-// opens it and how it is served.
-export type AppAddress = { host: string; url: string; tls: AddressTLS };
+// AppAddress is a public address of an app: the hostname (with the port
+// for a published one), the URL that opens it and how it is served;
+// service names the compose service a published port belongs to.
+export type AppAddress = { host: string; url: string; tls: AddressTLS; service?: string };
 
 function addressOf(d: AppDomain, registrations: readonly RegisteredDomain[]): AppAddress {
   const covering = coveringDomain(d.domain, registrations);
@@ -26,16 +28,46 @@ function addressOf(d: AppDomain, registrations: readonly RegisteredDomain[]): Ap
   return { host: d.domain, url: `https://${d.domain}`, tls: covering.tls === "off" ? "proxy" : "https" };
 }
 
-// appAddresses are the app's routes in the order the API lists them; a
-// redirect is not where the app lives. registrations are the server's
-// registered domains (useAddressRegistrations).
-export function appAddresses(app: Pick<App, "domains">, registrations: readonly RegisteredDomain[] = []): AppAddress[] {
-  return (app.domains ?? []).filter((d) => d.kind === "route").map((d) => addressOf(d, registrations));
+// portAddresses are the published host ports reachable from outside the
+// server, as http://<ip>:<port>: a port bound to every interface opens on
+// the server's IP (serverIp, the agent's server_ip), one bound to an
+// address on that address; a loopback one is left out. None without an IP.
+export function portAddresses(ports: readonly PublishedPort[], serverIp: string | undefined): AppAddress[] {
+  const out: AppAddress[] = [];
+  const seen = new Set<string>();
+  for (const p of ports) {
+    if (isLoopback(p.host)) continue;
+    const any = p.host === "" || p.host === "0.0.0.0" || p.host === "::";
+    const ip = any ? (serverIp ?? "").trim() : p.host;
+    if (!ip) continue;
+    const host = `${ip.includes(":") ? `[${ip}]` : ip}:${p.port}`;
+    if (seen.has(host)) continue;
+    seen.add(host);
+    out.push({ host, url: `http://${host}`, tls: null, service: p.service || undefined });
+  }
+  return out;
 }
 
-// primaryAddress is the address the UI opens ("Open ↗"), or null.
-export function primaryAddress(app: Pick<App, "domains">, registrations: readonly RegisteredDomain[] = []): AppAddress | null {
-  return appAddresses(app, registrations)[0] ?? null;
+// appAddresses are the app's routes in the order the API lists them (a
+// redirect is not where the app lives), then its published ports (see
+// portAddresses). registrations are the server's registered domains
+// (useAddressRegistrations).
+export function appAddresses(
+  app: Pick<App, "domains">,
+  registrations: readonly RegisteredDomain[] = [],
+  ports: readonly AppAddress[] = [],
+): AppAddress[] {
+  return [...(app.domains ?? []).filter((d) => d.kind === "route").map((d) => addressOf(d, registrations)), ...ports];
+}
+
+// primaryAddress is the address the UI opens ("Open ↗"): the first domain,
+// else the first published port; null without one.
+export function primaryAddress(
+  app: Pick<App, "domains">,
+  registrations: readonly RegisteredDomain[] = [],
+  ports: readonly AppAddress[] = [],
+): AppAddress | null {
+  return appAddresses(app, registrations, ports)[0] ?? null;
 }
 
 export type AppCounts = {

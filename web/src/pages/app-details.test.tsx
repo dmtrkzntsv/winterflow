@@ -84,7 +84,7 @@ vi.mock("@/lib/ecies", () => ({
 }));
 // Links point into the active server's scope (/server/:id/...).
 // No built-in proxy unless a test says so: the HTTPS state then reads no domains.
-const serverList: { id: string; features?: Record<string, boolean> }[] = [];
+const serverList: { id: string; features?: Record<string, boolean>; capabilities?: Record<string, string> }[] = [];
 vi.mock("@/context/use-servers", () => ({ useServers: () => ({ activeServerId: "srv-1", servers: serverList }) }));
 
 const remove = vi.fn();
@@ -316,6 +316,61 @@ describe("AppDetailsPage", () => {
     await user.click(screen.getByRole("menuitem", { name: "Pull latest images" }));
     expect(control).toHaveBeenCalledWith("a1", "update");
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Latest images pulled", { description: "Shop" }));
+  });
+
+  it("opens the app's published port from the header and moves Restart into ⋯", async () => {
+    const user = userEvent.setup();
+    const control = vi.fn(async () => {});
+    const compose = 'services:\n  web:\n    ports:\n      - "8090:80"\n      - "127.0.0.1:8091:80"\n';
+    const getApp = vi.fn(async () => ({
+      app: { app_id: "a1", config: "", files: [{ name: "compose.yml", content: btoa(compose) }], variables: [] },
+      revision: 1,
+      available_revisions: null,
+    }));
+    serverList.push({ id: "s", capabilities: { server_ip: "192.168.1.66" } });
+    try {
+      renderPage("/app/a1?tab=logs", {}, { ctx: { control, getApp } as unknown as Partial<AppsContextValue> });
+      const open = await screen.findByRole("link", { name: /Open ↗/ });
+      expect(open).toHaveAttribute("href", "http://192.168.1.66:8090");
+      expect(screen.getByRole("link", { name: "192.168.1.66:8090" })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Restart" })).not.toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "More actions" }));
+      expect((await screen.findAllByRole("menuitem")).map((m) => m.textContent)).toEqual([
+        "Restart",
+        "Stop",
+        "Pull latest images",
+        "Back up now",
+        "Save as template",
+        "Delete…",
+      ]);
+      await user.click(screen.getByRole("menuitem", { name: "Restart" }));
+      expect(control).toHaveBeenCalledWith("a1", "restart");
+      expect(getApp).toHaveBeenCalledTimes(1);
+    } finally {
+      serverList.length = 0;
+    }
+  });
+
+  it("keeps Start primary while a stopped app has an address", async () => {
+    renderPage("/app/a1?tab=logs", {}, {
+      app: { domains: [{ domain: "shop.example.com", ssl: true, kind: "route" }] },
+      ctx: { statusByApp: { a1: 5 } },
+    });
+    expect(await screen.findByRole("button", { name: "Start" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /Open ↗/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "shop.example.com" })).toHaveAttribute("href", "https://shop.example.com");
+  });
+
+  it("reads the app again each time the Overview is shown", async () => {
+    const user = userEvent.setup();
+    const getApp = vi.fn(async () => ({ app: { app_id: "a1", config: "", files: [], variables: [] } }));
+    renderPage("/app/a1", {}, { ctx: { getApp } as unknown as Partial<AppsContextValue> });
+    await waitFor(() => expect(getApp).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("tab", { name: "Logs" }));
+    await flushPending();
+    expect(getApp).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("tab", { name: "Overview" }));
+    await waitFor(() => expect(getApp).toHaveBeenCalledTimes(2));
   });
 
   it("offers Start while the app is stopped, and no Stop", async () => {

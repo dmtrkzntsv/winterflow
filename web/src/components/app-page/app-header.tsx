@@ -1,5 +1,15 @@
 import { Link } from "react-router-dom";
-import { ArrowUpCircle, DatabaseBackup, LayoutTemplate, MoreHorizontal, Play, RotateCw, Square, Trash2 } from "lucide-react";
+import {
+  ArrowUpCircle,
+  DatabaseBackup,
+  ExternalLink,
+  LayoutTemplate,
+  MoreHorizontal,
+  Play,
+  RotateCw,
+  Square,
+  Trash2,
+} from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,7 +25,7 @@ import { AppIcon } from "@/components/app-icon";
 import { StatusPill } from "@/components/status";
 import type { App, ControlAction } from "@/context/apps-context-base";
 import { hasRunningContainers } from "@/lib/app-status";
-import { primaryAddress } from "@/lib/app-summary";
+import { primaryAddress, type AppAddress } from "@/lib/app-summary";
 import type { RegisteredDomain } from "@/lib/domains";
 import { useHeadingInView } from "@/layouts/use-page-title";
 import { appLabel } from "@/lib/kpi";
@@ -28,6 +38,9 @@ export type AppHeaderProps = {
   // registrations are the server's registered domains: "Open ↗" uses https
   // for a host one covers.
   registrations?: RegisteredDomain[];
+  // ports are the app's published ports on the server's IP (portAddresses):
+  // the address to open when the app has no domain.
+  ports?: AppAddress[];
   app: App;
   status: number | undefined;
   // failed: the app's deploy failed (it reads Failed).
@@ -52,16 +65,17 @@ export type AppHeaderProps = {
 };
 
 // AppHeader is the app page's header: who the app is (icon, name, status,
-// where it opens, its template) and what to do now — one filled primary
-// (Restart while it runs, else Start; an unknown status offers Start, which
-// is harmless on a running stack) and the rest in ⋯. On a phone the actions
-// go under the name.
+// where it opens, its template) and what to do now — one filled primary:
+// Open ↗ while it runs and has an address (its first domain, else its
+// first published port), Start while it doesn't run (an unknown status
+// offers Start, which is harmless on a running stack), else Restart; the
+// rest (Restart when Open is primary) in ⋯. On a phone the actions go
+// under the name.
 export function AppHeader(p: AppHeaderProps) {
   const { app } = p;
   const running = hasRunningContainers(p.status);
-  const primary: ControlAction = running ? "restart" : "start";
-  const PrimaryIcon = running ? RotateCw : Play;
-  const address = primaryAddress(app, p.registrations);
+  const address = primaryAddress(app, p.registrations, p.ports);
+  const open = running && address !== null;
   const named = Boolean(app.name?.trim());
   const h1 = useHeadingInView<HTMLHeadingElement>();
   return (
@@ -85,10 +99,9 @@ export function AppHeader(p: AppHeaderProps) {
                 href={address.url}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex min-w-0 items-center gap-1.5 text-muted-foreground transition-colors duration-150 hover:text-foreground"
+                className="inline-flex min-w-0 items-center gap-1.5 text-muted-foreground transition-colors duration-150 hover:text-foreground hover:underline"
               >
                 <span className="truncate">{address.host}</span>
-                <span className="font-medium text-foreground">Open ↗</span>
               </a>
             ) : null}
             {p.instance ? (
@@ -114,10 +127,24 @@ export function AppHeader(p: AppHeaderProps) {
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-2">
-        <Button disabled={p.pending !== null} onClick={() => p.onControl(primary)}>
-          {p.pending === primary ? <Spinner className="size-4" aria-hidden /> : <PrimaryIcon className="size-4" aria-hidden />}
-          {running ? "Restart" : "Start"}
-        </Button>
+        {open ? (
+          <Button asChild>
+            <a href={address.url} target="_blank" rel="noreferrer">
+              <ExternalLink className="size-4" aria-hidden />
+              Open ↗
+            </a>
+          </Button>
+        ) : running ? (
+          <Button variant="outline" disabled={p.pending !== null} onClick={() => p.onControl("restart")}>
+            {p.pending === "restart" ? <Spinner className="size-4" aria-hidden /> : <RotateCw className="size-4" aria-hidden />}
+            Restart
+          </Button>
+        ) : (
+          <Button disabled={p.pending !== null} onClick={() => p.onControl("start")}>
+            {p.pending === "start" ? <Spinner className="size-4" aria-hidden /> : <Play className="size-4" aria-hidden />}
+            Start
+          </Button>
+        )}
         <DropdownMenu modal={false}>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" size="icon" aria-label="More actions">
@@ -125,6 +152,12 @@ export function AppHeader(p: AppHeaderProps) {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
+            {open ? (
+              <DropdownMenuItem disabled={p.pending !== null} onSelect={() => p.onControl("restart")}>
+                {p.pending === "restart" ? <Spinner aria-hidden /> : <RotateCw aria-hidden />}
+                Restart
+              </DropdownMenuItem>
+            ) : null}
             {running ? (
               <DropdownMenuItem disabled={p.pending !== null} onSelect={() => p.onControl("stop")}>
                 <Square aria-hidden />

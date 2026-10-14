@@ -9,6 +9,7 @@ import {
   containerHint,
   countApps,
   filterApps,
+  portAddresses,
   primaryAddress,
 } from "@/lib/app-summary";
 
@@ -49,6 +50,33 @@ describe("addresses", () => {
       { host: "c.tunnel.example", url: "https://c.tunnel.example", tls: "proxy" },
     ]);
     expect(primaryAddress(app, regs)?.tls).toBe("https");
+  });
+
+  it("opens published ports on the server's IP, leaving loopback ones out", () => {
+    const ports = [
+      { service: "web", host: "", port: 8090 },
+      { service: "web", host: "127.0.0.1", port: 8091 },
+      { service: "admin", host: "10.0.0.5", port: 9000 },
+      { service: "api", host: "0.0.0.0", port: 8092 },
+      { service: "api", host: "::", port: 8092 },
+      { service: "", host: "::1", port: 9001 },
+    ];
+    expect(portAddresses(ports, "192.168.1.66")).toEqual([
+      { host: "192.168.1.66:8090", url: "http://192.168.1.66:8090", tls: null, service: "web" },
+      { host: "10.0.0.5:9000", url: "http://10.0.0.5:9000", tls: null, service: "admin" },
+      { host: "192.168.1.66:8092", url: "http://192.168.1.66:8092", tls: null, service: "api" },
+    ]);
+    expect(portAddresses([{ service: "", host: "", port: 80 }], "fd00::1")).toEqual([
+      { host: "[fd00::1]:80", url: "http://[fd00::1]:80", tls: null, service: undefined },
+    ]);
+    // Without the server's IP only an explicitly bound address is known.
+    expect(portAddresses(ports, undefined).map((a) => a.host)).toEqual(["10.0.0.5:9000"]);
+  });
+
+  it("puts domains before published ports; the first is the one to open", () => {
+    const port = { host: "192.168.1.66:8090", url: "http://192.168.1.66:8090", tls: null };
+    expect(appAddresses(shop, [], [port]).map((a) => a.host)).toEqual(["shop.example.com", "shop.lan", "192.168.1.66:8090"]);
+    expect(primaryAddress({ domains: [] }, [], [port])).toBe(port);
   });
 
   it("has no address without routes", () => {

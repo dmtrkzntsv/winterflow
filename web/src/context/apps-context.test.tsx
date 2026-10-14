@@ -3,7 +3,7 @@ import { act, renderHook, waitFor as waitUntil } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppsProvider } from "@/context/apps-context";
-import { DELETE_APP_TIMEOUT_MS } from "@/context/apps-context-base";
+import { DELETE_APP_TIMEOUT_MS, SaveFailedError } from "@/context/apps-context-base";
 import { useApps } from "@/context/use-apps";
 import { keepRevisions, keptRevisions, resetRevisionsCache, revisionsEpoch } from "@/lib/revisions";
 
@@ -211,5 +211,80 @@ describe("AppsProvider and the kept histories", () => {
     await act(() => result.current.remove("a1"));
     expect(keptRevisions("a1", "3")).toBeNull();
     expect(revisionsEpoch("a1")).toBe(0);
+  });
+});
+
+describe("AppsProvider failed deploys", () => {
+  // save-app is accepted (its result comes over SSE), refresh-apps too.
+  const accepting = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("/api/v1/app/save-app")) return json(202, { data: { request_id: "save-1" } });
+    if (url.includes("/api/v1/app/refresh-apps")) return json(202, { data: { request_id: "list-1" } });
+    if (url.includes("/api/v1/app/control-app")) return json(202, { data: { request_id: "ctl-1" } });
+    return fetchMock(input);
+  });
+  beforeEach(() => {
+    waitFor.mockReset();
+    vi.stubGlobal("fetch", accepting);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("rejects a save the agent failed with a SaveFailedError", async () => {
+    const { result } = renderHook(() => useApps(), { wrapper });
+    await waitUntil(() => expect(result.current.loading).toBe(false));
+    waitFor.mockResolvedValueOnce({ status: 1, error: "docker compose up: exit status 1: port is already allocated" });
+    const err = await result.current.saveApp({ app: { name: "web" }, config: {}, files: [], variables: [] }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(SaveFailedError);
+    expect((err as Error).message).toBe("docker compose up: exit status 1: port is already allocated");
+  });
+
+  it("reconciles: waits for the agent's list, then reads the catalog again", async () => {
+    const { result } = renderHook(() => useApps(), { wrapper });
+    await waitUntil(() => expect(result.current.loading).toBe(false));
+    waitFor.mockResolvedValueOnce({ status: 0 });
+    await expect(result.current.reconcile()).resolves.toEqual([]);
+    expect(waitFor).toHaveBeenCalledWith("list-1", undefined);
+  });
+
+  it("holds a noted failure until a report shows the app running, or a start goes through", async () => {
+    const { result } = renderHook(() => useApps(), { wrapper });
+    await waitUntil(() => expect(result.current.statusByApp).toEqual({ a1: 1, a2: 5 }));
+    act(() => {
+      result.current.noteDeployFailure("a2", "boom");
+      result.current.noteDeployFailure("a3", "bang");
+    });
+    expect(result.current.deployFailures).toEqual({ a2: "boom", a3: "bang" });
+    // A report that still shows it stopped keeps it.
+    act(() => {
+      for (const h of handlers) h({ type: "apps_status", payload: { server_id: "srv-1", apps: [{ app_id: "a2", status_code: 2 }] } });
+    });
+    expect(result.current.deployFailures).toEqual({ a2: "boom", a3: "bang" });
+    // A report showing it running ends it.
+    act(() => {
+      for (const h of handlers) h({ type: "apps_status", payload: { server_id: "srv-1", apps: [{ app_id: "a2", status_code: 1 }] } });
+    });
+    await waitUntil(() => expect(result.current.deployFailures).toEqual({ a3: "bang" }));
+    // A stop leaves it; a start that went through ends it.
+    waitFor.mockResolvedValue({ status: 0 });
+    await act(() => result.current.control("a3", "stop"));
+    expect(result.current.deployFailures).toEqual({ a3: "bang" });
+    await act(() => result.current.control("a3", "start"));
+    expect(result.current.deployFailures).toEqual({});
+  });
+
+  it("ends a noted failure when a save of the app goes through", async () => {
+    const { result } = renderHook(() => useApps(), { wrapper });
+    await waitUntil(() => expect(result.current.loading).toBe(false));
+    act(() => result.current.noteDeployFailure("a9", "boom"));
+    waitFor.mockResolvedValue({ status: 0 });
+    await act(async () => {
+      await result.current.saveApp({ draft: true, app: { id: "a9" }, config: {}, files: [], variables: [] });
+    });
+    // A draft deploys nothing.
+    expect(result.current.deployFailures).toEqual({ a9: "boom" });
+    await act(async () => {
+      await result.current.saveApp({ app: { id: "a9" }, config: {}, files: [], variables: [] });
+    });
+    expect(result.current.deployFailures).toEqual({});
   });
 });

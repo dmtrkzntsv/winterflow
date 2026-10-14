@@ -15,7 +15,7 @@ import { cn } from "@/lib/utils";
 // with its status dot, then New app. Hidden when the sidebar is collapsed
 // to icons.
 export function NavApps() {
-  const { apps, statusByApp, loading } = useApps();
+  const { apps, statusByApp, deployFailures, loading } = useApps();
   const { activeServerId } = useServers();
   const { pathname } = useLocation();
   if (!activeServerId) return null;
@@ -31,7 +31,7 @@ export function NavApps() {
       ) : null}
       {serverApps.map((app) => {
         const to = appPath(activeServerId, app.id);
-        const status = appStatus(statusByApp[app.id]);
+        const status = appStatus(statusByApp[app.id], Boolean(deployFailures?.[app.id]));
         return (
           <SidebarMenuSubItem key={app.id}>
             <SidebarMenuSubButton asChild isActive={pathname === to} className="max-lg:h-10">

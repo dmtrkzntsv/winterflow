@@ -19,6 +19,7 @@ import { useBackups } from "@/context/use-backups";
 import { useHostCheck } from "@/hooks/use-host-check";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
 import { validHostname } from "@/lib/domains";
+import { errorHeadline } from "@/lib/errors";
 import { focusFirstInvalid } from "@/lib/field-errors";
 import { appPath, appsPath, serverSettingsPath, TEMPLATES_PATH } from "@/lib/routes";
 import {
@@ -48,7 +49,7 @@ import { cn } from "@/lib/utils";
 // "Advanced".
 export function TemplateFlow({ serverId }: { serverId: string }) {
   const navigate = useNavigate();
-  const { refresh } = useApps();
+  const { refresh, reconcile, noteDeployFailure } = useApps();
   const { serverStorages } = useBackups();
   const api = useTemplatesApi();
 
@@ -75,6 +76,8 @@ export function TemplateFlow({ serverId }: { serverId: string }) {
   const [error, setError] = useState("");
   const [moreOpen, setMoreOpen] = useState(false);
   const form = useRef<HTMLDivElement>(null);
+  // sending is the synchronous guard against a second Create while one runs.
+  const sending = useRef(false);
 
   useEffect(() => {
     let live = true;
@@ -159,6 +162,8 @@ export function TemplateFlow({ serverId }: { serverId: string }) {
       focusFirstInvalid(form.current);
       return;
     }
+    if (sending.current) return;
+    sending.current = true;
     setBusy(true);
     setError("");
     try {
@@ -177,15 +182,38 @@ export function TemplateFlow({ serverId }: { serverId: string }) {
         secrets,
         ...(Object.keys(overrides).length ? { backups: overrides } : {}),
       };
-      await send(body, view);
+      try {
+        await send(body, view);
+      } catch (e) {
+        // A deploy that failed may have left the app behind: open it.
+        if (await openLeftApp(e)) return;
+        throw e;
+      }
       const [inst] = await Promise.all([api.getInstance(serverId, key), refresh()]);
       toast.success("App created");
       navigate(appPath(serverId, inst.app_id));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Couldn't create the app");
     } finally {
+      sending.current = false;
       setBusy(false);
     }
+  };
+
+  // openLeftApp opens the app a failed create left behind (the API holds
+  // the instance, pending, and the agent's list has its app), noting the
+  // failure so the app reads Failed and says why. False when there is none.
+  const openLeftApp = async (e: unknown): Promise<boolean> => {
+    if (e instanceof ApiError) return false; // refused: nothing was dispatched
+    const inst = await api.getInstance(serverId, key).catch(() => null);
+    if (!inst?.app_id) return false;
+    const list = await reconcile().catch(() => []);
+    if (!list.some((a) => a.id === inst.app_id)) return false;
+    const message = inst.last_error || (e instanceof Error ? e.message : "");
+    if (message) noteDeployFailure(inst.app_id, message);
+    toast.error("The app was created but couldn't start", { description: message ? errorHeadline(message) : undefined });
+    navigate(appPath(serverId, inst.app_id));
+    return true;
   };
 
   if (loadError) {

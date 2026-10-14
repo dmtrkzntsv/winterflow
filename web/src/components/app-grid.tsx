@@ -66,12 +66,14 @@ function NoApps() {
 function AppCard({
   app,
   code,
+  failed = false,
   warning,
   registrations,
   index,
 }: {
   app: App;
   code: number | undefined;
+  failed?: boolean;
   warning: AppWarning | null;
   registrations: RegisteredDomain[];
   index: number;
@@ -94,7 +96,7 @@ function AppCard({
             >
               {appLabel(app.name)}
             </Link>
-            <StatusPill status={appStatus(code)} />
+            <StatusPill status={appStatus(code, failed)} />
           </div>
           <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
             {address ? (
@@ -125,7 +127,7 @@ function AppCard({
 // AppGrid is the active server's apps as cards (a filter box once there
 // are more than FILTER_THRESHOLD), or the invitation to run the first one.
 export function AppGrid() {
-  const { apps, statusByApp, backupsByApp, staleVarsByApp, loading, error } = useApps();
+  const { apps, statusByApp, backupsByApp, staleVarsByApp, deployFailures, loading, error } = useApps();
   const { activeServerId } = useServers();
   const registrations = useAddressRegistrations(activeServerId);
   const [query, setQuery] = useState("");
@@ -177,6 +179,7 @@ export function AppGrid() {
               key={app.id}
               app={app}
               code={statusByApp[app.id]}
+              failed={Boolean(deployFailures?.[app.id])}
               warning={appWarning(backupsByApp?.[app.id], staleVarsByApp?.[app.id], statusByApp[app.id])}
               registrations={registrations}
               index={index}

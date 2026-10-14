@@ -16,7 +16,9 @@ vi.mock("@/lib/ecies", () => ({
 }));
 vi.mock("@/context/use-servers", () => ({ useServers: () => ({ activeServerId: "s1" }) }));
 const refresh = vi.hoisted(() => vi.fn(async () => {}));
-vi.mock("@/context/use-apps", () => ({ useApps: () => ({ refresh }) }));
+const reconcile = vi.hoisted(() => vi.fn(async (): Promise<{ id: string }[]> => []));
+const noteDeployFailure = vi.hoisted(() => vi.fn());
+vi.mock("@/context/use-apps", () => ({ useApps: () => ({ refresh, reconcile, noteDeployFailure }) }));
 const serverStorages = vi.hoisted(() => vi.fn(async () => ["tenants", "local"]));
 vi.mock("@/context/use-backups", () => ({ useBackups: () => ({ serverStorages }) }));
 
@@ -113,7 +115,11 @@ async function fill(user: ReturnType<typeof userEvent.setup>) {
 
 beforeEach(() => {
   toast.success.mockReset();
+  toast.error.mockReset();
   refresh.mockClear();
+  reconcile.mockReset();
+  reconcile.mockImplementation(async () => []);
+  noteDeployFailure.mockReset();
   waitFor_.mockReset();
   serverStorages.mockImplementation(async () => ["tenants", "local"]);
 });
@@ -270,6 +276,37 @@ describe("TemplateFlow", () => {
     expect(await screen.findByText("Error: pull access denied")).toBeVisible();
     expect(screen.getByRole("alert")).toContainElement(screen.getByText("Details"));
     expect(screen.getByText(/Container web Creating/)).not.toBeVisible();
+  });
+
+  it("opens the app a failed deploy left behind, noting why it failed", async () => {
+    const user = userEvent.setup();
+    const api = fakeAPI(
+      routes({
+        "/api/v1/instance/create-instance": { request_id: "r1" },
+        "/api/v1/instance/get-instance": { app_id: "app-9", key: "k", state: "pending", last_error: "port is already allocated" },
+      }),
+    );
+    accepted(api);
+    reconcile.mockImplementation(async () => [{ id: "app-9" }]);
+    waitFor_.mockResolvedValueOnce({ status: 1, error: "docker compose up: exit status 1: port is already allocated" });
+    renderFlow();
+    await fill(user);
+    await user.click(screen.getByRole("button", { name: "Create app" }));
+    expect(await screen.findByText("the new app")).toBeInTheDocument();
+    expect(noteDeployFailure).toHaveBeenCalledWith("app-9", "port is already allocated");
+    expect(toast.error).toHaveBeenCalledWith("The app was created but couldn't start", {
+      description: "port is already allocated",
+    });
+  });
+
+  it("stays on the form when a refused create left nothing", async () => {
+    const user = userEvent.setup();
+    fakeAPI(routes({ "/api/v1/instance/create-instance": new ApiError("bad value", 400) }));
+    renderFlow();
+    await fill(user);
+    await user.click(screen.getByRole("button", { name: "Create app" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("bad value");
+    expect(reconcile).not.toHaveBeenCalled();
   });
 
   it.each([500, 409])("retries a create the API answered %i as an update of the same key", async (status) => {

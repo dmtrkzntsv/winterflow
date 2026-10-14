@@ -19,7 +19,9 @@ import { splitStatus, type AppStatusWire, type ContainerStatusWire } from "@/lib
 
 import {
   AppsContext,
+  AppStatusCode,
   DELETE_APP_TIMEOUT_MS,
+  SaveFailedError,
   type App,
   type AppDetailPayload,
   type AppRevisions,
@@ -88,6 +90,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
   const [staleVarsByApp, setStaleVarsByApp] = useState<Record<string, string[]>>({});
   const [backupsByApp, setBackupsByApp] = useState<Record<string, BackupHealth[]>>({});
   const [containersByApp, setContainersByApp] = useState<Record<string, ContainerStatusWire[]>>({});
+  const [deployFailures, setDeployFailures] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const mounted = useRef(false);
@@ -101,6 +104,30 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       mounted.current = false;
     };
   }, []);
+
+  const noteDeployFailure = useCallback((appId: string, error: string) => {
+    setDeployFailures((prev) => ({ ...prev, [appId]: error }));
+  }, []);
+  // clearDeployFailure drops an app's failed deploy: it runs now, or a
+  // later deploy of it went through.
+  const clearDeployFailure = useCallback((appId: string) => {
+    setDeployFailures((prev) => {
+      if (!(appId in prev)) return prev;
+      const next = { ...prev };
+      delete next[appId];
+      return next;
+    });
+  }, []);
+  // A status report showing a failed app running ends its failure.
+  useEffect(() => {
+    setDeployFailures((prev) => {
+      const done = Object.keys(prev).filter((id) => statusByApp[id] === AppStatusCode.Active);
+      if (done.length === 0) return prev;
+      const next = { ...prev };
+      for (const id of done) delete next[id];
+      return next;
+    });
+  }, [statusByApp]);
 
   // loadApps reads the DB-backed list synchronously (no agent hop).
   const loadApps = useCallback(async (): Promise<App[]> => {
@@ -163,6 +190,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
     void refresh();
   }, [refresh]);
 
+
   // loadStatus pulls the live container-status snapshot (in-memory, TTL'd).
   const loadStatus = useCallback(async () => {
     if (!isAuthenticated || !activeServerId) {
@@ -199,6 +227,20 @@ export function AppsProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void loadStatus();
   }, [loadStatus, connected]);
+
+  // reconcile is refresh that waits: the agent's list synced into the
+  // catalog, then read again (with the status).
+  const reconcile = useCallback(async (): Promise<App[]> => {
+    if (!activeServerId) throw new Error("No active server");
+    await dispatchCommand(
+      waitFor,
+      `${base}/api/v1/app/refresh-apps?server_id=${encodeURIComponent(activeServerId)}`,
+      { method: "POST" },
+      { refOptional: true },
+    );
+    const [list] = await Promise.all([loadApps(), loadStatus()]);
+    return list;
+  }, [activeServerId, waitFor, loadApps, loadStatus]);
 
   // Re-read the apps list when a dispatched command's result arrives over SSE.
   // The backend persists/reconciles the DB before publishing, so a plain
@@ -241,7 +283,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
     async (
       path: string,
       body: Record<string, unknown>,
-      opts: { timeoutMs?: number } = {},
+      opts: { timeoutMs?: number; failure?: new (message: string) => Error } = {},
     ): Promise<{ list: App[]; payload: unknown }> => {
       if (!activeServerId) throw new Error("No active server");
       // A refused command (400) carries the reason, e.g. an unknown storage.
@@ -253,7 +295,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ...body, server_id: activeServerId }),
         },
-        { timeoutMs: opts.timeoutMs, refOptional: true },
+        { timeoutMs: opts.timeoutMs, failure: opts.failure, refOptional: true },
       );
       const [list] = await Promise.all([loadApps(), loadStatus()]);
       return { list, payload };
@@ -264,11 +306,12 @@ export function AppsProvider({ children }: { children: ReactNode }) {
   const control = useCallback(
     async (appId: string, action: ControlAction) => {
       await dispatchAndWait("control-app", { app_id: appId, action });
+      if (action !== "stop") clearDeployFailure(appId);
       // A start (and a pull, which redeploys) can bring an undeployed draft
       // live without a commit; a stop or restart moves nothing.
       if (action === "start" || action === "update") forgetRevisions(appId);
     },
-    [dispatchAndWait],
+    [dispatchAndWait, clearDeployFailure],
   );
 
   const remove = useCallback(
@@ -290,6 +333,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
         { timeoutMs: DELETE_APP_TIMEOUT_MS },
       );
       forgetRevisions(appId, { gone: true });
+      clearDeployFailure(appId);
       const res = payload as
         | { warnings?: string[]; volumes_deleted?: boolean; backups_deleted?: boolean }
         | undefined;
@@ -299,7 +343,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
         backupsDeleted: res?.backups_deleted ?? false,
       };
     },
-    [dispatchAndWait],
+    [dispatchAndWait, clearDeployFailure],
   );
 
   const rename = useCallback(
@@ -435,8 +479,9 @@ export function AppsProvider({ children }: { children: ReactNode }) {
     async (appId: string, hash: string) => {
       await dispatchAndWait("rollback-app", { app_id: appId, hash });
       forgetRevisions(appId);
+      clearDeployFailure(appId);
     },
-    [dispatchAndWait],
+    [dispatchAndWait, clearDeployFailure],
   );
 
   // saveApp dispatches app.save with the full payload (an upsert: app.id
@@ -450,17 +495,23 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       files: { name: string; content: string; encrypted: boolean }[];
       variables: { name: string; content: string; encrypted: boolean }[];
     }) => {
-      const { list } = await dispatchAndWait("save-app", {
-        app: body.app,
-        config: body.config,
-        files: body.files,
-        variables: body.variables,
-        ...(body.source ? { source: body.source } : {}),
-        ...(body.draft ? { draft: true } : {}),
-      });
+      const { list } = await dispatchAndWait(
+        "save-app",
+        {
+          app: body.app,
+          config: body.config,
+          files: body.files,
+          variables: body.variables,
+          ...(body.source ? { source: body.source } : {}),
+          ...(body.draft ? { draft: true } : {}),
+        },
+        { failure: SaveFailedError },
+      );
+      // A deploy went through: the app no longer reads Failed.
+      if (typeof body.app.id === "string" && !body.draft) clearDeployFailure(body.app.id);
       return list;
     },
-    [dispatchAndWait],
+    [dispatchAndWait, clearDeployFailure],
   );
 
   const value = useMemo(
@@ -471,9 +522,12 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       reloadSharedVars,
       backupsByApp,
       containersByApp,
+      deployFailures,
+      noteDeployFailure,
       loading,
       error,
       refresh,
+      reconcile,
       control,
       remove,
       rename,
@@ -491,9 +545,12 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       reloadSharedVars,
       backupsByApp,
       containersByApp,
+      deployFailures,
+      noteDeployFailure,
       loading,
       error,
       refresh,
+      reconcile,
       control,
       remove,
       rename,

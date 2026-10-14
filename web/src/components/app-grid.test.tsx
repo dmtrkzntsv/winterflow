@@ -92,6 +92,12 @@ describe("AppGrid", () => {
     expect(screen.queryByText(/01234567/)).not.toBeInTheDocument();
   });
 
+  it("reads an app whose deploy failed as Failed", () => {
+    renderGrid({ apps: [app("a1", "Shop"), app("a2", "Blog")], statusByApp: { a1: 2, a2: 1 }, deployFailures: { a1: "boom" } });
+    expect(within(card("Shop")).getByText("Failed")).toBeInTheDocument();
+    expect(within(card("Blog")).getByText("Running")).toBeInTheDocument();
+  });
+
   it("carries one warning chip, for a late or failing backup or shared variables to reload", () => {
     renderGrid({
       backupsByApp: { a1: [{ name: "db", state: "failing", last_error: "disk full" }], a2: [{ name: "db", state: "ok" }] },

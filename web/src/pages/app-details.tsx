@@ -11,11 +11,11 @@ import { AppMetricsTab } from "@/components/app-metrics";
 import { AppHeader } from "@/components/app-page/app-header";
 import { AppLogsTab } from "@/components/app-page/app-logs-tab";
 import { AppOverview } from "@/components/app-page/app-overview";
+import { DeployFailedBanner } from "@/components/app-page/deploy-failed-banner";
 import { AppSettingsTab } from "@/components/app-page/app-settings-tab";
 import { HistorySheet } from "@/components/app-page/history-sheet";
 import type { Ownership } from "@/components/app-page/ownership";
 import { DeleteAppDialog } from "@/components/delete-app-dialog";
-import { ErrorText } from "@/components/error-text";
 import { InstancePanel } from "@/components/instance-panel";
 import { NotFound } from "@/components/not-found";
 import { LoadError, PageSpinner } from "@/components/page-states";
@@ -81,7 +81,7 @@ const CONTROL_PROGRESS: Record<ControlAction, string> = {
 // part is keyed by the app's id.
 export default function AppDetailsPage() {
   const { appId = "" } = useParams();
-  const { apps, statusByApp, backupsByApp, loading, control, refresh } = useApps();
+  const { apps, statusByApp, backupsByApp, deployFailures, loading, control, refresh } = useApps();
   const templatesApi = useTemplatesApi();
   const [tab, setTab] = useTabParam<Tab>(TABS, "overview", { aliases: LEGACY_APP_TABS });
   // After useTabParam: see useHistorySheet.
@@ -153,6 +153,9 @@ export default function AppDetailsPage() {
   };
 
   const status = statusByApp[appId];
+  // failure is why the app's deploy failed: a create's in this session, or
+  // a pending template instance's (its deploy never succeeded).
+  const failure = deployFailures?.[appId] || (inst?.state === "pending" ? inst.last_error : "") || "";
   const running = hasRunningContainers(status);
   // The control actions are disabled while one runs, like the header's.
   const busy = pending !== null;
@@ -206,6 +209,7 @@ export default function AppDetailsPage() {
         app={app}
         registrations={registrations}
         status={status}
+        failed={failure !== ""}
         instance={inst}
         behind={behind}
         pending={pending}
@@ -220,13 +224,11 @@ export default function AppDetailsPage() {
         onDelete={() => setDeleteOpen(true)}
       />
 
-      {inst?.state === "pending" && inst.last_error ? (
-        <ErrorText
-          alert
-          icon
-          text={inst.last_error}
-          prefix="The app's last deploy from its template failed: "
-          suffix=". Fix its values under Configuration and save again."
+      {failure ? (
+        <DeployFailedBanner
+          key={app.id}
+          error={failure}
+          onOpenConfiguration={tab === "configuration" ? undefined : () => setTab("configuration")}
         />
       ) : null}
       <StaleVarsBadge key={app.id} appId={app.id} />

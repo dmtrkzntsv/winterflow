@@ -4,7 +4,7 @@ import { MemoryRouter, Route, Routes, useParams } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ComposeFlow } from "@/components/new-app/compose-flow";
-import { AppsContext, type App, type AppsContextValue } from "@/context/apps-context-base";
+import { AppsContext, SaveFailedError, type App, type AppsContextValue } from "@/context/apps-context-base";
 import { suggestAppLook } from "@/lib/app-look";
 import { fakeAPI } from "@/test/fake-api";
 import { stubViewport } from "@/test/media";
@@ -36,11 +36,12 @@ function Landing() {
   return <p>app {useParams().appId}</p>;
 }
 
-function renderFlow(saveApp: AppsContextValue["saveApp"]) {
+function renderFlow(saveApp: AppsContextValue["saveApp"], over: Partial<AppsContextValue> = {}) {
   const value = {
     apps: [app("old", "shop")],
     saveApp,
     getPublicKey: vi.fn(async () => "K"),
+    ...over,
   } as unknown as AppsContextValue;
   return render(
     <MemoryRouter initialEntries={["/server/s1/new?from=compose"]}>
@@ -93,6 +94,73 @@ describe("ComposeFlow", () => {
     expect(body.config).not.toHaveProperty("ingress");
     expect(body).not.toHaveProperty("source");
     expect(toast.success).toHaveBeenCalledWith("App created and deploying");
+  });
+
+  it("opens the app a failed first deploy left behind, noting the failure", async () => {
+    const user = userEvent.setup();
+    const reconcile = vi.fn(async () => [app("old", "shop"), app("new1", "shop")]);
+    const noteDeployFailure = vi.fn();
+    const failure = "docker compose up: exit status 1: Bind for 0.0.0.0:8088 failed: port is already allocated";
+    renderFlow(
+      vi.fn(async () => {
+        throw new SaveFailedError(failure);
+      }),
+      { reconcile, noteDeployFailure },
+    );
+    await user.type(screen.getByLabelText("Name"), "shop");
+    await user.click(screen.getByRole("button", { name: "Create app" }));
+    expect(await screen.findByText("app new1")).toBeInTheDocument();
+    expect(noteDeployFailure).toHaveBeenCalledWith("new1", failure);
+    expect(toast.error).toHaveBeenCalledWith("The app was created but couldn't start", {
+      description: "Bind for 0.0.0.0:8088 failed: port is already allocated",
+    });
+  });
+
+  it("stays on the form when the failed create left no app", async () => {
+    const user = userEvent.setup();
+    const reconcile = vi.fn(async () => [app("old", "shop")]);
+    renderFlow(
+      vi.fn(async () => {
+        throw new SaveFailedError("sync source: repository not found");
+      }),
+      { reconcile, noteDeployFailure: vi.fn() },
+    );
+    await user.type(screen.getByLabelText("Name"), "shop");
+    await user.click(screen.getByRole("button", { name: "Create app" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("sync source: repository not found");
+    expect(reconcile).toHaveBeenCalledTimes(1);
+  });
+
+  it("doesn't look for a left app after a refusal", async () => {
+    const user = userEvent.setup();
+    const reconcile = vi.fn(async () => []);
+    renderFlow(
+      vi.fn(async () => {
+        throw new Error("the name is taken");
+      }),
+      { reconcile },
+    );
+    await user.type(screen.getByLabelText("Name"), "shop");
+    await user.click(screen.getByRole("button", { name: "Create app" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("the name is taken");
+    expect(reconcile).not.toHaveBeenCalled();
+  });
+
+  it("sends one create however often Create is pressed while it runs", async () => {
+    const user = userEvent.setup();
+    let finish: (list: App[]) => void = () => {};
+    const saveApp = vi.fn(() => new Promise<App[]>((resolve) => (finish = resolve)));
+    renderFlow(saveApp);
+    await user.type(screen.getByLabelText("Name"), "shop");
+    const create = screen.getByRole("button", { name: "Create app" });
+    // Two clicks before React re-renders the busy button.
+    create.click();
+    create.click();
+    await waitFor(() => expect(saveApp).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("button", { name: "Creating…" })).toBeDisabled();
+    finish([app("old", "shop"), app("new1", "shop")]);
+    expect(await screen.findByText("app new1")).toBeInTheDocument();
+    expect(saveApp).toHaveBeenCalledTimes(1);
   });
 
   it("lands on the Apps page when the answer doesn't list the new app yet", async () => {

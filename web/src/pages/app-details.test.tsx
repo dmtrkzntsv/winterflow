@@ -176,6 +176,22 @@ describe("AppDetailsPage", () => {
     for (const f of Object.values(toast)) f.mockReset();
   });
 
+  it("says why a failed create couldn't start and reads Failed", async () => {
+    const user = userEvent.setup();
+    renderPage("/app/a1", {}, {
+      ctx: {
+        statusByApp: { a1: 2 },
+        deployFailures: { a1: "docker compose up: exit status 1: Container a  Creating\nBind for 0.0.0.0:8088 failed: port is already allocated" },
+      },
+    });
+    const banner = await screen.findByRole("alert");
+    expect(banner).toHaveTextContent("Couldn't start: Bind for 0.0.0.0:8088 failed: port is already allocated");
+    expect(screen.getByText("Failed")).toBeInTheDocument();
+    expect(screen.queryByText("Idle")).not.toBeInTheDocument();
+    await user.click(within(banner).getByRole("button", { name: "Show details" }));
+    expect(within(banner).getByText(/Container a Creating/)).toBeVisible();
+  });
+
   it("offers its actions in the ⌘K palette", async () => {
     const user = userEvent.setup();
     const control = vi.fn(async () => {});
@@ -742,23 +758,27 @@ describe("AppDetailsPage of a template instance", () => {
     const user = userEvent.setup();
     instanceAPI({ ...INSTANCE, state: "pending", last_error: "pull access denied" });
     renderPage("/app/a1?tab=editor", {}, managed);
-    expect(await screen.findByText(/last deploy from its template failed: pull access denied/)).toBeInTheDocument();
+    expect(await screen.findByText("pull access denied")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("Couldn't start: pull access denied");
     expect(screen.getByText("Not created yet")).toBeInTheDocument();
+    // A failed deploy reads Failed, not the stale status.
+    expect(screen.getAllByText("Failed").length).toBeGreaterThan(0);
     expect(screen.getByLabelText("SESSION_KEY")).toHaveAttribute("placeholder", "Encrypted in your browser");
     await user.click(screen.getByRole("button", { name: "Save & redeploy" }));
     expect(screen.getByText("Required")).toBeInTheDocument();
   });
 
-  it("shows a long deploy failure by its last line, the rest behind Details", async () => {
+  it("shows a long deploy failure by its last line, the rest behind Show details", async () => {
+    const user = userEvent.setup();
     instanceAPI({ ...INSTANCE, state: "pending", last_error: "Container web  Creating\nError: pull access denied\n" });
-    renderPage("/app/a1?tab=editor", {}, managed);
-    expect(
-      await screen.findByText(
-        "The app's last deploy from its template failed: Error: pull access denied. Fix its values under Configuration and save again.",
-      ),
-    ).toBeVisible();
-    expect(screen.getByText("Details")).toBeInTheDocument();
-    expect(screen.getByText(/Container web Creating/)).not.toBeVisible();
+    renderPage("/app/a1?tab=overview", {}, managed);
+    expect(await screen.findByText("Error: pull access denied")).toBeVisible();
+    expect(screen.queryByText(/Container web Creating/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Show details" }));
+    expect(screen.getByText(/Container web Creating/)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Open Configuration" }));
+    expect(await screen.findByRole("tab", { name: "Configuration", selected: true })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open Configuration" })).not.toBeInTheDocument();
   });
 
   it("never offers the plain editor while the instance is being looked up", async () => {

@@ -34,9 +34,15 @@ const APP: Record<number, StatusInfo> = {
   [AppStatusCode.Unknown]: { tone: "idle", label: "Unknown" },
 };
 
-// appStatus maps a container status code to its tone and word. A missing
-// code is Unknown: the UI never infers "down" from missing data.
-export function appStatus(code: number | undefined): StatusInfo {
+// FAILED is an app whose deploy failed (its create's error), until a later
+// report shows it running.
+export const FAILED: StatusInfo = { tone: "bad", label: "Failed" };
+
+// appStatus maps a container status code to its tone and word; failed (a
+// failed deploy the apps context holds) reads Failed. A missing code is
+// Unknown: the UI never infers "down" from missing data.
+export function appStatus(code: number | undefined, failed = false): StatusInfo {
+  if (failed) return FAILED;
   return APP[code ?? AppStatusCode.Unknown] ?? APP[AppStatusCode.Unknown];
 }
 

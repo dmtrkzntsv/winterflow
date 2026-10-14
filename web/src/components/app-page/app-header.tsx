@@ -30,6 +30,8 @@ export type AppHeaderProps = {
   registrations?: RegisteredDomain[];
   app: App;
   status: number | undefined;
+  // failed: the app's deploy failed (it reads Failed).
+  failed?: boolean;
   // instance is the template instance managing the app (null: a plain app,
   // or not read yet).
   instance: InstanceView | null;
@@ -71,7 +73,7 @@ export function AppHeader(p: AppHeaderProps) {
             {appLabel(app.name)}
           </h1>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm">
-            <StatusPill status={appStatus(p.status)} />
+            <StatusPill status={appStatus(p.status, p.failed)} />
             {p.progress ? (
               <span role="status" className="inline-flex items-center gap-1.5 text-muted-foreground">
                 <Spinner className="size-3.5" aria-hidden />

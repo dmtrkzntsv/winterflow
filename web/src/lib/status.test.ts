@@ -20,6 +20,12 @@ describe("appStatus", () => {
     expect(appStatus(42)).toEqual({ tone: "idle", label: "Unknown" });
   });
 
+  it("reads a failed deploy as Failed, whatever the code says", () => {
+    expect(appStatus(AppStatusCode.Unknown, true)).toEqual({ tone: "bad", label: "Failed" });
+    expect(appStatus(AppStatusCode.Idle, true)).toEqual({ tone: "bad", label: "Failed" });
+    expect(appStatus(undefined, false)).toEqual({ tone: "idle", label: "Unknown" });
+  });
+
   it("pulses only while restarting", () => {
     expect(appStatus(AppStatusCode.Restarting).pulse).toBe(true);
     expect(appStatus(AppStatusCode.Active).pulse).toBeFalsy();

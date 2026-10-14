@@ -366,3 +366,22 @@
         display: none;
     }
 }
+
+/* Dialog, sheet, drawer and palette overlays (the vendored ui components
+   carry wf-overlay): a light tint with a slight blur, darker in dark mode.
+   Only the top-most overlay is tinted: Radix portals each one into <body>
+   in opening order, so one with a later overlay beside it (a sheet under a
+   confirm) goes clear instead of darkening twice. */
+.wf-overlay {
+  background-color: color-mix(in oklab, var(--foreground) 25%, transparent);
+  backdrop-filter: blur(2px);
+}
+.dark .wf-overlay {
+  background-color: rgb(0 0 0 / 0.5);
+}
+.wf-overlay:has(~ .wf-overlay),
+.wf-overlay:has(~ * .wf-overlay) {
+  background-color: transparent;
+  backdrop-filter: none;
+}
+

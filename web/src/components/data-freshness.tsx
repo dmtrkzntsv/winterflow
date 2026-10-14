@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { formatClock } from "@/lib/kpi";
 import { cn } from "@/lib/utils";
 
-// DataFreshness is the quiet line under a page title: "Data as of 05:06 PM"
+// DataFreshness is the quiet line in a page header's subtitle: "Data as of 05:06 PM"
 // and a small refresh button that re-fetches now (twillingate's header).
 // Before the first fetch lands it says "Loading data".
 export function DataFreshness({
@@ -30,7 +30,7 @@ export function DataFreshness({
     }
   };
   return (
-    <div className={cn("flex items-center gap-1 text-xs text-muted-foreground tabular-nums", className)}>
+    <span className={cn("inline-flex items-center gap-1 text-xs text-muted-foreground tabular-nums", className)}>
       <span data-testid="data-as-of">{updatedAt ? `Data as of ${formatClock(updatedAt)}` : "Loading data"}</span>
       <Button
         type="button"
@@ -45,6 +45,6 @@ export function DataFreshness({
       >
         <RefreshCw className={cn("size-3.5", busy && "animate-spin")} aria-hidden />
       </Button>
-    </div>
+    </span>
   );
 }

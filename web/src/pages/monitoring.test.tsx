@@ -1,10 +1,11 @@
 import { cloneElement, type ReactElement } from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
+import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import MonitoringPage from "@/pages/monitoring";
+import { appLabel } from "@/lib/kpi";
 import type { DockerDF, ServerSample, ServerSeries } from "@/lib/metrics";
 
 const useServerMetrics = vi.fn();
@@ -32,11 +33,14 @@ vi.mock("@/context/use-servers", () => ({
 vi.mock("@/context/use-apps", () => ({
   useApps: () => ({ apps: [{ id: "app-1", name: "Nextcloud" }, { id: "app-2-unnamed", name: "" }] }),
 }));
-// The Alerts card has its own tests; here it only has to be placed.
+// The alert components have their own tests; here they only have to be placed.
 vi.mock("@/components/alerts/target-alerts-card", () => ({
   TargetAlertsCard: (p: { serverId: string; appId?: string }) => (
     <div data-testid="alerts-card">{`${p.serverId}/${p.appId ?? ""}`}</div>
   ),
+}));
+vi.mock("@/components/alerts/firing-banner", () => ({
+  FiringBanner: (p: { serverId: string; appId?: string }) => <div data-testid="firing-banner">{p.serverId}</div>,
 }));
 vi.mock("@/hooks/use-metrics", () => ({
   useServerMetrics: (...args: unknown[]) => {
@@ -69,14 +73,12 @@ function fills(title: string): (string | null)[] {
 function renderPage() {
   return render(
     <MemoryRouter>
-      <Routes>
-        <Route element={<Outlet />}>
-          <Route path="/" element={<MonitoringPage />} />
-        </Route>
-      </Routes>
+      <MonitoringPage />
     </MemoryRouter>,
   );
 }
+
+const openDetails = () => userEvent.click(screen.getByRole("button", { name: "More details" }));
 
 // Rendering every chart through recharts is slow on a busy CI box.
 describe("MonitoringPage", { timeout: 20_000 }, () => {
@@ -108,25 +110,56 @@ describe("MonitoringPage", { timeout: 20_000 }, () => {
     };
   });
 
-  it("charts the active server and lists Docker disk usage", () => {
+  it("heads the page with the server, freshness and the range, then the firing banner", () => {
     renderPage();
-    expect(useServerMetrics).toHaveBeenLastCalledWith("s1", "1h");
-    for (const title of ["CPU", "Memory", "Load", "Disk usage", "Disk I/O", "Network", "Temperature", "CPU by app", "Memory by app"]) {
-      expect(screen.getByTestId(`chart-${title}`)).toBeInTheDocument();
-    }
-    expect(screen.getByTestId("docker-df")).toHaveTextContent("Images1.0 GB");
-    expect(screen.getByTestId("alerts-card")).toHaveTextContent("s1/");
-    expect(screen.getByTestId("docker-df")).toHaveTextContent("Reclaimable512 B");
-    // Rates were never reported: that chart says so instead of drawing zeros.
-    expect(screen.getByTestId("chart-Network")).toHaveTextContent("No data yet");
+    const header = screen.getByRole("banner");
+    expect(within(header).getByRole("heading", { level: 1, name: "Monitoring" })).toBeInTheDocument();
+    expect(header).toHaveTextContent("prod-1");
+    // Freshness sits in the subtitle paragraph: phrasing content only.
+    expect(screen.getByTestId("data-as-of").closest("p")).not.toBeNull();
+    expect(within(header).getByRole("button", { name: "Range: Last hour" })).toBeInTheDocument();
+    const banner = screen.getByTestId("firing-banner");
+    expect(banner).toHaveTextContent("s1");
+    expect(banner.compareDocumentPosition(screen.getByTestId("kpi-CPU")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it("colors temperature series through CSS-safe keys", () => {
+  it("shows four tiles, the four host charts and the apps, with the rest behind More details", async () => {
+    renderPage();
+    expect(useServerMetrics).toHaveBeenLastCalledWith("s1", "1h");
+    for (const label of ["CPU", "Memory", "Disk", "Network"]) expect(screen.getByTestId(`kpi-${label}`)).toBeInTheDocument();
+    const host = screen.getByTestId("host-charts");
+    for (const title of ["CPU", "Memory", "Disk usage", "Network"]) {
+      expect(within(host).getByTestId(`chart-${title}`)).toBeInTheDocument();
+    }
+    const apps = screen.getByRole("region", { name: "Apps" });
+    for (const title of ["CPU by app", "Memory by app"]) expect(within(apps).getByTestId(`chart-${title}`)).toBeInTheDocument();
+    for (const title of ["Load", "Disk I/O", "Temperature"]) expect(screen.queryByTestId(`chart-${title}`)).not.toBeInTheDocument();
+    expect(screen.queryByTestId("docker-df")).not.toBeInTheDocument();
+    // Rates were never reported: that chart says so instead of drawing zeros.
+    expect(screen.getByTestId("chart-Network")).toHaveTextContent("No data yet");
+    expect(screen.getByTestId("alerts-card")).toHaveTextContent("s1/");
+
+    await openDetails();
+    for (const title of ["Load", "Disk I/O", "Temperature"]) expect(screen.getByTestId(`chart-${title}`)).toBeInTheDocument();
+    expect(screen.getByTestId("docker-df")).toHaveTextContent("Images1.0 GB");
+    expect(screen.getByTestId("docker-df")).toHaveTextContent("Reclaimable512 B");
+  });
+
+  it("stacks the charts in one column on a phone", () => {
+    renderPage();
+    for (const grid of [screen.getByTestId("host-charts"), within(screen.getByRole("region", { name: "Apps" })).getByTestId("app-charts")]) {
+      expect(grid).toHaveClass("grid", "md:grid-cols-2");
+      expect(grid).not.toHaveClass("grid-cols-2");
+    }
+  });
+
+  it("colors temperature series through CSS-safe keys", async () => {
     data!.points = [
       { t: 0, "temp:Core 0": 40, "temp:nvme Composite": 30 },
       { t: 60, "temp:Core 0": 41, "temp:nvme Composite": 31 },
     ];
     renderPage();
+    await openDetails();
     const css = screen.getByTestId("chart-Temperature").querySelector("style")?.textContent ?? "";
     expect(css).toContain("--color-temp0:");
     expect(css).toContain("--color-temp1:");
@@ -134,26 +167,31 @@ describe("MonitoringPage", { timeout: 20_000 }, () => {
     expect(css).not.toContain("temp:");
   });
 
-  it("hides the temperature chart without sensors and waits for the disk scan", () => {
-    data!.points = [{ t: 0, cpu: 1 }];
+  it("explains a fresh server in plain words: no sensors, no disk scan yet, no app samples", async () => {
+    data = { interval_seconds: 60, points: [{ t: 0, cpu: 1 }], apps: [] };
     renderPage();
+    expect(screen.getByTestId("chart-CPU by app")).toHaveTextContent("No data yet");
+    await openDetails();
     expect(screen.queryByTestId("chart-Temperature")).not.toBeInTheDocument();
-    expect(screen.getByText(/No disk scan yet/)).toBeInTheDocument();
+    expect(screen.getByText("No disk scan yet. It runs once an hour.")).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent(/[A-Z]{3,}_[A-Z]{3,}/);
   });
 
-  it("shows the latest Docker disk scan whatever the range", () => {
+  it("shows the latest Docker disk scan whatever the range", async () => {
     data!.points = [{ t: 0, cpu: 1 }]; // a coarse range without the scan
     latestDF = { images: 2 * 1024 ** 3, volumes: 0, build_cache: 0, reclaimable: 0 };
     renderPage();
+    await openDetails();
     expect(screen.getByTestId("docker-df")).toHaveTextContent("Images2.0 GB");
   });
 
-  it("draws temperatures and load as lines", () => {
+  it("draws temperatures and load as lines", async () => {
     data!.points = [
       { t: 0, load1: 1, load5: 1, load15: 1, "temp:a": 40, "temp:b": 30 },
       { t: 60, load1: 2, load5: 1, load15: 1, "temp:a": 41, "temp:b": 31 },
     ];
     renderPage();
+    await openDetails();
     for (const title of ["Temperature", "Load"]) {
       expect(fills(title).length).toBeGreaterThan(0);
       for (const f of fills(title)) expect(f).toBe("none");
@@ -168,7 +206,11 @@ describe("MonitoringPage", { timeout: 20_000 }, () => {
     renderPage();
     for (const f of fills("CPU by app")) expect(f).not.toBe("none");
     expect(screen.getByTestId("chart-CPU by app")).toHaveTextContent("Nextcloud");
-    expect(screen.getByTestId("chart-CPU by app")).toHaveTextContent("app-2-un"); // nameless: id prefix
+    // A nameless app reads "Unnamed app", never its raw id.
+    expect(screen.getByTestId("chart-CPU by app")).toHaveTextContent(appLabel(""));
+    const chart = screen.getByTestId("chart-CPU by app");
+    const shown = (chart.textContent ?? "").replace(chart.querySelector("style")?.textContent ?? "", "");
+    expect(shown).not.toContain("app-2-un");
     await userEvent.click(screen.getByRole("radio", { name: "Peak" }));
     expect(fills("CPU by app").length).toBe(2);
     for (const f of fills("CPU by app")) expect(f).toBe("none");
@@ -258,10 +300,11 @@ describe("MonitoringPage", { timeout: 20_000 }, () => {
     data = null;
     loading = true;
     renderPage();
-    // The CPU tile and the big CPU chart.
+    // The CPU tile and the CPU chart.
     expect(screen.getAllByRole("status", { name: "Loading CPU" })).toHaveLength(2);
     expect(screen.getAllByRole("status").length).toBeGreaterThan(4);
     expect(screen.queryByTestId("chart-CPU")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "More details" })).not.toBeInTheDocument();
     expect(screen.getByTestId("data-as-of")).toHaveTextContent("Loading data");
   });
 });

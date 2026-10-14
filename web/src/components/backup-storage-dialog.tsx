@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/dialog";
 import { useServerPath } from "@/context/use-server-path";
 import { returnFocusTo } from "@/lib/focus";
+import { serverSettingsSub } from "@/lib/routes";
 
 // BackupStorageDialog picks one of the server's storages (load lists their
 // names), or points to Settings → Storages when there are none. It turns a
@@ -84,7 +85,7 @@ export function BackupStorageDialog({
         ) : names.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             This server has no storage yet.{" "}
-            <Link to={toServer("/settings?tab=storages")} className="font-medium text-foreground underline underline-offset-4">
+            <Link to={toServer(serverSettingsSub("storages"))} className="font-medium text-foreground underline underline-offset-4">
               Add a storage in Settings → Storages
             </Link>
             , then come back.

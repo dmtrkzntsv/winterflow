@@ -61,7 +61,7 @@ function renderAt(url: string) {
             <Route element={<Outlet context={{ setBreadcrumbs: () => {} }} />}>
               <Route path="/" element={<DefaultServer fallback={<p>no servers</p>} />} />
               <Route path="/server/s1" element={<HomePage />} />
-              <Route path="/server/s1/create-app" element={<p>create page</p>} />
+              <Route path="/server/s1/new" element={<p>create page</p>} />
               <Route path="/server/s2/monitoring" element={<p>beta monitoring</p>} />
             </Route>
           </Routes>

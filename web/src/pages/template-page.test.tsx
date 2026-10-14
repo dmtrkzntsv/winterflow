@@ -84,9 +84,9 @@ function renderPage(url: string, state?: unknown) {
     <MemoryRouter initialEntries={[state ? { pathname: url, state } : url]}>
       <NotificationsContext.Provider value={notifications}>
         <Routes>
-          <Route path="/org/templates" element={<p>the list</p>} />
-          <Route path="/org/templates/new" element={<TemplatePage />} />
-          <Route path="/org/templates/:templateId" element={<TemplatePage />} />
+          <Route path="/templates" element={<p>the list</p>} />
+          <Route path="/templates/new" element={<TemplatePage />} />
+          <Route path="/templates/:templateId" element={<TemplatePage />} />
         </Routes>
       </NotificationsContext.Provider>
     </MemoryRouter>,
@@ -106,7 +106,7 @@ describe("TemplatePage", () => {
       "/api/v1/template/get-template": { ...view(1), id: "t9", name: "shop" },
       "/api/v1/instance/get-instances": { instances: [] },
     });
-    renderPage("/org/templates/new");
+    renderPage("/templates/new");
     await user.type(screen.getByLabelText("Template name"), "shop");
     await user.type(screen.getByLabelText("App name"), "Shop");
     await user.click(screen.getByRole("button", { name: "Save template" }));
@@ -121,8 +121,8 @@ describe("TemplatePage", () => {
   it("refuses to save what the API would refuse, naming it", async () => {
     const user = userEvent.setup();
     const api = fakeAPI({});
-    renderPage("/org/templates/new");
-    expect(crumbs).toHaveBeenLastCalledWith([{ label: "Templates", href: "/org/templates" }, { label: "Add template" }]);
+    renderPage("/templates/new");
+    expect(crumbs).toHaveBeenLastCalledWith([{ label: "Templates", href: "/templates" }, { label: "Add template" }]);
     // A new template saves as revision 1: there is nothing to note yet.
     expect(screen.queryByLabelText("Revision note")).not.toBeInTheDocument();
     await user.type(screen.getByLabelText("Template name"), "Shop");
@@ -146,7 +146,7 @@ describe("TemplatePage", () => {
       "/api/v1/instance/get-instances": { instances: [] },
       "/api/v1/template/save-template": { id: "t1", name: "twillingate", revision: 4, warnings: null },
     });
-    renderPage("/org/templates/t1");
+    renderPage("/templates/t1");
     const save = await screen.findByRole("button", { name: "Save as r4" });
     expect(save).toBeDisabled();
     await user.click(screen.getAllByRole("button", { name: /Add parameter/ })[0]);
@@ -174,7 +174,7 @@ describe("TemplatePage", () => {
       "/api/v1/template/get-template": view(3),
       "/api/v1/instance/get-instances": { instances: [] },
     });
-    renderPage("/org/templates/t1");
+    renderPage("/templates/t1");
     const save = await screen.findByRole("button", { name: "Save as r4" });
     await user.type(screen.getByLabelText("App name"), "x");
     expect(save).toBeEnabled();
@@ -193,7 +193,7 @@ describe("TemplatePage", () => {
         return new ApiError("someone saved the template meanwhile: reload it and save again", 409);
       },
     });
-    renderPage("/org/templates/t1");
+    renderPage("/templates/t1");
     await user.type(await screen.findByLabelText("App name"), "-x");
     await user.click(screen.getByRole("button", { name: "Save as r4" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Someone saved r4 meanwhile; reload");
@@ -210,7 +210,7 @@ describe("TemplatePage", () => {
       "/api/v1/instance/get-instances": { instances: [] },
       "/api/v1/template/save-template": new Error("invalid template: files: x-winterflow.backups[0]: unknown type"),
     });
-    renderPage("/org/templates/t1");
+    renderPage("/templates/t1");
     await user.type(await screen.findByLabelText("App name"), "-x");
     await user.click(screen.getByRole("button", { name: "Save as r4" }));
     await waitFor(() =>
@@ -240,10 +240,10 @@ describe("TemplatePage", () => {
       "/api/v1/instance/get-instances": { instances: [] },
     });
     render(
-      <MemoryRouter initialEntries={["/org/templates/t1"]}>
+      <MemoryRouter initialEntries={["/templates/t1"]}>
         <NotificationsProvider>
           <Routes>
-            <Route path="/org/templates/:templateId" element={<TemplatePage />} />
+            <Route path="/templates/:templateId" element={<TemplatePage />} />
           </Routes>
         </NotificationsProvider>
       </MemoryRouter>,
@@ -264,7 +264,7 @@ describe("TemplatePage", () => {
       "/api/v1/template/get-template": view(3),
       "/api/v1/instance/get-instances": { instances: [{ key: "k1" }] },
     });
-    renderPage("/org/templates/t1");
+    renderPage("/templates/t1");
     expect(await screen.findByRole("button", { name: "Delete template" })).toBeDisabled();
     expect(screen.getByText("Revision 3 · 1 app uses it")).toBeInTheDocument();
   });
@@ -276,7 +276,7 @@ describe("TemplatePage", () => {
       "/api/v1/instance/get-instances": { instances: [] },
       "/api/v1/template/delete-template": null,
     });
-    renderPage("/org/templates/t1");
+    renderPage("/templates/t1");
     await user.click(await screen.findByRole("button", { name: "Delete template" }));
     await user.click(screen.getByRole("button", { name: "Delete" }));
     expect(await screen.findByText("the list")).toBeInTheDocument();
@@ -290,7 +290,7 @@ describe("TemplatePage", () => {
       "/api/v1/instance/get-instances": { instances: [] },
       "/api/v1/template/delete-template": new ApiError("the template has live instances: delete or unlink them first", 409),
     });
-    renderPage("/org/templates/t1");
+    renderPage("/templates/t1");
     await user.click(await screen.findByRole("button", { name: "Delete template" }));
     await user.click(screen.getByRole("button", { name: "Delete" }));
     await waitFor(() =>
@@ -302,7 +302,7 @@ describe("TemplatePage", () => {
 
   it("shows Not found for another org's template, and retries other failures", async () => {
     fakeAPI({ "/api/v1/template/get-template": new ApiError("template not found", 404), "/api/v1/instance/get-instances": { instances: [] } });
-    renderPage("/org/templates/t1");
+    renderPage("/templates/t1");
     expect(await screen.findByText("Template not found")).toBeInTheDocument();
     vi.unstubAllGlobals();
 
@@ -312,7 +312,7 @@ describe("TemplatePage", () => {
       "/api/v1/template/get-template": () => (fail ? new Error("database down") : view(3)),
       "/api/v1/instance/get-instances": { instances: [] },
     });
-    renderPage("/org/templates/t2");
+    renderPage("/templates/t2");
     expect(await screen.findByText("database down")).toBeInTheDocument();
     fail = false;
     await user.click(screen.getByRole("button", { name: "Retry" }));
@@ -321,7 +321,7 @@ describe("TemplatePage", () => {
 
   it("opens prefilled from Save as template, with its notes", async () => {
     const draft = draftFromBody("shop-front", BODY);
-    renderPage("/org/templates/new", {
+    renderPage("/templates/new", {
       draft,
       notes: ["Redirects aren't part of templates; they were left out."],
       appName: "Shop front",
@@ -362,7 +362,7 @@ describe("TemplatePage", () => {
         return { instance: at(3), request_id: "", warnings: [] };
       },
     });
-    renderPage("/org/templates/t1?tab=instances");
+    renderPage("/templates/t1?tab=instances");
     await user.click(await screen.findByRole("button", { name: "Upgrade" }));
     await user.click(await screen.findByRole("button", { name: "Upgrade to r3" }));
     await waitFor(() => expect(screen.queryByRole("button", { name: "Upgrade" })).not.toBeInTheDocument());
@@ -389,7 +389,7 @@ describe("TemplatePage", () => {
       "/api/v1/rollout/get-rollouts": { rollouts: [] },
       "/api/v1/template/upgrade-instances": rollout({ state: "queued", current_app_id: "", done: 0, skipped: 0, total: 0 }),
     });
-    renderPage("/org/templates/t1?tab=instances");
+    renderPage("/templates/t1?tab=instances");
     await user.click(await screen.findByRole("button", { name: "Upgrade all to r3" }));
     await user.click(screen.getByRole("button", { name: "Upgrade all" }));
     expect(await screen.findByText("Upgrade to r3 queued…")).toBeInTheDocument();
@@ -411,7 +411,7 @@ describe("TemplatePage", () => {
       "/api/v1/instance/get-instances": { instances: [{ key: "k1", server_id: "s1", app_id: "a1", revision: 1, state: "created", parameters: {} }] },
       "/api/v1/template/upgrade-instances": Object.assign(new Error("an upgrade of this template is already running"), { status: 409 }),
     });
-    renderPage("/org/templates/t1?tab=instances");
+    renderPage("/templates/t1?tab=instances");
     await user.click(await screen.findByRole("button", { name: "Upgrade all to r3" }));
     await user.click(screen.getByRole("button", { name: "Upgrade all" }));
     await waitFor(() =>

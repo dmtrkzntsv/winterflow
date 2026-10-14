@@ -60,7 +60,7 @@ describe("BackupStorageDialog", () => {
   it("points to Settings → Storages when there are none", async () => {
     renderDialog(async () => []);
     const link = await screen.findByRole("link", { name: "Add a storage in Settings → Storages" });
-    expect(link).toHaveAttribute("href", "/server/srv-1/settings?tab=storages");
+    expect(link).toHaveAttribute("href", "/server/srv-1/settings/storages");
     expect(screen.getByRole("button", { name: "Turn on" })).toBeDisabled();
   });
 

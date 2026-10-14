@@ -13,12 +13,12 @@ const notifications = { connected: true, subscribe: () => () => {}, waitFor: vi.
 
 function renderPage() {
   return render(
-    <MemoryRouter initialEntries={["/org/templates"]}>
+    <MemoryRouter initialEntries={["/templates"]}>
       <NotificationsContext.Provider value={notifications}>
         <Routes>
-          <Route path="/org/templates" element={<OrgTemplatesPage />} />
-          <Route path="/org/templates/new" element={<p>new template</p>} />
-          <Route path="/org/templates/:id" element={<p>template page</p>} />
+          <Route path="/templates" element={<OrgTemplatesPage />} />
+          <Route path="/templates/new" element={<p>new template</p>} />
+          <Route path="/templates/:id" element={<p>template page</p>} />
         </Routes>
       </NotificationsContext.Provider>
     </MemoryRouter>,

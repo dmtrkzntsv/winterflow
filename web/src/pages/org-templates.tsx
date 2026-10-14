@@ -11,6 +11,7 @@ import { useTemplatesApi } from "@/hooks/use-templates-api";
 import { useAppBreadcrumbs } from "@/layouts/use-app-layout";
 import { instancesLabel, type TemplateSummary } from "@/lib/templates";
 import { relativeTime } from "@/lib/utils";
+import { NEW_TEMPLATE_PATH, templatePath } from "@/lib/routes";
 
 const BREADCRUMBS = [{ label: "Organization" }, { label: "Templates" }];
 
@@ -37,7 +38,7 @@ export default function OrgTemplatesPage() {
             keep its files until you unlink them.
           </CardDescription>
         </div>
-        <Button size="sm" onClick={() => navigate("/org/templates/new")}>
+        <Button size="sm" onClick={() => navigate(NEW_TEMPLATE_PATH)}>
           <Plus className="size-4" /> Add template
         </Button>
       </CardHeader>
@@ -56,7 +57,7 @@ export default function OrgTemplatesPage() {
           <ul className="divide-y rounded-md border">
             {list.map((t) => (
               <li key={t.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3 text-sm">
-                <Link to={`/org/templates/${t.id}`} className="font-medium hover:underline">
+                <Link to={templatePath(t.id)} className="font-medium hover:underline">
                   {t.name}
                 </Link>
                 <span className="text-muted-foreground">r{t.latest_revision}</span>

@@ -31,7 +31,7 @@ describe("HomePage", () => {
       <MemoryRouter>
         <Routes>
           <Route path="/" element={<HomePage />} />
-          <Route path="/create-app/template" element={<p>from template</p>} />
+          <Route path="/new" element={<p>from template</p>} />
         </Routes>
       </MemoryRouter>,
     );

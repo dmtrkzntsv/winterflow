@@ -28,6 +28,7 @@ import {
   type HostPreview,
 } from "@/lib/template-params";
 import { ApiError, sealSecrets, type TemplateSummary, type TemplateView, type UpdateInstanceBody } from "@/lib/templates";
+import { TEMPLATES_PATH, serverSettingsSub } from "@/lib/routes";
 
 const BREADCRUMBS = [{ label: "Apps", href: "/" }, { label: "From template" }];
 
@@ -179,7 +180,7 @@ export default function CreateFromTemplatePage() {
     return (
       <EmptyNote className="mx-auto max-w-5xl p-6 text-center">
         The organization has no templates yet.{" "}
-        <Link to="/org/templates" className="underline underline-offset-4">
+        <Link to={TEMPLATES_PATH} className="underline underline-offset-4">
           Add one
         </Link>{" "}
         or save an app as a template from its Settings.
@@ -287,7 +288,7 @@ export default function CreateFromTemplatePage() {
                   {missing ? (
                     <p className="text-xs text-destructive">
                       This server has no storage named {value}.{" "}
-                      <Link to={toServer("/settings?tab=storages")} className="underline underline-offset-4">
+                      <Link to={toServer(serverSettingsSub("storages"))} className="underline underline-offset-4">
                         Add it
                       </Link>{" "}
                       or pick another.

@@ -22,6 +22,7 @@ import { useAppBreadcrumbs } from "@/layouts/use-app-layout";
 import { isActive } from "@/lib/rollouts";
 import { bodyFromDraft, draftFromBody, draftProblem, emptyDraft, type TemplateDraft } from "@/lib/template-draft";
 import { ApiError, type InstanceView, type TemplateView } from "@/lib/templates";
+import { TEMPLATES_PATH, templatePath } from "@/lib/routes";
 
 const TABS = ["editor", "revisions", "instances"] as const;
 
@@ -38,8 +39,8 @@ function sameDraft(d: TemplateDraft, base: TemplateDraft): boolean {
 // the draft, what was left out of it, and the app it was built from.
 export type DraftState = { draft: TemplateDraft; notes: string[]; appName: string };
 
-// TemplatePage is one template (/org/templates/:templateId) or a new one
-// (/org/templates/new, optionally prefilled by Save as template): its
+// TemplatePage is one template (/templates/:templateId) or a new one
+// (/templates/new, optionally prefilled by Save as template): its
 // editor, where Save adds a revision, its revisions with their changes and
 // the apps it runs as. The tab lives in ?tab=.
 export default function TemplatePage() {
@@ -68,7 +69,7 @@ export default function TemplatePage() {
   const [conflict, setConflict] = useState<number | null>(null);
 
   const breadcrumbs = useMemo(
-    () => [{ label: "Templates", href: "/org/templates" }, { label: view?.name ?? (templateId ? "Template" : "Add template") }],
+    () => [{ label: "Templates", href: TEMPLATES_PATH }, { label: view?.name ?? (templateId ? "Template" : "Add template") }],
     [view?.name, templateId],
   );
   useAppBreadcrumbs(breadcrumbs);
@@ -153,7 +154,7 @@ export default function TemplatePage() {
       }
       setNote("");
       if (!view) {
-        navigate(`/org/templates/${saved.id}`, { replace: true });
+        navigate(templatePath(saved.id), { replace: true });
         return;
       }
       await load(false);
@@ -175,7 +176,7 @@ export default function TemplatePage() {
     try {
       await api.deleteTemplate(view.id);
       toast.success(`Template ${view.name} deleted`);
-      navigate("/org/templates");
+      navigate(TEMPLATES_PATH);
     } catch (e) {
       toast.error("Couldn't delete the template", { description: e instanceof Error ? e.message : undefined });
     }

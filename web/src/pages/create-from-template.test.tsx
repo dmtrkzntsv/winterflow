@@ -77,13 +77,13 @@ function accepted(api: ReturnType<typeof fakeAPI>, path = "/api/v1/instance/crea
 
 function renderPage() {
   return render(
-    <MemoryRouter initialEntries={["/server/s1/create-app/template"]}>
+    <MemoryRouter initialEntries={["/server/s1/new"]}>
       <NotificationsContext.Provider value={notifications}>
         <Routes>
           <Route element={<Outlet />}>
-            <Route path="/server/s1/create-app/template" element={<CreateFromTemplatePage />} />
+            <Route path="/server/s1/new" element={<CreateFromTemplatePage />} />
             <Route path="/server/s1/app/:appId" element={<p>the new app</p>} />
-            <Route path="/org/templates" element={<p>templates</p>} />
+            <Route path="/templates" element={<p>templates</p>} />
           </Route>
         </Routes>
       </NotificationsContext.Provider>
@@ -265,7 +265,7 @@ describe("CreateFromTemplatePage", () => {
   it("points to Templates when the org has none, and shows load failures", async () => {
     fakeAPI(routes({ "/api/v1/template/get-templates": { templates: [] } }));
     renderPage();
-    expect(await screen.findByRole("link", { name: "Add one" })).toHaveAttribute("href", "/org/templates");
+    expect(await screen.findByRole("link", { name: "Add one" })).toHaveAttribute("href", "/templates");
     vi.unstubAllGlobals();
 
     fakeAPI(routes({ "/api/v1/template/get-template": new Error("template not found") }));

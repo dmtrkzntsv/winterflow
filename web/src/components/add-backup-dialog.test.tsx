@@ -95,7 +95,7 @@ describe("AddBackupDialog", () => {
     const user = userEvent.setup({ delay: null });
     const onAdd = renderDialog(targets, async () => []);
     const link = await screen.findByRole("link", { name: "Add storage" });
-    expect(link).toHaveAttribute("href", "/server/srv-1/settings?tab=storages");
+    expect(link).toHaveAttribute("href", "/server/srv-1/settings/storages");
     expect(screen.queryByLabelText("Storage")).not.toBeInTheDocument();
     await user.selectOptions(screen.getByLabelText("Where the data is"), "volume:data");
     expect(screen.getByRole("button", { name: "Add backup" })).toBeDisabled();

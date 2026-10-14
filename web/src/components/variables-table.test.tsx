@@ -74,7 +74,7 @@ describe("VariablesTable", () => {
     expect(within(org).getByText("overridden")).toBeInTheDocument();
     expect(within(org).getByText("missing here")).toBeInTheDocument();
     expect(within(org).queryByRole("button", { name: /^Edit|^Delete/ })).not.toBeInTheDocument();
-    expect(within(org).getByRole("link", { name: "Manage org variables" })).toHaveAttribute("href", "/org/variables");
+    expect(within(org).getByRole("link", { name: "Manage shared variables" })).toHaveAttribute("href", "/settings/variables");
     const builtins = screen.getByRole("region", { name: "Built-in" });
     expect(within(builtins).getByText("alpha")).toBeInTheDocument();
     expect(within(builtins).getByText("set by the agent")).toBeInTheDocument();

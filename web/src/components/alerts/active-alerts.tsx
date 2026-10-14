@@ -6,6 +6,7 @@ import { useActiveAlerts } from "@/hooks/use-alerts";
 import { useNow } from "@/hooks/use-now";
 import { activeText, alertTargetPath, sinceText } from "@/lib/alerts";
 import { cn } from "@/lib/utils";
+import { INBOX_PATH } from "@/lib/routes";
 
 // FiringBadge is the small red count of firing alerts on a server card or
 // an app header. Nothing when there are none.
@@ -54,7 +55,7 @@ export function ActiveAlertsStrip() {
           <Flame className="size-4" aria-hidden />
           {data.length} active alert{data.length === 1 ? "" : "s"}
         </h2>
-        <Link to="/org/alerts" className="text-xs text-muted-foreground hover:text-foreground hover:underline">
+        <Link to={INBOX_PATH} className="text-xs text-muted-foreground hover:text-foreground hover:underline">
           View history
         </Link>
       </div>

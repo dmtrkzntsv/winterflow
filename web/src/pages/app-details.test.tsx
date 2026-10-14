@@ -75,7 +75,7 @@ function renderPage(
             >
               <Route path="/app/:appId" element={<AppDetailsPage />} />
               <Route path="/server/srv-1" element={<p>the apps</p>} />
-              <Route path="/org/templates/new" element={<NewTemplate />} />
+              <Route path="/templates/new" element={<NewTemplate />} />
             </Route>
           </Routes>
         </AppsContext.Provider>
@@ -205,7 +205,7 @@ describe("AppDetailsPage of a template instance", () => {
     const user = userEvent.setup();
     const api = instanceAPI(INSTANCE, { "/api/v1/instance/upgrade-instance": { instance: INSTANCE, request_id: "", warnings: [] } });
     renderPage("/app/a1?tab=backups", {}, managed);
-    expect(await screen.findByRole("link", { name: "twillingate · r2" })).toHaveAttribute("href", "/org/templates/t1");
+    expect(await screen.findByRole("link", { name: "twillingate · r2" })).toHaveAttribute("href", "/templates/t1");
     expect(screen.getByText("r3 available")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Upgrade to r3" }));
     const dialog = await screen.findByRole("dialog");

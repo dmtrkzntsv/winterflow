@@ -19,6 +19,7 @@ import {
   type InheritedVariable,
   type SharedVariable,
 } from "@/lib/shared-variables";
+import { settingsPath } from "@/lib/routes";
 
 export type VariablesTableProps = {
   title: string;
@@ -143,8 +144,8 @@ export function VariablesTable({
         <section aria-label="Inherited from org" className="space-y-2">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-medium">Inherited from org</h3>
-            <Link to="/org/variables" className="text-sm underline-offset-4 hover:underline">
-              Manage org variables
+            <Link to={settingsPath("variables")} className="text-sm underline-offset-4 hover:underline">
+              Manage shared variables
             </Link>
           </div>
           {inherited.length === 0 ? (

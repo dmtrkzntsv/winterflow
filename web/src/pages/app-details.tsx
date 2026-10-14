@@ -18,7 +18,7 @@ import { Button } from "@/components/ui/button";
 import { TabsContent } from "@/components/ui/tabs";
 import { UnderlineTabs } from "@/components/underline-tabs";
 import { useTabParam } from "@/hooks/use-tab-param";
-import { LEGACY_APP_TABS } from "@/lib/routes";
+import { LEGACY_APP_TABS, NEW_TEMPLATE_PATH, templatePath } from "@/lib/routes";
 import { Spinner } from "@/components/ui/spinner";
 import { Input } from "@/components/ui/input";
 import {
@@ -200,7 +200,7 @@ export default function AppDetailsPage() {
             {inst ? (
               <span className="inline-flex items-center gap-2">
                 <Link
-                  to={`/org/templates/${inst.template_id}`}
+                  to={templatePath(inst.template_id)}
                   className="rounded-md border px-1.5 py-0.5 text-xs font-medium text-foreground hover:bg-muted"
                 >
                   {inst.template_name} · r{inst.revision}
@@ -677,7 +677,7 @@ function SettingsTab({
     setBusy(true);
     try {
       const state: DraftState = { ...templateFromApp(appId, await getApp(appId)), appName: appLabel(name, appId) };
-      navigate("/org/templates/new", { state });
+      navigate(NEW_TEMPLATE_PATH, { state });
     } catch (e) {
       toast.error("Couldn't read the app", { description: e instanceof Error ? e.message : undefined });
       setBusy(false);

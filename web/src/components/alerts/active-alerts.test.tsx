@@ -28,6 +28,7 @@ describe("ActiveAlertsStrip", () => {
       </MemoryRouter>,
     );
     const strip = await screen.findByRole("region", { name: "Active alerts" });
+    expect(within(strip).getByRole("link", { name: "View history" })).toHaveAttribute("href", "/inbox");
     expect(strip).toHaveTextContent("1 active alert");
     expect(within(strip).getByRole("link", { name: "prod-1" })).toHaveAttribute("href", "/server/s1/monitoring");
     expect(strip).toHaveTextContent("CPU 93% > 90%");

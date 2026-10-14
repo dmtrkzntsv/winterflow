@@ -11,6 +11,7 @@ import { ParameterFields } from "@/components/parameter-fields";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
 import { fieldErrors, splitValues } from "@/lib/template-params";
 import { sealSecrets, type InstanceView, type TemplateView } from "@/lib/templates";
+import { templatePath } from "@/lib/routes";
 
 // storedValues are the form's starting values: the plain values the
 // instance holds (secrets start blank: blank keeps them).
@@ -80,7 +81,7 @@ export function InstancePanel({
       <StickyActionBar className="mb-6">
         <p className="mr-auto text-sm text-muted-foreground">
           Managed by template{" "}
-          <Link to={`/org/templates/${instance.template_id}`} className="font-medium text-foreground hover:underline">
+          <Link to={templatePath(instance.template_id)} className="font-medium text-foreground hover:underline">
             {instance.template_name}
           </Link>{" "}
           r{instance.revision}. Change the files in the template, or unlink the app in Settings.

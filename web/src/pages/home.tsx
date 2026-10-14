@@ -11,6 +11,7 @@ import { AppGrid } from "@/components/app-grid"
 import { isStandalone } from "@/config"
 import { useServers } from "@/context/use-servers"
 import { useServerPath } from "@/context/use-server-path"
+import { newAppSub } from "@/lib/routes"
 
 export default function HomePage() {
   const navigate = useNavigate()
@@ -31,10 +32,10 @@ export default function HomePage() {
       {/* The apps page: title, Add app and From template share one row. */}
       <div className="flex items-center justify-between gap-3">
         <h1 className="mr-auto text-2xl font-semibold tracking-tight">Apps</h1>
-        <Button size="sm" variant="outline" onClick={() => navigate(toServer("/create-app/template"))}>
+        <Button size="sm" variant="outline" onClick={() => navigate(toServer(newAppSub("template")))}>
           <LayoutTemplate className="size-4" /> From template
         </Button>
-        <Button size="sm" onClick={() => navigate(toServer("/create-app"))}>
+        <Button size="sm" onClick={() => navigate(toServer(newAppSub()))}>
           <Plus className="size-4" /> Add app
         </Button>
       </div>

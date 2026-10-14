@@ -42,6 +42,7 @@ describe("TargetAlertsCard", () => {
     });
     renderCard();
     const firing = await screen.findByRole("list", { name: "Firing" });
+    expect(screen.getByRole("link", { name: "Manage rules" })).toHaveAttribute("href", "/settings/notifications");
     // The app's alert belongs to the app's card, not the server's.
     expect(within(firing).getAllByRole("listitem")).toHaveLength(1);
     expect(firing).toHaveTextContent("CPU 97% > 95%");

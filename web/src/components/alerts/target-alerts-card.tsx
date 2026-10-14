@@ -20,6 +20,7 @@ import {
   type Rule,
 } from "@/lib/alerts";
 import { cn } from "@/lib/utils";
+import { settingsPath } from "@/lib/routes";
 
 type Props = {
   serverId: string;
@@ -75,7 +76,7 @@ export function TargetAlertsCard({ serverId, appId = "", targetLabel }: Props) {
     <Card data-slot="widget-card" className="flex min-w-0 flex-col gap-3 p-3.5" role="region" aria-label="Alerts">
       <div className="flex items-center justify-between gap-3">
         <h2 className="text-sm font-medium">Alerts</h2>
-        <Link to="/org/alerts?tab=rules" className="text-xs text-muted-foreground hover:text-foreground hover:underline">
+        <Link to={settingsPath("notifications")} className="text-xs text-muted-foreground hover:text-foreground hover:underline">
           Manage rules
         </Link>
       </div>

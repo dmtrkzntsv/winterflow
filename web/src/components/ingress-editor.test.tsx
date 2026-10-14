@@ -145,7 +145,7 @@ describe("IngressEditor", () => {
     expect(screen.getByLabelText("Hostname")).toHaveAttribute("aria-describedby", hint.id);
     // A new tab, so following it doesn't lose the unsaved form.
     const link = screen.getByRole("link", { name: /Add it/ });
-    expect(link).toHaveAttribute("href", "/server/srv-1/settings?tab=domains");
+    expect(link).toHaveAttribute("href", "/server/srv-1/settings/domains");
     expect(link).toHaveAttribute("target", "_blank");
     // Nothing covers it: the stored flag keeps its default.
     expect(ssl()).toEqual([["shop.other.app", true]]);

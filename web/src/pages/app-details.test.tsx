@@ -91,6 +91,14 @@ describe("AppDetailsPage", () => {
     for (const f of Object.values(toast)) f.mockReset();
   });
 
+  it("opens Configuration from its new name and from the old ?tab=editor", async () => {
+    const { unmount } = renderPage("/app/a1?tab=configuration");
+    expect(await screen.findByRole("tab", { name: "Configuration" })).toHaveAttribute("aria-selected", "true");
+    unmount();
+    renderPage("/app/a1?tab=editor");
+    expect(await screen.findByRole("tab", { name: "Configuration" })).toHaveAttribute("aria-selected", "true");
+  });
+
   it("marks the Backups tab when a backup is late or failing", async () => {
     renderPage("/app/a1?tab=backups", { a1: [{ name: "db", state: "failing", last_error: "disk full" }] });
     const tab = await screen.findByRole("tab", { name: /Backups/ });

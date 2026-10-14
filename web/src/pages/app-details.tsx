@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ArrowUpCircle,
   ExternalLink,
@@ -15,7 +15,10 @@ import { toast } from "sonner";
 import { useAppBreadcrumbs } from "@/layouts/use-app-layout";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { TabsContent } from "@/components/ui/tabs";
+import { UnderlineTabs } from "@/components/underline-tabs";
+import { useTabParam } from "@/hooks/use-tab-param";
+import { LEGACY_APP_TABS } from "@/lib/routes";
 import { Spinner } from "@/components/ui/spinner";
 import { Input } from "@/components/ui/input";
 import {
@@ -68,33 +71,18 @@ import { NotFound } from "@/components/not-found";
 
 const base = apiBaseUrl.endsWith("/") ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
 
-const TABS = ["logs", "metrics", "editor", "backups", "history", "settings"] as const;
-
-const tabTriggerClass =
-  "-mb-px rounded-none border-b-2 border-transparent px-0.5 pt-1 sm:px-1 pb-2.5 text-muted-foreground shadow-none hover:text-foreground data-[state=active]:border-foreground data-[state=active]:bg-transparent data-[state=active]:text-foreground data-[state=active]:shadow-none";
+// History stays a tab until phase 2 turns it into a side sheet.
+const TABS = ["logs", "metrics", "configuration", "backups", "history", "settings"] as const;
+type Tab = (typeof TABS)[number];
 
 export default function AppDetailsPage() {
   const { appId } = useParams();
   const navigate = useNavigate();
   const toServer = useServerPath();
-  const [searchParams, setSearchParams] = useSearchParams();
   const { apps, statusByApp, backupsByApp, loading, control, remove, rename, refresh } = useApps();
   const templatesApi = useTemplatesApi();
 
-  const tabParam = searchParams.get("tab") ?? "logs";
-  const tab = (TABS as readonly string[]).includes(tabParam)
-    ? tabParam
-    : "logs";
-  const setTab = (next: string) => {
-    setSearchParams(next === "logs" ? {} : { tab: next }, { replace: true });
-  };
-  // A tab opened by link may sit past the bar's scrolled edge on a phone.
-  const tabBar = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    tabBar.current
-      ?.querySelector<HTMLElement>('[role="tab"][data-state="active"]')
-      ?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
-  }, [tab]);
+  const [tab, setTab] = useTabParam<Tab>(TABS, "logs", { aliases: LEGACY_APP_TABS });
 
   const app = useMemo(() => apps.find((a) => a.id === appId), [apps, appId]);
   const lookup = useAppInstance(app);
@@ -285,45 +273,40 @@ export default function AppDetailsPage() {
 
       <AppMetricBlocks serverId={app.serverId} appId={app.id} />
 
-      <Tabs value={tab} onValueChange={setTab}>
-        {/* Six tabs are wider than a phone: the bar scrolls inside itself
-            instead of widening the page. */}
-        <div ref={tabBar} className="-mx-1 max-w-full overflow-x-auto px-1">
-          <TabsList className="h-auto w-max min-w-full justify-start gap-6 rounded-none border-b bg-transparent p-0">
-            <TabsTrigger value="logs" className={tabTriggerClass}>
-              Logs
-            </TabsTrigger>
-            <TabsTrigger value="metrics" className={tabTriggerClass}>
-              Metrics
-            </TabsTrigger>
-            <TabsTrigger value="editor" className={tabTriggerClass}>
-              Configuration
-            </TabsTrigger>
-            <TabsTrigger value="backups" className={tabTriggerClass}>
-              Backups
-              {needsAttention(backupsByApp?.[app.id]) ? (
-                <TriangleAlert
-                  role="img"
-                  aria-label="A backup is late or failing"
-                  className="ml-1.5 inline size-3.5 align-text-bottom text-amber-500"
-                />
-              ) : null}
-            </TabsTrigger>
-            <TabsTrigger value="history" className={tabTriggerClass}>
-              History
-            </TabsTrigger>
-            <TabsTrigger value="settings" className={tabTriggerClass}>
-              Settings
-            </TabsTrigger>
-          </TabsList>
-        </div>
+      <UnderlineTabs<Tab>
+        value={tab}
+        onValueChange={setTab}
+        label="App sections"
+        items={[
+          { value: "logs", label: "Logs" },
+          { value: "metrics", label: "Metrics" },
+          { value: "configuration", label: "Configuration" },
+          {
+            value: "backups",
+            label: (
+              <>
+                Backups
+                {needsAttention(backupsByApp?.[app.id]) ? (
+                  <TriangleAlert
+                    role="img"
+                    aria-label="A backup is late or failing"
+                    className="ml-1.5 inline size-3.5 align-text-bottom text-status-warn"
+                  />
+                ) : null}
+              </>
+            ),
+          },
+          { value: "history", label: "History" },
+          { value: "settings", label: "Settings" },
+        ]}
+      >
         <TabsContent value="logs" className="mt-6">
           <LogsTab appId={app.id} />
         </TabsContent>
         <TabsContent value="metrics" className="mt-6">
           <AppMetricsTab serverId={app.serverId} appId={app.id} appName={appLabel(app.name, app.id)} />
         </TabsContent>
-        <TabsContent value="editor" className="mt-0">
+        <TabsContent value="configuration" className="mt-0">
           <ConfigurationTab appId={app.id} ownership={ownership} onSaved={reloadManaged} />
         </TabsContent>
         <TabsContent value="backups" className="mt-6">
@@ -346,7 +329,7 @@ export default function AppDetailsPage() {
             }}
           />
         </TabsContent>
-      </Tabs>
+      </UnderlineTabs>
     </div>
   );
 }

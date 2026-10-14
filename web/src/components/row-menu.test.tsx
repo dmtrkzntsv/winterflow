@@ -19,6 +19,8 @@ describe("RowMenu", () => {
     await user.click(trigger);
     expect(await screen.findAllByRole("menuitem")).toHaveLength(2);
     expect(screen.getByRole("menuitem", { name: "Remove" })).toHaveClass("text-destructive");
+    // Every item is a 40px tap target on phones (the vendored item's own class).
+    for (const item of screen.getAllByRole("menuitem")) expect(item).toHaveClass("max-sm:min-h-10");
     await user.click(screen.getByRole("menuitem", { name: "Edit" }));
     expect(edit).toHaveBeenCalledWith(trigger);
     expect(remove).not.toHaveBeenCalled();

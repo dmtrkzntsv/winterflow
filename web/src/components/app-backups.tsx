@@ -401,18 +401,17 @@ function BackupRow({
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             {b.storage ? null : (
-              <DropdownMenuItem disabled={busy} className="max-sm:min-h-10" onSelect={() => menuRef.current && onSetUp(menuRef.current)}>
+              <DropdownMenuItem disabled={busy} onSelect={() => menuRef.current && onSetUp(menuRef.current)}>
                 Set up…
               </DropdownMenuItem>
             )}
             {builtin ? (
               <>
-                <DropdownMenuItem disabled={runDisabled} className="max-sm:min-h-10" onSelect={onRun}>
+                <DropdownMenuItem disabled={runDisabled} onSelect={onRun}>
                   Back up now
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   disabled={!b.storage || busy}
-                  className="max-sm:min-h-10"
                   onSelect={() => menuRef.current && onPoints(menuRef.current)}
                 >
                   <span className="grid">
@@ -422,7 +421,7 @@ function BackupRow({
                 </DropdownMenuItem>
               </>
             ) : null}
-            <DropdownMenuItem disabled={busy} className="max-sm:min-h-10" onSelect={() => menuRef.current && onEdit(menuRef.current)}>
+            <DropdownMenuItem disabled={busy} onSelect={() => menuRef.current && onEdit(menuRef.current)}>
               Edit…
             </DropdownMenuItem>
           </DropdownMenuContent>

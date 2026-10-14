@@ -155,6 +155,15 @@ export function formatAge(ms: number): string {
   return `${Math.floor(h / 24)}d`;
 }
 
+// lastSeenText is a server's "last seen 5m ago" (or "last seen just now"),
+// from the timestamp itself. Empty for a server that never connected.
+export function lastSeenText(lastSeenAt: string | null, now: number): string {
+  const seen = lastSeenAt ? new Date(lastSeenAt).getTime() : NaN;
+  if (Number.isNaN(seen)) return "";
+  const age = formatAge(now - seen);
+  return age === "just now" ? "last seen just now" : `last seen ${age} ago`;
+}
+
 export type Presence = {
   // tone picks the dot: live (emerald), offline (muted), waiting (faint).
   tone: "live" | "offline" | "waiting";

@@ -130,7 +130,7 @@ export function LogsView({
   };
 
   return (
-    <div className="relative flex h-[calc(100svh-18.5rem)] min-h-80 lg:h-[calc(100svh-13.75rem)] flex-col overflow-hidden rounded-lg border border-console-border bg-console text-console-foreground">
+    <div className="relative flex min-h-80 grow basis-0 flex-col overflow-hidden rounded-lg border border-console-border bg-console text-console-foreground">
       <div className="flex flex-wrap items-center gap-2 border-b border-console-border px-3 py-2">
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 text-xs">
           {containers.length > 1 ? (

@@ -65,7 +65,10 @@ function GeneralSection({ app, ownership, running }: { app: App; ownership: Owne
   const before = { ...shown, description: description ?? "" };
   const after = { ...form, description: description === null ? "" : form.description };
   const dirty =
-    after.name !== before.name || after.icon !== before.icon || after.color !== before.color || after.description !== before.description;
+    after.name.trim() !== before.name.trim() ||
+    after.icon !== before.icon ||
+    after.color !== before.color ||
+    after.description !== before.description;
   const canSave = dirty && form.name.trim() !== "" && !saving;
 
   const save = async () => {
@@ -108,7 +111,6 @@ function GeneralSection({ app, ownership, running }: { app: App; ownership: Owne
               value={form.icon}
               color={form.color}
               name={form.name}
-              id={app.id}
               disabled={managed || saving}
               onChange={(icon) => setForm((f) => ({ ...f, icon }))}
             />

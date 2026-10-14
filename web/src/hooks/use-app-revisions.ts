@@ -35,8 +35,15 @@ export function useAppRevisions(appId: string, enabled = true, cacheKey?: string
     if (enabled) setReloading(true);
   }
 
-  // A deploy or rollback elsewhere changes the epoch, which reads again.
+  // A deploy or rollback elsewhere changes the epoch, which reads again:
+  // until that read lands, what is shown is not settled (adjusted during
+  // render, like enabling).
   const epoch = useRevisionsEpoch(appId);
+  const [seenEpoch, setSeenEpoch] = useState(epoch);
+  if (seenEpoch !== epoch) {
+    setSeenEpoch(epoch);
+    if (enabled) setReloading(true);
+  }
 
   // read is the one place the agent is asked, with the cache in front.
   const read = useCallback(

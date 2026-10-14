@@ -132,11 +132,11 @@ export function HistoryPanel({ appId, ownership }: { appId: string; ownership: O
                   </time>
                 </div>
                 {isUndeployedDraft ? (
-                  <Button size="sm" onClick={() => void doDeploy()} disabled={busy}>
+                  <Button size="sm" onClick={() => void doDeploy()} disabled={busy || loading}>
                     Deploy draft
                   </Button>
                 ) : !isCurrent && !templated ? (
-                  <Button size="sm" variant="ghost" disabled={busy} onClick={() => setTarget(rev)}>
+                  <Button size="sm" variant="ghost" disabled={busy || loading} onClick={() => setTarget(rev)}>
                     <History className="size-4" aria-hidden /> Roll back
                   </Button>
                 ) : null}

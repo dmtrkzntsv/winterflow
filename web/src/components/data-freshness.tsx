@@ -41,7 +41,7 @@ export function DataFreshness({
         aria-busy={busy}
         aria-disabled={busy}
         onClick={() => void refresh()}
-        className="size-6 text-muted-foreground hover:text-foreground"
+        className="size-6 max-sm:size-10 text-muted-foreground hover:text-foreground"
       >
         <RefreshCw className={cn("size-3.5", busy && "animate-spin")} aria-hidden />
       </Button>

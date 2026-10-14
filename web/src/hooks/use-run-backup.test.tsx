@@ -95,7 +95,15 @@ describe("useBackUpNow", () => {
       end = trackActivity("a1", "database", "restore");
     });
     expect(result.current.busy).toBe(true);
+    expect(result.current.restoring).toBe(true);
     act(() => end());
     await waitFor(() => expect(result.current.busy).toBe(false));
+    expect(result.current.restoring).toBe(false);
+    act(() => {
+      end = trackActivity("a1", "database", "backup");
+    });
+    expect(result.current.busy).toBe(true);
+    expect(result.current.restoring).toBe(false);
+    act(() => end());
   });
 });

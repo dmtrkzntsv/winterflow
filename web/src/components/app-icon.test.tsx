@@ -5,15 +5,21 @@ import { AppIcon } from "@/components/app-icon";
 
 describe("AppIcon", () => {
   it("shows the name's initial", () => {
-    expect(render(<AppIcon name="nextcloud" id="01a12cb2" />).container).toHaveTextContent("N");
+    expect(render(<AppIcon name="nextcloud" />).container).toHaveTextContent("N");
   });
 
-  it("falls back to the id for an app without a name", () => {
-    expect(render(<AppIcon name="" id="01a12cb2" />).container).toHaveTextContent(/^0$/);
-    expect(render(<AppIcon id="b7e1" />).container).toHaveTextContent(/^B$/);
+  it("shows a generic box, never a character of the id, for an app without a name", () => {
+    for (const name of [undefined, "", "   "]) {
+      const { container, unmount } = render(<AppIcon name={name} />);
+      expect(container).toHaveTextContent(/^$/);
+      expect(container.querySelector("svg")).toBeInTheDocument();
+      unmount();
+    }
   });
 
-  it("shows ? only when neither is known", () => {
-    expect(render(<AppIcon />).container).toHaveTextContent(/^\?$/);
+  it("shows the chosen icon over the initial", () => {
+    const { container } = render(<AppIcon name="nextcloud" icon="Box" />);
+    expect(container.querySelector("svg")).toBeInTheDocument();
+    expect(container).not.toHaveTextContent("N");
   });
 });

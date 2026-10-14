@@ -54,11 +54,10 @@ describe("AppMetricBlocks", () => {
     expect(screen.getByTestId("kpi-Network")).toHaveTextContent("2.0 KB/s");
   });
 
-  it("lays the four blocks out in pairs for a half-width widget", () => {
-    render(<AppMetricBlocks serverId="s1" appId="a1" layout="pair" />);
+  it("lays the four blocks out in pairs", () => {
+    render(<AppMetricBlocks serverId="s1" appId="a1" />);
     const grid = screen.getByTestId("kpi-CPU").parentElement!;
     expect(grid).toHaveClass("grid-cols-2");
-    expect(grid).not.toHaveClass("lg:grid-cols-4");
     expect(within(grid).getAllByTestId(/^kpi-/)).toHaveLength(4);
   });
 
@@ -88,7 +87,6 @@ describe("AppMetricBlocks", () => {
     expect(screen.getByText("Container metrics are unavailable on this host")).toBeInTheDocument();
     expect(screen.queryByTestId("kpi-CPU")).not.toBeInTheDocument();
   });
-
 
   it("still shows disk when container metrics are unavailable", () => {
     data = { interval_seconds: 60, points: [{ t: 0, unavailable: 1, disk: 2 * 1024 ** 3 }] };

@@ -53,13 +53,14 @@ const keepFields = (k: EffectiveBackup["keep"]) => ({
 });
 
 // BackupEditDialog edits a sqlite or files backup's schedule and, under
-// Advanced, its retention and location. For a backup of the compose file each part is badged "from
-// template" or "changed", and "Reset to template" drops the change (it
-// shows the template's value at once and applies it when saved). A backup
-// added here can be removed. The "Back up on schedule" switch turns the
-// backup on or off with the rest (it needs a storage). A custom backup (its
-// own tool runs it) gets only that switch and the storage. The parent remounts it per opening; onSave gets
-// the backup's whole new list entry; error is why the last save was refused,
+// Advanced, its retention and location. For a backup of the compose file
+// each part is badged "from template" or "changed", and "Reset to template"
+// drops the change (it shows the template's value at once and applies it
+// when saved). A backup added here can be removed. The "Back up on
+// schedule" switch turns the backup on or off with the rest (it needs a
+// storage). A custom backup (its own tool runs it) gets only that switch
+// and the storage. The parent remounts it per opening; onSave gets the
+// backup's whole new list entry; error is why the last save was refused,
 // kept in view next to Save. onChangeStorage (when given) opens the storage
 // picker in place of this dialog: the storage is not edited here.
 export function BackupEditDialog({

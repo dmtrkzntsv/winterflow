@@ -270,6 +270,34 @@ describe("AppDetailsPage", () => {
     expect(await screen.findByRole("menuitem", { name: "Back up now" })).not.toHaveAttribute("aria-disabled");
   });
 
+  it("shows in the header what a running action from ⋯ is doing", async () => {
+    const user = userEvent.setup();
+    const control = vi.fn(() => new Promise<void>(() => {}));
+    renderPage("/app/a1?tab=backups", {}, { ctx: { control } });
+    await user.click(await screen.findByRole("button", { name: "More actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Stop" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Stopping…");
+  });
+
+  it("shows in the header that a backup runs or a restore is under way", async () => {
+    let endBackup = () => {};
+    let endRestore = () => {};
+    act(() => {
+      endBackup = trackActivity("a1", "db", "backup");
+    });
+    renderPage("/app/a1?tab=backups");
+    expect(await screen.findByRole("status")).toHaveTextContent("Backing up…");
+    act(() => {
+      endRestore = trackActivity("a1", "db", "restore");
+    });
+    expect(screen.getByRole("status")).toHaveTextContent("Restoring…");
+    act(() => {
+      endRestore();
+      endBackup();
+    });
+    await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
+  });
+
   it("deletes from ⋯ through the one Delete dialog", async () => {
     const user = userEvent.setup();
     renderPage("/app/a1?tab=backups");

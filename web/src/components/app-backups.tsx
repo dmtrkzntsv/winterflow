@@ -236,19 +236,19 @@ export function AppBackups({ appId }: { appId: string }) {
         </p>
       ) : (
         <RowList label="Backups">
-            {list.map((b) => (
-              <BackupRow
-                key={b.name}
-                backup={b}
-                health={healthOf(b.name)}
-                busy={busy !== null || !!restoring || locked}
-                activity={activity[b.name]}
-                onSetUp={(el) => show({ kind: "enable", name: b.name }, el)}
-                onRun={() => void runNow(b.name)}
-                onPoints={(el) => show({ kind: "points", name: b.name }, el)}
-                onEdit={(el) => show({ kind: "edit", name: b.name }, el)}
-              />
-            ))}
+          {list.map((b) => (
+            <BackupRow
+              key={b.name}
+              backup={b}
+              health={healthOf(b.name)}
+              busy={busy !== null || !!restoring || locked}
+              activity={activity[b.name]}
+              onSetUp={(el) => show({ kind: "enable", name: b.name }, el)}
+              onRun={() => void runNow(b.name)}
+              onPoints={(el) => show({ kind: "points", name: b.name }, el)}
+              onEdit={(el) => show({ kind: "edit", name: b.name }, el)}
+            />
+          ))}
         </RowList>
       )}
       {(open?.kind === "enable" || open?.kind === "storage") && current ? (
@@ -358,7 +358,6 @@ function BackupRow({
   const where = [TYPE_LABELS[b.type], locationLabel(b)].filter(Boolean).join(" · ");
   const detail = [b.storage ? `${where} → ${b.storage}` : where, builtin ? scheduleLabel(b.every) : "Its own tool"].join(" · ");
   const runDisabled = !b.enabled || running || busy;
-  const copiesTitle = b.storage ? undefined : "Set up the backup to see its copies: they are stored in its storage";
   return (
     <li className="flex flex-col gap-2 px-4 py-3 transition-colors duration-150 hover:bg-muted/40 max-sm:rounded-xl max-sm:border max-sm:bg-card sm:flex-row sm:items-center sm:gap-4">
       <div className="min-w-0 flex-1">
@@ -413,11 +412,13 @@ function BackupRow({
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   disabled={!b.storage}
-                  title={copiesTitle}
                   className="max-sm:min-h-10"
                   onSelect={() => menuRef.current && onPoints(menuRef.current)}
                 >
-                  Restore…
+                  <span className="grid">
+                    Restore…
+                    {b.storage ? null : <span className="text-xs text-muted-foreground">Set up the backup first: its copies are kept in its storage</span>}
+                  </span>
                 </DropdownMenuItem>
               </>
             ) : null}

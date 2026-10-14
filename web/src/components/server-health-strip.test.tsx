@@ -6,6 +6,14 @@ import { ServerHealthStrip } from "@/components/server-health-strip";
 import type { Server } from "@/context/servers-context-base";
 import type { ServerOverview } from "@/lib/metrics";
 
+let standalone = false;
+vi.mock("@/config", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/config")>()),
+  get isStandalone() {
+    return standalone;
+  },
+}));
+
 let statusByServer: Record<string, "online" | "unknown"> = {};
 let overview: ServerOverview[] = [];
 vi.mock("@/context/use-servers", () => ({ useServers: () => ({ statusByServer }) }));
@@ -56,6 +64,7 @@ function renderStrip(s: Server) {
 
 describe("ServerHealthStrip", () => {
   beforeEach(() => {
+    standalone = false;
     statusByServer = { s1: "online" };
     overview = [sample];
   });
@@ -76,8 +85,40 @@ describe("ServerHealthStrip", () => {
     expect(screen.queryByText(/CPU/)).not.toBeInTheDocument();
   });
 
-  it("says the server is offline and since when", () => {
+  it("claims nothing while this server's liveness is not known yet", () => {
     statusByServer = {};
+    overview = [];
+    renderStrip(server("2026-10-13T10:00:00Z"));
+    const strip = screen.getByRole("region", { name: "Server health" });
+    expect(strip).toHaveTextContent("Checking this server");
+    expect(strip).not.toHaveTextContent("Offline");
+    expect(screen.getByRole("link", { name: "Monitoring" })).toBeInTheDocument();
+  });
+
+  it("takes liveness from the overview when the servers context has none", () => {
+    statusByServer = {};
+    renderStrip(server("2026-10-13T10:00:00Z"));
+    expect(screen.getByRole("region", { name: "Server health" })).toHaveTextContent("CPU 42%");
+  });
+
+  it("leaves out the Disk figure when the sample has no disk", () => {
+    overview = [{ ...sample, latest: { ...sample.latest, server: { ...sample.latest.server, disks: [] } } }];
+    renderStrip(server("2026-10-13T10:00:00Z"));
+    const strip = screen.getByRole("region", { name: "Server health" });
+    expect(strip).toHaveTextContent("CPU 42%");
+    expect(strip).not.toHaveTextContent("Disk");
+  });
+
+  it("treats a standalone server as online without any liveness entry", () => {
+    standalone = true;
+    statusByServer = {};
+    overview = [];
+    renderStrip(server(null));
+    expect(screen.getByRole("region", { name: "Server health" })).toHaveTextContent("No data yet");
+  });
+
+  it("says the server is offline and since when", () => {
+    statusByServer = { s1: "unknown" };
     renderStrip(server(new Date(Date.now() - 5 * 60_000).toISOString()));
     const strip = screen.getByRole("region", { name: "Server health" });
     expect(strip).toHaveTextContent("Offline");
@@ -85,8 +126,14 @@ describe("ServerHealthStrip", () => {
     expect(strip).not.toHaveTextContent("CPU");
   });
 
+  it("says just now for a server that dropped seconds ago", () => {
+    statusByServer = { s1: "unknown" };
+    renderStrip(server(new Date(Date.now() - 5_000).toISOString()));
+    expect(screen.getByRole("region", { name: "Server health" })).toHaveTextContent("last seen just now");
+  });
+
   it("says a server that never connected is still awaited", () => {
-    statusByServer = {};
+    statusByServer = { s1: "unknown" };
     renderStrip(server(null));
     expect(screen.getByRole("region", { name: "Server health" })).toHaveTextContent(
       "Waiting for this server to connect for the first time",

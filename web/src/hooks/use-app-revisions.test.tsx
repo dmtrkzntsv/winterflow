@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppsContext, type AppRevisions, type AppsContextValue } from "@/context/apps-context-base";
 import { useAppRevisions } from "@/hooks/use-app-revisions";
-import { resetRevisionsCache } from "@/lib/revisions";
+import { forgetRevisions, resetRevisionsCache } from "@/lib/revisions";
 
 const revs = (hash: string): AppRevisions => ({ current: hash, deployed: hash, revisions: [{ hash, subject: `at ${hash}`, timestamp: 1 }] });
 
@@ -50,6 +50,19 @@ describe("useAppRevisions", () => {
     await waitFor(() => expect(result.current.data?.current).toBe("a2"));
     await act(async () => first(revs("a1")));
     expect(result.current.data?.current).toBe("a2");
+  });
+
+  it("is loading from the moment the app's history is forgotten, until the new read lands", async () => {
+    let next: (v: AppRevisions) => void = () => {};
+    let calls = 0;
+    const getRevisions = vi.fn(() => (++calls === 1 ? Promise.resolve(revs("one")) : new Promise<AppRevisions>((resolve) => (next = resolve))));
+    const { result } = renderHook(() => useAppRevisions("a1"), { wrapper: wrap(getRevisions as unknown as AppsContextValue["getRevisions"]) });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    act(() => forgetRevisions("a1"));
+    expect(result.current.loading).toBe(true);
+    await act(async () => next(revs("two")));
+    expect(result.current.loading).toBe(false);
+    expect(result.current.data?.current).toBe("two");
   });
 
   it("is loading again from the moment it is enabled again, until the new read lands", async () => {

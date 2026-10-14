@@ -34,6 +34,9 @@ export type AppHeaderProps = {
   onControl: (action: ControlAction) => void;
   onUpdateTemplate: () => void;
   backUpBusy: boolean;
+  // progress says what a running action is doing ("Stopping…"), shown next
+  // to the status; null when nothing runs.
+  progress: string | null;
   onBackUpNow: () => void;
   canSaveAsTemplate: boolean;
   savingTemplate: boolean;
@@ -56,13 +59,19 @@ export function AppHeader(p: AppHeaderProps) {
   return (
     <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
       <div className="flex min-w-0 items-center gap-4">
-        <AppIcon name={app.name} id={app.id} icon={app.icon} color={app.color} className="size-14 shrink-0 rounded-xl text-xl" />
+        <AppIcon name={app.name} icon={app.icon} color={app.color} className="size-14 shrink-0 rounded-xl text-xl" />
         <div className="min-w-0 space-y-1.5">
           <h1 className={cn("truncate text-2xl font-semibold tracking-tight", !named && "text-muted-foreground")}>
             {appLabel(app.name)}
           </h1>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm">
             <StatusPill status={appStatus(p.status)} />
+            {p.progress ? (
+              <span role="status" className="inline-flex items-center gap-1.5 text-muted-foreground">
+                <Spinner className="size-3.5" aria-hidden />
+                {p.progress}
+              </span>
+            ) : null}
             {address ? (
               <a
                 href={address.url}

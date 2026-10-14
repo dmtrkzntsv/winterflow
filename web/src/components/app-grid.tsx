@@ -67,7 +67,7 @@ function AppCard({ app, code, warning, index }: { app: App; code: number | undef
   return (
     <li className="app-card-in relative min-w-0" style={{ animationDelay: `${index * 40}ms` }}>
       <Card className="flex h-full items-center gap-3 p-3.5 transition-colors duration-150 hover:border-primary/40">
-        <AppIcon name={app.name} id={app.id} icon={app.icon} color={app.color} className="size-10 shrink-0 rounded-lg text-base" />
+        <AppIcon name={app.name} icon={app.icon} color={app.color} className="size-10 shrink-0 rounded-lg text-base" />
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex items-center justify-between gap-2">
             <Link

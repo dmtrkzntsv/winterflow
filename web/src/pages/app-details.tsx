@@ -57,6 +57,14 @@ const CONTROL_FAILED: Record<ControlAction, string> = {
   update: "Couldn't pull the latest images",
 };
 
+// What the header says while a control action runs.
+const CONTROL_PROGRESS: Record<ControlAction, string> = {
+  start: "Starting…",
+  stop: "Stopping…",
+  restart: "Restarting…",
+  update: "Pulling images…",
+};
+
 // AppDetailsPage is /server/:id/app/:appId: the header, the banners that
 // matter now, and the tabs (Overview first). History is a side sheet
 // (?history=1). The page stays mounted from app to app, so every per-app
@@ -154,6 +162,13 @@ export default function AppDetailsPage() {
   }
 
   const name = appLabel(app.name);
+  const progress = pending
+    ? CONTROL_PROGRESS[pending]
+    : backUpNow.restoring
+      ? "Restoring…"
+      : backUpNow.busy
+        ? "Backing up…"
+        : null;
   const historyButton = (
     <Button variant="outline" onClick={() => setHistoryOpen(true)}>
       <History className="size-4" aria-hidden /> History
@@ -161,7 +176,8 @@ export default function AppDetailsPage() {
   );
 
   return (
-    <div className="space-y-6">
+    // A flex column so the Logs tab can fill what is left of the viewport.
+    <div className="flex flex-1 flex-col gap-6">
       <AppHeader
         app={app}
         status={status}
@@ -171,6 +187,7 @@ export default function AppDetailsPage() {
         onControl={(action) => void runControl(action)}
         onUpdateTemplate={() => void openUpgrade()}
         backUpBusy={backUpNow.busy}
+        progress={progress}
         onBackUpNow={() => void backUpNow.run()}
         canSaveAsTemplate={ownership === null}
         savingTemplate={saveAsTemplate.busy}
@@ -203,6 +220,7 @@ export default function AppDetailsPage() {
       ) : null}
 
       <UnderlineTabs<Tab>
+        className="flex grow basis-0 flex-col"
         value={tab}
         onValueChange={setTab}
         label="App sections"
@@ -239,7 +257,7 @@ export default function AppDetailsPage() {
             onOpenHistory={() => setHistoryOpen(true)}
           />
         </TabsContent>
-        <TabsContent value="logs" className="mt-6">
+        <TabsContent value="logs" className="mt-6 flex grow basis-0 flex-col">
           <AppLogsTab key={app.id} appId={app.id} />
         </TabsContent>
         <TabsContent value="configuration" className="mt-0">

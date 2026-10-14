@@ -31,27 +31,18 @@ const CHART_GRID = "grid auto-rows-[18.5rem] gap-3 md:grid-cols-2";
 // carries the flagged fraction; see isUnavailable).
 const UNAVAILABLE = "Container metrics are unavailable on this host";
 
-// The KPI blocks as a row under a header (2 columns, 4 on a wide screen),
-// or in pairs inside a half-width widget.
-const KPI_GRID = { row: "grid grid-cols-2 gap-3 lg:grid-cols-4", pair: "grid grid-cols-2 gap-3" } as const;
+// The KPI blocks in pairs: they live in a half-width widget.
+const KPI_GRID = "grid grid-cols-2 gap-3";
 
 // AppMetricBlocks is an app's KPI blocks: CPU now, memory against its
 // limit, disk and network rate, each from the newest 1-minute point with
 // the last hour as a sparkline (the Overview's Resources widget).
-export function AppMetricBlocks({
-  serverId,
-  appId,
-  layout = "row",
-}: {
-  serverId: string;
-  appId: string;
-  layout?: "row" | "pair";
-}) {
+export function AppMetricBlocks({ serverId, appId }: { serverId: string; appId: string }) {
   const { data, loading } = useAppMetrics(serverId, appId, "1h");
   const points = useMemo(() => withNetTotal(data?.points ?? []), [data]);
   if (loading && !data) {
     return (
-      <div className={KPI_GRID[layout]}>
+      <div className={KPI_GRID}>
         {["CPU", "Memory", "Disk", "Network"].map((l) => (
           <KpiTileSkeleton key={l} label={l} />
         ))}
@@ -80,7 +71,7 @@ export function AppMetricBlocks({
   return (
     <div className="space-y-2">
       {blind ? <p className="text-sm text-muted-foreground">{UNAVAILABLE}</p> : null}
-      <div className={KPI_GRID[layout]}>
+      <div className={KPI_GRID}>
         {blind ? null : (
           <>
             <KpiTile

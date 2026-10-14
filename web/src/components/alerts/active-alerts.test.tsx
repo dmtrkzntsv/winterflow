@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -43,6 +43,10 @@ describe("FiringAlertsLine", () => {
       </MemoryRouter>,
     );
     await vi.waitFor(() => expect(quiet.calls).toHaveLength(1));
+    // Let the answer land and render before asserting that nothing shows.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
     expect(container).toBeEmptyDOMElement();
     expect(api.calls).toHaveLength(1);
   });

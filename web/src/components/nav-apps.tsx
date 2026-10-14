@@ -37,8 +37,7 @@ export function NavApps() {
             <SidebarMenuSubButton asChild isActive={pathname === to} className="max-lg:h-10">
               <SidebarLink to={to}>
                 <StatusDot tone={status.tone} pulse={status.pulse} />
-                {/* Not reconciled yet: the id prefix stands in for the name. */}
-                <span className={cn("truncate", !app.name?.trim() && "font-mono text-muted-foreground")}>
+                <span className={cn("truncate", !app.name?.trim() && "text-muted-foreground")}>
                   {appLabel(app.name)}
                   <span className="sr-only">, {status.label}</span>
                 </span>

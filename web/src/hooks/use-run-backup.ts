@@ -3,7 +3,7 @@ import { toast } from "sonner";
 
 import { useApps } from "@/context/use-apps";
 import { useBackups } from "@/context/use-backups";
-import { holdHealth, shownHealth, trackActivity, useActivity, useOverlays } from "@/lib/backup-activity";
+import { holdHealth, restoringBackup, shownHealth, trackActivity, useActivity, useOverlays } from "@/lib/backup-activity";
 import { AgentError, isRunRefusal, runnableBackups, type EffectiveBackup } from "@/lib/backups";
 
 // useRunBackup is Back up now for one backup of an app. The run is marked
@@ -46,13 +46,14 @@ export function useRunBackup(appId: string): (name: string) => Promise<void> {
 // useBackUpNow is the app-wide Back up now (the page's ⋯ menu, ⌘K): every
 // backup winterflow can run for the app, at once (the agent runs them one
 // after the other). With none set up it says so and sends nothing. busy
-// while any backup of the app runs or is being restored, so a second click
-// never queues a duplicate.
-export function useBackUpNow(appId: string): { run: () => Promise<void>; busy: boolean } {
+// while any backup of the app runs or is being restored (restoring: the
+// latter), so a second click never queues a duplicate.
+export function useBackUpNow(appId: string): { run: () => Promise<void>; busy: boolean; restoring: boolean } {
   const { getApp } = useApps();
   const runOne = useRunBackup(appId);
   const activity = useActivity(appId);
   const busy = Object.keys(activity).length > 0;
+  const restoring = restoringBackup(activity) !== undefined;
   const run = useCallback(async () => {
     let list: EffectiveBackup[];
     try {
@@ -68,5 +69,5 @@ export function useBackUpNow(appId: string): { run: () => Promise<void>; busy: b
     }
     await Promise.all(ready.map((b) => runOne(b.name)));
   }, [appId, getApp, runOne]);
-  return { run, busy };
+  return { run, busy, restoring };
 }

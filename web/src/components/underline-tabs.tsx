@@ -42,7 +42,7 @@ export function UnderlineTabs<T extends string>({
 
   return (
     <Tabs value={value} onValueChange={(next) => onValueChange(next as T)} className={className}>
-      <div ref={bar} className="-mx-1 max-w-full overflow-x-auto px-1">
+      <div ref={bar} className="-mx-1 max-w-full shrink-0 overflow-x-auto px-1">
         <TabsList
           aria-label={label}
           className="h-auto w-max min-w-full justify-start gap-6 rounded-none border-b bg-transparent p-0"

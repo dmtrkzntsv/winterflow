@@ -8,7 +8,7 @@ import type { Server } from "@/context/servers-context-base";
 import { useServers } from "@/context/use-servers";
 import { useMetricsOverview } from "@/hooks/use-metrics";
 import { useNow } from "@/hooks/use-now";
-import { serverPresence } from "@/lib/kpi";
+import { lastSeenText, serverPresence } from "@/lib/kpi";
 import { formatPercent, fullestDisk, percentOf } from "@/lib/metrics";
 import { monitoringPath } from "@/lib/routes";
 
@@ -20,19 +20,22 @@ export function ServerHealthStrip({ server }: { server: Server }) {
   const { statusByServer } = useServers();
   const { data } = useMetricsOverview();
   const now = useNow();
-  const online = isStandalone || statusByServer[server.id] === "online";
-  const presence = serverPresence(online, server.lastSeenAt, now);
-  const latest = data?.servers?.find((s) => s.server_id === server.id)?.latest?.server;
+  const entry = data?.servers?.find((s) => s.server_id === server.id);
+  // Liveness is known once the servers context has it (or the overview does,
+  // should the context's seed have failed); until then nothing is claimed.
+  const liveness = isStandalone ? "online" : (statusByServer[server.id] ?? entry?.liveness);
+  const presence = serverPresence(liveness === "online", server.lastSeenAt, now);
+  const latest = entry?.latest?.server;
 
   let body: ReactNode;
-  if (presence.tone === "offline") {
-    // The presence label is "offline" or "offline 5m"; the age is the rest.
-    const age = presence.label.replace(/^offline\s*/, "");
+  if (liveness === undefined) {
+    body = <span className="text-muted-foreground">Checking this server…</span>;
+  } else if (presence.tone === "offline") {
     body = (
       <span className="inline-flex items-center gap-2">
         <StatusDot tone="bad" />
         <span className="font-medium">Offline</span>
-        <span className="text-muted-foreground">· {age ? `last seen ${age} ago` : "last seen just now"}</span>
+        <span className="text-muted-foreground">· {lastSeenText(server.lastSeenAt, now)}</span>
       </span>
     );
   } else if (presence.tone === "waiting") {
@@ -49,8 +52,8 @@ export function ServerHealthStrip({ server }: { server: Server }) {
     const figures: [string, number | undefined][] = [
       ["CPU", latest.cpu],
       ["Memory", percentOf(latest.mem_used, latest.mem_total)],
-      ["Disk", disk ? percentOf(disk.used, disk.total) : undefined],
     ];
+    if (disk) figures.push(["Disk", percentOf(disk.used, disk.total)]);
     body = figures.map(([label, value], i) => (
       <span key={label} className="whitespace-nowrap">
         {i > 0 ? (

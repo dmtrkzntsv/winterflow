@@ -154,7 +154,7 @@ function ResourcesWidget({ app }: { app: App }) {
         </Link>
       }
     >
-      <AppMetricBlocks serverId={app.serverId} appId={app.id} layout="pair" />
+      <AppMetricBlocks serverId={app.serverId} appId={app.id} />
     </Section>
   );
 }

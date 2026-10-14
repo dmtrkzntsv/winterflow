@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -101,6 +101,19 @@ describe("HistorySheet", () => {
     await waitFor(() => expect(ctx.control).toHaveBeenCalledWith("a1", "start"));
     expect(toast.success).toHaveBeenCalledWith("Draft deployed");
     await waitFor(() => expect(ctx.getRevisions).toHaveBeenCalledTimes(2));
+  });
+
+  it("holds Deploy draft and Roll back while the history is read again", async () => {
+    renderSheet();
+    const sheet = await screen.findByRole("dialog", { name: "History" });
+    expect(await within(sheet).findByRole("button", { name: "Deploy draft" })).toBeEnabled();
+    let land: (v: typeof HISTORY) => void = () => {};
+    ctx.getRevisions.mockReturnValueOnce(new Promise((resolve) => (land = resolve)));
+    act(() => forgetRevisions("a1"));
+    await waitFor(() => expect(within(sheet).getByRole("button", { name: "Deploy draft" })).toBeDisabled());
+    for (const button of within(sheet).getAllByRole("button", { name: /Roll back/ })) expect(button).toBeDisabled();
+    await act(async () => land(HISTORY));
+    await waitFor(() => expect(within(sheet).getByRole("button", { name: "Deploy draft" })).toBeEnabled());
   });
 
   it("offers no roll back for an app a template manages", async () => {

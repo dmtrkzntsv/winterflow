@@ -70,6 +70,14 @@ describe("AppSettingsTab", () => {
     expect(ctx.saveApp).not.toHaveBeenCalled();
   });
 
+  it("does not count spaces around the name as a change", async () => {
+    const user = userEvent.setup();
+    renderTab();
+    await screen.findByDisplayValue("Old");
+    await user.type(screen.getByRole("textbox", { name: "App name" }), "  ");
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  });
+
   it("saves a new colour and description through the app's save, redeploying a running app", async () => {
     const user = userEvent.setup();
     renderTab();

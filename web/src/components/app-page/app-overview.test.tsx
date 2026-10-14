@@ -18,7 +18,7 @@ vi.mock("@/context/use-servers", () => ({
   useServers: () => ({ activeServerId: "srv-1", activeServer: { id: "srv-1", features: { ingress } } }),
 }));
 vi.mock("@/components/app-metrics", () => ({
-  AppMetricBlocks: ({ layout }: { layout?: string }) => <div data-testid="kpi-blocks">{layout}</div>,
+  AppMetricBlocks: () => <div data-testid="kpi-blocks" />,
 }));
 vi.mock("@/components/restore-points-dialog", () => ({
   RestorePointsDialog: ({ backup }: { backup: { name: string } }) => (
@@ -139,10 +139,10 @@ describe("AppOverview", () => {
     expect(within(screen.getByRole("region", { name: "Access" })).queryByRole("link", { name: "Add a domain" })).not.toBeInTheDocument();
   });
 
-  it("shows the resource blocks in pairs and leads to the metrics", () => {
+  it("shows the resource blocks and leads to the metrics", () => {
     renderOverview();
     const resources = screen.getByRole("region", { name: "Resources" });
-    expect(within(resources).getByTestId("kpi-blocks")).toHaveTextContent("pair");
+    expect(within(resources).getByTestId("kpi-blocks")).toBeInTheDocument();
     expect(within(resources).getByRole("link", { name: /View metrics/ })).toHaveAttribute("href", "/server/srv-1/app/a1?tab=metrics");
   });
 

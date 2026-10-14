@@ -252,10 +252,9 @@ describe("AppBackups", () => {
     expect(await menuItem(user, "database", "Back up now")).toHaveAttribute("aria-disabled", "true");
     await user.keyboard("{Escape}");
     await act(async () => finish({ unchanged: false, point: { id: "p" }, warnings: [] }));
-    await waitFor(async () => {
-      expect(await menuItem(user, "database", "Back up now")).not.toHaveAttribute("aria-disabled");
-      await user.keyboard("{Escape}");
-    });
+    await waitFor(() => expect(within(row("database")).queryByText("Running")).not.toBeInTheDocument());
+    expect(await menuItem(user, "database", "Back up now")).not.toHaveAttribute("aria-disabled");
+    await user.keyboard("{Escape}");
 
     let end = () => {};
     act(() => {
@@ -338,9 +337,14 @@ describe("AppBackups", () => {
     // Without a storage: Set up inline and first in the menu; nothing runs yet.
     expect(within(row("media")).getByRole("button", { name: "Set up media" })).toBeInTheDocument();
     await user.click(within(row("media")).getByRole("button", { name: "Actions for media" }));
-    expect((await screen.findAllByRole("menuitem")).map((m) => m.textContent)).toEqual(["Set up…", "Back up now", "Restore…", "Edit…"]);
+    expect((await screen.findAllByRole("menuitem")).map((m) => m.textContent)).toEqual([
+      "Set up…",
+      "Back up now",
+      "Restore…Set up the backup first: its copies are kept in its storage",
+      "Edit…",
+    ]);
     expect(screen.getByRole("menuitem", { name: "Back up now" })).toHaveAttribute("aria-disabled", "true");
-    expect(screen.getByRole("menuitem", { name: "Restore…" })).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("menuitem", { name: /^Restore…/ })).toHaveAttribute("aria-disabled", "true");
     await user.click(screen.getByRole("menuitem", { name: "Set up…" }));
     expect(await screen.findByRole("heading", { name: "Turn on media" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Cancel" }));

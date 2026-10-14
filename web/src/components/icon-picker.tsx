@@ -16,15 +16,13 @@ export function IconPicker({
   value,
   color,
   name,
-  id,
   onChange,
   label = "Icon",
   disabled = false,
 }: {
   value?: string;
-  // name and id give the tile its fallback initial (as in the header).
+  // name gives the tile its fallback initial (as in the header).
   name?: string;
-  id?: string;
   color?: string;
   onChange: (icon: string) => void;
   // label names the trigger button for assistive technology.
@@ -44,7 +42,7 @@ export function IconPicker({
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button variant="outline" className="h-12 w-12 p-0" aria-label={label} disabled={disabled}>
-          <AppIcon icon={value} name={name} id={id} color={color} className="size-8" />
+          <AppIcon icon={value} name={name} color={color} className="size-8" />
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-72 p-2" align="start">

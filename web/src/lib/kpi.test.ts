@@ -7,6 +7,7 @@ import {
   isSignificant,
   kpiNow,
   formatAge,
+  lastSeenText,
   latestValue,
   percentCeiling,
   periodDelta,
@@ -145,5 +146,20 @@ describe("kpi helpers", () => {
     expect(appLabel("Nextcloud")).toBe("Nextcloud");
     expect(appLabel("  ")).toBe("Unnamed app");
     expect(appLabel(undefined)).toBe("Unnamed app");
+  });
+});
+
+describe("lastSeenText", () => {
+  const now = Date.parse("2026-10-11T12:05:00Z");
+
+  it("names the age from the timestamp, and 'just now' under a minute", () => {
+    expect(lastSeenText("2026-10-11T12:00:00Z", now)).toBe("last seen 5m ago");
+    expect(lastSeenText("2026-10-11T12:04:50Z", now)).toBe("last seen just now");
+    expect(lastSeenText("2026-10-08T12:05:00Z", now)).toBe("last seen 3d ago");
+  });
+
+  it("is empty for a server that never connected", () => {
+    expect(lastSeenText(null, now)).toBe("");
+    expect(lastSeenText("not a date", now)).toBe("");
   });
 });

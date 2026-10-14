@@ -36,13 +36,20 @@ export async function leftBehind(reconcile: () => Promise<App[]>, create: Pendin
   return createdApp(await reconcile().catch(() => [] as App[]), create.before, create.name) ?? null;
 }
 
+// landedApp is a create's app in the list read after it went through (the
+// active server's: another server's create is never found in it).
+function landedApp(create: PendingCreate, outcome: CreateOutcome): App | undefined {
+  const list = (outcome.list ?? []).filter((a) => a.serverId === create.serverId);
+  return createdApp(list, create.before, create.name);
+}
+
 // announceCreate tells, in a toast, how a create ended whose form is gone
 // (or now holds another app): ready, with Open; couldn't start, with Open
 // to the app it left (its failure noted by the caller); couldn't be
 // created.
 export function announceCreate(create: PendingCreate, outcome: CreateOutcome, open: (path: string) => void): void {
   if (!outcome.failed) {
-    const app = outcome.list && createdApp(outcome.list, create.before, create.name);
+    const app = landedApp(create, outcome);
     const to = app ? appPath(create.serverId, app.id) : appsPath(create.serverId);
     toast.success(`${create.name} is ready`, { action: { label: "Open", onClick: () => open(to) } });
     return;
@@ -137,7 +144,7 @@ export function useCreateApp(serverId: string, name = "") {
           announceCreate(c, outcome, navigate);
           return;
         }
-        const app = outcome.list && createdApp(outcome.list, c.before, c.name);
+        const app = landedApp(c, outcome);
         toast.success("App created");
         navigate(app ? appPath(serverId, app.id) : appsPath(serverId));
       }),

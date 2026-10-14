@@ -74,6 +74,14 @@ describe("CreateOutcomes", () => {
     expect(screen.getByText("apps")).toBeInTheDocument();
   });
 
+  it("doesn't take another server's app of that name for a create's", () => {
+    setup();
+    held("notes", "r1", "s2");
+    act(() => settleLateCreate("r1", { failed: false, error: "", list: [app("n1", "notes")] }));
+    openAction(toast.success);
+    expect(screen.getByText("apps")).toBeInTheDocument();
+  });
+
   it("notes the failure on the app a late failure left, after reading the agent's list, and offers to open it", async () => {
     const { reconcile, noteDeployFailure } = setup();
     reconcile.mockResolvedValueOnce([app("old", "notes"), app("n1", "notes")]);

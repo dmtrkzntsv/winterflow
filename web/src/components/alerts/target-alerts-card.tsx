@@ -11,6 +11,7 @@ import { alertsGet, useActiveAlerts } from "@/hooks/use-alerts";
 import {
   conditionText,
   effective,
+  formatAlertValue,
   hasThreshold,
   metricInfo,
   type Channel,
@@ -20,7 +21,7 @@ import {
 } from "@/lib/alerts";
 import { settingsPath } from "@/lib/routes";
 import type { StatusInfo } from "@/lib/status";
-import { cn, lowerFirst } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 type Props = {
   serverId: string;
@@ -33,6 +34,14 @@ type Props = {
 };
 
 const FIRING: StatusInfo = { tone: "bad", label: "Firing" };
+
+// ruleName tells a rule from the others of its kind by its own setting:
+// "Server down", "CPU above 90%".
+function ruleName(r: Rule): string {
+  const info = metricInfo(r.target_kind, r.metric);
+  if (!hasThreshold(r.metric)) return `${r.target_kind === "app" ? "App" : "Server"} down`;
+  return `${info?.label ?? r.metric} above ${info ? formatAlertValue(info.unit, r.threshold) : r.threshold}`;
+}
 
 // TargetAlertsCard is "Alert rules for this server/app", collapsed under a
 // server's Monitoring charts and an app's Metrics tab (spec §5). Opened, it
@@ -131,7 +140,7 @@ function TargetRules({
                 variant="ghost"
                 size="icon"
                 className="size-8 max-sm:size-10"
-                aria-label={`Adjust ${lowerFirst(info?.label ?? r.metric)} for ${targetLabel}`}
+                aria-label={`Adjust the “${ruleName(r)}” rule for ${targetLabel}`}
                 onClick={() => setAdjusting(r)}
               >
                 <SlidersHorizontal className="size-3.5" />

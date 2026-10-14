@@ -124,7 +124,7 @@ describe("TargetAlertsCard", () => {
     renderCard();
     await user.click(screen.getByRole("button", { name: "Alert rules for this server" }));
 
-    await user.click(await screen.findByRole("button", { name: "Adjust down for prod-1" }));
+    await user.click(await screen.findByRole("button", { name: "Adjust the “Server down” rule for prod-1" }));
     expect(screen.queryByLabelText(/Above/)).not.toBeInTheDocument();
     await user.type(screen.getByLabelText("For (minutes)"), "15");
     await user.click(screen.getByLabelText("Specific channels"));
@@ -134,7 +134,7 @@ describe("TargetAlertsCard", () => {
       { rule_id: "r3", server_id: "s1", app_id: "", disabled: false, threshold: null, duration_minutes: 15, channel_ids: ["c1"] },
     ]);
 
-    await user.click(screen.getByRole("button", { name: "Adjust CPU for prod-1" }));
+    await user.click(screen.getByRole("button", { name: "Adjust the “CPU above 90%” rule for prod-1" }));
     expect(screen.getByLabelText(/Above/)).toHaveValue(95);
     await user.click(screen.getByRole("button", { name: "Reset to rule" }));
     expect(api.posted("/api/v1/alerts/delete-override")).toEqual([{ rule_id: "r1", server_id: "s1", app_id: "" }]);

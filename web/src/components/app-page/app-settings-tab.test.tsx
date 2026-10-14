@@ -177,10 +177,13 @@ describe("AppSettingsTab", () => {
     expect(await screen.findByDisplayValue("Old")).toBeEnabled();
     expect(screen.getByRole("button", { name: "Change icon and colour" })).toBeEnabled();
     expect(screen.queryByText(/are set by/)).not.toBeInTheDocument();
+    // Its template section offers to start a template from it.
+    expect(screen.getByRole("button", { name: "Save as template" })).toBeInTheDocument();
     unmount();
     renderTab({ ownership: { ...gone, loading: true } });
     await screen.findByDisplayValue("Old");
     expect(screen.getByRole("button", { name: "Change icon and colour" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Save as template" })).not.toBeInTheDocument();
   });
 
   it("says when the description can't be read, and still renames", async () => {

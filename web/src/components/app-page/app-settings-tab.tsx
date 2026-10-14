@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -17,6 +17,7 @@ import { saveAppDetails } from "@/lib/app-details-save";
 import { stateFromDetail } from "@/lib/app-editor-io";
 import { DEFAULT_APP_COLOR, suggestAppLook } from "@/lib/app-look";
 import { isManagedByTemplate } from "@/lib/templates";
+import { cn } from "@/lib/utils";
 
 // GeneralSection edits how the app appears: name, icon, colour and
 // description, with one Save (see saveAppDetails for what each part does).
@@ -108,7 +109,7 @@ function GeneralSection({ app, ownership, running }: { app: App; ownership: Owne
   return (
     <Section title="General" description="How the app appears in the sidebar and the app list.">
       <form
-        className="grid gap-4 rounded-xl border bg-card p-4"
+        className={cn(CARD, "grid gap-4")}
         onSubmit={(e) => {
           e.preventDefault();
           if (canSave) void save();
@@ -169,10 +170,26 @@ function GeneralSection({ app, ownership, running }: { app: App; ownership: Owne
   );
 }
 
+// CARD frames each section's body (General's form, Template's and the
+// Danger zone's line and button) alike.
+const CARD = "rounded-xl border bg-card p-4";
+
+// ActionCard is a section's one line of explanation and its button, side by
+// side (stacked on a phone).
+function ActionCard({ text, className, children }: { text: string; className?: string; children: ReactNode }) {
+  return (
+    <div className={cn(CARD, "flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between", className)}>
+      <p className="text-sm text-muted-foreground">{text}</p>
+      <div className="shrink-0">{children}</div>
+    </div>
+  );
+}
+
 // TemplateSection starts a template from a plain app, or detaches a
 // template-managed one (once its first deploy from the template went
 // through: the API detaches only a created instance). Nothing while the
-// instance is still read.
+// instance is still read (or its read failed); an app whose instance is
+// gone is an ordinary app, which can start a template.
 function TemplateSection({
   ownership,
   onDetached,
@@ -187,19 +204,16 @@ function TemplateSection({
   const templatesApi = useTemplatesApi();
   const [confirm, setConfirm] = useState(false);
   const instance = ownership?.instance ?? null;
-  if (ownership && !instance) return null;
+  if (ownership && !instance && (ownership.loading || ownership.error !== "")) return null;
 
   if (!instance) {
     return (
-      <Section
-        title="Template"
-        description="Start a template from this app: its files, its variables as parameters, its addresses and backup settings. The app stays as it is."
-      >
-        <div>
+      <Section title="Template">
+        <ActionCard text="Start a template from this app: its files, its variables as parameters, its addresses and backup settings. The app stays as it is.">
           <Button variant="outline" className="max-sm:h-10" disabled={savingTemplate} onClick={onSaveAsTemplate}>
             Save as template
           </Button>
-        </div>
+        </ActionCard>
       </Section>
     );
   }
@@ -216,18 +230,17 @@ function TemplateSection({
   };
 
   return (
-    <Section
-      title="Template"
-      description={`Managed by template ${instance.template_name}: its files and values change through the template.`}
-    >
+    <Section title="Template">
       {instance.state !== "created" ? (
-        <p className="text-sm text-muted-foreground">Detach becomes available once its first deploy from the template succeeds.</p>
+        <p className={cn(CARD, "text-sm text-muted-foreground")}>
+          Managed by template {instance.template_name}. Detach becomes available once its first deploy from the template succeeds.
+        </p>
       ) : (
-        <div>
+        <ActionCard text={`Managed by template ${instance.template_name}: its files and values change through the template.`}>
           <Button variant="outline" className="max-sm:h-10" onClick={() => setConfirm(true)}>
             Detach from template
           </Button>
-        </div>
+        </ActionCard>
       )}
       <ConfirmDialog
         open={confirm}
@@ -272,11 +285,11 @@ export function AppSettingsTab({
         onSaveAsTemplate={onSaveAsTemplate}
         savingTemplate={savingTemplate}
       />
-      <Section
-        title="Danger zone"
-        description="Stops the containers and removes the deployment and its history. Volumes and backups are kept unless you choose otherwise."
-      >
-        <div>
+      <Section title="Danger zone">
+        <ActionCard
+          className="border-destructive/30"
+          text="Stops the containers and removes the deployment and its history. Volumes and backups are kept unless you choose otherwise."
+        >
           <Button
             variant="outline"
             className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive max-sm:h-10"
@@ -284,7 +297,7 @@ export function AppSettingsTab({
           >
             <Trash2 className="size-4" aria-hidden /> Delete app…
           </Button>
-        </div>
+        </ActionCard>
       </Section>
     </div>
   );

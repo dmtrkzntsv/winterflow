@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Disclosure } from "@/components/disclosure";
 import { FileEditors } from "@/components/files-section";
@@ -17,14 +18,16 @@ import { useSharedNames } from "@/hooks/use-shared-names";
 import { useUsedHostPorts } from "@/hooks/use-used-host-ports";
 import { pruneBlankAddresses } from "@/lib/app-editor-io";
 import { hasErrorIn } from "@/lib/field-errors";
+import { undeclaredNames, withVariables } from "@/lib/file-variables";
 import { firstFreeHostPort, randomHostPort } from "@/lib/host-ports";
 import { composeStart, withHostPort } from "@/lib/new-app";
 import { appsPath } from "@/lib/routes";
 import type { AppEditorState } from "@/types/app-config";
 
 // ComposeFlow is New app → Compose file: a name (its tile follows it), the
-// compose file, variables and one address; description, redirects and
-// image versions under "More options". Create deploys it at once.
+// compose file (with an offer to add the ${NAME}s it uses that nothing
+// sets), variables and one address; description, redirects and image
+// versions under "More options". Create deploys it at once.
 export function ComposeFlow({ serverId }: { serverId: string }) {
   const { activeServer, loading: serversLoading } = useServers();
   const ingressOn = Boolean(activeServer?.features?.ingress);
@@ -56,6 +59,11 @@ export function ComposeFlow({ serverId }: { serverId: string }) {
   const setConfig = (patch: Partial<AppEditorState["config"]>) =>
     setState((s) => ({ ...s, config: { ...s.config, ...patch } }));
   const rows = { state, onChange: setState, serverId, registrations, onRefresh: refresh, errors };
+  const undeclared = useMemo(() => undeclaredNames(state, shared), [state, shared]);
+  const addUndeclared = () => {
+    setState((s) => withVariables(s, undeclaredNames(s, shared)));
+    setVarsOpen(true);
+  };
 
   // A refused Create opens the sections holding a bad field. They are
   // opened for good (not only while the error lasts), so fixing the field
@@ -88,6 +96,27 @@ export function ComposeFlow({ serverId }: { serverId: string }) {
           addLabel="Add another file"
         />
       </section>
+
+      {undeclared.length > 0 ? (
+        <div
+          role="status"
+          aria-label="Variables the files use"
+          className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border bg-muted/30 px-4 py-3 text-sm"
+        >
+          <span className="mr-auto min-w-0">
+            Your files use {undeclared.length === 1 ? "a variable" : `${undeclared.length} variables`} nothing sets:{" "}
+            {undeclared.map((n, i) => (
+              <span key={n}>
+                {i > 0 ? ", " : null}
+                <code className="text-xs [overflow-wrap:anywhere]">{n}</code>
+              </span>
+            ))}
+          </span>
+          <Button size="sm" variant="outline" onClick={addUndeclared}>
+            {undeclared.length === 1 ? "Add 1 variable" : `Add ${undeclared.length} variables`}
+          </Button>
+        </div>
+      ) : null}
 
       <Disclosure label={`Variables (${config.variables.length})`} open={varsOpen} onOpenChange={setVarsOpen}>
         <p className="text-sm text-muted-foreground">

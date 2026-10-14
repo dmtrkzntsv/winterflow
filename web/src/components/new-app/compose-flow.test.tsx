@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useParams } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -98,6 +98,30 @@ describe("ComposeFlow", () => {
     expect(body.config).not.toHaveProperty("ingress");
     expect(body).not.toHaveProperty("source");
     expect(toast.success).toHaveBeenCalledWith("App created and deploying");
+  });
+
+  it("offers to add the variables the files use that nothing sets, as empty rows", async () => {
+    const user = userEvent.setup();
+    renderFlow(vi.fn());
+    const editor = screen.getByLabelText("Content of compose.yml");
+    expect(screen.queryByRole("status", { name: "Variables the files use" })).not.toBeInTheDocument();
+    await user.clear(editor);
+    await user.click(editor);
+    await user.paste("services:\n  web:\n    environment:\n      TITLE: ${NOTES_TITLE}\n      PASS: ${REDIS_PASSWORD}\n");
+    const offer = screen.getByRole("status", { name: "Variables the files use" });
+    expect(offer).toHaveTextContent("Your files use 2 variables nothing sets: NOTES_TITLE, REDIS_PASSWORD");
+    await user.click(within(offer).getByRole("button", { name: "Add 2 variables" }));
+    expect(screen.queryByRole("status", { name: "Variables the files use" })).not.toBeInTheDocument();
+    // The Variables section opens on the new rows.
+    expect(screen.getAllByRole("textbox", { name: "Variable name" }).map((i) => (i as HTMLInputElement).value)).toEqual([
+      "NOTES_TITLE",
+      "REDIS_PASSWORD",
+    ]);
+    await user.click(editor);
+    await user.paste("      X: ${ONE_MORE}\n");
+    expect(within(screen.getByRole("status", { name: "Variables the files use" })).getByRole("button")).toHaveTextContent(
+      "Add 1 variable",
+    );
   });
 
   it("prefills the first host port no other app on the server publishes", async () => {

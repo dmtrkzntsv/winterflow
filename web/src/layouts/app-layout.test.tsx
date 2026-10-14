@@ -128,6 +128,29 @@ describe("AppLayout", () => {
     expect(await within(bar).findByText("Apps")).toBeInTheDocument();
   });
 
+  it("never shows the title in the phone top bar for a frame when the page opens with its H1 in view", () => {
+    stubViewport(375);
+    vi.stubGlobal(
+      "IntersectionObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    // The H1 sits below the bar, on screen.
+    const rect = vi
+      .spyOn(Element.prototype, "getBoundingClientRect")
+      .mockReturnValue({ top: 80, bottom: 112, height: 32, left: 0, right: 300, width: 300, x: 0, y: 80, toJSON: () => ({}) });
+    try {
+      renderAt("/server/s1/apps");
+      // Measured before the first paint, no observer answer needed.
+      expect(within(screen.getByTestId("mobile-top-bar")).queryByText("Apps")).not.toBeInTheDocument();
+    } finally {
+      rect.mockRestore();
+    }
+  });
+
   it("caps reading pages at 1100px and gives Monitoring the full width", () => {
     const { unmount } = renderAt("/settings/members");
     expect(screen.getByTestId("page")).toHaveClass("max-w-[1100px]");

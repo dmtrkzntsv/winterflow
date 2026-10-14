@@ -55,6 +55,25 @@ describe("usePageTitle", () => {
     await waitFor(() => expect(screen.getByTestId("bar")).toBeEmptyDOMElement());
   });
 
+  it("leaves the tab alone while a page has no title yet (an app still loading)", async () => {
+    document.title = "Apps · Winterflow";
+    const { rerender } = render(
+      <PageTitleProvider>
+        <Page title="" />
+        <Bar />
+      </PageTitleProvider>,
+    );
+    expect(document.title).toBe("Apps · Winterflow");
+    expect(screen.getByTestId("bar")).toBeEmptyDOMElement();
+    rerender(
+      <PageTitleProvider>
+        <Page title="Shop" />
+        <Bar />
+      </PageTitleProvider>,
+    );
+    await waitFor(() => expect(document.title).toBe("Shop · Winterflow"));
+  });
+
   it("still names the browser tab outside the shell", () => {
     render(<Page title="Inbox" />);
     expect(document.title).toBe("Inbox · Winterflow");

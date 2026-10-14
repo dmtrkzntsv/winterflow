@@ -1,4 +1,4 @@
-import { useContext, useEffect, useRef, type RefObject } from "react";
+import { useContext, useEffect, useLayoutEffect, useRef, type RefObject } from "react";
 
 import {
   APP_NAME,
@@ -15,9 +15,12 @@ const TOP_BAR_PX = 56;
 // usePageTitle names the current page: the shell's mobile top bar shows it
 // and the browser tab reads "<title> · Winterflow". The page that unmounts
 // clears it, so a page that names nothing never shows the last one's name.
+// An empty title names nothing (a page still loading its subject, or one
+// that shows another page's NotFound): the tab keeps what it says.
 export function usePageTitle(title: string): void {
   const setTitle = useContext(SetPageTitleContext);
   useEffect(() => {
+    if (!title) return;
     setTitle?.(title);
     const previous = document.title;
     document.title = title ? `${title} · ${APP_NAME}` : APP_NAME;
@@ -37,12 +40,18 @@ export function useCurrentPageTitle(): string {
 // the shell's phone top bar repeats the title only once the H1 has scrolled
 // out of view. Without IntersectionObserver the heading counts as not in
 // view, so the bar keeps the title.
+//
+// The heading's place is measured before the first paint too (a layout
+// effect), so a page that opens with its H1 in view never flashes the title
+// in the bar for the frame the observer takes to answer.
 export function useHeadingInView<T extends Element>(): RefObject<T | null> {
   const ref = useRef<T>(null);
   const setVisible = useContext(SetHeadingVisibleContext);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = ref.current;
     if (!el || !setVisible || typeof IntersectionObserver === "undefined") return;
+    const box = el.getBoundingClientRect();
+    setVisible(box.height > 0 && box.bottom > TOP_BAR_PX && box.top < window.innerHeight);
     const observer = new IntersectionObserver(
       (entries) => {
         const last = entries[entries.length - 1];

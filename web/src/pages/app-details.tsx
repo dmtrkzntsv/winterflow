@@ -147,7 +147,9 @@ export default function AppDetailsPage() {
   });
   const saveAsTemplate = useSaveAsTemplate(appId, app?.name ?? "");
   const backUpNow = useBackUpNow(appId);
-  const title = app ? appLabel(app.name) : "App";
+  // Until the list names the app the tab keeps its title (never a generic
+  // "App" flashing first); a missing app's NotFound names itself.
+  const title = app ? appLabel(app.name) : "";
   usePageTitle(title);
 
   const runControl = async (action: ControlAction) => {

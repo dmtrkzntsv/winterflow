@@ -98,6 +98,11 @@ export const COMPOSE_FILENAMES: readonly string[] = [
   "docker-compose.yaml",
 ];
 
+// isComposeFile says whether a file name is one compose finds by itself.
+export function isComposeFile(name: string): boolean {
+  return COMPOSE_FILENAMES.includes(name.trim());
+}
+
 export const DEFAULT_COMPOSE = `services:
   app:
     image: nginx:alpine

@@ -5,11 +5,16 @@
 // preserves stored values).
 import { validHostname } from "@/lib/domains";
 import { ENCRYPTED, encryptSecret } from "@/lib/ecies";
+import type { FieldErrors } from "@/lib/field-errors";
 import type { AppDetailPayload } from "@/context/apps-context-base";
 import {
   DEFAULT_COMPOSE,
+  isComposeFile,
   localId,
   type AppEditorState,
+  type AppSourceConfig,
+  type IngressDomain,
+  type IngressRedirect,
 } from "@/types/app-config";
 
 export function emptyEditorState(): AppEditorState {
@@ -134,81 +139,119 @@ export function stateFromDetail(
   };
 }
 
-export function validateEditorState(state: AppEditorState): string | null {
-  if (!state.config.name.trim()) return "App name is required.";
-  const src = state.config.source;
-  if (src) {
-    if (!src.repo_url.trim()) return "Repository URL is required.";
-    if (!src.branch.trim()) return "Branch is required.";
-  }
-  const hasCompose = state.config.files.some(
-    (f) =>
-      f.filename.trim() === "compose.yml" ||
-      f.filename.trim() === "docker-compose.yml",
-  );
-  // Git-sourced apps may take their compose file from the repo.
-  if (!hasCompose && !src)
-    return "A compose.yml (or docker-compose.yml) file is required.";
-  for (const f of state.config.files) {
-    if (!f.filename.trim()) return "Every file needs a filename.";
-  }
-  for (const v of state.config.variables) {
-    if (!v.name.trim()) return "Every variable needs a name.";
-  }
-  const validRedirectCodes = new Set([301, 302, 307, 308]);
+// newGitSource is the Git source a newly Git-deployed app starts with.
+export function newGitSource(): AppSourceConfig {
+  return { repo_url: "", branch: "main", compose_path: "", auto_update: true, poll_seconds: 120 };
+}
+
+// newAddressRow is a blank address (hostname -> port) row.
+export function newAddressRow(): IngressDomain {
+  return { id: localId("dom"), domain: "", upstream_port: "", ssl: true };
+}
+
+// pruneBlankAddresses drops the address and redirect rows a create form
+// left untouched (its one Address row starts blank), and the ingress itself
+// when nothing is left, so an app created without an address saves exactly
+// as before (no ingress key). Only the create forms use it: an existing
+// app's empty ingress is saved as it was loaded.
+export function pruneBlankAddresses(state: AppEditorState): AppEditorState {
   const ing = state.config.ingress;
-  if (ing) {
-    const seen = new Set<string>();
-    for (const d of ing.domains) {
-      if (!validHostname(d.domain)) return `"${d.domain}" is not a valid lowercase hostname.`;
-      if (seen.has(d.domain)) return `Duplicate domain "${d.domain}".`;
-      seen.add(d.domain);
-      const port = Number(d.upstream_port);
-      if (!Number.isInteger(port) || port < 1 || port > 65535)
-        return `Domain "${d.domain}": upstream port must be 1-65535.`;
-    }
-    for (const r of ing.redirects) {
-      let target: URL;
-      try {
-        target = new URL(r.to);
-      } catch {
-        return `Redirect for "${r.domain}": target must be an absolute http(s) URL.`;
-      }
-      // Go's net/url leaves Host empty for forms like "http:/foo" or
-      // "http:///foo" and Validate() rejects them, but WHATWG new URL()
-      // normalizes them to a non-empty host — so also require the raw value
-      // to be scheme://non-slash to match what the server will accept.
-      if (
-        (target.protocol !== "http:" && target.protocol !== "https:") ||
-        target.host === "" ||
-        !/^https?:\/\/[^/]/i.test(r.to.trim()) ||
-        // WHATWG strips embedded tab/newline; Go's url.Parse rejects them.
-        /\s/.test(r.to.trim())
-      )
-        return `Redirect for "${r.domain}": target must be an absolute http(s) URL.`;
-      // Advisory mirror of Go's brace check (internal/domain/model/ingress.go
-      // Validate()): Caddy expands {env.*}/{http.request.*} placeholders in
-      // the Location header at request time, so braces could leak secrets to
-      // an attacker-controlled redirect target. The Go check is the actual
-      // security boundary; this just gives faster feedback in the editor.
-      if (/[{}]/.test(r.to))
-        return `Redirect for "${r.domain}": target must not contain { or }.`;
-      if (/[{}]/.test(r.path))
-        return `Redirect for "${r.domain}": path must not contain { or }.`;
-      if (!validRedirectCodes.has(r.code))
-        return `Redirect for "${r.domain}": code must be one of 301, 302, 307, 308.`;
-      if (r.path === "") {
-        if (!validHostname(r.domain)) return `"${r.domain}" is not a valid lowercase hostname.`;
-        if (seen.has(r.domain)) return `Duplicate domain "${r.domain}".`;
-        seen.add(r.domain);
-      } else {
-        if (!r.path.startsWith("/")) return `Redirect path "${r.path}" must start with /.`;
-        if (!seen.has(r.domain))
-          return `Path rule for "${r.domain}": add that domain as a route or redirect first.`;
-      }
-    }
+  if (!ing) return state;
+  const domains = ing.domains.filter((d) => d.domain.trim() !== "" || d.upstream_port !== "");
+  const redirects = ing.redirects.filter((r) => r.domain.trim() !== "" || r.path.trim() !== "" || r.to.trim() !== "");
+  const ingress = domains.length > 0 || redirects.length > 0 ? { domains, redirects } : undefined;
+  return { ...state, config: { ...state.config, ingress } };
+}
+
+const REDIRECT_CODES = new Set([301, 302, 307, 308]);
+
+// redirectTargetError checks a redirect's target and code. Go's net/url
+// leaves Host empty for forms like "http:/foo" or "http:///foo" and
+// Validate() rejects them, but WHATWG new URL() normalizes them to a
+// non-empty host, so the raw value must also be scheme://non-slash, and
+// may not hold whitespace (WHATWG strips embedded tab/newline; Go's
+// url.Parse rejects them). The brace check mirrors
+// internal/domain/model/ingress.go Validate(): Caddy expands {env.*} and
+// {http.request.*} placeholders in the Location header at request time, so
+// braces could leak secrets to an attacker-controlled target. The Go check
+// is the security boundary; this is faster feedback.
+function redirectTargetError(r: IngressRedirect): string {
+  const to = r.to.trim();
+  let target: URL | null = null;
+  try {
+    target = new URL(r.to);
+  } catch {
+    target = null;
   }
-  return null;
+  if (
+    !target ||
+    (target.protocol !== "http:" && target.protocol !== "https:") ||
+    target.host === "" ||
+    !/^https?:\/\/[^/]/i.test(to) ||
+    /\s/.test(to)
+  )
+    return "Send it to a full address starting with http:// or https://.";
+  if (/[{}]/.test(r.to)) return "The target can't contain { or }.";
+  if (!REDIRECT_CODES.has(r.code)) return "Pick 301, 302, 307 or 308.";
+  return "";
+}
+
+// editorErrors names every problem in the editor's state by field: name,
+// repo_url, branch, files, file:<id>, var:<id>, domain:<id>, port:<id>,
+// redirect-host:<id>, redirect-path:<id>, redirect-to:<id>. Ingress rows are
+// read in the order the server's Validate reads them: addresses, then
+// redirects, each claiming its hostname; a path rule needs a hostname
+// claimed above it.
+export function editorErrors(state: AppEditorState): FieldErrors {
+  const out: FieldErrors = {};
+  const { config } = state;
+  if (!config.name.trim()) out.name = "Give the app a name.";
+  const src = config.source;
+  if (src) {
+    if (!src.repo_url.trim()) out.repo_url = "Enter the repository's URL.";
+    if (!src.branch.trim()) out.branch = "Enter a branch.";
+  }
+  // A Git-deployed app may take its compose file from the repository.
+  if (!src && !config.files.some((f) => isComposeFile(f.filename))) out.files = "Add a compose file named compose.yml.";
+  for (const f of config.files) if (!f.filename.trim()) out[`file:${f.id}`] = "Name this file.";
+  for (const v of config.variables) if (!v.name.trim()) out[`var:${v.id}`] = "Name this variable.";
+
+  const ing = config.ingress;
+  if (!ing) return out;
+  const seen = new Set<string>();
+  const claim = (host: string): string => {
+    if (!validHostname(host)) return host ? "Use a lowercase hostname like app.example.com." : "Enter a hostname.";
+    if (seen.has(host)) return "This hostname is already used above.";
+    seen.add(host);
+    return "";
+  };
+  for (const d of ing.domains) {
+    const host = claim(d.domain);
+    if (host) out[`domain:${d.id}`] = host;
+    const port = Number(d.upstream_port);
+    if (d.upstream_port === "" || !Number.isInteger(port) || port < 1 || port > 65535)
+      out[`port:${d.id}`] = "Enter a port from 1 to 65535.";
+  }
+  for (const r of ing.redirects) {
+    const to = redirectTargetError(r);
+    if (to) out[`redirect-to:${r.id}`] = to;
+    if (/[{}]/.test(r.path)) out[`redirect-path:${r.id}`] = "The path can't contain { or }.";
+    else if (r.path !== "" && !r.path.startsWith("/")) out[`redirect-path:${r.id}`] = "The path must start with /.";
+    const host =
+      r.path === ""
+        ? claim(r.domain)
+        : seen.has(r.domain)
+          ? ""
+          : `Add ${r.domain || "this hostname"} as an address or a whole-domain redirect above this rule first.`;
+    if (host) out[`redirect-host:${r.id}`] = host;
+  }
+  return out;
+}
+
+// validateEditorState is editorErrors' first message (null when none).
+// Removed once every caller shows messages by field.
+export function validateEditorState(state: AppEditorState): string | null {
+  return Object.values(editorErrors(state))[0] ?? null;
 }
 
 // mapItem encrypts a secret value/file, passes the "<encrypted>" placeholder

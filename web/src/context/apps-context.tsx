@@ -322,6 +322,9 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       // A start (and a pull, which redeploys) can bring an undeployed draft
       // live without a commit; a stop or restart moves nothing.
       if (action === "start" || action === "update") forgetRevisions(appId);
+      // A pull can move a Git app's source (a new commit) while the version
+      // it is listed under stays: the page's read of it is stale.
+      if (action === "update") forgetAppDetail(appId);
     },
     [dispatchAndWait, clearDeployFailure],
   );
@@ -361,6 +364,11 @@ export function AppsProvider({ children }: { children: ReactNode }) {
   const rename = useCallback(
     async (appId: string, name: string) => {
       await dispatchAndWait("rename-app", { app_id: appId, name });
+      // A rename is a commit (the name is in the app's config) the version
+      // it is listed under may not show: a kept read would save the old
+      // name back.
+      forgetRevisions(appId);
+      forgetAppDetail(appId);
     },
     [dispatchAndWait],
   );
@@ -490,7 +498,10 @@ export function AppsProvider({ children }: { children: ReactNode }) {
   const rollback = useCallback(
     async (appId: string, hash: string) => {
       await dispatchAndWait("rollback-app", { app_id: appId, hash });
+      // The old tree is a new commit, under a version that may not move: a
+      // kept read would save the pre-rollback tree back.
       forgetRevisions(appId);
+      forgetAppDetail(appId);
       clearDeployFailure(appId);
     },
     [dispatchAndWait, clearDeployFailure],

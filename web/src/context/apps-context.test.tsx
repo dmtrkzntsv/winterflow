@@ -162,7 +162,7 @@ describe("AppsProvider and the kept histories", () => {
   const history = { current: "c", deployed: "b", revisions: [] };
   const accepting = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
-    if (/control-app|rollback-app|delete-app/.test(url)) return json(202, { data: { request_id: "r1" } });
+    if (/control-app|rollback-app|rename-app|delete-app/.test(url)) return json(202, { data: { request_id: "r1" } });
     return fetchMock(input);
   });
   beforeEach(() => {
@@ -195,6 +195,37 @@ describe("AppsProvider and the kept histories", () => {
     await act(() => result.current.control("a1", "update"));
     expect(keptRevisions("a1", "3")).toBeNull();
     expect(revisionsEpoch("a1")).toBe(1);
+  });
+
+  it("forgets the app's kept history and shared read after a rename, a roll back or a pull, which may not move its version", async () => {
+    const { result } = renderHook(() => useApps(), { wrapper });
+    await waitUntil(() => expect(result.current.loading).toBe(false));
+    const getApp = vi.fn(async () => ({ app: { app_id: "a1", config: "", files: [], variables: [] }, revision: 1, available_revisions: null }));
+    const commands: [string, () => Promise<unknown>][] = [
+      ["rename", () => result.current.rename("a1", "shop2")],
+      ["rollback", () => result.current.rollback("a1", "abc")],
+      ["update", () => result.current.control("a1", "update")],
+    ];
+    for (const [name, run] of commands) {
+      resetRevisionsCache();
+      keepRevisions("a1", "3", history, 0);
+      await readAppDetail(getApp, "a1", "3");
+      await act(run);
+      expect(keptRevisions("a1", "3"), name).toBeNull();
+      const calls = getApp.mock.calls.length;
+      await readAppDetail(getApp, "a1", "3");
+      expect(getApp, name).toHaveBeenCalledTimes(calls + 1);
+    }
+  });
+
+  it("keeps the shared read across a start, a stop or a restart", async () => {
+    const { result } = renderHook(() => useApps(), { wrapper });
+    await waitUntil(() => expect(result.current.loading).toBe(false));
+    const getApp = vi.fn(async () => ({ app: { app_id: "a1", config: "", files: [], variables: [] }, revision: 1, available_revisions: null }));
+    await readAppDetail(getApp, "a1", "3");
+    for (const action of ["start", "stop", "restart"] as const) await act(() => result.current.control("a1", action));
+    await readAppDetail(getApp, "a1", "3");
+    expect(getApp).toHaveBeenCalledTimes(1);
   });
 
   it("keeps it when the control fails", async () => {

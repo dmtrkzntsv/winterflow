@@ -4,6 +4,7 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, configure } from "@testing-library/react";
 import { afterEach } from "vitest";
 
+import { forgetAppDetails } from "@/hooks/use-app-detail";
 import { resetHeldCreates } from "@/lib/held-creates";
 
 afterEach(() => {
@@ -11,6 +12,8 @@ afterEach(() => {
   // A create a test left held (it outlived its wait) must not claim its
   // name in the next test.
   resetHeldCreates();
+  // Nor may an app read a test shared serve the next one.
+  forgetAppDetails();
 });
 
 // findBy*/waitFor default to 1 s, which a loaded runner with coverage on can

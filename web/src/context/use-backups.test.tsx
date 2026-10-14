@@ -1,7 +1,9 @@
 import { renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { readAppDetail } from "@/hooks/use-app-detail";
 import { AgentError } from "@/lib/backups";
+import { keepRevisions, keptRevisions, resetRevisionsCache } from "@/lib/revisions";
 import { BACKUP_RUN_TIMEOUT_MS, ORPHAN_DELETE_TIMEOUT_MS, ORPHAN_LIST_TIMEOUT_MS, useBackups } from "@/context/use-backups";
 
 vi.mock("@/context/use-servers", () => ({ useServers: () => ({ activeServerId: "srv-1" }) }));
@@ -26,6 +28,32 @@ describe("useBackups", () => {
     vi.stubGlobal("fetch", fetchMock);
   });
   afterEach(() => vi.unstubAllGlobals());
+
+  it("forgets the app's kept history and shared read after an update, which may not move its version", async () => {
+    const { result } = renderHook(() => useBackups());
+    const getApp = vi.fn(async () => ({ app: { app_id: "a1", config: "", files: [], variables: [] }, revision: 1, available_revisions: null }));
+    resetRevisionsCache();
+    keepRevisions("a1", "3", { current: "c", deployed: "b", revisions: [] }, 0);
+    await readAppDetail(getApp, "a1", "3");
+    waitFor.mockResolvedValueOnce({ status: 0, payload: { backups: [], backups_base: "b9" } });
+    await result.current.updateBackups("a1", []);
+    expect(keptRevisions("a1", "3")).toBeNull();
+    await readAppDetail(getApp, "a1", "3");
+    expect(getApp).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps them when the update is refused", async () => {
+    const { result } = renderHook(() => useBackups());
+    const getApp = vi.fn(async () => ({ app: { app_id: "a1", config: "", files: [], variables: [] }, revision: 1, available_revisions: null }));
+    resetRevisionsCache();
+    keepRevisions("a1", "3", { current: "c", deployed: "b", revisions: [] }, 0);
+    await readAppDetail(getApp, "a1", "3");
+    waitFor.mockResolvedValueOnce({ status: 1, error: "backups changed" });
+    await expect(result.current.updateBackups("a1", [])).rejects.toThrow();
+    expect(keptRevisions("a1", "3")).not.toBeNull();
+    await readAppDetail(getApp, "a1", "3");
+    expect(getApp).toHaveBeenCalledTimes(1);
+  });
 
   it("sends server_id in the body of the POST routes", async () => {
     const { result } = renderHook(() => useBackups());

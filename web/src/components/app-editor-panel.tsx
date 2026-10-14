@@ -89,8 +89,10 @@ export function AppEditorPanel({
     setError(null);
     try {
       const detail = version === undefined ? await getApp(appId) : await readAppDetail(getApp, appId, version);
-      if (version === undefined) seedAppDetail(appId, seed, detail);
       if (mine !== seq.current) return;
+      // Only the latest read is shared: an older one landing last would
+      // seed a tree a newer read has already replaced.
+      if (version === undefined) seedAppDetail(appId, seed, detail);
       const loaded = stateFromDetail(appId, detail);
       setState(loaded);
       setBaseline(JSON.stringify(loaded));

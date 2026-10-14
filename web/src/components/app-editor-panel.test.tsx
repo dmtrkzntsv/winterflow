@@ -399,6 +399,40 @@ describe("AppEditorPanel", () => {
     expect(screen.queryByDisplayValue("8080")).not.toBeInTheDocument();
   });
 
+  it("shares only its latest read: a post-save read landing after a newer one isn't kept for the page", async () => {
+    const user = userEvent.setup();
+    forgetAppDetails();
+    const answers: ((d: AppDetailPayload) => void)[] = [];
+    const getApp = vi.fn<AppsContextValue["getApp"]>(() => new Promise<AppDetailPayload>((resolve) => answers.push(resolve)));
+    const saveApp = vi.fn<AppsContextValue["saveApp"]>(async () => [{ id: "a1", version: "4" } as App]);
+    const ui = (read: AppsContextValue["getApp"]) => (
+      <MemoryRouter>
+        <AppsContext.Provider
+          value={{ apps: [{ id: "a1", version: "3" }], getApp: read, saveApp, getPublicKey: vi.fn(async () => "K"), refresh: vi.fn() } as unknown as AppsContextValue}
+        >
+          <AppEditorPanel appId="a1" />
+        </AppsContext.Provider>
+      </MemoryRouter>
+    );
+    const view = render(ui(getApp));
+    await waitFor(() => expect(answers).toHaveLength(1));
+    answers[0](withVariable("PORT", "8080"));
+    await user.type(await screen.findByRole("textbox", { name: "Value of PORT" }), "1");
+    await user.click(screen.getByRole("button", { name: "Save & redeploy" }));
+    // The post-save read (to be shared as version 4) is still out when a
+    // newer read starts (the server's reader changed).
+    await waitFor(() => expect(answers).toHaveLength(2));
+    view.rerender(ui(vi.fn((id: string) => getApp(id))));
+    expect(await screen.findByDisplayValue("8080")).toBeInTheDocument();
+    answers[1](withVariable("PORT", "80801"));
+    await flushPending();
+    expect(screen.getByDisplayValue("8080")).toBeInTheDocument();
+    // The older read was not kept as the page's read of version 4.
+    void readAppDetail(getApp, "a1", "4");
+    expect(getApp).toHaveBeenCalledTimes(3);
+    forgetAppDetails();
+  });
+
   it("tells the page whether it holds unsaved edits, and that it holds none once gone", async () => {
     const user = userEvent.setup();
     const onDirtyChange = vi.fn();

@@ -165,6 +165,8 @@ describe("InboxPage", () => {
     const yesterday = screen.getByRole("region", { name: "Yesterday" });
     const failed = within(yesterday).getByText("Sent to Ops · Couldn't send to Mail");
     expect(failed).toHaveAttribute("title", "Mail: 535 auth failed");
+    // On a phone it goes under the title, which keeps the row's width.
+    expect(failed.parentElement).toHaveClass("row-start-2");
     // The reason is text on the row, not only a tooltip; the note is in the
     // normal muted colour with a red dot, never small red text.
     expect(within(yesterday).getByText("Mail: 535 auth failed")).toBeVisible();

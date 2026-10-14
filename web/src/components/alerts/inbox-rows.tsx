@@ -72,12 +72,14 @@ export function EventRow({ event, unread }: { event: AlertEvent; unread: boolean
           ) : null}
         </>
       }
-      // Above the row's link. A failure is marked by a red dot, the words
+      // Where it went: under the title on a phone (the title keeps the
+      // row's width), at the end of the row from 640px; above the row's link
+      // so its tooltip shows. A failure is marked by a red dot, the words
       // stay in the normal text colours.
-      actions={
+      meta={
         note.text ? (
           <span
-            className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"
+            className="relative z-10 inline-flex items-center gap-1.5 text-xs text-muted-foreground"
             title={note.detail || undefined}
           >
             {note.failed ? <StatusDot tone="bad" /> : null}

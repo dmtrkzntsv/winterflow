@@ -38,10 +38,13 @@ describe("NewAppChoices", () => {
     expect(screen.getByRole("link", { name: /Compose file/ })).toHaveAttribute("href", "/server/s1/new?from=compose");
     expect(screen.getByRole("link", { name: /Git repository/ })).toHaveAttribute("href", "/server/s1/new?from=git");
     expect(screen.queryByTestId("template-choice-skeleton")).not.toBeInTheDocument();
+    // One column on a phone, all three in a row above.
+    expect(screen.getByRole("list", { name: "Ways to start" })).toHaveClass("grid", "sm:grid-cols-3");
   });
 
   it("leaves the template out without templates", () => {
     renderIn(<NewAppChoices serverId="s1" templates={0} />);
+    expect(screen.getByRole("list", { name: "Ways to start" })).toHaveClass("sm:grid-cols-2");
     expect(screen.queryByRole("link", { name: /From a template/ })).not.toBeInTheDocument();
     expect(screen.getAllByRole("link")).toHaveLength(2);
     expect(screen.queryByTestId("template-choice-skeleton")).not.toBeInTheDocument();

@@ -37,6 +37,8 @@ vi.mock("@/context/use-apps", () => ({
 vi.mock("@/hooks/use-inbox-unread", () => ({
   useInboxUnread: () => ({ count: unread, seenAt: 0, isUnread: () => false, markAllRead: () => {} }),
 }));
+// New app's chooser counts the templates on its first open.
+vi.mock("@/hooks/use-template-count", () => ({ useTemplateCount: () => 1 }));
 // NavUser needs the account contexts; it has its own test.
 vi.mock("@/components/nav-user", () => ({ NavUser: () => null }));
 
@@ -102,7 +104,6 @@ describe("AppSidebar", () => {
     expect(screen.getAllByRole("link").map((a) => a.getAttribute("href"))).toEqual([
       "/server/s1",
       "/server/s1/app/a1",
-      "/server/s1/new",
       "/server/s1/monitoring",
       "/inbox",
       "/templates",
@@ -116,7 +117,8 @@ describe("AppSidebar", () => {
   it.each([
     ["/server/s1", ["/server/s1"]],
     ["/server/s1/app/a1", ["/server/s1/app/a1"]],
-    ["/server/s1/new", ["/server/s1/new"]],
+    // New app is a button that opens the chooser: no entry for the page.
+    ["/server/s1/new", []],
     ["/server/s1/monitoring", ["/server/s1/monitoring"]],
     ["/inbox", ["/inbox"]],
     ["/templates/t1", ["/templates"]],
@@ -166,6 +168,15 @@ describe("AppSidebar", () => {
     expect(screen.getByRole("link", { name: "Apps" })).toHaveAttribute("href", "/");
     expect(screen.queryByRole("link", { name: "Monitoring" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /New app/ })).not.toBeInTheDocument();
+  });
+
+  it("opens the New app chooser from the sidebar, closing the phone sheet first", async () => {
+    renderAt("/server/s1", true);
+    await userEvent.setup().click(screen.getByRole("button", { name: "New app" }));
+    expect(setOpenMobile).toHaveBeenCalledWith(false);
+    const dialog = await screen.findByRole("dialog", { name: "New app" });
+    expect(dialog).toHaveTextContent("How do you want to start?");
+    expect(screen.getByRole("link", { name: /Compose file/ })).toHaveAttribute("href", "/server/s1/new?from=compose");
   });
 
   it("closes the phone sheet when a link is followed", async () => {

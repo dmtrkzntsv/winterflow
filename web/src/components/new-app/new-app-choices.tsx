@@ -3,6 +3,7 @@ import { FileCode, GitBranch, LayoutTemplate, type LucideIcon } from "lucide-rea
 
 import { Skeleton } from "@/components/ui/skeleton";
 import { newAppPath, type NewAppSource } from "@/lib/routes";
+import { cn } from "@/lib/utils";
 
 const CHOICES: readonly { from: NewAppSource; title: string; text: string; icon: LucideIcon }[] = [
   { from: "template", title: "From a template", text: "Fill in a few values. The template brings the rest.", icon: LayoutTemplate },
@@ -13,7 +14,8 @@ const CHOICES: readonly { from: NewAppSource; title: string; text: string; icon:
 // NewAppChoices are the ways to start a new app, as link cards. "From a
 // template" shows only when the organization has a template; templates is
 // their count (see useTemplateCount), null while unknown, when its slot is
-// held by a skeleton so the other cards don't move under a tap.
+// held by a skeleton so the other cards don't move under a tap. One column
+// on a phone, one row of them above.
 export function NewAppChoices({
   serverId,
   templates,
@@ -24,8 +26,9 @@ export function NewAppChoices({
   onPick?: () => void;
 }) {
   const shown = CHOICES.filter((c) => c.from !== "template" || (templates ?? 0) > 0);
+  const cards = shown.length + (templates === null ? 1 : 0);
   return (
-    <ul aria-label="Ways to start" className="grid gap-3 sm:grid-cols-[repeat(auto-fit,minmax(12rem,1fr))]">
+    <ul aria-label="Ways to start" className={cn("grid gap-3", cards === 3 ? "sm:grid-cols-3" : "sm:grid-cols-2")}>
       {templates === null ? (
         <li aria-hidden data-testid="template-choice-skeleton">
           <Skeleton className="h-full min-h-24 rounded-xl" />

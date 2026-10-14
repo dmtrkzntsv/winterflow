@@ -3,6 +3,7 @@ import { useParams, useSearchParams } from "react-router-dom";
 import { PageHeader } from "@/components/page-header";
 import { ComposeFlow } from "@/components/new-app/compose-flow";
 import { GitFlow } from "@/components/new-app/git-flow";
+import { NEW_APP_ASK, NEW_APP_TITLE } from "@/components/new-app/use-new-app-dialog";
 import { NewAppChoices } from "@/components/new-app/new-app-choices";
 import { TemplateFlow } from "@/components/new-app/template-flow";
 import { useTemplateCount } from "@/hooks/use-template-count";
@@ -17,7 +18,8 @@ const TITLES: Record<NewAppSource, string> = {
 
 // NewAppPage is /server/:id/new: ?from=template|compose|git opens that
 // form (?template=<id> picks a template); anything else shows the ways to
-// start (the same cards the Apps page's New app opens).
+// start: the New app dialog's cards and words, as a page (the palette and
+// old links come here; every button opens the dialog).
 export default function NewAppPage() {
   const [params] = useSearchParams();
   // The server is the one in the address, not whichever is active.
@@ -27,8 +29,8 @@ export default function NewAppPage() {
   return (
     <div className="mx-auto w-full max-w-3xl space-y-6">
       <PageHeader
-        title={from ? TITLES[from] : "New app"}
-        subtitle={from ? undefined : "How do you want to start?"}
+        title={from ? TITLES[from] : NEW_APP_TITLE}
+        subtitle={from ? undefined : NEW_APP_ASK}
         back={from ? { to: newAppPath(serverId), label: "New app" } : { to: appsPath(serverId), label: "Apps" }}
       />
       {from === "template" ? (

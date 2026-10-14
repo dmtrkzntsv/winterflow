@@ -7,15 +7,21 @@ export type AppFileMeta = {
   id: string;
   filename: string;
   is_encrypted: boolean;
+  // storedAs: the name the agent holds this secret file under (it was read
+  // back as the "<encrypted>" placeholder). Editor-only, never sent. A
+  // renamed file no longer stands for it (the agent keys secrets by name).
+  storedAs?: string;
 };
 
 export type AppVariableMeta = {
   id: string;
   name: string;
   is_encrypted: boolean;
-  // stored: the agent holds a secret value for this variable (it was read
-  // back as the "<encrypted>" placeholder). Editor-only, never sent.
-  stored?: boolean;
+  // storedAs: the name the agent holds a secret value for this variable
+  // under (it was read back as the "<encrypted>" placeholder). Editor-only,
+  // never sent. A renamed variable no longer stands for it (the agent keys
+  // secrets by name), so it needs a new value.
+  storedAs?: string;
 };
 
 export type AppSourceConfig = {

@@ -14,7 +14,7 @@ function withStoredSecret(): AppEditorState {
   const s = emptyEditorState();
   return {
     ...s,
-    config: { ...s.config, variables: [{ id: "t", name: "TOKEN", is_encrypted: true, stored: true }] },
+    config: { ...s.config, variables: [{ id: "t", name: "TOKEN", is_encrypted: true, storedAs: "TOKEN" }] },
     variables: { t: "<encrypted>" },
   };
 }
@@ -94,6 +94,29 @@ describe("VariablesEditor", () => {
     await user.click(screen.getByRole("button", { name: "Keep current" }));
     expect(screen.getByText("Secret · set")).toBeInTheDocument();
     expect(state().values).toEqual({ t: "<encrypted>" });
+  });
+
+  it("says an empty replacement keeps the stored value", async () => {
+    const user = userEvent.setup();
+    render(<Harness start={withStoredSecret} />);
+    await user.click(screen.getByRole("button", { name: "Replace TOKEN" }));
+    expect(screen.getByLabelText("Value of TOKEN")).toHaveAttribute("placeholder", "Leave empty to keep the current value");
+  });
+
+  it("empties a renamed stored secret: it needs a new value", async () => {
+    const user = userEvent.setup();
+    render(<Harness start={withStoredSecret} />);
+    await user.type(screen.getByRole("textbox", { name: "Variable name" }), "2");
+    expect(state().vars[0]).toMatchObject({ name: "TOKEN2", storedAs: "TOKEN" });
+    expect(state().values).toEqual({ t: "" });
+    const field = screen.getByLabelText("Value of TOKEN2");
+    expect(field).toHaveValue("");
+    expect(field).toHaveAttribute("placeholder", "value");
+    expect(screen.queryByRole("button", { name: "Keep current" })).not.toBeInTheDocument();
+    // Renamed back while still empty, it keeps the stored value again.
+    await user.type(screen.getByRole("textbox", { name: "Variable name" }), "{Backspace}");
+    expect(screen.getByLabelText("Value of TOKEN")).toHaveAttribute("placeholder", "Leave empty to keep the current value");
+    expect(screen.getByRole("button", { name: "Keep current" })).toBeInTheDocument();
   });
 
   it("empties a stored secret turned plain, so the placeholder never shows as text", async () => {

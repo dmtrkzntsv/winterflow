@@ -8,7 +8,9 @@ import { EditorSection } from "@/components/editor-section";
 import { FieldMessage } from "@/components/form-field";
 import { ImageTagPicker } from "@/components/image-tag-picker";
 import { EmptyNote } from "@/components/page-states";
+import { holdsStoredSecret } from "@/lib/app-editor-io";
 import { imageRefs } from "@/lib/compose-images";
+import { ENCRYPTED } from "@/lib/ecies";
 import { addFile, removeFile } from "@/lib/editor-rows";
 import { invalidAttrs, type FieldErrors } from "@/lib/field-errors";
 import { cn } from "@/lib/utils";
@@ -41,11 +43,15 @@ export function FileEditors({
   errors = {},
   addLabel,
 }: FileEditorsProps) {
-  const updateMeta = (id: string, patch: Partial<AppFileMeta>) =>
-    onChange(
-      files.map((f) => (f.id === id ? { ...f, ...patch } : f)),
-      contents,
-    );
+  // A stored secret's placeholder never becomes text: turned plain or
+  // renamed away from the name the agent holds it under, the file starts
+  // empty (renamed back while still empty, it keeps the stored contents).
+  const updateMeta = (id: string, patch: Partial<AppFileMeta>) => {
+    const next = files.map((f) => (f.id === id ? { ...f, ...patch } : f));
+    const changed = next.find((f) => f.id === id);
+    const drop = changed && contents[id] === ENCRYPTED && !holdsStoredSecret(changed, changed.filename);
+    onChange(next, drop ? { ...contents, [id]: "" } : contents);
+  };
   const updateContent = (id: string, content: string) => onChange(files, { ...contents, [id]: content });
   const add = () => {
     const next = addFile(files, contents);
@@ -61,6 +67,10 @@ export function FileEditors({
       {files.map((f) => {
         const nameId = `file-${f.id}`;
         const error = errors[`file:${f.id}`];
+        const contentId = `file-content-${f.id}`;
+        const contentError = errors[`file:${f.id}:content`];
+        const held = holdsStoredSecret(f, f.filename);
+        const content = contents[f.id] ?? "";
         return (
           <div key={f.id} className="overflow-hidden rounded-md border">
             <div className="flex items-center gap-1 border-b bg-muted/40 py-1 pr-1 pl-1">
@@ -91,19 +101,49 @@ export function FileEditors({
               </Button>
             </div>
             <FieldMessage id={nameId} message={error} className="border-b px-3 py-1.5" />
-            <CodeEditor
-              value={contents[f.id] ?? ""}
-              onChange={(content) => updateContent(f.id, content)}
-              filename={f.filename}
-              placeholder="file contents (use ${VAR}, including org/server variables)"
-              className="rounded-none border-0"
-            />
-            {imageChips && isComposeFile(f.filename) ? (
-              <ImageChips
-                content={contents[f.id] ?? ""}
-                onReplace={(oldRef, newRef) => updateContent(f.id, (contents[f.id] ?? "").split(oldRef).join(newRef))}
-              />
-            ) : null}
+            {held && content === ENCRYPTED ? (
+              // A stored secret file is never shown, nor its placeholder.
+              <div className="flex items-center gap-2 px-3 py-2 text-sm">
+                <span className="inline-flex min-w-0 items-center gap-1.5 text-muted-foreground">
+                  <Lock className="size-3.5 shrink-0" aria-hidden />
+                  <span className="truncate">Secret · set</span>
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="ml-auto h-7"
+                  aria-label={`Replace ${f.filename || "secret file"}`}
+                  onClick={() => updateContent(f.id, "")}
+                >
+                  Replace
+                </Button>
+              </div>
+            ) : (
+              <>
+                {held ? (
+                  <div className="flex items-center gap-2 border-b px-3 py-1.5 text-xs text-muted-foreground">
+                    <span>Leave empty to keep the current contents.</span>
+                    <Button size="sm" variant="ghost" className="ml-auto h-7 text-xs" onClick={() => updateContent(f.id, ENCRYPTED)}>
+                      Keep current
+                    </Button>
+                  </div>
+                ) : null}
+                <CodeEditor
+                  value={content}
+                  onChange={(next) => updateContent(f.id, next)}
+                  filename={f.filename}
+                  placeholder={held ? "new contents" : "file contents (use ${VAR}, including org/server variables)"}
+                  className="rounded-none border-0"
+                />
+                <FieldMessage id={contentId} message={contentError} className="border-t px-3 py-1.5" />
+                {imageChips && isComposeFile(f.filename) ? (
+                  <ImageChips
+                    content={content}
+                    onReplace={(oldRef, newRef) => updateContent(f.id, content.split(oldRef).join(newRef))}
+                  />
+                ) : null}
+              </>
+            )}
           </div>
         );
       })}

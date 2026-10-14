@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { SecretToggle } from "@/components/files-section";
 import { FieldMessage } from "@/components/form-field";
 import { EmptyNote } from "@/components/page-states";
-import { keepsStoredSecret } from "@/lib/app-editor-io";
+import { holdsStoredSecret } from "@/lib/app-editor-io";
 import { ENCRYPTED } from "@/lib/ecies";
 import { addVariable, removeVariable } from "@/lib/editor-rows";
 import { invalidAttrs, type FieldErrors } from "@/lib/field-errors";
@@ -27,18 +27,26 @@ type Props = {
 // VariablesEditor edits an app's variables: name, value (masked while
 // secret), the secret toggle and removal, then "Add variable". A stored
 // secret is never shown, nor its placeholder: it reads "Secret · set" with
-// Replace, which opens an empty field (Keep current goes back). Secret
-// values are encrypted by the save, never here.
+// Replace, which opens an empty field (left empty, or Keep current, keeps
+// the stored value). Secret values are encrypted by the save, never here.
 export function VariablesEditor({ state, onChange, shared, errors = {}, emptyNote = true }: Props) {
   const [revealed, setRevealed] = useState<Record<string, boolean>>({});
   // replaced: the row whose new-value field Replace just opened (focused).
   const replaced = useRef<string | null>(null);
   const vars = state.config.variables;
-  const updateMeta = (id: string, patch: Partial<AppVariableMeta>) =>
+  // updateMeta changes a row's name; renamed away from the name the agent
+  // holds its secret under, a stored secret starts empty and needs a new
+  // value (renamed back while still empty, it keeps the stored one).
+  const updateMeta = (id: string, patch: Partial<AppVariableMeta>) => {
+    const variables = vars.map((v) => (v.id === id ? { ...v, ...patch } : v));
+    const changed = variables.find((v) => v.id === id);
+    const drop = changed && state.variables[id] === ENCRYPTED && !holdsStoredSecret(changed, changed.name);
     onChange({
       ...state,
-      config: { ...state.config, variables: vars.map((v) => (v.id === id ? { ...v, ...patch } : v)) },
+      config: { ...state.config, variables },
+      variables: drop ? { ...state.variables, [id]: "" } : state.variables,
     });
+  };
   const updateValue = (id: string, value: string) => onChange({ ...state, variables: { ...state.variables, [id]: value } });
   // setSecret flips a row's secret flag; a stored secret turned plain
   // starts empty (its value never comes back as text).
@@ -59,7 +67,8 @@ export function VariablesEditor({ state, onChange, shared, errors = {}, emptyNot
         <div className="divide-y rounded-md border">
           {vars.map((v) => {
             const value = state.variables[v.id] ?? "";
-            const kept = keepsStoredSecret(v, value);
+            const held = holdsStoredSecret(v, v.name);
+            const kept = held && value === ENCRYPTED;
             const isRevealed = revealed[v.id] || !v.is_encrypted;
             const valueId = `var-value-${v.id}`;
             const valueError = errors[`var:${v.id}:value`];
@@ -110,7 +119,7 @@ export function VariablesEditor({ state, onChange, shared, errors = {}, emptyNot
                         aria-label={`Value of ${v.name || "variable"}`}
                         value={value}
                         type={isRevealed ? "text" : "password"}
-                        placeholder={v.stored && v.is_encrypted ? "New value" : "value"}
+                        placeholder={held ? "Leave empty to keep the current value" : "value"}
                         autoComplete="off"
                         ref={(el) => {
                           if (el && replaced.current === v.id) {
@@ -132,7 +141,7 @@ export function VariablesEditor({ state, onChange, shared, errors = {}, emptyNot
                           {isRevealed ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
                         </Button>
                       ) : null}
-                      {v.is_encrypted && v.stored ? (
+                      {held ? (
                         <Button size="sm" variant="ghost" className="h-8 shrink-0 text-xs" onClick={() => updateValue(v.id, ENCRYPTED)}>
                           Keep current
                         </Button>

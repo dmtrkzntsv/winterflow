@@ -9,7 +9,7 @@ import {
   pruneBlankAddresses,
   stateFromDetail,
 } from "@/lib/app-editor-io";
-import type { AppEditorState } from "@/types/app-config";
+import type { AppEditorState, AppFileMeta, AppVariableMeta } from "@/types/app-config";
 
 const b64 = (s: string) => btoa(s);
 
@@ -180,11 +180,14 @@ describe("app editor io: stored secrets", () => {
         config: b64(
           JSON.stringify({
             name: "demo",
-            files: [{ filename: "compose.yml" }],
+            files: [{ filename: "compose.yml" }, { filename: "key.pem", is_encrypted: true }],
             variables: [{ name: "PORT" }, { name: "TOKEN", is_encrypted: true }],
           }),
         ),
-        files: [{ name: "compose.yml", content: b64("services: {}") }],
+        files: [
+          { name: "compose.yml", content: b64("services: {}") },
+          { name: "key.pem", content: b64("<encrypted>"), encrypted: true },
+        ],
         variables: [
           { name: "PORT", content: b64("8080") },
           { name: "TOKEN", content: b64("<encrypted>"), encrypted: true },
@@ -193,14 +196,123 @@ describe("app editor io: stored secrets", () => {
       revision: 1,
       available_revisions: null,
     });
-  const tokenId = (s: AppEditorState) => s.config.variables.find((v) => v.name === "TOKEN")!.id;
+  const tokenId = (s: AppEditorState) => s.config.variables[1].id;
+  const keyId = (s: AppEditorState) => s.config.files[1].id;
+  const withFile = (s: AppEditorState, patch: Partial<AppFileMeta>, content?: string): AppEditorState => {
+    const id = keyId(s);
+    return {
+      ...s,
+      config: { ...s.config, files: s.config.files.map((f) => (f.id === id ? { ...f, ...patch } : f)) },
+      files: content === undefined ? s.files : { ...s.files, [id]: content },
+    };
+  };
+  const withVar = (s: AppEditorState, patch: Partial<AppVariableMeta>, value?: string): AppEditorState => {
+    const id = tokenId(s);
+    return {
+      ...s,
+      config: { ...s.config, variables: s.config.variables.map((v) => (v.id === id ? { ...v, ...patch } : v)) },
+      variables: value === undefined ? s.variables : { ...s.variables, [id]: value },
+    };
+  };
+  const save = (s: AppEditorState) => buildSavePayload(s, async () => "PUB", "app-1");
 
-  it("marks a secret read back from the agent as stored", () => {
+  it("marks a secret read back from the agent as stored under its name", () => {
     const s = stored();
-    expect(s.config.variables.map(({ name, is_encrypted, stored }) => ({ name, is_encrypted, stored }))).toEqual([
-      { name: "PORT", is_encrypted: false, stored: undefined },
-      { name: "TOKEN", is_encrypted: true, stored: true },
+    expect(s.config.variables.map(({ name, is_encrypted, storedAs }) => ({ name, is_encrypted, storedAs }))).toEqual([
+      { name: "PORT", is_encrypted: false, storedAs: undefined },
+      { name: "TOKEN", is_encrypted: true, storedAs: "TOKEN" },
     ]);
+    expect(s.config.files.map(({ filename, is_encrypted, storedAs }) => ({ filename, is_encrypted, storedAs }))).toEqual([
+      { filename: "compose.yml", is_encrypted: false, storedAs: undefined },
+      { filename: "key.pem", is_encrypted: true, storedAs: "key.pem" },
+    ]);
+  });
+
+  it("sends an untouched stored secret file as the placeholder, without reading the key", async () => {
+    let keyReads = 0;
+    const payload = await buildSavePayload(stored(), async () => {
+      keyReads++;
+      return "PUB";
+    }, "app-1");
+    expect(payload.files).toEqual([
+      { name: "compose.yml", encrypted: false, content: "services: {}" },
+      { name: "key.pem", encrypted: true, content: "<encrypted>" },
+    ]);
+    expect(keyReads).toBe(0);
+    expect(JSON.stringify(payload.config)).not.toContain("storedAs");
+  });
+
+  it("keeps a stored secret file left empty after Replace", async () => {
+    const payload = await save(withFile(stored(), {}, ""));
+    expect(payload.files[1]).toEqual({ name: "key.pem", encrypted: true, content: "<encrypted>" });
+  });
+
+  it("encrypts a stored secret file's new contents", async () => {
+    const payload = await save(withFile(stored(), {}, "-----BEGIN KEY-----"));
+    expect(payload.files[1]).toEqual({ name: "key.pem", encrypted: true, content: "ct(PUB):-----BEGIN KEY-----" });
+  });
+
+  it("never sends a stored secret file's placeholder as plaintext", async () => {
+    // Turned plain with the placeholder still in it (the editor empties it).
+    const plain = withFile(stored(), { is_encrypted: false });
+    expect(editorErrors(plain)).toEqual({ [`file:${keyId(plain)}:content`]: "A file can't start with <encrypted>." });
+    await expect(save(plain)).rejects.toThrow("key.pem: A file can't start with <encrypted>.");
+    // Turned plain and emptied: sent as an empty plain file.
+    const emptied = withFile(stored(), { is_encrypted: false }, "");
+    expect(editorErrors(emptied)).toEqual({});
+    expect((await save(emptied)).files[1]).toEqual({ name: "key.pem", encrypted: false, content: "" });
+  });
+
+  it("asks a renamed stored secret file for its contents again", async () => {
+    for (const content of ["", "<encrypted>"]) {
+      const renamed = withFile(stored(), { filename: "tls.pem" }, content);
+      expect(editorErrors(renamed)).toEqual({
+        [`file:${keyId(renamed)}:content`]: "Paste the contents again: a renamed secret file doesn't keep its old contents.",
+      });
+      await expect(save(renamed)).rejects.toThrow("tls.pem: Paste the contents again");
+    }
+    const given = await save(withFile(stored(), { filename: "tls.pem" }, "new"));
+    expect(given.files[1]).toEqual({ name: "tls.pem", encrypted: true, content: "ct(PUB):new" });
+    // Renamed back, it stands for the stored file again.
+    const back = withFile(stored(), { filename: " key.pem " }, "");
+    expect(editorErrors(back)).toEqual({});
+    expect((await save(back)).files[1]).toEqual({ name: "key.pem", encrypted: true, content: "<encrypted>" });
+  });
+
+  it("refuses the placeholder in a new secret file", async () => {
+    const fresh = emptyEditorState();
+    const added: AppEditorState = {
+      ...fresh,
+      config: { ...fresh.config, files: [...fresh.config.files, { id: "f1", filename: "a.key", is_encrypted: true }] },
+      files: { ...fresh.files, f1: "<encrypted>" },
+    };
+    expect(editorErrors(added)).toMatchObject({ "file:f1:content": "A file can't start with <encrypted>." });
+    await expect(buildSavePayload(added, async () => "PUB")).rejects.toThrow("a.key: A file can't start with <encrypted>.");
+  });
+
+  it("keeps a stored secret variable left empty after Replace", async () => {
+    let keyReads = 0;
+    const payload = await buildSavePayload(withVar(stored(), {}, ""), async () => {
+      keyReads++;
+      return "PUB";
+    }, "app-1");
+    expect(payload.variables[1]).toEqual({ name: "TOKEN", encrypted: true, content: "<encrypted>" });
+    expect(keyReads).toBe(0);
+  });
+
+  it("asks a renamed stored secret variable for a new value", async () => {
+    for (const value of ["", "<encrypted>"]) {
+      const renamed = withVar(stored(), { name: "API_TOKEN" }, value);
+      expect(editorErrors(renamed)).toEqual({
+        [`var:${tokenId(renamed)}:value`]: "Enter a value: a renamed secret doesn't keep its old one.",
+      });
+      await expect(save(renamed)).rejects.toThrow("API_TOKEN: Enter a value");
+    }
+    const given = await save(withVar(stored(), { name: "API_TOKEN" }, "s3cret"));
+    expect(given.variables[1]).toEqual({ name: "API_TOKEN", encrypted: true, content: "ct(PUB):s3cret" });
+    // A stored secret turned plain and emptied is a plain empty value.
+    const plain = await save(withVar(stored(), { is_encrypted: false }, ""));
+    expect(plain.variables[1]).toEqual({ name: "TOKEN", encrypted: false, content: "" });
   });
 
   it("sends an untouched stored secret as the placeholder, without reading the key", async () => {
@@ -225,7 +337,7 @@ describe("app editor io: stored secrets", () => {
     const payload = await buildSavePayload(replaced, async () => "PUB", "app-1");
     const token = payload.variables.find((v) => v.name === "TOKEN")!;
     expect(token).toEqual({ name: "TOKEN", encrypted: true, content: "ct(PUB):hunter2" });
-    expect(JSON.stringify(payload)).not.toContain("<encrypted>");
+    expect(JSON.stringify(payload.variables)).not.toContain("<encrypted>");
     expect(JSON.stringify(payload)).not.toContain('"hunter2"');
   });
 

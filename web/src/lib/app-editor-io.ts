@@ -12,6 +12,7 @@ import {
   isComposeFile,
   localId,
   type AppEditorState,
+  type AppFileMeta,
   type AppSourceConfig,
   type AppVariableMeta,
   type IngressDomain,
@@ -83,7 +84,7 @@ export function stateFromDetail(
     // Encrypted content is masked by the agent ("<encrypted>"); keep it as the
     // placeholder so save preserves the stored secret unless re-entered.
     files[id] = encrypted ? ENCRYPTED : b64ToString(f.content);
-    return { id, filename: f.name, is_encrypted: encrypted };
+    return encrypted ? { id, filename: f.name, is_encrypted: true, storedAs: f.name } : { id, filename: f.name, is_encrypted: false };
   });
 
   const variables: AppEditorState["variables"] = {};
@@ -91,7 +92,7 @@ export function stateFromDetail(
     const id = localId("var");
     const encrypted = v.encrypted ?? encVar.get(v.name) ?? false;
     variables[id] = encrypted ? ENCRYPTED : b64ToString(v.content);
-    return encrypted ? { id, name: v.name, is_encrypted: true, stored: true } : { id, name: v.name, is_encrypted: false };
+    return encrypted ? { id, name: v.name, is_encrypted: true, storedAs: v.name } : { id, name: v.name, is_encrypted: false };
   });
 
   const cfgSource = (cfg as { source?: import("@/types/app-config").AppSourceConfig }).source;
@@ -198,8 +199,9 @@ function redirectTargetError(r: IngressRedirect): string {
 }
 
 // editorErrors names every problem in the editor's state by field: name,
-// repo_url, branch, files, file:<id>, var:<id>, domain:<id>, port:<id>,
-// redirect-host:<id>, redirect-path:<id>, redirect-to:<id>. Ingress rows are
+// repo_url, branch, files, file:<id>, file:<id>:content, var:<id>,
+// var:<id>:value, domain:<id>, port:<id>, redirect-host:<id>,
+// redirect-path:<id>, redirect-to:<id>. Ingress rows are
 // read in the order the server's Validate reads them: addresses, then
 // redirects, each claiming its hostname; a path rule needs a hostname
 // claimed above it.
@@ -214,10 +216,17 @@ export function editorErrors(state: AppEditorState): FieldErrors {
   }
   // A Git-deployed app may take its compose file from the repository.
   if (!src && !config.files.some((f) => isComposeFile(f.filename))) out.files = "Add a compose file named compose.yml.";
-  for (const f of config.files) if (!f.filename.trim()) out[`file:${f.id}`] = "Name this file.";
+  for (const f of config.files) {
+    if (!f.filename.trim()) out[`file:${f.id}`] = "Name this file.";
+    const content = state.files[f.id] ?? "";
+    if (renamedStoredSecret(f, f.filename, content)) out[`file:${f.id}:content`] = RENAMED_FILE;
+    else if (placeholderMisuse(f, f.filename, content)) out[`file:${f.id}:content`] = PLACEHOLDER_REFUSED_FILE;
+  }
   for (const v of config.variables) {
     if (!v.name.trim()) out[`var:${v.id}`] = "Name this variable.";
-    if (placeholderMisuse(v, state.variables[v.id] ?? "")) out[`var:${v.id}:value`] = PLACEHOLDER_REFUSED;
+    const value = state.variables[v.id] ?? "";
+    if (renamedStoredSecret(v, v.name, value)) out[`var:${v.id}:value`] = RENAMED_VAR;
+    else if (placeholderMisuse(v, v.name, value)) out[`var:${v.id}:value`] = PLACEHOLDER_REFUSED;
   }
 
   const ing = config.ingress;
@@ -252,33 +261,47 @@ export function editorErrors(state: AppEditorState): FieldErrors {
   return out;
 }
 
-// keepsStoredSecret says whether a variable's value stands for the secret
-// the agent already holds (sent as the placeholder, which keeps it).
-export function keepsStoredSecret(v: AppVariableMeta, value: string): boolean {
-  return v.is_encrypted && v.stored === true && value === ENCRYPTED;
+type SecretItem = { is_encrypted: boolean; storedAs?: string };
+
+// holdsStoredSecret says whether a secret row still stands for the secret
+// the agent holds: it is secret and keeps the name it was read under (the
+// agent keys a kept secret by name, so a renamed one keeps nothing).
+export function holdsStoredSecret(item: SecretItem, name: string): boolean {
+  return item.is_encrypted && item.storedAs !== undefined && item.storedAs === name.trim();
+}
+
+// keepsStored says whether a secret's value stands for the one the
+// agent already holds (sent as the placeholder, which keeps it): untouched,
+// or left empty after Replace.
+function keepsStored(item: SecretItem, name: string, value: string): boolean {
+  return holdsStoredSecret(item, name) && (value === ENCRYPTED || value === "");
 }
 
 // placeholderMisuse is a value that starts with the placeholder without
 // standing for a stored secret: sent, it would keep (or become) the wrong
 // value.
-function placeholderMisuse(v: AppVariableMeta, value: string): boolean {
-  return value.startsWith(ENCRYPTED) && !keepsStoredSecret(v, value);
+function placeholderMisuse(item: SecretItem, name: string, value: string): boolean {
+  return value.startsWith(ENCRYPTED) && !keepsStored(item, name, value);
+}
+
+// renamedStoredSecret is a stored secret renamed without a new value: the
+// agent keeps nothing under the new name, so it needs one.
+function renamedStoredSecret(item: SecretItem, name: string, value: string): boolean {
+  return item.is_encrypted && item.storedAs !== undefined && !holdsStoredSecret(item, name) && (value === "" || value === ENCRYPTED);
 }
 
 const PLACEHOLDER_REFUSED = `A value can't start with ${ENCRYPTED}.`;
+const PLACEHOLDER_REFUSED_FILE = `A file can't start with ${ENCRYPTED}.`;
+const RENAMED_VAR = "Enter a value: a renamed secret doesn't keep its old one.";
+const RENAMED_FILE = "Paste the contents again: a renamed secret file doesn't keep its old contents.";
 
-// mapItem encrypts a secret value/file, passes the "<encrypted>" placeholder
-// through unchanged (preserve the stored secret), and sends plaintext as-is.
-async function mapItem(
-  name: string,
-  rawContent: string,
-  encrypted: boolean,
-  publicKey: string,
-) {
+// mapItem sends a kept stored secret as the "<encrypted>" placeholder (the
+// agent keeps what it holds), encrypts any other secret value or file, and
+// sends plaintext as-is.
+async function mapItem(name: string, rawContent: string, encrypted: boolean, kept: boolean, publicKey: string) {
   let content = rawContent;
-  if (encrypted && rawContent !== ENCRYPTED) {
-    content = await encryptSecret(rawContent, publicKey);
-  }
+  if (kept) content = ENCRYPTED;
+  else if (encrypted) content = await encryptSecret(rawContent, publicKey);
   return { name: name.trim(), encrypted, content };
 }
 
@@ -289,27 +312,30 @@ export async function buildSavePayload(
   getPublicKey: () => Promise<string>,
   appId?: string,
 ) {
-  for (const v of state.config.variables) {
-    if (placeholderMisuse(v, state.variables[v.id] ?? "")) throw new Error(`${v.name.trim() || "A variable"}: ${PLACEHOLDER_REFUSED}`);
+  // The placeholder is only ever sent for a secret the agent holds under
+  // that name: anywhere else it would be kept as text or drop the item.
+  for (const f of state.config.files) {
+    const content = state.files[f.id] ?? "";
+    if (renamedStoredSecret(f, f.filename, content)) throw new Error(`${f.filename.trim() || "A file"}: ${RENAMED_FILE}`);
+    if (placeholderMisuse(f, f.filename, content)) throw new Error(`${f.filename.trim() || "A file"}: ${PLACEHOLDER_REFUSED_FILE}`);
   }
+  for (const v of state.config.variables) {
+    const value = state.variables[v.id] ?? "";
+    if (renamedStoredSecret(v, v.name, value)) throw new Error(`${v.name.trim() || "A variable"}: ${RENAMED_VAR}`);
+    if (placeholderMisuse(v, v.name, value)) throw new Error(`${v.name.trim() || "A variable"}: ${PLACEHOLDER_REFUSED}`);
+  }
+  const fileKept = (f: AppFileMeta) => keepsStored(f, f.filename, state.files[f.id] ?? "");
+  const varKept = (v: AppVariableMeta) => keepsStored(v, v.name, state.variables[v.id] ?? "");
   const needsKey =
-    state.config.files.some(
-      (f) => f.is_encrypted && (state.files[f.id] ?? "") !== ENCRYPTED,
-    ) ||
-    state.config.variables.some(
-      (v) => v.is_encrypted && !keepsStoredSecret(v, state.variables[v.id] ?? ""),
-    );
+    state.config.files.some((f) => f.is_encrypted && !fileKept(f)) ||
+    state.config.variables.some((v) => v.is_encrypted && !varKept(v));
   const publicKey = needsKey ? await getPublicKey() : "";
 
   const files = await Promise.all(
-    state.config.files.map((f) =>
-      mapItem(f.filename, state.files[f.id] ?? "", f.is_encrypted, publicKey),
-    ),
+    state.config.files.map((f) => mapItem(f.filename, state.files[f.id] ?? "", f.is_encrypted, fileKept(f), publicKey)),
   );
   const variables = await Promise.all(
-    state.config.variables.map((v) =>
-      mapItem(v.name, state.variables[v.id] ?? "", v.is_encrypted, publicKey),
-    ),
+    state.config.variables.map((v) => mapItem(v.name, state.variables[v.id] ?? "", v.is_encrypted, varKept(v), publicKey)),
   );
 
   const config = {

@@ -128,3 +128,67 @@ describe("FileEditors", () => {
     expect(screen.getAllByRole("textbox", { name: "File name" })).toHaveLength(2);
   });
 });
+
+describe("FileEditors: a stored secret file", () => {
+  // StoredSecret is an app whose key.pem the agent holds (read back as the
+  // placeholder).
+  function StoredSecret({ errors }: { errors?: Record<string, string> }) {
+    const [files, setFiles] = useState<AppFileMeta[]>([{ id: "k", filename: "key.pem", is_encrypted: true, storedAs: "key.pem" }]);
+    const [contents, setContents] = useState<Record<string, string>>({ k: "<encrypted>" });
+    return (
+      <>
+        <FileEditors
+          files={files}
+          contents={contents}
+          onChange={(f, c) => {
+            setFiles(f);
+            setContents(c);
+          }}
+          errors={errors}
+        />
+        <output aria-label="state">{JSON.stringify({ files, contents })}</output>
+      </>
+    );
+  }
+
+  it("never shows its placeholder: Replace opens an empty editor, Keep current goes back", async () => {
+    const user = userEvent.setup();
+    render(<StoredSecret />);
+    expect(screen.getByText("Secret · set")).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Content of key.pem" })).not.toBeInTheDocument();
+    expect(screen.queryByDisplayValue("<encrypted>")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Replace key.pem" }));
+    const editor = screen.getByRole("textbox", { name: "Content of key.pem" });
+    expect(editor).toHaveValue("");
+    expect(screen.getByText("Leave empty to keep the current contents.")).toBeInTheDocument();
+    await user.type(editor, "KEY");
+    expect(state().contents).toEqual({ k: "KEY" });
+
+    await user.click(screen.getByRole("button", { name: "Keep current" }));
+    expect(screen.getByText("Secret · set")).toBeInTheDocument();
+    expect(state().contents).toEqual({ k: "<encrypted>" });
+  });
+
+  it("empties it when turned plain, so the placeholder never becomes text", async () => {
+    const user = userEvent.setup();
+    render(<StoredSecret />);
+    await user.click(screen.getByRole("button", { name: /Secret$/ }));
+    expect(screen.getByRole("textbox", { name: "Content of key.pem" })).toHaveValue("");
+    expect(state().contents).toEqual({ k: "" });
+    expect(state().files[0]).toMatchObject({ is_encrypted: false });
+  });
+
+  it("empties it when renamed: a renamed secret file needs its contents again", async () => {
+    const user = userEvent.setup();
+    render(<StoredSecret errors={{ "file:k:content": "Paste the contents again." }} />);
+    await user.type(screen.getByRole("textbox", { name: "File name" }), "2");
+    expect(state().files[0]).toMatchObject({ filename: "key.pem2", is_encrypted: true, storedAs: "key.pem" });
+    expect(state().contents).toEqual({ k: "" });
+    expect(screen.queryByText("Leave empty to keep the current contents.")).not.toBeInTheDocument();
+    expect(screen.getByText("Paste the contents again.")).toBeInTheDocument();
+    // Renamed back while still empty, it stands for the stored file again.
+    await user.type(screen.getByRole("textbox", { name: "File name" }), "{Backspace}");
+    expect(screen.getByText("Leave empty to keep the current contents.")).toBeInTheDocument();
+  });
+});

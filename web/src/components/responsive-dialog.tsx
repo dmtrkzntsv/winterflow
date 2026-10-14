@@ -31,6 +31,11 @@ export type ResponsiveDialogProps = {
   // footer holds the actions (Cancel, then the primary).
   footer?: ReactNode;
   className?: string;
+  // Focus hooks of the content: where focus goes when it opens (default:
+  // its first field) and back to when it closes (default: what was focused
+  // before it opened) — for a dialog opened from a row that may be gone.
+  onOpenAutoFocus?: (event: Event) => void;
+  onCloseAutoFocus?: (event: Event) => void;
 };
 
 // ResponsiveDialog is the standard dialog: shadcn's Dialog on wider
@@ -44,6 +49,8 @@ export function ResponsiveDialog({
   children,
   footer,
   className,
+  onOpenAutoFocus,
+  onCloseAutoFocus,
 }: ResponsiveDialogProps) {
   const phone = useMediaQuery(PHONE_QUERY);
   const describedBy = description ? {} : { "aria-describedby": undefined };
@@ -51,7 +58,12 @@ export function ResponsiveDialog({
   if (phone) {
     return (
       <Drawer open={open} onOpenChange={onOpenChange} shouldScaleBackground={false}>
-        <DrawerContent className={cn("max-h-[90svh]", className)} {...describedBy}>
+        <DrawerContent
+          className={cn("max-h-[90svh]", className)}
+          onOpenAutoFocus={onOpenAutoFocus}
+          onCloseAutoFocus={onCloseAutoFocus}
+          {...describedBy}
+        >
           <DrawerHeader className="text-left">
             <DrawerTitle>{title}</DrawerTitle>
             {description ? <DrawerDescription>{description}</DrawerDescription> : null}
@@ -65,7 +77,12 @@ export function ResponsiveDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={cn("max-h-[90svh] overflow-y-auto", className)} {...describedBy}>
+      <DialogContent
+        className={cn("max-h-[90svh] overflow-y-auto", className)}
+        onOpenAutoFocus={onOpenAutoFocus}
+        onCloseAutoFocus={onCloseAutoFocus}
+        {...describedBy}
+      >
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           {description ? <DialogDescription>{description}</DialogDescription> : null}

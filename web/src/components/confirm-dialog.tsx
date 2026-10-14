@@ -29,6 +29,9 @@ export type ConfirmDialogProps = {
   onConfirm: () => void | Promise<void>;
   // children is extra body (choices such as "Also delete the volumes").
   children?: ReactNode;
+  // onCloseAutoFocus is where focus goes once the dialog closes (default:
+  // back to what opened it — pass one when that leaves with its row).
+  onCloseAutoFocus?: (event: Event) => void;
 };
 
 // ConfirmDialog is the one destructive-confirm of the app.
@@ -43,6 +46,7 @@ export function ConfirmDialog({
   destructive = true,
   onConfirm,
   children,
+  onCloseAutoFocus,
 }: ConfirmDialogProps) {
   const [pending, setPending] = useState(false);
 
@@ -65,7 +69,7 @@ export function ConfirmDialog({
         if (!pending) onOpenChange(next);
       }}
     >
-      <AlertDialogContent {...(description ? {} : { "aria-describedby": undefined })}>
+      <AlertDialogContent onCloseAutoFocus={onCloseAutoFocus} {...(description ? {} : { "aria-describedby": undefined })}>
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
           {description ? <AlertDialogDescription>{description}</AlertDialogDescription> : null}

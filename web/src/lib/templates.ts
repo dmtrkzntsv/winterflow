@@ -47,10 +47,12 @@ export type TemplateSummary = {
   updated_at: string;
 };
 
-// instancesLabel is a template's "12 instances · 3 behind".
-export function instancesLabel(t: Pick<TemplateSummary, "instances" | "behind">): string {
-  const n = `${t.instances} ${t.instances === 1 ? "instance" : "instances"}`;
-  return t.behind > 0 ? `${n} · ${t.behind} behind` : n;
+// usageLabel says how many apps use a template, in plain words: "Used by
+// 12 apps · 3 on an older version" ("Not used by any app yet" without any).
+export function usageLabel(t: Pick<TemplateSummary, "instances" | "behind">): string {
+  if (t.instances === 0) return "Not used by any app yet";
+  const used = `Used by ${t.instances} ${t.instances === 1 ? "app" : "apps"}`;
+  return t.behind > 0 ? `${used} · ${t.behind} on an older version` : used;
 }
 
 export type TemplateRevisionInfo = { revision: number; note: string; created_at: string; created_by: string };

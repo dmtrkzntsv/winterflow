@@ -11,7 +11,7 @@ import {
   ApiError,
   createTemplatesApi,
   INSTANCE_WAIT_MS,
-  instancesLabel,
+  usageLabel,
   isManagedByTemplate,
   LOAD_TIMEOUT_MS,
   sealSecrets,
@@ -213,10 +213,11 @@ describe("isManagedByTemplate", () => {
   });
 });
 
-describe("instancesLabel", () => {
-  it("counts instances and the ones behind", () => {
-    expect(instancesLabel({ instances: 12, behind: 3 })).toBe("12 instances · 3 behind");
-    expect(instancesLabel({ instances: 1, behind: 0 })).toBe("1 instance");
+describe("usageLabel", () => {
+  it("says how many apps use a template, and how many are on an older version", () => {
+    expect(usageLabel({ instances: 0, behind: 0 })).toBe("Not used by any app yet");
+    expect(usageLabel({ instances: 1, behind: 0 })).toBe("Used by 1 app");
+    expect(usageLabel({ instances: 12, behind: 3 })).toBe("Used by 12 apps · 3 on an older version");
   });
 });
 

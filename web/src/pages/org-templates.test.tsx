@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -23,10 +23,15 @@ function renderPage() {
   );
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
 
 describe("OrgTemplatesPage", () => {
-  it("lists templates with their revision and instances", async () => {
+  it("shows each template as a card: how many apps use it and when it changed", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-14T10:00:00Z"));
     const user = userEvent.setup();
     fakeAPI({
       "/api/v1/template/get-templates": {
@@ -34,18 +39,24 @@ describe("OrgTemplatesPage", () => {
       },
     });
     renderPage();
-    expect(await screen.findByText("12 instances · 3 behind")).toBeInTheDocument();
-    expect(screen.getByText("r5")).toBeInTheDocument();
-    await user.click(screen.getByRole("link", { name: "twillingate" }));
+    expect(screen.getByRole("heading", { level: 1, name: "Templates" })).toBeInTheDocument();
+    const card = await screen.findByRole("link", { name: /twillingate/ });
+    expect(card).toHaveAttribute("href", "/templates/t1");
+    expect(within(card).getByText("Used by 12 apps · 3 on an older version")).toBeInTheDocument();
+    expect(within(card).getByText("Updated 2 days ago")).toBeInTheDocument();
+    expect(screen.queryByText("r5")).not.toBeInTheDocument();
+    await user.click(card);
     expect(await screen.findByText("template page")).toBeInTheDocument();
   });
 
-  it("offers Add template, also when there is none", async () => {
+  it("offers New template as a link, and says what to do when there is none", async () => {
     const user = userEvent.setup();
     fakeAPI({ "/api/v1/template/get-templates": { templates: null } });
     renderPage();
     expect(await screen.findByText(/No templates yet/)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Add template/ }));
+    const add = screen.getByRole("link", { name: /New template/ });
+    expect(add).toHaveAttribute("href", "/templates/new");
+    await user.click(add);
     expect(await screen.findByText("new template")).toBeInTheDocument();
   });
 

@@ -1,8 +1,9 @@
 // Host ports a compose file publishes, read from the ports: short syntax
 // ("8080:80", "127.0.0.1:8080:80", "8080-8081:80-81/tcp") without a YAML
 // parser: the new-app form only needs them to pick a port nobody uses.
-// Interpolated ports ("${PORT}:80") and container-only entries ("80") name
-// no host port and are left out, as is the long syntax.
+// Interpolated ports ("${PORT}:80") are read through the variables given
+// (see interpolate); one they don't resolve, and container-only entries
+// ("80"), name no host port and are left out, as is the long syntax.
 
 // The range the compose form prefills a free host port from.
 export const HOST_PORT_FIRST = 8080;
@@ -24,6 +25,24 @@ function stripComment(line: string): string {
     }
   }
   return line;
+}
+
+const REFERENCE = /\$\$|\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:?[-?])([^}]*))?\}|\$([A-Za-z_][A-Za-z0-9_]*)/g;
+
+// interpolate resolves ${NAME}, ${NAME:-default} (default when unset or
+// empty), ${NAME-default} (default when unset), ${NAME:?error} and $NAME
+// from vars, as compose does. A reference vars can't resolve, and an
+// escaped $$, stay as written.
+export function interpolate(s: string, vars: Readonly<Record<string, string>>): string {
+  return s.replace(REFERENCE, (ref: string, braced?: string, op?: string, fallback?: string, bare?: string) => {
+    const name = braced ?? bare;
+    if (name === undefined) return ref;
+    const set = Object.hasOwn(vars, name);
+    if (op === ":-") return set && vars[name] !== "" ? vars[name] : (fallback ?? "");
+    if (op === "-") return set ? vars[name] : (fallback ?? "");
+    if (op === ":?") return set && vars[name] !== "" ? vars[name] : ref;
+    return set ? vars[name] : ref;
+  });
 }
 
 // EntryBinding is what one short-syntax entry publishes: the host address
@@ -85,12 +104,13 @@ function serviceAt(lines: string[], i: number, indent: number): string {
 }
 
 // publishedPorts are the host ports a compose file's services publish, in
-// order, with their service and bind address.
-export function publishedPorts(content: string): PublishedPort[] {
+// order, with their service and bind address; an entry's ${VAR}s are read
+// from vars first.
+export function publishedPorts(content: string, vars: Readonly<Record<string, string>> = {}): PublishedPort[] {
   const out: PublishedPort[] = [];
   const lines = content.split(/\r?\n/);
   const add = (service: string, entry: string) => {
-    const { host, ports } = entryBinding(entry);
+    const { host, ports } = entryBinding(interpolate(entry, vars));
     for (const port of ports) out.push({ service, host, port });
   };
   for (let i = 0; i < lines.length; i++) {

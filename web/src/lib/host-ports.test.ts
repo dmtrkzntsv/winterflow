@@ -4,6 +4,7 @@ import {
   entryBinding,
   entryHostPorts,
   firstFreeHostPort,
+  interpolate,
   isLoopback,
   publishedHostPorts,
   publishedPorts,
@@ -95,6 +96,45 @@ describe("publishedPorts", () => {
 
   it("has no service for a top-level ports key", () => {
     expect(publishedPorts('ports: ["80:80"]')).toEqual([{ service: "", host: "", port: 80 }]);
+  });
+
+  it("reads interpolated ports through the variables given", () => {
+    const compose = `services:
+  web:
+    ports:
+      - "127.0.0.1:\${PORT}:8080"
+      - "$ADMIN:9000"
+  db:
+    ports: ["\${DB_PORT:-5433}:5432", "\${MISSING}:80"]
+`;
+    expect(publishedPorts(compose, { PORT: "8095", ADMIN: "8096" })).toEqual([
+      { service: "web", host: "127.0.0.1", port: 8095 },
+      { service: "web", host: "", port: 8096 },
+      { service: "db", host: "", port: 5433 },
+    ]);
+    // Without variables only the default resolves.
+    expect(publishedPorts(compose)).toEqual([{ service: "db", host: "", port: 5433 }]);
+  });
+});
+
+describe("interpolate", () => {
+  it("resolves references the way compose does", () => {
+    const vars = { PORT: "8080", EMPTY: "" };
+    expect(interpolate("${PORT}:80", vars)).toBe("8080:80");
+    expect(interpolate("$PORT:80", vars)).toBe("8080:80");
+    expect(interpolate("${EMPTY:-9000}:80", vars)).toBe("9000:80");
+    expect(interpolate("${EMPTY-9000}:80", vars)).toBe(":80");
+    expect(interpolate("${UNSET-9000}:80", vars)).toBe("9000:80");
+    expect(interpolate("${UNSET:-}:80", vars)).toBe(":80");
+  });
+
+  it("leaves what it can't resolve, and an escaped $$, as written", () => {
+    expect(interpolate("${UNSET}:80", {})).toBe("${UNSET}:80");
+    expect(interpolate("$$PORT:80", { PORT: "1" })).toBe("$$PORT:80");
+    expect(interpolate("${PORT:?required}:80", {})).toBe("${PORT:?required}:80");
+    expect(interpolate("${PORT:?required}:80", { PORT: "" })).toBe("${PORT:?required}:80");
+    expect(interpolate("${PORT:?required}:80", { PORT: "1" })).toBe("1:80");
+    expect(interpolate("${PORT?required}:80", { PORT: "1" })).toBe("1:80");
   });
 });
 

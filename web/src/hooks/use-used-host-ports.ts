@@ -22,12 +22,15 @@ function decode(b64: string): string {
 
 // appPublishedPorts are the ports an app's compose files publish (its
 // YAML files; a Git app's compose file lives in its repository and is not
-// read).
+// read), "${PORT}:80" read through the app's plain variables (a template
+// instance's values are among them).
 export function appPublishedPorts(detail: AppDetailPayload): PublishedPort[] {
+  const vars: Record<string, string> = {};
+  for (const v of detail.app?.variables ?? []) if (!v.encrypted) vars[v.name] = decode(v.content);
   const out: PublishedPort[] = [];
   for (const f of detail.app?.files ?? []) {
     if (f.encrypted || !/\.ya?ml$/i.test(f.name)) continue;
-    out.push(...publishedPorts(decode(f.content)));
+    out.push(...publishedPorts(decode(f.content), vars));
   }
   return out;
 }

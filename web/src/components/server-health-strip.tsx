@@ -1,0 +1,83 @@
+import type { ReactNode } from "react";
+import { Link } from "react-router-dom";
+import { ArrowRight } from "lucide-react";
+
+import { StatusDot } from "@/components/status";
+import { isStandalone } from "@/config";
+import type { Server } from "@/context/servers-context-base";
+import { useServers } from "@/context/use-servers";
+import { useMetricsOverview } from "@/hooks/use-metrics";
+import { useNow } from "@/hooks/use-now";
+import { serverPresence } from "@/lib/kpi";
+import { formatPercent, fullestDisk, percentOf } from "@/lib/metrics";
+import { monitoringPath } from "@/lib/routes";
+
+// ServerHealthStrip is the Apps page's one line about this server: CPU,
+// memory and the fullest disk now — or why there are no figures (offline,
+// never connected, no data yet) — and the way to Monitoring. The server's
+// IP, cores and agent version live in Settings → Server → General.
+export function ServerHealthStrip({ server }: { server: Server }) {
+  const { statusByServer } = useServers();
+  const { data } = useMetricsOverview();
+  const now = useNow();
+  const online = isStandalone || statusByServer[server.id] === "online";
+  const presence = serverPresence(online, server.lastSeenAt, now);
+  const latest = data?.servers?.find((s) => s.server_id === server.id)?.latest?.server;
+
+  let body: ReactNode;
+  if (presence.tone === "offline") {
+    // The presence label is "offline" or "offline 5m"; the age is the rest.
+    const age = presence.label.replace(/^offline\s*/, "");
+    body = (
+      <span className="inline-flex items-center gap-2">
+        <StatusDot tone="bad" />
+        <span className="font-medium">Offline</span>
+        <span className="text-muted-foreground">· {age ? `last seen ${age} ago` : "last seen just now"}</span>
+      </span>
+    );
+  } else if (presence.tone === "waiting") {
+    body = (
+      <span className="inline-flex items-center gap-2 text-muted-foreground">
+        <StatusDot tone="idle" />
+        Waiting for this server to connect for the first time
+      </span>
+    );
+  } else if (!latest) {
+    body = <span className="text-muted-foreground">No data yet</span>;
+  } else {
+    const disk = fullestDisk(latest.disks);
+    const figures: [string, number | undefined][] = [
+      ["CPU", latest.cpu],
+      ["Memory", percentOf(latest.mem_used, latest.mem_total)],
+      ["Disk", disk ? percentOf(disk.used, disk.total) : undefined],
+    ];
+    body = figures.map(([label, value], i) => (
+      <span key={label} className="whitespace-nowrap">
+        {i > 0 ? (
+          <span aria-hidden className="mr-3 text-muted-foreground/60">
+            ·
+          </span>
+        ) : null}
+        <span className="text-muted-foreground">{label}</span>{" "}
+        <span className="font-medium tabular-nums">{formatPercent(value)}</span>
+      </span>
+    ));
+  }
+
+  return (
+    <div
+      role="region"
+      aria-label="Server health"
+      className="flex min-h-10 flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border bg-card px-4 py-2 text-sm"
+    >
+      {body}
+      <Link
+        to={monitoringPath(server.id)}
+        className="ml-auto inline-flex min-h-8 items-center gap-1 font-medium text-muted-foreground transition-colors duration-150 hover:text-foreground"
+      >
+        Monitoring
+        <ArrowRight className="size-4" aria-hidden />
+      </Link>
+    </div>
+  );
+}

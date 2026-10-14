@@ -12,6 +12,7 @@ import { StatusPill } from "@/components/status";
 import { UpgradeInstanceDialog } from "@/components/upgrade-instance-dialog";
 import { useServers } from "@/context/use-servers";
 import { useConfirmTarget } from "@/hooks/use-confirm-target";
+import { useAppNames } from "@/hooks/use-app-names";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
 import { appLabel } from "@/lib/kpi";
 import { appPath } from "@/lib/routes";
@@ -52,11 +53,18 @@ export function TemplateInstances({
   const confirmDelete = useConfirmTarget<InstanceView>();
   const [confirmAll, setConfirmAll] = useState(false);
   const serverName = (id: string) => servers.find((s) => s.id === id)?.name ?? "a server";
+  // An app renamed since it was created goes by its current name; the
+  // rendered one stands in for an app the catalog doesn't list.
+  const current = useAppNames(instances.map((i) => i.server_id));
+  const nameOf = (inst: InstanceView) => {
+    const live = current.get(inst.app_id);
+    return live !== undefined ? appLabel(live) : instanceName(view, inst);
+  };
 
   // remove deletes a pending app; a failure is reported and rethrown so
   // the confirm dialog stays open for a retry.
   const remove = async (inst: InstanceView) => {
-    const name = instanceName(view, inst);
+    const name = nameOf(inst);
     setDeleting(inst.key);
     try {
       await api.deleteInstance(inst.server_id, inst.key);
@@ -101,7 +109,7 @@ export function TemplateInstances({
       ) : null}
       <RowList label="Apps using this template">
         {instances.map((inst) => {
-          const name = instanceName(view, inst);
+          const name = nameOf(inst);
           const old = inst.revision < latest;
           const pending = inst.state === "pending";
           return (
@@ -156,7 +164,7 @@ export function TemplateInstances({
       <ConfirmDialog
         open={confirmDelete.open}
         onOpenChange={confirmDelete.onOpenChange}
-        title={confirmDelete.target ? `Delete ${instanceName(view, confirmDelete.target)}?` : "Delete"}
+        title={confirmDelete.target ? `Delete ${nameOf(confirmDelete.target)}?` : "Delete"}
         description={
           confirmDelete.target
             ? `Its deploy never succeeded. Deleting removes whatever it left on ${serverName(confirmDelete.target.server_id)}.`
@@ -170,7 +178,7 @@ export function TemplateInstances({
         <UpgradeInstanceDialog
           key={upgrading.key}
           instance={upgrading}
-          appName={instanceName(view, upgrading)}
+          appName={nameOf(upgrading)}
           target={view}
           onClose={() => setUpgrading(null)}
           onDone={onChanged}

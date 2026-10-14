@@ -109,6 +109,17 @@ describe("TemplateInstances", () => {
     expect(within(rows[1]).queryByRole("button", { name: "Update" })).not.toBeInTheDocument();
   });
 
+  it("shows a renamed app by its current name, the rendered one for an app no longer listed", async () => {
+    fakeAPI({
+      "/api/v1/app/get-apps": (_: unknown, q: URLSearchParams) =>
+        q.get("server_id") === "s1" ? { apps: [{ id: "a1", name: "Family Notes" }] } : { apps: [] },
+    });
+    renderInstances([inst({}), inst({ key: "k2", server_id: "s2", app_id: "gone", parameters: { NAME: "shop" } })]);
+    expect(await screen.findByRole("link", { name: "Family Notes" })).toHaveAttribute("href", "/server/s1/app/a1");
+    expect(screen.queryByRole("link", { name: "bakomi" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "shop" })).toBeInTheDocument();
+  });
+
   it("names a server it doesn't know as \"a server\", never by its id", () => {
     renderInstances([inst({ server_id: "0f8e2c41-gone" })]);
     expect(screen.getByRole("listitem")).toHaveTextContent("on a server");
@@ -219,7 +230,8 @@ describe("TemplateInstances", () => {
     const dialog = await screen.findByRole("alertdialog");
     expect(dialog).toHaveTextContent("Its deploy never succeeded. Deleting removes whatever it left on alpha.");
     expect(dialog).not.toHaveTextContent(/key/i);
-    expect(api.calls).toEqual([]);
+    // Only the apps' current names were read so far.
+    expect(api.calls.map((c) => c.path)).toEqual(["/api/v1/app/get-apps"]);
     await user.click(within(dialog).getByRole("button", { name: "Delete" }));
     await waitFor(() => expect(onChanged).toHaveBeenCalled());
     expect(api.posted("/api/v1/instance/delete-instance")).toEqual([{ server_id: "s1", key: "k2" }]);

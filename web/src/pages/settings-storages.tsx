@@ -69,31 +69,6 @@ export function StoragesSettings({ docker }: { docker: Docker }) {
 
   const names = useMemo(() => new Map(apps.map((a) => [a.id, a.name])), [apps]);
 
-  // How many deleted apps' backups each storage keeps: read once per
-  // listing, one storage at a time (each is a listing of the storage); the
-  // link to them shows only for storages that keep some.
-  const [orphanCounts, setOrphanCounts] = useState<Record<string, number>>({});
-  const storageNames = (items ?? []).map((s) => s.name).join("\n");
-  useEffect(() => {
-    let live = true;
-    void (async () => {
-      for (const name of storageNames ? storageNames.split("\n") : []) {
-        let count = 0;
-        try {
-          count = (await backups.listOrphans(name)).length;
-        } catch {
-          // Unreadable now: nothing to offer.
-        }
-        if (!live) return;
-        setOrphanCounts((prev) => ({ ...prev, [name]: count }));
-      }
-    })();
-    return () => {
-      live = false;
-    };
-  }, [storageNames, backups]);
-  const withOrphans = (items ?? []).filter((s) => (orphanCounts[s.name] ?? 0) > 0);
-
   // A save answers with the stored storage: patch the list in place.
   const saved = ({ storage, redeployed, warnings }: StorageSaved) => {
     const done = edit ? "Storage saved" : "Storage added";
@@ -200,18 +175,17 @@ export function StoragesSettings({ docker }: { docker: Docker }) {
           })}
         </RowList>
       )}
-      {withOrphans.length > 0 ? (
+      {items !== null && items.length > 0 ? (
         // Copies of deleted apps stay in their storage: this link below the
-        // list is the one way in. With several storages keeping some it
-        // asks which one.
-        withOrphans.length === 1 ? (
+        // list is the one way in. With several storages it asks which one.
+        items.length === 1 ? (
           <Button
             ref={orphansLink}
             variant="link"
             className="h-auto gap-1 p-0 max-sm:h-10"
             onClick={(e) => {
               opener.current = e.currentTarget;
-              setOrphansOf(withOrphans[0].name);
+              setOrphansOf(items[0].name);
             }}
           >
             Backups of deleted apps
@@ -226,7 +200,7 @@ export function StoragesSettings({ docker }: { docker: Docker }) {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start">
-              {withOrphans.map((s) => (
+              {items.map((s) => (
                 <DropdownMenuItem
                   key={s.name}
                   className="font-mono"
@@ -261,7 +235,6 @@ export function StoragesSettings({ docker }: { docker: Docker }) {
           open
           returnFocus={opener}
           onOpenChange={(o) => !o && setOrphansOf(null)}
-          onListed={(count) => setOrphanCounts((prev) => ({ ...prev, [orphansOf]: count }))}
         />
       ) : null}
       <ConfirmDialog

@@ -726,39 +726,27 @@ describe("StorageDialog form", () => {
     expect(folder.selectionEnd).toBe("/mnt/usb".length);
   });
 
-  it("links to the backups of deleted apps only for storages that keep some", async () => {
+  it("links to the backups of deleted apps below the list, listing a storage only when asked", async () => {
     const user = setupUser();
-    const OLD = { app_id: "gone-1", app_name: "Old shop", copies: 2, bytes: 2048, deleted_at: 1790812800, purge_at: 1806364800 };
     backups.listOrphans.mockReset().mockResolvedValue([]);
-    backups.deleteOrphan.mockReset().mockResolvedValue(3);
-    // None anywhere: no link.
+    // Several storages: the link asks which one.
     const { unmount } = renderCard(fakeDocker());
-    await screen.findByText("hetzner");
-    await waitFor(() => expect(backups.listOrphans).toHaveBeenCalledTimes(2));
-    expect(screen.queryByRole("button", { name: "Backups of deleted apps" })).not.toBeInTheDocument();
+    const link = await screen.findByRole("button", { name: "Backups of deleted apps" });
+    // Opening the page lists no storage (each listing reads the whole bucket).
+    expect(backups.listOrphans).not.toHaveBeenCalled();
+    await user.click(link);
+    await user.click(await screen.findByRole("menuitem", { name: "disk" }));
+    expect(await screen.findByRole("dialog")).toHaveTextContent("Backups of deleted apps");
+    expect(backups.listOrphans).toHaveBeenLastCalledWith("disk");
     unmount();
 
-    // Only hetzner keeps some: the link opens its backups at once.
-    backups.listOrphans.mockImplementation(async (name: string) => (name === "hetzner" ? [OLD] : []));
-    renderCard(fakeDocker());
+    // One storage: the link opens its backups at once.
+    renderCard(fakeDocker({ listStorages: vi.fn().mockResolvedValue([STORAGES[0]]) }));
     await user.click(await screen.findByRole("button", { name: "Backups of deleted apps" }));
-    const dialog = await screen.findByRole("dialog");
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
     expect(backups.listOrphans).toHaveBeenLastCalledWith("hetzner");
-    // The last one deleted: the link goes once the dialog closes.
-    await user.click(await within(dialog).findByRole("button", { name: "Delete the backups of Old shop" }));
-    await user.click(await screen.findByRole("button", { name: "Delete backups" }));
-    await waitFor(() => expect(backups.deleteOrphan).toHaveBeenCalledWith("hetzner", "gone-1"));
     await user.keyboard("{Escape}");
-    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    expect(screen.queryByRole("button", { name: "Backups of deleted apps" })).not.toBeInTheDocument();
-  });
-
-  it("offers no link for a storage it can't list", async () => {
-    backups.listOrphans.mockReset().mockRejectedValue(new Error("folder missing"));
-    renderCard(fakeDocker());
-    await screen.findByText("hetzner");
-    await waitFor(() => expect(backups.listOrphans).toHaveBeenCalledTimes(2));
-    expect(screen.queryByRole("button", { name: "Backups of deleted apps" })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Backups of deleted apps" })).toHaveFocus());
   });
 
   it("returns focus to what opened a dialog", async () => {

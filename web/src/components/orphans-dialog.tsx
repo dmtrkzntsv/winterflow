@@ -36,21 +36,19 @@ const shownName = (o: Orphan) => o.app_name || "an unknown app";
 // this server: a deleted app's (named from its marker) or another server's
 // sharing the storage, each deletable after a confirmation. The parent
 // remounts it (key) per opening; returnFocus is where focus goes back on
-// close; onListed hears how many are left after each listing or delete.
+// close.
 export function OrphansDialog({
   backups,
   storage,
   open,
   returnFocus,
   onOpenChange,
-  onListed,
 }: {
   backups: Backups;
   storage: string;
   open: boolean;
   returnFocus?: RefObject<HTMLElement | null>;
   onOpenChange: (open: boolean) => void;
-  onListed?: (count: number) => void;
 }) {
   const [items, setItems] = useState<Orphan[] | null>(null);
   const [error, setError] = useState("");
@@ -60,12 +58,6 @@ export function OrphansDialog({
   // button: focus goes back to the first one still on the page.
   const opener = useRef<HTMLElement | null>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
-
-  // onListed is a report, not an input: a new one doesn't list again.
-  const reportListed = useRef(onListed);
-  useEffect(() => {
-    reportListed.current = onListed;
-  });
 
   // Another listing is asked for by bumping the attempt (Try again).
   const [attempt, setAttempt] = useState(0);
@@ -77,7 +69,6 @@ export function OrphansDialog({
         if (!live) return;
         setItems(list);
         setError("");
-        reportListed.current?.(list.length);
       },
       (e) => {
         if (live) setError(e instanceof Error ? e.message : "The storage could not be listed.");
@@ -94,9 +85,7 @@ export function OrphansDialog({
       toast.success(`Backups of ${shownName(o)} deleted`, {
         description: `${n} ${n === 1 ? "object" : "objects"} removed from ${storage}.`,
       });
-      const left = (items ?? []).filter((x) => x.app_id !== o.app_id);
-      setItems(left);
-      onListed?.(left.length);
+      setItems((prev) => prev && prev.filter((x) => x.app_id !== o.app_id));
     } catch (e) {
       toast.error("Couldn't delete the backups", { description: e instanceof Error ? e.message : undefined });
       throw e;

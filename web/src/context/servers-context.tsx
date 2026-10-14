@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -207,8 +208,12 @@ export function ServersProvider({ children }: { children: ReactNode }) {
   // Its identity is stable: the current place (and navigate, whose identity
   // follows the location in a non-data router) is read through a ref, so
   // sidebar and shortcut consumers don't re-render on every navigation.
+  // The ref is written in a layout effect, in the same commit as the DOM it
+  // describes: a passive effect can still be pending when a click lands on
+  // the first render that shows a loaded server, and the switch would read
+  // the previous (empty) server list.
   const placeRef = useRef({ pathname, urlServerId, activeServerId, navigate, servers });
-  useEffect(() => {
+  useLayoutEffect(() => {
     placeRef.current = { pathname, urlServerId, activeServerId, navigate, servers };
   }, [pathname, urlServerId, activeServerId, navigate, servers]);
   const selectServer = useCallback(

@@ -1,5 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import { useEffect } from "react";
+import { useEffect, type ReactNode } from "react";
 import { Outlet, RouterProvider, createMemoryRouter, useLocation, useParams } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -31,6 +31,9 @@ vi.mock("@/components/command-palette", () => ({ CommandPalette: () => null }));
 vi.mock("@/components/app-sidebar", () => ({ AppSidebar: () => null }));
 vi.mock("@/components/alerts/alert-toasts", () => ({ AlertToasts: () => null }));
 vi.mock("@/components/server-creation-dialog", () => ({ ServerSelectionDialog: () => null }));
+vi.mock("@/components/new-app/new-app-dialog-provider", () => ({
+  NewAppDialogProvider: ({ children }: { children: ReactNode }) => children,
+}));
 
 // Every page is a stub naming itself: this test is about which page an
 // address opens.

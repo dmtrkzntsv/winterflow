@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -21,7 +21,7 @@ describe("RuleDialog", () => {
     render(<RuleDialog open onOpenChange={() => {}} channels={channels} onSaved={onSaved} />);
 
     await user.click(screen.getByRole("combobox", { name: "Watch" }));
-    await user.click(await screen.findByRole("option", { name: "Apps" }));
+    await user.click(await screen.findByRole("option", { name: "an app" }));
     await user.click(screen.getByRole("combobox", { name: "Metric" }));
     await user.click(await screen.findByRole("option", { name: "Disk" }));
     expect(screen.getByLabelText(/Above \(GB\)/)).toHaveValue(50);
@@ -52,7 +52,7 @@ describe("RuleDialog", () => {
     const user = userEvent.setup({ delay: null });
     render(<RuleDialog open onOpenChange={() => {}} channels={[]} onSaved={() => {}} />);
     await user.click(screen.getByRole("combobox", { name: "Metric" }));
-    await user.click(await screen.findByRole("option", { name: "Down" }));
+    await user.click(await screen.findByRole("option", { name: "is down" }));
     expect(screen.queryByLabelText(/Above/)).not.toBeInTheDocument();
     await user.clear(screen.getByLabelText("For (minutes)"));
     await user.type(screen.getByLabelText("For (minutes)"), "90");
@@ -77,7 +77,7 @@ describe("RuleDialog", () => {
     render(<RuleDialog open onOpenChange={() => {}} rule={rule} channels={channels} onSaved={() => {}} />);
     expect(screen.getByRole("combobox", { name: "Watch" })).toBeDisabled();
     expect(screen.getByRole("combobox", { name: "Metric" })).toBeDisabled();
-    expect(screen.getByLabelText("History only")).toBeChecked();
+    expect(screen.getByLabelText("Inbox only")).toBeChecked();
     await user.clear(screen.getByLabelText(/Above/));
     await user.type(screen.getByLabelText(/Above/), "101");
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -87,5 +87,20 @@ describe("RuleDialog", () => {
     await user.click(screen.getByLabelText("Default channels"));
     await user.click(screen.getByRole("button", { name: "Save" }));
     expect(api.posted("/api/v1/alerts/save-rule")[0]).toMatchObject({ id: "r1", metric: "memory", threshold: 85, channel_ids: null });
+  });
+  it("reads as one sentence and closes on Cancel", async () => {
+    fakeAPI({});
+    const onOpenChange = vi.fn();
+    const user = userEvent.setup({ delay: null });
+    render(<RuleDialog open onOpenChange={onOpenChange} channels={channels} onSaved={() => {}} />);
+    const dialog = screen.getByRole("dialog");
+    for (const words of ["Alert when", "is above", "%", "for", "minutes", "Then notify"]) {
+      expect(within(dialog).getByText(words)).toBeInTheDocument();
+    }
+    expect(screen.getByRole("combobox", { name: "Watch" })).toHaveTextContent("a server");
+    expect(screen.getByRole("combobox", { name: "Metric" })).toHaveTextContent("CPU");
+    expect(screen.getByRole("radiogroup", { name: "Notify" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 });

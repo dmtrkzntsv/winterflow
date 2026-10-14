@@ -68,7 +68,7 @@ export type Channel = {
   created_at: string;
 };
 
-// channel_ids: null = the org's default channels, [] = none (History only).
+// channel_ids: null = the org's default channels, [] = none (Inbox only).
 export type Rule = {
   id: string;
   target_kind: TargetKind;
@@ -178,7 +178,7 @@ export function ruleSummary(rule: Pick<Rule, "target_kind" | "metric" | "thresho
 // routingText words where a rule's notifications go.
 export function routingText(ids: string[] | null, channels: Channel[]): string {
   if (ids === null) return "Default channels";
-  if (ids.length === 0) return "History only";
+  if (ids.length === 0) return "Inbox only";
   const names = ids.map((id) => channels.find((c) => c.id === id)?.name ?? "deleted channel");
   return names.join(", ");
 }

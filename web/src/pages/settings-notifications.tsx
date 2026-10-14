@@ -1,13 +1,12 @@
 import { ChannelsSection } from "@/components/alerts/channels-section";
-import { RulesTab } from "@/components/alerts/rules-tab";
+import { RulesSection } from "@/components/alerts/rules-section";
 import { PageHeader } from "@/components/page-header";
-import { Section } from "@/components/section";
 import { useAlertChannels } from "@/hooks/use-alert-channels";
 
 // NotificationsSettingsPage is Settings → Notifications: where alerts are
 // sent (channels) and when they fire (rules), on one page. The channel list
-// is loaded once here and shared, so the rules always name current
-// channels.
+// is loaded once here and shared, so a renamed or deleted channel shows in
+// the rules at once.
 export default function NotificationsSettingsPage() {
   const channels = useAlertChannels();
   return (
@@ -19,9 +18,7 @@ export default function NotificationsSettingsPage() {
         error={channels.error}
         onChanged={channels.refresh}
       />
-      <Section title="Alert rules">
-        <RulesTab />
-      </Section>
+      <RulesSection channels={channels.channels} />
     </div>
   );
 }

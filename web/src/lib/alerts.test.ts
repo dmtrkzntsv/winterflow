@@ -48,7 +48,7 @@ describe("alert wording", () => {
   it("words routing", () => {
     const channels = [{ id: "c1", name: "Ops" }] as Channel[];
     expect(routingText(null, channels)).toBe("Default channels");
-    expect(routingText([], channels)).toBe("History only");
+    expect(routingText([], channels)).toBe("Inbox only");
     expect(routingText(["c1", "gone"], channels)).toBe("Ops, deleted channel");
   });
 

@@ -65,6 +65,23 @@ describe("UserTokensPage", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Revoke CI deploy" })).toHaveFocus());
   });
 
+  it("drops a revoked token even when listing again fails, and shows the error above the rest", async () => {
+    const other = { ...TOKEN, token_id: "t3", name: "Backup script" };
+    let reads = 0;
+    fakeAPI({
+      "/api/v1/user/get-tokens": () => (++reads === 1 ? [TOKEN, other] : new Error("db down")),
+      "/api/v1/user/delete-token": null,
+    });
+    const user = userEvent.setup({ delay: null });
+    render(<UserTokensPage />);
+    await user.click(await screen.findByRole("button", { name: "Revoke CI deploy" }));
+    await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Revoke token" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("db down");
+    expect(screen.queryByText("CI deploy")).not.toBeInTheDocument();
+    expect(screen.getByText("Backup script")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+  });
+
   it("reports a load failure with a way to try again", async () => {
     const api = fakeAPI({ "/api/v1/user/get-tokens": new Error("db down") });
     const user = userEvent.setup({ delay: null });
@@ -91,7 +108,7 @@ describe("UserTokensPage", () => {
     await user.click(within(dialog).getByRole("radio", { name: "1 year" }));
     await user.click(within(dialog).getByRole("button", { name: "Generate" }));
     expect(await screen.findByLabelText("Token")).toHaveValue("wfp_SECRET");
-    expect(screen.getByRole("button", { name: "Copy token" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy Token" })).toBeInTheDocument();
     expect(api.posted("/api/v1/user/create-token")).toEqual([{ name: "Backup script", expires_in_days: 365 }]);
     // The token is gone once the dialog closes.
     await user.click(screen.getByRole("button", { name: "Done" }));

@@ -64,7 +64,6 @@ export default function UserPasswordPage() {
         <Label htmlFor={name}>{label}</Label>
         <PasswordInput
           id={name}
-          className="max-sm:h-10"
           name={name}
           required
           aria-invalid={invalid || undefined}
@@ -85,7 +84,7 @@ export default function UserPasswordPage() {
     <div className="space-y-6">
       <PageHeader title="Password" subtitle="The password you sign in with." />
       {profile?.must_change_password ? (
-        <Alert className="max-w-sm">
+        <Alert role="status" className="max-w-sm">
           <AlertDescription>You're using a temporary password: choose your own to continue.</AlertDescription>
         </Alert>
       ) : null}
@@ -98,7 +97,7 @@ export default function UserPasswordPage() {
             {problem.message}
           </p>
         ) : null}
-        <Button type="submit" className="max-sm:h-10" disabled={busy}>
+        <Button type="submit" disabled={busy}>
           {busy ? "Saving…" : "Change password"}
         </Button>
       </form>

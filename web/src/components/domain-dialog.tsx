@@ -1,4 +1,4 @@
-import { useState, type RefObject } from "react";
+import { useRef, useState, type RefObject } from "react";
 import { toast } from "sonner";
 
 import { ResponsiveDialog } from "@/components/responsive-dialog";
@@ -42,6 +42,9 @@ export function DomainDialog({
   const [certificate, setCertificate] = useState("");
   const [key, setKey] = useState("");
   const [busy, setBusy] = useState(false);
+  // Counts closings: a save still in flight when its opening was closed
+  // answers late, and must not close the next opening with it.
+  const closings = useRef(0);
 
   const trimmed = name.trim();
   const nameError = trimmed ? domainNameError(trimmed) : "";
@@ -53,6 +56,7 @@ export function DomainDialog({
   // (save, Cancel, Escape, overlay, swipe down).
   const changeOpen = (next: boolean) => {
     if (!next) {
+      closings.current += 1;
       setCertificate("");
       setKey("");
     }
@@ -60,6 +64,7 @@ export function DomainDialog({
   };
 
   const save = async () => {
+    const opening = closings.current;
     setBusy(true);
     try {
       const created = await docker.createDomain(
@@ -67,7 +72,7 @@ export function DomainDialog({
         tls,
         needsPair ? { certificate: certificate.trim(), key: key.trim() } : undefined,
       );
-      changeOpen(false);
+      if (opening === closings.current) changeOpen(false);
       onSaved(created);
     } catch (e) {
       toast.error(replace ? "Couldn't update domain" : "Couldn't add domain", {
@@ -97,10 +102,10 @@ export function DomainDialog({
       onCloseAutoFocus={returnFocusTo(returnFocus)}
       footer={
         <>
-          <Button type="button" variant="outline" className="max-sm:h-10" onClick={() => changeOpen(false)}>
+          <Button type="button" variant="outline" onClick={() => changeOpen(false)}>
             Cancel
           </Button>
-          <Button type="submit" form={FORM_ID} className="max-sm:h-10" disabled={!canSave}>
+          <Button type="submit" form={FORM_ID} disabled={!canSave}>
             {busy ? "Saving…" : replace ? "Save" : "Add"}
           </Button>
         </>

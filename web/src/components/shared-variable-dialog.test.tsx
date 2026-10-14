@@ -23,7 +23,10 @@ const SECRET: SharedVariable = {
 };
 const BETA = { id: "b", name: "beta" };
 
-function renderDialog(mode: DialogMode, opts: { chooseScope?: boolean; keys?: EncryptionKeys } = {}) {
+function renderDialog(
+  mode: DialogMode,
+  opts: { chooseScope?: boolean; keys?: EncryptionKeys; server?: { id: string; name: string } | null } = {},
+) {
   const onSave = vi.fn().mockResolvedValue(undefined);
   const onOpenChange = vi.fn();
   render(
@@ -31,7 +34,7 @@ function renderDialog(mode: DialogMode, opts: { chooseScope?: boolean; keys?: En
       open
       mode={mode}
       keys={opts.keys ?? KEYS}
-      server={BETA}
+      server={opts.server === undefined ? BETA : opts.server}
       chooseScope={opts.chooseScope ?? true}
       onOpenChange={onOpenChange}
       onSave={onSave}
@@ -52,6 +55,28 @@ describe("SharedVariableDialog", () => {
     await user.click(screen.getByRole("button", { name: "Save" }));
     expect(onSave).toHaveBeenCalledWith({ name: "SMTP_HOST", is_secret: false, value: "mail.example", description: "" }, "org");
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+  });
+
+  it("asks for the Secret switch before the Value", () => {
+    renderDialog({ kind: "create" });
+    const name = screen.getByLabelText("Name");
+    const secret = screen.getByRole("switch", { name: "Secret" });
+    const value = screen.getByLabelText("Value");
+    expect(name.compareDocumentPosition(secret) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(secret.compareDocumentPosition(value) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("never encrypts a server-only secret for every server when there is no server", async () => {
+    const user = setupUser();
+    const { onSave } = renderDialog(
+      { kind: "edit", variable: { ...SECRET, scope: "server", missing_on: [], description: "" } },
+      { server: null },
+    );
+    await user.click(screen.getByRole("button", { name: "Replace value" }));
+    await user.type(screen.getByLabelText("Value"), "n3w");
+    expect(screen.getByText("This server has no public key yet, so it can't receive secrets.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(onSave).not.toHaveBeenCalled();
   });
 
   it("keeps the description and the scope under Advanced", async () => {

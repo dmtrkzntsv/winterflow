@@ -38,7 +38,7 @@ describe("helpers", () => {
   it("labels coverage by server name", () => {
     const names = new Map([["s3", "srv-3"]]);
     expect(coverageLabel(secret, names)).toBe("All servers");
-    expect(coverageLabel({ ...secret, missing_on: ["s3", "s9"] }, names)).toBe("Missing on srv-3, s9");
+    expect(coverageLabel({ ...secret, missing_on: ["s3", "s9"] }, names)).toBe("Missing on srv-3, a server");
     expect(coverageLabel({ ...secret, is_secret: false }, names)).toBe("");
   });
 
@@ -178,7 +178,7 @@ describe("one list for both scopes", () => {
       { id: "s2", name: "alpha" },
       { id: "s1", name: "beta" },
     ]);
-    expect(failedServers({ s4: "failed" }, names)).toEqual([{ id: "s4", name: "s4" }]);
+    expect(failedServers({ s4: "failed" }, names)).toEqual([{ id: "s4", name: "a server" }]);
     expect(failedServers({ s1: "pending" }, names)).toEqual([]);
   });
 });

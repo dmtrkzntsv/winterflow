@@ -425,6 +425,9 @@ describe("StoragesSettings", () => {
     await waitFor(() => expect(toastError).toHaveBeenCalledWith("Couldn't remove storage", { description: "disk is used by Shop" }));
     expect(screen.getByRole("alertdialog")).toBeInTheDocument();
     expect(screen.getAllByText("disk")).toHaveLength(2); // the row, and the confirmation
+    // Cancelling after a failure puts focus back on the row's menu.
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Actions for disk" })).toHaveFocus());
   });
 
   it("opens Advanced at once on an edit that uses it", async () => {
@@ -651,13 +654,19 @@ describe("StorageDialog form", () => {
       { app_id: "gone-1", app_name: "Old shop", copies: 2, bytes: 2048, deleted_at: 1790812800, purge_at: 1806364800 },
     ]);
     renderCard(fakeDocker());
-    await pick(user, "disk", "Backups of deleted apps");
+    await user.click(await screen.findByRole("button", { name: "Actions for disk" }));
+    // The link below the list is the one way in, not a row menu item too.
+    expect(screen.queryByRole("menuitem", { name: "Backups of deleted apps" })).not.toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    const link = screen.getByRole("button", { name: "Backups of deleted apps" });
+    await user.click(link);
+    await user.click(await screen.findByRole("menuitem", { name: "disk" }));
     const dialog = await screen.findByRole("dialog");
     expect(await within(dialog).findByText("Old shop")).toBeInTheDocument();
     expect(backups.listOrphans).toHaveBeenCalledWith("disk");
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    expect(screen.getByRole("button", { name: "Actions for disk" })).toHaveFocus();
+    await waitFor(() => expect(link).toHaveFocus());
   });
 
   it("announces only the test result, not the button", async () => {
@@ -718,6 +727,8 @@ describe("StorageDialog form", () => {
     await user.click(await screen.findByRole("button", { name: "Backups of deleted apps" }));
     expect(await screen.findByRole("dialog")).toBeInTheDocument();
     expect(backups.listOrphans).toHaveBeenLastCalledWith("hetzner");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Backups of deleted apps" })).toHaveFocus());
   });
 
   it("returns focus to what opened a dialog", async () => {

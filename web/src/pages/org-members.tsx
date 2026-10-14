@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { apiBaseUrl } from "@/config";
 import { useProfile } from "@/context/use-profile";
+import { useConfirmTarget } from "@/hooks/use-confirm-target";
 import { readApiError } from "@/lib/api";
 import { returnFocusTo } from "@/lib/focus";
 import { initials } from "@/lib/members";
@@ -140,7 +141,7 @@ function OrganizationSettings() {
               Give the organization a name.
             </p>
           ) : null}
-          <Button type="submit" className="max-sm:h-10" disabled={!dirty || !trimmed || busy}>
+          <Button type="submit" disabled={!dirty || !trimmed || busy}>
             {busy ? "Saving…" : "Save"}
           </Button>
         </form>
@@ -211,7 +212,7 @@ function AddMemberDialog({
         title="Member added"
         description={`Give ${created.email} this temporary password. It's shown only once; they choose their own when they first sign in.`}
         footer={
-          <Button className="max-sm:h-10" onClick={() => changeOpen(false)}>
+          <Button onClick={() => changeOpen(false)}>
             Done
           </Button>
         }
@@ -230,10 +231,10 @@ function AddMemberDialog({
       description="Creates an account in this organization with a temporary password."
       footer={
         <>
-          <Button type="button" variant="outline" className="max-sm:h-10" disabled={busy} onClick={() => changeOpen(false)}>
+          <Button type="button" variant="outline" disabled={busy} onClick={() => changeOpen(false)}>
             Cancel
           </Button>
-          <Button type="submit" form="member-form" className="max-sm:h-10" disabled={busy}>
+          <Button type="submit" form="member-form" disabled={busy}>
             {busy ? "Adding…" : "Add"}
           </Button>
         </>
@@ -273,8 +274,8 @@ function MembersSettings() {
   const [members, setMembers] = useState<Member[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
-  const [toReset, setToReset] = useState<Member | null>(null);
-  const [toRemove, setToRemove] = useState<Member | null>(null);
+  const resetConfirm = useConfirmTarget<Member>();
+  const removeConfirm = useConfirmTarget<Member>();
   const [reset, setReset] = useState<TempPassword | null>(null);
   // The dialogs open from a row's menu, which leaves with its row on a
   // removal: focus then goes to Add member instead of falling to <body>.
@@ -299,6 +300,10 @@ function MembersSettings() {
   const resetPassword = async (m: Member) => {
     try {
       const data = await postJSON<{ temp_password: string }>("/api/v1/org/reset-member-password", { user_id: m.id });
+      // Opened before the confirmation closes (it closes once this returns):
+      // the password dialog's focus trap holds focus through the
+      // confirmation's own focus return, and its close sends focus back to
+      // the row's menu, or to Add member.
       setReset({ name: m.name, temp_password: data.temp_password });
     } catch (e) {
       toast.error("Couldn't reset the password", { description: errorText(e) });
@@ -324,7 +329,7 @@ function MembersSettings() {
         title="Members"
         subtitle="Everyone here can do everything in the organization."
         actions={
-          <Button ref={addButton} className="max-sm:h-10" onClick={() => setAdding(true)}>
+          <Button ref={addButton} onClick={() => setAdding(true)}>
             <Plus className="size-4" /> Add member
           </Button>
         }
@@ -355,11 +360,12 @@ function MembersSettings() {
                     <RowMenu
                       label={`Actions for ${m.name}`}
                       items={[
-                        m.email ? {
+                        m.email
+                          ? {
                               label: "Reset password",
                               onSelect: (trigger) => {
                                 opener.current = trigger;
-                                setToReset(m);
+                                resetConfirm.ask(m);
                               },
                             }
                           : null,
@@ -368,7 +374,7 @@ function MembersSettings() {
                           destructive: true,
                           onSelect: (trigger) => {
                             opener.current = trigger;
-                            setToRemove(m);
+                            removeConfirm.ask(m);
                           },
                         },
                       ]}
@@ -387,24 +393,24 @@ function MembersSettings() {
         onCloseAutoFocus={returnFocusTo(addButton)}
       />
       <ConfirmDialog
-        open={toReset !== null}
-        onOpenChange={(o) => !o && setToReset(null)}
-        title={`Reset ${toReset?.name ?? "this member"}'s password?`}
+        open={resetConfirm.open}
+        onOpenChange={resetConfirm.onOpenChange}
+        title={`Reset ${resetConfirm.target?.name ?? "this member"}'s password?`}
         description="Their current password stops working at once. You get a temporary password to give them; they choose their own when they next sign in."
         confirmLabel="Reset password"
         pendingLabel="Resetting…"
         onCloseAutoFocus={returnFocusTo(opener, addButton)}
-        onConfirm={() => (toReset ? resetPassword(toReset) : undefined)}
+        onConfirm={() => (resetConfirm.target ? resetPassword(resetConfirm.target) : undefined)}
       />
       <ConfirmDialog
-        open={toRemove !== null}
-        onOpenChange={(o) => !o && setToRemove(null)}
-        title={`Remove ${toRemove?.name ?? "this member"}?`}
+        open={removeConfirm.open}
+        onOpenChange={removeConfirm.onOpenChange}
+        title={`Remove ${removeConfirm.target?.name ?? "this member"}?`}
         description="Their account, API tokens and access are deleted for good."
         confirmLabel="Remove member"
         pendingLabel="Removing…"
         onCloseAutoFocus={returnFocusTo(opener, addButton)}
-        onConfirm={() => (toRemove ? remove(toRemove) : undefined)}
+        onConfirm={() => (removeConfirm.target ? remove(removeConfirm.target) : undefined)}
       />
       <ResponsiveDialog
         open={reset !== null}
@@ -412,9 +418,7 @@ function MembersSettings() {
         title="Password reset"
         description={`A temporary password for ${reset?.name ?? ""}. It's shown only once; they choose their own when they next sign in.`}
         footer={
-          <Button className="max-sm:h-10" onClick={() => setReset(null)}>
-            Done
-          </Button>
+          <Button onClick={() => setReset(null)}>Done</Button>
         }
         onCloseAutoFocus={returnFocusTo(opener, addButton)}
       >

@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { isStandalone } from "@/config";
 import { useApps } from "@/context/use-apps";
 import { useServers } from "@/context/use-servers";
+import { useNow } from "@/hooks/use-now";
 import { useSharedVariablesSettings } from "@/hooks/use-shared-variables-settings";
 import { reloadableStaleCount } from "@/lib/app-status";
 import { returnFocusTo } from "@/lib/focus";
@@ -24,6 +25,7 @@ import {
   coverageLabel,
   createSharedVariablesApi,
   failedServers,
+  SYNC_SETTLE_MS,
   variableRows,
   type SharedVariablesApi,
 } from "@/lib/shared-variables";
@@ -74,7 +76,7 @@ export default function SharedVariablesSettingsPage({
   standalone?: boolean;
 }) {
   const api = useMemo(() => injected ?? createSharedVariablesApi(), [injected]);
-  const { activeServer } = useServers();
+  const { activeServer, statusByServer } = useServers();
   const { staleVarsByApp, statusByApp } = useApps();
   const page = useSharedVariablesSettings(api, activeServer?.id ?? null);
   const serverName = activeServer?.name ?? "";
@@ -91,7 +93,16 @@ export default function SharedVariablesSettingsPage({
   // Keyed servers: where a value can be sent. A sync is "pending" until the
   // agent has taken the latest revision; a failure arrives live.
   const keyedIds = (page.org?.servers ?? []).filter((s) => s.has_key).map((s) => s.server_id);
-  const pending = (page.org?.servers ?? []).filter((s) => s.has_key && page.sync[s.server_id] === "pending");
+  // A pending sync is normal for a moment after every save, so it is only
+  // mentioned once it has lasted, or when the server's agent is offline.
+  const now = useNow(10_000);
+  const pending = (page.org?.servers ?? []).filter(
+    (s) =>
+      s.has_key &&
+      page.sync[s.server_id] === "pending" &&
+      (statusByServer?.[s.server_id] !== "online" ||
+        now - (page.pendingSince[s.server_id] ?? now) > SYNC_SETTLE_MS),
+  );
   const unsynced = [...failed.map((f) => f.id), ...pending.map((p) => p.server_id)];
   const syncText = [
     failed.length > 0 ? `Sync to ${failed.map((f) => f.name).join(", ")} failed.` : "",
@@ -125,7 +136,6 @@ export default function SharedVariablesSettingsPage({
             />
             <Button
               ref={addButton}
-              className="max-sm:h-10"
               disabled={page.org === null}
               onClick={(e) => {
                 from(e.currentTarget);
@@ -143,7 +153,7 @@ export default function SharedVariablesSettingsPage({
           label="Sync"
           tone={failed.length > 0 ? "bad" : "warn"}
           action={
-            <Button size="sm" variant="outline" className="max-sm:h-10" onClick={() => page.sendAgain(unsynced)}>
+            <Button size="sm" variant="outline" onClick={() => page.sendAgain(unsynced)}>
               Send again
             </Button>
           }
@@ -156,7 +166,7 @@ export default function SharedVariablesSettingsPage({
           label="Old values"
           tone="warn"
           action={
-            <Button size="sm" variant="outline" className="max-sm:h-10" onClick={page.reloadStale}>
+            <Button size="sm" variant="outline" onClick={page.reloadStale}>
               Reload
             </Button>
           }
@@ -172,7 +182,6 @@ export default function SharedVariablesSettingsPage({
             <Button
               size="sm"
               variant="outline"
-              className="max-sm:h-10"
               onClick={(e) => {
                 from(e.currentTarget);
                 page.openDialog({ kind: "provide", variable: firstMissing });
@@ -238,7 +247,6 @@ export default function SharedVariablesSettingsPage({
                       <Button
                         size="sm"
                         variant="outline"
-                        className="max-sm:h-10"
                         onClick={(e) => {
                           from(e.currentTarget);
                           page.openDialog({ kind: "provide", variable: v });
@@ -306,7 +314,7 @@ export default function SharedVariablesSettingsPage({
         />
       ) : null}
       <ConfirmDialog
-        open={toDelete !== null}
+        open={page.deleteOpen}
         onOpenChange={(o) => !o && page.setToDelete(null)}
         title={`Delete ${toDelete?.name ?? "this variable"}?`}
         description={

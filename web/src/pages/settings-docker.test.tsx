@@ -75,6 +75,38 @@ describe("DockerSettings", () => {
     expect(docker.listRegistries).toHaveBeenCalledTimes(2);
   });
 
+  it("returns focus to Add registry after a removal, and to the opener when it fails", async () => {
+    const user = setupUser();
+    const docker = fakeDocker({
+      listRegistries: vi.fn().mockResolvedValueOnce([{ address: "ghcr.io" }, { address: "quay.io" }]).mockResolvedValue([{ address: "quay.io" }]),
+      deleteRegistry: vi.fn().mockRejectedValueOnce(new Error("busy")).mockResolvedValue(undefined),
+    });
+    renderPage(docker);
+    const opener = await screen.findByRole("button", { name: "Remove registry ghcr.io" });
+    await user.click(opener);
+    let confirm = await screen.findByRole("alertdialog");
+    await user.click(within(confirm).getByRole("button", { name: "Remove registry" }));
+    await waitFor(() => expect(toastError).toHaveBeenCalled());
+    await user.click(within(confirm).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(opener).toHaveFocus());
+
+    await user.click(opener);
+    confirm = await screen.findByRole("alertdialog");
+    await user.click(within(confirm).getByRole("button", { name: "Remove registry" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Remove registry ghcr.io" })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("button", { name: /Add registry/ })).toHaveFocus());
+  });
+
+  it("keeps a removal's title while its confirmation closes", async () => {
+    const user = setupUser();
+    renderPage(fakeDocker());
+    await user.click(await screen.findByRole("button", { name: "Remove registry ghcr.io" }));
+    const confirm = await screen.findByRole("alertdialog");
+    expect(within(confirm).getByText("Remove ghcr.io?")).toBeInTheDocument();
+    await user.click(within(confirm).getByRole("button", { name: "Cancel" }));
+    expect(within(confirm).queryByText("Remove this registry?")).not.toBeInTheDocument();
+  });
+
   it("offers no removal of a built-in network and keeps the confirmation open when a removal fails", async () => {
     const user = setupUser();
     const docker = fakeDocker({
@@ -93,6 +125,23 @@ describe("DockerSettings", () => {
     );
     expect(screen.getByRole("alertdialog")).toBeInTheDocument();
     expect(screen.getByText("proxy")).toBeInTheDocument();
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Remove network proxy" })).toHaveFocus());
+  });
+
+  it("returns focus to Add network after a network is removed", async () => {
+    const user = setupUser();
+    const docker = fakeDocker({
+      listNetworks: vi
+        .fn()
+        .mockResolvedValueOnce([{ id: "n2", name: "proxy", driver: "bridge", scope: "local" }])
+        .mockResolvedValue([]),
+    });
+    renderPage(docker);
+    await user.click(await screen.findByRole("button", { name: "Remove network proxy" }));
+    await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Remove network" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("button", { name: /Add network/ })).toHaveFocus());
   });
 
   it("adds a registry, wiping the password when the dialog closes", async () => {

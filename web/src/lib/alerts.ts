@@ -232,16 +232,27 @@ export type ServiceSpec = {
   id: ServiceId;
   label: string;
   fields: FieldSpec[];
-  // build turns the form values into a Shoutrrr URL or throws an Error
-  // whose message is shown under the form.
+  // build turns the form values into a Shoutrrr URL or throws a FieldError
+  // whose message is shown under its field.
   build: (f: Record<string, string>) => string;
 };
 
 const enc = encodeURIComponent;
 
+// FieldError is a service form's problem with one of its fields: field is
+// the FieldSpec key, so the dialog can show the message under that field.
+export class FieldError extends Error {
+  field: string;
+  constructor(field: string, message: string) {
+    super(message);
+    this.name = "FieldError";
+    this.field = field;
+  }
+}
+
 function req(f: Record<string, string>, key: string, label: string): string {
   const v = (f[key] ?? "").trim();
-  if (!v) throw new Error(`${label} is required`);
+  if (!v) throw new FieldError(key, `${label} is required`);
   return v;
 }
 
@@ -251,10 +262,10 @@ function opt(f: Record<string, string>, key: string): string {
 
 // splitHost turns "https://host:port/path" or "host/path" into the
 // scheme-less host+path and whether plain HTTP was asked for.
-function splitHost(raw: string): { hostPath: string; insecure: boolean } {
+function splitHost(raw: string, field: string): { hostPath: string; insecure: boolean } {
   const insecure = /^http:\/\//i.test(raw);
   const hostPath = raw.replace(/^https?:\/\//i, "").replace(/\/+$/, "");
-  if (!hostPath || /\s/.test(hostPath)) throw new Error("Server must be a host name, like ntfy.example.com");
+  if (!hostPath || /\s/.test(hostPath)) throw new FieldError(field, "Server must be a host name, like ntfy.example.com");
   return { hostPath, insecure };
 }
 
@@ -276,7 +287,7 @@ export const SERVICES: ServiceSpec[] = [
     ],
     build: (f) => {
       const token = req(f, "token", "Bot token");
-      if (!/^\d+:[\w-]+$/.test(token)) throw new Error("Bot token looks like 123456789:ABC-DEF…");
+      if (!/^\d+:[\w-]+$/.test(token)) throw new FieldError("token", "Bot token looks like 123456789:ABC-DEF…");
       return `telegram://${token}@telegram?chats=${list(req(f, "chats", "Chats"))}`;
     },
   },
@@ -294,7 +305,7 @@ export const SERVICES: ServiceSpec[] = [
     ],
     build: (f) => {
       const m = req(f, "webhook", "Webhook URL").match(/discord(?:app)?\.com\/api\/webhooks\/(\d+)\/([\w-]+)/);
-      if (!m) throw new Error("Paste the whole Discord webhook URL");
+      if (!m) throw new FieldError("webhook", "Paste the whole Discord webhook URL");
       return `discord://${m[2]}@${m[1]}`;
     },
   },
@@ -312,7 +323,7 @@ export const SERVICES: ServiceSpec[] = [
     ],
     build: (f) => {
       const m = req(f, "webhook", "Webhook URL").match(/hooks\.slack\.com\/services\/([^/]+)\/([^/]+)\/([^/?#]+)/);
-      if (!m) throw new Error("Paste the whole Slack webhook URL");
+      if (!m) throw new FieldError("webhook", "Paste the whole Slack webhook URL");
       return `slack://hook:${m[1]}-${m[2]}-${m[3]}@webhook`;
     },
   },
@@ -326,7 +337,7 @@ export const SERVICES: ServiceSpec[] = [
       { key: "password", label: "Password or token", secret: true, optional: true },
     ],
     build: (f) => {
-      const { hostPath, insecure } = splitHost(req(f, "server", "Server"));
+      const { hostPath, insecure } = splitHost(req(f, "server", "Server"), "server");
       const topic = req(f, "topic", "Topic");
       const user = opt(f, "username");
       const pass = opt(f, "password");
@@ -342,7 +353,7 @@ export const SERVICES: ServiceSpec[] = [
       { key: "token", label: "App token", secret: true, placeholder: "AzyoeNS.D4iJLVa" },
     ],
     build: (f) => {
-      const { hostPath, insecure } = splitHost(req(f, "server", "Server"));
+      const { hostPath, insecure } = splitHost(req(f, "server", "Server"), "server");
       return `gotify://${hostPath}/${enc(req(f, "token", "App token"))}${insecure ? "?disabletls=yes" : ""}`;
     },
   },
@@ -373,7 +384,7 @@ export const SERVICES: ServiceSpec[] = [
     build: (f) => {
       const host = req(f, "host", "SMTP server");
       const port = req(f, "port", "Port");
-      if (!/^\d{1,5}$/.test(port)) throw new Error("Port must be a number");
+      if (!/^\d{1,5}$/.test(port)) throw new FieldError("port", "Port must be a number");
       const user = opt(f, "username");
       const pass = opt(f, "password");
       const auth = user ? `${enc(user)}:${enc(pass)}@` : "";
@@ -399,11 +410,11 @@ export const SERVICES: ServiceSpec[] = [
       try {
         u = new URL(raw);
       } catch {
-        throw new Error("URL must start with https:// or http://");
+        throw new FieldError("url", "URL must start with https:// or http://");
       }
-      if (u.protocol !== "https:" && u.protocol !== "http:") throw new Error("URL must start with https:// or http://");
+      if (u.protocol !== "https:" && u.protocol !== "http:") throw new FieldError("url", "URL must start with https:// or http://");
       if (u.username || u.password) {
-        throw new Error("Credentials in the URL are not supported; use a header-less token in the path or the raw Shoutrrr URL");
+        throw new FieldError("url", "Credentials in the URL are not supported; use a header-less token in the path or the Other (URL) service");
       }
       const extra = u.search ? `&${u.search.slice(1)}` : "";
       return `generic://${u.host}${u.pathname}?template=json${u.protocol === "http:" ? "&disabletls=yes" : ""}${extra}`;

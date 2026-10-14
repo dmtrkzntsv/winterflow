@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Cloud, Folder, HardDrive, Plus } from "lucide-react";
+import { ChevronDown, ChevronRight, Cloud, Folder, HardDrive, Plus } from "lucide-react";
 import { toast } from "sonner";
 
 import { AppLinks } from "@/components/app-links";
@@ -22,6 +22,7 @@ import {
 import { useApps } from "@/context/use-apps";
 import { useBackups } from "@/context/use-backups";
 import type { Docker } from "@/context/use-docker";
+import { useConfirmTarget } from "@/hooks/use-confirm-target";
 import { returnFocusTo } from "@/lib/focus";
 import { STORAGE_TYPES, type Storage, type StorageSaved } from "@/lib/storages";
 
@@ -42,7 +43,7 @@ export function StoragesSettings({ docker }: { docker: Docker }) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [edit, setEdit] = useState<Storage | null>(null);
   const [dialogKey, setDialogKey] = useState(0);
-  const [toDelete, setToDelete] = useState<Storage | null>(null);
+  const removal = useConfirmTarget<Storage>();
   // The storage whose backups of deleted apps are shown.
   const [orphansOf, setOrphansOf] = useState<string | null>(null);
   // The dialogs have no trigger of their own: focus goes back to what
@@ -72,7 +73,7 @@ export function StoragesSettings({ docker }: { docker: Docker }) {
   const saved = ({ storage, redeployed, warnings }: StorageSaved) => {
     const done = edit ? "Storage saved" : "Storage added";
     const description =
-      redeployed.length > 0 ? `Redeployed ${redeployed.map((id) => names.get(id) ?? id).join(", ")}.` : undefined;
+      redeployed.length > 0 ? `Redeployed ${redeployed.map((id) => names.get(id) ?? "an app").join(", ")}.` : undefined;
     if (warnings.length > 0) {
       // It asks for action (each warning names its app): it stays until dismissed.
       toast.warning(`${done}, but not every app was redeployed`, {
@@ -113,7 +114,7 @@ export function StoragesSettings({ docker }: { docker: Docker }) {
         actions={
           <>
             <RefreshButton label="Refresh storages" loading={loading} onClick={() => void load()} />
-            <Button ref={addButton} className="max-sm:h-10" onClick={(e) => openDialog(null, e.currentTarget)}>
+            <Button ref={addButton} onClick={(e) => openDialog(null, e.currentTarget)}>
               <Plus className="size-4" /> Add storage
             </Button>
           </>
@@ -133,7 +134,7 @@ export function StoragesSettings({ docker }: { docker: Docker }) {
             // Why the storage can't be removed (null: it can).
             const blocked =
               used.length > 0
-                ? `Used by ${listed(used.map((id) => names.get(id) ?? id))} — remove the references first`
+                ? `Used by ${listed(used.map((id) => names.get(id) ?? "an app"))} — remove the references first`
                 : null;
             const Icon = s.type === "s3" ? Cloud : Folder;
             return (
@@ -153,14 +154,6 @@ export function StoragesSettings({ docker }: { docker: Docker }) {
                     items={[
                       { label: "Edit", onSelect: (trigger) => openDialog(s, trigger) },
                       {
-                        // Copies of deleted apps stay in the storage: findable here.
-                        label: "Backups of deleted apps",
-                        onSelect: (trigger) => {
-                          opener.current = trigger;
-                          setOrphansOf(s.name);
-                        },
-                      },
-                      {
                         label: "Remove",
                         destructive: true,
                         title: blocked ?? undefined,
@@ -171,7 +164,7 @@ export function StoragesSettings({ docker }: { docker: Docker }) {
                             return;
                           }
                           opener.current = trigger;
-                          setToDelete(s);
+                          removal.ask(s);
                         },
                       },
                     ]}
@@ -183,26 +176,27 @@ export function StoragesSettings({ docker }: { docker: Docker }) {
         </RowList>
       )}
       {items !== null && items.length > 0 ? (
-        // Copies of deleted apps stay in their storage: a link below the
-        // list as well as each row's menu. With several storages it asks
-        // which one.
+        // Copies of deleted apps stay in their storage: this link below the
+        // list is the one way in. With several storages it asks which one.
         items.length === 1 ? (
           <Button
             ref={orphansLink}
             variant="link"
-            className="h-auto p-0 max-sm:h-10"
+            className="h-auto gap-1 p-0 max-sm:h-10"
             onClick={(e) => {
               opener.current = e.currentTarget;
               setOrphansOf(items[0].name);
             }}
           >
             Backups of deleted apps
+            <ChevronRight className="size-4" aria-hidden />
           </Button>
         ) : (
           <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
-              <Button ref={orphansLink} variant="link" className="h-auto p-0 max-sm:h-10">
+              <Button ref={orphansLink} variant="link" className="h-auto gap-1 p-0 max-sm:h-10">
                 Backups of deleted apps
+                <ChevronDown className="size-4" aria-hidden />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start">
@@ -228,7 +222,7 @@ export function StoragesSettings({ docker }: { docker: Docker }) {
         open={dialogOpen}
         edit={edit}
         existing={(items ?? []).map((s) => s.name)}
-        usedBy={(edit?.apps ?? []).map((id) => names.get(id) ?? id)}
+        usedBy={(edit?.apps ?? []).map((id) => names.get(id) ?? "an app")}
         returnFocus={opener}
         onOpenChange={setDialogOpen}
         onSaved={saved}
@@ -244,19 +238,19 @@ export function StoragesSettings({ docker }: { docker: Docker }) {
         />
       ) : null}
       <ConfirmDialog
-        open={toDelete !== null}
-        onOpenChange={(o) => !o && setToDelete(null)}
+        open={removal.open}
+        onOpenChange={removal.onOpenChange}
         title="Remove this storage?"
         description={
           <>
-            <code className="font-mono text-foreground [overflow-wrap:anywhere]">{toDelete?.name}</code> is removed from
+            <code className="font-mono text-foreground [overflow-wrap:anywhere]">{removal.target?.name}</code> is removed from
             this server. Nothing stored in it is deleted.
           </>
         }
         confirmLabel="Remove storage"
         pendingLabel="Removing…"
         onCloseAutoFocus={returnFocusTo(opener, addButton)}
-        onConfirm={() => (toDelete ? remove(toDelete.name) : undefined)}
+        onConfirm={() => (removal.target ? remove(removal.target.name) : undefined)}
       />
     </div>
   );

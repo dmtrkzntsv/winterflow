@@ -50,7 +50,8 @@ describe("OverrideDialog", () => {
     fakeAPI({});
     open();
     const dialog = screen.getByRole("dialog");
-    expect(dialog).toHaveTextContent("Inbox only");
+    // The description says it (the "Inbox only" radio label would pass this check on its own).
+    expect(dialog).toHaveAccessibleDescription(/inbox only\. Empty fields keep the rule's values\./);
     expect(within(dialog).getByText("Alert when it")).toBeInTheDocument();
     expect(within(dialog).getByText("Then notify")).toBeInTheDocument();
     expect(screen.getByRole("radiogroup", { name: "Notify" })).toBeInTheDocument();

@@ -138,6 +138,65 @@ describe("useSharedVariablesSettings", () => {
     expect(api.deleteOrg).toHaveBeenCalledWith("o1");
   });
 
+  it("fails closed: a server-scope change without a server never reaches the org's scope", async () => {
+    const api = fakeApi();
+    const { result } = setup(api, null);
+    await waitFor(() => expect(result.current.org).not.toBeNull());
+    const body = { name: "A", is_secret: false as const, value: "1", description: "" };
+    await expect(result.current.save(body, "server")).rejects.toThrow("No server is selected");
+    expect(api.saveOrg).not.toHaveBeenCalled();
+    expect(api.saveServer).not.toHaveBeenCalled();
+
+    const serverVar = plain({ id: "s1", name: "LOCAL", scope: "server" });
+    await expect(result.current.remove(serverVar)).rejects.toThrow("No server is selected");
+    expect(api.deleteOrg).not.toHaveBeenCalled();
+    expect(api.deleteServer).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith("Couldn't delete the variable", { description: expect.stringContaining("No server") });
+
+    act(() => result.current.reloadVariable(serverVar));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Request failed", { description: expect.stringContaining("No server") }));
+    expect(api.reload).not.toHaveBeenCalled();
+  });
+
+  it("lets a live synced event at the listed revision win over a stale pending listing", async () => {
+    const api = fakeApi();
+    const { result, emit } = setup(api, "srv-a");
+    await waitFor(() => expect(result.current.org).not.toBeNull());
+    expect(result.current.sync["srv-b"]).toBe("pending");
+    // The agent confirmed revision 3 (the listed one); the next listing still says pending.
+    emit({ type: "vars.synced", ref: "", payload: { server_id: "srv-b", revision: 3 } });
+    await act(() => result.current.load());
+    expect(result.current.sync["srv-b"]).toBe("synced");
+    // An older confirmation does not beat a newer listed revision.
+    emit({ type: "vars.synced", ref: "", payload: { server_id: "srv-a", revision: 2 } });
+    await act(() => result.current.load());
+    expect(result.current.sync["srv-a"]).toBe("pending");
+  });
+
+  it("tells since when a server has been pending, and forgets it once synced", async () => {
+    const api = fakeApi();
+    const { result, emit } = setup(api, "srv-a");
+    await waitFor(() => expect(result.current.org).not.toBeNull());
+    const since = result.current.pendingSince["srv-b"];
+    expect(since).toBeGreaterThan(0);
+    await act(() => result.current.load());
+    expect(result.current.pendingSince["srv-b"]).toBe(since);
+    emit({ type: "vars.synced", ref: "", payload: { server_id: "srv-b", revision: 3 } });
+    expect(result.current.pendingSince["srv-b"]).toBeUndefined();
+  });
+
+  it("keeps what a confirmation is about while it closes", async () => {
+    const api = fakeApi();
+    const { result } = setup(api, null);
+    await waitFor(() => expect(result.current.org).not.toBeNull());
+    const v = result.current.org!.variables[0];
+    act(() => result.current.setToDelete(v));
+    expect(result.current.deleteOpen).toBe(true);
+    act(() => result.current.setToDelete(null));
+    expect(result.current.deleteOpen).toBe(false);
+    expect(result.current.toDelete).toBe(v);
+  });
+
   it("reports a refused delete and rethrows it", async () => {
     const api = fakeApi();
     api.deleteOrg.mockRejectedValue(new Error("nope"));

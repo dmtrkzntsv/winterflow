@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Check, Copy } from "lucide-react";
 import { toast } from "sonner";
 
@@ -6,14 +6,23 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { copyText } from "@/lib/clipboard";
 
+// COPIED_MS is how long the button shows its check mark.
+const COPIED_MS = 2000;
+
 // CopyField shows a value handed over once (a temporary password, a new
 // token) read-only, with a Copy button; focusing it selects it all.
 export function CopyField({ value, label }: { value: string; label: string }) {
-  const [copied, setCopied] = useState(false);
+  // copied names the value that was copied, so a new value reads uncopied.
+  const [copied, setCopied] = useState<string | null>(null);
+  useEffect(() => {
+    if (copied === null) return;
+    const id = window.setTimeout(() => setCopied(null), COPIED_MS);
+    return () => window.clearTimeout(id);
+  }, [copied]);
   const copy = async () => {
     try {
       await copyText(value);
-      setCopied(true);
+      setCopied(value);
       toast.success("Copied");
     } catch {
       toast.error("Couldn't copy: select the text and copy it yourself");
@@ -33,10 +42,10 @@ export function CopyField({ value, label }: { value: string; label: string }) {
         variant="outline"
         size="icon"
         className="size-10 shrink-0 sm:size-9"
-        aria-label={`Copy ${label.toLowerCase()}`}
+        aria-label={`Copy ${label}`}
         onClick={() => void copy()}
       >
-        {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+        {copied === value ? <Check className="size-4" /> : <Copy className="size-4" />}
       </Button>
     </div>
   );

@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import type { Backups } from "@/context/use-backups";
 import { useNow } from "@/hooks/use-now";
+import { useConfirmTarget } from "@/hooks/use-confirm-target";
 import { formatSize, type Orphan } from "@/lib/backups";
 import { returnFocusTo } from "@/lib/focus";
 import { cn, relativeTime } from "@/lib/utils";
@@ -51,7 +52,7 @@ export function OrphansDialog({
 }) {
   const [items, setItems] = useState<Orphan[] | null>(null);
   const [error, setError] = useState("");
-  const [confirm, setConfirm] = useState<Orphan | null>(null);
+  const confirm = useConfirmTarget<Orphan>();
   const now = useNow();
   // The Delete button that opened the confirmation, and the footer's Close
   // button: focus goes back to the first one still on the page.
@@ -105,7 +106,7 @@ export function OrphansDialog({
       className="sm:max-w-2xl"
       onCloseAutoFocus={(e) => returnFocusTo(returnFocus)(e)}
       footer={
-        <Button ref={closeButton} variant="outline" className="max-sm:h-10" onClick={() => onOpenChange(false)}>
+        <Button ref={closeButton} variant="outline" onClick={() => onOpenChange(false)}>
           Close
         </Button>
       }
@@ -113,7 +114,7 @@ export function OrphansDialog({
       {error ? (
         <div className="grid justify-items-start gap-2">
           <InlineError>{error}</InlineError>
-          <Button variant="outline" size="sm" className="max-sm:h-10" onClick={() => setAttempt((n) => n + 1)}>
+          <Button variant="outline" size="sm" onClick={() => setAttempt((n) => n + 1)}>
             Try again
           </Button>
         </div>
@@ -146,11 +147,11 @@ export function OrphansDialog({
                 <Button
                   size="sm"
                   variant="ghost"
-                  className="text-destructive hover:text-destructive max-sm:h-10"
+                  className="text-destructive hover:text-destructive"
                   aria-label={`Delete the backups of ${o.app_name || o.app_id}`}
                   onClick={(e) => {
                     opener.current = e.currentTarget;
-                    setConfirm(o);
+                    confirm.ask(o);
                   }}
                 >
                   Delete
@@ -163,21 +164,21 @@ export function OrphansDialog({
       {/* A dialog of its own, so it is on screen however far the list is
           scrolled, takes focus (on Cancel), and Escape closes only it. */}
       <ConfirmDialog
-        open={confirm !== null}
-        onOpenChange={(o) => !o && setConfirm(null)}
+        open={confirm.open}
+        onOpenChange={confirm.onOpenChange}
         title="Delete these backups?"
         description={
-          confirm ? (
-            confirm.deleted_at ? (
+          confirm.target ? (
+            confirm.target.deleted_at ? (
               <>
-                Delete every copy of <strong>{shownName(confirm)}</strong> ({copiesLabel(confirm.copies)},{" "}
-                {formatSize(confirm.bytes)}) from {storage}? This cannot be undone.
+                Delete every copy of <strong>{shownName(confirm.target)}</strong> ({copiesLabel(confirm.target.copies)},{" "}
+                {formatSize(confirm.target.bytes)}) from {storage}? This cannot be undone.
               </>
             ) : (
               <>
                 This folder is not marked as deleted by this server, so it may hold the live backups of an app on another
-                server that shares this storage. Deleting every copy of <strong>{shownName(confirm)}</strong> (
-                {copiesLabel(confirm.copies)}, {formatSize(confirm.bytes)}) from {storage} is permanent, and that app
+                server that shares this storage. Deleting every copy of <strong>{shownName(confirm.target)}</strong> (
+                {copiesLabel(confirm.target.copies)}, {formatSize(confirm.target.bytes)}) from {storage} is permanent, and that app
                 would lose its backups. Delete only if you are sure nothing uses them.
               </>
             )
@@ -186,7 +187,7 @@ export function OrphansDialog({
         confirmLabel="Delete backups"
         pendingLabel="Deleting…"
         onCloseAutoFocus={(e) => returnFocusTo(opener, closeButton)(e)}
-        onConfirm={() => (confirm ? remove(confirm) : undefined)}
+        onConfirm={() => (confirm.target ? remove(confirm.target) : undefined)}
       />
     </ResponsiveDialog>
   );

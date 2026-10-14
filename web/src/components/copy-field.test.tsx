@@ -1,6 +1,6 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const toastSuccess = vi.hoisted(() => vi.fn());
 const toastError = vi.hoisted(() => vi.fn());
@@ -17,10 +17,38 @@ describe("CopyField", () => {
     render(<CopyField value="TEMP-123" label="Temporary password" />);
     expect(screen.getByLabelText("Temporary password")).toHaveValue("TEMP-123");
     expect(screen.getByLabelText("Temporary password")).toHaveAttribute("readonly");
-    await user.click(screen.getByRole("button", { name: "Copy temporary password" }));
+    await user.click(screen.getByRole("button", { name: "Copy Temporary password" }));
     expect(copy).toHaveBeenCalledWith("TEMP-123");
     await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith("Copied"));
-    await user.click(screen.getByRole("button", { name: "Copy temporary password" }));
+    await user.click(screen.getByRole("button", { name: "Copy Temporary password" }));
     await waitFor(() => expect(toastError).toHaveBeenCalledWith("Couldn't copy: select the text and copy it yourself"));
+  });
+
+  describe("the Copied mark", () => {
+    afterEach(() => vi.useRealTimers());
+    const icon = () => screen.getByRole("button", { name: "Copy Token" }).querySelector("svg");
+
+    it("goes away after a moment", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      copy.mockResolvedValue(undefined);
+      render(<CopyField value="wfp_1" label="Token" />);
+      const before = icon()?.getAttribute("class");
+      await act(async () => screen.getByRole("button", { name: "Copy Token" }).click());
+      expect(icon()?.getAttribute("class")).not.toBe(before);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2100);
+      });
+      expect(icon()?.getAttribute("class")).toBe(before);
+    });
+
+    it("does not carry over to a new value", async () => {
+      copy.mockResolvedValue(undefined);
+      const { rerender } = render(<CopyField value="wfp_1" label="Token" />);
+      const before = icon()?.getAttribute("class");
+      await act(async () => screen.getByRole("button", { name: "Copy Token" }).click());
+      expect(icon()?.getAttribute("class")).not.toBe(before);
+      rerender(<CopyField value="wfp_2" label="Token" />);
+      expect(icon()?.getAttribute("class")).toBe(before);
+    });
   });
 });

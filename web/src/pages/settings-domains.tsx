@@ -15,6 +15,8 @@ import { StatusDot } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { useApps } from "@/context/use-apps";
 import type { Docker, DomainCreated } from "@/context/use-docker";
+import { useNow } from "@/hooks/use-now";
+import { useConfirmTarget } from "@/hooks/use-confirm-target";
 import { expiryNote, TLS_MODES, type Domain } from "@/lib/domains";
 import { returnFocusTo } from "@/lib/focus";
 
@@ -38,12 +40,14 @@ function toastResult(done: string, warnings: string[]) {
 // is near or past, and the apps using it. Add, edit and remove from here.
 export function DomainsSettings({ docker }: { docker: Docker }) {
   const { apps } = useApps();
+  // Certificates run out while the page stays open: the notes follow the clock.
+  const now = useNow();
   const [items, setItems] = useState<Domain[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [replace, setReplace] = useState<Domain | null>(null);
   const [dialogKey, setDialogKey] = useState(0);
-  const [toDelete, setToDelete] = useState<Domain | null>(null);
+  const removal = useConfirmTarget<Domain>();
   // The dialogs have no trigger of their own: focus goes back to what
   // opened them, or to Add domain when that left with its row.
   const opener = useRef<HTMLElement | null>(null);
@@ -91,7 +95,7 @@ export function DomainsSettings({ docker }: { docker: Docker }) {
     setDialogOpen(true);
   };
 
-  const deleteApps = toDelete?.apps ?? [];
+  const deleteApps = removal.target?.apps ?? [];
 
   return (
     <div className="space-y-6">
@@ -101,7 +105,7 @@ export function DomainsSettings({ docker }: { docker: Docker }) {
         actions={
           <>
             <RefreshButton label="Refresh domains" loading={loading} onClick={() => void load()} />
-            <Button ref={addButton} className="max-sm:h-10" onClick={(e) => openDialog(null, e.currentTarget)}>
+            <Button ref={addButton} onClick={(e) => openDialog(null, e.currentTarget)}>
               <Plus className="size-4" /> Add domain
             </Button>
           </>
@@ -114,7 +118,7 @@ export function DomainsSettings({ docker }: { docker: Docker }) {
       ) : (
         <RowList label="Domains">
           {items.map((d) => {
-            const note = expiryNote(d);
+            const note = expiryNote(d, new Date(now));
             return (
               <Row
                 key={d.name}
@@ -145,7 +149,7 @@ export function DomainsSettings({ docker }: { docker: Docker }) {
                         destructive: true,
                         onSelect: (trigger) => {
                           opener.current = trigger;
-                          setToDelete(d);
+                          removal.ask(d);
                         },
                       },
                     ]}
@@ -166,19 +170,19 @@ export function DomainsSettings({ docker }: { docker: Docker }) {
         onSaved={saved}
       />
       <ConfirmDialog
-        open={toDelete !== null}
-        onOpenChange={(o) => !o && setToDelete(null)}
+        open={removal.open}
+        onOpenChange={removal.onOpenChange}
         title="Remove this domain?"
         description={
           <>
             Apps on this server will no longer be able to use{" "}
-            <code className="font-mono [overflow-wrap:anywhere] text-foreground">{toDelete?.name}</code>.
+            <code className="font-mono [overflow-wrap:anywhere] text-foreground">{removal.target?.name}</code>.
             {deleteApps.length > 0 ? (
               <>
                 {" "}
                 It's used by{" "}
                 <span className="font-medium text-foreground">
-                  {deleteApps.map((id) => names.get(id) ?? id).join(", ")}
+                  {deleteApps.map((id) => names.get(id) ?? "an app").join(", ")}
                 </span>
                 : remove those addresses first, unless another domain on this server covers them.
               </>
@@ -188,7 +192,7 @@ export function DomainsSettings({ docker }: { docker: Docker }) {
         confirmLabel="Remove domain"
         pendingLabel="Removing…"
         onCloseAutoFocus={returnFocusTo(opener, addButton)}
-        onConfirm={() => (toDelete ? remove(toDelete.name) : undefined)}
+        onConfirm={() => (removal.target ? remove(removal.target.name) : undefined)}
       />
     </div>
   );

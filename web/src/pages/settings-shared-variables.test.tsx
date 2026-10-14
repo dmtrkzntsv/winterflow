@@ -8,8 +8,13 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/lib/ecies", () => ({
   encryptSecret: vi.fn(async (value: string, key: string) => `ct(${key}):${value}`),
 }));
-const active = vi.hoisted(() => ({ server: null as { id: string; name: string } | null }));
-vi.mock("@/context/use-servers", () => ({ useServers: () => ({ activeServer: active.server }) }));
+const active = vi.hoisted(() => ({
+  server: null as { id: string; name: string } | null,
+  status: {} as Record<string, "online" | "unknown">,
+}));
+vi.mock("@/context/use-servers", () => ({
+  useServers: () => ({ activeServer: active.server, statusByServer: active.status }),
+}));
 
 import { AppsContext, type AppsContextValue } from "@/context/apps-context-base";
 import {
@@ -115,6 +120,7 @@ describe("SharedVariablesSettingsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     active.server = { id: "srv-a", name: "alpha" };
+    active.status = { "srv-a": "unknown", "srv-b": "online" };
   });
 
   it("lists the organization's and this server's variables in one list, with their scope", async () => {
@@ -167,6 +173,38 @@ describe("SharedVariablesSettingsPage", () => {
     expect(api.resync).toHaveBeenCalledWith({});
     // Sent: nothing is failed any more, both servers read pending until they answer.
     expect(screen.queryByRole("alert", { name: "Sync" })).not.toBeInTheDocument();
+  });
+
+  it("keeps quiet about a pending sync while its server is online, until it has lasted a minute", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+    try {
+      active.status = { "srv-a": "online", "srv-b": "online" };
+      renderPage(fakeApi());
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(screen.getByRole("list", { name: "Shared variables" })).toBeInTheDocument();
+      expect(screen.queryByRole("status", { name: "Sync" })).not.toBeInTheDocument();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(50_000);
+      });
+      expect(screen.queryByRole("status", { name: "Sync" })).not.toBeInTheDocument();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(20_000);
+      });
+      expect(screen.getByRole("status", { name: "Sync" })).toHaveTextContent("Sync to alpha is pending.");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("says a failed sync at once, even when the server is online", async () => {
+    active.status = { "srv-a": "online", "srv-b": "online" };
+    const { emit } = renderPage(fakeApi());
+    await listRows();
+    expect(screen.queryByRole("status", { name: "Sync" })).not.toBeInTheDocument();
+    emit({ type: "vars.sync_failed", ref: "", payload: { server_id: "srv-b", error: "boom" } });
+    expect(screen.getByRole("alert", { name: "Sync" })).toHaveTextContent("Sync to beta failed.");
   });
 
   it("has no sync notice once every keyed server is synced", async () => {

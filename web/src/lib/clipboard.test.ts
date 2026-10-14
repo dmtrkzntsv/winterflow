@@ -27,4 +27,29 @@ describe("copyText", () => {
     await expect(copyText("two")).rejects.toThrow("copy rejected");
     expect(document.querySelector("textarea")).toBeNull();
   });
+
+  it("puts the fallback field inside the dialog that has focus", async () => {
+    Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+    const host = document.createElement("div");
+    host.setAttribute("role", "dialog");
+    const button = document.createElement("button");
+    host.appendChild(button);
+    document.body.appendChild(host);
+    button.focus();
+    let parent: Element | null = null;
+    Object.defineProperty(document, "execCommand", {
+      value: vi.fn(() => {
+        parent = document.querySelector("textarea")?.parentElement ?? null;
+        return true;
+      }),
+      configurable: true,
+    });
+    try {
+      await copyText("inside");
+      expect(parent).toBe(host);
+      expect(host.querySelector("textarea")).toBeNull();
+    } finally {
+      host.remove();
+    }
+  });
 });

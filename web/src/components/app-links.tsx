@@ -12,7 +12,7 @@ export function AppLinks({ ids, names, chips = false }: { ids: string[]; names: 
   if (ids.length === 0) return <span className="text-muted-foreground">Not used</span>;
   const link = (id: string, className?: string) => (
     <Link to={toServer(`/app/${id}`)} className={cn(className, "underline-offset-4 hover:underline")}>
-      {names.get(id) ?? id}
+      {names.get(id) ?? "an app"}
     </Link>
   );
   if (chips) {

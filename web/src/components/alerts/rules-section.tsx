@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { alertsGet, alertsPost } from "@/hooks/use-alerts";
+import { useConfirmTarget } from "@/hooks/use-confirm-target";
 import { routingText, ruleSummary, type Channel, type Rule, type TargetKind } from "@/lib/alerts";
 import { returnFocusTo } from "@/lib/focus";
 import { cn } from "@/lib/utils";
@@ -25,7 +26,7 @@ export function RulesSection({ channels }: { channels: Channel[] }) {
   const [attempt, setAttempt] = useState(0);
   // editing: undefined = closed, null = a new rule.
   const [editing, setEditing] = useState<Rule | null | undefined>(undefined);
-  const [deleting, setDeleting] = useState<Rule | null>(null);
+  const deleting = useConfirmTarget<Rule>();
   // The dialogs have no trigger of their own: focus goes back to what
   // opened them, or to Add rule when that left with its row.
   const opener = useRef<HTMLElement | null>(null);
@@ -114,7 +115,7 @@ export function RulesSection({ channels }: { channels: Channel[] }) {
                         destructive: true,
                         onSelect: (trigger) => {
                           opener.current = trigger;
-                          setDeleting(r);
+                          deleting.ask(r);
                         },
                       },
                     ]}
@@ -137,7 +138,6 @@ export function RulesSection({ channels }: { channels: Channel[] }) {
           ref={addButton}
           size="sm"
           variant="outline"
-          className="max-sm:h-10"
           onClick={(e) => {
             opener.current = e.currentTarget;
             setEditing(null);
@@ -152,7 +152,7 @@ export function RulesSection({ channels }: { channels: Channel[] }) {
           <p role="alert" className="text-sm text-destructive">
             {error}
           </p>
-          <Button size="sm" variant="outline" className="max-sm:h-10" onClick={refresh}>
+          <Button size="sm" variant="outline" onClick={refresh}>
             Try again
           </Button>
         </div>
@@ -181,14 +181,14 @@ export function RulesSection({ channels }: { channels: Channel[] }) {
       ) : null}
 
       <ConfirmDialog
-        open={deleting !== null}
-        onOpenChange={(open) => !open && setDeleting(null)}
+        open={deleting.open}
+        onOpenChange={deleting.onOpenChange}
         title="Delete this rule?"
-        description={`${deleting ? ruleSummary(deleting) : ""}. Its adjustments go with it; its alerts stay in the Inbox.`}
+        description={`${deleting.target ? ruleSummary(deleting.target) : ""}. Its adjustments go with it; its alerts stay in the Inbox.`}
         confirmLabel="Delete rule"
         pendingLabel="Deleting…"
         onCloseAutoFocus={(e) => returnFocusTo(opener, addButton)(e)}
-        onConfirm={() => (deleting ? remove(deleting) : undefined)}
+        onConfirm={() => (deleting.target ? remove(deleting.target) : undefined)}
       />
     </Section>
   );

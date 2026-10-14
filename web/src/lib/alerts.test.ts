@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   ALERT_METRICS,
   buildChannel,
+  FieldError,
   channelService,
   alertTargetPath,
   channelSummary,
@@ -99,6 +100,13 @@ describe("channel URL builders", () => {
     expect(() => buildChannel("webhook", { url: "https://me:pw@hooks.example.com/a" })).toThrow(/Credentials in the URL are not supported/);
     expect(() => buildChannel("webhook", { url: "https://token@hooks.example.com/a" })).toThrow(/Credentials/);
     expect(() => buildChannel("ntfy", { server: "ntfy.sh" })).toThrow("Topic is required");
+    expect(() => buildChannel("email", { host: "h", port: "x", from: "a", to: "b" })).toThrow(
+      expect.objectContaining({ field: "port" }),
+    );
+    expect(() => buildChannel("ntfy", { server: "ntfy.sh" })).toThrow(FieldError);
+    expect(() => buildChannel("webhook", { url: "https://me:pw@hooks.example.com/a" })).toThrow(
+      /Other \(URL\) service/,
+    );
   });
 
   it("recognises a stored channel's form", () => {

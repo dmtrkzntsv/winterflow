@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Plus } from "lucide-react";
 import { toast } from "sonner";
 
@@ -14,6 +14,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { Docker, Network, Registry } from "@/context/use-docker";
+import { useConfirmTarget } from "@/hooks/use-confirm-target";
+import { returnFocusTo } from "@/lib/focus";
 import { VolumesSection } from "@/pages/settings-volumes";
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : undefined);
@@ -129,7 +131,10 @@ function AddRegistryDialog({
 function RegistriesSection({ docker }: { docker: Docker }) {
   const { items, loading, reload } = useResourceList<Registry>(docker.listRegistries, "registries");
   const [adding, setAdding] = useState(false);
-  const [toRemove, setToRemove] = useState<Registry | null>(null);
+  const removal = useConfirmTarget<Registry>();
+  // A removed row takes its button along: focus then goes to Add registry.
+  const opener = useRef<HTMLElement | null>(null);
+  const addButton = useRef<HTMLButtonElement | null>(null);
 
   const remove = async (address: string) => {
     try {
@@ -149,7 +154,7 @@ function RegistriesSection({ docker }: { docker: Docker }) {
       actions={
         <>
           <RefreshButton label="Refresh registries" loading={loading} onClick={() => void reload()} />
-          <Button size="sm" variant="outline" onClick={() => setAdding(true)}>
+          <Button ref={addButton} size="sm" variant="outline" onClick={() => setAdding(true)}>
             <Plus className="size-4" /> Add registry
           </Button>
         </>
@@ -165,20 +170,29 @@ function RegistriesSection({ docker }: { docker: Docker }) {
             <Row
               key={r.address}
               title={<span className="font-mono">{r.address}</span>}
-              actions={<RemoveButton label={`Remove registry ${r.address}`} onClick={() => setToRemove(r)} />}
+              actions={
+                <RemoveButton
+                  label={`Remove registry ${r.address}`}
+                  onClick={(trigger) => {
+                    opener.current = trigger;
+                    removal.ask(r);
+                  }}
+                />
+              }
             />
           ))}
         </RowList>
       )}
       <AddRegistryDialog docker={docker} open={adding} onOpenChange={setAdding} onAdded={reload} />
       <ConfirmDialog
-        open={toRemove !== null}
-        onOpenChange={(o) => !o && setToRemove(null)}
-        title={`Remove ${toRemove?.address ?? "this registry"}?`}
+        open={removal.open}
+        onOpenChange={removal.onOpenChange}
+        title={`Remove ${removal.target?.address ?? "this registry"}?`}
         description="Apps on this server can't pull private images from it until you add it again."
         confirmLabel="Remove registry"
         pendingLabel="Removing…"
-        onConfirm={() => (toRemove ? remove(toRemove.address) : undefined)}
+        onCloseAutoFocus={(e) => returnFocusTo(opener, addButton)(e)}
+        onConfirm={() => (removal.target ? remove(removal.target.address) : undefined)}
       />
     </Section>
   );
@@ -261,7 +275,9 @@ function CreateNetworkDialog({
 function NetworksSection({ docker }: { docker: Docker }) {
   const { items, loading, reload } = useResourceList<Network>(docker.listNetworks, "networks");
   const [creating, setCreating] = useState(false);
-  const [toRemove, setToRemove] = useState<Network | null>(null);
+  const removal = useConfirmTarget<Network>();
+  const opener = useRef<HTMLElement | null>(null);
+  const addButton = useRef<HTMLButtonElement | null>(null);
 
   const remove = async (name: string) => {
     try {
@@ -281,7 +297,7 @@ function NetworksSection({ docker }: { docker: Docker }) {
       actions={
         <>
           <RefreshButton label="Refresh networks" loading={loading} onClick={() => void reload()} />
-          <Button size="sm" variant="outline" onClick={() => setCreating(true)}>
+          <Button ref={addButton} size="sm" variant="outline" onClick={() => setCreating(true)}>
             <Plus className="size-4" /> Add network
           </Button>
         </>
@@ -300,7 +316,13 @@ function NetworksSection({ docker }: { docker: Docker }) {
               description={[n.driver, n.scope].filter(Boolean).join(" · ") || undefined}
               actions={
                 BUILTIN_NETWORKS.has(n.name) ? null : (
-                  <RemoveButton label={`Remove network ${n.name}`} onClick={() => setToRemove(n)} />
+                  <RemoveButton
+                    label={`Remove network ${n.name}`}
+                    onClick={(trigger) => {
+                      opener.current = trigger;
+                      removal.ask(n);
+                    }}
+                  />
                 )
               }
             />
@@ -309,13 +331,14 @@ function NetworksSection({ docker }: { docker: Docker }) {
       )}
       <CreateNetworkDialog docker={docker} open={creating} onOpenChange={setCreating} onCreated={reload} />
       <ConfirmDialog
-        open={toRemove !== null}
-        onOpenChange={(o) => !o && setToRemove(null)}
-        title={`Remove network ${toRemove?.name ?? ""}?`}
+        open={removal.open}
+        onOpenChange={removal.onOpenChange}
+        title={`Remove network ${removal.target?.name ?? ""}?`}
         description="Containers still attached to it keep Docker from removing it."
         confirmLabel="Remove network"
         pendingLabel="Removing…"
-        onConfirm={() => (toRemove ? remove(toRemove.name) : undefined)}
+        onCloseAutoFocus={(e) => returnFocusTo(opener, addButton)(e)}
+        onConfirm={() => (removal.target ? remove(removal.target.name) : undefined)}
       />
     </Section>
   );

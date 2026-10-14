@@ -80,7 +80,7 @@ function AgentUpdate({ docker, running }: { docker: Docker; running: string }) {
             onChange={(e) => setVersion(e.target.value)}
           />
         </div>
-        <Button type="submit" className="max-sm:h-10" disabled={busy || !target}>
+        <Button type="submit" disabled={busy || !target}>
           {busy ? "Updating…" : "Update"}
         </Button>
       </form>

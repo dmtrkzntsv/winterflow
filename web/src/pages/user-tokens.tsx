@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useNow } from "@/hooks/use-now";
 import { useTokens, type ApiToken, type CreatedToken } from "@/hooks/use-tokens";
+import { useConfirmTarget } from "@/hooks/use-confirm-target";
 import { returnFocusTo } from "@/lib/focus";
 import { tokenMeta } from "@/lib/tokens";
 import { cn } from "@/lib/utils";
@@ -68,7 +69,7 @@ function GenerateTokenDialog({
         title="Token generated"
         description="Copy it now: you won't be able to see it again."
         footer={
-          <Button className="max-sm:h-10" onClick={() => onOpenChange(false)}>
+          <Button onClick={() => onOpenChange(false)}>
             Done
           </Button>
         }
@@ -86,10 +87,10 @@ function GenerateTokenDialog({
       description="It can do everything your account can."
       footer={
         <>
-          <Button type="button" variant="outline" className="max-sm:h-10" disabled={busy} onClick={() => onOpenChange(false)}>
+          <Button type="button" variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button type="submit" form="token-form" className="max-sm:h-10" disabled={busy}>
+          <Button type="submit" form="token-form" disabled={busy}>
             {busy ? "Generating…" : "Generate"}
           </Button>
         </>
@@ -107,7 +108,6 @@ function GenerateTokenDialog({
           <Label htmlFor="token-name">Name</Label>
           <Input
             id="token-name"
-            className="max-sm:h-10"
             placeholder="e.g. CI deploy"
             value={name}
             maxLength={64}
@@ -151,7 +151,7 @@ function GenerateTokenDialog({
 export default function UserTokensPage() {
   const { tokens, loading, error, create, remove, refresh } = useTokens();
   const [generating, setGenerating] = useState(false);
-  const [toRevoke, setToRevoke] = useState<ApiToken | null>(null);
+  const revokeConfirm = useConfirmTarget<ApiToken>();
   // The confirmation has no trigger of its own: focus goes back to the
   // row's button, or to Generate token once that row is gone.
   const opener = useRef<HTMLElement | null>(null);
@@ -179,11 +179,21 @@ export default function UserTokensPage() {
           </>
         }
         actions={
-          <Button ref={generateButton} className="max-sm:h-10" onClick={() => setGenerating(true)}>
+          <Button ref={generateButton} onClick={() => setGenerating(true)}>
             <Plus className="size-4" /> Generate token
           </Button>
         }
       />
+      {tokens.length > 0 && error ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+          <Button size="sm" variant="outline" onClick={() => void refresh()}>
+            Try again
+          </Button>
+        </div>
+      ) : null}
       {tokens.length > 0 ? (
         <RowList label="API tokens">
           {tokens.map((t) => (
@@ -197,7 +207,7 @@ export default function UserTokensPage() {
                   label={`Revoke ${t.name}`}
                   onClick={(trigger) => {
                     opener.current = trigger;
-                    setToRevoke(t);
+                    revokeConfirm.ask(t);
                   }}
                 />
               }
@@ -213,14 +223,14 @@ export default function UserTokensPage() {
       )}
       {generating ? <GenerateTokenDialog onOpenChange={setGenerating} create={create} /> : null}
       <ConfirmDialog
-        open={toRevoke !== null}
-        onOpenChange={(o) => !o && setToRevoke(null)}
-        title={`Revoke ${toRevoke?.name ?? "this token"}?`}
+        open={revokeConfirm.open}
+        onOpenChange={revokeConfirm.onOpenChange}
+        title={`Revoke ${revokeConfirm.target?.name ?? "this token"}?`}
         description="Anything that uses it stops working at once."
         confirmLabel="Revoke token"
         pendingLabel="Revoking…"
         onCloseAutoFocus={(e) => returnFocusTo(opener, generateButton)(e)}
-        onConfirm={() => (toRevoke ? revoke(toRevoke) : undefined)}
+        onConfirm={() => (revokeConfirm.target ? revoke(revokeConfirm.target) : undefined)}
       />
     </div>
   );

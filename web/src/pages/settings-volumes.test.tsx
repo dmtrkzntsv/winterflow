@@ -55,6 +55,7 @@ describe("VolumesSection", () => {
     expect(screen.getByRole("link", { name: "Nextcloud" })).toHaveAttribute("href", "/server/srv-1/app/a1");
     expect(screen.getByText("In use")).toBeInTheDocument();
     expect(screen.getByText("Not used by any app")).toBeInTheDocument();
+    expect(screen.getByText("App not on this server")).toHaveAttribute("title", "No app gone on this server");
     expect(screen.getByText(/3 volumes/)).toBeInTheDocument();
     expect(screen.getByText(/1 not used by any app/)).toBeInTheDocument();
     expect(screen.queryByText(/orphan/i)).not.toBeInTheDocument();
@@ -71,7 +72,9 @@ describe("VolumesSection", () => {
 
   it("deletes an unused volume after confirmation and reloads", async () => {
     const user = userEvent.setup({ delay: null });
-    const docker = fakeDocker();
+    const docker = fakeDocker({
+      listVolumes: vi.fn().mockResolvedValueOnce(VOLUMES).mockResolvedValue(VOLUMES.filter((v) => v.name !== "shared")),
+    });
     renderSection(docker);
     await screen.findByText("Winterflow apps");
     // A mounted volume offers no delete, every other one does.
@@ -84,6 +87,8 @@ describe("VolumesSection", () => {
     expect(docker.deleteVolume).toHaveBeenCalledWith("shared");
     await waitFor(() => expect(docker.listVolumes).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    // The row is gone with its button: focus lands on Create volume, not <body>.
+    await waitFor(() => expect(screen.getByRole("button", { name: /Create volume/ })).toHaveFocus());
   });
 
   it("keeps the confirmation open and lists again when Docker refuses", async () => {
@@ -95,6 +100,9 @@ describe("VolumesSection", () => {
     await waitFor(() => expect(toastError).toHaveBeenCalledWith("Couldn't delete the volume", { description: "volume is in use" }));
     expect(docker.listVolumes).toHaveBeenCalledTimes(2);
     expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+    // Cancelling after a refusal puts focus back on what opened it.
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Delete volume shared" })).toHaveFocus());
   });
 
   it("validates the name before creating", async () => {

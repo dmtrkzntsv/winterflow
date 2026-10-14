@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { MemoryRouter } from "react-router-dom";
@@ -337,6 +337,32 @@ describe("DomainsSettings", () => {
     expect(screen.getByRole("alertdialog")).toBeInTheDocument();
     expect(screen.getAllByText("example.com")).toHaveLength(2); // the row, and the confirmation
     expect(docker.listDomains).toHaveBeenCalledTimes(1);
+    // Cancelling after a refusal puts focus back on the row's menu.
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Actions for example.com" })).toHaveFocus());
+  });
+
+  it("lets a save answer late without closing the next opening of the dialog", async () => {
+    const user = setupUser();
+    let finish: (v: { domain: Domain; warnings: string[] }) => void = () => {};
+    const docker = fakeDocker({
+      createDomain: vi.fn(() => new Promise<{ domain: Domain; warnings: string[] }>((r) => (finish = r))),
+    });
+    renderPage(docker);
+
+    await user.click(await screen.findByRole("button", { name: /Add domain/ }));
+    let dialog = await screen.findByRole("dialog");
+    await user.type(within(dialog).getByLabelText("Name"), "late.example.com");
+    await user.click(within(dialog).getByRole("button", { name: "Add" }));
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    await user.click(screen.getByRole("button", { name: /Add domain/ }));
+    dialog = await screen.findByRole("dialog");
+    await act(async () => finish({ domain: { name: "late.example.com", tls: "auto", apps: [] }, warnings: [] }));
+    // The domain was stored, so it is listed; the dialog now open is not the one that saved.
+    expect(await screen.findByText("late.example.com")).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 
   it("says so when the list can't be loaded, or is empty", async () => {

@@ -58,7 +58,10 @@ describe("ChannelsSection", () => {
     expect(within(rows[0]).getByText("Default")).toBeInTheDocument();
     expect(within(rows[0]).getByText("Telegram")).toBeInTheDocument();
     expect(within(rows[1]).getByText("Off")).toBeInTheDocument();
-    expect(within(rows[1]).getByText(/Last delivery failed: dial tcp/)).toBeInTheDocument();
+    const failed = within(rows[1]).getByText(/Last delivery failed: dial tcp/);
+    expect(failed).toBeInTheDocument();
+    // Muted text beside a dot, not red text.
+    expect(failed.closest("span.text-status-bad")).toBeNull();
 
     await user.click(within(rows[0]).getByRole("button", { name: "Actions for Ops" }));
     await user.click(await screen.findByRole("menuitem", { name: "Send test" }));
@@ -105,6 +108,18 @@ describe("ChannelsSection", () => {
     render(<Harness />);
     expect(await screen.findByRole("alert")).toHaveTextContent("boom");
     expect(screen.queryByText(/No channels yet/)).not.toBeInTheDocument();
+  });
+
+  it("offers Try again when the first load fails", async () => {
+    let fail = true;
+    fakeAPI({ "/api/v1/alerts/get-channels": () => (fail ? new Error("boom") : channels) });
+    const user = userEvent.setup({ delay: null });
+    render(<Harness />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("boom");
+    fail = false;
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findAllByTestId("channel-row")).toHaveLength(2);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("adds a channel from a grid of services, Other (URL) among them", async () => {

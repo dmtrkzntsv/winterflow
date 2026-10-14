@@ -36,7 +36,8 @@ const FORM_ID = "shared-variable-form";
 // only, an org one for every keyed server, a provide for the keyed servers
 // missing it. An existing secret's name, kind and value are locked:
 // "Replace value" sends a new value; anything else is delete and recreate.
-// Secret values are encrypted here and cleared on close. The parent
+// Secret values are encrypted here and cleared on close. The Secret switch
+// comes before the Value so a secret is never typed into a plain variable. The parent
 // remounts it (key) per opening; onSave reports nothing itself (it throws
 // to keep the dialog open).
 export function SharedVariableDialog({
@@ -72,10 +73,12 @@ export function SharedVariableDialog({
   const [reload, setReload] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  const serverId = scope === "server" ? server?.id : undefined;
+  // Fail closed: a server-only variable with no server has no keys at all
+  // (never every server's).
+  const serverOnly = scope === "server";
   const names = serverNameMap(keys);
-  const scopeKeys = serverId ? keys.servers.filter((k) => k.server_id === serverId) : keys.servers;
-  const pending = serverId ? keys.pending_servers.filter((p) => p.server_id === serverId) : keys.pending_servers;
+  const scopeKeys = serverOnly ? keys.servers.filter((k) => k.server_id === server?.id) : keys.servers;
+  const pending = serverOnly ? keys.pending_servers.filter((p) => p.server_id === server?.id) : keys.pending_servers;
   const typingSecret = secret && (mode.kind === "create" || provide || replace);
   const lockedSecret = mode.kind === "edit" && secret && !replace;
   const trimmed = name.trim();
@@ -85,7 +88,7 @@ export function SharedVariableDialog({
   const keyless = provide ? (existing?.missing_on ?? []).filter((id) => !targets.some((k) => k.server_id === id)) : [];
   const noKey = typingSecret && targets.length === 0;
   const canSave = !busy && trimmed !== "" && !nameError && !noKey && (!typingSecret || value !== "");
-  const pushesEverywhere = typingSecret && !provide && serverId === undefined;
+  const pushesEverywhere = typingSecret && !provide && !serverOnly;
 
   // The typed value must not outlive the dialog.
   useEffect(() => {
@@ -119,7 +122,7 @@ export function SharedVariableDialog({
   };
 
   const title = provide ? `Provide ${existing?.name}` : existing ? `Edit ${existing.name}` : "Add variable";
-  const label = (id: string) => names.get(id) ?? id;
+  const label = (id: string) => names.get(id) ?? "a server";
   const targetNames = targets.map((k) => k.name).join(", ");
   const keylessNames = keyless.map(label).join(", ");
   const scopeText = scope === "server" && server ? `${server.name} only` : "all servers";
@@ -137,10 +140,10 @@ export function SharedVariableDialog({
       }
       footer={
         <>
-          <Button type="button" variant="outline" className="max-sm:h-10" onClick={() => changeOpen(false)}>
+          <Button type="button" variant="outline" onClick={() => changeOpen(false)}>
             Cancel
           </Button>
-          <Button type="submit" form={FORM_ID} className="max-sm:h-10" disabled={!canSave}>
+          <Button type="submit" form={FORM_ID} disabled={!canSave}>
             {pushesEverywhere ? "Save and push" : "Save"}
           </Button>
         </>
@@ -174,10 +177,16 @@ export function SharedVariableDialog({
             </p>
           ) : null}
         </div>
+        {provide ? null : (
+          <div className="flex items-center gap-2">
+            <Switch id="sv-secret" checked={secret} disabled={existing !== null} onCheckedChange={setSecret} />
+            <Label htmlFor="sv-secret">Secret</Label>
+          </div>
+        )}
         {lockedSecret ? (
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border p-3 text-sm">
             <span className="text-muted-foreground">The value is encrypted and can't be shown.</span>
-            <Button type="button" size="sm" variant="outline" className="max-sm:h-10" onClick={() => setReplace(true)}>
+            <Button type="button" size="sm" variant="outline" onClick={() => setReplace(true)}>
               Replace value
             </Button>
           </div>
@@ -196,18 +205,12 @@ export function SharedVariableDialog({
             {typingSecret && !provide ? (
               <p className="text-sm text-muted-foreground">
                 {noKey
-                  ? serverId !== undefined
+                  ? serverOnly
                     ? "This server has no public key yet, so it can't receive secrets."
                     : "No server has a public key yet, so there is nobody to receive this secret."
                   : pushSummary(scopeKeys.length, pending.length)}
               </p>
             ) : null}
-          </div>
-        )}
-        {provide ? null : (
-          <div className="flex items-center gap-2">
-            <Switch id="sv-secret" checked={secret} disabled={existing !== null} onCheckedChange={setSecret} />
-            <Label htmlFor="sv-secret">Secret</Label>
           </div>
         )}
         <div className="flex items-center gap-2">

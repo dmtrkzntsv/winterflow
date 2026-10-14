@@ -64,7 +64,10 @@ describe("ChannelDialog", () => {
     await user.click(screen.getByRole("radio", { name: "Webhook" }));
     await user.type(screen.getByLabelText("URL"), "https://hooks.example.com/x");
     await user.click(screen.getByRole("button", { name: /Send test/ }));
-    expect(await screen.findByRole("status")).toHaveTextContent("Test failed: 403 Forbidden");
+    const result = await screen.findByRole("status");
+    expect(result).toHaveTextContent("Test failed: 403 Forbidden");
+    // Plain text with a dot, not red text.
+    expect(result).not.toHaveClass("text-destructive");
     expect(api.posted("/api/v1/alerts/test-channel")).toEqual([
       { url: "generic://hooks.example.com/x?template=json" },
     ]);
@@ -122,9 +125,17 @@ describe("ChannelDialog", () => {
     await user.click(screen.getByRole("button", { name: "Advanced" }));
     expect(screen.queryByLabelText("Port")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Save" }));
+    // The message sits under the Port field itself, which has focus.
+    const port = screen.getByLabelText("Port");
     expect(screen.getByRole("alert")).toHaveTextContent("Port must be a number");
-    expect(screen.getByLabelText("Port")).toHaveValue("x");
+    expect(port).toHaveValue("x");
+    expect(port).toHaveAttribute("aria-invalid", "true");
+    expect(port).toHaveAccessibleDescription("Port must be a number");
+    expect(port).toHaveFocus();
     expect(api.calls).toHaveLength(0);
+    // Typing in it clears the message.
+    await user.type(port, "1");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("closes on Cancel without saving", async () => {

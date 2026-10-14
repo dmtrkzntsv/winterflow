@@ -34,6 +34,10 @@ export type ServerSync = {
   state: "synced" | "pending";
 };
 
+// A pending sync is mentioned only after this long (a save leaves it pending
+// for a moment), unless the server's agent is offline.
+export const SYNC_SETTLE_MS = 60_000;
+
 // The browser adds "failed" from vars.sync_failed events.
 export type SyncState = "synced" | "pending" | "failed";
 
@@ -117,7 +121,7 @@ export function coverageLabel(v: SharedVariable, names: Map<string, string>, key
   const pending = keys?.pending_servers.length ?? 0;
   const pendingNote = pending > 0 ? `${pending} pending (no key yet)` : "";
   if (v.missing_on.length > 0) {
-    const missing = `Missing on ${v.missing_on.map((id) => names.get(id) ?? id).join(", ")}`;
+    const missing = `Missing on ${v.missing_on.map((id) => names.get(id) ?? "a server").join(", ")}`;
     return pendingNote ? `${missing}; ${pendingNote}` : missing;
   }
   if (keys && keys.servers.length === 0) return "No server has a key yet";
@@ -237,6 +241,6 @@ export function failedServers(
 ): { id: string; name: string }[] {
   return Object.entries(sync)
     .filter(([, state]) => state === "failed")
-    .map(([id]) => ({ id, name: names.get(id) ?? id }))
+    .map(([id]) => ({ id, name: names.get(id) ?? "a server" }))
     .sort((a, b) => a.name.localeCompare(b.name));
 }

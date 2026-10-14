@@ -70,6 +70,8 @@ describe("UserPasswordPage", () => {
   it("explains a temporary password", () => {
     fakeAPI({});
     renderPage(true);
-    expect(screen.getByText(/You're using a temporary password/)).toBeInTheDocument();
+    // A notice, not an alert: only the form's own errors are alerts.
+    expect(screen.getByRole("status")).toHaveTextContent(/temporary password/);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });

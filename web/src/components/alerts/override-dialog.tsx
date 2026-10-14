@@ -109,14 +109,14 @@ export function OverrideDialog({ open, onOpenChange, rule, override, channels, s
       footer={
         <>
           {override ? (
-            <Button type="button" variant="ghost" className="max-sm:h-10 sm:mr-auto" onClick={() => void reset()} disabled={busy}>
+            <Button type="button" variant="ghost" className="sm:mr-auto" onClick={() => void reset()} disabled={busy}>
               Reset to rule
             </Button>
           ) : null}
-          <Button type="button" variant="outline" className="max-sm:h-10" onClick={() => onOpenChange(false)}>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button type="submit" form={FORM_ID} className="max-sm:h-10" disabled={busy}>
+          <Button type="submit" form={FORM_ID} disabled={busy}>
             {busy ? "Saving…" : "Save"}
           </Button>
         </>

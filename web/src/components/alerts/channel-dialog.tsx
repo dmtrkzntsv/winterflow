@@ -1,4 +1,4 @@
-import { useState, type RefObject } from "react";
+import { useEffect, useState, type RefObject } from "react";
 import { Send } from "lucide-react";
 import { toast } from "sonner";
 
@@ -15,6 +15,7 @@ import {
   buildChannel,
   channelService,
   channelSummary,
+  FieldError,
   SERVICES,
   serviceSpec,
   type Channel,
@@ -73,6 +74,9 @@ export function ChannelDialog({ open, onOpenChange, channel, onSaved, returnFocu
   const [enabled, setEnabled] = useState(channel?.enabled ?? true);
   const [changing, setChanging] = useState(!editing);
   const [formError, setFormError] = useState<string | null>(null);
+  // The form's problem with one field, shown under it (a new object each
+  // time, so the same problem twice still moves focus there).
+  const [fieldProblem, setFieldProblem] = useState<{ field: string; message: string } | null>(null);
   const [busy, setBusy] = useState<"save" | "test" | null>(null);
   const [test, setTest] = useState<TestResult | null>(null);
 
@@ -80,25 +84,40 @@ export function ChannelDialog({ open, onOpenChange, channel, onSaved, returnFocu
   const basic = spec.fields.filter((f) => !f.advanced);
   const more = spec.fields.filter((f) => f.advanced);
 
+  // Focus goes to the field a problem is about, once it is on screen (it
+  // may have been folded under Advanced).
+  useEffect(() => {
+    if (fieldProblem) document.getElementById(`channel-${fieldProblem.field}`)?.focus();
+  }, [fieldProblem]);
+
   const pickService = (id: ServiceId) => {
     const next = initialValues(id, channel && channelService(channel) === id ? channel : undefined);
     setService(id);
     setValues(next);
     setAdvanced(advancedShown(id, next));
     setFormError(null);
+    setFieldProblem(null);
     setTest(null);
   };
 
-  // destination builds the URL from the form, showing why it cannot (and
-  // the folded fields, where the problem may be).
+  // destination builds the URL from the form, showing why it cannot: under
+  // the field at fault, which opens Advanced when it is folded in there.
   const destination = () => {
     try {
       const built = buildChannel(service, values);
       setFormError(null);
+      setFieldProblem(null);
       return built;
     } catch (e) {
-      setFormError(e instanceof Error ? e.message : "Invalid form");
-      if (more.length > 0) setAdvanced(true);
+      const message = e instanceof Error ? e.message : "Invalid form";
+      if (e instanceof FieldError) {
+        setFormError(null);
+        setFieldProblem({ field: e.field, message });
+        if (more.some((f) => f.key === e.field)) setAdvanced(true);
+      } else {
+        setFormError(message);
+        setFieldProblem(null);
+      }
       return null;
     }
   };
@@ -126,6 +145,7 @@ export function ChannelDialog({ open, onOpenChange, channel, onSaved, returnFocu
   const save = async () => {
     if (!name.trim()) {
       setFormError("Name is required");
+      setFieldProblem(null);
       return;
     }
     let url = "";
@@ -155,23 +175,36 @@ export function ChannelDialog({ open, onOpenChange, channel, onSaved, returnFocu
     }
   };
 
-  const input = (f: FieldSpec) => (
-    <div key={f.key} className="space-y-1.5">
-      <Label htmlFor={`channel-${f.key}`}>
-        {f.label}
-        {f.optional ? <span className="font-normal text-muted-foreground"> (optional)</span> : null}
-      </Label>
-      <Input
-        id={`channel-${f.key}`}
-        type={f.secret ? "password" : "text"}
-        autoComplete="off"
-        placeholder={f.placeholder}
-        value={values[f.key] ?? ""}
-        onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))}
-      />
-      {f.hint ? <p className="text-xs text-muted-foreground">{f.hint}</p> : null}
-    </div>
-  );
+  const input = (f: FieldSpec) => {
+    const problem = fieldProblem?.field === f.key ? fieldProblem.message : null;
+    return (
+      <div key={f.key} className="space-y-1.5">
+        <Label htmlFor={`channel-${f.key}`}>
+          {f.label}
+          {f.optional ? <span className="font-normal text-muted-foreground"> (optional)</span> : null}
+        </Label>
+        <Input
+          id={`channel-${f.key}`}
+          type={f.secret ? "password" : "text"}
+          autoComplete="off"
+          placeholder={f.placeholder}
+          value={values[f.key] ?? ""}
+          aria-invalid={problem ? true : undefined}
+          aria-describedby={problem ? `channel-${f.key}-error` : undefined}
+          onChange={(e) => {
+            setValues((v) => ({ ...v, [f.key]: e.target.value }));
+            if (problem) setFieldProblem(null);
+          }}
+        />
+        {problem ? (
+          <p id={`channel-${f.key}-error`} role="alert" className="text-xs text-destructive">
+            {problem}
+          </p>
+        ) : null}
+        {f.hint ? <p className="text-xs text-muted-foreground">{f.hint}</p> : null}
+      </div>
+    );
+  };
 
   return (
     <ResponsiveDialog
@@ -183,19 +216,18 @@ export function ChannelDialog({ open, onOpenChange, channel, onSaved, returnFocu
       onCloseAutoFocus={returnFocusTo(returnFocus)}
       footer={
         <>
-          <Button type="button" variant="outline" className="max-sm:h-10" onClick={() => onOpenChange(false)}>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
           <Button
             type="button"
             variant="outline"
-            className="max-sm:h-10"
             onClick={() => void runTest()}
             disabled={busy !== null}
           >
             <Send className="size-4" /> {busy === "test" ? "Sending…" : "Send test"}
           </Button>
-          <Button type="submit" form={FORM_ID} className="max-sm:h-10" disabled={busy !== null}>
+          <Button type="submit" form={FORM_ID} disabled={busy !== null}>
             {busy === "save" ? "Saving…" : "Save"}
           </Button>
         </>
@@ -255,7 +287,7 @@ export function ChannelDialog({ open, onOpenChange, channel, onSaved, returnFocu
             <span className="truncate" data-testid="channel-destination">
               {channelSummary(channel!)}
             </span>
-            <Button type="button" variant="ghost" size="sm" className="max-sm:h-10" onClick={() => setChanging(true)}>
+            <Button type="button" variant="ghost" size="sm" onClick={() => setChanging(true)}>
               Change destination
             </Button>
           </div>
@@ -283,14 +315,9 @@ export function ChannelDialog({ open, onOpenChange, channel, onSaved, returnFocu
           </p>
         ) : null}
         {test ? (
-          <p role="status" className={cn("flex items-center gap-2 text-sm", !test.ok && "text-destructive")}>
-            {test.ok ? (
-              <>
-                <StatusDot tone="ok" /> Test notification sent.
-              </>
-            ) : (
-              `Test failed: ${test.error}`
-            )}
+          <p role="status" className="flex items-center gap-2 text-sm">
+            <StatusDot tone={test.ok ? "ok" : "bad"} />
+            {test.ok ? "Test notification sent." : `Test failed: ${test.error}`}
           </p>
         ) : null}
       </form>

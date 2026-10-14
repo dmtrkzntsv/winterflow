@@ -98,7 +98,7 @@ describe("OrgMembersPage", () => {
     await user.click(within(dialog).getByRole("button", { name: "Add" }));
     expect(await screen.findByText("Member added")).toBeInTheDocument();
     expect(screen.getByLabelText("Temporary password")).toHaveValue("TEMP-PASS-123456");
-    expect(screen.getByRole("button", { name: "Copy temporary password" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy Temporary password" })).toBeInTheDocument();
     expect(api.posted("/api/v1/org/create-user")).toEqual([{ name: "Cy", email: "cy@example.test" }]);
   });
 

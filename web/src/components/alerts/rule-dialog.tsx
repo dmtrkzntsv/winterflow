@@ -101,10 +101,10 @@ export function RuleDialog({ open, onOpenChange, rule, channels, onSaved, return
       onCloseAutoFocus={returnFocusTo(returnFocus)}
       footer={
         <>
-          <Button type="button" variant="outline" className="max-sm:h-10" onClick={() => onOpenChange(false)}>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button type="submit" form={FORM_ID} className="max-sm:h-10" disabled={busy}>
+          <Button type="submit" form={FORM_ID} disabled={busy}>
             {busy ? "Saving…" : "Save"}
           </Button>
         </>

@@ -9,10 +9,12 @@ import { EmptyState } from "@/components/empty-state";
 import { ListPlaceholder } from "@/components/list-placeholder";
 import { RowMenu } from "@/components/row-menu";
 import { Row, RowList, Section } from "@/components/section";
+import { StatusDot } from "@/components/status";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { alertsPost } from "@/hooks/use-alerts";
 import { useNow } from "@/hooks/use-now";
+import { useConfirmTarget } from "@/hooks/use-confirm-target";
 import { channelService, channelSummary, type Channel } from "@/lib/alerts";
 import { returnFocusTo } from "@/lib/focus";
 import { relativeTime } from "@/lib/utils";
@@ -34,7 +36,7 @@ export function ChannelsSection({
 }) {
   // editing: undefined = closed, null = a new channel.
   const [editing, setEditing] = useState<Channel | null | undefined>(undefined);
-  const [deleting, setDeleting] = useState<Channel | null>(null);
+  const deleting = useConfirmTarget<Channel>();
   const [testing, setTesting] = useState<string | null>(null);
   // The dialogs have no trigger of their own: focus goes back to what
   // opened them, or to Add channel when that left with its row.
@@ -79,7 +81,6 @@ export function ChannelsSection({
           ref={addButton}
           size="sm"
           variant="outline"
-          className="max-sm:h-10"
           onClick={(e) => {
             opener.current = e.currentTarget;
             setEditing(null);
@@ -90,9 +91,14 @@ export function ChannelsSection({
       }
     >
       {error ? (
-        <p role="alert" className="text-sm text-destructive">
-          {error}
-        </p>
+        <div className="flex flex-wrap items-center gap-3">
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+          <Button size="sm" variant="outline" onClick={() => void onChanged()}>
+            Try again
+          </Button>
+        </div>
       ) : null}
       {channels.length > 0 ? (
         <RowList label="Channels">
@@ -115,8 +121,9 @@ export function ChannelsSection({
               description={channelSummary(ch)}
               meta={
                 ch.last_error ? (
-                  <span className="line-clamp-1 max-w-64 text-status-bad" title={ch.last_error}>
-                    Last delivery failed: {ch.last_error}
+                  <span className="inline-flex max-w-64 items-center gap-1.5" title={ch.last_error}>
+                    <StatusDot tone="bad" />
+                    <span className="line-clamp-1">Last delivery failed: {ch.last_error}</span>
                   </span>
                 ) : ch.last_sent_at ? (
                   `Last sent ${relativeTime(new Date(ch.last_sent_at), now)}`
@@ -145,7 +152,7 @@ export function ChannelsSection({
                       destructive: true,
                       onSelect: (trigger) => {
                         opener.current = trigger;
-                        setDeleting(ch);
+                        deleting.ask(ch);
                       },
                     },
                   ]}
@@ -172,14 +179,14 @@ export function ChannelsSection({
       ) : null}
 
       <ConfirmDialog
-        open={deleting !== null}
-        onOpenChange={(open) => !open && setDeleting(null)}
-        title={`Delete ${deleting?.name ?? "this channel"}?`}
+        open={deleting.open}
+        onOpenChange={deleting.onOpenChange}
+        title={`Delete ${deleting.target?.name ?? "this channel"}?`}
         description="Rules that send to it skip it from now on. This can't be undone."
         confirmLabel="Delete channel"
         pendingLabel="Deleting…"
         onCloseAutoFocus={(e) => returnFocusTo(opener, addButton)(e)}
-        onConfirm={() => (deleting ? remove(deleting) : undefined)}
+        onConfirm={() => (deleting.target ? remove(deleting.target) : undefined)}
       />
     </Section>
   );

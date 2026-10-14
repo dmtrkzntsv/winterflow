@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { Plus } from "lucide-react";
 import { toast } from "sonner";
@@ -18,6 +18,8 @@ import { Switch } from "@/components/ui/switch";
 import { useApps } from "@/context/use-apps";
 import type { Docker, Volume } from "@/context/use-docker";
 import { useServerPath } from "@/context/use-server-path";
+import { useConfirmTarget } from "@/hooks/use-confirm-target";
+import { returnFocusTo } from "@/lib/focus";
 import { appSub } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 import { groupVolumes, shortVolumeName, volumeNameError, volumeState } from "@/lib/volumes";
@@ -34,7 +36,7 @@ function ownerOf(volume: Volume, appName: string | undefined, appHref: (id: stri
       </Link>
     );
   }
-  if (volume.orphan) return <span title={`No app ${volume.app_id} on this server`}>Deleted app</span>;
+  if (volume.orphan) return <span title={`No app ${volume.app_id} on this server`}>App not on this server</span>;
   if (volume.project) return <span title="Docker Compose project">{volume.project}</span>;
   return null;
 }
@@ -136,7 +138,10 @@ export function VolumesSection({ docker }: { docker: Docker }) {
   const [loading, setLoading] = useState(true);
   const [showAnon, setShowAnon] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [toDelete, setToDelete] = useState<Volume | null>(null);
+  const removal = useConfirmTarget<Volume>();
+  // A deleted row takes its button along: focus then goes to Create volume.
+  const opener = useRef<HTMLElement | null>(null);
+  const createButton = useRef<HTMLButtonElement | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -181,7 +186,7 @@ export function VolumesSection({ docker }: { docker: Docker }) {
       actions={
         <>
           <RefreshButton label="Refresh volumes" loading={loading} onClick={() => void load()} />
-          <Button size="sm" variant="outline" onClick={() => setCreating(true)}>
+          <Button ref={createButton} size="sm" variant="outline" onClick={() => setCreating(true)}>
             <Plus className="size-4" /> Create volume
           </Button>
         </>
@@ -243,7 +248,15 @@ export function VolumesSection({ docker }: { docker: Docker }) {
                         }
                         actions={
                           // Docker refuses to remove a mounted volume; don't offer it.
-                          v.in_use ? null : <RemoveButton label={`Delete volume ${v.name}`} onClick={() => setToDelete(v)} />
+                          v.in_use ? null : (
+                            <RemoveButton
+                              label={`Delete volume ${v.name}`}
+                              onClick={(trigger) => {
+                                opener.current = trigger;
+                                removal.ask(v);
+                              }}
+                            />
+                          )
                         }
                       />
                     );
@@ -256,18 +269,19 @@ export function VolumesSection({ docker }: { docker: Docker }) {
       )}
       <CreateVolumeDialog docker={docker} open={creating} onOpenChange={setCreating} onCreated={load} />
       <ConfirmDialog
-        open={toDelete !== null}
-        onOpenChange={(o) => !o && setToDelete(null)}
+        open={removal.open}
+        onOpenChange={removal.onOpenChange}
         title="Delete this volume?"
         description={
           <>
-            <code className="break-all font-mono text-foreground">{toDelete?.name}</code> and all the data in it are
+            <code className="break-all font-mono text-foreground">{removal.target?.name}</code> and all the data in it are
             erased for good. This can't be undone.
           </>
         }
         confirmLabel="Delete volume"
         pendingLabel="Deleting…"
-        onConfirm={() => (toDelete ? remove(toDelete.name) : undefined)}
+        onCloseAutoFocus={(e) => returnFocusTo(opener, createButton)(e)}
+        onConfirm={() => (removal.target ? remove(removal.target.name) : undefined)}
       />
     </Section>
   );

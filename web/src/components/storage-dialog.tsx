@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { CircleX, Cloud, Folder } from "lucide-react";
+import { Cloud, Folder } from "lucide-react";
 import { toast } from "sonner";
 
 import { Disclosure } from "@/components/disclosure";
@@ -284,12 +284,12 @@ export function StorageDialog({
       onCloseAutoFocus={returnFocusTo(returnFocus)}
       footer={
         <>
-          <Button type="button" variant="outline" className="max-sm:h-10" onClick={() => changeOpen(false)}>
+          <Button type="button" variant="outline" onClick={() => changeOpen(false)}>
             Cancel
           </Button>
           {/* Enabled while a problem is out of sight, so Save can say
               what is missing; disabled once the problem is on screen. */}
-          <Button type="submit" form={FORM_ID} className="max-sm:h-10" disabled={(problem !== null && !hidden) || busy || !dirty}>
+          <Button type="submit" form={FORM_ID} disabled={(problem !== null && !hidden) || busy || !dirty}>
             {busy ? "Saving…" : "Save"}
           </Button>
         </>
@@ -416,7 +416,6 @@ export function StorageDialog({
             <Button
               type="button"
               variant="outline"
-              className="max-sm:h-10"
               disabled={(problem !== null && !hidden) || probe.state === "testing"}
               onClick={() => {
                 if (!reveal()) void test();
@@ -431,8 +430,8 @@ export function StorageDialog({
                   <StatusDot tone="ok" /> {copy.ok}
                 </span>
               ) : probe.state === "failed" ? (
-                <span className="flex items-start gap-1.5 text-sm text-destructive [overflow-wrap:anywhere]">
-                  <CircleX className="mt-0.5 size-4 shrink-0" /> {probe.error}
+                <span className="flex items-start gap-1.5 text-sm font-medium [overflow-wrap:anywhere]">
+                  <StatusDot tone="bad" className="mt-1.5" /> {probe.error}
                 </span>
               ) : null}
             </span>

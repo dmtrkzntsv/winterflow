@@ -22,7 +22,7 @@ const en = {
       submit: "Sign in",
       submitting: "Signing in…",
       errorGeneric: "We couldn't sign you in. Try again.",
-      errorCredentials: "Wrong email or password.",
+      errorCredentials: "Wrong email or password. Forgot it? Ask a member to reset your password.",
       ssoLabel: "Or continue with",
       providers: {
         google: "Sign in with Google",

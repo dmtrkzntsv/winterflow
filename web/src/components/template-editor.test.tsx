@@ -142,14 +142,18 @@ describe("TemplateEditor", () => {
     expect(latest().files).toHaveLength(2);
   });
 
-  it("keeps Domains & Routing behind More options until it has a row, and edits the rows", async () => {
+  it("keeps Domains & Routing behind More options for a template without hostnames, and edits the rows in place", async () => {
     const user = start();
     expect(screen.queryByRole("heading", { name: "Domains & Routing" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "More options" }));
-    expect(screen.getByRole("heading", { name: "Domains & Routing" })).toBeInTheDocument();
+    const heading = screen.getByRole("heading", { name: "Domains & Routing" });
     expect(screen.getByText("No hostnames.")).toBeInTheDocument();
-    await user.click(screen.getAllByRole("button", { name: "Add hostname" })[0]);
-    expect(screen.queryByRole("button", { name: "More options" })).not.toBeInTheDocument();
+    const add = screen.getAllByRole("button", { name: "Add hostname" })[0];
+    await user.click(add);
+    // The section stays where it is (not mounted again): focus stays on Add.
+    expect(screen.getByRole("heading", { name: "Domains & Routing" })).toBe(heading);
+    expect(add).toHaveFocus();
+    expect(screen.getByRole("button", { name: "More options" })).toHaveAttribute("aria-expanded", "true");
     await user.click(screen.getByLabelText("Host"));
     await user.paste("${NAME}.example.com");
     await user.type(screen.getByLabelText("Port of ${NAME}.example.com"), "8080");
@@ -157,6 +161,29 @@ describe("TemplateEditor", () => {
     expect(bodyFromDraft(latest()).ingress).toEqual([{ host: "${NAME}.example.com", service: "app", port: 8080 }]);
     await user.click(screen.getByRole("button", { name: "Remove ${NAME}.example.com" }));
     expect(latest().ingress).toEqual([]);
+    // Removing the last row doesn't fold the section away.
+    expect(screen.getByRole("heading", { name: "Domains & Routing" })).toBe(heading);
+    expect(screen.getByText("No hostnames.")).toBeVisible();
+  });
+
+  it("shows Domains & Routing open for a template with hostnames, and keeps it once the last is removed", async () => {
+    const draft = draftFromBody("shop", {
+      files: { "compose.yaml": COMPOSE },
+      parameters: [{ name: "NAME", default: "shop" }],
+      app_name: "${NAME}",
+      icon: "",
+      color: "",
+      ingress: [{ host: "shop.example.com", port: 8080 }],
+      backups: null,
+    });
+    render(<Harness initial={draft} />);
+    const user = userEvent.setup();
+    const heading = screen.getByRole("heading", { name: "Domains & Routing" });
+    expect(screen.queryByRole("button", { name: "More options" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Remove shop.example.com" }));
+    expect(screen.getByRole("heading", { name: "Domains & Routing" })).toBe(heading);
+    expect(screen.getByText("No hostnames.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "More options" })).not.toBeInTheDocument();
   });
 
   it("offers one backup default per recipe backup", async () => {

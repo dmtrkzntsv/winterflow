@@ -273,10 +273,10 @@ function CreateNetworkDialog({
 }
 
 // NetworksSection is the server's Docker networks grouped like the
-// volumes: each app's under its name (its compose project's networks,
-// removable only with the app), then Other; Docker's built-in ones behind
-// a switch. Rows name a network without its project prefix; the full name
-// and id are on hover.
+// volumes: each app's under its name (its compose project's networks: a
+// leftover one can be removed, Docker refuses one still in use), then
+// Other; Docker's built-in ones behind a switch, never removable. Rows name
+// a network without its project prefix; the full name and id are on hover.
 function NetworksSection({ docker }: { docker: Docker }) {
   const { apps } = useApps();
   const { items, loading, reload } = useResourceList<Network>(docker.listNetworks, "networks");
@@ -286,9 +286,9 @@ function NetworksSection({ docker }: { docker: Docker }) {
   const opener = useRef<HTMLElement | null>(null);
   const addButton = useRef<HTMLButtonElement | null>(null);
   const { groups, builtin } = useMemo(() => groupNetworks(items ?? [], apps), [items, apps]);
-  // An app's networks go with the app; Docker's own never do.
+  // Docker's own networks are never removable.
   const shown = [
-    ...groups.map((g) => ({ ...g, removable: !g.appId })),
+    ...groups.map((g) => ({ ...g, removable: true })),
     ...(showBuiltin && builtin.length > 0
       ? [{ label: "Built-in", networks: builtin.map((n) => ({ network: n, short: n.name })), removable: false }]
       : []),
@@ -372,7 +372,11 @@ function NetworksSection({ docker }: { docker: Docker }) {
         open={removal.open}
         onOpenChange={removal.onOpenChange}
         title={`Remove network ${removal.target?.name ?? ""}?`}
-        description="Containers still attached to it keep Docker from removing it."
+        description={
+          groups.some((g) => g.appId && g.networks.some((x) => x.network === removal.target))
+            ? "Containers still attached to it keep Docker from removing it. If the app still uses it, its next deploy creates it again."
+            : "Containers still attached to it keep Docker from removing it."
+        }
         confirmLabel="Remove network"
         pendingLabel="Removing…"
         onCloseAutoFocus={(e) => returnFocusTo(opener, addButton)(e)}

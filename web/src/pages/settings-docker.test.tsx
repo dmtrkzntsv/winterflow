@@ -82,9 +82,14 @@ describe("DockerSettings", () => {
     const section = screen.getByRole("region", { name: "Networks" });
     const notes = await within(section).findByRole("list", { name: "Notes" });
     expect(within(notes).getByText("default")).toHaveAttribute("title", "wf-a1_default · id n2");
-    // It goes with the app: no removal here.
-    expect(within(notes).queryByRole("button", { name: /Remove network/ })).not.toBeInTheDocument();
     expect(within(within(section).getByRole("list", { name: "Other" })).getByRole("button", { name: "Remove network proxy" })).toBeInTheDocument();
+    // A leftover app network can be removed, after a confirmation that says
+    // a deploy that still uses it creates it again.
+    await user.click(within(notes).getByRole("button", { name: "Remove network wf-a1_default" }));
+    const confirm = await screen.findByRole("alertdialog");
+    expect(confirm).toHaveTextContent("If the app still uses it, its next deploy creates it again.");
+    await user.click(within(confirm).getByRole("button", { name: "Remove network" }));
+    await waitFor(() => expect(docker.deleteNetwork).toHaveBeenCalledWith("wf-a1_default"));
     expect(within(section).queryByText("bridge", { selector: "span.font-mono" })).not.toBeInTheDocument();
     await user.click(within(section).getByRole("switch", { name: "Show 1 built-in" }));
     const builtin = within(section).getByRole("list", { name: "Built-in" });

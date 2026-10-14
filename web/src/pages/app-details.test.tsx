@@ -355,7 +355,9 @@ describe("AppDetailsPage", () => {
     serverList.push({ id: "s", capabilities: { server_ip: "192.168.1.66" } });
     try {
       renderPage("/app/a1?tab=logs", {}, { ctx: { control, getApp } as unknown as Partial<AppsContextValue> });
-      const open = await screen.findByRole("link", { name: /Open ↗/ });
+      const open = await screen.findByRole("link", { name: "Open" });
+      expect(open).toHaveTextContent(/^Open$/);
+      expect(open.querySelector("svg")).not.toBeNull();
       expect(open).toHaveAttribute("href", "http://192.168.1.66:8090");
       expect(screen.getByRole("link", { name: "192.168.1.66:8090" })).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: "Restart" })).not.toBeInTheDocument();
@@ -382,7 +384,7 @@ describe("AppDetailsPage", () => {
       ctx: { statusByApp: { a1: 5 } },
     });
     expect(await screen.findByRole("button", { name: "Start" })).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /Open ↗/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Open" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "shop.example.com" })).toHaveAttribute("href", "https://shop.example.com");
   });
 

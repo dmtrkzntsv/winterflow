@@ -72,7 +72,7 @@ describe("LoginPage", () => {
     await user.type(screen.getByLabelText("Email"), "ann@example.test");
     await user.type(screen.getByLabelText("Password"), "nope");
     await user.click(screen.getByRole("button", { name: "Sign in" }));
-    expect(await screen.findByText("Wrong email or password.")).toBeInTheDocument();
+    expect(await screen.findByText("Wrong email or password. Forgot it? Ask a member to reset your password.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Sign in" }));
     expect(await screen.findByText("We couldn't sign you in. Try again.")).toBeInTheDocument();
   });

@@ -119,9 +119,9 @@ function DockerDisk({ df }: { df: DockerDF | undefined }) {
 }
 
 // MonitoringPage charts the active server (spec §5): firing alerts on top,
-// four KPI tiles (the figure now and what it is out of), the four host charts, what each app
-// uses, then Load, Disk I/O, Temperature and Docker's disk usage under "More
-// details" (not drawn until opened), and the server's alert rules collapsed.
+// four KPI tiles, the four host charts, what each app uses, then Load, Disk
+// I/O, Temperature and Docker's disk usage under "More details" (not drawn
+// until opened), and the server's alert rules collapsed.
 export default function MonitoringPage() {
   const { activeServer, activeServerId } = useServers();
   const { apps } = useApps();
@@ -223,7 +223,14 @@ export default function MonitoringPage() {
             <KpiTile
               label="Disk"
               value={formatPercent(now.disk_pct)}
-              sub={disk ? `${formatSize(disk.used)} of ${formatSize(disk.total)}` : undefined}
+              sub={
+                disk ? (
+                  <>
+                    {formatSize(disk.used)} of {formatSize(disk.total)}
+                    {disk.mount ? <span className="text-muted-foreground/70"> · {disk.mount}</span> : null}
+                  </>
+                ) : undefined
+              }
             />
             <KpiTile
               label="Network"

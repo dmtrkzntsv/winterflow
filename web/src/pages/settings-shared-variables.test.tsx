@@ -13,9 +13,10 @@ const active = vi.hoisted(() => ({
   status: {} as Record<string, "online" | "unknown">,
   // The org's servers: two unless a test says otherwise.
   servers: [{ id: "srv-a" }, { id: "srv-b" }] as { id: string }[],
+  loaded: true,
 }));
 vi.mock("@/context/use-servers", () => ({
-  useServers: () => ({ activeServer: active.server, statusByServer: active.status, servers: active.servers }),
+  useServers: () => ({ activeServer: active.server, statusByServer: active.status, servers: active.servers, loaded: active.loaded }),
 }));
 
 import { AppsContext, type AppsContextValue } from "@/context/apps-context-base";
@@ -297,7 +298,16 @@ describe("SharedVariablesSettingsPage", () => {
       renderPage(api);
       const rows = await listRows();
       expect(screen.getByRole("list", { name: "Shared variables" })).not.toHaveTextContent("All servers");
+      // The server's own variable still says so.
+      expect(rows[1]).toHaveTextContent("alpha only");
       expect(screen.queryByRole("button", { name: "More actions for shared variables" })).not.toBeInTheDocument();
+      // Deleting an org variable removes it from this one server.
+      await user.click(within(rows[0]).getByRole("button", { name: /^Actions for / }));
+      await user.click(await screen.findByRole("menuitem", { name: "Delete" }));
+      expect(await screen.findByRole("alertdialog")).toHaveTextContent(
+        "It's removed from this server. Apps that use it lose the value on their next deploy or reload.",
+      );
+      await user.click(screen.getByRole("button", { name: "Cancel" }));
       await user.click(within(rows[0]).getByRole("button", { name: /^Actions for / }));
       expect(screen.queryByRole("menuitem", { name: "Send to servers again" })).not.toBeInTheDocument();
       await user.keyboard("{Escape}");
@@ -312,6 +322,19 @@ describe("SharedVariablesSettingsPage", () => {
       expect(within(dialog).queryByRole("radiogroup", { name: "Applies to" })).not.toBeInTheDocument();
     } finally {
       active.servers = [{ id: "srv-a" }, { id: "srv-b" }];
+    }
+  });
+
+  it("keeps the words about several servers until the servers are read", async () => {
+    active.servers = [];
+    active.loaded = false;
+    try {
+      renderPage(fakeApi());
+      await listRows();
+      expect(screen.getByRole("list", { name: "Shared variables" })).toHaveTextContent("All servers");
+    } finally {
+      active.servers = [{ id: "srv-a" }, { id: "srv-b" }];
+      active.loaded = true;
     }
   });
 

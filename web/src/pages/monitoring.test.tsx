@@ -258,8 +258,9 @@ describe("MonitoringPage", { timeout: 20_000 }, () => {
     expect(screen.getByTestId("kpi-Memory")).toHaveTextContent("75%");
     expect(screen.getByTestId("kpi-Memory")).toHaveTextContent("3 B of 4 B");
     expect(screen.getByTestId("kpi-Disk")).toHaveTextContent("25%");
-    // Used of total, without the mount point.
-    expect(screen.getByTestId("kpi-Disk")).toHaveTextContent(/1 B of 4 B$/);
+    // Used of total, then the mount point, quieter.
+    expect(screen.getByTestId("kpi-Disk")).toHaveTextContent(/1 B of 4 B · \/$/);
+    expect(within(screen.getByTestId("kpi-Disk")).getByText("· /", { exact: false })).toHaveClass("text-muted-foreground/70");
     expect(screen.getByTestId("kpi-Network")).toHaveTextContent("2.0 KB/s");
   });
 

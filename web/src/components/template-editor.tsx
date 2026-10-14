@@ -73,6 +73,10 @@ export function TemplateEditor({ draft, onChange }: Props) {
     set({ parameters: [...draft.parameters, row] });
     setExpanded((prev) => new Set(prev).add(row.id));
   };
+  // domainsFolded: Domains starts behind More options when the template
+  // has no hostnames; decided once, so adding the first hostname or
+  // removing the last never moves (remounts) the section being edited.
+  const [domainsFolded] = useState(() => draft.ingress.length === 0);
   // Parsing the compose files runs only when their contents change.
   const [main, override] = composeContents(draft);
   const backupNames = useMemo(() => backupNamesIn([main, override]), [main, override]);
@@ -329,12 +333,12 @@ export function TemplateEditor({ draft, onChange }: Props) {
         )}
       </EditorSection>
 
-      {draft.ingress.length > 0 ? (
-        domains
-      ) : (
-        // No hostnames yet: the section waits behind More options (most
-        // templates publish a port and need none).
+      {domainsFolded ? (
+        // No hostnames when the editor opened: the section waits behind
+        // More options (most templates publish a port and need none).
         <Disclosure className="border-t py-4">{domains}</Disclosure>
+      ) : (
+        domains
       )}
 
       {/* Only for a compose file that declares backups: there is nothing

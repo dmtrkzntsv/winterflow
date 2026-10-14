@@ -35,7 +35,7 @@ import type { InstanceView } from "@/lib/templates";
 import { cn } from "@/lib/utils";
 
 export type AppHeaderProps = {
-  // registrations are the server's registered domains: "Open ↗" uses https
+  // registrations are the server's registered domains: "Open" uses https
   // for a host one covers.
   registrations?: RegisteredDomain[];
   // ports are the app's published ports on the server's IP (portAddresses):
@@ -66,7 +66,7 @@ export type AppHeaderProps = {
 
 // AppHeader is the app page's header: who the app is (icon, name, status,
 // where it opens, its template) and what to do now — one filled primary:
-// Open ↗ while it runs and has an address (its first domain, else its
+// Open while it runs and has an address (its first domain, else its
 // first published port), Start while it doesn't run (an unknown status
 // offers Start, which is harmless on a running stack), else Restart; the
 // rest (Restart when Open is primary) in ⋯. On a phone the actions go
@@ -131,7 +131,7 @@ export function AppHeader(p: AppHeaderProps) {
           <Button asChild>
             <a href={address.url} target="_blank" rel="noreferrer">
               <ExternalLink className="size-4" aria-hidden />
-              Open ↗
+              Open
             </a>
           </Button>
         ) : running ? (

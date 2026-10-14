@@ -65,8 +65,9 @@ function Notice({
 // something needs doing (a failed sync, apps on old values, a secret this
 // server lacks). New variables are org-wide; "{server} only" is under
 // Advanced. With a single server (a standalone install, or an org with one)
-// the words and controls about several servers go: no scope, no "Send to
-// servers again", a plain Try again after a failed sync. api, rollouts and
+// the words and controls about several servers go: no "All servers", no
+// "Send to servers again", a plain Try again after a failed sync ("{server}
+// only" stays: it says the variable is the server's own). api, rollouts and
 // standalone are for tests.
 export default function SharedVariablesSettingsPage({
   api: injected,
@@ -78,8 +79,9 @@ export default function SharedVariablesSettingsPage({
   standalone?: boolean;
 }) {
   const api = useMemo(() => injected ?? createSharedVariablesApi(), [injected]);
-  const { activeServer, statusByServer, servers } = useServers();
-  const single = standalone || (servers ?? []).length <= 1;
+  const { activeServer, statusByServer, servers, loaded } = useServers();
+  // One server only once the servers are read (no flash of one-server words).
+  const single = standalone || (loaded && (servers ?? []).length <= 1);
   const { staleVarsByApp, statusByApp } = useApps();
   const page = useSharedVariablesSettings(api, activeServer?.id ?? null);
   const serverName = activeServer?.name ?? "";
@@ -246,7 +248,7 @@ export default function SharedVariablesSettingsPage({
                     ) : null}
                   </span>
                 }
-                meta={single ? undefined : scopeLabel}
+                meta={single && v.scope !== "server" ? undefined : scopeLabel}
                 actions={
                   <>
                     {missingCopies ? (
@@ -328,7 +330,7 @@ export default function SharedVariablesSettingsPage({
         description={
           toDelete?.scope === "server"
             ? "Apps that use it fall back to the organization's value, if there is one, on their next deploy or reload."
-            : "It's removed from every server. Apps that use it lose the value on their next deploy or reload."
+            : `It's removed from ${single ? "this server" : "every server"}. Apps that use it lose the value on their next deploy or reload.`
         }
         confirmLabel="Delete variable"
         pendingLabel="Deleting…"

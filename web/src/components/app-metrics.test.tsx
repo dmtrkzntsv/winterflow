@@ -66,7 +66,7 @@ describe("AppMetricBlocks", () => {
     loading = true;
     render(<AppMetricBlocks serverId="s1" appId="a1" />);
     expect(screen.getAllByRole("status")).toHaveLength(4);
-    expect(screen.getByRole("status", { name: "Loading Memory" })).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Loading memory" })).toBeInTheDocument();
   });
 
   it("says no limit, and dashes for fields not reported yet", () => {

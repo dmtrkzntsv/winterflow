@@ -108,7 +108,7 @@ describe("UserTokensPage", () => {
     await user.click(within(dialog).getByRole("radio", { name: "1 year" }));
     await user.click(within(dialog).getByRole("button", { name: "Generate" }));
     expect(await screen.findByLabelText("Token")).toHaveValue("wfp_SECRET");
-    expect(screen.getByRole("button", { name: "Copy Token" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Copy token" })).toBeInTheDocument();
     expect(api.posted("/api/v1/user/create-token")).toEqual([{ name: "Backup script", expires_in_days: 365 }]);
     // The token is gone once the dialog closes.
     await user.click(screen.getByRole("button", { name: "Done" }));

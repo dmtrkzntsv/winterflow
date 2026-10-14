@@ -17,23 +17,23 @@ describe("CopyField", () => {
     render(<CopyField value="TEMP-123" label="Temporary password" />);
     expect(screen.getByLabelText("Temporary password")).toHaveValue("TEMP-123");
     expect(screen.getByLabelText("Temporary password")).toHaveAttribute("readonly");
-    await user.click(screen.getByRole("button", { name: "Copy Temporary password" }));
+    await user.click(screen.getByRole("button", { name: "Copy temporary password" }));
     expect(copy).toHaveBeenCalledWith("TEMP-123");
     await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith("Copied"));
-    await user.click(screen.getByRole("button", { name: "Copy Temporary password" }));
+    await user.click(screen.getByRole("button", { name: "Copy temporary password" }));
     await waitFor(() => expect(toastError).toHaveBeenCalledWith("Couldn't copy: select the text and copy it yourself"));
   });
 
   describe("the Copied mark", () => {
     afterEach(() => vi.useRealTimers());
-    const icon = () => screen.getByRole("button", { name: "Copy Token" }).querySelector("svg");
+    const icon = () => screen.getByRole("button", { name: "Copy token" }).querySelector("svg");
 
     it("goes away after a moment", async () => {
       vi.useFakeTimers({ shouldAdvanceTime: true });
       copy.mockResolvedValue(undefined);
       render(<CopyField value="wfp_1" label="Token" />);
       const before = icon()?.getAttribute("class");
-      await act(async () => screen.getByRole("button", { name: "Copy Token" }).click());
+      await act(async () => screen.getByRole("button", { name: "Copy token" }).click());
       expect(icon()?.getAttribute("class")).not.toBe(before);
       await act(async () => {
         await vi.advanceTimersByTimeAsync(2100);
@@ -45,7 +45,7 @@ describe("CopyField", () => {
       copy.mockResolvedValue(undefined);
       const { rerender } = render(<CopyField value="wfp_1" label="Token" />);
       const before = icon()?.getAttribute("class");
-      await act(async () => screen.getByRole("button", { name: "Copy Token" }).click());
+      await act(async () => screen.getByRole("button", { name: "Copy token" }).click());
       expect(icon()?.getAttribute("class")).not.toBe(before);
       rerender(<CopyField value="wfp_2" label="Token" />);
       expect(icon()?.getAttribute("class")).toBe(before);

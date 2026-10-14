@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { copyText } from "@/lib/clipboard";
+import { lowerFirst } from "@/lib/utils";
 
 // COPIED_MS is how long the button shows its check mark.
 const COPIED_MS = 2000;
@@ -42,7 +43,7 @@ export function CopyField({ value, label }: { value: string; label: string }) {
         variant="outline"
         size="icon"
         className="size-10 shrink-0 sm:size-9"
-        aria-label={`Copy ${label}`}
+        aria-label={`Copy ${lowerFirst(label)}`}
         onClick={() => void copy()}
       >
         {copied === value ? <Check className="size-4" /> : <Copy className="size-4" />}

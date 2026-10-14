@@ -124,7 +124,7 @@ describe("TargetAlertsCard", () => {
     renderCard();
     await user.click(screen.getByRole("button", { name: "Alert rules for this server" }));
 
-    await user.click(await screen.findByRole("button", { name: "Adjust Down for prod-1" }));
+    await user.click(await screen.findByRole("button", { name: "Adjust down for prod-1" }));
     expect(screen.queryByLabelText(/Above/)).not.toBeInTheDocument();
     await user.type(screen.getByLabelText("For (minutes)"), "15");
     await user.click(screen.getByLabelText("Specific channels"));

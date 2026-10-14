@@ -47,6 +47,6 @@ describe("KpiTileSkeleton", () => {
     expect(screen.getByRole("status", { name: "Loading" })).toHaveAttribute("data-slot", "widget-card");
     expect(container.querySelectorAll(".frost")).toHaveLength(3);
     render(<KpiTileSkeleton label="Memory" />);
-    expect(screen.getByRole("status", { name: "Loading Memory" })).toHaveTextContent("Memory");
+    expect(screen.getByRole("status", { name: "Loading memory" })).toHaveTextContent("Memory");
   });
 });

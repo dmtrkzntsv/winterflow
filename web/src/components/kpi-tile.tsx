@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 
 import { Card } from "@/components/ui/card";
 import { Sparkline } from "@/components/sparkline";
-import { cn } from "@/lib/utils";
+import { cn, lowerFirst } from "@/lib/utils";
 import type { ChartRow } from "@/lib/metrics";
 
 export type KpiSpark = { rows: ChartRow[]; field: string; color: string; max?: number };
@@ -56,7 +56,7 @@ export function KpiTileSkeleton({ label, className }: { label?: string; classNam
     <Card
       data-slot="widget-card"
       role="status"
-      aria-label={label ? `Loading ${label}` : "Loading"}
+      aria-label={label ? `Loading ${lowerFirst(label)}` : "Loading"}
       className={cn("flex min-w-0 flex-col gap-1.5 p-3.5", className)}
     >
       {label ? (

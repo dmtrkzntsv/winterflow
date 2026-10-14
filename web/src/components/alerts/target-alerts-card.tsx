@@ -20,7 +20,7 @@ import {
 } from "@/lib/alerts";
 import { settingsPath } from "@/lib/routes";
 import type { StatusInfo } from "@/lib/status";
-import { cn } from "@/lib/utils";
+import { cn, lowerFirst } from "@/lib/utils";
 
 type Props = {
   serverId: string;
@@ -131,7 +131,7 @@ function TargetRules({
                 variant="ghost"
                 size="icon"
                 className="size-8 max-sm:size-10"
-                aria-label={`Adjust ${info?.label ?? r.metric} for ${targetLabel}`}
+                aria-label={`Adjust ${lowerFirst(info?.label ?? r.metric)} for ${targetLabel}`}
                 onClick={() => setAdjusting(r)}
               >
                 <SlidersHorizontal className="size-3.5" />

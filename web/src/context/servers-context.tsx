@@ -11,6 +11,14 @@ import { useLocation, useMatch, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/use-auth";
 import { useNotifications } from "@/context/use-notifications";
 import { apiBaseUrl } from "@/config";
+import {
+  INBOX_PATH,
+  SETTINGS_PATH,
+  TEMPLATES_PATH,
+  appsPath,
+  monitoringPath,
+  serverSettingsPath,
+} from "@/lib/routes";
 import { serverPath, serverRoutePattern } from "@/lib/server-paths";
 
 import {
@@ -65,7 +73,7 @@ export function ServersProvider({ children }: { children: ReactNode }) {
   const urlServerId = useMatch(serverRoutePattern)?.params.serverId ?? null;
   const [lastServerId, setLastServerId] = useState<string | null>(null);
   const navigate = useNavigate();
-  const location = useLocation();
+  const { pathname } = useLocation();
   const [statusByServer, setStatusByServer] = useState<
     Record<string, ServerLiveness>
   >({});
@@ -188,19 +196,28 @@ export function ServersProvider({ children }: { children: ReactNode }) {
   }, [servers, urlServerId, lastServerId]);
   const activeServerId = activeServer?.id ?? null;
 
-  // selectServer moves the tab to another server, keeping the current page
-  // (settings tab included) when it exists there too. An app page belongs to
-  // one server, so switching from it lands on the new server's dashboard.
-  const { pathname, search } = location;
+  // selectServer moves the tab to another server. Server settings open the
+  // new server's General page (a section may not exist there), Monitoring
+  // stays Monitoring, the organization's Settings go to the server's
+  // settings, and Inbox and Templates (organization-wide) stay where they
+  // are with only the active server changing. Every other page (Apps, an
+  // app, New app) belongs to one server: the new server's Apps.
   const selectServer = useCallback(
     (id: string) => {
-      const sub = urlServerId
-        ? pathname.slice(serverPath(urlServerId).length)
-        : "";
-      const keep = sub !== "" && !sub.startsWith("/app/");
-      navigate(keep ? serverPath(id, sub) + search : serverPath(id));
+      if (!urlServerId && (pathname.startsWith(INBOX_PATH) || pathname.startsWith(TEMPLATES_PATH))) {
+        setLastServerId(id);
+        return;
+      }
+      const sub = urlServerId ? pathname.slice(serverPath(urlServerId).length) : "";
+      if (sub.startsWith("/settings") || (!urlServerId && pathname.startsWith(SETTINGS_PATH))) {
+        navigate(serverSettingsPath(id));
+      } else if (sub.startsWith("/monitoring")) {
+        navigate(monitoringPath(id));
+      } else {
+        navigate(appsPath(id));
+      }
     },
-    [navigate, pathname, search, urlServerId],
+    [navigate, pathname, urlServerId],
   );
 
   const value = useMemo(() => {

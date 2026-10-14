@@ -15,6 +15,7 @@ import { useCommandPalette } from "@/context/use-palette"
 import { useProfile } from "@/context/use-profile"
 import { useServers } from "@/context/use-servers"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { useServerShortcuts } from "@/hooks/use-server-shortcuts"
 import { PageTitleProvider } from "@/layouts/page-title"
 import { useCurrentPageTitle } from "@/layouts/use-page-title"
 import { isWidePath, settingsPath } from "@/lib/routes"
@@ -71,6 +72,7 @@ export function AppLayout() {
   const location = useLocation()
   const { refresh } = useServers()
   const [isServerDialogOpen, setIsServerDialogOpen] = useState(false)
+  useServerShortcuts(!isStandalone)
 
   // Users on a temporary password are forced to set their own before doing
   // anything else.

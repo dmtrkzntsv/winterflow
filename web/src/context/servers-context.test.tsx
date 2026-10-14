@@ -58,9 +58,13 @@ function renderAt(url: string) {
           <Route path="/server/:serverId" element={<ServerScope />}>
             <Route index element={<Probe />} />
             <Route path="monitoring" element={<Probe />} />
-            <Route path="settings" element={<Probe />} />
+            <Route path="settings/:section" element={<Probe />} />
+            <Route path="new" element={<Probe />} />
             <Route path="app/:appId" element={<Probe />} />
           </Route>
+          <Route path="/inbox" element={<Probe />} />
+          <Route path="/templates" element={<Probe />} />
+          <Route path="/settings/members" element={<Probe />} />
           <Route path="/user/tokens" element={<Probe />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
@@ -87,7 +91,7 @@ describe("server-scoped URLs", () => {
   });
 
   it("shows an error page for an unknown server id", async () => {
-    renderAt("/server/nope/settings");
+    renderAt("/server/nope/settings/general");
     expect(await screen.findByText("Server not found")).toBeInTheDocument();
     expect(screen.queryByTestId("at")).not.toBeInTheDocument();
   });
@@ -97,19 +101,41 @@ describe("server-scoped URLs", () => {
     expect(await screen.findByText("Page not found")).toBeInTheDocument();
   });
 
-  it("keeps the page when switching servers, except an app page", async () => {
-    renderAt("/server/s1/settings?tab=volumes");
+  it("opens the new server's General page when switching from a server's settings", async () => {
+    renderAt("/server/s1/settings/domains?x=1");
     await screen.findByText("Alpha");
     act(() => screen.getByText("switch").click());
-    expect(at()).toBe("/server/s2/settings?tab=volumes");
+    expect(at()).toBe("/server/s2/settings/general");
     expect(server()).toBe("Beta");
   });
 
-  it("lands on the new server's dashboard when switching from an app", async () => {
+  it("opens the server's General page when switching from the organization's settings", async () => {
+    renderAt("/settings/members");
+    await screen.findByText("Alpha");
+    act(() => screen.getByText("switch").click());
+    expect(at()).toBe("/server/s2/settings/general");
+  });
+
+  it("lands on the new server's Apps when switching from an app or the new-app page", async () => {
     renderAt("/server/s1/app/a1");
     await screen.findByText("Alpha");
     act(() => screen.getByText("switch").click());
     expect(at()).toBe("/server/s2");
+  });
+
+  it("lands on the new server's Apps when switching from the new-app page", async () => {
+    renderAt("/server/s1/new?from=git");
+    await screen.findByText("Alpha");
+    act(() => screen.getByText("switch").click());
+    expect(at()).toBe("/server/s2");
+  });
+
+  it.each(["/inbox", "/templates"])("stays on %s (organization-wide) and only changes the active server", async (url) => {
+    renderAt(url);
+    await screen.findByText("Alpha");
+    act(() => screen.getByText("switch").click());
+    expect(at()).toBe(url);
+    expect(server()).toBe("Beta");
   });
 
   it("scopes monitoring to the URL's server and keeps it when switching", async () => {

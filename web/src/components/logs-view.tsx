@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArrowDown, RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -54,6 +54,23 @@ type Props = {
   onRefresh: () => void;
 };
 
+// Chip is one container filter: a toggle button in the console's palette.
+function Chip({ pressed, onClick, children }: { pressed: boolean; onClick: () => void; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={pressed}
+      onClick={onClick}
+      className={cn(
+        "inline-flex min-h-7 items-center gap-1.5 rounded-full border border-console-border px-2.5 font-mono text-xs transition-colors duration-150 motion-reduce:transition-none max-sm:min-h-10",
+        pressed ? "bg-console-hover text-console-foreground" : "text-console-muted hover:text-console-foreground",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
 // LogsView is a console-style log display: a scroll box that sticks to the
 // bottom while new lines arrive, unless the user has scrolled up to read
 // (then it stays put until they jump back down).
@@ -82,12 +99,18 @@ export function LogsView({
     containers.reduce((w, c) => Math.max(w, c.length), 0),
   );
 
+  // The container picked in the chips; it goes back to All when that
+  // container has no lines any more.
+  const [only, setOnly] = useState<string | null>(null);
+  const active = only !== null && containers.includes(only) ? only : null;
+  const shown = useMemo(() => (active ? lines.filter((l) => l.container === active) : lines), [lines, active]);
+
   useEffect(() => {
     const el = scrollRef.current;
     if (el && stickToBottom) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [lines, stickToBottom]);
+  }, [shown, stickToBottom]);
 
   const handleScroll = () => {
     const el = scrollRef.current;
@@ -103,23 +126,28 @@ export function LogsView({
   };
 
   return (
-    <div className="relative flex h-[calc(100svh-16rem)] min-h-80 flex-col overflow-hidden rounded-lg border border-console-border bg-console text-console-foreground">
-      <div className="flex items-center gap-3 border-b border-console-border px-3 py-2">
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-4 gap-y-1 text-xs">
-          {containers.length === 0 ? (
-            <span className="text-console-muted">Container output</span>
+    <div className="relative flex h-[calc(100svh-15rem)] min-h-80 flex-col overflow-hidden rounded-lg border border-console-border bg-console text-console-foreground">
+      <div className="flex flex-wrap items-center gap-2 border-b border-console-border px-3 py-2">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 text-xs">
+          {containers.length > 1 ? (
+            <div role="group" aria-label="Containers" className="flex flex-wrap gap-1.5">
+              <Chip pressed={active === null} onClick={() => setOnly(null)}>
+                All
+              </Chip>
+              {containers.map((c) => (
+                <Chip key={c} pressed={active === c} onClick={() => setOnly(c)}>
+                  <span className={cn("size-2 rounded-full bg-current", colorOf(c))} aria-hidden />
+                  <span>{c}</span>
+                </Chip>
+              ))}
+            </div>
           ) : (
-            containers.map((c) => (
-              <span key={c} className="flex items-center gap-1.5 font-mono">
-                <span
-                  className={cn("size-2 rounded-full bg-current", colorOf(c))}
-                  aria-hidden
-                />
-                <span className="text-console-muted">{c}</span>
-              </span>
-            ))
+            <span className="font-mono text-console-muted">{containers[0] ?? "Container output"}</span>
           )}
         </div>
+        <span className="text-xs tabular-nums text-console-muted">
+          {shown.length === 1 ? "1 line" : `${shown.length} lines`}
+        </span>
         <Select
           value={String(tail)}
           onValueChange={(v) => onTailChange(Number(v))}
@@ -174,10 +202,12 @@ export function LogsView({
       ) : (
         <div
           ref={scrollRef}
+          role="log"
+          aria-label="Logs"
           onScroll={handleScroll}
           className="flex-1 overflow-y-auto py-2 font-mono text-xs leading-5"
         >
-          {lines.map((l, i) => (
+          {shown.map((l, i) => (
             <div
               key={i}
               className="flex gap-3 px-3 hover:bg-console-hover"
@@ -207,13 +237,13 @@ export function LogsView({
         </div>
       )}
 
-      {!stickToBottom && lines.length > 0 ? (
+      {!stickToBottom && shown.length > 0 ? (
         <Button
           size="sm"
           className="absolute right-4 bottom-4 h-7 gap-1 rounded-full bg-console-foreground px-3 text-xs text-console shadow-lg hover:bg-console-foreground/90"
           onClick={jumpToBottom}
         >
-          <ArrowDown className="size-3.5" /> Latest
+          <ArrowDown className="size-3.5" aria-hidden /> Jump to latest
         </Button>
       ) : null}
     </div>

@@ -537,7 +537,7 @@ describe("AppDetailsPage of a template instance", () => {
     await user.click(screen.getByRole("button", { name: "Update available" }));
     const dialog = await screen.findByRole("dialog");
     await user.type(within(dialog).getByLabelText("REGION"), "eu");
-    await user.click(within(dialog).getByRole("button", { name: "Upgrade to r3" }));
+    await user.click(within(dialog).getByRole("button", { name: "Update to version 3" }));
     await waitFor(() => expect(refresh).toHaveBeenCalled());
     expect(api.posted("/api/v1/instance/upgrade-instance")).toEqual([
       { server_id: "s", key: "k1", revision: 3, parameters: { REGION: "eu" } },
@@ -550,7 +550,7 @@ describe("AppDetailsPage of a template instance", () => {
     renderPage("/app/a1?tab=backups", {}, { ...managed, ctx: { statusByApp: { a1: 5 } } });
     await user.click(await screen.findByRole("button", { name: "Update available" }));
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByRole("heading")).toHaveTextContent("Upgrade Shop to r3");
+    expect(within(dialog).getByRole("heading")).toHaveTextContent("Update Shop to version 3");
     expect(dialog).toHaveTextContent("The app will be started.");
     // The page read r2 already: the dialog doesn't read it again.
     expect(api.calls.filter((c) => c.query.includes("revision=2"))).toHaveLength(1);
@@ -577,7 +577,7 @@ describe("AppDetailsPage of a template instance", () => {
     expect(note).toHaveTextContent("(version 3)");
     await user.click(within(note.closest('[role="status"]') as HTMLElement).getByRole("button", { name: "Update" }));
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByRole("heading")).toHaveTextContent("Upgrade Shop to r3");
+    expect(within(dialog).getByRole("heading")).toHaveTextContent("Update Shop to version 3");
   });
 
   it("shows the files read-only and a Parameters form instead of the editor", async () => {

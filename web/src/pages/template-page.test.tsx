@@ -367,10 +367,10 @@ describe("TemplatePage", () => {
       },
     });
     renderPage("/templates/t1?tab=instances");
-    await user.click(await screen.findByRole("button", { name: "Upgrade" }));
-    await user.click(await screen.findByRole("button", { name: "Upgrade to r3" }));
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Upgrade" })).not.toBeInTheDocument());
-    expect(screen.getByText("r3")).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "Update" }));
+    await user.click(await screen.findByRole("button", { name: "Update to version 3" }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Update" })).not.toBeInTheDocument());
+    expect(screen.getByText("Version 3")).toBeInTheDocument();
     // The editor read the template once (the dialog read r2 to compare
     // defaults): the upgrade didn't reload it.
     const reads = api.calls.filter((c) => c.path === "/api/v1/template/get-template");
@@ -394,13 +394,13 @@ describe("TemplatePage", () => {
       "/api/v1/template/upgrade-instances": rollout({ state: "queued", current_app_id: "", done: 0, skipped: 0, total: 0 }),
     });
     renderPage("/templates/t1?tab=instances");
-    await user.click(await screen.findByRole("button", { name: "Upgrade all to r3" }));
-    await user.click(screen.getByRole("button", { name: "Upgrade all" }));
+    await user.click(await screen.findByRole("button", { name: "Update all apps" }));
+    await user.click(screen.getByRole("button", { name: "Update all" }));
     expect(await screen.findByText("Update to version 3 queued…")).toBeInTheDocument();
     expect(api.posted("/api/v1/template/upgrade-instances")).toEqual([{ id: "t1", revision: 3 }]);
     expect(api.calls.find((c) => c.path === "/api/v1/rollout/get-rollouts")?.query).toBe("?kind=template_upgrade&scope_key=t1");
     // One upgrade at a time: the button waits for this one.
-    expect(screen.getByRole("button", { name: "Upgrade all to r3" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Update all apps" })).toBeDisabled();
     // Queuing moved no instance: the list is not read again until a step.
     const listReads = () => api.calls.filter((c) => c.path === "/api/v1/instance/get-instances").length;
     expect(listReads()).toBe(1);
@@ -416,8 +416,8 @@ describe("TemplatePage", () => {
       "/api/v1/template/upgrade-instances": Object.assign(new Error("an upgrade of this template is already running"), { status: 409 }),
     });
     renderPage("/templates/t1?tab=instances");
-    await user.click(await screen.findByRole("button", { name: "Upgrade all to r3" }));
-    await user.click(screen.getByRole("button", { name: "Upgrade all" }));
+    await user.click(await screen.findByRole("button", { name: "Update all apps" }));
+    await user.click(screen.getByRole("button", { name: "Update all" }));
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith("Couldn't start the upgrade", { description: "an upgrade of this template is already running" }),
     );

@@ -9,7 +9,7 @@ import { RequireAuth } from "@/components/require-auth"
 import { DefaultServer, ServerScope } from "@/components/server-routes"
 import { NotFound } from "@/components/not-found"
 import { LogoSprite } from "@/components/app-logo"
-import { Toaster } from "@/components/ui/sonner"
+import { ThemedToaster } from "@/components/themed-toaster"
 import { AuthProvider } from "@/context/auth-context"
 import { UserProvider } from "@/context/user-context"
 import { ProfileProvider } from "@/context/profile-context"
@@ -32,11 +32,12 @@ import TemplatePage from "@/pages/template-page"
 import CreateFromTemplatePage from "@/pages/create-from-template"
 import LoginPage from "@/pages/login"
 import RegisterPage from "@/pages/register"
-import { followSystemTheme } from "@/lib/theme"
+import { startTheme } from "@/lib/theme"
 import "./index.css"
 
-// Dark mode follows the OS; set before the first render so nothing flashes.
-followSystemTheme()
+// Light, dark or the system's (the user menu and ⌘K switch it); applied
+// before the first render so nothing flashes.
+startTheme()
 
 // The servers and apps providers sit inside the router: the active server is
 // read from the URL.
@@ -128,7 +129,7 @@ createRoot(document.getElementById("root")!).render(
         <NotificationsProvider>
           <LogoSprite />
           <RouterProvider router={router} />
-          <Toaster />
+          <ThemedToaster />
         </NotificationsProvider>
         </ProfileProvider>
       </UserProvider>

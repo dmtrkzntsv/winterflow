@@ -195,7 +195,7 @@ describe("AppDetailsPage", () => {
   it("offers its actions in the ⌘K palette", async () => {
     const user = userEvent.setup();
     const control = vi.fn(async () => {});
-    renderPage("/app/a1?tab=backups", {}, { ctx: { control } });
+    renderPage("/app/a1?tab=backups", { a1: [{ name: "db", state: "ok" }] }, { ctx: { control } });
     const list = await screen.findByRole("list", { name: "Palette actions" });
     expect(within(list).getAllByRole("button").map((b) => b.textContent)).toEqual([
       "Shop: Restart",
@@ -206,6 +206,17 @@ describe("AppDetailsPage", () => {
     ]);
     await user.click(within(list).getByRole("button", { name: "Shop: Stop" }));
     expect(control).toHaveBeenCalledWith("a1", "stop");
+  });
+
+  it("offers Back up now in the palette only while a backup of the app is on", async () => {
+    const { unmount } = renderPage("/app/a1?tab=backups", { a1: [{ name: "db", state: "off" }] });
+    let list = await screen.findByRole("list", { name: "Palette actions" });
+    expect(within(list).getByRole("button", { name: "Shop: View logs" })).toBeInTheDocument();
+    expect(within(list).queryByRole("button", { name: "Shop: Back up now" })).not.toBeInTheDocument();
+    unmount();
+    renderPage("/app/a1?tab=backups", { a1: [{ name: "db", state: "off" }, { name: "media", state: "late" }] });
+    list = await screen.findByRole("list", { name: "Palette actions" });
+    expect(within(list).getByRole("button", { name: "Shop: Back up now" })).toBeInTheDocument();
   });
 
   it("offers Start instead of Stop while the app is stopped", async () => {
@@ -321,7 +332,7 @@ describe("AppDetailsPage", () => {
     const getApp = vi.fn(async () => ({
       backups: [{ name: "db", type: "sqlite", enabled: true, storage: "disk", in_recipe: true, from_recipe: null }],
     }));
-    renderPage("/app/a1?tab=backups", {}, { ctx: { getApp } as unknown as Partial<AppsContextValue> });
+    renderPage("/app/a1?tab=backups", { a1: [{ name: "db", state: "ok" }] }, { ctx: { getApp } as unknown as Partial<AppsContextValue> });
     await user.click(await screen.findByRole("button", { name: "More actions" }));
     await user.click(await screen.findByRole("menuitem", { name: "Back up now" }));
     await waitFor(() => expect(backupsApi.runBackup).toHaveBeenCalledWith("a1", "db"));

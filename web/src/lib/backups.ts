@@ -461,3 +461,9 @@ export function locationError(type: BackupType, where: "volume" | "service", tar
   }
   return "";
 }
+
+// hasActiveBackup says whether an app has a backup switched on, by its
+// reported health (a backup that is off reports "off").
+export function hasActiveBackup(health: BackupHealth[] | undefined): boolean {
+  return (health ?? []).some((h) => h.state !== "off");
+}

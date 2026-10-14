@@ -36,7 +36,7 @@ import { useTabParam } from "@/hooks/use-tab-param";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
 import { usePageTitle } from "@/layouts/use-page-title";
 import { hasRunningContainers } from "@/lib/app-status";
-import { needsAttention } from "@/lib/backups";
+import { hasActiveBackup, needsAttention } from "@/lib/backups";
 import { appLabel } from "@/lib/kpi";
 import { LEGACY_APP_TABS, type AppTab } from "@/lib/routes";
 import type { TemplateView } from "@/lib/templates";
@@ -176,14 +176,20 @@ export default function AppDetailsPage() {
           run: () => void runControl("update"),
         },
         { id: "app.logs", label: "View logs", icon: ScrollText, run: () => setTab("logs") },
-        {
-          id: "app.backup",
-          label: "Back up now",
-          icon: DatabaseBackup,
-          keywords: ["backup", "copy"],
-          disabled: backUpNow.busy,
-          run: () => void backUpNow.run(),
-        },
+        // Only for an app with a backup switched on (the agent reports its
+        // health): elsewhere it would only say there is nothing to back up.
+        ...(hasActiveBackup(backupsByApp?.[app.id])
+          ? [
+              {
+                id: "app.backup",
+                label: "Back up now",
+                icon: DatabaseBackup,
+                keywords: ["backup", "copy"],
+                disabled: backUpNow.busy,
+                run: () => void backUpNow.run(),
+              },
+            ]
+          : []),
       ]
     : [];
   usePaletteActions(title, paletteActions);

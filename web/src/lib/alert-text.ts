@@ -83,14 +83,25 @@ export type DeliveryNote = {
   failed: boolean;
   // detail is one "channel: error" line per failed channel (a tooltip).
   detail: string;
+  // reason is the same in a line a phone can read: each channel with only
+  // the cause at the end of its error ("Phone: connection refused").
+  reason: string;
 };
+
+// cause is the last part of an error chain ("post …: dial tcp …: connection
+// refused" → "connection refused").
+function cause(error: string): string {
+  const first = error.trim().split("\n")[0];
+  const parts = first.split(": ");
+  return parts[parts.length - 1] || "failed";
+}
 
 // deliveryNote is the small line saying where an event's notification went:
 // "Sent to Telegram", "Sent to Ops · Couldn't send to Mail"; "" when it went
 // nowhere (the Inbox says that once, not per row).
 export function deliveryNote(deliveries: Delivery[] | null): DeliveryNote {
   const list = deliveries ?? [];
-  if (list.length === 0) return { text: "", failed: false, detail: "" };
+  if (list.length === 0) return { text: "", failed: false, detail: "", reason: "" };
   const sent = list.filter((d) => d.ok).map((d) => d.channel_name);
   const failed = list.filter((d) => !d.ok);
   const parts: string[] = [];
@@ -100,6 +111,7 @@ export function deliveryNote(deliveries: Delivery[] | null): DeliveryNote {
     text: parts.join(" · "),
     failed: failed.length > 0,
     detail: failed.map((d) => `${d.channel_name}: ${d.error.trim() || "failed"}`).join("\n"),
+    reason: failed.map((d) => `${d.channel_name}: ${cause(d.error)}`).join(" · "),
   };
 }
 

@@ -88,12 +88,13 @@ describe("placeText", () => {
 
 describe("deliveryNote", () => {
   it("says where the alert went", () => {
-    expect(deliveryNote(null)).toEqual({ text: "", failed: false, detail: "" });
-    expect(deliveryNote([])).toEqual({ text: "", failed: false, detail: "" });
+    expect(deliveryNote(null)).toEqual({ text: "", failed: false, detail: "", reason: "" });
+    expect(deliveryNote([])).toEqual({ text: "", failed: false, detail: "", reason: "" });
     expect(deliveryNote([{ channel_id: "c1", channel_name: "Telegram", ok: true, error: "" }])).toEqual({
       text: "Sent to Telegram",
       failed: false,
       detail: "",
+      reason: "",
     });
   });
 
@@ -103,7 +104,21 @@ describe("deliveryNote", () => {
         { channel_id: "c1", channel_name: "Ops", ok: true, error: "" },
         { channel_id: "c2", channel_name: "Mail", ok: false, error: "535 auth failed" },
       ]),
-    ).toEqual({ text: "Sent to Ops · Couldn't send to Mail", failed: true, detail: "Mail: 535 auth failed" });
+    ).toEqual({ text: "Sent to Ops · Couldn't send to Mail", failed: true, detail: "Mail: 535 auth failed", reason: "Mail: 535 auth failed" });
+  });
+
+  it("shortens each reason to the cause at the end of its error", () => {
+    const note = deliveryNote([
+      {
+        channel_id: "c2",
+        channel_name: "Phone",
+        ok: false,
+        error: 'ntfy: failed to send: sending POST request to "https://x": dial tcp 127.0.0.1:9: connect: connection refused',
+      },
+      { channel_id: "c3", channel_name: "Ops", ok: false, error: "" },
+    ]);
+    expect(note.reason).toBe("Phone: connection refused · Ops: failed");
+    expect(note.detail).toContain("dial tcp");
   });
 
   it("says a failure without a reason is a failure", () => {

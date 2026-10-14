@@ -70,7 +70,7 @@ function SkipLink() {
         e.preventDefault()
         document.getElementById(MAIN_ID)?.focus()
       }}
-      className="sr-only rounded-md bg-background px-3 py-2 text-sm font-medium shadow-lg ring-2 ring-ring focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50"
+      className="sr-only rounded-md bg-background text-sm font-medium shadow-lg ring-2 ring-ring focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:px-3 focus:py-2"
     >
       Skip to content
     </a>

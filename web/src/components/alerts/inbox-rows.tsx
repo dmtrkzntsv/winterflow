@@ -66,7 +66,9 @@ export function EventRow({ event, unread }: { event: AlertEvent; unread: boolean
           </Where>
           {/* The reason is text, not only a tooltip, so a phone can read it. */}
           {note.failed ? (
-            <span className="block whitespace-normal break-words">{note.detail.replaceAll("\n", " · ")}</span>
+            <span className="block whitespace-normal break-words" title={note.detail}>
+              {note.reason}
+            </span>
           ) : null}
         </>
       }

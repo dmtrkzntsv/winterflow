@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { AlertDialog, AlertDialogContent, AlertDialogDescription, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from "@/components/ui/drawer";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 
 const overlays = () => [...document.body.querySelectorAll(".wf-overlay")];
@@ -45,5 +46,28 @@ describe("overlays", () => {
     );
     expect(overlays()).toHaveLength(1);
     expect(overlays()[0]).toHaveClass("fixed", "inset-0", "z-50");
+  });
+
+  it("marks every overlay open or closed, the drawer's too, for the CSS that clears the one under an open one", () => {
+    render(
+      <>
+        <Drawer open>
+          <DrawerContent>
+            <DrawerTitle>New app</DrawerTitle>
+            <DrawerDescription>How?</DrawerDescription>
+          </DrawerContent>
+        </Drawer>
+        <AlertDialog open>
+          <AlertDialogContent>
+            <AlertDialogTitle>Sure?</AlertDialogTitle>
+            <AlertDialogDescription>sure</AlertDialogDescription>
+          </AlertDialogContent>
+        </AlertDialog>
+      </>,
+    );
+    expect(overlays()).toHaveLength(2);
+    // index.css clears an overlay only under an open one
+    // (.wf-overlay[data-state="open"]): one closing gives the tint back.
+    for (const o of overlays()) expect(o).toHaveAttribute("data-state", "open");
   });
 });

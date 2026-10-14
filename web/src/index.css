@@ -369,19 +369,30 @@
 
 /* Dialog, sheet, drawer and palette overlays (the vendored ui components
    carry wf-overlay): a light tint with a slight blur, darker in dark mode.
-   Only the top-most overlay is tinted: Radix portals each one into <body>
-   in opening order, so one with a later overlay beside it (a sheet under a
-   confirm) goes clear instead of darkening twice. */
+   Only the top-most open overlay is tinted: Radix portals each one into
+   <body> in opening order, so one with a later open overlay beside it (a
+   sheet under a confirm) goes clear instead of darkening twice. While the
+   later one closes (data-state="closed" during its exit) the one under it
+   takes the tint back, eased, so nothing flickers. Every overlay (vaul's
+   drawer too: it is Radix's Dialog overlay) carries data-state. */
 .wf-overlay {
   background-color: color-mix(in oklab, var(--foreground) 25%, transparent);
   backdrop-filter: blur(2px);
+  transition:
+    background-color 150ms ease,
+    backdrop-filter 150ms ease;
 }
 .dark .wf-overlay {
   background-color: rgb(0 0 0 / 0.5);
 }
-.wf-overlay:has(~ .wf-overlay),
-.wf-overlay:has(~ * .wf-overlay) {
+.wf-overlay:has(~ .wf-overlay[data-state="open"]),
+.wf-overlay:has(~ * .wf-overlay[data-state="open"]) {
   background-color: transparent;
   backdrop-filter: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .wf-overlay {
+    transition: none;
+  }
 }
 

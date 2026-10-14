@@ -10,6 +10,21 @@ import { fetchAuthState } from "@/lib/auth-state";
 
 type LoginState = { from?: { pathname?: string; search?: string; hash?: string }; email?: string } | undefined;
 
+// returnPath is where a successful sign-in goes: the page the person was
+// headed for (query and hash included), or home unless that is a
+// same-origin path — one leading "/" not followed by another "/" or a "\"
+// (either makes a protocol-relative URL that leaves the site), and no
+// control characters (URL parsers drop tabs and newlines, so "/\t/x" would
+// read as "//x").
+function returnPath(from: NonNullable<LoginState>["from"]): string {
+  const pathname = from?.pathname;
+  // eslint-disable-next-line no-control-regex
+  if (typeof pathname !== "string" || !/^\/(?![/\\])/.test(pathname) || /[\u0000-\u001f\u007f]/.test(pathname)) {
+    return "/";
+  }
+  return `${pathname}${from?.search ?? ""}${from?.hash ?? ""}`;
+}
+
 // LoginPage is /login. A fresh (unclaimed) instance has no account to log
 // in to, so it goes to the setup screen (/register) instead; when the
 // instance's state can't be read the form stays (and offers no sign-up).
@@ -26,8 +41,7 @@ export default function LoginPage() {
   const state = location.state as LoginState;
   // Back to where the person was headed, query and hash included (an
   // alert e-mail's ?tab=metrics link keeps its tab).
-  const from = state?.from;
-  const redirectTo = from?.pathname ? `${from.pathname}${from.search ?? ""}${from.hash ?? ""}` : "/";
+  const redirectTo = returnPath(state?.from);
 
   useEffect(() => {
     const ctl = new AbortController();

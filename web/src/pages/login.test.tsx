@@ -85,6 +85,34 @@ describe("LoginPage", () => {
     expect(await screen.findByTestId("where")).toHaveTextContent("/server/s1/app/a1?tab=metrics#cpu");
   });
 
+  it.each([
+    ["a protocol-relative URL", "//evil.example/x"],
+    ["a backslash URL", "/\\evil.example/x"],
+    ["a path hiding a tab", "/\t/evil.example/x"],
+    ["an absolute URL", "https://evil.example/x"],
+    ["a relative path", "server/s1"],
+  ])("goes home instead of to %s", async (_label, pathname) => {
+    const user = userEvent.setup();
+    fakeAPI({ "/api/v1/auth/state": { bootstrap: false, registration_enabled: false } });
+    auth.login.mockResolvedValue(undefined);
+    renderLogin({ pathname, search: "?tab=metrics", hash: "#cpu" });
+    await user.type(screen.getByLabelText("Email"), "ann@example.test");
+    await user.type(screen.getByLabelText("Password"), "secret");
+    await user.click(screen.getByRole("button", { name: "Login" }));
+    expect(await screen.findByText("home")).toBeInTheDocument();
+  });
+
+  it("sends a returning visitor with a session home when the return path leaves the site", async () => {
+    fakeAPI({ "/api/v1/auth/state": { bootstrap: false, registration_enabled: false } });
+    auth.isAuthenticated = true;
+    try {
+      renderLogin({ pathname: "//evil.example/x" });
+      expect(await screen.findByText("home")).toBeInTheDocument();
+    } finally {
+      auth.isAuthenticated = false;
+    }
+  });
+
   it("sends a returning visitor with a session straight to where they were headed", async () => {
     fakeAPI({ "/api/v1/auth/state": { bootstrap: false, registration_enabled: false } });
     auth.isAuthenticated = true;

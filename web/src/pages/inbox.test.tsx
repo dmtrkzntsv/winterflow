@@ -183,6 +183,8 @@ describe("InboxPage", () => {
 
     await user.click(screen.getByRole("radio", { name: "Firing" }));
     expect(lastEventsQuery(api)).toBe("?kind=fired");
+    // In dark mode the picked segment is lighter than its track, not sunk.
+    expect(screen.getByRole("radio", { name: "Firing" }).className).toContain("dark:data-[state=on]:bg-foreground/15");
     expect(screen.getByRole("region", { name: "Firing now" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("radio", { name: "Resolved" }));

@@ -66,7 +66,7 @@ export function ModeSwitch({
   className?: string;
 }) {
   const item =
-    "h-[26px] min-w-0 rounded-md px-2.5 text-xs font-medium text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=on]:bg-background data-[state=on]:text-foreground data-[state=on]:shadow-sm";
+    "h-[26px] min-w-0 rounded-md px-2.5 text-xs font-medium text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=on]:bg-background dark:data-[state=on]:bg-foreground/15 data-[state=on]:text-foreground data-[state=on]:shadow-sm";
   return (
     <ToggleGroup
       type="single"

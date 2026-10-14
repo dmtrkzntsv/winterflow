@@ -26,7 +26,7 @@ const SHOW: { value: EventKindFilter; label: string }[] = [
 ];
 const QUIET = "All quiet. You'll see alerts here when something needs attention.";
 const FILTER_ITEM =
-  "h-10 min-w-0 rounded-md px-3 sm:h-[30px] text-xs font-medium text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=on]:bg-background data-[state=on]:text-foreground data-[state=on]:shadow-sm";
+  "h-10 min-w-0 rounded-md px-3 sm:h-[30px] text-xs font-medium text-muted-foreground hover:bg-transparent hover:text-foreground data-[state=on]:bg-background dark:data-[state=on]:bg-foreground/15 data-[state=on]:text-foreground data-[state=on]:shadow-sm";
 
 // InboxPage is /inbox, org-wide (spec §5): what is firing now pinned on top,
 // then the alert history grouped by day, newest first, with unread dots

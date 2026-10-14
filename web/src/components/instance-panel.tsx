@@ -120,10 +120,17 @@ export function InstancePanel({
             <span role="alert" tabIndex={-1} data-refusal className="text-destructive">
               Some fields need attention.
             </span>
+          ) : dirty ? (
+            <span className="inline-flex items-center gap-2 text-foreground">
+              <span className="size-2 rounded-full bg-status-warn" aria-hidden />
+              Unsaved changes
+            </span>
           ) : (
             note
           )
         }
+        // A pending instance's save is a retry of its create: always offered.
+        dirty={dirty || instance.state !== "created" || refused}
         onOpenHistory={onOpenHistory}
         primary={
           <Button onClick={() => void save()} disabled={saving || (!dirty && instance.state === "created")}>

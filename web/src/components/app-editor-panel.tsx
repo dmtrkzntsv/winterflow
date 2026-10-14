@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { AppEditor } from "@/components/app-editor";
 import { ConfigBar } from "@/components/config-bar";
 import { LoadError, PageSpinner } from "@/components/page-states";
-import { useIsPhone } from "@/hooks/use-is-phone";
 import { useApps } from "@/context/use-apps";
 import { useServerPath } from "@/context/use-server-path";
 import { useServers } from "@/context/use-servers";
@@ -60,7 +59,6 @@ export function AppEditorPanel({
   const { activeServer, loading: serversLoading } = useServers();
   const domainsShown = !serversLoading && Boolean(activeServer?.features?.ingress);
   const toServer = useServerPath();
-  const phone = useIsPhone();
   const [state, setState] = useState<AppEditorState>(emptyEditorState);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -196,11 +194,9 @@ export function AppEditorPanel({
               <span className="size-2 rounded-full bg-status-warn" aria-hidden />
               Unsaved changes
             </span>
-          ) : (
-            // Not on a phone: the line would only push the form down.
-            (phone ? undefined : "Every save is kept in History, so you can roll back.")
-          )
+          ) : undefined
         }
+        dirty={dirty || stale}
         onOpenHistory={onOpenHistory}
         secondary={[
           {

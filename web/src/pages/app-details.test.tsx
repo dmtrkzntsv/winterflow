@@ -790,12 +790,12 @@ describe("AppDetailsPage of a template instance", () => {
     expect(await screen.findByText(/Managed by template/)).toBeInTheDocument();
     expect(screen.queryByText("the plain editor")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Content of compose.yaml")).toHaveTextContent("image: twillingate:${VERSION}");
-    const save = screen.getByRole("button", { name: "Save & redeploy" });
-    expect(save).toBeDisabled();
+    // Nothing edited yet: nothing to save.
+    expect(screen.queryByRole("button", { name: "Save & redeploy" })).not.toBeInTheDocument();
     expect(screen.getByLabelText("SESSION_KEY")).toHaveAttribute("placeholder", "Stored, leave blank to keep");
     await user.clear(screen.getByLabelText("NAME"));
     await user.type(screen.getByLabelText("NAME"), "shop");
-    await user.click(save);
+    await user.click(screen.getByRole("button", { name: "Save & redeploy" }));
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Saved and redeployed"));
     expect(api.posted("/api/v1/instance/update-instance")).toEqual([{ server_id: "s", key: "k1", parameters: { NAME: "shop" } }]);
     expect(refresh).toHaveBeenCalled();

@@ -18,20 +18,25 @@ export type BarAction = {
   title?: string;
 };
 
-// ConfigBar is the Configuration tab's sticky bar (the app editor's and a
-// template-managed app's): a status line, History, the secondary actions
-// and the one primary. From 640px up they all sit in the bar; on a phone it
-// keeps the primary and a ⋯ menu (History, then the secondary actions), in
-// one row, so the sticky bar stays one line high, and the status line sits
-// under it. secondary is in menu order; the bar shows them last-first, so
-// the one nearest the primary is the first listed.
+// ConfigBar is the Configuration tab's bar (the app editor's and a
+// template-managed app's). While nothing is edited (dirty false) it is only
+// a History button on the right (and the status line, when it says
+// something). Once edited it is a sticky bar: from 640px up "Unsaved
+// changes", the secondary actions and the one primary; on a phone the
+// primary and a ⋯ menu (History, then the secondary actions), in one row,
+// so the sticky bar stays one line high, and the status line under it.
+// secondary is in menu order; the bar shows them last-first, so the one
+// nearest the primary is the first listed.
 export function ConfigBar({
   status,
+  dirty,
   onOpenHistory,
   secondary = [],
   primary,
 }: {
   status?: ReactNode;
+  // dirty: there is something to save (or discard).
+  dirty: boolean;
   // onOpenHistory opens the app's History (the bar's History button, or the
   // ⋯ menu's first item on a phone); without it there is no History.
   onOpenHistory?: () => void;
@@ -43,19 +48,27 @@ export function ConfigBar({
   // back to its ⋯ button as it unmounts, which would take it from the field
   // a refused Save just focused.
   const pending = useRef<(() => void) | null>(null);
+  if (!dirty) {
+    if (!status && !onOpenHistory) return null;
+    return (
+      <div className="mb-6 flex min-h-9 flex-wrap items-center justify-end gap-2">
+        {status ? <p className="mr-auto text-sm text-muted-foreground">{status}</p> : null}
+        {onOpenHistory ? (
+          <Button variant="ghost" onClick={onOpenHistory}>
+            <History className="size-4" aria-hidden /> History
+          </Button>
+        ) : null}
+      </div>
+    );
+  }
   if (!phone) {
     return (
       <StickyActionBar className="mb-6">
         <p className="mr-auto text-sm text-muted-foreground">{status}</p>
-        {onOpenHistory ? (
-          <Button variant="outline" onClick={onOpenHistory}>
-            <History className="size-4" aria-hidden /> History
-          </Button>
-        ) : null}
-        {[...secondary].reverse().map((a, i) => (
+        {[...secondary].reverse().map((a) => (
           <Button
             key={a.label}
-            variant={i === 0 ? "ghost" : "outline"}
+            variant="ghost"
             disabled={a.disabled}
             title={a.title}
             onClick={a.onSelect}

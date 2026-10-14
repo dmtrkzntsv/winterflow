@@ -56,12 +56,21 @@ function renderPanel(props: Partial<Parameters<typeof InstancePanel>[0]> = {}) {
 describe("InstancePanel", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it("puts History in its bar, before Save", () => {
+  it("is the note and History until a value is edited, then a sticky bar with Save & redeploy", async () => {
+    const user = userEvent.setup();
     renderPanel({ onOpenHistory: vi.fn() });
-    const history = screen.getByRole("button", { name: "History" });
-    const save = screen.getByRole("button", { name: "Save & redeploy" });
-    expect(history.compareDocumentPosition(save) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByRole("button", { name: "History" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save & redeploy" })).not.toBeInTheDocument();
     expect(screen.getByText(/detach the app from it in Settings/)).toBeInTheDocument();
+    await user.type(screen.getByLabelText("NAME"), "x");
+    expect(screen.getByText("Unsaved changes").closest(".sticky")).toContainElement(
+      screen.getByRole("button", { name: "Save & redeploy" }),
+    );
+  });
+
+  it("always offers Save & redeploy on a pending instance (a retry of its create)", () => {
+    renderPanel({ instance: { ...instance, state: "pending" } });
+    expect(screen.getByRole("button", { name: "Save & redeploy" })).toBeEnabled();
   });
 
   it("names the template and its version in plain words", () => {
@@ -113,16 +122,17 @@ describe("InstancePanel", () => {
     // Typing the secret clears the line.
     await user.type(screen.getByLabelText("TOKEN"), "s3cret");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
-    expect(screen.getByText(/Managed by template/)).toBeInTheDocument();
+    expect(screen.getByText("Unsaved changes")).toBeInTheDocument();
   });
 
-  it("keeps the bar to Save and a ⋯ menu on a phone, with the note under it", async () => {
+  it("keeps the bar to Save and a ⋯ menu on a phone once edited", async () => {
     vi.stubGlobal("matchMedia", () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
     const user = userEvent.setup();
     const onOpenHistory = vi.fn();
     renderPanel({ onOpenHistory });
-    expect(screen.queryByRole("button", { name: "History" })).not.toBeInTheDocument();
     expect(screen.getByText(/Managed by template/)).toBeInTheDocument();
+    await user.type(screen.getByLabelText("NAME"), "x");
+    expect(screen.queryByRole("button", { name: "History" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "More save options" }));
     await user.click(screen.getByRole("menuitem", { name: "History" }));
     expect(onOpenHistory).toHaveBeenCalled();

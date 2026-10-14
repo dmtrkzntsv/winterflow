@@ -120,14 +120,27 @@ describe("AppEditorPanel", () => {
     expect(refresh).toHaveBeenCalled();
   });
 
-  it("puts History in its bar, before the Save buttons", async () => {
+  it("is only History until something is edited, then a sticky bar of Discard, Save draft and Save & redeploy", async () => {
+    const user = userEvent.setup();
     const onOpenHistory = vi.fn();
     renderPanel(vi.fn(), vi.fn(async () => {}), detail, onOpenHistory);
     const history = await screen.findByRole("button", { name: "History" });
-    const save = screen.getByRole("button", { name: "Save & redeploy" });
-    expect(history.compareDocumentPosition(save) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    await userEvent.setup().click(history);
+    expect(screen.queryByRole("button", { name: "Save & redeploy" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Discard" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Every save is kept in History/)).not.toBeInTheDocument();
+    await user.click(history);
     expect(onOpenHistory).toHaveBeenCalled();
+    await user.click(await screen.findByRole("button", { name: /Add variable/ }));
+    await user.type(screen.getByRole("textbox", { name: "Variable name" }), "PORT");
+    const bar = screen.getByText("Unsaved changes").closest(".sticky")!;
+    expect(within(bar as HTMLElement).getAllByRole("button").map((b) => b.textContent)).toEqual([
+      "Discard",
+      "Save draft",
+      "Save & redeploy",
+    ]);
+    await user.click(screen.getByRole("button", { name: "Discard" }));
+    expect(await screen.findByRole("button", { name: "History" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save & redeploy" })).not.toBeInTheDocument();
   });
 
   it("refuses a nameless file next to it instead of in a toast", async () => {
@@ -246,21 +259,9 @@ describe("AppEditorPanel", () => {
     await user.click(screen.getByRole("button", { name: "More save options" }));
     await user.click(screen.getByRole("menuitem", { name: "Save draft" }));
     await waitFor(() => expect(saveApp).toHaveBeenCalledWith(expect.objectContaining({ draft: true })));
-    await user.click(screen.getByRole("button", { name: "More save options" }));
-    await user.click(screen.getByRole("menuitem", { name: "History" }));
+    // Saved: nothing is edited, so the bar is History alone again.
+    await user.click(await screen.findByRole("button", { name: "History" }));
     expect(onOpenHistory).toHaveBeenCalled();
-  });
-
-  it("says every save is kept in History while idle", async () => {
-    renderPanel(vi.fn());
-    expect(await screen.findByText("Every save is kept in History, so you can roll back.")).toBeInTheDocument();
-  });
-
-  it("keeps that sentence off a phone, where it only pushes the form down", async () => {
-    vi.stubGlobal("matchMedia", () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
-    renderPanel(vi.fn());
-    await screen.findByRole("button", { name: /Add variable/ });
-    expect(screen.queryByText(/Every save is kept in History/)).not.toBeInTheDocument();
   });
 
   it("reports any other refusal as before", async () => {

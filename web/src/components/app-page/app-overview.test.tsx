@@ -1,11 +1,11 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppOverview } from "@/components/app-page/app-overview";
 import { AppsContext, type App, type AppsContextValue } from "@/context/apps-context-base";
-import { resetRevisionsCache } from "@/hooks/use-app-revisions";
+import { forgetRevisions, resetRevisionsCache } from "@/lib/revisions";
 import { resetHeldHealth } from "@/lib/backup-activity";
 import type { BackupHealth, EffectiveBackup } from "@/lib/backups";
 
@@ -59,14 +59,14 @@ const ctx = {
 
 function renderOverview(over: { app?: Partial<App>; status?: number } = {}) {
   const props = { onControl: vi.fn(), onOpenHistory: vi.fn() };
-  render(
+  const view = render(
     <MemoryRouter>
       <AppsContext.Provider value={ctx as unknown as AppsContextValue}>
         <AppOverview app={{ ...APP, ...over.app }} status={over.status ?? 1} pending={null} {...props} />
       </AppsContext.Provider>
     </MemoryRouter>,
   );
-  return props;
+  return { ...props, unmount: view.unmount };
 }
 
 describe("AppOverview", () => {
@@ -216,9 +216,8 @@ describe("AppOverview", () => {
 
   it("does not walk the history again when the page is opened again for the same version", async () => {
     const first = renderOverview();
-    expect(first.onOpenHistory).not.toHaveBeenCalled();
     await screen.findByRole("list", { name: "Recent changes" });
-    document.body.innerHTML = "";
+    first.unmount();
     renderOverview();
     await screen.findByRole("list", { name: "Recent changes" });
     expect(ctx.getRevisions).toHaveBeenCalledTimes(1);
@@ -232,5 +231,23 @@ describe("AppOverview", () => {
     expect(await within(region).findByText(/boom/)).toBeInTheDocument();
     await user.click(within(region).getByRole("button", { name: "Retry" }));
     expect(await within(region).findByText("No changes yet.")).toBeInTheDocument();
+  });
+
+  it("reads the history again after a deploy forgot it, on this page and on the next visit", async () => {
+    const first = renderOverview();
+    const draft = await screen.findByRole("list", { name: "Recent changes" });
+    expect(draft).toHaveTextContent("Draft");
+    // Start brings the draft live without a commit: the version stays.
+    ctx.getRevisions.mockResolvedValue({ ...REVISIONS, deployed: "dddd" });
+    act(() => forgetRevisions("a1"));
+    await waitFor(() => expect(screen.getByRole("list", { name: "Recent changes" })).toHaveTextContent("Live"));
+    expect(screen.getByRole("list", { name: "Recent changes" })).not.toHaveTextContent("Draft");
+    expect(ctx.getRevisions).toHaveBeenCalledTimes(2);
+    first.unmount();
+    // Forgotten again while away: the next visit asks the agent.
+    act(() => forgetRevisions("a1"));
+    renderOverview();
+    await screen.findByRole("list", { name: "Recent changes" });
+    expect(ctx.getRevisions).toHaveBeenCalledTimes(3);
   });
 });

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppsProvider } from "@/context/apps-context";
 import { DELETE_APP_TIMEOUT_MS } from "@/context/apps-context-base";
 import { useApps } from "@/context/use-apps";
+import { keepRevisions, keptRevisions, resetRevisionsCache, revisionsEpoch } from "@/lib/revisions";
 
 vi.mock("@/context/use-auth", () => ({ useAuth: () => ({ isAuthenticated: true }) }));
 vi.mock("@/context/use-servers", () => ({ useServers: () => ({ activeServerId: "srv-1" }) }));
@@ -151,5 +152,52 @@ describe("AppsProvider apps", () => {
     const { result } = renderHook(() => useApps(), { wrapper });
     await waitUntil(() => expect(result.current.apps).toHaveLength(2));
     expect(result.current.apps.map((a) => a.templateId)).toEqual(["t1", undefined]);
+  });
+});
+
+describe("AppsProvider and the kept histories", () => {
+  const history = { current: "c", deployed: "b", revisions: [] };
+  const accepting = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (/control-app|rollback-app|delete-app/.test(url)) return json(202, { data: { request_id: "r1" } });
+    return fetchMock(input);
+  });
+  beforeEach(() => {
+    vi.stubGlobal("fetch", accepting);
+    waitFor.mockReset().mockResolvedValue({ status: 0, payload: {} });
+    resetRevisionsCache();
+    keepRevisions("a1", "3", history, 0);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("forgets an app's history when a control or a roll back succeeds, so a draft that went live is read again", async () => {
+    const { result } = renderHook(() => useApps(), { wrapper });
+    await waitUntil(() => expect(result.current.loading).toBe(false));
+    await act(() => result.current.control("a1", "start"));
+    expect(keptRevisions("a1", "3")).toBeNull();
+    expect(revisionsEpoch("a1")).toBe(1);
+    keepRevisions("a1", "3", history, 1);
+    await act(() => result.current.rollback("a1", "abc"));
+    expect(keptRevisions("a1", "3")).toBeNull();
+    expect(revisionsEpoch("a1")).toBe(2);
+  });
+
+  it("keeps it when the control fails", async () => {
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useApps(), { wrapper });
+    await waitUntil(() => expect(result.current.loading).toBe(false));
+    await expect(result.current.control("a1", "start")).rejects.toThrow();
+    expect(keptRevisions("a1", "3")).toEqual(history);
+    expect(revisionsEpoch("a1")).toBe(0);
+  });
+
+  it("drops an app's bookkeeping with the app", async () => {
+    const { result } = renderHook(() => useApps(), { wrapper });
+    await waitUntil(() => expect(result.current.loading).toBe(false));
+    await act(() => result.current.control("a1", "stop"));
+    waitFor.mockResolvedValueOnce({ status: 0, payload: {} });
+    await act(() => result.current.remove("a1"));
+    expect(keptRevisions("a1", "3")).toBeNull();
+    expect(revisionsEpoch("a1")).toBe(0);
   });
 });

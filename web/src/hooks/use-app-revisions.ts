@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { AppRevisions } from "@/context/apps-context-base";
 import { useApps } from "@/context/use-apps";
+import { keepRevisions, keptRevisions, revisionsEpoch, useRevisionsEpoch } from "@/lib/revisions";
 
 export type AppRevisionsState = {
   data: AppRevisions | null;
@@ -9,17 +10,6 @@ export type AppRevisionsState = {
   error: string | null;
   reload: () => Promise<void>;
 };
-
-// What reads kept for the session, per app and cache key (see
-// useAppRevisions). A history walk is the expensive read here (it grows with
-// the app's git history), so a page that is opened again for the same
-// version of the app doesn't repeat it.
-const kept = new Map<string, { key: string; data: AppRevisions }>();
-
-// resetRevisionsCache forgets every kept history (tests).
-export function resetRevisionsCache() {
-  kept.clear();
-}
 
 // What the last finished read said, and for which app: another app's
 // answer is never shown.
@@ -30,7 +20,8 @@ type Settled = { appId: string; data: AppRevisions | null; error: string | null 
 // reload) is dropped. With a cacheKey (the app's version) a read is served
 // from memory when the same app was read under the same key; reload and
 // reads without a key always ask the agent, and replace what was kept, so a
-// history that moved on (a deploy, a rollback) is never shown stale.
+// history that moved on is never shown stale; forgetRevisions (a deploy, a
+// rollback, a delete) also makes a mounted history read again.
 export function useAppRevisions(appId: string, enabled = true, cacheKey?: string): AppRevisionsState {
   const { getRevisions } = useApps();
   const [settled, setSettled] = useState<Settled | null>(null);
@@ -44,18 +35,21 @@ export function useAppRevisions(appId: string, enabled = true, cacheKey?: string
     if (enabled) setReloading(true);
   }
 
+  // A deploy or rollback elsewhere changes the epoch, which reads again.
+  const epoch = useRevisionsEpoch(appId);
+
   // read is the one place the agent is asked, with the cache in front.
   const read = useCallback(
     async (fresh: boolean): Promise<Settled> => {
-      const hit = kept.get(appId);
-      if (!fresh && cacheKey !== undefined && hit?.key === cacheKey) return { appId, data: hit.data, error: null };
+      const hit = !fresh && cacheKey !== undefined ? keptRevisions(appId, cacheKey) : null;
+      if (hit) return { appId, data: hit, error: null };
+      const began = revisionsEpoch(appId);
       try {
         const data = await getRevisions(appId);
-        if (cacheKey === undefined) kept.delete(appId);
-        else kept.set(appId, { key: cacheKey, data });
+        keepRevisions(appId, cacheKey, data, began);
         return { appId, data, error: null };
       } catch (e) {
-        kept.delete(appId);
+        keepRevisions(appId, undefined, null, began);
         return { appId, data: null, error: e instanceof Error ? e.message : "Failed to load history" };
       }
     },
@@ -74,7 +68,8 @@ export function useAppRevisions(appId: string, enabled = true, cacheKey?: string
     return () => {
       live = false;
     };
-  }, [enabled, read]);
+    // epoch: a forgotten app is read again.
+  }, [enabled, read, epoch]);
 
   const reload = useCallback(async () => {
     const n = ++latest.current;

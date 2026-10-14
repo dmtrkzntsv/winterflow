@@ -6,10 +6,11 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import type { Ownership } from "@/components/app-page/ownership";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { StatusDot } from "@/components/status";
+import { RevisionBadge } from "@/components/app-page/revision-badge";
 import type { AppRevision } from "@/context/apps-context-base";
 import { useApps } from "@/context/use-apps";
 import { useAppRevisions } from "@/hooks/use-app-revisions";
+import { revisionFlags } from "@/lib/revisions";
 import { isManagedByTemplate } from "@/lib/templates";
 import { cn, relativeTime } from "@/lib/utils";
 
@@ -33,7 +34,6 @@ export function HistoryPanel({ appId, ownership }: { appId: string; ownership: O
     try {
       await rollback(appId, hash);
       toast.success("Rolled back and redeployed");
-      await reload();
     } catch (e) {
       toast.error("Roll back failed", { description: e instanceof Error ? e.message : undefined });
       // A template took the app over meanwhile: show it as managed.
@@ -51,7 +51,6 @@ export function HistoryPanel({ appId, ownership }: { appId: string; ownership: O
     try {
       await control(appId, "start");
       toast.success("Draft deployed");
-      await reload();
     } catch (e) {
       toast.error("Deploy failed", { description: e instanceof Error ? e.message : undefined });
     } finally {
@@ -103,9 +102,7 @@ export function HistoryPanel({ appId, ownership }: { appId: string; ownership: O
       </div>
       <ol aria-label="Versions">
         {data.revisions.map((rev, i) => {
-          const isCurrent = rev.hash === data.current;
-          const isDeployed = data.deployed !== "" && rev.hash === data.deployed;
-          const isUndeployedDraft = isCurrent && data.deployed !== "" && !isDeployed;
+          const { isCurrent, isDeployed, isUndeployedDraft } = revisionFlags(data, rev.hash);
           const isLast = i === data.revisions.length - 1;
           const when = new Date(rev.timestamp * 1000);
           return (
@@ -128,18 +125,7 @@ export function HistoryPanel({ appId, ownership }: { appId: string; ownership: O
                     <span className="truncate text-sm font-medium" title={`Commit ${rev.hash.slice(0, 8)}`}>
                       {rev.subject}
                     </span>
-                    {isDeployed ? (
-                      <span className="inline-flex items-center gap-1.5 text-xs font-medium text-foreground">
-                        <StatusDot tone="ok" />
-                        Live
-                      </span>
-                    ) : null}
-                    {isUndeployedDraft ? (
-                      <span className="inline-flex items-center gap-1.5 text-xs font-medium text-foreground">
-                        <StatusDot tone="warn" />
-                        Draft, not deployed
-                      </span>
-                    ) : null}
+                    <RevisionBadge isDeployed={isDeployed} isUndeployedDraft={isUndeployedDraft} draftLabel="Draft, not deployed" />
                   </div>
                   <time className="text-xs text-muted-foreground" dateTime={when.toISOString()} title={when.toLocaleString()}>
                     {relativeTime(when)}

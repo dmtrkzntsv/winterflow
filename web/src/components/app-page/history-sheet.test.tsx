@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { HistorySheet } from "@/components/app-page/history-sheet";
 import type { Ownership } from "@/components/app-page/ownership";
+import { forgetRevisions, resetRevisionsCache } from "@/lib/revisions";
 import { AppsContext, type AppRevisions, type AppsContextValue } from "@/context/apps-context-base";
 
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
@@ -37,8 +38,11 @@ describe("HistorySheet", () => {
     for (const f of Object.values(ctx)) f.mockReset();
     for (const f of Object.values(toast)) f.mockReset();
     ctx.getRevisions.mockResolvedValue(HISTORY);
-    ctx.rollback.mockResolvedValue(undefined);
-    ctx.control.mockResolvedValue(undefined);
+    resetRevisionsCache();
+    // The real context forgets the app's history when these succeed, which
+    // makes the open sheet read it again.
+    ctx.rollback.mockImplementation(async () => forgetRevisions("a1"));
+    ctx.control.mockImplementation(async () => forgetRevisions("a1"));
   });
 
   it("lists the versions by what changed and when, with the commit on hover", async () => {
@@ -96,6 +100,7 @@ describe("HistorySheet", () => {
     await user.click(await screen.findByRole("button", { name: "Deploy draft" }));
     await waitFor(() => expect(ctx.control).toHaveBeenCalledWith("a1", "start"));
     expect(toast.success).toHaveBeenCalledWith("Draft deployed");
+    await waitFor(() => expect(ctx.getRevisions).toHaveBeenCalledTimes(2));
   });
 
   it("offers no roll back for an app a template manages", async () => {

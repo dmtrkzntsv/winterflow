@@ -3,7 +3,8 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppsContext, type AppRevisions, type AppsContextValue } from "@/context/apps-context-base";
-import { resetRevisionsCache, useAppRevisions } from "@/hooks/use-app-revisions";
+import { useAppRevisions } from "@/hooks/use-app-revisions";
+import { resetRevisionsCache } from "@/lib/revisions";
 
 const revs = (hash: string): AppRevisions => ({ current: hash, deployed: hash, revisions: [{ hash, subject: `at ${hash}`, timestamp: 1 }] });
 

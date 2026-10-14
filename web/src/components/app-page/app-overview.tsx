@@ -5,6 +5,8 @@ import { ArrowRight, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { AppMetricBlocks } from "@/components/app-metrics";
+import { RevisionBadge } from "@/components/app-page/revision-badge";
+import { InlineError } from "@/components/inline-error";
 import { RestorePointsDialog } from "@/components/restore-points-dialog";
 import { Section } from "@/components/section";
 import { StatusDot, StatusPill } from "@/components/status";
@@ -19,6 +21,7 @@ import { hasRunningContainers } from "@/lib/app-status";
 import { appAddresses, containerHint } from "@/lib/app-summary";
 import { backupRowState, restoringBackup, shownHealth, useActivity, useOverlays } from "@/lib/backup-activity";
 import type { EffectiveBackup } from "@/lib/backups";
+import { revisionFlags } from "@/lib/revisions";
 import { appSub } from "@/lib/routes";
 import { appStatus, backupStatus, RESTORING } from "@/lib/status";
 import { relativeTime } from "@/lib/utils";
@@ -30,12 +33,12 @@ const LINK =
 // Retry is a failed read's message with the way to try again.
 function Retry({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
-    <p className="text-sm text-destructive">
+    <InlineError>
       {message}{" "}
       <button type="button" className="underline underline-offset-4" onClick={onRetry}>
         Retry
       </button>
-    </p>
+    </InlineError>
   );
 }
 
@@ -310,20 +313,14 @@ function RecentChangesWidget({ app, enabled, onOpenHistory }: { app: App; enable
     body = (
       <ul aria-label="Recent changes" className="space-y-2">
         {top.map((rev) => {
-          const live = data.deployed !== "" && rev.hash === data.deployed;
-          const draft = data.deployed !== "" && rev.hash === data.current && !live;
+          const flags = revisionFlags(data, rev.hash);
           return (
             <li key={rev.hash} className="flex min-w-0 items-baseline gap-2 text-sm">
               <span className="truncate" title={`Commit ${rev.hash.slice(0, 8)}`}>
                 {rev.subject}
               </span>
               <span className="shrink-0 text-xs text-muted-foreground">· {relativeTime(new Date(rev.timestamp * 1000))}</span>
-              {live || draft ? (
-                <span className="inline-flex shrink-0 items-center gap-1.5 text-xs font-medium">
-                  <StatusDot tone={live ? "ok" : "warn"} />
-                  {live ? "Live" : "Draft"}
-                </span>
-              ) : null}
+              <RevisionBadge isDeployed={flags.isDeployed} isUndeployedDraft={flags.isUndeployedDraft} />
             </li>
           );
         })}

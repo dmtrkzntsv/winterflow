@@ -13,6 +13,7 @@ import { useNotifications } from "@/context/use-notifications";
 import { apiBase as base } from "@/config";
 import { dispatchCommand } from "@/lib/api";
 import type { BackupHealth } from "@/lib/backups";
+import { forgetRevisions } from "@/lib/revisions";
 import { createSharedVariablesApi, type VarsReloaded } from "@/lib/shared-variables";
 import { splitStatus, type AppStatusWire, type ContainerStatusWire } from "@/lib/app-status";
 
@@ -263,6 +264,8 @@ export function AppsProvider({ children }: { children: ReactNode }) {
   const control = useCallback(
     async (appId: string, action: ControlAction) => {
       await dispatchAndWait("control-app", { app_id: appId, action });
+      // A start can bring an undeployed draft live without a commit.
+      forgetRevisions(appId);
     },
     [dispatchAndWait],
   );
@@ -285,6 +288,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
         },
         { timeoutMs: DELETE_APP_TIMEOUT_MS },
       );
+      forgetRevisions(appId, { gone: true });
       const res = payload as
         | { warnings?: string[]; volumes_deleted?: boolean; backups_deleted?: boolean }
         | undefined;
@@ -429,6 +433,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
   const rollback = useCallback(
     async (appId: string, hash: string) => {
       await dispatchAndWait("rollback-app", { app_id: appId, hash });
+      forgetRevisions(appId);
     },
     [dispatchAndWait],
   );

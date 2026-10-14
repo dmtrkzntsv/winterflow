@@ -1,9 +1,9 @@
 import type { ReactNode } from "react";
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppsContext, type AppRevisions, type AppsContextValue } from "@/context/apps-context-base";
-import { useAppRevisions } from "@/hooks/use-app-revisions";
+import { resetRevisionsCache, useAppRevisions } from "@/hooks/use-app-revisions";
 
 const revs = (hash: string): AppRevisions => ({ current: hash, deployed: hash, revisions: [{ hash, subject: `at ${hash}`, timestamp: 1 }] });
 
@@ -13,6 +13,8 @@ function wrap(getRevisions: AppsContextValue["getRevisions"]) {
 }
 
 describe("useAppRevisions", () => {
+  beforeEach(resetRevisionsCache);
+
   it("reads the history, and again on reload", async () => {
     const getRevisions = vi.fn(async (id: string) => revs(id));
     const { result } = renderHook(() => useAppRevisions("a1"), { wrapper: wrap(getRevisions) });
@@ -82,5 +84,60 @@ describe("useAppRevisions", () => {
     expect(result.current.loading).toBe(true);
     await act(async () => second(revs("a2")));
     expect(result.current.data?.current).toBe("a2");
+  });
+
+  describe("with a cache key", () => {
+    it("serves a remount from memory for the same app and key", async () => {
+      const getRevisions = vi.fn(async (id: string) => revs(id));
+      const first = renderHook(() => useAppRevisions("a1", true, "3"), { wrapper: wrap(getRevisions) });
+      await waitFor(() => expect(first.result.current.data?.current).toBe("a1"));
+      first.unmount();
+      const second = renderHook(() => useAppRevisions("a1", true, "3"), { wrapper: wrap(getRevisions) });
+      await waitFor(() => expect(second.result.current.data?.current).toBe("a1"));
+      expect(getRevisions).toHaveBeenCalledTimes(1);
+    });
+
+    it("reads again when the key changes or another app asks", async () => {
+      const getRevisions = vi.fn(async (id: string) => revs(id));
+      const { rerender, result } = renderHook(({ id, key }) => useAppRevisions(id, true, key), {
+        wrapper: wrap(getRevisions),
+        initialProps: { id: "a1", key: "3" },
+      });
+      await waitFor(() => expect(result.current.data?.current).toBe("a1"));
+      rerender({ id: "a1", key: "4" });
+      await waitFor(() => expect(getRevisions).toHaveBeenCalledTimes(2));
+      rerender({ id: "a2", key: "4" });
+      await waitFor(() => expect(result.current.data?.current).toBe("a2"));
+      expect(getRevisions).toHaveBeenCalledTimes(3);
+    });
+
+    it("reload always asks the agent, and an uncached read forgets what was kept", async () => {
+      const getRevisions = vi.fn(async (id: string) => revs(id));
+      const keyed = renderHook(() => useAppRevisions("a1", true, "3"), { wrapper: wrap(getRevisions) });
+      await waitFor(() => expect(keyed.result.current.data).not.toBeNull());
+      await act(() => keyed.result.current.reload());
+      expect(getRevisions).toHaveBeenCalledTimes(2);
+      keyed.unmount();
+      // The History sheet reads without a key: what it saw may differ from what was kept.
+      const plain = renderHook(() => useAppRevisions("a1"), { wrapper: wrap(getRevisions) });
+      await waitFor(() => expect(plain.result.current.data).not.toBeNull());
+      plain.unmount();
+      const again = renderHook(() => useAppRevisions("a1", true, "3"), { wrapper: wrap(getRevisions) });
+      await waitFor(() => expect(again.result.current.data).not.toBeNull());
+      expect(getRevisions).toHaveBeenCalledTimes(4);
+    });
+
+    it("does not keep a failed read", async () => {
+      const getRevisions = vi.fn().mockRejectedValueOnce(new Error("offline")).mockResolvedValue(revs("a1"));
+      const first = renderHook(() => useAppRevisions("a1", true, "3"), {
+        wrapper: wrap(getRevisions as unknown as AppsContextValue["getRevisions"]),
+      });
+      await waitFor(() => expect(first.result.current.error).toBe("offline"));
+      first.unmount();
+      const second = renderHook(() => useAppRevisions("a1", true, "3"), {
+        wrapper: wrap(getRevisions as unknown as AppsContextValue["getRevisions"]),
+      });
+      await waitFor(() => expect(second.result.current.data?.current).toBe("a1"));
+    });
   });
 });

@@ -14,6 +14,7 @@ import { RowList } from "@/components/section";
 import { StatusPill } from "@/components/status";
 import { useApps } from "@/context/use-apps";
 import {
+  backupRowState,
   holdHealth,
   releaseHealth,
   restoringBackup,
@@ -32,11 +33,9 @@ import {
   isBackupsChanged,
   isStaleTab,
   locationLabel,
-  nextCopyNote,
   scheduleLabel,
   type BackupConfig,
   type BackupHealth,
-  type BackupState,
   type BackupTargets,
   type EffectiveBackup,
 } from "@/lib/backups";
@@ -355,12 +354,7 @@ function BackupRow({
   const menuRef = useRef<HTMLButtonElement>(null);
   const builtin = b.type !== "custom";
   const kinds = activity ?? [];
-  const restoringRow = kinds.includes("restore");
-  const state: BackupState = kinds.includes("backup") ? "running" : (health?.state ?? (b.enabled ? "never" : "off"));
-  // A run is under way here, or the agent reports one (a page reloaded, or
-  // another browser, started it): a second request would be refused.
-  const running = kinds.includes("backup") || health?.state === "running";
-  const note = restoringRow || running || !builtin ? "" : nextCopyNote(b, state, health?.last_success);
+  const { state, restoring: restoringRow, running, note } = backupRowState(b, health, kinds);
   const where = [TYPE_LABELS[b.type], locationLabel(b)].filter(Boolean).join(" · ");
   const detail = [b.storage ? `${where} → ${b.storage}` : where, builtin ? scheduleLabel(b.every) : "Its own tool"].join(" · ");
   const runDisabled = !b.enabled || running || busy;

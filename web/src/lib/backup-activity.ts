@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 
-import type { BackupHealth } from "@/lib/backups";
+import { nextCopyNote, type BackupHealth, type BackupState, type EffectiveBackup } from "@/lib/backups";
 
 // Back up now and Restore answer over SSE when they end, up to ~2 hours
 // later. The page must stay usable meanwhile, and switching tabs must not
@@ -82,6 +82,24 @@ export function isRunning(running: Running, backup: string, kind: Activity): boo
 // restore stops the app: the whole app is busy).
 export function restoringBackup(running: Running): string | undefined {
   return Object.entries(running).find(([, kinds]) => kinds.includes("restore"))?.[0];
+}
+
+// backupRowState is what a backup's row says about it, for the Backups tab
+// and the Overview alike: its state (a run started here reads running before
+// the agent reports it), whether it is being restored, whether a run is
+// under way (here, or reported by the agent: a second request would be
+// refused), and the next-copy note (empty while a run or restore is under
+// way, and for a custom backup, which winterflow doesn't schedule).
+export function backupRowState(
+  b: Pick<EffectiveBackup, "enabled" | "type" | "every">,
+  health: BackupHealth | undefined,
+  kinds: readonly Activity[],
+): { state: BackupState; restoring: boolean; running: boolean; note: string } {
+  const restoring = kinds.includes("restore");
+  const state: BackupState = kinds.includes("backup") ? "running" : (health?.state ?? (b.enabled ? "never" : "off"));
+  const running = kinds.includes("backup") || health?.state === "running";
+  const note = restoring || running || b.type === "custom" ? "" : nextCopyNote(b, state, health?.last_success);
+  return { state, restoring, running, note };
 }
 
 // What the user was just told (a toast) must not be contradicted by a

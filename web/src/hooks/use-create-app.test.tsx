@@ -94,6 +94,44 @@ describe("useCreateApp", () => {
     expect(await screen.findByText("app n1")).toBeInTheDocument();
   });
 
+  it("keeps every slow create's name claimed, not only the last", async () => {
+    const user = userEvent.setup();
+    const saveApp = vi.fn<SaveApp>(async () => Promise.reject(new WaitTimeoutError()));
+    function Two() {
+      const { create, stillCreating } = useCreateApp("s1");
+      return (
+        <>
+          <button onClick={() => void create(named("shop"))}>shop</button>
+          <button onClick={() => void create(named("blog"))}>blog</button>
+          <p>still {stillCreating || "-"}</p>
+        </>
+      );
+    }
+    const value = (apps: App[]) => ({ apps, saveApp, getPublicKey: async () => "K", reconcile: vi.fn(), noteDeployFailure: vi.fn() }) as unknown as AppsContextValue;
+    const tree = (apps: App[]) => (
+      <MemoryRouter initialEntries={["/server/s1/new"]}>
+        <AppsContext.Provider value={value(apps)}>
+          <Routes>
+            <Route path="/server/s1/new" element={<Two />} />
+            <Route path="/server/s1/app/:appId" element={<Landing />} />
+          </Routes>
+        </AppsContext.Provider>
+      </MemoryRouter>
+    );
+    const { rerender } = render(tree([]));
+    await user.click(screen.getByRole("button", { name: "shop" }));
+    await screen.findByText("still shop");
+    await user.click(screen.getByRole("button", { name: "blog" }));
+    await screen.findByText("still blog");
+    // Both stay claimed.
+    await user.click(screen.getByRole("button", { name: "shop" }));
+    await user.click(screen.getByRole("button", { name: "blog" }));
+    expect(saveApp).toHaveBeenCalledTimes(2);
+    // blog appears: shop is still being created, and its name still claimed.
+    rerender(tree([app("b1", "blog")]));
+    expect(await screen.findByText("app b1")).toBeInTheDocument();
+  });
+
   it("gives the name back when the form is left", async () => {
     const user = userEvent.setup();
     const saveApp = vi.fn<SaveApp>(async () => Promise.reject(new WaitTimeoutError()));

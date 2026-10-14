@@ -42,28 +42,30 @@ export function useCreateApp(serverId: string) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [stillCreating, setStillCreating] = useState("");
-  const held = useRef<Held | null>(null);
+  // held are the creates that outlived their wait, newest last.
+  const held = useRef<Held[]>([]);
 
-  // Leaving the form gives the name back.
+  // Leaving the form gives the names back.
   useEffect(
     () => () => {
-      if (held.current) pending.delete(held.current.slot);
-      held.current = null;
+      for (const h of held.current) pending.delete(h.slot);
+      held.current = [];
     },
     [],
   );
 
-  // The slow create appeared (the list is re-read when its answer comes).
+  // A slow create appeared (the list is re-read when its answer comes):
+  // its name is free again; the newest one's page opens.
   useEffect(() => {
-    const h = held.current;
-    if (!h) return;
-    const app = createdApp(apps, h.before, h.name);
-    if (!app) return;
-    pending.delete(h.slot);
-    held.current = null;
-    setStillCreating("");
+    if (held.current.length === 0) return;
+    const appeared = held.current.filter((h) => createdApp(apps, h.before, h.name));
+    if (appeared.length === 0) return;
+    for (const h of appeared) pending.delete(h.slot);
+    held.current = held.current.filter((h) => !appeared.includes(h));
+    const newest = appeared[appeared.length - 1];
+    setStillCreating(held.current.at(-1)?.name ?? "");
     toast.success("App created");
-    navigate(appPath(serverId, app.id));
+    navigate(appPath(serverId, createdApp(apps, newest.before, newest.name)!.id));
   }, [apps, navigate, serverId]);
 
   const create = async (state: AppEditorState) => {
@@ -83,7 +85,7 @@ export function useCreateApp(serverId: string) {
       } catch (e) {
         if (e instanceof WaitTimeoutError) {
           keep = true;
-          held.current = { slot, name, before };
+          held.current = [...held.current, { slot, name, before }];
           setStillCreating(name);
           return;
         }

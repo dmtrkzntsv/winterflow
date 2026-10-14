@@ -6,7 +6,6 @@ import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { EmptyState } from "@/components/empty-state";
 import { ListPlaceholder } from "@/components/list-placeholder";
-import { RefreshButton } from "@/components/refresh-button";
 import { RemoveButton } from "@/components/remove-button";
 import { ResponsiveDialog } from "@/components/responsive-dialog";
 import { Row, RowList, Section } from "@/components/section";
@@ -82,7 +81,7 @@ function CreateVolumeDialog({
     <ResponsiveDialog
       open={open}
       onOpenChange={changeOpen}
-      title="Create volume"
+      title="Add volume"
       description={
         <>
           An empty local volume. To mount it in an app, declare it in the compose file with{" "}
@@ -139,7 +138,7 @@ export function VolumesSection({ docker }: { docker: Docker }) {
   const [showAnon, setShowAnon] = useState(false);
   const [creating, setCreating] = useState(false);
   const removal = useConfirmTarget<Volume>();
-  // A deleted row takes its button along: focus then goes to Create volume.
+  // A deleted row takes its button along: focus then goes to Add volume.
   const opener = useRef<HTMLElement | null>(null);
   const createButton = useRef<HTMLButtonElement | null>(null);
 
@@ -185,9 +184,8 @@ export function VolumesSection({ docker }: { docker: Docker }) {
       description="Where containers keep data that outlives a redeploy."
       actions={
         <>
-          <RefreshButton label="Refresh volumes" loading={loading} onClick={() => void load()} />
           <Button ref={createButton} size="sm" variant="outline" onClick={() => setCreating(true)}>
-            <Plus className="size-4" /> Create volume
+            <Plus className="size-4" /> Add volume
           </Button>
         </>
       }

@@ -8,7 +8,6 @@ import { DomainDialog } from "@/components/domain-dialog";
 import { EmptyState } from "@/components/empty-state";
 import { ListPlaceholder } from "@/components/list-placeholder";
 import { PageHeader } from "@/components/page-header";
-import { RefreshButton } from "@/components/refresh-button";
 import { RowMenu } from "@/components/row-menu";
 import { Row, RowList } from "@/components/section";
 import { StatusDot } from "@/components/status";
@@ -104,7 +103,6 @@ export function DomainsSettings({ docker }: { docker: Docker }) {
         subtitle="Addresses apps on this server can use, and how HTTPS works for each."
         actions={
           <>
-            <RefreshButton label="Refresh domains" loading={loading} onClick={() => void load()} />
             <Button ref={addButton} onClick={(e) => openDialog(null, e.currentTarget)}>
               <Plus className="size-4" /> Add domain
             </Button>

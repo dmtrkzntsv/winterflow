@@ -3,7 +3,6 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { ListPlaceholder } from "@/components/list-placeholder";
-import { RefreshButton } from "@/components/refresh-button";
 import { RemoveButton } from "@/components/remove-button";
 import { Row, RowList } from "@/components/section";
 
@@ -20,22 +19,12 @@ describe("list parts", () => {
     expect(retry).toHaveBeenCalled();
   });
 
-  it("names the refresh and remove buttons and turns refresh off while loading", async () => {
+  it("names the remove button", async () => {
     const user = userEvent.setup({ delay: null });
-    const reload = vi.fn();
     const remove = vi.fn();
-    const { rerender } = render(
-      <>
-        <RefreshButton label="Refresh domains" loading={false} onClick={reload} />
-        <RemoveButton label="Remove registry ghcr.io" onClick={remove} />
-      </>,
-    );
-    await user.click(screen.getByRole("button", { name: "Refresh domains" }));
+    render(<RemoveButton label="Remove registry ghcr.io" onClick={remove} />);
     await user.click(screen.getByRole("button", { name: "Remove registry ghcr.io" }));
-    expect(reload).toHaveBeenCalled();
     expect(remove).toHaveBeenCalled();
-    rerender(<RefreshButton label="Refresh domains" loading onClick={reload} />);
-    expect(screen.getByRole("button", { name: "Refresh domains" })).toBeDisabled();
   });
 
   it("puts a test id on a row", () => {

@@ -366,7 +366,6 @@ describe("DomainsSettings", () => {
   });
 
   it("says so when the list can't be loaded, or is empty", async () => {
-    const user = setupUser();
     const { unmount } = renderPage(fakeDocker({ listDomains: vi.fn().mockRejectedValue(new Error("agent offline")) }));
     expect(await screen.findByText("Couldn't load domains.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
@@ -375,7 +374,7 @@ describe("DomainsSettings", () => {
     const docker = fakeDocker({ listDomains: vi.fn().mockResolvedValue([]) });
     renderPage(docker);
     expect(await screen.findByText(/No domains yet/)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Refresh domains" }));
-    await waitFor(() => expect(docker.listDomains).toHaveBeenCalledTimes(2));
+    // No manual refresh: the list is read on open and after every change.
+    expect(screen.queryByRole("button", { name: "Refresh domains" })).not.toBeInTheDocument();
   });
 });

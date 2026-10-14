@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { History, RefreshCw } from "lucide-react";
+import { History } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -102,17 +102,6 @@ export function HistoryPanel({
             ? `Managed by ${managedBy ? `template ${managedBy}` : "a template"}: it changes through its values or an update; detach it to roll back.`
             : "Rolling back adds a new version; nothing is lost."}
         </p>
-        <Button
-          size="icon"
-          variant="ghost"
-          className="size-8 shrink-0 text-muted-foreground"
-          aria-label="Refresh history"
-          title="Refresh history"
-          onClick={() => void reload()}
-          disabled={loading}
-        >
-          <RefreshCw className={cn("size-4", loading && "animate-spin motion-reduce:animate-none")} />
-        </Button>
       </div>
       <ol aria-label="Versions">
         {data.revisions.map((rev, i) => {

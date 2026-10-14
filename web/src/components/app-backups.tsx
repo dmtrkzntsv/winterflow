@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { CircleX, Plus, RefreshCw } from "lucide-react";
+import { CircleX, Plus } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -40,7 +40,7 @@ import {
   type EffectiveBackup,
 } from "@/lib/backups";
 import { backupStatus, RESTORING } from "@/lib/status";
-import { cn, relativeTime } from "@/lib/utils";
+import { relativeTime } from "@/lib/utils";
 
 // base identifies the stored list this view was loaded with (see save).
 type Detail = { list: EffectiveBackup[]; targets: BackupTargets | null; days: number; error: string; base: string };
@@ -203,19 +203,8 @@ export function AppBackups({ appId }: { appId: string }) {
           <span />
         )}
         <div className="flex items-center gap-2">
-          <Button
-            size="icon"
-            variant="ghost"
-            className="size-8 text-muted-foreground"
-            aria-label="Refresh backups"
-            title="Refresh backups"
-            onClick={() => void load()}
-            disabled={loading}
-          >
-            <RefreshCw className={cn("size-4", loading && "animate-spin")} />
-          </Button>
           {noPlaces ? null : (
-            <Button size="sm" onClick={(e) => show({ kind: "add" }, e.currentTarget)} disabled={busy !== null || !!restoring || locked}>
+            <Button size="sm" variant="outline" onClick={(e) => show({ kind: "add" }, e.currentTarget)} disabled={busy !== null || !!restoring || locked}>
               <Plus className="size-4" /> Add backup
             </Button>
           )}

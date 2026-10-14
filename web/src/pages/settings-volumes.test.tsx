@@ -87,8 +87,8 @@ describe("VolumesSection", () => {
     expect(docker.deleteVolume).toHaveBeenCalledWith("shared");
     await waitFor(() => expect(docker.listVolumes).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
-    // The row is gone with its button: focus lands on Create volume, not <body>.
-    await waitFor(() => expect(screen.getByRole("button", { name: /Create volume/ })).toHaveFocus());
+    // The row is gone with its button: focus lands on Add volume, not <body>.
+    await waitFor(() => expect(screen.getByRole("button", { name: /Add volume/ })).toHaveFocus());
   });
 
   it("keeps the confirmation open and lists again when Docker refuses", async () => {
@@ -109,7 +109,7 @@ describe("VolumesSection", () => {
     const user = userEvent.setup({ delay: null });
     const docker = fakeDocker();
     renderSection(docker);
-    await user.click(await screen.findByRole("button", { name: /Create volume/ }));
+    await user.click(await screen.findByRole("button", { name: /Add volume/ }));
     const dialog = await screen.findByRole("dialog");
     const create = within(dialog).getByRole("button", { name: "Create" });
     expect(create).toBeDisabled();

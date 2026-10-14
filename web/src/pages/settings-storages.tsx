@@ -8,7 +8,6 @@ import { EmptyState } from "@/components/empty-state";
 import { ListPlaceholder } from "@/components/list-placeholder";
 import { OrphansDialog } from "@/components/orphans-dialog";
 import { PageHeader } from "@/components/page-header";
-import { RefreshButton } from "@/components/refresh-button";
 import { RowMenu } from "@/components/row-menu";
 import { Row, RowList } from "@/components/section";
 import { StorageDialog } from "@/components/storage-dialog";
@@ -113,7 +112,6 @@ export function StoragesSettings({ docker }: { docker: Docker }) {
         subtitle="Folders and S3 buckets that backups and apps on this server can write to."
         actions={
           <>
-            <RefreshButton label="Refresh storages" loading={loading} onClick={() => void load()} />
             <Button ref={addButton} onClick={(e) => openDialog(null, e.currentTarget)}>
               <Plus className="size-4" /> Add storage
             </Button>

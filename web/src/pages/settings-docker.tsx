@@ -6,7 +6,6 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { EmptyState } from "@/components/empty-state";
 import { ListPlaceholder } from "@/components/list-placeholder";
 import { PageHeader } from "@/components/page-header";
-import { RefreshButton } from "@/components/refresh-button";
 import { RemoveButton } from "@/components/remove-button";
 import { ResponsiveDialog } from "@/components/responsive-dialog";
 import { Row, RowList, Section } from "@/components/section";
@@ -153,7 +152,6 @@ function RegistriesSection({ docker }: { docker: Docker }) {
       description="Private image registries apps on this server can pull from."
       actions={
         <>
-          <RefreshButton label="Refresh registries" loading={loading} onClick={() => void reload()} />
           <Button ref={addButton} size="sm" variant="outline" onClick={() => setAdding(true)}>
             <Plus className="size-4" /> Add registry
           </Button>
@@ -334,7 +332,6 @@ function NetworksSection({ docker }: { docker: Docker }) {
       description="Docker networks on this server."
       actions={
         <>
-          <RefreshButton label="Refresh networks" loading={loading} onClick={() => void reload()} />
           <Button ref={addButton} size="sm" variant="outline" onClick={() => setCreating(true)}>
             <Plus className="size-4" /> Add network
           </Button>

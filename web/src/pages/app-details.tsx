@@ -47,6 +47,7 @@ import {
 } from "@/context/apps-context-base";
 import { useAppInstance } from "@/hooks/use-app-instance";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
+import { hasRunningContainers } from "@/lib/app-status";
 import { needsAttention } from "@/lib/backups";
 import { appLabel } from "@/lib/kpi";
 import type { TemplateView } from "@/lib/templates";
@@ -58,7 +59,7 @@ type Tab = (typeof TABS)[number];
 
 export default function AppDetailsPage() {
   const { appId } = useParams();
-  const { apps, statusByApp, backupsByApp, loading, control, rename, refresh } = useApps();
+  const { apps, statusByApp, backupsByApp, loading, control, refresh } = useApps();
   const templatesApi = useTemplatesApi();
 
   const [tab, setTab] = useTabParam<Tab>(TABS, "logs", { aliases: LEGACY_APP_TABS });
@@ -323,11 +324,11 @@ export default function AppDetailsPage() {
         </TabsContent>
         <TabsContent value="settings" className="mt-6">
           <AppSettingsTab
-            appId={app.id}
-            name={app.name}
+            key={app.id}
+            app={app}
             ownership={ownership}
-            onUnlinked={reloadManaged}
-            onRename={rename}
+            running={hasRunningContainers(status)}
+            onDetached={reloadManaged}
             onDelete={() => setDeleteOpen(true)}
             onSaveAsTemplate={() => void saveAsTemplate.run()}
             savingTemplate={saveAsTemplate.busy}

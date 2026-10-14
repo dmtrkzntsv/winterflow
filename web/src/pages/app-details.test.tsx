@@ -82,6 +82,11 @@ function renderPage(
     backupsByApp,
     control: vi.fn(),
     getRevisions: vi.fn(async () => ({ current: "", deployed: "", revisions: [] })),
+    getApp: vi.fn(async () => ({
+      app: { app_id: "a1", config: btoa(JSON.stringify({ name: "Shop", description: "" })), files: [], variables: [] },
+      revision: 1,
+      available_revisions: null,
+    })),
     remove,
     rename: vi.fn(),
     refresh,
@@ -433,37 +438,37 @@ describe("AppDetailsPage of a template instance", () => {
     renderPage("/app/a1?tab=settings", {}, managed);
     expect(await screen.findByRole("textbox", { name: "App name" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save as template" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Unlink from template" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Detach from template" })).not.toBeInTheDocument();
   });
 
-  it("unlinks from the template after confirming", async () => {
+  it("detaches from the template after confirming", async () => {
     const user = userEvent.setup();
     const api = instanceAPI(INSTANCE, { "/api/v1/instance/unlink-instance": { instance: INSTANCE, request_id: "", warnings: [] } });
     renderPage("/app/a1?tab=settings", {}, managed);
-    await user.click(await screen.findByRole("button", { name: "Unlink from template" }));
+    await user.click(await screen.findByRole("button", { name: "Detach from template" }));
     expect(
-      screen.getByText("The app becomes an ordinary app you can edit freely; template upgrades no longer reach it."),
+      screen.getByText("The app becomes an ordinary app you can edit freely; template updates no longer reach it."),
     ).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Unlink" }));
-    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Unlinked from the template"));
+    await user.click(screen.getByRole("button", { name: "Detach" }));
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Detached from the template"));
     expect(api.posted("/api/v1/instance/unlink-instance")).toEqual([{ server_id: "s", key: "k1" }]);
     expect(refresh).toHaveBeenCalled();
   });
 
-  it("offers no Unlink while the instance is pending (the API refuses it)", async () => {
+  it("offers no Detach while the instance is pending (the API refuses it)", async () => {
     instanceAPI({ ...INSTANCE, state: "pending", last_error: "pull access denied" });
     renderPage("/app/a1?tab=settings", {}, managed);
-    expect(await screen.findByText(/Unlink becomes available once/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Unlink from template" })).not.toBeInTheDocument();
+    expect(await screen.findByText(/Detach becomes available once/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Detach from template" })).not.toBeInTheDocument();
   });
 
-  it("reports a failed unlink", async () => {
+  it("reports a failed detach", async () => {
     const user = userEvent.setup();
     instanceAPI(INSTANCE, { "/api/v1/instance/unlink-instance": new Error("instance not found") });
     renderPage("/app/a1?tab=settings", {}, managed);
-    await user.click(await screen.findByRole("button", { name: "Unlink from template" }));
-    await user.click(screen.getByRole("button", { name: "Unlink" }));
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Unlink failed", { description: "instance not found" }));
+    await user.click(await screen.findByRole("button", { name: "Detach from template" }));
+    await user.click(screen.getByRole("button", { name: "Detach" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Detach failed", { description: "instance not found" }));
   });
 
   it("offers no Roll back in History: the template owns the files", async () => {

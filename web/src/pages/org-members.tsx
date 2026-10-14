@@ -110,7 +110,8 @@ function OrganizationSettings() {
           }}
         >
           <div className="flex flex-wrap items-end gap-3">
-            <div className="space-y-2">
+            {/* A grid, so the label sits above its button like the others. */}
+            <div data-testid="org-icon-field" className="grid justify-items-start gap-2">
               <Label>Icon</Label>
               <IconPicker value={icon} name={name} color={color} onChange={setIcon} />
             </div>

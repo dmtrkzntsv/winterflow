@@ -81,6 +81,7 @@ export function ServersProvider({ children }: { children: ReactNode }) {
     Record<string, ServerLiveness>
   >({});
   const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isMountedRef = useRef(false);
 
@@ -135,6 +136,7 @@ export function ServersProvider({ children }: { children: ReactNode }) {
     } finally {
       if (isMountedRef.current) {
         setLoading(false);
+        setLoaded(true);
       }
     }
   }, [isAuthenticated]);
@@ -249,10 +251,12 @@ export function ServersProvider({ children }: { children: ReactNode }) {
       selectServer,
       statusByServer,
       loading,
+      loaded,
       error,
       refresh: fetchServers,
     };
   }, [
+    loaded,
     servers,
     activeServer,
     activeServerId,

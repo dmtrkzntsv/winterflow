@@ -9,13 +9,15 @@ type FakeServer = { id: string; name: string; features?: Record<string, boolean>
 let active: FakeServer | null = { id: "s1", name: "Alpha", features: { ingress: true } };
 let email = "ann@example.test";
 let mustChange = false;
+let loaded = true;
 
 vi.mock("@/context/use-servers", () => ({
   useServers: () => ({
     activeServer: active,
-    activeServerId: active?.id ?? null,
-    servers: active ? [active] : [],
+    activeServerId: loaded ? (active?.id ?? null) : null,
+    servers: active && loaded ? [active] : [],
     loading: false,
+    loaded,
   }),
 }));
 vi.mock("@/context/use-profile", () => ({
@@ -51,6 +53,7 @@ describe("SettingsLayout", () => {
     active = { id: "s1", name: "Alpha", features: { ingress: true } };
     email = "ann@example.test";
     mustChange = false;
+    loaded = true;
   });
 
   it("puts the sub-menu beside the page on a desktop", () => {
@@ -78,6 +81,28 @@ describe("SettingsLayout", () => {
     renderAt("/settings");
     expect(await screen.findByText("general body")).toBeInTheDocument();
     expect(screen.getByTestId("at")).toHaveTextContent("/server/s1/settings/general");
+  });
+
+  it("waits for the server list on a hard load instead of guessing Organization", async () => {
+    loaded = false;
+    const { rerender } = renderAt("/settings");
+    expect(screen.getByTestId("at")).toHaveTextContent("/settings");
+    loaded = true;
+    rerender(
+      <MemoryRouter initialEntries={["/settings"]}>
+        <Routes>
+          <Route path="/settings" element={<SettingsLayout />}>
+            <Route index element={<SettingsIndex />} />
+            <Route path="organization" element={<p>organization body</p>} />
+          </Route>
+          <Route path="/server/:serverId/settings" element={<SettingsLayout />}>
+            <Route path="general" element={<p>general body</p>} />
+          </Route>
+        </Routes>
+        <Where />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByText("general body")).toBeInTheDocument();
   });
 
   it("opens Organization at /settings when there is no server", async () => {

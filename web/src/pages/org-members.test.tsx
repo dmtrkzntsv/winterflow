@@ -62,6 +62,8 @@ describe("OrgMembersPage", () => {
     const name = await screen.findByLabelText("Name");
     expect(name).toHaveValue("Homelab");
     expect(screen.queryByText("o-1")).not.toBeInTheDocument();
+    // The Icon label stacks above its button, like Name and Colour.
+    expect(screen.getByTestId("org-icon-field").className).toContain("grid");
     const save = screen.getByRole("button", { name: "Save" });
     expect(save).toBeDisabled();
     await user.clear(name);

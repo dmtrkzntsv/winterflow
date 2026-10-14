@@ -95,8 +95,10 @@ export function SettingsLayout() {
 // SettingsIndex is /settings on a desktop: the active server's General
 // page, or the organization's when there is no server yet.
 export function SettingsIndex() {
-  const { activeServerId, servers, loading } = useServers();
-  if (loading && servers.length === 0) return null;
+  const { activeServerId, servers, loading, loaded = true } = useServers();
+  // On a hard load the list isn't read yet (loading reads false while the
+  // sign-in is checked): no server yet would be a guess.
+  if ((loading || !loaded) && servers.length === 0) return null;
   return (
     <Navigate replace to={activeServerId ? serverSettingsPath(activeServerId) : settingsPath("organization")} />
   );

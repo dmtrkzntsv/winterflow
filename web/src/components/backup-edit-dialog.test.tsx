@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { BackupEditDialog } from "@/components/backup-edit-dialog";
 import type { BackupTargets, EffectiveBackup } from "@/lib/backups";
+import { stubViewport } from "@/test/media";
 
 const all = { every: true, keep: true, volume: true, service: true, path: true, paths: true, exclude: true };
 const targets: BackupTargets = {
@@ -356,5 +357,19 @@ describe("BackupEditDialog", () => {
     renderDialog({ ...database, every: "90m" });
     expect(screen.getByLabelText("Schedule")).toHaveValue("90m");
     expect(screen.getByRole("option", { name: "Every 90m" })).toBeInTheDocument();
+  });
+
+  it("is a bottom sheet on a phone whose Save still sends the form", async () => {
+    stubViewport(375);
+    try {
+      const user = userEvent.setup({ delay: null });
+      const onSave = renderDialog({ ...database, from_recipe: all });
+      expect(screen.getByRole("dialog", { name: "Edit backup database" })).toHaveClass("rounded-t-[10px]");
+      await user.selectOptions(screen.getByLabelText("Schedule"), "manual");
+      await user.click(screen.getByRole("button", { name: "Save" }));
+      expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ name: "database", every: "manual" }));
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

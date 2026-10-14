@@ -20,7 +20,9 @@ globalThis.ResizeObserver ??= class {
   disconnect() {}
 };
 
-// Radix Select uses pointer capture and scrollIntoView, which jsdom lacks.
+// Radix Select and vaul's bottom sheet use pointer capture and
+// scrollIntoView, which jsdom lacks.
+Element.prototype.setPointerCapture ??= () => {};
 Element.prototype.hasPointerCapture ??= () => false;
 Element.prototype.releasePointerCapture ??= () => {};
 Element.prototype.scrollIntoView ??= () => {};

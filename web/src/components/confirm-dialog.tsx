@@ -21,6 +21,10 @@ export type ConfirmDialogProps = {
   confirmLabel: string;
   pendingLabel?: string;
   cancelLabel?: string;
+  // pendingCancelLabel lets the person close the dialog while a long action
+  // runs (it carries on and reports its own end); Cancel then reads this
+  // ("Close"). Without it the dialog can't be dismissed while pending.
+  pendingCancelLabel?: string;
   // destructive (the default) paints the action red.
   destructive?: boolean;
   // onConfirm runs the action. The dialog shows it pending, closes when it
@@ -43,12 +47,14 @@ export function ConfirmDialog({
   confirmLabel,
   pendingLabel,
   cancelLabel = "Cancel",
+  pendingCancelLabel,
   destructive = true,
   onConfirm,
   children,
   onCloseAutoFocus,
 }: ConfirmDialogProps) {
   const [pending, setPending] = useState(false);
+  const dismissible = !pending || pendingCancelLabel !== undefined;
 
   const confirm = async () => {
     setPending(true);
@@ -66,7 +72,7 @@ export function ConfirmDialog({
     <AlertDialog
       open={open}
       onOpenChange={(next) => {
-        if (!pending) onOpenChange(next);
+        if (dismissible) onOpenChange(next);
       }}
     >
       <AlertDialogContent onCloseAutoFocus={onCloseAutoFocus} {...(description ? {} : { "aria-describedby": undefined })}>
@@ -76,7 +82,7 @@ export function ConfirmDialog({
         </AlertDialogHeader>
         {children}
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={pending}>{cancelLabel}</AlertDialogCancel>
+          <AlertDialogCancel disabled={!dismissible}>{pending ? (pendingCancelLabel ?? cancelLabel) : cancelLabel}</AlertDialogCancel>
           <Button variant={destructive ? "destructive" : "default"} disabled={pending} onClick={() => void confirm()}>
             {/* The spinner is decoration: the label already says it is pending. */}
             {pending ? <Spinner className="size-4" aria-hidden /> : null}

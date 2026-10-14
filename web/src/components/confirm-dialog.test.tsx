@@ -8,7 +8,7 @@ import { ConfirmDialog, type ConfirmDialogProps } from "@/components/confirm-dia
 function Harness({
   onConfirm,
   ...rest
-}: { onConfirm: () => void | Promise<void> } & Partial<Pick<ConfirmDialogProps, "destructive" | "description">>) {
+}: { onConfirm: () => void | Promise<void> } & Partial<Pick<ConfirmDialogProps, "destructive" | "description" | "pendingCancelLabel">>) {
   const [open, setOpen] = useState(true);
   return (
     <>
@@ -73,6 +73,21 @@ describe("ConfirmDialog", () => {
     expect(screen.getByRole("alertdialog")).toBeInTheDocument();
     finish();
     expect(await screen.findByText("closed")).toBeInTheDocument();
+  });
+
+  it("can be closed while a long action runs when it says so", async () => {
+    const user = userEvent.setup();
+    let finish: () => void = () => {};
+    const onConfirm = vi.fn(() => new Promise<void>((resolve) => (finish = resolve)));
+    render(<Harness onConfirm={onConfirm} pendingCancelLabel="Close" />);
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Remove" }));
+    await screen.findByRole("button", { name: "Removing…" });
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.getByText("closed")).toBeInTheDocument();
+    finish();
+    await vi.waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(1));
+    expect(screen.getByText("closed")).toBeInTheDocument();
   });
 
   it("closes on Escape when nothing is pending", async () => {

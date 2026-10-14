@@ -6,14 +6,7 @@ import { Label } from "@/components/ui/label";
 import { InlineError } from "@/components/inline-error";
 import { NativeSelect } from "@/components/native-select";
 import { Spinner } from "@/components/ui/spinner";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { ResponsiveDialog } from "@/components/responsive-dialog";
 import { useServerPath } from "@/context/use-server-path";
 import { returnFocusTo } from "@/lib/focus";
 import { serverSettingsSub } from "@/lib/routes";
@@ -68,14 +61,25 @@ export function BackupStorageDialog({
   }, [open, load]);
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md" onCloseAutoFocus={returnFocusTo(returnFocus)}>
-        <DialogHeader>
-          <DialogTitle>{turnOn ? `Turn on ${backup}` : `Storage of ${backup}`}</DialogTitle>
-          <DialogDescription>
-            {turnOn ? "Pick the storage its copies go to." : "Pick the storage its copies go to from now on."}
-          </DialogDescription>
-        </DialogHeader>
+    <ResponsiveDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      className="sm:max-w-md"
+      onCloseAutoFocus={returnFocusTo(returnFocus)}
+      title={turnOn ? `Turn on ${backup}` : `Storage of ${backup}`}
+      description={turnOn ? "Pick the storage its copies go to." : "Pick the storage its copies go to from now on."}
+      footer={
+        <>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button disabled={!picked || busy} onClick={() => onPick(picked)}>
+            {busy ? (turnOn ? "Turning on…" : "Saving…") : turnOn ? "Turn on" : "Save"}
+          </Button>
+        </>
+      }
+    >
+      <div className="grid gap-4">
         {error ? (
           <InlineError>{error}</InlineError>
         ) : names === null ? (
@@ -102,18 +106,8 @@ export function BackupStorageDialog({
             </NativeSelect>
           </div>
         )}
-        {saveError ? (
-          <InlineError className="[overflow-wrap:anywhere]">{saveError}</InlineError>
-        ) : null}
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
-          </Button>
-          <Button disabled={!picked || busy} onClick={() => onPick(picked)}>
-            {busy ? (turnOn ? "Turning on…" : "Saving…") : turnOn ? "Turn on" : "Save"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        {saveError ? <InlineError className="[overflow-wrap:anywhere]">{saveError}</InlineError> : null}
+      </div>
+    </ResponsiveDialog>
   );
 }

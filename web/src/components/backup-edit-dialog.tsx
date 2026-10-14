@@ -6,18 +6,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Disclosure } from "@/components/disclosure";
 import { InlineError } from "@/components/inline-error";
 import { NativeSelect } from "@/components/native-select";
 import { PathsField, ScheduleSelect } from "@/components/backup-fields";
+import { ResponsiveDialog } from "@/components/responsive-dialog";
 import {
   cappedNote,
   changed,
@@ -204,186 +197,189 @@ export function BackupEditDialog({
   );
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg"
-        onCloseAutoFocus={returnFocusTo(returnFocus)}
-      >
-        <form
-          className="grid gap-4"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (!problem && !busy) onSave(entry());
-          }}
-        >
-          <DialogHeader>
-            <DialogTitle>Edit backup {b.name}</DialogTitle>
-            <DialogDescription>
-              {custom ? "Runs its own backup tool" : b.type === "sqlite" ? "A SQLite database file" : "Folders and files"}
-              {b.in_recipe ? ", declared by the compose file." : ", added here."}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-3 rounded-md border p-3 text-sm">
-            <div className="flex items-center justify-between gap-3">
-              <Label htmlFor="backup-enabled" className="font-medium">
-                {custom ? "Run its backup tool" : "Back up on schedule"}
-              </Label>
-              <Switch id="backup-enabled" checked={enabled} disabled={busy || !b.storage} onCheckedChange={setEnabled} />
-            </div>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span>
-                <span className="font-medium">Storage</span>{" "}
-                <span className="font-mono text-muted-foreground [overflow-wrap:anywhere]">{b.storage || "none"}</span>
-              </span>
-              {onChangeStorage ? (
-                <Button type="button" variant="outline" size="sm" disabled={busy} onClick={onChangeStorage}>
-                  {b.storage ? "Change storage…" : "Pick a storage…"}
-                </Button>
-              ) : null}
-            </div>
-            {b.storage ? null : <p className="text-xs text-muted-foreground">Pick a storage to turn the backup on: its copies go there.</p>}
+    <ResponsiveDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      className="sm:max-w-lg"
+      onCloseAutoFocus={returnFocusTo(returnFocus)}
+      title={`Edit backup ${b.name}`}
+      description={
+        <>
+          {custom ? "Runs its own backup tool" : b.type === "sqlite" ? "A SQLite database file" : "Folders and files"}
+          {b.in_recipe ? ", declared by the compose file." : ", added here."}
+        </>
+      }
+      footer={
+        <div className="flex w-full flex-col-reverse gap-2 sm:flex-row sm:justify-between">
+          {onRemove ? (
+            <Button type="button" variant="ghost" className="text-destructive hover:text-destructive" disabled={busy} onClick={onRemove}>
+              Remove backup
+            </Button>
+          ) : (
+            <span />
+          )}
+          <div className="flex flex-col-reverse gap-2 sm:flex-row">
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" form="backup-edit-form" disabled={!!problem || busy}>
+              {busy ? "Saving…" : "Save"}
+            </Button>
           </div>
-          {custom ? null : (
-          <fieldset disabled={busy} className="grid min-w-0 gap-3">
+        </div>
+      }
+    >
+      <form
+        id="backup-edit-form"
+        className="grid gap-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!problem && !busy) onSave(entry());
+        }}
+      >
+        <div className="grid gap-3 rounded-md border p-3 text-sm">
+          <div className="flex items-center justify-between gap-3">
+            <Label htmlFor="backup-enabled" className="font-medium">
+              {custom ? "Run its backup tool" : "Back up on schedule"}
+            </Label>
+            <Switch id="backup-enabled" checked={enabled} disabled={busy || !b.storage} onCheckedChange={setEnabled} />
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span>
+              <span className="font-medium">Storage</span>{" "}
+              <span className="font-mono text-muted-foreground [overflow-wrap:anywhere]">{b.storage || "none"}</span>
+            </span>
+            {onChangeStorage ? (
+              <Button type="button" variant="outline" size="sm" disabled={busy} onClick={onChangeStorage}>
+                {b.storage ? "Change storage…" : "Pick a storage…"}
+              </Button>
+            ) : null}
+          </div>
+          {b.storage ? null : <p className="text-xs text-muted-foreground">Pick a storage to turn the backup on: its copies go there.</p>}
+        </div>
+        {custom ? null : (
+        <fieldset disabled={busy} className="grid min-w-0 gap-3">
+          {section(
+            "schedule",
+            "Schedule",
+            <ScheduleSelect
+              aria-label="Schedule"
+              value={every}
+              onChange={(v) => {
+                setEvery(v);
+                touch("schedule");
+              }}
+            />,
+          )}
+          <Disclosure label="Advanced" open={advancedOpen} onOpenChange={setAdvancedOpen}>
             {section(
-              "schedule",
-              "Schedule",
-              <ScheduleSelect
-                aria-label="Schedule"
-                value={every}
-                onChange={(v) => {
-                  setEvery(v);
-                  touch("schedule");
-                }}
-              />,
+              "retention",
+              "Keep",
+              <>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  {(
+                    [
+                      ["Every copy for", recent, setRecent, "keep-recent"],
+                      ["Daily copies", daily, setDaily, "keep-daily"],
+                      ["Monthly copies", monthly, setMonthly, "keep-monthly"],
+                    ] as const
+                  ).map(([label, value, set, id]) => (
+                    <div key={id} className="grid gap-1">
+                      <Label htmlFor={id} className="text-xs font-normal text-muted-foreground">
+                        {label}
+                      </Label>
+                      <Input
+                        id={id}
+                        value={value}
+                        onChange={(e) => {
+                          set(e.target.value);
+                          touch("retention");
+                        }}
+                      />
+                    </div>
+                  ))}
+                </div>
+                {note ? <p className="text-xs text-muted-foreground">{note}</p> : null}
+              </>,
             )}
-            <Disclosure label="Advanced" open={advancedOpen} onOpenChange={setAdvancedOpen}>
-              {section(
-                "retention",
-                "Keep",
-                <>
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                    {(
-                      [
-                        ["Every copy for", recent, setRecent, "keep-recent"],
-                        ["Daily copies", daily, setDaily, "keep-daily"],
-                        ["Monthly copies", monthly, setMonthly, "keep-monthly"],
-                      ] as const
-                    ).map(([label, value, set, id]) => (
-                      <div key={id} className="grid gap-1">
-                        <Label htmlFor={id} className="text-xs font-normal text-muted-foreground">
-                          {label}
-                        </Label>
-                        <Input
-                          id={id}
-                          value={value}
-                          onChange={(e) => {
-                            set(e.target.value);
-                            touch("retention");
-                          }}
-                        />
-                      </div>
-                    ))}
-                  </div>
-                  {note ? <p className="text-xs text-muted-foreground">{note}</p> : null}
-                </>,
-              )}
-              {section(
-                "location",
-                "Location",
-                <>
-                  <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-2">
-                    <NativeSelect
-                      aria-label="Location kind"
-                      value={where}
-                      onChange={(e) => {
-                        const next = e.target.value as "volume" | "service";
-                        setWhere(next);
-                        // Back to the backup's own kind: its own volume or service.
-                        const own = next === "volume" ? b.volume : b.service;
-                        setTarget(own ?? (next === "volume" ? (targets?.volumes[0] ?? "") : (services[0]?.name ?? "")));
-                        // A volume's paths are relative, a service's absolute: a
-                        // path typed for the other kind means nothing here.
-                        const fits = (p: string) => (next === "service" ? p.startsWith("/") : !p.startsWith("/"));
-                        setPathsByKind((m) => ({ ...m, [where]: pathsText }));
-                        setPathsText(pathsByKind[next] ?? (pathList.every(fits) ? pathsText : ""));
-                        setPathsEdited(true);
-                        touch("location");
-                      }}
-                    >
-                      <option value="volume">Volume</option>
-                      <option value="service">Service</option>
-                    </NativeSelect>
-                    <NativeSelect
-                      aria-label={where === "volume" ? "Volume" : "Service"}
-                      value={target}
-                      onChange={(e) => {
-                        setTarget(e.target.value);
-                        touch("location");
-                      }}
-                    >
-                      {[...new Set([target, ...(where === "volume" ? (targets?.volumes ?? []) : services.map((s) => s.name))])]
-                        .filter(Boolean)
-                        .map((n) => (
-                          <option key={n} value={n}>
-                            {n}
-                          </option>
-                        ))}
-                    </NativeSelect>
-                  </div>
-                  <PathsField
-                    id="backup-paths"
-                    compact
-                    type={b.type}
-                    where={where}
-                    value={pathsText}
-                    onChange={(v) => {
-                      setPathsText(v);
+            {section(
+              "location",
+              "Location",
+              <>
+                <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-2">
+                  <NativeSelect
+                    aria-label="Location kind"
+                    value={where}
+                    onChange={(e) => {
+                      const next = e.target.value as "volume" | "service";
+                      setWhere(next);
+                      // Back to the backup's own kind: its own volume or service.
+                      const own = next === "volume" ? b.volume : b.service;
+                      setTarget(own ?? (next === "volume" ? (targets?.volumes[0] ?? "") : (services[0]?.name ?? "")));
+                      // A volume's paths are relative, a service's absolute: a
+                      // path typed for the other kind means nothing here.
+                      const fits = (p: string) => (next === "service" ? p.startsWith("/") : !p.startsWith("/"));
+                      setPathsByKind((m) => ({ ...m, [where]: pathsText }));
+                      setPathsText(pathsByKind[next] ?? (pathList.every(fits) ? pathsText : ""));
                       setPathsEdited(true);
                       touch("location");
                     }}
-                  />
-                  {b.type === "files" && (b.exclude ?? []).length > 0 ? (
-                    <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
-                      Skipped{b.in_recipe && b.from_recipe?.exclude ? " (set by the compose file)" : ""}:{" "}
-                      {(b.exclude ?? []).map((x, i) => (
-                        <span key={x}>
-                          {i > 0 ? ", " : ""}
-                          <code className="font-mono text-foreground">{x}</code>
-                        </span>
+                  >
+                    <option value="volume">Volume</option>
+                    <option value="service">Service</option>
+                  </NativeSelect>
+                  <NativeSelect
+                    aria-label={where === "volume" ? "Volume" : "Service"}
+                    value={target}
+                    onChange={(e) => {
+                      setTarget(e.target.value);
+                      touch("location");
+                    }}
+                  >
+                    {[...new Set([target, ...(where === "volume" ? (targets?.volumes ?? []) : services.map((s) => s.name))])]
+                      .filter(Boolean)
+                      .map((n) => (
+                        <option key={n} value={n}>
+                          {n}
+                        </option>
                       ))}
-                    </p>
-                  ) : null}
-                </>,
-              )}
-            </Disclosure>
-          </fieldset>
-          )}
-          {error ? (
-            <InlineError icon className="[overflow-wrap:anywhere]">
-              {error}
-            </InlineError>
-          ) : null}
-          {problem ? <InlineError icon>{problem}</InlineError> : null}
-          <DialogFooter className="gap-2 sm:justify-between sm:space-x-0">
-            {onRemove ? (
-              <Button type="button" variant="ghost" className="text-destructive hover:text-destructive" disabled={busy} onClick={onRemove}>
-                Remove backup
-              </Button>
-            ) : (
-              <span />
+                  </NativeSelect>
+                </div>
+                <PathsField
+                  id="backup-paths"
+                  compact
+                  type={b.type}
+                  where={where}
+                  value={pathsText}
+                  onChange={(v) => {
+                    setPathsText(v);
+                    setPathsEdited(true);
+                    touch("location");
+                  }}
+                />
+                {b.type === "files" && (b.exclude ?? []).length > 0 ? (
+                  <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                    Skipped{b.in_recipe && b.from_recipe?.exclude ? " (set by the compose file)" : ""}:{" "}
+                    {(b.exclude ?? []).map((x, i) => (
+                      <span key={x}>
+                        {i > 0 ? ", " : ""}
+                        <code className="font-mono text-foreground">{x}</code>
+                      </span>
+                    ))}
+                  </p>
+                ) : null}
+              </>,
             )}
-            <div className="flex flex-col-reverse gap-2 sm:flex-row">
-              <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={!!problem || busy}>
-                {busy ? "Saving…" : "Save"}
-              </Button>
-            </div>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+          </Disclosure>
+        </fieldset>
+        )}
+        {error ? (
+          <InlineError icon className="[overflow-wrap:anywhere]">
+            {error}
+          </InlineError>
+        ) : null}
+        {problem ? <InlineError icon>{problem}</InlineError> : null}
+      </form>
+    </ResponsiveDialog>
   );
 }

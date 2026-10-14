@@ -14,6 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Disclosure } from "@/components/disclosure";
 import { InlineError } from "@/components/inline-error";
 import { NativeSelect } from "@/components/native-select";
 import { PathsField, ScheduleSelect } from "@/components/backup-fields";
@@ -51,8 +52,8 @@ const keepFields = (k: EffectiveBackup["keep"]) => ({
   monthly: String(k?.monthly ?? 6),
 });
 
-// BackupEditDialog edits a sqlite or files backup's schedule, retention and
-// location. For a backup of the compose file each part is badged "from
+// BackupEditDialog edits a sqlite or files backup's schedule and, under
+// Advanced, its retention and location. For a backup of the compose file each part is badged "from
 // template" or "changed", and "Reset to template" drops the change (it
 // shows the template's value at once and applies it when saved). A backup
 // added here can be removed. The "Back up on schedule" switch turns the
@@ -87,6 +88,8 @@ export function BackupEditDialog({
   onChangeStorage?: () => void;
 }) {
   const b = backup;
+  // A custom backup runs its own tool: only its on/off and storage are here.
+  const custom = b.type === "custom";
   const [enabled, setEnabled] = useState(b.enabled);
   const [every, setEvery] = useState(b.every ?? "1h");
   const [recent, setRecent] = useState(keepFields(b.keep).recent);
@@ -104,6 +107,12 @@ export function BackupEditDialog({
   const [pathsByKind, setPathsByKind] = useState<Partial<Record<"volume" | "service", string>>>({});
   // A group the user changed, or reset to the template; never both.
   const [marks, setMarks] = useState<Map<Group, "edited" | "reset">>(new Map());
+
+  // Retention and location are Advanced. A stored value the form refuses
+  // opens them at once: Save is disabled until it is fixed.
+  const [advancedOpen, setAdvancedOpen] = useState(
+    () => !custom && !!(keepError(recent, daily, monthly) || locationError(b.type, where, target, pathsFrom(pathsText))),
+  );
 
   const touch = (g: Group) => setMarks((m) => new Map(m).set(g, "edited"));
   // resetGroup goes back to the compose file's value, shown at once.
@@ -130,8 +139,6 @@ export function BackupEditDialog({
   };
 
   const pathList = pathsFrom(pathsText);
-  // A custom backup runs its own tool: only its on/off and storage are here.
-  const custom = b.type === "custom";
   const problem = custom
     ? ""
     : everyError(every) ||
@@ -249,104 +256,106 @@ export function BackupEditDialog({
                 }}
               />,
             )}
-            {section(
-              "retention",
-              "Keep",
-              <>
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                  {(
-                    [
-                      ["Every copy for", recent, setRecent, "keep-recent"],
-                      ["Daily copies", daily, setDaily, "keep-daily"],
-                      ["Monthly copies", monthly, setMonthly, "keep-monthly"],
-                    ] as const
-                  ).map(([label, value, set, id]) => (
-                    <div key={id} className="grid gap-1">
-                      <Label htmlFor={id} className="text-xs font-normal text-muted-foreground">
-                        {label}
-                      </Label>
-                      <Input
-                        id={id}
-                        value={value}
-                        onChange={(e) => {
-                          set(e.target.value);
-                          touch("retention");
-                        }}
-                      />
-                    </div>
-                  ))}
-                </div>
-                {note ? <p className="text-xs text-muted-foreground">{note}</p> : null}
-              </>,
-            )}
-            {section(
-              "location",
-              "Location",
-              <>
-                <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-2">
-                  <NativeSelect
-                    aria-label="Location kind"
-                    value={where}
-                    onChange={(e) => {
-                      const next = e.target.value as "volume" | "service";
-                      setWhere(next);
-                      // Back to the backup's own kind: its own volume or service.
-                      const own = next === "volume" ? b.volume : b.service;
-                      setTarget(own ?? (next === "volume" ? (targets?.volumes[0] ?? "") : (services[0]?.name ?? "")));
-                      // A volume's paths are relative, a service's absolute: a
-                      // path typed for the other kind means nothing here.
-                      const fits = (p: string) => (next === "service" ? p.startsWith("/") : !p.startsWith("/"));
-                      setPathsByKind((m) => ({ ...m, [where]: pathsText }));
-                      setPathsText(pathsByKind[next] ?? (pathList.every(fits) ? pathsText : ""));
+            <Disclosure label="Advanced" open={advancedOpen} onOpenChange={setAdvancedOpen}>
+              {section(
+                "retention",
+                "Keep",
+                <>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                    {(
+                      [
+                        ["Every copy for", recent, setRecent, "keep-recent"],
+                        ["Daily copies", daily, setDaily, "keep-daily"],
+                        ["Monthly copies", monthly, setMonthly, "keep-monthly"],
+                      ] as const
+                    ).map(([label, value, set, id]) => (
+                      <div key={id} className="grid gap-1">
+                        <Label htmlFor={id} className="text-xs font-normal text-muted-foreground">
+                          {label}
+                        </Label>
+                        <Input
+                          id={id}
+                          value={value}
+                          onChange={(e) => {
+                            set(e.target.value);
+                            touch("retention");
+                          }}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  {note ? <p className="text-xs text-muted-foreground">{note}</p> : null}
+                </>,
+              )}
+              {section(
+                "location",
+                "Location",
+                <>
+                  <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-2">
+                    <NativeSelect
+                      aria-label="Location kind"
+                      value={where}
+                      onChange={(e) => {
+                        const next = e.target.value as "volume" | "service";
+                        setWhere(next);
+                        // Back to the backup's own kind: its own volume or service.
+                        const own = next === "volume" ? b.volume : b.service;
+                        setTarget(own ?? (next === "volume" ? (targets?.volumes[0] ?? "") : (services[0]?.name ?? "")));
+                        // A volume's paths are relative, a service's absolute: a
+                        // path typed for the other kind means nothing here.
+                        const fits = (p: string) => (next === "service" ? p.startsWith("/") : !p.startsWith("/"));
+                        setPathsByKind((m) => ({ ...m, [where]: pathsText }));
+                        setPathsText(pathsByKind[next] ?? (pathList.every(fits) ? pathsText : ""));
+                        setPathsEdited(true);
+                        touch("location");
+                      }}
+                    >
+                      <option value="volume">Volume</option>
+                      <option value="service">Service</option>
+                    </NativeSelect>
+                    <NativeSelect
+                      aria-label={where === "volume" ? "Volume" : "Service"}
+                      value={target}
+                      onChange={(e) => {
+                        setTarget(e.target.value);
+                        touch("location");
+                      }}
+                    >
+                      {[...new Set([target, ...(where === "volume" ? (targets?.volumes ?? []) : services.map((s) => s.name))])]
+                        .filter(Boolean)
+                        .map((n) => (
+                          <option key={n} value={n}>
+                            {n}
+                          </option>
+                        ))}
+                    </NativeSelect>
+                  </div>
+                  <PathsField
+                    id="backup-paths"
+                    compact
+                    type={b.type}
+                    where={where}
+                    value={pathsText}
+                    onChange={(v) => {
+                      setPathsText(v);
                       setPathsEdited(true);
                       touch("location");
                     }}
-                  >
-                    <option value="volume">Volume</option>
-                    <option value="service">Service</option>
-                  </NativeSelect>
-                  <NativeSelect
-                    aria-label={where === "volume" ? "Volume" : "Service"}
-                    value={target}
-                    onChange={(e) => {
-                      setTarget(e.target.value);
-                      touch("location");
-                    }}
-                  >
-                    {[...new Set([target, ...(where === "volume" ? (targets?.volumes ?? []) : services.map((s) => s.name))])]
-                      .filter(Boolean)
-                      .map((n) => (
-                        <option key={n} value={n}>
-                          {n}
-                        </option>
+                  />
+                  {b.type === "files" && (b.exclude ?? []).length > 0 ? (
+                    <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                      Skipped{b.in_recipe && b.from_recipe?.exclude ? " (set by the compose file)" : ""}:{" "}
+                      {(b.exclude ?? []).map((x, i) => (
+                        <span key={x}>
+                          {i > 0 ? ", " : ""}
+                          <code className="font-mono text-foreground">{x}</code>
+                        </span>
                       ))}
-                  </NativeSelect>
-                </div>
-                <PathsField
-                  id="backup-paths"
-                  compact
-                  type={b.type}
-                  where={where}
-                  value={pathsText}
-                  onChange={(v) => {
-                    setPathsText(v);
-                    setPathsEdited(true);
-                    touch("location");
-                  }}
-                />
-                {b.type === "files" && (b.exclude ?? []).length > 0 ? (
-                  <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
-                    Skipped{b.in_recipe && b.from_recipe?.exclude ? " (set by the compose file)" : ""}:{" "}
-                    {(b.exclude ?? []).map((x, i) => (
-                      <span key={x}>
-                        {i > 0 ? ", " : ""}
-                        <code className="font-mono text-foreground">{x}</code>
-                      </span>
-                    ))}
-                  </p>
-                ) : null}
-              </>,
-            )}
+                    </p>
+                  ) : null}
+                </>,
+              )}
+            </Disclosure>
           </fieldset>
           )}
           {error ? (

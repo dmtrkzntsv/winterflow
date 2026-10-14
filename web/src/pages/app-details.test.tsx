@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Link, MemoryRouter, Outlet, Route, Routes, useLocation } from "react-router-dom";
@@ -20,7 +21,14 @@ vi.mock("@/components/app-metrics", () => ({ AppMetricBlocks: () => null, AppMet
 // The stale shared-variables badge has its own tests (it subscribes to
 // notifications).
 vi.mock("@/components/stale-vars-badge", () => ({ StaleVarsBadge: () => null }));
-vi.mock("@/components/app-editor-panel", () => ({ AppEditorPanel: () => <p>the plain editor</p> }));
+vi.mock("@/components/app-editor-panel", () => ({
+  AppEditorPanel: ({ headerActions }: { headerActions?: ReactNode }) => (
+    <div>
+      {headerActions}
+      <p>the plain editor</p>
+    </div>
+  ),
+}));
 vi.mock("@/components/code-editor", () => ({
   CodeEditor: ({ value, filename }: { value: string; filename?: string }) => (
     <pre aria-label={`Content of ${filename}`}>{value}</pre>
@@ -73,6 +81,7 @@ function renderPage(
     statusByApp: { a1: 1 },
     backupsByApp,
     control: vi.fn(),
+    getRevisions: vi.fn(async () => ({ current: "", deployed: "", revisions: [] })),
     remove,
     rename: vi.fn(),
     refresh,
@@ -159,6 +168,20 @@ describe("AppDetailsPage", () => {
     unmount();
     renderPage("/app/a1?tab=editor");
     expect(await screen.findByRole("tab", { name: "Configuration" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("opens History from Configuration's bar; History is no tab any more", async () => {
+    const user = userEvent.setup();
+    const getRevisions = vi.fn(async () => ({
+      current: "bbbbbbbb",
+      deployed: "bbbbbbbb",
+      revisions: [{ hash: "bbbbbbbb", subject: "Changed compose.yml", timestamp: 2 }],
+    }));
+    renderPage("/app/a1?tab=configuration", {}, { ctx: { getRevisions } });
+    expect(screen.queryByRole("tab", { name: "History" })).not.toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "History" }));
+    const sheet = await screen.findByRole("dialog", { name: "History" });
+    expect(await within(sheet).findByText("Changed compose.yml")).toBeInTheDocument();
   });
 
   it("marks the Backups tab when a backup is late or failing", async () => {

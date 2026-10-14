@@ -56,8 +56,9 @@ export function templatePath(templateId: string): string {
 }
 
 // LEGACY_APP_TABS maps an app page ?tab= value of before the rebuild to
-// its new name (the URL is rewritten in place).
-export const LEGACY_APP_TABS = { editor: "configuration" } as const satisfies Record<string, AppTab>;
+// its new name (the URL is rewritten in place). History is a side sheet
+// now: useHistorySheet opens it for an old ?tab=history.
+export const LEGACY_APP_TABS = { editor: "configuration", history: "configuration" } as const satisfies Record<string, AppTab>;
 
 // legacyServerSettingsTarget is where /server/:id/settings?tab=… went:
 // each tab is a page of Settings → Server now, the server's variables are

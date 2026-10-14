@@ -73,6 +73,7 @@ describe("legacy URLs", () => {
 
   it("renames the app page's Editor tab to Configuration", () => {
     expect(LEGACY_APP_TABS.editor).toBe("configuration");
+    expect(LEGACY_APP_TABS.history).toBe("configuration");
   });
 
   it("carries the old query and hash over, merged into the target's own query (its params win)", () => {

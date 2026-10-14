@@ -60,6 +60,23 @@ describe("AppEditorPanel", () => {
     expect(refresh).toHaveBeenCalled();
   });
 
+  it("puts the page's actions in its bar, before the Save buttons", async () => {
+    const value = {
+      getApp: vi.fn(async () => detail),
+      saveApp: vi.fn(),
+      getPublicKey: vi.fn(async () => "K"),
+      refresh: vi.fn(async () => {}),
+    } as unknown as AppsContextValue;
+    render(
+      <AppsContext.Provider value={value}>
+        <AppEditorPanel appId="a1" headerActions={<button type="button">History</button>} />
+      </AppsContext.Provider>,
+    );
+    const history = await screen.findByRole("button", { name: "History" });
+    const save = screen.getByRole("button", { name: "Save & redeploy" });
+    expect(history.compareDocumentPosition(save) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("reports any other refusal as before", async () => {
     const user = userEvent.setup();
     const refresh = renderPanel(vi.fn(async () => Promise.reject(new Error("no storage nope"))));

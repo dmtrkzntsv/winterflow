@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ArrowUpCircle,
   ExternalLink,
+  History,
   Play,
   RotateCw,
   ScrollText,
@@ -18,12 +19,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { TabsContent } from "@/components/ui/tabs";
 import { UnderlineTabs } from "@/components/underline-tabs";
+import { useHistorySheet } from "@/hooks/use-history-sheet";
 import { useTabParam } from "@/hooks/use-tab-param";
 import { LEGACY_APP_TABS, templatePath } from "@/lib/routes";
 import { Spinner } from "@/components/ui/spinner";
 import { AppLogsTab } from "@/components/app-page/app-logs-tab";
 import { AppSettingsTab } from "@/components/app-page/app-settings-tab";
-import { HistoryPanel } from "@/components/app-page/history-panel";
+import { HistorySheet } from "@/components/app-page/history-sheet";
 import type { Ownership } from "@/components/app-page/ownership";
 import { AppIcon } from "@/components/app-icon";
 import { AppBackups } from "@/components/app-backups";
@@ -50,8 +52,7 @@ import { cn } from "@/lib/utils";
 import { useServerPath } from "@/context/use-server-path";
 import { NotFound } from "@/components/not-found";
 
-// History stays a tab until phase 2 turns it into a side sheet.
-const TABS = ["logs", "metrics", "configuration", "backups", "history", "settings"] as const;
+const TABS = ["logs", "metrics", "configuration", "backups", "settings"] as const;
 type Tab = (typeof TABS)[number];
 
 export default function AppDetailsPage() {
@@ -62,6 +63,7 @@ export default function AppDetailsPage() {
   const templatesApi = useTemplatesApi();
 
   const [tab, setTab] = useTabParam<Tab>(TABS, "logs", { aliases: LEGACY_APP_TABS });
+  const [historyOpen, setHistoryOpen] = useHistorySheet();
 
   const app = useMemo(() => apps.find((a) => a.id === appId), [apps, appId]);
   const lookup = useAppInstance(app);
@@ -293,7 +295,6 @@ export default function AppDetailsPage() {
               </>
             ),
           },
-          { value: "history", label: "History" },
           { value: "settings", label: "Settings" },
         ]}
       >
@@ -304,13 +305,19 @@ export default function AppDetailsPage() {
           <AppMetricsTab serverId={app.serverId} appId={app.id} appName={appLabel(app.name, app.id)} />
         </TabsContent>
         <TabsContent value="configuration" className="mt-0">
-          <ConfigurationTab appId={app.id} ownership={ownership} onSaved={reloadManaged} />
+          <ConfigurationTab
+            appId={app.id}
+            ownership={ownership}
+            onSaved={reloadManaged}
+            headerActions={
+              <Button variant="outline" onClick={() => setHistoryOpen(true)}>
+                <History className="size-4" aria-hidden /> History
+              </Button>
+            }
+          />
         </TabsContent>
         <TabsContent value="backups" className="mt-6">
           <AppBackups appId={app.id} />
-        </TabsContent>
-        <TabsContent value="history" className="mt-6">
-          <HistoryPanel appId={app.id} ownership={ownership} />
         </TabsContent>
         <TabsContent value="settings" className="mt-6">
           <AppSettingsTab
@@ -327,6 +334,8 @@ export default function AppDetailsPage() {
           />
         </TabsContent>
       </UnderlineTabs>
+
+      <HistorySheet key={app.id} appId={app.id} ownership={ownership} open={historyOpen} onOpenChange={setHistoryOpen} />
     </div>
   );
 }
@@ -340,8 +349,18 @@ const CONTROL_DONE: Record<ControlAction, string> = {
 
 // ConfigurationTab is the app's editor, or for an app a template manages
 // its instance's parameters (never the plain editor, whose save would be
-// refused).
-function ConfigurationTab({ appId, ownership, onSaved }: { appId: string; ownership: Ownership; onSaved: () => void }) {
+// refused). headerActions (the History button) go in either panel's bar.
+function ConfigurationTab({
+  appId,
+  ownership,
+  onSaved,
+  headerActions,
+}: {
+  appId: string;
+  ownership: Ownership;
+  onSaved: () => void;
+  headerActions?: ReactNode;
+}) {
   if (ownership?.error) return <LoadError message={ownership.error} onRetry={() => void ownership.reload()} />;
   if (ownership?.loading) return <PageSpinner />;
   if (ownership?.instance && ownership.current) {
@@ -352,8 +371,9 @@ function ConfigurationTab({ appId, ownership, onSaved }: { appId: string; owners
         instance={inst}
         current={ownership.current}
         onSaved={onSaved}
+        headerActions={headerActions}
       />
     );
   }
-  return <AppEditorPanel appId={appId} />;
+  return <AppEditorPanel appId={appId} headerActions={headerActions} />;
 }

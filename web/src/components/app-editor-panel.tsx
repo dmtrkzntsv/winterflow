@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -18,7 +18,9 @@ import type { AppEditorState } from "@/types/app-config";
 // AppEditorPanel is the Editor tab on the app details page: it loads the
 // app's current revision, lets the user edit compose/files/variables, and
 // saves in place (app.save with the app id → new revision + redeploy).
-export function AppEditorPanel({ appId }: { appId: string }) {
+// headerActions (the page's History button) sit in the action bar before
+// the Save buttons.
+export function AppEditorPanel({ appId, headerActions }: { appId: string; headerActions?: ReactNode }) {
   const { saveApp, getApp, getPublicKey, refresh } = useApps();
   const [state, setState] = useState<AppEditorState>(emptyEditorState);
   const [loading, setLoading] = useState(true);
@@ -102,6 +104,7 @@ export function AppEditorPanel({ appId }: { appId: string }) {
             "Every save is kept in History, so you can roll back."
           )}
         </p>
+        {headerActions}
         <Button
           variant="ghost"
           onClick={() => void load()}

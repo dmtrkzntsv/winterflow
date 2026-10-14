@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { FileText } from "lucide-react";
 import { toast } from "sonner";
@@ -30,10 +30,13 @@ export function InstancePanel({
   instance,
   current,
   onSaved,
+  headerActions,
 }: {
   instance: InstanceView;
   current: TemplateView;
   onSaved: () => void;
+  // headerActions sit in the bar before Save (the page's History button).
+  headerActions?: ReactNode;
 }) {
   const api = useTemplatesApi();
   const initial = useMemo(() => storedValues(current, instance), [current, instance]);
@@ -86,6 +89,7 @@ export function InstancePanel({
           </Link>{" "}
           r{instance.revision}. Change the files in the template, or unlink the app in Settings.
         </p>
+        {headerActions}
         <Button onClick={() => void save()} disabled={saving || (!dirty && instance.state === "created")}>
           {saving ? "Saving…" : "Save & redeploy"}
         </Button>

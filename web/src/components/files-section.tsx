@@ -116,11 +116,24 @@ export function FileEditors({
   );
 }
 
-type Props = Omit<FileEditorsProps, "addLabel"> & { description: ReactNode };
+type Props = Omit<FileEditorsProps, "addLabel"> & {
+  description: ReactNode;
+  // emptyNote stands in for no files (default: add a compose file).
+  emptyNote?: ReactNode;
+};
 
 // FilesSection is the editor row of files: an explanation, "Add file", and
 // the files. errors.files (no compose file) stands in for the empty note.
-export function FilesSection({ files, contents, onChange, description, allowSecret = true, imageChips = true, errors = {} }: Props) {
+export function FilesSection({
+  files,
+  contents,
+  onChange,
+  description,
+  emptyNote,
+  allowSecret = true,
+  imageChips = true,
+  errors = {},
+}: Props) {
   const add = () => {
     const next = addFile(files, contents);
     onChange(next.files, next.contents);
@@ -139,7 +152,11 @@ export function FilesSection({ files, contents, onChange, description, allowSecr
         <FieldMessage id="files" message={errors.files} className="text-sm" />
       ) : files.length === 0 ? (
         <EmptyNote>
-          Add at least a <code>compose.yml</code>.
+          {emptyNote ?? (
+            <>
+              Add at least a <code>compose.yml</code>.
+            </>
+          )}
         </EmptyNote>
       ) : null}
       {files.length > 0 ? (

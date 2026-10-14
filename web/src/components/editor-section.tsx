@@ -60,12 +60,13 @@ export function EditorSection({
 }
 
 // StickyActionBar is an editor's bar of actions (Save, Cancel, …) that
-// stays at the top while its long form scrolls.
+// stays at the top while its long form scrolls; below 1024px it sits under
+// the shell's 56px top bar.
 export function StickyActionBar({ className, children }: { className?: string; children: ReactNode }) {
   return (
     <div
       className={cn(
-        "sticky top-0 z-10 -mx-4 flex flex-wrap items-center gap-2 border-b bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80",
+        "sticky top-0 z-10 max-lg:top-14 -mx-4 flex flex-wrap items-center gap-2 border-b bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80",
         className,
       )}
     >

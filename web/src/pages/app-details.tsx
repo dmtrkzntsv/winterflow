@@ -273,6 +273,7 @@ export default function AppDetailsPage() {
             ownership={ownership}
             onSaved={reloadManaged}
             headerActions={historyButton}
+            onOpenHistory={() => setHistoryOpen(true)}
           />
         </TabsContent>
         <TabsContent value="backups" className="mt-6">
@@ -310,11 +311,13 @@ function ConfigurationTab({
   ownership,
   onSaved,
   headerActions,
+  onOpenHistory,
 }: {
   appId: string;
   ownership: Ownership;
   onSaved: () => void;
   headerActions?: ReactNode;
+  onOpenHistory?: () => void;
 }) {
   if (ownership?.error) return <LoadError message={ownership.error} onRetry={() => void ownership.reload()} />;
   if (ownership?.loading) return <PageSpinner />;
@@ -330,5 +333,5 @@ function ConfigurationTab({
       />
     );
   }
-  return <AppEditorPanel appId={appId} headerActions={headerActions} />;
+  return <AppEditorPanel appId={appId} headerActions={headerActions} onOpenHistory={onOpenHistory} />;
 }

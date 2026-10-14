@@ -248,12 +248,6 @@ export function editorErrors(state: AppEditorState): FieldErrors {
   return out;
 }
 
-// validateEditorState is editorErrors' first message (null when none).
-// Removed once every caller shows messages by field.
-export function validateEditorState(state: AppEditorState): string | null {
-  return Object.values(editorErrors(state))[0] ?? null;
-}
-
 // mapItem encrypts a secret value/file, passes the "<encrypted>" placeholder
 // through unchanged (preserve the stored secret), and sends plaintext as-is.
 async function mapItem(

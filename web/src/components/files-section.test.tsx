@@ -17,7 +17,17 @@ vi.mock("@/components/image-tag-picker", () => ({
   ),
 }));
 
-function Harness({ allowSecret, imageChips, errors }: { allowSecret?: boolean; imageChips?: boolean; errors?: Record<string, string> }) {
+function Harness({
+  allowSecret,
+  imageChips,
+  errors,
+  emptyNote,
+}: {
+  allowSecret?: boolean;
+  imageChips?: boolean;
+  errors?: Record<string, string>;
+  emptyNote?: string;
+}) {
   const [files, setFiles] = useState<AppFileMeta[]>([{ id: "f1", filename: "compose.yml", is_encrypted: false }]);
   const [contents, setContents] = useState<Record<string, string>>({ f1: "services:\n  app:\n    image: nginx:1\n" });
   return (
@@ -33,6 +43,7 @@ function Harness({ allowSecret, imageChips, errors }: { allowSecret?: boolean; i
         allowSecret={allowSecret}
         imageChips={imageChips}
         errors={errors}
+        emptyNote={emptyNote}
       />
       <output aria-label="state">{JSON.stringify({ files, contents })}</output>
     </>
@@ -71,6 +82,14 @@ describe("FilesSection", () => {
     expect(screen.queryByRole("button", { name: /tags of/ })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Remove compose.yml" }));
     expect(screen.getByText(/Add at least a/)).toBeInTheDocument();
+  });
+
+  it("says its own empty note instead of asking for a compose file", async () => {
+    const user = userEvent.setup();
+    render(<Harness emptyNote="The repository's compose file runs." />);
+    await user.click(screen.getByRole("button", { name: "Remove compose.yml" }));
+    expect(screen.getByText("The repository's compose file runs.")).toBeInTheDocument();
+    expect(screen.queryByText(/Add at least a/)).not.toBeInTheDocument();
   });
 });
 

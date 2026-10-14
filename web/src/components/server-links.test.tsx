@@ -1,13 +1,15 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AppSidebar } from "@/components/app-sidebar";
 import { DefaultServer } from "@/components/server-routes";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarContext, type SidebarContextProps } from "@/components/ui/use-sidebar";
+import { NotificationsContext, type NotificationsContextValue } from "@/context/notifications-context-base";
 import HomePage from "@/pages/home";
+import { fakeAPI } from "@/test/fake-api";
 
 // Every link and switch on the dashboard and in the sidebar stays inside the
 // active server's scope (/server/:id/...).
@@ -54,26 +56,33 @@ const sidebar: SidebarContextProps = {
   toggleSidebar: () => {},
 };
 
+// New app opens the chooser, which reads the organization's templates.
+const notifications = { connected: true, subscribe: () => () => {}, waitFor: vi.fn() } as NotificationsContextValue;
+
 function renderAt(url: string) {
   return render(
     <MemoryRouter initialEntries={[url]}>
-      <TooltipProvider>
-        <SidebarContext.Provider value={sidebar}>
-          <AppSidebar />
-          <Routes>
-            <Route element={<Outlet />}>
-              <Route path="/" element={<DefaultServer fallback={<p>no servers</p>} />} />
-              <Route path="/server/s1" element={<main><HomePage /></main>} />
-              <Route path="/server/s1/new" element={<p>create page</p>} />
-            </Route>
-          </Routes>
-        </SidebarContext.Provider>
-      </TooltipProvider>
+      <NotificationsContext.Provider value={notifications}>
+        <TooltipProvider>
+          <SidebarContext.Provider value={sidebar}>
+            <AppSidebar />
+            <Routes>
+              <Route element={<Outlet />}>
+                <Route path="/" element={<DefaultServer fallback={<p>no servers</p>} />} />
+                <Route path="/server/s1" element={<main><HomePage /></main>} />
+                <Route path="/server/s1/new" element={<p>create page</p>} />
+              </Route>
+            </Routes>
+          </SidebarContext.Provider>
+        </TooltipProvider>
+      </NotificationsContext.Provider>
     </MemoryRouter>,
   );
 }
 
 describe("server-scoped links", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
   it("points the sidebar and the app grid into the active server", async () => {
     renderAt("/server/s1");
     expect(screen.getByRole("link", { name: "Apps" })).toHaveAttribute("href", "/server/s1");
@@ -104,7 +113,9 @@ describe("server-scoped links", () => {
   it("opens the create page of the active server", async () => {
     const user = userEvent.setup();
     renderAt("/server/s1");
-    await user.click(within(screen.getByRole("main")).getByRole("link", { name: "New app" }));
+    fakeAPI({ "/api/v1/template/get-templates": { templates: [] } });
+    await user.click(within(screen.getByRole("main")).getByRole("button", { name: "New app" }));
+    await user.click(await screen.findByRole("link", { name: /Compose file/ }));
     expect(await screen.findByText("create page")).toBeInTheDocument();
   });
 

@@ -1,11 +1,11 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
 import { Plus, Server } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { FiringAlertsLine } from "@/components/alerts/active-alerts";
 import { AppGrid } from "@/components/app-grid";
 import { EmptyState } from "@/components/empty-state";
+import { NewAppButton } from "@/components/new-app/new-app-button";
 import { PageHeader } from "@/components/page-header";
 import { ServerSelectionDialog } from "@/components/server-creation-dialog";
 import { ServerHealthStrip } from "@/components/server-health-strip";
@@ -13,12 +13,11 @@ import { isStandalone } from "@/config";
 import { useApps } from "@/context/use-apps";
 import { useServers } from "@/context/use-servers";
 import { appsSubtitle, countApps } from "@/lib/app-summary";
-import { newAppPath } from "@/lib/routes";
 
 // HomePage is the Apps page (/server/:id): this server's apps, how many
 // run, its health in one line, firing alerts in one line, and New app (a
-// link to the new-app page; phase 3 turns it into the chooser). The other
-// servers are one switch away in the sidebar.
+// button that opens the ways to start). The other servers are one switch
+// away in the sidebar.
 export default function HomePage() {
   const { activeServer, loading, refresh } = useServers();
   const { apps, statusByApp, loading: appsLoading } = useApps();
@@ -64,11 +63,7 @@ export default function HomePage() {
             : appsSubtitle(activeServer.name, apps.length, countApps(apps, statusByApp))
         }
         actions={
-          <Button asChild>
-            <Link to={newAppPath(activeServer.id)}>
-              <Plus className="size-4" aria-hidden /> New app
-            </Link>
-          </Button>
+          <NewAppButton serverId={activeServer.id} />
         }
       />
       <div className="space-y-2">

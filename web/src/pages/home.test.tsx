@@ -1,9 +1,11 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { NotificationsContext, type NotificationsContextValue } from "@/context/notifications-context-base";
 import HomePage from "@/pages/home";
+import { fakeAPI } from "@/test/fake-api";
 
 const homelab = { id: "s1", organizationId: "o", name: "homelab", createdAt: "", lastSeenAt: null, capabilities: {} };
 let servers: { activeServer: typeof homelab | null; loading: boolean; refresh: () => Promise<void> };
@@ -20,13 +22,18 @@ vi.mock("@/components/server-creation-dialog", () => ({
   ServerSelectionDialog: ({ isOpen }: { isOpen: boolean }) => (isOpen ? <p>add server dialog</p> : null),
 }));
 
+// New app opens the chooser, which reads the organization's templates.
+const notifications = { connected: true, subscribe: () => () => {}, waitFor: vi.fn() } as NotificationsContextValue;
+
 function renderHome() {
   return render(
     <MemoryRouter initialEntries={["/server/s1"]}>
-      <Routes>
-        <Route path="/server/s1" element={<HomePage />} />
-        <Route path="/server/s1/new" element={<p>new app page</p>} />
-      </Routes>
+      <NotificationsContext.Provider value={notifications}>
+        <Routes>
+          <Route path="/server/s1" element={<HomePage />} />
+          <Route path="/server/s1/new" element={<p>new app page</p>} />
+        </Routes>
+      </NotificationsContext.Provider>
     </MemoryRouter>,
   );
 }
@@ -36,7 +43,10 @@ describe("HomePage", () => {
     servers = { activeServer: homelab, loading: false, refresh: vi.fn(async () => {}) };
     appsState = { apps: [{ id: "a1" }, { id: "a2" }, { id: "a3" }], loading: false };
     statusState = { a1: 1, a2: 1, a3: 5 };
+    fakeAPI({ "/api/v1/template/get-templates": { templates: [] } });
   });
+
+  afterEach(() => vi.unstubAllGlobals());
 
   it("names just the server until the first status report, not '0 running'", () => {
     statusState = {};
@@ -62,9 +72,9 @@ describe("HomePage", () => {
     renderHome();
     expect(screen.getByRole("heading", { level: 1, name: "Apps" })).toBeInTheDocument();
     expect(screen.getByText("homelab · 2 running · 1 stopped")).toBeInTheDocument();
-    // One primary action: New app, a link to the new-app page.
-    expect(screen.queryAllByRole("button")).toHaveLength(0);
-    expect(screen.getByRole("link", { name: "New app" })).toHaveAttribute("href", "/server/s1/new");
+    // One primary action: New app, a button that opens the chooser.
+    expect(screen.getAllByRole("button")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "New app" })).toBeInTheDocument();
     const strip = screen.getByTestId("strip");
     const grid = screen.getByTestId("grid");
     expect(strip.compareDocumentPosition(screen.getByTestId("firing")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -73,10 +83,14 @@ describe("HomePage", () => {
     expect(screen.queryByRole("region", { name: "Servers" })).not.toBeInTheDocument();
   });
 
-  it("goes to the new-app page from New app", async () => {
+  it("opens the ways to start from New app", async () => {
     const user = userEvent.setup();
     renderHome();
-    await user.click(screen.getByRole("link", { name: "New app" }));
+    await user.click(screen.getByRole("button", { name: "New app" }));
+    const dialog = await screen.findByRole("dialog", { name: "New app" });
+    const compose = within(dialog).getByRole("link", { name: /Compose file/ });
+    expect(compose).toHaveAttribute("href", "/server/s1/new?from=compose");
+    await user.click(compose);
     expect(await screen.findByText("new app page")).toBeInTheDocument();
   });
 
@@ -85,7 +99,7 @@ describe("HomePage", () => {
     servers = { ...servers, activeServer: null };
     renderHome();
     expect(screen.getByText("Add a server to run your apps on.")).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "New app" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "New app" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Add server" }));
     expect(screen.getByText("add server dialog")).toBeInTheDocument();
   });

@@ -121,9 +121,20 @@ describe("ServerHealthStrip", () => {
     expect(screen.getByRole("region", { name: "Server health" })).toHaveTextContent("No data yet");
   });
 
+  it("keeps no clock running while the server is online (nothing on screen ages)", () => {
+    const every = vi.spyOn(window, "setInterval");
+    renderStrip(server("2026-10-13T10:00:00Z"));
+    expect(every).not.toHaveBeenCalledWith(expect.any(Function), 60_000);
+    every.mockRestore();
+  });
+
   it("says the server is offline and since when", () => {
     statusByServer = { s1: "unknown" };
+    const every = vi.spyOn(window, "setInterval");
     renderStrip(server(new Date(Date.now() - 5 * 60_000).toISOString()));
+    // Its age keeps counting.
+    expect(every).toHaveBeenCalledWith(expect.any(Function), 60_000);
+    every.mockRestore();
     const strip = screen.getByRole("region", { name: "Server health" });
     expect(strip).toHaveTextContent("Offline");
     expect(strip).toHaveTextContent("last seen 5m ago");

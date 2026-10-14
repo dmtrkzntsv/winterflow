@@ -22,13 +22,14 @@ import { serverStatus } from "@/lib/status";
 export function ServerHealthStrip({ server }: { server: Server }) {
   const { statusByServer } = useServers();
   const { data } = useMetricsOverview();
-  const now = useNow();
   const entry = data?.servers?.find((s) => s.server_id === server.id);
   // Liveness is known once the servers context has it (or the overview does,
   // should the context's seed have failed); until then nothing is claimed.
   const liveness = isStandalone ? "online" : (statusByServer[server.id] ?? entry?.liveness);
   // The same mapping as the server switcher and Settings → General.
   const status = serverStatus({ liveness, lastSeenAt: server.lastSeenAt, standalone: isStandalone });
+  // The clock ticks only while an offline server's age is on screen.
+  const now = useNow(60_000, status.tone === "bad");
   const latest = entry?.latest?.server;
 
   let body: ReactNode;

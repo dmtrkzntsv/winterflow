@@ -15,7 +15,7 @@ import { serverSettingsPath } from "@/lib/routes";
 import { serverFacts, versionLabel } from "@/lib/server-facts";
 import { serverStatus } from "@/lib/status";
 import { DockerSettings } from "@/pages/settings-docker";
-import { DomainsCard } from "@/pages/settings-domains";
+import { DomainsSettings } from "@/pages/settings-domains";
 import { StoragesCard } from "@/pages/settings-storages";
 
 // Settings → Server: one page per section (the sub-menu is SettingsLayout's).
@@ -135,12 +135,7 @@ export function ServerDomainsPage() {
   if (!activeServer.features?.ingress) {
     return <Navigate replace to={serverSettingsPath(activeServer.id)} />;
   }
-  return (
-    <div className="space-y-6">
-      <PageHeader title="Domains" subtitle={activeServer.name} />
-      <DomainsCard docker={docker} />
-    </div>
-  );
+  return <DomainsSettings key={activeServer.id} docker={docker} />;
 }
 
 export function ServerStoragesPage() {

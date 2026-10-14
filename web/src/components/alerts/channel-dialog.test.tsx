@@ -105,4 +105,45 @@ describe("ChannelDialog", () => {
     await user.click(screen.getByRole("button", { name: "Save" }));
     expect(api.posted("/api/v1/alerts/save-channel")[0]).toMatchObject({ url: "ntfy://ntfy.example.com/t2" });
   });
+  it("keeps the SMTP port and sign-in under Advanced, and opens it when one is wrong", async () => {
+    const api = fakeAPI({ "/api/v1/alerts/save-channel": {} });
+    const user = userEvent.setup({ delay: null });
+    render(<ChannelDialog open onOpenChange={() => {}} onSaved={() => {}} />);
+    await user.type(screen.getByLabelText("Name"), "Mail");
+    await user.click(screen.getByRole("radio", { name: "Email (SMTP)" }));
+    expect(screen.queryByLabelText("Port")).not.toBeInTheDocument();
+    await user.type(screen.getByLabelText("SMTP server"), "smtp.example.com");
+    await user.type(screen.getByLabelText("From"), "wf@example.com");
+    await user.type(screen.getByLabelText("To"), "ops@example.com");
+    await user.click(screen.getByRole("button", { name: "Advanced" }));
+    expect(screen.getByLabelText("Port")).toHaveValue("587");
+    await user.clear(screen.getByLabelText("Port"));
+    await user.type(screen.getByLabelText("Port"), "x");
+    await user.click(screen.getByRole("button", { name: "Advanced" }));
+    expect(screen.queryByLabelText("Port")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Port must be a number");
+    expect(screen.getByLabelText("Port")).toHaveValue("x");
+    expect(api.calls).toHaveLength(0);
+  });
+
+  it("closes on Cancel without saving", async () => {
+    const api = fakeAPI({});
+    const onOpenChange = vi.fn();
+    const user = userEvent.setup({ delay: null });
+    render(<ChannelDialog open onOpenChange={onOpenChange} onSaved={() => {}} />);
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    expect(api.calls).toHaveLength(0);
+  });
+
+  it("keeps a stored destination when the secret fields are left blank", async () => {
+    const api = fakeAPI({ "/api/v1/alerts/save-channel": stored });
+    const user = userEvent.setup({ delay: null });
+    render(<ChannelDialog open onOpenChange={() => {}} channel={stored} onSaved={() => {}} />);
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(api.posted("/api/v1/alerts/save-channel")).toEqual([
+      { id: "c1", name: "Ops", url: "", fields: {}, is_default: true, enabled: true },
+    ]);
+  });
 });

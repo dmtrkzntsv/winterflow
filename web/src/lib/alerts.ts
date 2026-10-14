@@ -224,6 +224,8 @@ export type FieldSpec = {
   placeholder?: string;
   hint?: string;
   defaultValue?: string;
+  // advanced fields sit under the channel form's "Advanced" disclosure.
+  advanced?: boolean;
 };
 
 export type ServiceSpec = {
@@ -362,9 +364,9 @@ export const SERVICES: ServiceSpec[] = [
     label: "Email (SMTP)",
     fields: [
       { key: "host", label: "SMTP server", placeholder: "smtp.example.com" },
-      { key: "port", label: "Port", defaultValue: "587" },
-      { key: "username", label: "Username", optional: true },
-      { key: "password", label: "Password", secret: true, optional: true },
+      { key: "port", label: "Port", defaultValue: "587", advanced: true },
+      { key: "username", label: "Username", optional: true, advanced: true },
+      { key: "password", label: "Password", secret: true, optional: true, advanced: true },
       { key: "from", label: "From", placeholder: "winterflow@example.com" },
       { key: "to", label: "To", placeholder: "ops@example.com", hint: "Comma-separated." },
     ],
@@ -409,14 +411,14 @@ export const SERVICES: ServiceSpec[] = [
   },
   {
     id: "raw",
-    label: "Shoutrrr URL",
+    label: "Other (URL)",
     fields: [
       {
         key: "url",
         label: "URL",
         secret: true,
         placeholder: "matrix://user:password@host/?rooms=!room",
-        hint: "Any Shoutrrr service URL (containrrr.dev/shoutrrr).",
+        hint: "Any Shoutrrr service URL (containrrr.dev/shoutrrr), such as matrix:// or pushbullet://.",
       },
     ],
     build: (f) => req(f, "url", "URL"),

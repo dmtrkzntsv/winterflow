@@ -20,7 +20,7 @@ describe("NotificationsSettingsPage", () => {
     expect(screen.getByRole("heading", { level: 1, name: "Notifications" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Channels" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Alert rules" })).toBeInTheDocument();
-    expect(await screen.findByText("No channels yet")).toBeInTheDocument();
+    expect(await screen.findByText(/No channels yet/)).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /Add rule/ })).toBeInTheDocument();
   });
 });

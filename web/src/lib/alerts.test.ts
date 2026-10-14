@@ -11,6 +11,7 @@ import {
   routingText,
   ruleSummary,
   SERVICES,
+  serviceSpec,
   type Channel,
   type Rule,
 } from "@/lib/alerts";
@@ -114,5 +115,13 @@ describe("alertTargetPath", () => {
   it("leads an app's alert to its Metrics tab and a server's to its Monitoring", () => {
     expect(alertTargetPath("s1", "a1")).toBe("/server/s1/app/a1?tab=metrics");
     expect(alertTargetPath("s1", "")).toBe("/server/s1/monitoring");
+  });
+});
+
+describe("channel form wording", () => {
+  it("calls a raw Shoutrrr URL Other (URL) and folds SMTP's port and sign-in under Advanced", () => {
+    expect(serviceSpec("raw").label).toBe("Other (URL)");
+    expect(serviceSpec("email").fields.filter((f) => f.advanced).map((f) => f.key)).toEqual(["port", "username", "password"]);
+    expect(SERVICES.filter((s) => s.id !== "email").every((s) => s.fields.every((f) => !f.advanced))).toBe(true);
   });
 });

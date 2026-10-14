@@ -162,6 +162,21 @@ describe("StoragesSettings", () => {
     expect(toastSuccess).toHaveBeenCalledWith("Storage added", { description: undefined });
   });
 
+  it("says nothing about the name before it is tried, then the error replaces its hint", async () => {
+    const user = setupUser();
+    renderCard(fakeDocker());
+    await user.click(await screen.findByRole("button", { name: /Add storage/ }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("radio", { name: "S3 bucket" }));
+    expect(within(dialog).queryByText(/Use 1-32 lowercase letters/)).not.toBeInTheDocument();
+    expect(within(dialog).getByText("Lowercase letters, digits and hyphens.")).toBeInTheDocument();
+    await user.type(within(dialog).getByLabelText("Name"), "Bad_Name");
+    await user.tab();
+    expect(within(dialog).getByText(/Use 1-32 lowercase letters/)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/Compose files use it as/)).not.toBeInTheDocument();
+    expect(within(dialog).getByLabelText("Name")).toHaveAccessibleDescription(/Use 1-32 lowercase letters/);
+  });
+
   it("shows a failed test inline and lets a stale result go", async () => {
     const user = setupUser();
     const docker = fakeDocker({

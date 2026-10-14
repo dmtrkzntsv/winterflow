@@ -221,7 +221,8 @@ export function StorageDialog({
   ) => {
     const id = fieldId(key);
     const invalid = shown(key);
-    const describedBy = [props.hint ? `${id}-hint` : "", invalid ? `${id}-error` : ""].filter(Boolean).join(" ");
+    // The error replaces the hint while the field is wrong.
+    const describedBy = invalid ? `${id}-error` : props.hint ? `${id}-hint` : "";
     return (
       <div className="grid gap-1.5">
         <Label htmlFor={id}>{label}</Label>
@@ -237,7 +238,7 @@ export function StorageDialog({
           onChange={(e) => onChange(e.target.value)}
           onBlur={() => touch(key)}
         />
-        {props.hint ? (
+        {props.hint && !invalid ? (
           <p id={`${id}-hint`} className="text-xs text-muted-foreground">
             {props.hint}
           </p>
@@ -314,7 +315,12 @@ export function StorageDialog({
                   aria-labelledby="st-type-label"
                   className="grid gap-2 sm:grid-cols-2"
                   value={draft.type}
-                  onValueChange={(v) => set({ type: v as StorageType })}
+                  onValueChange={(v) => {
+                    set({ type: v as StorageType });
+                    // Picking the type leaves the (focused) empty name: that
+                    // is no attempt at it yet.
+                    if (!draft.name.trim()) setReached(-1);
+                  }}
                 >
                   {(Object.keys(STORAGE_TYPES) as StorageType[]).map((t) => {
                     const Icon = TYPE_ICON[t];

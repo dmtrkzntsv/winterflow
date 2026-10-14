@@ -3917,6 +3917,125 @@ paths:
       - docker
       x-operation-result:
         $ref: '#/components/schemas/ListRegistriesResponse'
+  /api/v1/rollout/get-rollouts:
+    get:
+      description: Progress arrives as rollout events over SSE.
+      operationId: rolloutGetRollouts
+      parameters:
+      - description: template_upgrade or vars_reload.
+        in: query
+        name: kind
+        required: true
+        schema:
+          description: template_upgrade or vars_reload.
+          type: string
+      - description: 'A template id (template_upgrade) or the org id (vars_reload);
+          absent: every scope of the org.'
+        in: query
+        name: scope_key
+        schema:
+          description: 'A template id (template_upgrade) or the org id (vars_reload);
+            absent: every scope of the org.'
+          type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/RolloutList'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not Found
+      security:
+      - bearer: []
+      - cookie: []
+      summary: 'The org''s rollouts of a kind: the active one and the last 20 ended'
+      tags:
+      - rollouts
+  /api/v1/rollout/stop-rollout:
+    post:
+      description: An ended rollout answers as it is.
+      operationId: rolloutStopRollout
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RolloutIDRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/RolloutView'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not Found
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Stop a rollout after the app in flight
+      tags:
+      - rollouts
   /api/v1/server/delete-shared-variable:
     post:
       description: Answers once the change is stored; each affected server's agent
@@ -4273,8 +4392,11 @@ paths:
       - variables
   /api/v1/shared-variables/reload:
     post:
-      description: Answers with the servers dispatched to; each app's outcome arrives
-        as vars.reloaded over SSE.
+      description: 'Queues, or extends, the org''s vars_reload rollout: the stale
+        running apps in scope reload one at a time and the first failure stops it;
+        409 while the org''s reload rollout is being stopped. Answers with the servers
+        in scope; progress arrives as rollout events, each app''s outcome as vars.reloaded
+        over SSE.'
       operationId: sharedVariablesReload
       requestBody:
         content:
@@ -4320,6 +4442,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: Forbidden
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Conflict
       security:
       - bearer: []
       - cookie: []
@@ -4386,7 +4514,7 @@ paths:
       description: |-
         Server-sent events, each `data: <Notification JSON>`.
 
-        Subscribe BEFORE dispatching a 202 operation: results are best-effort, not buffered or replayed. A result produced while no stream is open, or while this stream is not being read, is dropped. An operation_result is delivered only to the open streams of the user who dispatched it; match it on ref == the 202's data.request_id. server_status, apps_status, alert and vars.* events go to every member of the server's organization and interleave with results; ignore types you do not handle.
+        Subscribe BEFORE dispatching a 202 operation: results are best-effort, not buffered or replayed. A result produced while no stream is open, or while this stream is not being read, is dropped. An operation_result is delivered only to the open streams of the user who dispatched it; match it on ref == the 202's data.request_id. server_status, apps_status, alert and vars.* events go to every member of the server's organization, rollout events to every member of the rollout's organization; they interleave with results; ignore types you do not handle.
       operationId: sse
       responses:
         "200":
@@ -5062,6 +5190,70 @@ paths:
       - bearer: []
       - cookie: []
       summary: Create a template or add a revision
+      tags:
+      - templates
+  /api/v1/template/upgrade-instances:
+    post:
+      description: 'Queues a template_upgrade rollout: each created instance below
+        the revision is re-rendered with its values and redeployed, oldest first;
+        one that needs new values is skipped; the first failure stops it. 409 while
+        an upgrade of the template is active. Progress arrives as rollout events over
+        SSE.'
+      operationId: templateUpgradeInstances
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpgradeInstancesRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/RolloutView'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Conflict
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Upgrade all of a template's instances, one app at a time
       tags:
       - templates
   /api/v1/user/change-password:
@@ -7594,6 +7786,16 @@ components:
         - properties:
             payload:
               $ref: '#/components/schemas/VarsReloadedPayload'
+      - anyOf:
+        - not:
+            properties:
+              type:
+                const: rollout
+            required:
+            - type
+        - properties:
+            payload:
+              $ref: '#/components/schemas/RolloutView'
       properties:
         error:
           type: string
@@ -7607,6 +7809,7 @@ components:
             - vars.synced: #/components/schemas/VarsSyncedPayload
             - vars.sync_failed: #/components/schemas/VarsSyncFailedPayload
             - vars.reloaded: #/components/schemas/VarsReloadedPayload
+            - rollout: #/components/schemas/RolloutView
         ref:
           type: string
         status:
@@ -8039,6 +8242,95 @@ components:
       - app_id
       - revision
       type: object
+    RolloutIDRequest:
+      properties:
+        id:
+          type: string
+      required:
+      - id
+      type: object
+    RolloutList:
+      properties:
+        rollouts:
+          description: The active rollout first, then the last 20 ended ones of each
+            scope, newest first.
+          items:
+            $ref: '#/components/schemas/RolloutView'
+          type:
+          - array
+          - "null"
+      required:
+      - rollouts
+      type: object
+    RolloutView:
+      properties:
+        created_at:
+          format: date-time
+          type: string
+        created_by:
+          type: string
+        current_app_id:
+          description: The app in flight; after a failure, the app that failed.
+          type: string
+        current_app_name:
+          type: string
+        current_server_id:
+          type: string
+        done:
+          format: int64
+          type: integer
+        error:
+          type: string
+        finished_at:
+          format: date-time
+          type:
+          - "null"
+          - string
+        id:
+          type: string
+        kind:
+          description: template_upgrade or vars_reload.
+          type: string
+        revision:
+          description: 'template_upgrade: the target revision; 0 for vars_reload.'
+          format: int64
+          type: integer
+        scope_key:
+          description: The template id (template_upgrade) or the org id (vars_reload).
+          type: string
+        skipped:
+          description: 'Apps left out: an instance the revision needs new values for,
+            an app that stopped meanwhile.'
+          format: int64
+          type: integer
+        state:
+          description: queued, running, done, stopped or failed.
+          type: string
+        stop_requested:
+          description: 'Stop was asked: the rollout stops after the app in flight.'
+          type: boolean
+        total:
+          description: done + skipped + the apps still to do, as of the last step.
+          format: int64
+          type: integer
+      required:
+      - id
+      - kind
+      - scope_key
+      - revision
+      - state
+      - stop_requested
+      - done
+      - skipped
+      - total
+      - current_app_id
+      - current_server_id
+      - current_app_name
+      - error
+      - created_at
+      - created_by
+      - finished_at
+      type: object
     Rule:
       properties:
         channel_ids:
@@ -8334,7 +8626,8 @@ components:
           description: Env-var name; COMPOSE_PROJECT_NAME and WF_* are reserved.
           type: string
         reload:
-          description: Reload the affected apps after each server stored the change.
+          description: Reload the affected running apps, one at a time, once each
+            server stored the change (the org's vars_reload rollout).
           type: boolean
         value:
           description: Plain variables only.
@@ -9058,6 +9351,17 @@ components:
       - server_id
       - key
       - revision
+      type: object
+    UpgradeInstancesRequest:
+      properties:
+        id:
+          type: string
+        revision:
+          description: The revision to move the instances to; absent or 0 is the latest.
+          format: int64
+          type: integer
+      required:
+      - id
       type: object
     UserToken:
       properties:

@@ -14,6 +14,7 @@ import (
 	"winterflow/internal/app/web/handler/monitoring"
 	"winterflow/internal/app/web/handler/notification"
 	horg "winterflow/internal/app/web/handler/org"
+	hrollouts "winterflow/internal/app/web/handler/rollouts"
 	"winterflow/internal/app/web/handler/server"
 	hsharedvars "winterflow/internal/app/web/handler/sharedvars"
 	htemplates "winterflow/internal/app/web/handler/templates"
@@ -21,6 +22,7 @@ import (
 	"winterflow/internal/app/web/middleware/patauth"
 	"winterflow/internal/app/web/middleware/ratelimit"
 	"winterflow/internal/app/web/util"
+	svuc "winterflow/internal/domain/usecase/sharedvars"
 	"winterflow/internal/infra/bootstrap"
 )
 
@@ -124,6 +126,16 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 	})
 	usersAPI := huser.NewHandler(&huser.Deps{Logger: d.Log, Tokens: d.UserService, Users: d.UserService})
 	orgAPI := horg.NewHandler(&horg.Deps{Logger: d.Log, Users: d.UserService})
+	// A nil rollout queue (the spec-only route table) must not become a
+	// non-nil interface in any of its consumers.
+	var (
+		reloads  svuc.ReloadQueue
+		upgrades htemplates.RolloutQueue
+		rollouts hrollouts.Queue
+	)
+	if d.Rollouts != nil {
+		reloads, upgrades, rollouts = d.Rollouts, d.Rollouts, d.Rollouts
+	}
 	sharedVarsAPI := hsharedvars.NewHandler(&hsharedvars.Deps{
 		Logger:              d.Log,
 		Repo:                d.SharedVariableRepository,
@@ -132,6 +144,7 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 		CommandDispatcher:   d.CommandDispatcher,
 		NotificationManager: d.NotificationManager,
 		StatusCache:         d.StatusCache,
+		Reloads:             reloads,
 	})
 
 	templatesAPI := htemplates.NewHandler(&htemplates.Deps{
@@ -146,7 +159,10 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 		ServerDomainRepository:  d.ServerDomainRepository,
 		ServerStorageRepository: d.ServerStorageRepository,
 		StatusCache:             d.StatusCache,
+		Rollouts:                upgrades,
+		Instances:               d.Instances,
 	})
+	rolloutsAPI := hrollouts.NewHandler(&hrollouts.Deps{Logger: d.Log, Users: d.UserService, Rollouts: rollouts})
 
 	routes := []api.Route{{
 		Method: http.MethodGet, Path: "/_/health", Handler: health, Auth: api.Public,
@@ -164,6 +180,7 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 		orgAPI.Routes(g),
 		sharedVarsAPI.Routes(g),
 		templatesAPI.Routes(g),
+		rolloutsAPI.Routes(g),
 		authprvd.Routes(),
 	} {
 		routes = append(routes, table...)

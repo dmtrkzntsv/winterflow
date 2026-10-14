@@ -8,6 +8,7 @@ import (
 	"winterflow/internal/domain/model"
 	"winterflow/internal/infra/db"
 	"winterflow/internal/infra/db/dbtest"
+	rolloutrepo "winterflow/internal/infra/db/repository/rollout"
 )
 
 var (
@@ -269,6 +270,43 @@ func TestListInstancesAndBehind(t *testing.T) {
 	}
 }
 
+// An upgrade rollout of an org touches only the template's created
+// instances below the target revision on the org's own servers, oldest
+// first.
+func TestListUpgradableInstances(t *testing.T) {
+	r, _ := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	mustCreate(t, r, org1, tpl1, "shop")
+	mustCreate(t, r, org1, tpl2, "blog")
+	created := func(inst model.Instance, rev int64) {
+		t.Helper()
+		if _, _, err := r.ClaimInstance(ctx, inst); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.MarkSaved(ctx, inst.ID, rev, inst.Params, inst.SecretNames); err != nil {
+			t.Fatal(err)
+		}
+	}
+	created(instance(1, "old"), 1)
+	created(instance(2, "older-next"), 1)
+	stray := instance(3, "stray")
+	stray.ServerID = srv2 // org2's server
+	created(stray, 1)
+	created(instance(4, "current"), 2)
+	other := instance(5, "other-template")
+	other.TemplateID = tpl2
+	created(other, 1)
+	_, _, _ = r.ClaimInstance(ctx, instance(6, "pending")) // never created
+
+	got, err := r.ListUpgradableInstances(ctx, org1, tpl1, 2)
+	if err != nil || len(got) != 2 || got[0].Key != "old" || got[1].Key != "older-next" {
+		t.Fatalf("upgradable = %+v, %v", got, err)
+	}
+	if got, err := r.ListUpgradableInstances(ctx, org2, tpl1, 2); err != nil || len(got) != 0 {
+		t.Fatalf("another org = %+v, %v", got, err)
+	}
+}
+
 // The app routes see an app that is a live instance; delete-app retires
 // its key. An unlinked instance is no longer the app's, yet still read by
 // id.
@@ -328,5 +366,45 @@ func TestInstanceLinksForApp(t *testing.T) {
 	}
 	if _, err := r.GetInstanceByID(ctx, dbtest.ID(998)); !errors.Is(err, model.ErrInstanceNotFound) {
 		t.Fatalf("an unknown id: %v", err)
+	}
+}
+
+// Deleting a template deletes its upgrade rollouts (scope key: the template
+// id), not another template's nor the org's reloads; a refused delete
+// keeps them.
+func TestDeleteTemplateDeletesItsRollouts(t *testing.T) {
+	r, d := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	rollouts, err := rolloutrepo.New(d.Tx, d.Driver, dbtest.Log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustCreate(t, r, org1, tpl1, "shop")
+	mustCreate(t, r, org1, tpl2, "blog")
+	for i, ro := range []model.Rollout{
+		{Kind: model.RolloutTemplateUpgrade, ScopeKey: tpl1},
+		{Kind: model.RolloutTemplateUpgrade, ScopeKey: tpl2},
+		{Kind: model.RolloutVarsReload, ScopeKey: org1},
+	} {
+		ro.ID, ro.OrgID, ro.Scope = dbtest.ID(300+i), org1, []byte(`{}`)
+		if ok, err := rollouts.InsertRollout(ctx, ro); err != nil || !ok {
+			t.Fatalf("insert %d: %v %v", i, ok, err)
+		}
+	}
+	count := func() string {
+		return dbtest.QueryString(t, d, `SELECT COUNT(*) FROM rollouts`)
+	}
+	live, _, _ := r.ClaimInstance(ctx, instance(1, "live"))
+	if err := r.DeleteTemplate(ctx, org1, tpl1); !errors.Is(err, model.ErrTemplateInUse) || count() != "3" {
+		t.Fatalf("a refused delete: %v, %s rollouts left", err, count())
+	}
+	if err := r.SetState(ctx, live.ID, model.InstanceUnlinked); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.DeleteTemplate(ctx, org1, tpl1); err != nil {
+		t.Fatal(err)
+	}
+	if n := dbtest.QueryString(t, d, `SELECT COUNT(*) FROM rollouts WHERE scope_key = ?`, tpl1); n != "0" || count() != "2" {
+		t.Fatalf("rollouts of the deleted template: %s, all: %s", n, count())
 	}
 }

@@ -205,7 +205,7 @@ func (s *eventSink) handle(ctx context.Context, ev bus.EventMessage) {
 			s.vars.revision(ctx, ev.ServerID, *body.VarsRevision)
 		}
 		var changed bool
-		changed, transition = s.cache.SetAppStatus(ev.ServerID, body.Apps, now)
+		changed, transition = s.cache.SetAppStatus(ev.ServerID, body.Apps, body.VarsRevision, now)
 		// The reporter pushes on a fixed timer; only actual changes are worth
 		// a DB lookup + SSE fan-out. New clients seed from the cache on load.
 		if changed {

@@ -17,7 +17,8 @@ const StreamDescription = "Server-sent events, each `data: <Notification JSON>`.
 	"A result produced while no stream is open, or while this stream is not being read, is dropped. " +
 	"An operation_result is delivered only to the open streams of the user who dispatched it; " +
 	"match it on ref == the 202's data.request_id. server_status, apps_status, alert and vars.* events go to every " +
-	"member of the server's organization and interleave with results; ignore types you do not handle."
+	"member of the server's organization, rollout events to every member of the rollout's organization; they " +
+	"interleave with results; ignore types you do not handle."
 
 // Routes is the SSE stream's slice of the route table. operation_result
 // events carry the x-operation-result payload of the Accepted route that
@@ -36,6 +37,7 @@ func (h *Handler) Routes(api.Guards) []api.Route {
 			{Type: string(model.NotificationVarsSynced), Payload: model.VarsSyncedPayload{}},
 			{Type: string(model.NotificationVarsSyncFailed), Payload: model.VarsSyncFailedPayload{}},
 			{Type: string(model.NotificationVarsReloaded), Payload: command.VarsReloadedPayload{}},
+			{Type: string(model.NotificationRollout), Payload: model.RolloutView{}},
 		},
 	}}
 }

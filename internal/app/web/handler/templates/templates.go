@@ -33,6 +33,12 @@ type TemplateIDRequest struct {
 	ID string `json:"id" required:"true"`
 }
 
+// UpgradeInstancesRequest is the body of POST upgrade-instances.
+type UpgradeInstancesRequest struct {
+	ID       string `json:"id" required:"true"`
+	Revision int64  `json:"revision" description:"The revision to move the instances to; absent or 0 is the latest."`
+}
+
 func (h *Handler) ListTemplates(w http.ResponseWriter, r *http.Request) {
 	_, orgID, ok := h.callerOrg(w, r)
 	if !ok {
@@ -110,4 +116,25 @@ func (h *Handler) DeleteTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	webutil.Success(w, "template deleted", nil)
+}
+
+func (h *Handler) UpgradeInstances(w http.ResponseWriter, r *http.Request) {
+	userID, orgID, ok := h.callerOrg(w, r)
+	if !ok {
+		return
+	}
+	req, ok := webutil.DecodeBody[UpgradeInstancesRequest](w, r)
+	if !ok || !requireID(w, "id", req.ID) {
+		return
+	}
+	if req.Revision < 0 {
+		webutil.Error(w, "revision must be a revision number", nil)
+		return
+	}
+	out, err := h.rollouts.QueueUpgrade(r.Context(), userID, orgID, req.ID, req.Revision)
+	if err != nil {
+		h.fail(w, err, "queue the upgrade")
+		return
+	}
+	webutil.Success(w, "upgrade queued", out)
 }

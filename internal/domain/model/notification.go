@@ -26,6 +26,9 @@ const (
 	// NotificationVarsReloaded is one app's shared-variable reload outcome
 	// (Payload is command.VarsReloadedPayload).
 	NotificationVarsReloaded NotificationType = "vars.reloaded"
+	// NotificationRollout is a rollout's progress or end, to the org,
+	// whenever its counts or state change (Payload is RolloutView).
+	NotificationRollout NotificationType = "rollout"
 )
 
 // VarsSyncedPayload is the payload of a vars.synced notification:

@@ -56,6 +56,10 @@ func (pgsqlQuerier) DeleteTemplate(ctx context.Context, db backend.DBTX, p delet
 	return pgsqlgen.New(db).DeleteTemplate(ctx, pgsqlgen.DeleteTemplateParams(p))
 }
 
+func (pgsqlQuerier) DeleteTemplateRollouts(ctx context.Context, db backend.DBTX, templateID string) error {
+	return pgsqlgen.New(db).DeleteTemplateRollouts(ctx, templateID)
+}
+
 func (pgsqlQuerier) InsertTemplateRevision(ctx context.Context, db backend.DBTX, p insertRevision) error {
 	return pgsqlgen.New(db).InsertTemplateRevision(ctx, pgsqlgen.InsertTemplateRevisionParams(p))
 }
@@ -87,7 +91,14 @@ func (pgsqlQuerier) GetLiveTemplateInstance(ctx context.Context, db backend.DBTX
 }
 
 func (pgsqlQuerier) ListLiveTemplateInstances(ctx context.Context, db backend.DBTX, orgID string) ([]instanceRow, error) {
-	rows, err := pgsqlgen.New(db).ListLiveTemplateInstances(ctx, orgID)
+	return instanceRows(pgsqlgen.New(db).ListLiveTemplateInstances(ctx, orgID))
+}
+
+func (pgsqlQuerier) ListUpgradableInstances(ctx context.Context, db backend.DBTX, p upgradeParams) ([]instanceRow, error) {
+	return instanceRows(pgsqlgen.New(db).ListUpgradableInstances(ctx, pgsqlgen.ListUpgradableInstancesParams(p)))
+}
+
+func instanceRows(rows []pgsqlgen.TemplateInstance, err error) ([]instanceRow, error) {
 	if err != nil {
 		return nil, err
 	}

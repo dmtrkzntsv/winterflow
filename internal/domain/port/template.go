@@ -28,7 +28,8 @@ type TemplateRepository interface {
 	GetRevision(ctx context.Context, templateID string, revision int64) (model.TemplateRevision, error)
 	// ListRevisions returns the revisions newest first, without bodies.
 	ListRevisions(ctx context.Context, templateID string) ([]model.TemplateRevision, error)
-	// DeleteTemplate removes the template and its revisions:
+	// DeleteTemplate removes the template, its revisions and its upgrade
+	// rollouts:
 	// model.ErrTemplateInUse while an instance is pending or created,
 	// model.ErrTemplateNotFound when unknown.
 	DeleteTemplate(ctx context.Context, orgID, templateID string) error
@@ -46,6 +47,10 @@ type TemplateRepository interface {
 	// ListInstances returns the org's pending and created instances,
 	// oldest first.
 	ListInstances(ctx context.Context, orgID string) ([]model.Instance, error)
+	// ListUpgradableInstances returns the org's created instances of
+	// templateID below revision, oldest first, without an instance whose
+	// server is not the org's: what an upgrade rollout of the org may touch.
+	ListUpgradableInstances(ctx context.Context, orgID, templateID string, revision int64) ([]model.Instance, error)
 	// MarkSaved records a save the agent confirmed: revision, values and
 	// state created, last error cleared. A deleted or unlinked instance is
 	// left alone.

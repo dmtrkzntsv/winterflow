@@ -14,9 +14,14 @@ type Querier interface {
 	BumpServerVarsRevision(ctx context.Context, serverID string) error
 	// Optimistic: 0 rows when latest_revision moved past the caller's base.
 	BumpTemplateRevision(ctx context.Context, arg BumpTemplateRevisionParams) (int64, error)
+	ClaimRollout(ctx context.Context, arg ClaimRolloutParams) (int64, error)
 	// A live key (the partial unique index) inserts nothing (0 rows).
 	ClaimTemplateInstance(ctx context.Context, arg ClaimTemplateInstanceParams) (int64, error)
+	// Done, unless the scope was extended since the worker read it (0 rows: it
+	// looks again).
+	CompleteRollout(ctx context.Context, arg CompleteRolloutParams) (int64, error)
 	CountFiringAlertsByServer(ctx context.Context) ([]CountFiringAlertsByServerRow, error)
+	CountRolloutStep(ctx context.Context, arg CountRolloutStepParams) (int64, error)
 	CountUsers(ctx context.Context) (int64, error)
 	DeleteAlertEventsBefore(ctx context.Context, createdAt types.DateTime) (int64, error)
 	DeleteAlertEventsByApp(ctx context.Context, appID string) error
@@ -44,13 +49,22 @@ type Querier interface {
 	DeleteSharedVariable(ctx context.Context, id string) error
 	// Refused (0 rows) while an instance is pending or created.
 	DeleteTemplate(ctx context.Context, arg DeleteTemplateParams) (int64, error)
+	// A deleted template's upgrade rollouts (scope key: the template id).
+	DeleteTemplateRollouts(ctx context.Context, scopeKey string) error
 	DeleteToken(ctx context.Context, arg DeleteTokenParams) (int64, error)
 	DeleteUser(ctx context.Context, userID string) error
 	EmailTaken(ctx context.Context, email string) (bool, error)
+	// Optimistic: 0 rows when the scope moved on (another extension), the
+	// rollout ended or a stop was requested (it would end stopped, losing the
+	// extension).
+	ExtendRollout(ctx context.Context, arg ExtendRolloutParams) (int64, error)
+	// Stopped or failed. A failure keeps the current app: it names what failed.
+	FinishRollout(ctx context.Context, arg FinishRolloutParams) (int64, error)
 	// FireAlertState moves a (rule, target) to firing unless it already is;
 	// the row count says whether this call made the transition (several API
 	// replicas evaluate the same events).
 	FireAlertState(ctx context.Context, arg FireAlertStateParams) (int64, error)
+	GetActiveRollout(ctx context.Context, arg GetActiveRolloutParams) (Rollout, error)
 	// GetAlertEventTrimCutoff is the newest event of an org that falls outside
 	// the newest `keep` (none when the org has at most `keep`).
 	GetAlertEventTrimCutoff(ctx context.Context, arg GetAlertEventTrimCutoffParams) (GetAlertEventTrimCutoffRow, error)
@@ -75,6 +89,7 @@ type Querier interface {
 	GetOrganization(ctx context.Context, organizationID string) (Organization, error)
 	GetPrimaryOrganizationID(ctx context.Context, userID string) (string, error)
 	GetRegistrationByCode(ctx context.Context, code string) (ServerRegistration, error)
+	GetRollout(ctx context.Context, id string) (Rollout, error)
 	GetServerSharedVariableByName(ctx context.Context, arg GetServerSharedVariableByNameParams) (SharedVariable, error)
 	GetServerVarsInfo(ctx context.Context, serverID string) (GetServerVarsInfoRow, error)
 	GetSharedVariable(ctx context.Context, id string) (SharedVariable, error)
@@ -99,6 +114,10 @@ type Querier interface {
 	InsertOrganization(ctx context.Context, arg InsertOrganizationParams) error
 	InsertOrganizationUser(ctx context.Context, arg InsertOrganizationUserParams) error
 	InsertRegistration(ctx context.Context, arg InsertRegistrationParams) error
+	// The rollout queue. Every worker write names its lease_owner, so a worker
+	// that lost its lease changes nothing.
+	// An active rollout of the same (kind, scope_key) inserts nothing (0 rows).
+	InsertRollout(ctx context.Context, arg InsertRolloutParams) (int64, error)
 	InsertServer(ctx context.Context, arg InsertServerParams) error
 	InsertServerDomain(ctx context.Context, arg InsertServerDomainParams) error
 	InsertServerStorage(ctx context.Context, arg InsertServerStorageParams) error
@@ -128,6 +147,10 @@ type Querier interface {
 	ListAppsByServer(ctx context.Context, serverID string) ([]App, error)
 	ListCapabilitiesByUser(ctx context.Context, userID string) ([]ListCapabilitiesByUserRow, error)
 	ListCiphertextServersByOrg(ctx context.Context, orgID string) ([]ListCiphertextServersByOrgRow, error)
+	// The worker's idle query: active rollouts nobody holds a live lease on.
+	// Times are stored to the second, so a lease ending now counts as ended
+	// (<=): a parked rollout is due on the poll that follows its park.
+	ListClaimableRollouts(ctx context.Context, leaseUntil *types.DateTime) ([]string, error)
 	ListFeaturesByUser(ctx context.Context, userID string) ([]ServerFeature, error)
 	ListFiringAlertStates(ctx context.Context) ([]ListFiringAlertStatesRow, error)
 	ListLiveTemplateInstances(ctx context.Context, orgID string) ([]TemplateInstance, error)
@@ -141,11 +164,16 @@ type Querier interface {
 	ListOrgServers(ctx context.Context, organizationID string) ([]ListOrgServersRow, error)
 	// Org- and server-level shared variables and their per-server ciphertexts.
 	ListOrgSharedVariables(ctx context.Context, orgID string) ([]SharedVariable, error)
+	// The ids of an organization's members (the audience of its rollout events).
+	ListOrgUserIDs(ctx context.Context, organizationID string) ([]string, error)
 	ListOrganizationMembers(ctx context.Context, organizationID string) ([]User, error)
 	// ListOversizedAlertOrganizations lists the orgs past the history cap. The
 	// literal is alert repository's EventsPerOrg (sqlc cannot bind a HAVING
 	// parameter); keep them in step.
 	ListOversizedAlertOrganizations(ctx context.Context) ([]string, error)
+	// The active rollout first, then the ended ones newest first.
+	ListRolloutsForScope(ctx context.Context, arg ListRolloutsForScopeParams) ([]Rollout, error)
+	ListRolloutsOfKind(ctx context.Context, arg ListRolloutsOfKindParams) ([]Rollout, error)
 	ListServerAppMetricSamples(ctx context.Context, arg ListServerAppMetricSamplesParams) ([]MetricSample, error)
 	// The server_domains index (mirrors each agent's domain registrations).
 	ListServerDomains(ctx context.Context, serverID string) ([]ServerDomain, error)
@@ -166,6 +194,10 @@ type Querier interface {
 	ListTokensByUser(ctx context.Context, userID string) ([]UserToken, error)
 	// Alerts: channels, rules, overrides, states, events (see migration 0013).
 	ListUnseededOrganizationIDs(ctx context.Context) ([]string, error)
+	// The org's created instances of a template below a revision on the org's
+	// own servers, oldest first: what a template_upgrade rollout of the org may
+	// still touch.
+	ListUpgradableInstances(ctx context.Context, arg ListUpgradableInstancesParams) ([]TemplateInstance, error)
 	// LockOrganizationMember re-reads the caller's membership inside
 	// RemoveMember's transaction. SQLite has no row locks (its writers are
 	// serialized), so this is a plain SELECT; Postgres adds FOR UPDATE.
@@ -173,19 +205,35 @@ type Querier interface {
 	MarkAlertDefaultsSeeded(ctx context.Context, organizationID string) (int64, error)
 	// A save the agent confirmed; a deleted or unlinked row stays as it is.
 	MarkTemplateInstanceSaved(ctx context.Context, arg MarkTemplateInstanceSavedParams) error
+	// Keeps the newest ended rollouts of a scope.
+	PruneRollouts(ctx context.Context, arg PruneRolloutsParams) error
 	// Lifts vars_revision past an agent-reported revision the API never issued
 	// (the API database was restored); never lowers it.
 	RaiseServerVarsRevision(ctx context.Context, arg RaiseServerVarsRevisionParams) error
 	RecordChannelFailure(ctx context.Context, arg RecordChannelFailureParams) error
 	RecordChannelSuccess(ctx context.Context, arg RecordChannelSuccessParams) error
+	// Gives the lease back: lease_until NULL (a graceful shutdown) is claimable
+	// at once; a time parks a rollout that waits on a server until the next poll
+	// is due, so the claimable list (LIMIT) does not fill with waiting ones.
+	ReleaseRolloutLease(ctx context.Context, arg ReleaseRolloutLeaseParams) (int64, error)
 	RenameApp(ctx context.Context, arg RenameAppParams) error
+	RenewRolloutLease(ctx context.Context, arg RenewRolloutLeaseParams) (int64, error)
+	RequestRolloutStop(ctx context.Context, arg RequestRolloutStopParams) (int64, error)
 	ResolveAlertState(ctx context.Context, arg ResolveAlertStateParams) (int64, error)
 	// The app was deleted outside the instance routes: its instance's key
 	// stays retired.
 	RetireTemplateInstancesForApp(ctx context.Context, arg RetireTemplateInstancesForAppParams) error
+	// Whether the server belongs to the organization (instance routes act for
+	// the caller's primary organization only).
+	ServerInOrganization(ctx context.Context, arg ServerInOrganizationParams) (bool, error)
 	SetAlertEventDeliveries(ctx context.Context, arg SetAlertEventDeliveriesParams) error
 	SetTemplateInstanceError(ctx context.Context, arg SetTemplateInstanceErrorParams) error
 	SetTemplateInstanceState(ctx context.Context, arg SetTemplateInstanceStateParams) error
+	StartRolloutStep(ctx context.Context, arg StartRolloutStepParams) (int64, error)
+	// Ends a rollout nobody is driving (queued, parked, or whose owner's lease
+	// expired) as stopped. 0 rows: someone holds a live lease (stop_requested
+	// takes over) or it is not the org's / not active.
+	StopUnleasedRollout(ctx context.Context, arg StopUnleasedRolloutParams) (int64, error)
 	TouchServerLastSeen(ctx context.Context, arg TouchServerLastSeenParams) error
 	TouchTokenLastUsed(ctx context.Context, arg TouchTokenLastUsedParams) error
 	UpdateAlertRule(ctx context.Context, arg UpdateAlertRuleParams) (int64, error)

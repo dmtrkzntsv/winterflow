@@ -9,6 +9,7 @@ import { draftFromBody } from "@/lib/template-draft";
 import { ApiError, type TemplateBody, type TemplateView } from "@/lib/templates";
 import TemplatePage from "@/pages/template-page";
 import { fakeAPI } from "@/test/fake-api";
+import { rollout } from "@/test/rollouts";
 
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
@@ -59,7 +60,24 @@ function view(revision: number): TemplateView {
   };
 }
 
-const notifications = { connected: true, subscribe: () => () => {}, waitFor: vi.fn() } as NotificationsContextValue;
+type Listener = Parameters<NotificationsContextValue["subscribe"]>[0];
+const listeners = new Set<Listener>();
+const notifications = {
+  connected: true,
+  subscribe: (fn: Listener) => {
+    listeners.add(fn);
+    return () => {
+      listeners.delete(fn);
+    };
+  },
+  waitFor: vi.fn(),
+} as unknown as NotificationsContextValue;
+// emit delivers an SSE notification to the page.
+function emit(n: Parameters<Listener>[0]) {
+  act(() => {
+    for (const fn of listeners) fn(n);
+  });
+}
 
 function renderPage(url: string, state?: unknown) {
   return render(
@@ -358,5 +376,46 @@ describe("TemplatePage", () => {
     expect(await screen.findByRole("button", { name: "Changes from r2" })).toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: "Editor" }));
     expect(screen.getByLabelText("Template name")).toHaveValue("twillingate");
+  });
+
+  it("upgrades all instances behind after a confirm, and shows the rollout", async () => {
+    const user = userEvent.setup();
+    const behind = { key: "k1", server_id: "s1", app_id: "a1", template_id: "t1", template_name: "twillingate", revision: 2,
+      parameters: { NAME: "bakomi" }, secrets: null, state: "created", status_code: 1, last_error: "",
+      created_at: "2026-10-12T10:00:00Z", updated_at: "2026-10-12T10:00:00Z" };
+    const api = fakeAPI({
+      "/api/v1/template/get-template": view(3),
+      "/api/v1/instance/get-instances": { instances: [behind] },
+      "/api/v1/rollout/get-rollouts": { rollouts: [] },
+      "/api/v1/template/upgrade-instances": rollout({ state: "queued", current_app_id: "", done: 0, skipped: 0, total: 0 }),
+    });
+    renderPage("/org/templates/t1?tab=instances");
+    await user.click(await screen.findByRole("button", { name: "Upgrade all to r3" }));
+    await user.click(screen.getByRole("button", { name: "Upgrade all" }));
+    expect(await screen.findByText("Upgrade to r3 queued…")).toBeInTheDocument();
+    expect(api.posted("/api/v1/template/upgrade-instances")).toEqual([{ id: "t1", revision: 3 }]);
+    expect(api.calls.find((c) => c.path === "/api/v1/rollout/get-rollouts")?.query).toBe("?kind=template_upgrade&scope_key=t1");
+    // One upgrade at a time: the button waits for this one.
+    expect(screen.getByRole("button", { name: "Upgrade all to r3" })).toBeDisabled();
+    // Queuing moved no instance: the list is not read again until a step.
+    const listReads = () => api.calls.filter((c) => c.path === "/api/v1/instance/get-instances").length;
+    expect(listReads()).toBe(1);
+    emit({ type: "rollout", payload: rollout({ done: 1, skipped: 0 }) } as Parameters<Listener>[0]);
+    await waitFor(() => expect(listReads()).toBe(2));
+  });
+
+  it("says why an upgrade could not start", async () => {
+    const user = userEvent.setup();
+    fakeAPI({
+      "/api/v1/template/get-template": view(3),
+      "/api/v1/instance/get-instances": { instances: [{ key: "k1", server_id: "s1", app_id: "a1", revision: 1, state: "created", parameters: {} }] },
+      "/api/v1/template/upgrade-instances": Object.assign(new Error("an upgrade of this template is already running"), { status: 409 }),
+    });
+    renderPage("/org/templates/t1?tab=instances");
+    await user.click(await screen.findByRole("button", { name: "Upgrade all to r3" }));
+    await user.click(screen.getByRole("button", { name: "Upgrade all" }));
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith("Couldn't start the upgrade", { description: "an upgrade of this template is already running" }),
+    );
   });
 });

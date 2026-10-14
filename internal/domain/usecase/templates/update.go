@@ -2,6 +2,7 @@ package templates
 
 import (
 	"context"
+	"errors"
 
 	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/template"
@@ -10,6 +11,18 @@ import (
 // ErrBackupsNotPending is a backups override sent for an instance the
 // agent already confirmed: its backups belong to the app's Backups tab.
 var ErrBackupsNotPending = model.Rejected("backups can only be set while the instance is pending; change them in the app's Backups tab")
+
+// ErrNeedsValues marks an update or upgrade the values at hand can't
+// render (a newly required parameter without a default, a stored value the
+// revision's pattern refuses): an "Upgrade all" rollout skips such an
+// instance. The error's message is the validation's.
+var ErrNeedsValues = errors.New("the instance needs new values for this revision")
+
+// needsValues is a values error that also matches ErrNeedsValues.
+type needsValues struct{ err error }
+
+func (e needsValues) Error() string   { return e.err.Error() }
+func (e needsValues) Unwrap() []error { return []error{e.err, ErrNeedsValues} }
 
 // UpdateInput is POST update-instance and (with Revision) upgrade-instance.
 type UpdateInput struct {
@@ -92,7 +105,7 @@ func (uc *UseCase) UpdateInstance(ctx context.Context, userID, orgID string, in 
 	}
 	values, err := template.Resolve(body, stored, template.Given{Params: in.Params, Secrets: in.Secrets})
 	if err != nil {
-		return Outcome{}, err
+		return Outcome{}, needsValues{err}
 	}
 	input.Values = values
 	app, payload, err := template.Render(body, input)

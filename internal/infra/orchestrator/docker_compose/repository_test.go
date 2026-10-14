@@ -114,8 +114,8 @@ func TestListAppsEmptyRootAndErrorPropagation(t *testing.T) {
 	if err != nil || len(apps) != 0 {
 		t.Fatalf("empty root: %v %v", apps, err)
 	}
-	statuses, err := r.GetAppsStatus(context.Background())
-	if err != nil || len(statuses) != 0 {
+	statuses, err := r.StatusReport(context.Background())
+	if err != nil || len(statuses.Apps) != 0 {
 		t.Fatalf("empty root status: %v %v", statuses, err)
 	}
 
@@ -126,7 +126,7 @@ func TestListAppsEmptyRootAndErrorPropagation(t *testing.T) {
 	if _, err := r.ListApps(context.Background()); err == nil {
 		t.Fatal("expected error for blocked apps-data root")
 	}
-	if _, err := r.GetAppsStatus(context.Background()); err == nil {
+	if _, err := r.StatusReport(context.Background()); err == nil {
 		t.Fatal("expected error for blocked apps-data root")
 	}
 }

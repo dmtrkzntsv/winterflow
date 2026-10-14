@@ -51,8 +51,16 @@ func (pgsqlQuerier) ListServerUserIDs(ctx context.Context, db backend.DBTX, serv
 	return pgsqlgen.New(db).ListServerUserIDs(ctx, serverID)
 }
 
+func (pgsqlQuerier) ListOrgUserIDs(ctx context.Context, db backend.DBTX, orgID string) ([]string, error) {
+	return pgsqlgen.New(db).ListOrgUserIDs(ctx, orgID)
+}
+
 func (pgsqlQuerier) UserOwnsServer(ctx context.Context, db backend.DBTX, p ownsParams) (bool, error) {
 	return pgsqlgen.New(db).UserOwnsServer(ctx, pgsqlgen.UserOwnsServerParams(p))
+}
+
+func (pgsqlQuerier) ServerInOrganization(ctx context.Context, db backend.DBTX, p inOrgParams) (bool, error) {
+	return pgsqlgen.New(db).ServerInOrganization(ctx, pgsqlgen.ServerInOrganizationParams(p))
 }
 
 func (pgsqlQuerier) HasAnyServer(ctx context.Context, db backend.DBTX) (bool, error) {

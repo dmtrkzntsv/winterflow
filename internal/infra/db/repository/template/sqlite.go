@@ -39,6 +39,10 @@ func (sqliteQuerier) DeleteTemplate(ctx context.Context, db backend.DBTX, p dele
 	return sqlitegen.New(db).DeleteTemplate(ctx, p)
 }
 
+func (sqliteQuerier) DeleteTemplateRollouts(ctx context.Context, db backend.DBTX, templateID string) error {
+	return sqlitegen.New(db).DeleteTemplateRollouts(ctx, templateID)
+}
+
 func (sqliteQuerier) InsertTemplateRevision(ctx context.Context, db backend.DBTX, p insertRevision) error {
 	return sqlitegen.New(db).InsertTemplateRevision(ctx, p)
 }
@@ -61,6 +65,10 @@ func (sqliteQuerier) GetLiveTemplateInstance(ctx context.Context, db backend.DBT
 
 func (sqliteQuerier) ListLiveTemplateInstances(ctx context.Context, db backend.DBTX, orgID string) ([]instanceRow, error) {
 	return sqlitegen.New(db).ListLiveTemplateInstances(ctx, orgID)
+}
+
+func (sqliteQuerier) ListUpgradableInstances(ctx context.Context, db backend.DBTX, p upgradeParams) ([]instanceRow, error) {
+	return sqlitegen.New(db).ListUpgradableInstances(ctx, p)
 }
 
 func (sqliteQuerier) MarkTemplateInstanceSaved(ctx context.Context, db backend.DBTX, p savedParams) error {

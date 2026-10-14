@@ -31,7 +31,7 @@ type Outcome struct {
 // agent's error; a success runs onSuccess (the DB side of the command), or
 // with onSuccess nil records the result's error (empty: clearing it).
 func (uc *UseCase) observe(inst model.Instance, onSuccess func(ctx context.Context) error) (appuc.Observer, <-chan port.CommandResult) {
-	done := make(chan port.CommandResult, 1)
+	done, deliver := port.NewResultChan()
 	id, key := inst.ID, inst.Key // not inst: the hook may live 15 minutes
 	return func(res port.CommandResult) {
 		ctx, cancel := context.WithTimeout(context.Background(), recordTimeout)
@@ -45,10 +45,7 @@ func (uc *UseCase) observe(inst model.Instance, onSuccess func(ctx context.Conte
 		if err != nil {
 			uc.log.Error("instance: record a result", "error", err, "instance_id", id, "key", key)
 		}
-		select {
-		case done <- res:
-		default:
-		}
+		deliver(res)
 	}, done
 }
 

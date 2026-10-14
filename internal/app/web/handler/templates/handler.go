@@ -5,7 +5,7 @@
 package templates
 
 import (
-	"errors"
+	"context"
 	"net/http"
 	"time"
 
@@ -23,6 +23,20 @@ import (
 // with get-instance.
 const WaitBound = 10 * time.Minute
 
+// InstanceServers authorizes the instance routes (port.ServerRepository):
+// the server must be one of the caller's organizations' and, beyond that,
+// the organization the call acts for (the caller's primary one), so an
+// instance never sits on another organization's server.
+type InstanceServers interface {
+	webutil.ServerAccess
+	ServerInOrg(ctx context.Context, serverID, orgID string) (bool, error)
+}
+
+// RolloutQueue queues "Upgrade all" (*rollouts.UseCase).
+type RolloutQueue interface {
+	QueueUpgrade(ctx context.Context, userID, orgID, templateID string, revision int64) (model.RolloutView, error)
+}
+
 // Deps wires the handler; with zero Deps (route documentation) it is never
 // called.
 type Deps struct {
@@ -30,26 +44,40 @@ type Deps struct {
 	Templates               port.TemplateRepository
 	SharedVariables         tuc.SharedNames
 	Users                   webutil.OrgResolver
-	Servers                 webutil.ServerAccess
+	Servers                 InstanceServers
 	CommandDispatcher       port.CommandDispatcher
 	AppRepository           port.AppRepository
 	AppDomainRepository     port.AppDomainRepository
 	ServerDomainRepository  port.ServerDomainRepository
 	ServerStorageRepository port.ServerStorageRepository
 	StatusCache             *status.Cache
+	Rollouts                RolloutQueue
+	// Instances is the shared templates usecase (bootstrap.Deps.Instances);
+	// nil builds one from the fields above.
+	Instances *tuc.UseCase
 }
 
 // Handler serves the template and instance routes.
 type Handler struct {
 	uc        *tuc.UseCase
+	rollouts  RolloutQueue
 	users     webutil.OrgResolver
-	servers   webutil.ServerAccess
+	servers   InstanceServers
 	log       *logger.Logger
 	waitBound time.Duration
 }
 
 // NewHandler wires the usecases.
 func NewHandler(d *Deps) *Handler {
+	uc := d.Instances
+	if uc == nil {
+		uc = newUseCase(d)
+	}
+	return &Handler{uc: uc, rollouts: d.Rollouts, users: d.Users, servers: d.Servers, log: d.Logger, waitBound: WaitBound}
+}
+
+// newUseCase builds a templates usecase from d's repositories.
+func newUseCase(d *Deps) *tuc.UseCase {
 	apps := appuc.NewUseCase(&appuc.Deps{
 		CommandDispatcher:       d.CommandDispatcher,
 		AppRepository:           d.AppRepository,
@@ -63,7 +91,7 @@ func NewHandler(d *Deps) *Handler {
 	if d.StatusCache != nil { // a nil *status.Cache must not become a non-nil interface
 		deps.Status = d.StatusCache
 	}
-	return &Handler{uc: tuc.New(deps), users: d.Users, servers: d.Servers, log: d.Logger, waitBound: WaitBound}
+	return tuc.New(deps)
 }
 
 // callerOrg resolves the caller and their org, writing 401/400 itself.
@@ -73,18 +101,19 @@ func (h *Handler) callerOrg(w http.ResponseWriter, r *http.Request) (string, str
 
 // requireID answers 400 unless id is a template id.
 func requireID(w http.ResponseWriter, field, id string) bool {
-	if !tuc.ValidID(id) {
-		webutil.Error(w, field+" must be a template id", nil)
-		return false
-	}
-	return true
+	return webutil.RequireUUID(w, id, field+" must be a template id")
 }
 
 // serverCaller resolves the caller and their org and requires serverID
-// (400) owned by the caller's org (403).
+// (400) owned by the caller's organizations and in the org the call acts
+// for (403 either way; a lookup error denies too).
 func (h *Handler) serverCaller(w http.ResponseWriter, r *http.Request, serverID string) (string, string, bool) {
 	userID, orgID, ok := h.callerOrg(w, r)
 	if !ok || !webutil.RequireOwnedServer(w, r, h.servers, userID, serverID) {
+		return "", "", false
+	}
+	if in, err := h.servers.ServerInOrg(r.Context(), serverID, orgID); err != nil || !in {
+		webutil.Forbidden(w)
 		return "", "", false
 	}
 	return userID, orgID, true
@@ -107,11 +136,5 @@ func (h *Handler) instanceCaller(w http.ResponseWriter, r *http.Request, serverI
 // 409, a fixable request 400 with its message, anything else a logged
 // generic 400.
 func (h *Handler) fail(w http.ResponseWriter, err error, what string) {
-	switch {
-	case errors.Is(err, model.ErrNotFound), errors.Is(err, model.ErrConflict), errors.Is(err, model.ErrRejected):
-		webutil.ErrorStatus(w, webutil.StatusFor(err), err.Error())
-	default:
-		h.log.Error("templates: "+what, "error", err)
-		webutil.Error(w, "failed to "+what, nil)
-	}
+	webutil.Fail(w, h.log, "templates", err, what)
 }

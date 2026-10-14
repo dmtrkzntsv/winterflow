@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { Plus, RefreshCw } from "lucide-react";
 
 import { DeleteVariableDialog } from "@/components/delete-variable-dialog";
+import { ReloadRolloutStrip } from "@/components/rollout-strip";
 import { SharedVariableDialog } from "@/components/shared-variable-dialog";
 import { VariablesTable } from "@/components/variables-table";
 import { Badge } from "@/components/ui/badge";
@@ -10,6 +11,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Spinner } from "@/components/ui/spinner";
 import { useSharedVariablesPage, type Scope } from "@/hooks/use-shared-variables-page";
 import { useAppBreadcrumbs } from "@/layouts/use-app-layout";
+import type { RolloutsApi } from "@/lib/rollouts";
 import { createSharedVariablesApi, type SharedVariablesApi, type SyncState } from "@/lib/shared-variables";
 
 const SYNC_LABEL: Record<SyncState, string> = { synced: "Synced", pending: "Sync pending", failed: "Sync failed" };
@@ -19,9 +21,16 @@ const BREADCRUMBS = [{ label: "Organization" }, { label: "Variables" }];
 // OrgVariablesPage manages org-level shared variables, available to apps on
 // every server of the organization. Secrets show their coverage ("All
 // servers" / "Missing on ..."); a new value is encrypted for every keyed
-// server, "Provide value" only for the servers missing it. The logic lives
-// in useSharedVariablesPage; this is the layout.
-export default function OrgVariablesPage({ api: injected }: { api?: SharedVariablesApi }) {
+// server, "Provide value" only for the servers missing it. The org's reload
+// rollout (reload: true, Reload) shows above with Stop. The logic lives in
+// useSharedVariablesPage; this is the layout.
+export default function OrgVariablesPage({
+  api: injected,
+  rollouts,
+}: {
+  api?: SharedVariablesApi;
+  rollouts?: RolloutsApi;
+}) {
   useAppBreadcrumbs(BREADCRUMBS);
   const api = useMemo(() => injected ?? createSharedVariablesApi(), [injected]);
   const page = useSharedVariablesPage(api, ORG_SCOPE);
@@ -29,6 +38,7 @@ export default function OrgVariablesPage({ api: injected }: { api?: SharedVariab
 
   return (
     <div className="space-y-6">
+      <ReloadRolloutStrip api={rollouts} serverNames={page.serverNames} />
       <Card>
         <CardHeader className="flex-row flex-wrap items-start justify-between gap-x-4 gap-y-3 space-y-0">
           <div className="min-w-0 space-y-1.5">

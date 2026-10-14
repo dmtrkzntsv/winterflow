@@ -37,6 +37,24 @@ type serverEntry struct {
 type appEntry struct {
 	apps    []command.AppStatus
 	expires time.Time
+	// received is when the report arrived; varsRev (hasRev) the
+	// shared-variables revision its stale_vars were computed against.
+	received time.Time
+	varsRev  int64
+	hasRev   bool
+}
+
+// Report is a server's latest apps.status as the API received it: the
+// rollout worker waits for one received after a step, and for one whose
+// stale_vars already reflect a shared-variable change.
+type Report struct {
+	Apps []command.AppStatus
+	// VarsRevision is the agent's shared-variables revision when it built
+	// the report; HasRevision is false for an agent predating shared
+	// variables.
+	VarsRevision int64
+	HasRevision  bool
+	Received     time.Time
 }
 
 // Cache is the per-API-instance status store. Safe for concurrent use.
@@ -100,15 +118,32 @@ func (c *Cache) markOnlineLocked(serverID string, now time.Time) bool {
 // reports whether the content differs from the previous report — the reporter
 // pushes unconditionally on a timer, and unchanged snapshots should not be
 // re-fanned-out to every browser — and, like MarkOnline, whether this doubled
-// as a liveness transition.
-func (c *Cache) SetAppStatus(serverID string, apps []command.AppStatus, now time.Time) (changed, transition bool) {
+// as a liveness transition. varsRev is the agent's shared-variables revision
+// the report carries (nil: an agent predating shared variables).
+func (c *Cache) SetAppStatus(serverID string, apps []command.AppStatus, varsRev *int64, now time.Time) (changed, transition bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	prev, had := c.apps[serverID]
 	changed = !had || !reflect.DeepEqual(prev.apps, apps)
-	c.apps[serverID] = appEntry{apps: apps, expires: now.Add(c.ttl)}
+	e := appEntry{apps: apps, expires: now.Add(c.ttl), received: now}
+	if varsRev != nil {
+		e.varsRev, e.hasRev = *varsRev, true
+	}
+	c.apps[serverID] = e
 	// A status report is also a liveness signal.
 	return changed, c.markOnlineLocked(serverID, now)
+}
+
+// LatestReport returns the server's latest report; false when there is
+// none or it expired.
+func (c *Cache) LatestReport(serverID string, now time.Time) (Report, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	e, ok := c.apps[serverID]
+	if !ok || now.After(e.expires) {
+		return Report{}, false
+	}
+	return Report{Apps: e.apps, VarsRevision: e.varsRev, HasRevision: e.hasRev, Received: e.received}, true
 }
 
 // ExpireStale removes server liveness entries whose TTL has passed and returns

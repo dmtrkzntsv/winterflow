@@ -41,6 +41,10 @@ type ServerRepository interface {
 	// if the server has no such capability recorded.
 	GetCapability(ctx context.Context, serverID, name string) (value string, ok bool, err error)
 
+	// ServerInOrg reports whether the server belongs to orgID (unknown:
+	// false, no error).
+	ServerInOrg(ctx context.Context, serverID, orgID string) (bool, error)
+
 	ServerOwnership
 }
 

@@ -83,9 +83,14 @@ const (
 
 // Detached reports whether a command's answer waits for long work that runs
 // elsewhere (backup.run and backup.restore wait for their run on the backup
-// scheduler). Such a command is dispatched off the standalone bridge's single
-// goroutine, so it never holds up other commands.
-func (t Type) Detached() bool { return t == TypeBackupRun || t == TypeBackupRestore }
+// scheduler, a single-app vars.reload for its turn on the reload worker).
+// Such a command is dispatched off the standalone bridge's single goroutine,
+// so it never holds up other commands. The type decides, not the payload
+// (the bridge has not decoded it): a bulk vars.reload answers at once either
+// way.
+func (t Type) Detached() bool {
+	return t == TypeBackupRun || t == TypeBackupRestore || t == TypeVarsReload
+}
 
 // ContentTypeJSON is the envelope content type used for every command payload.
 const ContentTypeJSON = "application/json"

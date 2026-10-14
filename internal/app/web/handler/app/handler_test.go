@@ -383,7 +383,7 @@ func TestGetAppsReturnsRepoList(t *testing.T) {
 
 func TestGetAppsStatusReadsCache(t *testing.T) {
 	h, _, cache := newHandler(t)
-	cache.SetAppStatus("s1", nil, time.Now())
+	cache.SetAppStatus("s1", nil, nil, time.Now())
 
 	r := authed(httptest.NewRequest("GET", "/api/v1/app/get-apps-status?server_id=s1", nil))
 	w := do(h.GetAppsStatus, r)

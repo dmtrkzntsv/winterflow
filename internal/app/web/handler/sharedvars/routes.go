@@ -2,6 +2,7 @@ package sharedvars
 
 import (
 	"net/http"
+	"slices"
 
 	"winterflow/internal/app/web/api"
 	svuc "winterflow/internal/domain/usecase/sharedvars"
@@ -14,7 +15,7 @@ type SaveVariableRequest struct {
 	Value       *string           `json:"value,omitempty" description:"Plain variables only."`
 	Ciphertexts map[string]string `json:"ciphertexts,omitempty" description:"Secrets only: server_id -> ECIES ciphertext for that server's key (GET /api/v1/org/list-encryption-keys). A new value covers every keyed server; a gap fill only servers missing it; none keeps every stored copy."`
 	Description string            `json:"description"`
-	Reload      bool              `json:"reload,omitempty" description:"Reload the affected apps after each server stored the change."`
+	Reload      bool              `json:"reload,omitempty" description:"Reload the affected running apps, one at a time, once each server stored the change (the org's vars_reload rollout)."`
 }
 
 func (r SaveVariableRequest) input() svuc.SaveInput {
@@ -116,8 +117,10 @@ func (h *Handler) Routes(api.Guards) []api.Route {
 		{
 			Method: http.MethodPost, Path: "/api/v1/shared-variables/reload", Handler: h.Reload, Auth: api.User,
 			Summary: "Reload running apps whose shared variables changed", Tag: "variables",
-			Description: "Answers with the servers dispatched to; each app's outcome arrives as vars.reloaded over SSE.",
-			Request:     ReloadRequest{}, Response: svuc.DispatchedServers{}, Errors: both,
+			Description: "Queues, or extends, the org's vars_reload rollout: the stale running apps in scope reload one " +
+				"at a time and the first failure stops it; 409 while the org's reload rollout is being stopped. Answers with the " +
+				"servers in scope; progress arrives as rollout events, each app's outcome as vars.reloaded over SSE.",
+			Request: ReloadRequest{}, Response: svuc.DispatchedServers{}, Errors: append(slices.Clone(both), http.StatusConflict),
 		},
 	}
 }

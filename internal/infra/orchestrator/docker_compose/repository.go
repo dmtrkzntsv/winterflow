@@ -73,10 +73,12 @@ type Repository struct {
 	// store a flag the render just cleared.
 	sharedMu sync.Mutex
 
-	// stale is the last computed stale set (app id -> names); staleReady is
-	// false until the first computation after a start.
+	// stale is the last computed stale set (app id -> names) and staleRev
+	// the snapshot revision it was computed against; staleReady is false
+	// until the first computation after a start.
 	staleMu    sync.Mutex
 	stale      map[string][]string
+	staleRev   int64
 	staleReady bool
 
 	// opLocks are the per-app operation locks (see applock.go): they

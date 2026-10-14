@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"winterflow/internal/domain/command"
 	"winterflow/pkg/crypto/cryptotest"
@@ -134,8 +135,8 @@ func TestSyncDoesNotRenderButFlagsStale(t *testing.T) {
 	if got := r.StaleApps(); !reflect.DeepEqual(got, map[string][]string{"app-1": {"SMTP_HOST", "SMTP_PASS"}}) {
 		t.Fatalf("stale = %v", got)
 	}
-	if r.VarsRevision() != 3 {
-		t.Fatalf("revision = %d", r.VarsRevision())
+	if r.vars.Current().Revision != 3 {
+		t.Fatalf("revision = %d", r.vars.Current().Revision)
 	}
 	// An older snapshot is ignored.
 	if resp := syncVars(t, r, testSnapshot(pub, t, 2, "old.example", "old")); resp.Revision != 3 {
@@ -213,9 +214,9 @@ func TestWithStaleAttachesNames(t *testing.T) {
 	r, pub := newSecretRepo(t)
 	sharedApp(t, r, "app-1", shopCompose, map[string]string{"PORT": "1"})
 	syncVars(t, r, testSnapshot(pub, t, 1, "mail.example", "s3cret"))
-	got := r.withStale([]command.AppStatus{{AppID: "app-1"}, {AppID: "other"}})
-	if !reflect.DeepEqual(got[0].StaleVars, []string{"SMTP_HOST", "SMTP_PASS"}) || got[1].StaleVars != nil {
-		t.Fatalf("withStale = %+v", got)
+	got, rev := r.withStale([]command.AppStatus{{AppID: "app-1"}, {AppID: "other"}})
+	if !reflect.DeepEqual(got[0].StaleVars, []string{"SMTP_HOST", "SMTP_PASS"}) || got[1].StaleVars != nil || rev != 1 {
+		t.Fatalf("withStale = %+v (revision %d)", got, rev)
 	}
 }
 
@@ -302,5 +303,53 @@ func TestHeadMoveOutsideDeployOnlyRescans(t *testing.T) {
 	r.refMu.Unlock()
 	if want, _ := refKey(r.appDataDir("app-1")); key != want {
 		t.Fatalf("refs cache key = %q, want %q", key, want)
+	}
+}
+
+// A status report pairs the stale set with the revision it was computed
+// against: taken after a vars.sync stored the new snapshot but before the
+// recompute finished, it still carries the previous revision (with the
+// previous stale set), never the new revision beside the old set.
+func TestStatusReportPairsRevisionWithItsStaleSet(t *testing.T) {
+	r, pub := newSecretRepo(t)
+	syncVars(t, r, testSnapshot(pub, t, 1, "mail.example", "s3cret"))
+	sharedApp(t, r, "app-1", shopCompose, map[string]string{"PORT": "8080"})
+	stubDockerApp(t, "app-1", "running", 0)
+	ctx := context.Background()
+	report := func() (int64, []string) {
+		t.Helper()
+		resp, err := r.StatusReport(ctx)
+		if err != nil || resp.VarsRevision == nil || len(resp.Apps) != 1 {
+			t.Fatalf("report = %+v, %v", resp, err)
+		}
+		return *resp.VarsRevision, resp.Apps[0].StaleVars
+	}
+	if rev, stale := report(); rev != 1 || len(stale) != 0 {
+		t.Fatalf("before the sync: revision %d, stale %v", rev, stale)
+	}
+
+	r.sharedMu.Lock() // the recompute of the next sync cannot finish yet
+	synced := make(chan struct{})
+	go func() {
+		defer close(synced)
+		_, _ = r.SyncVars(ctx, testSnapshot(pub, t, 2, "relay.example", "n3w"))
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for r.vars.Current().Revision != 2 {
+		if time.Now().After(deadline) {
+			r.sharedMu.Unlock()
+			t.Fatal("the sync never stored its snapshot")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	// The new snapshot is stored; the stale set is still the old one.
+	rev, stale := report()
+	r.sharedMu.Unlock()
+	if rev != 1 || len(stale) != 0 {
+		t.Fatalf("mid-sync report: revision %d, stale %v (want the old pair: 1, none)", rev, stale)
+	}
+	<-synced
+	if rev, stale := report(); rev != 2 || !reflect.DeepEqual(stale, []string{"SMTP_HOST", "SMTP_PASS"}) {
+		t.Fatalf("after the sync: revision %d, stale %v", rev, stale)
 	}
 }

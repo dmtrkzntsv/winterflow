@@ -81,10 +81,16 @@ func TestAppsStatusEventFansOutAppsAndLiveness(t *testing.T) {
 	sink, _ := newTestSink(rec, []string{"alice"})
 	ctx := context.Background()
 
+	rev := int64(3)
 	body, _ := json.Marshal(command.GetAppsStatusResponse{Apps: []command.AppStatus{
 		{AppID: "app-1", StatusCode: command.ContainerStatusActive},
-	}})
+	}, VarsRevision: &rev})
 	sink.handle(ctx, bus.EventMessage{ServerID: "srv-1", Kind: bus.EventAppsStatus, Payload: body})
+	// The cache keeps the report with its revision (the rollout worker
+	// reads it).
+	if rep, ok := sink.cache.LatestReport("srv-1", time.Now()); !ok || !rep.HasRevision || rep.VarsRevision != 3 || len(rep.Apps) != 1 {
+		t.Fatalf("cached report = %+v, %v", rep, ok)
+	}
 
 	// First report is both an apps_status and a liveness transition.
 	if got := rec.count(); got != 2 {

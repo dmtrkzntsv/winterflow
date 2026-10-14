@@ -13,6 +13,7 @@ import (
 	apprepo "winterflow/internal/infra/db/repository/app"
 	appdomainrepo "winterflow/internal/infra/db/repository/appdomain"
 	metricrepo "winterflow/internal/infra/db/repository/metric"
+	rolloutrepo "winterflow/internal/infra/db/repository/rollout"
 	serverrepo "winterflow/internal/infra/db/repository/server"
 	serverdomainrepo "winterflow/internal/infra/db/repository/serverdomain"
 	serverstoragerepo "winterflow/internal/infra/db/repository/serverstorage"
@@ -33,7 +34,11 @@ import (
 // (standalone: certs, in-process bridge, self-registration; api: nothing).
 // The concrete server repository is returned alongside Deps for standalone's
 // registration flow, which needs methods beyond the port.
-func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerConfig, log *logger.Logger) (*Deps, *serverrepo.Repo) {
+func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerConfig, log *logger.Logger, opts ...CoreOption) (*Deps, *serverrepo.Repo) {
+	var o coreOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
 	r, err := newRepos(conn, log)
 	if err != nil {
 		// Only an unknown driver name fails, which db.Open never returns.
@@ -74,6 +79,14 @@ func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerCon
 		newStorageSync(ctx, dispatcher, r.serverStorage, log),
 	}, vars, ms, latest, al.evaluator)
 
+	// The rollout queue is built here (one value for the routes and the
+	// worker) but its worker is NOT started: its first pass may claim a
+	// rollout whose lease expired and dispatch at once, which is lost while
+	// nothing consumes the request queue (standalone: the in-process bridge).
+	// Each topology calls StartRollouts once commands can flow.
+	instances := newInstances(r, dispatcher, statusCache, log)
+	queue := newRollouts(r, instances, dispatcher, statusCache, nm, o.rolloutTiming, log)
+
 	return &Deps{
 		Log:                      log,
 		Cfg:                      cfg,
@@ -85,6 +98,8 @@ func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerCon
 		ServerStorageRepository:  r.serverStorage,
 		SharedVariableRepository: r.sharedVar,
 		TemplateRepository:       r.template,
+		Instances:                instances,
+		Rollouts:                 queue,
 		CommandDispatcher:        dispatcher,
 		NotificationManager:      nm,
 		StatusCache:              statusCache,
@@ -107,6 +122,7 @@ type repos struct {
 	metric        *metricrepo.Repo
 	sharedVar     *sharedvarrepo.Repo
 	template      *templaterepo.Repo
+	rollout       *rolloutrepo.Repo
 	alert         *alertrepo.Repo
 }
 
@@ -140,6 +156,9 @@ func newRepos(conn *db.DB, log *logger.Logger) (repos, error) {
 		return r, err
 	}
 	if r.template, err = templaterepo.New(conn.Tx, conn.Driver, log); err != nil {
+		return r, err
+	}
+	if r.rollout, err = rolloutrepo.New(conn.Tx, conn.Driver, log); err != nil {
 		return r, err
 	}
 	r.alert, err = alertrepo.New(conn.Tx, conn.Driver, log, util.GenerateID)

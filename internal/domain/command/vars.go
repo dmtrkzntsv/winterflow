@@ -2,6 +2,7 @@ package command
 
 import (
 	"fmt"
+	"time"
 
 	"winterflow/internal/domain/model"
 )
@@ -73,9 +74,17 @@ type SyncVarsResponse struct {
 	Undecryptable []VarRef `json:"undecryptable"`
 }
 
+// ReloadAppWait bounds a single-app vars.reload on the agent: the app's
+// turn on the reload worker plus its reload (whose own deadline is also 10
+// minutes, so a reload that starts late answers this bound's timeout).
+const ReloadAppWait = 10 * time.Minute
+
 // ReloadVarsRequest is vars.reload: re-render and `compose up -d` running
 // apps. AppIDs selects those apps; else Names selects the stale apps whose
 // stale names include one of them; neither = every stale running app.
+// Exactly one app id is the waitable form: the answer comes when that
+// app's reload ends (an error when it failed); any other form answers once
+// queued and reports each app as a vars.reloaded event.
 type ReloadVarsRequest struct {
 	Names  []string `json:"names,omitempty"`
 	AppIDs []string `json:"app_ids,omitempty"`
@@ -98,9 +107,14 @@ func (r ReloadVarsRequest) Validate() error {
 }
 
 // ReloadVarsResponse acknowledges a queued reload; each app's outcome
-// arrives later as a vars.reloaded event.
+// arrives later as a vars.reloaded event. The single-app form answers when
+// the app's reload ended: AppID, the names that were stale, and Skipped
+// when the app was not running (nothing reloaded, nothing failed).
 type ReloadVarsResponse struct {
-	Queued bool `json:"queued"`
+	Queued  bool     `json:"queued"`
+	AppID   string   `json:"app_id,omitempty"`
+	Names   []string `json:"names,omitempty"`
+	Skipped bool     `json:"skipped,omitempty"`
 }
 
 // VarsReloadedPayload is one app's reload outcome: the body of the agent's

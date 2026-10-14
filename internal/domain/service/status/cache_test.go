@@ -38,7 +38,7 @@ func TestServerLivenessAbsentIsUnknown(t *testing.T) {
 func TestAppStatusesFreshThenExpire(t *testing.T) {
 	c := NewCache(60 * time.Second)
 	now := time.Unix(1000, 0)
-	c.SetAppStatus("srv-1", []command.AppStatus{{AppID: "a1", StatusCode: command.ContainerStatusActive}}, now)
+	c.SetAppStatus("srv-1", []command.AppStatus{{AppID: "a1", StatusCode: command.ContainerStatusActive}}, nil, now)
 
 	got := c.AppStatuses("srv-1", now.Add(30*time.Second))
 	if len(got) != 1 || got[0].AppID != "a1" {
@@ -53,7 +53,7 @@ func TestAppStatusesFreshThenExpire(t *testing.T) {
 func TestSetAppStatusAlsoMarksOnline(t *testing.T) {
 	c := NewCache(60 * time.Second)
 	now := time.Unix(1000, 0)
-	c.SetAppStatus("srv-1", nil, now)
+	c.SetAppStatus("srv-1", nil, nil, now)
 	if got := c.ServerLiveness("srv-1", now); got != LivenessOnline {
 		t.Errorf("a status report should also be a liveness signal, got %q", got)
 	}
@@ -79,10 +79,10 @@ func TestSetAppStatusReportsLivenessTransition(t *testing.T) {
 	c := NewCache(60 * time.Second)
 	now := time.Unix(1000, 0)
 
-	if _, transition := c.SetAppStatus("srv-1", nil, now); !transition {
+	if _, transition := c.SetAppStatus("srv-1", nil, nil, now); !transition {
 		t.Error("first status report: want transition")
 	}
-	if _, transition := c.SetAppStatus("srv-1", nil, now.Add(10*time.Second)); transition {
+	if _, transition := c.SetAppStatus("srv-1", nil, nil, now.Add(10*time.Second)); transition {
 		t.Error("second report within TTL: want no transition")
 	}
 }
@@ -93,14 +93,14 @@ func TestSetAppStatusReportsContentChange(t *testing.T) {
 	active := []command.AppStatus{{AppID: "a1", StatusCode: command.ContainerStatusActive}}
 	stopped := []command.AppStatus{{AppID: "a1", StatusCode: command.ContainerStatusStopped}}
 
-	if changed, _ := c.SetAppStatus("srv-1", active, now); !changed {
+	if changed, _ := c.SetAppStatus("srv-1", active, nil, now); !changed {
 		t.Error("first report: want changed")
 	}
 	// Identical snapshot on the next tick: no change, no fan-out needed.
-	if changed, _ := c.SetAppStatus("srv-1", active, now.Add(30*time.Second)); changed {
+	if changed, _ := c.SetAppStatus("srv-1", active, nil, now.Add(30*time.Second)); changed {
 		t.Error("identical report: want unchanged")
 	}
-	if changed, _ := c.SetAppStatus("srv-1", stopped, now.Add(60*time.Second)); !changed {
+	if changed, _ := c.SetAppStatus("srv-1", stopped, nil, now.Add(60*time.Second)); !changed {
 		t.Error("different report: want changed")
 	}
 }
@@ -157,5 +157,29 @@ func TestVarsRevision(t *testing.T) {
 	c.ExpireStale(time.Now().Add(time.Hour))
 	if _, ok := c.VarsRevision("s1"); !ok {
 		t.Fatal("revision expired with liveness")
+	}
+}
+
+func TestLatestReportKeepsTimeAndRevision(t *testing.T) {
+	c := NewCache(60 * time.Second)
+	now := time.Unix(1000, 0)
+	if _, ok := c.LatestReport("srv-1", now); ok {
+		t.Fatal("a report before any arrived")
+	}
+	rev := int64(7)
+	apps := []command.AppStatus{{AppID: "a1", StatusCode: command.ContainerStatusActive, StaleVars: []string{"SMTP_PASS"}}}
+	c.SetAppStatus("srv-1", apps, &rev, now)
+	got, ok := c.LatestReport("srv-1", now.Add(10*time.Second))
+	if !ok || !got.Received.Equal(now) || !got.HasRevision || got.VarsRevision != 7 || len(got.Apps) != 1 || got.Apps[0].StaleVars[0] != "SMTP_PASS" {
+		t.Fatalf("report = %+v, %v", got, ok)
+	}
+	// An agent predating shared variables reports no revision.
+	c.SetAppStatus("srv-1", apps, nil, now.Add(20*time.Second))
+	got, _ = c.LatestReport("srv-1", now.Add(20*time.Second))
+	if got.HasRevision || !got.Received.Equal(now.Add(20*time.Second)) {
+		t.Fatalf("report without a revision = %+v", got)
+	}
+	if _, ok := c.LatestReport("srv-1", now.Add(81*time.Second)); ok {
+		t.Fatal("an expired report is still served")
 	}
 }

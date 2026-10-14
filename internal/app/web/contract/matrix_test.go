@@ -190,9 +190,12 @@ var probes = map[string]probe{
 		return post("/api/v1/shared-variables/reload", map[string]any{"server_id": s})
 	}, malformed: bad("POST", "/api/v1/shared-variables/reload")},
 
-	"GET /api/v1/template/get-template":     {malformed: bad("GET", "/api/v1/template/get-template")},
-	"POST /api/v1/template/save-template":   {malformed: bad("POST", "/api/v1/template/save-template")},
-	"POST /api/v1/template/delete-template": {malformed: bad("POST", "/api/v1/template/delete-template")},
+	"GET /api/v1/template/get-template":       {malformed: bad("GET", "/api/v1/template/get-template")},
+	"POST /api/v1/template/save-template":     {malformed: bad("POST", "/api/v1/template/save-template")},
+	"POST /api/v1/template/delete-template":   {malformed: bad("POST", "/api/v1/template/delete-template")},
+	"POST /api/v1/template/upgrade-instances": {malformed: bad("POST", "/api/v1/template/upgrade-instances")},
+	"GET /api/v1/rollout/get-rollouts":        {malformed: bad("GET", "/api/v1/rollout/get-rollouts")},
+	"POST /api/v1/rollout/stop-rollout":       {malformed: bad("POST", "/api/v1/rollout/stop-rollout")},
 
 	// The template and key do not exist, so the own-server control answers
 	// 404, not 403.

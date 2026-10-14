@@ -126,3 +126,28 @@ func TestSaveTemplateCapsTheRequest(t *testing.T) {
 		t.Fatalf("oversized save = %d %s", w.Code, w.Body)
 	}
 }
+
+// memberElsewhere: the caller belongs to the server's org (ownership
+// passes), but it is not the org they act for (their primary one).
+type memberElsewhere struct{ err error }
+
+func (memberElsewhere) UserOwnsServer(context.Context, string, string) (bool, error) {
+	return true, nil
+}
+func (m memberElsewhere) ServerInOrg(context.Context, string, string) (bool, error) {
+	return false, m.err
+}
+
+// An instance never sits on a server outside the org the call acts for,
+// even one of another org the caller is a member of.
+func TestInstanceRoutesRequireTheCallersOrgServer(t *testing.T) {
+	for _, servers := range []memberElsewhere{{}, {err: errors.New("db down")}} {
+		h := NewHandler(&Deps{Logger: testLog, Users: orgs{}, Servers: servers})
+		if w := serve(h.GetInstance, http.MethodGet, "/?server_id=s-b&key=k", ""); w.Code != http.StatusForbidden {
+			t.Errorf("get-instance on another org's server (%v) = %d %s", servers.err, w.Code, w.Body)
+		}
+		if w := serve(h.CreateInstance, http.MethodPost, "/", `{"server_id":"s-b","key":"k","template_id":"00000000-0000-7000-8000-000000000021"}`); w.Code != http.StatusForbidden {
+			t.Errorf("create-instance on another org's server (%v) = %d %s", servers.err, w.Code, w.Body)
+		}
+	}
+}

@@ -244,6 +244,34 @@ func (q *Queries) ListFeaturesByUser(ctx context.Context, userID string) ([]Serv
 	return items, nil
 }
 
+const listOrgUserIDs = `-- name: ListOrgUserIDs :many
+SELECT user_id FROM organization_users WHERE organization_id = ?
+`
+
+// The ids of an organization's members (the audience of its rollout events).
+func (q *Queries) ListOrgUserIDs(ctx context.Context, organizationID string) ([]string, error) {
+	rows, err := q.db.QueryContext(ctx, listOrgUserIDs, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var user_id string
+		if err := rows.Scan(&user_id); err != nil {
+			return nil, err
+		}
+		items = append(items, user_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listServerUserIDs = `-- name: ListServerUserIDs :many
 SELECT user_id FROM organization_users
 WHERE organization_id IN (SELECT organization_id FROM servers WHERE server_id = ?)
@@ -308,6 +336,24 @@ func (q *Queries) ListServersByUser(ctx context.Context, userID string) ([]Serve
 		return nil, err
 	}
 	return items, nil
+}
+
+const serverInOrganization = `-- name: ServerInOrganization :one
+SELECT EXISTS (SELECT 1 FROM servers WHERE server_id = ? AND organization_id = ?)
+`
+
+type ServerInOrganizationParams struct {
+	ServerID       string
+	OrganizationID string
+}
+
+// Whether the server belongs to the organization (instance routes act for
+// the caller's primary organization only).
+func (q *Queries) ServerInOrganization(ctx context.Context, arg ServerInOrganizationParams) (bool, error) {
+	row := q.db.QueryRowContext(ctx, serverInOrganization, arg.ServerID, arg.OrganizationID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const touchServerLastSeen = `-- name: TouchServerLastSeen :exec

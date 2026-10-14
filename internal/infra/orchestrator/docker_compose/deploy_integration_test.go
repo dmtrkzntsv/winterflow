@@ -72,10 +72,11 @@ func TestSaveAppDeploysContainer(t *testing.T) {
 		t.Fatalf("apps/ symlink missing: %v", err)
 	}
 	// The container name proves compose actually interpolated from .env.
-	statuses, err := repo.GetAppsStatus(ctx)
+	report, err := repo.StatusReport(ctx)
 	if err != nil {
-		t.Fatalf("GetAppsStatus: %v", err)
+		t.Fatalf("StatusReport: %v", err)
 	}
+	statuses := report.Apps
 	found := false
 	for _, s := range statuses {
 		if s.AppID != appID {

@@ -14,16 +14,15 @@ import (
 const notifyTimeout = 30 * time.Second
 
 // Sync dispatches serverID's full snapshot as vars.sync (for no user: the
-// outcome fans out to the org). After a successful sync, reload names are
-// sent as vars.reload.
-func (u *UseCase) Sync(ctx context.Context, serverID string, reload []string) error {
+// outcome fans out to the org).
+func (u *UseCase) Sync(ctx context.Context, serverID string) error {
 	req, err := u.snapshot(ctx, serverID)
 	if err != nil {
 		return err
 	}
 	_, err = u.d.Dispatcher.Dispatch(ctx, port.DispatchInput{
 		AgentID: serverID, Type: command.TypeVarsSync, Payload: req,
-		OnResult: func(res port.CommandResult) { u.synced(serverID, reload, res) },
+		OnResult: func(res port.CommandResult) { u.synced(serverID, res) },
 	})
 	return err
 }
@@ -72,9 +71,8 @@ func entries(vs []model.SharedVariable, cts map[string]string) []command.SharedV
 // drops the copies the agent cannot decrypt (only when the result is for
 // the current revision: a late result for an older snapshot may name
 // ciphertexts replaced since), records the agent's revision (never moving
-// the cached one back), announces vars.synced and sends the follow-up
-// reload.
-func (u *UseCase) synced(serverID string, reload []string, res port.CommandResult) {
+// the cached one back) and announces vars.synced.
+func (u *UseCase) synced(serverID string, res port.CommandResult) {
 	ctx, cancel := context.WithTimeout(context.Background(), notifyTimeout)
 	defer cancel()
 	if !res.Success {
@@ -103,11 +101,6 @@ func (u *UseCase) synced(serverID string, reload []string, res port.CommandResul
 		}
 	}
 	u.notify(ctx, serverID, model.NotificationVarsSynced, model.VarsSyncedPayload{ServerID: serverID, Revision: out.Revision, Undecryptable: names})
-	if len(reload) > 0 {
-		if err := u.dispatchReload(ctx, serverID, command.ReloadVarsRequest{Names: reload}); err != nil {
-			u.d.Log.Warn("reload after shared variable change", "server_id", serverID, "error", err)
-		}
-	}
 }
 
 // dropUndecryptable deletes serverID's copies of the secrets its agent
@@ -145,25 +138,6 @@ func (u *UseCase) dropUndecryptable(ctx context.Context, serverID string, refs [
 	}
 	u.d.Log.Warn("dropped shared secrets this server cannot decrypt; enter them again", "server_id", serverID, "names", names)
 	return names
-}
-
-func (u *UseCase) dispatchReload(ctx context.Context, serverID string, req command.ReloadVarsRequest) error {
-	_, err := u.d.Dispatcher.Dispatch(ctx, port.DispatchInput{
-		AgentID: serverID, Type: command.TypeVarsReload, Payload: req,
-		OnResult: func(res port.CommandResult) {
-			if res.Success || res.Error == agentNotConnected {
-				return
-			}
-			nctx, cancel := context.WithTimeout(context.Background(), notifyTimeout)
-			defer cancel()
-			names := req.Names
-			if names == nil {
-				names = []string{}
-			}
-			u.notify(nctx, serverID, model.NotificationVarsReloaded, command.VarsReloadedPayload{ServerID: serverID, Error: res.Error, Names: names})
-		},
-	})
-	return err
 }
 
 // KeyObserved handles a capabilities report before it is stored: a

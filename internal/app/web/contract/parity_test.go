@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	happ "winterflow/internal/app/web/handler/app"
+	hrollouts "winterflow/internal/app/web/handler/rollouts"
 	"winterflow/internal/app/web/handler/server"
 	hsv "winterflow/internal/app/web/handler/sharedvars"
 	htpl "winterflow/internal/app/web/handler/templates"
@@ -142,6 +143,16 @@ func TestParity(t *testing.T) {
 		ServerID: sid, Key: "parity-1", TemplateID: tpl.ID, Wait: true,
 	})).expect(t, http.StatusOK)
 	rec("list templates", p.get(t, "/api/v1/template/get-templates", nil)).expect(t, http.StatusOK)
+	// The only instance is on the latest revision: the upgrade ends at once.
+	rec("upgrade all instances", p.post(t, "/api/v1/template/upgrade-instances", htpl.UpgradeInstancesRequest{ID: tpl.ID})).
+		expect(t, http.StatusOK)
+	rq := url.Values{"kind": {model.RolloutTemplateUpgrade}, "scope_key": {tpl.ID}}
+	eventually(t, func() bool {
+		var list hrollouts.RolloutList
+		p.get(t, "/api/v1/rollout/get-rollouts", rq).expect(t, http.StatusOK).data(t, &list)
+		return len(list.Rollouts) == 1 && list.Rollouts[0].State == string(model.RolloutDone)
+	})
+	rec("list rollouts", p.get(t, "/api/v1/rollout/get-rollouts", rq)).expect(t, http.StatusOK)
 
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)

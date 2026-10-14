@@ -5,7 +5,10 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/google/uuid"
+
 	"winterflow/internal/domain/model"
+	"winterflow/pkg/logger"
 )
 
 type APIResponse struct {
@@ -55,4 +58,28 @@ func StatusFor(err error) int {
 		return http.StatusConflict
 	}
 	return http.StatusBadRequest
+}
+
+// Fail answers a usecase error: a classified one (model.ErrNotFound,
+// ErrConflict, ErrRejected) with its status (StatusFor) and message,
+// anything else logged ("<area>: <what>") and answered with a generic 400
+// "failed to <what>".
+func Fail(w http.ResponseWriter, log *logger.Logger, area string, err error, what string) {
+	if errors.Is(err, model.ErrNotFound) || errors.Is(err, model.ErrConflict) || errors.Is(err, model.ErrRejected) {
+		ErrorStatus(w, StatusFor(err), err.Error())
+		return
+	}
+	log.Error(area+": "+what, "error", err)
+	Error(w, "failed to "+what, nil)
+}
+
+// RequireUUID answers 400 with msg unless id is a canonical UUID (the ids
+// of templates, rollouts and orgs; on Postgres anything else could not
+// even be looked up).
+func RequireUUID(w http.ResponseWriter, id, msg string) bool {
+	if u, err := uuid.Parse(id); err != nil || u.String() != id {
+		Error(w, msg, nil)
+		return false
+	}
+	return true
 }

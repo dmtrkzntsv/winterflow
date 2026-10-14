@@ -1,9 +1,6 @@
 package command
 
 import (
-	"fmt"
-	"strings"
-
 	"winterflow/internal/domain/backup/recipe"
 	"winterflow/internal/domain/model"
 )
@@ -13,23 +10,12 @@ import (
 // (reject early with 400) and the agent dispatcher (fail closed): a legit id
 // is a generated UUID, so anything empty, "."/"..", or containing a path
 // separator (or NUL) is refused rather than normalised.
-func ValidAppID(id string) bool {
-	switch id {
-	case "", ".", "..":
-		return false
-	}
-	return !strings.ContainsAny(id, "/\\\x00")
-}
+func ValidAppID(id string) bool { return model.ValidAppID(id) }
 
 // validateAppID is ValidAppID as an error, shared by the app-scoped requests'
 // Validate methods (the agent dispatcher calls Validate on every decoded
 // request before it reaches the orchestrator).
-func validateAppID(id string) error {
-	if !ValidAppID(id) {
-		return fmt.Errorf("invalid app id %q", id)
-	}
-	return nil
-}
+func validateAppID(id string) error { return model.ValidateAppID(id) }
 
 // AppPayload is the on-the-wire form of an app to deploy. It mirrors v1's AppV1:
 // a JSON config blob plus the variable and file contents the agent renders into

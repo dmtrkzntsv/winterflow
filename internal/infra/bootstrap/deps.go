@@ -5,6 +5,8 @@ import (
 	"winterflow/internal/domain/port"
 	"winterflow/internal/domain/service/alerting"
 	"winterflow/internal/domain/service/status"
+	"winterflow/internal/domain/usecase/rollouts"
+	"winterflow/internal/domain/usecase/templates"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
 	"winterflow/pkg/secretbox"
@@ -32,7 +34,15 @@ type Deps struct {
 	// SharedVariableRepository stores org- and server-level shared variables.
 	SharedVariableRepository port.SharedVariableRepository
 	// TemplateRepository stores templates, their revisions and instances.
-	TemplateRepository  port.TemplateRepository
+	TemplateRepository port.TemplateRepository
+	// Instances is the templates usecase the instance routes and the
+	// rollout queue's upgrade steps share.
+	Instances *templates.UseCase
+	// Rollouts is the rollout queue WireCore builds; its worker is started
+	// by StartRollouts once commands can flow (after the in-process bridge
+	// or the response subscriber). Every handler that queues a rollout must
+	// use this one value (its Wake reaches that worker).
+	Rollouts            *rollouts.UseCase
 	CommandDispatcher   port.CommandDispatcher
 	NotificationManager port.NotificationManager
 	StatusCache         *status.Cache

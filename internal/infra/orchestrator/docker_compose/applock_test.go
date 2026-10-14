@@ -265,24 +265,32 @@ func TestForgetAppWaitsForAStaleRecompute(t *testing.T) {
 }
 
 // A shared-variable reload starts containers, so it registers as an
-// operation: it is refused while a restore of the app runs, and a restore
-// does not begin while a reload holds the app.
+// operation: a reload of a running app is refused while a restore of the
+// app runs, and a restore does not begin while a reload holds the app. An
+// app the restore stopped is skipped (nothing would be started), not
+// refused.
 func TestReloadAndRestoreExcludeEachOther(t *testing.T) {
 	r := newTestRepo(t)
+	if _, err := r.SaveAppDraft(context.Background(), draftPayload("app-1")); err != nil {
+		t.Fatal(err)
+	}
 	end, err := r.beginRestore("app-1")
 	if err != nil {
 		t.Fatal(err)
 	}
+	stubDockerApp(t, "app-1", "running", 0)
 	if _, _, err := r.ReloadSharedVars(context.Background(), "app-1"); !errors.Is(err, ErrRestoring) {
 		t.Fatalf("reload during a restore: %v, want ErrRestoring", err)
 	}
 	lockFree(t, r, "app-1", "a reload refused by a restore")
+	stubDockerApp(t, "app-1", "exited", 1) // compose up would fail the test
+	if _, skipped, err := r.ReloadSharedVars(context.Background(), "app-1"); err != nil || !skipped {
+		t.Fatalf("reload of an app a restore stopped: skipped = %v, err = %v; want a skip", skipped, err)
+	}
+	lockFree(t, r, "app-1", "a reload skipped during a restore")
 	end()
 
 	// The reload registers its operation once it holds the app's lock.
-	if _, err := r.SaveAppDraft(context.Background(), draftPayload("app-1")); err != nil {
-		t.Fatal(err)
-	}
 	unlock := r.lockAppOp("app-1")
 	done := make(chan struct{})
 	stubDocker(t, 0)

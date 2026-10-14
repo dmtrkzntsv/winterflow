@@ -1,11 +1,14 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"winterflow/internal/domain/command"
 	"winterflow/internal/infra/transport/bus"
@@ -83,4 +86,41 @@ func TestDispatchAppsStatusCarriesVarsRevision(t *testing.T) {
 	if err := json.Unmarshal(resp.Payload, &out); err != nil || out.VarsRevision == nil || *out.VarsRevision != 7 {
 		t.Fatalf("apps.status = %s, %v", resp.Payload, err)
 	}
+}
+
+func TestDispatchVarsReloadOneAppAnswersItsOutcome(t *testing.T) {
+	d := newTestDispatcher(t)
+	f := &fakeReloader{stale: map[string][]string{"a": {"SMTP_PASS"}, "b": {"X"}},
+		failWith: map[string]error{"b": errors.New("compose up failed")}, stopped: map[string]bool{"c": true}}
+	w := NewReloadWorker(f, func(bus.EventKind, []byte) error { return nil }, testLog())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go w.Run(ctx)
+	d.WithReloads(w)
+
+	resp := dispatchJSON(t, d, command.TypeVarsReload, command.ReloadVarsRequest{AppIDs: []string{"a"}})
+	var out command.ReloadVarsResponse
+	if resp.Base.ResponseCode != proto.ResponseCode_RESPONSE_CODE_SUCCESS || json.Unmarshal(resp.Payload, &out) != nil ||
+		out.AppID != "a" || out.Skipped || len(out.Names) != 1 || out.Names[0] != "SMTP_PASS" {
+		t.Fatalf("reloaded = %+v %s", resp.Base, resp.Payload)
+	}
+	resp = dispatchJSON(t, d, command.TypeVarsReload, command.ReloadVarsRequest{AppIDs: []string{"b"}})
+	if resp.Base.ResponseCode == proto.ResponseCode_RESPONSE_CODE_SUCCESS || !strings.Contains(resp.Base.Detail, "compose up failed") {
+		t.Fatalf("failed reload = %+v", resp.Base)
+	}
+	resp = dispatchJSON(t, d, command.TypeVarsReload, command.ReloadVarsRequest{AppIDs: []string{"c"}})
+	out = command.ReloadVarsResponse{}
+	if resp.Base.ResponseCode != proto.ResponseCode_RESPONSE_CODE_SUCCESS || json.Unmarshal(resp.Payload, &out) != nil || !out.Skipped {
+		t.Fatalf("stopped app = %+v %s", resp.Base, resp.Payload)
+	}
+
+	// A reload that outlives the bound answers the bound.
+	f.block = make(chan struct{})
+	f.stale["a"] = []string{"SMTP_PASS"}
+	d.reloadWait = 50 * time.Millisecond
+	resp = dispatchJSON(t, d, command.TypeVarsReload, command.ReloadVarsRequest{AppIDs: []string{"a"}})
+	if resp.Base.ResponseCode == proto.ResponseCode_RESPONSE_CODE_SUCCESS || !strings.Contains(resp.Base.Detail, "did not end within 50ms") {
+		t.Fatalf("slow reload = %+v", resp.Base)
+	}
+	close(f.block)
 }

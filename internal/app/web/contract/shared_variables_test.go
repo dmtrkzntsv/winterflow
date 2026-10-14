@@ -270,34 +270,34 @@ func TestSharedVariableRoutes(t *testing.T) {
 		}
 		owner.post(t, "/api/v1/shared-variables/reload", hsv.ReloadRequest{ServerID: sidA, AppIDs: []string{anApp}}).
 			expect(t, http.StatusOK).data(t, &d)
-		eventually(t, func() bool {
-			for _, c := range e.agent.seen(command.TypeVarsReload) {
-				if in := decode[command.ReloadVarsRequest](c.Payload); c.AgentID == sidA && len(in.AppIDs) == 1 && in.AppIDs[0] == anApp {
-					return true
-				}
-			}
-			return false
-		})
+		if len(d.Servers) != 1 || d.Servers[0] != sidA {
+			t.Fatalf("reload of an app = %+v", d)
+		}
 		owner.post(t, "/api/v1/shared-variables/reload", hsv.ReloadRequest{VariableID: hostID}).expect(t, http.StatusOK).data(t, &d)
 		if len(d.Servers) != 3 {
 			t.Fatalf("reload by org variable = %+v", d)
+		}
+		// Both went on the org's one reload rollout (no server has reported
+		// the apps' staleness here, so it is still waiting).
+		if list := rolloutsOf(t, owner, url.Values{"kind": {model.RolloutVarsReload}}); len(list) != 1 || !model.RolloutState(list[0].State).Active() {
+			t.Fatalf("reload rollouts = %+v", list)
 		}
 		owner.post(t, "/api/v1/shared-variables/reload", hsv.ReloadRequest{}).expect(t, http.StatusBadRequest)
 		owner.post(t, "/api/v1/shared-variables/reload", hsv.ReloadRequest{ServerID: foreign}).expect(t, http.StatusForbidden)
 		owner.post(t, "/api/v1/shared-variables/resync", hsv.ResyncRequest{ServerID: foreign}).expect(t, http.StatusForbidden)
 	})
 
-	t.Run("reload: true follows each sync with vars.reload", func(t *testing.T) {
+	t.Run("reload: true extends the org's reload rollout", func(t *testing.T) {
+		before := rolloutsOf(t, owner, url.Values{"kind": {model.RolloutVarsReload}})
 		save(t, hsv.SaveVariableRequest{Name: "RELOAD_ME", Value: strp("1"), Reload: true}).expect(t, http.StatusOK)
-		eventually(t, func() bool {
-			n := 0
-			for _, c := range e.agent.seen(command.TypeVarsReload) {
-				if in := decode[command.ReloadVarsRequest](c.Payload); len(in.Names) == 1 && in.Names[0] == "RELOAD_ME" {
-					n++
-				}
-			}
-			return n == 3
-		})
+		after := rolloutsOf(t, owner, url.Values{"kind": {model.RolloutVarsReload}})
+		if len(after) != 1 || after[0].ID != before[0].ID {
+			t.Fatalf("rollouts before %+v, after %+v", before, after)
+		}
+		// Nothing is sent to an agent before its server reports a stale app.
+		if n := len(e.agent.seen(command.TypeVarsReload)); n != 0 {
+			t.Fatalf("%d vars.reload sent", n)
+		}
 	})
 
 	t.Run("vars.reloaded from the agent fans out", func(t *testing.T) {

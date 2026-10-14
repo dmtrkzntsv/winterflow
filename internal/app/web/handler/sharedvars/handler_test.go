@@ -12,6 +12,7 @@ import (
 	"github.com/go-pkgz/auth/v2/token"
 
 	"winterflow/internal/app/web/api"
+	"winterflow/internal/domain/model"
 	svuc "winterflow/internal/domain/usecase/sharedvars"
 	"winterflow/pkg/logger"
 )
@@ -111,6 +112,7 @@ func TestFailMapsUsecaseErrors(t *testing.T) {
 	}{
 		{&svuc.ValidationError{Msg: "bad name"}, http.StatusBadRequest, "bad name"},
 		{svuc.ErrForbidden, http.StatusForbidden, "forbidden"},
+		{model.ErrRolloutStopping, http.StatusConflict, "a reload is stopping"},
 		{errors.New("secret detail"), http.StatusBadRequest, "failed to save shared variable"},
 	}
 	for _, tc := range cases {

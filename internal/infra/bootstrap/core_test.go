@@ -34,7 +34,7 @@ func TestWireCoreWiresResponsePipeline(t *testing.T) {
 
 	deps, serverRepo := WireCore(ctx, b, conn, cfg, log)
 	if deps.NotificationManager == nil || deps.CommandDispatcher == nil ||
-		deps.StatusCache == nil || deps.ServerRepository == nil || serverRepo == nil {
+		deps.StatusCache == nil || deps.ServerRepository == nil || serverRepo == nil || deps.Rollouts == nil {
 		t.Fatalf("incomplete deps: %+v", deps)
 	}
 

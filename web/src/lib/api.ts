@@ -7,6 +7,44 @@ export async function readApiError(res: Response): Promise<Error> {
   return new Error(message || `Request failed: ${res.status}`);
 }
 
+// ApiError is a refused request with its HTTP status (409: a concurrent
+// edit, a key in use, a template with live instances, an active rollout).
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
+// jsonPost is a POST of payload as JSON.
+export function jsonPost(payload: unknown): RequestInit {
+  return { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) };
+}
+
+export type JsonClient = {
+  // request fetches base + path with the session cookie and throws a
+  // refusal (non-2xx) as an ApiError carrying the server's message.
+  request(path: string, init?: RequestInit): Promise<Response>;
+  // call is request's envelope `data`.
+  call<T>(path: string, init?: RequestInit): Promise<T>;
+};
+
+// createJsonClient is the client of the API's JSON envelope under base
+// (fetchImpl: tests).
+export function createJsonClient(base: string, fetchImpl?: typeof fetch): JsonClient {
+  const doFetch: typeof fetch = fetchImpl ?? ((input, init) => fetch(input, init));
+  async function request(path: string, init?: RequestInit): Promise<Response> {
+    const res = await doFetch(`${base}${path}`, { credentials: "include", ...init });
+    if (!res.ok) throw new ApiError((await readApiError(res)).message, res.status);
+    return res;
+  }
+  return {
+    request,
+    call: async <T>(path: string, init?: RequestInit) => ((await (await request(path, init)).json()) as { data: T }).data,
+  };
+}
+
 // dispatchCommand sends an agent-bound request, waits for its result over SSE
 // (by the 202's request_id, for timeoutMs else the waitFor default) and
 // returns the payload. A refusal (non-2xx) carries the API's message; an

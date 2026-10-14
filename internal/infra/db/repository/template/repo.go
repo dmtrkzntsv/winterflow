@@ -42,6 +42,7 @@ type (
 	errorParams    = sqlitegen.SetTemplateInstanceErrorParams
 	forAppParams   = sqlitegen.GetLiveTemplateInstanceForAppParams
 	retireParams   = sqlitegen.RetireTemplateInstancesForAppParams
+	upgradeParams  = sqlitegen.ListUpgradableInstancesParams
 )
 
 type querier interface {
@@ -52,12 +53,14 @@ type querier interface {
 	ListTemplates(ctx context.Context, db backend.DBTX, orgID string) ([]summaryRow, error)
 	ListTemplateNames(ctx context.Context, db backend.DBTX, orgID string) ([]nameRow, error)
 	DeleteTemplate(ctx context.Context, db backend.DBTX, p deleteParams) (int64, error)
+	DeleteTemplateRollouts(ctx context.Context, db backend.DBTX, templateID string) error
 	InsertTemplateRevision(ctx context.Context, db backend.DBTX, p insertRevision) error
 	GetTemplateRevision(ctx context.Context, db backend.DBTX, p getRevision) (revisionRow, error)
 	ListTemplateRevisions(ctx context.Context, db backend.DBTX, templateID string) ([]revisionInfo, error)
 	ClaimTemplateInstance(ctx context.Context, db backend.DBTX, p claimParams) (int64, error)
 	GetLiveTemplateInstance(ctx context.Context, db backend.DBTX, p liveParams) (instanceRow, error)
 	ListLiveTemplateInstances(ctx context.Context, db backend.DBTX, orgID string) ([]instanceRow, error)
+	ListUpgradableInstances(ctx context.Context, db backend.DBTX, p upgradeParams) ([]instanceRow, error)
 	MarkTemplateInstanceSaved(ctx context.Context, db backend.DBTX, p savedParams) error
 	SetTemplateInstanceState(ctx context.Context, db backend.DBTX, p stateParams) error
 	SetTemplateInstanceError(ctx context.Context, db backend.DBTX, p errorParams) error
@@ -227,12 +230,16 @@ func (r *Repo) ListRevisions(ctx context.Context, templateID string) ([]model.Te
 }
 
 // DeleteTemplate deletes the template unless an instance is live: one
-// guarded statement, then a read to tell "in use" from "unknown".
+// guarded statement, then a read to tell "in use" from "unknown". Its
+// upgrade rollouts go in the same transaction.
 func (r *Repo) DeleteTemplate(ctx context.Context, orgID, templateID string) error {
 	return r.tx.WithTx(ctx, func(ctx context.Context) error {
 		n, err := r.q.DeleteTemplate(ctx, r.tx.Querier(ctx), deleteParams{ID: templateID, OrgID: orgID})
-		if err != nil || n > 0 {
+		if err != nil {
 			return err
+		}
+		if n > 0 {
+			return r.q.DeleteTemplateRollouts(ctx, r.tx.Querier(ctx), templateID)
 		}
 		_, err = r.q.GetTemplate(ctx, r.tx.Querier(ctx), getParams{ID: templateID, OrgID: orgID})
 		if errors.Is(err, sql.ErrNoRows) {
@@ -324,7 +331,18 @@ func (r *Repo) RetireForApp(ctx context.Context, serverID, appID string) error {
 
 // ListInstances returns the org's pending and created instances.
 func (r *Repo) ListInstances(ctx context.Context, orgID string) ([]model.Instance, error) {
-	rows, err := r.q.ListLiveTemplateInstances(ctx, r.tx.Querier(ctx), orgID)
+	return hydrateInstances(r.q.ListLiveTemplateInstances(ctx, r.tx.Querier(ctx), orgID))
+}
+
+// ListUpgradableInstances returns the org's created instances of
+// templateID below revision on the org's own servers, oldest first.
+func (r *Repo) ListUpgradableInstances(ctx context.Context, orgID, templateID string, revision int64) ([]model.Instance, error) {
+	return hydrateInstances(r.q.ListUpgradableInstances(ctx, r.tx.Querier(ctx), upgradeParams{
+		OrgID: orgID, TemplateID: &templateID, Revision: revision,
+	}))
+}
+
+func hydrateInstances(rows []instanceRow, err error) ([]model.Instance, error) {
 	if err != nil {
 		return nil, err
 	}

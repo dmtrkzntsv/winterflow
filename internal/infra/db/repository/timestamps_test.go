@@ -17,6 +17,7 @@ import (
 	apprepo "winterflow/internal/infra/db/repository/app"
 	appdomainrepo "winterflow/internal/infra/db/repository/appdomain"
 	metricrepo "winterflow/internal/infra/db/repository/metric"
+	rolloutrepo "winterflow/internal/infra/db/repository/rollout"
 	serverrepo "winterflow/internal/infra/db/repository/server"
 	serverdomainrepo "winterflow/internal/infra/db/repository/serverdomain"
 	serverstoragerepo "winterflow/internal/infra/db/repository/serverstorage"
@@ -53,6 +54,7 @@ func TestSQLiteTimestampsAreDateTimeText(t *testing.T) {
 	metricSamples := must(metricrepo.New(d.Tx, d.Driver, dbtest.Log))
 	sharedVars := must(sharedvarrepo.New(d.Tx, d.Driver, dbtest.Log))
 	templates := must(templaterepo.New(d.Tx, d.Driver, dbtest.Log))
+	rollouts := must(rolloutrepo.New(d.Tx, d.Driver, dbtest.Log))
 
 	admin := must(users.BootstrapLocalAdmin(ctx, "Admin", "admin@example.com", "correct horse battery"))
 	orgID := must(users.PrimaryOrganizationID(ctx, admin.ID))
@@ -143,6 +145,21 @@ func TestSQLiteTimestampsAreDateTimeText(t *testing.T) {
 	if _, _, err := templates.ClaimInstance(ctx, model.Instance{
 		ID: dbtest.ID(502), OrgID: orgID, Key: "k", AppID: appID, ServerID: srv.ID, TemplateID: tplID, Revision: 1, RequestHash: "h",
 	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// created_at on insert, lease_until on the claim, finished_at when it
+	// ends (a second one keeps its lease for the check).
+	for i, id := range []string{dbtest.ID(601), dbtest.ID(602)} {
+		ro := model.Rollout{ID: id, OrgID: orgID, Kind: model.RolloutTemplateUpgrade, Scope: []byte(`{}`), ScopeKey: fmt.Sprint("tpl-", i)}
+		if _, err := rollouts.InsertRollout(ctx, ro); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := rollouts.Claim(ctx, id, "w", at, at.Add(2*time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := rollouts.Complete(ctx, dbtest.ID(601), "w", 1); err != nil {
 		t.Fatal(err)
 	}
 

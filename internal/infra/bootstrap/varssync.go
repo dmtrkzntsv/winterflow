@@ -36,7 +36,7 @@ func newVarsSync(ctx context.Context, d port.CommandDispatcher, deps sharedvars.
 		deps.Log = log
 	}
 	s := &varsSync{indexSync: online, uc: sharedvars.New(&deps), log: log, pushed: map[string]int64{}}
-	online.list = func(ctx context.Context, serverID string) error { return s.uc.Sync(ctx, serverID, nil) }
+	online.list = func(ctx context.Context, serverID string) error { return s.uc.Sync(ctx, serverID) }
 	return s
 }
 
@@ -71,7 +71,7 @@ func (s *varsSync) revision(ctx context.Context, serverID string, agentRev int64
 	s.mu.Unlock()
 	pctx, cancel := context.WithTimeout(s.ctx, indexSyncPublishTimeout)
 	defer cancel()
-	if err := s.uc.Sync(pctx, serverID, nil); err != nil {
+	if err := s.uc.Sync(pctx, serverID); err != nil {
 		s.log.Warn("sync shared variables: drift push", "error", err, "server_id", serverID)
 		// Nothing was sent: the next report tries again.
 		s.mu.Lock()

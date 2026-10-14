@@ -10,6 +10,7 @@ import (
 	"time"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
+	"winterflow/pkg/util"
 
 	"winterflow/internal/domain/command"
 	"winterflow/internal/infra/transport/grpc/proto"
@@ -509,7 +510,7 @@ func (a *Agent) Run(ctx context.Context) {
 			a.log.Warn("agent connection attempt failed, will retry",
 				"error", err, "retry_in", backoff.String())
 			a.teardownConn()
-			if !sleepCtx(ctx, backoff) {
+			if !util.Sleep(ctx, backoff) {
 				return
 			}
 			backoff = nextBackoff(backoff, maxBackoff)
@@ -525,7 +526,7 @@ func (a *Agent) Run(ctx context.Context) {
 		case <-done:
 			a.log.Warn("agent stream ended, reconnecting", "agent_id", a.agentID)
 			a.teardownConn()
-			if !sleepCtx(ctx, backoff) {
+			if !util.Sleep(ctx, backoff) {
 				return
 			}
 			backoff = nextBackoff(backoff, maxBackoff)
@@ -570,18 +571,6 @@ func (a *Agent) teardownConn() {
 		_ = a.conn.Close()
 		a.conn = nil
 		a.client = nil
-	}
-}
-
-// sleepCtx sleeps for d or until ctx is canceled; returns false if canceled.
-func sleepCtx(ctx context.Context, d time.Duration) bool {
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return false
-	case <-t.C:
-		return true
 	}
 }
 

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -51,6 +51,42 @@ describe("UnderlineTabs", () => {
     renderTabs("logs", onValueChange);
     await userEvent.setup().click(screen.getByRole("tab", { name: "Overview" }));
     expect(onValueChange).toHaveBeenCalledWith("overview");
+  });
+
+  it("measures again when the tabs change, and when they resize", async () => {
+    let resized: () => void = () => {};
+    const observed: Element[] = [];
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(fn: () => void) {
+          resized = fn;
+        }
+        observe(el: Element) {
+          observed.push(el);
+        }
+        disconnect() {}
+      },
+    );
+    try {
+      const view = renderTabs("overview");
+      const strip = screen.getByTestId("tab-strip");
+      expect(observed).toEqual([strip, screen.getByRole("tablist")]);
+      Object.defineProperty(strip, "clientWidth", { configurable: true, value: 200 });
+      Object.defineProperty(strip, "scrollWidth", { configurable: true, value: 400 });
+      // A tab added (say, Backups once the app has some) cuts the strip off.
+      view.rerender(
+        <UnderlineTabs value="overview" onValueChange={vi.fn()} items={[...ITEMS, { value: "backups", label: "Backups" }]}>
+          <TabsContent value="overview">overview panel</TabsContent>
+        </UnderlineTabs>,
+      );
+      await waitFor(() => expect(strip.className).toContain("to_right,black_calc(100%-2rem),transparent"));
+      Object.defineProperty(strip, "scrollWidth", { configurable: true, value: 200 });
+      act(() => resized());
+      expect(strip.className).not.toContain("mask-image");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("scrolls inside itself on a phone instead of widening the page", () => {

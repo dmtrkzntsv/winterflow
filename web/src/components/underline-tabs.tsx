@@ -46,16 +46,25 @@ export function UnderlineTabs<T extends string>({
     const right = strip.scrollLeft + strip.clientWidth < strip.scrollWidth - 1;
     setHidden(left && right ? "both" : left ? "left" : right ? "right" : null);
   }, []);
-  // Measured once laid out, then on every scroll (a tab brought into view
-  // scrolls the strip too) and resize.
+  // Measured once laid out and whenever the tabs change (one added or
+  // gone), then on every scroll (a tab brought into view scrolls the strip
+  // too) and resize, of the window or of the tabs (a label that grew).
+  const tabs = items.map((item) => item.value).join("\n");
   useEffect(() => {
     const frame = requestAnimationFrame(measure);
     window.addEventListener("resize", measure);
+    const strip = bar.current;
+    const sizes = typeof ResizeObserver === "function" && strip ? new ResizeObserver(() => measure()) : null;
+    if (strip && sizes) {
+      sizes.observe(strip);
+      if (strip.firstElementChild) sizes.observe(strip.firstElementChild);
+    }
     return () => {
       cancelAnimationFrame(frame);
       window.removeEventListener("resize", measure);
+      sizes?.disconnect();
     };
-  }, [measure]);
+  }, [measure, tabs]);
   // Only the strip scrolls (scrollIntoView would scroll the page as well
   // when the tabs sit below the fold).
   useEffect(() => {

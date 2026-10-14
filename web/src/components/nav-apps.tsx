@@ -39,7 +39,7 @@ export function NavApps() {
                 <StatusDot tone={status.tone} pulse={status.pulse} />
                 {/* Not reconciled yet: the id prefix stands in for the name. */}
                 <span className={cn("truncate", !app.name?.trim() && "font-mono text-muted-foreground")}>
-                  {appLabel(app.name, app.id)}
+                  {appLabel(app.name)}
                   <span className="sr-only">, {status.label}</span>
                 </span>
               </SidebarLink>

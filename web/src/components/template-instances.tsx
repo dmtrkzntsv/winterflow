@@ -11,14 +11,14 @@ import { EmptyNote } from "@/components/page-states";
 import { UpgradeInstanceDialog } from "@/components/upgrade-instance-dialog";
 import { useServers } from "@/context/use-servers";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
+import { appLabel } from "@/lib/kpi";
 import { serverPath } from "@/lib/server-paths";
 import { expand, plainValues } from "@/lib/template-params";
 import type { InstanceView, TemplateView } from "@/lib/templates";
 
-// instanceName is an instance's app name as the latest revision renders it
-// (the app id's prefix until it has one).
+// instanceName is an instance's app name as the latest revision renders it.
 function instanceName(view: TemplateView, inst: InstanceView): string {
-  return expand(view.body.app_name, plainValues(view.body.parameters, inst.parameters ?? {})) || inst.app_id.slice(0, 8);
+  return appLabel(expand(view.body.app_name, plainValues(view.body.parameters, inst.parameters ?? {})));
 }
 
 // TemplateInstances lists the apps a template runs as, across the org's

@@ -24,7 +24,7 @@ describe("paletteNavEntries", () => {
     });
     expect(entries.filter((e) => e.group === "Apps").map((e) => [e.label, e.to])).toEqual([
       ["Shop", "/server/s1/app/a1"],
-      ["01234567", "/server/s1/app/0123456789"],
+      ["Unnamed app", "/server/s1/app/0123456789"],
     ]);
     expect(entries.filter((e) => e.group === "Pages").map((e) => [e.label, e.to])).toEqual([
       ["Apps", "/server/s1"],

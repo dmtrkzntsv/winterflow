@@ -12,8 +12,9 @@ import type { App } from "@/context/apps-context-base";
 import { useApps } from "@/context/use-apps";
 import { useServerPath } from "@/context/use-server-path";
 import { useServers } from "@/context/use-servers";
-import { appTitle, appWarning, filterApps, FILTER_THRESHOLD, primaryAddress, type AppWarning } from "@/lib/app-summary";
+import { appWarning, filterApps, FILTER_THRESHOLD, primaryAddress, type AppWarning } from "@/lib/app-summary";
 import { TILE_GRID } from "@/lib/grid";
+import { appLabel } from "@/lib/kpi";
 import { appSub, newAppSub } from "@/lib/routes";
 import { appStatus } from "@/lib/status";
 import { cn } from "@/lib/utils";
@@ -76,7 +77,7 @@ function AppCard({ app, code, warning, index }: { app: App; code: number | undef
                 !named && "font-medium text-muted-foreground",
               )}
             >
-              {appTitle(app)}
+              {appLabel(app.name)}
             </Link>
             <StatusPill status={appStatus(code)} />
           </div>

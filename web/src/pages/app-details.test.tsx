@@ -12,12 +12,29 @@ import AppDetailsPage from "@/pages/app-details";
 import type { BackupHealth } from "@/lib/backups";
 import type { InstanceView, TemplateView } from "@/lib/templates";
 import type { DraftState } from "@/lib/template-draft";
+import { trackActivity } from "@/lib/backup-activity";
 import { fakeAPI } from "@/test/fake-api";
 
-const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }));
+const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
 vi.mock("@/components/app-backups", () => ({ AppBackups: () => <p>the backups tab</p> }));
-vi.mock("@/components/app-metrics", () => ({ AppMetricBlocks: () => null, AppMetricsTab: () => null }));
+vi.mock("@/components/app-metrics", () => ({ AppMetricsTab: () => null }));
+// The Overview has its own tests; here it shows whose it is and offers
+// View history.
+vi.mock("@/components/app-page/app-overview", () => ({
+  AppOverview: ({ app, onOpenHistory }: { app: { name: string }; onOpenHistory: () => void }) => (
+    <div>
+      <p>the overview of {app.name}</p>
+      <button type="button" onClick={onOpenHistory}>
+        View history
+      </button>
+    </div>
+  ),
+}));
+// The alerts banner has its own tests (it polls).
+vi.mock("@/components/alerts/active-alerts", () => ({ AppAlertsBanner: () => null }));
+const backupsApi = vi.hoisted(() => ({ runBackup: vi.fn() }));
+vi.mock("@/context/use-backups", () => ({ useBackups: () => backupsApi }));
 // The stale shared-variables badge has its own tests (it subscribes to
 // notifications).
 vi.mock("@/components/stale-vars-badge", () => ({ StaleVarsBadge: () => null }));
@@ -102,6 +119,7 @@ function renderPage(
               element={
                 <>
                   <Link to="/app/a2?tab=editor">go to a2</Link>
+                  <Link to="/app/a2?tab=settings">open a2 settings</Link>
                   <PaletteActions />
                   <Outlet />
                 </>
@@ -136,6 +154,7 @@ describe("AppDetailsPage", () => {
       "Shop: Stop",
       "Shop: Pull latest images",
       "Shop: View logs",
+      "Shop: Back up now",
     ]);
     await user.click(within(list).getByRole("button", { name: "Shop: Stop" }));
     expect(control).toHaveBeenCalledWith("a1", "stop");
@@ -165,6 +184,131 @@ describe("AppDetailsPage", () => {
     expect(within(list).getByRole("button", { name: "Shop: Stop" })).toBeDisabled();
     expect(within(list).getByRole("button", { name: "Shop: Pull latest images" })).toBeDisabled();
     expect(within(list).getByRole("button", { name: "Shop: View logs" })).toBeEnabled();
+  });
+
+  it("opens Overview by default; old and e-mailed links still open their tab", async () => {
+    const { unmount } = renderPage("/app/a1");
+    expect(await screen.findByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText("the overview of Shop")).toBeInTheDocument();
+    expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual([
+      "Overview",
+      "Logs",
+      "Configuration",
+      "Backups",
+      "Metrics",
+      "Settings",
+    ]);
+    unmount();
+    renderPage("/app/a1?tab=metrics");
+    expect(await screen.findByRole("tab", { name: "Metrics" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("shows where the app lives, and the header stacks on a phone", async () => {
+    renderPage("/app/a1?tab=backups", {}, { app: { domains: [{ domain: "shop.example.com", ssl: true, kind: "route" }] } });
+    expect(await screen.findByRole("link", { name: /Open/ })).toHaveAttribute("href", "https://shop.example.com");
+    expect(screen.getByRole("heading", { level: 1, name: "Shop" }).closest("header")).toHaveClass("flex-col", "sm:flex-row");
+  });
+
+  it("puts Restart first while the app runs and the rest in ⋯", async () => {
+    const user = userEvent.setup();
+    const control = vi.fn(async () => {});
+    renderPage("/app/a1?tab=backups", {}, { ctx: { control } });
+    await user.click(await screen.findByRole("button", { name: "Restart" }));
+    expect(control).toHaveBeenCalledWith("a1", "restart");
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("App restarted"));
+    await user.click(screen.getByRole("button", { name: "More actions" }));
+    expect((await screen.findAllByRole("menuitem")).map((m) => m.textContent)).toEqual([
+      "Stop",
+      "Pull latest images",
+      "Back up now",
+      "Save as template",
+      "Delete…",
+    ]);
+    await user.click(screen.getByRole("menuitem", { name: "Pull latest images" }));
+    expect(control).toHaveBeenCalledWith("a1", "update");
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Latest images pulled"));
+  });
+
+  it("offers Start while the app is stopped, and no Stop", async () => {
+    const user = userEvent.setup();
+    renderPage("/app/a1?tab=backups", {}, { ctx: { statusByApp: { a1: 5 } } });
+    expect(await screen.findByRole("button", { name: "Start" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "More actions" }));
+    expect(screen.queryByRole("menuitem", { name: "Stop" })).not.toBeInTheDocument();
+  });
+
+  it("backs up now from ⋯, and from ⌘K says when there is nothing to back up", async () => {
+    const user = userEvent.setup();
+    backupsApi.runBackup.mockReset().mockResolvedValue({ unchanged: false, point: { id: "p" }, warnings: [] });
+    const getApp = vi.fn(async () => ({
+      backups: [{ name: "db", type: "sqlite", enabled: true, storage: "disk", in_recipe: true, from_recipe: null }],
+    }));
+    renderPage("/app/a1?tab=backups", {}, { ctx: { getApp } as unknown as Partial<AppsContextValue> });
+    await user.click(await screen.findByRole("button", { name: "More actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Back up now" }));
+    await waitFor(() => expect(backupsApi.runBackup).toHaveBeenCalledWith("a1", "db"));
+
+    getApp.mockResolvedValueOnce({ backups: [] } as never);
+    await user.click(screen.getByRole("button", { name: "Shop: Back up now" }));
+    await waitFor(() =>
+      expect(toast.info).toHaveBeenCalledWith("Nothing to back up yet", { description: "Set up a backup on the Backups tab first." }),
+    );
+  });
+
+  it("disables Back up now in ⋯ while a backup of the app runs or is restored", async () => {
+    const user = userEvent.setup();
+    let end = () => {};
+    act(() => {
+      end = trackActivity("a1", "db", "restore");
+    });
+    renderPage("/app/a1?tab=backups");
+    await user.click(await screen.findByRole("button", { name: "More actions" }));
+    expect(await screen.findByRole("menuitem", { name: "Back up now" })).toHaveAttribute("aria-disabled", "true");
+    await user.keyboard("{Escape}");
+    act(() => end());
+    await user.click(screen.getByRole("button", { name: "More actions" }));
+    expect(await screen.findByRole("menuitem", { name: "Back up now" })).not.toHaveAttribute("aria-disabled");
+  });
+
+  it("deletes from ⋯ through the one Delete dialog", async () => {
+    const user = userEvent.setup();
+    renderPage("/app/a1?tab=backups");
+    await user.click(await screen.findByRole("button", { name: "More actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Delete…" }));
+    expect(await screen.findByRole("alertdialog", { name: "Delete Shop?" })).toBeInTheDocument();
+  });
+
+  it("opens History from the Overview", async () => {
+    const user = userEvent.setup();
+    renderPage("/app/a1");
+    await user.click(await screen.findByRole("button", { name: "View history" }));
+    expect(await screen.findByRole("dialog", { name: "History" })).toBeInTheDocument();
+  });
+
+  it("shows only the new app's settings after moving to another app", async () => {
+    const user = userEvent.setup();
+    const getApp = vi.fn(async (id: string) => ({
+      app: { app_id: id, config: btoa(JSON.stringify({ name: id, description: `${id} notes` })), files: [], variables: [] },
+      revision: 1,
+      available_revisions: null,
+    }));
+    const apps = [
+      { id: "a1", serverId: "s", name: "Shop", version: "3", icon: "", color: "", createdAt: "" },
+      { id: "a2", serverId: "s", name: "Blog", version: "1", icon: "", color: "", createdAt: "" },
+    ];
+    renderPage("/app/a1?tab=settings", {}, { ctx: { apps, getApp } as unknown as Partial<AppsContextValue> });
+    expect(await screen.findByDisplayValue("a1 notes")).toBeInTheDocument();
+    await user.click(screen.getByRole("link", { name: "open a2 settings" }));
+    expect(await screen.findByDisplayValue("a2 notes")).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("a1 notes")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1, name: "Blog" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "App name" })).toHaveValue("Blog");
+  });
+
+  it("names a nameless app Unnamed app everywhere, never by its id", async () => {
+    renderPage("/app/a1?tab=backups", {}, { app: { name: "" } });
+    expect(await screen.findByRole("heading", { level: 1, name: "Unnamed app" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Unnamed app: Restart" })).toBeInTheDocument();
   });
 
   it("opens Configuration from its new name and from the old ?tab=editor", async () => {
@@ -294,13 +438,13 @@ describe("AppDetailsPage of a template instance", () => {
     for (const f of Object.values(toast)) f.mockReset();
   });
 
-  it("badges the template and revision, and upgrades asking for the new value", async () => {
+  it("chips the template, and updates asking for the new value", async () => {
     const user = userEvent.setup();
     const api = instanceAPI(INSTANCE, { "/api/v1/instance/upgrade-instance": { instance: INSTANCE, request_id: "", warnings: [] } });
     renderPage("/app/a1?tab=backups", {}, managed);
-    expect(await screen.findByRole("link", { name: "twillingate · r2" })).toHaveAttribute("href", "/templates/t1");
-    expect(screen.getByText("r3 available")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Upgrade to r3" }));
+    expect(await screen.findByRole("link", { name: "From template twillingate" })).toHaveAttribute("href", "/templates/t1");
+    expect(screen.queryByText(/r3/)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Update available" }));
     const dialog = await screen.findByRole("dialog");
     await user.type(within(dialog).getByLabelText("REGION"), "eu");
     await user.click(within(dialog).getByRole("button", { name: "Upgrade to r3" }));
@@ -314,7 +458,7 @@ describe("AppDetailsPage of a template instance", () => {
     const user = userEvent.setup();
     const api = instanceAPI();
     renderPage("/app/a1?tab=backups", {}, { ...managed, ctx: { statusByApp: { a1: 5 } } });
-    await user.click(await screen.findByRole("button", { name: "Upgrade to r3" }));
+    await user.click(await screen.findByRole("button", { name: "Update available" }));
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByRole("heading")).toHaveTextContent("Upgrade Shop to r3");
     expect(dialog).toHaveTextContent("The app will be started.");
@@ -325,13 +469,14 @@ describe("AppDetailsPage of a template instance", () => {
   it("hides the app's own revision for an app a template manages", async () => {
     instanceAPI();
     renderPage("/app/a1?tab=backups", {}, managed);
-    expect(await screen.findByRole("link", { name: "twillingate · r2" })).toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "From template twillingate" })).toBeInTheDocument();
     expect(screen.queryByText("Revision 3")).not.toBeInTheDocument();
   });
 
-  it("shows the app's own revision for a plain app", async () => {
+  it("never shows a revision number in the header", async () => {
     renderPage("/app/a1?tab=backups");
-    expect(await screen.findByText("Revision 3")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 1, name: "Shop" })).toBeInTheDocument();
+    expect(screen.queryByText(/Revision/)).not.toBeInTheDocument();
   });
 
   it("shows the files read-only and a Parameters form instead of the editor", async () => {
@@ -529,7 +674,7 @@ describe("AppDetailsPage of a template instance", () => {
       },
     });
     renderPage("/app/a1?tab=backups", {}, managed);
-    await user.click(await screen.findByRole("button", { name: "Upgrade to r3" }));
+    await user.click(await screen.findByRole("button", { name: "Update available" }));
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Couldn't load the template", { description: "boom" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
@@ -582,7 +727,7 @@ describe("AppDetailsPage of a template instance", () => {
     await new Promise((r) => setTimeout(r, 50));
     expect(screen.getByText("the plain editor")).toBeInTheDocument();
     expect(screen.queryByText(/Managed by template/)).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "twillingate · r2" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "From template twillingate" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("NAME")).not.toBeInTheDocument();
   });
 });

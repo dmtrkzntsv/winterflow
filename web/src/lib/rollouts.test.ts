@@ -19,11 +19,11 @@ describe("rolloutLine", () => {
     ).toBe("Reloading 2 of 5: shop on srv-2…");
   });
 
-  it("says queued, stopping, and names an app without a name by its id", () => {
+  it("says queued, stopping, and names an app without a name Unnamed app", () => {
     expect(rolloutLine(rollout({ state: "queued", current_app_id: "" }), names)).toBe("Upgrade to r3 queued…");
     expect(rolloutLine(rollout({ kind: "vars_reload", state: "queued", current_app_id: "" }), names)).toBe("Reload queued…");
     expect(rolloutLine(rollout({ stop_requested: true, current_app_name: "" }), names)).toBe(
-      "Upgrading 3 of 12: a1b2c3d4 (stopping after this one)",
+      "Upgrading 3 of 12: Unnamed app (stopping after this one)",
     );
   });
 

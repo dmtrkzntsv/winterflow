@@ -73,7 +73,10 @@ function Chip({ pressed, onClick, children }: { pressed: boolean; onClick: () =>
 
 // LogsView is a console-style log display: a scroll box that sticks to the
 // bottom while new lines arrive, unless the user has scrolled up to read
-// (then it stays put until they jump back down).
+// (then it stays put until they jump back down). Its height fills the
+// viewport under the app page's tabs, so the page itself does not scroll:
+// the rest of the page is shell padding + app header + tabs, about 13.5rem
+// on a desktop and 18.4rem on a phone (top bar, stacked header).
 export function LogsView({
   lines,
   loading,
@@ -127,7 +130,7 @@ export function LogsView({
   };
 
   return (
-    <div className="relative flex h-[calc(100svh-15rem)] min-h-80 flex-col overflow-hidden rounded-lg border border-console-border bg-console text-console-foreground">
+    <div className="relative flex h-[calc(100svh-18.5rem)] min-h-80 lg:h-[calc(100svh-13.75rem)] flex-col overflow-hidden rounded-lg border border-console-border bg-console text-console-foreground">
       <div className="flex flex-wrap items-center gap-2 border-b border-console-border px-3 py-2">
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 text-xs">
           {containers.length > 1 ? (

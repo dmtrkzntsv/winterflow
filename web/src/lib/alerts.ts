@@ -489,10 +489,3 @@ export function activeText(a: Pick<ActiveAlert, "target_kind" | "metric" | "valu
   if (!info || !hasThreshold(a.metric)) return "Down";
   return `${info.label} ${formatAlertValue(info.unit, a.value)} > ${formatAlertValue(info.unit, a.threshold)}`;
 }
-
-// alertTargetPath links a firing alert to its server's Monitoring page or its
-// app's Metrics tab.
-export function alertTargetPath(serverId: string, appId: string): string {
-  const base = `/server/${encodeURIComponent(serverId)}`;
-  return appId ? `${base}/app/${encodeURIComponent(appId)}?tab=metrics` : `${base}/monitoring`;
-}

@@ -138,7 +138,7 @@ export default function MonitoringPage() {
   const rows = (fields: string[]) => toChartRows(points, interval, fields, mode);
   const temps = temperatureChart(points, interval, mode);
   const appSeries = (data?.apps ?? []).map((a, i) =>
-    s(a.app_id, appLabel(apps.find((x) => x.id === a.app_id)?.name, a.app_id), i),
+    s(a.app_id, appLabel(apps.find((x) => x.id === a.app_id)?.name), i),
   );
   // The disk scan is hourly: take the latest sample's, not the range's.
   const latest = overview?.servers?.find((o) => o.server_id === activeServerId)?.latest?.server;

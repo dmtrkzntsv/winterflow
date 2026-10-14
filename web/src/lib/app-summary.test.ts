@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
   appAddresses,
   appsSubtitle,
-  appTitle,
   appWarning,
   containerHint,
   countApps,
@@ -32,13 +31,6 @@ describe("addresses", () => {
   it("has no address without routes", () => {
     expect(primaryAddress({ domains: undefined })).toBeNull();
     expect(primaryAddress({ domains: [{ domain: "x.example.com", ssl: true, kind: "redirect" }] })).toBeNull();
-  });
-});
-
-describe("appTitle", () => {
-  it("names an app not reconciled yet without its id", () => {
-    expect(appTitle({ name: "Shop" })).toBe("Shop");
-    expect(appTitle({ name: "  " })).toBe("Unnamed app");
   });
 });
 

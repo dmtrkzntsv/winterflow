@@ -4,6 +4,7 @@
 // the SSE stream, to every member of the org.
 import { apiBase } from "@/config";
 import { createJsonClient, jsonPost } from "@/lib/api";
+import { appLabel } from "@/lib/kpi";
 
 export type RolloutKind = "template_upgrade" | "vars_reload";
 export type RolloutState = "queued" | "running" | "done" | "stopped" | "failed";
@@ -34,10 +35,9 @@ export function isActive(r: Rollout): boolean {
   return r.state === "queued" || r.state === "running";
 }
 
-// appLabel names the rollout's current app (its id's prefix until the API
-// knows a name).
-export function appLabel(r: Rollout): string {
-  return r.current_app_name || r.current_app_id.slice(0, 8);
+// currentApp names the rollout's current app.
+export function currentApp(r: Rollout): string {
+  return appLabel(r.current_app_name);
 }
 
 // rolloutLine is the strip's text for an active rollout: "Upgrading 3 of
@@ -50,7 +50,7 @@ export function rolloutLine(r: Rollout, serverName: (id: string) => string): str
   const where = r.kind === "vars_reload" ? ` on ${serverName(r.current_server_id)}` : "";
   const step = Math.min(r.done + r.skipped + 1, Math.max(r.total, 1));
   const stopping = r.stop_requested ? " (stopping after this one)" : "…";
-  return `${verb} ${step} of ${r.total}: ${appLabel(r)}${where}${stopping}`;
+  return `${verb} ${step} of ${r.total}: ${currentApp(r)}${where}${stopping}`;
 }
 
 // failureLine names what stopped a failed rollout: the app it stopped at,
@@ -59,7 +59,7 @@ export function failureLine(r: Rollout, serverName: (id: string) => string): str
   const what = r.kind === "template_upgrade" ? `Upgrade to r${r.revision}` : "Reload";
   if (!r.current_app_id) return `${what} failed`;
   const where = r.kind === "vars_reload" && r.current_server_id ? ` on ${serverName(r.current_server_id)}` : "";
-  return `${what} stopped at ${appLabel(r)}${where}`;
+  return `${what} stopped at ${currentApp(r)}${where}`;
 }
 
 const apps = (n: number) => `${n} app${n === 1 ? "" : "s"}`;

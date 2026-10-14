@@ -187,8 +187,8 @@ export function formatClock(ms: number): string {
   return new Date(ms).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }
 
-// appLabel is an app's display name; an app not reconciled yet has none and
-// is named by its id prefix.
-export function appLabel(name: string | undefined, id: string): string {
-  return name?.trim() || id.slice(0, 8);
+// appLabel is an app's name for the UI. An app not reconciled yet has none
+// and is never shown by its raw id.
+export function appLabel(name: string | undefined | null): string {
+  return name?.trim() || "Unnamed app";
 }

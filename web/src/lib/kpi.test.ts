@@ -141,9 +141,9 @@ describe("kpi helpers", () => {
     expect(serverPresence(false, null, now)).toMatchObject({ tone: "waiting", label: "waiting" });
   });
 
-  it("names a nameless app by its id prefix", () => {
-    expect(appLabel("Nextcloud", "abc")).toBe("Nextcloud");
-    expect(appLabel("", "0123456789")).toBe("01234567");
-    expect(appLabel(undefined, "0123456789")).toBe("01234567");
+  it("names a nameless app Unnamed app, never by its id", () => {
+    expect(appLabel("Nextcloud")).toBe("Nextcloud");
+    expect(appLabel("  ")).toBe("Unnamed app");
+    expect(appLabel(undefined)).toBe("Unnamed app");
   });
 });

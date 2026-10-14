@@ -8,7 +8,7 @@ import { ErrorText } from "@/components/error-text";
 import { useRollout } from "@/hooks/use-rollout";
 import { useRolloutsApi } from "@/hooks/use-rollouts-api";
 import { serverPath } from "@/lib/server-paths";
-import { appLabel, failureLine, isActive, rolloutLine, skippedLine, type Rollout, type RolloutsApi } from "@/lib/rollouts";
+import { currentApp, failureLine, isActive, rolloutLine, skippedLine, type Rollout, type RolloutsApi } from "@/lib/rollouts";
 
 // ReloadRolloutStrip is the org's shared-variable reload rollout as a
 // RolloutStrip with Stop (api: a test's client), its servers named by
@@ -82,7 +82,7 @@ export function RolloutStrip({
             <>
               {" · "}
               <Link to={link} className="font-medium underline-offset-2 hover:underline">
-                Open {appLabel(rollout)}
+                Open {currentApp(rollout)}
               </Link>
             </>
           ) : null}

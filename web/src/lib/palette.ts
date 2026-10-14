@@ -47,7 +47,7 @@ export function paletteNavEntries({
   if (serverId) {
     for (const app of apps) {
       if (app.serverId !== serverId) continue;
-      entries.push({ id: `app:${app.id}`, group: "Apps", label: appLabel(app.name, app.id), to: appPath(serverId, app.id), keywords: ["app"] });
+      entries.push({ id: `app:${app.id}`, group: "Apps", label: appLabel(app.name), to: appPath(serverId, app.id), keywords: ["app"] });
     }
     entries.push(
       { id: "page:apps", group: "Pages", label: "Apps", to: appsPath(serverId), keywords: ["home", "dashboard"] },

@@ -25,12 +25,6 @@ export function primaryAddress(app: Pick<App, "domains">): AppAddress | null {
   return appAddresses(app)[0] ?? null;
 }
 
-// appTitle is an app's name for the UI; an app not reconciled yet has none
-// and is never shown by its raw id.
-export function appTitle(app: Pick<App, "name">): string {
-  return app.name?.trim() || "Unnamed app";
-}
-
 export type AppCounts = { running: number; problem: number; stopped: number };
 
 // countApps sorts the apps by their live status: running (active, idle,

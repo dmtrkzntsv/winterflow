@@ -48,7 +48,7 @@ export function useSaveAsTemplate(appId: string, name: string): { run: () => Pro
   const run = useCallback(async () => {
     setBusy(true);
     try {
-      const state: DraftState = { ...templateFromApp(appId, await getApp(appId)), appName: appLabel(name, appId) };
+      const state: DraftState = { ...templateFromApp(appId, await getApp(appId)), appName: appLabel(name) };
       navigate(NEW_TEMPLATE_PATH, { state });
     } catch (e) {
       toast.error("Couldn't read the app", { description: e instanceof Error ? e.message : undefined });

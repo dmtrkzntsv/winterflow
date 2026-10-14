@@ -215,7 +215,15 @@ function BackupsWidget({ app, read, className }: { app: App; read: AppDetailRead
 
   let body: ReactNode;
   if (error) {
-    body = <Retry message={error} onRetry={read.reload} />;
+    // The Backups tab says more (and shows what the agent last reported).
+    body = (
+      <div className="space-y-1">
+        <Retry message={error} onRetry={read.reload} />
+        <Link to={backupsTab} className={LINK}>
+          Open Backups <ArrowRight className="size-4" aria-hidden />
+        </Link>
+      </div>
+    );
   } else if (list === null) {
     body = <Spinner aria-label="Loading backups" />;
   } else if (set.length === 0) {
@@ -352,9 +360,10 @@ function RecentChangesWidget({
       title="Recent changes"
       className={cn(CARD, className)}
       actions={
-        <Button size="sm" variant="ghost" onClick={onOpenHistory}>
-          View history
-        </Button>
+        // A link like the other cards' (it opens the History sheet).
+        <button type="button" className={LINK} onClick={onOpenHistory}>
+          View history <ArrowRight className="size-4" aria-hidden />
+        </button>
       }
     >
       {body}

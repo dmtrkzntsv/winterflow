@@ -304,6 +304,8 @@ describe("AppOverview", () => {
     expect(await within(region).findByText(/Backups can't be read right now: x-winterflow/)).toBeInTheDocument();
     expect(within(region).queryByText("No backup is set up yet.")).not.toBeInTheDocument();
     expect(within(region).queryByRole("link", { name: "Set up a backup" })).not.toBeInTheDocument();
+    // The Backups tab is a click away.
+    expect(within(region).getByRole("link", { name: "Open Backups" })).toHaveAttribute("href", expect.stringContaining("tab=backups"));
     await user.click(within(region).getByRole("button", { name: "Retry" }));
     expect(await within(region).findByRole("list", { name: "Backups" })).toBeInTheDocument();
   });

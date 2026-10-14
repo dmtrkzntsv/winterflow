@@ -36,6 +36,9 @@ vi.mock("@/context/use-apps", () => ({
     control: vi.fn(),
   }),
 }));
+vi.mock("@/hooks/use-inbox-unread", () => ({
+  useInboxUnread: () => ({ count: 0, seenAt: 0, isUnread: () => false, markAllRead: () => {} }),
+}));
 // NavUser needs the account contexts; it has its own test.
 vi.mock("@/components/nav-user", () => ({ NavUser: () => null }));
 
@@ -74,15 +77,12 @@ function renderAt(url: string) {
 describe("server-scoped links", () => {
   it("points the sidebar and the app grid into the active server", async () => {
     renderAt("/server/s1");
-    expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute("href", "/server/s1");
+    expect(screen.getByRole("link", { name: "Apps" })).toHaveAttribute("href", "/server/s1");
     expect(screen.getByRole("link", { name: "Monitoring" })).toHaveAttribute(
       "href",
       "/server/s1/monitoring",
     );
-    expect(screen.getByRole("link", { name: "Server Settings" })).toHaveAttribute(
-      "href",
-      "/server/s1/settings",
-    );
+    expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
     for (const link of screen.getAllByRole("link", { name: /Shop/ })) {
       expect(link).toHaveAttribute("href", "/server/s1/app/a1");
     }

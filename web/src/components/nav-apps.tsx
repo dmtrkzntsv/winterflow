@@ -1,67 +1,60 @@
-"use client";
+import { useLocation } from "react-router-dom";
+import { Plus } from "lucide-react";
 
-import { Link, useLocation } from "react-router-dom";
-
-import {
-  SidebarGroup,
-  SidebarGroupLabel,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-} from "@/components/ui/sidebar";
-import { AppIcon } from "@/components/app-icon";
+import { SidebarLink } from "@/components/sidebar-link";
+import { StatusDot } from "@/components/status";
+import { SidebarMenuSub, SidebarMenuSubButton, SidebarMenuSubItem } from "@/components/ui/sidebar";
 import { useApps } from "@/context/use-apps";
+import { useServers } from "@/context/use-servers";
 import { appLabel } from "@/lib/kpi";
+import { appPath, newAppPath } from "@/lib/routes";
+import { appStatus } from "@/lib/status";
 import { cn } from "@/lib/utils";
-import { useServerPath } from "@/context/use-server-path";
 
-// NavApps lists the active server's apps in the sidebar (v1 parity).
+// NavApps is the live app list under Apps: each app of the active server
+// with its status dot, then New app. Hidden when the sidebar is collapsed
+// to icons.
 export function NavApps() {
-  const { apps, loading } = useApps();
+  const { apps, statusByApp, loading } = useApps();
+  const { activeServerId } = useServers();
   const { pathname } = useLocation();
-  const toServer = useServerPath();
+  if (!activeServerId) return null;
+  const newApp = newAppPath(activeServerId);
+  const serverApps = apps.filter((app) => app.serverId === activeServerId);
 
   return (
-    <SidebarGroup className="group-data-[collapsible=icon]:hidden">
-      <SidebarGroupLabel>Apps</SidebarGroupLabel>
-      <SidebarMenu>
-        {loading && apps.length === 0 ? (
-          <SidebarMenuItem>
-            <SidebarMenuButton disabled>
-              <span className="text-muted-foreground">Loading…</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        ) : apps.length === 0 ? (
-          <SidebarMenuItem>
-            <SidebarMenuButton disabled>
-              <span className="text-muted-foreground">No apps yet</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        ) : (
-          apps.map((app) => (
-            <SidebarMenuItem key={app.id}>
-              <SidebarMenuButton
-                asChild
-                isActive={pathname === toServer(`/app/${app.id}`)}
-              >
-                <Link to={toServer(`/app/${app.id}`)}>
-                  <AppIcon
-                    name={app.name}
-                    id={app.id}
-                    icon={app.icon}
-                    color={app.color}
-                    className="size-5 text-[10px]"
-                  />
-                  {/* Not reconciled yet: the id prefix stands in for the name. */}
-                  <span className={cn("truncate", !app.name?.trim() && "font-mono text-muted-foreground")}>
-                    {appLabel(app.name, app.id)}
-                  </span>
-                </Link>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          ))
-        )}
-      </SidebarMenu>
-    </SidebarGroup>
+    <SidebarMenuSub>
+      {loading && serverApps.length === 0 ? (
+        <SidebarMenuSubItem>
+          <span className="px-2 text-xs text-muted-foreground">Loading…</span>
+        </SidebarMenuSubItem>
+      ) : null}
+      {serverApps.map((app) => {
+        const to = appPath(activeServerId, app.id);
+        const status = appStatus(statusByApp[app.id]);
+        return (
+          <SidebarMenuSubItem key={app.id}>
+            <SidebarMenuSubButton asChild isActive={pathname === to} className="max-lg:h-10">
+              <SidebarLink to={to}>
+                <StatusDot tone={status.tone} pulse={status.pulse} />
+                {/* Not reconciled yet: the id prefix stands in for the name. */}
+                <span className={cn("truncate", !app.name?.trim() && "font-mono text-muted-foreground")}>
+                  {appLabel(app.name, app.id)}
+                  <span className="sr-only">, {status.label}</span>
+                </span>
+              </SidebarLink>
+            </SidebarMenuSubButton>
+          </SidebarMenuSubItem>
+        );
+      })}
+      <SidebarMenuSubItem>
+        <SidebarMenuSubButton asChild isActive={pathname === newApp} className="text-muted-foreground max-lg:h-10">
+          <SidebarLink to={newApp}>
+            <Plus />
+            <span>New app</span>
+          </SidebarLink>
+        </SidebarMenuSubButton>
+      </SidebarMenuSubItem>
+    </SidebarMenuSub>
   );
 }

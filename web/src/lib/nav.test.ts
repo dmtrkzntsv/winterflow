@@ -1,33 +1,43 @@
 import { describe, expect, it } from "vitest";
 
-import { isNavActive, navBottom, navMain, scopeNav } from "@/lib/nav";
-import { serverPath } from "@/lib/server-paths";
+import { isNavActive, sidebarNav } from "@/lib/nav";
 
-const toServer = (sub = "") => serverPath("s1", sub);
+const urls = (n: ReturnType<typeof sidebarNav>) => [n.apps, ...n.pages, n.settings].map((i) => [i.title, i.url]);
 
-describe("sidebar groups", () => {
-  it("tops with the Dashboard alone", () => {
-    expect(navMain.map((i) => [i.title, i.url])).toEqual([["Dashboard", ""]]);
+describe("sidebarNav", () => {
+  it("points Apps and Monitoring into the server and the rest at the org", () => {
+    expect(urls(sidebarNav("s1"))).toEqual([
+      ["Apps", "/server/s1"],
+      ["Monitoring", "/server/s1/monitoring"],
+      ["Inbox", "/inbox"],
+      ["Templates", "/templates"],
+      ["Settings", "/settings"],
+    ]);
+    expect(sidebarNav("s1").pages.find((p) => p.title === "Inbox")?.badge).toBe("inbox");
   });
 
-  it("groups Monitoring with Server Settings at the bottom", () => {
-    expect(navBottom.map((i) => [i.title, i.url])).toEqual([
-      ["Monitoring", "/monitoring"],
-      ["Server Settings", "/settings"],
+  it("has no Monitoring before there is a server", () => {
+    expect(urls(sidebarNav(null))).toEqual([
+      ["Apps", "/"],
+      ["Inbox", "/inbox"],
+      ["Templates", "/templates"],
+      ["Settings", "/settings"],
     ]);
   });
 
-  it("scopes every entry to the server", () => {
-    expect(scopeNav([...navMain, ...navBottom], toServer).map((i) => i.url)).toEqual([
-      "/server/s1",
-      "/server/s1/monitoring",
-      "/server/s1/settings",
-    ]);
+  it("lights Apps on the apps page only, and Settings on both settings areas", () => {
+    const nav = sidebarNav("s1");
+    expect(nav.apps.isActive("/server/s1")).toBe(true);
+    expect(nav.apps.isActive("/server/s1/app/a1")).toBe(false);
+    expect(nav.settings.isActive("/settings/members")).toBe(true);
+    expect(nav.settings.isActive("/server/s1/settings/docker")).toBe(true);
+    expect(nav.settings.isActive("/server/s1/monitoring")).toBe(false);
+    expect(nav.pages[0].isActive("/server/s1/monitoring")).toBe(true);
   });
 });
 
 describe("isNavActive", () => {
-  it("matches an exact entry (the Dashboard) only on itself", () => {
+  it("matches an exact entry only on itself", () => {
     expect(isNavActive("/server/s1", "/server/s1", true)).toBe(true);
     expect(isNavActive("/server/s1/monitoring", "/server/s1", true)).toBe(false);
   });

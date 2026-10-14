@@ -211,7 +211,13 @@ describe("AppDetailsPage", () => {
 
   it("places the firing banner for this app under the header", async () => {
     renderPage("/app/a1?tab=backups");
-    expect(await screen.findByTestId("firing-banner")).toHaveTextContent("s/a1");
+    const banner = await screen.findByTestId("firing-banner");
+    expect(banner).toHaveTextContent("s/a1");
+    // Right under the header, above the tabs.
+    const header = screen.getByRole("heading", { level: 1, name: "Shop" }).closest("header")!;
+    const tabs = screen.getAllByRole("tablist")[0];
+    expect(header.compareDocumentPosition(banner) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(banner.compareDocumentPosition(tabs) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("shows where the app lives, and the header stacks on a phone", async () => {

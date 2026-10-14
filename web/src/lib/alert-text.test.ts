@@ -96,6 +96,15 @@ describe("deliveryNote", () => {
       ]),
     ).toEqual({ text: "Sent to Ops · Couldn't send to Mail", failed: true, detail: "Mail: 535 auth failed" });
   });
+
+  it("says a failure without a reason is a failure", () => {
+    expect(
+      deliveryNote([
+        { channel_id: "c2", channel_name: "Mail", ok: false, error: "" },
+        { channel_id: "c3", channel_name: "Ops", ok: false, error: "  " },
+      ]).detail,
+    ).toBe("Mail: failed\nOps: failed");
+  });
 });
 
 describe("day groups", () => {

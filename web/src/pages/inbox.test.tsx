@@ -145,6 +145,12 @@ describe("InboxPage", () => {
     const yesterday = screen.getByRole("region", { name: "Yesterday" });
     const failed = within(yesterday).getByText("Sent to Ops · Couldn't send to Mail");
     expect(failed).toHaveAttribute("title", "Mail: 535 auth failed");
+    // The reason is text on the row, not only a tooltip; the note is in the
+    // normal muted colour with a red dot, never small red text.
+    expect(within(yesterday).getByText("Mail: 535 auth failed")).toBeVisible();
+    expect(failed).toHaveClass("text-muted-foreground");
+    expect(failed.className).not.toMatch(/status-bad/);
+    expect(failed.querySelector('[data-tone="bad"]')).not.toBeNull();
     expect(screen.getByRole("region", { name: dayLabel(at(10, 9), NOW.getTime()) })).toBeInTheDocument();
     // No notification emoji or operators anywhere.
     expect(document.body).not.toHaveTextContent(/🔥|✅|>/);

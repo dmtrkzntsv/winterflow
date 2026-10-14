@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { FiringBanner } from "@/components/alerts/firing-banner";
 import type { ActiveAlert } from "@/lib/alerts";
 import { fakeAPI } from "@/test/fake-api";
+import { fakeNotifications } from "@/test/notifications";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -74,7 +75,7 @@ describe("FiringBanner", () => {
     expect(within(banner).queryByText("app-5 is down")).not.toBeInTheDocument();
   });
 
-  it("renders nothing while all is quiet", async () => {
+  it("shows nothing but an empty status line while all is quiet", async () => {
     const api = fakeAPI({ "/api/v1/alerts/get-active": [] });
     const { container } = render(
       <MemoryRouter>
@@ -86,6 +87,36 @@ describe("FiringBanner", () => {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
-    expect(container).toBeEmptyDOMElement();
+    expect(screen.queryByRole("region", { name: "Firing alerts" })).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
+    expect(container.children).toHaveLength(1);
+  });
+
+  it("announces only the count of firing alerts, when it changes, not the ticking ages", async () => {
+    let list: ActiveAlert[] = [];
+    fakeAPI({ "/api/v1/alerts/get-active": () => list });
+    const sse = fakeNotifications();
+    render(
+      <MemoryRouter>
+        <sse.Provider>
+          <FiringBanner serverId="s1" />
+        </sse.Provider>
+      </MemoryRouter>,
+    );
+    const status = screen.getByRole("status");
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(status).toBeEmptyDOMElement();
+
+    list = [serverCPU, appDown];
+    act(() => sse.emit({ type: "alert", ref: "", payload: {} }));
+    await vi.waitFor(() => expect(status).toHaveTextContent(/^2 alerts firing$/));
+    // The status element stays the same node, so the change is announced.
+    expect(screen.getByRole("status")).toBe(status);
+
+    list = [appDown];
+    act(() => sse.emit({ type: "alert", ref: "", payload: {} }));
+    await vi.waitFor(() => expect(status).toHaveTextContent(/^1 alert firing$/));
   });
 });

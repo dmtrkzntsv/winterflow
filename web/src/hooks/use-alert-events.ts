@@ -31,12 +31,18 @@ function eventParams(kind: EventKindFilter, serverId: string | null, cursor: str
 // response to an older request (filters changed meanwhile) is dropped
 // instead of overwriting the newer list. While mounted, every "alert"
 // notification reads the first page again and puts the events not shown
-// yet on top. The loaded pages and the cursor stay, and there is no polling.
+// yet on top (also while the first page itself is still loading: the two are
+// joined by id). The loaded pages and the cursor stay, and there is no
+// polling. Until the first page of the current filters is in, the hook shows
+// no events, never the previous filters' list.
 export function useAlertEvents(kind: EventKindFilter, serverId: string | null): AlertEventsState {
+  const key = `${kind}|${serverId ?? ""}`;
   const [events, setEvents] = useState<AlertEvent[]>([]);
   const [cursor, setCursor] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // listKey names the filters the state above belongs to.
+  const [listKey, setListKey] = useState(key);
   // latest numbers page requests: only the newest may land.
   const latest = useRef(0);
   // generation numbers first-page loads: a live update read before the
@@ -51,6 +57,7 @@ export function useAlertEvents(kind: EventKindFilter, serverId: string | null): 
         // its cursor) go at once, so they never show under the new filter,
         // not even when this read fails.
         generation.current++;
+        setListKey(key);
         setEvents([]);
         setCursor("");
       }
@@ -59,7 +66,12 @@ export function useAlertEvents(kind: EventKindFilter, serverId: string | null): 
         const page = await alertsGet<Page>("get-events", eventParams(kind, serverId, after));
         if (request !== latest.current) return;
         const got = page.events ?? [];
-        setEvents((prev) => (after ? [...prev, ...got] : got));
+        setEvents((prev) => {
+          if (after) return [...prev, ...got];
+          // Events a live update added while this page was in flight stay.
+          const ids = new Set(got.map((e) => e.id));
+          return [...prev.filter((e) => !ids.has(e.id)), ...got];
+        });
         setCursor(page.next_cursor);
         setError(null);
       } catch (e) {
@@ -69,7 +81,7 @@ export function useAlertEvents(kind: EventKindFilter, serverId: string | null): 
         if (request === latest.current) setLoading(false);
       }
     },
-    [kind, serverId],
+    [kind, serverId, key],
   );
 
   useEffect(() => {
@@ -86,6 +98,7 @@ export function useAlertEvents(kind: EventKindFilter, serverId: string | null): 
         const fresh = (page.events ?? []).filter((e) => !known.has(e.id));
         return fresh.length > 0 ? [...fresh, ...prev] : prev;
       });
+      setError(null);
     } catch {
       // A live update is best effort: the list stays as it is.
     }
@@ -103,5 +116,6 @@ export function useAlertEvents(kind: EventKindFilter, serverId: string | null): 
     if (cursor) void load(cursor);
   }, [cursor, load]);
 
+  if (listKey !== key) return { events: [], hasMore: false, loading: true, error: null, loadMore };
   return { events, hasMore: cursor !== "", loading, error, loadMore };
 }

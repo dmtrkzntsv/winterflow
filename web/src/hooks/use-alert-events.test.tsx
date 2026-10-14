@@ -178,4 +178,71 @@ describe("useAlertEvents", () => {
     await act(() => new Promise((r) => setTimeout(r, 50)));
     expect(result.current.events.map((e) => e.id)).toEqual(["r1"]);
   });
+
+  // pendingFetch answers each read when the test says so.
+  function pendingFetch() {
+    const pending: { query: string; resolve: (page: unknown) => void; fail: (m: string) => void }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (url: string) =>
+          new Promise<Response>((resolve) => {
+            pending.push({
+              query: new URL(url, "http://x").search,
+              resolve: (page) => resolve(new Response(JSON.stringify({ success: true, message: "ok", data: page }))),
+              fail: (m) => resolve(new Response(JSON.stringify({ success: false, message: m }), { status: 500 })),
+            });
+          }),
+      ),
+    );
+    return pending;
+  }
+
+  it("keeps an event a live update added while the first page was still loading", async () => {
+    const pending = pendingFetch();
+    const sse = fakeNotifications();
+    const { result } = renderHook(() => useAlertEvents("all", null), { wrapper: sse.Provider });
+    await waitFor(() => expect(pending).toHaveLength(1));
+    act(() => sse.emit({ type: "alert", ref: "", payload: {} }));
+    await waitFor(() => expect(pending).toHaveLength(2));
+    // The live read is answered first (it saw the new event), then the older first page.
+    pending[1].resolve({ events: [event("new"), event("e1")], next_cursor: "" });
+    await waitFor(() => expect(result.current.events.map((e) => e.id)).toEqual(["new", "e1"]));
+    pending[0].resolve({ events: [event("e1"), event("e0")], next_cursor: "c1" });
+    await waitFor(() => expect(result.current.events.map((e) => e.id)).toEqual(["new", "e1", "e0"]));
+    expect(result.current.hasMore).toBe(true);
+    expect(result.current.loading).toBe(false);
+  });
+
+  it("clears a stale error once a live update reads fine", async () => {
+    const pending = pendingFetch();
+    const sse = fakeNotifications();
+    const { result } = renderHook(() => useAlertEvents("all", null), { wrapper: sse.Provider });
+    await waitFor(() => expect(pending).toHaveLength(1));
+    pending[0].fail("database is locked");
+    await waitFor(() => expect(result.current.error).toBe("database is locked"));
+    act(() => sse.emit({ type: "alert", ref: "", payload: {} }));
+    await waitFor(() => expect(pending).toHaveLength(2));
+    pending[1].resolve({ events: [event("e1")], next_cursor: "" });
+    await waitFor(() => expect(result.current.events.map((e) => e.id)).toEqual(["e1"]));
+    expect(result.current.error).toBeNull();
+  });
+
+  it("shows no events for new filters from the very first render, not the old list for a frame", async () => {
+    fakeAPI({ "/api/v1/alerts/get-events": { events: [event("e1")], next_cursor: "c1" } });
+    const renders: { kind: EventKindFilter; ids: string[]; loading: boolean; hasMore: boolean }[] = [];
+    const { result, rerender } = renderHook(
+      ({ kind, server }: Props) => {
+        const state = useAlertEvents(kind, server);
+        renders.push({ kind, ids: state.events.map((e) => e.id), loading: state.loading, hasMore: state.hasMore });
+        return state;
+      },
+      { initialProps: { kind: "all", server: null } },
+    );
+    await waitFor(() => expect(result.current.events).toHaveLength(1));
+    rerender({ kind: "fired", server: null });
+    const first = renders.find((r) => r.kind === "fired");
+    expect(first).toEqual({ kind: "fired", ids: [], loading: true, hasMore: false });
+    await waitFor(() => expect(result.current.events.map((e) => e.id)).toEqual(["e1"]));
+  });
 });

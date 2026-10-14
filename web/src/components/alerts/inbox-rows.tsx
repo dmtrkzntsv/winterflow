@@ -6,7 +6,6 @@ import { StatusDot } from "@/components/status";
 import { alertTargetPath, sinceText, type ActiveAlert, type AlertEvent } from "@/lib/alerts";
 import { activeTitle, deliveryNote, eventTitle, targetText } from "@/lib/alert-text";
 import { formatClock } from "@/lib/kpi";
-import { cn } from "@/lib/utils";
 
 // The slot before the status mark holds the unread dot, so titles line up
 // whether or not a row is unread.
@@ -47,14 +46,20 @@ export function EventRow({ event, unread }: { event: AlertEvent; unread: boolean
           <time dateTime={event.created_at} className="tabular-nums">
             {formatClock(Date.parse(event.created_at))}
           </time>
+          {/* The reason is text, not only a tooltip, so a phone can read it. */}
+          {note.failed ? (
+            <span className="block whitespace-normal break-words">{note.detail.replaceAll("\n", " · ")}</span>
+          ) : null}
         </>
       }
-      // Above the row's link, so the failure reason shows on hover.
+      // Above the row's link. A failure is marked by a red dot, the words
+      // stay in the normal text colours.
       actions={
         <span
-          className={cn("text-xs", note.failed ? "text-status-bad" : "text-muted-foreground")}
+          className="inline-flex items-center gap-1.5 text-xs text-muted-foreground"
           title={note.detail || undefined}
         >
+          {note.failed ? <StatusDot tone="bad" /> : null}
           {note.text}
         </span>
       }

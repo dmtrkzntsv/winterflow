@@ -92,7 +92,7 @@ export function deliveryNote(deliveries: Delivery[] | null): DeliveryNote {
   return {
     text: parts.join(" · "),
     failed: failed.length > 0,
-    detail: failed.map((d) => `${d.channel_name}: ${d.error}`).join("\n"),
+    detail: failed.map((d) => `${d.channel_name}: ${d.error.trim() || "failed"}`).join("\n"),
   };
 }
 

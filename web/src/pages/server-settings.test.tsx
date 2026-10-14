@@ -75,7 +75,13 @@ describe("server settings pages", () => {
     expect(screen.getByText("4 cores")).toBeInTheDocument();
     expect(screen.getByText("16.0 GB")).toBeInTheDocument();
     expect(screen.getByText("512.0 GB")).toBeInTheDocument();
-    expect(screen.getByText("Running v1.2.3.")).toBeInTheDocument();
+    expect(screen.getByText("Running v1.2.3")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /See releases/ })).toHaveAttribute(
+      "href",
+      "https://github.com/dmtrkzntsv/winterflow/releases",
+    );
+    // The version field waits under Advanced, with what it does.
+    expect(screen.queryByLabelText("Version")).not.toBeInTheDocument();
   });
 
   it("says Offline once the agent is gone, and leaves out what it never reported", () => {
@@ -91,6 +97,8 @@ describe("server settings pages", () => {
     const user = userEvent.setup({ delay: null });
     docker.updateAgent.mockResolvedValue(undefined);
     renderPage(<ServerGeneralPage />);
+    await user.click(screen.getByRole("button", { name: "Advanced" }));
+    expect(screen.getByText("Installs a specific release from GitHub.")).toBeInTheDocument();
     const update = screen.getByRole("button", { name: "Update" });
     expect(update).toBeDisabled();
     await user.type(screen.getByLabelText("Version"), " 1.2.4 ");
@@ -108,6 +116,7 @@ describe("server settings pages", () => {
     const user = userEvent.setup({ delay: null });
     docker.updateAgent.mockRejectedValue(new Error("a restore is running"));
     renderPage(<ServerGeneralPage />);
+    await user.click(screen.getByRole("button", { name: "Advanced" }));
     await user.type(screen.getByLabelText("Version"), "1.2.4");
     await user.click(screen.getByRole("button", { name: "Update" }));
     await waitFor(() =>
@@ -119,6 +128,7 @@ describe("server settings pages", () => {
   it("starts the update field over on another server", async () => {
     const user = userEvent.setup({ delay: null });
     const view = renderPage(<ServerGeneralPage />);
+    await user.click(screen.getByRole("button", { name: "Advanced" }));
     await user.type(screen.getByLabelText("Version"), "1.2.4");
     state.server = { ...ALPHA, id: "s2", name: "Beta" };
     view.rerender(
@@ -128,6 +138,8 @@ describe("server settings pages", () => {
         </Routes>
       </MemoryRouter>,
     );
+    // Another server's page starts folded and empty.
+    await user.click(screen.getByRole("button", { name: "Advanced" }));
     expect(screen.getByLabelText("Version")).toHaveValue("");
   });
 

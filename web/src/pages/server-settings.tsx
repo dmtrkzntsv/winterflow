@@ -1,7 +1,9 @@
 import { useState, type ReactNode } from "react";
 import { Navigate } from "react-router-dom";
+import { ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 
+import { Disclosure } from "@/components/disclosure";
 import { PageHeader } from "@/components/page-header";
 import { Section } from "@/components/section";
 import { StatusPill } from "@/components/status";
@@ -37,8 +39,12 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-// AgentUpdate asks the agent to update itself to a version (the API has no
-// latest-version lookup yet: the version is typed).
+// RELEASES_URL lists Winterflow's releases (calver tags, v261014.1).
+const RELEASES_URL = "https://github.com/dmtrkzntsv/winterflow/releases";
+
+// AgentUpdate shows the agent's running version with the releases, and
+// under Advanced asks the agent to update itself to a typed version (the
+// API has no latest-version lookup yet).
 function AgentUpdate({ docker, running }: { docker: Docker; running: string }) {
   const [version, setVersion] = useState("");
   const [busy, setBusy] = useState(false);
@@ -58,35 +64,47 @@ function AgentUpdate({ docker, running }: { docker: Docker; running: string }) {
   };
 
   return (
-    <Section
-      title="Updates"
-      description={running ? `Running ${versionLabel(running)}.` : "The agent hasn't reported its version yet."}
-    >
-      <form
-        className="flex flex-col gap-2 sm:flex-row sm:items-end"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (target && !busy) void update();
-        }}
-      >
-        <div className="grid flex-1 gap-1.5 sm:max-w-xs">
-          <Label htmlFor="agent-version">Version</Label>
-          <Input
-            id="agent-version"
-            placeholder="e.g. 1.2.3"
-            autoComplete="off"
-            spellCheck={false}
-            value={version}
-            onChange={(e) => setVersion(e.target.value)}
-          />
-        </div>
-        <Button type="submit" disabled={busy || !target}>
-          {busy ? "Updating…" : "Update"}
-        </Button>
-      </form>
-      <p className="text-xs text-muted-foreground">
-        The agent downloads that release, replaces itself and restarts. Only a newer version is applied.
+    <Section title="Updates">
+      <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
+        <span>{running ? `Running ${versionLabel(running)}` : "The agent hasn't reported its version yet."}</span>
+        <a
+          href={RELEASES_URL}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-1 font-medium text-muted-foreground transition-colors duration-150 hover:text-foreground"
+        >
+          See releases
+          <ExternalLink className="size-3.5" aria-hidden />
+        </a>
       </p>
+      <Disclosure label="Advanced">
+        <p className="text-sm text-muted-foreground">Installs a specific release from GitHub.</p>
+        <form
+          className="flex flex-col gap-2 sm:flex-row sm:items-end"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (target && !busy) void update();
+          }}
+        >
+          <div className="grid flex-1 gap-1.5 sm:max-w-xs">
+            <Label htmlFor="agent-version">Version</Label>
+            <Input
+              id="agent-version"
+              placeholder="e.g. v261014.1"
+              autoComplete="off"
+              spellCheck={false}
+              value={version}
+              onChange={(e) => setVersion(e.target.value)}
+            />
+          </div>
+          <Button type="submit" variant="outline" disabled={busy || !target}>
+            {busy ? "Updating…" : "Update"}
+          </Button>
+        </form>
+        <p className="text-xs text-muted-foreground">
+          The agent downloads that release, replaces itself and restarts. Only a newer version is applied.
+        </p>
+      </Disclosure>
     </Section>
   );
 }

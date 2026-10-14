@@ -69,7 +69,7 @@ export function AppEditorPanel({ appId, headerActions }: { appId: string; header
         // Configuration is the instance's parameters, shown once the list
         // is read again.
         toast.error("This app is managed by a template", {
-          description: "Change it through its parameters, or unlink it in Settings first.",
+          description: "Change it through its parameters, or detach it from the template in Settings first.",
         });
         void refresh();
         return;

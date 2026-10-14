@@ -8,8 +8,7 @@ import { useServerPath } from "@/context/use-server-path";
 import { deleteOutcome, type DeleteChoice } from "@/lib/delete-app";
 import { appLabel } from "@/lib/kpi";
 import { NEW_TEMPLATE_PATH } from "@/lib/routes";
-import { templateFromApp } from "@/lib/template-draft";
-import type { DraftState } from "@/pages/template-page";
+import { templateFromApp, type DraftState } from "@/lib/template-draft";
 
 // useDeleteApp deletes an app and leaves its page for the Apps list,
 // telling what was kept (volumes, backups) or why not everything went. A

@@ -191,7 +191,7 @@ export default function CreateFromTemplatePage() {
       <StickyActionBar className="mb-6 gap-x-4">
         <div className="mr-auto min-w-0">
           <h1 className="text-xl font-semibold tracking-tight">Add app from template</h1>
-          <p className="text-sm text-muted-foreground">The app keeps the template's files until you unlink it.</p>
+          <p className="text-sm text-muted-foreground">The app keeps the template's files until you detach it.</p>
         </div>
         <Button variant="ghost" onClick={() => navigate(toServer())} disabled={busy}>
           Cancel

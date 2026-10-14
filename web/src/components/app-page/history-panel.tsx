@@ -70,7 +70,7 @@ export function HistoryPanel({ appId, ownership }: { appId: string; ownership: O
     return (
       <div className="flex h-40 flex-col items-center justify-center gap-3">
         <p className="text-sm text-destructive">{error}</p>
-        <Button variant="outline" className="h-10 sm:h-8" onClick={() => void reload()}>
+        <Button size="sm" variant="outline" onClick={() => void reload()}>
           Try again
         </Button>
       </div>
@@ -92,7 +92,7 @@ export function HistoryPanel({ appId, ownership }: { appId: string; ownership: O
         <Button
           size="icon"
           variant="ghost"
-          className="size-10 shrink-0 text-muted-foreground sm:size-8"
+          className="size-8 shrink-0 text-muted-foreground"
           aria-label="Refresh history"
           title="Refresh history"
           onClick={() => void reload()}
@@ -146,11 +146,11 @@ export function HistoryPanel({ appId, ownership }: { appId: string; ownership: O
                   </time>
                 </div>
                 {isUndeployedDraft ? (
-                  <Button className="h-10 sm:h-8" onClick={() => void doDeploy()} disabled={busy}>
+                  <Button size="sm" onClick={() => void doDeploy()} disabled={busy}>
                     Deploy draft
                   </Button>
                 ) : !isCurrent && !templated ? (
-                  <Button variant="ghost" className="h-10 sm:h-8" disabled={busy} onClick={() => setTarget(rev)}>
+                  <Button size="sm" variant="ghost" disabled={busy} onClick={() => setTarget(rev)}>
                     <History className="size-4" aria-hidden /> Roll back
                   </Button>
                 ) : null}

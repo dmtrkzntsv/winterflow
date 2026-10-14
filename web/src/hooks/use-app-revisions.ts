@@ -22,6 +22,13 @@ export function useAppRevisions(appId: string, enabled = true): AppRevisionsStat
   const [settled, setSettled] = useState<Settled | null>(null);
   const [reloading, setReloading] = useState(false);
   const latest = useRef(0);
+  // Enabling starts a read: until it lands, whatever an earlier one left is
+  // not settled (adjusted during render).
+  const [wasEnabled, setWasEnabled] = useState(enabled);
+  if (wasEnabled !== enabled) {
+    setWasEnabled(enabled);
+    if (enabled) setReloading(true);
+  }
 
   // read is the one place the agent is asked: a cache keyed by
   // (appId, version) can sit in front of getRevisions here.

@@ -24,6 +24,10 @@ export type ParamRow = {
 
 export type IngressDraft = { id: string; host: string; service: string; port: string };
 
+// DraftState is what "Save as template" hands the new template's editor:
+// the draft, what was left out of it, and the app it was built from.
+export type DraftState = { draft: TemplateDraft; notes: string[]; appName: string };
+
 export type TemplateDraft = {
   name: string;
   appName: string;

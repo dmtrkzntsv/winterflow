@@ -20,7 +20,7 @@ import { useRolloutsApi } from "@/hooks/use-rollouts-api";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
 import { usePageTitle } from "@/layouts/use-page-title";
 import { isActive } from "@/lib/rollouts";
-import { bodyFromDraft, draftFromBody, draftProblem, emptyDraft, type TemplateDraft } from "@/lib/template-draft";
+import { bodyFromDraft, draftFromBody, draftProblem, emptyDraft, type DraftState, type TemplateDraft } from "@/lib/template-draft";
 import { ApiError, type InstanceView, type TemplateView } from "@/lib/templates";
 import { TEMPLATES_PATH, templatePath } from "@/lib/routes";
 
@@ -34,10 +34,6 @@ function sameDraft(d: TemplateDraft, base: TemplateDraft): boolean {
     (k) => d[k] === base[k] || JSON.stringify(d[k]) === JSON.stringify(base[k]),
   );
 }
-
-// DraftState is what "Save as template" hands the new template's editor:
-// the draft, what was left out of it, and the app it was built from.
-export type DraftState = { draft: TemplateDraft; notes: string[]; appName: string };
 
 // TemplatePage is one template (/templates/:templateId) or a new one
 // (/templates/new, optionally prefilled by Save as template): its
@@ -241,7 +237,7 @@ export default function TemplatePage() {
                 size="sm"
                 className="text-destructive"
                 disabled={live > 0}
-                title={live > 0 ? "Delete or unlink its apps first" : undefined}
+                title={live > 0 ? "Delete or detach its apps first" : undefined}
               >
                 Delete template
               </Button>

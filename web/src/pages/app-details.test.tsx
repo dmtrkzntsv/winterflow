@@ -11,7 +11,7 @@ import { useCommandPalette } from "@/context/use-palette";
 import AppDetailsPage from "@/pages/app-details";
 import type { BackupHealth } from "@/lib/backups";
 import type { InstanceView, TemplateView } from "@/lib/templates";
-import type { DraftState } from "@/pages/template-page";
+import type { DraftState } from "@/lib/template-draft";
 import { fakeAPI } from "@/test/fake-api";
 
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }));

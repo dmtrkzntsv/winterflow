@@ -70,6 +70,7 @@ describe("DeleteAppDialog", () => {
     render(<Harness onConfirm={onConfirm} />);
     await user.click(screen.getByRole("button", { name: "open" }));
     await user.click(screen.getByRole("button", { name: "Delete app" }));
+    await waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(screen.getByRole("button", { name: "Delete app" })).toBeEnabled());
     expect(screen.getByRole("alertdialog")).toBeInTheDocument();
     expect(screen.queryByRole("status")).not.toBeInTheDocument();

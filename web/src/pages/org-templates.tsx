@@ -33,7 +33,7 @@ export default function OrgTemplatesPage() {
           <CardTitle>Templates</CardTitle>
           <CardDescription>
             A stack defined once, added as an app on any server with its own values. Apps added from a template
-            keep its files until you unlink them.
+            keep its files until you detach them.
           </CardDescription>
         </div>
         <Button size="sm" onClick={() => navigate(NEW_TEMPLATE_PATH)}>

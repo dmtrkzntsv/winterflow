@@ -87,7 +87,7 @@ export function InstancePanel({
           <Link to={templatePath(instance.template_id)} className="font-medium text-foreground hover:underline">
             {instance.template_name}
           </Link>{" "}
-          r{instance.revision}. Change the files in the template, or unlink the app in Settings.
+          r{instance.revision}. Change the files in the template, or detach the app from the template in Settings.
         </p>
         {headerActions}
         <Button onClick={() => void save()} disabled={saving || (!dirty && instance.state === "created")}>

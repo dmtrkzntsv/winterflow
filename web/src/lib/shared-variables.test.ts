@@ -9,11 +9,13 @@ import {
   coverageIncomplete,
   coverageLabel,
   createSharedVariablesApi,
+  failedServers,
   overrideNote,
   pushSummary,
   serverNameMap,
   sharedNames,
   variableNameError,
+  variableRows,
   type ServerVariables,
   type SharedVariable,
 } from "@/lib/shared-variables";
@@ -147,5 +149,36 @@ describe("createSharedVariablesApi", () => {
   it("surfaces the API's refusal message", async () => {
     const api = createSharedVariablesApi(fakeFetch(null, 400));
     await expect(api.saveOrg({ name: "X", is_secret: false, value: "1", description: "" })).rejects.toThrow("nope");
+  });
+});
+
+describe("one list for both scopes", () => {
+  const v = (over: Partial<SharedVariable>): SharedVariable => ({
+    id: "x", name: "X", scope: "org", is_secret: false, value: "v", description: "",
+    updated_at: "2026-10-11T00:00:00Z", updated_by: "u1", missing_on: [], ...over,
+  });
+
+  it("merges the org's and this server's variables by name, org first", () => {
+    const rows = variableRows(
+      [v({ id: "o2", name: "SMTP_PASS" }), v({ id: "o1", name: "SMTP_HOST" })],
+      [v({ id: "s1", name: "SMTP_HOST", scope: "server" }), v({ id: "s2", name: "A_LOCAL", scope: "server" })],
+      "alpha",
+    );
+    expect(rows.map((r) => [r.variable.id, r.scopeLabel, r.overriddenHere])).toEqual([
+      ["s2", "alpha only", false],
+      ["o1", "All servers", true],
+      ["s1", "alpha only", false],
+      ["o2", "All servers", false],
+    ]);
+  });
+
+  it("names the servers whose sync failed", () => {
+    const names = new Map([["s1", "beta"], ["s2", "alpha"]]);
+    expect(failedServers({ s1: "failed", s2: "failed", s3: "synced" }, names)).toEqual([
+      { id: "s2", name: "alpha" },
+      { id: "s1", name: "beta" },
+    ]);
+    expect(failedServers({ s4: "failed" }, names)).toEqual([{ id: "s4", name: "s4" }]);
+    expect(failedServers({ s1: "pending" }, names)).toEqual([]);
   });
 });

@@ -203,3 +203,40 @@ export function createSharedVariablesApi(fetchImpl?: typeof fetch): SharedVariab
     reload: (target) => post<{ servers?: string[] | null }>("/api/v1/shared-variables/reload", target).then(dispatched),
   };
 }
+
+// VariableRow is one row of Settings → Shared variables: an org variable
+// (every server) or the active server's own, and what the list says about
+// it.
+export type VariableRow = {
+  variable: SharedVariable;
+  // "All servers" for the org's, "{server} only" for the active server's.
+  scopeLabel: string;
+  // An org variable the active server replaces with a value of its own.
+  overriddenHere: boolean;
+};
+
+// variableRows merges the org's variables and the active server's own into
+// one list sorted by name, the org's row first when both define a name.
+export function variableRows(org: SharedVariable[], server: SharedVariable[], serverName: string): VariableRow[] {
+  const own = new Set(server.map((v) => v.name));
+  const rows: VariableRow[] = [
+    ...org.map((v) => ({ variable: v, scopeLabel: "All servers", overriddenHere: own.has(v.name) })),
+    ...server.map((v) => ({ variable: v, scopeLabel: `${serverName} only`, overriddenHere: false })),
+  ];
+  return rows.sort((a, b) => {
+    if (a.variable.name !== b.variable.name) return a.variable.name < b.variable.name ? -1 : 1;
+    return a.variable.scope === b.variable.scope ? 0 : a.variable.scope === "org" ? -1 : 1;
+  });
+}
+
+// failedServers lists the servers whose last sync failed, sorted by name
+// (an unknown server by its id).
+export function failedServers(
+  sync: Record<string, SyncState>,
+  names: Map<string, string>,
+): { id: string; name: string }[] {
+  return Object.entries(sync)
+    .filter(([, state]) => state === "failed")
+    .map(([id]) => ({ id, name: names.get(id) ?? id }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}

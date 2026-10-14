@@ -63,9 +63,8 @@ function renderAt(url: string) {
           <Routes>
             <Route element={<Outlet />}>
               <Route path="/" element={<DefaultServer fallback={<p>no servers</p>} />} />
-              <Route path="/server/s1" element={<HomePage />} />
+              <Route path="/server/s1" element={<main><HomePage /></main>} />
               <Route path="/server/s1/new" element={<p>create page</p>} />
-              <Route path="/server/s2/monitoring" element={<p>beta monitoring</p>} />
             </Route>
           </Routes>
         </SidebarContext.Provider>
@@ -78,21 +77,20 @@ describe("server-scoped links", () => {
   it("points the sidebar and the app grid into the active server", async () => {
     renderAt("/server/s1");
     expect(screen.getByRole("link", { name: "Apps" })).toHaveAttribute("href", "/server/s1");
-    expect(screen.getByRole("link", { name: "Monitoring" })).toHaveAttribute(
-      "href",
-      "/server/s1/monitoring",
-    );
+    // "Monitoring" is in the sidebar and in the health strip: both lead into s1.
+    const monitoring = screen.getAllByRole("link", { name: "Monitoring" });
+    expect(monitoring.length).toBeGreaterThanOrEqual(2);
+    for (const link of monitoring) expect(link).toHaveAttribute("href", "/server/s1/monitoring");
     expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
     for (const link of screen.getAllByRole("link", { name: /Shop/ })) {
       expect(link).toHaveAttribute("href", "/server/s1/app/a1");
     }
   });
 
-  it("opens a server card's monitoring in that server's scope", async () => {
-    const user = userEvent.setup();
+  it("points the health strip's Monitoring link into the active server", () => {
     renderAt("/server/s1");
-    await user.click(screen.getByTitle(/^Beta:/));
-    expect(await screen.findByText("beta monitoring")).toBeInTheDocument();
+    const strip = screen.getByRole("region", { name: "Server health" });
+    expect(within(strip).getByRole("link", { name: "Monitoring" })).toHaveAttribute("href", "/server/s1/monitoring");
   });
 
   it("switches servers from the switcher", async () => {
@@ -106,7 +104,7 @@ describe("server-scoped links", () => {
   it("opens the create page of the active server", async () => {
     const user = userEvent.setup();
     renderAt("/server/s1");
-    await user.click(screen.getByRole("button", { name: "Add app" }));
+    await user.click(within(screen.getByRole("main")).getByRole("link", { name: "New app" }));
     expect(await screen.findByText("create page")).toBeInTheDocument();
   });
 

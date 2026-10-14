@@ -1,26 +1,21 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
-import { Boxes, TriangleAlert } from "lucide-react";
+import { Boxes, FileCode2, LayoutTemplate, TriangleAlert } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { AppIcon } from "@/components/app-icon";
-import { AppStatusCode } from "@/context/apps-context-base";
+import { EmptyState } from "@/components/empty-state";
+import { StatusPill } from "@/components/status";
+import type { App } from "@/context/apps-context-base";
 import { useApps } from "@/context/use-apps";
-import { needsAttention } from "@/lib/backups";
-import { appLabel } from "@/lib/kpi";
-import { TILE_GRID } from "@/lib/grid";
-import { cn } from "@/lib/utils";
 import { useServerPath } from "@/context/use-server-path";
-
-// Status → a small dot and a word (twillingate's status treatment, not a
-// coloured outline); unknown is just a neutral dot.
-const STATUS_STYLE: Record<number, { label: string; dot: string }> = {
-  [AppStatusCode.Active]: { label: "Running", dot: "bg-emerald-500" },
-  [AppStatusCode.Idle]: { label: "Idle", dot: "bg-muted-foreground/40" },
-  [AppStatusCode.Restarting]: { label: "Restarting", dot: "bg-amber-500" },
-  [AppStatusCode.Problematic]: { label: "Problematic", dot: "bg-red-500" },
-  [AppStatusCode.Stopped]: { label: "Stopped", dot: "bg-muted-foreground/40" },
-  [AppStatusCode.Unknown]: { label: "Unknown", dot: "bg-muted-foreground/25" },
-};
+import { appTitle, appWarning, filterApps, FILTER_THRESHOLD, primaryAddress, type AppWarning } from "@/lib/app-summary";
+import { TILE_GRID } from "@/lib/grid";
+import { appSub, newAppSub } from "@/lib/routes";
+import { appStatus } from "@/lib/status";
+import { cn } from "@/lib/utils";
 
 function AppTileSkeleton() {
   return (
@@ -34,12 +29,87 @@ function AppTileSkeleton() {
   );
 }
 
-// AppGrid renders the active server's apps as cards in the server cards'
-// language: icon, name, a status dot with its word, and the public route
-// (or, for an app without a name yet, its id). Each card links to the app.
-export function AppGrid() {
+// NoApps is the Apps page of a server without apps: one sentence and the
+// two most common ways to start.
+function NoApps() {
   const toServer = useServerPath();
-  const { apps, statusByApp, backupsByApp, loading, error } = useApps();
+  return (
+    <EmptyState
+      icon={Boxes}
+      title="Run your first app"
+      action={
+        <div className="flex flex-wrap justify-center gap-2">
+          <Button asChild variant="outline">
+            <Link to={toServer(newAppSub("template"))}>
+              <LayoutTemplate className="size-4" aria-hidden /> From a template
+            </Link>
+          </Button>
+          <Button asChild>
+            <Link to={toServer(newAppSub("compose"))}>
+              <FileCode2 className="size-4" aria-hidden /> Compose file
+            </Link>
+          </Button>
+        </div>
+      }
+    />
+  );
+}
+
+// AppCard is one app: icon, name (the link to the app, covering the card),
+// its status, the address it opens at, and at most one warning. The address
+// is its own external link above the card's.
+function AppCard({ app, code, warning, index }: { app: App; code: number | undefined; warning: AppWarning | null; index: number }) {
+  const toServer = useServerPath();
+  const address = primaryAddress(app);
+  const named = Boolean(app.name?.trim());
+  return (
+    <li className="app-card-in relative min-w-0" style={{ animationDelay: `${index * 40}ms` }}>
+      <Card className="flex h-full items-center gap-3 p-3.5 transition-colors duration-150 hover:border-primary/40">
+        <AppIcon name={app.name} id={app.id} icon={app.icon} color={app.color} className="size-10 shrink-0 rounded-lg text-base" />
+        <div className="min-w-0 flex-1 space-y-1">
+          <div className="flex items-center justify-between gap-2">
+            <Link
+              to={toServer(appSub(app.id, warning?.tab))}
+              className={cn(
+                "truncate text-sm font-semibold tracking-tight after:absolute after:inset-0 after:rounded-xl focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-ring",
+                !named && "font-medium text-muted-foreground",
+              )}
+            >
+              {appTitle(app)}
+            </Link>
+            <StatusPill status={appStatus(code)} />
+          </div>
+          <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+            {address ? (
+              <a
+                href={address.url}
+                target="_blank"
+                rel="noreferrer"
+                className="relative z-10 truncate transition-colors duration-150 hover:text-foreground hover:underline"
+              >
+                {address.host}
+              </a>
+            ) : (
+              <span className="truncate">No public address</span>
+            )}
+            {warning ? (
+              <span className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-full bg-status-warn/15 px-2 py-0.5 text-[11px] font-medium text-foreground">
+                <TriangleAlert className="size-3 text-status-warn" aria-hidden />
+                {warning.label}
+              </span>
+            ) : null}
+          </div>
+        </div>
+      </Card>
+    </li>
+  );
+}
+
+// AppGrid is the active server's apps as cards (a filter box once there
+// are more than FILTER_THRESHOLD), or the invitation to run the first one.
+export function AppGrid() {
+  const { apps, statusByApp, backupsByApp, staleVarsByApp, loading, error } = useApps();
+  const [query, setQuery] = useState("");
 
   if (loading && apps.length === 0) {
     return (
@@ -50,103 +120,41 @@ export function AppGrid() {
       </div>
     );
   }
-
   if (error) {
     return <p className="text-sm text-destructive">{error}</p>;
   }
-
   if (apps.length === 0) {
-    return (
-      <Card className="flex min-h-40 flex-col items-center justify-center gap-2 p-6 text-center text-muted-foreground">
-        <Boxes className="size-5 opacity-70" aria-hidden />
-        <p className="text-sm font-medium">No apps yet</p>
-        <p className="text-xs">Deploy an application to see it here.</p>
-      </Card>
-    );
+    return <NoApps />;
   }
 
+  const shown = filterApps(apps, query);
   return (
-    <div className={TILE_GRID}>
-      {apps.map((app, index) => {
-        const code = statusByApp[app.id] ?? AppStatusCode.Unknown;
-        const status = STATUS_STYLE[code] ?? STATUS_STYLE[AppStatusCode.Unknown];
-        const unknown = code === AppStatusCode.Unknown;
-        const named = Boolean(app.name?.trim());
-        const label = appLabel(app.name, app.id);
-        const routes = app.domains?.filter((d) => d.kind === "route") ?? [];
-        // A late or failing backup: a small warning triangle (a shape, not just a
-        // color, so it reads without hover), never the status dot (backup
-        // health doesn't change the app's status).
-        const backupWarning = needsAttention(backupsByApp?.[app.id]);
-        return (
-          <Link
-            key={app.id}
-            // The warning leads to the backup that needs attention.
-            to={toServer(`/app/${app.id}${backupWarning ? "?tab=backups" : ""}`)}
-            title={`${label}: ${status.label}${backupWarning ? " (a backup is late or failing)" : ""}`}
-            className="app-card-in block min-w-0"
-            style={{ animationDelay: `${index * 40}ms` }}
-          >
-            <Card className="flex h-full items-center gap-3 p-3.5 transition-colors hover:border-primary/40">
-              <AppIcon
-                name={app.name}
-                id={app.id}
-                icon={app.icon}
-                color={app.color}
-                className="size-10 shrink-0 rounded-lg text-base"
-              />
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center justify-between gap-2">
-                  <span
-                    className={cn(
-                      "truncate text-sm font-semibold tracking-tight",
-                      !named && "font-mono font-medium text-muted-foreground",
-                    )}
-                  >
-                    {label}
-                  </span>
-                  <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-                    {backupWarning ? (
-                      <TriangleAlert
-                        role="img"
-                        aria-label="A backup is late or failing"
-                        className="size-3.5 text-amber-500"
-                      />
-                    ) : null}
-                    <span aria-hidden className={cn("size-2 shrink-0 rounded-full", status.dot)} />
-                    {unknown ? null : status.label}
-                  </span>
-                </div>
-                <div className="mt-0.5 flex min-w-0 gap-2 text-xs text-muted-foreground">
-                  {routes.length === 0 ? (
-                    <span className="truncate">{named ? "No public route" : "Not reconciled yet"}</span>
-                  ) : null}
-                  {/* Buttons, not anchors: the card is already a Link (<a>),
-                      and nesting an <a> inside it is invalid interactive content. */}
-                  {routes.slice(0, 2).map((d) => (
-                    <button
-                      key={d.domain}
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        e.preventDefault();
-                        window.open(
-                          `${d.ssl ? "https" : "http"}://${d.domain}`,
-                          "_blank",
-                          "noopener,noreferrer",
-                        );
-                      }}
-                      className="min-w-0 truncate hover:text-foreground hover:underline"
-                    >
-                      {d.domain}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </Card>
-          </Link>
-        );
-      })}
+    <div className="space-y-3">
+      {apps.length > FILTER_THRESHOLD ? (
+        <Input
+          type="search"
+          aria-label="Filter apps"
+          placeholder="Filter apps"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          className="max-w-xs"
+        />
+      ) : null}
+      {shown.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No app matches “{query.trim()}”.</p>
+      ) : (
+        <ul aria-label="Apps" className={TILE_GRID}>
+          {shown.map((app, index) => (
+            <AppCard
+              key={app.id}
+              app={app}
+              code={statusByApp[app.id]}
+              warning={appWarning(backupsByApp?.[app.id], staleVarsByApp?.[app.id])}
+              index={index}
+            />
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

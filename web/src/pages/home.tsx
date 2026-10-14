@@ -1,68 +1,75 @@
-import { useState } from "react"
-import { useNavigate } from "react-router-dom"
-import { LayoutTemplate, Plus } from "lucide-react"
+import { useState } from "react";
+import { Link } from "react-router-dom";
+import { Plus, Server } from "lucide-react";
 
-import { usePageTitle } from "@/layouts/use-page-title"
-import { Button } from "@/components/ui/button"
-import { ServerSelectionDialog } from "@/components/server-creation-dialog"
-import { ActiveAlertsStrip } from "@/components/alerts/active-alerts"
-import { ServerCards } from "@/components/server-cards"
-import { AppGrid } from "@/components/app-grid"
-import { isStandalone } from "@/config"
-import { useServers } from "@/context/use-servers"
-import { useServerPath } from "@/context/use-server-path"
-import { newAppSub } from "@/lib/routes"
+import { Button } from "@/components/ui/button";
+import { FiringAlertsLine } from "@/components/alerts/active-alerts";
+import { AppGrid } from "@/components/app-grid";
+import { EmptyState } from "@/components/empty-state";
+import { PageHeader } from "@/components/page-header";
+import { ServerSelectionDialog } from "@/components/server-creation-dialog";
+import { ServerHealthStrip } from "@/components/server-health-strip";
+import { isStandalone } from "@/config";
+import { useApps } from "@/context/use-apps";
+import { useServers } from "@/context/use-servers";
+import { appsSubtitle, countApps } from "@/lib/app-summary";
+import { newAppPath } from "@/lib/routes";
 
+// HomePage is the Apps page (/server/:id): this server's apps, how many
+// run, its health in one line, firing alerts in one line, and New app (a
+// link to the new-app page; phase 3 turns it into the chooser). The other
+// servers are one switch away in the sidebar.
 export default function HomePage() {
-  const navigate = useNavigate()
-  const toServer = useServerPath()
-  const [isServerDialogOpen, setIsServerDialogOpen] = useState(false)
-  const { refresh } = useServers()
-  usePageTitle("Apps")
+  const { activeServer, loading, refresh } = useServers();
+  const { apps, statusByApp } = useApps();
+  const [addServerOpen, setAddServerOpen] = useState(false);
+
+  if (!activeServer) {
+    return (
+      <div className="space-y-6">
+        <PageHeader title="Apps" />
+        {loading ? null : (
+          <EmptyState
+            icon={Server}
+            title={isStandalone ? "This server isn't ready yet." : "Add a server to run your apps on."}
+            action={
+              isStandalone ? undefined : (
+                <Button onClick={() => setAddServerOpen(true)}>
+                  <Plus className="size-4" aria-hidden /> Add server
+                </Button>
+              )
+            }
+          />
+        )}
+        {!isStandalone ? (
+          <ServerSelectionDialog
+            isOpen={addServerOpen}
+            onClose={() => setAddServerOpen(false)}
+            onServerAdded={() => void refresh()}
+          />
+        ) : null}
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-4">
-      {/* The apps page: title, Add app and From template share one row. */}
-      <div className="flex items-center justify-between gap-3">
-        <h1 className="mr-auto text-2xl font-semibold tracking-tight">Apps</h1>
-        <Button size="sm" variant="outline" onClick={() => navigate(toServer(newAppSub("template")))}>
-          <LayoutTemplate className="size-4" /> From template
-        </Button>
-        <Button size="sm" onClick={() => navigate(toServer(newAppSub()))}>
-          <Plus className="size-4" /> Add app
-        </Button>
+    <div className="space-y-6">
+      <PageHeader
+        title="Apps"
+        subtitle={appsSubtitle(activeServer.name, apps.length, countApps(apps, statusByApp))}
+        actions={
+          <Button asChild>
+            <Link to={newAppPath(activeServer.id)}>
+              <Plus className="size-4" aria-hidden /> New app
+            </Link>
+          </Button>
+        }
+      />
+      <div className="space-y-2">
+        <ServerHealthStrip server={activeServer} />
+        <FiringAlertsLine serverId={activeServer.id} />
       </div>
-
-      <ActiveAlertsStrip />
-
-      {/* Server health at a glance: a compact strip above the apps. Adding
-          servers is a cloud capability; the standalone build ships one
-          embedded server, so the action is hidden. */}
-      <section aria-label="Servers" className="space-y-2">
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-medium text-muted-foreground">Servers</h2>
-          {!isStandalone ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setIsServerDialogOpen(true)}
-            >
-              <Plus className="size-4" /> Add Server
-            </Button>
-          ) : null}
-        </div>
-        <ServerCards />
-      </section>
-
       <AppGrid />
-
-      {!isStandalone ? (
-        <ServerSelectionDialog
-          isOpen={isServerDialogOpen}
-          onClose={() => setIsServerDialogOpen(false)}
-          onServerAdded={() => void refresh()}
-        />
-      ) : null}
     </div>
-  )
+  );
 }

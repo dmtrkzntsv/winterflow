@@ -9,7 +9,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { StickyActionBar } from "@/components/editor-section";
-import { useMediaQuery } from "@/hooks/use-media-query";
+import { useIsPhone } from "@/hooks/use-is-phone";
 
 export type BarAction = {
   label: string;
@@ -40,7 +40,7 @@ export function ConfigBar({
   secondary?: BarAction[];
   primary: ReactNode;
 }) {
-  const phone = useMediaQuery("(max-width: 639px)");
+  const phone = useIsPhone();
   if (!phone) {
     return (
       <StickyActionBar className="mb-6">

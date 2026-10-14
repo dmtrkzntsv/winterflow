@@ -91,8 +91,8 @@ export default function AppDetailsPage() {
   const upgradeTarget = upgrade && upgrade.appId === app?.id ? upgrade.target : null;
   const reloadManaged = () => void Promise.all([lookup.reload(), refresh()]);
   // openUpgrade reads the template's latest version and opens the update
-  // dialog (the header's "Update available"; phase 3's Configuration reuses
-  // it).
+  // dialog (the header's "Update available" and the Configuration tab's
+  // "A newer version is available").
   const openUpgrade = async () => {
     if (!inst) return;
     try {
@@ -274,6 +274,7 @@ export default function AppDetailsPage() {
             onSaved={reloadManaged}
             headerActions={historyButton}
             onOpenHistory={() => setHistoryOpen(true)}
+            onUpgrade={() => void openUpgrade()}
           />
         </TabsContent>
         <TabsContent value="backups" className="mt-6">
@@ -304,20 +305,24 @@ export default function AppDetailsPage() {
 
 // ConfigurationTab is the app's editor, or for an app a template manages
 // its instance's parameters (never the plain editor, whose save would be
-// refused). headerActions (the History button) go in either panel's bar.
-// Phase 3 owns what is inside both panels.
+// refused). headerActions (the History button) go in either panel's bar;
+// onUpgrade is the instance panel's "A newer version is available".
 function ConfigurationTab({
   appId,
   ownership,
   onSaved,
   headerActions,
   onOpenHistory,
+  onUpgrade,
 }: {
   appId: string;
   ownership: Ownership;
   onSaved: () => void;
   headerActions?: ReactNode;
   onOpenHistory?: () => void;
+  // onUpgrade opens the page's update dialog (a template-managed app's
+  // "A newer version is available").
+  onUpgrade: () => void;
 }) {
   if (ownership?.error) return <LoadError message={ownership.error} onRetry={() => void ownership.reload()} />;
   if (ownership?.loading) return <PageSpinner />;
@@ -330,6 +335,9 @@ function ConfigurationTab({
         current={ownership.current}
         onSaved={onSaved}
         headerActions={headerActions}
+        onOpenHistory={onOpenHistory}
+        latestRevision={ownership.current.latest_revision}
+        onUpgrade={onUpgrade}
       />
     );
   }

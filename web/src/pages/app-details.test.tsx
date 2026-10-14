@@ -531,6 +531,17 @@ describe("AppDetailsPage of a template instance", () => {
     expect(screen.queryByText(/Revision/)).not.toBeInTheDocument();
   });
 
+  it("offers the newer template version from the Configuration tab", async () => {
+    const user = userEvent.setup();
+    instanceAPI();
+    renderPage("/app/a1?tab=configuration", {}, managed);
+    const note = await screen.findByText(/A newer version of twillingate is available/);
+    expect(note).toHaveTextContent("(version 3)");
+    await user.click(within(note.closest('[role="status"]') as HTMLElement).getByRole("button", { name: "Update" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("heading")).toHaveTextContent("Upgrade Shop to r3");
+  });
+
   it("shows the files read-only and a Parameters form instead of the editor", async () => {
     const user = userEvent.setup();
     const api = instanceAPI(INSTANCE, { "/api/v1/instance/update-instance": { instance: INSTANCE, request_id: "", warnings: [] } });

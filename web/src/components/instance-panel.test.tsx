@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { InstancePanel } from "@/components/instance-panel";
 import type { InstanceView, TemplateView } from "@/lib/templates";
@@ -43,21 +44,59 @@ const current: TemplateView = {
   revisions: null,
 };
 
+function renderPanel(props: Partial<Parameters<typeof InstancePanel>[0]> = {}) {
+  return render(
+    <MemoryRouter>
+      <InstancePanel instance={instance} current={current} onSaved={() => {}} {...props} />
+    </MemoryRouter>,
+  );
+}
+
 describe("InstancePanel", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
   it("puts the page's actions in its bar, before Save", () => {
-    render(
-      <MemoryRouter>
-        <InstancePanel
-          instance={instance}
-          current={current}
-          onSaved={() => {}}
-          headerActions={<button type="button">History</button>}
-        />
-      </MemoryRouter>,
-    );
+    renderPanel({ headerActions: <button type="button">History</button> });
     const history = screen.getByRole("button", { name: "History" });
     const save = screen.getByRole("button", { name: "Save & redeploy" });
     expect(history.compareDocumentPosition(save) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(screen.getByText(/detach the app from the template in Settings/)).toBeInTheDocument();
+    expect(screen.getByText(/detach the app from it in Settings/)).toBeInTheDocument();
+  });
+
+  it("names the template and its version in plain words", () => {
+    renderPanel();
+    expect(screen.getByText(/Managed by template/)).toHaveTextContent("Managed by template twillingate (version 2).");
+    expect(screen.getByRole("link", { name: "twillingate" })).toHaveAttribute("href", "/templates/t1");
+    expect(screen.queryByText(/\br2\b/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/unlink/i)).not.toBeInTheDocument();
+  });
+
+  it("offers a newer version of the template", async () => {
+    const user = userEvent.setup();
+    const onUpgrade = vi.fn();
+    renderPanel({ latestRevision: 3, onUpgrade });
+    expect(screen.getByRole("status")).toHaveTextContent("A newer version of twillingate is available (version 3).");
+    await user.click(screen.getByRole("button", { name: "Update" }));
+    expect(onUpgrade).toHaveBeenCalled();
+  });
+
+  it("says nothing about versions when the app is on the latest, or the page can't update", () => {
+    const { unmount } = renderPanel({ latestRevision: 2, onUpgrade: vi.fn() });
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    unmount();
+    renderPanel({ latestRevision: 3 });
+    expect(screen.queryByRole("button", { name: "Update" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the bar to Save and a ⋯ menu on a phone, with the note under it", async () => {
+    vi.stubGlobal("matchMedia", () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
+    const user = userEvent.setup();
+    const onOpenHistory = vi.fn();
+    renderPanel({ headerActions: <button type="button">History</button>, onOpenHistory });
+    expect(screen.queryByRole("button", { name: "History" })).not.toBeInTheDocument();
+    expect(screen.getByText(/Managed by template/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "More save options" }));
+    await user.click(screen.getByRole("menuitem", { name: "History" }));
+    expect(onOpenHistory).toHaveBeenCalled();
   });
 });

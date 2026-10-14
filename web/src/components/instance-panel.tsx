@@ -1,13 +1,15 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { FileText } from "lucide-react";
+import { ArrowUpCircle, FileText } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { CodeEditor } from "@/components/code-editor";
-import { EditorSection, StickyActionBar } from "@/components/editor-section";
+import { ConfigBar } from "@/components/config-bar";
+import { EditorSection } from "@/components/editor-section";
 import { InlineError } from "@/components/inline-error";
 import { ParameterFields } from "@/components/parameter-fields";
+import { useIsPhone } from "@/hooks/use-is-phone";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
 import { fieldErrors, splitValues } from "@/lib/template-params";
 import { sealSecrets, type InstanceView, type TemplateView } from "@/lib/templates";
@@ -25,18 +27,28 @@ function storedValues(current: TemplateView, instance: InstanceView): Record<str
 // template's files read-only, and in place of the editor a Parameters form
 // whose Save re-renders and redeploys the app. A secret keeps its value
 // unless a new one is typed; a pending instance (never created) holds none,
-// so every required secret is asked for again.
+// so every required secret is asked for again. When the template has a
+// newer version, an Update opens the page's update dialog.
 export function InstancePanel({
   instance,
   current,
   onSaved,
   headerActions,
+  onOpenHistory,
+  latestRevision,
+  onUpgrade,
 }: {
   instance: InstanceView;
   current: TemplateView;
   onSaved: () => void;
-  // headerActions sit in the bar before Save (the page's History button).
+  // headerActions sit in the bar before Save (the page's History button);
+  // onOpenHistory is how the phone's ⋯ menu opens it.
   headerActions?: ReactNode;
+  onOpenHistory?: () => void;
+  // latestRevision is the template's newest version; onUpgrade opens the
+  // page's update dialog.
+  latestRevision?: number;
+  onUpgrade?: () => void;
 }) {
   const api = useTemplatesApi();
   const initial = useMemo(() => storedValues(current, instance), [current, instance]);
@@ -47,6 +59,17 @@ export function InstancePanel({
   const params = current.body.parameters ?? [];
   const kept = instance.state === "created" ? Object.keys(instance.secrets ?? {}) : [];
   const dirty = params.some((p) => (values[p.name] ?? "") !== (initial[p.name] ?? ""));
+  const newer = onUpgrade !== undefined && latestRevision !== undefined && latestRevision > instance.revision;
+  const phone = useIsPhone();
+  const note = (
+    <>
+      Managed by template{" "}
+      <Link to={templatePath(instance.template_id)} className="font-medium text-foreground hover:underline">
+        {instance.template_name}
+      </Link>{" "}
+      (version {instance.revision}). Change its files in the template, or detach the app from it in Settings.
+    </>
+  );
 
   const save = async () => {
     setTried(true);
@@ -81,19 +104,29 @@ export function InstancePanel({
 
   return (
     <div>
-      <StickyActionBar className="mb-6">
-        <p className="mr-auto text-sm text-muted-foreground">
-          Managed by template{" "}
-          <Link to={templatePath(instance.template_id)} className="font-medium text-foreground hover:underline">
-            {instance.template_name}
-          </Link>{" "}
-          r{instance.revision}. Change the files in the template, or detach the app from the template in Settings.
-        </p>
-        {headerActions}
-        <Button onClick={() => void save()} disabled={saving || (!dirty && instance.state === "created")}>
-          {saving ? "Saving…" : "Save & redeploy"}
-        </Button>
-      </StickyActionBar>
+      {/* On a phone the bar is one row of buttons: the note sits under it. */}
+      <ConfigBar
+        status={phone ? undefined : note}
+        headerActions={headerActions}
+        onOpenHistory={onOpenHistory}
+        primary={
+          <Button onClick={() => void save()} disabled={saving || (!dirty && instance.state === "created")}>
+            {saving ? "Saving…" : "Save & redeploy"}
+          </Button>
+        }
+      />
+      {phone ? <p className="-mt-3 mb-6 text-sm text-muted-foreground">{note}</p> : null}
+      {newer ? (
+        <div role="status" className="mb-6 flex flex-wrap items-center gap-3 rounded-lg border bg-muted/40 px-4 py-3 text-sm">
+          <ArrowUpCircle className="size-4 shrink-0 text-primary" aria-hidden />
+          <span className="mr-auto">
+            A newer version of {instance.template_name} is available (version {latestRevision}).
+          </span>
+          <Button size="sm" variant="outline" onClick={onUpgrade}>
+            Update
+          </Button>
+        </div>
+      ) : null}
       {error ? (
         <InlineError icon className="mb-4">
           {error}
@@ -101,7 +134,7 @@ export function InstancePanel({
       ) : null}
       <EditorSection
         title="Parameters"
-        description="The values this app was added with. Secret values are encrypted in your browser for this server."
+        description="The values this app was created with. Secret values are encrypted in your browser for this server."
       >
         {params.length === 0 ? (
           <p className="text-sm text-muted-foreground">The template takes no values.</p>

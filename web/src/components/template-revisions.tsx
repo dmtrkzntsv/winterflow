@@ -70,7 +70,8 @@ export function TemplateRevisions({ view }: { view: TemplateView }) {
           <li key={r.revision} className="px-4 py-3 text-sm">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
               <span className="font-medium">Version {r.revision}</span>
-              <span className="min-w-0 flex-1 truncate text-muted-foreground">{r.note || "No note"}</span>
+              {/* A version without a note says nothing more. */}
+              <span className="min-w-0 flex-1 truncate text-muted-foreground">{r.note}</span>
               <time className="text-xs text-muted-foreground" dateTime={r.created_at}>
                 {relativeTime(new Date(r.created_at))}
               </time>

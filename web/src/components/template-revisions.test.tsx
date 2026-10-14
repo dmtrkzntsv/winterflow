@@ -60,6 +60,8 @@ describe("TemplateRevisions", () => {
     });
     renderRevisions();
     expect(screen.getByText("bump image")).toBeInTheDocument();
+    // A version without a note says nothing about it.
+    expect(screen.queryByText("No note")).not.toBeInTheDocument();
     expect(screen.getByText("First version")).toBeInTheDocument();
     expect(screen.getByText("Version 3")).toBeInTheDocument();
     expect(screen.queryByText("r3")).not.toBeInTheDocument();

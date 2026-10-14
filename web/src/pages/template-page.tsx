@@ -256,37 +256,42 @@ export default function TemplatePage() {
   }
 
   const live = instances.length;
+  // A saved template shows its save bar (the note and Save as version N)
+  // only once it is edited, or while a save or its outcome is on screen.
+  const barShown = !view || dirty || saving || conflict !== null || !!problem;
   const editor = (
     <>
-      <StickyActionBar>
-        {conflict !== null ? (
-          <p role="alert" className="mr-auto flex flex-wrap items-center gap-2 text-sm text-destructive">
-            Someone saved version {conflict} meanwhile; reload to get it (your changes here are dropped).
-            <Button size="sm" variant="outline" onClick={() => void load()}>
-              Reload
-            </Button>
-          </p>
-        ) : view ? (
-          <Input
-            aria-label="Version note"
-            value={note}
-            placeholder="What changed (optional)"
-            className="mr-auto max-w-md"
-            onChange={(e) => setNote(e.target.value)}
-          />
-        ) : (
-          // Version 1 has nothing to note.
-          <span className="mr-auto" />
-        )}
-        {problem ? (
-          <InlineError icon className="max-w-md">
-            {problem}
-          </InlineError>
-        ) : null}
-        <Button onClick={() => void save()} disabled={saving || (!dirty && !!view) || conflict !== null}>
-          {saving ? "Saving…" : view ? `Save as version ${view.latest_revision + 1}` : "Save template"}
-        </Button>
-      </StickyActionBar>
+      {barShown ? (
+        <StickyActionBar>
+          {conflict !== null ? (
+            <p role="alert" className="mr-auto flex flex-wrap items-center gap-2 text-sm text-destructive">
+              Someone saved version {conflict} meanwhile; reload to get it (your changes here are dropped).
+              <Button size="sm" variant="outline" onClick={() => void load()}>
+                Reload
+              </Button>
+            </p>
+          ) : view ? (
+            <Input
+              aria-label="Version note"
+              value={note}
+              placeholder="What changed (optional)"
+              className="mr-auto max-w-md"
+              onChange={(e) => setNote(e.target.value)}
+            />
+          ) : (
+            // Version 1 has nothing to note.
+            <span className="mr-auto" />
+          )}
+          {problem ? (
+            <InlineError icon className="max-w-md">
+              {problem}
+            </InlineError>
+          ) : null}
+          <Button onClick={() => void save()} disabled={saving || (!dirty && !!view) || conflict !== null}>
+            {saving ? "Saving…" : view ? `Save as version ${view.latest_revision + 1}` : "Save template"}
+          </Button>
+        </StickyActionBar>
+      ) : null}
       <TemplateEditor draft={draft} onChange={setDraft} />
     </>
   );

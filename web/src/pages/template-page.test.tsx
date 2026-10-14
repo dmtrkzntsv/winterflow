@@ -153,12 +153,14 @@ describe("TemplatePage", () => {
       "/api/v1/template/save-template": { id: "t1", name: "twillingate", revision: 4, warnings: null },
     });
     renderPage("/templates/t1");
-    const save = await screen.findByRole("button", { name: "Save as version 4" });
-    expect(save).toBeDisabled();
+    // Clean, the save bar waits for an edit.
+    await screen.findByLabelText("App name");
+    expect(screen.queryByRole("button", { name: "Save as version 4" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Version note")).not.toBeInTheDocument();
     await user.click(screen.getAllByRole("button", { name: /Add parameter/ })[0]);
     await user.type(screen.getAllByLabelText("Parameter name").at(-1)!, "MEMORY_MAX");
     await user.type(screen.getByLabelText("Version note"), "memory cap");
-    await user.click(save);
+    await user.click(screen.getByRole("button", { name: "Save as version 4" }));
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Saved version 4"));
     const [sent] = api.posted("/api/v1/template/save-template") as {
       id: string;
@@ -206,11 +208,10 @@ describe("TemplatePage", () => {
       "/api/v1/instance/get-instances": { instances: [] },
     });
     renderPage("/templates/t1");
-    const save = await screen.findByRole("button", { name: "Save as version 4" });
-    await user.type(screen.getByLabelText("App name"), "x");
-    expect(save).toBeEnabled();
+    await user.type(await screen.findByLabelText("App name"), "x");
+    expect(screen.getByRole("button", { name: "Save as version 4" })).toBeEnabled();
     await user.type(screen.getByLabelText("App name"), "{Backspace}");
-    expect(save).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Save as version 4" })).not.toBeInTheDocument();
   });
 
   it("says who saved meanwhile on a concurrent edit, and reloads", async () => {
@@ -229,7 +230,7 @@ describe("TemplatePage", () => {
     await user.click(screen.getByRole("button", { name: "Save as version 4" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Someone saved version 4 meanwhile; reload");
     await user.click(screen.getByRole("button", { name: "Reload" }));
-    expect(await screen.findByRole("button", { name: "Save as version 5" })).toBeInTheDocument();
+    expect(await screen.findByText(/^Version 4 · /)).toBeInTheDocument();
     expect(screen.getByLabelText("App name")).toHaveValue("${NAME}");
     expect(toast.error).not.toHaveBeenCalled();
   });

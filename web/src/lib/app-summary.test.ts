@@ -58,16 +58,28 @@ describe("addresses", () => {
 });
 
 describe("counts", () => {
-  it("counts running, problem and stopped apps, leaving unknown ones out", () => {
+  it("counts the apps by what their pills read, leaving unknown ones out", () => {
     const apps = ["a", "b", "c", "d", "e", "f"].map((id) => ({ id }));
-    // Active, Idle, Restarting run; Problematic is a problem; Stopped; Unknown (missing).
-    expect(countApps(apps, { a: 1, b: 2, c: 3, d: 4, e: 5 })).toEqual({ running: 3, problem: 1, stopped: 1 });
+    // Only Active runs; Idle, Restarting, Problematic and Stopped each count apart; Unknown (missing) in none.
+    expect(countApps(apps, { a: 1, b: 2, c: 3, d: 4, e: 5 })).toEqual({
+      running: 1,
+      failed: 0,
+      restarting: 1,
+      idle: 1,
+      problem: 1,
+      stopped: 1,
+    });
+    // A failed deploy counts as failed, whatever its code says.
+    expect(countApps(apps, { a: 1, b: 2 }, { b: "boom" })).toMatchObject({ running: 1, failed: 1, idle: 0 });
   });
 
   it("says the server and the counts, skipping zeros except running", () => {
-    expect(appsSubtitle("homelab", 4, { running: 3, problem: 0, stopped: 1 })).toBe("homelab · 3 running · 1 stopped");
-    expect(appsSubtitle("homelab", 2, { running: 0, problem: 2, stopped: 0 })).toBe("homelab · 0 running · 2 with problems");
-    expect(appsSubtitle("homelab", 0, { running: 0, problem: 0, stopped: 0 })).toBe("homelab · no apps yet");
+    const none = { running: 0, failed: 0, restarting: 0, idle: 0, problem: 0, stopped: 0 };
+    expect(appsSubtitle("homelab", 4, { ...none, running: 3, stopped: 1 })).toBe("homelab · 3 running · 1 stopped");
+    expect(appsSubtitle("homelab", 2, { ...none, problem: 2 })).toBe("homelab · 0 running · 2 with problems");
+    expect(appsSubtitle("homelab", 5, { ...none, running: 3, failed: 1, idle: 1 })).toBe("homelab · 3 running · 1 failed · 1 idle");
+    expect(appsSubtitle("homelab", 1, { ...none, restarting: 1 })).toBe("homelab · 0 running · 1 restarting");
+    expect(appsSubtitle("homelab", 0, none)).toBe("homelab · no apps yet");
   });
 });
 
@@ -138,7 +150,8 @@ describe("containersSummary", () => {
   const c = (status_code: number) => ({ status_code });
   it("counts what runs and names what is wrong", () => {
     expect(containersSummary(1, [c(1)])).toBe("1 container running");
-    expect(containersSummary(1, [c(1), c(2)])).toBe("2 containers running");
+    expect(containersSummary(1, [c(1), c(2)])).toBe("1 of 2 containers running · 1 not started or paused");
+    expect(containersSummary(2, [c(2)])).toBe("0 of 1 container running · 1 not started or paused");
     expect(containersSummary(4, [c(1), c(3), c(4)])).toBe("1 of 3 containers running · 1 restarting · 1 with a problem");
   });
 

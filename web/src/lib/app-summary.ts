@@ -38,30 +38,49 @@ export function primaryAddress(app: Pick<App, "domains">, registrations: readonl
   return appAddresses(app, registrations)[0] ?? null;
 }
 
-export type AppCounts = { running: number; problem: number; stopped: number };
+export type AppCounts = {
+  running: number;
+  failed: number;
+  restarting: number;
+  idle: number;
+  problem: number;
+  stopped: number;
+};
 
-// countApps sorts the apps by their live status: running (active, idle,
-// restarting), with a problem, stopped. An app without a known status is
-// in none (the UI never infers "down" from missing data).
-export function countApps(apps: Pick<App, "id">[], statusByApp: Record<string, number>): AppCounts {
-  const counts: AppCounts = { running: 0, problem: 0, stopped: 0 };
+// countApps sorts the apps by what their pills read: running (Active only),
+// failed (a deploy that failed, see AppsContextValue.deployFailures),
+// restarting, idle, with a problem, stopped. An app without a known status
+// is in none (the UI never infers "down" from missing data).
+export function countApps(
+  apps: Pick<App, "id">[],
+  statusByApp: Record<string, number>,
+  failed: Record<string, string> = {},
+): AppCounts {
+  const counts: AppCounts = { running: 0, failed: 0, restarting: 0, idle: 0, problem: 0, stopped: 0 };
   for (const a of apps) {
     const code = statusByApp[a.id];
-    if (code === AppStatusCode.Active || code === AppStatusCode.Idle || code === AppStatusCode.Restarting) counts.running++;
+    if (failed[a.id]) counts.failed++;
+    else if (code === AppStatusCode.Active) counts.running++;
+    else if (code === AppStatusCode.Restarting) counts.restarting++;
+    else if (code === AppStatusCode.Idle) counts.idle++;
     else if (code === AppStatusCode.Problematic) counts.problem++;
     else if (code === AppStatusCode.Stopped) counts.stopped++;
   }
   return counts;
 }
 
-// appsSubtitle is the Apps page's subtitle: "homelab · 3 running · 1
-// stopped" (zero counts other than running are left out).
+// appsSubtitle is the Apps page's subtitle, counting apps (not containers):
+// "homelab · 3 running · 1 failed · 1 stopped" (zero counts other than
+// running are left out).
 export function appsSubtitle(serverName: string, total: number, counts: AppCounts): string {
   const parts = [serverName];
   if (total === 0) {
     parts.push("no apps yet");
   } else {
     parts.push(`${counts.running} running`);
+    if (counts.failed > 0) parts.push(`${counts.failed} failed`);
+    if (counts.restarting > 0) parts.push(`${counts.restarting} restarting`);
+    if (counts.idle > 0) parts.push(`${counts.idle} idle`);
     if (counts.problem > 0) parts.push(`${counts.problem} with problems`);
     if (counts.stopped > 0) parts.push(`${counts.stopped} stopped`);
   }
@@ -128,9 +147,13 @@ export function containersSummary(status: number | undefined, containers: Pick<C
   if (status === AppStatusCode.Stopped) return "Stopped — no containers running";
   if (containers.length === 0) return "No containers reported yet";
   const count = (...codes: number[]) => containers.filter((c) => codes.includes(c.status_code)).length;
-  const running = count(AppStatusCode.Active, AppStatusCode.Idle);
+  // Only an Active container runs: an Idle one was created but not started
+  // (or is paused).
+  const running = count(AppStatusCode.Active);
   const noun = (n: number) => (n === 1 ? "1 container" : `${n} containers`);
   const parts = [running === containers.length ? `${noun(running)} running` : `${running} of ${noun(containers.length)} running`];
+  const idle = count(AppStatusCode.Idle);
+  if (idle > 0) parts.push(`${idle} not started or paused`);
   const restarting = count(AppStatusCode.Restarting);
   const problems = count(AppStatusCode.Problematic);
   if (restarting > 0) parts.push(`${restarting} restarting`);

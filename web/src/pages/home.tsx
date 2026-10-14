@@ -19,7 +19,7 @@ import { appsSubtitle, countApps } from "@/lib/app-summary";
 // away in the sidebar.
 export default function HomePage() {
   const { activeServer, loading } = useServers();
-  const { apps, statusByApp, loading: appsLoading } = useApps();
+  const { apps, statusByApp, deployFailures, loading: appsLoading } = useApps();
   // The shell's one Add server dialog (none on a standalone install).
   const addServer = useShellAddServer();
 
@@ -53,7 +53,7 @@ export default function HomePage() {
         subtitle={
           (appsLoading && apps.length === 0) || (apps.length > 0 && Object.keys(statusByApp).length === 0)
             ? activeServer.name
-            : appsSubtitle(activeServer.name, apps.length, countApps(apps, statusByApp))
+            : appsSubtitle(activeServer.name, apps.length, countApps(apps, statusByApp, deployFailures))
         }
         actions={
           <NewAppButton serverId={activeServer.id} />

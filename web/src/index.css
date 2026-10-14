@@ -283,9 +283,10 @@
     }
 }
 
-/* Staggered entrance for app tiles; delay is set inline per card. */
+/* Staggered entrance for app tiles; delay is set inline per card. Short:
+   the cards read solid at once (entrances stay within 150ms). */
 .app-card-in {
-    animation: app-card-in 0.3s ease-out backwards;
+    animation: app-card-in 150ms ease-out backwards;
 }
 @keyframes app-card-in {
     from {
@@ -356,10 +357,22 @@
     }
 }
 
+/* A phone's bottom sheet (vaul) comes in as fast as a dialog does; its
+   exit keeps vaul's own timing, which its code waits for. */
+[data-vaul-drawer][data-state="open"],
+[data-vaul-overlay][data-state="open"] {
+    animation-duration: 150ms;
+}
+
 @media (prefers-reduced-motion: reduce) {
     .frost,
     .app-card-in {
         animation: none;
+    }
+    /* Dialogs, sheets, menus and popovers open and close without motion. */
+    [data-state="open"],
+    [data-state="closed"] {
+        animation: none !important;
     }
     /* The login page's snowfall is decoration: gone for less motion. */
     .login-snowflake {

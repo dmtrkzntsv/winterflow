@@ -86,6 +86,8 @@ describe("AppGrid", () => {
     const shop = within(card("Shop"));
     expect(shop.getByText("Running")).toBeInTheDocument();
     expect(shop.getByRole("link", { name: "shop.example.com" })).toHaveAttribute("href", "https://shop.example.com");
+    // On a phone the address is a 40px tap target (16px line + 12px above and below).
+    expect(shop.getByRole("link", { name: "shop.example.com" })).toHaveClass("max-sm:py-3", "max-sm:-my-3");
     expect(within(card("Blog")).getByText("Stopped")).toBeInTheDocument();
     // No domain: no address line at all.
     expect(card("Blog")).not.toHaveTextContent("No public address");
@@ -135,6 +137,12 @@ describe("AppGrid", () => {
     expect(screen.queryByRole("searchbox", { name: "Filter apps" })).not.toBeInTheDocument();
     unmount();
     renderGrid({ apps: many });
+    // The cards come in quickly: the stagger stops after the sixth (100ms).
+    const delays = within(screen.getByRole("list", { name: "Apps" }))
+      .getAllByRole("listitem")
+      .map((li) => li.style.animationDelay);
+    expect(delays.slice(0, 3)).toEqual(["0ms", "20ms", "40ms"]);
+    expect(delays.at(-1)).toBe("100ms");
     await user.type(screen.getByRole("searchbox", { name: "Filter apps" }), "pics");
     expect(within(screen.getByRole("list", { name: "Apps" })).getAllByRole("listitem")).toHaveLength(1);
     expect(screen.getByRole("link", { name: "Photos" })).toBeInTheDocument();

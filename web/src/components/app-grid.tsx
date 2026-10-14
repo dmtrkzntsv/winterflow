@@ -82,7 +82,7 @@ function AppCard({
   const address = primaryAddress(app, registrations);
   const named = Boolean(app.name?.trim());
   return (
-    <li className="app-card-in relative min-w-0" style={{ animationDelay: `${index * 40}ms` }}>
+    <li className="app-card-in relative min-w-0" style={{ animationDelay: `${Math.min(index, 5) * 20}ms` }}>
       <Card className="flex h-full items-center gap-3 p-3.5 transition-colors duration-150 hover:border-primary/40">
         <AppIcon name={app.name} icon={app.icon} color={app.color} className="size-10 shrink-0 rounded-lg text-base" />
         <div className="min-w-0 flex-1 space-y-1">
@@ -105,7 +105,7 @@ function AppCard({
                   href={address.url}
                   target="_blank"
                   rel="noreferrer"
-                  className="relative z-10 truncate transition-colors duration-150 hover:text-foreground hover:underline max-sm:-my-2.5 max-sm:py-2.5"
+                  className="relative z-10 truncate transition-colors duration-150 hover:text-foreground hover:underline max-sm:-my-3 max-sm:py-3"
                 >
                   {address.host}
                 </a>

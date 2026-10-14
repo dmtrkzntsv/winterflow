@@ -377,6 +377,12 @@ export function needsAttention(health: BackupHealth[] | undefined): boolean {
   return (health ?? []).some((h) => h.state === "late" || h.state === "failing");
 }
 
+// runnableBackups are the backups Back up now can run: on, with a storage,
+// and run by winterflow (a custom backup's own tool runs itself).
+export function runnableBackups(list: EffectiveBackup[]): EffectiveBackup[] {
+  return list.filter((b) => b.enabled && !!b.storage && b.type !== "custom");
+}
+
 const NAME_RE = /^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$/;
 
 // backupNameError mirrors recipe.ValidateName plus uniqueness in the app;

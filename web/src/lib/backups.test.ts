@@ -31,6 +31,7 @@ import {
   pathsFrom,
   pointLabel,
   pointTime,
+  runnableBackups,
   scheduleLabel,
   type EffectiveBackup,
 } from "@/lib/backups";
@@ -367,5 +368,21 @@ describe("what the agent's answers are matched by", () => {
   it("tells a refused run from a failed one", () => {
     expect(isRunRefusal("a backup of uploads is already queued or running")).toBe(true);
     expect(isRunRefusal("upload the copy: permission denied")).toBe(false);
+  });
+});
+
+describe("runnableBackups", () => {
+  it("keeps the backups Back up now can run: on, with a storage, not custom", () => {
+    const b = (name: string, over: Partial<EffectiveBackup>): EffectiveBackup => ({
+      name,
+      type: "sqlite",
+      enabled: true,
+      storage: "disk",
+      in_recipe: true,
+      from_recipe: null,
+      ...over,
+    });
+    const list = [b("db", {}), b("off", { enabled: false }), b("nowhere", { storage: "" }), b("replica", { type: "custom" })];
+    expect(runnableBackups(list).map((x) => x.name)).toEqual(["db"]);
   });
 });

@@ -24,6 +24,14 @@ function Probe() {
   );
 }
 
+function profileOf(userId: string | null) {
+  return {
+    profile: userId ? { user_id: userId, name: "Ann", email: "", must_change_password: false } : null,
+    loading: false,
+    refresh: async () => {},
+  } as ProfileContextValue;
+}
+
 function renderProbe(userId: string | null = "u1") {
   const handlers = new Set<NotificationHandler>();
   const notifications = {
@@ -34,19 +42,18 @@ function renderProbe(userId: string | null = "u1") {
     },
     waitFor: vi.fn(),
   } as unknown as NotificationsContextValue;
-  const profile = {
-    profile: userId ? { user_id: userId, name: "Ann", email: "", must_change_password: false } : null,
-    loading: false,
-    refresh: async () => {},
-  } as ProfileContextValue;
-  render(
+  const tree = (id: string | null) => (
     <NotificationsContext.Provider value={notifications}>
-      <ProfileContext.Provider value={profile}>
+      <ProfileContext.Provider value={profileOf(id)}>
         <Probe />
       </ProfileContext.Provider>
-    </NotificationsContext.Provider>,
+    </NotificationsContext.Provider>
   );
-  return { emit: (n: Notification) => act(() => handlers.forEach((h) => h(n))) };
+  const { rerender } = render(tree(userId));
+  return {
+    emit: (n: Notification) => act(() => handlers.forEach((h) => h(n))),
+    switchUser: (id: string | null) => rerender(tree(id)),
+  };
 }
 
 const event = (id: string, at: string) => ({ id, created_at: at, kind: "fired" });
@@ -70,9 +77,14 @@ describe("useInboxUnread", () => {
   });
 
   it("starts from now on a first visit instead of counting old history", async () => {
-    fakeAPI({ "/api/v1/alerts/get-events": { events: [event("e1", "2020-01-01T00:00:00Z")], next_cursor: "" } });
+    const api = fakeAPI({
+      "/api/v1/alerts/get-events": { events: [event("e1", "2020-01-01T00:00:00Z")], next_cursor: "" },
+    });
     renderProbe();
     await waitFor(() => expect(readInboxSeen("u1")).not.toBeNull());
+    // Let the events arrive before asserting that they aren't counted.
+    await waitFor(() => expect(api.calls).toHaveLength(1));
+    await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
     expect(count()).toHaveTextContent("0");
   });
 
@@ -105,6 +117,31 @@ describe("useInboxUnread", () => {
     await waitFor(() => expect(count()).toHaveTextContent("0"));
     events = [event("e1", "2026-10-13T11:00:00Z")];
     emit({ type: "alert", ref: "" });
+    await waitFor(() => expect(count()).toHaveTextContent("1"));
+  });
+
+  it("drops the previous user's events while the next user's load", async () => {
+    localStorage.setItem(inboxSeenKey("u1"), "0");
+    localStorage.setItem(inboxSeenKey("u2"), "0");
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let slow = false;
+    const fetchMock = fakeAPI({
+      "/api/v1/alerts/get-events": () => ({ events: [event("e1", "2026-10-13T11:00:00Z")], next_cursor: "" }),
+    }).fetchMock;
+    const fast = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (url, init) => {
+      if (slow) await gate;
+      return fast(url, init);
+    });
+    const { switchUser } = renderProbe("u1");
+    await waitFor(() => expect(count()).toHaveTextContent("1"));
+    slow = true;
+    switchUser("u2");
+    expect(count()).toHaveTextContent("0");
+    release();
     await waitFor(() => expect(count()).toHaveTextContent("1"));
   });
 

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react"
-import { Navigate, Outlet, useOutletContext, useParams } from "react-router-dom"
+import { Navigate, Outlet, useParams } from "react-router-dom"
 
 import { NotFound } from "@/components/not-found"
 import { useServers } from "@/context/use-servers"
@@ -10,9 +10,6 @@ import { serverPath } from "@/lib/server-paths"
 export function ServerScope() {
   const { serverId } = useParams()
   const { servers, loading } = useServers()
-  // Hand any outlet context of the layout through to the pages: a nested
-  // <Outlet /> without it would shadow the layout's with undefined.
-  const layout = useOutletContext()
 
   if (loading && servers.length === 0) return null
   if (!servers.some((s) => s.id === serverId)) {
@@ -23,7 +20,7 @@ export function ServerScope() {
       />
     )
   }
-  return <Outlet context={layout} />
+  return <Outlet />
 }
 
 // DefaultServer is the entry point at /: it opens the active server's

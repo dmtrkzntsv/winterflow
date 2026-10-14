@@ -37,7 +37,8 @@ export function writeInboxSeen(userId: string, at: number): void {
 export function subscribeInboxSeen(onChange: () => void): () => void {
   listeners.add(onChange);
   const onStorage = (event: StorageEvent) => {
-    if (event.key?.startsWith(INBOX_SEEN_PREFIX)) onChange();
+    // key === null: localStorage.clear() in another tab.
+    if (event.key === null || event.key.startsWith(INBOX_SEEN_PREFIX)) onChange();
   };
   window.addEventListener("storage", onStorage);
   return () => {

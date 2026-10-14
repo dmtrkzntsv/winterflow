@@ -329,40 +329,40 @@ export default function OrgMembersPage({ section }: { section?: "organization" |
                           {m.name}
                           {isSelf ? (
                             <span className="text-muted-foreground"> (you)</span>
-                        ) : null}
-                      </TableCell>
-                      <TableCell>{m.email || "—"}</TableCell>
-                      <TableCell>{m.provider || "—"}</TableCell>
-                      <TableCell className="text-right">
-                        {!isSelf && m.email ? (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            title="Reset password"
-                            onClick={() => void handleReset(m)}
-                          >
-                            <KeyRound />
-                          </Button>
-                        ) : null}
-                        {!isSelf ? (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            title="Remove"
-                            onClick={() => void handleRemove(m)}
-                          >
-                            <Trash2 className="text-destructive" />
-                          </Button>
-                        ) : null}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+                          ) : null}
+                        </TableCell>
+                        <TableCell>{m.email || "—"}</TableCell>
+                        <TableCell>{m.provider || "—"}</TableCell>
+                        <TableCell className="text-right">
+                          {!isSelf && m.email ? (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              title="Reset password"
+                              onClick={() => void handleReset(m)}
+                            >
+                              <KeyRound />
+                            </Button>
+                          ) : null}
+                          {!isSelf ? (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              title="Remove"
+                              onClick={() => void handleRemove(m)}
+                            >
+                              <Trash2 className="text-destructive" />
+                            </Button>
+                          ) : null}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
       ) : null}
 
       <Dialog open={addOpen} onOpenChange={setAddOpen}>

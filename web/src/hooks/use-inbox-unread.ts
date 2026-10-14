@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useContext, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 
 import { NotificationsContext } from "@/context/notifications-context-base";
 import { ProfileContext } from "@/context/profile-context-base";
@@ -35,7 +35,13 @@ export function useInboxUnread(): InboxUnread {
     () => (userId ? readInboxSeen(userId) : null),
     () => null,
   );
-  const [events, setEvents] = useState<AlertEvent[]>([]);
+  // The loaded events remember whose they are: another user's are not shown
+  // (nor counted) while this one's load.
+  const [loaded, setLoaded] = useState<{ userId: string; events: AlertEvent[] } | null>(null);
+  const events = useMemo(
+    () => (loaded && loaded.userId === userId ? loaded.events : []),
+    [loaded, userId],
+  );
   const [version, setVersion] = useState(0);
 
   useEffect(() => {
@@ -47,7 +53,7 @@ export function useInboxUnread(): InboxUnread {
     let active = true;
     alertsGet<EventsPage>("get-events", { limit: String(UNREAD_SCAN) })
       .then((page) => {
-        if (active) setEvents(page.events ?? []);
+        if (active) setLoaded({ userId, events: page.events ?? [] });
       })
       .catch(() => {
         // The badge is best effort: keep the last count.

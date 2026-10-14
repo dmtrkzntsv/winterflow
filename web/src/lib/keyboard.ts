@@ -1,4 +1,5 @@
-export type KeyLike = Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">;
+export type KeyLike = Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey"> &
+  Partial<Pick<KeyboardEvent, "code" | "repeat">>;
 
 // isMacPlatform decides whether shortcuts read ⌘ or Ctrl.
 export function isMacPlatform(): boolean {
@@ -20,14 +21,18 @@ function commandOnly(e: KeyLike): boolean {
 }
 
 // isPaletteShortcut is ⌘K / Ctrl+K: it opens the palette from anywhere,
-// text fields included.
+// text fields included. The physical key counts too (e.code), so it works on
+// non-Latin layouts, and a held key doesn't toggle the palette back and forth.
 export function isPaletteShortcut(e: KeyLike): boolean {
-  return commandOnly(e) && e.key.toLowerCase() === "k";
+  return !e.repeat && commandOnly(e) && (e.code === "KeyK" || e.key.toLowerCase() === "k");
 }
 
 // serverShortcutIndex maps ⌘1…⌘9 (Ctrl elsewhere) to the index of the
-// server to switch to, null for any other key.
+// server to switch to, null for any other key (and for a held key). The
+// physical key counts (e.code), so it works on layouts whose digit row types
+// symbols.
 export function serverShortcutIndex(e: KeyLike): number | null {
-  if (!commandOnly(e) || !/^[1-9]$/.test(e.key)) return null;
-  return Number(e.key) - 1;
+  if (e.repeat || !commandOnly(e)) return null;
+  const digit = /^Digit([1-9])$/.exec(e.code ?? "")?.[1] ?? (/^[1-9]$/.test(e.key) ? e.key : null);
+  return digit === null ? null : Number(digit) - 1;
 }

@@ -75,9 +75,11 @@ describe("legacy URLs", () => {
     expect(LEGACY_APP_TABS.editor).toBe("configuration");
   });
 
-  it("carries the old query and hash over unless the target has its own query", () => {
+  it("carries the old query and hash over, merged into the target's own query (its params win)", () => {
     expect(withQuery("/settings/members", "?x=1", "#top")).toBe("/settings/members?x=1#top");
-    expect(withQuery("/server/s1/new?from=template", "?x=1", "")).toBe("/server/s1/new?from=template");
+    expect(withQuery("/server/s1/new?from=template", "?x=1", "")).toBe("/server/s1/new?from=template&x=1");
+    expect(withQuery("/server/s1/new?from=template", "?from=git&x=1", "")).toBe("/server/s1/new?from=template&x=1");
+    expect(withQuery("/server/s1/new?from=template", "", "#h")).toBe("/server/s1/new?from=template#h");
     expect(withQuery("/inbox", "", "")).toBe("/inbox");
   });
 });

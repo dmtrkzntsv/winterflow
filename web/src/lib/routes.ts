@@ -85,11 +85,16 @@ export function legacyAlertsTarget(tab: string | null): string {
   return tab === "rules" || tab === "channels" ? settingsPath("notifications") : INBOX_PATH;
 }
 
-// withQuery appends an old URL's query to a redirect target that has none
-// of its own, and its hash in any case.
+// withQuery merges an old URL's query into a redirect target (the target's
+// own params win over the old ones) and appends the hash.
 export function withQuery(target: string, search: string, hash: string): string {
-  const base = target.includes("?") || !search ? target : `${target}${search}`;
-  return `${base}${hash}`;
+  const at = target.indexOf("?");
+  const path = at === -1 ? target : target.slice(0, at);
+  const own = new URLSearchParams(at === -1 ? "" : target.slice(at + 1));
+  const old = new URLSearchParams(search);
+  own.forEach((_, key) => old.delete(key));
+  const query = [own.toString(), old.toString()].filter(Boolean).join("&");
+  return `${path}${query ? `?${query}` : ""}${hash}`;
 }
 
 // isWidePath reports the pages that use the full width (the app page with

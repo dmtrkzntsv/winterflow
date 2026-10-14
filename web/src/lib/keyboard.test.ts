@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { isMacPlatform, isPaletteShortcut, modKeyLabel, serverShortcutIndex, shortcutLabel } from "@/lib/keyboard";
 
-const key = (k: string, mods: Partial<Record<"metaKey" | "ctrlKey" | "altKey" | "shiftKey", boolean>> = {}) => ({
+const key = (
+  k: string,
+  mods: Partial<Record<"metaKey" | "ctrlKey" | "altKey" | "shiftKey" | "repeat", boolean>> & { code?: string } = {},
+) => ({
   key: k,
   metaKey: false,
   ctrlKey: false,
@@ -17,6 +20,15 @@ describe("isPaletteShortcut", () => {
     expect(isPaletteShortcut(key("K", { ctrlKey: true }))).toBe(true);
   });
 
+  it("follows the physical key, for layouts that don't type a Latin k", () => {
+    expect(isPaletteShortcut(key("л", { metaKey: true, code: "KeyK" }))).toBe(true);
+    expect(isPaletteShortcut(key("л", { metaKey: true, code: "KeyL" }))).toBe(false);
+  });
+
+  it("ignores a held key", () => {
+    expect(isPaletteShortcut(key("k", { metaKey: true, repeat: true }))).toBe(false);
+  });
+
   it("is not a plain K or one with Alt or Shift", () => {
     expect(isPaletteShortcut(key("k"))).toBe(false);
     expect(isPaletteShortcut(key("k", { metaKey: true, shiftKey: true }))).toBe(false);
@@ -28,6 +40,16 @@ describe("serverShortcutIndex", () => {
   it("maps ⌘1…⌘9 to the first nine servers", () => {
     expect(serverShortcutIndex(key("1", { metaKey: true }))).toBe(0);
     expect(serverShortcutIndex(key("9", { ctrlKey: true }))).toBe(8);
+  });
+
+  it("follows the physical digit key", () => {
+    expect(serverShortcutIndex(key("&", { metaKey: true, code: "Digit1" }))).toBe(0);
+    expect(serverShortcutIndex(key("é", { ctrlKey: true, code: "Digit2" }))).toBe(1);
+    expect(serverShortcutIndex(key("&", { metaKey: true, code: "Digit0" }))).toBeNull();
+  });
+
+  it("ignores a held key", () => {
+    expect(serverShortcutIndex(key("1", { metaKey: true, repeat: true }))).toBeNull();
   });
 
   it("ignores 0, letters, bare digits and extra modifiers", () => {

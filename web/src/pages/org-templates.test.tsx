@@ -7,7 +7,6 @@ import { NotificationsContext, type NotificationsContextValue } from "@/context/
 import OrgTemplatesPage from "@/pages/org-templates";
 import { fakeAPI } from "@/test/fake-api";
 
-
 const notifications = { connected: true, subscribe: () => () => {}, waitFor: vi.fn() } as NotificationsContextValue;
 
 function renderPage() {

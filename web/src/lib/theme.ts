@@ -93,8 +93,9 @@ export function startTheme(): () => void {
     if (getThemePreference() === "system") apply()
   }
   const onStorage = (event: StorageEvent) => {
-    if (event.key !== THEME_KEY) return
-    current = parse(event.newValue)
+    // key === null: localStorage.clear() in another tab.
+    if (event.key !== null && event.key !== THEME_KEY) return
+    current = event.key === null ? "system" : parse(event.newValue)
     apply()
     emit()
   }

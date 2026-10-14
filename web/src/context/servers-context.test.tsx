@@ -1,5 +1,5 @@
 import { act, render, screen } from "@testing-library/react";
-import { MemoryRouter, Outlet, Route, Routes, useLocation, useOutletContext } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { NotFound } from "@/components/not-found";
@@ -45,6 +45,7 @@ function Probe() {
       <span data-testid="at">{pathname + search}</span>
       <span data-testid="server">{activeServer?.name ?? "-"}</span>
       <button onClick={() => selectServer("s2")}>switch</button>
+      <button onClick={() => selectServer(activeServer?.id ?? "")}>same</button>
     </div>
   );
 }
@@ -64,6 +65,7 @@ function renderAt(url: string) {
           </Route>
           <Route path="/inbox" element={<Probe />} />
           <Route path="/templates" element={<Probe />} />
+          <Route path="/inbox-archive" element={<Probe />} />
           <Route path="/settings/members" element={<Probe />} />
           <Route path="/user/tokens" element={<Probe />} />
           <Route path="*" element={<NotFound />} />
@@ -138,6 +140,51 @@ describe("server-scoped URLs", () => {
     expect(server()).toBe("Beta");
   });
 
+  it("does nothing when the picked server is already the active one", async () => {
+    renderAt("/server/s1/settings/domains");
+    await screen.findByText("Alpha");
+    act(() => screen.getByText("same").click());
+    expect(at()).toBe("/server/s1/settings/domains");
+  });
+
+  it("matches the organization-wide pages at a path segment, not a prefix", async () => {
+    renderAt("/inbox-archive");
+    await screen.findByText("Alpha");
+    act(() => screen.getByText("switch").click());
+    expect(at()).toBe("/server/s2");
+  });
+
+  it("keeps selectServer's identity across navigation", async () => {
+    const seen = new Set<unknown>();
+    function Spy() {
+      const { selectServer } = useServers();
+      seen.add(selectServer);
+      return null;
+    }
+    render(
+      <MemoryRouter initialEntries={["/server/s1"]}>
+        <ServersProvider>
+          <Routes>
+            <Route
+              path="*"
+              element={
+                <>
+                  <Spy />
+                  <Probe />
+                </>
+              }
+            />
+          </Routes>
+        </ServersProvider>
+      </MemoryRouter>,
+    );
+    await screen.findByText("Alpha");
+    const before = seen.size;
+    act(() => screen.getByText("switch").click());
+    await screen.findByText("Beta");
+    expect(seen.size).toBe(before);
+  });
+
   it("scopes monitoring to the URL's server and keeps it when switching", async () => {
     renderAt("/server/s1/monitoring");
     await screen.findByText("Alpha");
@@ -154,30 +201,6 @@ describe("server-scoped URLs", () => {
   it("has no unscoped /monitoring", async () => {
     renderAt("/monitoring");
     expect(await screen.findByText("Page not found")).toBeInTheDocument();
-  });
-
-  it("passes the layout's outlet context through to the server's pages", async () => {
-    function Layout() {
-      return <Outlet context={{ marker: "layout" }} />;
-    }
-    function Page() {
-      const ctx = useOutletContext<{ marker?: string } | undefined>();
-      return <span>context: {ctx?.marker ?? "none"}</span>;
-    }
-    render(
-      <MemoryRouter initialEntries={["/server/s1"]}>
-        <ServersProvider>
-          <Routes>
-            <Route element={<Layout />}>
-              <Route path="/server/:serverId" element={<ServerScope />}>
-                <Route index element={<Page />} />
-              </Route>
-            </Route>
-          </Routes>
-        </ServersProvider>
-      </MemoryRouter>,
-    );
-    expect(await screen.findByText("context: layout")).toBeInTheDocument();
   });
 
   it("falls back to the first server outside a server's scope", async () => {

@@ -19,6 +19,7 @@ import {
   monitoringPath,
   serverSettingsPath,
 } from "@/lib/routes";
+import { isNavActive } from "@/lib/nav";
 import { serverPath, serverRoutePattern } from "@/lib/server-paths";
 
 import {
@@ -202,22 +203,31 @@ export function ServersProvider({ children }: { children: ReactNode }) {
   // settings, and Inbox and Templates (organization-wide) stay where they
   // are with only the active server changing. Every other page (Apps, an
   // app, New app) belongs to one server: the new server's Apps.
+  // Its identity is stable: the current place (and navigate, whose identity
+  // follows the location in a non-data router) is read through a ref, so
+  // sidebar and shortcut consumers don't re-render on every navigation.
+  const placeRef = useRef({ pathname, urlServerId, activeServerId, navigate });
+  useEffect(() => {
+    placeRef.current = { pathname, urlServerId, activeServerId, navigate };
+  }, [pathname, urlServerId, activeServerId, navigate]);
   const selectServer = useCallback(
     (id: string) => {
-      if (!urlServerId && (pathname.startsWith(INBOX_PATH) || pathname.startsWith(TEMPLATES_PATH))) {
+      const { pathname: at, urlServerId: inServer, activeServerId: active, navigate } = placeRef.current;
+      if (id === active) return;
+      if (!inServer && (isNavActive(at, INBOX_PATH) || isNavActive(at, TEMPLATES_PATH))) {
         setLastServerId(id);
         return;
       }
-      const sub = urlServerId ? pathname.slice(serverPath(urlServerId).length) : "";
-      if (sub.startsWith("/settings") || (!urlServerId && pathname.startsWith(SETTINGS_PATH))) {
+      const sub = inServer ? at.slice(serverPath(inServer).length) : "";
+      if (isNavActive(sub, "/settings") || (!inServer && isNavActive(at, SETTINGS_PATH))) {
         navigate(serverSettingsPath(id));
-      } else if (sub.startsWith("/monitoring")) {
+      } else if (isNavActive(sub, "/monitoring")) {
         navigate(monitoringPath(id));
       } else {
         navigate(appsPath(id));
       }
     },
-    [navigate, pathname, urlServerId],
+    [],
   );
 
   const value = useMemo(() => {

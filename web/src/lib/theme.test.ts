@@ -99,6 +99,21 @@ describe("theme preference", () => {
     unsubscribe()
   })
 
+  it("follows localStorage.clear() in another tab (a storage event without a key)", () => {
+    mockMatchMedia(false)
+    localStorage.setItem(THEME_KEY, "dark")
+    stop = startTheme()
+    expect(getThemePreference()).toBe("dark")
+    localStorage.clear()
+    const seen = vi.fn()
+    const unsubscribe = subscribeThemePreference(seen)
+    window.dispatchEvent(new StorageEvent("storage", { key: null }))
+    expect(getThemePreference()).toBe("system")
+    expect(dark()).toBe(false)
+    expect(seen).toHaveBeenCalled()
+    unsubscribe()
+  })
+
   it("tells subscribers about a change made here", () => {
     mockMatchMedia(false)
     stop = startTheme()

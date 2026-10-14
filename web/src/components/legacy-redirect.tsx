@@ -17,16 +17,15 @@ function withoutTab(search: string): string {
 
 // LegacyRedirect sends a pre-rebuild URL (a bookmark, an alert e-mail, a
 // link in an open tab) to its new place in one hop, replacing the history
-// entry. The hash and the query (minus ?tab=) carry over, unless keepQuery
-// is false.
-export function LegacyRedirect({ to, keepQuery = true }: { to: RedirectTarget; keepQuery?: boolean }) {
+// entry. The hash and the query (minus ?tab=) carry over.
+export function LegacyRedirect({ to }: { to: RedirectTarget }) {
   const params = useParams();
   const location = useLocation();
   const target = typeof to === "string" ? to : to({ params, search: new URLSearchParams(location.search) });
   return (
     <Navigate
       replace
-      to={withQuery(target, keepQuery ? withoutTab(location.search) : "", location.hash)}
+      to={withQuery(target, withoutTab(location.search), location.hash)}
       state={location.state}
     />
   );

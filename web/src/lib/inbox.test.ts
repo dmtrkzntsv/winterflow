@@ -31,9 +31,11 @@ describe("inbox last-seen store", () => {
     window.dispatchEvent(new StorageEvent("storage", { key: inboxSeenKey("u1") }));
     window.dispatchEvent(new StorageEvent("storage", { key: "wf.theme" }));
     expect(seen).toHaveBeenCalledTimes(2);
+    window.dispatchEvent(new StorageEvent("storage", { key: null })); // localStorage.clear() elsewhere
+    expect(seen).toHaveBeenCalledTimes(3);
     unsubscribe();
     writeInboxSeen("u1", 6);
-    expect(seen).toHaveBeenCalledTimes(2);
+    expect(seen).toHaveBeenCalledTimes(3);
   });
 });
 

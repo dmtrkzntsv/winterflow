@@ -13,7 +13,6 @@ import { instancesLabel, type TemplateSummary } from "@/lib/templates";
 import { relativeTime } from "@/lib/utils";
 import { NEW_TEMPLATE_PATH, templatePath } from "@/lib/routes";
 
-
 // OrgTemplatesPage is Org → Templates: the org's stack definitions, each
 // with its latest revision and how many apps run it.
 export default function OrgTemplatesPage() {

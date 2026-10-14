@@ -131,7 +131,7 @@ export function ServerSwitcher({ onAddServer }: { onAddServer?: () => void }) {
                 <DropdownMenuItem key={s.id} onClick={() => pick(s.id)} className="min-h-10 gap-2 p-2">
                   <StatusDot tone={status.tone} pulse={status.pulse} label={status.label} />
                   <span className="truncate">{s.name}</span>
-                  {s.id === activeServer.id ? <Check className="size-4" aria-label="Current server" /> : null}
+                  {s.id === activeServer.id ? <Check role="img" className="size-4" aria-label="Current server" /> : null}
                   {index < 9 ? <DropdownMenuShortcut>{shortcutLabel(index + 1)}</DropdownMenuShortcut> : null}
                 </DropdownMenuItem>
               );

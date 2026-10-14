@@ -74,8 +74,9 @@ export function Row({
   return (
     <li
       className={cn(
-        "relative flex flex-col gap-2 px-4 py-3 transition-colors duration-150 hover:bg-muted/40 sm:flex-row sm:items-center sm:gap-4",
+        "relative flex flex-col gap-2 px-4 py-3 transition-colors duration-150 sm:flex-row sm:items-center sm:gap-4",
         "max-sm:rounded-xl max-sm:border max-sm:bg-card",
+        to && "hover:bg-muted/40",
         className,
       )}
     >

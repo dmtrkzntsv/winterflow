@@ -27,7 +27,7 @@ vi.mock("@/context/use-servers", () => ({
 }));
 const SHOP = { id: "a1", serverId: "s1", name: "Shop", version: "1", icon: "", color: "", createdAt: "" };
 let apps = [SHOP];
-vi.mock("@/context/use-apps", () => ({ useApps: () => ({ apps }) }));
+vi.mock("@/context/use-apps", () => ({ useApps: () => ({ apps, statusByApp: { a1: 1 }, deployFailures: {} }) }));
 vi.mock("@/context/use-profile", () => ({
   useProfile: () => ({ profile: { user_id: "u1", name: "Ann", email: "ann@example.test", must_change_password: false } }),
 }));
@@ -70,6 +70,17 @@ describe("CommandPalette", () => {
     expect(screen.getByTestId("at")).toHaveTextContent("/server/s1/monitoring");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(readRecent()[0]).toMatchObject({ id: "page:monitoring", to: "/server/s1/monitoring" });
+  });
+
+  it("leads apps with their status dot and the rest with an icon, and marks the highlighted item's Enter", async () => {
+    renderPalette();
+    openWithKeyboard();
+    await input();
+    const shop = screen.getByRole("option", { name: /Shop/ });
+    expect(within(shop).getByTestId("palette-app-status").querySelector("[data-tone]")).toHaveAttribute("data-tone", "ok");
+    expect(screen.getByRole("option", { name: /Monitoring/ }).querySelector("svg")).not.toBeNull();
+    // Every item carries the ↵, shown only while it is the highlighted one.
+    expect(within(shop).getByText("↵")).toHaveClass("hidden", "in-data-[selected=true]:inline");
   });
 
   it("finds this server's apps, the Settings sections and the other servers", async () => {

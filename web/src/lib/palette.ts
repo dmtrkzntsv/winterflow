@@ -1,3 +1,5 @@
+import { Activity, Inbox, LayoutGrid, LayoutTemplate, Plus, Server, type LucideIcon } from "lucide-react";
+
 import { appLabel } from "@/lib/kpi";
 import { INBOX_PATH, TEMPLATES_PATH, appPath, appsPath, monitoringPath, newAppPath } from "@/lib/routes";
 import { serverPath } from "@/lib/server-paths";
@@ -22,6 +24,9 @@ export type PaletteNavEntry = {
   // serverId marks a "switch server" entry: picking it goes through
   // selectServer (which keeps the page kind) rather than to `to`.
   serverId?: string;
+  // icon leads the entry; an app's entry has appId instead (its status dot).
+  icon?: LucideIcon;
+  appId?: string;
 };
 
 export type RecentEntry = { id: string; label: string; to: string };
@@ -47,16 +52,16 @@ export function paletteNavEntries({
   if (serverId) {
     for (const app of apps) {
       if (app.serverId !== serverId) continue;
-      entries.push({ id: `app:${app.id}`, group: "Apps", label: appLabel(app.name), to: appPath(serverId, app.id), keywords: ["app"] });
+      entries.push({ id: `app:${app.id}`, group: "Apps", label: appLabel(app.name), to: appPath(serverId, app.id), keywords: ["app"], appId: app.id });
     }
     entries.push(
-      { id: "page:apps", group: "Pages", label: "Apps", to: appsPath(serverId), keywords: ["home", "dashboard"] },
-      { id: "page:monitoring", group: "Pages", label: "Monitoring", to: monitoringPath(serverId), keywords: ["metrics", "cpu", "memory", "disk"] },
+      { id: "page:apps", group: "Pages", label: "Apps", to: appsPath(serverId), keywords: ["home", "dashboard"], icon: LayoutGrid },
+      { id: "page:monitoring", group: "Pages", label: "Monitoring", to: monitoringPath(serverId), keywords: ["metrics", "cpu", "memory", "disk"], icon: Activity },
     );
   }
   entries.push(
-    { id: "page:inbox", group: "Pages", label: "Inbox", to: INBOX_PATH, keywords: ["alerts", "notifications"] },
-    { id: "page:templates", group: "Pages", label: "Templates", to: TEMPLATES_PATH, keywords: ["stack"] },
+    { id: "page:inbox", group: "Pages", label: "Inbox", to: INBOX_PATH, keywords: ["alerts", "notifications"], icon: Inbox },
+    { id: "page:templates", group: "Pages", label: "Templates", to: TEMPLATES_PATH, keywords: ["stack"], icon: LayoutTemplate },
   );
   for (const section of settings) {
     for (const item of section.items) {
@@ -67,17 +72,18 @@ export function paletteNavEntries({
         to: item.to,
         hint: section.title,
         keywords: ["settings", section.title],
+        icon: item.icon,
       });
     }
   }
   if (!standalone) {
     for (const server of servers) {
       if (server.id === serverId) continue;
-      entries.push({ id: `server:${server.id}`, group: "Servers", label: server.name, to: serverPath(server.id), hint: "Switch server", keywords: ["server", "switch"], serverId: server.id });
+      entries.push({ id: `server:${server.id}`, group: "Servers", label: server.name, to: serverPath(server.id), hint: "Switch server", keywords: ["server", "switch"], serverId: server.id, icon: Server });
     }
   }
   if (serverId) {
-    entries.push({ id: "action:new-app", group: "Actions", label: "New app", to: newAppPath(serverId), keywords: ["create", "add", "deploy"] });
+    entries.push({ id: "action:new-app", group: "Actions", label: "New app", to: newAppPath(serverId), keywords: ["create", "add", "deploy"], icon: Plus });
   }
   return entries;
 }

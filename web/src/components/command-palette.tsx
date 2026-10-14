@@ -3,6 +3,8 @@ import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Server } from "lucide-react";
 
+import { StatusDot } from "@/components/status";
+
 import {
   Command,
   CommandEmpty,
@@ -26,13 +28,14 @@ import {
   type PaletteGroup,
   type PaletteNavEntry,
 } from "@/lib/palette";
+import { appStatus } from "@/lib/status";
 import { THEME_OPTIONS } from "@/lib/theme-options";
 
 const NAV_GROUPS: PaletteGroup[] = ["Apps", "Pages", "Settings", "Servers"];
 
 // The same cmdk styling the vendored CommandDialog uses.
 const COMMAND_CLASS =
-  "[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-muted-foreground [&_[cmdk-group]:not([hidden])_~[cmdk-group]]:pt-0 [&_[cmdk-group]]:px-2 [&_[cmdk-input-wrapper]_svg]:h-5 [&_[cmdk-input-wrapper]_svg]:w-5 [&_[cmdk-input]]:h-12 [&_[cmdk-item]]:px-2 [&_[cmdk-item]]:py-3 [&_[cmdk-item]_svg]:h-5 [&_[cmdk-item]_svg]:w-5";
+  "[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-muted-foreground [&_[cmdk-group]:not([hidden])_~[cmdk-group]]:pt-0 [&_[cmdk-group]]:px-2 [&_[cmdk-input-wrapper]_svg]:h-5 [&_[cmdk-input-wrapper]_svg]:w-5 [&_[cmdk-input]]:h-12 [&_[cmdk-item]]:px-2 [&_[cmdk-item]]:py-2.5 [&_[cmdk-item]_svg]:h-4 [&_[cmdk-item]_svg]:w-4";
 
 // An item's cmdk value is its searchable text, then ID_MARK and its id. The id
 // keeps two same-named apps or servers apart (cmdk treats equal values as one
@@ -57,6 +60,15 @@ function paletteFilter(value: string, search: string, keywords?: string[]): numb
   return Math.max(text, ...viaKeyword);
 }
 
+// Enter is the "↵" on the highlighted item: what Enter does.
+function Enter() {
+  return (
+    <kbd aria-hidden className="hidden font-sans text-xs text-muted-foreground in-data-[selected=true]:inline">
+      ↵
+    </kbd>
+  );
+}
+
 // itemValue is the group, the label and the hint ("Settings: General (Organization)").
 function itemValue(entry: PaletteNavEntry, prefix = ""): string {
   return withId(`${prefix}${entry.group}: ${entry.label}${entry.hint ? ` (${entry.hint})` : ""}`, entry.id);
@@ -70,7 +82,7 @@ export function CommandPalette({ onAddServer }: { onAddServer?: () => void }) {
   const { open, setOpen, groups } = useCommandPalette();
   const navigate = useNavigate();
   const { servers, activeServerId, selectServer } = useServers();
-  const { apps } = useApps();
+  const { apps, statusByApp, deployFailures } = useApps();
   const settings = useSettingsSections();
   const [, setTheme] = useThemePreference();
   const [query, setQuery] = useState("");
@@ -97,10 +109,22 @@ export function CommandPalette({ onAddServer }: { onAddServer?: () => void }) {
     close();
     action();
   };
+  // A destination leads with its icon, an app with its status dot; the
+  // hint and the ↵ sit at the end.
   const navItem = (entry: PaletteNavEntry, prefix = "") => (
     <CommandItem key={prefix + entry.id} value={itemValue(entry, prefix)} keywords={entry.keywords} onSelect={() => go(entry)}>
+      {entry.appId ? (
+        <span className="flex size-4 shrink-0 items-center justify-center" data-testid="palette-app-status">
+          <StatusDot tone={appStatus(statusByApp[entry.appId], Boolean(deployFailures?.[entry.appId])).tone} />
+        </span>
+      ) : entry.icon ? (
+        <entry.icon className="text-muted-foreground" />
+      ) : null}
       <span className="truncate">{entry.label}</span>
-      {entry.hint ? <span className="ml-auto truncate text-xs text-muted-foreground">{entry.hint}</span> : null}
+      <span className="ml-auto flex shrink-0 items-center gap-2">
+        {entry.hint ? <span className="truncate text-xs text-muted-foreground">{entry.hint}</span> : null}
+        <Enter />
+      </span>
     </CommandItem>
   );
 
@@ -126,8 +150,11 @@ export function CommandPalette({ onAddServer }: { onAddServer?: () => void }) {
                       disabled={action.disabled}
                       onSelect={() => run(action.run)}
                     >
-                      {action.icon ? <action.icon /> : null}
+                      {action.icon ? <action.icon className="text-muted-foreground" /> : null}
                       <span>{action.label}</span>
+                      <span className="ml-auto">
+                        <Enter />
+                      </span>
                     </CommandItem>
                   ))}
                 </CommandGroup>
@@ -145,8 +172,11 @@ export function CommandPalette({ onAddServer }: { onAddServer?: () => void }) {
               {entries.filter((e) => e.group === "Actions").map((entry) => navItem(entry))}
               {onAddServer ? (
                 <CommandItem value="Actions: Add server" keywords={["server", "connect"]} onSelect={() => run(onAddServer)}>
-                  <Server />
+                  <Server className="text-muted-foreground" />
                   <span>Add server</span>
+                  <span className="ml-auto">
+                    <Enter />
+                  </span>
                 </CommandItem>
               ) : null}
               {THEME_OPTIONS.map((theme) => (
@@ -156,8 +186,11 @@ export function CommandPalette({ onAddServer }: { onAddServer?: () => void }) {
                   keywords={["appearance", "dark mode", "light mode"]}
                   onSelect={() => run(() => setTheme(theme.value))}
                 >
-                  <theme.icon />
+                  <theme.icon className="text-muted-foreground" />
                   <span>Theme: {theme.label}</span>
+                  <span className="ml-auto">
+                    <Enter />
+                  </span>
                 </CommandItem>
               ))}
             </CommandGroup>

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { AppStatusCode } from "@/context/apps-context-base";
-import { appStatus, backupStatus, serverStatus } from "@/lib/status";
+import { appStatus, backupStatus, RESTORING, serverStatus } from "@/lib/status";
 
 describe("appStatus", () => {
   it.each([
@@ -60,5 +60,11 @@ describe("backupStatus", () => {
     ["failing", "bad", "Failing"],
   ] as const)("maps %s to %s %s", (state, tone, label) => {
     expect(backupStatus(state)).toMatchObject({ tone, label });
+  });
+});
+
+describe("RESTORING", () => {
+  it("is a moving warning", () => {
+    expect(RESTORING).toEqual({ tone: "warn", label: "Restoring", pulse: true });
   });
 });

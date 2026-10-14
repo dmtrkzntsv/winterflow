@@ -71,3 +71,7 @@ const BACKUP_TONE: Record<BackupState, Omit<StatusInfo, "label">> = {
 export function backupStatus(state: BackupState): StatusInfo {
   return { ...BACKUP_TONE[state], label: STATE_LABELS[state] };
 }
+
+// RESTORING is a backup's state while it is being restored (the app is
+// stopped meanwhile).
+export const RESTORING: StatusInfo = { tone: "warn", label: "Restoring", pulse: true };

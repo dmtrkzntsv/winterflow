@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { AlertEvent } from "@/lib/alerts";
 import {
   countUnread,
   inboxSeenKey,
@@ -40,10 +41,18 @@ describe("inbox last-seen store", () => {
 });
 
 describe("countUnread", () => {
-  const events = [{ created_at: "2026-10-13T11:00:00Z" }, { created_at: "2026-10-13T09:00:00Z" }];
+  const events: Pick<AlertEvent, "kind" | "created_at">[] = [
+    { kind: "fired", created_at: "2026-10-13T11:00:00Z" },
+    { kind: "fired", created_at: "2026-10-13T09:00:00Z" },
+  ];
 
   it("counts the events newer than the last visit", () => {
     expect(countUnread(events, Date.parse("2026-10-13T10:00:00Z"))).toBe(1);
+  });
+
+  it("counts a firing only: its resolution is no news", () => {
+    const incident: typeof events = [...events, { kind: "resolved", created_at: "2026-10-13T11:30:00Z" }];
+    expect(countUnread(incident, Date.parse("2026-10-13T10:00:00Z"))).toBe(1);
   });
 
   it("counts nothing before the first visit is recorded", () => {

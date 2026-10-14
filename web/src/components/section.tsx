@@ -62,6 +62,7 @@ export function Row({
   actions,
   to,
   className,
+  testId,
 }: {
   title: ReactNode;
   leading?: ReactNode;
@@ -70,9 +71,11 @@ export function Row({
   actions?: ReactNode;
   to?: string;
   className?: string;
+  testId?: string;
 }) {
   return (
     <li
+      data-testid={testId}
       className={cn(
         "relative flex flex-col gap-2 px-4 py-3 transition-colors duration-150 sm:flex-row sm:items-center sm:gap-4",
         "max-sm:rounded-xl max-sm:border max-sm:bg-card",

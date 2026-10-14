@@ -8,6 +8,7 @@ import {
   type NotificationHandler,
   type NotificationsContextValue,
 } from "@/context/notifications-context-base";
+import { InboxUnreadProvider } from "@/context/inbox-unread-context";
 import { ProfileContext, type ProfileContextValue } from "@/context/profile-context-base";
 import { useInboxUnread } from "@/hooks/use-inbox-unread";
 import { inboxSeenKey, readInboxSeen } from "@/lib/inbox";
@@ -22,6 +23,10 @@ function Probe() {
       <button onClick={markAllRead}>read</button>
     </div>
   );
+}
+
+function Second() {
+  return <span data-testid="count2">{useInboxUnread().count}</span>;
 }
 
 function profileOf(userId: string | null) {
@@ -45,7 +50,11 @@ function renderProbe(userId: string | null = "u1") {
   const tree = (id: string | null) => (
     <NotificationsContext.Provider value={notifications}>
       <ProfileContext.Provider value={profileOf(id)}>
-        <Probe />
+        <InboxUnreadProvider>
+          <Probe />
+          {/* A second consumer, like the Inbox page beside the sidebar. */}
+          <Second />
+        </InboxUnreadProvider>
       </ProfileContext.Provider>
     </NotificationsContext.Provider>
   );
@@ -56,7 +65,7 @@ function renderProbe(userId: string | null = "u1") {
   };
 }
 
-const event = (id: string, at: string) => ({ id, created_at: at, kind: "fired" });
+const event = (id: string, at: string, kind = "fired") => ({ id, created_at: at, kind });
 const count = () => screen.getByTestId("count");
 
 describe("useInboxUnread", () => {
@@ -74,6 +83,35 @@ describe("useInboxUnread", () => {
     renderProbe();
     await waitFor(() => expect(count()).toHaveTextContent("1"));
     expect(screen.getByTestId("new")).toHaveTextContent("true");
+  });
+
+  it("counts a firing, not its resolution", async () => {
+    localStorage.setItem(inboxSeenKey("u1"), String(Date.parse("2026-10-13T10:00:00Z")));
+    fakeAPI({
+      "/api/v1/alerts/get-events": {
+        events: [
+          event("e2", "2026-10-13T11:30:00Z", "resolved"),
+          event("e1", "2026-10-13T11:00:00Z"),
+        ],
+        next_cursor: "",
+      },
+    });
+    renderProbe();
+    await waitFor(() => expect(count()).toHaveTextContent("1"));
+  });
+
+  it("serves every consumer from one read, also when an alert fires", async () => {
+    localStorage.setItem(inboxSeenKey("u1"), "0");
+    let events = [event("e1", "2026-10-13T11:00:00Z")];
+    const api = fakeAPI({ "/api/v1/alerts/get-events": () => ({ events, next_cursor: "" }) });
+    const { emit } = renderProbe();
+    await waitFor(() => expect(count()).toHaveTextContent("1"));
+    expect(screen.getByTestId("count2")).toHaveTextContent("1");
+    expect(api.calls).toHaveLength(1);
+    events = [event("e2", "2026-10-13T11:05:00Z"), ...events];
+    emit({ type: "alert", ref: "" });
+    await waitFor(() => expect(screen.getByTestId("count2")).toHaveTextContent("2"));
+    expect(api.calls).toHaveLength(2);
   });
 
   it("starts from now on a first visit instead of counting old history", async () => {
@@ -143,6 +181,11 @@ describe("useInboxUnread", () => {
     expect(count()).toHaveTextContent("0");
     release();
     await waitFor(() => expect(count()).toHaveTextContent("1"));
+  });
+
+  it("reads as nothing unread outside the provider", () => {
+    render(<Second />);
+    expect(screen.getByTestId("count2")).toHaveTextContent("0");
   });
 
   it("counts nothing and reads nothing without a signed-in user", () => {

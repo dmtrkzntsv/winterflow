@@ -47,11 +47,12 @@ export function subscribeInboxSeen(onChange: () => void): () => void {
   };
 }
 
-// countUnread counts the events created after seenAt (none before the
-// first visit is recorded).
-export function countUnread(events: Pick<AlertEvent, "created_at">[], seenAt: number | null): number {
+// countUnread counts the alerts that fired after seenAt (none before the
+// first visit is recorded). A resolution is no news: one incident counts
+// once, not twice.
+export function countUnread(events: Pick<AlertEvent, "kind" | "created_at">[], seenAt: number | null): number {
   if (seenAt === null) return 0;
-  return events.filter((e) => Date.parse(e.created_at) > seenAt).length;
+  return events.filter((e) => e.kind === "fired" && Date.parse(e.created_at) > seenAt).length;
 }
 
 // unreadBadge is the sidebar badge text.

@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { useSidebar } from "@/components/ui/use-sidebar"
 import { isStandalone } from "@/config"
+import { InboxUnreadProvider } from "@/context/inbox-unread-context"
 import { CommandPaletteProvider } from "@/context/palette-context"
 import { useCommandPalette } from "@/context/use-palette"
 import { useProfile } from "@/context/use-profile"
@@ -97,23 +98,27 @@ export function AppLayout() {
     ? undefined
     : () => setIsServerDialogOpen(true)
 
+  // One unread-Inbox state for the shell: the sidebar badge and the Inbox
+  // page read the same instance (one read per alert, not one per consumer).
   return (
     <PageTitleProvider>
-      <CommandPaletteProvider>
-        <SidebarProvider style={SIDEBAR_STYLE}>
-          <AppSidebar onAddServer={handleAddServer} />
-          <AppMain />
-          <CommandPalette onAddServer={handleAddServer} />
-          <AlertToasts />
-          {!isStandalone ? (
-            <ServerSelectionDialog
-              isOpen={isServerDialogOpen}
-              onClose={() => setIsServerDialogOpen(false)}
-              onServerAdded={() => void refresh()}
-            />
-          ) : null}
-        </SidebarProvider>
-      </CommandPaletteProvider>
+      <InboxUnreadProvider>
+        <CommandPaletteProvider>
+          <SidebarProvider style={SIDEBAR_STYLE}>
+            <AppSidebar onAddServer={handleAddServer} />
+            <AppMain />
+            <CommandPalette onAddServer={handleAddServer} />
+            <AlertToasts />
+            {!isStandalone ? (
+              <ServerSelectionDialog
+                isOpen={isServerDialogOpen}
+                onClose={() => setIsServerDialogOpen(false)}
+                onServerAdded={() => void refresh()}
+              />
+            ) : null}
+          </SidebarProvider>
+        </CommandPaletteProvider>
+      </InboxUnreadProvider>
     </PageTitleProvider>
   )
 }

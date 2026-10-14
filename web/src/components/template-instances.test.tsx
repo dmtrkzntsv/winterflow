@@ -103,7 +103,7 @@ describe("TemplateInstances", () => {
     expect(rows[0]).toHaveTextContent("on alpha");
     expect(rows[0]).toHaveTextContent("r2 · behind");
     // The quiet dot the app pages use, not a filled pill.
-    expect(within(rows[0]).getByText("Running").querySelector(".bg-emerald-500")).not.toBeNull();
+    expect(within(rows[0]).getByText("Running").querySelector(".bg-status-ok")).not.toBeNull();
     expect(within(rows[1]).getByText("Not created yet")).toHaveAttribute("title", "pull failed");
     expect(within(rows[1]).queryByRole("button", { name: "Upgrade" })).not.toBeInTheDocument();
   });

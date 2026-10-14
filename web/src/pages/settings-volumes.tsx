@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { Plus, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
-import { StatusDot } from "@/components/app-status-badge";
+import { DotLabel } from "@/components/app-status-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -58,12 +58,12 @@ import { useServerPath } from "@/context/use-server-path";
 // quiet, only Orphaned (data nobody owns any more) draws the eye.
 function VolumeStatus({ volume }: { volume: Volume }) {
   const [label, dot, text] = volume.in_use
-    ? ["In use", "bg-emerald-500", ""]
+    ? ["In use", "bg-status-ok", ""]
     : volume.orphan
-      ? ["Orphaned", "bg-amber-400", "text-amber-700 dark:text-amber-400"]
-      : ["Unused", "bg-muted-foreground/40", "text-muted-foreground"];
+      ? ["Orphaned", "bg-status-warn", "text-amber-700 dark:text-amber-400"]
+      : ["Unused", "bg-status-idle", "text-muted-foreground"];
   return (
-    <StatusDot
+    <DotLabel
       label={label}
       dotClassName={dot}
       className={cn("whitespace-nowrap", text)}

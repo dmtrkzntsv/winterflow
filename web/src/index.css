@@ -71,6 +71,10 @@
     --color-console-hover: var(--console-hover);
     --color-skeleton: var(--skeleton);
     --color-skeleton-shine: var(--skeleton-shine);
+    --color-status-ok: var(--status-ok);
+    --color-status-warn: var(--status-warn);
+    --color-status-bad: var(--status-bad);
+    --color-status-idle: var(--status-idle);
     --shadow-card: var(--card-shadow);
     --animate-accordion-down: accordion-down 0.2s ease-out;
     --animate-accordion-up: accordion-up 0.2s ease-out;
@@ -152,6 +156,12 @@
     --console-hover: #e9f0f8;
     --sidebar-top: #f8fafd;
     --sidebar-bottom: #edf3fa;
+    /* Status tones (lib/status): one token each, so a status means the same
+       colour everywhere. Dots need >= 3:1 against the card. */
+    --status-ok: #1d8a5f;
+    --status-warn: #b7770c;
+    --status-bad: #d03a3a;
+    --status-idle: #8ea3ba;
 }
 
 .dark {
@@ -203,6 +213,10 @@
     --console-hover: #12233a;
     --sidebar-top: #10202f;
     --sidebar-bottom: #0a1522;
+    --status-ok: #3cc48e;
+    --status-warn: #e3aa45;
+    --status-bad: #ff7d73;
+    --status-idle: #5d7590;
 }
 
 @layer base {
@@ -346,5 +360,9 @@
     .frost,
     .app-card-in {
         animation: none;
+    }
+    /* The login page's snowfall is decoration: gone for less motion. */
+    .login-snowflake {
+        display: none;
     }
 }

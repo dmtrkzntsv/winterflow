@@ -526,7 +526,8 @@ describe("AppDetailsPage", () => {
     expect(screen.queryByRole("tab", { name: "History" })).not.toBeInTheDocument();
     await user.click(await screen.findByRole("button", { name: "History" }));
     const sheet = await screen.findByRole("dialog", { name: "History" });
-    expect(await within(sheet).findByText("Changed compose.yml")).toBeInTheDocument();
+    // The only version is the app's creation.
+    expect(await within(sheet).findByText("Created")).toBeInTheDocument();
   });
 
   it("tells the Configuration editor to read the app again after a roll back in History", async () => {

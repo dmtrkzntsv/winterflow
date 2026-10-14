@@ -11,12 +11,13 @@ import type { AppRevision } from "@/context/apps-context-base";
 import { useApps } from "@/context/use-apps";
 import { useAppRevisions } from "@/hooks/use-app-revisions";
 import { useConfirmTarget } from "@/hooks/use-confirm-target";
+import { revisionLabel, whenLabel } from "@/lib/revision-labels";
 import { revisionFlags } from "@/lib/revisions";
 import { isManagedByTemplate } from "@/lib/templates";
 import { cn, relativeTime } from "@/lib/utils";
 
-// HistoryPanel lists an app's versions, newest first: what changed and
-// when (the commit hash on hover), which one is live, an undeployed draft
+// HistoryPanel lists an app's versions, newest first: what changed (in
+// plain words, see revisionLabel) and when (the commit hash on hover), which one is live, an undeployed draft
 // with Deploy draft, and Roll back for an older one — not for an app a
 // template manages: its template owns the files (its name may still be
 // loading). onChanged is called after a roll back went through, so what
@@ -136,7 +137,7 @@ export function HistoryPanel({
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="truncate text-sm font-medium" title={`Commit ${rev.hash.slice(0, 8)}`}>
-                      {rev.subject}
+                      {revisionLabel(data.revisions, i)}
                     </span>
                     <RevisionBadge isDeployed={isDeployed} isUndeployedDraft={isUndeployedDraft} draftLabel="Draft, not deployed" />
                   </div>
@@ -161,7 +162,7 @@ export function HistoryPanel({
       <ConfirmDialog
         open={confirm.open}
         onOpenChange={confirm.onOpenChange}
-        title={target ? `Roll back to “${target.subject}”?` : "Roll back?"}
+        title={target ? `Roll back to the version from ${whenLabel(new Date(target.timestamp * 1000))}?` : "Roll back?"}
         description="The app's files and variables go back to this version as a new entry in the history, and the app is redeployed. Nothing is lost: you can roll forward again."
         confirmLabel="Roll back"
         pendingLabel="Rolling back…"

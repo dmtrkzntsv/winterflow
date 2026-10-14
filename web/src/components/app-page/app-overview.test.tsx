@@ -48,8 +48,8 @@ const REVISIONS = {
   current: "dddd",
   deployed: "cccc",
   revisions: [
-    { hash: "dddd", subject: "Changed .env", timestamp: now - 60 },
-    { hash: "cccc", subject: "Changed compose.yml", timestamp: now - 7200 },
+    { hash: "dddd", subject: "save Shop", timestamp: now - 60 },
+    { hash: "cccc", subject: "update backups", timestamp: now - 7200 },
     { hash: "bbbb", subject: "rename to Shop", timestamp: now - 86400 },
     { hash: "aaaa", subject: "create", timestamp: now - 2 * 86400 },
   ],
@@ -307,9 +307,9 @@ describe("AppOverview", () => {
     const region = screen.getByRole("region", { name: "Recent changes" });
     const list = await within(region).findByRole("list", { name: "Recent changes" });
     expect(within(list).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
-      expect.stringContaining("Changed .env"),
-      expect.stringContaining("Changed compose.yml"),
-      expect.stringContaining("rename to Shop"),
+      expect.stringContaining("Saved"),
+      expect.stringContaining("Changed backups"),
+      expect.stringContaining("Renamed to Shop"),
     ]);
     expect(within(list).getAllByRole("listitem")[0]).toHaveTextContent("Draft");
     expect(within(list).getAllByRole("listitem")[1]).toHaveTextContent("Live");

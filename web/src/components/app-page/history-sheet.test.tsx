@@ -74,9 +74,9 @@ describe("HistorySheet", () => {
     const user = userEvent.setup();
     renderSheet();
     const sheet = await screen.findByRole("dialog", { name: "History" });
-    const older = (await within(sheet).findByText("create")).closest("li")!;
+    const older = (await within(sheet).findByText("Created")).closest("li")!;
     await user.click(within(older).getByRole("button", { name: /Roll back/ }));
-    const confirm = await screen.findByRole("alertdialog", { name: "Roll back to “create”?" });
+    const confirm = await screen.findByRole("alertdialog", { name: /^Roll back to the version from / });
     await user.click(within(confirm).getByRole("button", { name: "Roll back" }));
     await waitFor(() => expect(ctx.rollback).toHaveBeenCalledWith("a1", "aaaaaaaa11"));
     expect(toast.success).toHaveBeenCalledWith("Rolled back and redeployed");
@@ -89,14 +89,14 @@ describe("HistorySheet", () => {
     ctx.rollback.mockRejectedValueOnce(new Error("agent offline"));
     renderSheet();
     const sheet = await screen.findByRole("dialog", { name: "History" });
-    const older = (await within(sheet).findByText("create")).closest("li")!;
+    const older = (await within(sheet).findByText("Created")).closest("li")!;
     await user.click(within(older).getByRole("button", { name: /Roll back/ }));
-    const confirm = await screen.findByRole("alertdialog", { name: "Roll back to “create”?" });
+    const confirm = await screen.findByRole("alertdialog", { name: /^Roll back to the version from / });
     await user.click(within(confirm).getByRole("button", { name: "Roll back" }));
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Roll back failed", { description: "agent offline" }));
     // Nothing changed, so nobody is told to read the app again.
     expect(onChanged).not.toHaveBeenCalled();
-    expect(screen.getByRole("alertdialog", { name: "Roll back to “create”?" })).toBeInTheDocument();
+    expect(screen.getByRole("alertdialog", { name: /^Roll back to the version from / })).toBeInTheDocument();
     expect(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Roll back" })).toBeEnabled();
   });
 

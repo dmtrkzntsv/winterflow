@@ -24,6 +24,7 @@ import { backupRowState, restoringBackup, shownHealth, useActivity, useOverlays 
 import type { EffectiveBackup } from "@/lib/backups";
 import { copyText } from "@/lib/clipboard";
 import type { RegisteredDomain } from "@/lib/domains";
+import { revisionLabel } from "@/lib/revision-labels";
 import { revisionFlags } from "@/lib/revisions";
 import { appSub } from "@/lib/routes";
 import { appStatus, backupStatus, RESTORING } from "@/lib/status";
@@ -326,12 +327,12 @@ function RecentChangesWidget({
   } else {
     body = (
       <ul aria-label="Recent changes" className="space-y-2">
-        {top.map((rev) => {
+        {top.map((rev, i) => {
           const flags = revisionFlags(data, rev.hash);
           return (
             <li key={rev.hash} className="flex min-w-0 items-baseline gap-2 text-sm">
               <span className="truncate" title={`Commit ${rev.hash.slice(0, 8)}`}>
-                {rev.subject}
+                {revisionLabel(data.revisions, i)}
               </span>
               <span className="shrink-0 text-xs text-muted-foreground">· {relativeTime(new Date(rev.timestamp * 1000))}</span>
               <RevisionBadge isDeployed={flags.isDeployed} isUndeployedDraft={flags.isUndeployedDraft} />

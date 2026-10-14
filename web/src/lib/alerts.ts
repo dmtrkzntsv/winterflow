@@ -2,6 +2,8 @@
 // internal/domain/alert/catalog.go), API types, rule and value wording,
 // and the notification services the channel form turns into Shoutrrr URLs.
 
+import { appPath, monitoringPath } from "@/lib/routes";
+
 export type TargetKind = "server" | "app";
 
 export type AlertMetric =
@@ -488,4 +490,10 @@ export function activeText(a: Pick<ActiveAlert, "target_kind" | "metric" | "valu
   const info = metricInfo(a.target_kind, a.metric);
   if (!info || !hasThreshold(a.metric)) return "Down";
   return `${info.label} ${formatAlertValue(info.unit, a.value)} > ${formatAlertValue(info.unit, a.threshold)}`;
+}
+
+// alertTargetPath is where an alert leads: an app's Metrics tab, or the
+// server's Monitoring page for an alert about the server itself.
+export function alertTargetPath(serverId: string, appId: string): string {
+  return appId ? appPath(serverId, appId, "metrics") : monitoringPath(serverId);
 }

@@ -1,7 +1,6 @@
 import { useMemo, useState } from "react";
 
 import { DataFreshness } from "@/components/data-freshness";
-import { Disclosure } from "@/components/disclosure";
 import { KpiTile, KpiTileSkeleton } from "@/components/kpi-tile";
 import { ChartCardSkeleton, MetricChartCard } from "@/components/metric-chart";
 import { RangeMenu } from "@/components/range-menu";
@@ -122,7 +121,7 @@ export function AppMetricBlocks({ serverId, appId }: { serverId: string; appId: 
 }
 
 // AppMetricsTab is the app page's Metrics tab: CPU, memory, network and
-// disk over the selected range, the app's alert rules folded below.
+// disk over the selected range, the app's alert rules (a collapsed section of their own) below.
 export function AppMetricsTab({ serverId, appId, appName }: { serverId: string; appId: string; appName?: string }) {
   // 1h has data from the first minute (raw samples); see MonitoringPage.
   const [range, setRange] = useState<MetricsRange>("1h");
@@ -193,9 +192,7 @@ export function AppMetricsTab({ serverId, appId, appName }: { serverId: string; 
           />
         </div>
       )}
-      <Disclosure label="Alert rules for this app">
-        <TargetAlertsCard serverId={serverId} appId={appId} targetLabel={appName || "this app"} />
-      </Disclosure>
+      <TargetAlertsCard serverId={serverId} appId={appId} targetLabel={appName || "this app"} />
     </div>
   );
 }

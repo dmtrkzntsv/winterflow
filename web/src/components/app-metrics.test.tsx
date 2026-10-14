@@ -110,10 +110,9 @@ describe("AppMetricsTab", () => {
   it("charts the app over the chosen range", async () => {
     render(<AppMetricsTab serverId="s1" appId="a1" />);
     expect(calls.at(-1)).toEqual(["s1", "a1", "1h"]);
-    // The alert rules are folded away until asked for.
-    expect(screen.queryByTestId("alerts-card")).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Alert rules for this app" }));
+    // The alert rules card folds itself: it is always placed, never wrapped.
     expect(screen.getByTestId("alerts-card")).toHaveTextContent("s1/a1");
+    expect(screen.queryByRole("button", { name: "Alert rules for this app" })).not.toBeInTheDocument();
     for (const title of ["CPU", "Memory", "Network", "Disk"]) {
       expect(screen.getByTestId(`chart-${title}`)).toBeInTheDocument();
     }

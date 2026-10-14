@@ -4,7 +4,7 @@ import { ArrowUpCircle, DatabaseBackup, Play, RotateCw, ScrollText, Square, Tria
 import { toast } from "sonner";
 
 import { TabsContent } from "@/components/ui/tabs";
-import { AppAlertsBanner } from "@/components/alerts/active-alerts";
+import { FiringBanner } from "@/components/alerts/firing-banner";
 import { AppBackups } from "@/components/app-backups";
 import { AppEditorPanel } from "@/components/app-editor-panel";
 import { AppMetricsTab } from "@/components/app-metrics";
@@ -207,7 +207,7 @@ export default function AppDetailsPage() {
         />
       ) : null}
       <StaleVarsBadge key={app.id} appId={app.id} />
-      <AppAlertsBanner key={`alerts-${app.id}`} serverId={app.serverId} appId={app.id} />
+      <FiringBanner key={`alerts-${app.id}`} serverId={app.serverId} appId={app.id} />
 
       {upgradeTarget && inst ? (
         <UpgradeInstanceDialog

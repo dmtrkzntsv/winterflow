@@ -30,8 +30,12 @@ vi.mock("@/components/app-page/app-overview", () => ({
     </div>
   ),
 }));
-// The alerts banner has its own tests (it polls).
-vi.mock("@/components/alerts/active-alerts", () => ({ AppAlertsBanner: () => null }));
+// The firing banner has its own tests (it polls); here it only has to be placed.
+vi.mock("@/components/alerts/firing-banner", () => ({
+  FiringBanner: (p: { serverId: string; appId?: string }) => (
+    <div data-testid="firing-banner">{`${p.serverId}/${p.appId ?? ""}`}</div>
+  ),
+}));
 const backupsApi = vi.hoisted(() => ({ runBackup: vi.fn() }));
 vi.mock("@/context/use-backups", () => ({ useBackups: () => backupsApi }));
 // The stale shared-variables badge has its own tests (it subscribes to
@@ -202,6 +206,11 @@ describe("AppDetailsPage", () => {
     unmount();
     renderPage("/app/a1?tab=metrics");
     expect(await screen.findByRole("tab", { name: "Metrics" })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("places the firing banner for this app under the header", async () => {
+    renderPage("/app/a1?tab=backups");
+    expect(await screen.findByTestId("firing-banner")).toHaveTextContent("s/a1");
   });
 
   it("shows where the app lives, and the header stacks on a phone", async () => {

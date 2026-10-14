@@ -4,6 +4,7 @@ import {
   ALERT_METRICS,
   buildChannel,
   channelService,
+  alertTargetPath,
   channelSummary,
   effective,
   formatAlertValue,
@@ -106,5 +107,12 @@ describe("channel URL builders", () => {
     expect(channelService({ service: "generic", fields: { ui_service: "raw" } })).toBe("raw");
     expect(channelSummary({ service: "ntfy", fields: { ui_service: "ntfy", server: "ntfy.sh" } })).toBe("ntfy · ntfy.sh");
     expect(SERVICES.map((s) => s.id)).toEqual(["telegram", "discord", "slack", "ntfy", "gotify", "pushover", "email", "webhook", "raw"]);
+  });
+});
+
+describe("alertTargetPath", () => {
+  it("leads an app's alert to its Metrics tab and a server's to its Monitoring", () => {
+    expect(alertTargetPath("s1", "a1")).toBe("/server/s1/app/a1?tab=metrics");
+    expect(alertTargetPath("s1", "")).toBe("/server/s1/monitoring");
   });
 });

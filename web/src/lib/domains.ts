@@ -62,6 +62,19 @@ export function isWildcard(name: string): boolean {
   return name.startsWith("*.");
 }
 
+// coveringDomain is the registration that covers a hostname, as the agent
+// picks it: an exact name wins over a wildcard, and "*.example.com" covers
+// one label under example.com (a.example.com, not a.b.example.com nor
+// example.com itself). undefined when none does.
+export function coveringDomain(host: string, registrations: readonly RegisteredDomain[]): RegisteredDomain | undefined {
+  const name = host.toLowerCase();
+  const exact = registrations.find((r) => r.name === name);
+  if (exact) return exact;
+  const dot = name.indexOf(".");
+  if (dot <= 0) return undefined;
+  return registrations.find((r) => r.name === `*.${name.slice(dot + 1)}`);
+}
+
 // domainNameError mirrors model.ValidateDomainName; "" means valid.
 export function domainNameError(name: string): string {
   const host = isWildcard(name) ? name.slice(2) : name;

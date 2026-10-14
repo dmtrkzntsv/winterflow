@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { domainNameError, expiry, expiryNote, isWildcard, TLS_MODES, validHostname } from "@/lib/domains";
+import { coveringDomain, domainNameError, expiry, expiryNote, isWildcard, TLS_MODES, validHostname } from "@/lib/domains";
 
 describe("domain registrations", () => {
   it("validates names like the agent", () => {
@@ -77,5 +77,27 @@ describe("expiryNote", () => {
       "Own certificate",
       "HTTPS off",
     ]);
+  });
+});
+
+describe("coveringDomain", () => {
+  const regs = [
+    { name: "*.example.com", tls: "auto" as const },
+    { name: "shop.example.com", tls: "off" as const },
+    { name: "example.org", tls: "certificate" as const },
+  ];
+
+  it("prefers an exact name over a wildcard", () => {
+    expect(coveringDomain("shop.example.com", regs)?.tls).toBe("off");
+    expect(coveringDomain("Shop.Example.com", regs)?.tls).toBe("off");
+  });
+
+  it("covers one label under a wildcard, not deeper nor the bare name", () => {
+    expect(coveringDomain("blog.example.com", regs)?.name).toBe("*.example.com");
+    expect(coveringDomain("a.blog.example.com", regs)).toBeUndefined();
+    expect(coveringDomain("example.com", regs)).toBeUndefined();
+    expect(coveringDomain("example.org", regs)?.tls).toBe("certificate");
+    expect(coveringDomain("www.example.org", regs)).toBeUndefined();
+    expect(coveringDomain("localhost", regs)).toBeUndefined();
   });
 });

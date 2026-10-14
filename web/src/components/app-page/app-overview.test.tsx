@@ -8,6 +8,7 @@ import { AppsContext, type App, type AppsContextValue } from "@/context/apps-con
 import { forgetRevisions, resetRevisionsCache } from "@/lib/revisions";
 import { resetHeldHealth } from "@/lib/backup-activity";
 import type { BackupHealth, EffectiveBackup } from "@/lib/backups";
+import type { RegisteredDomain } from "@/lib/domains";
 
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
@@ -57,8 +58,8 @@ const ctx = {
   backupsByApp: { a1: HEALTH } as AppsContextValue["backupsByApp"],
 };
 
-function renderOverview(over: { app?: Partial<App>; status?: number } = {}) {
-  const props = { onOpenHistory: vi.fn() };
+function renderOverview(over: { app?: Partial<App>; status?: number; registrations?: RegisteredDomain[] } = {}) {
+  const props = { onOpenHistory: vi.fn(), registrations: over.registrations };
   const view = render(
     <MemoryRouter>
       <AppsContext.Provider value={ctx as unknown as AppsContextValue}>
@@ -139,19 +140,35 @@ describe("AppOverview", () => {
     expect(within(right).getByRole("region", { name: "Backups" })).toBeInTheDocument();
   });
 
-  it("lists the addresses with their HTTPS state", () => {
+  it("lists the addresses with how their registered domain serves them", () => {
     renderOverview({
       app: {
         domains: [
-          { domain: "shop.example.com", ssl: true, kind: "route" },
-          { domain: "shop.lan", ssl: false, kind: "route" },
+          { domain: "shop.example.com", ssl: false, kind: "route" },
+          { domain: "cloud.home.example", ssl: false, kind: "route" },
+          { domain: "files.example.org", ssl: true, kind: "route" },
+          { domain: "shop.lan", ssl: true, kind: "route" },
         ],
       },
+      registrations: [
+        { name: "shop.example.com", tls: "auto" },
+        { name: "*.home.example", tls: "off" },
+        { name: "files.example.org", tls: "certificate" },
+      ],
     });
     const access = screen.getByRole("region", { name: "Access" });
-    expect(within(access).getByRole("link", { name: /shop\.example\.com/ })).toHaveAttribute("href", "https://shop.example.com");
-    expect(access).toHaveTextContent("HTTPS");
-    expect(access).toHaveTextContent("HTTP only");
+    const row = (host: string) => within(access).getByRole("link", { name: new RegExp(host.replace(/\./g, "\\.")) }).closest("li")!;
+    // The route's own ssl flag is ignored: the domain's TLS mode decides.
+    expect(within(row("shop.example.com")).getByRole("link")).toHaveAttribute("href", "https://shop.example.com");
+    expect(row("shop.example.com")).toHaveTextContent("HTTPS");
+    expect(within(row("files.example.org")).getByRole("link")).toHaveAttribute("href", "https://files.example.org");
+    expect(row("files.example.org")).toHaveTextContent("HTTPS");
+    // TLS off: the tunnel or proxy in front serves HTTPS.
+    expect(within(row("cloud.home.example")).getByRole("link")).toHaveAttribute("href", "https://cloud.home.example");
+    expect(row("cloud.home.example")).toHaveTextContent("Behind your proxy");
+    // No registration covers it: no claim either way.
+    expect(row("shop.lan")).not.toHaveTextContent(/HTTPS|proxy|HTTP only/);
+    expect(access).not.toHaveTextContent("HTTP only");
     expect(within(access).queryByRole("link", { name: "Add a domain" })).not.toBeInTheDocument();
   });
 

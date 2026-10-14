@@ -29,6 +29,7 @@ import { usePaletteActions } from "@/context/use-palette";
 import { useDeleteApp, useSaveAsTemplate } from "@/hooks/use-app-actions";
 import { useAppInstance } from "@/hooks/use-app-instance";
 import { useHistorySheet } from "@/hooks/use-history-sheet";
+import { useAddressRegistrations } from "@/hooks/use-registrations";
 import { useBackUpNow } from "@/hooks/use-run-backup";
 import { useTabParam } from "@/hooks/use-tab-param";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
@@ -77,6 +78,8 @@ export default function AppDetailsPage() {
   const [historyOpen, setHistoryOpen] = useHistorySheet();
 
   const app = useMemo(() => apps.find((a) => a.id === appId), [apps, appId]);
+  // One read of the server's domains for the header's and Overview's HTTPS state.
+  const registrations = useAddressRegistrations(app?.serverId);
   const lookup = useAppInstance(app);
   // ownership is the template side of the app (null for a plain app). Only
   // this app's own instance is ever used.
@@ -185,6 +188,7 @@ export default function AppDetailsPage() {
     <div className="flex flex-1 flex-col gap-6">
       <AppHeader
         app={app}
+        registrations={registrations}
         status={status}
         instance={inst}
         behind={behind}
@@ -257,6 +261,7 @@ export default function AppDetailsPage() {
             key={app.id}
             app={app}
             status={status}
+            registrations={registrations}
             onOpenHistory={() => setHistoryOpen(true)}
           />
         </TabsContent>

@@ -21,9 +21,18 @@ vi.mock("@/components/app-metrics", () => ({ AppMetricsTab: () => null }));
 // The Overview has its own tests; here it shows whose it is and offers
 // View history.
 vi.mock("@/components/app-page/app-overview", () => ({
-  AppOverview: ({ app, onOpenHistory }: { app: { name: string }; onOpenHistory: () => void }) => (
+  AppOverview: ({
+    app,
+    registrations,
+    onOpenHistory,
+  }: {
+    app: { name: string };
+    registrations?: { name: string }[];
+    onOpenHistory: () => void;
+  }) => (
     <div>
       <p>the overview of {app.name}</p>
+      <p>overview domains: {(registrations ?? []).map((r) => r.name).join(", ")}</p>
       <button type="button" onClick={onOpenHistory}>
         View history
       </button>
@@ -62,7 +71,9 @@ vi.mock("@/lib/ecies", () => ({
   encryptSecret: vi.fn(async (value: string, key: string) => `ct(${key}):${value}`),
 }));
 // Links point into the active server's scope (/server/:id/...).
-vi.mock("@/context/use-servers", () => ({ useServers: () => ({ activeServerId: "srv-1" }) }));
+// No built-in proxy unless a test says so: the HTTPS state then reads no domains.
+const serverList: { id: string; features?: Record<string, boolean> }[] = [];
+vi.mock("@/context/use-servers", () => ({ useServers: () => ({ activeServerId: "srv-1", servers: serverList }) }));
 
 const remove = vi.fn();
 const refresh = vi.fn(async () => {});
@@ -224,6 +235,25 @@ describe("AppDetailsPage", () => {
     renderPage("/app/a1?tab=backups", {}, { app: { domains: [{ domain: "shop.example.com", ssl: true, kind: "route" }] } });
     expect(await screen.findByRole("link", { name: /Open/ })).toHaveAttribute("href", "https://shop.example.com");
     expect(screen.getByRole("heading", { level: 1, name: "Shop" }).closest("header")).toHaveClass("flex-col", "sm:flex-row");
+  });
+
+  it("reads the server's domains once for the header and Overview when it runs the built-in proxy", async () => {
+    serverList.push({ id: "s", features: { ingress: true } });
+    try {
+      const api = fakeAPI({
+        "/api/v1/instance/get-instances": { instances: [] },
+        "/api/v1/domain/get-domains": { domains: [{ name: "*.home.example", tls: "off" }] },
+      });
+      renderPage("/app/a1", {}, { app: { domains: [{ domain: "shop.home.example", ssl: false, kind: "route" }] } });
+      // TLS off: plain HTTP behind the person's tunnel, reached by https.
+      await waitFor(() => expect(screen.getByRole("link", { name: /Open/ })).toHaveAttribute("href", "https://shop.home.example"));
+      // The Overview gets the same read (its Access widget words the state).
+      expect(screen.getByText("overview domains: *.home.example")).toBeInTheDocument();
+      expect(api.calls.filter((c) => c.path === "/api/v1/domain/get-domains")).toHaveLength(1);
+    } finally {
+      serverList.length = 0;
+      vi.unstubAllGlobals();
+    }
   });
 
   it("puts Restart first while the app runs and the rest in ⋯", async () => {

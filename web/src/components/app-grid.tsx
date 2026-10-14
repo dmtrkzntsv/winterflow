@@ -12,7 +12,9 @@ import type { App } from "@/context/apps-context-base";
 import { useApps } from "@/context/use-apps";
 import { useServerPath } from "@/context/use-server-path";
 import { useServers } from "@/context/use-servers";
+import { useAddressRegistrations } from "@/hooks/use-registrations";
 import { appWarning, filterApps, FILTER_THRESHOLD, primaryAddress, type AppWarning } from "@/lib/app-summary";
+import type { RegisteredDomain } from "@/lib/domains";
 import { TILE_GRID } from "@/lib/grid";
 import { appLabel } from "@/lib/kpi";
 import { appSub, newAppSub } from "@/lib/routes";
@@ -61,9 +63,21 @@ function NoApps() {
 // AppCard is one app: icon, name (the link to the app, covering the card),
 // its status, the address it opens at, and at most one warning. The address
 // is its own external link above the card's.
-function AppCard({ app, code, warning, index }: { app: App; code: number | undefined; warning: AppWarning | null; index: number }) {
+function AppCard({
+  app,
+  code,
+  warning,
+  registrations,
+  index,
+}: {
+  app: App;
+  code: number | undefined;
+  warning: AppWarning | null;
+  registrations: RegisteredDomain[];
+  index: number;
+}) {
   const toServer = useServerPath();
-  const address = primaryAddress(app);
+  const address = primaryAddress(app, registrations);
   const named = Boolean(app.name?.trim());
   return (
     <li className="app-card-in relative min-w-0" style={{ animationDelay: `${index * 40}ms` }}>
@@ -113,6 +127,7 @@ function AppCard({ app, code, warning, index }: { app: App; code: number | undef
 export function AppGrid() {
   const { apps, statusByApp, backupsByApp, staleVarsByApp, loading, error } = useApps();
   const { activeServerId } = useServers();
+  const registrations = useAddressRegistrations(activeServerId);
   const [query, setQuery] = useState("");
   // The page outlives a server switch: a query typed on one server is not
   // carried to the next.
@@ -163,6 +178,7 @@ export function AppGrid() {
               app={app}
               code={statusByApp[app.id]}
               warning={appWarning(backupsByApp?.[app.id], staleVarsByApp?.[app.id], statusByApp[app.id])}
+              registrations={registrations}
               index={index}
             />
           ))}

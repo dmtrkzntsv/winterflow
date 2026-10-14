@@ -20,6 +20,7 @@ import { useRunBackup } from "@/hooks/use-run-backup";
 import { appAddresses, containerHint, containersSummary, serviceLabels } from "@/lib/app-summary";
 import { backupRowState, restoringBackup, shownHealth, useActivity, useOverlays } from "@/lib/backup-activity";
 import type { EffectiveBackup } from "@/lib/backups";
+import type { RegisteredDomain } from "@/lib/domains";
 import { revisionFlags } from "@/lib/revisions";
 import { appSub } from "@/lib/routes";
 import { appStatus, backupStatus, RESTORING } from "@/lib/status";
@@ -80,13 +81,14 @@ function StatusWidget({ app, status }: { app: App; status: number | undefined })
   );
 }
 
-// AccessWidget is where the app is reachable: each address with its HTTPS
-// state; without one, the way to add a domain (only when this server runs
-// the built-in proxy).
-function AccessWidget({ app }: { app: App }) {
+// AccessWidget is where the app is reachable: each address with how it is
+// served (from its registered domain's TLS mode; nothing when no domain
+// covers it); without one, the way to add a domain (only when this server
+// runs the built-in proxy).
+function AccessWidget({ app, registrations }: { app: App; registrations: RegisteredDomain[] }) {
   const { activeServer } = useServers();
   const toServer = useServerPath();
-  const addresses = appAddresses(app);
+  const addresses = appAddresses(app, registrations);
   return (
     <Section title="Access" className={CARD}>
       {addresses.length === 0 ? (
@@ -111,10 +113,12 @@ function AccessWidget({ app }: { app: App }) {
                 <span className="truncate">{a.host}</span>
                 <ExternalLink className="size-3.5 shrink-0" aria-hidden />
               </a>
-              <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
-                <StatusDot tone={a.https ? "ok" : "idle"} />
-                {a.https ? "HTTPS" : "HTTP only"}
-              </span>
+              {a.tls ? (
+                <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+                  <StatusDot tone={a.tls === "https" ? "ok" : "idle"} />
+                  {a.tls === "https" ? "HTTPS" : "Behind your proxy"}
+                </span>
+              ) : null}
             </li>
           ))}
         </ul>
@@ -333,10 +337,12 @@ function RecentChangesWidget({ app, enabled, onOpenHistory }: { app: App; enable
 export function AppOverview({
   app,
   status,
+  registrations = [],
   onOpenHistory,
 }: {
   app: App;
   status: number | undefined;
+  registrations?: RegisteredDomain[];
   onOpenHistory: () => void;
 }) {
   // The app whose backups read has ended: the history is read after it.
@@ -349,7 +355,7 @@ export function AppOverview({
         <RecentChangesWidget app={app} enabled={settledFor === app.id} onOpenHistory={onOpenHistory} />
       </div>
       <div className="min-w-0 space-y-4">
-        <AccessWidget app={app} />
+        <AccessWidget app={app} registrations={registrations} />
         <BackupsWidget app={app} onSettled={setSettledFor} />
       </div>
     </div>

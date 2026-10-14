@@ -22,12 +22,33 @@ const shop = {
 };
 
 describe("addresses", () => {
-  it("lists the routes, never the redirects, with the scheme TLS gives", () => {
+  it("lists the routes, never the redirects; without a covering domain the route's flag gives the scheme and no claim", () => {
     expect(appAddresses(shop)).toEqual([
-      { host: "shop.example.com", url: "https://shop.example.com", https: true },
-      { host: "shop.lan", url: "http://shop.lan", https: false },
+      { host: "shop.example.com", url: "https://shop.example.com", tls: null },
+      { host: "shop.lan", url: "http://shop.lan", tls: null },
     ]);
     expect(primaryAddress(shop)?.url).toBe("https://shop.example.com");
+  });
+
+  it("takes HTTPS from the registered domain's TLS mode and opens it by https", () => {
+    const app = {
+      domains: [
+        { domain: "a.example.com", ssl: false, kind: "route" as const },
+        { domain: "b.example.com", ssl: false, kind: "route" as const },
+        { domain: "c.tunnel.example", ssl: true, kind: "route" as const },
+      ],
+    };
+    const regs = [
+      { name: "a.example.com", tls: "auto" as const },
+      { name: "*.example.com", tls: "certificate" as const },
+      { name: "*.tunnel.example", tls: "off" as const },
+    ];
+    expect(appAddresses(app, regs)).toEqual([
+      { host: "a.example.com", url: "https://a.example.com", tls: "https" },
+      { host: "b.example.com", url: "https://b.example.com", tls: "https" },
+      { host: "c.tunnel.example", url: "https://c.tunnel.example", tls: "proxy" },
+    ]);
+    expect(primaryAddress(app, regs)?.tls).toBe("https");
   });
 
   it("has no address without routes", () => {

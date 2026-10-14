@@ -16,6 +16,7 @@ import { StatusPill } from "@/components/status";
 import type { App, ControlAction } from "@/context/apps-context-base";
 import { hasRunningContainers } from "@/lib/app-status";
 import { primaryAddress } from "@/lib/app-summary";
+import type { RegisteredDomain } from "@/lib/domains";
 import { useHeadingInView } from "@/layouts/use-page-title";
 import { appLabel } from "@/lib/kpi";
 import { templatePath } from "@/lib/routes";
@@ -24,6 +25,9 @@ import type { InstanceView } from "@/lib/templates";
 import { cn } from "@/lib/utils";
 
 export type AppHeaderProps = {
+  // registrations are the server's registered domains: "Open ↗" uses https
+  // for a host one covers.
+  registrations?: RegisteredDomain[];
   app: App;
   status: number | undefined;
   // instance is the template instance managing the app (null: a plain app,
@@ -55,7 +59,7 @@ export function AppHeader(p: AppHeaderProps) {
   const running = hasRunningContainers(p.status);
   const primary: ControlAction = running ? "restart" : "start";
   const PrimaryIcon = running ? RotateCw : Play;
-  const address = primaryAddress(app);
+  const address = primaryAddress(app, p.registrations);
   const named = Boolean(app.name?.trim());
   const h1 = useHeadingInView<HTMLHeadingElement>();
   return (

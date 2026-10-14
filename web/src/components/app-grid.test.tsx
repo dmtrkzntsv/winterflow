@@ -1,14 +1,19 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AppGrid } from "@/components/app-grid";
 import { AppsContext, type App, type AppsContextValue } from "@/context/apps-context-base";
+import { fakeAPI } from "@/test/fake-api";
+
+afterEach(() => vi.unstubAllGlobals());
 
 // Links point into the active server's scope (/server/:id/...).
 let activeServerId = "srv-1";
-vi.mock("@/context/use-servers", () => ({ useServers: () => ({ activeServerId }) }));
+// srv-1 runs the built-in proxy: its registered domains decide HTTPS.
+const servers = [{ id: "srv-1", features: { ingress: true } }];
+vi.mock("@/context/use-servers", () => ({ useServers: () => ({ activeServerId, servers }) }));
 
 const app = (id: string, name: string, over: Partial<App> = {}): App => ({
   id,
@@ -48,6 +53,27 @@ function renderGrid(over: Partial<AppsContextValue>) {
 const card = (name: string) => screen.getByRole("link", { name }).closest("li")!;
 
 describe("AppGrid", () => {
+  it("opens an address under a registered domain by https, whatever the route's own flag says", async () => {
+    const api = fakeAPI({
+      "/api/v1/domain/get-domains": { domains: [{ name: "*.tunnel.example", tls: "off" }] },
+    });
+    renderGrid({
+      apps: [
+        app("a1", "Shop", { domains: [{ domain: "shop.tunnel.example", ssl: false, kind: "route" }] }),
+        app("a2", "Blog", { domains: [{ domain: "blog.elsewhere.example", ssl: false, kind: "route" }] }),
+      ],
+    });
+    await waitFor(() =>
+      expect(within(card("Shop")).getByRole("link", { name: "shop.tunnel.example" })).toHaveAttribute("href", "https://shop.tunnel.example"),
+    );
+    // Not covered by a registration: the route's own flag, as before.
+    expect(within(card("Blog")).getByRole("link", { name: "blog.elsewhere.example" })).toHaveAttribute(
+      "href",
+      "http://blog.elsewhere.example",
+    );
+    expect(api.calls.filter((c) => c.path === "/api/v1/domain/get-domains")).toHaveLength(1);
+  });
+
   it("shows each app's status and where it lives, never its id", () => {
     renderGrid({
       apps: [

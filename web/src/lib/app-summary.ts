@@ -1,28 +1,41 @@
 import { AppStatusCode, type App, type AppDomain } from "@/context/apps-context-base";
 import { hasRunningContainers, type ContainerStatusWire } from "@/lib/app-status";
 import type { BackupHealth } from "@/lib/backups";
+import { coveringDomain, type RegisteredDomain } from "@/lib/domains";
 import type { AppTab } from "@/lib/routes";
 
 // What the Apps page and the app page say about an app at a glance: where
 // it lives, how many apps run, the one warning a card carries.
 
-// AppAddress is a public address of an app: the hostname and the URL that
-// opens it (https when the route has TLS).
-export type AppAddress = { host: string; url: string; https: boolean };
+// AddressTLS is how an address is served, from the TLS mode of the server's
+// registered domain that covers it (the route's own ssl flag is ignored by
+// the proxy): "https" — the proxy serves HTTPS (auto or an uploaded
+// certificate); "proxy" — plain HTTP behind the person's tunnel or proxy,
+// which handles HTTPS; null — not known (no registration covers the host,
+// or the server's domains aren't read: no built-in proxy, or not loaded).
+export type AddressTLS = "https" | "proxy" | null;
 
-function addressOf(d: AppDomain): AppAddress {
-  return { host: d.domain, url: `${d.ssl ? "https" : "http"}://${d.domain}`, https: d.ssl };
+// AppAddress is a public address of an app: the hostname, the URL that
+// opens it and how it is served.
+export type AppAddress = { host: string; url: string; tls: AddressTLS };
+
+function addressOf(d: AppDomain, registrations: readonly RegisteredDomain[]): AppAddress {
+  const covering = coveringDomain(d.domain, registrations);
+  if (!covering) return { host: d.domain, url: `${d.ssl ? "https" : "http"}://${d.domain}`, tls: null };
+  // A tunnel or proxy in front terminates TLS too: people reach it by https.
+  return { host: d.domain, url: `https://${d.domain}`, tls: covering.tls === "off" ? "proxy" : "https" };
 }
 
 // appAddresses are the app's routes in the order the API lists them; a
-// redirect is not where the app lives.
-export function appAddresses(app: Pick<App, "domains">): AppAddress[] {
-  return (app.domains ?? []).filter((d) => d.kind === "route").map(addressOf);
+// redirect is not where the app lives. registrations are the server's
+// registered domains (useAddressRegistrations).
+export function appAddresses(app: Pick<App, "domains">, registrations: readonly RegisteredDomain[] = []): AppAddress[] {
+  return (app.domains ?? []).filter((d) => d.kind === "route").map((d) => addressOf(d, registrations));
 }
 
 // primaryAddress is the address the UI opens ("Open ↗"), or null.
-export function primaryAddress(app: Pick<App, "domains">): AppAddress | null {
-  return appAddresses(app)[0] ?? null;
+export function primaryAddress(app: Pick<App, "domains">, registrations: readonly RegisteredDomain[] = []): AppAddress | null {
+  return appAddresses(app, registrations)[0] ?? null;
 }
 
 export type AppCounts = { running: number; problem: number; stopped: number };

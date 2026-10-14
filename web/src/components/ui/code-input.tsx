@@ -1,3 +1,5 @@
+import { REGEXP_ONLY_DIGITS_AND_CHARS } from "input-otp"
+
 import {
   InputOTP,
   InputOTPGroup,
@@ -13,8 +15,13 @@ type CodeInputProps = {
   className?: string
   disabled?: boolean
   autoFocus?: boolean
+  // id names the input for a <label htmlFor>.
+  id?: string
 }
 
+// CodeInput is a pairing-code field: letters and digits (codes are A–Z0–9),
+// a text keyboard with capitals on phones, the value uppercased, split
+// 3 + 3 into slots that fit a 320px phone (36px slots below 360px).
 export function CodeInput({
   length = 6,
   value,
@@ -22,6 +29,7 @@ export function CodeInput({
   className,
   disabled = false,
   autoFocus = false,
+  id,
 }: CodeInputProps) {
   const normalizedValue = value.toUpperCase()
   const handleChange = (nextValue: string) => {
@@ -31,27 +39,34 @@ export function CodeInput({
   const secondSegmentLength = Math.max(length - firstSegmentLength, 0)
   const slotClassName = (slotIndex: number) =>
     cn(
-      "h-16 w-14 border border-input bg-background text-2xl font-semibold tracking-widest",
+      "h-12 w-9 border border-input min-[360px]:w-10 bg-background text-xl font-semibold tracking-widest sm:h-16 sm:w-14 sm:text-2xl",
       slotIndex === 0 || slotIndex === length - 1
-        ? "rounded-2xl"
-        : "rounded-xl"
+        ? "rounded-xl sm:rounded-2xl"
+        : "rounded-lg sm:rounded-xl"
     )
 
   return (
     <InputOTP
+      id={id}
       maxLength={length}
       value={normalizedValue}
       onChange={handleChange}
-      pattern="\d*"
-      inputMode="numeric"
+      pattern={REGEXP_ONLY_DIGITS_AND_CHARS}
+      inputMode="text"
+      autoCapitalize="characters"
+      autoCorrect="off"
+      spellCheck={false}
+      // A pairing code is no password: skip input-otp's password-manager
+      // badge handling (it polls the layout every second while mounted).
+      pushPasswordManagerStrategy="none"
       disabled={disabled}
       autoFocus={autoFocus}
       containerClassName={cn(
-        "w-full flex items-center justify-center gap-4",
+        "w-full flex items-center justify-center gap-1.5 min-[360px]:gap-2 sm:gap-4",
         className
       )}
     >
-      <InputOTPGroup className="flex gap-3 px-2">
+      <InputOTPGroup className="flex gap-1.5 min-[360px]:gap-2 sm:gap-3 sm:px-2">
         {Array.from({ length: firstSegmentLength }).map((_, index) => (
           <InputOTPSlot
             key={`code-slot-first-${index}`}
@@ -63,11 +78,11 @@ export function CodeInput({
 
       {secondSegmentLength > 0 && (
         <>
-          <InputOTPSeparator className="text-3xl font-bold text-muted-foreground">
+          <InputOTPSeparator className="text-2xl font-bold text-muted-foreground sm:text-3xl">
             -
           </InputOTPSeparator>
 
-          <InputOTPGroup className="flex gap-3 px-2">
+          <InputOTPGroup className="flex gap-1.5 min-[360px]:gap-2 sm:gap-3 sm:px-2">
             {Array.from({ length: secondSegmentLength }).map((_, index) => {
               const overallIndex = firstSegmentLength + index
               return (

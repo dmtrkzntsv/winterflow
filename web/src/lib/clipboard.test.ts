@@ -52,4 +52,25 @@ describe("copyText", () => {
       host.remove();
     }
   });
+
+  it("fails with a plain refusal where the browser has no selection copy at all", async () => {
+    Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+    Object.defineProperty(document, "execCommand", { value: undefined, configurable: true });
+    await expect(copyText("x")).rejects.toThrow("copy rejected");
+    expect(document.querySelector("textarea")).toBeNull();
+  });
+
+  it("keeps the fallback field read-only so a phone's keyboard stays down", async () => {
+    Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
+    let readonly: boolean | undefined;
+    Object.defineProperty(document, "execCommand", {
+      value: vi.fn(() => {
+        readonly = document.querySelector("textarea")?.readOnly;
+        return true;
+      }),
+      configurable: true,
+    });
+    await copyText("x");
+    expect(readonly).toBe(true);
+  });
 });

@@ -10,13 +10,15 @@ export async function copyText(text: string): Promise<void> {
   }
   const area = document.createElement("textarea");
   area.value = text;
+  // Read-only: selecting it must not raise a phone's keyboard.
+  area.setAttribute("readonly", "");
   area.style.position = "fixed";
   area.style.opacity = "0";
   const host = document.activeElement?.closest('[role="dialog"], [role="alertdialog"]') ?? document.body;
   host.appendChild(area);
   area.select();
   try {
-    if (!document.execCommand("copy")) throw new Error("copy rejected");
+    if (typeof document.execCommand !== "function" || !document.execCommand("copy")) throw new Error("copy rejected");
   } finally {
     area.remove();
   }

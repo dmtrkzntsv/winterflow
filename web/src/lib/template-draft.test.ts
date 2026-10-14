@@ -209,3 +209,11 @@ describe("templateFromApp", () => {
     expect(slugName("a".repeat(62) + "-bbb--")).toBe("a".repeat(62));
   });
 });
+
+describe("a new template", () => {
+  it("publishes ${PORT}, a parameter defaulting to 8080, so each app picks its own port", () => {
+    const body = bodyFromDraft({ ...emptyDraft(), name: "site", appName: "Site" });
+    expect(Object.values(body.files ?? {})[0]).toContain('- "${PORT}:80"');
+    expect(body.parameters).toEqual([{ name: "PORT", default: "8080", description: "Host port" }]);
+  });
+});

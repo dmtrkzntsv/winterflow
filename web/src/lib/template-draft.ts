@@ -10,7 +10,7 @@ import { configOf } from "@/lib/backups";
 import { ENCRYPTED } from "@/lib/ecies";
 import { compilePattern, REF } from "@/lib/template-params";
 import type { BackupDefault, Parameter, TemplateBody } from "@/lib/templates";
-import { COMPOSE_FILENAMES, DEFAULT_COMPOSE, localId, type AppFileMeta } from "@/types/app-config";
+import { COMPOSE_FILENAMES, defaultCompose, localId, type AppFileMeta } from "@/types/app-config";
 
 export type ParamRow = {
   id: string;
@@ -52,6 +52,9 @@ export const TEMPLATE_NAME = /^[a-z][a-z0-9-]{0,62}$/;
 const PARAM_NAME = /^[A-Z][A-Z0-9_]*$/;
 const PORT = /^[1-9][0-9]{0,4}$/;
 
+// emptyDraft is a new template: the example compose file publishing
+// ${PORT}, with the PORT parameter (default 8080) each app sets to a port of
+// its own.
 export function emptyDraft(): TemplateDraft {
   const id = localId("file");
   return {
@@ -60,8 +63,8 @@ export function emptyDraft(): TemplateDraft {
     icon: "",
     color: "#64748b",
     files: [{ id, filename: "compose.yml", is_encrypted: false }],
-    contents: { [id]: DEFAULT_COMPOSE },
-    parameters: [],
+    contents: { [id]: defaultCompose("${PORT}") },
+    parameters: [paramRow({ name: "PORT", default: "8080", description: "Host port" })],
     ingress: [],
     backups: {},
   };

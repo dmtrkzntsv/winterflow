@@ -8,6 +8,7 @@ import { AppsContext, SaveFailedError, type App, type AppsContextValue } from "@
 import { suggestAppLook } from "@/lib/app-look";
 import { fakeAPI } from "@/test/fake-api";
 import { stubViewport } from "@/test/media";
+import { forgetUsedHostPorts } from "@/hooks/use-used-host-ports";
 import { DEFAULT_COMPOSE } from "@/types/app-config";
 
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
@@ -41,6 +42,7 @@ function renderFlow(saveApp: AppsContextValue["saveApp"], over: Partial<AppsCont
     apps: [app("old", "shop")],
     saveApp,
     getPublicKey: vi.fn(async () => "K"),
+    getApp: vi.fn(async () => ({ app: { app_id: "old", config: "", files: [], variables: [] } })),
     ...over,
   } as unknown as AppsContextValue;
   return render(
@@ -67,6 +69,7 @@ const sent = (saveApp: ReturnType<typeof vi.fn>) =>
   };
 
 beforeEach(() => {
+  forgetUsedHostPorts();
   server = { id: "s1", name: "Alpha", features: { ingress: true } };
   toast.success.mockReset();
   toast.error.mockReset();
@@ -82,7 +85,8 @@ describe("ComposeFlow", () => {
     const user = userEvent.setup();
     const saveApp = vi.fn(async () => [app("old", "shop"), app("new1", "shop")]);
     renderFlow(saveApp);
-    expect(screen.getByLabelText("Content of compose.yml")).toHaveValue(DEFAULT_COMPOSE);
+    // No other app publishes a port: the first of the range.
+    await waitFor(() => expect(screen.getByLabelText("Content of compose.yml")).toHaveValue(DEFAULT_COMPOSE));
     await user.type(screen.getByLabelText("Name"), "shop");
     await user.click(screen.getByRole("button", { name: "Create app" }));
     expect(await screen.findByText("app new1")).toBeInTheDocument();
@@ -94,6 +98,42 @@ describe("ComposeFlow", () => {
     expect(body.config).not.toHaveProperty("ingress");
     expect(body).not.toHaveProperty("source");
     expect(toast.success).toHaveBeenCalledWith("App created and deploying");
+  });
+
+  it("prefills the first host port no other app on the server publishes", async () => {
+    const compose = btoa('services:\n  web:\n    ports:\n      - "8080:80"\n      - "127.0.0.1:8081:80"\n      - "${PORT}:80"\n');
+    const getApp = vi.fn(async () => ({
+      app: { app_id: "old", config: "", files: [{ name: "compose.yml", content: compose }], variables: [] },
+    }));
+    renderFlow(vi.fn(), { getApp } as unknown as Partial<AppsContextValue>);
+    await waitFor(() => expect(screen.getByLabelText("Content of compose.yml")).toHaveValue(DEFAULT_COMPOSE.replace("8080:80", "8082:80")));
+    expect(getApp).toHaveBeenCalledWith("old");
+  });
+
+  it("keeps a random port of the range when the other apps can't be read", async () => {
+    const getApp = vi.fn(async () => {
+      throw new Error("offline");
+    });
+    renderFlow(vi.fn(), { getApp } as unknown as Partial<AppsContextValue>);
+    await waitFor(() => expect(getApp).toHaveBeenCalled());
+    const value = (screen.getByLabelText("Content of compose.yml") as HTMLTextAreaElement).value;
+    const port = Number(/- "(\d+):80"/.exec(value)?.[1]);
+    expect(port).toBeGreaterThanOrEqual(8080);
+    expect(port).toBeLessThanOrEqual(8999);
+  });
+
+  it("leaves a compose file the user already edited alone", async () => {
+    const user = userEvent.setup();
+    let answer: (v: unknown) => void = () => {};
+    const getApp = vi.fn(() => new Promise((resolve) => (answer = resolve)));
+    renderFlow(vi.fn(), { getApp } as unknown as Partial<AppsContextValue>);
+    const editor = screen.getByLabelText("Content of compose.yml");
+    await user.clear(editor);
+    await user.type(editor, "mine");
+    answer({ app: { app_id: "old", config: "", files: [], variables: [] } });
+    await waitFor(() => expect(getApp).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 0));
+    expect(editor).toHaveValue("mine");
   });
 
   it("opens the app a failed first deploy left behind, noting the failure", async () => {

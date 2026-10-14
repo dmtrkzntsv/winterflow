@@ -103,10 +103,16 @@ export function isComposeFile(name: string): boolean {
   return COMPOSE_FILENAMES.includes(name.trim());
 }
 
-export const DEFAULT_COMPOSE = `services:
+// defaultCompose is the example compose file a new app or template starts
+// from, publishing hostPort (a number, or "\${PORT}" in a template).
+export function defaultCompose(hostPort: number | string = 8080): string {
+  return `services:
   app:
     image: nginx:alpine
     ports:
       # host:container — change the host port if it's already in use
-      - "8088:80"
+      - "${hostPort}:80"
 `;
+}
+
+export const DEFAULT_COMPOSE = defaultCompose();

@@ -14,9 +14,11 @@ import { useServers } from "@/context/use-servers";
 import { useCreateForm } from "@/hooks/use-create-form";
 import { useRegistrations } from "@/hooks/use-registrations";
 import { useSharedNames } from "@/hooks/use-shared-names";
+import { useUsedHostPorts } from "@/hooks/use-used-host-ports";
 import { pruneBlankAddresses } from "@/lib/app-editor-io";
 import { hasErrorIn } from "@/lib/field-errors";
-import { composeStart } from "@/lib/new-app";
+import { firstFreeHostPort, randomHostPort } from "@/lib/host-ports";
+import { composeStart, withHostPort } from "@/lib/new-app";
 import { appsPath } from "@/lib/routes";
 import type { AppEditorState } from "@/types/app-config";
 
@@ -28,7 +30,18 @@ export function ComposeFlow({ serverId }: { serverId: string }) {
   const ingressOn = Boolean(activeServer?.features?.ingress);
   const shared = useSharedNames(serverId);
   const { registrations, refresh } = useRegistrations(serverId, ingressOn);
-  const [state, setState] = useState<AppEditorState>(composeStart);
+  // The example file publishes a random port of 8080-8999 until the ports
+  // the server's apps publish are read, then the first free one (while the
+  // file is untouched).
+  const [startPort] = useState(randomHostPort);
+  const [state, setState] = useState<AppEditorState>(() => composeStart(startPort));
+  const used = useUsedHostPorts(serverId);
+  const [portsSeen, setPortsSeen] = useState<ReadonlySet<number> | null>(null);
+  if (used && used !== portsSeen) {
+    setPortsSeen(used);
+    const free = firstFreeHostPort(used);
+    if (free !== undefined) setState((s) => withHostPort(s, startPort, free));
+  }
   const [varsOpen, setVarsOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
 

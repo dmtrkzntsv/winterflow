@@ -35,8 +35,8 @@ function diffBodies(before: TemplateBody, after: TemplateBody): FileDiff[] {
   return out;
 }
 
-// TemplateRevisions lists a template's revisions, newest first; each opens
-// its changes against the revision before it.
+// TemplateRevisions is the Versions tab: a template's versions, newest
+// first; each opens its changes against the version before it.
 export function TemplateRevisions({ view }: { view: TemplateView }) {
   const api = useTemplatesApi();
   const [open, setOpen] = useState<number | null>(null);
@@ -57,7 +57,7 @@ export function TemplateRevisions({ view }: { view: TemplateView }) {
       const [prev, cur] = await Promise.all([api.getRevision(view.id, revision - 1), api.getRevision(view.id, revision)]);
       setDiffs((d) => ({ ...d, [revision]: diffBodies(prev.body, cur.body) }));
     } catch (e) {
-      setFailed({ revision, message: e instanceof Error ? e.message : "Failed to load the revisions" });
+      setFailed({ revision, message: e instanceof Error ? e.message : "Failed to load the versions" });
     }
   };
 
@@ -69,18 +69,19 @@ export function TemplateRevisions({ view }: { view: TemplateView }) {
         return (
           <li key={r.revision} className="px-4 py-3 text-sm">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-              <span className="font-medium">r{r.revision}</span>
-              <span className="min-w-0 flex-1 truncate text-muted-foreground">{r.note || "No note"}</span>
+              <span className="font-medium">Version {r.revision}</span>
+              {/* A version without a note says nothing more. */}
+              <span className="min-w-0 flex-1 truncate text-muted-foreground">{r.note}</span>
               <time className="text-xs text-muted-foreground" dateTime={r.created_at}>
                 {relativeTime(new Date(r.created_at))}
               </time>
               {r.revision > 1 ? (
                 <Button size="sm" variant="ghost" onClick={() => void toggle(r.revision)}>
                   {open === r.revision ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
-                  Changes from r{r.revision - 1}
+                  Changes from version {r.revision - 1}
                 </Button>
               ) : (
-                <span className="text-xs text-muted-foreground">First revision</span>
+                <span className="text-xs text-muted-foreground">First version</span>
               )}
             </div>
             {open === r.revision ? (

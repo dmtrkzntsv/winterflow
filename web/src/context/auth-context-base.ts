@@ -14,6 +14,17 @@ export type AuthContextValue = {
   logout: () => void
 }
 
+// LoginError is a sign-in the server refused; status is its HTTP status
+// (400, 401 or 403: the email or password is wrong).
+export class LoginError extends Error {
+  status: number
+  constructor(status: number) {
+    super("Failed to login")
+    this.name = "LoginError"
+    this.status = status
+  }
+}
+
 export const AuthContext = createContext<AuthContextValue | undefined>(
   undefined
 )

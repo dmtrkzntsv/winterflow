@@ -6,6 +6,7 @@ import { RestorePointsDialog } from "@/components/restore-points-dialog";
 import type { Backups } from "@/context/use-backups";
 import { trackActivity } from "@/lib/backup-activity";
 import type { EffectiveBackup, RestorePoint } from "@/lib/backups";
+import { stubViewport } from "@/test/media";
 
 const toastSuccess = vi.fn();
 const toastError = vi.fn();
@@ -214,5 +215,37 @@ describe("RestorePointsDialog", () => {
       />,
     );
     expect(await screen.findByText(/the storage did not answer within 30s/)).toBeInTheDocument();
+  });
+
+  it("is a bottom sheet on a phone, confirming in the shared dialog", async () => {
+    stubViewport(375);
+    try {
+      const user = userEvent.setup({ delay: null });
+      const backups = fake();
+      render(<RestorePointsDialog appId="a1" backup={database} backups={backups} open onOpenChange={() => {}} />);
+      expect(screen.getByRole("dialog", { name: "Copies of database" })).toHaveClass("rounded-t-[10px]");
+      await user.click(await screen.findByRole("button", { name: `Delete the copy of ${when(POINTS[0])}` }));
+      const confirm = screen.getByRole("alertdialog", { name: "Delete this copy?" });
+      await user.click(within(confirm).getByRole("button", { name: "Delete copy" }));
+      await waitFor(() => expect(backups.deleteRestorePoint).toHaveBeenCalledWith("a1", "database", "p2"));
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("keeps a failed delete's confirmation open, unable to close mid-delete", async () => {
+    const user = userEvent.setup({ delay: null });
+    let fail: (e: Error) => void = () => {};
+    const deleteRestorePoint = vi.fn().mockReturnValue(new Promise((_r, reject) => (fail = reject)));
+    render(<RestorePointsDialog appId="a1" backup={database} backups={fake({ deleteRestorePoint })} open onOpenChange={() => {}} />);
+    await user.click(await screen.findByRole("button", { name: `Delete the copy of ${when(POINTS[0])}` }));
+    await user.click(screen.getByRole("button", { name: "Delete copy" }));
+    expect(await screen.findByRole("button", { name: "Deleting…" })).toBeDisabled();
+    expect(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Cancel" })).toBeDisabled();
+    fail(new Error("the storage did not answer"));
+    expect(await screen.findByRole("alert")).toHaveTextContent("the storage did not answer");
+    expect(toastError).toHaveBeenCalledWith("Couldn't delete the copy", { description: "the storage did not answer" });
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Delete copy" })).toBeEnabled();
   });
 });

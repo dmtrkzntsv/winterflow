@@ -1,9 +1,10 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { BackupEditDialog } from "@/components/backup-edit-dialog";
 import type { BackupTargets, EffectiveBackup } from "@/lib/backups";
+import { stubViewport } from "@/test/media";
 
 const all = { every: true, keep: true, volume: true, service: true, path: true, paths: true, exclude: true };
 const targets: BackupTargets = {
@@ -24,7 +25,10 @@ const database: EffectiveBackup = {
   template: { every: "1h", keep: { recent: "24h0m0s", daily: 14, monthly: 6 }, volume: "data", path: "app.db" },
 };
 
-function renderDialog(backup: EffectiveBackup, opts: { days?: number; error?: string; onRemove?: () => void; onChangeStorage?: () => void } = {}) {
+function renderDialog(
+  backup: EffectiveBackup,
+  opts: { days?: number; error?: string; onRemove?: () => void; onChangeStorage?: () => void; closed?: boolean } = {},
+) {
   const onSave = vi.fn();
   render(
     <BackupEditDialog
@@ -40,10 +44,37 @@ function renderDialog(backup: EffectiveBackup, opts: { days?: number; error?: st
       onChangeStorage={opts.onChangeStorage}
     />,
   );
+  // Retention and location sit under Advanced (a custom backup has none).
+  const advanced = screen.queryByRole("button", { name: "Advanced" });
+  if (advanced && !opts.closed && advanced.getAttribute("aria-expanded") !== "true") fireEvent.click(advanced);
   return onSave;
 }
 
 describe("BackupEditDialog", () => {
+  it("keeps retention, location and skipped paths under Advanced, closed", async () => {
+    const user = userEvent.setup({ delay: null });
+    renderDialog({ ...database, type: "files", path: undefined, paths: ["uploads"], exclude: ["cache"] }, { closed: true });
+    expect(screen.getByLabelText("Schedule")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Every copy for")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Location kind")).not.toBeInTheDocument();
+    expect(screen.queryByText("cache")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Advanced" }));
+    expect(screen.getByLabelText("Every copy for")).toBeInTheDocument();
+    expect(screen.getByLabelText("Location kind")).toBeInTheDocument();
+    expect(screen.getByText("cache")).toBeInTheDocument();
+  });
+
+  it("opens Advanced by itself when a stored retention needs fixing", () => {
+    renderDialog({ ...database, keep: { recent: "24h0m0s", daily: -1, monthly: 6 } }, { closed: true });
+    expect(screen.getByLabelText("Daily copies")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  });
+
+  it("has no Advanced for a custom backup", () => {
+    renderDialog({ ...database, type: "custom", service: "litestream" }, { closed: true });
+    expect(screen.queryByRole("button", { name: "Advanced" })).not.toBeInTheDocument();
+  });
+
   it("shows the storage and offers to change it when it can", async () => {
     const user = userEvent.setup({ delay: null });
     const onChangeStorage = vi.fn();
@@ -326,5 +357,19 @@ describe("BackupEditDialog", () => {
     renderDialog({ ...database, every: "90m" });
     expect(screen.getByLabelText("Schedule")).toHaveValue("90m");
     expect(screen.getByRole("option", { name: "Every 90m" })).toBeInTheDocument();
+  });
+
+  it("is a bottom sheet on a phone whose Save still sends the form", async () => {
+    stubViewport(375);
+    try {
+      const user = userEvent.setup({ delay: null });
+      const onSave = renderDialog({ ...database, from_recipe: all });
+      expect(screen.getByRole("dialog", { name: "Edit backup database" })).toHaveClass("rounded-t-[10px]");
+      await user.selectOptions(screen.getByLabelText("Schedule"), "manual");
+      await user.click(screen.getByRole("button", { name: "Save" }));
+      expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ name: "database", every: "manual" }));
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

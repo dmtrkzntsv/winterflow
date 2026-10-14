@@ -4,8 +4,10 @@ import { useState } from "react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { IngressEditor } from "@/components/ingress-editor";
+import { AddressRows, RedirectRows } from "@/components/ingress-editor";
+import { useRegistrations } from "@/hooks/use-registrations";
 import type { RegisteredDomain } from "@/lib/domains";
+import type { FieldErrors } from "@/lib/field-errors";
 import type { AppEditorState, AppIngress } from "@/types/app-config";
 
 // Links point into the active server's scope (/server/:id/...).
@@ -51,17 +53,20 @@ const calls = (path: string) =>
     .map(([input]) => new URL(String(input), "http://localhost"))
     .filter((url) => url.pathname === path);
 
-function Harness({ ingress }: { ingress: AppIngress }) {
+function Harness({ ingress, errors }: { ingress: AppIngress; errors?: FieldErrors }) {
   const [state, setState] = useState<AppEditorState>({
     config: { id: "app-1", name: "x", files: [], variables: [], ingress },
     files: {},
     variables: {},
     storageVariables: [],
   });
+  const { registrations, refresh } = useRegistrations("srv-1");
   const ing = state.config.ingress;
+  const rows = { state, onChange: setState, appId: "app-1", serverId: "srv-1", registrations, onRefresh: refresh, errors };
   return (
     <MemoryRouter>
-      <IngressEditor state={state} onChange={setState} appId="app-1" serverId="srv-1" />
+      <AddressRows {...rows} />
+      <RedirectRows {...rows} />
       <output data-testid="ingress">{JSON.stringify(ing)}</output>
       <output data-testid="ssl">
         {JSON.stringify([...(ing?.domains ?? []), ...(ing?.redirects ?? [])].map((r) => [r.domain, r.ssl]))}
@@ -76,7 +81,7 @@ const oneDomain = (domain: string): AppIngress => ({
   redirects: [],
 });
 
-describe("IngressEditor", () => {
+describe("ingress rows", () => {
   beforeEach(() => {
     registrations = [WILDCARD, EXACT, TUNNEL];
     checks = {};
@@ -141,11 +146,14 @@ describe("IngressEditor", () => {
 
     await user.type(screen.getByLabelText("Hostname"), "shop.other.app");
     const hint = await screen.findByText(/No domain on this server covers this hostname/);
-    expect(screen.getByLabelText("Hostname")).toHaveAttribute("aria-invalid", "true");
+    // A warning, not a refusal: described by its hint, not marked invalid
+    // (focusFirstInvalid would stop on it).
+    expect(screen.getByLabelText("Hostname")).toHaveAttribute("aria-invalid", "false");
+    expect(screen.getByLabelText("Hostname")).toHaveClass("border-destructive");
     expect(screen.getByLabelText("Hostname")).toHaveAttribute("aria-describedby", hint.id);
     // A new tab, so following it doesn't lose the unsaved form.
     const link = screen.getByRole("link", { name: /Add it/ });
-    expect(link).toHaveAttribute("href", "/server/srv-1/settings?tab=domains");
+    expect(link).toHaveAttribute("href", "/server/srv-1/settings/domains");
     expect(link).toHaveAttribute("target", "_blank");
     // Nothing covers it: the stored flag keeps its default.
     expect(ssl()).toEqual([["shop.other.app", true]]);
@@ -270,7 +278,7 @@ describe("IngressEditor", () => {
 
     await user.click(screen.getByRole("button", { name: /Add hostname/ }));
     await user.type(screen.getByLabelText("Hostname"), "example.com");
-    await user.type(screen.getByLabelText("Upstream port"), "8088");
+    await user.type(screen.getByLabelText("Port"), "8088");
     await user.click(screen.getByRole("button", { name: /Add redirect/ }));
     await user.type(screen.getByLabelText("Redirect hostname"), "x.tunnel.example.com");
     await user.type(screen.getByLabelText("Redirect to"), "https://example.com");
@@ -283,7 +291,7 @@ describe("IngressEditor", () => {
     expect(ingress().redirects).toMatchObject([
       { domain: "x.tunnel.example.com", path: "", to: "https://example.com", code: 301 },
     ]);
-    await user.clear(screen.getByLabelText("Upstream port"));
+    await user.clear(screen.getByLabelText("Port"));
     expect(ingress().domains[0].upstream_port).toBe("");
   });
 
@@ -300,5 +308,65 @@ describe("IngressEditor", () => {
     expect(screen.getByLabelText("Hostname")).toHaveValue("shop.example.com");
     expect(screen.queryByText("Auto TLS")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Hostname")).not.toHaveAttribute("aria-describedby");
+  });
+});
+
+describe("ingress rows: messages", () => {
+  beforeEach(() => {
+    registrations = [WILDCARD, EXACT, TUNNEL];
+    checks = {};
+    offline = false;
+    vi.stubGlobal("fetch", fetchMock);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("shows a hostname's and a port's message under their row", () => {
+    render(
+      <Harness
+        ingress={oneDomain("Bad Host")}
+        errors={{ "domain:d1": "Use a lowercase hostname like app.example.com.", "port:d1": "Enter a port from 1 to 65535." }}
+      />,
+    );
+    const host = screen.getByLabelText("Hostname");
+    expect(host).toHaveAttribute("aria-invalid", "true");
+    expect(host).toHaveAccessibleDescription("Use a lowercase hostname like app.example.com.");
+    expect(screen.getByLabelText("Port")).toHaveAccessibleDescription("Enter a port from 1 to 65535.");
+  });
+
+  it("shows a redirect hostname's message under its row", () => {
+    render(
+      <Harness
+        ingress={{
+          domains: [],
+          redirects: [{ id: "r1", domain: "late.example.com", path: "", to: "https://x.example.com", code: 301, ssl: true }],
+        }}
+        errors={{ "redirect-host:r1": "Add late.example.com as an address or a whole-domain redirect above this rule first." }}
+      />,
+    );
+    const host = screen.getByLabelText("Redirect hostname");
+    expect(host).toHaveAttribute("aria-invalid", "true");
+    expect(host).toHaveAccessibleDescription(
+      "Add late.example.com as an address or a whole-domain redirect above this rule first.",
+    );
+    expect(host).toHaveClass("border-destructive");
+  });
+
+  it("shows a redirect's messages under its fields", () => {
+    render(
+      <Harness
+        ingress={{
+          domains: [],
+          redirects: [{ id: "r1", domain: "x.tunnel.example.com", path: "old", to: "nope", code: 301, ssl: true }],
+        }}
+        errors={{
+          "redirect-path:r1": "The path must start with /.",
+          "redirect-to:r1": "Send it to a full address starting with http:// or https://.",
+        }}
+      />,
+    );
+    expect(screen.getByLabelText("Redirect path")).toHaveAccessibleDescription("The path must start with /.");
+    expect(screen.getByLabelText("Redirect to")).toHaveAccessibleDescription(
+      "Send it to a full address starting with http:// or https://.",
+    );
   });
 });

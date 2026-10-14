@@ -10,6 +10,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty"
+import { usePageTitle } from "@/layouts/use-page-title"
 
 // NotFound is the error page for URLs that address nothing: an unknown route,
 // a server outside the org, an app not on the server.
@@ -20,6 +21,7 @@ export function NotFound({
   title?: string
   description?: string
 }) {
+  usePageTitle("Not found")
   return (
     <Empty>
       <EmptyHeader>
@@ -31,7 +33,8 @@ export function NotFound({
       </EmptyHeader>
       <EmptyContent>
         <Button asChild variant="outline" size="sm">
-          <Link to="/">Go to the dashboard</Link>
+          {/* "/" opens the default server's Apps. */}
+          <Link to="/">Go to Apps</Link>
         </Button>
       </EmptyContent>
     </Empty>

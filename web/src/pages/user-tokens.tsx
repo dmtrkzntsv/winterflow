@@ -1,30 +1,24 @@
-import { useMemo, useState } from "react";
-import { Check, Copy, Plus, Trash2 } from "lucide-react";
+import { useRef, useState } from "react";
+import { KeyRound, Plus } from "lucide-react";
 import { toast } from "sonner";
 
-import { useAppBreadcrumbs } from "@/layouts/use-app-layout";
+import { ConfirmDialog } from "@/components/confirm-dialog";
+import { CopyField } from "@/components/copy-field";
+import { EmptyState } from "@/components/empty-state";
+import { ListPlaceholder } from "@/components/list-placeholder";
+import { PageHeader } from "@/components/page-header";
+import { RemoveButton } from "@/components/remove-button";
+import { ResponsiveDialog } from "@/components/responsive-dialog";
+import { Row, RowList } from "@/components/section";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Spinner } from "@/components/ui/spinner";
-import { useTokens, type CreatedToken } from "@/hooks/use-tokens";
+import { useNow } from "@/hooks/use-now";
+import { useTokens, type ApiToken, type CreatedToken } from "@/hooks/use-tokens";
+import { useConfirmTarget } from "@/hooks/use-confirm-target";
+import { returnFocusTo } from "@/lib/focus";
+import { tokenMeta } from "@/lib/tokens";
+import { cn } from "@/lib/utils";
 
 const EXPIRY_OPTIONS = [
   { label: "30 days", days: 30 },
@@ -33,249 +27,211 @@ const EXPIRY_OPTIONS = [
   { label: "No expiry", days: 0 },
 ];
 
-function fmtDate(iso: string | null): string {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleDateString();
-}
+const errorText = (e: unknown) => (e instanceof Error ? e.message : undefined);
 
-// copyText works on insecure (plain-http LAN) origins too, where browsers
-// don't expose navigator.clipboard — same constraint as crypto.subtle in
-// lib/ecies.ts. Falls back to the legacy selection-based copy.
-async function copyText(text: string): Promise<void> {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text);
-    return;
-  }
-  const ta = document.createElement("textarea");
-  ta.value = text;
-  ta.style.position = "fixed";
-  ta.style.opacity = "0";
-  document.body.appendChild(ta);
-  ta.select();
-  try {
-    if (!document.execCommand("copy")) {
-      throw new Error("copy rejected");
-    }
-  } finally {
-    ta.remove();
-  }
-}
-
-// UserTokensPage manages personal access tokens: list, generate (with a
-// one-time plaintext reveal), and revoke. Tokens authenticate API calls via
-// "Authorization: Bearer wfp_…" or Basic auth (token as password).
-export default function UserTokensPage() {
-  const breadcrumbs = useMemo(
-    () => [{ label: "User" }, { label: "API tokens" }],
-    [],
-  );
-  useAppBreadcrumbs(breadcrumbs);
-
-  const { tokens, loading, error, create, remove } = useTokens();
-  const [dialogOpen, setDialogOpen] = useState(false);
+// GenerateTokenDialog names a new token and its expiry, then shows the
+// token once (only its hash is kept) with Copy. The page mounts it per
+// opening, so the token does not outlive the dialog.
+function GenerateTokenDialog({
+  onOpenChange,
+  create,
+}: {
+  onOpenChange: (open: boolean) => void;
+  create: (name: string, days: number) => Promise<CreatedToken>;
+}) {
   const [name, setName] = useState("");
-  const [expiryDays, setExpiryDays] = useState(30);
+  const [days, setDays] = useState(30);
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
   const [created, setCreated] = useState<CreatedToken | null>(null);
-  const [copied, setCopied] = useState(false);
 
-  const openDialog = () => {
-    setName("");
-    setExpiryDays(30);
-    setCreated(null);
-    setCopied(false);
-    setDialogOpen(true);
-  };
-
-  const handleCreate = async () => {
+  const generate = async () => {
     if (!name.trim()) {
-      toast.error("Give the token a name");
+      setError("Give the token a name.");
       return;
     }
     setBusy(true);
+    setError("");
     try {
-      setCreated(await create(name.trim(), expiryDays));
+      setCreated(await create(name.trim(), days));
     } catch (e) {
-      toast.error("Failed to create token", {
-        description: e instanceof Error ? e.message : undefined,
-      });
+      setError(errorText(e) ?? "Couldn't generate the token.");
     } finally {
       setBusy(false);
     }
   };
 
-  const handleCopy = async () => {
-    if (!created) return;
-    try {
-      await copyText(created.token);
-      setCopied(true);
-      toast.success("Token copied");
-    } catch {
-      toast.error("Copy failed — select the token and copy it manually");
-    }
-  };
+  if (created) {
+    return (
+      <ResponsiveDialog
+        open
+        onOpenChange={onOpenChange}
+        title="Token generated"
+        description="Copy it now: you won't be able to see it again."
+        footer={
+          <Button onClick={() => onOpenChange(false)}>
+            Done
+          </Button>
+        }
+      >
+        <CopyField value={created.token} label="Token" />
+      </ResponsiveDialog>
+    );
+  }
 
-  const handleRevoke = async (tokenId: string, tokenName: string) => {
-    if (
-      !window.confirm(
-        `Revoke "${tokenName}"? Clients using it will stop working immediately.`,
-      )
-    ) {
-      return;
-    }
+  return (
+    <ResponsiveDialog
+      open
+      onOpenChange={onOpenChange}
+      title="Generate token"
+      description="It can do everything your account can."
+      footer={
+        <>
+          <Button type="button" variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button type="submit" form="token-form" disabled={busy}>
+            {busy ? "Generating…" : "Generate"}
+          </Button>
+        </>
+      }
+    >
+      <form
+        id="token-form"
+        className="space-y-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void generate();
+        }}
+      >
+        <div className="space-y-2">
+          <Label htmlFor="token-name">Name</Label>
+          <Input
+            id="token-name"
+            placeholder="e.g. CI deploy"
+            value={name}
+            maxLength={64}
+            onChange={(e) => setName(e.target.value)}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label id="token-expiry-label">Expires</Label>
+          <div role="radiogroup" aria-labelledby="token-expiry-label" className="flex flex-wrap gap-2">
+            {EXPIRY_OPTIONS.map((o) => (
+              <button
+                key={o.days}
+                type="button"
+                role="radio"
+                aria-checked={days === o.days}
+                onClick={() => setDays(o.days)}
+                className={cn(
+                  "min-h-10 rounded-md border px-3 text-sm transition-colors duration-150 hover:border-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:min-h-8",
+                  days === o.days && "border-primary bg-primary/5 font-medium",
+                )}
+              >
+                {o.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {error ? (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        ) : null}
+      </form>
+    </ResponsiveDialog>
+  );
+}
+
+// UserTokensPage is Settings → Account → API tokens: personal access
+// tokens for scripts and CI (sent as "Authorization: Bearer wfp_…", or as
+// the Basic-auth password); generate one, or revoke one after a
+// confirmation.
+export default function UserTokensPage() {
+  const { tokens, loading, error, create, remove, refresh } = useTokens();
+  const [generating, setGenerating] = useState(false);
+  const revokeConfirm = useConfirmTarget<ApiToken>();
+  // The confirmation has no trigger of its own: focus goes back to the
+  // row's button, or to Generate token once that row is gone.
+  const opener = useRef<HTMLElement | null>(null);
+  const generateButton = useRef<HTMLButtonElement | null>(null);
+  const now = useNow();
+
+  const revoke = async (t: ApiToken) => {
     try {
-      await remove(tokenId);
+      await remove(t.token_id);
       toast.success("Token revoked");
     } catch (e) {
-      toast.error("Failed to revoke token", {
-        description: e instanceof Error ? e.message : undefined,
-      });
+      toast.error("Couldn't revoke the token", { description: errorText(e) });
+      throw e;
     }
   };
 
   return (
-    <div className="mx-auto w-full max-w-4xl space-y-6">
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle>Personal access tokens</CardTitle>
-          <Button size="sm" onClick={openDialog}>
-            <Plus /> Generate token
+    <div className="space-y-6">
+      <PageHeader
+        title="API tokens"
+        subtitle={
+          <>
+            Let scripts and CI call the API as you: send a token as{" "}
+            <code className="font-mono">Authorization: Bearer wfp_…</code>.
+          </>
+        }
+        actions={
+          <Button ref={generateButton} onClick={() => setGenerating(true)}>
+            <Plus className="size-4" /> Generate token
           </Button>
-        </CardHeader>
-        <CardContent>
-          {loading ? (
-            <div className="flex min-h-32 items-center justify-center">
-              <Spinner />
-            </div>
-          ) : error ? (
-            <p className="text-sm text-destructive">{error}</p>
-          ) : tokens.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No tokens yet. Generate one to call the API from scripts or CI —
-              send it as <code>Authorization: Bearer wfp_…</code>.
-            </p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Token</TableHead>
-                  <TableHead>Created</TableHead>
-                  <TableHead>Expires</TableHead>
-                  <TableHead>Last used</TableHead>
-                  <TableHead />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {tokens.map((t) => (
-                  <TableRow key={t.token_id}>
-                    <TableCell className="font-medium">{t.name}</TableCell>
-                    <TableCell className="font-mono text-xs">
-                      {t.prefix}…
-                    </TableCell>
-                    <TableCell>{fmtDate(t.created_at)}</TableCell>
-                    <TableCell>{fmtDate(t.expires_at)}</TableCell>
-                    <TableCell>
-                      {t.last_used_at ? fmtDate(t.last_used_at) : "Never"}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => void handleRevoke(t.token_id, t.name)}
-                      >
-                        <Trash2 className="text-destructive" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
-
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent>
-          {created ? (
-            <>
-              <DialogHeader>
-                <DialogTitle>Token created</DialogTitle>
-                <DialogDescription>
-                  Copy it now — you won&apos;t be able to see it again.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="flex items-center gap-2">
-                <Input
-                  readOnly
-                  value={created.token}
-                  className="font-mono text-xs"
-                  onFocus={(e) => e.currentTarget.select()}
+        }
+      />
+      {tokens.length > 0 && error ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+          <Button size="sm" variant="outline" onClick={() => void refresh()}>
+            Try again
+          </Button>
+        </div>
+      ) : null}
+      {tokens.length > 0 ? (
+        <RowList label="API tokens">
+          {tokens.map((t) => (
+            <Row
+              key={t.token_id}
+              title={t.name}
+              description={<span className="font-mono">{t.prefix}…</span>}
+              meta={tokenMeta(t, now)}
+              actions={
+                <RemoveButton
+                  label={`Revoke ${t.name}`}
+                  onClick={(trigger) => {
+                    opener.current = trigger;
+                    revokeConfirm.ask(t);
+                  }}
                 />
-                <Button
-                  variant="outline"
-                  size="icon"
-                  onClick={() => void handleCopy()}
-                >
-                  {copied ? <Check /> : <Copy />}
-                </Button>
-              </div>
-              <DialogFooter>
-                <Button onClick={() => setDialogOpen(false)}>Done</Button>
-              </DialogFooter>
-            </>
-          ) : (
-            <>
-              <DialogHeader>
-                <DialogTitle>Generate token</DialogTitle>
-                <DialogDescription>
-                  The token has the same access as your account. No scopes.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="token-name">Name</Label>
-                  <Input
-                    id="token-name"
-                    placeholder="e.g. CI deploy"
-                    value={name}
-                    maxLength={64}
-                    onChange={(e) => setName(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Expires</Label>
-                  <div className="flex gap-2">
-                    {EXPIRY_OPTIONS.map((o) => (
-                      <Button
-                        key={o.days}
-                        type="button"
-                        size="sm"
-                        variant={expiryDays === o.days ? "default" : "outline"}
-                        onClick={() => setExpiryDays(o.days)}
-                      >
-                        {o.label}
-                      </Button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-              <DialogFooter>
-                <Button
-                  variant="outline"
-                  onClick={() => setDialogOpen(false)}
-                  disabled={busy}
-                >
-                  Cancel
-                </Button>
-                <Button onClick={() => void handleCreate()} disabled={busy}>
-                  {busy ? "Creating…" : "Create"}
-                </Button>
-              </DialogFooter>
-            </>
-          )}
-        </DialogContent>
-      </Dialog>
+              }
+            />
+          ))}
+        </RowList>
+      ) : loading ? (
+        <ListPlaceholder loading failed="" />
+      ) : error ? (
+        <ListPlaceholder loading={false} failed={error} onRetry={() => void refresh()} />
+      ) : (
+        <EmptyState icon={KeyRound} title="No tokens yet. Generate one to call the API from a script." />
+      )}
+      {generating ? <GenerateTokenDialog onOpenChange={setGenerating} create={create} /> : null}
+      <ConfirmDialog
+        open={revokeConfirm.open}
+        onOpenChange={revokeConfirm.onOpenChange}
+        title={`Revoke ${revokeConfirm.target?.name ?? "this token"}?`}
+        description="Anything that uses it stops working at once."
+        confirmLabel="Revoke token"
+        pendingLabel="Revoking…"
+        onCloseAutoFocus={(e) => returnFocusTo(opener, generateButton)(e)}
+        onConfirm={() => (revokeConfirm.target ? revoke(revokeConfirm.target) : undefined)}
+      />
     </div>
   );
 }

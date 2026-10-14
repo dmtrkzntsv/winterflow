@@ -1,58 +1,46 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { MoreHorizontal, Plus, RefreshCw } from "lucide-react";
+import { CircleX, Plus } from "lucide-react";
 import { toast } from "sonner";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Spinner } from "@/components/ui/spinner";
-import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table";
 import { AddBackupDialog } from "@/components/add-backup-dialog";
 import { BackupEditDialog } from "@/components/backup-edit-dialog";
 import { BackupStorageDialog } from "@/components/backup-storage-dialog";
 import { InlineError } from "@/components/inline-error";
 import { RestorePointsDialog } from "@/components/restore-points-dialog";
+import { RowMenu } from "@/components/row-menu";
+import { RowList } from "@/components/section";
+import { StatusPill } from "@/components/status";
 import { useApps } from "@/context/use-apps";
 import {
+  backupRowState,
   holdHealth,
   releaseHealth,
   restoringBackup,
   shownHealth,
-  trackActivity,
   useActivity,
   useOverlays,
   type Activity,
   type Outcome,
 } from "@/lib/backup-activity";
 import { useBackups } from "@/context/use-backups";
+import { useRunBackup } from "@/hooks/use-run-backup";
 import {
-  AgentError,
   configOf,
   configsWith,
   errorSummary,
   isBackupsChanged,
-  isRunRefusal,
   isStaleTab,
   locationLabel,
-  nextCopyNote,
   scheduleLabel,
-  STATE_LABELS,
   type BackupConfig,
   type BackupHealth,
-  type BackupState,
   type BackupTargets,
   type EffectiveBackup,
 } from "@/lib/backups";
-import { cn, relativeTime } from "@/lib/utils";
-
-const STATE_STYLE: Record<BackupState, string> = {
-  ok: "border-emerald-500/40 text-emerald-700 dark:text-emerald-400",
-  running: "border-sky-500/40 text-sky-700 dark:text-sky-400",
-  never: "text-muted-foreground",
-  off: "text-muted-foreground",
-  late: "border-amber-500/50 text-amber-700 dark:text-amber-400",
-  failing: "border-destructive/50 text-destructive",
-};
+import { backupStatus, RESTORING } from "@/lib/status";
+import { relativeTime } from "@/lib/utils";
 
 // base identifies the stored list this view was loaded with (see save).
 type Detail = { list: EffectiveBackup[]; targets: BackupTargets | null; days: number; error: string; base: string };
@@ -71,12 +59,13 @@ const sameOpen = (a: Open, b: Open) => JSON.stringify(a) === JSON.stringify(b);
 // AppBackups is the app page's Backups tab: each backup (declared by the
 // compose file, or added here) with its storage, schedule, last copy and
 // health; Set up for one that has no storage yet (it picks the storage and
-// turns the backup on); Back up now; its copies (restore, delete); an editor
-// for on/off, schedule, retention, location and storage; and Add backup
-// (which picks the storage and starts the backup on).
+// turns the backup on); its actions in a ⋯ menu (Back up now, Restore, Edit:
+// on/off, schedule, retention, location and storage); and Add backup (which
+// picks the storage and starts the backup on).
 export function AppBackups({ appId }: { appId: string }) {
   const { getApp, backupsByApp } = useApps();
   const backups = useBackups();
+  const runNow = useRunBackup(appId);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [loadError, setLoadError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -179,25 +168,6 @@ export function AppBackups({ appId }: { appId: string }) {
     }
   };
 
-  const runNow = async (name: string) => {
-    const end = trackActivity(appId, name, "backup");
-    const prior = healthOf(name);
-    try {
-      const res = await backups.runBackup(appId, name);
-      holdHealth(appId, name, { kind: "backed-up", unchanged: res.unchanged }, prior);
-      const title = res.unchanged ? `${name}: nothing changed since the last copy` : `${name} backed up`;
-      toast.success(title, { description: res.warnings.join("\n") || undefined });
-    } catch (e) {
-      const message = e instanceof Error ? e.message : "";
-      // The run itself failed (not refused before or while another runs):
-      // the row says so now, not when the next report comes.
-      if (e instanceof AgentError && message && !isRunRefusal(message)) holdHealth(appId, name, { kind: "failed", error: message }, prior);
-      toast.error(`Couldn't back up ${name}`, { description: message || undefined });
-    } finally {
-      end();
-    }
-  };
-
   if (loading && !detail) {
     return (
       <div className="flex h-40 items-center justify-center">
@@ -217,6 +187,10 @@ export function AppBackups({ appId }: { appId: string }) {
   }
 
   const current = open && open.kind !== "add" ? list.find((b) => b.name === open.name) : undefined;
+  // noPlaces: the app has no volume or bind mount, so a backup can reach
+  // nothing (unknown targets offer Add backup, whose dialog explains).
+  const targets = detail?.targets ?? null;
+  const noPlaces = targets !== null && targets.volumes.length === 0 && targets.services.every((s) => s.mounts.length === 0);
   return (
     <div className="max-w-5xl space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -229,24 +203,15 @@ export function AppBackups({ appId }: { appId: string }) {
           <span />
         )}
         <div className="flex items-center gap-2">
-          <Button
-            size="icon"
-            variant="ghost"
-            className="size-8 text-muted-foreground"
-            aria-label="Refresh backups"
-            title="Refresh backups"
-            onClick={() => void load()}
-            disabled={loading}
-          >
-            <RefreshCw className={cn("size-4", loading && "animate-spin")} />
-          </Button>
-          <Button size="sm" onClick={(e) => show({ kind: "add" }, e.currentTarget)} disabled={busy !== null || !!restoring || locked}>
-            <Plus className="size-4" /> Add backup
-          </Button>
+          {noPlaces ? null : (
+            <Button size="sm" variant="outline" onClick={(e) => show({ kind: "add" }, e.currentTarget)} disabled={busy !== null || !!restoring || locked}>
+              <Plus className="size-4" /> Add backup
+            </Button>
+          )}
         </div>
       </div>
       {restoring ? (
-        <p role="status" className="flex items-start gap-2 rounded-md bg-sky-500/10 px-3 py-2 text-sm text-sky-800 dark:text-sky-300">
+        <p role="status" className="flex items-start gap-2 rounded-md border bg-muted/50 px-3 py-2 text-sm text-foreground">
           <Spinner aria-hidden className="mt-0.5 size-4 shrink-0" />
           <span>
             Restoring <strong className="font-mono font-medium">{restoring}</strong>: the app is stopped until it is done, which can take a while for
@@ -256,32 +221,34 @@ export function AppBackups({ appId }: { appId: string }) {
       ) : null}
       {detail?.error ? (
         <InlineError className="rounded-md bg-destructive/10 px-3 py-2 [overflow-wrap:anywhere]">
-          The backups can't be read: {detail.error}. Fix the compose file, or roll back in History, before changing the backups.
+          The backups can't be read: {detail.error}. Fix the compose file, or roll back in History (Configuration → History), before changing the backups.
         </InlineError>
       ) : null}
-      {list.length === 0 && locked ? null : list.length === 0 ? (
+      {list.length === 0 && locked ? null : list.length === 0 && noPlaces ? (
+        <p className="rounded-lg border border-dashed px-4 py-10 text-center text-sm text-muted-foreground">
+          This app keeps no data on disk, so there&apos;s nothing to back up.
+        </p>
+      ) : list.length === 0 ? (
         <p className="rounded-lg border border-dashed px-4 py-10 text-center text-sm text-muted-foreground">
           This app has no backups yet. Add one here to copy a database file or folders to one of this server's storages, or declare
           them in the compose file under <code className="font-mono">x-winterflow.backups</code>.
         </p>
       ) : (
-        <Table>
-          <TableBody>
-            {list.map((b) => (
-              <BackupRow
-                key={b.name}
-                backup={b}
-                health={healthOf(b.name)}
-                busy={busy !== null || !!restoring || locked}
-                activity={activity[b.name]}
-                onSetUp={(el) => show({ kind: "enable", name: b.name }, el)}
-                onRun={() => void runNow(b.name)}
-                onPoints={(el) => show({ kind: "points", name: b.name }, el)}
-                onEdit={(el) => show({ kind: "edit", name: b.name }, el)}
-              />
-            ))}
-          </TableBody>
-        </Table>
+        <RowList label="Backups">
+          {list.map((b) => (
+            <BackupRow
+              key={b.name}
+              backup={b}
+              health={healthOf(b.name)}
+              busy={busy !== null || !!restoring || locked}
+              activity={activity[b.name]}
+              onSetUp={(el) => show({ kind: "enable", name: b.name }, el)}
+              onRun={() => void runNow(b.name)}
+              onPoints={(el) => show({ kind: "points", name: b.name }, el)}
+              onEdit={(el) => show({ kind: "edit", name: b.name }, el)}
+            />
+          ))}
+        </RowList>
       )}
       {(open?.kind === "enable" || open?.kind === "storage") && current ? (
         <BackupStorageDialog
@@ -359,12 +326,11 @@ export function AppBackups({ appId }: { appId: string }) {
 
 const TYPE_LABELS: Record<EffectiveBackup["type"], string> = { sqlite: "SQLite database", files: "Folders", custom: "Custom" };
 
-// BackupRow is one backup in three cells: its name with a muted line (type,
-// location, storage, schedule), its status (state, last copy, next copy), and
-// its actions: Set up (no storage yet), Back up now, Copies & restore and
-// Edit (Back up now and Copies are for built-in backups only: winterflow
-// neither runs nor lists a custom backup's copies; on/off is in Edit). On a
-// phone the actions are one menu.
+// BackupRow is one backup as a flat row: its name with a muted line (type,
+// location, storage, schedule), its state with the last and next copy, and
+// its actions in a ⋯ menu: Set up (no storage yet; also inline), Back up now
+// and Restore (built-in backups only: winterflow neither runs nor lists a
+// custom backup's copies), Edit (on/off is there).
 function BackupRow({
   backup: b,
   health,
@@ -384,115 +350,59 @@ function BackupRow({
   onPoints: (trigger: HTMLElement) => void;
   onEdit: (trigger: HTMLElement) => void;
 }) {
-  const menuRef = useRef<HTMLButtonElement>(null);
   const builtin = b.type !== "custom";
   const kinds = activity ?? [];
-  const restoringRow = kinds.includes("restore");
-  const state: BackupState = kinds.includes("backup") ? "running" : (health?.state ?? (b.enabled ? "never" : "off"));
-  // A run is under way here, or the agent reports one (a page reloaded, or
-  // another browser, started it): a second request would be refused.
-  const running = kinds.includes("backup") || health?.state === "running";
-  const note = restoringRow || running || !builtin ? "" : nextCopyNote(b, state, health?.last_success);
+  const { state, restoring: restoringRow, running, note } = backupRowState(b, health, kinds);
   const where = [TYPE_LABELS[b.type], locationLabel(b)].filter(Boolean).join(" · ");
   const detail = [b.storage ? `${where} → ${b.storage}` : where, builtin ? scheduleLabel(b.every) : "Its own tool"].join(" · ");
   const runDisabled = !b.enabled || running || busy;
-  const copiesTitle = b.storage ? undefined : "Set up the backup to see its copies: they are stored in its storage";
   return (
-    <TableRow>
-      <TableCell>
-        <span className="font-mono">{b.name}</span>
+    // On a phone the ⋯ stays on the name's line and the state goes under
+    // both (like the shared Row); from 640px all three sit side by side.
+    <li className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 gap-y-2 px-4 py-3 transition-colors duration-150 hover:bg-muted/40 max-sm:rounded-xl max-sm:border max-sm:bg-card sm:flex sm:flex-row sm:items-center sm:gap-4">
+      <div className="col-start-1 row-start-1 min-w-0 flex-1">
+        <span className="font-mono text-sm font-medium">{b.name}</span>
         <div className="mt-0.5 text-xs text-muted-foreground [overflow-wrap:anywhere]">{detail}</div>
-      </TableCell>
-      <TableCell>
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <Badge
-            variant="outline"
-            className={cn("min-w-[4.5rem] justify-center", STATE_STYLE[restoringRow ? "running" : state])}
-            title={health?.last_error}
-          >
-            {restoringRow ? "Restoring" : STATE_LABELS[state]}
-          </Badge>
-          {health?.last_success ? (
-            <span className="text-xs text-muted-foreground">· {relativeTime(new Date(health.last_success * 1000))}</span>
-          ) : null}
-        </div>
         {state === "failing" && health?.last_error ? <RowError error={health.last_error} /> : null}
-        {note ? <div className="mt-1 text-xs text-muted-foreground">{note}</div> : null}
-      </TableCell>
-      <TableCell className="whitespace-nowrap py-0.5 text-right">
-        <div className="hidden justify-end sm:flex">
-          {b.storage ? null : (
-            <Button size="sm" variant="outline" disabled={busy} aria-label={`Set up ${b.name}`} onClick={(e) => onSetUp(e.currentTarget)}>
-              Set up…
-            </Button>
-          )}
-          {builtin ? (
-            <>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="px-2 text-muted-foreground"
-                aria-label={`Back up now: ${b.name}`}
-                disabled={runDisabled}
-                onClick={onRun}
-              >
-                {running ? <Spinner className="size-4" /> : null} Back up now
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="px-2 text-muted-foreground"
-                aria-label={`Copies & restore: ${b.name}`}
-                title={copiesTitle}
-                disabled={!b.storage}
-                onClick={(e) => onPoints(e.currentTarget)}
-              >
-                Copies &amp; restore
-              </Button>
-            </>
-          ) : null}
+      </div>
+      <div className="col-span-2 col-start-1 row-start-2 flex flex-wrap items-center gap-x-2 gap-y-1 sm:w-60 sm:justify-end">
+        <span title={health?.last_error}>
+          <StatusPill status={restoringRow ? RESTORING : backupStatus(state)} />
+        </span>
+        {health?.last_success ? (
+          <span className="text-xs text-muted-foreground">Last copy {relativeTime(new Date(health.last_success * 1000))}</span>
+        ) : null}
+        {note ? <span className="text-xs text-muted-foreground sm:w-full sm:text-right">{note}</span> : null}
+      </div>
+      <div data-testid="backup-row-actions" className="col-start-2 row-start-1 flex shrink-0 items-center justify-end gap-1 max-sm:-my-1 max-sm:-mr-2">
+        {b.storage ? null : (
           <Button
             size="sm"
-            variant="ghost"
-            className="px-2 text-muted-foreground"
-            aria-label={`Edit: ${b.name}`}
+            variant="outline"
+            className="max-sm:h-10"
             disabled={busy}
-            onClick={(e) => onEdit(e.currentTarget)}
+            aria-label={`Set up ${b.name}`}
+            onClick={(e) => onSetUp(e.currentTarget)}
           >
-            Edit
+            Set up…
           </Button>
-        </div>
-        <div className="sm:hidden">
-          <DropdownMenu modal={false}>
-            <DropdownMenuTrigger asChild>
-              <Button ref={menuRef} size="icon" variant="ghost" className="size-8 text-muted-foreground" aria-label={`Actions for ${b.name}`}>
-                <MoreHorizontal className="size-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              {b.storage ? null : (
-                <DropdownMenuItem disabled={busy} onSelect={() => menuRef.current && onSetUp(menuRef.current)}>
-                  Set up…
-                </DropdownMenuItem>
-              )}
-              {builtin ? (
-                <>
-                  <DropdownMenuItem disabled={runDisabled} onSelect={onRun}>
-                    Back up now
-                  </DropdownMenuItem>
-                  <DropdownMenuItem disabled={!b.storage} title={copiesTitle} onSelect={() => menuRef.current && onPoints(menuRef.current)}>
-                    Copies &amp; restore
-                  </DropdownMenuItem>
-                </>
-              ) : null}
-              <DropdownMenuItem disabled={busy} onSelect={() => menuRef.current && onEdit(menuRef.current)}>
-                Edit
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </TableCell>
-    </TableRow>
+        )}
+        <RowMenu
+          label={`Actions for ${b.name}`}
+          items={[
+            !b.storage && { label: "Set up…", disabled: busy, onSelect: (t) => t && onSetUp(t) },
+            builtin && { label: "Back up now", disabled: runDisabled, onSelect: () => onRun() },
+            builtin && {
+              label: "Restore…",
+              disabled: !b.storage || busy,
+              hint: b.storage ? undefined : "Set up the backup first: its copies are kept in its storage",
+              onSelect: (t) => t && onPoints(t),
+            },
+            { label: "Edit…", disabled: busy, onSelect: (t) => t && onEdit(t) },
+          ]}
+        />
+      </div>
+    </li>
   );
 }
 
@@ -502,8 +412,11 @@ function RowError({ error }: { error: string }) {
   const summary = errorSummary(error);
   const more = summary !== error.trim();
   return (
-    <div className="mt-1 text-xs text-destructive [overflow-wrap:anywhere]">
-      <span>{summary}</span>
+    <div className="mt-1 text-xs text-foreground [overflow-wrap:anywhere]">
+      <span className="inline-flex items-start gap-1">
+        <CircleX className="mt-px size-3.5 shrink-0 text-destructive" aria-hidden />
+        {summary}
+      </span>
       {more ? (
         <details className="mt-0.5">
           <summary className="w-fit cursor-pointer text-muted-foreground hover:text-foreground">Details</summary>

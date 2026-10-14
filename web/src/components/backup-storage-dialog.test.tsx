@@ -4,6 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 
 import { BackupStorageDialog } from "@/components/backup-storage-dialog";
+import { stubViewport } from "@/test/media";
 
 // Links point into the active server's scope (/server/:id/...).
 vi.mock("@/context/use-servers", () => ({ useServers: () => ({ activeServerId: "srv-1" }) }));
@@ -60,7 +61,7 @@ describe("BackupStorageDialog", () => {
   it("points to Settings → Storages when there are none", async () => {
     renderDialog(async () => []);
     const link = await screen.findByRole("link", { name: "Add a storage in Settings → Storages" });
-    expect(link).toHaveAttribute("href", "/server/srv-1/settings?tab=storages");
+    expect(link).toHaveAttribute("href", "/server/srv-1/settings/storages");
     expect(screen.getByRole("button", { name: "Turn on" })).toBeDisabled();
   });
 
@@ -76,5 +77,19 @@ describe("BackupStorageDialog", () => {
       </MemoryRouter>,
     );
     expect(await screen.findByRole("alert")).toHaveTextContent("storage disk is gone");
+  });
+
+  it("is a bottom sheet on a phone", async () => {
+    stubViewport(375);
+    try {
+      const user = userEvent.setup({ delay: null });
+      const onPick = renderDialog(async () => ["disk"]);
+      expect(screen.getByRole("dialog", { name: "Turn on database" })).toHaveClass("rounded-t-[10px]");
+      await screen.findByLabelText("Storage");
+      await user.click(screen.getByRole("button", { name: "Turn on" }));
+      expect(onPick).toHaveBeenCalledWith("disk");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

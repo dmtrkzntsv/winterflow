@@ -5,12 +5,23 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="color-scheme" content="light dark" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>WinterFlow.io</title>
+    <title>Winterflow</title>
     <script>
-      // Dark before first paint (followSystemTheme in main.tsx then tracks
-      // changes), so a dark-OS user never sees a light flash.
-      if (window.matchMedia("(prefers-color-scheme: dark)").matches)
-        document.documentElement.classList.add("dark");
+      // The theme before first paint (startTheme in main.tsx then keeps it):
+      // the stored choice (wf.theme), else the system's, so nobody sees a
+      // flash of the other theme.
+      (function () {
+        var stored = null;
+        try {
+          stored = localStorage.getItem("wf.theme");
+        } catch (e) {}
+        if (
+          stored === "dark" ||
+          (stored !== "light" &&
+            window.matchMedia("(prefers-color-scheme: dark)").matches)
+        )
+          document.documentElement.classList.add("dark");
+      })();
     </script>
   </head>
   <body>

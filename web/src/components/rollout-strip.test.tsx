@@ -24,7 +24,7 @@ function renderStrip(r: Rollout | null, onStop = vi.fn(async () => {})) {
 describe("RolloutStrip", () => {
   it("shows the app in flight and stops after it", async () => {
     const onStop = renderStrip(rollout());
-    expect(screen.getByRole("status")).toHaveTextContent("Upgrading 3 of 12: bakomi…");
+    expect(screen.getByRole("status")).toHaveTextContent("Updating 3 of 12: bakomi…");
     await userEvent.click(screen.getByRole("button", { name: "Stop" }));
     expect(onStop).toHaveBeenCalledWith("r1");
   });
@@ -53,7 +53,7 @@ describe("RolloutStrip", () => {
 
   it("adds the reload hint to reload failures only", () => {
     renderStrip(rollout({ state: "failed", error: "pull access denied" }));
-    expect(screen.getByRole("alert")).toHaveTextContent("Upgrade to r3 stopped at bakomi");
+    expect(screen.getByRole("alert")).toHaveTextContent("Update to version 3 stopped at bakomi");
     expect(screen.getByRole("alert")).not.toHaveTextContent("Reloads stop at this app");
   });
 
@@ -68,7 +68,7 @@ describe("RolloutStrip", () => {
 
   it("tells what an Upgrade all skipped, and can be dismissed", async () => {
     renderStrip(rollout({ state: "done", done: 2, skipped: 1, revision: 5 }));
-    expect(screen.getByRole("status")).toHaveTextContent("Upgraded 2 apps to r5 · 1 skipped: it needs a new value — upgrade it on its own.");
+    expect(screen.getByRole("status")).toHaveTextContent("Updated 2 apps to version 5 · 1 skipped: it needs a new value — update it on its own.");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Dismiss" }));
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
@@ -77,7 +77,7 @@ describe("RolloutStrip", () => {
   it("tells what a stopped Upgrade all skipped", () => {
     renderStrip(rollout({ state: "stopped", done: 1, skipped: 2, revision: 5 }));
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Stopped after upgrading 1 app to r5 · 2 skipped: they need a new value — upgrade them on their own.",
+      "Stopped after updating 1 app to version 5 · 2 skipped: they need a new value — update them on their own.",
     );
   });
 

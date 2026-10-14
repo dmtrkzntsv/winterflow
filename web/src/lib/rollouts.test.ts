@@ -13,27 +13,27 @@ afterEach(() => {
 
 describe("rolloutLine", () => {
   it("counts the app in flight among the total", () => {
-    expect(rolloutLine(rollout(), names)).toBe("Upgrading 3 of 12: bakomi…");
+    expect(rolloutLine(rollout(), names)).toBe("Updating 3 of 12: bakomi…");
     expect(
       rolloutLine(rollout({ kind: "vars_reload", done: 1, skipped: 0, total: 5, current_app_name: "shop", current_server_id: "s2" }), names),
     ).toBe("Reloading 2 of 5: shop on srv-2…");
   });
 
-  it("says queued, stopping, and names an app without a name by its id", () => {
-    expect(rolloutLine(rollout({ state: "queued", current_app_id: "" }), names)).toBe("Upgrade to r3 queued…");
+  it("says queued, stopping, and names an app without a name Unnamed app", () => {
+    expect(rolloutLine(rollout({ state: "queued", current_app_id: "" }), names)).toBe("Update to version 3 queued…");
     expect(rolloutLine(rollout({ kind: "vars_reload", state: "queued", current_app_id: "" }), names)).toBe("Reload queued…");
     expect(rolloutLine(rollout({ stop_requested: true, current_app_name: "" }), names)).toBe(
-      "Upgrading 3 of 12: a1b2c3d4 (stopping after this one)",
+      "Updating 3 of 12: Unnamed app (stopping after this one)",
     );
   });
 
   it("names where a failed rollout stopped", () => {
-    expect(failureLine(rollout({ state: "failed" }), names)).toBe("Upgrade to r3 stopped at bakomi");
+    expect(failureLine(rollout({ state: "failed" }), names)).toBe("Update to version 3 stopped at bakomi");
     expect(failureLine(rollout({ kind: "vars_reload", state: "failed", current_app_name: "shop", current_server_id: "s2" }), names)).toBe(
       "Reload stopped at shop on srv-2",
     );
     // No app in flight: no dangling "at".
-    expect(failureLine(rollout({ state: "failed", current_app_id: "", current_app_name: "" }), names)).toBe("Upgrade to r3 failed");
+    expect(failureLine(rollout({ state: "failed", current_app_id: "", current_app_name: "" }), names)).toBe("Update to version 3 failed");
     expect(failureLine(rollout({ kind: "vars_reload", state: "failed", current_app_id: "", current_server_id: "" }), names)).toBe(
       "Reload failed",
     );
@@ -45,19 +45,19 @@ describe("rolloutLine", () => {
 describe("skippedLine", () => {
   it("says what an ended Upgrade all skipped, pluralized", () => {
     expect(skippedLine(rollout({ state: "done", done: 2, skipped: 1, revision: 5 }))).toBe(
-      "Upgraded 2 apps to r5 · 1 skipped: it needs a new value — upgrade it on its own.",
+      "Updated 2 apps to version 5 · 1 skipped: it needs a new value — update it on its own.",
     );
     expect(skippedLine(rollout({ state: "done", done: 1, skipped: 3, revision: 5 }))).toBe(
-      "Upgraded 1 app to r5 · 3 skipped: they need a new value — upgrade them on their own.",
+      "Updated 1 app to version 5 · 3 skipped: they need a new value — update them on their own.",
     );
     expect(skippedLine(rollout({ state: "done", done: 0, skipped: 1, revision: 5 }))).toBe(
-      "No app upgraded to r5 · 1 skipped: it needs a new value — upgrade it on its own.",
+      "No app updated to version 5 · 1 skipped: it needs a new value — update it on its own.",
     );
     expect(skippedLine(rollout({ state: "stopped", done: 2, skipped: 1, revision: 5 }))).toBe(
-      "Stopped after upgrading 2 apps to r5 · 1 skipped: it needs a new value — upgrade it on its own.",
+      "Stopped after updating 2 apps to version 5 · 1 skipped: it needs a new value — update it on its own.",
     );
     expect(skippedLine(rollout({ state: "stopped", done: 0, skipped: 2, revision: 5 }))).toBe(
-      "Stopped before upgrading any app to r5 · 2 skipped: they need a new value — upgrade them on their own.",
+      "Stopped before updating any app to version 5 · 2 skipped: they need a new value — update them on their own.",
     );
   });
 

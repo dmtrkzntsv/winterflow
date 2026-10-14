@@ -8,23 +8,23 @@ import { ErrorText } from "@/components/error-text";
 import { useRollout } from "@/hooks/use-rollout";
 import { useRolloutsApi } from "@/hooks/use-rollouts-api";
 import { serverPath } from "@/lib/server-paths";
-import { appLabel, failureLine, isActive, rolloutLine, skippedLine, type Rollout, type RolloutsApi } from "@/lib/rollouts";
+import { currentApp, failureLine, isActive, rolloutLine, skippedLine, type Rollout, type RolloutsApi } from "@/lib/rollouts";
 
 // ReloadRolloutStrip is the org's shared-variable reload rollout as a
 // RolloutStrip with Stop (api: a test's client), its servers named by
 // serverNames.
 export function ReloadRolloutStrip({ api, serverNames }: { api?: RolloutsApi; serverNames: Map<string, string> }) {
   const { rollout, stop } = useRollout(useRolloutsApi(api), "vars_reload");
-  return <RolloutStrip rollout={rollout} serverName={(id) => serverNames.get(id) ?? id} onStop={stop} />;
+  return <RolloutStrip rollout={rollout} serverName={(id) => serverNames.get(id) ?? "a server"} onStop={stop} />;
 }
 
-// RolloutStrip shows a rollout in progress ("Upgrading 3 of 12: bakomi…"
+// RolloutStrip shows a rollout in progress ("Updating 3 of 12: bakomi…"
 // with Stop) or the failure that ended one, naming the app with a link to
 // it and the error (Dismiss hides it for this visit); a failed reload adds
 // that later reloads stop at the same app (it is picked first again). An
-// Upgrade all that ended (done or stopped) with instances skipped shows an
-// info line saying so, dismissible the same way. Nothing for any other
-// finished or stopped rollout, or none.
+// "Update all apps" that ended (done or stopped) with instances skipped
+// shows an info line saying so, dismissible the same way. Nothing for any
+// other finished or stopped rollout, or none.
 export function RolloutStrip({
   rollout,
   serverName,
@@ -82,7 +82,7 @@ export function RolloutStrip({
             <>
               {" · "}
               <Link to={link} className="font-medium underline-offset-2 hover:underline">
-                Open {appLabel(rollout)}
+                Open {currentApp(rollout)}
               </Link>
             </>
           ) : null}

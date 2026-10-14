@@ -1,6 +1,17 @@
 import { AppStatusCode } from "@/context/apps-context-base";
 import type { BackupHealth } from "@/lib/backups";
 
+// ContainerStatusWire is one container of an app in a status report
+// (command.ContainerStatus): its compose name, its own status code (the
+// AppStatusCode values), and why it stopped when it did.
+export type ContainerStatusWire = {
+  container_id: string;
+  name: string;
+  status_code: number;
+  exit_code: number;
+  error?: string;
+};
+
 // AppStatusWire is one app of an apps.status report as the API sends it
 // (get-apps-status and the apps_status SSE event).
 export type AppStatusWire = {
@@ -11,25 +22,31 @@ export type AppStatusWire = {
   stale_vars?: string[] | null;
   // The health of each of the app's backups (none: absent).
   backups?: BackupHealth[] | null;
+  // The app's containers (none reported: absent or null).
+  containers?: ContainerStatusWire[] | null;
 };
 
-// splitStatus turns a report into the apps context's three maps: container
-// status codes, the stale shared names of stale apps only, and the backup
-// health of apps with backups only.
+// splitStatus turns a report into the apps context's maps: container
+// status codes, the stale shared names of stale apps only, the backup
+// health of apps with backups only, and the containers of apps that report
+// some.
 export function splitStatus(apps: AppStatusWire[] | null | undefined): {
   status: Record<string, number>;
   stale: Record<string, string[]>;
   backups: Record<string, BackupHealth[]>;
+  containers: Record<string, ContainerStatusWire[]>;
 } {
   const status: Record<string, number> = {};
   const stale: Record<string, string[]> = {};
   const backups: Record<string, BackupHealth[]> = {};
+  const containers: Record<string, ContainerStatusWire[]> = {};
   for (const a of apps ?? []) {
     status[a.app_id] = a.status_code;
     if (a.stale_vars && a.stale_vars.length > 0) stale[a.app_id] = a.stale_vars;
     if (a.backups?.length) backups[a.app_id] = a.backups;
+    if (a.containers?.length) containers[a.app_id] = a.containers;
   }
-  return { status, stale, backups };
+  return { status, stale, backups, containers };
 }
 
 // hasRunningContainers mirrors the agent's reload rule: a shared-variable

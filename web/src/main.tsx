@@ -6,10 +6,8 @@ import "@/styles/inter.css"
 import "@/lib/i18n"
 
 import { RequireAuth } from "@/components/require-auth"
-import { DefaultServer, ServerScope } from "@/components/server-routes"
-import { NotFound } from "@/components/not-found"
 import { LogoSprite } from "@/components/app-logo"
-import { Toaster } from "@/components/ui/sonner"
+import { ThemedToaster } from "@/components/themed-toaster"
 import { AuthProvider } from "@/context/auth-context"
 import { UserProvider } from "@/context/user-context"
 import { ProfileProvider } from "@/context/profile-context"
@@ -17,29 +15,21 @@ import { ServersProvider } from "@/context/servers-context"
 import { NotificationsProvider } from "@/context/notifications-context"
 import { AppsProvider } from "@/context/apps-context"
 import { AppLayout } from "@/layouts/app-layout"
-import HomePage from "@/pages/home"
-import CreateAppPage from "@/pages/create-app"
-import AppDetailsPage from "@/pages/app-details"
-import MonitoringPage from "@/pages/monitoring"
-import SettingsPage from "@/pages/settings"
-import UserTokensPage from "@/pages/user-tokens"
-import UserPasswordPage from "@/pages/user-password"
-import OrgMembersPage from "@/pages/org-members"
-import OrgAlertsPage from "@/pages/org-alerts"
-import OrgVariablesPage from "@/pages/org-variables";
-import OrgTemplatesPage from "@/pages/org-templates"
-import TemplatePage from "@/pages/template-page"
-import CreateFromTemplatePage from "@/pages/create-from-template"
 import LoginPage from "@/pages/login"
 import RegisterPage from "@/pages/register"
-import { followSystemTheme } from "@/lib/theme"
+import { startTheme } from "@/lib/theme"
+import { startCreateSync } from "@/lib/held-creates"
+import { appRoutes } from "@/routes"
 import "./index.css"
 
-// Dark mode follows the OS; set before the first render so nothing flashes.
-followSystemTheme()
+// Light, dark or the system's (the user menu and ⌘K switch it); applied
+// before the first render so nothing flashes.
+startTheme()
+// Tabs share the creates in flight, so two can't create one app twice.
+startCreateSync()
 
 // The servers and apps providers sit inside the router: the active server is
-// read from the URL.
+// read from the URL. The signed-in pages are the route table in routes.tsx.
 const router = createBrowserRouter([
   {
     element: (
@@ -56,57 +46,7 @@ const router = createBrowserRouter([
             <AppLayout />
           </RequireAuth>
         ),
-        children: [
-          {
-            path: "/",
-            element: <DefaultServer fallback={<HomePage />} />,
-          },
-          {
-            path: "/server/:serverId",
-            element: <ServerScope />,
-            children: [
-              { index: true, element: <HomePage /> },
-              { path: "create-app", element: <CreateAppPage /> },
-              { path: "create-app/template", element: <CreateFromTemplatePage /> },
-              { path: "app/:appId", element: <AppDetailsPage /> },
-              { path: "monitoring", element: <MonitoringPage /> },
-              { path: "settings", element: <SettingsPage /> },
-            ],
-          },
-          {
-            path: "/user/tokens",
-            element: <UserTokensPage />,
-          },
-          {
-            path: "/user/password",
-            element: <UserPasswordPage />,
-          },
-          {
-            path: "/org/members",
-            element: <OrgMembersPage />,
-          },
-          {
-            path: "/org/alerts",
-            element: <OrgAlertsPage />,
-          },
-          {
-            path: "/org/variables",
-            element: <OrgVariablesPage />,
-          },
-          {
-            path: "/org/templates",
-            element: <OrgTemplatesPage />,
-          },
-          {
-            path: "/org/templates/new",
-            element: <TemplatePage />,
-          },
-          {
-            path: "/org/templates/:templateId",
-            element: <TemplatePage />,
-          },
-          { path: "*", element: <NotFound /> },
-        ],
+        children: appRoutes,
       },
       {
         path: "/login",
@@ -128,7 +68,7 @@ createRoot(document.getElementById("root")!).render(
         <NotificationsProvider>
           <LogoSprite />
           <RouterProvider router={router} />
-          <Toaster />
+          <ThemedToaster />
         </NotificationsProvider>
         </ProfileProvider>
       </UserProvider>

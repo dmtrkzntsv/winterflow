@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Volume } from "@/context/use-docker";
-import { groupVolumes, shortVolumeName, volumeNameError } from "@/lib/volumes";
+import { groupVolumes, shortVolumeName, volumeNameError, volumeState } from "@/lib/volumes";
 
 const HASH = "0123456789abcdef".repeat(4); // 64 hex chars
 
@@ -82,5 +82,13 @@ describe("groupVolumes", () => {
   it("files an anonymous volume that carries an app label under the app", () => {
     const v = vol({ name: HASH, anonymous: true, app_id: "1" });
     expect(groupVolumes([v])).toEqual([{ label: "Winterflow apps", volumes: [v] }]);
+  });
+});
+
+describe("volumeState", () => {
+  it("says in plain words whether a volume is used", () => {
+    expect(volumeState(vol({ name: "a", in_use: true }))).toEqual({ tone: "ok", label: "In use" });
+    expect(volumeState(vol({ name: "b", orphan: true, app_id: "gone" }))).toEqual({ tone: "warn", label: "Not used by any app" });
+    expect(volumeState(vol({ name: "c" }))).toEqual({ tone: "idle", label: "Unused" });
   });
 });

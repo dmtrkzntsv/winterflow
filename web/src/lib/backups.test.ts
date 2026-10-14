@@ -31,6 +31,7 @@ import {
   pathsFrom,
   pointLabel,
   pointTime,
+  runnableBackups,
   scheduleLabel,
   type EffectiveBackup,
 } from "@/lib/backups";
@@ -313,12 +314,13 @@ describe("the next copy", () => {
   const hourly = { enabled: true, type: "sqlite" as const, every: "1h" };
   it("says when the next scheduled copy is due, or that the first one is coming", () => {
     expect(nextCopyNote(hourly, "never", undefined, at)).toBe("next within 1 hour");
-    const last = secs(at) - 600;
-    const due = new Date(last * 1000 + 3_600_000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-    expect(nextCopyNote(hourly, "ok", last, at)).toBe(`next ${due}`);
+    // Relative, like "Last copy 9 minutes ago" beside it.
+    expect(nextCopyNote(hourly, "ok", secs(at) - 480, at)).toBe("next in 52 min");
+    expect(nextCopyNote(hourly, "ok", secs(at) - 3599, at)).toBe("next in 1 min");
     expect(nextCopyNote(hourly, "ok", secs(at) - 7200, at)).toBe("next due now");
-    const tomorrow = nextCopyNote({ ...hourly, every: "24h" }, "ok", secs(at) - 60, at);
-    expect(tomorrow).toContain(new Date(at + 86_400_000 - 60_000).toLocaleDateString());
+    expect(nextCopyNote({ ...hourly, every: "24h" }, "ok", secs(at) - 60, at)).toBe("next in 24 hours");
+    expect(nextCopyNote({ ...hourly, every: "6h" }, "ok", secs(at) - 3600, at)).toBe("next in 5 hours");
+    expect(nextCopyNote({ ...hourly, every: "168h" }, "ok", secs(at) - 60, at)).toBe("next in 7 days");
   });
   it("says nothing when nothing is scheduled or the state says more", () => {
     expect(nextCopyNote({ ...hourly, enabled: false }, "off", undefined, at)).toBe("");
@@ -367,5 +369,21 @@ describe("what the agent's answers are matched by", () => {
   it("tells a refused run from a failed one", () => {
     expect(isRunRefusal("a backup of uploads is already queued or running")).toBe(true);
     expect(isRunRefusal("upload the copy: permission denied")).toBe(false);
+  });
+});
+
+describe("runnableBackups", () => {
+  it("keeps the backups Back up now can run: on, with a storage, not custom", () => {
+    const b = (name: string, over: Partial<EffectiveBackup>): EffectiveBackup => ({
+      name,
+      type: "sqlite",
+      enabled: true,
+      storage: "disk",
+      in_recipe: true,
+      from_recipe: null,
+      ...over,
+    });
+    const list = [b("db", {}), b("off", { enabled: false }), b("nowhere", { storage: "" }), b("replica", { type: "custom" })];
+    expect(runnableBackups(list).map((x) => x.name)).toEqual(["db"]);
   });
 });

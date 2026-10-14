@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { relativeTime } from "@/lib/utils";
+import { lowerFirst, relativeTime } from "@/lib/utils";
 
 describe("relativeTime", () => {
   const now = 1_800_000_000_000;
@@ -21,5 +21,16 @@ describe("relativeTime", () => {
   it("falls back to the date after a week", () => {
     const old = ago(8 * 86_400);
     expect(relativeTime(old, now)).toBe(old.toLocaleDateString());
+  });
+});
+
+describe("lowerFirst", () => {
+  it("puts a label inside a sentence, keeping acronyms", () => {
+    expect(lowerFirst("Temporary password")).toBe("temporary password");
+    expect(lowerFirst("Memory")).toBe("memory");
+    expect(lowerFirst("CPU")).toBe("CPU");
+    expect(lowerFirst("S3 bucket")).toBe("S3 bucket");
+    expect(lowerFirst("")).toBe("");
+    expect(lowerFirst("a")).toBe("a");
   });
 });

@@ -1,18 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Tags } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
+import { ResponsiveDialog } from "@/components/responsive-dialog";
 import { useApps } from "@/context/use-apps";
+import { returnFocusTo } from "@/lib/focus";
 
 type Props = {
   image: string; // full ref as written in the compose file (may carry a tag)
@@ -27,6 +21,8 @@ export function ImageTagPicker({ image, onSelect }: Props) {
   const [tags, setTags] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
+  // The dialog hands focus back to its button (when it is still there).
+  const trigger = useRef<HTMLButtonElement>(null);
 
   const baseRef = imageWithoutTag(image);
 
@@ -49,20 +45,19 @@ export function ImageTagPicker({ image, onSelect }: Props) {
   const visible = (tags ?? []).filter((t) => t.includes(filter));
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button size="sm" variant="outline" className="h-7 gap-1 font-mono text-xs">
-          <Tags className="size-3.5" />
-          {image}
-        </Button>
-      </DialogTrigger>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle className="font-mono text-base">{baseRef}</DialogTitle>
-          <DialogDescription>
-            Pick a tag to use in the compose file.
-          </DialogDescription>
-        </DialogHeader>
+    <>
+      <Button ref={trigger} size="sm" variant="outline" className="h-7 gap-1 font-mono text-xs" onClick={() => setOpen(true)}>
+        <Tags className="size-3.5" />
+        {image}
+      </Button>
+      <ResponsiveDialog
+        open={open}
+        onOpenChange={setOpen}
+        className="sm:max-w-md"
+        title={<span className="font-mono text-base">{baseRef}</span>}
+        description="Pick a tag to use in the compose file."
+        onCloseAutoFocus={(e) => returnFocusTo(trigger)(e)}
+      >
         {error ? (
           <p className="text-sm text-destructive">{error}</p>
         ) : tags === null ? (
@@ -71,22 +66,16 @@ export function ImageTagPicker({ image, onSelect }: Props) {
           </div>
         ) : (
           <div className="space-y-2">
-            <Input
-              placeholder="Filter tags…"
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-            />
+            <Input placeholder="Filter tags…" value={filter} onChange={(e) => setFilter(e.target.value)} />
             <div className="max-h-64 space-y-1 overflow-y-auto">
               {visible.length === 0 ? (
-                <p className="py-4 text-center text-sm text-muted-foreground">
-                  No matching tags.
-                </p>
+                <p className="py-4 text-center text-sm text-muted-foreground">No matching tags.</p>
               ) : (
                 visible.map((tag) => (
                   <button
                     key={tag}
                     type="button"
-                    className="block w-full rounded px-2 py-1.5 text-left font-mono text-sm hover:bg-muted"
+                    className="block w-full rounded px-2 py-1.5 text-left font-mono text-sm hover:bg-muted max-sm:min-h-10"
                     onClick={() => {
                       onSelect(`${baseRef}:${tag}`);
                       setOpen(false);
@@ -99,8 +88,8 @@ export function ImageTagPicker({ image, onSelect }: Props) {
             </div>
           </div>
         )}
-      </DialogContent>
-    </Dialog>
+      </ResponsiveDialog>
+    </>
   );
 }
 

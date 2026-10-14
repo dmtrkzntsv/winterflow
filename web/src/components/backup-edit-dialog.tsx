@@ -6,17 +6,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Disclosure } from "@/components/disclosure";
 import { InlineError } from "@/components/inline-error";
 import { NativeSelect } from "@/components/native-select";
 import { PathsField, ScheduleSelect } from "@/components/backup-fields";
+import { ResponsiveDialog } from "@/components/responsive-dialog";
 import {
   cappedNote,
   changed,
@@ -51,14 +45,15 @@ const keepFields = (k: EffectiveBackup["keep"]) => ({
   monthly: String(k?.monthly ?? 6),
 });
 
-// BackupEditDialog edits a sqlite or files backup's schedule, retention and
-// location. For a backup of the compose file each part is badged "from
-// template" or "changed", and "Reset to template" drops the change (it
-// shows the template's value at once and applies it when saved). A backup
-// added here can be removed. The "Back up on schedule" switch turns the
-// backup on or off with the rest (it needs a storage). A custom backup (its
-// own tool runs it) gets only that switch and the storage. The parent remounts it per opening; onSave gets
-// the backup's whole new list entry; error is why the last save was refused,
+// BackupEditDialog edits a sqlite or files backup's schedule and, under
+// Advanced, its retention and location. For a backup of the compose file
+// each part is badged "from template" or "changed", and "Reset to template"
+// drops the change (it shows the template's value at once and applies it
+// when saved). A backup added here can be removed. The "Back up on
+// schedule" switch turns the backup on or off with the rest (it needs a
+// storage). A custom backup (its own tool runs it) gets only that switch
+// and the storage. The parent remounts it per opening; onSave gets the
+// backup's whole new list entry; error is why the last save was refused,
 // kept in view next to Save. onChangeStorage (when given) opens the storage
 // picker in place of this dialog: the storage is not edited here.
 export function BackupEditDialog({
@@ -87,6 +82,8 @@ export function BackupEditDialog({
   onChangeStorage?: () => void;
 }) {
   const b = backup;
+  // A custom backup runs its own tool: only its on/off and storage are here.
+  const custom = b.type === "custom";
   const [enabled, setEnabled] = useState(b.enabled);
   const [every, setEvery] = useState(b.every ?? "1h");
   const [recent, setRecent] = useState(keepFields(b.keep).recent);
@@ -104,6 +101,12 @@ export function BackupEditDialog({
   const [pathsByKind, setPathsByKind] = useState<Partial<Record<"volume" | "service", string>>>({});
   // A group the user changed, or reset to the template; never both.
   const [marks, setMarks] = useState<Map<Group, "edited" | "reset">>(new Map());
+
+  // Retention and location are Advanced. A stored value the form refuses
+  // opens them at once: Save is disabled until it is fixed.
+  const [advancedOpen, setAdvancedOpen] = useState(
+    () => !custom && !!(keepError(recent, daily, monthly) || locationError(b.type, where, target, pathsFrom(pathsText))),
+  );
 
   const touch = (g: Group) => setMarks((m) => new Map(m).set(g, "edited"));
   // resetGroup goes back to the compose file's value, shown at once.
@@ -130,8 +133,6 @@ export function BackupEditDialog({
   };
 
   const pathList = pathsFrom(pathsText);
-  // A custom backup runs its own tool: only its on/off and storage are here.
-  const custom = b.type === "custom";
   const problem = custom
     ? ""
     : everyError(every) ||
@@ -196,59 +197,79 @@ export function BackupEditDialog({
   );
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg"
-        onCloseAutoFocus={returnFocusTo(returnFocus)}
+    <ResponsiveDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      className="sm:max-w-lg"
+      onCloseAutoFocus={returnFocusTo(returnFocus)}
+      title={`Edit backup ${b.name}`}
+      description={
+        <>
+          {custom ? "Runs its own backup tool" : b.type === "sqlite" ? "A SQLite database file" : "Folders and files"}
+          {b.in_recipe ? ", declared by the compose file." : ", added here."}
+        </>
+      }
+      aside={
+        onRemove ? (
+          <Button type="button" variant="ghost" className="text-destructive hover:text-destructive sm:mr-auto" disabled={busy} onClick={onRemove}>
+            Remove backup
+          </Button>
+        ) : null
+      }
+      footer={
+        <>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button type="submit" form="backup-edit-form" disabled={!!problem || busy}>
+            {busy ? "Saving…" : "Save"}
+          </Button>
+        </>
+      }
+    >
+      <form
+        id="backup-edit-form"
+        className="grid gap-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!problem && !busy) onSave(entry());
+        }}
       >
-        <form
-          className="grid gap-4"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (!problem && !busy) onSave(entry());
-          }}
-        >
-          <DialogHeader>
-            <DialogTitle>Edit backup {b.name}</DialogTitle>
-            <DialogDescription>
-              {custom ? "Runs its own backup tool" : b.type === "sqlite" ? "A SQLite database file" : "Folders and files"}
-              {b.in_recipe ? ", declared by the compose file." : ", added here."}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-3 rounded-md border p-3 text-sm">
-            <div className="flex items-center justify-between gap-3">
-              <Label htmlFor="backup-enabled" className="font-medium">
-                {custom ? "Run its backup tool" : "Back up on schedule"}
-              </Label>
-              <Switch id="backup-enabled" checked={enabled} disabled={busy || !b.storage} onCheckedChange={setEnabled} />
-            </div>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span>
-                <span className="font-medium">Storage</span>{" "}
-                <span className="font-mono text-muted-foreground [overflow-wrap:anywhere]">{b.storage || "none"}</span>
-              </span>
-              {onChangeStorage ? (
-                <Button type="button" variant="outline" size="sm" disabled={busy} onClick={onChangeStorage}>
-                  {b.storage ? "Change storage…" : "Pick a storage…"}
-                </Button>
-              ) : null}
-            </div>
-            {b.storage ? null : <p className="text-xs text-muted-foreground">Pick a storage to turn the backup on: its copies go there.</p>}
+        <div className="grid gap-3 rounded-md border p-3 text-sm">
+          <div className="flex items-center justify-between gap-3">
+            <Label htmlFor="backup-enabled" className="font-medium">
+              {custom ? "Run its backup tool" : "Back up on schedule"}
+            </Label>
+            <Switch id="backup-enabled" checked={enabled} disabled={busy || !b.storage} onCheckedChange={setEnabled} />
           </div>
-          {custom ? null : (
-          <fieldset disabled={busy} className="grid min-w-0 gap-3">
-            {section(
-              "schedule",
-              "Schedule",
-              <ScheduleSelect
-                aria-label="Schedule"
-                value={every}
-                onChange={(v) => {
-                  setEvery(v);
-                  touch("schedule");
-                }}
-              />,
-            )}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span>
+              <span className="font-medium">Storage</span>{" "}
+              <span className="font-mono text-muted-foreground [overflow-wrap:anywhere]">{b.storage || "none"}</span>
+            </span>
+            {onChangeStorage ? (
+              <Button type="button" variant="outline" size="sm" disabled={busy} onClick={onChangeStorage}>
+                {b.storage ? "Change storage…" : "Pick a storage…"}
+              </Button>
+            ) : null}
+          </div>
+          {b.storage ? null : <p className="text-xs text-muted-foreground">Pick a storage to turn the backup on: its copies go there.</p>}
+        </div>
+        {custom ? null : (
+        <fieldset disabled={busy} className="grid min-w-0 gap-3">
+          {section(
+            "schedule",
+            "Schedule",
+            <ScheduleSelect
+              aria-label="Schedule"
+              value={every}
+              onChange={(v) => {
+                setEvery(v);
+                touch("schedule");
+              }}
+            />,
+          )}
+          <Disclosure label="Advanced" open={advancedOpen} onOpenChange={setAdvancedOpen}>
             {section(
               "retention",
               "Keep",
@@ -347,33 +368,16 @@ export function BackupEditDialog({
                 ) : null}
               </>,
             )}
-          </fieldset>
-          )}
-          {error ? (
-            <InlineError icon className="[overflow-wrap:anywhere]">
-              {error}
-            </InlineError>
-          ) : null}
-          {problem ? <InlineError icon>{problem}</InlineError> : null}
-          <DialogFooter className="gap-2 sm:justify-between sm:space-x-0">
-            {onRemove ? (
-              <Button type="button" variant="ghost" className="text-destructive hover:text-destructive" disabled={busy} onClick={onRemove}>
-                Remove backup
-              </Button>
-            ) : (
-              <span />
-            )}
-            <div className="flex flex-col-reverse gap-2 sm:flex-row">
-              <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={!!problem || busy}>
-                {busy ? "Saving…" : "Save"}
-              </Button>
-            </div>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+          </Disclosure>
+        </fieldset>
+        )}
+        {error ? (
+          <InlineError icon className="[overflow-wrap:anywhere]">
+            {error}
+          </InlineError>
+        ) : null}
+        {problem ? <InlineError icon>{problem}</InlineError> : null}
+      </form>
+    </ResponsiveDialog>
   );
 }

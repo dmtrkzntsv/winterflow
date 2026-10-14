@@ -1,9 +1,14 @@
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PasswordInput } from "@/components/ui/password-input";
 import { cn } from "@/lib/utils";
 import { fieldErrors, requiredFirst } from "@/lib/template-params";
 import type { Parameter } from "@/lib/templates";
+
+// nameOf is a field's accessible name: its description and parameter
+// name, or the name alone.
+const nameOf = (p: Parameter) => (p.description ? `${p.description} (${p.name})` : p.name);
 
 type Props = {
   params: Parameter[] | null | undefined;
@@ -18,7 +23,9 @@ type Props = {
 
 // ParameterFields is a form over a template's parameters: required ones
 // first, each checked as typed, secrets masked (the caller encrypts them
-// for the server before anything is sent).
+// for the server before anything is sent). A field is labelled by the
+// parameter's description when it has one (its name small beside it),
+// else by its name; a secret carries a Secret tag.
 export function ParameterFields({ params, values, onChange, kept = [], showRequired = false }: Props) {
   const errors = fieldErrors(params, values, kept);
   return (
@@ -37,19 +44,28 @@ export function ParameterFields({ params, values, onChange, kept = [], showRequi
         };
         return (
           <div key={p.name} className="grid gap-1.5">
-            <Label htmlFor={id} className="font-mono">
-              {p.name}
-              {p.required ? (
-                <span aria-hidden className="text-destructive">
-                  *
-                </span>
+            <Label htmlFor={id} className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <span className={cn(!p.description && "font-mono")}>
+                {p.description || p.name}
+                {p.required ? (
+                  <span aria-hidden className="text-destructive">
+                    *
+                  </span>
+                ) : null}
+              </span>
+              {p.secret ? (
+                <Badge variant="secondary" className="px-1.5 py-0 text-[11px] font-normal">
+                  Secret
+                </Badge>
               ) : null}
-              {p.secret ? <span className="font-sans text-xs font-normal text-muted-foreground">secret</span> : null}
+              {p.description ? (
+                <code className="ml-auto font-mono text-xs font-normal text-muted-foreground">{p.name}</code>
+              ) : null}
             </Label>
             {p.secret ? (
               <PasswordInput
                 id={id}
-                aria-label={p.name}
+                aria-label={nameOf(p)}
                 value={value}
                 autoComplete="new-password"
                 placeholder={kept.includes(p.name) ? "Stored, leave blank to keep" : "Encrypted in your browser"}
@@ -59,7 +75,7 @@ export function ParameterFields({ params, values, onChange, kept = [], showRequi
             ) : (
               <Input
                 id={id}
-                aria-label={p.name}
+                aria-label={nameOf(p)}
                 value={value}
                 placeholder={p.default ? `Default: ${p.default}` : undefined}
                 {...invalid}
@@ -67,7 +83,6 @@ export function ParameterFields({ params, values, onChange, kept = [], showRequi
                 onChange={(e) => onChange(p.name, e.target.value)}
               />
             )}
-            {p.description ? <p className="text-xs text-muted-foreground">{p.description}</p> : null}
             {shown ? (
               <p id={`${id}-error`} className="text-xs text-destructive">
                 {err}

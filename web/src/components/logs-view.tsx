@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { ArrowDown, RefreshCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -54,9 +54,28 @@ type Props = {
   onRefresh: () => void;
 };
 
+// Chip is one container filter: a toggle button in the console's palette.
+function Chip({ pressed, onClick, children }: { pressed: boolean; onClick: () => void; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={pressed}
+      onClick={onClick}
+      className={cn(
+        "inline-flex min-h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-console-border px-2.5 font-mono text-xs transition-colors duration-150 motion-reduce:transition-none max-sm:min-h-10",
+        pressed ? "bg-console-hover text-console-foreground" : "text-console-muted hover:text-console-foreground",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
 // LogsView is a console-style log display: a scroll box that sticks to the
 // bottom while new lines arrive, unless the user has scrolled up to read
-// (then it stays put until they jump back down).
+// (then it stays put until they jump back down). It fills what is left of
+// its parent (a flex column that grows with the viewport, min-h-80 at
+// least), so the app page itself does not scroll.
 export function LogsView({
   lines,
   loading,
@@ -82,12 +101,19 @@ export function LogsView({
     containers.reduce((w, c) => Math.max(w, c.length), 0),
   );
 
+  // The container picked in the chips; it is dropped (back to All) when that
+  // container has no lines any more, so it can't silently return later.
+  const [only, setOnly] = useState<string | null>(null);
+  const active = only !== null && containers.includes(only) ? only : null;
+  if (only !== null && active === null) setOnly(null);
+  const shown = useMemo(() => (active ? lines.filter((l) => l.container === active) : lines), [lines, active]);
+
   useEffect(() => {
     const el = scrollRef.current;
     if (el && stickToBottom) {
       el.scrollTop = el.scrollHeight;
     }
-  }, [lines, stickToBottom]);
+  }, [shown, stickToBottom]);
 
   const handleScroll = () => {
     const el = scrollRef.current;
@@ -103,30 +129,38 @@ export function LogsView({
   };
 
   return (
-    <div className="relative flex h-[calc(100svh-16rem)] min-h-80 flex-col overflow-hidden rounded-lg border border-console-border bg-console text-console-foreground">
-      <div className="flex items-center gap-3 border-b border-console-border px-3 py-2">
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-4 gap-y-1 text-xs">
-          {containers.length === 0 ? (
-            <span className="text-console-muted">Container output</span>
+    <div className="relative flex min-h-80 grow basis-0 flex-col overflow-hidden rounded-lg border border-console-border bg-console text-console-foreground">
+      <div className="flex flex-wrap items-center gap-2 border-b border-console-border px-3 py-2">
+        <div className="flex min-w-0 flex-1 items-center gap-1.5 text-xs max-sm:basis-full">
+          {containers.length > 1 ? (
+            // One row that scrolls sideways on a narrow screen.
+            <div role="group" aria-label="Containers" className="-my-1 flex min-w-0 gap-1.5 overflow-x-auto py-1">
+              <Chip pressed={active === null} onClick={() => setOnly(null)}>
+                All
+              </Chip>
+              {containers.map((c) => (
+                <Chip key={c} pressed={active === c} onClick={() => setOnly(c)}>
+                  <span className={cn("size-2 rounded-full bg-current", colorOf(c))} aria-hidden />
+                  <span>{c}</span>
+                </Chip>
+              ))}
+            </div>
           ) : (
-            containers.map((c) => (
-              <span key={c} className="flex items-center gap-1.5 font-mono">
-                <span
-                  className={cn("size-2 rounded-full bg-current", colorOf(c))}
-                  aria-hidden
-                />
-                <span className="text-console-muted">{c}</span>
-              </span>
-            ))
+            <span className="font-mono text-console-muted">{containers[0] ?? "Container output"}</span>
           )}
         </div>
+        {(loading && lines.length === 0) || error ? null : (
+          <span className="text-xs tabular-nums text-console-muted">
+            {shown.length === 1 ? "1 line" : `${shown.length} lines`}
+          </span>
+        )}
         <Select
           value={String(tail)}
           onValueChange={(v) => onTailChange(Number(v))}
         >
           <SelectTrigger
             aria-label="Number of lines"
-            className="h-7 w-36 border-console-border bg-console-hover text-xs text-console-foreground"
+            className="h-7 w-36 max-sm:h-10 border-console-border bg-console-hover text-xs text-console-foreground"
           >
             <SelectValue />
           </SelectTrigger>
@@ -143,11 +177,11 @@ export function LogsView({
           variant="ghost"
           aria-label="Refresh logs"
           title="Refresh logs"
-          className="size-7 text-console-muted hover:bg-console-hover hover:text-console-foreground"
+          className="size-7 max-sm:size-10 text-console-muted hover:bg-console-hover hover:text-console-foreground"
           onClick={onRefresh}
           disabled={loading}
         >
-          <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
+          <RefreshCw className={cn("size-3.5", loading && "animate-spin motion-reduce:animate-none")} />
         </Button>
       </div>
 
@@ -157,7 +191,7 @@ export function LogsView({
         </div>
       ) : error ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
-          <p className="text-sm text-red-700 dark:text-red-400">{error}</p>
+          <p className="max-h-40 max-w-full overflow-y-auto text-sm break-words whitespace-pre-wrap text-destructive [overflow-wrap:anywhere]">{error}</p>
           <Button
             size="sm"
             variant="outline"
@@ -174,29 +208,40 @@ export function LogsView({
       ) : (
         <div
           ref={scrollRef}
+          // Not role="log": that is a live region, and a refresh replaces up
+          // to a thousand lines.
+          role="region"
+          aria-label="Logs"
+          tabIndex={0}
           onScroll={handleScroll}
-          className="flex-1 overflow-y-auto py-2 font-mono text-xs leading-5"
+          className="flex-1 overflow-y-auto py-2 font-mono focus-visible:ring-2 focus-visible:ring-console-foreground/60 focus-visible:outline-none focus-visible:ring-inset text-xs leading-5"
         >
-          {lines.map((l, i) => (
+          {shown.map((l, i) => (
+            // From 640px: time, container and message side by side. On a
+            // phone the time and container (a coloured dot and its name)
+            // go above the message, which gets the full width.
             <div
               key={i}
-              className="flex gap-3 px-3 hover:bg-console-hover"
+              className="flex flex-col px-3 hover:bg-console-hover max-sm:py-0.5 sm:flex-row sm:gap-3"
             >
-              <span className="shrink-0 text-console-muted tabular-nums select-none">
-                {timeFormat.format(new Date(l.timestamp * 1000))}
-              </span>
-              {l.container ? (
-                <span
-                  className={cn("shrink-0 truncate select-none", colorOf(l.container))}
-                  style={{ width: `${labelWidth}ch` }}
-                  title={l.container}
-                >
-                  {l.container}
+              <span data-testid="log-meta" className="flex min-w-0 items-center gap-2 select-none sm:contents">
+                <span className="shrink-0 text-console-muted tabular-nums">
+                  {timeFormat.format(new Date(l.timestamp * 1000))}
                 </span>
-              ) : null}
+                {l.container ? (
+                  <span
+                    className={cn("flex min-w-0 items-center gap-1.5 sm:w-[var(--log-label)] sm:shrink-0", colorOf(l.container))}
+                    style={{ "--log-label": `${labelWidth}ch` } as CSSProperties}
+                    title={l.container}
+                  >
+                    <span className="size-1.5 shrink-0 rounded-full bg-current sm:hidden" aria-hidden />
+                    <span className="truncate">{l.container}</span>
+                  </span>
+                ) : null}
+              </span>
               <span
                 className={cn(
-                  "min-w-0 flex-1 break-all whitespace-pre-wrap",
+                  "min-w-0 flex-1 whitespace-pre-wrap [overflow-wrap:anywhere]",
                   LEVEL_CLASS[l.level],
                 )}
               >
@@ -207,13 +252,13 @@ export function LogsView({
         </div>
       )}
 
-      {!stickToBottom && lines.length > 0 ? (
+      {!stickToBottom && shown.length > 0 ? (
         <Button
           size="sm"
-          className="absolute right-4 bottom-4 h-7 gap-1 rounded-full bg-console-foreground px-3 text-xs text-console shadow-lg hover:bg-console-foreground/90"
+          className="absolute right-4 bottom-4 h-7 max-sm:h-10 gap-1 rounded-full bg-console-foreground px-3 text-xs text-console shadow-lg hover:bg-console-foreground/90"
           onClick={jumpToBottom}
         >
-          <ArrowDown className="size-3.5" /> Latest
+          <ArrowDown className="size-3.5" aria-hidden /> Jump to latest
         </Button>
       ) : null}
     </div>

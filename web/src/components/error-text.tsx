@@ -31,10 +31,12 @@ export function ErrorText({
   const line = lastLine(text);
   const more = line !== text.trim();
   return (
-    <div role={alert ? "alert" : undefined} className={cn("text-sm text-destructive", className)}>
-      <p className={cn("break-words", icon && "flex items-start gap-1.5")}>
+    <div role={alert ? "alert" : undefined} className={cn("min-w-0 text-sm text-destructive", className)}>
+      <p className={cn(icon && "flex items-start gap-1.5")}>
         {icon ? <ErrorIcon /> : null}
-        <span>
+        {/* Docker output carries long unbroken tokens (ids, paths): they
+            wrap anywhere, and a runaway line scrolls in its own box. */}
+        <span className="block max-h-40 min-w-0 overflow-y-auto break-words whitespace-pre-wrap [overflow-wrap:anywhere]">
           {prefix}
           {line}
           {suffix}
@@ -43,7 +45,7 @@ export function ErrorText({
       {more ? (
         <details className="mt-1">
           <summary className="w-fit cursor-pointer text-xs text-muted-foreground hover:text-foreground">Details</summary>
-          <pre className="mt-1 max-h-60 overflow-auto rounded-md border bg-muted/40 p-2 font-mono text-xs break-words whitespace-pre-wrap text-foreground">
+          <pre className="mt-1 max-h-60 overflow-auto rounded-md border bg-muted/40 p-2 font-mono text-xs break-words whitespace-pre-wrap text-foreground [overflow-wrap:anywhere]">
             {text}
           </pre>
         </details>

@@ -2,6 +2,7 @@ import { act, renderHook } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import {
+  backupRowState,
   holdHealth,
   isRunning,
   OVERLAY_HOLD_MS,
@@ -123,5 +124,28 @@ describe("held health", () => {
     expect(Object.keys(result.current)).toEqual(["other"]);
     act(() => resetHeldHealth());
     expect(result.current).toEqual({});
+  });
+});
+
+describe("backupRowState", () => {
+  const b = { enabled: true, type: "sqlite", every: "1h" } as const;
+  const ok = { name: "database", state: "ok", last_success: 1_700_000_000 } as const;
+
+  it("follows the reported health, else never run (on) or off", () => {
+    expect(backupRowState(b, ok, []).state).toBe("ok");
+    expect(backupRowState(b, undefined, []).state).toBe("never");
+    expect(backupRowState({ ...b, enabled: false }, undefined, []).state).toBe("off");
+  });
+
+  it("says running while this browser runs it or the agent reports a run, and stays quiet then", () => {
+    const here = backupRowState(b, ok, ["backup"]);
+    expect(here).toMatchObject({ state: "running", running: true, restoring: false, note: "" });
+    expect(backupRowState(b, { name: "database", state: "running" }, [])).toMatchObject({ running: true, note: "" });
+  });
+
+  it("marks a restore, and gives the next copy only for a backup winterflow runs", () => {
+    expect(backupRowState(b, ok, ["restore"])).toMatchObject({ restoring: true, note: "" });
+    expect(backupRowState(b, undefined, []).note).toMatch(/^next within/);
+    expect(backupRowState({ ...b, type: "custom" }, ok, []).note).toBe("");
   });
 });

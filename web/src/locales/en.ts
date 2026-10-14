@@ -7,11 +7,11 @@ const en = {
       },
     },
     auth: {
-      logout: "Log out",
+      logout: "Sign out",
     },
     login: {
       title: "Welcome back",
-      subtitle: "Login to your Winterflow account",
+      subtitle: "Sign in to Winterflow",
       usernameLabel: "Email",
       usernamePlaceholder: "you@example.com",
       noAccount: "No account yet?",
@@ -19,18 +19,19 @@ const en = {
       passwordLabel: "Password",
       showPassword: "Show password",
       hidePassword: "Hide password",
-      submit: "Login",
-      submitting: "Logging in...",
+      submit: "Sign in",
+      submitting: "Signing in…",
       errorGeneric: "We couldn't sign you in. Try again.",
+      errorCredentials: "Wrong email or password. Forgot it? Ask a member to reset your password.",
       ssoLabel: "Or continue with",
       providers: {
-        google: "Login with Google",
+        google: "Sign in with Google",
       },
       providersLoading: "Checking authentication methods...",
       providerUnavailable: "Authentication method unavailable right now.",
-      localUnavailable: "Email + password login is unavailable.",
+      localUnavailable: "Signing in with email and password is unavailable.",
       terms:
-        "By using <WinterflowLink>WinterFlow.io</WinterflowLink>, you agree to our <TermsLink>Terms of Service</TermsLink> and <PrivacyLink>Privacy Policy</PrivacyLink>.",
+        "By using <WinterflowLink>Winterflow.io</WinterflowLink>, you agree to our <TermsLink>Terms of Service</TermsLink> and <PrivacyLink>Privacy Policy</PrivacyLink>.",
     },
   },
 }

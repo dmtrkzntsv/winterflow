@@ -34,6 +34,10 @@ export type ServerSync = {
   state: "synced" | "pending";
 };
 
+// A pending sync is mentioned only after this long (a save leaves it pending
+// for a moment), unless the server's agent is offline.
+export const SYNC_SETTLE_MS = 60_000;
+
 // The browser adds "failed" from vars.sync_failed events.
 export type SyncState = "synced" | "pending" | "failed";
 
@@ -117,7 +121,7 @@ export function coverageLabel(v: SharedVariable, names: Map<string, string>, key
   const pending = keys?.pending_servers.length ?? 0;
   const pendingNote = pending > 0 ? `${pending} pending (no key yet)` : "";
   if (v.missing_on.length > 0) {
-    const missing = `Missing on ${v.missing_on.map((id) => names.get(id) ?? id).join(", ")}`;
+    const missing = `Missing on ${v.missing_on.map((id) => names.get(id) ?? "a server").join(", ")}`;
     return pendingNote ? `${missing}; ${pendingNote}` : missing;
   }
   if (keys && keys.servers.length === 0) return "No server has a key yet";
@@ -202,4 +206,41 @@ export function createSharedVariablesApi(fetchImpl?: typeof fetch): SharedVariab
     resync: (target) => post<{ servers?: string[] | null }>("/api/v1/shared-variables/resync", target).then(dispatched),
     reload: (target) => post<{ servers?: string[] | null }>("/api/v1/shared-variables/reload", target).then(dispatched),
   };
+}
+
+// VariableRow is one row of Settings → Shared variables: an org variable
+// (every server) or the active server's own, and what the list says about
+// it.
+export type VariableRow = {
+  variable: SharedVariable;
+  // "All servers" for the org's, "{server} only" for the active server's.
+  scopeLabel: string;
+  // An org variable the active server replaces with a value of its own.
+  overriddenHere: boolean;
+};
+
+// variableRows merges the org's variables and the active server's own into
+// one list sorted by name, the org's row first when both define a name.
+export function variableRows(org: SharedVariable[], server: SharedVariable[], serverName: string): VariableRow[] {
+  const own = new Set(server.map((v) => v.name));
+  const rows: VariableRow[] = [
+    ...org.map((v) => ({ variable: v, scopeLabel: "All servers", overriddenHere: own.has(v.name) })),
+    ...server.map((v) => ({ variable: v, scopeLabel: `${serverName} only`, overriddenHere: false })),
+  ];
+  return rows.sort((a, b) => {
+    if (a.variable.name !== b.variable.name) return a.variable.name < b.variable.name ? -1 : 1;
+    return a.variable.scope === b.variable.scope ? 0 : a.variable.scope === "org" ? -1 : 1;
+  });
+}
+
+// failedServers lists the servers whose last sync failed, sorted by name
+// (an unknown server by its id).
+export function failedServers(
+  sync: Record<string, SyncState>,
+  names: Map<string, string>,
+): { id: string; name: string }[] {
+  return Object.entries(sync)
+    .filter(([, state]) => state === "failed")
+    .map(([id]) => ({ id, name: names.get(id) ?? "a server" }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }

@@ -1,15 +1,19 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  sortRules,
   ALERT_METRICS,
   buildChannel,
+  FieldError,
   channelService,
+  alertTargetPath,
   channelSummary,
   effective,
   formatAlertValue,
   routingText,
   ruleSummary,
   SERVICES,
+  serviceSpec,
   type Channel,
   type Rule,
 } from "@/lib/alerts";
@@ -46,7 +50,7 @@ describe("alert wording", () => {
   it("words routing", () => {
     const channels = [{ id: "c1", name: "Ops" }] as Channel[];
     expect(routingText(null, channels)).toBe("Default channels");
-    expect(routingText([], channels)).toBe("History only");
+    expect(routingText([], channels)).toBe("Inbox only");
     expect(routingText(["c1", "gone"], channels)).toBe("Ops, deleted channel");
   });
 
@@ -97,6 +101,13 @@ describe("channel URL builders", () => {
     expect(() => buildChannel("webhook", { url: "https://me:pw@hooks.example.com/a" })).toThrow(/Credentials in the URL are not supported/);
     expect(() => buildChannel("webhook", { url: "https://token@hooks.example.com/a" })).toThrow(/Credentials/);
     expect(() => buildChannel("ntfy", { server: "ntfy.sh" })).toThrow("Topic is required");
+    expect(() => buildChannel("email", { host: "h", port: "x", from: "a", to: "b" })).toThrow(
+      expect.objectContaining({ field: "port" }),
+    );
+    expect(() => buildChannel("ntfy", { server: "ntfy.sh" })).toThrow(FieldError);
+    expect(() => buildChannel("webhook", { url: "https://me:pw@hooks.example.com/a" })).toThrow(
+      /Other \(URL\) service/,
+    );
   });
 
   it("recognises a stored channel's form", () => {
@@ -106,5 +117,35 @@ describe("channel URL builders", () => {
     expect(channelService({ service: "generic", fields: { ui_service: "raw" } })).toBe("raw");
     expect(channelSummary({ service: "ntfy", fields: { ui_service: "ntfy", server: "ntfy.sh" } })).toBe("ntfy · ntfy.sh");
     expect(SERVICES.map((s) => s.id)).toEqual(["telegram", "discord", "slack", "ntfy", "gotify", "pushover", "email", "webhook", "raw"]);
+  });
+});
+
+describe("alertTargetPath", () => {
+  it("leads an app's alert to its Metrics tab and a server's to its Monitoring", () => {
+    expect(alertTargetPath("s1", "a1")).toBe("/server/s1/app/a1?tab=metrics");
+    expect(alertTargetPath("s1", "")).toBe("/server/s1/monitoring");
+  });
+});
+
+describe("channel form wording", () => {
+  it("calls a raw Shoutrrr URL Other (URL) and folds SMTP's port and sign-in, and ntfy's sign-in, under Advanced", () => {
+    expect(serviceSpec("raw").label).toBe("Other (URL)");
+    expect(serviceSpec("email").fields.filter((f) => f.advanced).map((f) => f.key)).toEqual(["port", "username", "password"]);
+    expect(serviceSpec("ntfy").fields.filter((f) => f.advanced).map((f) => f.key)).toEqual(["username", "password"]);
+    expect(SERVICES.filter((s) => s.id !== "email" && s.id !== "ntfy").every((s) => s.fields.every((f) => !f.advanced))).toBe(true);
+  });
+});
+
+describe("sortRules", () => {
+  it("lists server down first, then CPU, memory and disk, keeping the order within a metric", () => {
+    const rules = [
+      { id: "1", metric: "cpu" },
+      { id: "2", metric: "disk" },
+      { id: "3", metric: "down" },
+      { id: "4", metric: "memory" },
+      { id: "5", metric: "cpu" },
+      { id: "6", metric: "temperature" },
+    ] as const;
+    expect(sortRules([...rules]).map((r) => r.id)).toEqual(["3", "1", "5", "4", "2", "6"]);
   });
 });

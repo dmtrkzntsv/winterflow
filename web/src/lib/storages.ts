@@ -31,9 +31,11 @@ export type StorageSaved = { storage: Storage; redeployed: string[]; warnings: s
 // StorageTest is storage.test's result: a failed probe is ok: false.
 export type StorageTest = { ok: boolean; error?: string };
 
+// STORAGE_TYPES names the two kinds in plain words (type-first dialog,
+// rows).
 export const STORAGE_TYPES: Record<StorageType, string> = {
-  local: "Local folder",
-  s3: "S3-compatible",
+  local: "Folder on this server",
+  s3: "S3 bucket",
 };
 
 // StorageDraft is the dialog's form. secret is the plaintext as typed: ""
@@ -148,10 +150,14 @@ function accessKeyError(keyId: string): string {
   return "";
 }
 
-// DraftField is a field of the dialog, in form order; a problem belongs to
-// one.
-export const DRAFT_FIELDS = ["name", "path", "endpoint", "region", "bucket", "prefix", "accessKeyId", "secret"] as const;
+// DraftField is a field of the dialog, in form order: the S3 basics, then
+// the advanced fields (region, prefix) folded under "Advanced". A problem
+// belongs to one.
+export const DRAFT_FIELDS = ["name", "path", "endpoint", "bucket", "accessKeyId", "secret", "region", "prefix"] as const;
 export type DraftField = (typeof DRAFT_FIELDS)[number];
+
+// ADVANCED_FIELDS sit under the dialog's "Advanced" disclosure.
+export const ADVANCED_FIELDS: readonly DraftField[] = ["region", "prefix"];
 
 // DraftProblem is the first problem with a draft and the field it belongs to.
 export type DraftProblem = { field: DraftField; message: string };
@@ -163,10 +169,10 @@ const RULES: Record<StorageType, [DraftField, (d: StorageDraft, editing: boolean
   s3: [
     ["endpoint", (d) => endpointError(d.endpoint)],
     ["bucket", (d) => (BUCKET_RE.test(d.bucket.trim()) && !d.bucket.includes("..") ? "" : "Enter a valid bucket name.")],
-    ["prefix", (d) => (prefixValid(d.prefix.trim()) ? "" : "Use folder names separated by /, like winterflow/.")],
     ["accessKeyId", (d) => accessKeyError(d.accessKeyId.trim())],
     // An edit keeps the stored secret when none is typed.
     ["secret", (d, editing) => (editing || d.secret ? "" : "Enter the secret key.")],
+    ["prefix", (d) => (prefixValid(d.prefix.trim()) ? "" : "Use folder names separated by /, like winterflow/.")],
   ],
 };
 

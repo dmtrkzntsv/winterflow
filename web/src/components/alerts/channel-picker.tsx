@@ -4,7 +4,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { routingOf, type Channel } from "@/lib/alerts";
 
 type Props = {
-  // value: null = default channels, [] = History only, else those ids.
+  // value: null = default channels, [] = the Inbox only, else those ids.
   value: string[] | null;
   onChange: (ids: string[] | null) => void;
   channels: Channel[];
@@ -13,13 +13,14 @@ type Props = {
 };
 
 // ChannelPicker chooses where notifications go: the org's default channels,
-// specific channels, or none (the alert is only recorded in History).
+// specific channels, or none (the alert only shows in the Inbox).
 export function ChannelPicker({ value, onChange, channels, idPrefix }: Props) {
   const routing = routingOf(value);
   const selected = value ?? [];
   return (
     <div className="space-y-2">
       <RadioGroup
+        aria-label="Notify"
         value={routing}
         onValueChange={(v) => {
           if (v === "default") onChange(null);
@@ -31,7 +32,7 @@ export function ChannelPicker({ value, onChange, channels, idPrefix }: Props) {
           [
             ["default", "Default channels"],
             ["specific", "Specific channels"],
-            ["none", "History only"],
+            ["none", "Inbox only"],
           ] as const
         ).map(([v, label]) => (
           <div key={v} className="flex items-center gap-2">
@@ -44,7 +45,7 @@ export function ChannelPicker({ value, onChange, channels, idPrefix }: Props) {
       </RadioGroup>
       {routing === "specific" ? (
         channels.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No channels yet: add one in the Channels tab.</p>
+          <p className="text-xs text-muted-foreground">No channels yet: add one under Channels.</p>
         ) : (
           <div className="grid gap-1.5 pl-6">
             {channels.map((c) => (

@@ -1,132 +1,69 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { Plus, RefreshCw, Trash2 } from "lucide-react";
+import { Plus } from "lucide-react";
 import { toast } from "sonner";
 
-import { StatusDot } from "@/components/app-status-badge";
+import { ConfirmDialog } from "@/components/confirm-dialog";
+import { EmptyState } from "@/components/empty-state";
+import { ListPlaceholder } from "@/components/list-placeholder";
+import { RemoveButton } from "@/components/remove-button";
+import { ResponsiveDialog } from "@/components/responsive-dialog";
+import { Row, RowList, Section } from "@/components/section";
+import { StatusDot } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { buttonVariants } from "@/components/ui/button-variants";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import { Spinner } from "@/components/ui/spinner";
-import { type Docker, type Volume } from "@/context/use-docker";
 import { useApps } from "@/context/use-apps";
-import { cn } from "@/lib/utils";
-import {
-  groupVolumes,
-  shortVolumeName,
-  volumeNameError,
-} from "@/lib/volumes";
+import type { Docker, Volume } from "@/context/use-docker";
 import { useServerPath } from "@/context/use-server-path";
+import { useConfirmTarget } from "@/hooks/use-confirm-target";
+import { returnFocusTo } from "@/lib/focus";
+import { appSub } from "@/lib/routes";
+import { cn } from "@/lib/utils";
+import { groupVolumes, shortVolumeName, volumeNameError, volumeState } from "@/lib/volumes";
 
-// Same dot + label language as AppStatusIndicator: the normal state stays
-// quiet, only Orphaned (data nobody owns any more) draws the eye.
-function VolumeStatus({ volume }: { volume: Volume }) {
-  const [label, dot, text] = volume.in_use
-    ? ["In use", "bg-emerald-500", ""]
-    : volume.orphan
-      ? ["Orphaned", "bg-amber-400", "text-amber-700 dark:text-amber-400"]
-      : ["Unused", "bg-muted-foreground/40", "text-muted-foreground"];
-  return (
-    <StatusDot
-      label={label}
-      dotClassName={dot}
-      className={cn("whitespace-nowrap", text)}
-    />
-  );
-}
+const errorText = (e: unknown) => (e instanceof Error ? e.message : undefined);
 
-function VolumeOwner({ volume, appName }: { volume: Volume; appName?: string }) {
-  const toServer = useServerPath();
+// ownerOf names who a volume belongs to: its app (a link), a deleted app,
+// or the compose project; nothing for a plain volume.
+function ownerOf(volume: Volume, appName: string | undefined, appHref: (id: string) => string): ReactNode {
   if (volume.app_id && appName) {
     return (
-      <Link
-        to={toServer(`/app/${volume.app_id}`)}
-        className="font-medium underline-offset-4 hover:underline"
-      >
+      <Link to={appHref(volume.app_id)} className="font-medium underline-offset-4 hover:underline">
         {appName}
       </Link>
     );
   }
-  if (volume.orphan) {
-    return (
-      <span
-        className="text-muted-foreground"
-        title={`No app ${volume.app_id} on this server`}
-      >
-        Not found
-      </span>
-    );
-  }
-  if (volume.project) {
-    return (
-      <span className="text-muted-foreground" title="Docker Compose project">
-        {volume.project}
-      </span>
-    );
-  }
-  return <span className="text-muted-foreground">—</span>;
+  if (volume.orphan) return <span title={`No app ${volume.app_id} on this server`}>App not on this server</span>;
+  if (volume.project) return <span title="Docker Compose project">{volume.project}</span>;
+  return null;
 }
 
-// CreateVolumeDialog owns its open/name/busy state; closing it (any path)
-// resets the name.
+// CreateVolumeDialog asks for a volume's name; closing it (any way) clears it.
 function CreateVolumeDialog({
   docker,
+  open,
+  onOpenChange,
   onCreated,
 }: {
   docker: Docker;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   onCreated: () => Promise<void>;
 }) {
-  const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [name, setName] = useState("");
   const trimmed = name.trim();
   const nameError = trimmed ? volumeNameError(trimmed) : "";
   const canCreate = trimmed !== "" && !nameError && !busy;
 
-  // Single close path: Radix fires onOpenChange only for its own dismissals,
-  // so the Cancel button must go through here to reset the name too.
-  const changeOpen = (o: boolean) => {
-    setOpen(o);
-    if (!o) setName("");
+  const changeOpen = (next: boolean) => {
+    if (!next) setName("");
+    onOpenChange(next);
   };
 
-  const add = async () => {
+  const create = async () => {
     setBusy(true);
     try {
       await docker.createVolume(trimmed);
@@ -134,135 +71,83 @@ function CreateVolumeDialog({
       changeOpen(false);
       await onCreated();
     } catch (e) {
-      toast.error("Failed to create volume", {
-        description: e instanceof Error ? e.message : undefined,
-      });
+      toast.error("Couldn't create the volume", { description: errorText(e) });
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <Dialog open={open} onOpenChange={changeOpen}>
-      <DialogTrigger asChild>
-        <Button size="sm">
-          <Plus className="size-4" /> Create volume
-        </Button>
-      </DialogTrigger>
-      <DialogContent>
-        <form
-          className="grid gap-4"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (canCreate) void add();
-          }}
-        >
-          <DialogHeader>
-            <DialogTitle>Create volume</DialogTitle>
-            <DialogDescription>
-              An empty local volume. To mount it in an app, declare it in the
-              compose file with{" "}
-              <code className="whitespace-nowrap">external: true</code>.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-1.5">
-            <Label htmlFor="vol-name">Name</Label>
-            <Input
-              id="vol-name"
-              placeholder="my-volume"
-              autoComplete="off"
-              spellCheck={false}
-              className={cn(
-                "font-mono",
-                nameError && "border-destructive focus-visible:ring-destructive",
-              )}
-              aria-invalid={nameError !== ""}
-              aria-describedby="vol-name-hint"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-            <p
-              id="vol-name-hint"
-              className={cn(
-                "text-xs",
-                nameError ? "text-destructive" : "text-muted-foreground",
-              )}
-            >
-              {nameError || "Letters, digits, dots, dashes and underscores."}
-            </p>
-          </div>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => changeOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button type="submit" disabled={!canCreate}>
-              {busy ? "Creating…" : "Create"}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+    <ResponsiveDialog
+      open={open}
+      onOpenChange={changeOpen}
+      title="Add volume"
+      description={
+        <>
+          An empty local volume. To mount it in an app, declare it in the compose file with{" "}
+          <code className="whitespace-nowrap">external: true</code>.
+        </>
+      }
+      footer={
+        <>
+          <Button type="button" variant="outline" onClick={() => changeOpen(false)}>
+            Cancel
+          </Button>
+          <Button type="submit" form="volume-form" disabled={!canCreate}>
+            {busy ? "Creating…" : "Create"}
+          </Button>
+        </>
+      }
+    >
+      <form
+        id="volume-form"
+        className="grid gap-1.5"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (canCreate) void create();
+        }}
+      >
+        <Label htmlFor="vol-name">Name</Label>
+        <Input
+          id="vol-name"
+          placeholder="my-volume"
+          autoComplete="off"
+          spellCheck={false}
+          className={cn("font-mono", nameError && "border-destructive focus-visible:ring-destructive")}
+          aria-invalid={nameError !== ""}
+          aria-describedby="vol-name-hint"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
+        <p id="vol-name-hint" className={cn("text-xs", nameError ? "text-destructive" : "text-muted-foreground")}>
+          {nameError || "Letters, digits, dots, dashes and underscores."}
+        </p>
+      </form>
+    </ResponsiveDialog>
   );
 }
 
-// DeleteVolumeDialog confirms erasing one volume; open while volume is set.
-function DeleteVolumeDialog({
-  volume,
-  onClose,
-  onConfirm,
-}: {
-  volume: Volume | null;
-  onClose: () => void;
-  onConfirm: (name: string) => void;
-}) {
-  return (
-    <AlertDialog open={volume !== null} onOpenChange={(o) => !o && onClose()}>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Delete this volume?</AlertDialogTitle>
-          <AlertDialogDescription>
-            <code className="break-all font-mono text-foreground">
-              {volume?.name}
-            </code>{" "}
-            and all the data in it will be erased permanently. This cannot be
-            undone.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction
-            className={buttonVariants({ variant: "destructive" })}
-            onClick={() => {
-              if (volume) onConfirm(volume.name);
-            }}
-          >
-            Delete volume
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
-  );
-}
-
-export function VolumesCard({ docker }: { docker: Docker }) {
+// VolumesSection is Settings → Docker → Volumes: Winterflow apps' volumes
+// first, then the rest of the host's, anonymous ones behind a switch. Any
+// volume no container mounts can be deleted, after a confirmation.
+export function VolumesSection({ docker }: { docker: Docker }) {
   const { apps } = useApps();
+  const toServer = useServerPath();
   const [items, setItems] = useState<Volume[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [showAnon, setShowAnon] = useState(false);
-  const [toDelete, setToDelete] = useState<Volume | null>(null);
+  const [creating, setCreating] = useState(false);
+  const removal = useConfirmTarget<Volume>();
+  // A deleted row takes its button along: focus then goes to Add volume.
+  const opener = useRef<HTMLElement | null>(null);
+  const createButton = useRef<HTMLButtonElement | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
       setItems(await docker.listVolumes());
     } catch (e) {
-      toast.error("Failed to load volumes", {
-        description: e instanceof Error ? e.message : undefined,
-      });
+      toast.error("Couldn't load volumes", { description: errorText(e) });
     } finally {
       setLoading(false);
     }
@@ -272,201 +157,130 @@ export function VolumesCard({ docker }: { docker: Docker }) {
     void load();
   }, [load]);
 
-  const remove = async (n: string) => {
+  // A failed delete lists again (the list may be stale: a container started
+  // using the volume since it loaded) and keeps the confirmation open.
+  const remove = async (name: string) => {
     try {
-      await docker.deleteVolume(n);
+      await docker.deleteVolume(name);
       toast.success("Volume deleted");
+      await load();
     } catch (e) {
-      // The list may be stale (a container started using the volume since
-      // it loaded); Docker's reason says so, and the reload below shows it.
-      toast.error("Couldn't delete volume", {
-        description: e instanceof Error ? e.message : undefined,
-      });
+      toast.error("Couldn't delete the volume", { description: errorText(e) });
+      await load();
+      throw e;
     }
-    await load();
   };
 
-  const appNames = useMemo(
-    () => new Map(apps.map((a) => [a.id, a.name])),
-    [apps],
-  );
+  const appNames = useMemo(() => new Map(apps.map((a) => [a.id, a.name])), [apps]);
   const all = items ?? [];
   const anonCount = all.filter((v) => v.anonymous).length;
   const visible = all.filter((v) => showAnon || !v.anonymous);
   const groups = groupVolumes(visible);
-  const orphanCount = visible.filter((v) => v.orphan).length;
-
-  const rows = (list: Volume[]) =>
-    list.map((v) => {
-      const appName = v.app_id ? appNames.get(v.app_id) : undefined;
-      return (
-        <TableRow key={v.name}>
-          {/* w-full + max-w-0 lets the name take the slack and truncate. */}
-          <TableCell className="w-full max-w-0">
-            <div className="truncate font-mono" title={v.name}>
-              {shortVolumeName(v)}
-            </div>
-            {/* Phones drop the App and Status columns; show them inline. */}
-            <div className="mt-1 flex items-center gap-2 text-xs sm:hidden">
-              <VolumeStatus volume={v} />
-              {(v.app_id || v.project) && (
-                <>
-                  <span className="text-muted-foreground" aria-hidden>
-                    ·
-                  </span>
-                  <span className="min-w-0 truncate">
-                    <VolumeOwner volume={v} appName={appName} />
-                  </span>
-                </>
-              )}
-            </div>
-          </TableCell>
-          <TableCell className="hidden pr-6 sm:table-cell">
-            <div className="max-w-48 truncate lg:max-w-64">
-              <VolumeOwner volume={v} appName={appName} />
-            </div>
-          </TableCell>
-          <TableCell className="hidden sm:table-cell">
-            <VolumeStatus volume={v} />
-          </TableCell>
-          <TableCell className="py-0.5 text-right">
-            {/* Docker refuses to remove a mounted volume; don't offer it. */}
-            {v.in_use ? null : (
-              <Button
-                size="icon"
-                variant="ghost"
-                className="size-8 text-muted-foreground hover:text-destructive"
-                aria-label={`Delete volume ${v.name}`}
-                title="Delete volume"
-                onClick={() => setToDelete(v)}
-              >
-                <Trash2 className="size-4" />
-              </Button>
-            )}
-          </TableCell>
-        </TableRow>
-      );
-    });
-
-  const groupRow = (label: string) => (
-    <TableRow className="hover:bg-transparent">
-      <TableCell
-        colSpan={4}
-        className="bg-muted/40 py-1.5 text-xs font-medium text-muted-foreground"
-      >
-        {label}
-      </TableCell>
-    </TableRow>
-  );
+  const unusedByApps = visible.filter((v) => v.orphan).length;
 
   return (
-    <Card>
-      <CardHeader className="flex-row flex-wrap items-start justify-between gap-x-4 gap-y-3 space-y-0">
-        <div className="min-w-0 space-y-1.5">
-          <CardTitle>Volumes</CardTitle>
-          <CardDescription>
-            Where containers keep data that outlives a redeploy.
-          </CardDescription>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button
-            size="icon"
-            variant="ghost"
-            className="size-8 text-muted-foreground"
-            aria-label="Refresh volumes"
-            title="Refresh volumes"
-            onClick={() => void load()}
-            disabled={loading}
-          >
-            <RefreshCw className={cn("size-4", loading && "animate-spin")} />
+    <Section
+      title="Volumes"
+      description="Where containers keep data that outlives a redeploy."
+      actions={
+        <>
+          <Button ref={createButton} size="sm" variant="outline" onClick={() => setCreating(true)}>
+            <Plus className="size-4" /> Add volume
           </Button>
-          <CreateVolumeDialog docker={docker} onCreated={load} />
-        </div>
-      </CardHeader>
-      <CardContent>
-        {items === null ? (
-          <div className="flex h-24 items-center justify-center">
-            {loading ? (
-              <Spinner />
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                Couldn't load volumes.
-              </p>
-            )}
+        </>
+      }
+    >
+      {items === null ? (
+        <ListPlaceholder loading={loading} failed="Couldn't load volumes." onRetry={() => void load()} />
+      ) : (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-sm">
+            <p className="text-muted-foreground">
+              {visible.length === 1 ? "1 volume" : `${visible.length} volumes`}
+              {unusedByApps > 0 ? <span className="text-foreground">{` · ${unusedByApps} not used by any app`}</span> : null}
+            </p>
+            {anonCount > 0 ? (
+              <div className="flex items-center gap-2">
+                <Switch id="vol-show-anon" checked={showAnon} onCheckedChange={setShowAnon} />
+                <Label htmlFor="vol-show-anon" className="font-normal text-muted-foreground">
+                  Show {anonCount} anonymous
+                </Label>
+              </div>
+            ) : null}
           </div>
-        ) : (
-          <>
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-sm">
-              <p className="text-muted-foreground">
-                {visible.length === 1 ? "1 volume" : `${visible.length} volumes`}
-                {orphanCount > 0 && (
-                  <span className="text-amber-700 dark:text-amber-400">
-                    {" · "}
-                    {orphanCount} orphaned
-                  </span>
-                )}
-              </p>
-              {anonCount > 0 && (
-                <div className="flex items-center gap-2">
-                  <Switch
-                    id="vol-show-anon"
-                    checked={showAnon}
-                    onCheckedChange={setShowAnon}
-                  />
-                  <Label
-                    htmlFor="vol-show-anon"
-                    className="font-normal text-muted-foreground"
-                  >
-                    Show {anonCount} anonymous
-                  </Label>
-                </div>
-              )}
-            </div>
-            {orphanCount > 0 && (
-              <p className="mb-3 text-xs text-muted-foreground">
-                Orphaned volumes carry a Winterflow app label, but that app isn't on
-                this server — it was deleted, or the volume belongs to another
-                Winterflow install on the same Docker host. Check before deleting.
-              </p>
-            )}
-            {visible.length === 0 ? (
-              <p className="rounded-lg border border-dashed py-10 text-center text-sm text-muted-foreground">
-                {all.length > 0
+          {unusedByApps > 0 ? (
+            <p className="text-xs text-muted-foreground">
+              A volume not used by any app carries a Winterflow app label, but that app isn't on this server: it was
+              deleted, or the volume belongs to another Winterflow install on the same Docker host. Check before deleting.
+            </p>
+          ) : null}
+          {visible.length === 0 ? (
+            <EmptyState
+              title={
+                all.length > 0
                   ? "Only anonymous volumes here. Turn on “Show anonymous” to list them."
-                  : "No volumes yet. Apps create theirs when they first deploy."}
-              </p>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Name</TableHead>
-                    <TableHead className="hidden pr-6 sm:table-cell">App</TableHead>
-                    <TableHead className="hidden sm:table-cell">
-                      Status
-                    </TableHead>
-                    <TableHead className="w-12">
-                      <span className="sr-only">Actions</span>
-                    </TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {groups.map(({ label, volumes }) => (
-                    <Fragment key={label}>
-                      {groups.length > 1 && groupRow(label)}
-                      {rows(volumes)}
-                    </Fragment>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
+                  : "No volumes yet. Apps create theirs when they first deploy."
+              }
+            />
+          ) : (
+            groups.map(({ label, volumes }) => (
+              <div key={label} className="space-y-1.5">
+                {groups.length > 1 ? <h3 className="px-1 text-xs font-medium text-muted-foreground">{label}</h3> : null}
+                <RowList label={label}>
+                  {volumes.map((v) => {
+                    const state = volumeState(v);
+                    return (
+                      <Row
+                        key={v.name}
+                        title={
+                          <span className="font-mono" title={v.name}>
+                            {shortVolumeName(v)}
+                          </span>
+                        }
+                        description={ownerOf(v, v.app_id ? appNames.get(v.app_id) : undefined, (id) => toServer(appSub(id)))}
+                        meta={
+                          <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                            <StatusDot tone={state.tone} />
+                            {state.label}
+                          </span>
+                        }
+                        actions={
+                          // Docker refuses to remove a mounted volume; don't offer it.
+                          v.in_use ? null : (
+                            <RemoveButton
+                              label={`Delete volume ${v.name}`}
+                              onClick={(trigger) => {
+                                opener.current = trigger;
+                                removal.ask(v);
+                              }}
+                            />
+                          )
+                        }
+                      />
+                    );
+                  })}
+                </RowList>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+      <CreateVolumeDialog docker={docker} open={creating} onOpenChange={setCreating} onCreated={load} />
+      <ConfirmDialog
+        open={removal.open}
+        onOpenChange={removal.onOpenChange}
+        title="Delete this volume?"
+        description={
+          <>
+            <code className="break-all font-mono text-foreground">{removal.target?.name}</code> and all the data in it are
+            erased for good. This can't be undone.
           </>
-        )}
-      </CardContent>
-      <DeleteVolumeDialog
-        volume={toDelete}
-        onClose={() => setToDelete(null)}
-        onConfirm={(n) => void remove(n)}
+        }
+        confirmLabel="Delete volume"
+        pendingLabel="Deleting…"
+        onCloseAutoFocus={(e) => returnFocusTo(opener, createButton)(e)}
+        onConfirm={() => (removal.target ? remove(removal.target.name) : undefined)}
       />
-    </Card>
+    </Section>
   );
 }

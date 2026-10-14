@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -11,6 +12,16 @@ import { useLocation, useMatch, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/use-auth";
 import { useNotifications } from "@/context/use-notifications";
 import { apiBaseUrl } from "@/config";
+import {
+  INBOX_PATH,
+  SETTINGS_PATH,
+  TEMPLATES_PATH,
+  appsPath,
+  monitoringPath,
+  serverSettingsPath,
+  type ServerSettingsSection,
+} from "@/lib/routes";
+import { isNavActive } from "@/lib/nav";
 import { serverPath, serverRoutePattern } from "@/lib/server-paths";
 
 import {
@@ -65,11 +76,12 @@ export function ServersProvider({ children }: { children: ReactNode }) {
   const urlServerId = useMatch(serverRoutePattern)?.params.serverId ?? null;
   const [lastServerId, setLastServerId] = useState<string | null>(null);
   const navigate = useNavigate();
-  const location = useLocation();
+  const { pathname } = useLocation();
   const [statusByServer, setStatusByServer] = useState<
     Record<string, ServerLiveness>
   >({});
   const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const isMountedRef = useRef(false);
 
@@ -124,6 +136,7 @@ export function ServersProvider({ children }: { children: ReactNode }) {
     } finally {
       if (isMountedRef.current) {
         setLoading(false);
+        setLoaded(true);
       }
     }
   }, [isAuthenticated]);
@@ -188,19 +201,46 @@ export function ServersProvider({ children }: { children: ReactNode }) {
   }, [servers, urlServerId, lastServerId]);
   const activeServerId = activeServer?.id ?? null;
 
-  // selectServer moves the tab to another server, keeping the current page
-  // (settings tab included) when it exists there too. An app page belongs to
-  // one server, so switching from it lands on the new server's dashboard.
-  const { pathname, search } = location;
+  // selectServer moves the tab to another server. Server settings keep the
+  // section when the new server has it (Domains only with ingress), else
+  // open its General page; Monitoring stays Monitoring, the organization's
+  // Settings go to the server's General page, and Inbox and Templates (organization-wide) stay where they
+  // are with only the active server changing. Every other page (Apps, an
+  // app, New app) belongs to one server: the new server's Apps.
+  // Its identity is stable: the current place (and navigate, whose identity
+  // follows the location in a non-data router) is read through a ref, so
+  // sidebar and shortcut consumers don't re-render on every navigation.
+  // The ref is written in a layout effect, in the same commit as the DOM it
+  // describes: a passive effect can still be pending when a click lands on
+  // the first render that shows a loaded server, and the switch would read
+  // the previous (empty) server list.
+  const placeRef = useRef({ pathname, urlServerId, activeServerId, navigate, servers });
+  useLayoutEffect(() => {
+    placeRef.current = { pathname, urlServerId, activeServerId, navigate, servers };
+  }, [pathname, urlServerId, activeServerId, navigate, servers]);
   const selectServer = useCallback(
     (id: string) => {
-      const sub = urlServerId
-        ? pathname.slice(serverPath(urlServerId).length)
-        : "";
-      const keep = sub !== "" && !sub.startsWith("/app/");
-      navigate(keep ? serverPath(id, sub) + search : serverPath(id));
+      const { pathname: at, urlServerId: inServer, activeServerId: active, navigate, servers: known } = placeRef.current;
+      if (id === active) return;
+      if (!inServer && (isNavActive(at, INBOX_PATH) || isNavActive(at, TEMPLATES_PATH))) {
+        setLastServerId(id);
+        return;
+      }
+      const sub = inServer ? at.slice(serverPath(inServer).length) : "";
+      if (isNavActive(sub, "/settings")) {
+        const section = /^\/settings\/([^/]+)/.exec(sub)?.[1];
+        const hasIngress = Boolean(known.find((s) => s.id === id)?.features?.ingress);
+        const keep: ServerSettingsSection[] = hasIngress ? ["domains", "storages", "docker"] : ["storages", "docker"];
+        navigate(serverSettingsPath(id, keep.find((k) => k === section)));
+      } else if (!inServer && isNavActive(at, SETTINGS_PATH)) {
+        navigate(serverSettingsPath(id));
+      } else if (isNavActive(sub, "/monitoring")) {
+        navigate(monitoringPath(id));
+      } else {
+        navigate(appsPath(id));
+      }
     },
-    [navigate, pathname, search, urlServerId],
+    [],
   );
 
   const value = useMemo(() => {
@@ -211,10 +251,12 @@ export function ServersProvider({ children }: { children: ReactNode }) {
       selectServer,
       statusByServer,
       loading,
+      loaded,
       error,
       refresh: fetchServers,
     };
   }, [
+    loaded,
     servers,
     activeServer,
     activeServerId,

@@ -1,4 +1,5 @@
 import type { Volume } from "@/context/use-docker";
+import type { StatusTone } from "@/lib/status";
 
 const VOLUME_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/;
 
@@ -44,4 +45,13 @@ export function groupVolumes(volumes: Volume[]): VolumeGroup[] {
     },
   ];
   return groups.filter((g) => g.volumes.length > 0);
+}
+
+// volumeState says whether a volume is used, in plain words: mounted by a
+// container, labelled for a Winterflow app that is no longer here, or
+// neither.
+export function volumeState(v: Volume): { tone: StatusTone; label: string } {
+  if (v.in_use) return { tone: "ok", label: "In use" };
+  if (v.orphan) return { tone: "warn", label: "Not used by any app" };
+  return { tone: "idle", label: "Unused" };
 }

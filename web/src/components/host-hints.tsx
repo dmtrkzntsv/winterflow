@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { TLSBadge } from "@/components/tls-badge";
 import { isWildcard, TLS_MODES, type RegisteredDomain } from "@/lib/domains";
 import { useServerPath } from "@/context/use-server-path";
+import { serverSettingsSub } from "@/lib/routes";
 
 // Issue is the live check's verdict on one hostname: another app on this
 // server claims it, or no registered domain covers it.
@@ -33,7 +34,7 @@ export function HostHints({ id, check }: { id: string; check: HostCheck }) {
       <p id={id} className="mt-2 text-xs text-destructive">
         No domain on this server covers this hostname.{" "}
         <Link
-          to={toServer("/settings?tab=domains")}
+          to={toServer(serverSettingsSub("domains"))}
           target="_blank"
           rel="noreferrer"
           className="inline-flex items-center gap-0.5 font-medium underline underline-offset-4"

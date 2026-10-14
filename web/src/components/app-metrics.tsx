@@ -30,11 +30,15 @@ const CHART_GRID = "grid auto-rows-[18.5rem] gap-3 md:grid-cols-2";
 // carries the flagged fraction; see isUnavailable).
 const UNAVAILABLE = "Container metrics are unavailable on this host";
 
-const KPI_GRID = "grid grid-cols-2 gap-3 lg:grid-cols-4";
+// The KPI blocks in pairs: they live in a half-width widget, flat inside it
+// (no card of their own), a 2x2 grid with hairlines between the tiles.
+const KPI_GRID = "grid grid-cols-2";
+const FLAT_TILE =
+  "rounded-none border-0 bg-transparent shadow-none [&:nth-child(odd)]:border-r [&:nth-child(n+3)]:border-t";
 
-// AppMetricBlocks is the app header's KPI row: CPU now, memory against its
+// AppMetricBlocks is an app's KPI blocks: CPU now, memory against its
 // limit, disk and network rate, each from the newest 1-minute point with
-// the last hour as a sparkline.
+// the last hour as a sparkline (the Overview's Resources widget).
 export function AppMetricBlocks({ serverId, appId }: { serverId: string; appId: string }) {
   const { data, loading } = useAppMetrics(serverId, appId, "1h");
   const points = useMemo(() => withNetTotal(data?.points ?? []), [data]);
@@ -42,13 +46,13 @@ export function AppMetricBlocks({ serverId, appId }: { serverId: string; appId: 
     return (
       <div className={KPI_GRID}>
         {["CPU", "Memory", "Disk", "Network"].map((l) => (
-          <KpiTileSkeleton key={l} label={l} />
+          <KpiTileSkeleton key={l} label={l} className={FLAT_TILE} />
         ))}
       </div>
     );
   }
   const last = lastPoint(points);
-  if (!last) return null;
+  if (!last) return <p className="text-sm text-muted-foreground">No data yet.</p>;
   const rows = toChartRows(
     points,
     data?.interval_seconds ?? 60,
@@ -73,12 +77,14 @@ export function AppMetricBlocks({ serverId, appId }: { serverId: string; appId: 
         {blind ? null : (
           <>
             <KpiTile
+            className={FLAT_TILE}
               label="CPU"
               value={formatPercent(now("cpu"))}
               sub="of host"
               spark={spark("cpu", 0, percentCeiling(rows, "cpu"))}
             />
             <KpiTile
+            className={FLAT_TILE}
               label="Memory"
               value={formatSize(now("mem_used"))}
               sub={last.mem_limit ? `of ${formatSize(last.mem_limit)} limit` : "no limit"}
@@ -89,6 +95,7 @@ export function AppMetricBlocks({ serverId, appId }: { serverId: string; appId: 
         )}
         {hasDisk || !blind ? (
           <KpiTile
+            className={FLAT_TILE}
             label="Disk"
             value={formatSize(last.disk)}
             sub={last.image ? `+ ${formatSize(last.image)} images (may be shared)` : undefined}
@@ -97,6 +104,7 @@ export function AppMetricBlocks({ serverId, appId }: { serverId: string; appId: 
         ) : null}
         {blind ? null : (
           <KpiTile
+            className={FLAT_TILE}
             label="Network"
             value={formatRate(now("net_bps"))}
             sub={
@@ -113,7 +121,7 @@ export function AppMetricBlocks({ serverId, appId }: { serverId: string; appId: 
 }
 
 // AppMetricsTab is the app page's Metrics tab: CPU, memory, network and
-// disk growth over the selected range.
+// disk over the selected range, the app's alert rules (a collapsed section of their own) below.
 export function AppMetricsTab({ serverId, appId, appName }: { serverId: string; appId: string; appName?: string }) {
   // 1h has data from the first minute (raw samples); see MonitoringPage.
   const [range, setRange] = useState<MetricsRange>("1h");

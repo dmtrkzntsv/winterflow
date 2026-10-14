@@ -1,24 +1,26 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Flame, SlidersHorizontal } from "lucide-react";
+import { SlidersHorizontal } from "lucide-react";
 
+import { OverrideDialog } from "@/components/alerts/override-dialog";
+import { Disclosure } from "@/components/disclosure";
+import { StatusPill } from "@/components/status";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { OverrideDialog } from "@/components/alerts/override-dialog";
 import { alertsGet, useActiveAlerts } from "@/hooks/use-alerts";
-import { useNow } from "@/hooks/use-now";
 import {
-  activeText,
   conditionText,
   effective,
+  formatAlertValue,
   hasThreshold,
   metricInfo,
-  sinceText,
   type Channel,
   type Override,
   type Rule,
+  type TargetKind,
 } from "@/lib/alerts";
+import { settingsPath } from "@/lib/routes";
+import type { StatusInfo } from "@/lib/status";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -27,28 +29,68 @@ type Props = {
   appId?: string;
   // targetLabel names the target in dialogs ("prod-1", "nextcloud").
   targetLabel: string;
+  // defaultOpen starts the section expanded (collapsed by default).
+  defaultOpen?: boolean;
 };
 
-// TargetAlertsCard is the Alerts card of a server's Monitoring page or an
-// app's Metrics tab: what is firing here now, and every org rule that
-// applies with its effective setting for this target, adjustable per
-// target (overrides).
-export function TargetAlertsCard({ serverId, appId = "", targetLabel }: Props) {
-  const kind = appId ? "app" : "server";
-  const now = useNow();
+const FIRING: StatusInfo = { tone: "bad", label: "Firing" };
+
+// ruleName tells a rule from the others of its kind by its own setting:
+// "Server down", "CPU above 90%".
+function ruleName(r: Rule): string {
+  const info = metricInfo(r.target_kind, r.metric);
+  if (!hasThreshold(r.metric)) return `${r.target_kind === "app" ? "App" : "Server"} down`;
+  return `${info?.label ?? r.metric} above ${info ? formatAlertValue(info.unit, r.threshold) : r.threshold}`;
+}
+
+// TargetAlertsCard is "Alert rules for this server/app", collapsed under a
+// server's Monitoring charts and an app's Metrics tab (spec §5). Opened, it
+// lists every org rule of the target's kind with its effective setting here,
+// adjustable per target (overrides). The rules are read only once it is
+// opened: a collapsed section costs nothing.
+export function TargetAlertsCard({ serverId, appId = "", targetLabel, defaultOpen = false }: Props) {
+  const kind: TargetKind = appId ? "app" : "server";
+  return (
+    <section aria-label="Alert rules" className="relative">
+      <Link
+        to={settingsPath("notifications")}
+        className="absolute top-0 right-0 inline-flex min-h-10 items-center text-xs text-muted-foreground transition-colors duration-150 hover:text-foreground hover:underline"
+      >
+        Manage rules
+      </Link>
+      <Disclosure label={`Alert rules for this ${kind}`} defaultOpen={defaultOpen}>
+        <TargetRules serverId={serverId} appId={appId} kind={kind} targetLabel={targetLabel} />
+      </Disclosure>
+    </section>
+  );
+}
+
+// TargetRules is the opened section's body; it mounts (and fetches) only
+// while the Disclosure is open.
+function TargetRules({
+  serverId,
+  appId,
+  kind,
+  targetLabel,
+}: {
+  serverId: string;
+  appId: string;
+  kind: TargetKind;
+  targetLabel: string;
+}) {
   const { data: active } = useActiveAlerts(serverId, appId || null);
-  const firing = active.filter((a) => a.app_id === appId);
+  const firing = new Set(active.filter((a) => a.app_id === appId).map((a) => a.rule_id));
   const [rules, setRules] = useState<Rule[]>([]);
   const [overrides, setOverrides] = useState<Override[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [adjusting, setAdjusting] = useState<Rule | null>(null);
-
-  // version bumps after an override changes, reloading the card.
+  // version bumps after an override changes, reloading the rules.
   const [version, setVersion] = useState(0);
 
   useEffect(() => {
-    let active = true;
+    let current = true;
     const target: Record<string, string> = { server_id: serverId };
     if (appId) target.app_id = appId;
     Promise.all([
@@ -57,51 +99,31 @@ export function TargetAlertsCard({ serverId, appId = "", targetLabel }: Props) {
       alertsGet<Channel[] | null>("get-channels"),
     ])
       .then(([r, o, c]) => {
-        if (!active) return;
+        if (!current) return;
         setRules((r ?? []).filter((x) => x.target_kind === kind));
         setOverrides(o ?? []);
         setChannels(c ?? []);
         setError(null);
+        setLoaded(true);
       })
       .catch((e: unknown) => {
-        if (active) setError(e instanceof Error ? e.message : "Failed to load alerts");
+        if (current) setError(e instanceof Error ? e.message : "Failed to load alert rules");
       });
     return () => {
-      active = false;
+      current = false;
     };
   }, [serverId, appId, kind, version]);
 
   return (
-    <Card data-slot="widget-card" className="flex min-w-0 flex-col gap-3 p-3.5" role="region" aria-label="Alerts">
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="text-sm font-medium">Alerts</h2>
-        <Link to="/org/alerts?tab=rules" className="text-xs text-muted-foreground hover:text-foreground hover:underline">
-          Manage rules
-        </Link>
-      </div>
+    <div className="space-y-2">
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
-
-      {firing.length > 0 ? (
-        <ul className="grid gap-1" aria-label="Firing">
-          {firing.map((a) => (
-            <li key={a.rule_id} className="flex items-center gap-2 text-sm text-destructive">
-              <Flame className="size-4 shrink-0" aria-hidden />
-              <span className="truncate font-medium">{activeText(a)}</span>
-              <span className="ml-auto shrink-0 text-xs tabular-nums">for {sinceText(a.since, now)}</span>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="text-sm text-muted-foreground">Nothing firing.</p>
-      )}
-
       <ul className="grid gap-1.5" aria-label="Rules">
         {rules.map((r) => {
           const o = overrides.find((x) => x.rule_id === r.id);
           const eff = effective(r, o);
           const info = metricInfo(r.target_kind, r.metric);
           return (
-            <li key={r.id} className="flex items-center gap-2 text-sm" data-testid="target-rule">
+            <li key={r.id} className="flex min-h-10 items-center gap-2 text-sm" data-testid="target-rule">
               <span className={cn("min-w-0 flex-1 truncate", !eff.enabled && "text-muted-foreground line-through")}>
                 {hasThreshold(r.metric) ? (
                   <>
@@ -112,12 +134,13 @@ export function TargetAlertsCard({ serverId, appId = "", targetLabel }: Props) {
                   <span className="font-medium">Down for {eff.duration_minutes} min</span>
                 )}
               </span>
+              {firing.has(r.id) ? <StatusPill status={FIRING} /> : null}
               {o ? <Badge variant="secondary">{o.disabled ? "Off here" : "Adjusted"}</Badge> : null}
               <Button
                 variant="ghost"
                 size="icon"
-                className="size-7"
-                aria-label={`Adjust ${info?.label ?? r.metric} for ${targetLabel}`}
+                className="size-8 max-sm:size-10"
+                aria-label={`Adjust the “${ruleName(r)}” rule for ${targetLabel}`}
                 onClick={() => setAdjusting(r)}
               >
                 <SlidersHorizontal className="size-3.5" />
@@ -125,8 +148,8 @@ export function TargetAlertsCard({ serverId, appId = "", targetLabel }: Props) {
             </li>
           );
         })}
-        {rules.length === 0 && !error ? (
-          <li className="text-sm text-muted-foreground">No {kind} rules in this organization.</li>
+        {loaded && rules.length === 0 ? (
+          <li className="text-sm text-muted-foreground">No {kind} rules yet.</li>
         ) : null}
       </ul>
 
@@ -144,6 +167,6 @@ export function TargetAlertsCard({ serverId, appId = "", targetLabel }: Props) {
           onSaved={() => setVersion((v) => v + 1)}
         />
       ) : null}
-    </Card>
+    </div>
   );
 }

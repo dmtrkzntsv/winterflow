@@ -1,7 +1,9 @@
 "use client";
 
-import { ChevronsUpDown, Plus } from "lucide-react";
+import { Check, ChevronsUpDown, Plus } from "lucide-react";
 
+import { LogoSpinner } from "@/components/app-logo";
+import { StatusDot } from "@/components/status";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -11,48 +13,29 @@ import {
   DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-} from "@/components/ui/sidebar";
+import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar";
 import { useSidebar } from "@/components/ui/use-sidebar";
-import { LogoSpinner } from "@/components/app-logo";
 import { isStandalone } from "@/config";
-import { useServers } from "@/context/use-servers";
 import type { Server } from "@/context/servers-context-base";
+import { useServers } from "@/context/use-servers";
+import { shortcutLabel } from "@/lib/keyboard";
+import { serverStatus } from "@/lib/status";
 
-// A server is considered online if it has reported in within this window.
-const ONLINE_WINDOW_MS = 2 * 60 * 1000;
+const LOGO_BOX =
+  "bg-white text-sidebar-primary-soft flex aspect-square size-8 items-center justify-center rounded-lg border border-sidebar-border/50";
 
-function statusLabel(server: Server): string {
-  // In standalone the app *is* the server: there is no remote connection to
-  // report on, so describe it as the local server rather than as online/offline.
-  if (isStandalone) {
-    return "This server";
-  }
-  if (!server.lastSeenAt) {
-    return "Never connected";
-  }
-  const seen = new Date(server.lastSeenAt).getTime();
-  if (Number.isNaN(seen)) {
-    return "Unknown";
-  }
-  return Date.now() - seen <= ONLINE_WINDOW_MS ? "Online" : "Offline";
+function Logo() {
+  return <LogoSpinner size="md" containerClassName={LOGO_BOX} iconClassName="text-sidebar-primary-soft" />;
 }
 
-// placeholderRow renders a stable sidebar header row (icon + two lines) so the
-// switcher never disappears while servers are loading or absent.
+// placeholderRow keeps the header stable (icon + two lines) while servers
+// load or before the first one exists.
 function placeholderRow(title: string, subtitle: string) {
   return (
     <SidebarMenu>
       <SidebarMenuItem>
         <SidebarMenuButton size="lg">
-          <LogoSpinner
-            size="md"
-            containerClassName="bg-white text-sidebar-primary-soft flex aspect-square size-8 items-center justify-center rounded-lg border border-sidebar-border/50"
-            iconClassName="text-sidebar-primary-soft"
-          />
+          <Logo />
           <div className="grid flex-1 text-left text-sm leading-tight">
             <span className="truncate font-medium">{title}</span>
             <span className="truncate text-xs text-muted-foreground">
@@ -65,43 +48,27 @@ function placeholderRow(title: string, subtitle: string) {
   );
 }
 
-export function ServerSwitcher({
-  onAddServer,
-}: {
-  onAddServer?: () => void;
-}) {
-  const { isMobile } = useSidebar();
-  const { servers, activeServer, selectServer, loading } = useServers();
+// ServerSwitcher heads the sidebar (spec §2). Distributed: the active
+// server with its status, a menu of every server (status dot, ⌘1…⌘9) and
+// Add server. Standalone: the one embedded server's name, no menu.
+export function ServerSwitcher({ onAddServer }: { onAddServer?: () => void }) {
+  const { isMobile, setOpenMobile } = useSidebar();
+  const { servers, activeServer, selectServer, statusByServer, loading } = useServers();
 
-  // Never collapse to nothing: show a stable placeholder while loading or when
-  // there are no servers yet, instead of disappearing.
   if (!activeServer) {
-    // Fetch still in flight — "Loading…" is honest here.
-    if (loading) {
-      return placeholderRow("WinterFlow", "Loading…");
-    }
-    // Settled with no server row yet. In standalone the app itself is the
-    // server (claimed automatically at login), so label it as such rather than
-    // implying a missing remote connection.
-    if (isStandalone) {
-      return placeholderRow("WinterFlow", "This server");
-    }
+    // Never collapse to nothing while loading or before the first server.
+    if (loading) return placeholderRow("Winterflow", "Loading…");
+    if (isStandalone) return placeholderRow("Winterflow", "This server");
     return (
       <SidebarMenu>
         <SidebarMenuItem>
-          <SidebarMenuButton
-            size="lg"
-            onClick={() => onAddServer?.()}
-            className="cursor-pointer"
-          >
+          <SidebarMenuButton size="lg" onClick={() => onAddServer?.()} className="cursor-pointer">
             <div className="flex aspect-square size-8 items-center justify-center rounded-lg border border-sidebar-border bg-sidebar-accent">
               <Plus className="size-4" />
             </div>
             <div className="grid flex-1 text-left text-sm leading-tight">
               <span className="truncate font-medium">Add a server</span>
-              <span className="truncate text-xs text-muted-foreground">
-                No servers yet
-              </span>
+              <span className="truncate text-xs text-muted-foreground">No servers yet</span>
             </div>
           </SidebarMenuButton>
         </SidebarMenuItem>
@@ -109,28 +76,27 @@ export function ServerSwitcher({
     );
   }
 
-  // Standalone: a single embedded server, no switching and no "add server".
+  // Standalone: one embedded server, nothing to switch or add. Not a button.
   if (isStandalone) {
     return (
       <SidebarMenu>
         <SidebarMenuItem>
-          <SidebarMenuButton size="lg">
-            <LogoSpinner
-              size="md"
-              containerClassName="bg-white text-sidebar-primary-soft flex aspect-square size-8 items-center justify-center rounded-lg border border-sidebar-border/50"
-              iconClassName="text-sidebar-primary-soft"
-            />
-            <div className="grid flex-1 text-left text-sm leading-tight">
-              <span className="truncate font-medium">{activeServer.name}</span>
-              <span className="truncate text-xs">
-                {statusLabel(activeServer)}
-              </span>
-            </div>
-          </SidebarMenuButton>
+          <div className="flex h-12 items-center gap-2 rounded-md p-2 text-sm group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:p-0">
+            <Logo />
+            <span className="truncate font-medium group-data-[collapsible=icon]:hidden">{activeServer.name}</span>
+          </div>
         </SidebarMenuItem>
       </SidebarMenu>
     );
   }
+
+  const statusOf = (s: Server) =>
+    serverStatus({ liveness: statusByServer?.[s.id], lastSeenAt: s.lastSeenAt, standalone: false });
+  const current = statusOf(activeServer);
+  const pick = (id: string) => {
+    selectServer(id);
+    if (isMobile) setOpenMobile(false);
+  };
 
   return (
     <SidebarMenu>
@@ -141,17 +107,12 @@ export function ServerSwitcher({
               size="lg"
               className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
             >
-              <LogoSpinner
-                size="md"
-                containerClassName="bg-white text-sidebar-primary-soft flex aspect-square size-8 items-center justify-center rounded-lg border border-sidebar-border/50"
-                iconClassName="text-sidebar-primary-soft"
-              />
+              <Logo />
               <div className="grid flex-1 text-left text-sm leading-tight">
-                <span className="truncate font-medium">
-                  {activeServer.name}
-                </span>
-                <span className="truncate text-xs">
-                  {statusLabel(activeServer)}
+                <span className="truncate font-medium">{activeServer.name}</span>
+                <span className="flex items-center gap-1.5 truncate text-xs text-muted-foreground">
+                  <StatusDot tone={current.tone} pulse={current.pulse} />
+                  {current.label}
                 </span>
               </div>
               <ChevronsUpDown className="ml-auto" />
@@ -163,35 +124,24 @@ export function ServerSwitcher({
             side={isMobile ? "bottom" : "right"}
             sideOffset={4}
           >
-            <DropdownMenuLabel className="text-muted-foreground text-xs">
-              Servers
-            </DropdownMenuLabel>
-            {servers.map((server, index) => (
-              <DropdownMenuItem
-                key={server.id}
-                onClick={() => selectServer(server.id)}
-                className="gap-2 p-2"
-              >
-                <LogoSpinner
-                  size="sm"
-                  containerClassName="bg-white text-sidebar-primary-soft flex size-6 items-center justify-center rounded-md border border-sidebar-border/50"
-                  iconClassName="text-sidebar-primary-soft shrink-0"
-                />
-                {server.name}
-                <DropdownMenuShortcut>⌘{index + 1}</DropdownMenuShortcut>
-              </DropdownMenuItem>
-            ))}
+            <DropdownMenuLabel className="text-xs text-muted-foreground">Servers</DropdownMenuLabel>
+            {servers.map((s, index) => {
+              const status = statusOf(s);
+              return (
+                <DropdownMenuItem key={s.id} onClick={() => pick(s.id)} className="min-h-10 gap-2 p-2">
+                  <StatusDot tone={status.tone} pulse={status.pulse} label={status.label} />
+                  <span className="truncate">{s.name}</span>
+                  {s.id === activeServer.id ? <Check role="img" className="size-4" aria-label="Current server" /> : null}
+                  {index < 9 ? <DropdownMenuShortcut>{shortcutLabel(index + 1)}</DropdownMenuShortcut> : null}
+                </DropdownMenuItem>
+              );
+            })}
             <DropdownMenuSeparator />
-            <DropdownMenuItem
-              className="gap-2 p-2"
-              onClick={() => onAddServer?.()}
-            >
+            <DropdownMenuItem className="min-h-10 gap-2 p-2" onClick={() => onAddServer?.()}>
               <div className="flex size-6 items-center justify-center rounded-md border bg-transparent">
                 <Plus className="size-4" />
               </div>
-              <div className="text-muted-foreground font-medium">
-                Add server
-              </div>
+              <div className="font-medium text-muted-foreground">Add server</div>
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

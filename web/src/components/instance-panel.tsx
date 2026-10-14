@@ -1,16 +1,19 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { FileText } from "lucide-react";
+import { ArrowUpCircle, FileText } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { CodeEditor } from "@/components/code-editor";
-import { EditorSection, StickyActionBar } from "@/components/editor-section";
+import { ConfigBar } from "@/components/config-bar";
+import { EditorSection } from "@/components/editor-section";
 import { InlineError } from "@/components/inline-error";
 import { ParameterFields } from "@/components/parameter-fields";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
+import { focusFirstInvalid } from "@/lib/field-errors";
 import { fieldErrors, splitValues } from "@/lib/template-params";
 import { sealSecrets, type InstanceView, type TemplateView } from "@/lib/templates";
+import { templatePath } from "@/lib/routes";
 
 // storedValues are the form's starting values: the plain values the
 // instance holds (secrets start blank: blank keeps them).
@@ -24,15 +27,29 @@ function storedValues(current: TemplateView, instance: InstanceView): Record<str
 // template's files read-only, and in place of the editor a Parameters form
 // whose Save re-renders and redeploys the app. A secret keeps its value
 // unless a new one is typed; a pending instance (never created) holds none,
-// so every required secret is asked for again.
+// so every required secret is asked for again. When the template has a
+// newer version, an Update opens the page's update dialog.
 export function InstancePanel({
   instance,
   current,
   onSaved,
+  onOpenHistory,
+  latestRevision,
+  onUpgrade,
+  onDirtyChange,
 }: {
   instance: InstanceView;
   current: TemplateView;
   onSaved: () => void;
+  // onOpenHistory opens the page's History from the bar.
+  onOpenHistory?: () => void;
+  // latestRevision is the template's newest version; onUpgrade opens the
+  // page's update dialog.
+  latestRevision?: number;
+  onUpgrade?: () => void;
+  // onDirtyChange hears whether the form holds unsaved values (the page
+  // asks before leaving them), and false when it goes.
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   const api = useTemplatesApi();
   const initial = useMemo(() => storedValues(current, instance), [current, instance]);
@@ -40,13 +57,33 @@ export function InstancePanel({
   const [tried, setTried] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const root = useRef<HTMLDivElement>(null);
   const params = current.body.parameters ?? [];
   const kept = instance.state === "created" ? Object.keys(instance.secrets ?? {}) : [];
   const dirty = params.some((p) => (values[p.name] ?? "") !== (initial[p.name] ?? ""));
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
+  const refused = tried && Object.keys(fieldErrors(params, values, kept)).length > 0;
+  const newer = onUpgrade !== undefined && latestRevision !== undefined && latestRevision > instance.revision;
+  const note = (
+    <>
+      Managed by template{" "}
+      <Link to={templatePath(instance.template_id)} className="font-medium text-foreground hover:underline">
+        {instance.template_name}
+      </Link>{" "}
+      (version {instance.revision}). Change its files in the template, or detach the app from it in Settings.
+    </>
+  );
 
   const save = async () => {
     setTried(true);
-    if (Object.keys(fieldErrors(params, values, kept)).length > 0) return;
+    if (Object.keys(fieldErrors(params, values, kept)).length > 0) {
+      // ParameterFields marks each bad field once tried is set.
+      focusFirstInvalid(root.current);
+      return;
+    }
     setSaving(true);
     setError("");
     try {
@@ -76,19 +113,42 @@ export function InstancePanel({
   };
 
   return (
-    <div>
-      <StickyActionBar className="mb-6">
-        <p className="mr-auto text-sm text-muted-foreground">
-          Managed by template{" "}
-          <Link to={`/org/templates/${instance.template_id}`} className="font-medium text-foreground hover:underline">
-            {instance.template_name}
-          </Link>{" "}
-          r{instance.revision}. Change the files in the template, or unlink the app in Settings.
-        </p>
-        <Button onClick={() => void save()} disabled={saving || (!dirty && instance.state === "created")}>
-          {saving ? "Saving…" : "Save & redeploy"}
-        </Button>
-      </StickyActionBar>
+    <div ref={root}>
+      <ConfigBar
+        status={
+          refused ? (
+            <span role="alert" tabIndex={-1} data-refusal className="text-destructive">
+              Some fields need attention.
+            </span>
+          ) : dirty ? (
+            <span className="inline-flex items-center gap-2 text-foreground">
+              <span className="size-2 rounded-full bg-status-warn" aria-hidden />
+              Unsaved changes
+            </span>
+          ) : (
+            note
+          )
+        }
+        // A pending instance's save is a retry of its create: always offered.
+        dirty={dirty || instance.state !== "created" || refused}
+        onOpenHistory={onOpenHistory}
+        primary={
+          <Button onClick={() => void save()} disabled={saving || (!dirty && instance.state === "created")}>
+            {saving ? "Saving…" : "Save & redeploy"}
+          </Button>
+        }
+      />
+      {newer ? (
+        <div role="status" className="mb-6 flex flex-wrap items-center gap-3 rounded-lg border bg-muted/40 px-4 py-3 text-sm">
+          <ArrowUpCircle className="size-4 shrink-0 text-primary" aria-hidden />
+          <span className="mr-auto">
+            A newer version of {instance.template_name} is available (version {latestRevision}).
+          </span>
+          <Button size="sm" variant="outline" onClick={onUpgrade}>
+            Update
+          </Button>
+        </div>
+      ) : null}
       {error ? (
         <InlineError icon className="mb-4">
           {error}
@@ -96,7 +156,7 @@ export function InstancePanel({
       ) : null}
       <EditorSection
         title="Parameters"
-        description="The values this app was added with. Secret values are encrypted in your browser for this server."
+        description="The values this app was created with. Secret values are encrypted in your browser for this server."
       >
         {params.length === 0 ? (
           <p className="text-sm text-muted-foreground">The template takes no values.</p>

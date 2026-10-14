@@ -18,24 +18,34 @@ export type Domain = RegisteredDomain & {
   apps: string[] | null; // app ids using a covered host
 };
 
-// TLS_MODES words each mode: its badge label, what it means for a hostname
-// (next to the badge in the app editor), and the setup it fits (the
-// register dialog). Listed in the order the dialog offers them.
-export const TLS_MODES: Record<DomainTLS, { label: string; summary: string; hint: string }> = {
+// TLS_MODES words each mode: its badge label and summary (the app editor's
+// hostname hints), its state on the Domains page, its choice in the
+// register dialog with the setup it fits. Listed in the order the dialog
+// offers them.
+export const TLS_MODES: Record<
+  DomainTLS,
+  { label: string; summary: string; state: string; choice: string; hint: string }
+> = {
   auto: {
     label: "Auto TLS",
     summary: "Free Let's Encrypt certificate",
-    hint: "Gets a free Let's Encrypt certificate for each app hostname. For a DNS record pointing at this server (on Cloudflare: DNS only, grey cloud).",
+    state: "Automatic HTTPS",
+    choice: "Automatic (Let's Encrypt)",
+    hint: "A free certificate for each app address. Point the domain's DNS at this server (on Cloudflare: DNS only, grey cloud).",
   },
   certificate: {
     label: "Certificate",
     summary: "Your uploaded certificate",
-    hint: "Uses a certificate you paste in, such as a Cloudflare Origin certificate behind the Cloudflare proxy.",
+    state: "Own certificate",
+    choice: "My own certificate",
+    hint: "Paste a certificate and its private key, such as a Cloudflare Origin certificate behind the Cloudflare proxy.",
   },
   off: {
     label: "TLS off",
     summary: "Plain HTTP, for a tunnel or proxy in front",
-    hint: "Serves plain HTTP, for when something in front handles HTTPS, such as a Cloudflare Tunnel.",
+    state: "HTTPS off",
+    choice: "Off — behind Cloudflare Tunnel or another proxy",
+    hint: "This server serves plain HTTP; the tunnel or proxy in front of it handles HTTPS.",
   },
 };
 
@@ -50,6 +60,19 @@ export function validHostname(host: string): boolean {
 
 export function isWildcard(name: string): boolean {
   return name.startsWith("*.");
+}
+
+// coveringDomain is the registration that covers a hostname, as the agent
+// picks it: an exact name wins over a wildcard, and "*.example.com" covers
+// one label under example.com (a.example.com, not a.b.example.com nor
+// example.com itself). undefined when none does.
+export function coveringDomain(host: string, registrations: readonly RegisteredDomain[]): RegisteredDomain | undefined {
+  const name = host.toLowerCase();
+  const exact = registrations.find((r) => r.name === name);
+  if (exact) return exact;
+  const dot = name.indexOf(".");
+  if (dot <= 0) return undefined;
+  return registrations.find((r) => r.name === `*.${name.slice(dot + 1)}`);
 }
 
 // domainNameError mirrors model.ValidateDomainName; "" means valid.
@@ -79,4 +102,19 @@ export function expiry(notAfter: string | null | undefined, now: Date = new Date
     days: Math.ceil(left / DAY_MS),
     day: notAfter.slice(0, 10),
   };
+}
+
+// expiryNote is what the Domains page says about a certificate-mode
+// domain's certificate: nothing while it has 30 days or more, a countdown
+// under that, the date once it is past. Other modes renew themselves or
+// have no certificate here.
+export function expiryNote(
+  d: Pick<RegisteredDomain, "tls" | "not_after">,
+  now: Date = new Date(),
+): { text: string; expired: boolean } | null {
+  if (d.tls !== "certificate") return null;
+  const left = expiry(d.not_after, now);
+  if (!left || left.grade === "ok") return null;
+  if (left.grade === "expired") return { text: `Expired ${left.day}`, expired: true };
+  return { text: `Expires in ${left.days === 1 ? "1 day" : `${left.days} days`}`, expired: false };
 }

@@ -7,7 +7,7 @@ import {
 } from "react";
 
 import { apiBaseUrl, appBaseUrl } from "@/config";
-import { AuthContext, type LoginPayload } from "./auth-context-base";
+import { AuthContext, LoginError, type LoginPayload } from "./auth-context-base";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -43,7 +43,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       credentials: "include",
     });
     if (!response.ok) {
-      throw new Error("Failed to login");
+      throw new LoginError(response.status);
     }
     setIsAuthenticated(true);
   }, []);

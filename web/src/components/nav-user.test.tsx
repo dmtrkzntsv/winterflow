@@ -1,79 +1,83 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { describe, expect, it, vi } from "vitest";
+import { MemoryRouter } from "react-router-dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { NavUser } from "@/components/nav-user";
-import {
-  SidebarContext,
-  type SidebarContextProps,
-} from "@/components/ui/use-sidebar";
+import { SidebarContext, type SidebarContextProps } from "@/components/ui/use-sidebar";
 import { AuthContext, type AuthContextValue } from "@/context/auth-context-base";
-import {
-  ProfileContext,
-  type ProfileContextValue,
-} from "@/context/profile-context-base";
 import { UserContext, type UserContextValue } from "@/context/user-context-base";
+import { THEME_KEY, setThemePreference } from "@/lib/theme";
 
 function renderNav() {
   const sidebar = { isMobile: false, state: "expanded" } as SidebarContextProps;
-  const auth = { logout: vi.fn() } as unknown as AuthContextValue;
+  const logout = vi.fn();
+  const auth = { logout } as unknown as AuthContextValue;
   const user = {
-    user: { id: "u-1", name: "Ann", picture: "", provider: "local" },
+    user: { id: "u-1", name: "Ann Lee", picture: "", provider: "local" },
     loading: false,
   } as UserContextValue;
-  // A plain account: nothing in the profile says "admin" any more.
-  const profile = {
-    profile: { user_id: "u-1", name: "Ann", email: "ann@example.test", must_change_password: false },
-  } as ProfileContextValue;
-  return render(
-    <MemoryRouter initialEntries={["/"]}>
+  render(
+    <MemoryRouter>
       <SidebarContext.Provider value={sidebar}>
         <AuthContext.Provider value={auth}>
           <UserContext.Provider value={user}>
-            <ProfileContext.Provider value={profile}>
-              <Routes>
-                <Route path="/" element={<NavUser />} />
-                <Route path="/org/members" element={<p>members page</p>} />
-                <Route path="/org/alerts" element={<p>alerts page</p>} />
-                <Route path="/org/templates" element={<p>templates page</p>} />
-              </Routes>
-            </ProfileContext.Provider>
+            <NavUser />
           </UserContext.Provider>
         </AuthContext.Provider>
       </SidebarContext.Provider>
     </MemoryRouter>,
   );
+  return { logout };
 }
 
 describe("NavUser", () => {
-  it("offers Members to every user and navigates there", async () => {
-    const user = userEvent.setup();
-    renderNav();
-
-    await user.click(screen.getByRole("button", { name: /Ann/ }));
-    await user.click(await screen.findByRole("menuitem", { name: "Members" }));
-
-    expect(await screen.findByText("members page")).toBeInTheDocument();
+  afterEach(() => {
+    act(() => setThemePreference("system"));
+    localStorage.clear();
+    document.documentElement.classList.remove("dark");
   });
 
-  it("offers Alerts next to Members", async () => {
+  it("switches the theme between Light, Dark and System", async () => {
     const user = userEvent.setup();
     renderNav();
-
     await user.click(screen.getByRole("button", { name: /Ann/ }));
-    await user.click(await screen.findByRole("menuitem", { name: "Alerts" }));
-
-    expect(await screen.findByText("alerts page")).toBeInTheDocument();
+    expect(await screen.findByRole("menuitemradio", { name: "System" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByRole("menuitemradio", { name: "Light" })).toHaveAttribute("aria-checked", "false");
+    await user.click(screen.getByRole("menuitemradio", { name: "Dark" }));
+    expect(document.documentElement).toHaveClass("dark");
+    expect(localStorage.getItem(THEME_KEY)).toBe("dark");
   });
 
-  it("offers Templates next to the org's variables", async () => {
+  it("shows the same initials as the member list", () => {
+    renderNav();
+    expect(screen.getAllByText("AL").length).toBeGreaterThan(0);
+  });
+
+  it("names every theme choice, System included", async () => {
     const user = userEvent.setup();
     renderNav();
-
     await user.click(screen.getByRole("button", { name: /Ann/ }));
-    await user.click(await screen.findByRole("menuitem", { name: "Templates" }));
+    for (const name of ["Light", "Dark", "System"]) {
+      expect(await screen.findByRole("menuitemradio", { name })).toHaveAttribute("aria-label", name);
+    }
+  });
 
-    expect(await screen.findByText("templates page")).toBeInTheDocument();
+  it("logs out", async () => {
+    const user = userEvent.setup();
+    const { logout } = renderNav();
+    await user.click(screen.getByRole("button", { name: /Ann/ }));
+    await user.click(await screen.findByRole("menuitem", { name: /log ?out/i }));
+    expect(logout).toHaveBeenCalled();
+  });
+
+  it("no longer carries the organization's pages (they live in Settings)", async () => {
+    const user = userEvent.setup();
+    renderNav();
+    await user.click(screen.getByRole("button", { name: /Ann/ }));
+    await screen.findByRole("menu");
+    for (const name of ["Members", "Alerts", "Org variables", "Templates", "API tokens", "Change password"]) {
+      expect(screen.queryByRole("menuitem", { name })).not.toBeInTheDocument();
+    }
   });
 });

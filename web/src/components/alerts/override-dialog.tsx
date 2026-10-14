@@ -1,16 +1,9 @@
 import { useState } from "react";
 import { toast } from "sonner";
 
+import { ResponsiveDialog } from "@/components/responsive-dialog";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -33,11 +26,15 @@ type Props = {
 
 type Notify = "inherit" | "specific" | "none";
 
-// OverrideDialog adjusts one rule for one server or app: switch it off
-// here, change its threshold or duration, or send elsewhere. Empty fields
-// keep the rule's value; "Reset to rule" removes the override.
+const FORM_ID = "override-form";
+
+// OverrideDialog adjusts one rule for one server or app, in the rule
+// dialog's sentence: switch it off here, change its threshold or duration,
+// or send elsewhere. Empty fields keep the rule's value; "Reset to rule"
+// removes the adjustment.
 export function OverrideDialog({ open, onOpenChange, rule, override, channels, serverId, appId, targetLabel, onSaved }: Props) {
   const info = metricInfo(rule.target_kind, rule.metric);
+  const unit = info?.unit === "load" ? "" : (info?.unit ?? "");
   const [on, setOn] = useState(!override?.disabled);
   const [threshold, setThreshold] = useState(override?.threshold != null ? String(override.threshold) : "");
   const [minutes, setMinutes] = useState(override?.duration_minutes != null ? String(override.duration_minutes) : "");
@@ -103,105 +100,120 @@ export function OverrideDialog({ open, onOpenChange, rule, override, channels, s
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>Adjust for {targetLabel}</DialogTitle>
-          <DialogDescription>
-            Rule: {ruleSummary(rule)}, {routingText(rule.channel_ids, channels).toLowerCase()}. Empty fields keep the
-            rule&apos;s values.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <Label htmlFor="override-on">Alert on {targetLabel}</Label>
-            <Switch id="override-on" checked={on} onCheckedChange={setOn} />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            {hasThreshold(rule.metric) ? (
-              <div className="space-y-1.5">
-                <Label htmlFor="override-threshold">Above ({info?.unit})</Label>
-                <Input
-                  id="override-threshold"
-                  type="number"
-                  step="any"
-                  placeholder={String(rule.threshold)}
-                  value={threshold}
-                  disabled={!on}
-                  onChange={(e) => setThreshold(e.target.value)}
-                />
-              </div>
-            ) : null}
-            <div className="space-y-1.5">
-              <Label htmlFor="override-minutes">For (minutes)</Label>
+    <ResponsiveDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title={`Adjust for ${targetLabel}`}
+      description={`Rule: ${ruleSummary(rule)}, ${routingText(rule.channel_ids, channels).toLowerCase()}. Empty fields keep the rule's values.`}
+      className="sm:max-w-lg"
+      aside={
+        override ? (
+          <Button type="button" variant="ghost" className="sm:mr-auto" onClick={() => void reset()} disabled={busy}>
+            Reset to rule
+          </Button>
+        ) : null
+      }
+      footer={
+        <>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button type="submit" form={FORM_ID} disabled={busy}>
+            {busy ? "Saving…" : "Save"}
+          </Button>
+        </>
+      }
+    >
+      <form
+        id={FORM_ID}
+        noValidate
+        className="space-y-5"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void save();
+        }}
+      >
+        <div className="flex items-center justify-between">
+          <Label htmlFor="override-on">Alert on {targetLabel}</Label>
+          <Switch id="override-on" checked={on} onCheckedChange={setOn} />
+        </div>
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <span>Alert when it</span>
+          {hasThreshold(rule.metric) ? (
+            <>
+              <span>is above</span>
               <Input
-                id="override-minutes"
+                id="override-threshold"
+                aria-label={`Above (${info?.unit})`}
+                className="h-9 w-20 max-sm:h-10"
                 type="number"
-                min={1}
-                max={60}
-                placeholder={String(rule.duration_minutes)}
-                value={minutes}
+                step="any"
+                placeholder={String(rule.threshold)}
+                value={threshold}
                 disabled={!on}
-                onChange={(e) => setMinutes(e.target.value)}
+                onChange={(e) => setThreshold(e.target.value)}
               />
-            </div>
-          </div>
-          <div className="space-y-2">
-            <Label>Notify</Label>
-            <RadioGroup value={notify} onValueChange={(v) => setNotify(v as Notify)} disabled={!on}>
-              {(
-                [
-                  ["inherit", "Same as the rule"],
-                  ["specific", "Specific channels"],
-                  ["none", "History only"],
-                ] as const
-              ).map(([v, label]) => (
-                <div key={v} className="flex items-center gap-2">
-                  <RadioGroupItem value={v} id={`override-${v}`} />
-                  <Label htmlFor={`override-${v}`} className="font-normal">
-                    {label}
+              {unit ? <span>{unit}</span> : null}
+            </>
+          ) : (
+            <span>is down</span>
+          )}
+          <span>for</span>
+          <Input
+            id="override-minutes"
+            aria-label="For (minutes)"
+            className="h-9 w-16 max-sm:h-10"
+            type="number"
+            min={1}
+            max={60}
+            placeholder={String(rule.duration_minutes)}
+            value={minutes}
+            disabled={!on}
+            onChange={(e) => setMinutes(e.target.value)}
+          />
+          <span>minutes</span>
+        </div>
+        <div className="space-y-2">
+          <p className="text-sm font-medium">Then notify</p>
+          <RadioGroup aria-label="Notify" value={notify} onValueChange={(v) => setNotify(v as Notify)} disabled={!on}>
+            {(
+              [
+                ["inherit", "Same as the rule"],
+                ["specific", "Specific channels"],
+                ["none", "Inbox only"],
+              ] as const
+            ).map(([v, label]) => (
+              <div key={v} className="flex items-center gap-2">
+                <RadioGroupItem value={v} id={`override-${v}`} />
+                <Label htmlFor={`override-${v}`} className="font-normal">
+                  {label}
+                </Label>
+              </div>
+            ))}
+          </RadioGroup>
+          {notify === "specific" ? (
+            <div className="grid gap-1.5 pl-6">
+              {channels.map((c) => (
+                <div key={c.id} className="flex items-center gap-2">
+                  <Checkbox
+                    id={`override-ch-${c.id}`}
+                    checked={picked.includes(c.id)}
+                    onCheckedChange={(checked) => setPicked((p) => (checked ? [...p, c.id] : p.filter((id) => id !== c.id)))}
+                  />
+                  <Label htmlFor={`override-ch-${c.id}`} className="font-normal">
+                    {c.name}
                   </Label>
                 </div>
               ))}
-            </RadioGroup>
-            {notify === "specific" ? (
-              <div className="grid gap-1.5 pl-6">
-                {channels.map((c) => (
-                  <div key={c.id} className="flex items-center gap-2">
-                    <Checkbox
-                      id={`override-ch-${c.id}`}
-                      checked={picked.includes(c.id)}
-                      onCheckedChange={(checked) =>
-                        setPicked((p) => (checked ? [...p, c.id] : p.filter((id) => id !== c.id)))
-                      }
-                    />
-                    <Label htmlFor={`override-ch-${c.id}`} className="font-normal">
-                      {c.name}
-                    </Label>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-          </div>
-          {error ? (
-            <p role="alert" className="text-sm text-destructive">
-              {error}
-            </p>
+            </div>
           ) : null}
         </div>
-        <DialogFooter className="gap-2 sm:justify-between">
-          {override ? (
-            <Button variant="outline" onClick={() => void reset()} disabled={busy}>
-              Reset to rule
-            </Button>
-          ) : (
-            <span />
-          )}
-          <Button onClick={() => void save()} disabled={busy}>
-            {busy ? "Saving…" : "Save"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        {error ? (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        ) : null}
+      </form>
+    </ResponsiveDialog>
   );
 }

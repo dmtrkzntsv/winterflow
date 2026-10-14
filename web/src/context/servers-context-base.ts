@@ -28,6 +28,9 @@ export type ServersContextValue = {
   // by server_status SSE notifications. Missing entry = unknown.
   statusByServer: Record<string, ServerLiveness>;
   loading: boolean;
+  // loaded: the signed-in user's servers were read at least once (loading
+  // is also false before that, while the sign-in is being checked).
+  loaded: boolean;
   error: string | null;
   refresh: () => Promise<void>;
 };

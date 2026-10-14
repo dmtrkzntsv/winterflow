@@ -7,12 +7,21 @@ export type AppFileMeta = {
   id: string;
   filename: string;
   is_encrypted: boolean;
+  // storedAs: the name the agent holds this secret file under (it was read
+  // back as the "<encrypted>" placeholder). Editor-only, never sent. A
+  // renamed file no longer stands for it (the agent keys secrets by name).
+  storedAs?: string;
 };
 
 export type AppVariableMeta = {
   id: string;
   name: string;
   is_encrypted: boolean;
+  // storedAs: the name the agent holds a secret value for this variable
+  // under (it was read back as the "<encrypted>" placeholder). Editor-only,
+  // never sent. A renamed variable no longer stands for it (the agent keys
+  // secrets by name), so it needs a new value.
+  storedAs?: string;
 };
 
 export type AppSourceConfig = {
@@ -98,10 +107,21 @@ export const COMPOSE_FILENAMES: readonly string[] = [
   "docker-compose.yaml",
 ];
 
-export const DEFAULT_COMPOSE = `services:
+// isComposeFile says whether a file name is one compose finds by itself.
+export function isComposeFile(name: string): boolean {
+  return COMPOSE_FILENAMES.includes(name.trim());
+}
+
+// defaultCompose is the example compose file a new app or template starts
+// from, publishing hostPort (a number, or "\${PORT}" in a template).
+export function defaultCompose(hostPort: number | string = 8080): string {
+  return `services:
   app:
     image: nginx:alpine
     ports:
       # host:container — change the host port if it's already in use
-      - "8088:80"
+      - "${hostPort}:80"
 `;
+}
+
+export const DEFAULT_COMPOSE = defaultCompose();

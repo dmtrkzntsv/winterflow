@@ -1,74 +1,76 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { Plus } from "lucide-react";
+import { Link } from "react-router-dom";
+import { LayoutTemplate, Plus } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
+import { AppIcon } from "@/components/app-icon";
+import { EmptyState } from "@/components/empty-state";
 import { InlineError } from "@/components/inline-error";
-import { EmptyNote } from "@/components/page-states";
+import { PageHeader } from "@/components/page-header";
+import { useTemplateLooks } from "@/hooks/use-template-looks";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
-import { useAppBreadcrumbs } from "@/layouts/use-app-layout";
-import { instancesLabel, type TemplateSummary } from "@/lib/templates";
+import { NEW_TEMPLATE_PATH, templatePath } from "@/lib/routes";
+import { usageLabel, type TemplateSummary } from "@/lib/templates";
 import { relativeTime } from "@/lib/utils";
 
-const BREADCRUMBS = [{ label: "Organization" }, { label: "Templates" }];
-
-// OrgTemplatesPage is Org → Templates: the org's stack definitions, each
-// with its latest revision and how many apps run it.
+// OrgTemplatesPage is /templates: the organization's templates as cards
+// (how many apps use each, when it last changed) and New template.
 export default function OrgTemplatesPage() {
-  useAppBreadcrumbs(BREADCRUMBS);
   const api = useTemplatesApi();
-  const navigate = useNavigate();
   const [list, setList] = useState<TemplateSummary[] | null>(null);
   const [error, setError] = useState("");
+  const looks = useTemplateLooks(api, list);
 
   useEffect(() => {
     api.listTemplates().then(setList, (e: unknown) => setError(e instanceof Error ? e.message : "Failed to load templates"));
   }, [api]);
 
   return (
-    <Card>
-      <CardHeader className="flex-row flex-wrap items-start justify-between gap-x-4 gap-y-3 space-y-0">
-        <div className="min-w-0 space-y-1.5">
-          <CardTitle>Templates</CardTitle>
-          <CardDescription>
-            A stack defined once, added as an app on any server with its own values. Apps added from a template
-            keep its files until you unlink them.
-          </CardDescription>
+    <div className="space-y-6">
+      <PageHeader
+        title="Templates"
+        subtitle="Define an app once, then add it to any server with its own settings."
+        actions={
+          <Button asChild>
+            <Link to={NEW_TEMPLATE_PATH}>
+              <Plus className="size-4" /> New template
+            </Link>
+          </Button>
+        }
+      />
+      {error ? (
+        <InlineError>{error}</InlineError>
+      ) : list === null ? (
+        <div className="flex h-24 items-center justify-center">
+          <Spinner />
         </div>
-        <Button size="sm" onClick={() => navigate("/org/templates/new")}>
-          <Plus className="size-4" /> Add template
-        </Button>
-      </CardHeader>
-      <CardContent>
-        {error ? (
-          <InlineError>{error}</InlineError>
-        ) : list === null ? (
-          <div className="flex h-24 items-center justify-center">
-            <Spinner />
-          </div>
-        ) : list.length === 0 ? (
-          <EmptyNote className="p-6 text-center">
-            No templates yet. Add one here, or open an app's Settings and save it as a template.
-          </EmptyNote>
-        ) : (
-          <ul className="divide-y rounded-md border">
-            {list.map((t) => (
-              <li key={t.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3 text-sm">
-                <Link to={`/org/templates/${t.id}`} className="font-medium hover:underline">
-                  {t.name}
-                </Link>
-                <span className="text-muted-foreground">r{t.latest_revision}</span>
-                <span className="text-muted-foreground">{instancesLabel(t)}</span>
-                <time className="ml-auto text-xs text-muted-foreground" dateTime={t.updated_at}>
-                  {relativeTime(new Date(t.updated_at))}
-                </time>
-              </li>
-            ))}
-          </ul>
-        )}
-      </CardContent>
-    </Card>
+      ) : list.length === 0 ? (
+        <EmptyState
+          icon={LayoutTemplate}
+          title="No templates yet. Create one here, or open an app's Settings and save it as a template."
+        />
+      ) : (
+        <ul aria-label="Templates" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {list.map((t) => (
+            <li key={t.id}>
+              <Link
+                to={templatePath(t.id)}
+                className="flex h-full items-start gap-3 rounded-xl border bg-card p-4 transition-colors duration-150 hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
+              >
+                <AppIcon name={t.name} icon={looks[t.id]?.icon} color={looks[t.id]?.color} className="size-10 shrink-0 text-base" />
+                <div className="min-w-0 space-y-1">
+                  <p className="truncate text-[15px] font-semibold">{t.name}</p>
+                  <p className="text-xs text-muted-foreground">{usageLabel(t)}</p>
+                  <p className="text-xs text-muted-foreground">
+                    <time dateTime={t.updated_at}>Updated {relativeTime(new Date(t.updated_at))}</time>
+                  </p>
+                </div>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }

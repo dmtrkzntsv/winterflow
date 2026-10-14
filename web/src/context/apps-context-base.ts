@@ -1,5 +1,6 @@
 import { createContext } from "react";
 
+import type { ContainerStatusWire } from "@/lib/app-status";
 import type { BackupHealth, BackupTargets, EffectiveBackup } from "@/lib/backups";
 import type { StorageVariable } from "@/types/app-config";
 
@@ -63,6 +64,16 @@ export type DeleteAppResult = {
   backupsDeleted: boolean;
 };
 
+// SaveFailedError is a save the agent ran and reported failed. For a new
+// app it may still exist: the agent commits the app before compose up, so
+// a first deploy that fails leaves the app behind.
+export class SaveFailedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SaveFailedError";
+  }
+}
+
 export type AppsContextValue = {
   apps: App[];
   // statusByApp maps app id -> latest container status code (live, in-memory).
@@ -76,9 +87,21 @@ export type AppsContextValue = {
   // backupsByApp maps app id -> the health of each of its backups (live,
   // with the status).
   backupsByApp: Record<string, BackupHealth[]>;
+  // containersByApp maps app id -> its containers in the latest report
+  // (apps that report containers only; live, with the status).
+  containersByApp: Record<string, ContainerStatusWire[]>;
+  // deployFailures maps app id -> the error of a create whose first deploy
+  // failed in this session (noteDeployFailure). It is dropped when a later
+  // status report shows the app running, or a start, save or roll back of
+  // it succeeds: the app reads Failed until then.
+  deployFailures: Record<string, string>;
+  noteDeployFailure: (appId: string, error: string) => void;
   loading: boolean;
   error: string | null;
   refresh: () => Promise<void>;
+  // reconcile asks the agent for its apps (apps.list), waits for the
+  // catalog to be synced and resolves with the re-read list.
+  reconcile: () => Promise<App[]>;
   // Lifecycle actions: dispatch the command, await its SSE result, then refresh.
   control: (appId: string, action: ControlAction) => Promise<void>;
   // remove resolves with cleanup warnings (e.g. a volume still in use) and
@@ -93,15 +116,21 @@ export type AppsContextValue = {
   // saveApp dispatches app.save with the full payload (config + files +
   // variables) and awaits the result. Upsert: app.id present = edit,
   // absent = create. Resolves with the refreshed app list so callers can
-  // locate a freshly created app (e.g. to navigate to it).
-  saveApp: (body: {
-    draft?: boolean;
-    source?: unknown;
-    app: Record<string, unknown>;
-    config: unknown;
-    files: { name: string; content: string; encrypted: boolean }[];
-    variables: { name: string; content: string; encrypted: boolean }[];
-  }) => Promise<App[]>;
+  // locate a freshly created app (e.g. to navigate to it). A failure the
+  // agent reports is a SaveFailedError; no result within timeoutMs (default:
+  // waitFor's) a WaitTimeoutError, after which the list is still re-read
+  // when the result arrives.
+  saveApp: (
+    body: {
+      draft?: boolean;
+      source?: unknown;
+      app: Record<string, unknown>;
+      config: unknown;
+      files: { name: string; content: string; encrypted: boolean }[];
+      variables: { name: string; content: string; encrypted: boolean }[];
+    },
+    opts?: { timeoutMs?: number },
+  ) => Promise<App[]>;
   // getPublicKey returns the server's ECIES public key for encrypting secrets.
   getPublicKey: () => Promise<string>;
   // getImageTags lists the registry tags available for an image (via the

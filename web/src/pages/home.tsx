@@ -1,74 +1,69 @@
-import { useMemo, useState } from "react"
-import { useNavigate } from "react-router-dom"
-import { LayoutTemplate, Plus } from "lucide-react"
+import { Plus, Server } from "lucide-react";
 
-import { useAppBreadcrumbs } from "@/layouts/use-app-layout"
-import { Button } from "@/components/ui/button"
-import { ServerSelectionDialog } from "@/components/server-creation-dialog"
-import { ActiveAlertsStrip } from "@/components/alerts/active-alerts"
-import { ServerCards } from "@/components/server-cards"
-import { AppGrid } from "@/components/app-grid"
-import { isStandalone } from "@/config"
-import { useServers } from "@/context/use-servers"
-import { useServerPath } from "@/context/use-server-path"
+import { Button } from "@/components/ui/button";
+import { FiringAlertsLine } from "@/components/alerts/active-alerts";
+import { AppGrid } from "@/components/app-grid";
+import { EmptyState } from "@/components/empty-state";
+import { NewAppButton } from "@/components/new-app/new-app-button";
+import { PageHeader } from "@/components/page-header";
+import { ServerHealthStrip } from "@/components/server-health-strip";
+import { isStandalone } from "@/config";
+import { useApps } from "@/context/use-apps";
+import { useServers } from "@/context/use-servers";
+import { useShellAddServer } from "@/layouts/shell-outlet";
+import { appsSubtitle, countApps } from "@/lib/app-summary";
 
+// HomePage is the Apps page (/server/:id): this server's apps, how many
+// run, its health in one line, firing alerts in one line, and New app (a
+// button that opens the ways to start). The other servers are one switch
+// away in the sidebar.
 export default function HomePage() {
-  const navigate = useNavigate()
-  const toServer = useServerPath()
-  const [isServerDialogOpen, setIsServerDialogOpen] = useState(false)
-  const { refresh } = useServers()
-  const breadcrumbs = useMemo(
-    () => [
-      { label: "Dashboard", href: "#", hideOnMobile: true },
-      { label: "Apps" },
-    ],
-    []
-  )
-  useAppBreadcrumbs(breadcrumbs)
+  const { activeServer, loading } = useServers();
+  const { apps, statusByApp, deployFailures, loading: appsLoading } = useApps();
+  // The shell's one Add server dialog (none on a standalone install).
+  const addServer = useShellAddServer();
+
+  if (!activeServer) {
+    return (
+      <div className="space-y-6">
+        <PageHeader title="Apps" />
+        {loading ? null : (
+          <EmptyState
+            icon={Server}
+            title={isStandalone ? "This server isn't ready yet." : "Add a server to run your apps on."}
+            action={
+              addServer ? (
+                <Button onClick={addServer}>
+                  <Plus className="size-4" aria-hidden /> Add server
+                </Button>
+              ) : undefined
+            }
+          />
+        )}
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-4">
-      {/* The apps page: title, Add app and From template share one row. */}
-      <div className="flex items-center justify-between gap-3">
-        <h1 className="mr-auto text-2xl font-semibold tracking-tight">Apps</h1>
-        <Button size="sm" variant="outline" onClick={() => navigate(toServer("/create-app/template"))}>
-          <LayoutTemplate className="size-4" /> From template
-        </Button>
-        <Button size="sm" onClick={() => navigate(toServer("/create-app"))}>
-          <Plus className="size-4" /> Add app
-        </Button>
+    <div className="space-y-6">
+      <PageHeader
+        title="Apps"
+        // Until the first list arrives "no apps yet" would be a guess, and
+        // until the first status report "0 running" would be one too.
+        subtitle={
+          (appsLoading && apps.length === 0) || (apps.length > 0 && Object.keys(statusByApp).length === 0)
+            ? activeServer.name
+            : appsSubtitle(activeServer.name, apps.length, countApps(apps, statusByApp, deployFailures))
+        }
+        actions={
+          <NewAppButton serverId={activeServer.id} />
+        }
+      />
+      <div className="space-y-2">
+        <ServerHealthStrip server={activeServer} />
+        <FiringAlertsLine serverId={activeServer.id} />
       </div>
-
-      <ActiveAlertsStrip />
-
-      {/* Server health at a glance: a compact strip above the apps. Adding
-          servers is a cloud capability; the standalone build ships one
-          embedded server, so the action is hidden. */}
-      <section aria-label="Servers" className="space-y-2">
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-medium text-muted-foreground">Servers</h2>
-          {!isStandalone ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setIsServerDialogOpen(true)}
-            >
-              <Plus className="size-4" /> Add Server
-            </Button>
-          ) : null}
-        </div>
-        <ServerCards />
-      </section>
-
       <AppGrid />
-
-      {!isStandalone ? (
-        <ServerSelectionDialog
-          isOpen={isServerDialogOpen}
-          onClose={() => setIsServerDialogOpen(false)}
-          onServerAdded={() => void refresh()}
-        />
-      ) : null}
     </div>
-  )
+  );
 }

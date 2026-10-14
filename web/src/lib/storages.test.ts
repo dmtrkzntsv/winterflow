@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ADVANCED_FIELDS,
+  DRAFT_FIELDS,
   draftFrom,
   draftProblem,
   endpointError,
   pathStyleDefault,
   storageBody,
   storageVar,
+  STORAGE_TYPES,
   type Storage,
   type StorageDraft,
 } from "@/lib/storages";
@@ -163,5 +166,19 @@ describe("storages", () => {
 
   it("names compose variables like the agent", () => {
     expect(storageVar("backup-disk", "PATH")).toBe("WF_STORAGE_BACKUP_DISK_PATH");
+  });
+});
+
+describe("storage form order", () => {
+  it("asks for the S3 basics first and the advanced fields last", () => {
+    expect(DRAFT_FIELDS).toEqual(["name", "path", "endpoint", "bucket", "accessKeyId", "secret", "region", "prefix"]);
+    expect(ADVANCED_FIELDS).toEqual(["region", "prefix"]);
+    // A missing secret is reported before a bad prefix: it comes first on screen.
+    const ok = { ...draftFrom(s3), name: "offsite", secret: "s3cret" };
+    expect(draftProblem({ ...ok, secret: "", prefix: "/x" }, false)?.field).toBe("secret");
+  });
+
+  it("names the two kinds in plain words", () => {
+    expect(STORAGE_TYPES).toEqual({ local: "Folder on this server", s3: "S3 bucket" });
   });
 });

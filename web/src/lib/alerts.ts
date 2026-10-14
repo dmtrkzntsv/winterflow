@@ -2,6 +2,8 @@
 // internal/domain/alert/catalog.go), API types, rule and value wording,
 // and the notification services the channel form turns into Shoutrrr URLs.
 
+import { appPath, monitoringPath } from "@/lib/routes";
+
 export type TargetKind = "server" | "app";
 
 export type AlertMetric =
@@ -66,7 +68,7 @@ export type Channel = {
   created_at: string;
 };
 
-// channel_ids: null = the org's default channels, [] = none (History only).
+// channel_ids: null = the org's default channels, [] = none (Inbox only).
 export type Rule = {
   id: string;
   target_kind: TargetKind;
@@ -137,6 +139,19 @@ export type AlertNotice = {
 
 export const ALERT_NOTIFICATION = "alert";
 
+// sortRules lists rules in the metrics' order — down first, then CPU,
+// memory, disk and the rest — keeping the API's order within a metric.
+export function sortRules<T extends Pick<Rule, "metric">>(rules: T[]): T[] {
+  const rank = (m: AlertMetric) => {
+    const i = ALERT_METRICS.findIndex((x) => x.metric === m);
+    return i < 0 ? ALERT_METRICS.length : i;
+  };
+  return rules
+    .map((r, i) => ({ r, i }))
+    .sort((a, b) => rank(a.r.metric) - rank(b.r.metric) || a.i - b.i)
+    .map(({ r }) => r);
+}
+
 // formatAlertValue renders a value in its metric's unit, as the
 // notifications do ("93%", "2.31", "12.4 MB/s", "71 °C", "14.2 GB").
 export function formatAlertValue(unit: AlertUnit, v: number): string {
@@ -176,7 +191,7 @@ export function ruleSummary(rule: Pick<Rule, "target_kind" | "metric" | "thresho
 // routingText words where a rule's notifications go.
 export function routingText(ids: string[] | null, channels: Channel[]): string {
   if (ids === null) return "Default channels";
-  if (ids.length === 0) return "History only";
+  if (ids.length === 0) return "Inbox only";
   const names = ids.map((id) => channels.find((c) => c.id === id)?.name ?? "deleted channel");
   return names.join(", ");
 }
@@ -222,22 +237,35 @@ export type FieldSpec = {
   placeholder?: string;
   hint?: string;
   defaultValue?: string;
+  // advanced fields sit under the channel form's "Advanced" disclosure.
+  advanced?: boolean;
 };
 
 export type ServiceSpec = {
   id: ServiceId;
   label: string;
   fields: FieldSpec[];
-  // build turns the form values into a Shoutrrr URL or throws an Error
-  // whose message is shown under the form.
+  // build turns the form values into a Shoutrrr URL or throws a FieldError
+  // whose message is shown under its field.
   build: (f: Record<string, string>) => string;
 };
 
 const enc = encodeURIComponent;
 
+// FieldError is a service form's problem with one of its fields: field is
+// the FieldSpec key, so the dialog can show the message under that field.
+export class FieldError extends Error {
+  field: string;
+  constructor(field: string, message: string) {
+    super(message);
+    this.name = "FieldError";
+    this.field = field;
+  }
+}
+
 function req(f: Record<string, string>, key: string, label: string): string {
   const v = (f[key] ?? "").trim();
-  if (!v) throw new Error(`${label} is required`);
+  if (!v) throw new FieldError(key, `${label} is required`);
   return v;
 }
 
@@ -247,10 +275,10 @@ function opt(f: Record<string, string>, key: string): string {
 
 // splitHost turns "https://host:port/path" or "host/path" into the
 // scheme-less host+path and whether plain HTTP was asked for.
-function splitHost(raw: string): { hostPath: string; insecure: boolean } {
+function splitHost(raw: string, field: string): { hostPath: string; insecure: boolean } {
   const insecure = /^http:\/\//i.test(raw);
   const hostPath = raw.replace(/^https?:\/\//i, "").replace(/\/+$/, "");
-  if (!hostPath || /\s/.test(hostPath)) throw new Error("Server must be a host name, like ntfy.example.com");
+  if (!hostPath || /\s/.test(hostPath)) throw new FieldError(field, "Server must be a host name, like ntfy.example.com");
   return { hostPath, insecure };
 }
 
@@ -272,7 +300,7 @@ export const SERVICES: ServiceSpec[] = [
     ],
     build: (f) => {
       const token = req(f, "token", "Bot token");
-      if (!/^\d+:[\w-]+$/.test(token)) throw new Error("Bot token looks like 123456789:ABC-DEF…");
+      if (!/^\d+:[\w-]+$/.test(token)) throw new FieldError("token", "Bot token looks like 123456789:ABC-DEF…");
       return `telegram://${token}@telegram?chats=${list(req(f, "chats", "Chats"))}`;
     },
   },
@@ -290,7 +318,7 @@ export const SERVICES: ServiceSpec[] = [
     ],
     build: (f) => {
       const m = req(f, "webhook", "Webhook URL").match(/discord(?:app)?\.com\/api\/webhooks\/(\d+)\/([\w-]+)/);
-      if (!m) throw new Error("Paste the whole Discord webhook URL");
+      if (!m) throw new FieldError("webhook", "Paste the whole Discord webhook URL");
       return `discord://${m[2]}@${m[1]}`;
     },
   },
@@ -308,7 +336,7 @@ export const SERVICES: ServiceSpec[] = [
     ],
     build: (f) => {
       const m = req(f, "webhook", "Webhook URL").match(/hooks\.slack\.com\/services\/([^/]+)\/([^/]+)\/([^/?#]+)/);
-      if (!m) throw new Error("Paste the whole Slack webhook URL");
+      if (!m) throw new FieldError("webhook", "Paste the whole Slack webhook URL");
       return `slack://hook:${m[1]}-${m[2]}-${m[3]}@webhook`;
     },
   },
@@ -318,11 +346,11 @@ export const SERVICES: ServiceSpec[] = [
     fields: [
       { key: "server", label: "Server", defaultValue: "ntfy.sh", placeholder: "ntfy.sh" },
       { key: "topic", label: "Topic", secret: true, placeholder: "my-alerts-7f3k", hint: "Anyone who knows a public topic can read it." },
-      { key: "username", label: "Username", optional: true },
-      { key: "password", label: "Password or token", secret: true, optional: true },
+      { key: "username", label: "Username", optional: true, advanced: true },
+      { key: "password", label: "Password or token", secret: true, optional: true, advanced: true },
     ],
     build: (f) => {
-      const { hostPath, insecure } = splitHost(req(f, "server", "Server"));
+      const { hostPath, insecure } = splitHost(req(f, "server", "Server"), "server");
       const topic = req(f, "topic", "Topic");
       const user = opt(f, "username");
       const pass = opt(f, "password");
@@ -338,7 +366,7 @@ export const SERVICES: ServiceSpec[] = [
       { key: "token", label: "App token", secret: true, placeholder: "AzyoeNS.D4iJLVa" },
     ],
     build: (f) => {
-      const { hostPath, insecure } = splitHost(req(f, "server", "Server"));
+      const { hostPath, insecure } = splitHost(req(f, "server", "Server"), "server");
       return `gotify://${hostPath}/${enc(req(f, "token", "App token"))}${insecure ? "?disabletls=yes" : ""}`;
     },
   },
@@ -360,16 +388,16 @@ export const SERVICES: ServiceSpec[] = [
     label: "Email (SMTP)",
     fields: [
       { key: "host", label: "SMTP server", placeholder: "smtp.example.com" },
-      { key: "port", label: "Port", defaultValue: "587" },
-      { key: "username", label: "Username", optional: true },
-      { key: "password", label: "Password", secret: true, optional: true },
+      { key: "port", label: "Port", defaultValue: "587", advanced: true },
+      { key: "username", label: "Username", optional: true, advanced: true },
+      { key: "password", label: "Password", secret: true, optional: true, advanced: true },
       { key: "from", label: "From", placeholder: "winterflow@example.com" },
       { key: "to", label: "To", placeholder: "ops@example.com", hint: "Comma-separated." },
     ],
     build: (f) => {
       const host = req(f, "host", "SMTP server");
       const port = req(f, "port", "Port");
-      if (!/^\d{1,5}$/.test(port)) throw new Error("Port must be a number");
+      if (!/^\d{1,5}$/.test(port)) throw new FieldError("port", "Port must be a number");
       const user = opt(f, "username");
       const pass = opt(f, "password");
       const auth = user ? `${enc(user)}:${enc(pass)}@` : "";
@@ -395,11 +423,11 @@ export const SERVICES: ServiceSpec[] = [
       try {
         u = new URL(raw);
       } catch {
-        throw new Error("URL must start with https:// or http://");
+        throw new FieldError("url", "URL must start with https:// or http://");
       }
-      if (u.protocol !== "https:" && u.protocol !== "http:") throw new Error("URL must start with https:// or http://");
+      if (u.protocol !== "https:" && u.protocol !== "http:") throw new FieldError("url", "URL must start with https:// or http://");
       if (u.username || u.password) {
-        throw new Error("Credentials in the URL are not supported; use a header-less token in the path or the raw Shoutrrr URL");
+        throw new FieldError("url", "Credentials in the URL are not supported; use a header-less token in the path or the Other (URL) service");
       }
       const extra = u.search ? `&${u.search.slice(1)}` : "";
       return `generic://${u.host}${u.pathname}?template=json${u.protocol === "http:" ? "&disabletls=yes" : ""}${extra}`;
@@ -407,14 +435,14 @@ export const SERVICES: ServiceSpec[] = [
   },
   {
     id: "raw",
-    label: "Shoutrrr URL",
+    label: "Other (URL)",
     fields: [
       {
         key: "url",
         label: "URL",
         secret: true,
         placeholder: "matrix://user:password@host/?rooms=!room",
-        hint: "Any Shoutrrr service URL (containrrr.dev/shoutrrr).",
+        hint: "Any Shoutrrr service URL (containrrr.dev/shoutrrr), such as matrix:// or pushbullet://.",
       },
     ],
     build: (f) => req(f, "url", "URL"),
@@ -490,9 +518,8 @@ export function activeText(a: Pick<ActiveAlert, "target_kind" | "metric" | "valu
   return `${info.label} ${formatAlertValue(info.unit, a.value)} > ${formatAlertValue(info.unit, a.threshold)}`;
 }
 
-// alertTargetPath links a firing alert to its server's Monitoring page or its
-// app's Metrics tab.
+// alertTargetPath is where an alert leads: an app's Metrics tab, or the
+// server's Monitoring page for an alert about the server itself.
 export function alertTargetPath(serverId: string, appId: string): string {
-  const base = `/server/${encodeURIComponent(serverId)}`;
-  return appId ? `${base}/app/${encodeURIComponent(appId)}?tab=metrics` : `${base}/monitoring`;
+  return appId ? appPath(serverId, appId, "metrics") : monitoringPath(serverId);
 }

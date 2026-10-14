@@ -2,6 +2,7 @@ import { useCallback, useMemo } from "react";
 
 import { useNotifications } from "@/context/use-notifications";
 import { useServers } from "@/context/use-servers";
+import { forgetAppDetail } from "@/hooks/use-app-detail";
 import { dispatchCommand, readApiError } from "@/lib/api";
 import {
   AgentError,
@@ -12,6 +13,7 @@ import {
   type RestoreResult,
   type RunBackupResult,
 } from "@/lib/backups";
+import { forgetRevisions } from "@/lib/revisions";
 import { apiBase as base } from "@/config";
 
 // How long to wait for a result. A Back up now or a restore answers when it
@@ -74,6 +76,10 @@ export function useBackups() {
         { app_id: appId, backups, ...(base ? { base } : {}) },
         { post: true, timeoutMs: BACKUP_UPDATE_TIMEOUT_MS },
       );
+      // The update is a commit of the app's config, under a version that
+      // may not move: the page's kept read and history are stale.
+      forgetRevisions(appId);
+      forgetAppDetail(appId);
       return { backups: res.backups ?? [], redeployed: res.redeployed ?? false, warnings: res.warnings ?? [], base: res.backups_base ?? "" };
     },
     [dispatch],

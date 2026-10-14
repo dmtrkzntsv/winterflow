@@ -6,7 +6,7 @@ import { Card } from "@/components/ui/card";
 import { ChartContainer, ChartTooltip, type ChartConfig } from "@/components/ui/chart";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ChartEmpty, MetricLegend, MetricTooltip } from "@/components/chart-parts";
-import { cn } from "@/lib/utils";
+import { cn, lowerFirst } from "@/lib/utils";
 import { axisWidth, niceAxis, scaleFor, stackTotals, timeTicks, valuesOf, type AxisScale } from "@/lib/chart-scale";
 import { formatTick, type ChartRow, type MetricsRange } from "@/lib/metrics";
 
@@ -250,7 +250,7 @@ export function ChartCardSkeleton({
     <Card
       data-slot="widget-card"
       role="status"
-      aria-label={title ? `Loading ${title}` : "Loading"}
+      aria-label={title ? `Loading ${lowerFirst(title)}` : "Loading"}
       className={cn("flex min-w-0 flex-col gap-1.5 p-3.5", className)}
     >
       {title ? (

@@ -4,8 +4,16 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, configure } from "@testing-library/react";
 import { afterEach } from "vitest";
 
+import { forgetAppDetails } from "@/hooks/use-app-detail";
+import { resetHeldCreates } from "@/lib/held-creates";
+
 afterEach(() => {
   cleanup();
+  // A create a test left held (it outlived its wait) must not claim its
+  // name in the next test.
+  resetHeldCreates();
+  // Nor may an app read a test shared serve the next one.
+  forgetAppDetails();
 });
 
 // findBy*/waitFor default to 1 s, which a loaded runner with coverage on can
@@ -20,7 +28,9 @@ globalThis.ResizeObserver ??= class {
   disconnect() {}
 };
 
-// Radix Select uses pointer capture and scrollIntoView, which jsdom lacks.
+// Radix Select and vaul's bottom sheet use pointer capture and
+// scrollIntoView, which jsdom lacks.
+Element.prototype.setPointerCapture ??= () => {};
 Element.prototype.hasPointerCapture ??= () => false;
 Element.prototype.releasePointerCapture ??= () => {};
 Element.prototype.scrollIntoView ??= () => {};

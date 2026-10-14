@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { AddBackupDialog } from "@/components/add-backup-dialog";
 import type { BackupTargets } from "@/lib/backups";
+import { stubViewport } from "@/test/media";
 
 // Links point into the active server's scope (/server/:id/...).
 vi.mock("@/context/use-servers", () => ({ useServers: () => ({ activeServerId: "srv-1" }) }));
@@ -70,7 +71,7 @@ describe("AddBackupDialog", () => {
     await user.selectOptions(screen.getByLabelText("Where the data is"), "volume:data");
     await user.type(screen.getByLabelText("Database file"), "audit.db");
     await user.click(screen.getByRole("button", { name: "Add backup" }));
-    expect(onAdd).toHaveBeenCalledWith({ name: "audit", type: "sqlite", enabled: true, storage: "disk", every: "1h", volume: "data", path: "audit.db" });
+    expect(onAdd).toHaveBeenCalledWith({ name: "audit", type: "sqlite", enabled: true, storage: "disk", every: "24h", volume: "data", path: "audit.db" });
   });
 
   it("preselects the only storage, and asks to pick when there are several", async () => {
@@ -95,7 +96,7 @@ describe("AddBackupDialog", () => {
     const user = userEvent.setup({ delay: null });
     const onAdd = renderDialog(targets, async () => []);
     const link = await screen.findByRole("link", { name: "Add storage" });
-    expect(link).toHaveAttribute("href", "/server/srv-1/settings?tab=storages");
+    expect(link).toHaveAttribute("href", "/server/srv-1/settings/storages");
     expect(screen.queryByLabelText("Storage")).not.toBeInTheDocument();
     await user.selectOptions(screen.getByLabelText("Where the data is"), "volume:data");
     expect(screen.getByRole("button", { name: "Add backup" })).toBeDisabled();
@@ -237,5 +238,21 @@ describe("AddBackupDialog", () => {
       </MemoryRouter>,
     );
     expect(screen.getByRole("alert")).toHaveTextContent("backups[1].volume: nope");
+  });
+
+  it("is a bottom sheet on a phone whose Add backup still sends the form", async () => {
+    stubViewport(375);
+    try {
+      const user = userEvent.setup({ delay: null });
+      const onAdd = renderDialog(targets, async () => ["disk"]);
+      expect(screen.getByRole("dialog", { name: "Add backup" })).toHaveClass("rounded-t-[10px]");
+      await user.click(await screen.findByRole("radio", { name: "SQLite database file" }));
+      await user.selectOptions(screen.getByLabelText("Where the data is"), "volume:data");
+      await user.type(screen.getByLabelText("Database file"), "audit.db");
+      await user.click(screen.getByRole("button", { name: "Add backup" }));
+      expect(onAdd).toHaveBeenCalledWith(expect.objectContaining({ name: "audit", type: "sqlite", volume: "data" }));
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

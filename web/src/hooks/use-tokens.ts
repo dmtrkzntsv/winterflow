@@ -74,7 +74,11 @@ export function useTokens() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token_id: tokenId }),
       });
-      void refresh();
+      // The token is gone whatever the list says next: drop it here, so a
+      // failed listing can't leave its row behind.
+      setTokens((list) => list.filter((t) => t.token_id !== tokenId));
+      // Resolve once the list is read again (focus moves on then).
+      await refresh();
     },
     [refresh],
   );

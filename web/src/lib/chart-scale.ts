@@ -152,16 +152,18 @@ export function timeTicks(
   return ticks;
 }
 
-// sparkDomain is a sparkline's value axis: zero to max when given, else the
-// data's own span. A flat series is padded so it draws as a solid line at
-// mid-height rather than on a degenerate axis.
+// sparkDomain is a sparkline's value axis: zero to max when given, else
+// zero to the data's top (a memory use wobbling by 0.1 MB stays a calm line
+// instead of dramatic waves); data below zero spans itself. A flat series is
+// padded so it draws as a solid line at mid-height rather than on a
+// degenerate axis.
 export function sparkDomain(values: (number | null | undefined)[], max?: number): [number, number] {
   if (max !== undefined) return [0, max];
   const finite = values.filter((v): v is number => typeof v === "number" && Number.isFinite(v));
   if (finite.length === 0) return [0, 1];
   const lo = Math.min(...finite);
   const hi = Math.max(...finite);
-  if (lo !== hi) return [lo, hi];
+  if (lo !== hi) return lo >= 0 ? [0, hi] : [lo, hi];
   const pad = Math.abs(lo) / 2 || 1;
   return [lo - pad, hi + pad];
 }
@@ -192,21 +194,6 @@ export function stackTotals(rows: Record<string, unknown>[], keys: string[]): nu
 // valuesOf is every numeric value under keys, for an unstacked axis.
 export function valuesOf(rows: Record<string, unknown>[], keys: string[]): number[] {
   return rows.flatMap((row) => keys.map((k) => row[k]).filter((v): v is number => typeof v === "number"));
-}
-
-// average is the mean of the finite values, or null without any.
-export function average(values: (number | null | undefined)[]): number | null {
-  const finite = values.filter((v): v is number => typeof v === "number" && Number.isFinite(v));
-  if (finite.length === 0) return null;
-  return finite.reduce((a, b) => a + b, 0) / finite.length;
-}
-
-// formatDelta renders a delta pill's figure: "+12.1%", "-4%", "+130%", "0%".
-export function formatDelta(delta: number): string {
-  const abs = Math.abs(delta);
-  const n = abs < 100 ? Number(abs.toFixed(1)) : Math.round(abs);
-  if (n === 0) return "0%";
-  return `${delta > 0 ? "+" : "-"}${n}%`;
 }
 
 // formatHeading renders a tooltip heading: "Oct 11, 05:06 PM".

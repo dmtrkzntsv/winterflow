@@ -10,15 +10,21 @@ import {
 import { useAuth } from "@/context/use-auth";
 import { useServers } from "@/context/use-servers";
 import { useNotifications } from "@/context/use-notifications";
+import { WaitTimeoutError } from "@/context/notifications-context-base";
 import { apiBase as base } from "@/config";
 import { dispatchCommand } from "@/lib/api";
 import type { BackupHealth } from "@/lib/backups";
+import { forgetAppDetail } from "@/hooks/use-app-detail";
+import { settleLateCreate } from "@/lib/held-creates";
+import { forgetRevisions } from "@/lib/revisions";
 import { createSharedVariablesApi, type VarsReloaded } from "@/lib/shared-variables";
-import { splitStatus, type AppStatusWire } from "@/lib/app-status";
+import { splitStatus, type AppStatusWire, type ContainerStatusWire } from "@/lib/app-status";
 
 import {
   AppsContext,
+  AppStatusCode,
   DELETE_APP_TIMEOUT_MS,
+  SaveFailedError,
   type App,
   type AppDetailPayload,
   type AppRevisions,
@@ -65,7 +71,6 @@ type AcceptedResponse = {
   data?: { request_id?: string };
 };
 
-
 const toApp = (a: AppResponse): App => ({
   id: a.id,
   serverId: a.server_id,
@@ -86,6 +91,8 @@ export function AppsProvider({ children }: { children: ReactNode }) {
   const [statusByApp, setStatusByApp] = useState<Record<string, number>>({});
   const [staleVarsByApp, setStaleVarsByApp] = useState<Record<string, string[]>>({});
   const [backupsByApp, setBackupsByApp] = useState<Record<string, BackupHealth[]>>({});
+  const [containersByApp, setContainersByApp] = useState<Record<string, ContainerStatusWire[]>>({});
+  const [deployFailures, setDeployFailures] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const mounted = useRef(false);
@@ -99,6 +106,30 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       mounted.current = false;
     };
   }, []);
+
+  const noteDeployFailure = useCallback((appId: string, error: string) => {
+    setDeployFailures((prev) => ({ ...prev, [appId]: error }));
+  }, []);
+  // clearDeployFailure drops an app's failed deploy: it runs now, or a
+  // later deploy of it went through.
+  const clearDeployFailure = useCallback((appId: string) => {
+    setDeployFailures((prev) => {
+      if (!(appId in prev)) return prev;
+      const next = { ...prev };
+      delete next[appId];
+      return next;
+    });
+  }, []);
+  // A status report showing a failed app running ends its failure.
+  useEffect(() => {
+    setDeployFailures((prev) => {
+      const done = Object.keys(prev).filter((id) => statusByApp[id] === AppStatusCode.Active);
+      if (done.length === 0) return prev;
+      const next = { ...prev };
+      for (const id of done) delete next[id];
+      return next;
+    });
+  }, [statusByApp]);
 
   // loadApps reads the DB-backed list synchronously (no agent hop).
   const loadApps = useCallback(async (): Promise<App[]> => {
@@ -168,6 +199,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
         setStatusByApp({});
         setStaleVarsByApp({});
         setBackupsByApp({});
+        setContainersByApp({});
       }
       return;
     }
@@ -179,10 +211,11 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       if (!res.ok) return;
       const result = (await res.json()) as GetAppsStatusResponse;
       if (!mounted.current) return;
-      const { status, stale, backups } = splitStatus(result.data?.apps);
+      const { status, stale, backups, containers } = splitStatus(result.data?.apps);
       setStatusByApp(keepIfSame(status));
       setStaleVarsByApp(keepIfSame(stale));
       setBackupsByApp(keepIfSame(backups));
+      setContainersByApp(keepIfSame(containers));
     } catch {
       // Status is best-effort; absence renders as "unknown".
     }
@@ -196,6 +229,20 @@ export function AppsProvider({ children }: { children: ReactNode }) {
     void loadStatus();
   }, [loadStatus, connected]);
 
+  // reconcile is refresh that waits: the agent's list synced into the
+  // catalog, then read again (with the status).
+  const reconcile = useCallback(async (): Promise<App[]> => {
+    if (!activeServerId) throw new Error("No active server");
+    await dispatchCommand(
+      waitFor,
+      `${base}/api/v1/app/refresh-apps?server_id=${encodeURIComponent(activeServerId)}`,
+      { method: "POST" },
+      { refOptional: true },
+    );
+    const [list] = await Promise.all([loadApps(), loadStatus()]);
+    return list;
+  }, [activeServerId, waitFor, loadApps, loadStatus]);
+
   // Re-read the apps list when a dispatched command's result arrives over SSE.
   // The backend persists/reconciles the DB before publishing, so a plain
   // re-read picks up the synced state.
@@ -204,7 +251,14 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       if (n.type !== "operation_result") return;
       if (!n.ref || !pendingRefs.current.has(n.ref)) return;
       pendingRefs.current.delete(n.ref);
-      void loadApps();
+      // A create that outlived its wait gives its name back once the list
+      // is read again (its app listed when it went through), and how it
+      // ended reaches a create form, or the shell's toast.
+      const ref = n.ref;
+      const failed = !!n.status;
+      void loadApps().then((list) =>
+        settleLateCreate(ref, failed ? { failed, error: n.error || "Operation failed" } : { failed, error: "", list }),
+      );
     });
     return unsubscribe;
   }, [subscribe, loadApps]);
@@ -222,23 +276,26 @@ export function AppsProvider({ children }: { children: ReactNode }) {
           }
         | undefined;
       if (!p?.server_id || p.server_id !== activeServerId) return;
-      const { status, stale, backups } = splitStatus(p.apps);
+      const { status, stale, backups, containers } = splitStatus(p.apps);
       setStatusByApp(keepIfSame(status));
       setStaleVarsByApp(keepIfSame(stale));
       setBackupsByApp(keepIfSame(backups));
+      setContainersByApp(keepIfSame(containers));
     });
   }, [subscribe, activeServerId]);
 
   // dispatchAndWait POSTs a fire-and-forward command, awaits its SSE result
   // by request_id, refreshes the list and status, and returns the refreshed
-  // list together with the result payload.
+  // list together with the result payload. A command that outlives the wait
+  // still re-reads the list when its result arrives (a slow create appears).
   const dispatchAndWait = useCallback(
     async (
       path: string,
       body: Record<string, unknown>,
-      opts: { timeoutMs?: number } = {},
+      opts: { timeoutMs?: number; failure?: new (message: string) => Error } = {},
     ): Promise<{ list: App[]; payload: unknown }> => {
       if (!activeServerId) throw new Error("No active server");
+      let ref = "";
       // A refused command (400) carries the reason, e.g. an unknown storage.
       const payload = await dispatchCommand(
         waitFor,
@@ -248,8 +305,14 @@ export function AppsProvider({ children }: { children: ReactNode }) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ...body, server_id: activeServerId }),
         },
-        { timeoutMs: opts.timeoutMs, refOptional: true },
-      );
+        { timeoutMs: opts.timeoutMs, failure: opts.failure, refOptional: true, onAccepted: (r) => (ref = r) },
+      ).catch((e: unknown) => {
+        if (e instanceof WaitTimeoutError && ref) {
+          pendingRefs.current.add(ref);
+          e.ref = ref;
+        }
+        throw e;
+      });
       const [list] = await Promise.all([loadApps(), loadStatus()]);
       return { list, payload };
     },
@@ -259,8 +322,15 @@ export function AppsProvider({ children }: { children: ReactNode }) {
   const control = useCallback(
     async (appId: string, action: ControlAction) => {
       await dispatchAndWait("control-app", { app_id: appId, action });
+      if (action !== "stop") clearDeployFailure(appId);
+      // A start (and a pull, which redeploys) can bring an undeployed draft
+      // live without a commit; a stop or restart moves nothing.
+      if (action === "start" || action === "update") forgetRevisions(appId);
+      // A pull can move a Git app's source (a new commit) while the version
+      // it is listed under stays: the page's read of it is stale.
+      if (action === "update") forgetAppDetail(appId);
     },
-    [dispatchAndWait],
+    [dispatchAndWait, clearDeployFailure],
   );
 
   const remove = useCallback(
@@ -281,6 +351,8 @@ export function AppsProvider({ children }: { children: ReactNode }) {
         },
         { timeoutMs: DELETE_APP_TIMEOUT_MS },
       );
+      forgetRevisions(appId, { gone: true });
+      clearDeployFailure(appId);
       const res = payload as
         | { warnings?: string[]; volumes_deleted?: boolean; backups_deleted?: boolean }
         | undefined;
@@ -290,12 +362,17 @@ export function AppsProvider({ children }: { children: ReactNode }) {
         backupsDeleted: res?.backups_deleted ?? false,
       };
     },
-    [dispatchAndWait],
+    [dispatchAndWait, clearDeployFailure],
   );
 
   const rename = useCallback(
     async (appId: string, name: string) => {
       await dispatchAndWait("rename-app", { app_id: appId, name });
+      // A rename is a commit (the name is in the app's config) the version
+      // it is listed under may not show: a kept read would save the old
+      // name back.
+      forgetRevisions(appId);
+      forgetAppDetail(appId);
     },
     [dispatchAndWait],
   );
@@ -425,8 +502,13 @@ export function AppsProvider({ children }: { children: ReactNode }) {
   const rollback = useCallback(
     async (appId: string, hash: string) => {
       await dispatchAndWait("rollback-app", { app_id: appId, hash });
+      // The old tree is a new commit, under a version that may not move: a
+      // kept read would save the pre-rollback tree back.
+      forgetRevisions(appId);
+      forgetAppDetail(appId);
+      clearDeployFailure(appId);
     },
-    [dispatchAndWait],
+    [dispatchAndWait, clearDeployFailure],
   );
 
   // saveApp dispatches app.save with the full payload (an upsert: app.id
@@ -439,18 +521,30 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       config: unknown;
       files: { name: string; content: string; encrypted: boolean }[];
       variables: { name: string; content: string; encrypted: boolean }[];
-    }) => {
-      const { list } = await dispatchAndWait("save-app", {
-        app: body.app,
-        config: body.config,
-        files: body.files,
-        variables: body.variables,
-        ...(body.source ? { source: body.source } : {}),
-        ...(body.draft ? { draft: true } : {}),
-      });
+    }, opts: { timeoutMs?: number } = {}) => {
+      const { list } = await dispatchAndWait(
+        "save-app",
+        {
+          app: body.app,
+          config: body.config,
+          files: body.files,
+          variables: body.variables,
+          ...(body.source ? { source: body.source } : {}),
+          ...(body.draft ? { draft: true } : {}),
+        },
+        { failure: SaveFailedError, timeoutMs: opts.timeoutMs },
+      );
+      if (typeof body.app.id === "string") {
+        // The app changed, and the version it is listed under may not have
+        // moved (the API stores none after a save): drop what was kept of it.
+        forgetRevisions(body.app.id);
+        forgetAppDetail(body.app.id);
+        // A deploy went through: the app no longer reads Failed.
+        if (!body.draft) clearDeployFailure(body.app.id);
+      }
       return list;
     },
-    [dispatchAndWait],
+    [dispatchAndWait, clearDeployFailure],
   );
 
   const value = useMemo(
@@ -460,9 +554,13 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       staleVarsByApp,
       reloadSharedVars,
       backupsByApp,
+      containersByApp,
+      deployFailures,
+      noteDeployFailure,
       loading,
       error,
       refresh,
+      reconcile,
       control,
       remove,
       rename,
@@ -479,9 +577,13 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       staleVarsByApp,
       reloadSharedVars,
       backupsByApp,
+      containersByApp,
+      deployFailures,
+      noteDeployFailure,
       loading,
       error,
       refresh,
+      reconcile,
       control,
       remove,
       rename,

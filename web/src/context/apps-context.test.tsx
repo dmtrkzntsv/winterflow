@@ -3,8 +3,12 @@ import { act, renderHook, waitFor as waitUntil } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppsProvider } from "@/context/apps-context";
-import { DELETE_APP_TIMEOUT_MS } from "@/context/apps-context-base";
+import { DELETE_APP_TIMEOUT_MS, SaveFailedError } from "@/context/apps-context-base";
+import { WaitTimeoutError } from "@/context/notifications-context-base";
 import { useApps } from "@/context/use-apps";
+import { keepRevisions, keptRevisions, resetRevisionsCache, revisionsEpoch } from "@/lib/revisions";
+import { readAppDetail } from "@/hooks/use-app-detail";
+import { claimCreate, holdCreate, onUnattendedCreate, pendingCreates } from "@/lib/held-creates";
 
 vi.mock("@/context/use-auth", () => ({ useAuth: () => ({ isAuthenticated: true }) }));
 vi.mock("@/context/use-servers", () => ({ useServers: () => ({ activeServerId: "srv-1" }) }));
@@ -34,7 +38,7 @@ const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     return json(200, {
       data: {
         apps: [
-          { app_id: "a1", status_code: 1, backups: [{ name: "db", state: "late", last_success: 1 }] },
+          { app_id: "a1", status_code: 1, backups: [{ name: "db", state: "late", last_success: 1 }], containers: [{ container_id: "c1", name: "shop-web-1", status_code: 1, exit_code: 0 }] },
           { app_id: "a2", status_code: 5, backups: null },
         ],
       },
@@ -72,6 +76,22 @@ describe("AppsProvider commands", () => {
 describe("AppsProvider backups", () => {
   beforeEach(() => vi.stubGlobal("fetch", fetchMock));
   afterEach(() => vi.unstubAllGlobals());
+
+  it("keeps each app's containers from the status and its pushes", async () => {
+    const { result } = renderHook(() => useApps(), { wrapper });
+    await waitUntil(() =>
+      expect(result.current.containersByApp).toEqual({
+        a1: [{ container_id: "c1", name: "shop-web-1", status_code: 1, exit_code: 0 }],
+      }),
+    );
+    const crashed = { container_id: "c2", name: "blog-db-1", status_code: 4, exit_code: 1, error: "out of memory" };
+    act(() => {
+      for (const h of handlers) {
+        h({ type: "apps_status", payload: { server_id: "srv-1", apps: [{ app_id: "a2", status_code: 4, containers: [crashed] }] } });
+      }
+    });
+    await waitUntil(() => expect(result.current.containersByApp).toEqual({ a2: [crashed] }));
+  });
 
   it("keeps each app's backup health from the status and its pushes", async () => {
     const { result } = renderHook(() => useApps(), { wrapper });
@@ -135,5 +155,249 @@ describe("AppsProvider apps", () => {
     const { result } = renderHook(() => useApps(), { wrapper });
     await waitUntil(() => expect(result.current.apps).toHaveLength(2));
     expect(result.current.apps.map((a) => a.templateId)).toEqual(["t1", undefined]);
+  });
+});
+
+describe("AppsProvider and the kept histories", () => {
+  const history = { current: "c", deployed: "b", revisions: [] };
+  const accepting = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (/control-app|rollback-app|rename-app|delete-app/.test(url)) return json(202, { data: { request_id: "r1" } });
+    return fetchMock(input);
+  });
+  beforeEach(() => {
+    vi.stubGlobal("fetch", accepting);
+    waitFor.mockReset().mockResolvedValue({ status: 0, payload: {} });
+    resetRevisionsCache();
+    keepRevisions("a1", "3", history, 0);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("forgets an app's history when a control or a roll back succeeds, so a draft that went live is read again", async () => {
+    const { result } = renderHook(() => useApps(), { wrapper });
+    await waitUntil(() => expect(result.current.loading).toBe(false));
+    await act(() => result.current.control("a1", "start"));
+    expect(keptRevisions("a1", "3")).toBeNull();
+    expect(revisionsEpoch("a1")).toBe(1);
+    keepRevisions("a1", "3", history, 1);
+    await act(() => result.current.rollback("a1", "abc"));
+    expect(keptRevisions("a1", "3")).toBeNull();
+    expect(revisionsEpoch("a1")).toBe(2);
+  });
+
+  it("keeps it across a stop or a restart, which move nothing; a pull forgets it", async () => {
+    const { result } = renderHook(() => useApps(), { wrapper });
+    await waitUntil(() => expect(result.current.loading).toBe(false));
+    await act(() => result.current.control("a1", "stop"));
+    await act(() => result.current.control("a1", "restart"));
+    expect(keptRevisions("a1", "3")).toEqual(history);
+    expect(revisionsEpoch("a1")).toBe(0);
+    await act(() => result.current.control("a1", "update"));
+    expect(keptRevisions("a1", "3")).toBeNull();
+    expect(revisionsEpoch("a1")).toBe(1);
+  });
+
+  it("forgets the app's kept history and shared read after a rename, a roll back or a pull, which may not move its version", async () => {
+    const { result } = renderHook(() => useApps(), { wrapper });
+    await waitUntil(() => expect(result.current.loading).toBe(false));
+    const getApp = vi.fn(async () => ({ app: { app_id: "a1", config: "", files: [], variables: [] }, revision: 1, available_revisions: null }));
+    const commands: [string, () => Promise<unknown>][] = [
+      ["rename", () => result.current.rename("a1", "shop2")],
+      ["rollback", () => result.current.rollback("a1", "abc")],
+      ["update", () => result.current.control("a1", "update")],
+    ];
+    for (const [name, run] of commands) {
+      resetRevisionsCache();
+      keepRevisions("a1", "3", history, 0);
+      await readAppDetail(getApp, "a1", "3");
+      await act(run);
+      expect(keptRevisions("a1", "3"), name).toBeNull();
+      const calls = getApp.mock.calls.length;
+      await readAppDetail(getApp, "a1", "3");
+      expect(getApp, name).toHaveBeenCalledTimes(calls + 1);
+    }
+  });
+
+  it("keeps the shared read across a start, a stop or a restart", async () => {
+    const { result } = renderHook(() => useApps(), { wrapper });
+    await waitUntil(() => expect(result.current.loading).toBe(false));
+    const getApp = vi.fn(async () => ({ app: { app_id: "a1", config: "", files: [], variables: [] }, revision: 1, available_revisions: null }));
+    await readAppDetail(getApp, "a1", "3");
+    for (const action of ["start", "stop", "restart"] as const) await act(() => result.current.control("a1", action));
+    await readAppDetail(getApp, "a1", "3");
+    expect(getApp).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps it when the control fails", async () => {
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => useApps(), { wrapper });
+    await waitUntil(() => expect(result.current.loading).toBe(false));
+    await expect(result.current.control("a1", "start")).rejects.toThrow();
+    expect(keptRevisions("a1", "3")).toEqual(history);
+    expect(revisionsEpoch("a1")).toBe(0);
+  });
+
+  it("drops an app's bookkeeping with the app", async () => {
+    const { result } = renderHook(() => useApps(), { wrapper });
+    await waitUntil(() => expect(result.current.loading).toBe(false));
+    await act(() => result.current.control("a1", "stop"));
+    waitFor.mockResolvedValueOnce({ status: 0, payload: {} });
+    await act(() => result.current.remove("a1"));
+    expect(keptRevisions("a1", "3")).toBeNull();
+    expect(revisionsEpoch("a1")).toBe(0);
+  });
+});
+
+describe("AppsProvider failed deploys", () => {
+  // save-app is accepted (its result comes over SSE), refresh-apps too.
+  const accepting = vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("/api/v1/app/save-app")) return json(202, { data: { request_id: "save-1" } });
+    if (url.includes("/api/v1/app/refresh-apps")) return json(202, { data: { request_id: "list-1" } });
+    if (url.includes("/api/v1/app/control-app")) return json(202, { data: { request_id: "ctl-1" } });
+    return fetchMock(input);
+  });
+  beforeEach(() => {
+    waitFor.mockReset();
+    vi.stubGlobal("fetch", accepting);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("rejects a save the agent failed with a SaveFailedError", async () => {
+    const { result } = renderHook(() => useApps(), { wrapper });
+    await waitUntil(() => expect(result.current.loading).toBe(false));
+    waitFor.mockResolvedValueOnce({ status: 1, error: "docker compose up: exit status 1: port is already allocated" });
+    const err = await result.current.saveApp({ app: { name: "web" }, config: {}, files: [], variables: [] }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(SaveFailedError);
+    expect((err as Error).message).toBe("docker compose up: exit status 1: port is already allocated");
+  });
+
+  it("waits a save as long as asked, and re-reads the list when a save that outlived it answers", async () => {
+    const { result } = renderHook(() => useApps(), { wrapper });
+    await waitUntil(() => expect(result.current.loading).toBe(false));
+    waitFor.mockRejectedValueOnce(new WaitTimeoutError());
+    await expect(
+      result.current.saveApp({ app: { name: "web" }, config: {}, files: [], variables: [] }, { timeoutMs: 300_000 }),
+    ).rejects.toBeInstanceOf(WaitTimeoutError);
+    expect(waitFor).toHaveBeenCalledWith("save-1", 300_000);
+    const reads = () => accepting.mock.calls.filter(([u]) => String(u).includes("/api/v1/app/get-apps?")).length;
+    const before = reads();
+    act(() => {
+      for (const h of handlers) h({ type: "operation_result", ref: "save-1" });
+    });
+    await waitUntil(() => expect(reads()).toBe(before + 1));
+    // Only once: the ref is forgotten after its answer.
+    act(() => {
+      for (const h of handlers) h({ type: "operation_result", ref: "save-1" });
+    });
+    expect(reads()).toBe(before + 1);
+  });
+
+  it("names the timed-out command's request, and hands its late result to the create it held", async () => {
+    const { result } = renderHook(() => useApps(), { wrapper });
+    await waitUntil(() => expect(result.current.loading).toBe(false));
+    waitFor.mockRejectedValueOnce(new WaitTimeoutError());
+    const err: unknown = await result.current
+      .saveApp({ app: { name: "web" }, config: {}, files: [], variables: [] })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(WaitTimeoutError);
+    expect((err as WaitTimeoutError).ref).toBe("save-1");
+    const c = claimCreate("srv-1", "web", new Set())!;
+    holdCreate(c.slot, "save-1");
+    const heard = vi.fn();
+    const stop = onUnattendedCreate(heard);
+    act(() => {
+      for (const h of handlers) h({ type: "operation_result", ref: "save-1", status: 1, error: "boom" } as never);
+    });
+    // Once the list is read again.
+    await waitUntil(() => expect(heard).toHaveBeenCalledWith(expect.objectContaining({ name: "web" }), { failed: true, error: "boom" }));
+    stop();
+    expect(pendingCreates()).toEqual([]);
+  });
+
+  it("hands a late success the list read again, its app among it", async () => {
+    const { result } = renderHook(() => useApps(), { wrapper });
+    await waitUntil(() => expect(result.current.loading).toBe(false));
+    waitFor.mockRejectedValueOnce(new WaitTimeoutError());
+    await result.current.saveApp({ app: { name: "web" }, config: {}, files: [], variables: [] }).catch(() => {});
+    const c = claimCreate("srv-1", "web", new Set())!;
+    holdCreate(c.slot, "save-1");
+    const heard = vi.fn();
+    const stop = onUnattendedCreate(heard);
+    act(() => {
+      for (const h of handlers) h({ type: "operation_result", ref: "save-1", status: 0 } as never);
+    });
+    await waitUntil(() => expect(heard).toHaveBeenCalledWith(expect.objectContaining({ name: "web" }), { failed: false, error: "", list: [] }));
+    stop();
+  });
+
+  it("reconciles: waits for the agent's list, then reads the catalog again", async () => {
+    const { result } = renderHook(() => useApps(), { wrapper });
+    await waitUntil(() => expect(result.current.loading).toBe(false));
+    waitFor.mockResolvedValueOnce({ status: 0 });
+    await expect(result.current.reconcile()).resolves.toEqual([]);
+    expect(waitFor).toHaveBeenCalledWith("list-1", undefined);
+  });
+
+  it("holds a noted failure until a report shows the app running, or a start goes through", async () => {
+    const { result } = renderHook(() => useApps(), { wrapper });
+    await waitUntil(() => expect(result.current.statusByApp).toEqual({ a1: 1, a2: 5 }));
+    act(() => {
+      result.current.noteDeployFailure("a2", "boom");
+      result.current.noteDeployFailure("a3", "bang");
+    });
+    expect(result.current.deployFailures).toEqual({ a2: "boom", a3: "bang" });
+    // A report that still shows it stopped keeps it.
+    act(() => {
+      for (const h of handlers) h({ type: "apps_status", payload: { server_id: "srv-1", apps: [{ app_id: "a2", status_code: 2 }] } });
+    });
+    expect(result.current.deployFailures).toEqual({ a2: "boom", a3: "bang" });
+    // A report showing it running ends it.
+    act(() => {
+      for (const h of handlers) h({ type: "apps_status", payload: { server_id: "srv-1", apps: [{ app_id: "a2", status_code: 1 }] } });
+    });
+    await waitUntil(() => expect(result.current.deployFailures).toEqual({ a3: "bang" }));
+    // A stop leaves it; a start that went through ends it.
+    waitFor.mockResolvedValue({ status: 0 });
+    await act(() => result.current.control("a3", "stop"));
+    expect(result.current.deployFailures).toEqual({ a3: "bang" });
+    await act(() => result.current.control("a3", "start"));
+    expect(result.current.deployFailures).toEqual({});
+  });
+
+  it("ends a noted failure when a save of the app goes through", async () => {
+    const { result } = renderHook(() => useApps(), { wrapper });
+    await waitUntil(() => expect(result.current.loading).toBe(false));
+    act(() => result.current.noteDeployFailure("a9", "boom"));
+    waitFor.mockResolvedValue({ status: 0 });
+    await act(async () => {
+      await result.current.saveApp({ draft: true, app: { id: "a9" }, config: {}, files: [], variables: [] });
+    });
+    // A draft deploys nothing.
+    expect(result.current.deployFailures).toEqual({ a9: "boom" });
+    await act(async () => {
+      await result.current.saveApp({ app: { id: "a9" }, config: {}, files: [], variables: [] });
+    });
+    expect(result.current.deployFailures).toEqual({});
+  });
+
+  it("forgets the app's kept history and shared read after every save, draft or deploy", async () => {
+    const { result } = renderHook(() => useApps(), { wrapper });
+    await waitUntil(() => expect(result.current.loading).toBe(false));
+    waitFor.mockResolvedValue({ status: 0 });
+    const history = { current: "c", deployed: "b", revisions: [] };
+    const getApp = vi.fn(async () => ({ app: { app_id: "a9", config: "", files: [], variables: [] }, revision: 1, available_revisions: null }));
+    for (const draft of [true, false]) {
+      resetRevisionsCache();
+      keepRevisions("a9", "3", history, 0);
+      await readAppDetail(getApp, "a9", "3");
+      await act(async () => {
+        await result.current.saveApp({ draft, app: { id: "a9" }, config: {}, files: [], variables: [] });
+      });
+      expect(keptRevisions("a9", "3")).toBeNull();
+      const calls = getApp.mock.calls.length;
+      await readAppDetail(getApp, "a9", "3");
+      expect(getApp).toHaveBeenCalledTimes(calls + 1);
+    }
   });
 });

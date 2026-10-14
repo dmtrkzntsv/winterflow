@@ -41,17 +41,14 @@ describe("OrphansDialog", () => {
     render(<OrphansDialog backups={fake()} storage="disk" open onOpenChange={() => {}} />);
     const dialog = await screen.findByRole("dialog");
     expect(await within(dialog).findByText("Old shop")).toBeInTheDocument();
-    expect(within(dialog).getByText("other-server")).toBeInTheDocument();
-    expect(within(dialog).getByText("Unknown app")).toBeInTheDocument();
+    // A raw app id is never text on screen: only on hover.
+    expect(within(dialog).queryByText("gone-1")).not.toBeInTheDocument();
+    expect(within(dialog).getByTitle("other-server")).toHaveTextContent("Unknown app");
     expect(within(dialog).getByText("Not deleted automatically (another server's?)")).toBeInTheDocument();
-    expect(within(dialog).getByText("At the next daily sweep")).toBeInTheDocument();
-    expect(within(dialog).getByText("Kept: no retention limit on this server")).toBeInTheDocument();
-    expect(within(dialog).getByText(/^Will be deleted on /)).toBeInTheDocument();
-    expect(within(dialog).getByRole("columnheader", { name: "Automatic deletion" })).toBeInTheDocument();
-    // On a phone the copies column is hidden: the app cell says it too.
+    expect(within(dialog).getByText(/At the next daily sweep/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Kept: no retention limit on this server/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Will be deleted on /)).toBeInTheDocument();
     expect(within(dialog).getByText("2 copies · 2.0 kB · 1 hour ago")).toBeInTheDocument();
-    expect(within(dialog).getByText("2 · 2.0 kB")).toBeInTheDocument();
-    expect(within(dialog).getByText("1 hour ago")).toBeInTheDocument();
   });
 
   it("deletes an orphan after a confirmation", async () => {
@@ -67,9 +64,9 @@ describe("OrphansDialog", () => {
     await user.click(screen.getByRole("button", { name: "Delete the backups of other-server" }));
     expect(await screen.findByRole("alertdialog")).toHaveTextContent("(1 copy, 500 B)");
     await user.click(screen.getByRole("button", { name: "Delete backups" }));
-    await waitFor(() => expect(screen.queryByText("other-server")).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByTitle("other-server")).not.toBeInTheDocument());
     expect(backups.deleteOrphan).toHaveBeenCalledWith("disk", "other-server");
-    expect(toastSuccess).toHaveBeenCalledWith("Backups of other-server deleted", { description: "6 objects removed from disk." });
+    expect(toastSuccess).toHaveBeenCalledWith("Backups of an unknown app deleted", { description: "6 objects removed from disk." });
     // The row the focus was on is gone: it lands on the dialog's Close button.
     await waitFor(() => expect(footerClose()).toHaveFocus());
   });
@@ -93,6 +90,7 @@ describe("OrphansDialog", () => {
     render(<OrphansDialog backups={backups} storage="disk" open onOpenChange={() => {}} />);
     await user.click(await screen.findByRole("button", { name: "Delete the backups of other-server" }));
     const confirm = await screen.findByRole("alertdialog");
+    expect(confirm).not.toHaveTextContent("other-server");
     expect(confirm).toHaveTextContent("not marked as deleted by this server");
     expect(confirm).toHaveTextContent("live backups of an app on another server that shares this storage");
     expect(confirm).toHaveTextContent("is permanent");
@@ -106,9 +104,9 @@ describe("OrphansDialog", () => {
     await user.click(await screen.findByRole("button", { name: "Delete the backups of Old shop" }));
     await user.click(await screen.findByRole("button", { name: "Delete backups" }));
     await waitFor(() => expect(toastError).toHaveBeenCalledWith("Couldn't delete the backups", { description: "the app Shop is on this server" }));
-    // The confirmation is gone and the row is still there to try again.
-    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
-    expect(screen.getByRole("button", { name: "Delete the backups of Old shop" })).toBeInTheDocument();
+    // The confirmation stays for another try or Cancel, and the row too.
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Delete the backups of Old shop", hidden: true })).toBeInTheDocument();
   });
 
   it("reports a failed list and tries again", async () => {

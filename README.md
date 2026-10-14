@@ -51,7 +51,11 @@ All options: `--port`, `--user`, `--version`, resource caps, `--dry-run`,
 
 Open `http://<server-ip>:8080/register` (the installer prints the exact URL)
 and create the admin account. Your server is already registered — add your
-first app from the dashboard.
+first app from the **Apps** page (**New app**).
+
+The sidebar leads to **Apps**, **Monitoring**, the **Inbox** (alert history),
+**Templates** and **Settings** (Server, Organization, Account); ⌘K / Ctrl+K
+opens the command palette from anywhere.
 
 Useful commands:
 

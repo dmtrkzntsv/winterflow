@@ -6,11 +6,12 @@ import { yamlLanguage } from "@codemirror/lang-yaml";
 
 import type { AppDetailPayload } from "@/context/apps-context-base";
 import { stateFromDetail } from "@/lib/app-editor-io";
-import { configOf } from "@/lib/backups";
+import { configOf, type EffectiveBackup } from "@/lib/backups";
 import { ENCRYPTED } from "@/lib/ecies";
+import { publishedPorts, rewriteHostPorts } from "@/lib/host-ports";
 import { compilePattern, REF } from "@/lib/template-params";
 import type { BackupDefault, Parameter, TemplateBody } from "@/lib/templates";
-import { COMPOSE_FILENAMES, DEFAULT_COMPOSE, localId, type AppFileMeta } from "@/types/app-config";
+import { COMPOSE_FILENAMES, defaultCompose, localId, type AppFileMeta } from "@/types/app-config";
 
 export type ParamRow = {
   id: string;
@@ -23,6 +24,10 @@ export type ParamRow = {
 };
 
 export type IngressDraft = { id: string; host: string; service: string; port: string };
+
+// DraftState is what "Save as template" hands the new template's editor:
+// the draft, what was left out of it, and the app it was built from.
+export type DraftState = { draft: TemplateDraft; notes: string[]; appName: string };
 
 export type TemplateDraft = {
   name: string;
@@ -48,6 +53,9 @@ export const TEMPLATE_NAME = /^[a-z][a-z0-9-]{0,62}$/;
 const PARAM_NAME = /^[A-Z][A-Z0-9_]*$/;
 const PORT = /^[1-9][0-9]{0,4}$/;
 
+// emptyDraft is a new template: the example compose file publishing
+// ${PORT}, with the PORT parameter (default 8080) each app sets to a port of
+// its own.
 export function emptyDraft(): TemplateDraft {
   const id = localId("file");
   return {
@@ -56,8 +64,8 @@ export function emptyDraft(): TemplateDraft {
     icon: "",
     color: "#64748b",
     files: [{ id, filename: "compose.yml", is_encrypted: false }],
-    contents: { [id]: DEFAULT_COMPOSE },
-    parameters: [],
+    contents: { [id]: defaultCompose("${PORT}") },
+    parameters: [paramRow({ name: "PORT", default: "8080", description: "Host port" })],
     ingress: [],
     backups: {},
   };
@@ -258,11 +266,39 @@ export function slugName(appName: string): string {
   return slug || "template";
 }
 
+// isComposeYaml: a compose file (a main one or an override), whose ports
+// templateFromApp turns into parameters; another YAML file is left as it is.
+const isComposeYaml = (filename: string) => {
+  const name = filename.trim();
+  return COMPOSE_FILENAMES.includes(name) || OVERRIDE_FILES.includes(name);
+};
+
+// freeParamName is base, else base_2, base_3, … whichever no parameter has.
+function freeParamName(base: string, taken: Set<string>): string {
+  let name = base;
+  for (let n = 2; taken.has(name); n++) name = `${base}_${n}`;
+  taken.add(name);
+  return name;
+}
+
+// recipeEntry is the x-winterflow.backups entry of a backup added in the
+// app (what and where it copies; on/off, storage and schedule are the
+// template's defaults).
+function recipeEntry(b: EffectiveBackup): Record<string, unknown> {
+  const c = configOf(b);
+  const entry: Record<string, unknown> = { name: b.name, type: b.type };
+  for (const k of ["volume", "service", "path", "paths", "exclude"] as const) if (c[k] !== undefined) entry[k] = c[k];
+  return entry;
+}
+
 // templateFromApp builds revision 1 of a template from an app as the editor
 // holds it (Save as template): files copied, each variable a parameter with
-// its value as the default, each secret a required secret parameter, the
-// app's hosts literal ingress rows, its backup overrides the defaults.
-// notes say what could not come along.
+// its value as the default, each secret a required secret parameter, every
+// literal host port the compose files publish a PORT parameter (PORT_2, …)
+// defaulting to it, the app's hosts literal ingress rows (on that parameter
+// where they point at the port), its backups the defaults — one added in
+// the app joins the compose file's x-winterflow.backups so the template
+// declares it. notes say what changed or could not come along.
 export function templateFromApp(appId: string, detail: AppDetailPayload): { draft: TemplateDraft; notes: string[] } {
   const state = stateFromDetail(appId, detail);
   const notes: string[] = [];
@@ -288,11 +324,46 @@ export function templateFromApp(appId: string, detail: AppDetailPayload): { draf
     }
     return paramRow({ name: v.name, default: value });
   });
-  const ingress = (state.config.ingress?.domains ?? []).map((dom) => ingressRow(dom.domain, String(dom.upstream_port)));
+
+  // Each app from the template needs host ports of its own: a literal one
+  // becomes a parameter defaulting to it, described by its service. A range
+  // stays as it is (it can't be one parameter).
+  const taken = new Set(parameters.map((p) => p.name));
+  const portParams = new Map<number, string>();
+  for (const f of files) {
+    if (!isComposeYaml(f.filename)) continue;
+    for (const { port, last, service } of publishedPorts(contents[f.id])) {
+      if (last !== undefined) {
+        notes.push(`Ports ${port}–${last} are a range, which stays as it is: two apps from the template would both publish them.`);
+        continue;
+      }
+      if (portParams.has(port)) continue;
+      const name = freeParamName("PORT", taken);
+      portParams.set(port, name);
+      const description = service ? `Host port for ${service}` : "Host port";
+      parameters.push(paramRow({ name, required: true, default: String(port), description }));
+      notes.push(`Port ${port} is now the ${name} parameter, so each app can publish its own.`);
+    }
+  }
+  if (portParams.size > 0) {
+    for (const f of files) {
+      if (!isComposeYaml(f.filename)) continue;
+      contents[f.id] = rewriteHostPorts(contents[f.id], (port) => {
+        const name = portParams.get(port);
+        return name ? `\${${name}}` : null;
+      });
+    }
+  }
+  const ingress = (state.config.ingress?.domains ?? []).map((dom) => {
+    const name = dom.upstream_port === "" ? undefined : portParams.get(dom.upstream_port);
+    return ingressRow(dom.domain, name ? `\${${name}}` : String(dom.upstream_port));
+  });
   if ((state.config.ingress?.redirects.length ?? 0) > 0) notes.push("Redirects aren't part of templates; they were left out.");
+
   const backups: Record<string, BackupDefault> = {};
+  const added: EffectiveBackup[] = [];
   for (const b of detail.backups ?? []) {
-    if (!b.in_recipe) continue;
+    if (!b.in_recipe) added.push(b);
     const c = configOf(b);
     backups[b.name] = {
       enabled: !!c.enabled,
@@ -300,6 +371,21 @@ export function templateFromApp(appId: string, detail: AppDetailPayload): { draf
       ...(c.every ? { every: c.every } : {}),
       ...(c.keep ? { keep: c.keep } : {}),
     };
+  }
+  if (added.length > 0) {
+    const main = files.find((f) => COMPOSE_FILENAMES.includes(f.filename.trim()));
+    const src = main ? contents[main.id] : "";
+    if (main && !/^x-winterflow\s*:/m.test(src)) {
+      const entries = added.map((b) => `    - ${JSON.stringify(recipeEntry(b))}`).join("\n");
+      contents[main.id] = `${src.replace(/\s*$/, "")}\n\nx-winterflow:\n  backups:\n${entries}\n`;
+    } else {
+      for (const b of added) {
+        delete backups[b.name];
+        notes.push(
+          `The backup ${b.name} was added in the app; add it to the compose file's x-winterflow.backups to make it part of the template.`,
+        );
+      }
+    }
   }
   return {
     draft: {

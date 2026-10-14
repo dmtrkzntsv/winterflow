@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  average,
   axisWidth,
-  formatDelta,
   niceAxis,
   niceTicks,
   scaleFor,
@@ -118,21 +116,6 @@ describe("stackTotals and valuesOf", () => {
   });
 });
 
-describe("average and formatDelta", () => {
-  it("averages the finite values", () => {
-    expect(average([1, null, 3])).toBe(2);
-    expect(average([null])).toBeNull();
-  });
-
-  it("formats the pill figure", () => {
-    expect(formatDelta(12.06)).toBe("+12.1%");
-    expect(formatDelta(-4)).toBe("-4%");
-    expect(formatDelta(-38.64)).toBe("-38.6%");
-    expect(formatDelta(129.6)).toBe("+130%");
-    expect(formatDelta(0.01)).toBe("0%");
-  });
-});
-
 describe("tooltipRows", () => {
   const series = [
     { key: "a", label: "Nextcloud", color: "red" },
@@ -206,8 +189,10 @@ describe("timeTicks", () => {
 });
 
 describe("sparkDomain", () => {
-  it("spans the data", () => {
-    expect(sparkDomain([2, null, 5, 3])).toEqual([2, 5]);
+  it("runs from zero to the data's top, or spans data below zero", () => {
+    expect(sparkDomain([2, null, 5, 3])).toEqual([0, 5]);
+    expect(sparkDomain([8.1, 8.2, 8.05])).toEqual([0, 8.2]);
+    expect(sparkDomain([-2, 3])).toEqual([-2, 3]);
   });
   it("runs from zero to max when given", () => {
     expect(sparkDomain([2, 5], 100)).toEqual([0, 100]);

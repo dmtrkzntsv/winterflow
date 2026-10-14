@@ -1,15 +1,17 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AppSidebar } from "@/components/app-sidebar";
 import { DefaultServer } from "@/components/server-routes";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarContext, type SidebarContextProps } from "@/components/ui/use-sidebar";
+import { NotificationsContext, type NotificationsContextValue } from "@/context/notifications-context-base";
 import HomePage from "@/pages/home";
+import { fakeAPI } from "@/test/fake-api";
 
-// Every link and switch on the dashboard and in the sidebar stays inside the
+// Every link and switch on the Apps page and in the sidebar stays inside the
 // active server's scope (/server/:id/...).
 
 const selectServer = vi.fn();
@@ -36,6 +38,9 @@ vi.mock("@/context/use-apps", () => ({
     control: vi.fn(),
   }),
 }));
+vi.mock("@/hooks/use-inbox-unread", () => ({
+  useInboxUnread: () => ({ count: 0, seenAt: 0, isUnread: () => false, markAllRead: () => {} }),
+}));
 // NavUser needs the account contexts; it has its own test.
 vi.mock("@/components/nav-user", () => ({ NavUser: () => null }));
 
@@ -51,48 +56,50 @@ const sidebar: SidebarContextProps = {
   toggleSidebar: () => {},
 };
 
+// New app opens the chooser, which reads the organization's templates.
+const notifications = { connected: true, subscribe: () => () => {}, waitFor: vi.fn() } as NotificationsContextValue;
+
 function renderAt(url: string) {
   return render(
     <MemoryRouter initialEntries={[url]}>
-      <TooltipProvider>
-        <SidebarContext.Provider value={sidebar}>
-          <AppSidebar />
-          <Routes>
-            <Route element={<Outlet context={{ setBreadcrumbs: () => {} }} />}>
-              <Route path="/" element={<DefaultServer fallback={<p>no servers</p>} />} />
-              <Route path="/server/s1" element={<HomePage />} />
-              <Route path="/server/s1/create-app" element={<p>create page</p>} />
-              <Route path="/server/s2/monitoring" element={<p>beta monitoring</p>} />
-            </Route>
-          </Routes>
-        </SidebarContext.Provider>
-      </TooltipProvider>
+      <NotificationsContext.Provider value={notifications}>
+        <TooltipProvider>
+          <SidebarContext.Provider value={sidebar}>
+            <AppSidebar />
+            <Routes>
+              <Route element={<Outlet />}>
+                <Route path="/" element={<DefaultServer fallback={<p>no servers</p>} />} />
+                <Route path="/server/s1" element={<main><HomePage /></main>} />
+                <Route path="/server/s1/new" element={<p>create page</p>} />
+              </Route>
+            </Routes>
+          </SidebarContext.Provider>
+        </TooltipProvider>
+      </NotificationsContext.Provider>
     </MemoryRouter>,
   );
 }
 
 describe("server-scoped links", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
   it("points the sidebar and the app grid into the active server", async () => {
     renderAt("/server/s1");
-    expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute("href", "/server/s1");
-    expect(screen.getByRole("link", { name: "Monitoring" })).toHaveAttribute(
-      "href",
-      "/server/s1/monitoring",
-    );
-    expect(screen.getByRole("link", { name: "Server Settings" })).toHaveAttribute(
-      "href",
-      "/server/s1/settings",
-    );
+    expect(screen.getByRole("link", { name: "Apps" })).toHaveAttribute("href", "/server/s1");
+    // "Monitoring" is in the sidebar and in the health strip: both lead into s1.
+    const monitoring = screen.getAllByRole("link", { name: "Monitoring" });
+    expect(monitoring.length).toBeGreaterThanOrEqual(2);
+    for (const link of monitoring) expect(link).toHaveAttribute("href", "/server/s1/monitoring");
+    expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
     for (const link of screen.getAllByRole("link", { name: /Shop/ })) {
       expect(link).toHaveAttribute("href", "/server/s1/app/a1");
     }
   });
 
-  it("opens a server card's monitoring in that server's scope", async () => {
-    const user = userEvent.setup();
+  it("points the health strip's Monitoring link into the active server", () => {
     renderAt("/server/s1");
-    await user.click(screen.getByTitle(/^Beta:/));
-    expect(await screen.findByText("beta monitoring")).toBeInTheDocument();
+    const strip = screen.getByRole("region", { name: "Server health" });
+    expect(within(strip).getByRole("link", { name: "Monitoring" })).toHaveAttribute("href", "/server/s1/monitoring");
   });
 
   it("switches servers from the switcher", async () => {
@@ -106,7 +113,9 @@ describe("server-scoped links", () => {
   it("opens the create page of the active server", async () => {
     const user = userEvent.setup();
     renderAt("/server/s1");
-    await user.click(screen.getByRole("button", { name: "Add app" }));
+    fakeAPI({ "/api/v1/template/get-templates": { templates: [] } });
+    await user.click(within(screen.getByRole("main")).getByRole("button", { name: "New app" }));
+    await user.click(await screen.findByRole("link", { name: /Compose file/ }));
     expect(await screen.findByText("create page")).toBeInTheDocument();
   });
 

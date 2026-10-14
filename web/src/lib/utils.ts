@@ -16,6 +16,14 @@ export function formatBytes(value: string | number | undefined): string {
   return `${gb.toFixed(1)} GB`
 }
 
+// lowerFirst puts a label inside a sentence ("Copy token", "Loading memory"):
+// its first letter goes lower case unless the word is an acronym or a
+// name like S3 (CPU).
+export function lowerFirst(s: string): string {
+  if (/^.[A-Z0-9]/.test(s)) return s
+  return s.charAt(0).toLowerCase() + s.slice(1)
+}
+
 const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" })
 
 // relativeTime renders "5 minutes ago"-style labels (now in ms), falling back

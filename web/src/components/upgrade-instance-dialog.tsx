@@ -2,16 +2,9 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { InlineError } from "@/components/inline-error";
 import { ParameterFields } from "@/components/parameter-fields";
+import { ResponsiveDialog } from "@/components/responsive-dialog";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
 import { AppStatusCode } from "@/context/apps-context-base";
 import { defaultChanges, fieldErrors, splitValues, upgradeNeeds } from "@/lib/template-params";
@@ -21,9 +14,9 @@ type Props = {
   instance: InstanceView;
   // appName is the app's name as the page shows it.
   appName: string;
-  // target is the revision to move to (its body says what it needs).
+  // target is the version to move to (its body says what it needs).
   target: TemplateView;
-  // current is the instance's own revision when the caller has it read;
+  // current is the instance's own version when the caller has it read;
   // otherwise the dialog reads it (to name the defaults that change).
   current?: TemplateView | null;
   // onClose closes the dialog (the caller mounts it only while open).
@@ -31,10 +24,10 @@ type Props = {
   onDone: () => void;
 };
 
-// UpgradeInstanceDialog moves one instance to another revision of its
-// template, asking only for the values the instance doesn't hold yet
-// (a newly required parameter, a pending instance's secrets), and naming
-// the parameters left on their default whose default the upgrade changes.
+// UpgradeInstanceDialog updates one app to another version of its template,
+// asking only for the values the app doesn't hold yet (a newly required
+// parameter, a pending app's secrets), and naming the parameters left on
+// their default whose default the update changes.
 export function UpgradeInstanceDialog({ instance, appName, target, current, onClose, onDone }: Props) {
   const api = useTemplatesApi();
   const needs = upgradeNeeds(target.body.parameters, instance);
@@ -75,33 +68,46 @@ export function UpgradeInstanceDialog({ instance, appName, target, current, onCl
         ...(Object.keys(plain).length ? { parameters: plain } : {}),
         ...(Object.keys(secrets).length ? { secrets } : {}),
       });
-      toast.success(`Upgraded to r${target.revision}`);
+      toast.success(`Updated to version ${target.revision}`);
       onClose();
       onDone();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "The upgrade failed");
+      setError(e instanceof Error ? e.message : "The update failed");
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <Dialog open onOpenChange={(o) => !o && !busy && onClose()}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>
-            Upgrade {appName} to r{target.revision}
-          </DialogTitle>
-          <DialogDescription>
-            The app is redeployed with {target.name} r{target.revision}; its backup settings stay. Values you set
-            stay; parameters left on their default take the new default.{starts ? " The app will be started." : ""}
-          </DialogDescription>
-        </DialogHeader>
+    <ResponsiveDialog
+      open
+      onOpenChange={(open) => {
+        if (!open && !busy) onClose();
+      }}
+      title={`Update ${appName} to version ${target.revision}`}
+      description={
+        <>
+          The app is redeployed with {target.name} version {target.revision}; its backup settings stay. Values you set
+          stay; parameters left on their default take the new default.{starts ? " The app will be started." : ""}
+        </>
+      }
+      footer={
+        <>
+          <Button variant="outline" disabled={busy} onClick={onClose}>
+            Cancel
+          </Button>
+          <Button disabled={busy} onClick={() => void upgrade()}>
+            {busy ? "Updating…" : `Update to version ${target.revision}`}
+          </Button>
+        </>
+      }
+    >
+      <div className="grid gap-4">
         {!from && !read ? (
           <p className="text-sm text-muted-foreground">Checking which defaults change…</p>
         ) : read?.error ? (
           <p className="text-sm text-muted-foreground">
-            Couldn't read r{instance.revision} to compare its defaults: {read.error}
+            Couldn't read version {instance.revision} to compare its defaults: {read.error}
           </p>
         ) : changes.length > 0 ? (
           <ul aria-label="Defaults that change" className="grid gap-1 text-sm">
@@ -124,15 +130,7 @@ export function UpgradeInstanceDialog({ instance, appName, target, current, onCl
           <p className="text-sm text-muted-foreground">No new values are needed.</p>
         )}
         {error ? <InlineError icon>{error}</InlineError> : null}
-        <DialogFooter>
-          <Button variant="outline" disabled={busy} onClick={onClose}>
-            Cancel
-          </Button>
-          <Button disabled={busy} onClick={() => void upgrade()}>
-            {busy ? "Upgrading…" : `Upgrade to r${target.revision}`}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      </div>
+    </ResponsiveDialog>
   );
 }

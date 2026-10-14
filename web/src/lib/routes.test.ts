@@ -12,6 +12,7 @@ import {
   isWidePath,
   legacyAlertsTarget,
   legacyServerSettingsTarget,
+  legacyTemplateTarget,
   monitoringPath,
   newAppPath,
   newAppSub,
@@ -69,6 +70,16 @@ describe("legacy URLs", () => {
     ["channels", "/settings/notifications"],
   ])("sends the alerts tab %s to %s", (tab, target) => {
     expect(legacyAlertsTarget(tab)).toBe(target);
+  });
+
+  it.each([
+    [null, "/templates/t%201"],
+    ["editor", "/templates/t%201"],
+    ["instances", "/templates/t%201?tab=apps"],
+    ["revisions", "/templates/t%201?tab=versions"],
+    ["nonsense", "/templates/t%201"],
+  ])("sends the template tab %s to %s", (tab, target) => {
+    expect(legacyTemplateTarget("t 1", tab)).toBe(target);
   });
 
   it("renames the app page's Editor tab to Configuration", () => {

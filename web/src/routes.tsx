@@ -11,9 +11,9 @@ import {
   TEMPLATES_PATH,
   legacyAlertsTarget,
   legacyServerSettingsTarget,
+  legacyTemplateTarget,
   newAppPath,
   settingsPath,
-  templatePath,
 } from "@/lib/routes";
 import AppDetailsPage from "@/pages/app-details";
 import HomePage from "@/pages/home";
@@ -102,7 +102,9 @@ export const appRoutes: RouteObject[] = [
   { path: "/org/templates/new", element: <LegacyRedirect to={NEW_TEMPLATE_PATH} /> },
   {
     path: "/org/templates/:templateId",
-    element: <LegacyRedirect to={({ params }) => templatePath(params.templateId ?? "")} />,
+    element: (
+      <LegacyRedirect to={({ params, search }) => legacyTemplateTarget(params.templateId ?? "", search.get("tab"))} />
+    ),
   },
   { path: "/user/password", element: <LegacyRedirect to={settingsPath("password")} /> },
   { path: "/user/tokens", element: <LegacyRedirect to={settingsPath("tokens")} /> },

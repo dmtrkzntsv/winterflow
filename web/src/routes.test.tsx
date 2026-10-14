@@ -178,11 +178,23 @@ describe("route table", () => {
     ["/server/s1/create-app?tab=x&y=2", "/server/s1/new?from=compose&y=2", "new app page compose"],
     ["/org/members?tab=x", "/settings/members", "org page members"],
     ["/org/templates/t1?tab=x#versions", "/templates/t1#versions", "template page t1"],
+    ["/org/templates/t1?tab=editor", "/templates/t1", "template page t1"],
   ])("sends %s to %s without a stale tab", async (from, to, page) => {
     renderAt(from);
     expect(await screen.findByText(page)).toBeInTheDocument();
     expect(at().textContent).toBe(to);
     expect(at().textContent).not.toContain("tab=");
+  });
+
+  // The template page's tabs were renamed: an old link names the new tab.
+  it.each([
+    ["/org/templates/t1?tab=instances", "/templates/t1?tab=apps"],
+    ["/org/templates/t1?tab=revisions", "/templates/t1?tab=versions"],
+    ["/org/templates/t1?tab=revisions&x=1#top", "/templates/t1?tab=versions&x=1#top"],
+  ])("sends %s to %s", async (from, to) => {
+    renderAt(from);
+    expect(await screen.findByText("template page t1")).toBeInTheDocument();
+    expect(at().textContent).toBe(to);
   });
 
   it("opens the organization's settings at /settings while there is no server", async () => {

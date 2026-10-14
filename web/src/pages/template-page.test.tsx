@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -103,7 +103,7 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("TemplatePage", () => {
-  it("adds a template as revision 1, then opens it", async () => {
+  it("adds a template as version 1, then opens it", async () => {
     const user = userEvent.setup();
     const api = fakeAPI({
       "/api/v1/template/save-template": { id: "t9", name: "shop", revision: 1, warnings: ["SMTP_PASS is not a parameter"] },
@@ -114,7 +114,7 @@ describe("TemplatePage", () => {
     await user.type(screen.getByLabelText("Template name"), "shop");
     await user.type(screen.getByLabelText("App name"), "Shop");
     await user.click(screen.getByRole("button", { name: "Save template" }));
-    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Saved r1"));
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Saved version 1"));
     expect(toast.warning).toHaveBeenCalledWith("Check these references", { description: "SMTP_PASS is not a parameter" });
     const [sent] = api.posted("/api/v1/template/save-template") as { name: string; base_revision: number; id?: string }[];
     expect(sent).toMatchObject({ name: "shop", base_revision: 0 });
@@ -126,9 +126,9 @@ describe("TemplatePage", () => {
     const user = userEvent.setup();
     const api = fakeAPI({});
     renderPage("/templates/new");
-    expect(pageTitle).toHaveBeenLastCalledWith("Add template");
-    // A new template saves as revision 1: there is nothing to note yet.
-    expect(screen.queryByLabelText("Revision note")).not.toBeInTheDocument();
+    expect(pageTitle).toHaveBeenLastCalledWith("New template");
+    // A new template saves as version 1: there is nothing to note yet.
+    expect(screen.queryByLabelText("Version note")).not.toBeInTheDocument();
     await user.type(screen.getByLabelText("Template name"), "Shop");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Save template" }));
@@ -143,7 +143,7 @@ describe("TemplatePage", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("adds a revision on top of the one it read, with a note", async () => {
+  it("adds a version on top of the one it read, with a note", async () => {
     const user = userEvent.setup();
     const api = fakeAPI({
       "/api/v1/template/get-template": view(3),
@@ -151,13 +151,13 @@ describe("TemplatePage", () => {
       "/api/v1/template/save-template": { id: "t1", name: "twillingate", revision: 4, warnings: null },
     });
     renderPage("/templates/t1");
-    const save = await screen.findByRole("button", { name: "Save as r4" });
+    const save = await screen.findByRole("button", { name: "Save as version 4" });
     expect(save).toBeDisabled();
     await user.click(screen.getAllByRole("button", { name: /Add parameter/ })[0]);
     await user.type(screen.getAllByLabelText("Parameter name").at(-1)!, "MEMORY_MAX");
-    await user.type(screen.getByLabelText("Revision note"), "memory cap");
+    await user.type(screen.getByLabelText("Version note"), "memory cap");
     await user.click(save);
-    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Saved r4"));
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Saved version 4"));
     const [sent] = api.posted("/api/v1/template/save-template") as {
       id: string;
       base_revision: number;
@@ -179,7 +179,7 @@ describe("TemplatePage", () => {
       "/api/v1/instance/get-instances": { instances: [] },
     });
     renderPage("/templates/t1");
-    const save = await screen.findByRole("button", { name: "Save as r4" });
+    const save = await screen.findByRole("button", { name: "Save as version 4" });
     await user.type(screen.getByLabelText("App name"), "x");
     expect(save).toBeEnabled();
     await user.type(screen.getByLabelText("App name"), "{Backspace}");
@@ -199,10 +199,10 @@ describe("TemplatePage", () => {
     });
     renderPage("/templates/t1");
     await user.type(await screen.findByLabelText("App name"), "-x");
-    await user.click(screen.getByRole("button", { name: "Save as r4" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Someone saved r4 meanwhile; reload");
+    await user.click(screen.getByRole("button", { name: "Save as version 4" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Someone saved version 4 meanwhile; reload");
     await user.click(screen.getByRole("button", { name: "Reload" }));
-    expect(await screen.findByRole("button", { name: "Save as r5" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Save as version 5" })).toBeInTheDocument();
     expect(screen.getByLabelText("App name")).toHaveValue("${NAME}");
     expect(toast.error).not.toHaveBeenCalled();
   });
@@ -216,7 +216,7 @@ describe("TemplatePage", () => {
     });
     renderPage("/templates/t1");
     await user.type(await screen.findByLabelText("App name"), "-x");
-    await user.click(screen.getByRole("button", { name: "Save as r4" }));
+    await user.click(screen.getByRole("button", { name: "Save as version 4" }));
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith("Couldn't save the template", {
         description: "invalid template: files: x-winterflow.backups[0]: unknown type",
@@ -259,21 +259,27 @@ describe("TemplatePage", () => {
       await act(() => new Promise((r) => setTimeout(r, 20)));
     }
     expect(screen.getByLabelText("App name")).toHaveValue("${NAME}-x");
-    expect(screen.getByRole("button", { name: "Save as r4" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Save as version 4" })).toBeEnabled();
     expect(api.calls.filter((c) => c.path === "/api/v1/template/get-template")).toHaveLength(1);
   });
 
-  it("offers Delete only without live instances", async () => {
+  it("offers Delete only while no app uses the template, saying why", async () => {
+    const user = userEvent.setup();
     fakeAPI({
       "/api/v1/template/get-template": view(3),
       "/api/v1/instance/get-instances": { instances: [{ key: "k1" }] },
     });
     renderPage("/templates/t1");
-    expect(await screen.findByRole("button", { name: "Delete template" })).toBeDisabled();
-    expect(screen.getByText("Revision 3 · 1 app uses it")).toBeInTheDocument();
+    expect(await screen.findByText("Version 3 · used by 1 app")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "More actions" }));
+    const item = await screen.findByRole("menuitem", { name: /Delete template/ });
+    expect(item).toHaveAttribute("aria-disabled", "true");
+    // The reason sits beside the dimmed item, not inside it (contrast).
+    const reason = screen.getByText("Delete its apps or detach them from it first");
+    expect(item).not.toContainElement(reason);
   });
 
-  it("deletes a template no app uses", async () => {
+  it("deletes a template no app uses after a confirm", async () => {
     const user = userEvent.setup();
     const api = fakeAPI({
       "/api/v1/template/get-template": view(3),
@@ -281,13 +287,18 @@ describe("TemplatePage", () => {
       "/api/v1/template/delete-template": null,
     });
     renderPage("/templates/t1");
-    await user.click(await screen.findByRole("button", { name: "Delete template" }));
-    await user.click(screen.getByRole("button", { name: "Delete" }));
+    await user.click(await screen.findByRole("button", { name: "More actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: /Delete template/ }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveTextContent("Delete twillingate?");
+    expect(dialog).toHaveTextContent("detached");
+    expect(api.posted("/api/v1/template/delete-template")).toEqual([]);
+    await user.click(within(dialog).getByRole("button", { name: "Delete template" }));
     expect(await screen.findByText("the list")).toBeInTheDocument();
     expect(api.posted("/api/v1/template/delete-template")).toEqual([{ id: "t1" }]);
   });
 
-  it("explains a refused delete", async () => {
+  it("explains a refused delete and keeps the confirm open", async () => {
     const user = userEvent.setup();
     fakeAPI({
       "/api/v1/template/get-template": view(3),
@@ -295,13 +306,48 @@ describe("TemplatePage", () => {
       "/api/v1/template/delete-template": new ApiError("the template has live instances: delete or unlink them first", 409),
     });
     renderPage("/templates/t1");
-    await user.click(await screen.findByRole("button", { name: "Delete template" }));
-    await user.click(screen.getByRole("button", { name: "Delete" }));
+    await user.click(await screen.findByRole("button", { name: "More actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: /Delete template/ }));
+    const dialog = await screen.findByRole("alertdialog");
+    await user.click(within(dialog).getByRole("button", { name: "Delete template" }));
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith("Couldn't delete the template", {
         description: "the template has live instances: delete or unlink them first",
       }),
     );
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+    expect(screen.queryByText("the list")).not.toBeInTheDocument();
+  });
+
+  it("starts with a way back to Templates and opens old tab links on their new tabs", async () => {
+    fakeAPI({
+      "/api/v1/template/get-template": view(3),
+      "/api/v1/instance/get-instances": { instances: [] },
+    });
+    renderPage("/templates/t1?tab=revisions");
+    expect(await screen.findByRole("tab", { name: "Versions" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("link", { name: "Templates" })).toHaveAttribute("href", "/templates");
+    expect(screen.getByRole("heading", { level: 1, name: "twillingate" })).toBeInTheDocument();
+    expect(screen.getByText("Version 3 · not used by any app yet")).toBeInTheDocument();
+    cleanup();
+    vi.unstubAllGlobals();
+
+    fakeAPI({
+      "/api/v1/template/get-template": view(3),
+      "/api/v1/instance/get-instances": { instances: [] },
+    });
+    renderPage("/templates/t1?tab=instances");
+    expect(await screen.findByRole("tab", { name: "Apps using it" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByText(/No app uses this template yet/)).toBeInTheDocument();
+  });
+
+  it("names a new template and says what saving does", () => {
+    fakeAPI({});
+    renderPage("/templates/new");
+    expect(screen.getByRole("heading", { level: 1, name: "New template" })).toBeInTheDocument();
+    expect(screen.getByText("Saving creates version 1.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "More actions" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
   });
 
   it("shows Not found for another org's template, and retries other failures", async () => {
@@ -340,7 +386,7 @@ describe("TemplatePage", () => {
     expect(screen.getByRole("button", { name: "Save template" })).toBeEnabled();
   });
 
-  it("has the revisions and the instances in tabs; Upgrade refreshes the instances only", async () => {
+  it("has the apps and the versions in tabs; Update refreshes the apps only", async () => {
     const user = userEvent.setup();
     const at = (revision: number) => ({
       key: "k1",
@@ -366,23 +412,23 @@ describe("TemplatePage", () => {
         return { instance: at(3), request_id: "", warnings: [] };
       },
     });
-    renderPage("/templates/t1?tab=instances");
+    renderPage("/templates/t1?tab=apps");
     await user.click(await screen.findByRole("button", { name: "Update" }));
     await user.click(await screen.findByRole("button", { name: "Update to version 3" }));
     await waitFor(() => expect(screen.queryByRole("button", { name: "Update" })).not.toBeInTheDocument());
     expect(screen.getByText("Version 3")).toBeInTheDocument();
-    // The editor read the template once (the dialog read r2 to compare
-    // defaults): the upgrade didn't reload it.
+    // The editor read the template once (the dialog read version 2 to compare
+    // defaults): the update didn't reload it.
     const reads = api.calls.filter((c) => c.path === "/api/v1/template/get-template");
     expect(reads.map((c) => c.query)).toEqual(["?id=t1", "?id=t1&revision=2"]);
 
-    await user.click(screen.getByRole("tab", { name: "Revisions" }));
+    await user.click(screen.getByRole("tab", { name: "Versions" }));
     expect(await screen.findByRole("button", { name: "Changes from version 2" })).toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: "Editor" }));
     expect(screen.getByLabelText("Template name")).toHaveValue("twillingate");
   });
 
-  it("upgrades all instances behind after a confirm, and shows the rollout", async () => {
+  it("updates all apps behind after a confirm, and shows the rollout", async () => {
     const user = userEvent.setup();
     const behind = { key: "k1", server_id: "s1", app_id: "a1", template_id: "t1", template_name: "twillingate", revision: 2,
       parameters: { NAME: "bakomi" }, secrets: null, state: "created", status_code: 1, last_error: "",
@@ -393,7 +439,7 @@ describe("TemplatePage", () => {
       "/api/v1/rollout/get-rollouts": { rollouts: [] },
       "/api/v1/template/upgrade-instances": rollout({ state: "queued", current_app_id: "", done: 0, skipped: 0, total: 0 }),
     });
-    renderPage("/templates/t1?tab=instances");
+    renderPage("/templates/t1?tab=apps");
     await user.click(await screen.findByRole("button", { name: "Update all apps" }));
     await user.click(screen.getByRole("button", { name: "Update all" }));
     expect(await screen.findByText("Update to version 3 queued…")).toBeInTheDocument();
@@ -408,18 +454,18 @@ describe("TemplatePage", () => {
     await waitFor(() => expect(listReads()).toBe(2));
   });
 
-  it("says why an upgrade could not start", async () => {
+  it("says why an update could not start", async () => {
     const user = userEvent.setup();
     fakeAPI({
       "/api/v1/template/get-template": view(3),
       "/api/v1/instance/get-instances": { instances: [{ key: "k1", server_id: "s1", app_id: "a1", revision: 1, state: "created", parameters: {} }] },
       "/api/v1/template/upgrade-instances": Object.assign(new Error("an upgrade of this template is already running"), { status: 409 }),
     });
-    renderPage("/templates/t1?tab=instances");
+    renderPage("/templates/t1?tab=apps");
     await user.click(await screen.findByRole("button", { name: "Update all apps" }));
     await user.click(screen.getByRole("button", { name: "Update all" }));
     await waitFor(() =>
-      expect(toast.error).toHaveBeenCalledWith("Couldn't start the upgrade", { description: "an upgrade of this template is already running" }),
+      expect(toast.error).toHaveBeenCalledWith("Couldn't start the update", { description: "an upgrade of this template is already running" }),
     );
   });
 });

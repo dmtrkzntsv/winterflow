@@ -86,6 +86,15 @@ export function legacyAlertsTarget(tab: string | null): string {
   return tab === "rules" || tab === "channels" ? settingsPath("notifications") : INBOX_PATH;
 }
 
+// legacyTemplateTarget is where /org/templates/:id?tab=… went: the page's
+// Instances and Revisions tabs are now "Apps using it" and "Versions".
+export function legacyTemplateTarget(templateId: string, tab: string | null): string {
+  const path = templatePath(templateId);
+  if (tab === "instances") return `${path}?tab=apps`;
+  if (tab === "revisions") return `${path}?tab=versions`;
+  return path;
+}
+
 // withQuery merges an old URL's query into a redirect target (the target's
 // own params win over the old ones) and appends the hash.
 export function withQuery(target: string, search: string, hash: string): string {

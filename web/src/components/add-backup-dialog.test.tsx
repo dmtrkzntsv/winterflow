@@ -71,7 +71,7 @@ describe("AddBackupDialog", () => {
     await user.selectOptions(screen.getByLabelText("Where the data is"), "volume:data");
     await user.type(screen.getByLabelText("Database file"), "audit.db");
     await user.click(screen.getByRole("button", { name: "Add backup" }));
-    expect(onAdd).toHaveBeenCalledWith({ name: "audit", type: "sqlite", enabled: true, storage: "disk", every: "1h", volume: "data", path: "audit.db" });
+    expect(onAdd).toHaveBeenCalledWith({ name: "audit", type: "sqlite", enabled: true, storage: "disk", every: "24h", volume: "data", path: "audit.db" });
   });
 
   it("preselects the only storage, and asks to pick when there are several", async () => {

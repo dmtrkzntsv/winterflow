@@ -109,6 +109,13 @@ describe("AppBackups", () => {
     }));
   });
 
+  it("says an app without volumes or bind mounts has nothing to back up, and offers no Add backup", async () => {
+    renderBackups({ backups: [], backup_targets: { volumes: [], services: [{ name: "web", mounts: [] }] } });
+    expect(await screen.findByText("This app keeps no data on disk, so there's nothing to back up.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Add backup/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(/x-winterflow/)).not.toBeInTheDocument();
+  });
+
   it("lists each backup with its storage, schedule, location and health", async () => {
     renderBackups();
     const db = within(await screen.findByText("database", { selector: "span.font-mono" }).then((e) => e.closest("li")!));
@@ -310,7 +317,7 @@ describe("AppBackups", () => {
       type: "sqlite",
       enabled: true,
       storage: "offsite",
-      every: "1h",
+      every: "24h",
       volume: "data",
       path: "audit.db",
     });

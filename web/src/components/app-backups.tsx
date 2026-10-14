@@ -187,6 +187,10 @@ export function AppBackups({ appId }: { appId: string }) {
   }
 
   const current = open && open.kind !== "add" ? list.find((b) => b.name === open.name) : undefined;
+  // noPlaces: the app has no volume or bind mount, so a backup can reach
+  // nothing (unknown targets offer Add backup, whose dialog explains).
+  const targets = detail?.targets ?? null;
+  const noPlaces = targets !== null && targets.volumes.length === 0 && targets.services.every((s) => s.mounts.length === 0);
   return (
     <div className="max-w-5xl space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -210,9 +214,11 @@ export function AppBackups({ appId }: { appId: string }) {
           >
             <RefreshCw className={cn("size-4", loading && "animate-spin")} />
           </Button>
-          <Button size="sm" onClick={(e) => show({ kind: "add" }, e.currentTarget)} disabled={busy !== null || !!restoring || locked}>
-            <Plus className="size-4" /> Add backup
-          </Button>
+          {noPlaces ? null : (
+            <Button size="sm" onClick={(e) => show({ kind: "add" }, e.currentTarget)} disabled={busy !== null || !!restoring || locked}>
+              <Plus className="size-4" /> Add backup
+            </Button>
+          )}
         </div>
       </div>
       {restoring ? (
@@ -229,7 +235,11 @@ export function AppBackups({ appId }: { appId: string }) {
           The backups can't be read: {detail.error}. Fix the compose file, or roll back in History (Configuration → History), before changing the backups.
         </InlineError>
       ) : null}
-      {list.length === 0 && locked ? null : list.length === 0 ? (
+      {list.length === 0 && locked ? null : list.length === 0 && noPlaces ? (
+        <p className="rounded-lg border border-dashed px-4 py-10 text-center text-sm text-muted-foreground">
+          This app keeps no data on disk, so there&apos;s nothing to back up.
+        </p>
+      ) : list.length === 0 ? (
         <p className="rounded-lg border border-dashed px-4 py-10 text-center text-sm text-muted-foreground">
           This app has no backups yet. Add one here to copy a database file or folders to one of this server's storages, or declare
           them in the compose file under <code className="font-mono">x-winterflow.backups</code>.

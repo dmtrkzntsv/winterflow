@@ -63,7 +63,8 @@ export function AddBackupDialog({
   const [type, setType] = useState<"sqlite" | "files">("files");
   const [place, setPlace] = useState("");
   const [pathsText, setPathsText] = useState("");
-  const [every, setEvery] = useState("1h");
+  // Daily: hourly copies are a lot for a small server.
+  const [every, setEvery] = useState("24h");
   const [picked, setPicked] = useState("");
   const [storages, setStorages] = useState<string[] | null>(null);
   const [storagesError, setStoragesError] = useState("");

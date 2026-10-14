@@ -40,7 +40,7 @@ import { appPublishedPorts } from "@/hooks/use-used-host-ports";
 import { usePageTitle } from "@/layouts/use-page-title";
 import { hasRunningContainers } from "@/lib/app-status";
 import { portAddresses } from "@/lib/app-summary";
-import { hasActiveBackup, needsAttention } from "@/lib/backups";
+import { hasActiveBackup, needsAttention, runnableBackups } from "@/lib/backups";
 import { appLabel } from "@/lib/kpi";
 import { LEGACY_APP_TABS, type AppTab } from "@/lib/routes";
 import type { TemplateView } from "@/lib/templates";
@@ -199,9 +199,10 @@ export default function AppDetailsPage() {
           run: () => void runControl("update"),
         },
         { id: "app.logs", label: "View logs", icon: ScrollText, run: () => setTab("logs") },
-        // Only for an app with a backup switched on (the agent reports its
-        // health): elsewhere it would only say there is nothing to back up.
-        ...(hasActiveBackup(backupsByApp?.[app.id])
+        // Only for an app with a backup Back up now runs (on, with a
+        // storage, not custom; until the app is read, one the agent reports
+        // on): elsewhere it would only say there is nothing to back up.
+        ...((detail ? runnableBackups(detail.backups ?? []).length > 0 : hasActiveBackup(backupsByApp?.[app.id]))
           ? [
               {
                 id: "app.backup",

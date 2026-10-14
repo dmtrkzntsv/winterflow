@@ -437,7 +437,7 @@ export function TemplateFlow({ serverId, initialTemplate = "" }: { serverId: str
             </div>
           </Disclosure>
 
-              <CreateBar
+          <CreateBar
             error={error}
             busy={busy}
             waiting={storages === null}

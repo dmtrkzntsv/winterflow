@@ -117,6 +117,17 @@ function NewTemplate() {
   );
 }
 
+// SQLITE_ON is a backup Back up now runs; withBackups is an app.get
+// answer holding the backups given.
+const SQLITE_ON = { name: "db", type: "sqlite", enabled: true, storage: "disk", in_recipe: true, from_recipe: null };
+const withBackups = (backups: object[]) =>
+  vi.fn(async () => ({
+    app: { app_id: "a1", config: btoa(JSON.stringify({ name: "Shop", description: "" })), files: [], variables: [] },
+    backups,
+    revision: 1,
+    available_revisions: null,
+  })) as unknown as AppsContextValue["getApp"];
+
 function renderPage(
   url: string,
   backupsByApp: Record<string, BackupHealth[]> = {},
@@ -195,8 +206,9 @@ describe("AppDetailsPage", () => {
   it("offers its actions in the ⌘K palette", async () => {
     const user = userEvent.setup();
     const control = vi.fn(async () => {});
-    renderPage("/app/a1?tab=backups", { a1: [{ name: "db", state: "ok" }] }, { ctx: { control } });
+    renderPage("/app/a1?tab=backups", { a1: [{ name: "db", state: "ok" }] }, { ctx: { control, getApp: withBackups([SQLITE_ON]) } });
     const list = await screen.findByRole("list", { name: "Palette actions" });
+    await within(list).findByRole("button", { name: "Shop: Back up now" });
     expect(within(list).getAllByRole("button").map((b) => b.textContent)).toEqual([
       "Shop: Restart",
       "Shop: Stop",
@@ -208,15 +220,28 @@ describe("AppDetailsPage", () => {
     expect(control).toHaveBeenCalledWith("a1", "stop");
   });
 
-  it("offers Back up now in the palette only while a backup of the app is on", async () => {
-    const { unmount } = renderPage("/app/a1?tab=backups", { a1: [{ name: "db", state: "off" }] });
+  it("offers Back up now in the palette only while a backup it runs is on", async () => {
+    // Until the app is read, by the reported health.
+    const unread = renderPage("/app/a1?tab=backups", { a1: [{ name: "db", state: "off" }, { name: "media", state: "late" }] }, {
+      ctx: { getApp: vi.fn(() => new Promise(() => {})) } as unknown as Partial<AppsContextValue>,
+    });
     let list = await screen.findByRole("list", { name: "Palette actions" });
-    expect(within(list).getByRole("button", { name: "Shop: View logs" })).toBeInTheDocument();
-    expect(within(list).queryByRole("button", { name: "Shop: Back up now" })).not.toBeInTheDocument();
-    unmount();
-    renderPage("/app/a1?tab=backups", { a1: [{ name: "db", state: "off" }, { name: "media", state: "late" }] });
-    list = await screen.findByRole("list", { name: "Palette actions" });
     expect(within(list).getByRole("button", { name: "Shop: Back up now" })).toBeInTheDocument();
+    unread.unmount();
+    // Read: an off backup, one without a storage, and a custom one (its own
+    // tool runs it) give nothing to run.
+    const off = { ...SQLITE_ON, enabled: false };
+    const nowhere = { ...SQLITE_ON, name: "media", storage: "" };
+    const custom = { ...SQLITE_ON, name: "pg", type: "custom" };
+    const health = { a1: [{ name: "db", state: "ok" as const }, { name: "pg", state: "ok" as const }] };
+    const none = renderPage("/app/a1?tab=backups", health, { ctx: { getApp: withBackups([off, nowhere, custom]) } });
+    list = await screen.findByRole("list", { name: "Palette actions" });
+    await waitFor(() => expect(within(list).queryByRole("button", { name: "Shop: Back up now" })).not.toBeInTheDocument());
+    expect(within(list).getByRole("button", { name: "Shop: View logs" })).toBeInTheDocument();
+    none.unmount();
+    renderPage("/app/a1?tab=backups", health, { ctx: { getApp: withBackups([custom, SQLITE_ON]) } });
+    list = await screen.findByRole("list", { name: "Palette actions" });
+    expect(await within(list).findByRole("button", { name: "Shop: Back up now" })).toBeInTheDocument();
   });
 
   it("offers Start instead of Stop while the app is stopped", async () => {

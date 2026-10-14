@@ -230,7 +230,7 @@ export function LogsView({
                 </span>
                 {l.container ? (
                   <span
-                    className={cn("flex min-w-0 shrink-0 items-center gap-1.5 sm:w-[var(--log-label)]", colorOf(l.container))}
+                    className={cn("flex min-w-0 items-center gap-1.5 sm:w-[var(--log-label)] sm:shrink-0", colorOf(l.container))}
                     style={{ "--log-label": `${labelWidth}ch` } as CSSProperties}
                     title={l.container}
                   >

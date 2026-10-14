@@ -30,7 +30,7 @@ export type ServersContextValue = {
   loading: boolean;
   // loaded: the signed-in user's servers were read at least once (loading
   // is also false before that, while the sign-in is being checked).
-  loaded?: boolean;
+  loaded: boolean;
   error: string | null;
   refresh: () => Promise<void>;
 };

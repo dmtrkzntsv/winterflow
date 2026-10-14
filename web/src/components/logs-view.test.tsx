@@ -48,6 +48,10 @@ describe("LogsView", () => {
     expect(within(meta).getByText("cache-1")).toBeInTheDocument();
     expect(meta.querySelector(".rounded-full.bg-current")).not.toBeNull();
     expect(meta).not.toContainElement(message);
+    // A long name truncates on a phone; from 640px it keeps its column.
+    const label = within(meta).getByText("cache-1").parentElement!;
+    expect(label).toHaveClass("min-w-0", "sm:shrink-0");
+    expect(label).not.toHaveClass("shrink-0");
   });
 
   it("drops the container filter when its container leaves the lines", async () => {

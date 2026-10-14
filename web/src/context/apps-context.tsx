@@ -69,7 +69,6 @@ type AcceptedResponse = {
   data?: { request_id?: string };
 };
 
-
 const toApp = (a: AppResponse): App => ({
   id: a.id,
   serverId: a.server_id,
@@ -190,7 +189,6 @@ export function AppsProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
-
 
   // loadStatus pulls the live container-status snapshot (in-memory, TTL'd).
   const loadStatus = useCallback(async () => {

@@ -18,13 +18,13 @@ export function ReloadRolloutStrip({ api, serverNames }: { api?: RolloutsApi; se
   return <RolloutStrip rollout={rollout} serverName={(id) => serverNames.get(id) ?? id} onStop={stop} />;
 }
 
-// RolloutStrip shows a rollout in progress ("Upgrading 3 of 12: bakomi…"
+// RolloutStrip shows a rollout in progress ("Updating 3 of 12: bakomi…"
 // with Stop) or the failure that ended one, naming the app with a link to
 // it and the error (Dismiss hides it for this visit); a failed reload adds
 // that later reloads stop at the same app (it is picked first again). An
-// Upgrade all that ended (done or stopped) with instances skipped shows an
-// info line saying so, dismissible the same way. Nothing for any other
-// finished or stopped rollout, or none.
+// "Update all apps" that ended (done or stopped) with instances skipped
+// shows an info line saying so, dismissible the same way. Nothing for any
+// other finished or stopped rollout, or none.
 export function RolloutStrip({
   rollout,
   serverName,

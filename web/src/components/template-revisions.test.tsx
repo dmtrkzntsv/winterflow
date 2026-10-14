@@ -60,21 +60,23 @@ describe("TemplateRevisions", () => {
     });
     renderRevisions();
     expect(screen.getByText("bump image")).toBeInTheDocument();
-    expect(screen.getByText("First revision")).toBeInTheDocument();
+    expect(screen.getByText("First version")).toBeInTheDocument();
+    expect(screen.getByText("Version 3")).toBeInTheDocument();
+    expect(screen.queryByText("r3")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Changes from r2" }));
+    await user.click(screen.getByRole("button", { name: "Changes from version 2" }));
     const compose = await screen.findByRole("region", { name: "Changes to compose.yaml" });
     expect(within(compose).getByText("- image: app:1", { exact: false })).toBeInTheDocument();
     expect(within(compose).getByText("+ image: app:2", { exact: false })).toBeInTheDocument();
     const settings = screen.getByRole("region", { name: "Changes to template settings" });
     expect(settings).toHaveTextContent('+ "app_name": "shop-${NAME}",');
 
-    await user.click(screen.getByRole("button", { name: "Changes from r1" }));
+    await user.click(screen.getByRole("button", { name: "Changes from version 1" }));
     const added = await screen.findByRole("region", { name: "Changes to Caddyfile" });
     expect(added).toHaveTextContent("added");
     expect(screen.queryByRole("region", { name: "Changes to compose.yaml" })).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Changes from r1" }));
+    await user.click(screen.getByRole("button", { name: "Changes from version 1" }));
     expect(screen.queryByRole("region", { name: "Changes to Caddyfile" })).not.toBeInTheDocument();
   });
 
@@ -82,12 +84,12 @@ describe("TemplateRevisions", () => {
     const user = userEvent.setup();
     fakeAPI({ "/api/v1/template/get-template": { ...VIEW, body: BODIES["1"] } });
     renderRevisions();
-    await user.click(screen.getByRole("button", { name: "Changes from r2" }));
+    await user.click(screen.getByRole("button", { name: "Changes from version 2" }));
     expect(await screen.findByText("No changes.")).toBeInTheDocument();
     vi.unstubAllGlobals();
 
     fakeAPI({ "/api/v1/template/get-template": new Error("template revision not found") });
-    await user.click(screen.getByRole("button", { name: "Changes from r1" }));
+    await user.click(screen.getByRole("button", { name: "Changes from version 1" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("template revision not found");
   });
 
@@ -95,7 +97,7 @@ describe("TemplateRevisions", () => {
     const user = userEvent.setup();
     fakeAPI({ "/api/v1/template/get-template": new Error("database down") });
     renderRevisions();
-    const button = screen.getByRole("button", { name: "Changes from r2" });
+    const button = screen.getByRole("button", { name: "Changes from version 2" });
     await user.click(button);
     expect(await screen.findByRole("alert")).toHaveTextContent("database down");
     vi.unstubAllGlobals();

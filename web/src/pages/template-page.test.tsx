@@ -377,7 +377,7 @@ describe("TemplatePage", () => {
     expect(reads.map((c) => c.query)).toEqual(["?id=t1", "?id=t1&revision=2"]);
 
     await user.click(screen.getByRole("tab", { name: "Revisions" }));
-    expect(await screen.findByRole("button", { name: "Changes from r2" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Changes from version 2" })).toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: "Editor" }));
     expect(screen.getByLabelText("Template name")).toHaveValue("twillingate");
   });
@@ -396,7 +396,7 @@ describe("TemplatePage", () => {
     renderPage("/templates/t1?tab=instances");
     await user.click(await screen.findByRole("button", { name: "Upgrade all to r3" }));
     await user.click(screen.getByRole("button", { name: "Upgrade all" }));
-    expect(await screen.findByText("Upgrade to r3 queued…")).toBeInTheDocument();
+    expect(await screen.findByText("Update to version 3 queued…")).toBeInTheDocument();
     expect(api.posted("/api/v1/template/upgrade-instances")).toEqual([{ id: "t1", revision: 3 }]);
     expect(api.calls.find((c) => c.path === "/api/v1/rollout/get-rollouts")?.query).toBe("?kind=template_upgrade&scope_key=t1");
     // One upgrade at a time: the button waits for this one.

@@ -1,5 +1,5 @@
-// Rollouts: the API's queue of one-app-at-a-time jobs ("Upgrade all" of a
-// template's instances, the reloads a shared-variable change asks for).
+// Rollouts: the API's queue of one-app-at-a-time jobs ("Update all apps" of a
+// template, the reloads a shared-variable change asks for).
 // Types mirror model.RolloutView; progress arrives as "rollout" events on
 // the SSE stream, to every member of the org.
 import { apiBase } from "@/config";
@@ -40,12 +40,12 @@ export function currentApp(r: Rollout): string {
   return appLabel(r.current_app_name);
 }
 
-// rolloutLine is the strip's text for an active rollout: "Upgrading 3 of
+// rolloutLine is the strip's text for an active rollout: "Updating 3 of
 // 12: bakomi…", "Reloading 2 of 5: shop on srv-2…".
 export function rolloutLine(r: Rollout, serverName: (id: string) => string): string {
-  const verb = r.kind === "template_upgrade" ? "Upgrading" : "Reloading";
+  const verb = r.kind === "template_upgrade" ? "Updating" : "Reloading";
   if (r.state === "queued" || !r.current_app_id) {
-    return r.kind === "template_upgrade" ? `Upgrade to r${r.revision} queued…` : "Reload queued…";
+    return r.kind === "template_upgrade" ? `Update to version ${r.revision} queued…` : "Reload queued…";
   }
   const where = r.kind === "vars_reload" ? ` on ${serverName(r.current_server_id)}` : "";
   const step = Math.min(r.done + r.skipped + 1, Math.max(r.total, 1));
@@ -56,7 +56,7 @@ export function rolloutLine(r: Rollout, serverName: (id: string) => string): str
 // failureLine names what stopped a failed rollout: the app it stopped at,
 // or just that it failed when no app was in flight (its error says why).
 export function failureLine(r: Rollout, serverName: (id: string) => string): string {
-  const what = r.kind === "template_upgrade" ? `Upgrade to r${r.revision}` : "Reload";
+  const what = r.kind === "template_upgrade" ? `Update to version ${r.revision}` : "Reload";
   if (!r.current_app_id) return `${what} failed`;
   const where = r.kind === "vars_reload" && r.current_server_id ? ` on ${serverName(r.current_server_id)}` : "";
   return `${what} stopped at ${currentApp(r)}${where}`;
@@ -64,21 +64,21 @@ export function failureLine(r: Rollout, serverName: (id: string) => string): str
 
 const apps = (n: number) => `${n} app${n === 1 ? "" : "s"}`;
 
-// skippedLine says what a finished or stopped Upgrade all left behind:
-// "Upgraded 2 apps to r5 · 1 skipped: it needs a new value — upgrade it on
-// its own." Null for any other rollout, or when nothing was skipped.
+// skippedLine says what a finished or stopped "Update all apps" left behind:
+// "Updated 2 apps to version 5 · 1 skipped: it needs a new value — update it
+// on its own." Null for any other rollout, or when nothing was skipped.
 export function skippedLine(r: Rollout): string | null {
   if (r.kind !== "template_upgrade" || (r.state !== "done" && r.state !== "stopped") || r.skipped <= 0) return null;
-  const upgraded =
+  const updated =
     r.state === "stopped"
       ? r.done > 0
-        ? `Stopped after upgrading ${apps(r.done)} to r${r.revision}`
-        : `Stopped before upgrading any app to r${r.revision}`
+        ? `Stopped after updating ${apps(r.done)} to version ${r.revision}`
+        : `Stopped before updating any app to version ${r.revision}`
       : r.done > 0
-        ? `Upgraded ${apps(r.done)} to r${r.revision}`
-        : `No app upgraded to r${r.revision}`;
-  const why = r.skipped === 1 ? "it needs a new value — upgrade it on its own" : "they need a new value — upgrade them on their own";
-  return `${upgraded} · ${r.skipped} skipped: ${why}.`;
+        ? `Updated ${apps(r.done)} to version ${r.revision}`
+        : `No app updated to version ${r.revision}`;
+  const why = r.skipped === 1 ? "it needs a new value — update it on its own" : "they need a new value — update them on their own";
+  return `${updated} · ${r.skipped} skipped: ${why}.`;
 }
 
 export type RolloutsApi = {
@@ -86,7 +86,7 @@ export type RolloutsApi = {
   // vars_reload the scope is the caller's org.
   list(kind: RolloutKind, scopeKey?: string): Promise<Rollout[]>;
   stop(id: string): Promise<Rollout>;
-  // upgradeAll queues "Upgrade all" of a template's instances to revision
+  // upgradeAll queues "Update all apps" of a template to revision
   // (an ApiError with status 409 while one is active).
   upgradeAll(templateId: string, revision: number): Promise<Rollout>;
 };

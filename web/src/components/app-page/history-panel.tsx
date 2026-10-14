@@ -19,9 +19,9 @@ import { cn, relativeTime } from "@/lib/utils";
 // when (the commit hash on hover), which one is live, an undeployed draft
 // with Deploy draft, and Roll back for an older one — not for an app a
 // template manages: its template owns the files (its name may still be
-// loading). onChanged is called after a roll back or a draft deploy went
-// through, so what shows the app's files (the Configuration editor) can read
-// them again.
+// loading). onChanged is called after a roll back went through, so what
+// shows the app's files (the Configuration editor) can read them again; a
+// draft deploy leaves the files as they are, so it doesn't call it.
 export function HistoryPanel({
   appId,
   ownership,
@@ -64,7 +64,6 @@ export function HistoryPanel({
     try {
       await control(appId, "start");
       toast.success("Draft deployed");
-      onChanged?.();
     } catch (e) {
       toast.error("Deploy failed", { description: e instanceof Error ? e.message : undefined });
     } finally {

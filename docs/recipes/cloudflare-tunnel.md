@@ -63,7 +63,7 @@ to your DNS zone yourself.
 
 ## 4. Add the domain with TLS off
 
-In **Settings → Server · <name> → Domains**, add the names the tunnel
+In **Settings → Server · {name} → Domains**, add the names the tunnel
 serves — `*.example.com` covers every single-label subdomain — and pick
 **Off — behind Cloudflare Tunnel or another proxy**.
 Cloudflare already terminates TLS at the edge; with no inbound 80/443,

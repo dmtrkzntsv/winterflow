@@ -15,14 +15,19 @@ type LoginState = { from?: { pathname?: string; search?: string; hash?: string }
 // same-origin path — one leading "/" not followed by another "/" or a "\"
 // (either makes a protocol-relative URL that leaves the site), and no
 // control characters (URL parsers drop tabs and newlines, so "/\t/x" would
-// read as "//x").
+// read as "//x"). The query must start with "?" and the hash with "#" (or
+// be empty), and the joined string is checked again: "/" with a query of
+// "/evil.example" would otherwise join into "//evil.example".
 function returnPath(from: NonNullable<LoginState>["from"]): string {
   const pathname = from?.pathname;
+  const search = from?.search ?? "";
+  const hash = from?.hash ?? "";
+  if (typeof pathname !== "string" || typeof search !== "string" || typeof hash !== "string") return "/";
+  if ((search !== "" && !search.startsWith("?")) || (hash !== "" && !hash.startsWith("#"))) return "/";
+  const path = `${pathname}${search}${hash}`;
   // eslint-disable-next-line no-control-regex
-  if (typeof pathname !== "string" || !/^\/(?![/\\])/.test(pathname) || /[\u0000-\u001f\u007f]/.test(pathname)) {
-    return "/";
-  }
-  return `${pathname}${from?.search ?? ""}${from?.hash ?? ""}`;
+  if (!/^\/(?![/\\])/.test(pathname) || !/^\/(?![/\\])/.test(path) || /[\u0000-\u001f\u007f]/.test(path)) return "/";
+  return path;
 }
 
 // LoginPage is /login. A fresh (unclaimed) instance has no account to log

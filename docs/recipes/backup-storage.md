@@ -3,7 +3,7 @@
 A **storage** is a place on a server that backups and apps can write to: a
 local folder (a USB disk, an NFS or CIFS share) or an S3-compatible bucket
 (AWS S3, Cloudflare R2, Backblaze B2, Hetzner Object Storage, MinIO).
-Storages are added per server under **Settings → Server · <name> → Storages**.
+Storages are added per server under **Settings → Server · {name} → Storages**.
 
 Winterflow tests every storage before it saves it: it writes a small
 `.winterflow-probe-…` file and deletes it again. A storage that fails the

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowUpCircle, FileText } from "lucide-react";
 import { toast } from "sonner";
@@ -36,6 +36,7 @@ export function InstancePanel({
   onOpenHistory,
   latestRevision,
   onUpgrade,
+  onDirtyChange,
 }: {
   instance: InstanceView;
   current: TemplateView;
@@ -46,6 +47,9 @@ export function InstancePanel({
   // page's update dialog.
   latestRevision?: number;
   onUpgrade?: () => void;
+  // onDirtyChange hears whether the form holds unsaved values (the page
+  // asks before leaving them), and false when it goes.
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   const api = useTemplatesApi();
   const initial = useMemo(() => storedValues(current, instance), [current, instance]);
@@ -57,6 +61,10 @@ export function InstancePanel({
   const params = current.body.parameters ?? [];
   const kept = instance.state === "created" ? Object.keys(instance.secrets ?? {}) : [];
   const dirty = params.some((p) => (values[p.name] ?? "") !== (initial[p.name] ?? ""));
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
   const refused = tried && Object.keys(fieldErrors(params, values, kept)).length > 0;
   const newer = onUpgrade !== undefined && latestRevision !== undefined && latestRevision > instance.revision;
   const note = (

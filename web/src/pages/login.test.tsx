@@ -102,6 +102,23 @@ describe("LoginPage", () => {
     expect(await screen.findByText("home")).toBeInTheDocument();
   });
 
+  it.each([
+    ["a query that joins into //", { pathname: "/", search: "/evil.example/x" }],
+    ["a hash that joins into //", { pathname: "/", hash: "/evil.example/x" }],
+    ["a query not starting with ?", { pathname: "/server", search: "x" }],
+    ["a hash not starting with #", { pathname: "/server", hash: "x" }],
+    ["a query hiding a newline", { pathname: "/server", search: "?a\n" }],
+  ])("goes home instead of to %s", async (_label, from) => {
+    const user = userEvent.setup();
+    fakeAPI({ "/api/v1/auth/state": { bootstrap: false, registration_enabled: false } });
+    auth.login.mockResolvedValue(undefined);
+    renderLogin(from);
+    await user.type(screen.getByLabelText("Email"), "ann@example.test");
+    await user.type(screen.getByLabelText("Password"), "secret");
+    await user.click(screen.getByRole("button", { name: "Login" }));
+    expect(await screen.findByText("home")).toBeInTheDocument();
+  });
+
   it("sends a returning visitor with a session home when the return path leaves the site", async () => {
     fakeAPI({ "/api/v1/auth/state": { bootstrap: false, registration_enabled: false } });
     auth.isAuthenticated = true;

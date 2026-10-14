@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useParams, type Location } from "react-router-dom";
 import { ArrowUpCircle, DatabaseBackup, Play, RotateCw, ScrollText, Square, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
@@ -125,7 +125,12 @@ export default function AppDetailsPage() {
   const [controls, setControls] = useState<{ appId: string; action: ControlAction }[]>([]);
   const pending = controls.find((c) => c.appId === appId)?.action ?? null;
   const [deleteOpen, setDeleteOpen] = useState(false);
-  const deleteApp = useDeleteApp(appId);
+  // deletedApp: the app deleted from this page; leaving it then asks
+  // nothing (its unsaved edits went with it).
+  const deletedApp = useRef<string | null>(null);
+  const deleteApp = useDeleteApp(appId, () => {
+    deletedApp.current = appId;
+  });
   const saveAsTemplate = useSaveAsTemplate(appId, app?.name ?? "");
   const backUpNow = useBackUpNow(appId);
   const title = app ? appLabel(app.name) : "App";
@@ -254,7 +259,7 @@ export default function AppDetailsPage() {
 
       <UnsavedChangesGuard
         when={tab === "configuration" && configDirty}
-        stays={staysOnConfiguration}
+        stays={(next, current) => deletedApp.current === appId || staysOnConfiguration(next, current)}
         description="Your changes to this app's configuration haven't been saved. Leaving drops them."
       />
 
@@ -381,6 +386,7 @@ function ConfigurationTab({
         onOpenHistory={onOpenHistory}
         latestRevision={ownership.current.latest_revision}
         onUpgrade={onUpgrade}
+        onDirtyChange={onDirtyChange}
       />
     );
   }

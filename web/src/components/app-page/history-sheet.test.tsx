@@ -106,7 +106,8 @@ describe("HistorySheet", () => {
     await user.click(await screen.findByRole("button", { name: "Deploy draft" }));
     await waitFor(() => expect(ctx.control).toHaveBeenCalledWith("a1", "start"));
     expect(toast.success).toHaveBeenCalledWith("Draft deployed");
-    expect(onChanged).toHaveBeenCalledTimes(1);
+    // The files didn't change: an editor holding edits isn't made stale.
+    expect(onChanged).not.toHaveBeenCalled();
     await waitFor(() => expect(ctx.getRevisions).toHaveBeenCalledTimes(2));
   });
 

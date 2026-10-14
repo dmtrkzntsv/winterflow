@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Tags } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { ResponsiveDialog } from "@/components/responsive-dialog";
 import { useApps } from "@/context/use-apps";
+import { returnFocusTo } from "@/lib/focus";
 
 type Props = {
   image: string; // full ref as written in the compose file (may carry a tag)
@@ -20,6 +21,8 @@ export function ImageTagPicker({ image, onSelect }: Props) {
   const [tags, setTags] = useState<string[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
+  // The dialog hands focus back to its button (when it is still there).
+  const trigger = useRef<HTMLButtonElement>(null);
 
   const baseRef = imageWithoutTag(image);
 
@@ -43,7 +46,7 @@ export function ImageTagPicker({ image, onSelect }: Props) {
 
   return (
     <>
-      <Button size="sm" variant="outline" className="h-7 gap-1 font-mono text-xs" onClick={() => setOpen(true)}>
+      <Button ref={trigger} size="sm" variant="outline" className="h-7 gap-1 font-mono text-xs" onClick={() => setOpen(true)}>
         <Tags className="size-3.5" />
         {image}
       </Button>
@@ -53,6 +56,7 @@ export function ImageTagPicker({ image, onSelect }: Props) {
         className="sm:max-w-md"
         title={<span className="font-mono text-base">{baseRef}</span>}
         description="Pick a tag to use in the compose file."
+        onCloseAutoFocus={(e) => returnFocusTo(trigger)(e)}
       >
         {error ? (
           <p className="text-sm text-destructive">{error}</p>

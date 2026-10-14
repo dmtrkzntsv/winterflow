@@ -549,6 +549,19 @@ describe("AppDetailsPage", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "Blog" })).toBeInTheDocument();
   });
 
+  it("leaves for the apps without asking once the app was deleted, edits or not", async () => {
+    const user = userEvent.setup();
+    remove.mockResolvedValueOnce({ warnings: [], volumesDeleted: false, backupsDeleted: false });
+    renderPage("/app/a1?tab=configuration");
+    await user.click(await screen.findByRole("button", { name: "make an edit" }));
+    await user.click(screen.getByRole("button", { name: "More actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Delete…" }));
+    const confirm = await screen.findByRole("alertdialog", { name: "Delete Shop?" });
+    await user.click(within(confirm).getByRole("button", { name: "Delete app" }));
+    expect(await screen.findByText("the apps")).toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog", { name: "Discard unsaved changes?" })).not.toBeInTheDocument();
+  });
+
   it("leaves without asking when Configuration holds no edits", async () => {
     const user = userEvent.setup();
     renderPage("/app/a1?tab=configuration");
@@ -763,6 +776,15 @@ describe("AppDetailsPage of a template instance", () => {
     expect(api.posted("/api/v1/instance/update-instance")).toEqual([
       { server_id: "s", key: "k1", secrets: { SESSION_KEY: "ct(K):new-secret" } },
     ]);
+  });
+
+  it("asks before another tab drops unsaved parameter values", async () => {
+    const user = userEvent.setup();
+    instanceAPI();
+    renderPage("/app/a1?tab=configuration", {}, managed);
+    await user.type(await screen.findByLabelText("NAME"), "x");
+    await user.click(screen.getByRole("tab", { name: "Logs" }));
+    expect(await screen.findByRole("alertdialog", { name: "Discard unsaved changes?" })).toBeInTheDocument();
   });
 
   it("shows a pending instance's failure and asks for its secrets again", async () => {

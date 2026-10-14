@@ -14,7 +14,9 @@ import { templateFromApp, type DraftState } from "@/lib/template-draft";
 // telling what was kept (volumes, backups) or why not everything went. A
 // failure is toasted and thrown again, so the confirm dialog stays open for
 // a retry.
-export function useDeleteApp(appId: string): (choice: DeleteChoice) => Promise<void> {
+// onGone runs once the app is deleted, before the page is left (e.g. to
+// drop an unsaved-edits guard: the edits went with the app).
+export function useDeleteApp(appId: string, onGone?: () => void): (choice: DeleteChoice) => Promise<void> {
   const { remove, backupsByApp } = useApps();
   const navigate = useNavigate();
   const toServer = useServerPath();
@@ -28,12 +30,13 @@ export function useDeleteApp(appId: string): (choice: DeleteChoice) => Promise<v
         toast.error("Delete failed", { description: e instanceof Error ? e.message : undefined });
         throw e;
       }
+      onGone?.();
       navigate(toServer());
       const out = deleteOutcome(choice, res, { hadBackups });
       if (out.level === "warning") toast.warning(out.title, { description: out.description });
       else toast.success(out.title, { description: out.description });
     },
-    [appId, backupsByApp, navigate, remove, toServer],
+    [appId, backupsByApp, navigate, remove, toServer, onGone],
   );
 }
 

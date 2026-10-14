@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -28,6 +28,18 @@ describe("ImageTagPicker", () => {
     expect(onSelect).toHaveBeenCalledWith("registry.example/nginx:1.26");
     expect(getImageTags).toHaveBeenCalledWith("registry.example/nginx:1.25");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("hands focus back to its button when the dialog closes", async () => {
+    const user = userEvent.setup({ delay: null });
+    getImageTags.mockResolvedValue(["latest"]);
+    render(<ImageTagPicker image="nginx:1.25" onSelect={vi.fn()} />);
+    const button = screen.getByRole("button", { name: "nginx:1.25" });
+    await user.click(button);
+    await screen.findByRole("dialog");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(button).toHaveFocus();
   });
 
   it("says when no tag matches and when the tags can't be read", async () => {

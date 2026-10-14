@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { alertsPost } from "@/hooks/use-alerts";
 import { useNow } from "@/hooks/use-now";
 import { useConfirmTarget } from "@/hooks/use-confirm-target";
+import { errorCause } from "@/lib/alert-text";
 import { channelService, channelSummary, type Channel } from "@/lib/alerts";
 import { returnFocusTo } from "@/lib/focus";
 import { relativeTime } from "@/lib/utils";
@@ -123,7 +124,7 @@ export function ChannelsSection({
                 ch.last_error ? (
                   <span className="inline-flex max-w-64 items-center gap-1.5" title={ch.last_error}>
                     <StatusDot tone="bad" />
-                    <span className="line-clamp-1">Last delivery failed: {ch.last_error}</span>
+                    <span className="line-clamp-1">Last delivery failed: {errorCause(ch.last_error)}</span>
                   </span>
                 ) : ch.last_sent_at ? (
                   `Last sent ${relativeTime(new Date(ch.last_sent_at), now)}`

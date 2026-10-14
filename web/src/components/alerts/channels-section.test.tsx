@@ -58,7 +58,7 @@ describe("ChannelsSection", () => {
     expect(within(rows[0]).getByText("Default")).toBeInTheDocument();
     expect(within(rows[0]).getByText("Telegram")).toBeInTheDocument();
     expect(within(rows[1]).getByText("Off")).toBeInTheDocument();
-    const failed = within(rows[1]).getByText(/Last delivery failed: dial tcp/);
+    const failed = within(rows[1]).getByText("Last delivery failed: connection refused");
     expect(failed).toBeInTheDocument();
     // Muted text beside a dot, not red text.
     expect(failed.closest("span.text-status-bad")).toBeNull();

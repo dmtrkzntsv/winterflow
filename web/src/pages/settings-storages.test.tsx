@@ -148,9 +148,8 @@ describe("StoragesSettings", () => {
     await user.clear(within(dialog).getByLabelText("Folder"));
     await user.type(within(dialog).getByLabelText("Folder"), "/mnt/backup/winterflow");
 
-    await user.click(within(dialog).getByRole("button", { name: "Check folder" }));
-    expect(await within(dialog).findByText("Folder is writable")).toBeInTheDocument();
-    expect(docker.testStorage).toHaveBeenCalledWith(expect.objectContaining({ name: "backup-disk", type: "local", path: "/mnt/backup/winterflow" }));
+    // A folder has no separate check: Save checks it.
+    expect(within(dialog).queryByRole("button", { name: "Check folder" })).not.toBeInTheDocument();
 
     await user.click(save);
     // An add: the agent refuses it over an existing storage.
@@ -331,7 +330,7 @@ describe("StoragesSettings", () => {
     await user.type(within(dialog).getByLabelText("Name"), "usb");
     await user.type(within(dialog).getByLabelText("Folder"), "/mnt/usb2");
     await user.click(within(dialog).getByRole("button", { name: "Save" }));
-    expect(within(dialog).getByRole("button", { name: "Saving…" })).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Checking folder…" })).toBeDisabled();
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
 
@@ -381,21 +380,21 @@ describe("StoragesSettings", () => {
     });
     renderCard(docker);
 
-    await pick(user, "disk", "Edit");
+    await pick(user, "hetzner", "Edit");
     const dialog = await screen.findByRole("dialog");
-    await user.click(within(dialog).getByRole("button", { name: "Check folder" }));
+    await user.click(within(dialog).getByRole("button", { name: "Test connection" }));
     // Editing a field makes the running test stale; test again.
-    await user.clear(within(dialog).getByLabelText("Folder"));
-    await user.type(within(dialog).getByLabelText("Folder"), "/mnt/usb3");
-    await user.click(within(dialog).getByRole("button", { name: "Check folder" }));
+    await user.clear(within(dialog).getByLabelText("Bucket"));
+    await user.type(within(dialog).getByLabelText("Bucket"), "tenants2");
+    await user.click(within(dialog).getByRole("button", { name: "Test connection" }));
     expect(answers).toHaveLength(2);
 
     answers[1]({ ok: true });
-    expect(await within(dialog).findByText("Folder is writable")).toBeInTheDocument();
-    answers[0]({ ok: false, error: "the folder /mnt/usb does not exist" });
+    expect(await within(dialog).findByText("Connection works")).toBeInTheDocument();
+    answers[0]({ ok: false, error: "no such bucket" });
     await new Promise((r) => setTimeout(r, 0));
-    expect(within(dialog).queryByText("the folder /mnt/usb does not exist")).not.toBeInTheDocument();
-    expect(within(dialog).getByText("Folder is writable")).toBeInTheDocument();
+    expect(within(dialog).queryByText("no such bucket")).not.toBeInTheDocument();
+    expect(within(dialog).getByText("Connection works")).toBeInTheDocument();
   });
 
   it("explains why a storage in use can't be removed, and confirms otherwise", async () => {
@@ -583,21 +582,25 @@ describe("StorageDialog form", () => {
     const user = setupUser();
     const docker = fakeDocker();
     const dialog = await openAdd(user, docker);
-    await user.type(within(dialog).getByLabelText("Name"), "usb");
-    // The folder was never focused: its problem is hidden, the check is not.
-    const check = within(dialog).getByRole("button", { name: "Check folder" });
+    await user.click(within(dialog).getByRole("radio", { name: "S3 bucket" }));
+    await user.type(within(dialog).getByLabelText("Name"), "offsite");
+    // The endpoint was never focused: its problem is hidden, the test is not.
+    const check = within(dialog).getByRole("button", { name: "Test connection" });
     expect(check).toBeEnabled();
     await user.click(check);
     expect(docker.testStorage).not.toHaveBeenCalled();
-    const folder = within(dialog).getByLabelText("Folder");
-    expect(within(dialog).getByText("Use an absolute folder path, like /mnt/backup/winterflow.")).toBeInTheDocument();
-    expect(folder).toHaveFocus();
-    // Now on screen, the problem disables the check until it is fixed.
+    const endpoint = within(dialog).getByLabelText("Endpoint");
+    expect(endpoint).toHaveFocus();
+    // Now on screen, the problems disable the test until they are fixed.
     expect(check).toBeDisabled();
-    await user.type(folder, "/mnt/usb");
+    await user.type(endpoint, "https://s3.example.com");
+    await user.type(within(dialog).getByLabelText("Bucket"), "backups");
+    await user.type(within(dialog).getByLabelText("Access key"), "AKIA");
+    expect(check).toBeDisabled();
+    await user.type(within(dialog).getByLabelText("Secret key"), "S");
     expect(check).toBeEnabled();
     await user.click(check);
-    expect(docker.testStorage).toHaveBeenCalledWith(expect.objectContaining({ name: "usb", path: "/mnt/usb" }));
+    expect(docker.testStorage).toHaveBeenCalledWith(expect.objectContaining({ name: "offsite", endpoint: "https://s3.example.com" }));
   });
 
   it("keeps an edit's stored path-style when an IP endpoint is typed", async () => {
@@ -687,13 +690,17 @@ describe("StorageDialog form", () => {
   it("announces only the test result, not the button", async () => {
     const user = setupUser();
     const dialog = await openAdd(user);
-    await user.type(within(dialog).getByLabelText("Name"), "usb");
-    await user.type(within(dialog).getByLabelText("Folder"), "/mnt/usb");
-    const check = within(dialog).getByRole("button", { name: "Check folder" });
+    await user.click(within(dialog).getByRole("radio", { name: "S3 bucket" }));
+    await user.type(within(dialog).getByLabelText("Name"), "offsite");
+    await user.type(within(dialog).getByLabelText("Endpoint"), "https://s3.example.com");
+    await user.type(within(dialog).getByLabelText("Bucket"), "backups");
+    await user.type(within(dialog).getByLabelText("Access key"), "AKIA");
+    await user.type(within(dialog).getByLabelText("Secret key"), "S");
+    const check = within(dialog).getByRole("button", { name: "Test connection" });
     const status = within(dialog).getByRole("status");
     expect(status).not.toContainElement(check);
     await user.click(check);
-    await waitFor(() => expect(status).toHaveTextContent("Folder is writable"));
+    await waitFor(() => expect(status).toHaveTextContent("Connection works"));
   });
 
   it("locks the form and says what is going on while saving", async () => {

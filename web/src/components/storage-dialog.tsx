@@ -40,20 +40,19 @@ const fieldId = (field: DraftField) => `st-${field}`;
 const TYPE_ICON = { local: Folder, s3: Cloud } as const;
 
 // COPY is the wording that differs by type.
-const COPY: Record<StorageType, { hint: string; namePlaceholder: string; test: string; testing: string; ok: string }> = {
+// A folder has no separate test: Save checks it ("Checking folder…"). A
+// bucket's keys are easy to get wrong, so it can be tested before saving.
+const COPY: Record<StorageType, { hint: string; namePlaceholder: string; saving: string; test?: { label: string; testing: string; ok: string } }> = {
   local: {
     hint: "A folder on a disk attached to this server, such as a USB drive.",
     namePlaceholder: "e.g. backup-disk",
-    test: "Check folder",
-    testing: "Checking…",
-    ok: "Folder is writable",
+    saving: "Checking folder…",
   },
   s3: {
     hint: "A bucket at an S3-compatible provider: Backblaze, Wasabi, Cloudflare R2, MinIO…",
     namePlaceholder: "e.g. offsite",
-    test: "Test connection",
-    testing: "Testing…",
-    ok: "Connection works",
+    saving: "Saving…",
+    test: { label: "Test connection", testing: "Testing…", ok: "Connection works" },
   },
 };
 
@@ -131,6 +130,7 @@ export function StorageDialog({
   const apps = usedBy ?? edit?.apps ?? [];
   const local = draft.type === "local";
   const copy = COPY[draft.type];
+  const testCopy = copy.test;
   // An edit that changes nothing has nothing to save (nor apps to redeploy).
   const dirty = !editing || JSON.stringify(draft) !== JSON.stringify(initial);
 
@@ -291,7 +291,7 @@ export function StorageDialog({
           {/* Enabled while a problem is out of sight, so Save can say
               what is missing; disabled once the problem is on screen. */}
           <Button type="submit" form={FORM_ID} disabled={(problem !== null && !hidden) || busy || !dirty}>
-            {busy ? "Saving…" : "Save"}
+            {busy ? copy.saving : "Save"}
           </Button>
         </>
       }
@@ -417,31 +417,33 @@ export function StorageDialog({
             </p>
           ) : null}
 
-          <div className="flex min-h-9 flex-wrap items-center gap-3">
-            {/* Enabled while a problem is out of sight, like Save. */}
-            <Button
-              type="button"
-              variant="outline"
-              disabled={(problem !== null && !hidden) || probe.state === "testing"}
-              onClick={() => {
-                if (!reveal()) void test();
-              }}
-            >
-              {probe.state === "testing" ? copy.testing : copy.test}
-            </Button>
-            {/* Only the result is announced, not the button's label. */}
-            <span role="status" className="flex min-w-0">
-              {probe.state === "ok" ? (
-                <span className="flex items-center gap-1.5 text-sm font-medium">
-                  <StatusDot tone="ok" /> {copy.ok}
-                </span>
-              ) : probe.state === "failed" ? (
-                <span className="flex items-start gap-1.5 text-sm font-medium [overflow-wrap:anywhere]">
-                  <StatusDot tone="bad" className="mt-1.5" /> {probe.error}
-                </span>
-              ) : null}
-            </span>
-          </div>
+          {testCopy ? (
+            <div className="flex min-h-9 flex-wrap items-center gap-3">
+              {/* Enabled while a problem is out of sight, like Save. */}
+              <Button
+                type="button"
+                variant="outline"
+                disabled={(problem !== null && !hidden) || probe.state === "testing"}
+                onClick={() => {
+                  if (!reveal()) void test();
+                }}
+              >
+                {probe.state === "testing" ? testCopy.testing : testCopy.label}
+              </Button>
+              {/* Only the result is announced, not the button's label. */}
+              <span role="status" className="flex min-w-0">
+                {probe.state === "ok" ? (
+                  <span className="flex items-center gap-1.5 text-sm font-medium">
+                    <StatusDot tone="ok" /> {testCopy.ok}
+                  </span>
+                ) : probe.state === "failed" ? (
+                  <span className="flex items-start gap-1.5 text-sm font-medium [overflow-wrap:anywhere]">
+                    <StatusDot tone="bad" className="mt-1.5" /> {probe.error}
+                  </span>
+                ) : null}
+              </span>
+            </div>
+          ) : null}
         </fieldset>
 
         {busy ? (

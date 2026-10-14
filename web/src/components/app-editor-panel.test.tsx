@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
@@ -29,7 +28,6 @@ const detail: AppDetailPayload = {
 function renderPanel(
   saveApp: AppsContextValue["saveApp"],
   refresh = vi.fn(async () => {}),
-  headerActions?: ReactNode,
   d: AppDetailPayload = detail,
   onOpenHistory?: () => void,
 ) {
@@ -42,7 +40,7 @@ function renderPanel(
   render(
     <MemoryRouter>
       <AppsContext.Provider value={value}>
-        <AppEditorPanel appId="a1" headerActions={headerActions} onOpenHistory={onOpenHistory} />
+        <AppEditorPanel appId="a1" onOpenHistory={onOpenHistory} />
       </AppsContext.Provider>
     </MemoryRouter>,
   );
@@ -86,11 +84,14 @@ describe("AppEditorPanel", () => {
     expect(refresh).toHaveBeenCalled();
   });
 
-  it("puts the page's actions in its bar, before the Save buttons", async () => {
-    renderPanel(vi.fn(), vi.fn(async () => {}), <button type="button">History</button>);
+  it("puts History in its bar, before the Save buttons", async () => {
+    const onOpenHistory = vi.fn();
+    renderPanel(vi.fn(), vi.fn(async () => {}), detail, onOpenHistory);
     const history = await screen.findByRole("button", { name: "History" });
     const save = screen.getByRole("button", { name: "Save & redeploy" });
     expect(history.compareDocumentPosition(save) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await userEvent.setup().click(history);
+    expect(onOpenHistory).toHaveBeenCalled();
   });
 
   it("refuses a nameless file next to it instead of in a toast", async () => {
@@ -123,7 +124,7 @@ describe("AppEditorPanel", () => {
     const user = userEvent.setup();
     const saveApp = vi.fn();
     const nameless = { ...detail, app: { ...detail.app, config: btoa(JSON.stringify({ files: [{ filename: "compose.yml" }] })) } };
-    renderPanel(saveApp, vi.fn(async () => {}), undefined, nameless);
+    renderPanel(saveApp, vi.fn(async () => {}), nameless);
     await user.click(await screen.findByRole("button", { name: /Add variable/ }));
     await user.type(screen.getByRole("textbox", { name: "Variable name" }), "PORT");
     await user.click(screen.getByRole("button", { name: "Save & redeploy" }));
@@ -139,7 +140,7 @@ describe("AppEditorPanel", () => {
       domains: [{ domain: "shop.example.com", upstream_port: 8080, ssl: true }],
       redirects: [{ domain: "old.example.com", path: "", to: "", code: 301 }],
     };
-    renderPanel(vi.fn(), vi.fn(async () => {}), undefined, withStored(ingress));
+    renderPanel(vi.fn(), vi.fn(async () => {}), withStored(ingress));
     // Dirty the form so Save is enabled; the redirect is inside the closed Advanced.
     await user.click(await screen.findByRole("button", { name: /Add variable/ }));
     await user.type(screen.getByRole("textbox", { name: "Variable name" }), "PORT");
@@ -160,7 +161,7 @@ describe("AppEditorPanel", () => {
     servers = { activeServer: { id: "s1", features: {} }, loading: false };
     const saveApp = vi.fn<AppsContextValue["saveApp"]>(async () => []);
     const ingress = { domains: [{ domain: "shop.example.com", upstream_port: 0, ssl: true }], redirects: [] };
-    renderPanel(saveApp, vi.fn(async () => {}), undefined, withStored(ingress));
+    renderPanel(saveApp, vi.fn(async () => {}), withStored(ingress));
     await user.click(await screen.findByRole("button", { name: /Add variable/ }));
     await user.type(screen.getByRole("textbox", { name: "Variable name" }), "PORT");
     await user.click(screen.getByRole("button", { name: "Save & redeploy" }));
@@ -168,12 +169,24 @@ describe("AppEditorPanel", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
+  it("doesn't count a stored ingress against Save while the server is still unknown", async () => {
+    const user = userEvent.setup();
+    servers = { activeServer: null, loading: true };
+    const saveApp = vi.fn<AppsContextValue["saveApp"]>(async () => []);
+    const ingress = { domains: [{ domain: "shop.example.com", upstream_port: 0, ssl: true }], redirects: [] };
+    renderPanel(saveApp, vi.fn(async () => {}), withStored(ingress));
+    await user.click(await screen.findByRole("button", { name: /Add variable/ }));
+    await user.type(screen.getByRole("textbox", { name: "Variable name" }), "PORT");
+    await user.click(screen.getByRole("button", { name: "Save & redeploy" }));
+    await waitFor(() => expect(saveApp).toHaveBeenCalled());
+  });
+
   it("keeps the bar to Save & redeploy and a ⋯ menu on a phone", async () => {
     vi.stubGlobal("matchMedia", () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
     const user = userEvent.setup();
     const onOpenHistory = vi.fn();
     const saveApp = vi.fn<AppsContextValue["saveApp"]>(async () => []);
-    renderPanel(saveApp, vi.fn(async () => {}), <button type="button">History</button>, detail, onOpenHistory);
+    renderPanel(saveApp, vi.fn(async () => {}), detail, onOpenHistory);
     await user.click(await screen.findByRole("button", { name: /Add variable/ }));
     await user.type(screen.getByRole("textbox", { name: "Variable name" }), "PORT");
     expect(screen.queryByRole("button", { name: "History" })).not.toBeInTheDocument();

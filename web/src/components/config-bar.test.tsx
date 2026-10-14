@@ -17,7 +17,6 @@ function bar(props: { onOpenHistory?: () => void; discard?: () => void } = {}) {
   return render(
     <ConfigBar
       status="Unsaved changes"
-      headerActions={<button type="button">History</button>}
       onOpenHistory={props.onOpenHistory}
       secondary={[
         { label: "Save draft", onSelect: vi.fn(), title: "Save a new version without redeploying" },
@@ -31,7 +30,7 @@ function bar(props: { onOpenHistory?: () => void; discard?: () => void } = {}) {
 describe("ConfigBar", () => {
   it("shows every action in the bar on a desktop, History first and Save last", () => {
     bar({ onOpenHistory: vi.fn() });
-    const names = screen.getAllByRole("button").map((b) => b.textContent);
+    const names = screen.getAllByRole("button").map((b) => b.textContent?.trim());
     expect(names).toEqual(["History", "Discard", "Save draft", "Save & redeploy"]);
     expect(screen.getByText("Unsaved changes")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "More save options" })).not.toBeInTheDocument();
@@ -60,10 +59,27 @@ describe("ConfigBar", () => {
     expect(el).toHaveClass("flex-nowrap", "max-lg:top-14");
   });
 
-  it("keeps the page's own History button on a phone when it gave no way to open it", () => {
-    phone(true);
+  it("has no History without a way to open it", async () => {
     bar();
-    expect(screen.getByRole("button", { name: "History" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "History" })).not.toBeInTheDocument();
+  });
+
+  it("opens History from the bar's own button on a desktop", async () => {
+    const onOpenHistory = vi.fn();
+    bar({ onOpenHistory });
+    await userEvent.setup().click(screen.getByRole("button", { name: "History" }));
+    expect(onOpenHistory).toHaveBeenCalled();
+  });
+
+  it("puts the status under the bar on a phone, in the bar on a desktop", () => {
+    phone(true);
+    const { container, unmount } = bar({ onOpenHistory: vi.fn() });
+    expect(container.firstElementChild).not.toHaveTextContent("Unsaved changes");
+    expect(screen.getByText("Unsaved changes")).toBeInTheDocument();
+    unmount();
+    phone(false);
+    const desktop = bar({ onOpenHistory: vi.fn() });
+    expect(desktop.container.firstElementChild).toHaveTextContent("Unsaved changes");
   });
 
   it("disables a menu action that is disabled", async () => {

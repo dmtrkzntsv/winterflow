@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Link, MemoryRouter, Outlet, Route, Routes, useLocation } from "react-router-dom";
@@ -39,9 +38,11 @@ vi.mock("@/context/use-backups", () => ({ useBackups: () => backupsApi }));
 // notifications).
 vi.mock("@/components/stale-vars-badge", () => ({ StaleVarsBadge: () => null }));
 vi.mock("@/components/app-editor-panel", () => ({
-  AppEditorPanel: ({ headerActions }: { headerActions?: ReactNode }) => (
+  AppEditorPanel: ({ onOpenHistory }: { onOpenHistory?: () => void }) => (
     <div>
-      {headerActions}
+      <button type="button" onClick={onOpenHistory}>
+        History
+      </button>
       <p>the plain editor</p>
     </div>
   ),

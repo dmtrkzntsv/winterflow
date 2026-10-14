@@ -1,9 +1,8 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
-import { ArrowUpCircle, DatabaseBackup, History, Play, RotateCw, ScrollText, Square, TriangleAlert } from "lucide-react";
+import { ArrowUpCircle, DatabaseBackup, Play, RotateCw, ScrollText, Square, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 
-import { Button } from "@/components/ui/button";
 import { TabsContent } from "@/components/ui/tabs";
 import { AppAlertsBanner } from "@/components/alerts/active-alerts";
 import { AppBackups } from "@/components/app-backups";
@@ -177,11 +176,6 @@ export default function AppDetailsPage() {
       : backUpNow.busy
         ? "Backing up…"
         : null;
-  const historyButton = (
-    <Button variant="outline" onClick={() => setHistoryOpen(true)}>
-      <History className="size-4" aria-hidden /> History
-    </Button>
-  );
 
   return (
     // A flex column so the Logs tab can fill what is left of the viewport.
@@ -272,7 +266,6 @@ export default function AppDetailsPage() {
             appId={app.id}
             ownership={ownership}
             onSaved={reloadManaged}
-            headerActions={historyButton}
             onOpenHistory={() => setHistoryOpen(true)}
             onUpgrade={() => void openUpgrade()}
           />
@@ -305,20 +298,18 @@ export default function AppDetailsPage() {
 
 // ConfigurationTab is the app's editor, or for an app a template manages
 // its instance's parameters (never the plain editor, whose save would be
-// refused). headerActions (the History button) go in either panel's bar;
+// refused). onOpenHistory puts a History button in either panel's bar;
 // onUpgrade is the instance panel's "A newer version is available".
 function ConfigurationTab({
   appId,
   ownership,
   onSaved,
-  headerActions,
   onOpenHistory,
   onUpgrade,
 }: {
   appId: string;
   ownership: Ownership;
   onSaved: () => void;
-  headerActions?: ReactNode;
   onOpenHistory?: () => void;
   // onUpgrade opens the page's update dialog (a template-managed app's
   // "A newer version is available").
@@ -334,12 +325,11 @@ function ConfigurationTab({
         instance={inst}
         current={ownership.current}
         onSaved={onSaved}
-        headerActions={headerActions}
         onOpenHistory={onOpenHistory}
         latestRevision={ownership.current.latest_revision}
         onUpgrade={onUpgrade}
       />
     );
   }
-  return <AppEditorPanel appId={appId} headerActions={headerActions} onOpenHistory={onOpenHistory} />;
+  return <AppEditorPanel appId={appId} onOpenHistory={onOpenHistory} />;
 }

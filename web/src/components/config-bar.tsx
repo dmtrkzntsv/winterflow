@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { MoreHorizontal } from "lucide-react";
+import { History, MoreHorizontal } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -19,23 +19,21 @@ export type BarAction = {
 };
 
 // ConfigBar is the Configuration tab's sticky bar (the app editor's and a
-// template-managed app's): a status line, the page's actions, the
-// secondary actions and the one primary. From 640px up they all sit in the
-// bar; on a phone it keeps the primary and a ⋯ menu (History, then the
-// secondary actions), in one row, so the sticky bar stays one line high.
-// secondary is in menu order; the bar shows them last-first, so the one
-// nearest the primary is the first listed.
+// template-managed app's): a status line, History, the secondary actions
+// and the one primary. From 640px up they all sit in the bar; on a phone it
+// keeps the primary and a ⋯ menu (History, then the secondary actions), in
+// one row, so the sticky bar stays one line high, and the status line sits
+// under it. secondary is in menu order; the bar shows them last-first, so
+// the one nearest the primary is the first listed.
 export function ConfigBar({
   status,
-  headerActions,
   onOpenHistory,
   secondary = [],
   primary,
 }: {
   status?: ReactNode;
-  // headerActions are the page's buttons (History); onOpenHistory is how
-  // the ⋯ menu opens it on a phone (without it the buttons stay in the bar).
-  headerActions?: ReactNode;
+  // onOpenHistory opens the app's History (the bar's History button, or the
+  // ⋯ menu's first item on a phone); without it there is no History.
   onOpenHistory?: () => void;
   secondary?: BarAction[];
   primary: ReactNode;
@@ -45,7 +43,11 @@ export function ConfigBar({
     return (
       <StickyActionBar className="mb-6">
         <p className="mr-auto text-sm text-muted-foreground">{status}</p>
-        {headerActions}
+        {onOpenHistory ? (
+          <Button variant="outline" onClick={onOpenHistory}>
+            <History className="size-4" aria-hidden /> History
+          </Button>
+        ) : null}
         {[...secondary].reverse().map((a, i) => (
           <Button
             key={a.label}
@@ -61,29 +63,30 @@ export function ConfigBar({
       </StickyActionBar>
     );
   }
-  const inMenu = onOpenHistory !== undefined;
   return (
-    <StickyActionBar className="mb-6 flex-nowrap">
-      <p className="mr-auto min-w-0 flex-1 text-sm text-muted-foreground">{status}</p>
-      {inMenu ? null : headerActions}
-      {primary}
-      {inMenu || secondary.length > 0 ? (
-        <DropdownMenu modal={false}>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="icon" className="shrink-0" aria-label="More save options">
-              <MoreHorizontal className="size-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            {inMenu ? <DropdownMenuItem onSelect={onOpenHistory}>History</DropdownMenuItem> : null}
-            {secondary.map((a) => (
-              <DropdownMenuItem key={a.label} disabled={a.disabled} title={a.title} onSelect={a.onSelect}>
-                {a.label}
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      ) : null}
-    </StickyActionBar>
+    <>
+      <StickyActionBar className={status ? "mb-3 flex-nowrap" : "mb-6 flex-nowrap"}>
+        <div className="mr-auto" />
+        {primary}
+        {onOpenHistory || secondary.length > 0 ? (
+          <DropdownMenu modal={false}>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="icon" className="shrink-0" aria-label="More save options">
+                <MoreHorizontal className="size-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {onOpenHistory ? <DropdownMenuItem onSelect={onOpenHistory}>History</DropdownMenuItem> : null}
+              {secondary.map((a) => (
+                <DropdownMenuItem key={a.label} disabled={a.disabled} title={a.title} onSelect={a.onSelect}>
+                  {a.label}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : null}
+      </StickyActionBar>
+      {status ? <p className="mb-6 text-sm text-muted-foreground">{status}</p> : null}
+    </>
   );
 }

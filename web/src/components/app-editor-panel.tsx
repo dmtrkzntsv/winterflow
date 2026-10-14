@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 
@@ -23,11 +23,12 @@ import type { AppEditorState } from "@/types/app-config";
 const NO_ERRORS: FieldErrors = {};
 
 // panelErrors are editorErrors' problems the Configuration tab can show.
-// Without the built-in proxy the Domains section is gone, so a stored
-// address or redirect (saved as it was loaded) can't block Save invisibly.
-function panelErrors(state: AppEditorState, proxyOff: boolean): FieldErrors {
+// Without the built-in proxy, or until the server is known, the Domains
+// section is not shown, so a stored address or redirect (saved as it was
+// loaded) can't block Save invisibly.
+function panelErrors(state: AppEditorState, domainsShown: boolean): FieldErrors {
   const found = editorErrors(state);
-  if (!proxyOff) return found;
+  if (domainsShown) return found;
   return Object.fromEntries(
     Object.entries(found).filter(([k]) => !/^(domain:|port:|redirect-)/.test(k)),
   );
@@ -36,21 +37,18 @@ function panelErrors(state: AppEditorState, proxyOff: boolean): FieldErrors {
 // AppEditorPanel is the Configuration tab of a plain app: it loads the
 // app's current version, lets the user edit what runs, and saves in place
 // (app.save with the app id → new version + redeploy). A refused save
-// marks each bad field with its message. headerActions (the page's History
-// button) sit in the action bar before the Save buttons; onOpenHistory is
-// how the phone's ⋯ menu opens it.
+// marks each bad field with its message. onOpenHistory opens the page's
+// History from the action bar.
 export function AppEditorPanel({
   appId,
-  headerActions,
   onOpenHistory,
 }: {
   appId: string;
-  headerActions?: ReactNode;
   onOpenHistory?: () => void;
 }) {
   const { saveApp, getApp, getPublicKey, refresh } = useApps();
   const { activeServer, loading: serversLoading } = useServers();
-  const proxyOff = !serversLoading && !activeServer?.features?.ingress;
+  const domainsShown = !serversLoading && Boolean(activeServer?.features?.ingress);
   const toServer = useServerPath();
   const [state, setState] = useState<AppEditorState>(emptyEditorState);
   const [loading, setLoading] = useState(true);
@@ -87,7 +85,7 @@ export function AppEditorPanel({
   }, [load]);
 
   const handleSave = async (draft: boolean) => {
-    if (Object.keys(panelErrors(state, proxyOff)).length > 0) {
+    if (Object.keys(panelErrors(state, domainsShown)).length > 0) {
       setTried(true);
       setRefused((n) => n + 1);
       focusFirstInvalid(form.current);
@@ -125,7 +123,7 @@ export function AppEditorPanel({
     [state, baseline],
   );
 
-  const errors = tried ? panelErrors(state, proxyOff) : NO_ERRORS;
+  const errors = tried ? panelErrors(state, domainsShown) : NO_ERRORS;
   const [firstKey, firstMessage] = Object.entries(errors)[0] ?? [];
 
   if (loading) return <PageSpinner />;
@@ -159,7 +157,6 @@ export function AppEditorPanel({
             "Every save is kept in History, so you can roll back."
           )
         }
-        headerActions={headerActions}
         onOpenHistory={onOpenHistory}
         secondary={[
           {

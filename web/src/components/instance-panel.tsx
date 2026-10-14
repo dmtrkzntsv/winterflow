@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowUpCircle, FileText } from "lucide-react";
 import { toast } from "sonner";
@@ -9,7 +9,6 @@ import { ConfigBar } from "@/components/config-bar";
 import { EditorSection } from "@/components/editor-section";
 import { InlineError } from "@/components/inline-error";
 import { ParameterFields } from "@/components/parameter-fields";
-import { useIsPhone } from "@/hooks/use-is-phone";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
 import { fieldErrors, splitValues } from "@/lib/template-params";
 import { sealSecrets, type InstanceView, type TemplateView } from "@/lib/templates";
@@ -33,7 +32,6 @@ export function InstancePanel({
   instance,
   current,
   onSaved,
-  headerActions,
   onOpenHistory,
   latestRevision,
   onUpgrade,
@@ -41,9 +39,7 @@ export function InstancePanel({
   instance: InstanceView;
   current: TemplateView;
   onSaved: () => void;
-  // headerActions sit in the bar before Save (the page's History button);
-  // onOpenHistory is how the phone's ⋯ menu opens it.
-  headerActions?: ReactNode;
+  // onOpenHistory opens the page's History from the bar.
   onOpenHistory?: () => void;
   // latestRevision is the template's newest version; onUpgrade opens the
   // page's update dialog.
@@ -60,7 +56,6 @@ export function InstancePanel({
   const kept = instance.state === "created" ? Object.keys(instance.secrets ?? {}) : [];
   const dirty = params.some((p) => (values[p.name] ?? "") !== (initial[p.name] ?? ""));
   const newer = onUpgrade !== undefined && latestRevision !== undefined && latestRevision > instance.revision;
-  const phone = useIsPhone();
   const note = (
     <>
       Managed by template{" "}
@@ -104,10 +99,8 @@ export function InstancePanel({
 
   return (
     <div>
-      {/* On a phone the bar is one row of buttons: the note sits under it. */}
       <ConfigBar
-        status={phone ? undefined : note}
-        headerActions={headerActions}
+        status={note}
         onOpenHistory={onOpenHistory}
         primary={
           <Button onClick={() => void save()} disabled={saving || (!dirty && instance.state === "created")}>
@@ -115,7 +108,6 @@ export function InstancePanel({
           </Button>
         }
       />
-      {phone ? <p className="-mt-3 mb-6 text-sm text-muted-foreground">{note}</p> : null}
       {newer ? (
         <div role="status" className="mb-6 flex flex-wrap items-center gap-3 rounded-lg border bg-muted/40 px-4 py-3 text-sm">
           <ArrowUpCircle className="size-4 shrink-0 text-primary" aria-hidden />

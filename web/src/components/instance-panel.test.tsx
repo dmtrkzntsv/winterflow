@@ -55,8 +55,8 @@ function renderPanel(props: Partial<Parameters<typeof InstancePanel>[0]> = {}) {
 describe("InstancePanel", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it("puts the page's actions in its bar, before Save", () => {
-    renderPanel({ headerActions: <button type="button">History</button> });
+  it("puts History in its bar, before Save", () => {
+    renderPanel({ onOpenHistory: vi.fn() });
     const history = screen.getByRole("button", { name: "History" });
     const save = screen.getByRole("button", { name: "Save & redeploy" });
     expect(history.compareDocumentPosition(save) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -92,7 +92,7 @@ describe("InstancePanel", () => {
     vi.stubGlobal("matchMedia", () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
     const user = userEvent.setup();
     const onOpenHistory = vi.fn();
-    renderPanel({ headerActions: <button type="button">History</button>, onOpenHistory });
+    renderPanel({ onOpenHistory });
     expect(screen.queryByRole("button", { name: "History" })).not.toBeInTheDocument();
     expect(screen.getByText(/Managed by template/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "More save options" }));

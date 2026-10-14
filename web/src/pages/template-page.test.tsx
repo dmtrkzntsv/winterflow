@@ -13,8 +13,8 @@ import { rollout } from "@/test/rollouts";
 
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
-const crumbs = vi.hoisted(() => vi.fn());
-vi.mock("@/layouts/use-app-layout", () => ({ useAppBreadcrumbs: crumbs }));
+const pageTitle = vi.hoisted(() => vi.fn());
+vi.mock("@/layouts/use-page-title", () => ({ usePageTitle: pageTitle, useCurrentPageTitle: () => "" }));
 vi.mock("@/context/use-auth", () => ({ useAuth: () => ({ isAuthenticated: true }) }));
 vi.mock("@/context/use-servers", () => ({ useServers: () => ({ servers: [{ id: "s1", name: "alpha" }] }) }));
 vi.mock("@/components/code-editor", () => ({
@@ -122,7 +122,7 @@ describe("TemplatePage", () => {
     const user = userEvent.setup();
     const api = fakeAPI({});
     renderPage("/templates/new");
-    expect(crumbs).toHaveBeenLastCalledWith([{ label: "Templates", href: "/templates" }, { label: "Add template" }]);
+    expect(pageTitle).toHaveBeenLastCalledWith("Add template");
     // A new template saves as revision 1: there is nothing to note yet.
     expect(screen.queryByLabelText("Revision note")).not.toBeInTheDocument();
     await user.type(screen.getByLabelText("Template name"), "Shop");

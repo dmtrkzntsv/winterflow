@@ -1,8 +1,8 @@
-import { useMemo, useState } from "react"
+import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { LayoutTemplate, Plus } from "lucide-react"
 
-import { useAppBreadcrumbs } from "@/layouts/use-app-layout"
+import { usePageTitle } from "@/layouts/use-page-title"
 import { Button } from "@/components/ui/button"
 import { ServerSelectionDialog } from "@/components/server-creation-dialog"
 import { ActiveAlertsStrip } from "@/components/alerts/active-alerts"
@@ -18,14 +18,7 @@ export default function HomePage() {
   const toServer = useServerPath()
   const [isServerDialogOpen, setIsServerDialogOpen] = useState(false)
   const { refresh } = useServers()
-  const breadcrumbs = useMemo(
-    () => [
-      { label: "Dashboard", href: "#", hideOnMobile: true },
-      { label: "Apps" },
-    ],
-    []
-  )
-  useAppBreadcrumbs(breadcrumbs)
+  usePageTitle("Apps")
 
   return (
     <div className="space-y-4">

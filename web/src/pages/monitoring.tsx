@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { HardDrive } from "lucide-react";
 
-import { useAppBreadcrumbs } from "@/layouts/use-app-layout";
+import { usePageTitle } from "@/layouts/use-page-title";
 import { Card } from "@/components/ui/card";
 import { ChartEmpty } from "@/components/chart-parts";
 import { DataFreshness } from "@/components/data-freshness";
@@ -11,7 +11,6 @@ import { RangeMenu } from "@/components/range-menu";
 import { TargetAlertsCard } from "@/components/alerts/target-alerts-card";
 import { useApps } from "@/context/use-apps";
 import { useServers } from "@/context/use-servers";
-import { useServerPath } from "@/context/use-server-path";
 import { useMetricsOverview, useServerMetrics } from "@/hooks/use-metrics";
 import { appLabel, deltaLabel, isSignificant, kpiNow, latestValue, percentCeiling, periodDelta, withNetTotal } from "@/lib/kpi";
 import {
@@ -124,7 +123,6 @@ function DockerDisk({ df }: { df: DockerDF | undefined }) {
 // CPU and memory stack, and Docker's disk usage.
 export default function MonitoringPage() {
   const { activeServer, activeServerId } = useServers();
-  const toServer = useServerPath();
   const { apps } = useApps();
   // 1h is served from raw samples, so it has data from the first minute;
   // coarser ranges fill in once their rollup buckets close.
@@ -133,14 +131,7 @@ export default function MonitoringPage() {
   const { data, loading, error, updatedAt, refresh } = useServerMetrics(activeServerId, range);
   const { data: overview, refresh: refreshOverview } = useMetricsOverview();
 
-  const breadcrumbs = useMemo(
-    () => [
-      { label: "Monitoring", href: toServer("/monitoring"), hideOnMobile: true },
-      { label: activeServer?.name ?? "Server" },
-    ],
-    [activeServer?.name, toServer],
-  );
-  useAppBreadcrumbs(breadcrumbs);
+  usePageTitle("Monitoring");
 
   const points = useMemo(() => withNetTotal(withPercents(data?.points ?? [])), [data]);
   const interval = data?.interval_seconds ?? 60;

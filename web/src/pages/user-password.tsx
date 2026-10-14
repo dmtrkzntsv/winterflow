@@ -1,8 +1,8 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 
-import { useAppBreadcrumbs } from "@/layouts/use-app-layout";
+import { usePageTitle } from "@/layouts/use-page-title";
 import { apiBaseUrl } from "@/config";
 import { readApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -15,11 +15,7 @@ import { useProfile } from "@/context/use-profile";
 // must_change_password are forced here by the layout guard until they set
 // their own password.
 export default function UserPasswordPage() {
-  const breadcrumbs = useMemo(
-    () => [{ label: "User" }, { label: "Change password" }],
-    [],
-  );
-  useAppBreadcrumbs(breadcrumbs);
+  usePageTitle("Password");
   const navigate = useNavigate();
   const { profile, refresh } = useProfile();
   const [busy, setBusy] = useState(false);

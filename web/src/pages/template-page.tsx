@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 
@@ -18,7 +18,7 @@ import { useServers } from "@/context/use-servers";
 import { useRollout } from "@/hooks/use-rollout";
 import { useRolloutsApi } from "@/hooks/use-rollouts-api";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
-import { useAppBreadcrumbs } from "@/layouts/use-app-layout";
+import { usePageTitle } from "@/layouts/use-page-title";
 import { isActive } from "@/lib/rollouts";
 import { bodyFromDraft, draftFromBody, draftProblem, emptyDraft, type TemplateDraft } from "@/lib/template-draft";
 import { ApiError, type InstanceView, type TemplateView } from "@/lib/templates";
@@ -68,11 +68,7 @@ export default function TemplatePage() {
   // conflict is the revision someone saved while this editor was open.
   const [conflict, setConflict] = useState<number | null>(null);
 
-  const breadcrumbs = useMemo(
-    () => [{ label: "Templates", href: TEMPLATES_PATH }, { label: view?.name ?? (templateId ? "Template" : "Add template") }],
-    [view?.name, templateId],
-  );
-  useAppBreadcrumbs(breadcrumbs);
+  usePageTitle(view?.name ?? (templateId ? "Template" : "Add template"));
 
   // load reads the template into the editor, and its instances unless
   // only the template changed (a save).

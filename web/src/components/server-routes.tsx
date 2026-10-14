@@ -10,8 +10,8 @@ import { serverPath } from "@/lib/server-paths"
 export function ServerScope() {
   const { serverId } = useParams()
   const { servers, loading } = useServers()
-  // Hand the layout's outlet context (setBreadcrumbs) through to the pages: a
-  // nested <Outlet /> without it would shadow the layout's with undefined.
+  // Hand any outlet context of the layout through to the pages: a nested
+  // <Outlet /> without it would shadow the layout's with undefined.
   const layout = useOutletContext()
 
   if (loading && servers.length === 0) return null

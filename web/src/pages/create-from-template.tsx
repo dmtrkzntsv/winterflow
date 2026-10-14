@@ -15,7 +15,7 @@ import { useBackups } from "@/context/use-backups";
 import { useServerPath } from "@/context/use-server-path";
 import { useServers } from "@/context/use-servers";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
-import { useAppBreadcrumbs } from "@/layouts/use-app-layout";
+import { usePageTitle } from "@/layouts/use-page-title";
 import { validHostname } from "@/lib/domains";
 import { useHostCheck } from "@/hooks/use-host-check";
 import {
@@ -30,14 +30,13 @@ import {
 import { ApiError, sealSecrets, type TemplateSummary, type TemplateView, type UpdateInstanceBody } from "@/lib/templates";
 import { TEMPLATES_PATH, serverSettingsSub } from "@/lib/routes";
 
-const BREADCRUMBS = [{ label: "Apps", href: "/" }, { label: "From template" }];
 
 // CreateFromTemplatePage is Add app → From template on a server: pick a
 // template and revision, fill in its parameters (secrets encrypted in the
 // browser for this server), pick storages for its backups, see the hosts
 // the app will get, then add the app and open it.
 export default function CreateFromTemplatePage() {
-  useAppBreadcrumbs(BREADCRUMBS);
+  usePageTitle("New app");
   const navigate = useNavigate();
   const toServer = useServerPath();
   const { activeServerId } = useServers();

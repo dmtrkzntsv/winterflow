@@ -8,10 +8,6 @@ import {
 } from "@/context/profile-context-base";
 import OrgMembersPage from "@/pages/org-members";
 
-// The page sets breadcrumbs through the app layout's outlet context; the
-// layout isn't under test.
-vi.mock("@/layouts/use-app-layout", () => ({ useAppBreadcrumbs: () => {} }));
-
 const ME = {
   id: "u-me",
   name: "Ann",

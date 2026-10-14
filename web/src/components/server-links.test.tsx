@@ -58,7 +58,7 @@ function renderAt(url: string) {
         <SidebarContext.Provider value={sidebar}>
           <AppSidebar />
           <Routes>
-            <Route element={<Outlet context={{ setBreadcrumbs: () => {} }} />}>
+            <Route element={<Outlet />}>
               <Route path="/" element={<DefaultServer fallback={<p>no servers</p>} />} />
               <Route path="/server/s1" element={<HomePage />} />
               <Route path="/server/s1/new" element={<p>create page</p>} />

@@ -10,13 +10,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
 import { useSharedVariablesPage, type Scope } from "@/hooks/use-shared-variables-page";
-import { useAppBreadcrumbs } from "@/layouts/use-app-layout";
 import type { RolloutsApi } from "@/lib/rollouts";
 import { createSharedVariablesApi, type SharedVariablesApi, type SyncState } from "@/lib/shared-variables";
 
 const SYNC_LABEL: Record<SyncState, string> = { synced: "Synced", pending: "Sync pending", failed: "Sync failed" };
 const ORG_SCOPE: Scope = { kind: "org" };
-const BREADCRUMBS = [{ label: "Organization" }, { label: "Variables" }];
 
 // OrgVariablesPage manages org-level shared variables, available to apps on
 // every server of the organization. Secrets show their coverage ("All
@@ -31,7 +29,6 @@ export default function OrgVariablesPage({
   api?: SharedVariablesApi;
   rollouts?: RolloutsApi;
 }) {
-  useAppBreadcrumbs(BREADCRUMBS);
   const api = useMemo(() => injected ?? createSharedVariablesApi(), [injected]);
   const page = useSharedVariablesPage(api, ORG_SCOPE);
   const { org: data } = page;

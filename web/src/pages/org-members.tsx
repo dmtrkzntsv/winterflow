@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Check, Copy, Pencil, Plus, Trash2, KeyRound } from "lucide-react";
 import { toast } from "sonner";
 
-import { useAppBreadcrumbs } from "@/layouts/use-app-layout";
+import { usePageTitle } from "@/layouts/use-page-title";
 import { apiBaseUrl } from "@/config";
 import { readApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -121,11 +121,7 @@ function Reveal({ value }: { value: string }) {
 // own page, so the card title would repeat the page title and is dropped);
 // without it the page shows both (the pre-rebuild Organization page).
 export default function OrgMembersPage({ section }: { section?: "organization" | "members" }) {
-  const breadcrumbs = useMemo(
-    () => [{ label: "Organization" }, { label: "Members" }],
-    [],
-  );
-  useAppBreadcrumbs(breadcrumbs);
+  usePageTitle(section === "members" ? "Members" : "Organization");
   const { profile } = useProfile();
 
   const [org, setOrg] = useState<Organization | null>(null);

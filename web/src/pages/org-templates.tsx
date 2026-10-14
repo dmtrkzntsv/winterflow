@@ -8,17 +8,16 @@ import { Spinner } from "@/components/ui/spinner";
 import { InlineError } from "@/components/inline-error";
 import { EmptyNote } from "@/components/page-states";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
-import { useAppBreadcrumbs } from "@/layouts/use-app-layout";
+import { usePageTitle } from "@/layouts/use-page-title";
 import { instancesLabel, type TemplateSummary } from "@/lib/templates";
 import { relativeTime } from "@/lib/utils";
 import { NEW_TEMPLATE_PATH, templatePath } from "@/lib/routes";
 
-const BREADCRUMBS = [{ label: "Organization" }, { label: "Templates" }];
 
 // OrgTemplatesPage is Org → Templates: the org's stack definitions, each
 // with its latest revision and how many apps run it.
 export default function OrgTemplatesPage() {
-  useAppBreadcrumbs(BREADCRUMBS);
+  usePageTitle("Templates");
   const api = useTemplatesApi();
   const navigate = useNavigate();
   const [list, setList] = useState<TemplateSummary[] | null>(null);

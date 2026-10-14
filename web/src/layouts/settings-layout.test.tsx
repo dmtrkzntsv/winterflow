@@ -1,5 +1,5 @@
 import { render, screen, within } from "@testing-library/react";
-import { MemoryRouter, Outlet, Route, Routes, useLocation, useOutletContext } from "react-router-dom";
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { SettingsIndex, SettingsLayout } from "@/layouts/settings-layout";
@@ -25,10 +25,6 @@ function Where() {
   return <span data-testid="at">{useLocation().pathname}</span>;
 }
 
-function ContextProbe() {
-  return <p>context {String(useOutletContext())}</p>;
-}
-
 function renderAt(url: string) {
   return render(
     <MemoryRouter initialEntries={[url]}>
@@ -37,7 +33,6 @@ function renderAt(url: string) {
           <Route index element={<SettingsIndex />} />
           <Route path="organization" element={<p>organization body</p>} />
           <Route path="members" element={<p>members body</p>} />
-          <Route path="probe" element={<ContextProbe />} />
         </Route>
         <Route path="/server/:serverId/settings" element={<SettingsLayout />}>
           <Route path="general" element={<p>general body</p>} />
@@ -102,29 +97,5 @@ describe("SettingsLayout", () => {
     expect(screen.getByText("members body")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
     expect(screen.queryByRole("navigation", { name: "Settings" })).not.toBeInTheDocument();
-  });
-
-  it("forwards the outlet context it was given to the pages, on a desktop and a phone", () => {
-    function Parent() {
-      return <Outlet context="from-layout" />;
-    }
-    const mount = () =>
-      render(
-        <MemoryRouter initialEntries={["/settings/probe"]}>
-          <Routes>
-            <Route element={<Parent />}>
-              <Route path="/settings" element={<SettingsLayout />}>
-                <Route path="probe" element={<ContextProbe />} />
-              </Route>
-            </Route>
-          </Routes>
-        </MemoryRouter>,
-      );
-    const desktop = mount();
-    expect(screen.getByText("context from-layout")).toBeInTheDocument();
-    desktop.unmount();
-    stubViewport(375);
-    mount();
-    expect(screen.getByText("context from-layout")).toBeInTheDocument();
   });
 });

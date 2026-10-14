@@ -1,4 +1,4 @@
-import { Link, Navigate, NavLink, Outlet, useLocation, useOutletContext } from "react-router-dom";
+import { Link, Navigate, NavLink, Outlet, useLocation } from "react-router-dom";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
 import { PageHeader } from "@/components/page-header";
@@ -48,10 +48,6 @@ export function SettingsLayout() {
   const sections = useSettingsSections();
   const isMobile = useIsMobile();
   const { pathname } = useLocation();
-  // Hand the layout's outlet context through to the pages (until every page
-  // uses usePageTitle): a nested <Outlet /> without it would shadow the
-  // parent's with undefined, as ServerScope's does.
-  const layout = useOutletContext();
   const atIndex = pathname.replace(/\/+$/, "") === SETTINGS_PATH;
 
   if (isMobile) {
@@ -72,7 +68,7 @@ export function SettingsLayout() {
           <ChevronLeft className="size-4" aria-hidden />
           Settings
         </Link>
-        <Outlet context={layout} />
+        <Outlet />
       </div>
     );
   }
@@ -83,7 +79,7 @@ export function SettingsLayout() {
         <SettingsMenu sections={sections} />
       </aside>
       <div className="min-w-0 flex-1">
-        <Outlet context={layout} />
+        <Outlet />
       </div>
     </div>
   );

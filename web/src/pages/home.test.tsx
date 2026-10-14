@@ -5,7 +5,6 @@ import { describe, expect, it, vi } from "vitest";
 
 import HomePage from "@/pages/home";
 
-vi.mock("@/layouts/use-app-layout", () => ({ useAppBreadcrumbs: vi.fn() }));
 vi.mock("@/context/use-servers", () => ({ useServers: () => ({ refresh: vi.fn() }) }));
 vi.mock("@/components/server-cards", () => ({ ServerCards: () => <div data-testid="strip" /> }));
 vi.mock("@/components/app-grid", () => ({ AppGrid: () => <div data-testid="grid" /> }));

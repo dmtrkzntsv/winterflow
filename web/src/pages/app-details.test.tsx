@@ -69,7 +69,7 @@ function renderPage(
               element={
                 <>
                   <Link to="/app/a2?tab=editor">go to a2</Link>
-                  <Outlet context={{ setBreadcrumbs: () => {} }} />
+                  <Outlet />
                 </>
               }
             >

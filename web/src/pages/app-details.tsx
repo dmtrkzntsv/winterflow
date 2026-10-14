@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
-import { useAppBreadcrumbs } from "@/layouts/use-app-layout";
+import { usePageTitle } from "@/layouts/use-page-title";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { TabsContent } from "@/components/ui/tabs";
@@ -107,14 +107,7 @@ export default function AppDetailsPage() {
     }
   };
 
-  const breadcrumbs = useMemo(
-    () => [
-      { label: "Apps", href: toServer() },
-      { label: appId ? appLabel(app?.name, appId) : "App" },
-    ],
-    [app?.name, appId, toServer],
-  );
-  useAppBreadcrumbs(breadcrumbs);
+  usePageTitle(appId ? appLabel(app?.name, appId) : "App");
 
   const [pending, setPending] = useState<ControlAction | null>(null);
 

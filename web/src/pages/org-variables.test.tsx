@@ -6,7 +6,6 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/ecies", () => ({
   encryptSecret: vi.fn(async (value: string, key: string) => `ct(${key}):${value}`),
 }));
-vi.mock("@/layouts/use-app-layout", () => ({ useAppBreadcrumbs: () => {} }));
 
 import {
   NotificationsContext,

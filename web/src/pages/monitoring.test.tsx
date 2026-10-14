@@ -70,7 +70,7 @@ function renderPage() {
   return render(
     <MemoryRouter>
       <Routes>
-        <Route element={<Outlet context={{ setBreadcrumbs: vi.fn() }} />}>
+        <Route element={<Outlet />}>
           <Route path="/" element={<MonitoringPage />} />
         </Route>
       </Routes>

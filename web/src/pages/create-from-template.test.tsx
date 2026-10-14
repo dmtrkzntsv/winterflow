@@ -10,7 +10,6 @@ import { fakeAPI } from "@/test/fake-api";
 
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
-vi.mock("@/layouts/use-app-layout", () => ({ useAppBreadcrumbs: () => {} }));
 vi.mock("@/lib/ecies", () => ({
   ENCRYPTED: "<encrypted>",
   encryptSecret: vi.fn(async (value: string, key: string) => `ct(${key}):${value}`),

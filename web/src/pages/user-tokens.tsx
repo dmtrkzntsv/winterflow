@@ -1,8 +1,8 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { Check, Copy, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
-import { useAppBreadcrumbs } from "@/layouts/use-app-layout";
+import { usePageTitle } from "@/layouts/use-page-title";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -65,11 +65,7 @@ async function copyText(text: string): Promise<void> {
 // one-time plaintext reveal), and revoke. Tokens authenticate API calls via
 // "Authorization: Bearer wfp_…" or Basic auth (token as password).
 export default function UserTokensPage() {
-  const breadcrumbs = useMemo(
-    () => [{ label: "User" }, { label: "API tokens" }],
-    [],
-  );
-  useAppBreadcrumbs(breadcrumbs);
+  usePageTitle("API tokens");
 
   const { tokens, loading, error, create, remove } = useTokens();
   const [dialogOpen, setDialogOpen] = useState(false);

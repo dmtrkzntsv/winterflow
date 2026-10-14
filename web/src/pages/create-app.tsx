@@ -1,8 +1,8 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 
-import { useAppBreadcrumbs } from "@/layouts/use-app-layout";
+import { usePageTitle } from "@/layouts/use-page-title";
 import { Button } from "@/components/ui/button";
 import { AppEditor } from "@/components/app-editor";
 import { StickyActionBar } from "@/components/editor-section";
@@ -22,11 +22,7 @@ export default function CreateAppPage() {
   const [state, setState] = useState<AppEditorState>(emptyEditorState);
   const [saving, setSaving] = useState(false);
 
-  const breadcrumbs = useMemo(
-    () => [{ label: "Apps", href: "/" }, { label: "New app" }],
-    [],
-  );
-  useAppBreadcrumbs(breadcrumbs);
+  usePageTitle("New app");
 
   const handleCreate = async () => {
     const err = validateEditorState(state);

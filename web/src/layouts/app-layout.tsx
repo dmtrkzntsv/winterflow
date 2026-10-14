@@ -1,94 +1,67 @@
-import { Fragment, useState } from "react"
+import { useState, type CSSProperties } from "react"
 import { Navigate, Outlet, useLocation } from "react-router-dom"
-
-import { useProfile } from "@/context/use-profile"
+import { Menu, Search } from "lucide-react"
 
 import { AlertToasts } from "@/components/alerts/alert-toasts"
 import { AppSidebar } from "@/components/app-sidebar"
 import { ServerSelectionDialog } from "@/components/server-creation-dialog"
+import { Button } from "@/components/ui/button"
+import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
+import { useSidebar } from "@/components/ui/use-sidebar"
 import { isStandalone } from "@/config"
+import { CommandPaletteProvider } from "@/context/palette-context"
+import { useCommandPalette } from "@/context/use-palette"
+import { useProfile } from "@/context/use-profile"
 import { useServers } from "@/context/use-servers"
-import { settingsPath } from "@/lib/routes"
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb"
-import { Separator } from "@/components/ui/separator"
-import {
-  SidebarInset,
-  SidebarProvider,
-  SidebarTrigger,
-} from "@/components/ui/sidebar"
+import { useIsMobile } from "@/hooks/use-mobile"
+import { PageTitleProvider } from "@/layouts/page-title"
+import { useCurrentPageTitle } from "@/layouts/use-page-title"
+import { isWidePath, settingsPath } from "@/lib/routes"
+import { cn } from "@/lib/utils"
 
-export type BreadcrumbEntry = {
-  label: string
-  href?: string
-  hideOnMobile?: boolean
-}
+// The sidebar is 240px wide on a desktop (spec §2), collapsible to icons.
+const SIDEBAR_STYLE = { "--sidebar-width": "15rem" } as CSSProperties
 
-export type AppLayoutOutletContext = {
-  setBreadcrumbs: (items: BreadcrumbEntry[]) => void
-}
-
-function AppLayoutContent() {
-  const [breadcrumbs, setBreadcrumbs] = useState<BreadcrumbEntry[]>([])
-
+// MobileTopBar is the phone/tablet chrome (below 1024px): the menu button
+// opens the sidebar sheet, the page names itself, search opens ⌘K.
+function MobileTopBar() {
+  const { setOpenMobile } = useSidebar()
+  const { openPalette } = useCommandPalette()
+  const title = useCurrentPageTitle()
   return (
-    // The sky wash sits behind the page title; the top bar is translucent
-    // and blurred so content scrolls under it (twillingate's shell).
-    <SidebarInset
-      className="sky-wash min-w-0"
-      style={{
-        transition: 'margin-left 200ms ease-linear',
-      }}
+    <header
+      data-testid="mobile-top-bar"
+      className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-1 border-b border-border/70 bg-background/70 px-2 backdrop-blur-md"
     >
-        <header className="sticky top-0 z-20 flex h-12 shrink-0 items-center gap-2 border-b border-border/70 bg-background/55 backdrop-blur-md">
-          <div className="flex min-w-0 items-center gap-2 px-3 sm:px-4">
-            <SidebarTrigger className="-ml-1" />
-            <Separator
-              orientation="vertical"
-              className="mr-1 data-[orientation=vertical]:h-4"
-            />
-            {breadcrumbs.length > 0 ? (
-              <Breadcrumb>
-                <BreadcrumbList>
-                  {breadcrumbs.map((crumb, index) => {
-                    const isLast = index === breadcrumbs.length - 1
-                    const itemClass = crumb.hideOnMobile ? "hidden md:block" : undefined
-                    const separatorClass = crumb.hideOnMobile
-                      ? "hidden md:block"
-                      : undefined
+      <Button variant="ghost" size="icon" className="size-10" aria-label="Open menu" onClick={() => setOpenMobile(true)}>
+        <Menu className="size-5" />
+      </Button>
+      <p className="min-w-0 flex-1 truncate text-center text-[15px] font-semibold">{title}</p>
+      <Button variant="ghost" size="icon" className="size-10" aria-label="Search" onClick={openPalette}>
+        <Search className="size-5" />
+      </Button>
+    </header>
+  )
+}
 
-                    return (
-                      <Fragment key={`${crumb.label}-${index}`}>
-                        <BreadcrumbItem className={itemClass}>
-                          {isLast ? (
-                            <BreadcrumbPage>{crumb.label}</BreadcrumbPage>
-                          ) : (
-                            <BreadcrumbLink href={crumb.href ?? "#"}>
-                              {crumb.label}
-                            </BreadcrumbLink>
-                          )}
-                        </BreadcrumbItem>
-                        {!isLast ? (
-                          <BreadcrumbSeparator className={separatorClass} />
-                        ) : null}
-                      </Fragment>
-                    )
-                  })}
-                </BreadcrumbList>
-              </Breadcrumb>
-            ) : null}
-          </div>
-        </header>
-        <div className="flex flex-1 flex-col gap-4 p-4 sm:p-6">
-          <Outlet context={{ setBreadcrumbs }} />
-        </div>
-      </SidebarInset>
+// AppMain is the page area: the sky wash, no breadcrumb bar (every page
+// starts with its own PageHeader), reading pages capped near 1100px.
+function AppMain() {
+  const isMobile = useIsMobile()
+  const { pathname } = useLocation()
+  return (
+    <SidebarInset className="sky-wash min-w-0">
+      {isMobile ? <MobileTopBar /> : null}
+      <div
+        data-testid="page"
+        className={cn(
+          "mx-auto flex w-full flex-1 flex-col gap-4 p-4 sm:p-6 lg:p-8",
+          !isWidePath(pathname) && "max-w-[1100px]",
+        )}
+      >
+        <Outlet />
+      </div>
+    </SidebarInset>
   )
 }
 
@@ -114,17 +87,21 @@ export function AppLayout() {
     : () => setIsServerDialogOpen(true)
 
   return (
-    <SidebarProvider>
-      <AppSidebar onAddServer={handleAddServer} />
-      <AppLayoutContent />
-      <AlertToasts />
-      {!isStandalone ? (
-        <ServerSelectionDialog
-          isOpen={isServerDialogOpen}
-          onClose={() => setIsServerDialogOpen(false)}
-          onServerAdded={() => void refresh()}
-        />
-      ) : null}
-    </SidebarProvider>
+    <PageTitleProvider>
+      <CommandPaletteProvider>
+        <SidebarProvider style={SIDEBAR_STYLE}>
+          <AppSidebar onAddServer={handleAddServer} />
+          <AppMain />
+          <AlertToasts />
+          {!isStandalone ? (
+            <ServerSelectionDialog
+              isOpen={isServerDialogOpen}
+              onClose={() => setIsServerDialogOpen(false)}
+              onServerAdded={() => void refresh()}
+            />
+          ) : null}
+        </SidebarProvider>
+      </CommandPaletteProvider>
+    </PageTitleProvider>
   )
 }

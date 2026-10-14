@@ -4,8 +4,13 @@ import "@testing-library/jest-dom/vitest";
 import { cleanup, configure } from "@testing-library/react";
 import { afterEach } from "vitest";
 
+import { resetHeldCreates } from "@/lib/held-creates";
+
 afterEach(() => {
   cleanup();
+  // A create a test left held (it outlived its wait) must not claim its
+  // name in the next test.
+  resetHeldCreates();
 });
 
 // findBy*/waitFor default to 1 s, which a loaded runner with coverage on can

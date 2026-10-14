@@ -1,15 +1,24 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useParams } from "react-router-dom";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppsContext, type App, type AppsContextValue } from "@/context/apps-context-base";
 import { WaitTimeoutError } from "@/context/notifications-context-base";
 import { COMPOSE_CREATE_WAIT_MS, GIT_CREATE_WAIT_MS, useCreateApp } from "@/hooks/use-create-app";
 import { emptyEditorState, newGitSource } from "@/lib/app-editor-io";
+import { HELD_CREATE_CAP_MS, heldCreates, resetHeldCreates, settleLateCreate } from "@/lib/held-creates";
 import type { AppEditorState } from "@/types/app-config";
 
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
+const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), info: vi.fn() }));
+vi.mock("sonner", () => ({ toast }));
+
+// timeout is a create the agent didn't answer in time, with its request id.
+const timeout = (ref = "r1") => {
+  const e = new WaitTimeoutError();
+  e.ref = ref;
+  return e;
+};
 
 const app = (id: string, name: string) => ({ id, name, serverId: "s1", version: "1", icon: "", color: "", createdAt: "" }) as App;
 
@@ -38,7 +47,8 @@ type SaveApp = AppsContextValue["saveApp"];
 
 function setup(saveApp: SaveApp, start = named("shop")) {
   const reconcile = vi.fn(async () => [] as App[]);
-  const value = (apps: App[]) => ({ apps, saveApp, getPublicKey: async () => "K", reconcile, noteDeployFailure: vi.fn() }) as unknown as AppsContextValue;
+  const noteDeployFailure = vi.fn();
+  const value = (apps: App[]) => ({ apps, saveApp, getPublicKey: async () => "K", reconcile, noteDeployFailure }) as unknown as AppsContextValue;
   const tree = (apps: App[], show = true) => (
     <MemoryRouter initialEntries={["/server/s1/new"]}>
       <AppsContext.Provider value={value(apps)}>
@@ -50,11 +60,17 @@ function setup(saveApp: SaveApp, start = named("shop")) {
     </MemoryRouter>
   );
   const view = render(tree([app("old", "blog")]));
-  return { ...view, tree, reconcile };
+  return { ...view, tree, reconcile, noteDeployFailure };
 }
 
 describe("useCreateApp", () => {
-  it("waits 5 minutes for a compose app and 10 for a Git one", async () => {
+  beforeEach(() => {
+    resetHeldCreates();
+    toast.success.mockReset();
+    toast.error.mockReset();
+  });
+
+  it("waits 5 minutes for a compose app and 9.5 for a Git one (below the API's 10-minute pending limit)", async () => {
     const user = userEvent.setup();
     const saveApp = vi.fn<SaveApp>(async () => [app("n1", "shop")]);
     const first = setup(saveApp);
@@ -69,12 +85,12 @@ describe("useCreateApp", () => {
     await screen.findByText("app n2");
     expect(git.mock.calls[0][1]).toEqual({ timeoutMs: GIT_CREATE_WAIT_MS });
     expect(COMPOSE_CREATE_WAIT_MS).toBe(300_000);
-    expect(GIT_CREATE_WAIT_MS).toBe(600_000);
+    expect(GIT_CREATE_WAIT_MS).toBe(570_000);
   });
 
   it("keeps a create that outlived its wait claimed until the app appears, then opens it", async () => {
     const user = userEvent.setup();
-    const saveApp = vi.fn<SaveApp>(async () => Promise.reject(new WaitTimeoutError()));
+    const saveApp = vi.fn<SaveApp>(async () => Promise.reject(timeout()));
     const { rerender, tree, reconcile } = setup(saveApp);
     await user.click(screen.getByRole("button", { name: "create" }));
     expect(await screen.findByText("still shop")).toBeInTheDocument();
@@ -96,7 +112,7 @@ describe("useCreateApp", () => {
 
   it("keeps every slow create's name claimed, not only the last", async () => {
     const user = userEvent.setup();
-    const saveApp = vi.fn<SaveApp>(async () => Promise.reject(new WaitTimeoutError()));
+    const saveApp = vi.fn<SaveApp>(async () => Promise.reject(timeout()));
     function Two() {
       const { create, stillCreating } = useCreateApp("s1");
       return (
@@ -132,18 +148,85 @@ describe("useCreateApp", () => {
     expect(await screen.findByText("app b1")).toBeInTheDocument();
   });
 
-  it("gives the name back when the form is left", async () => {
+  it("keeps the name claimed after the form is left, until the late result comes", async () => {
     const user = userEvent.setup();
-    const saveApp = vi.fn<SaveApp>(async () => Promise.reject(new WaitTimeoutError()));
+    const saveApp = vi.fn<SaveApp>(async () => Promise.reject(timeout("r7")));
     const { rerender, tree } = setup(saveApp);
     await user.click(screen.getByRole("button", { name: "create" }));
     await screen.findByText("still shop");
     rerender(tree([], false));
     expect(screen.getByText("left")).toBeInTheDocument();
+    // Opened again: it still says so, and Create sends nothing.
     rerender(tree([]));
+    expect(screen.getByText("still shop")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "create" }));
+    expect(saveApp).toHaveBeenCalledTimes(1);
+    // Another command's result is not it.
+    act(() => settleLateCreate("other", { failed: false, error: "" }));
+    expect(heldCreates()).toHaveLength(1);
+    act(() => settleLateCreate("r7", { failed: false, error: "" }));
+    expect(screen.getByText("still -")).toBeInTheDocument();
     saveApp.mockResolvedValueOnce([app("n1", "shop")]);
     await user.click(screen.getByRole("button", { name: "create" }));
     await waitFor(() => expect(saveApp).toHaveBeenCalledTimes(2));
     await act(async () => {});
+  });
+
+  it("gives the name back after the cap when no result ever comes", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const saveApp = vi.fn<SaveApp>(async () => Promise.reject(timeout()));
+      setup(saveApp);
+      act(() => screen.getByRole("button", { name: "create" }).click());
+      await screen.findByText("still shop");
+      act(() => vi.advanceTimersByTime(HELD_CREATE_CAP_MS - 1000));
+      expect(screen.getByText("still shop")).toBeInTheDocument();
+      act(() => vi.advanceTimersByTime(1000));
+      expect(screen.getByText("still -")).toBeInTheDocument();
+      expect(heldCreates()).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("opens the app when a late result says the create went through and the list shows it", async () => {
+    const user = userEvent.setup();
+    const saveApp = vi.fn<SaveApp>(async () => Promise.reject(timeout("r2")));
+    const { rerender, tree } = setup(saveApp);
+    await user.click(screen.getByRole("button", { name: "create" }));
+    await screen.findByText("still shop");
+    act(() => settleLateCreate("r2", { failed: false, error: "" }));
+    rerender(tree([app("old", "blog"), app("n1", "shop")]));
+    expect(await screen.findByText("app n1")).toBeInTheDocument();
+    expect(toast.success).toHaveBeenCalledWith("App created");
+  });
+
+  it("says why when a late result says the create failed and left nothing, and frees Create", async () => {
+    const user = userEvent.setup();
+    const saveApp = vi.fn<SaveApp>(async () => Promise.reject(timeout("r3")));
+    const { reconcile } = setup(saveApp);
+    await user.click(screen.getByRole("button", { name: "create" }));
+    await screen.findByText("still shop");
+    act(() => settleLateCreate("r3", { failed: true, error: "no configuration file provided" }));
+    expect(await screen.findByText("error no configuration file provided")).toBeInTheDocument();
+    expect(screen.getByText("still -")).toBeInTheDocument();
+    expect(reconcile).toHaveBeenCalled();
+    saveApp.mockResolvedValueOnce([app("n1", "shop")]);
+    await user.click(screen.getByRole("button", { name: "create" }));
+    expect(await screen.findByText("app n1")).toBeInTheDocument();
+  });
+
+  it("opens the app a late failure left behind with the failure noted, not as created", async () => {
+    const user = userEvent.setup();
+    const saveApp = vi.fn<SaveApp>(async () => Promise.reject(timeout("r4")));
+    const { reconcile, noteDeployFailure } = setup(saveApp);
+    await user.click(screen.getByRole("button", { name: "create" }));
+    await screen.findByText("still shop");
+    reconcile.mockResolvedValueOnce([app("old", "blog"), app("n1", "shop")]);
+    act(() => settleLateCreate("r4", { failed: true, error: "port is already allocated" }));
+    expect(await screen.findByText("app n1")).toBeInTheDocument();
+    expect(noteDeployFailure).toHaveBeenCalledWith("n1", "port is already allocated");
+    expect(toast.error).toHaveBeenCalledWith("The app was created but couldn't start", expect.anything());
+    expect(toast.success).not.toHaveBeenCalled();
   });
 });

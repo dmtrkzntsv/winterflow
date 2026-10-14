@@ -15,7 +15,7 @@ import {
   emptyEditorState,
   stateFromDetail,
 } from "@/lib/app-editor-io";
-import { readAppDetail } from "@/hooks/use-app-detail";
+import { readAppDetail, seedAppDetail } from "@/hooks/use-app-detail";
 import { focusFirstInvalid, type FieldErrors } from "@/lib/field-errors";
 import { appSub } from "@/lib/routes";
 import { isManagedByTemplate } from "@/lib/templates";
@@ -81,13 +81,15 @@ export function AppEditorPanel({
   const seq = useRef(0);
   // load reads the app: version names the one the list holds, so the
   // page's read of it is shared (readAppDetail); without it the read is
-  // afresh (History or an update changed the app under the list).
-  const load = useCallback(async (version?: string) => {
+  // afresh (History or an update changed the app under the list, or a save
+  // did), and seed is the version that fresh read is then shared as.
+  const load = useCallback(async (version?: string, seed?: string) => {
     const mine = ++seq.current;
     setLoading(true);
     setError(null);
     try {
       const detail = version === undefined ? await getApp(appId) : await readAppDetail(getApp, appId, version);
+      if (version === undefined) seedAppDetail(appId, seed, detail);
       if (mine !== seq.current) return;
       const loaded = stateFromDetail(appId, detail);
       setState(loaded);
@@ -121,9 +123,10 @@ export function AppEditorPanel({
       const payload = await buildSavePayload(state, getPublicKey, appId);
       const list = await saveApp({ ...payload, draft });
       toast.success(draft ? "Draft saved — not deployed yet" : "App updated");
-      // Reload so masked secrets and server-side normalization are reflected
-      // (the saved version: the page reads it too).
-      await load(list.find((a) => a.id === appId)?.version);
+      // Read the saved app afresh, so masked secrets and server-side
+      // normalization are reflected: the version the list holds may not
+      // have moved with the save. The page then shares that read.
+      await load(undefined, list.find((a) => a.id === appId)?.version);
     } catch (e) {
       const message = e instanceof Error ? e.message : "";
       if (isManagedByTemplate(message)) {

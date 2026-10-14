@@ -3,7 +3,7 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppsContext, type AppDetailPayload, type AppsContextValue } from "@/context/apps-context-base";
-import { forgetAppDetails, readAppDetail, useAppDetail } from "@/hooks/use-app-detail";
+import { forgetAppDetail, forgetAppDetails, readAppDetail, seedAppDetail, useAppDetail } from "@/hooks/use-app-detail";
 
 const detail = (id: string): AppDetailPayload => ({
   app: { app_id: id, config: "", files: [], variables: [] },
@@ -36,6 +36,34 @@ describe("readAppDetail", () => {
     await expect(readAppDetail(getApp, "bad", "1")).rejects.toThrow("offline");
     await expect(readAppDetail(getApp, "bad", "1")).rejects.toThrow("offline");
     expect(getApp).toHaveBeenCalledTimes(5);
+  });
+});
+
+describe("an app without a version", () => {
+  it("is read afresh every time and keeps nothing (the API stores no version after a save)", async () => {
+    const getApp = vi.fn(async (id: string) => detail(id));
+    readAppDetail(getApp, "a1", "3");
+    readAppDetail(getApp, "a1", "");
+    readAppDetail(getApp, "a1", "");
+    expect(getApp).toHaveBeenCalledTimes(3);
+    // The read of version 3 went with the versionless one.
+    readAppDetail(getApp, "a1", "3");
+    expect(getApp).toHaveBeenCalledTimes(4);
+  });
+
+  it("is never seeded; a version is, and a forget drops it", async () => {
+    const getApp = vi.fn(async (id: string) => detail(id));
+    const seeded = detail("a1");
+    seedAppDetail("a1", "", seeded);
+    seedAppDetail("a1", undefined, seeded);
+    await readAppDetail(getApp, "a1", "");
+    expect(getApp).toHaveBeenCalledTimes(1);
+    seedAppDetail("a1", "5", seeded);
+    expect(await readAppDetail(getApp, "a1", "5")).toBe(seeded);
+    expect(getApp).toHaveBeenCalledTimes(1);
+    forgetAppDetail("a1");
+    await readAppDetail(getApp, "a1", "5");
+    expect(getApp).toHaveBeenCalledTimes(2);
   });
 });
 

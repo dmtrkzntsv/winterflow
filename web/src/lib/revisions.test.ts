@@ -49,6 +49,14 @@ describe("kept revisions", () => {
     expect(keptRevisions("a1", "3")).toBeNull();
   });
 
+  it("keeps nothing under an empty key (an app without a version)", () => {
+    keepRevisions("a1", "", data, 0);
+    expect(keptRevisions("a1", "")).toBeNull();
+    keepRevisions("a1", "3", data, 0);
+    expect(keptRevisions("a1", "")).toBeNull();
+    expect(keptRevisions("a1", "3")).toBe(data);
+  });
+
   it("drops the bookkeeping of a deleted app", () => {
     forgetRevisions("a1");
     forgetRevisions("a1", { gone: true });

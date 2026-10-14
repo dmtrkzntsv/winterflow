@@ -12,21 +12,43 @@ const shared = new Map<string, { version: string; read: Promise<AppDetailPayload
 // readAppDetail reads an app's version once: a read of the same version
 // already asked for (or under way) is shared, unless again asks for a new
 // one (which the next shared read then gets). A failed read is not kept.
+// An app without a version (the API stores none after a save) can't be told
+// apart from its next save: every read of it is fresh and none is kept.
 export function readAppDetail(
   getApp: (appId: string) => Promise<AppDetailPayload>,
   appId: string,
   version: string,
   again = false,
 ): Promise<AppDetailPayload> {
+  if (!version) {
+    shared.delete(appId);
+    return getApp(appId);
+  }
   const hit = shared.get(appId);
   if (!again && hit && hit.version === version) return hit.read;
-  const read = getApp(appId);
+  return keep(appId, version, getApp(appId));
+}
+
+function keep(appId: string, version: string, read: Promise<AppDetailPayload>): Promise<AppDetailPayload> {
   shared.clear();
   shared.set(appId, { version, read });
   read.catch(() => {
     if (shared.get(appId)?.read === read) shared.delete(appId);
   });
   return read;
+}
+
+// seedAppDetail shares a read made elsewhere (Configuration's fresh read
+// after a save) as the read of that version; nothing for an app without a
+// version.
+export function seedAppDetail(appId: string, version: string | undefined, detail: AppDetailPayload): void {
+  if (version) keep(appId, version, Promise.resolve(detail));
+}
+
+// forgetAppDetail drops an app's shared read (a save changed the app: the
+// version it was kept under may not move).
+export function forgetAppDetail(appId: string): void {
+  shared.delete(appId);
 }
 
 // forgetAppDetails drops every shared read (tests).

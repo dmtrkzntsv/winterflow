@@ -16,7 +16,7 @@ const NO_ERRORS: FieldErrors = {};
 // follow every edit. stillCreating: a create outlived its wait (held: it is
 // the one this form would create again).
 export function useCreateForm(serverId: string, ready: AppEditorState) {
-  const { create, busy, error, stillCreating, dismiss } = useCreateApp(serverId);
+  const { create, busy, error, stillCreating, heldNames, dismiss } = useCreateApp(serverId);
   const [tried, setTried] = useState(false);
   const form = useRef<HTMLDivElement>(null);
   const errors = useMemo(() => (tried ? editorErrors(ready) : NO_ERRORS), [tried, ready]);
@@ -35,6 +35,6 @@ export function useCreateForm(serverId: string, ready: AppEditorState) {
   };
 
   // A create still running holds Create back for its name.
-  const held = stillCreating !== "" && stillCreating === ready.config.name.trim();
+  const held = heldNames.includes(ready.config.name.trim());
   return { form, errors, invalid: Object.keys(errors).length > 0, busy, error, stillCreating: stillCreating !== "", held, submit };
 }

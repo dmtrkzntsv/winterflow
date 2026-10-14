@@ -7,6 +7,8 @@ import { DELETE_APP_TIMEOUT_MS, SaveFailedError } from "@/context/apps-context-b
 import { WaitTimeoutError } from "@/context/notifications-context-base";
 import { useApps } from "@/context/use-apps";
 import { keepRevisions, keptRevisions, resetRevisionsCache, revisionsEpoch } from "@/lib/revisions";
+import { readAppDetail } from "@/hooks/use-app-detail";
+import { createSlot, heldCreates, holdCreate, onLateCreate } from "@/lib/held-creates";
 
 vi.mock("@/context/use-auth", () => ({ useAuth: () => ({ isAuthenticated: true }) }));
 vi.mock("@/context/use-servers", () => ({ useServers: () => ({ activeServerId: "srv-1" }) }));
@@ -260,6 +262,26 @@ describe("AppsProvider failed deploys", () => {
     expect(reads()).toBe(before + 1);
   });
 
+  it("names the timed-out command's request, and hands its late result to the create it held", async () => {
+    const { result } = renderHook(() => useApps(), { wrapper });
+    await waitUntil(() => expect(result.current.loading).toBe(false));
+    waitFor.mockRejectedValueOnce(new WaitTimeoutError());
+    const err: unknown = await result.current
+      .saveApp({ app: { name: "web" }, config: {}, files: [], variables: [] })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(WaitTimeoutError);
+    expect((err as WaitTimeoutError).ref).toBe("save-1");
+    holdCreate({ slot: createSlot("srv-1", "web"), serverId: "srv-1", name: "web", before: new Set(), ref: "save-1" });
+    const heard = vi.fn();
+    const stop = onLateCreate(heard);
+    act(() => {
+      for (const h of handlers) h({ type: "operation_result", ref: "save-1", status: 1, error: "boom" } as never);
+    });
+    stop();
+    expect(heard).toHaveBeenCalledWith(expect.objectContaining({ name: "web" }), { failed: true, error: "boom" });
+    expect(heldCreates()).toEqual([]);
+  });
+
   it("reconciles: waits for the agent's list, then reads the catalog again", async () => {
     const { result } = renderHook(() => useApps(), { wrapper });
     await waitUntil(() => expect(result.current.loading).toBe(false));
@@ -308,5 +330,25 @@ describe("AppsProvider failed deploys", () => {
       await result.current.saveApp({ app: { id: "a9" }, config: {}, files: [], variables: [] });
     });
     expect(result.current.deployFailures).toEqual({});
+  });
+
+  it("forgets the app's kept history and shared read after every save, draft or deploy", async () => {
+    const { result } = renderHook(() => useApps(), { wrapper });
+    await waitUntil(() => expect(result.current.loading).toBe(false));
+    waitFor.mockResolvedValue({ status: 0 });
+    const history = { current: "c", deployed: "b", revisions: [] };
+    const getApp = vi.fn(async () => ({ app: { app_id: "a9", config: "", files: [], variables: [] }, revision: 1, available_revisions: null }));
+    for (const draft of [true, false]) {
+      resetRevisionsCache();
+      keepRevisions("a9", "3", history, 0);
+      await readAppDetail(getApp, "a9", "3");
+      await act(async () => {
+        await result.current.saveApp({ draft, app: { id: "a9" }, config: {}, files: [], variables: [] });
+      });
+      expect(keptRevisions("a9", "3")).toBeNull();
+      const calls = getApp.mock.calls.length;
+      await readAppDetail(getApp, "a9", "3");
+      expect(getApp).toHaveBeenCalledTimes(calls + 1);
+    }
   });
 });

@@ -105,13 +105,18 @@ describe("AppEditorPanel", () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it("shares the page's read of the listed version, and of the version a save made", async () => {
+  it("shares the page's read of the listed version, and reads afresh after every save", async () => {
     const user = userEvent.setup();
     forgetAppDetails();
-    const getApp = vi.fn(async () => withVariable("PORT", "8080"));
+    let port = "8080";
+    const getApp = vi.fn(async () => withVariable("PORT", port));
     // The page read version 3 already.
     await readAppDetail(getApp, "a1", "3");
-    const saveApp = vi.fn<AppsContextValue["saveApp"]>(async () => [{ id: "a1", version: "4" } as App]);
+    // The API stores no version after a save: the list says "" from then on.
+    const saveApp = vi.fn<AppsContextValue["saveApp"]>(async (body) => {
+      port = body.variables[0]?.content ?? port;
+      return [{ id: "a1", version: "" } as App];
+    });
     const value = { apps: [{ id: "a1", version: "3" }], getApp, saveApp, getPublicKey: vi.fn(async () => "K"), refresh: vi.fn() };
     render(
       <MemoryRouter>
@@ -125,8 +130,36 @@ describe("AppEditorPanel", () => {
     await user.type(field, "1");
     await user.click(screen.getByRole("button", { name: "Save & redeploy" }));
     await waitFor(() => expect(getApp).toHaveBeenCalledTimes(2));
-    // The page's read of version 4 is that one.
-    readAppDetail(getApp, "a1", "4");
+    expect(await screen.findByRole("textbox", { name: "Value of PORT" })).toHaveValue("80801");
+    // A second save in the same visit reads afresh too, though the version
+    // didn't move: the form shows what was saved, not the first save's.
+    await user.type(screen.getByRole("textbox", { name: "Value of PORT" }), "2");
+    await user.click(screen.getByRole("button", { name: "Save & redeploy" }));
+    await waitFor(() => expect(getApp).toHaveBeenCalledTimes(3));
+    expect(await screen.findByRole("textbox", { name: "Value of PORT" })).toHaveValue("808012");
+    // The page's read of an app without a version is never served from memory.
+    await readAppDetail(getApp, "a1", "");
+    expect(getApp).toHaveBeenCalledTimes(4);
+    forgetAppDetails();
+  });
+
+  it("shares its fresh read after a save as the read of the version the list then holds", async () => {
+    const user = userEvent.setup();
+    forgetAppDetails();
+    const getApp = vi.fn(async () => withVariable("PORT", "8080"));
+    const saveApp = vi.fn<AppsContextValue["saveApp"]>(async () => [{ id: "a1", version: "4" } as App]);
+    const value = { apps: [{ id: "a1", version: "3" }], getApp, saveApp, getPublicKey: vi.fn(async () => "K"), refresh: vi.fn() };
+    render(
+      <MemoryRouter>
+        <AppsContext.Provider value={value as unknown as AppsContextValue}>
+          <AppEditorPanel appId="a1" />
+        </AppsContext.Provider>
+      </MemoryRouter>,
+    );
+    await user.type(await screen.findByRole("textbox", { name: "Value of PORT" }), "1");
+    await user.click(screen.getByRole("button", { name: "Save & redeploy" }));
+    await waitFor(() => expect(getApp).toHaveBeenCalledTimes(2));
+    await readAppDetail(getApp, "a1", "4");
     expect(getApp).toHaveBeenCalledTimes(2);
     forgetAppDetails();
   });

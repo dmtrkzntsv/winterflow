@@ -32,18 +32,21 @@ const subscribe = (fn: () => void) => {
   return () => void listeners.delete(fn);
 };
 
+// An empty key (an app without a version: the API stores none after a
+// save) is no key: nothing is served or kept under it.
 export function keptRevisions(appId: string, key: string): AppRevisions | null {
+  if (!key) return null;
   const hit = kept.get(appId);
   return hit?.key === key ? hit.data : null;
 }
 
 // keepRevisions stores a read, unless the app was forgotten since it began
 // (at `epoch`): then it may already be out of date. A read without a key (the
-// History sheet's) refreshes the data of what is kept under its key, and
+// History sheet's, or an app without a version) refreshes the data of what is kept under its key, and
 // keeps nothing new; a failed read drops what was kept.
 export function keepRevisions(appId: string, key: string | undefined, data: AppRevisions | null, epoch: number) {
   if (data === null || epoch !== (epochs.get(appId) ?? 0)) kept.delete(appId);
-  else if (key !== undefined) kept.set(appId, { key, data });
+  else if (key) kept.set(appId, { key, data });
   else {
     const hit = kept.get(appId);
     if (hit) kept.set(appId, { key: hit.key, data });

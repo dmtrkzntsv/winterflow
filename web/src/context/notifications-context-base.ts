@@ -17,6 +17,9 @@ export type Notification = {
 export const WAIT_TIMEOUT = "Timed out waiting for command result";
 
 export class WaitTimeoutError extends Error {
+  // ref is the command's request id when the caller knows it (its late
+  // result carries it).
+  ref = "";
   constructor() {
     super(WAIT_TIMEOUT);
     this.name = "WaitTimeoutError";

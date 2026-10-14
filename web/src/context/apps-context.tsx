@@ -14,6 +14,8 @@ import { WaitTimeoutError } from "@/context/notifications-context-base";
 import { apiBase as base } from "@/config";
 import { dispatchCommand } from "@/lib/api";
 import type { BackupHealth } from "@/lib/backups";
+import { forgetAppDetail } from "@/hooks/use-app-detail";
+import { settleLateCreate } from "@/lib/held-creates";
 import { forgetRevisions } from "@/lib/revisions";
 import { createSharedVariablesApi, type VarsReloaded } from "@/lib/shared-variables";
 import { splitStatus, type AppStatusWire, type ContainerStatusWire } from "@/lib/app-status";
@@ -249,6 +251,9 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       if (n.type !== "operation_result") return;
       if (!n.ref || !pendingRefs.current.has(n.ref)) return;
       pendingRefs.current.delete(n.ref);
+      // A create that outlived its wait gives its name back (and its form,
+      // when open, hears how it ended) before the list is read again.
+      settleLateCreate(n.ref, { failed: !!n.status, error: n.error || "Operation failed" });
       void loadApps();
     });
     return unsubscribe;
@@ -298,7 +303,10 @@ export function AppsProvider({ children }: { children: ReactNode }) {
         },
         { timeoutMs: opts.timeoutMs, failure: opts.failure, refOptional: true, onAccepted: (r) => (ref = r) },
       ).catch((e: unknown) => {
-        if (e instanceof WaitTimeoutError && ref) pendingRefs.current.add(ref);
+        if (e instanceof WaitTimeoutError && ref) {
+          pendingRefs.current.add(ref);
+          e.ref = ref;
+        }
         throw e;
       });
       const [list] = await Promise.all([loadApps(), loadStatus()]);
@@ -511,8 +519,14 @@ export function AppsProvider({ children }: { children: ReactNode }) {
         },
         { failure: SaveFailedError, timeoutMs: opts.timeoutMs },
       );
-      // A deploy went through: the app no longer reads Failed.
-      if (typeof body.app.id === "string" && !body.draft) clearDeployFailure(body.app.id);
+      if (typeof body.app.id === "string") {
+        // The app changed, and the version it is listed under may not have
+        // moved (the API stores none after a save): drop what was kept of it.
+        forgetRevisions(body.app.id);
+        forgetAppDetail(body.app.id);
+        // A deploy went through: the app no longer reads Failed.
+        if (!body.draft) clearDeployFailure(body.app.id);
+      }
       return list;
     },
     [dispatchAndWait, clearDeployFailure],

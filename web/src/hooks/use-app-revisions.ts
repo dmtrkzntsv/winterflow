@@ -48,6 +48,7 @@ export function useAppRevisions(appId: string, enabled = true, cacheKey?: string
   // read is the one place the agent is asked, with the cache in front.
   const read = useCallback(
     async (fresh: boolean): Promise<Settled> => {
+      // An empty key (no version) is uncacheable: keptRevisions serves nothing.
       const hit = !fresh && cacheKey !== undefined ? keptRevisions(appId, cacheKey) : null;
       if (hit) return { appId, data: hit, error: null };
       const began = revisionsEpoch(appId);

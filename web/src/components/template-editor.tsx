@@ -166,7 +166,7 @@ export function TemplateEditor({ draft, onChange }: Props) {
         <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 gap-y-2">
           <Label>Icon</Label>
           <Label htmlFor="template-app-name">App name</Label>
-          <Label htmlFor="template-color">Color</Label>
+          <Label htmlFor="template-color">Colour</Label>
           <IconPicker value={draft.icon} color={draft.color} name={draft.appName} onChange={(icon) => set({ icon })} />
           <Input
             id="template-app-name"

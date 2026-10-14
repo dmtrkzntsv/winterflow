@@ -28,7 +28,8 @@ export type ResponsiveDialogProps = {
   title: ReactNode;
   description?: ReactNode;
   children: ReactNode;
-  // footer holds the actions (Cancel, then the primary).
+  // footer holds the actions (Cancel, then the primary). On a phone's
+  // sheet they stack primary first, Cancel last.
   footer?: ReactNode;
   className?: string;
   // Focus hooks of the content: where focus goes when it opens (default:
@@ -69,7 +70,7 @@ export function ResponsiveDialog({
             {description ? <DrawerDescription>{description}</DrawerDescription> : null}
           </DrawerHeader>
           <div className="overflow-y-auto px-4 pb-2">{children}</div>
-          {footer ? <DrawerFooter className="pb-[max(1rem,env(safe-area-inset-bottom))]">{footer}</DrawerFooter> : null}
+          {footer ? <DrawerFooter className="flex-col-reverse pb-[max(1rem,env(safe-area-inset-bottom))]">{footer}</DrawerFooter> : null}
         </DrawerContent>
       </Drawer>
     );

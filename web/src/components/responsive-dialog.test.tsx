@@ -39,6 +39,7 @@ describe("ResponsiveDialog", () => {
     const sheet = screen.getByRole("dialog", { name: "Add a domain" });
     expect(sheet).toHaveClass("rounded-t-[10px]");
     expect(screen.getByLabelText("Name")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Add" })).toBeInTheDocument();
+    // The footer stacks the primary (given last) on top, Cancel under it.
+    expect(screen.getByRole("button", { name: "Add" }).parentElement).toHaveClass("flex-col-reverse");
   });
 });

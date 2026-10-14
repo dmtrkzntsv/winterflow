@@ -125,6 +125,8 @@ describe("TemplateEditor", () => {
     const user = start();
     expect(screen.getByLabelText("Template name")).toHaveAttribute("placeholder", "my-stack");
     expect(screen.getByLabelText("App name")).toHaveAttribute("placeholder", "my-app or ${NAME}");
+    // British spelling, like the rest of the UI.
+    expect(screen.getByText("Colour")).toBeInTheDocument();
     expect(screen.getByLabelText("Default of NAME")).toHaveAttribute("placeholder", "Default");
     await user.click(screen.getByRole("button", { name: "Details of NAME" }));
     expect(screen.getByLabelText("Pattern of NAME")).toHaveAttribute("placeholder", "e.g. ^[a-z0-9-]+$");

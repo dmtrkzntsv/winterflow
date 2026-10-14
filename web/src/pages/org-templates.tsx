@@ -61,7 +61,7 @@ export default function OrgTemplatesPage() {
                 <AppIcon name={t.name} icon={looks[t.id]?.icon} color={looks[t.id]?.color} className="size-10 shrink-0 text-base" />
                 <div className="min-w-0 space-y-1">
                   <p className="truncate text-[15px] font-semibold">{t.name}</p>
-                  <p className="text-sm text-muted-foreground">{usageLabel(t)}</p>
+                  <p className="text-xs text-muted-foreground">{usageLabel(t)}</p>
                   <p className="text-xs text-muted-foreground">
                     <time dateTime={t.updated_at}>Updated {relativeTime(new Date(t.updated_at))}</time>
                   </p>

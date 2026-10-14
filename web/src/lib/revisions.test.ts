@@ -38,6 +38,17 @@ describe("kept revisions", () => {
     expect(keptRevisions("a1", "3")).toBeNull();
   });
 
+  it("lets a read without a key refresh what is kept, and a failed one drop it", () => {
+    const newer = { current: "d", deployed: "d", revisions: [] };
+    keepRevisions("a1", "3", data, 0);
+    keepRevisions("a1", undefined, newer, 0);
+    expect(keptRevisions("a1", "3")).toBe(newer);
+    keepRevisions("a2", undefined, newer, 0);
+    expect(keptRevisions("a2", "3")).toBeNull();
+    keepRevisions("a1", undefined, null, 0);
+    expect(keptRevisions("a1", "3")).toBeNull();
+  });
+
   it("drops the bookkeeping of a deleted app", () => {
     forgetRevisions("a1");
     forgetRevisions("a1", { gone: true });

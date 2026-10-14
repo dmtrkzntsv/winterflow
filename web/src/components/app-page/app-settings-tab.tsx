@@ -23,12 +23,14 @@ const DEFAULT_COLOR = "#64748b";
 // GeneralSection edits how the app appears: name, icon, colour and
 // description, with one Save (see saveAppDetails for what each part does).
 // Name, icon and colour come from the app list at once; the description is
-// read from the app. A template-managed app changes its name only: the rest
-// is its template's (the API refuses its save).
+// read from the app. An app a template manages changes its name only: the
+// rest is its template's (the API refuses its save).
 function GeneralSection({ app, ownership, running }: { app: App; ownership: Ownership; running: boolean }) {
   const deps = useApps();
   const { getApp, refresh } = deps;
-  const managed = ownership !== null;
+  // Managed while an instance manages the app, or while that is not known
+  // yet (read, or failed): an app whose instance is gone is an ordinary app.
+  const managed = ownership !== null && (ownership.instance !== null || ownership.loading || ownership.error !== "");
   const templateName = ownership?.instance?.template_name;
   const shown = { name: app.name, icon: app.icon ?? "", color: app.color || DEFAULT_COLOR };
   const [form, setForm] = useState({ ...shown, description: "" });
@@ -38,13 +40,19 @@ function GeneralSection({ app, ownership, running }: { app: App; ownership: Owne
   const [saving, setSaving] = useState(false);
 
   // When the app's saved name, icon or colour change (a rename made
-  // elsewhere, the list refreshed after a save), the form starts from them
-  // again: a stale form must not revert them on the next Save.
-  const savedKey = JSON.stringify(shown);
-  const [seededFrom, setSeededFrom] = useState(savedKey);
-  if (seededFrom !== savedKey) {
-    setSeededFrom(savedKey);
-    setForm((f) => ({ ...shown, description: f.description }));
+  // elsewhere, the list refreshed after a save), the form takes the fields
+  // that changed: a stale form must not revert them on the next Save, and a
+  // field that did not change keeps what the user typed (a rename that went
+  // through before a failed save of the rest).
+  const [seededFrom, setSeededFrom] = useState(shown);
+  if (JSON.stringify(seededFrom) !== JSON.stringify(shown)) {
+    setSeededFrom(shown);
+    setForm((f) => ({
+      name: shown.name !== seededFrom.name ? shown.name : f.name,
+      icon: shown.icon !== seededFrom.icon ? shown.icon : f.icon,
+      color: shown.color !== seededFrom.color ? shown.color : f.color,
+      description: f.description,
+    }));
   }
 
   const readDescription = useCallback(async () => {
@@ -78,7 +86,12 @@ function GeneralSection({ app, ownership, running }: { app: App; ownership: Owne
       if (result.saved === "none") toast.success("App renamed");
       else if (result.saved === "deployed") toast.success("Saved");
       else toast.success("Saved", { description: "It goes live with the app's next deploy." });
-      if (result.saved !== "none") void readDescription();
+      // The save is the new truth: the form is clean now, whether or not the
+      // read that confirms it succeeds.
+      if (result.saved !== "none") {
+        if (description !== null) setDescription(after.description);
+        void readDescription();
+      }
     } catch (e) {
       const message = e instanceof Error ? e.message : "";
       if (isManagedByTemplate(message)) {

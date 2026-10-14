@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { useSidebar } from "@/components/ui/use-sidebar";
 import { useCommandPalette } from "@/context/use-palette";
 import { AppLayout } from "@/layouts/app-layout";
-import { usePageTitle } from "@/layouts/use-page-title";
+import { useHeadingInView, usePageTitle } from "@/layouts/use-page-title";
 import { stubViewport } from "@/test/media";
 
 let mustChange = false;
@@ -39,6 +39,13 @@ function Page({ title }: { title: string }) {
   );
 }
 
+// TitledPage has its own H1, like PageHeader and AppHeader.
+function TitledPage({ title }: { title: string }) {
+  usePageTitle(title);
+  const h1 = useHeadingInView<HTMLHeadingElement>();
+  return <h1 ref={h1}>{title}</h1>;
+}
+
 function renderAt(url: string) {
   return render(
     <MemoryRouter initialEntries={[url]}>
@@ -46,6 +53,7 @@ function renderAt(url: string) {
         <Route element={<AppLayout />}>
           <Route path="/server/s1/monitoring" element={<Page title="Monitoring" />} />
           <Route path="/settings/members" element={<Page title="Members" />} />
+          <Route path="/server/s1/apps" element={<TitledPage title="Apps" />} />
           <Route path="/settings/password" element={<Page title="Password" />} />
         </Route>
       </Routes>
@@ -83,6 +91,36 @@ describe("AppLayout", () => {
 
     await user.click(within(bar).getByRole("button", { name: "Search" }));
     expect(screen.getByText(/palette open/)).toBeInTheDocument();
+  });
+
+  it("leaves the phone top bar's title empty while the page's own H1 is in view, and shows it once it scrolls out", async () => {
+    stubViewport(375);
+    let report: (inView: boolean) => void = () => {};
+    let rootMargin = "";
+    vi.stubGlobal(
+      "IntersectionObserver",
+      class {
+        constructor(cb: IntersectionObserverCallback, opts?: IntersectionObserverInit) {
+          rootMargin = opts?.rootMargin ?? "";
+          report = (isIntersecting) => cb([{ isIntersecting } as IntersectionObserverEntry], this as unknown as IntersectionObserver);
+        }
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    renderAt("/server/s1/apps");
+    const bar = screen.getByTestId("mobile-top-bar");
+    // The bar sticks over the page: the H1 behind it is not in view.
+    expect(rootMargin).toBe("-56px 0px 0px 0px");
+    // Not reported yet: the title shows.
+    expect(await within(bar).findByText("Apps")).toBeInTheDocument();
+    act(() => report(true));
+    await waitFor(() => expect(within(bar).queryByText("Apps")).not.toBeInTheDocument());
+    // The browser tab keeps the title.
+    expect(document.title).toBe("Apps · WinterFlow");
+    act(() => report(false));
+    expect(await within(bar).findByText("Apps")).toBeInTheDocument();
   });
 
   it("caps reading pages at 1100px and gives Monitoring the full width", () => {

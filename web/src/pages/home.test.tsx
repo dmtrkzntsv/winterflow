@@ -9,8 +9,9 @@ const homelab = { id: "s1", organizationId: "o", name: "homelab", createdAt: "",
 let servers: { activeServer: typeof homelab | null; loading: boolean; refresh: () => Promise<void> };
 vi.mock("@/context/use-servers", () => ({ useServers: () => servers }));
 let appsState: { apps: { id: string }[]; loading: boolean };
+let statusState: Record<string, number> = {};
 vi.mock("@/context/use-apps", () => ({
-  useApps: () => ({ ...appsState, statusByApp: { a1: 1, a2: 1, a3: 5 } }),
+  useApps: () => ({ ...appsState, statusByApp: statusState }),
 }));
 vi.mock("@/components/server-health-strip", () => ({ ServerHealthStrip: () => <div data-testid="strip" /> }));
 vi.mock("@/components/alerts/active-alerts", () => ({ FiringAlertsLine: () => <div data-testid="firing" /> }));
@@ -34,6 +35,14 @@ describe("HomePage", () => {
   beforeEach(() => {
     servers = { activeServer: homelab, loading: false, refresh: vi.fn(async () => {}) };
     appsState = { apps: [{ id: "a1" }, { id: "a2" }, { id: "a3" }], loading: false };
+    statusState = { a1: 1, a2: 1, a3: 5 };
+  });
+
+  it("names just the server until the first status report, not '0 running'", () => {
+    statusState = {};
+    renderHome();
+    expect(screen.getByText("homelab")).toBeInTheDocument();
+    expect(screen.queryByText(/running/)).not.toBeInTheDocument();
   });
 
   it("names just the server until the first list of apps has arrived", () => {

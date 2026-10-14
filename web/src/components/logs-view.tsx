@@ -73,10 +73,9 @@ function Chip({ pressed, onClick, children }: { pressed: boolean; onClick: () =>
 
 // LogsView is a console-style log display: a scroll box that sticks to the
 // bottom while new lines arrive, unless the user has scrolled up to read
-// (then it stays put until they jump back down). Its height fills the
-// viewport under the app page's tabs, so the page itself does not scroll:
-// the rest of the page is shell padding + app header + tabs, about 13.5rem
-// on a desktop and 18.4rem on a phone (top bar, stacked header).
+// (then it stays put until they jump back down). It fills what is left of
+// its parent (a flex column that grows with the viewport, min-h-80 at
+// least), so the app page itself does not scroll.
 export function LogsView({
   lines,
   loading,
@@ -181,7 +180,7 @@ export function LogsView({
           onClick={onRefresh}
           disabled={loading}
         >
-          <RefreshCw className={cn("size-3.5", loading && "animate-spin")} />
+          <RefreshCw className={cn("size-3.5", loading && "animate-spin motion-reduce:animate-none")} />
         </Button>
       </div>
 
@@ -208,7 +207,9 @@ export function LogsView({
       ) : (
         <div
           ref={scrollRef}
-          role="log"
+          // Not role="log": that is a live region, and a refresh replaces up
+          // to a thousand lines.
+          role="region"
           aria-label="Logs"
           tabIndex={0}
           onScroll={handleScroll}

@@ -31,8 +31,11 @@ const CHART_GRID = "grid auto-rows-[18.5rem] gap-3 md:grid-cols-2";
 // carries the flagged fraction; see isUnavailable).
 const UNAVAILABLE = "Container metrics are unavailable on this host";
 
-// The KPI blocks in pairs: they live in a half-width widget.
-const KPI_GRID = "grid grid-cols-2 gap-3";
+// The KPI blocks in pairs: they live in a half-width widget, flat inside it
+// (no card of their own), a 2x2 grid with hairlines between the tiles.
+const KPI_GRID = "grid grid-cols-2";
+const FLAT_TILE =
+  "rounded-none border-0 bg-transparent shadow-none [&:nth-child(odd)]:border-r [&:nth-child(n+3)]:border-t";
 
 // AppMetricBlocks is an app's KPI blocks: CPU now, memory against its
 // limit, disk and network rate, each from the newest 1-minute point with
@@ -44,7 +47,7 @@ export function AppMetricBlocks({ serverId, appId }: { serverId: string; appId: 
     return (
       <div className={KPI_GRID}>
         {["CPU", "Memory", "Disk", "Network"].map((l) => (
-          <KpiTileSkeleton key={l} label={l} />
+          <KpiTileSkeleton key={l} label={l} className={FLAT_TILE} />
         ))}
       </div>
     );
@@ -75,12 +78,14 @@ export function AppMetricBlocks({ serverId, appId }: { serverId: string; appId: 
         {blind ? null : (
           <>
             <KpiTile
+            className={FLAT_TILE}
               label="CPU"
               value={formatPercent(now("cpu"))}
               sub="of host"
               spark={spark("cpu", 0, percentCeiling(rows, "cpu"))}
             />
             <KpiTile
+            className={FLAT_TILE}
               label="Memory"
               value={formatSize(now("mem_used"))}
               sub={last.mem_limit ? `of ${formatSize(last.mem_limit)} limit` : "no limit"}
@@ -91,6 +96,7 @@ export function AppMetricBlocks({ serverId, appId }: { serverId: string; appId: 
         )}
         {hasDisk || !blind ? (
           <KpiTile
+            className={FLAT_TILE}
             label="Disk"
             value={formatSize(last.disk)}
             sub={last.image ? `+ ${formatSize(last.image)} images (may be shared)` : undefined}
@@ -99,6 +105,7 @@ export function AppMetricBlocks({ serverId, appId }: { serverId: string; appId: 
         ) : null}
         {blind ? null : (
           <KpiTile
+            className={FLAT_TILE}
             label="Network"
             value={formatRate(now("net_bps"))}
             sub={

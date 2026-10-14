@@ -87,6 +87,35 @@ describe("useBackUpNow", () => {
     expect(toast.error).toHaveBeenCalledWith("Couldn't read the app's backups", { description: "agent offline" });
   });
 
+  it("says the backups can't be read, not that none is set up, when the agent reports an error", async () => {
+    const getApp = vi.fn(async () => ({ backups: [], backups_error: "x-winterflow.backups[0].volume: gone" }));
+    const { result } = renderHook(() => useBackUpNow("a1"), { wrapper: wrap(getApp as unknown as AppsContextValue["getApp"]) });
+    await act(() => result.current.run());
+    expect(backups.runBackup).not.toHaveBeenCalled();
+    expect(toast.info).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith("Couldn't read the app's backups", { description: "x-winterflow.backups[0].volume: gone" });
+  });
+
+  it("is busy while the app is read, so a second click sends nothing more", async () => {
+    backups.runBackup.mockResolvedValue({ unchanged: false, point: { id: "p" }, warnings: [] });
+    let answer: (v: unknown) => void = () => {};
+    const getApp = vi.fn(() => new Promise((r) => (answer = r)));
+    const { result } = renderHook(() => useBackUpNow("a1"), { wrapper: wrap(getApp as unknown as AppsContextValue["getApp"]) });
+    let first: Promise<void> = Promise.resolve();
+    act(() => {
+      first = result.current.run();
+    });
+    expect(result.current.busy).toBe(true);
+    await act(() => result.current.run());
+    expect(getApp).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      answer({ backups: [b("database")] });
+      await first;
+    });
+    expect(backups.runBackup).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(result.current.busy).toBe(false));
+  });
+
   it("is busy while any backup of the app runs or is restored", async () => {
     const { result } = renderHook(() => useBackUpNow("a1"), { wrapper: wrap(vi.fn()) });
     expect(result.current.busy).toBe(false);

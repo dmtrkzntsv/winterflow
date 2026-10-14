@@ -264,8 +264,9 @@ export function AppsProvider({ children }: { children: ReactNode }) {
   const control = useCallback(
     async (appId: string, action: ControlAction) => {
       await dispatchAndWait("control-app", { app_id: appId, action });
-      // A start can bring an undeployed draft live without a commit.
-      forgetRevisions(appId);
+      // A start (and a pull, which redeploys) can bring an undeployed draft
+      // live without a commit; a stop or restart moves nothing.
+      if (action === "start" || action === "update") forgetRevisions(appId);
     },
     [dispatchAndWait],
   );

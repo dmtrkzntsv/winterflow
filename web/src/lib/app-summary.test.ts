@@ -4,6 +4,8 @@ import {
   appAddresses,
   appsSubtitle,
   appWarning,
+  containersSummary,
+  serviceLabels,
   containerHint,
   countApps,
   filterApps,
@@ -50,17 +52,22 @@ describe("counts", () => {
 
 describe("appWarning", () => {
   it("names the worst backup first, then shared variables to reload", () => {
-    expect(appWarning([{ name: "a", state: "late" }, { name: "b", state: "failing" }], ["X"])).toEqual({
+    expect(appWarning([{ name: "a", state: "late" }, { name: "b", state: "failing" }], ["X"], 1)).toEqual({
       label: "Backup failing",
       tab: "backups",
     });
-    expect(appWarning([{ name: "a", state: "late" }], undefined)).toEqual({ label: "Backup late", tab: "backups" });
-    expect(appWarning([{ name: "a", state: "ok" }], ["SMTP_PASS"])).toEqual({ label: "Reload needed" });
+    expect(appWarning([{ name: "a", state: "late" }], undefined, 1)).toEqual({ label: "Backup late", tab: "backups" });
+    expect(appWarning([{ name: "a", state: "ok" }], ["SMTP_PASS"], 1)).toEqual({ label: "Reload needed" });
+  });
+
+  it("asks for no reload of a stopped app: it reads the values on its next start", () => {
+    expect(appWarning(undefined, ["SMTP_PASS"], 5)).toBeNull();
+    expect(appWarning([{ name: "a", state: "late" }], ["SMTP_PASS"], 5)).toEqual({ label: "Backup late", tab: "backups" });
   });
 
   it("is quiet when all is well", () => {
-    expect(appWarning([{ name: "a", state: "ok" }, { name: "b", state: "off" }], [])).toBeNull();
-    expect(appWarning(undefined, undefined)).toBeNull();
+    expect(appWarning([{ name: "a", state: "ok" }, { name: "b", state: "off" }], [], 1)).toBeNull();
+    expect(appWarning(undefined, undefined, undefined)).toBeNull();
   });
 });
 
@@ -85,5 +92,38 @@ describe("containerHint", () => {
     expect(containerHint({ ...base, status_code: 4, exit_code: 137 })).toBe("Stopped with exit code 137");
     expect(containerHint({ ...base, status_code: 4, error: "OOMKilled\nmore detail" })).toBe("OOMKilled");
     expect(containerHint({ ...base, status_code: 4 })).toBe("Has a problem");
+  });
+});
+
+describe("serviceLabels", () => {
+  it("drops the project prefix and the replica suffix of a single replica", () => {
+    expect(serviceLabels("a1", [{ name: "wf-a1-web-1" }, { name: "wf-a1-db-1" }])).toEqual(["web", "db"]);
+  });
+
+  it("keeps the replica number of a service that has several", () => {
+    expect(serviceLabels("a1", [{ name: "wf-a1-web-1" }, { name: "wf-a1-web-2" }, { name: "wf-a1-db-1" }])).toEqual([
+      "web-1",
+      "web-2",
+      "db",
+    ]);
+  });
+
+  it("leaves a name that does not carry the prefix as it is", () => {
+    expect(serviceLabels("a1", [{ name: "custom_name" }])).toEqual(["custom_name"]);
+  });
+});
+
+describe("containersSummary", () => {
+  const c = (status_code: number) => ({ status_code });
+  it("counts what runs and names what is wrong", () => {
+    expect(containersSummary(1, [c(1)])).toBe("1 container running");
+    expect(containersSummary(1, [c(1), c(2)])).toBe("2 containers running");
+    expect(containersSummary(4, [c(1), c(3), c(4)])).toBe("1 of 3 containers running · 1 restarting · 1 with a problem");
+  });
+
+  it("says a stopped app runs nothing, and an app without a report has not reported", () => {
+    expect(containersSummary(5, [])).toBe("Stopped — no containers running");
+    expect(containersSummary(1, [])).toBe("No containers reported yet");
+    expect(containersSummary(undefined, [])).toBe("No containers reported yet");
   });
 });

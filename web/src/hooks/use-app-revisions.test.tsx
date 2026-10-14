@@ -125,20 +125,20 @@ describe("useAppRevisions", () => {
       expect(getRevisions).toHaveBeenCalledTimes(3);
     });
 
-    it("reload always asks the agent, and an uncached read forgets what was kept", async () => {
+    it("reload always asks the agent, and an uncached read (the History sheet) keeps what the Overview kept", async () => {
       const getRevisions = vi.fn(async (id: string) => revs(id));
       const keyed = renderHook(() => useAppRevisions("a1", true, "3"), { wrapper: wrap(getRevisions) });
       await waitFor(() => expect(keyed.result.current.data).not.toBeNull());
       await act(() => keyed.result.current.reload());
       expect(getRevisions).toHaveBeenCalledTimes(2);
       keyed.unmount();
-      // The History sheet reads without a key: what it saw may differ from what was kept.
+      // The History sheet reads without a key: it asks the agent, but opening it must not evict the kept entry.
       const plain = renderHook(() => useAppRevisions("a1"), { wrapper: wrap(getRevisions) });
       await waitFor(() => expect(plain.result.current.data).not.toBeNull());
       plain.unmount();
       const again = renderHook(() => useAppRevisions("a1", true, "3"), { wrapper: wrap(getRevisions) });
       await waitFor(() => expect(again.result.current.data).not.toBeNull());
-      expect(getRevisions).toHaveBeenCalledTimes(4);
+      expect(getRevisions).toHaveBeenCalledTimes(3);
     });
 
     it("does not keep a failed read", async () => {

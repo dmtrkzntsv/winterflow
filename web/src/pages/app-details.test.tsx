@@ -215,7 +215,7 @@ describe("AppDetailsPage", () => {
     renderPage("/app/a1?tab=backups", {}, { ctx: { control } });
     await user.click(await screen.findByRole("button", { name: "Restart" }));
     expect(control).toHaveBeenCalledWith("a1", "restart");
-    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("App restarted"));
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("App restarted", { description: "Shop" }));
     await user.click(screen.getByRole("button", { name: "More actions" }));
     expect((await screen.findAllByRole("menuitem")).map((m) => m.textContent)).toEqual([
       "Stop",
@@ -226,7 +226,7 @@ describe("AppDetailsPage", () => {
     ]);
     await user.click(screen.getByRole("menuitem", { name: "Pull latest images" }));
     expect(control).toHaveBeenCalledWith("a1", "update");
-    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Latest images pulled"));
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Latest images pulled", { description: "Shop" }));
   });
 
   it("offers Start while the app is stopped, and no Stop", async () => {
@@ -331,6 +331,30 @@ describe("AppDetailsPage", () => {
     expect(screen.queryByDisplayValue("a1 notes")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { level: 1, name: "Blog" })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "App name" })).toHaveValue("Blog");
+  });
+
+  it("keeps a running action with its app: the next app's controls stay free, and the toast names the app", async () => {
+    const user = userEvent.setup();
+    let finish = () => {};
+    const control = vi.fn(() => new Promise<void>((r) => (finish = r)));
+    const apps = [
+      { id: "a1", serverId: "s", name: "Shop", version: "3", icon: "", color: "", createdAt: "" },
+      { id: "a2", serverId: "s", name: "Blog", version: "1", icon: "", color: "", createdAt: "" },
+    ];
+    renderPage("/app/a1?tab=settings", {}, { ctx: { apps, control, statusByApp: { a1: 1, a2: 1 } } as unknown as Partial<AppsContextValue> });
+    await user.click(await screen.findByRole("button", { name: "More actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Stop" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Stopping…");
+
+    await user.click(screen.getByRole("link", { name: "open a2 settings" }));
+    expect(await screen.findByRole("heading", { level: 1, name: "Blog" })).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Restart" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Blog: Stop" })).toBeEnabled();
+
+    finish();
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("App stopped", { description: "Shop" }));
+    expect(screen.getByRole("button", { name: "Restart" })).toBeEnabled();
   });
 
   it("names a nameless app Unnamed app everywhere, never by its id", async () => {

@@ -70,6 +70,7 @@ describe("AppGrid", () => {
     renderGrid({
       backupsByApp: { a1: [{ name: "db", state: "failing", last_error: "disk full" }], a2: [{ name: "db", state: "ok" }] },
       staleVarsByApp: { a2: ["SMTP_PASS"] },
+      statusByApp: { a1: 1, a2: 1 },
     });
     expect(within(card("Shop")).getByText("Backup failing")).toBeInTheDocument();
     expect(within(card("Blog")).getByText("Reload needed")).toBeInTheDocument();
@@ -79,6 +80,12 @@ describe("AppGrid", () => {
     renderGrid({ backupsByApp: { a1: [{ name: "db", state: "late" }], a2: [{ name: "db", state: "ok" }] } });
     expect(screen.getByRole("link", { name: "Shop" })).toHaveAttribute("href", "/server/srv-1/app/a1?tab=backups");
     expect(screen.getByRole("link", { name: "Blog" })).toHaveAttribute("href", "/server/srv-1/app/a2");
+  });
+
+  it("warns about shared variables only for an app that runs", () => {
+    renderGrid({ staleVarsByApp: { a1: ["SMTP_PASS"], a2: ["SMTP_PASS"] } });
+    expect(within(card("Shop")).getByText("Reload needed")).toBeInTheDocument();
+    expect(within(card("Blog")).queryByText("Reload needed")).not.toBeInTheDocument();
   });
 
   it("shows no chip while all is well", () => {
@@ -131,6 +138,11 @@ describe("AppGrid", () => {
     expect(screen.getByText("Run your first app")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /From a template/ })).toHaveAttribute("href", "/server/srv-1/new?from=template");
     expect(screen.getByRole("link", { name: /Compose file/ })).toHaveAttribute("href", "/server/srv-1/new?from=compose");
+    // The page header's New app is the one filled button: neither start is.
+    for (const name of [/From a template/, /Compose file/]) {
+      expect(screen.getByRole("link", { name })).toHaveClass("border");
+      expect(screen.getByRole("link", { name })).not.toHaveClass("bg-primary");
+    }
   });
 
   it("shows skeletons while the first list loads, and a read failure", () => {

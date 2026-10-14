@@ -38,10 +38,16 @@ export function keptRevisions(appId: string, key: string): AppRevisions | null {
 }
 
 // keepRevisions stores a read, unless the app was forgotten since it began
-// (at `epoch`): then it may already be out of date.
+// (at `epoch`): then it may already be out of date. A read without a key (the
+// History sheet's) refreshes the data of what is kept under its key, and
+// keeps nothing new; a failed read drops what was kept.
 export function keepRevisions(appId: string, key: string | undefined, data: AppRevisions | null, epoch: number) {
-  if (key === undefined || data === null || epoch !== (epochs.get(appId) ?? 0)) kept.delete(appId);
-  else kept.set(appId, { key, data });
+  if (data === null || epoch !== (epochs.get(appId) ?? 0)) kept.delete(appId);
+  else if (key !== undefined) kept.set(appId, { key, data });
+  else {
+    const hit = kept.get(appId);
+    if (hit) kept.set(appId, { key: hit.key, data });
+  }
 }
 
 // forgetRevisions drops an app's kept history and tells mounted histories of

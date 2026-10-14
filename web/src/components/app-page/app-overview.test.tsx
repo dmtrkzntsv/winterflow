@@ -58,11 +58,11 @@ const ctx = {
 };
 
 function renderOverview(over: { app?: Partial<App>; status?: number } = {}) {
-  const props = { onControl: vi.fn(), onOpenHistory: vi.fn() };
+  const props = { onOpenHistory: vi.fn() };
   const view = render(
     <MemoryRouter>
       <AppsContext.Provider value={ctx as unknown as AppsContextValue}>
-        <AppOverview app={{ ...APP, ...over.app }} status={over.status ?? 1} pending={null} {...props} />
+        <AppOverview app={{ ...APP, ...over.app }} status={over.status ?? 1} {...props} />
       </AppsContext.Provider>
     </MemoryRouter>,
   );
@@ -80,34 +80,63 @@ describe("AppOverview", () => {
     ctx.getRevisions.mockReset().mockResolvedValue(REVISIONS);
     ctx.containersByApp = {
       a1: [
-        { container_id: "c1", name: "shop-web-1", status_code: 1, exit_code: 0 },
-        { container_id: "c2", name: "shop-worker-1", status_code: 3, exit_code: 0 },
-        { container_id: "c3", name: "shop-db-1", status_code: 4, exit_code: 137 },
+        { container_id: "c1", name: "wf-a1-web-1", status_code: 1, exit_code: 0 },
+        { container_id: "c2", name: "wf-a1-worker-1", status_code: 3, exit_code: 0 },
+        { container_id: "c3", name: "wf-a1-db-1", status_code: 4, exit_code: 137 },
       ],
     };
   });
 
-  it("shows the status with each container and what is wrong with it, and restarts", async () => {
-    const user = userEvent.setup();
-    const props = renderOverview();
+  it("summarizes the containers by compose service, and what is wrong with them", () => {
+    renderOverview();
     const status = screen.getByRole("region", { name: "Status" });
-    expect(within(status).getByText("Running")).toBeInTheDocument();
+    expect(status).toHaveTextContent("1 of 3 containers running · 1 restarting · 1 with a problem");
     const containers = within(status).getByRole("list", { name: "Containers" });
     expect(within(containers).getAllByRole("listitem")).toHaveLength(3);
-    expect(containers).toHaveTextContent("shop-worker-1Keeps restarting");
-    expect(containers).toHaveTextContent("shop-db-1Stopped with exit code 137");
-    await user.click(within(status).getByRole("button", { name: "Restart" }));
-    expect(props.onControl).toHaveBeenCalledWith("restart");
+    expect(containers).toHaveTextContent("webworkerKeeps restartingdbStopped with exit code 137");
+    expect(containers).not.toHaveTextContent("wf-a1");
+    // The header owns the state and Restart.
+    expect(within(status).queryByRole("button")).not.toBeInTheDocument();
+    expect(within(status).queryByText("Running")).not.toBeInTheDocument();
   });
 
-  it("offers Start for a stopped app, and says when no container reported yet", async () => {
-    const user = userEvent.setup();
-    ctx.containersByApp = {};
-    const props = renderOverview({ status: 5 });
+  it("keeps the replica number only where a service has several replicas", () => {
+    ctx.containersByApp = {
+      a1: [
+        { container_id: "c1", name: "wf-a1-app-1", status_code: 1, exit_code: 0 },
+        { container_id: "c2", name: "wf-a1-app-2", status_code: 1, exit_code: 0 },
+        { container_id: "c3", name: "wf-a1-db-1", status_code: 1, exit_code: 0 },
+      ],
+    };
+    renderOverview();
     const status = screen.getByRole("region", { name: "Status" });
-    expect(within(status).getByText("No containers reported yet.")).toBeInTheDocument();
-    await user.click(within(status).getByRole("button", { name: "Start" }));
-    expect(props.onControl).toHaveBeenCalledWith("start");
+    expect(status).toHaveTextContent("3 containers running");
+    expect(within(status).getByRole("list", { name: "Containers" })).toHaveTextContent("app-1app-2db");
+  });
+
+  it("says a single container runs", () => {
+    ctx.containersByApp = { a1: [{ container_id: "c1", name: "wf-a1-app-1", status_code: 1, exit_code: 0 }] };
+    renderOverview();
+    expect(screen.getByRole("region", { name: "Status" })).toHaveTextContent("1 container running");
+  });
+
+  it("says a stopped app runs nothing, and a running one that reported nothing has not reported", () => {
+    ctx.containersByApp = {};
+    const { unmount } = renderOverview({ status: 5 });
+    expect(screen.getByRole("region", { name: "Status" })).toHaveTextContent("Stopped — no containers running");
+    unmount();
+    renderOverview({ status: 1 });
+    expect(screen.getByRole("region", { name: "Status" })).toHaveTextContent("No containers reported yet");
+  });
+
+  it("lays out two independent columns", () => {
+    renderOverview();
+    const left = screen.getByRole("region", { name: "Status" }).parentElement!;
+    const right = screen.getByRole("region", { name: "Access" }).parentElement!;
+    expect(left.parentElement).toHaveClass("items-start", "lg:grid-cols-2");
+    expect(within(left).getByRole("region", { name: "Resources" })).toBeInTheDocument();
+    expect(within(left).getByRole("region", { name: "Recent changes" })).toBeInTheDocument();
+    expect(within(right).getByRole("region", { name: "Backups" })).toBeInTheDocument();
   });
 
   it("lists the addresses with their HTTPS state", () => {
@@ -175,6 +204,20 @@ describe("AppOverview", () => {
       "href",
       "/server/srv-1/app/a1?tab=backups",
     );
+  });
+
+  it("says the backups can't be read, not that none is set up, and retries", async () => {
+    const user = userEvent.setup();
+    ctx.getApp
+      .mockResolvedValueOnce({ backups: [], backups_error: 'x-winterflow.backups[0].volume: "gone" is not a volume' })
+      .mockResolvedValue({ backups: LIST });
+    renderOverview();
+    const region = screen.getByRole("region", { name: "Backups" });
+    expect(await within(region).findByText(/Backups can't be read right now: x-winterflow/)).toBeInTheDocument();
+    expect(within(region).queryByText("No backup is set up yet.")).not.toBeInTheDocument();
+    expect(within(region).queryByRole("link", { name: "Set up a backup" })).not.toBeInTheDocument();
+    await user.click(within(region).getByRole("button", { name: "Retry" }));
+    expect(await within(region).findByRole("list", { name: "Backups" })).toBeInTheDocument();
   });
 
   it("retries a backups read that failed", async () => {

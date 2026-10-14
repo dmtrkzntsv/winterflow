@@ -17,7 +17,7 @@ import { useServers } from "@/context/use-servers"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useServerShortcuts } from "@/hooks/use-server-shortcuts"
 import { PageTitleProvider } from "@/layouts/page-title"
-import { useCurrentPageTitle } from "@/layouts/use-page-title"
+import { useTopBarTitle } from "@/layouts/use-page-title"
 import { isWidePath, settingsPath } from "@/lib/routes"
 import { cn } from "@/lib/utils"
 
@@ -29,7 +29,7 @@ const SIDEBAR_STYLE = { "--sidebar-width": "15rem" } as CSSProperties
 function MobileTopBar() {
   const { openMobile, setOpenMobile } = useSidebar()
   const { openPalette } = useCommandPalette()
-  const title = useCurrentPageTitle()
+  const title = useTopBarTitle()
   return (
     <header
       data-testid="mobile-top-bar"

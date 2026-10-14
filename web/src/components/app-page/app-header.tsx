@@ -16,6 +16,7 @@ import { StatusPill } from "@/components/status";
 import type { App, ControlAction } from "@/context/apps-context-base";
 import { hasRunningContainers } from "@/lib/app-status";
 import { primaryAddress } from "@/lib/app-summary";
+import { useHeadingInView } from "@/layouts/use-page-title";
 import { appLabel } from "@/lib/kpi";
 import { templatePath } from "@/lib/routes";
 import { appStatus } from "@/lib/status";
@@ -56,12 +57,13 @@ export function AppHeader(p: AppHeaderProps) {
   const PrimaryIcon = running ? RotateCw : Play;
   const address = primaryAddress(app);
   const named = Boolean(app.name?.trim());
+  const h1 = useHeadingInView<HTMLHeadingElement>();
   return (
     <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
       <div className="flex min-w-0 items-center gap-4">
         <AppIcon name={app.name} icon={app.icon} color={app.color} className="size-14 shrink-0 rounded-xl text-xl" />
         <div className="min-w-0 space-y-1.5">
-          <h1 className={cn("truncate text-2xl font-semibold tracking-tight", !named && "text-muted-foreground")}>
+          <h1 ref={h1} className={cn("truncate text-2xl font-semibold tracking-tight", !named && "text-muted-foreground")}>
             {appLabel(app.name)}
           </h1>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm">

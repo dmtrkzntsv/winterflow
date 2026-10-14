@@ -32,7 +32,8 @@ function AppTileSkeleton() {
 }
 
 // NoApps is the Apps page of a server without apps: one sentence and the
-// two most common ways to start.
+// two most common ways to start (both outline: the header's New app is the
+// page's one filled button).
 function NoApps() {
   const toServer = useServerPath();
   return (
@@ -46,7 +47,7 @@ function NoApps() {
               <LayoutTemplate className="size-4" aria-hidden /> From a template
             </Link>
           </Button>
-          <Button asChild>
+          <Button asChild variant="outline">
             <Link to={toServer(newAppSub("compose"))}>
               <FileCode2 className="size-4" aria-hidden /> Compose file
             </Link>
@@ -87,7 +88,7 @@ function AppCard({ app, code, warning, index }: { app: App; code: number | undef
                 href={address.url}
                 target="_blank"
                 rel="noreferrer"
-                className="relative z-10 truncate transition-colors duration-150 hover:text-foreground hover:underline"
+                className="relative z-10 truncate transition-colors duration-150 hover:text-foreground hover:underline max-sm:-my-2.5 max-sm:py-2.5"
               >
                 {address.host}
               </a>
@@ -161,7 +162,7 @@ export function AppGrid() {
               key={app.id}
               app={app}
               code={statusByApp[app.id]}
-              warning={appWarning(backupsByApp?.[app.id], staleVarsByApp?.[app.id])}
+              warning={appWarning(backupsByApp?.[app.id], staleVarsByApp?.[app.id], statusByApp[app.id])}
               index={index}
             />
           ))}

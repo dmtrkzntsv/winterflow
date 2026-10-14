@@ -76,7 +76,7 @@ export function ServerHealthStrip({ server }: { server: Server }) {
       {body}
       <Link
         to={monitoringPath(server.id)}
-        className="ml-auto inline-flex min-h-8 items-center gap-1 font-medium text-muted-foreground transition-colors duration-150 hover:text-foreground"
+        className="ml-auto inline-flex min-h-8 items-center gap-1 font-medium max-sm:min-h-10 text-muted-foreground transition-colors duration-150 hover:text-foreground"
       >
         Monitoring
         <ArrowRight className="size-4" aria-hidden />

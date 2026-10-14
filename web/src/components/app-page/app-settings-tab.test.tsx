@@ -41,7 +41,7 @@ function tab(app: App, over: { ownership?: Ownership; running?: boolean } = {}, 
 function renderTab(over: { ownership?: Ownership; running?: boolean } = {}) {
   const props = { onDetached: vi.fn(), onSaveAsTemplate: vi.fn(), onDelete: vi.fn() };
   const view = render(tab(APP, over, props));
-  return { ...props, rerender: (app: App) => view.rerender(tab(app, over, props)) };
+  return { ...props, unmount: view.unmount, rerender: (app: App) => view.rerender(tab(app, over, props)) };
 }
 
 describe("AppSettingsTab", () => {
@@ -93,6 +93,38 @@ describe("AppSettingsTab", () => {
     expect(ctx.rename).not.toHaveBeenCalled();
   });
 
+  it("is clean after a save even when the description can't be read back, so it never saves twice", async () => {
+    const user = userEvent.setup();
+    renderTab();
+    const description = await screen.findByDisplayValue("Old");
+    ctx.getApp.mockRejectedValue(new Error("agent offline"));
+    await user.type(description, "!");
+    ctx.getApp.mockResolvedValueOnce(detail);
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Saved"));
+    expect(await screen.findByText(/Couldn't read the description/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(ctx.saveApp).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the user's colour when the rename went through and the rest failed to save", async () => {
+    const user = userEvent.setup();
+    const { rerender } = renderTab();
+    await screen.findByDisplayValue("Old");
+    // The rename lands and the list refreshes with it before the save fails.
+    ctx.rename.mockImplementation(async () => rerender({ ...APP, name: "Store" }));
+    ctx.saveApp.mockRejectedValueOnce(new Error("agent offline"));
+    await user.clear(screen.getByRole("textbox", { name: "App name" }));
+    await user.type(screen.getByRole("textbox", { name: "App name" }), "Store");
+    fireEvent.change(screen.getByLabelText("Colour"), { target: { value: "#ff0000" } });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Couldn't save", { description: "agent offline" }));
+    expect(screen.getByLabelText("Colour")).toHaveValue("#ff0000");
+    expect(screen.getByRole("textbox", { name: "App name" })).toHaveValue("Store");
+    // Still unsaved: Save is offered again.
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  });
+
   it("keeps the change as a draft for a stopped app, and says when it goes live", async () => {
     const user = userEvent.setup();
     renderTab({ running: false });
@@ -116,6 +148,18 @@ describe("AppSettingsTab", () => {
     await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(ctx.rename).toHaveBeenCalledWith("a1", "Shop!"));
     expect(ctx.saveApp).not.toHaveBeenCalled();
+  });
+
+  it("treats an app whose instance is gone as an ordinary app, but locks it while the instance is looked up", async () => {
+    const gone: Ownership = { loading: false, error: "", instance: null, current: null, reload: vi.fn(async () => {}) };
+    const { unmount } = renderTab({ ownership: gone });
+    expect(await screen.findByDisplayValue("Old")).toBeEnabled();
+    expect(screen.getByLabelText("Colour")).toBeEnabled();
+    expect(screen.queryByText(/are set by/)).not.toBeInTheDocument();
+    unmount();
+    renderTab({ ownership: { ...gone, loading: true } });
+    await screen.findByDisplayValue("Old");
+    expect(screen.getByLabelText("Colour")).toBeDisabled();
   });
 
   it("says when the description can't be read, and still renames", async () => {

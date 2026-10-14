@@ -102,7 +102,10 @@ export default function AppDetailsPage() {
     }
   };
 
-  const [pending, setPending] = useState<ControlAction | null>(null);
+  // The running control actions, each with its app: the page stays mounted
+  // from app to app, so another app's page must not show them.
+  const [controls, setControls] = useState<{ appId: string; action: ControlAction }[]>([]);
+  const pending = controls.find((c) => c.appId === appId)?.action ?? null;
   const [deleteOpen, setDeleteOpen] = useState(false);
   const deleteApp = useDeleteApp(appId);
   const saveAsTemplate = useSaveAsTemplate(appId, app?.name ?? "");
@@ -112,14 +115,19 @@ export default function AppDetailsPage() {
 
   const runControl = async (action: ControlAction) => {
     if (!appId) return;
-    setPending(action);
+    const entry = { appId, action };
+    // The toast outlives the page's app: it names the app it is about.
+    const label = title;
+    setControls((cur) => [...cur, entry]);
     try {
       await control(appId, action);
-      toast.success(CONTROL_DONE[action]);
+      toast.success(CONTROL_DONE[action], { description: label });
     } catch (e) {
-      toast.error(CONTROL_FAILED[action], { description: e instanceof Error ? e.message : undefined });
+      toast.error(CONTROL_FAILED[action], {
+        description: [label, e instanceof Error ? e.message : ""].filter(Boolean).join(": "),
+      });
     } finally {
-      setPending(null);
+      setControls((cur) => cur.filter((c) => c !== entry));
     }
   };
 
@@ -252,8 +260,6 @@ export default function AppDetailsPage() {
             key={app.id}
             app={app}
             status={status}
-            pending={pending}
-            onControl={(action) => void runControl(action)}
             onOpenHistory={() => setHistoryOpen(true)}
           />
         </TabsContent>

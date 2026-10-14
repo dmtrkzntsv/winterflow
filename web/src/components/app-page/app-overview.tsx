@@ -10,15 +10,14 @@ import { InlineError } from "@/components/inline-error";
 import { RestorePointsDialog } from "@/components/restore-points-dialog";
 import { Section } from "@/components/section";
 import { StatusDot, StatusPill } from "@/components/status";
-import type { App, ControlAction } from "@/context/apps-context-base";
+import { AppStatusCode, type App } from "@/context/apps-context-base";
 import { useApps } from "@/context/use-apps";
 import { useBackups } from "@/context/use-backups";
 import { useServerPath } from "@/context/use-server-path";
 import { useServers } from "@/context/use-servers";
 import { useAppRevisions } from "@/hooks/use-app-revisions";
 import { useRunBackup } from "@/hooks/use-run-backup";
-import { hasRunningContainers } from "@/lib/app-status";
-import { appAddresses, containerHint } from "@/lib/app-summary";
+import { appAddresses, containerHint, containersSummary, serviceLabels } from "@/lib/app-summary";
 import { backupRowState, restoringBackup, shownHealth, useActivity, useOverlays } from "@/lib/backup-activity";
 import type { EffectiveBackup } from "@/lib/backups";
 import { revisionFlags } from "@/lib/revisions";
@@ -28,71 +27,55 @@ import { relativeTime } from "@/lib/utils";
 
 const CARD = "min-w-0 rounded-xl border bg-card p-4";
 const LINK =
-  "inline-flex min-h-8 items-center gap-1 text-sm font-medium text-muted-foreground transition-colors duration-150 hover:text-foreground";
+  "inline-flex min-h-8 items-center gap-1 text-sm font-medium text-muted-foreground transition-colors duration-150 hover:text-foreground max-sm:min-h-10";
 
 // Retry is a failed read's message with the way to try again.
 function Retry({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
     <InlineError>
       {message}{" "}
-      <button type="button" className="underline underline-offset-4" onClick={onRetry}>
+      <button
+        type="button"
+        className="inline-flex min-h-8 items-center underline underline-offset-4 max-sm:min-h-10"
+        onClick={onRetry}
+      >
         Retry
       </button>
     </InlineError>
   );
 }
 
-// StatusWidget is the app's state, its containers with what is wrong with
-// them, and Restart (Start when it doesn't run). The API reports no start
-// time, so there is no "since".
-function StatusWidget({
-  app,
-  status,
-  pending,
-  onControl,
-}: {
-  app: App;
-  status: number | undefined;
-  pending: ControlAction | null;
-  onControl: (action: ControlAction) => void;
-}) {
+// StatusWidget is the app's containers by compose service, one line on how
+// many run, and what is wrong with the ones that don't. The state and
+// Restart/Start are in the header; the API reports no start time, so there
+// is no "since".
+function StatusWidget({ app, status }: { app: App; status: number | undefined }) {
   const { containersByApp } = useApps();
   const containers = containersByApp?.[app.id] ?? [];
-  const running = hasRunningContainers(status);
-  const action: ControlAction = running ? "restart" : "start";
+  const labels = serviceLabels(app.id, containers);
+  const stopped = status === AppStatusCode.Stopped;
   return (
-    <Section
-      title="Status"
-      className={CARD}
-      actions={
-        <Button size="sm" variant="outline" disabled={pending !== null} onClick={() => onControl(action)}>
-          {pending === action ? <Spinner className="size-4" aria-hidden /> : null}
-          {running ? "Restart" : "Start"}
-        </Button>
-      }
-    >
-      <div>
-        <StatusPill status={appStatus(status)} />
-      </div>
-      {containers.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No containers reported yet.</p>
-      ) : (
+    <Section title="Status" className={CARD}>
+      <p className="text-sm font-medium">{containersSummary(status, containers)}</p>
+      {containers.length > 0 && !stopped ? (
         <ul aria-label="Containers" className="space-y-1.5">
-          {containers.map((c) => {
+          {containers.map((c, i) => {
             const info = appStatus(c.status_code);
             const hint = containerHint(c);
             return (
               <li key={c.container_id || c.name} className="flex min-w-0 items-start gap-2">
                 <StatusDot tone={info.tone} pulse={info.pulse} label={info.label} className="mt-1.5" />
                 <span className="min-w-0">
-                  <span className="block truncate font-mono text-xs">{c.name}</span>
+                  <span className="block truncate font-mono text-xs" title={c.name}>
+                    {labels[i]}
+                  </span>
                   {hint ? <span className="block text-xs text-muted-foreground">{hint}</span> : null}
                 </span>
               </li>
             );
           })}
         </ul>
-      )}
+      ) : null}
     </Section>
   );
 }
@@ -123,7 +106,7 @@ function AccessWidget({ app }: { app: App }) {
                 href={a.url}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex min-w-0 items-center gap-1 font-medium hover:underline"
+                className="inline-flex min-w-0 items-center gap-1 font-medium hover:underline max-sm:min-h-10"
               >
                 <span className="truncate">{a.host}</span>
                 <ExternalLink className="size-3.5 shrink-0" aria-hidden />
@@ -187,7 +170,9 @@ function BackupsWidget({ app, onSettled }: { app: App; onSettled: (appId: string
       onSettled(app.id);
     };
     getApp(app.id).then(
-      (d) => settle(d.backups ?? [], ""),
+      // An unreadable recipe comes back as an empty list plus an error:
+      // that is not "no backup is set up".
+      (d) => settle(d.backups ?? [], d.backups_error ? `Backups can't be read right now: ${d.backups_error}` : ""),
       (e) => settle(null, e instanceof Error ? e.message : "Couldn't read the backups"),
     );
     return () => {
@@ -342,30 +327,31 @@ function RecentChangesWidget({ app, enabled, onOpenHistory }: { app: App; enable
   );
 }
 
-// AppOverview is the app page's default tab: status, access, resources,
-// backups and recent changes at a glance (two columns from lg, one below).
+// AppOverview is the app page's default tab: status, resources and recent
+// changes beside access and backups, at a glance (two independent columns
+// from lg, one below).
 export function AppOverview({
   app,
   status,
-  pending,
-  onControl,
   onOpenHistory,
 }: {
   app: App;
   status: number | undefined;
-  pending: ControlAction | null;
-  onControl: (action: ControlAction) => void;
   onOpenHistory: () => void;
 }) {
   // The app whose backups read has ended: the history is read after it.
   const [settledFor, setSettledFor] = useState<string | null>(null);
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
-      <StatusWidget app={app} status={status} pending={pending} onControl={onControl} />
-      <AccessWidget app={app} />
-      <ResourcesWidget app={app} />
-      <BackupsWidget app={app} onSettled={setSettledFor} />
-      <RecentChangesWidget app={app} enabled={settledFor === app.id} onOpenHistory={onOpenHistory} />
+    <div className="grid items-start gap-4 lg:grid-cols-2">
+      <div className="min-w-0 space-y-4">
+        <StatusWidget app={app} status={status} />
+        <ResourcesWidget app={app} />
+        <RecentChangesWidget app={app} enabled={settledFor === app.id} onOpenHistory={onOpenHistory} />
+      </div>
+      <div className="min-w-0 space-y-4">
+        <AccessWidget app={app} />
+        <BackupsWidget app={app} onSettled={setSettledFor} />
+      </div>
     </div>
   );
 }

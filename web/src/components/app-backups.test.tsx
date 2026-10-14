@@ -264,6 +264,8 @@ describe("AppBackups", () => {
     expect(within(row("database")).getByText("Restoring")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add backup" })).toBeDisabled();
     expect(await menuItem(user, "database", "Edit…")).toHaveAttribute("aria-disabled", "true");
+    // A second restore waits for this one, like the Overview's.
+    expect(screen.getByRole("menuitem", { name: "Restore…" })).toHaveAttribute("aria-disabled", "true");
     await user.keyboard("{Escape}");
     act(() => end());
     await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());

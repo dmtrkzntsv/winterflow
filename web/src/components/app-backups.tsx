@@ -411,7 +411,7 @@ function BackupRow({
                   Back up now
                 </DropdownMenuItem>
                 <DropdownMenuItem
-                  disabled={!b.storage}
+                  disabled={!b.storage || busy}
                   className="max-sm:min-h-10"
                   onSelect={() => menuRef.current && onPoints(menuRef.current)}
                 >

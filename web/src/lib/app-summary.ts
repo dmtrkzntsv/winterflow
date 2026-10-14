@@ -1,5 +1,5 @@
 import { AppStatusCode, type App, type AppDomain } from "@/context/apps-context-base";
-import type { ContainerStatusWire } from "@/lib/app-status";
+import { hasRunningContainers, type ContainerStatusWire } from "@/lib/app-status";
 import type { BackupHealth } from "@/lib/backups";
 import type { AppTab } from "@/lib/routes";
 
@@ -60,13 +60,18 @@ export function appsSubtitle(serverName: string, total: number, counts: AppCount
 export type AppWarning = { label: string; tab?: AppTab };
 
 // appWarning picks a card's warning: a failing backup, else a late one,
-// else shared variables changed since the app last read them. Backup health
-// never changes the app's own status.
-export function appWarning(health: BackupHealth[] | undefined, staleVars: string[] | undefined): AppWarning | null {
+// else shared variables changed since the app last read them (only while it
+// runs: a stopped app reads them on its next start). Backup health never
+// changes the app's own status.
+export function appWarning(
+  health: BackupHealth[] | undefined,
+  staleVars: string[] | undefined,
+  status: number | undefined,
+): AppWarning | null {
   const states = (health ?? []).map((h) => h.state);
   if (states.includes("failing")) return { label: "Backup failing", tab: "backups" };
   if (states.includes("late")) return { label: "Backup late", tab: "backups" };
-  if ((staleVars ?? []).length > 0) return { label: "Reload needed" };
+  if ((staleVars ?? []).length > 0 && hasRunningContainers(status)) return { label: "Reload needed" };
   return null;
 }
 
@@ -92,4 +97,30 @@ export function containerHint(c: ContainerStatusWire): string {
   const error = c.error?.trim().split("\n")[0];
   if (error) return error;
   return c.exit_code ? `Stopped with exit code ${c.exit_code}` : "Has a problem";
+}
+
+// serviceLabels names each container by its compose service: the project
+// prefix (wf-<appId>-) and the replica suffix (-1) go, the suffix staying
+// only where a service has several replicas. Keyed like the containers.
+export function serviceLabels(appId: string, containers: Pick<ContainerStatusWire, "name">[]): string[] {
+  const prefix = `wf-${appId}-`;
+  const bases = containers.map((c) => (c.name.startsWith(prefix) ? c.name.slice(prefix.length) : c.name));
+  const services = bases.map((b) => b.replace(/-\d+$/, ""));
+  return bases.map((base, i) => (services.filter((s) => s === services[i]).length > 1 ? base : services[i]));
+}
+
+// containersSummary is the one line over an app's containers: how many run
+// and what is wrong. "" when the app has none to report on.
+export function containersSummary(status: number | undefined, containers: Pick<ContainerStatusWire, "status_code">[]): string {
+  if (status === AppStatusCode.Stopped) return "Stopped — no containers running";
+  if (containers.length === 0) return "No containers reported yet";
+  const count = (...codes: number[]) => containers.filter((c) => codes.includes(c.status_code)).length;
+  const running = count(AppStatusCode.Active, AppStatusCode.Idle);
+  const noun = (n: number) => (n === 1 ? "1 container" : `${n} containers`);
+  const parts = [running === containers.length ? `${noun(running)} running` : `${running} of ${noun(containers.length)} running`];
+  const restarting = count(AppStatusCode.Restarting);
+  const problems = count(AppStatusCode.Problematic);
+  if (restarting > 0) parts.push(`${restarting} restarting`);
+  if (problems > 0) parts.push(problems === 1 ? "1 with a problem" : `${problems} with problems`);
+  return parts.join(" · ");
 }

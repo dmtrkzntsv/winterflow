@@ -22,14 +22,14 @@ describe("LogsView", () => {
     expect(screen.getByText("3 lines")).toBeInTheDocument();
 
     await user.click(within(chips).getByRole("button", { name: "web" }));
-    const log = screen.getByRole("log", { name: "Logs" });
+    const log = screen.getByRole("region", { name: "Logs" });
     expect(log).toHaveTextContent("GET /health");
     expect(log).not.toHaveTextContent("checkpoint");
     expect(within(chips).getByRole("button", { name: "web" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByText("2 lines")).toBeInTheDocument();
 
     await user.click(within(chips).getByRole("button", { name: "All" }));
-    expect(screen.getByRole("log", { name: "Logs" })).toHaveTextContent("checkpoint");
+    expect(screen.getByRole("region", { name: "Logs" })).toHaveTextContent("checkpoint");
   });
 
   it("drops the container filter when its container leaves the lines", async () => {
@@ -74,7 +74,7 @@ describe("LogsView", () => {
   it("offers Jump to latest once scrolled up, and sticks to the bottom again", async () => {
     const user = userEvent.setup();
     renderLogs([line("web", "a"), line("web", "b")]);
-    const log = screen.getByRole("log", { name: "Logs" });
+    const log = screen.getByRole("region", { name: "Logs" });
     expect(log).toHaveAttribute("tabindex", "0");
     Object.defineProperty(log, "scrollHeight", { configurable: true, value: 1000 });
     Object.defineProperty(log, "clientHeight", { configurable: true, value: 100 });

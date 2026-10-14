@@ -182,6 +182,18 @@ describe("AppsProvider and the kept histories", () => {
     expect(revisionsEpoch("a1")).toBe(2);
   });
 
+  it("keeps it across a stop or a restart, which move nothing; a pull forgets it", async () => {
+    const { result } = renderHook(() => useApps(), { wrapper });
+    await waitUntil(() => expect(result.current.loading).toBe(false));
+    await act(() => result.current.control("a1", "stop"));
+    await act(() => result.current.control("a1", "restart"));
+    expect(keptRevisions("a1", "3")).toEqual(history);
+    expect(revisionsEpoch("a1")).toBe(0);
+    await act(() => result.current.control("a1", "update"));
+    expect(keptRevisions("a1", "3")).toBeNull();
+    expect(revisionsEpoch("a1")).toBe(1);
+  });
+
   it("keeps it when the control fails", async () => {
     vi.stubGlobal("fetch", fetchMock);
     const { result } = renderHook(() => useApps(), { wrapper });

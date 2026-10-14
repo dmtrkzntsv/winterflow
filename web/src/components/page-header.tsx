@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 
-import { usePageTitle } from "@/layouts/use-page-title";
+import { useHeadingInView, usePageTitle } from "@/layouts/use-page-title";
 import { cn } from "@/lib/utils";
 
 export type PageHeaderProps = {
@@ -20,6 +20,7 @@ export type PageHeaderProps = {
 // a subtitle and the actions. It also names the page (usePageTitle).
 export function PageHeader({ title, subtitle, back, actions, className }: PageHeaderProps) {
   usePageTitle(title);
+  const h1 = useHeadingInView<HTMLHeadingElement>();
   return (
     <header className={cn("flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between", className)}>
       <div className="min-w-0 space-y-1">
@@ -32,7 +33,7 @@ export function PageHeader({ title, subtitle, back, actions, className }: PageHe
             {back.label}
           </Link>
         ) : null}
-        <h1 className="truncate text-2xl font-semibold tracking-tight">{title}</h1>
+        <h1 ref={h1} className="truncate text-2xl font-semibold tracking-tight">{title}</h1>
         {subtitle ? <p className="text-sm text-muted-foreground">{subtitle}</p> : null}
       </div>
       {actions ? <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div> : null}

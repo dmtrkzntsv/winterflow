@@ -56,9 +56,10 @@ export default function HomePage() {
     <div className="space-y-6">
       <PageHeader
         title="Apps"
-        // Until the first list arrives "no apps yet" would be a guess.
+        // Until the first list arrives "no apps yet" would be a guess, and
+        // until the first status report "0 running" would be one too.
         subtitle={
-          appsLoading && apps.length === 0
+          (appsLoading && apps.length === 0) || (apps.length > 0 && Object.keys(statusByApp).length === 0)
             ? activeServer.name
             : appsSubtitle(activeServer.name, apps.length, countApps(apps, statusByApp))
         }

@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { useApps } from "@/context/use-apps";
@@ -45,22 +45,39 @@ export function useRunBackup(appId: string): (name: string) => Promise<void> {
 
 // useBackUpNow is the app-wide Back up now (the page's ⋯ menu, ⌘K): every
 // backup winterflow can run for the app, at once (the agent runs them one
-// after the other). With none set up it says so and sends nothing. busy
-// while any backup of the app runs or is being restored (restoring: the
+// after the other). With none set up it says so and sends nothing; when the
+// app's backups can't be read it says that instead. busy while the app is
+// being read, or any backup of it runs or is being restored (restoring: the
 // latter), so a second click never queues a duplicate.
 export function useBackUpNow(appId: string): { run: () => Promise<void>; busy: boolean; restoring: boolean } {
   const { getApp } = useApps();
   const runOne = useRunBackup(appId);
   const activity = useActivity(appId);
-  const busy = Object.keys(activity).length > 0;
+  // reading: the get-app read is in flight (the ref is the synchronous
+  // guard, the state is what busy shows).
+  const reading = useRef<string | null>(null);
+  const [readingApp, setReadingApp] = useState<string | null>(null);
+  const busy = readingApp === appId || Object.keys(activity).length > 0;
   const restoring = restoringBackup(activity) !== undefined;
   const run = useCallback(async () => {
+    if (reading.current === appId) return;
+    reading.current = appId;
+    setReadingApp(appId);
     let list: EffectiveBackup[];
     try {
-      list = (await getApp(appId)).backups ?? [];
+      const d = await getApp(appId);
+      if (d.backups_error) {
+        // An unreadable recipe comes back as an empty list plus this.
+        toast.error("Couldn't read the app's backups", { description: d.backups_error });
+        return;
+      }
+      list = d.backups ?? [];
     } catch (e) {
       toast.error("Couldn't read the app's backups", { description: e instanceof Error ? e.message : undefined });
       return;
+    } finally {
+      if (reading.current === appId) reading.current = null;
+      setReadingApp((cur) => (cur === appId ? null : cur));
     }
     const ready = runnableBackups(list);
     if (ready.length === 0) {

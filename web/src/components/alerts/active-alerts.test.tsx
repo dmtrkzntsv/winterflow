@@ -60,8 +60,10 @@ describe("AppAlertsBanner", () => {
         <AppAlertsBanner serverId="s1" appId="a1" />
       </MemoryRouter>,
     );
-    const banner = await screen.findByRole("status", { name: "Firing alerts" });
+    const banner = await screen.findByRole("group", { name: "Firing alerts" });
     expect(banner).toHaveTextContent("Down");
+    // Only what fires is a live announcement; the ages ("12 min") are not.
+    expect(within(banner).getByRole("status")).toHaveTextContent(/^Down$/);
     expect(banner).toHaveTextContent("12 min");
     // The server's own CPU alert is not this app's.
     expect(banner).not.toHaveTextContent("CPU");

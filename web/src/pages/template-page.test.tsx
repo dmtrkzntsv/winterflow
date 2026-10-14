@@ -14,7 +14,11 @@ import { rollout } from "@/test/rollouts";
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
 const pageTitle = vi.hoisted(() => vi.fn());
-vi.mock("@/layouts/use-page-title", () => ({ usePageTitle: pageTitle, useCurrentPageTitle: () => "" }));
+vi.mock("@/layouts/use-page-title", () => ({
+  usePageTitle: pageTitle,
+  useCurrentPageTitle: () => "",
+  useHeadingInView: () => ({ current: null }),
+}));
 vi.mock("@/context/use-auth", () => ({ useAuth: () => ({ isAuthenticated: true }) }));
 vi.mock("@/context/use-servers", () => ({ useServers: () => ({ servers: [{ id: "s1", name: "alpha" }] }) }));
 vi.mock("@/components/code-editor", () => ({

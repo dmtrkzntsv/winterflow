@@ -8,7 +8,7 @@ import { WaitTimeoutError } from "@/context/notifications-context-base";
 import { useApps } from "@/context/use-apps";
 import { keepRevisions, keptRevisions, resetRevisionsCache, revisionsEpoch } from "@/lib/revisions";
 import { readAppDetail } from "@/hooks/use-app-detail";
-import { createSlot, heldCreates, holdCreate, onLateCreate } from "@/lib/held-creates";
+import { claimCreate, holdCreate, onUnattendedCreate, pendingCreates } from "@/lib/held-creates";
 
 vi.mock("@/context/use-auth", () => ({ useAuth: () => ({ isAuthenticated: true }) }));
 vi.mock("@/context/use-servers", () => ({ useServers: () => ({ activeServerId: "srv-1" }) }));
@@ -302,15 +302,33 @@ describe("AppsProvider failed deploys", () => {
       .catch((e: unknown) => e);
     expect(err).toBeInstanceOf(WaitTimeoutError);
     expect((err as WaitTimeoutError).ref).toBe("save-1");
-    holdCreate({ slot: createSlot("srv-1", "web"), serverId: "srv-1", name: "web", before: new Set(), ref: "save-1" });
+    const c = claimCreate("srv-1", "web", new Set())!;
+    holdCreate(c.slot, "save-1");
     const heard = vi.fn();
-    const stop = onLateCreate(heard);
+    const stop = onUnattendedCreate(heard);
     act(() => {
       for (const h of handlers) h({ type: "operation_result", ref: "save-1", status: 1, error: "boom" } as never);
     });
+    // Once the list is read again.
+    await waitUntil(() => expect(heard).toHaveBeenCalledWith(expect.objectContaining({ name: "web" }), { failed: true, error: "boom" }));
     stop();
-    expect(heard).toHaveBeenCalledWith(expect.objectContaining({ name: "web" }), { failed: true, error: "boom" });
-    expect(heldCreates()).toEqual([]);
+    expect(pendingCreates()).toEqual([]);
+  });
+
+  it("hands a late success the list read again, its app among it", async () => {
+    const { result } = renderHook(() => useApps(), { wrapper });
+    await waitUntil(() => expect(result.current.loading).toBe(false));
+    waitFor.mockRejectedValueOnce(new WaitTimeoutError());
+    await result.current.saveApp({ app: { name: "web" }, config: {}, files: [], variables: [] }).catch(() => {});
+    const c = claimCreate("srv-1", "web", new Set())!;
+    holdCreate(c.slot, "save-1");
+    const heard = vi.fn();
+    const stop = onUnattendedCreate(heard);
+    act(() => {
+      for (const h of handlers) h({ type: "operation_result", ref: "save-1", status: 0 } as never);
+    });
+    await waitUntil(() => expect(heard).toHaveBeenCalledWith(expect.objectContaining({ name: "web" }), { failed: false, error: "", list: [] }));
+    stop();
   });
 
   it("reconciles: waits for the agent's list, then reads the catalog again", async () => {

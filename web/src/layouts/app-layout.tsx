@@ -5,6 +5,7 @@ import { Menu, Search } from "lucide-react"
 import { AlertToasts } from "@/components/alerts/alert-toasts"
 import { AppSidebar } from "@/components/app-sidebar"
 import { CommandPalette } from "@/components/command-palette"
+import { CreateOutcomes } from "@/components/new-app/create-outcomes"
 import { NewAppDialogProvider } from "@/components/new-app/new-app-dialog-provider"
 import { ServerSelectionDialog } from "@/components/server-creation-dialog"
 import { Button } from "@/components/ui/button"
@@ -136,6 +137,7 @@ export function AppLayout() {
               <AppMain onAddServer={handleAddServer} />
               <CommandPalette onAddServer={handleAddServer} />
               <AlertToasts />
+              <CreateOutcomes />
               {!isStandalone ? (
                 <ServerSelectionDialog
                   isOpen={isServerDialogOpen}

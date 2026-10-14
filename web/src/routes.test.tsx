@@ -30,6 +30,7 @@ vi.mock("@/context/use-profile", () => ({
 vi.mock("@/components/command-palette", () => ({ CommandPalette: () => null }));
 vi.mock("@/components/app-sidebar", () => ({ AppSidebar: () => null }));
 vi.mock("@/components/alerts/alert-toasts", () => ({ AlertToasts: () => null }));
+vi.mock("@/components/new-app/create-outcomes", () => ({ CreateOutcomes: () => null }));
 vi.mock("@/components/server-creation-dialog", () => ({ ServerSelectionDialog: () => null }));
 vi.mock("@/components/new-app/new-app-dialog-provider", () => ({
   NewAppDialogProvider: ({ children }: { children: ReactNode }) => children,

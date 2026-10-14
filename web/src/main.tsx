@@ -18,12 +18,15 @@ import { AppLayout } from "@/layouts/app-layout"
 import LoginPage from "@/pages/login"
 import RegisterPage from "@/pages/register"
 import { startTheme } from "@/lib/theme"
+import { startCreateSync } from "@/lib/held-creates"
 import { appRoutes } from "@/routes"
 import "./index.css"
 
 // Light, dark or the system's (the user menu and ⌘K switch it); applied
 // before the first render so nothing flashes.
 startTheme()
+// Tabs share the creates in flight, so two can't create one app twice.
+startCreateSync()
 
 // The servers and apps providers sit inside the router: the active server is
 // read from the URL. The signed-in pages are the route table in routes.tsx.

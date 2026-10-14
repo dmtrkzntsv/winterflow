@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useParams } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,7 +7,15 @@ import { AppsContext, type App, type AppsContextValue } from "@/context/apps-con
 import { WaitTimeoutError } from "@/context/notifications-context-base";
 import { COMPOSE_CREATE_WAIT_MS, GIT_CREATE_WAIT_MS, useCreateApp } from "@/hooks/use-create-app";
 import { emptyEditorState, newGitSource } from "@/lib/app-editor-io";
-import { HELD_CREATE_CAP_MS, heldCreates, resetHeldCreates, settleLateCreate } from "@/lib/held-creates";
+import {
+  HELD_CREATE_CAP_MS,
+  claimCreate,
+  onCreateExpiry,
+  onUnattendedCreate,
+  pendingCreates,
+  resetHeldCreates,
+  settleLateCreate,
+} from "@/lib/held-creates";
 import type { AppEditorState } from "@/types/app-config";
 
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), info: vi.fn() }));
@@ -27,8 +35,8 @@ const named = (name: string, git = false): AppEditorState => {
   return { ...s, config: { ...s.config, name, ...(git ? { source: { ...newGitSource(), repo_url: "https://x/y" } } : {}) } };
 };
 
-function Creator({ start }: { start: AppEditorState }) {
-  const { create, busy, error, stillCreating } = useCreateApp("s1");
+function Creator({ start, holding = "" }: { start: AppEditorState; holding?: string }) {
+  const { create, busy, error, stillCreating } = useCreateApp("s1", holding);
   return (
     <>
       <button onClick={() => void create(start)}>create</button>
@@ -45,7 +53,7 @@ function Landing() {
 
 type SaveApp = AppsContextValue["saveApp"];
 
-function setup(saveApp: SaveApp, start = named("shop")) {
+function setup(saveApp: SaveApp, start = named("shop"), holding = "") {
   const reconcile = vi.fn(async () => [] as App[]);
   const noteDeployFailure = vi.fn();
   const value = (apps: App[]) => ({ apps, saveApp, getPublicKey: async () => "K", reconcile, noteDeployFailure }) as unknown as AppsContextValue;
@@ -53,8 +61,9 @@ function setup(saveApp: SaveApp, start = named("shop")) {
     <MemoryRouter initialEntries={["/server/s1/new"]}>
       <AppsContext.Provider value={value(apps)}>
         <Routes>
-          <Route path="/server/s1/new" element={show ? <Creator start={start} /> : <p>left</p>} />
+          <Route path="/server/s1/new" element={show ? <Creator start={start} holding={holding} /> : <p>left</p>} />
           <Route path="/server/s1/app/:appId" element={<Landing />} />
+          <Route path="/server/s1" element={<p>apps</p>} />
         </Routes>
       </AppsContext.Provider>
     </MemoryRouter>
@@ -148,7 +157,7 @@ describe("useCreateApp", () => {
     expect(await screen.findByText("app b1")).toBeInTheDocument();
   });
 
-  it("keeps the name claimed after the form is left, until the late result comes", async () => {
+  it("keeps the name claimed after the form is left, and the reopened form opens the app when the late result comes", async () => {
     const user = userEvent.setup();
     const saveApp = vi.fn<SaveApp>(async () => Promise.reject(timeout("r7")));
     const { rerender, tree } = setup(saveApp);
@@ -163,13 +172,125 @@ describe("useCreateApp", () => {
     expect(saveApp).toHaveBeenCalledTimes(1);
     // Another command's result is not it.
     act(() => settleLateCreate("other", { failed: false, error: "" }));
-    expect(heldCreates()).toHaveLength(1);
-    act(() => settleLateCreate("r7", { failed: false, error: "" }));
-    expect(screen.getByText("still -")).toBeInTheDocument();
-    saveApp.mockResolvedValueOnce([app("n1", "shop")]);
+    expect(pendingCreates()).toHaveLength(1);
+    act(() => settleLateCreate("r7", { failed: false, error: "", list: [app("old", "blog"), app("n1", "shop")] }));
+    expect(await screen.findByText("app n1")).toBeInTheDocument();
+    expect(toast.success).toHaveBeenCalledWith("App created");
+    expect(pendingCreates()).toHaveLength(0);
+  });
+
+  it("explains a late failure on the reopened form, and frees Create", async () => {
+    const user = userEvent.setup();
+    const saveApp = vi.fn<SaveApp>(async () => Promise.reject(timeout("r8")));
+    const { rerender, tree } = setup(saveApp);
     await user.click(screen.getByRole("button", { name: "create" }));
-    await waitFor(() => expect(saveApp).toHaveBeenCalledTimes(2));
-    await act(async () => {});
+    await screen.findByText("still shop");
+    rerender(tree([], false));
+    rerender(tree([]));
+    act(() => settleLateCreate("r8", { failed: true, error: "pull access denied" }));
+    expect(await screen.findByText("error pull access denied")).toBeInTheDocument();
+    expect(screen.getByText("still -")).toBeInTheDocument();
+  });
+
+  it("only toasts a late success on a form that holds another app's name now", async () => {
+    const user = userEvent.setup();
+    const saveApp = vi.fn<SaveApp>(async () => Promise.reject(timeout("r9")));
+    const view = setup(saveApp);
+    await user.click(screen.getByRole("button", { name: "create" }));
+    await screen.findByText("still shop");
+    view.unmount();
+    setup(saveApp, named("blog"), "blog");
+    act(() => settleLateCreate("r9", { failed: false, error: "", list: [app("n1", "shop")] }));
+    expect(toast.success).toHaveBeenCalledWith("shop is ready", expect.objectContaining({ action: expect.objectContaining({ label: "Open" }) }));
+    expect(screen.getByRole("button", { name: "create" })).toBeInTheDocument();
+  });
+
+  it("shows a create still in its first wait as still creating on a reopened form, which opens the app when it lands", async () => {
+    const user = userEvent.setup();
+    let answer: (list: App[]) => void = () => {};
+    const saveApp = vi.fn<SaveApp>(() => new Promise<App[]>((resolve) => (answer = resolve)));
+    const { rerender, tree } = setup(saveApp);
+    await user.click(screen.getByRole("button", { name: "create" }));
+    expect(await screen.findByText("busy true")).toBeInTheDocument();
+    // The form that sent it says busy, not still creating.
+    expect(screen.getByText("still -")).toBeInTheDocument();
+    rerender(tree([], false));
+    rerender(tree([]));
+    expect(screen.getByText("still shop")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "create" }));
+    expect(saveApp).toHaveBeenCalledTimes(1);
+    await act(async () => answer([app("old", "blog"), app("n1", "shop")]));
+    expect(await screen.findByText("app n1")).toBeInTheDocument();
+    expect(pendingCreates()).toHaveLength(0);
+  });
+
+  it("doesn't open anything from a form that was left: the outcome goes to the shell", async () => {
+    const user = userEvent.setup();
+    let fail: (e: Error) => void = () => {};
+    const saveApp = vi.fn<SaveApp>(() => new Promise<App[]>((_, reject) => (fail = reject)));
+    const unattended = vi.fn();
+    const { rerender, tree, reconcile } = setup(saveApp);
+    onUnattendedCreate(unattended);
+    await user.click(screen.getByRole("button", { name: "create" }));
+    await screen.findByText("busy true");
+    rerender(tree([], false));
+    await act(async () => fail(new Error("refused: bad compose file")));
+    expect(screen.getByText("left")).toBeInTheDocument();
+    expect(unattended).toHaveBeenCalledWith(expect.objectContaining({ name: "shop" }), {
+      failed: true,
+      error: "refused: bad compose file",
+      left: null,
+    });
+    expect(reconcile).not.toHaveBeenCalled();
+  });
+
+  it("hands a success that lands after the form was left to the shell", async () => {
+    const user = userEvent.setup();
+    let answer: (list: App[]) => void = () => {};
+    const saveApp = vi.fn<SaveApp>(() => new Promise<App[]>((resolve) => (answer = resolve)));
+    const unattended = vi.fn();
+    const { rerender, tree } = setup(saveApp);
+    onUnattendedCreate(unattended);
+    await user.click(screen.getByRole("button", { name: "create" }));
+    await screen.findByText("busy true");
+    rerender(tree([], false));
+    await act(async () => answer([app("n1", "shop")]));
+    expect(screen.getByText("left")).toBeInTheDocument();
+    expect(unattended).toHaveBeenCalledWith(expect.objectContaining({ name: "shop" }), { failed: false, error: "", list: [app("n1", "shop")] });
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it("doesn't open the app a late failure left when the form is left while the list is read", async () => {
+    const user = userEvent.setup();
+    const saveApp = vi.fn<SaveApp>(async () => Promise.reject(timeout("r6")));
+    const unattended = vi.fn();
+    const { rerender, tree, reconcile, noteDeployFailure } = setup(saveApp);
+    onUnattendedCreate(unattended);
+    await user.click(screen.getByRole("button", { name: "create" }));
+    await screen.findByText("still shop");
+    let listed: (list: App[]) => void = () => {};
+    reconcile.mockImplementationOnce(() => new Promise<App[]>((resolve) => (listed = resolve)));
+    act(() => settleLateCreate("r6", { failed: true, error: "port is already allocated" }));
+    rerender(tree([], false));
+    await act(async () => listed([app("old", "blog"), app("n1", "shop")]));
+    expect(screen.getByText("left")).toBeInTheDocument();
+    expect(noteDeployFailure).toHaveBeenCalledWith("n1", "port is already allocated");
+    expect(unattended).toHaveBeenCalledWith(expect.objectContaining({ name: "shop" }), {
+      failed: true,
+      error: "port is already allocated",
+      left: app("n1", "shop"),
+    });
+    expect(reconcile).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a name another tab is creating", async () => {
+    const user = userEvent.setup();
+    const saveApp = vi.fn<SaveApp>(async () => [app("n1", "shop")]);
+    setup(saveApp);
+    act(() => void claimCreate("s1", "shop", new Set()));
+    await user.click(screen.getByRole("button", { name: "create" }));
+    expect(saveApp).not.toHaveBeenCalled();
+    expect(screen.getByText("still shop")).toBeInTheDocument();
   });
 
   it("gives the name back after the cap when no result ever comes", async () => {
@@ -181,9 +302,16 @@ describe("useCreateApp", () => {
       await screen.findByText("still shop");
       act(() => vi.advanceTimersByTime(HELD_CREATE_CAP_MS - 1000));
       expect(screen.getByText("still shop")).toBeInTheDocument();
+      // The agent's list is read once before the name is freed.
+      let listed: () => void = () => {};
+      const reconcile = vi.fn(() => new Promise<void>((resolve) => (listed = resolve)));
+      onCreateExpiry(reconcile);
       act(() => vi.advanceTimersByTime(1000));
+      expect(reconcile).toHaveBeenCalledTimes(1);
+      expect(screen.getByText("still shop")).toBeInTheDocument();
+      await act(async () => listed());
       expect(screen.getByText("still -")).toBeInTheDocument();
-      expect(heldCreates()).toHaveLength(0);
+      expect(pendingCreates()).toHaveLength(0);
     } finally {
       vi.useRealTimers();
     }
@@ -192,11 +320,11 @@ describe("useCreateApp", () => {
   it("opens the app when a late result says the create went through and the list shows it", async () => {
     const user = userEvent.setup();
     const saveApp = vi.fn<SaveApp>(async () => Promise.reject(timeout("r2")));
-    const { rerender, tree } = setup(saveApp);
+    setup(saveApp);
     await user.click(screen.getByRole("button", { name: "create" }));
     await screen.findByText("still shop");
-    act(() => settleLateCreate("r2", { failed: false, error: "" }));
-    rerender(tree([app("old", "blog"), app("n1", "shop")]));
+    // The list the provider read again shows it.
+    act(() => settleLateCreate("r2", { failed: false, error: "", list: [app("old", "blog"), app("n1", "shop")] }));
     expect(await screen.findByText("app n1")).toBeInTheDocument();
     expect(toast.success).toHaveBeenCalledWith("App created");
   });

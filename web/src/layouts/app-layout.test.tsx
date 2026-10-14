@@ -32,6 +32,7 @@ vi.mock("@/components/new-app/new-app-dialog-provider", () => ({
   NewAppDialogProvider: ({ children }: { children: ReactNode }) => children,
 }));
 vi.mock("@/components/alerts/alert-toasts", () => ({ AlertToasts: () => null }));
+vi.mock("@/components/new-app/create-outcomes", () => ({ CreateOutcomes: () => null }));
 vi.mock("@/components/server-creation-dialog", () => ({ ServerSelectionDialog: () => null }));
 
 function Page({ title }: { title: string }) {

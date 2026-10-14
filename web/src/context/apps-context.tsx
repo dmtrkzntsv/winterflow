@@ -251,10 +251,14 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       if (n.type !== "operation_result") return;
       if (!n.ref || !pendingRefs.current.has(n.ref)) return;
       pendingRefs.current.delete(n.ref);
-      // A create that outlived its wait gives its name back (and its form,
-      // when open, hears how it ended) before the list is read again.
-      settleLateCreate(n.ref, { failed: !!n.status, error: n.error || "Operation failed" });
-      void loadApps();
+      // A create that outlived its wait gives its name back once the list
+      // is read again (its app listed when it went through), and how it
+      // ended reaches a create form, or the shell's toast.
+      const ref = n.ref;
+      const failed = !!n.status;
+      void loadApps().then((list) =>
+        settleLateCreate(ref, failed ? { failed, error: n.error || "Operation failed" } : { failed, error: "", list }),
+      );
     });
     return unsubscribe;
   }, [subscribe, loadApps]);

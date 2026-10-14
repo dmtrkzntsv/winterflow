@@ -13,6 +13,7 @@ import { ProfileContext, type ProfileContextValue } from "@/context/profile-cont
 import { useInboxUnread } from "@/hooks/use-inbox-unread";
 import { inboxSeenKey, readInboxSeen } from "@/lib/inbox";
 import { fakeAPI } from "@/test/fake-api";
+import { flushPending } from "@/test/flush";
 
 function Probe() {
   const { count, isUnread, markAllRead } = useInboxUnread();
@@ -122,7 +123,7 @@ describe("useInboxUnread", () => {
     await waitFor(() => expect(readInboxSeen("u1")).not.toBeNull());
     // Let the events arrive before asserting that they aren't counted.
     await waitFor(() => expect(api.calls).toHaveLength(1));
-    await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
+    await flushPending();
     expect(count()).toHaveTextContent("0");
   });
 

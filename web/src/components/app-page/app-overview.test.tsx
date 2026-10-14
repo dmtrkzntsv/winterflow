@@ -9,6 +9,7 @@ import { forgetRevisions, resetRevisionsCache } from "@/lib/revisions";
 import { resetHeldHealth } from "@/lib/backup-activity";
 import type { BackupHealth, EffectiveBackup } from "@/lib/backups";
 import type { RegisteredDomain } from "@/lib/domains";
+import { flushPending } from "@/test/flush";
 
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
@@ -268,7 +269,8 @@ describe("AppOverview", () => {
     let release: (v: unknown) => void = () => {};
     ctx.getApp.mockReturnValue(new Promise((resolve) => (release = resolve)));
     renderOverview();
-    await new Promise((r) => setTimeout(r, 30));
+    await waitFor(() => expect(ctx.getApp).toHaveBeenCalled());
+    await flushPending();
     expect(ctx.getRevisions).not.toHaveBeenCalled();
     release({ backups: LIST });
     await waitFor(() => expect(ctx.getRevisions).toHaveBeenCalledTimes(1));

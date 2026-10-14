@@ -58,11 +58,17 @@ function DeltaPill({
         className={cn(
           "inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 font-medium tabular-nums",
           good === undefined && "bg-muted text-muted-foreground",
-          good === true && "bg-emerald-500/12 text-emerald-700 dark:text-emerald-400",
-          good === false && "bg-red-500/12 text-red-700 dark:text-red-400",
+          // The tone is on the tint and the arrow; the figure stays foreground.
+          good === true && "bg-status-ok/15 text-foreground",
+          good === false && "bg-status-bad/15 text-foreground",
         )}
       >
-        {Arrow ? <Arrow className="size-3" aria-hidden /> : null}
+        {Arrow ? (
+          <Arrow
+            className={cn("size-3", good === true && "text-status-ok", good === false && "text-status-bad")}
+            aria-hidden
+          />
+        ) : null}
         {direction === "flat" ? "0%" : formatDelta(delta)}
       </span>
       <span className="truncate whitespace-nowrap text-muted-foreground">{label}</span>

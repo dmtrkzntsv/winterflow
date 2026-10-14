@@ -109,6 +109,12 @@ describe("TemplateInstances", () => {
     expect(within(rows[1]).queryByRole("button", { name: "Update" })).not.toBeInTheDocument();
   });
 
+  it("names a server it doesn't know as \"a server\", never by its id", () => {
+    renderInstances([inst({ server_id: "0f8e2c41-gone" })]);
+    expect(screen.getByRole("listitem")).toHaveTextContent("on a server");
+    expect(screen.queryByText(/0f8e2c41/)).not.toBeInTheDocument();
+  });
+
   it("upgrades one instance, asking only for the newly required value", async () => {
     const user = userEvent.setup();
     const api = fakeAPI({
@@ -207,7 +213,8 @@ describe("TemplateInstances", () => {
     renderInstances([inst({}), inst({ key: "k2", app_id: "a2", state: "pending", last_error: "pull access denied" })]);
     const rows = screen.getAllByRole("listitem");
     expect(within(rows[0]).queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
-    expect(within(rows[1]).getByText("pull access denied")).toBeInTheDocument();
+    // The failure reads at body size, not as small red text.
+    expect(within(rows[1]).getByText("pull access denied").closest(".text-sm")).not.toBeNull();
     await user.click(within(rows[1]).getByRole("button", { name: "Delete" }));
     const dialog = await screen.findByRole("alertdialog");
     expect(dialog).toHaveTextContent("Its deploy never succeeded. Deleting removes whatever it left on alpha.");

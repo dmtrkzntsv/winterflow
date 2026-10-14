@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { MoreHorizontal, Plus, RefreshCw } from "lucide-react";
+import { CircleX, Plus, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Spinner } from "@/components/ui/spinner";
 import { AddBackupDialog } from "@/components/add-backup-dialog";
 import { BackupEditDialog } from "@/components/backup-edit-dialog";
 import { BackupStorageDialog } from "@/components/backup-storage-dialog";
 import { InlineError } from "@/components/inline-error";
 import { RestorePointsDialog } from "@/components/restore-points-dialog";
+import { RowMenu } from "@/components/row-menu";
 import { RowList } from "@/components/section";
 import { StatusPill } from "@/components/status";
 import { useApps } from "@/context/use-apps";
@@ -216,7 +216,7 @@ export function AppBackups({ appId }: { appId: string }) {
         </div>
       </div>
       {restoring ? (
-        <p role="status" className="flex items-start gap-2 rounded-md bg-sky-500/10 px-3 py-2 text-sm text-sky-800 dark:text-sky-300">
+        <p role="status" className="flex items-start gap-2 rounded-md border bg-muted/50 px-3 py-2 text-sm text-foreground">
           <Spinner aria-hidden className="mt-0.5 size-4 shrink-0" />
           <span>
             Restoring <strong className="font-mono font-medium">{restoring}</strong>: the app is stopped until it is done, which can take a while for
@@ -351,7 +351,6 @@ function BackupRow({
   onPoints: (trigger: HTMLElement) => void;
   onEdit: (trigger: HTMLElement) => void;
 }) {
-  const menuRef = useRef<HTMLButtonElement>(null);
   const builtin = b.type !== "custom";
   const kinds = activity ?? [];
   const { state, restoring: restoringRow, running, note } = backupRowState(b, health, kinds);
@@ -387,45 +386,20 @@ function BackupRow({
             Set up…
           </Button>
         )}
-        <DropdownMenu modal={false}>
-          <DropdownMenuTrigger asChild>
-            <Button
-              ref={menuRef}
-              size="icon"
-              variant="ghost"
-              className="size-8 text-muted-foreground max-sm:size-10"
-              aria-label={`Actions for ${b.name}`}
-            >
-              <MoreHorizontal className="size-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            {b.storage ? null : (
-              <DropdownMenuItem disabled={busy} onSelect={() => menuRef.current && onSetUp(menuRef.current)}>
-                Set up…
-              </DropdownMenuItem>
-            )}
-            {builtin ? (
-              <>
-                <DropdownMenuItem disabled={runDisabled} onSelect={onRun}>
-                  Back up now
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  disabled={!b.storage || busy}
-                  onSelect={() => menuRef.current && onPoints(menuRef.current)}
-                >
-                  <span className="grid">
-                    Restore…
-                    {b.storage ? null : <span className="text-xs text-muted-foreground">Set up the backup first: its copies are kept in its storage</span>}
-                  </span>
-                </DropdownMenuItem>
-              </>
-            ) : null}
-            <DropdownMenuItem disabled={busy} onSelect={() => menuRef.current && onEdit(menuRef.current)}>
-              Edit…
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <RowMenu
+          label={`Actions for ${b.name}`}
+          items={[
+            !b.storage && { label: "Set up…", disabled: busy, onSelect: (t) => t && onSetUp(t) },
+            builtin && { label: "Back up now", disabled: runDisabled, onSelect: () => onRun() },
+            builtin && {
+              label: "Restore…",
+              disabled: !b.storage || busy,
+              hint: b.storage ? undefined : "Set up the backup first: its copies are kept in its storage",
+              onSelect: (t) => t && onPoints(t),
+            },
+            { label: "Edit…", disabled: busy, onSelect: (t) => t && onEdit(t) },
+          ]}
+        />
       </div>
     </li>
   );
@@ -437,8 +411,11 @@ function RowError({ error }: { error: string }) {
   const summary = errorSummary(error);
   const more = summary !== error.trim();
   return (
-    <div className="mt-1 text-xs text-destructive [overflow-wrap:anywhere]">
-      <span>{summary}</span>
+    <div className="mt-1 text-xs text-foreground [overflow-wrap:anywhere]">
+      <span className="inline-flex items-start gap-1">
+        <CircleX className="mt-px size-3.5 shrink-0 text-destructive" aria-hidden />
+        {summary}
+      </span>
       {more ? (
         <details className="mt-0.5">
           <summary className="w-fit cursor-pointer text-muted-foreground hover:text-foreground">Details</summary>

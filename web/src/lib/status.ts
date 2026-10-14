@@ -21,7 +21,7 @@ export const TONE_DOT_CLASS: Record<StatusTone, string> = {
 export const TONE_PILL_CLASS: Record<StatusTone, string> = {
   ok: "bg-status-ok/15 text-foreground",
   warn: "bg-status-warn/15 text-foreground",
-  bad: "bg-status-bad/15 text-status-bad",
+  bad: "bg-status-bad/15 text-foreground",
   idle: "bg-muted text-muted-foreground",
 };
 

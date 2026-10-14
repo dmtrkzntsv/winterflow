@@ -53,11 +53,13 @@ export function RowList({ children, label, className }: { children: ReactNode; l
 }
 
 // Row is one item of a RowList: leading visual, title (a link covering the
-// row when `to` is set), description, meta and actions (above the link).
+// row when `to` is set), description, detail (under it, wrapping, above the
+// link: an error with its Details), meta and actions (above the link).
 export function Row({
   title,
   leading,
   description,
+  detail,
   meta,
   actions,
   to,
@@ -67,6 +69,7 @@ export function Row({
   title: ReactNode;
   leading?: ReactNode;
   description?: ReactNode;
+  detail?: ReactNode;
   meta?: ReactNode;
   actions?: ReactNode;
   to?: string;
@@ -96,6 +99,7 @@ export function Row({
             )}
           </div>
           {description ? <div className="truncate text-xs text-muted-foreground">{description}</div> : null}
+          {detail ? <div className="relative z-10 mt-1">{detail}</div> : null}
         </div>
       </div>
       {meta ? <div className="text-xs text-muted-foreground sm:text-right">{meta}</div> : null}

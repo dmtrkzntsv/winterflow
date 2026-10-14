@@ -125,7 +125,7 @@ export default function TemplatePage() {
     lastProgress.current = progress;
     if (prev && progress && prev !== progress) reloadInstances();
   }, [progress, reloadInstances]);
-  const serverName = (id: string) => servers.find((s) => s.id === id)?.name ?? id;
+  const serverName = (id: string) => servers.find((s) => s.id === id)?.name ?? "a server";
 
   const upgradeAll = async () => {
     if (!view) return;

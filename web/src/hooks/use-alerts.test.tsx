@@ -1,10 +1,11 @@
 import { act, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { useActiveAlerts } from "@/hooks/use-alerts";
+import { alertStoreCount, useActiveAlerts } from "@/hooks/use-alerts";
 import type { ActiveAlert } from "@/lib/alerts";
 import { fakeAPI } from "@/test/fake-api";
 import { fakeNotifications } from "@/test/notifications";
+import { flushPending } from "@/test/flush";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -18,7 +19,6 @@ function Reader({ name, server = "s1" }: { name: string; server?: string }) {
   return <p data-testid={name}>{data.length}</p>;
 }
 
-const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 20)); });
 
 describe("useActiveAlerts", () => {
   it("shares one poller between readers of the same query", async () => {
@@ -33,12 +33,12 @@ describe("useActiveAlerts", () => {
     );
     await vi.waitFor(() => expect(screen.getByTestId("card")).toHaveTextContent("1"));
     expect(screen.getByTestId("banner")).toHaveTextContent("1");
-    await settle();
+    await flushPending();
     expect(api.calls.map((c) => c.query).sort()).toEqual(["?server_id=s1", "?server_id=s2"]);
 
     // One notification reaches both readers but reads once per query.
     act(() => sse.emit({ type: "alert", ref: "", payload: {} }));
-    await settle();
+    await flushPending();
     expect(api.calls.filter((c) => c.query === "?server_id=s1")).toHaveLength(2);
   });
 
@@ -53,5 +53,19 @@ describe("useActiveAlerts", () => {
     await vi.waitFor(() => expect(screen.getByTestId("b")).toHaveTextContent("1"));
     expect(api.calls).toHaveLength(2);
     again.unmount();
+  });
+
+  it("keeps no store for a query nobody reads any more", async () => {
+    fakeAPI({ "/api/v1/alerts/get-active": [down] });
+    const view = render(
+      <>
+        <Reader name="a" server="s7" />
+        <Reader name="b" server="s8" />
+      </>,
+    );
+    await vi.waitFor(() => expect(screen.getByTestId("b")).toHaveTextContent("1"));
+    expect(alertStoreCount()).toBe(2);
+    view.unmount();
+    expect(alertStoreCount()).toBe(0);
   });
 });

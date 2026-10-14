@@ -13,6 +13,7 @@ import type { InstanceView, TemplateView } from "@/lib/templates";
 import type { DraftState } from "@/lib/template-draft";
 import { trackActivity } from "@/lib/backup-activity";
 import { fakeAPI } from "@/test/fake-api";
+import { flushPending } from "@/test/flush";
 
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
@@ -855,7 +856,7 @@ describe("AppDetailsPage of a template instance", () => {
     expect(await screen.findByText("the plain editor")).toBeInTheDocument();
     await act(async () => answer());
     // a1's late answer must not reach a2's page.
-    await new Promise((r) => setTimeout(r, 50));
+    await flushPending();
     expect(screen.getByText("the plain editor")).toBeInTheDocument();
     expect(screen.queryByText(/Managed by template/)).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "From template twillingate" })).not.toBeInTheDocument();

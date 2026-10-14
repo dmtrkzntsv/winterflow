@@ -10,6 +10,7 @@ import { RevisionBadge } from "@/components/app-page/revision-badge";
 import type { AppRevision } from "@/context/apps-context-base";
 import { useApps } from "@/context/use-apps";
 import { useAppRevisions } from "@/hooks/use-app-revisions";
+import { useConfirmTarget } from "@/hooks/use-confirm-target";
 import { revisionFlags } from "@/lib/revisions";
 import { isManagedByTemplate } from "@/lib/templates";
 import { cn, relativeTime } from "@/lib/utils";
@@ -35,7 +36,8 @@ export function HistoryPanel({
   const { rollback, control, refresh } = useApps();
   const { data, loading, error, reload } = useAppRevisions(appId);
   const [busy, setBusy] = useState(false);
-  const [target, setTarget] = useState<AppRevision | null>(null);
+  const confirm = useConfirmTarget<AppRevision>();
+  const target = confirm.target;
 
   // doRollback reports its failure and throws it again, so the confirm
   // dialog stays open for a retry.
@@ -148,7 +150,7 @@ export function HistoryPanel({
                     Deploy draft
                   </Button>
                 ) : !isCurrent && !templated ? (
-                  <Button size="sm" variant="ghost" disabled={busy || loading} onClick={() => setTarget(rev)}>
+                  <Button size="sm" variant="ghost" disabled={busy || loading} onClick={() => confirm.ask(rev)}>
                     <History className="size-4" aria-hidden /> Roll back
                   </Button>
                 ) : null}
@@ -158,10 +160,8 @@ export function HistoryPanel({
         })}
       </ol>
       <ConfirmDialog
-        open={target !== null}
-        onOpenChange={(open) => {
-          if (!open) setTarget(null);
-        }}
+        open={confirm.open}
+        onOpenChange={confirm.onOpenChange}
         title={target ? `Roll back to “${target.subject}”?` : "Roll back?"}
         description="The app's files and variables go back to this version as a new entry in the history, and the app is redeployed. Nothing is lost: you can roll forward again."
         confirmLabel="Roll back"

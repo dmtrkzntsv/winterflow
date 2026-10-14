@@ -20,8 +20,8 @@ describe("useRegistrations", () => {
 
   it("asks nothing while disabled (a server without the built-in proxy)", async () => {
     const api = fakeAPI({ "/api/v1/domain/get-domains": { domains: [] } });
+    // renderHook runs the effect (inside act): a read would have started.
     renderHook(() => useRegistrations("s1", false));
-    await new Promise((r) => setTimeout(r, 20));
     expect(api.calls).toEqual([]);
   });
 

@@ -18,6 +18,7 @@ import { useServers } from "@/context/use-servers"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useServerShortcuts } from "@/hooks/use-server-shortcuts"
 import { PageTitleProvider } from "@/layouts/page-title"
+import type { ShellOutlet } from "@/layouts/shell-outlet"
 import { useTopBarTitle } from "@/layouts/use-page-title"
 import { isWidePath, settingsPath } from "@/lib/routes"
 import { cn } from "@/lib/utils"
@@ -57,7 +58,7 @@ function MobileTopBar() {
 
 // AppMain is the page area: the sky wash, no breadcrumb bar (every page
 // starts with its own PageHeader), reading pages capped near 1100px.
-function AppMain() {
+function AppMain({ onAddServer }: ShellOutlet) {
   const isMobile = useIsMobile()
   const { pathname } = useLocation()
   return (
@@ -70,7 +71,7 @@ function AppMain() {
           !isWidePath(pathname) && "max-w-[1100px]",
         )}
       >
-        <Outlet />
+        <Outlet context={{ onAddServer } satisfies ShellOutlet} />
       </div>
     </SidebarInset>
   )
@@ -106,7 +107,7 @@ export function AppLayout() {
         <CommandPaletteProvider>
           <SidebarProvider style={SIDEBAR_STYLE}>
             <AppSidebar onAddServer={handleAddServer} />
-            <AppMain />
+            <AppMain onAddServer={handleAddServer} />
             <CommandPalette onAddServer={handleAddServer} />
             <AlertToasts />
             {!isStandalone ? (

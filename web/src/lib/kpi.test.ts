@@ -11,7 +11,6 @@ import {
   latestValue,
   percentCeiling,
   periodDelta,
-  serverPresence,
   withNetTotal,
 } from "@/lib/kpi";
 import type { ChartRow } from "@/lib/metrics";
@@ -132,14 +131,6 @@ describe("kpi helpers", () => {
     expect(formatAge(3 * 3600_000)).toBe("3h");
     expect(formatAge(72 * 3600_000)).toBe("3d");
     expect(formatAge(-5)).toBe("just now");
-  });
-
-  it("labels a server's presence", () => {
-    const now = Date.parse("2026-10-11T12:05:00Z");
-    expect(serverPresence(true, null, now)).toMatchObject({ tone: "live", label: "just now" });
-    expect(serverPresence(false, "2026-10-11T12:00:00Z", now)).toMatchObject({ tone: "offline", label: "offline 5m" });
-    expect(serverPresence(false, "2026-10-11T12:04:50Z", now).label).toBe("offline");
-    expect(serverPresence(false, null, now)).toMatchObject({ tone: "waiting", label: "waiting" });
   });
 
   it("names a nameless app Unnamed app, never by its id", () => {

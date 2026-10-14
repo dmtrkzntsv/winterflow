@@ -47,10 +47,16 @@ type ActiveStore = {
 // One poller per distinct query, shared by every component reading it (the
 // Monitoring page's banner and its rules section read the same list): the
 // poll runs while at least one of them is mounted, and a last unmount
-// stops it and forgets the data.
+// stops it and forgets the store.
 const stores = new Map<string, ActiveStore>();
 
-function createStore(params: Record<string, string>): ActiveStore {
+// alertStoreCount is how many queries have a store (tests: none is kept
+// once its last reader is gone).
+export function alertStoreCount(): number {
+  return stores.size;
+}
+
+function createStore(qs: string, params: Record<string, string>): ActiveStore {
   const listeners = new Set<() => void>();
   let inflight: AbortController | null = null;
   let timer: number | null = null;
@@ -97,12 +103,15 @@ function createStore(params: Record<string, string>): ActiveStore {
     document.removeEventListener("visibilitychange", tick);
     queued = null;
     store.snapshot = EMPTY;
+    if (stores.get(qs) === store) stores.delete(qs);
   };
 
   const store: ActiveStore = {
     snapshot: EMPTY,
     subscribe: (listener) => {
       listeners.add(listener);
+      // A reader that resubscribes (a re-run effect) brings the store back.
+      if (!stores.has(qs)) stores.set(qs, store);
       if (listeners.size === 1) start();
       return () => {
         listeners.delete(listener);
@@ -125,7 +134,7 @@ function createStore(params: Record<string, string>): ActiveStore {
 function storeFor(qs: string, params: Record<string, string>): ActiveStore {
   let store = stores.get(qs);
   if (!store) {
-    store = createStore(params);
+    store = createStore(qs, params);
     stores.set(qs, store);
   }
   return store;

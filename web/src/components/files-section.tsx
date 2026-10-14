@@ -185,7 +185,7 @@ export function SecretToggle({ on, onChange }: { on: boolean; onChange: (on: boo
       className={cn(
         "h-8 shrink-0 gap-1.5 px-2 text-xs",
         on
-          ? "bg-amber-500/10 text-amber-700 hover:bg-amber-500/15 hover:text-amber-800 dark:text-amber-400"
+          ? "bg-status-warn/10 text-foreground hover:bg-status-warn/15 hover:text-foreground [&>svg]:text-status-warn"
           : "text-muted-foreground",
       )}
       onClick={() => onChange(!on)}

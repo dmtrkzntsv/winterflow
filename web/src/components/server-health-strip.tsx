@@ -8,9 +8,10 @@ import type { Server } from "@/context/servers-context-base";
 import { useServers } from "@/context/use-servers";
 import { useMetricsOverview } from "@/hooks/use-metrics";
 import { useNow } from "@/hooks/use-now";
-import { lastSeenText, serverPresence } from "@/lib/kpi";
+import { lastSeenText } from "@/lib/kpi";
 import { formatPercent, fullestDisk, percentOf } from "@/lib/metrics";
 import { monitoringPath } from "@/lib/routes";
+import { serverStatus } from "@/lib/status";
 
 // ServerHealthStrip is the Apps page's one line about this server: CPU,
 // memory and the fullest disk now — or why there are no figures (offline,
@@ -24,21 +25,22 @@ export function ServerHealthStrip({ server }: { server: Server }) {
   // Liveness is known once the servers context has it (or the overview does,
   // should the context's seed have failed); until then nothing is claimed.
   const liveness = isStandalone ? "online" : (statusByServer[server.id] ?? entry?.liveness);
-  const presence = serverPresence(liveness === "online", server.lastSeenAt, now);
+  // The same mapping as the server switcher and Settings → General.
+  const status = serverStatus({ liveness, lastSeenAt: server.lastSeenAt, standalone: isStandalone });
   const latest = entry?.latest?.server;
 
   let body: ReactNode;
   if (liveness === undefined) {
     body = <span className="text-muted-foreground">Checking this server…</span>;
-  } else if (presence.tone === "offline") {
+  } else if (status.tone === "bad") {
     body = (
       <span className="inline-flex items-center gap-2">
-        <StatusDot tone="bad" />
-        <span className="font-medium">Offline</span>
+        <StatusDot tone={status.tone} />
+        <span className="font-medium">{status.label}</span>
         <span className="text-muted-foreground">· {lastSeenText(server.lastSeenAt, now)}</span>
       </span>
     );
-  } else if (presence.tone === "waiting") {
+  } else if (status.tone === "idle") {
     body = (
       <span className="inline-flex items-center gap-2 text-muted-foreground">
         <StatusDot tone="idle" />

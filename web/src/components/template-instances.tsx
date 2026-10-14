@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
 import { AppWindow } from "lucide-react";
 import { toast } from "sonner";
 
@@ -8,10 +7,11 @@ import { AppIcon } from "@/components/app-icon";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { EmptyState } from "@/components/empty-state";
 import { ErrorText } from "@/components/error-text";
-import { RowList } from "@/components/section";
+import { Row, RowList } from "@/components/section";
 import { StatusPill } from "@/components/status";
 import { UpgradeInstanceDialog } from "@/components/upgrade-instance-dialog";
 import { useServers } from "@/context/use-servers";
+import { useConfirmTarget } from "@/hooks/use-confirm-target";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
 import { appLabel } from "@/lib/kpi";
 import { appPath } from "@/lib/routes";
@@ -49,9 +49,9 @@ export function TemplateInstances({
   const api = useTemplatesApi();
   const [upgrading, setUpgrading] = useState<InstanceView | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null); // key
-  const [confirmDelete, setConfirmDelete] = useState<InstanceView | null>(null);
+  const confirmDelete = useConfirmTarget<InstanceView>();
   const [confirmAll, setConfirmAll] = useState(false);
-  const serverName = (id: string) => servers.find((s) => s.id === id)?.name ?? id;
+  const serverName = (id: string) => servers.find((s) => s.id === id)?.name ?? "a server";
 
   // remove deletes a pending app; a failure is reported and rethrown so
   // the confirm dialog stays open for a retry.
@@ -105,34 +105,25 @@ export function TemplateInstances({
           const old = inst.revision < latest;
           const pending = inst.state === "pending";
           return (
-            <li
+            <Row
               key={inst.key}
-              className="flex flex-col gap-2 px-4 py-3 text-sm transition-colors duration-150 hover:bg-muted/40 motion-reduce:transition-none sm:flex-row sm:items-center sm:gap-4 max-sm:rounded-xl max-sm:border max-sm:bg-card"
-            >
-              <div className="flex min-w-0 flex-1 items-center gap-3">
-                <AppIcon name={name} icon={view.body.icon} color={view.body.color} className="size-8 shrink-0 text-sm" />
-                <div className="min-w-0">
-                  <Link to={appPath(inst.server_id, inst.app_id)} className="font-medium hover:underline">
-                    {name}
-                  </Link>
-                  <p className="text-xs text-muted-foreground">on {serverName(inst.server_id)}</p>
-                  {pending && inst.last_error ? <ErrorText text={inst.last_error} className="text-xs" /> : null}
-                </div>
-              </div>
-              <span className="text-xs text-muted-foreground">
-                {old ? `Version ${inst.revision} (latest is ${latest})` : `Version ${inst.revision}`}
-              </span>
-              {pending ? (
-                <span title={inst.last_error || undefined}>
-                  <StatusPill status={{ tone: "warn", label: "Not created yet" }} />
-                </span>
-              ) : (
-                <StatusPill status={appStatus(inst.status_code)} />
-              )}
-              {old || pending ? (
-                <div className="flex items-center gap-2">
+              to={appPath(inst.server_id, inst.app_id)}
+              leading={<AppIcon name={name} icon={view.body.icon} color={view.body.color} className="size-8 shrink-0 text-sm" />}
+              title={name}
+              description={`on ${serverName(inst.server_id)}`}
+              detail={pending && inst.last_error ? <ErrorText text={inst.last_error} /> : null}
+              meta={old ? `Version ${inst.revision} (latest is ${latest})` : `Version ${inst.revision}`}
+              actions={
+                <>
+                  {pending ? (
+                    <span title={inst.last_error || undefined}>
+                      <StatusPill status={{ tone: "warn", label: "Not created yet" }} />
+                    </span>
+                  ) : (
+                    <StatusPill status={appStatus(inst.status_code)} />
+                  )}
                   {old ? (
-                    <Button size="sm" variant="outline" onClick={() => setUpgrading(inst)}>
+                    <Button size="sm" variant="outline" className="ml-1" onClick={() => setUpgrading(inst)}>
                       Update
                     </Button>
                   ) : null}
@@ -140,16 +131,16 @@ export function TemplateInstances({
                     <Button
                       size="sm"
                       variant="outline"
-                      className="text-destructive"
+                      className="ml-1 text-destructive"
                       disabled={deleting === inst.key}
-                      onClick={() => setConfirmDelete(inst)}
+                      onClick={() => confirmDelete.ask(inst)}
                     >
                       Delete
                     </Button>
                   ) : null}
-                </div>
-              ) : null}
-            </li>
+                </>
+              }
+            />
           );
         })}
       </RowList>
@@ -163,19 +154,17 @@ export function TemplateInstances({
         onConfirm={() => onUpgradeAll?.()}
       />
       <ConfirmDialog
-        open={confirmDelete !== null}
-        onOpenChange={(open) => {
-          if (!open) setConfirmDelete(null);
-        }}
-        title={confirmDelete ? `Delete ${instanceName(view, confirmDelete)}?` : "Delete"}
+        open={confirmDelete.open}
+        onOpenChange={confirmDelete.onOpenChange}
+        title={confirmDelete.target ? `Delete ${instanceName(view, confirmDelete.target)}?` : "Delete"}
         description={
-          confirmDelete
-            ? `Its deploy never succeeded. Deleting removes whatever it left on ${serverName(confirmDelete.server_id)}.`
+          confirmDelete.target
+            ? `Its deploy never succeeded. Deleting removes whatever it left on ${serverName(confirmDelete.target.server_id)}.`
             : undefined
         }
         confirmLabel="Delete"
         pendingLabel="Deleting…"
-        onConfirm={() => (confirmDelete ? remove(confirmDelete) : undefined)}
+        onConfirm={() => (confirmDelete.target ? remove(confirmDelete.target) : undefined)}
       />
       {upgrading ? (
         <UpgradeInstanceDialog

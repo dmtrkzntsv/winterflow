@@ -1,9 +1,10 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { NotificationsContext, type NotificationsContextValue } from "@/context/notifications-context-base";
+import type { ShellOutlet } from "@/layouts/shell-outlet";
 import HomePage from "@/pages/home";
 import { fakeAPI } from "@/test/fake-api";
 
@@ -18,9 +19,8 @@ vi.mock("@/context/use-apps", () => ({
 vi.mock("@/components/server-health-strip", () => ({ ServerHealthStrip: () => <div data-testid="strip" /> }));
 vi.mock("@/components/alerts/active-alerts", () => ({ FiringAlertsLine: () => <div data-testid="firing" /> }));
 vi.mock("@/components/app-grid", () => ({ AppGrid: () => <div data-testid="grid" /> }));
-vi.mock("@/components/server-creation-dialog", () => ({
-  ServerSelectionDialog: ({ isOpen }: { isOpen: boolean }) => (isOpen ? <p>add server dialog</p> : null),
-}));
+// The shell hands the page its one Add server dialog's opener.
+const addServer = vi.fn();
 
 // New app opens the chooser, which reads the organization's templates.
 const notifications = { connected: true, subscribe: () => () => {}, waitFor: vi.fn() } as NotificationsContextValue;
@@ -30,8 +30,10 @@ function renderHome() {
     <MemoryRouter initialEntries={["/server/s1"]}>
       <NotificationsContext.Provider value={notifications}>
         <Routes>
-          <Route path="/server/s1" element={<HomePage />} />
-          <Route path="/server/s1/new" element={<p>new app page</p>} />
+          <Route element={<Outlet context={{ onAddServer: addServer } satisfies ShellOutlet} />}>
+            <Route path="/server/s1" element={<HomePage />} />
+            <Route path="/server/s1/new" element={<p>new app page</p>} />
+          </Route>
         </Routes>
       </NotificationsContext.Provider>
     </MemoryRouter>,
@@ -40,6 +42,7 @@ function renderHome() {
 
 describe("HomePage", () => {
   beforeEach(() => {
+    addServer.mockReset();
     servers = { activeServer: homelab, loading: false, refresh: vi.fn(async () => {}) };
     appsState = { apps: [{ id: "a1" }, { id: "a2" }, { id: "a3" }], loading: false };
     statusState = { a1: 1, a2: 1, a3: 5 };
@@ -101,6 +104,7 @@ describe("HomePage", () => {
     expect(screen.getByText("Add a server to run your apps on.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "New app" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Add server" }));
-    expect(screen.getByText("add server dialog")).toBeInTheDocument();
+    // The shell's dialog, not a second one of the page's.
+    expect(addServer).toHaveBeenCalledTimes(1);
   });
 });

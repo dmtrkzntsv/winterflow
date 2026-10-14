@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { RotateCw } from "lucide-react";
+import { RefreshCcwDot, RotateCw } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -69,12 +69,15 @@ export function StaleVarsBadge({ appId }: { appId: string }) {
   };
 
   return (
+    // The firing banner's look in the warn tone: the text stays foreground,
+    // the tone is on the icon and the border.
     <div
       role="status"
-      className="flex flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200"
+      className="flex flex-wrap items-center gap-2 rounded-xl border border-status-warn/40 bg-status-warn/5 px-4 py-2 text-sm text-foreground"
     >
-      <span>{running ? "Shared variables changed — reload to apply" : "Shared variables changed — applies on next start"}</span>
-      <span className="font-mono text-xs">{names.join(", ")}</span>
+      <RefreshCcwDot className="size-4 shrink-0 text-status-warn" aria-hidden />
+      <span className="font-medium">{running ? "Shared variables changed — reload to apply" : "Shared variables changed — applies on next start"}</span>
+      <span className="font-mono text-xs text-muted-foreground">{names.join(", ")}</span>
       {running ? (
         <Button size="sm" variant="outline" className="ml-auto" disabled={busy} onClick={() => void reload()}>
           {busy ? <Spinner className="size-4" /> : <RotateCw className="size-4" />}

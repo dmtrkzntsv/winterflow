@@ -18,6 +18,8 @@ export type RowMenuItem = {
   destructive?: boolean;
   disabled?: boolean;
   title?: string;
+  // hint is a muted second line under the label (why it is disabled, say).
+  hint?: string;
 };
 
 // RowMenu is a row's "⋯" menu: its less frequent actions, the destructive
@@ -49,7 +51,14 @@ export function RowMenu({ label, items }: { label: string; items: (RowMenuItem |
             className={cn(item.destructive && "text-destructive focus:text-destructive")}
             onSelect={() => item.onSelect(trigger.current)}
           >
-            {item.label}
+            {item.hint ? (
+              <span className="grid">
+                {item.label}
+                <span className="text-xs text-muted-foreground">{item.hint}</span>
+              </span>
+            ) : (
+              item.label
+            )}
           </DropdownMenuItem>
         ))}
       </DropdownMenuContent>

@@ -38,6 +38,13 @@ describe("RowMenu", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
+  it("shows an item's hint as a second line", async () => {
+    const user = userEvent.setup({ delay: null });
+    render(<RowMenu label="Actions for x" items={[{ label: "Restore…", hint: "Set up the backup first", disabled: true, onSelect: vi.fn() }]} />);
+    await user.click(screen.getByRole("button", { name: "Actions for x" }));
+    expect(await screen.findByRole("menuitem", { name: /^Restore…\s*Set up the backup first$/ })).toBeInTheDocument();
+  });
+
   it("renders nothing without an item", () => {
     const { container } = render(<RowMenu label="Actions for x" items={[false]} />);
     expect(container).toBeEmptyDOMElement();

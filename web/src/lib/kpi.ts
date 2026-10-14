@@ -164,33 +164,6 @@ export function lastSeenText(lastSeenAt: string | null, now: number): string {
   return age === "just now" ? "last seen just now" : `last seen ${age} ago`;
 }
 
-export type Presence = {
-  // tone picks the dot: live (emerald), offline (muted), waiting (faint).
-  tone: "live" | "offline" | "waiting";
-  // label is the short text beside the dot ("just now", "offline 5m").
-  label: string;
-  // title is the long form for a hover title ("Last seen <date>").
-  title: string;
-};
-
-// serverPresence is a server card's status: "just now" while the agent is
-// connected, "offline 5m" once it dropped, "waiting" before it ever came.
-export function serverPresence(online: boolean, lastSeenAt: string | null, now: number): Presence {
-  const seen = lastSeenAt ? new Date(lastSeenAt).getTime() : NaN;
-  if (online) {
-    return { tone: "live", label: "just now", title: "Online: the agent is connected" };
-  }
-  if (Number.isNaN(seen)) {
-    return { tone: "waiting", label: "waiting", title: "Waiting for the agent to connect" };
-  }
-  const age = formatAge(now - seen);
-  return {
-    tone: "offline",
-    label: age === "just now" ? "offline" : `offline ${age}`,
-    title: `Offline since ${new Date(seen).toLocaleString()}`,
-  };
-}
-
 // formatClock renders a freshness time: "05:06 PM".
 export function formatClock(ms: number): string {
   return new Date(ms).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });

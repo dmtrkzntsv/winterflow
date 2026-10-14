@@ -5,6 +5,7 @@ import { useAlertEvents, type EventKindFilter } from "@/hooks/use-alert-events";
 import type { AlertEvent } from "@/lib/alerts";
 import { fakeAPI } from "@/test/fake-api";
 import { fakeNotifications } from "@/test/notifications";
+import { flushPending } from "@/test/flush";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -111,7 +112,7 @@ describe("useAlertEvents", () => {
     await waitFor(() => expect(result.current.events.map((e) => e.id)).toEqual(["newer"]));
     pending[1].resolve({ events: [event("stale")], next_cursor: "" });
     pending[0].resolve({ events: [event("oldest")], next_cursor: "" });
-    await act(() => new Promise((r) => setTimeout(r, 50)));
+    await flushPending();
     expect(result.current.events.map((e) => e.id)).toEqual(["newer"]);
     expect(result.current.loading).toBe(false);
   });
@@ -138,11 +139,11 @@ describe("useAlertEvents", () => {
     // Another notification type reads nothing; a repeated alert adds nothing.
     const reads = api.calls.length;
     act(() => sse.emit({ type: "apps_status", ref: "", payload: {} }));
-    await act(() => new Promise((r) => setTimeout(r, 50)));
+    await flushPending();
     expect(api.calls).toHaveLength(reads);
     act(() => sse.emit({ type: "alert", ref: "", payload: {} }));
     await waitFor(() => expect(api.calls).toHaveLength(reads + 1));
-    await act(() => new Promise((r) => setTimeout(r, 50)));
+    await flushPending();
     expect(ids()).toEqual(["e2", "e1", "old"]);
   });
 
@@ -175,7 +176,7 @@ describe("useAlertEvents", () => {
     pending[2].resolve({ events: [event("r1", { kind: "resolved" })], next_cursor: "" });
     await waitFor(() => expect(result.current.events.map((e) => e.id)).toEqual(["r1"]));
     pending[1].resolve({ events: [event("f9")], next_cursor: "" });
-    await act(() => new Promise((r) => setTimeout(r, 50)));
+    await flushPending();
     expect(result.current.events.map((e) => e.id)).toEqual(["r1"]);
   });
 

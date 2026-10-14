@@ -18,6 +18,16 @@ describe("copyText", () => {
     expect(writeText).toHaveBeenCalledWith("wfp_abc");
   });
 
+  it("falls back to a selection copy when the clipboard API refuses", async () => {
+    const writeText = vi.fn().mockRejectedValue(new DOMException("Document is not focused.", "NotAllowedError"));
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    const exec = vi.fn().mockReturnValue(true);
+    Object.defineProperty(document, "execCommand", { value: exec, configurable: true });
+    await copyText("wfp_abc");
+    expect(writeText).toHaveBeenCalledWith("wfp_abc");
+    expect(exec).toHaveBeenCalledWith("copy");
+  });
+
   it("falls back to a selection copy on a plain-http origin, and fails when that is refused", async () => {
     Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });
     const exec = vi.fn().mockReturnValueOnce(true).mockReturnValueOnce(false);

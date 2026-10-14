@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { TargetAlertsCard } from "@/components/alerts/target-alerts-card";
 import type { Override, Rule } from "@/lib/alerts";
 import { fakeAPI } from "@/test/fake-api";
+import { flushPending } from "@/test/flush";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -43,7 +44,7 @@ describe("TargetAlertsCard", () => {
     const toggle = within(region).getByRole("button", { name: "Alert rules for this server" });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     expect(within(region).getByRole("link", { name: "Manage rules" })).toHaveAttribute("href", "/settings/notifications");
-    await new Promise((r) => setTimeout(r, 20));
+    await flushPending();
     expect(api.calls).toHaveLength(0);
 
     await userEvent.setup({ delay: null }).click(toggle);

@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { Plus, Server } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -7,11 +6,11 @@ import { AppGrid } from "@/components/app-grid";
 import { EmptyState } from "@/components/empty-state";
 import { NewAppButton } from "@/components/new-app/new-app-button";
 import { PageHeader } from "@/components/page-header";
-import { ServerSelectionDialog } from "@/components/server-creation-dialog";
 import { ServerHealthStrip } from "@/components/server-health-strip";
 import { isStandalone } from "@/config";
 import { useApps } from "@/context/use-apps";
 import { useServers } from "@/context/use-servers";
+import { useShellAddServer } from "@/layouts/shell-outlet";
 import { appsSubtitle, countApps } from "@/lib/app-summary";
 
 // HomePage is the Apps page (/server/:id): this server's apps, how many
@@ -19,9 +18,10 @@ import { appsSubtitle, countApps } from "@/lib/app-summary";
 // button that opens the ways to start). The other servers are one switch
 // away in the sidebar.
 export default function HomePage() {
-  const { activeServer, loading, refresh } = useServers();
+  const { activeServer, loading } = useServers();
   const { apps, statusByApp, loading: appsLoading } = useApps();
-  const [addServerOpen, setAddServerOpen] = useState(false);
+  // The shell's one Add server dialog (none on a standalone install).
+  const addServer = useShellAddServer();
 
   if (!activeServer) {
     return (
@@ -32,21 +32,14 @@ export default function HomePage() {
             icon={Server}
             title={isStandalone ? "This server isn't ready yet." : "Add a server to run your apps on."}
             action={
-              isStandalone ? undefined : (
-                <Button onClick={() => setAddServerOpen(true)}>
+              addServer ? (
+                <Button onClick={addServer}>
                   <Plus className="size-4" aria-hidden /> Add server
                 </Button>
-              )
+              ) : undefined
             }
           />
         )}
-        {!isStandalone ? (
-          <ServerSelectionDialog
-            isOpen={addServerOpen}
-            onClose={() => setAddServerOpen(false)}
-            onServerAdded={() => void refresh()}
-          />
-        ) : null}
       </div>
     );
   }

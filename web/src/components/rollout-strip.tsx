@@ -15,7 +15,7 @@ import { currentApp, failureLine, isActive, rolloutLine, skippedLine, type Rollo
 // serverNames.
 export function ReloadRolloutStrip({ api, serverNames }: { api?: RolloutsApi; serverNames: Map<string, string> }) {
   const { rollout, stop } = useRollout(useRolloutsApi(api), "vars_reload");
-  return <RolloutStrip rollout={rollout} serverName={(id) => serverNames.get(id) ?? id} onStop={stop} />;
+  return <RolloutStrip rollout={rollout} serverName={(id) => serverNames.get(id) ?? "a server"} onStop={stop} />;
 }
 
 // RolloutStrip shows a rollout in progress ("Updating 3 of 12: bakomi…"

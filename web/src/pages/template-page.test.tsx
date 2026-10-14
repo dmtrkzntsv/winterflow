@@ -10,6 +10,7 @@ import { ApiError, type TemplateBody, type TemplateView } from "@/lib/templates"
 import TemplatePage from "@/pages/template-page";
 import { fakeAPI } from "@/test/fake-api";
 import { rollout } from "@/test/rollouts";
+import { flushPending } from "@/test/flush";
 
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
@@ -256,7 +257,7 @@ describe("TemplatePage", () => {
     await user.type(await screen.findByLabelText("App name"), "-x");
     for (const step of [() => streams[0].onerror?.(), () => streams[0].onopen?.()]) {
       act(step);
-      await act(() => new Promise((r) => setTimeout(r, 20)));
+      await flushPending();
     }
     expect(screen.getByLabelText("App name")).toHaveValue("${NAME}-x");
     expect(screen.getByRole("button", { name: "Save as version 4" })).toBeEnabled();

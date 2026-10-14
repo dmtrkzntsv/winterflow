@@ -34,7 +34,7 @@ const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     return json(200, {
       data: {
         apps: [
-          { app_id: "a1", status_code: 1, backups: [{ name: "db", state: "late", last_success: 1 }] },
+          { app_id: "a1", status_code: 1, backups: [{ name: "db", state: "late", last_success: 1 }], containers: [{ container_id: "c1", name: "shop-web-1", status_code: 1, exit_code: 0 }] },
           { app_id: "a2", status_code: 5, backups: null },
         ],
       },
@@ -72,6 +72,22 @@ describe("AppsProvider commands", () => {
 describe("AppsProvider backups", () => {
   beforeEach(() => vi.stubGlobal("fetch", fetchMock));
   afterEach(() => vi.unstubAllGlobals());
+
+  it("keeps each app's containers from the status and its pushes", async () => {
+    const { result } = renderHook(() => useApps(), { wrapper });
+    await waitUntil(() =>
+      expect(result.current.containersByApp).toEqual({
+        a1: [{ container_id: "c1", name: "shop-web-1", status_code: 1, exit_code: 0 }],
+      }),
+    );
+    const crashed = { container_id: "c2", name: "blog-db-1", status_code: 4, exit_code: 1, error: "out of memory" };
+    act(() => {
+      for (const h of handlers) {
+        h({ type: "apps_status", payload: { server_id: "srv-1", apps: [{ app_id: "a2", status_code: 4, containers: [crashed] }] } });
+      }
+    });
+    await waitUntil(() => expect(result.current.containersByApp).toEqual({ a2: [crashed] }));
+  });
 
   it("keeps each app's backup health from the status and its pushes", async () => {
     const { result } = renderHook(() => useApps(), { wrapper });

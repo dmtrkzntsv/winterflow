@@ -11,8 +11,8 @@ describe("splitStatus", () => {
         { app_id: "c", status_code: 2, stale_vars: null },
         { app_id: "d", status_code: 1 },
       ]),
-    ).toEqual({ status: { a: 1, b: 5, c: 2, d: 1 }, stale: { a: ["SMTP_PASS"] }, backups: {} });
-    expect(splitStatus(null)).toEqual({ status: {}, stale: {}, backups: {} });
+    ).toEqual({ status: { a: 1, b: 5, c: 2, d: 1 }, stale: { a: ["SMTP_PASS"] }, backups: {}, containers: {} });
+    expect(splitStatus(null)).toEqual({ status: {}, stale: {}, backups: {}, containers: {} });
   });
 
   it("keeps the backup health of apps that have backups", () => {
@@ -23,7 +23,18 @@ describe("splitStatus", () => {
         { app_id: "b", status_code: 1, backups: [] },
         { app_id: "c", status_code: 1, backups: null },
       ]),
-    ).toEqual({ status: { a: 1, b: 1, c: 1 }, stale: { a: ["X"] }, backups: { a: health } });
+    ).toEqual({ status: { a: 1, b: 1, c: 1 }, stale: { a: ["X"] }, backups: { a: health }, containers: {} });
+  });
+
+  it("keeps the containers of apps that report some", () => {
+    const web = { container_id: "c1", name: "shop-web-1", status_code: 1, exit_code: 0 };
+    expect(
+      splitStatus([
+        { app_id: "a", status_code: 1, containers: [web] },
+        { app_id: "b", status_code: 5, containers: [] },
+        { app_id: "c", status_code: 0, containers: null },
+      ]).containers,
+    ).toEqual({ a: [web] });
   });
 });
 

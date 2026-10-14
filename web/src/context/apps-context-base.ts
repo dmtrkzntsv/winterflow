@@ -1,5 +1,6 @@
 import { createContext } from "react";
 
+import type { ContainerStatusWire } from "@/lib/app-status";
 import type { BackupHealth, BackupTargets, EffectiveBackup } from "@/lib/backups";
 import type { StorageVariable } from "@/types/app-config";
 
@@ -76,6 +77,9 @@ export type AppsContextValue = {
   // backupsByApp maps app id -> the health of each of its backups (live,
   // with the status).
   backupsByApp: Record<string, BackupHealth[]>;
+  // containersByApp maps app id -> its containers in the latest report
+  // (apps that report containers only; live, with the status).
+  containersByApp: Record<string, ContainerStatusWire[]>;
   loading: boolean;
   error: string | null;
   refresh: () => Promise<void>;

@@ -14,7 +14,7 @@ import { apiBase as base } from "@/config";
 import { dispatchCommand } from "@/lib/api";
 import type { BackupHealth } from "@/lib/backups";
 import { createSharedVariablesApi, type VarsReloaded } from "@/lib/shared-variables";
-import { splitStatus, type AppStatusWire } from "@/lib/app-status";
+import { splitStatus, type AppStatusWire, type ContainerStatusWire } from "@/lib/app-status";
 
 import {
   AppsContext,
@@ -86,6 +86,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
   const [statusByApp, setStatusByApp] = useState<Record<string, number>>({});
   const [staleVarsByApp, setStaleVarsByApp] = useState<Record<string, string[]>>({});
   const [backupsByApp, setBackupsByApp] = useState<Record<string, BackupHealth[]>>({});
+  const [containersByApp, setContainersByApp] = useState<Record<string, ContainerStatusWire[]>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const mounted = useRef(false);
@@ -168,6 +169,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
         setStatusByApp({});
         setStaleVarsByApp({});
         setBackupsByApp({});
+        setContainersByApp({});
       }
       return;
     }
@@ -179,10 +181,11 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       if (!res.ok) return;
       const result = (await res.json()) as GetAppsStatusResponse;
       if (!mounted.current) return;
-      const { status, stale, backups } = splitStatus(result.data?.apps);
+      const { status, stale, backups, containers } = splitStatus(result.data?.apps);
       setStatusByApp(keepIfSame(status));
       setStaleVarsByApp(keepIfSame(stale));
       setBackupsByApp(keepIfSame(backups));
+      setContainersByApp(keepIfSame(containers));
     } catch {
       // Status is best-effort; absence renders as "unknown".
     }
@@ -222,10 +225,11 @@ export function AppsProvider({ children }: { children: ReactNode }) {
           }
         | undefined;
       if (!p?.server_id || p.server_id !== activeServerId) return;
-      const { status, stale, backups } = splitStatus(p.apps);
+      const { status, stale, backups, containers } = splitStatus(p.apps);
       setStatusByApp(keepIfSame(status));
       setStaleVarsByApp(keepIfSame(stale));
       setBackupsByApp(keepIfSame(backups));
+      setContainersByApp(keepIfSame(containers));
     });
   }, [subscribe, activeServerId]);
 
@@ -460,6 +464,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       staleVarsByApp,
       reloadSharedVars,
       backupsByApp,
+      containersByApp,
       loading,
       error,
       refresh,
@@ -479,6 +484,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       staleVarsByApp,
       reloadSharedVars,
       backupsByApp,
+      containersByApp,
       loading,
       error,
       refresh,

@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { ArrowRight } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 
 import { StatusDot } from "@/components/status";
 import { isStandalone } from "@/config";
@@ -16,7 +16,9 @@ import { serverStatus } from "@/lib/status";
 // ServerHealthStrip is the Apps page's one line about this server: CPU,
 // memory and the fullest disk now — or why there are no figures (offline,
 // never connected, no data yet) — and the way to Monitoring. The server's
-// IP, cores and agent version live in Settings → Server → General.
+// IP, cores and agent version live in Settings → Server → General. The whole
+// strip opens Monitoring (on a phone it ends in a "›", the word hidden, so
+// it stays one line).
 export function ServerHealthStrip({ server }: { server: Server }) {
   const { statusByServer } = useServers();
   const { data } = useMetricsOverview();
@@ -73,15 +75,16 @@ export function ServerHealthStrip({ server }: { server: Server }) {
     <div
       role="region"
       aria-label="Server health"
-      className="flex min-h-10 flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border bg-card px-4 py-2 text-sm"
+      className="relative flex min-h-10 items-center gap-3 rounded-xl border bg-card px-4 py-2 text-sm transition-colors duration-150 hover:border-primary/40"
     >
-      {body}
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">{body}</div>
       <Link
         to={monitoringPath(server.id)}
-        className="ml-auto inline-flex min-h-8 items-center gap-1 font-medium max-sm:min-h-10 text-muted-foreground transition-colors duration-150 hover:text-foreground"
+        aria-label="Monitoring"
+        className="inline-flex min-h-8 shrink-0 items-center gap-1 font-medium text-muted-foreground transition-colors duration-150 after:absolute after:inset-0 after:rounded-xl hover:text-foreground focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-ring max-sm:min-h-10"
       >
-        Monitoring
-        <ArrowRight className="size-4" aria-hidden />
+        <span className="max-sm:hidden">Monitoring</span>
+        <ChevronRight className="size-4" aria-hidden />
       </Link>
     </div>
   );

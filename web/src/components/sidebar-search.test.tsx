@@ -44,4 +44,10 @@ describe("SidebarSearch", () => {
     expect(openPalette).toHaveBeenCalledTimes(1);
     expect(setOpenMobile.mock.invocationCallOrder[0]).toBeLessThan(openPalette.mock.invocationCallOrder[0]);
   });
+
+  it("hides the keyboard shortcut on a phone or a touch screen", () => {
+    renderSearch(true);
+    const kbd = screen.getByRole("button", { name: /Search/ }).querySelector("kbd");
+    expect(kbd).toHaveClass("max-sm:hidden", "pointer-coarse:hidden");
+  });
 });

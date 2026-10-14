@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -20,6 +20,23 @@ function renderTabs(value: "overview" | "logs", onValueChange = vi.fn()) {
 }
 
 describe("UnderlineTabs", () => {
+  it("fades the edge where tabs are scrolled out of view", () => {
+    renderTabs("overview");
+    const strip = screen.getByTestId("tab-strip");
+    expect(strip.className).not.toContain("mask-image");
+    // A strip wider than its box: more tabs to the right, then both sides.
+    Object.defineProperty(strip, "clientWidth", { configurable: true, value: 200 });
+    Object.defineProperty(strip, "scrollWidth", { configurable: true, value: 400 });
+    fireEvent.scroll(strip);
+    expect(strip.className).toContain("to_right,black_calc(100%-2rem),transparent");
+    strip.scrollLeft = 100;
+    fireEvent.scroll(strip);
+    expect(strip.className).toContain("transparent,black_2rem");
+    strip.scrollLeft = 200;
+    fireEvent.scroll(strip);
+    expect(strip.className).toContain("to_left");
+  });
+
   it("shows the selected tab's panel under an underline tab bar", () => {
     renderTabs("logs");
     expect(screen.getByRole("tablist", { name: "App sections" })).toBeInTheDocument();

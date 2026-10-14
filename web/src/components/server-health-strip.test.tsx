@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -75,7 +75,11 @@ describe("ServerHealthStrip", () => {
     expect(strip).toHaveTextContent("CPU 42%");
     expect(strip).toHaveTextContent("Memory 38%");
     expect(strip).toHaveTextContent("Disk 55%");
-    expect(screen.getByRole("link", { name: "Monitoring" })).toHaveAttribute("href", "/server/s1/monitoring");
+    const link = screen.getByRole("link", { name: "Monitoring" });
+    expect(link).toHaveAttribute("href", "/server/s1/monitoring");
+    // The whole strip is the link; a phone shows only its "›".
+    expect(link).toHaveClass("after:absolute", "after:inset-0");
+    expect(within(link).getByText("Monitoring")).toHaveClass("max-sm:hidden");
   });
 
   it("says when there is no data yet instead of dashes", () => {

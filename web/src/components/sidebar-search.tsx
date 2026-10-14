@@ -25,7 +25,7 @@ export function SidebarSearch() {
         >
           <Search />
           <span>Search…</span>
-          <Kbd className="ml-auto group-data-[collapsible=icon]:hidden">{shortcutLabel("K")}</Kbd>
+          <Kbd className="ml-auto group-data-[collapsible=icon]:hidden max-sm:hidden pointer-coarse:hidden">{shortcutLabel("K")}</Kbd>
         </SidebarMenuButton>
       </SidebarMenuItem>
     </SidebarMenu>

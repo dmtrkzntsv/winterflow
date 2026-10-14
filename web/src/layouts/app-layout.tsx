@@ -57,6 +57,26 @@ function MobileTopBar() {
   )
 }
 
+// MAIN_ID is the page area's id: the skip link's target.
+const MAIN_ID = "main-content"
+
+// SkipLink is the first Tab stop: it moves focus past the sidebar to the
+// page (without touching the URL), shown only while focused.
+function SkipLink() {
+  return (
+    <a
+      href={`#${MAIN_ID}`}
+      onClick={(e) => {
+        e.preventDefault()
+        document.getElementById(MAIN_ID)?.focus()
+      }}
+      className="sr-only rounded-md bg-background px-3 py-2 text-sm font-medium shadow-lg ring-2 ring-ring focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50"
+    >
+      Skip to content
+    </a>
+  )
+}
+
 // AppMain is the page area: the sky wash, no breadcrumb bar (every page
 // starts with its own PageHeader), reading pages capped near 1100px.
 function AppMain({ onAddServer }: ShellOutlet) {
@@ -66,9 +86,11 @@ function AppMain({ onAddServer }: ShellOutlet) {
     <SidebarInset className="sky-wash min-w-0">
       {isMobile ? <MobileTopBar /> : null}
       <div
+        id={MAIN_ID}
+        tabIndex={-1}
         data-testid="page"
         className={cn(
-          "mx-auto flex w-full flex-1 flex-col gap-4 p-4 sm:p-6 lg:p-8",
+          "mx-auto flex w-full flex-1 flex-col gap-4 p-4 outline-none sm:p-6 lg:p-8",
           !isWidePath(pathname) && "max-w-[1100px]",
         )}
       >
@@ -109,6 +131,7 @@ export function AppLayout() {
         <CommandPaletteProvider>
           <SidebarProvider style={SIDEBAR_STYLE}>
             <NewAppDialogProvider>
+              <SkipLink />
               <AppSidebar onAddServer={handleAddServer} />
               <AppMain onAddServer={handleAddServer} />
               <CommandPalette onAddServer={handleAddServer} />

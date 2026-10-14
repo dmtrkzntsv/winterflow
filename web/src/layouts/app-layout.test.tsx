@@ -151,6 +151,16 @@ describe("AppLayout", () => {
     }
   });
 
+  it("offers a Skip to content link first, which moves focus to the page", async () => {
+    const user = userEvent.setup();
+    renderAt("/settings/members");
+    await user.tab();
+    const skip = screen.getByRole("link", { name: "Skip to content" });
+    expect(skip).toHaveFocus();
+    await user.click(skip);
+    expect(screen.getByTestId("page")).toHaveFocus();
+  });
+
   it("caps reading pages at 1100px and gives Monitoring the full width", () => {
     const { unmount } = renderAt("/settings/members");
     expect(screen.getByTestId("page")).toHaveClass("max-w-[1100px]");

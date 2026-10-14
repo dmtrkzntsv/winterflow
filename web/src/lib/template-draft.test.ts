@@ -243,8 +243,8 @@ volumes: { data: {} }
     // PORT is the app's own variable: the ports take PORT_2 and PORT_3.
     expect(body.parameters).toEqual([
       { name: "PORT", default: "x" },
-      { name: "PORT_2", required: true, default: "8090", description: "Host port" },
-      { name: "PORT_3", required: true, default: "8091", description: "Host port" },
+      { name: "PORT_2", required: true, default: "8090", description: "Host port for web" },
+      { name: "PORT_3", required: true, default: "8091", description: "Host port for web" },
     ]);
     expect(body.files?.["compose.yml"]).toBe(`services:
   web:
@@ -268,6 +268,35 @@ x-winterflow:
     expect(recipeBackupNames(draft)).toEqual(["notes-data"]);
     expect(notes).toContain("Port 8090 is now the PORT_2 parameter, so each app can publish its own.");
     expect(draftProblem(draft)).toBeNull();
+  });
+
+  it("leaves port ranges and YAML files other than compose files as they are", () => {
+    const compose = `services:
+  media:
+    ports:
+      - "8000-8010:8000-8010"
+      - "9000:9000"
+`;
+    const { draft, notes } = templateFromApp("a1", {
+      ...detail,
+      app: {
+        ...detail.app,
+        config: b64(JSON.stringify({ name: "Media", files: [{ filename: "compose.yml" }, { filename: "config/app.yml" }] })),
+        files: [
+          { name: "compose.yml", content: b64(compose) },
+          { name: "config/app.yml", content: b64('ports: ["7000:7000"]') },
+        ],
+        variables: [],
+      },
+      backups: [],
+    });
+    const body = bodyFromDraft(draft);
+    // One parameter, for the single port: the range is never one.
+    expect(body.parameters).toEqual([{ name: "PORT", required: true, default: "9000", description: "Host port for media" }]);
+    expect(body.files?.["compose.yml"]).toContain('- "8000-8010:8000-8010"');
+    expect(body.files?.["compose.yml"]).toContain('- "${PORT}:9000"');
+    expect(body.files?.["config/app.yml"]).toBe('ports: ["7000:7000"]');
+    expect(notes).toContain("Ports 8000–8010 are a range, which stays as it is: two apps from the template would both publish them.");
   });
 
   it("notes that a Git source does not come along", () => {

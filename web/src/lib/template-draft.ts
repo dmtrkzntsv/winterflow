@@ -266,8 +266,12 @@ export function slugName(appName: string): string {
   return slug || "template";
 }
 
-// isComposeYaml: a file whose ports templateFromApp turns into parameters.
-const isComposeYaml = (filename: string) => /\.ya?ml$/i.test(filename.trim());
+// isComposeYaml: a compose file (a main one or an override), whose ports
+// templateFromApp turns into parameters; another YAML file is left as it is.
+const isComposeYaml = (filename: string) => {
+  const name = filename.trim();
+  return COMPOSE_FILENAMES.includes(name) || OVERRIDE_FILES.includes(name);
+};
 
 // freeParamName is base, else base_2, base_3, … whichever no parameter has.
 function freeParamName(base: string, taken: Set<string>): string {
@@ -322,16 +326,22 @@ export function templateFromApp(appId: string, detail: AppDetailPayload): { draf
   });
 
   // Each app from the template needs host ports of its own: a literal one
-  // becomes a parameter defaulting to it.
+  // becomes a parameter defaulting to it, described by its service. A range
+  // stays as it is (it can't be one parameter).
   const taken = new Set(parameters.map((p) => p.name));
   const portParams = new Map<number, string>();
   for (const f of files) {
     if (!isComposeYaml(f.filename)) continue;
-    for (const { port } of publishedPorts(contents[f.id])) {
+    for (const { port, last, service } of publishedPorts(contents[f.id])) {
+      if (last !== undefined) {
+        notes.push(`Ports ${port}–${last} are a range, which stays as it is: two apps from the template would both publish them.`);
+        continue;
+      }
       if (portParams.has(port)) continue;
       const name = freeParamName("PORT", taken);
       portParams.set(port, name);
-      parameters.push(paramRow({ name, required: true, default: String(port), description: "Host port" }));
+      const description = service ? `Host port for ${service}` : "Host port";
+      parameters.push(paramRow({ name, required: true, default: String(port), description }));
       notes.push(`Port ${port} is now the ${name} parameter, so each app can publish its own.`);
     }
   }

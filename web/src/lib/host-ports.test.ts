@@ -4,6 +4,7 @@ import {
   entryBinding,
   entryHostPorts,
   firstFreeHostPort,
+  hostPortsIn,
   interpolate,
   isLoopback,
   publishedHostPorts,
@@ -65,12 +66,13 @@ volumes:
 
 describe("entryBinding", () => {
   it.each([
-    ['"8080:80"', { host: "", ports: [8080] }],
-    ["127.0.0.1:8081:80", { host: "127.0.0.1", ports: [8081] }],
-    ['"0.0.0.0:8082:80/tcp"', { host: "0.0.0.0", ports: [8082] }],
-    ['"[::1]:8083:80"', { host: "::1", ports: [8083] }],
-    ['"[::1]8083:80"', { host: "", ports: [] }],
-    ['"${PORT}:80"', { host: "", ports: [] }],
+    ['"8080:80"', { host: "", ports: [8080], proto: "" }],
+    ["127.0.0.1:8081:80", { host: "127.0.0.1", ports: [8081], proto: "" }],
+    ['"0.0.0.0:8082:80/tcp"', { host: "0.0.0.0", ports: [8082], proto: "tcp" }],
+    ['"[::1]:8083:80"', { host: "::1", ports: [8083], proto: "" }],
+    ['"51820:51820/UDP"', { host: "", ports: [51820], proto: "udp" }],
+    ['"[::1]8083:80"', { host: "", ports: [], proto: "" }],
+    ['"${PORT}:80"', { host: "", ports: [], proto: "" }],
   ])("reads %s", (entry, binding) => {
     expect(entryBinding(entry)).toEqual(binding);
   });
@@ -92,6 +94,25 @@ describe("publishedPorts", () => {
       { service: "web", host: "127.0.0.1", port: 8091 },
       { service: "api", host: "", port: 9000 },
     ]);
+  });
+
+  it("gives a range one entry, and names a protocol other than tcp", () => {
+    const compose = `services:
+  media:
+    ports:
+      - "8000-8010:8000-8010"
+      - "51820:51820/udp"
+      - "8443:443/tcp"
+`;
+    const ports = publishedPorts(compose);
+    expect(ports).toEqual([
+      { service: "media", host: "", port: 8000, last: 8010 },
+      { service: "media", host: "", port: 51820, proto: "udp" },
+      { service: "media", host: "", port: 8443 },
+    ]);
+    expect(hostPortsIn(ports[0])).toHaveLength(11);
+    expect(hostPortsIn(ports[1])).toEqual([51820]);
+    expect(publishedHostPorts(compose)).toHaveLength(13);
   });
 
   it("has no service for a top-level ports key", () => {

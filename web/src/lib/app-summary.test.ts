@@ -73,6 +73,23 @@ describe("addresses", () => {
     expect(portAddresses(ports, undefined).map((a) => a.host)).toEqual(["10.0.0.5:9000"]);
   });
 
+  it("gives a port range one address and says udp, neither one a browser opens", () => {
+    const ports = [
+      { service: "media", host: "", port: 8000, last: 8010 },
+      { service: "vpn", host: "", port: 51820, proto: "udp" },
+      { service: "web", host: "", port: 8090 },
+    ];
+    const addresses = portAddresses(ports, "192.168.1.66");
+    expect(addresses).toEqual([
+      { host: "192.168.1.66:8000–8010", url: "", tls: null, service: "media" },
+      { host: "192.168.1.66:51820/udp", url: "", tls: null, service: "vpn" },
+      { host: "192.168.1.66:8090", url: "http://192.168.1.66:8090", tls: null, service: "web" },
+    ]);
+    // The one to open is the first a browser opens.
+    expect(primaryAddress({ domains: [] }, [], addresses)?.host).toBe("192.168.1.66:8090");
+    expect(primaryAddress({ domains: [] }, [], addresses.slice(0, 2))).toBeNull();
+  });
+
   it("puts domains before published ports; the first is the one to open", () => {
     const port = { host: "192.168.1.66:8090", url: "http://192.168.1.66:8090", tls: null };
     expect(appAddresses(shop, [], [port]).map((a) => a.host)).toEqual(["shop.example.com", "shop.lan", "192.168.1.66:8090"]);

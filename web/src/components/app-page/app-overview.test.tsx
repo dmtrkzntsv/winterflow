@@ -202,6 +202,24 @@ describe("AppOverview", () => {
     expect(toast.success).toHaveBeenCalledWith("Copied");
   });
 
+  it("shows a port range and a udp port as one row each, not as links", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
+    renderOverview({
+      ports: [
+        { host: "192.168.1.66:8000–8010", url: "", tls: null, service: "media" },
+        { host: "192.168.1.66:51820/udp", url: "", tls: null, service: "vpn" },
+      ],
+    });
+    const access = screen.getByRole("region", { name: "Access" });
+    expect(within(access).queryAllByRole("link")).toEqual([]);
+    expect(within(access).getAllByRole("listitem")).toHaveLength(2);
+    expect(within(access).getByText("192.168.1.66:8000–8010").closest("li")).toHaveTextContent("media");
+    await user.click(within(access).getByRole("button", { name: "Copy 192.168.1.66:51820/udp" }));
+    expect(writeText).toHaveBeenCalledWith("192.168.1.66:51820/udp");
+  });
+
   it("says so when an address can't be copied", async () => {
     const user = userEvent.setup();
     Object.defineProperty(navigator, "clipboard", { value: undefined, configurable: true });

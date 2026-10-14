@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 import type { AppDetailPayload } from "@/context/apps-context-base";
 import { useApps } from "@/context/use-apps";
-import { publishedPorts, type PublishedPort } from "@/lib/host-ports";
+import { hostPortsIn, publishedPorts, type PublishedPort } from "@/lib/host-ports";
 
 // MAX_READS bounds the apps read for their ports when a form opens.
 const MAX_READS = 25;
@@ -37,7 +37,7 @@ export function appPublishedPorts(detail: AppDetailPayload): PublishedPort[] {
 
 // portsOf are the host ports an app's compose files publish, each once.
 export function portsOf(detail: AppDetailPayload): number[] {
-  return [...new Set(appPublishedPorts(detail).map((p) => p.port))];
+  return [...new Set(appPublishedPorts(detail).flatMap(hostPortsIn))];
 }
 
 // useUsedHostPorts reads the host ports the server's apps publish, one app

@@ -46,14 +46,16 @@ export function interpolate(s: string, vars: Readonly<Record<string, string>>): 
 }
 
 // EntryBinding is what one short-syntax entry publishes: the host address
-// it binds ("" = every interface) and its host ports.
-export type EntryBinding = { host: string; ports: number[] };
+// it binds ("" = every interface), its host ports and its protocol ("" =
+// tcp, compose's default).
+export type EntryBinding = { host: string; ports: number[]; proto: string };
 
 // entryBinding reads one short-syntax entry.
 export function entryBinding(raw: string): EntryBinding {
-  const none = { host: "", ports: [] };
+  const none = { host: "", ports: [], proto: "" };
   let s = unquote(raw);
   if (s === "" || s.includes("$") || s.includes("{")) return none;
+  const proto = (/\/([a-z]+)$/i.exec(s)?.[1] ?? "").toLowerCase();
   s = s.replace(/\/[a-z]+$/i, "");
   // A bracketed IPv6 host address goes first.
   if (s.startsWith("[")) {
@@ -61,12 +63,12 @@ export function entryBinding(raw: string): EntryBinding {
     if (end < 0) return none;
     const host = s.slice(1, end);
     const parts = s.slice(end + 2).split(":");
-    return parts.length === 2 ? { host, ports: portRange(parts[0]) } : none;
+    return parts.length === 2 ? { host, ports: portRange(parts[0]), proto } : none;
   }
   const parts = s.split(":");
   if (parts.length < 2) return none;
   // HOST:CONTAINER, IP:HOST:CONTAINER (the host part second to last).
-  return { host: parts.length > 2 ? parts.slice(0, -2).join(":") : "", ports: portRange(parts[parts.length - 2]) };
+  return { host: parts.length > 2 ? parts.slice(0, -2).join(":") : "", ports: portRange(parts[parts.length - 2]), proto };
 }
 
 // entryHostPorts are the host ports one short-syntax entry publishes.
@@ -87,9 +89,17 @@ function portRange(spec: string): number[] {
 
 const indentOf = (line: string) => line.length - line.trimStart().length;
 
-// PublishedPort is a host port a compose service publishes, with the host
-// address it binds ("" = every interface).
-export type PublishedPort = { service: string; host: string; port: number };
+// PublishedPort is a host port a compose service publishes (one entry: a
+// range "8000-8010:..." is one, port to last), with the host address it
+// binds ("" = every interface) and its protocol when not tcp ("udp").
+export type PublishedPort = { service: string; host: string; port: number; last?: number; proto?: string };
+
+// hostPortsIn are the host ports one published entry holds.
+export function hostPortsIn(p: PublishedPort): number[] {
+  const out: number[] = [];
+  for (let port = p.port; port <= (p.last ?? p.port); port++) out.push(port);
+  return out;
+}
 
 // serviceAt is the key that owns the line at index i, indented below
 // indent: the service of a ports key ("" when there is none).
@@ -104,14 +114,16 @@ function serviceAt(lines: string[], i: number, indent: number): string {
 }
 
 // publishedPorts are the host ports a compose file's services publish, in
-// order, with their service and bind address; an entry's ${VAR}s are read
-// from vars first.
+// order, one per entry, with their service and bind address; an entry's
+// ${VAR}s are read from vars first.
 export function publishedPorts(content: string, vars: Readonly<Record<string, string>> = {}): PublishedPort[] {
   const out: PublishedPort[] = [];
   const lines = content.split(/\r?\n/);
   const add = (service: string, entry: string) => {
-    const { host, ports } = entryBinding(interpolate(entry, vars));
-    for (const port of ports) out.push({ service, host, port });
+    const { host, ports, proto } = entryBinding(interpolate(entry, vars));
+    if (ports.length === 0) return;
+    const last = ports[ports.length - 1];
+    out.push({ service, host, port: ports[0], ...(last !== ports[0] ? { last } : {}), ...(proto && proto !== "tcp" ? { proto } : {}) });
   };
   for (let i = 0; i < lines.length; i++) {
     const line = stripComment(lines[i]);
@@ -143,7 +155,7 @@ export function publishedPorts(content: string, vars: Readonly<Record<string, st
 // publishedHostPorts are the host ports a compose file's services publish
 // (each once, in order).
 export function publishedHostPorts(content: string): number[] {
-  return [...new Set(publishedPorts(content).map((p) => p.port))];
+  return [...new Set(publishedPorts(content).flatMap(hostPortsIn))];
 }
 
 // rewriteEntry gives a short-syntax entry another host port: replace says

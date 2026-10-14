@@ -128,22 +128,27 @@ function AccessWidget({
           {addresses.map((a) => (
             <li key={a.host} className="flex min-w-0 items-center justify-between gap-3 text-sm">
               <span className="flex min-w-0 items-center gap-1">
-                <a
-                  href={a.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex min-w-0 items-center gap-1 font-medium hover:underline max-sm:min-h-10"
-                >
-                  <span className="truncate">{a.host}</span>
-                  <ExternalLink className="size-3.5 shrink-0" aria-hidden />
-                </a>
+                {a.url ? (
+                  <a
+                    href={a.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex min-w-0 items-center gap-1 font-medium hover:underline max-sm:min-h-10"
+                  >
+                    <span className="truncate">{a.host}</span>
+                    <ExternalLink className="size-3.5 shrink-0" aria-hidden />
+                  </a>
+                ) : (
+                  // A port range or a udp port: nothing a browser opens.
+                  <span className="truncate font-medium">{a.host}</span>
+                )}
                 <Button
                   type="button"
                   size="icon"
                   variant="ghost"
                   className="size-7 shrink-0 text-muted-foreground max-sm:size-10"
-                  aria-label={`Copy ${a.url}`}
-                  onClick={() => void copy(a.url)}
+                  aria-label={`Copy ${a.url || a.host}`}
+                  onClick={() => void copy(a.url || a.host)}
                 >
                   <Copy className="size-3.5" aria-hidden />
                 </Button>

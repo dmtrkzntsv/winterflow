@@ -17,8 +17,9 @@ import type { AppTab } from "@/lib/routes";
 export type AddressTLS = "https" | "proxy" | null;
 
 // AppAddress is a public address of an app: the hostname (with the port
-// for a published one), the URL that opens it and how it is served;
-// service names the compose service a published port belongs to.
+// for a published one), the URL that opens it ("" for a published port a
+// browser can't open: a range, or udp) and how it is served; service names
+// the compose service a published port belongs to.
 export type AppAddress = { host: string; url: string; tls: AddressTLS; service?: string };
 
 function addressOf(d: AppDomain, registrations: readonly RegisteredDomain[]): AppAddress {
@@ -32,6 +33,8 @@ function addressOf(d: AppDomain, registrations: readonly RegisteredDomain[]): Ap
 // server, as http://<ip>:<port>: a port bound to every interface opens on
 // the server's IP (serverIp, the agent's server_ip), one bound to an
 // address on that address; a loopback one is left out. None without an IP.
+// A range is one address ("<ip>:8000–8010") and a udp port says so
+// ("<ip>:51820/udp"); neither opens in a browser (no url).
 export function portAddresses(ports: readonly PublishedPort[], serverIp: string | undefined): AppAddress[] {
   const out: AppAddress[] = [];
   const seen = new Set<string>();
@@ -40,10 +43,12 @@ export function portAddresses(ports: readonly PublishedPort[], serverIp: string 
     const any = p.host === "" || p.host === "0.0.0.0" || p.host === "::";
     const ip = any ? (serverIp ?? "").trim() : p.host;
     if (!ip) continue;
-    const host = `${ip.includes(":") ? `[${ip}]` : ip}:${p.port}`;
+    const at = `${ip.includes(":") ? `[${ip}]` : ip}:${p.port}`;
+    const host = `${at}${p.last !== undefined ? `–${p.last}` : ""}${p.proto ? `/${p.proto}` : ""}`;
     if (seen.has(host)) continue;
     seen.add(host);
-    out.push({ host, url: `http://${host}`, tls: null, service: p.service || undefined });
+    const opens = p.last === undefined && !p.proto;
+    out.push({ host, url: opens ? `http://${at}` : "", tls: null, service: p.service || undefined });
   }
   return out;
 }
@@ -60,14 +65,14 @@ export function appAddresses(
   return [...(app.domains ?? []).filter((d) => d.kind === "route").map((d) => addressOf(d, registrations)), ...ports];
 }
 
-// primaryAddress is the address the UI opens ("Open ↗"): the first domain,
-// else the first published port; null without one.
+// primaryAddress is the address the UI opens ("Open"): the first domain,
+// else the first published port a browser opens; null without one.
 export function primaryAddress(
   app: Pick<App, "domains">,
   registrations: readonly RegisteredDomain[] = [],
   ports: readonly AppAddress[] = [],
 ): AppAddress | null {
-  return appAddresses(app, registrations, ports)[0] ?? null;
+  return appAddresses(app, registrations, ports).find((a) => a.url !== "") ?? null;
 }
 
 export type AppCounts = {

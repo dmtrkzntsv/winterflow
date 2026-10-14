@@ -190,7 +190,7 @@ export function LogsView({
         </div>
       ) : error ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
-          <p className="text-sm text-destructive">{error}</p>
+          <p className="max-h-40 max-w-full overflow-y-auto text-sm break-words whitespace-pre-wrap text-destructive [overflow-wrap:anywhere]">{error}</p>
           <Button
             size="sm"
             variant="outline"

@@ -2,7 +2,6 @@ import { useMemo, useState } from "react";
 
 import { Input } from "@/components/ui/input";
 import { Disclosure } from "@/components/disclosure";
-import { ErrorText } from "@/components/error-text";
 import { FileEditors } from "@/components/files-section";
 import { FieldMessage, FormField } from "@/components/form-field";
 import { ImageVersions } from "@/components/image-versions";
@@ -125,8 +124,7 @@ export function ComposeFlow({ serverId }: { serverId: string }) {
         />
       </Disclosure>
 
-      {error ? <ErrorText alert icon text={error} /> : null}
-      <CreateBar busy={busy} onCreate={create} cancelTo={appsPath(serverId)} invalid={invalid} />
+      <CreateBar error={error} busy={busy} onCreate={create} cancelTo={appsPath(serverId)} invalid={invalid} />
     </div>
   );
 }

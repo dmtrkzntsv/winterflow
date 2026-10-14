@@ -9,7 +9,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { AppIcon } from "@/components/app-icon";
 import { Disclosure } from "@/components/disclosure";
 import { EmptyState } from "@/components/empty-state";
-import { ErrorText } from "@/components/error-text";
 import { HostHints } from "@/components/host-hints";
 import { NativeSelect } from "@/components/native-select";
 import { CreateBar } from "@/components/new-app/create-bar";
@@ -367,8 +366,8 @@ export function TemplateFlow({ serverId }: { serverId: string }) {
             </div>
           </Disclosure>
 
-          {error ? <ErrorText alert icon text={error} /> : null}
-          <CreateBar
+              <CreateBar
+            error={error}
             busy={busy}
             waiting={storages === null}
             onCreate={() => void create()}

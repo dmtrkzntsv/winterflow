@@ -1,6 +1,5 @@
 import { useState } from "react";
 
-import { ErrorText } from "@/components/error-text";
 import { GitSourceFields } from "@/components/git-source-fields";
 import { NameField } from "@/components/name-field";
 import { CreateBar } from "@/components/new-app/create-bar";
@@ -40,8 +39,7 @@ export function GitFlow({ serverId }: { serverId: string }) {
       <p className="text-sm text-muted-foreground">
         The app runs the repository's compose file. Add addresses and variables under Configuration once it is created.
       </p>
-      {error ? <ErrorText alert icon text={error} /> : null}
-      <CreateBar busy={busy} onCreate={() => submit()} cancelTo={appsPath(serverId)} invalid={invalid} />
+      <CreateBar error={error} busy={busy} onCreate={() => submit()} cancelTo={appsPath(serverId)} invalid={invalid} />
     </div>
   );
 }

@@ -74,7 +74,8 @@ export function useTokens() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token_id: tokenId }),
       });
-      void refresh();
+      // Resolve once the list has dropped the token (focus moves on then).
+      await refresh();
     },
     [refresh],
   );

@@ -357,22 +357,24 @@ function BackupRow({
   const detail = [b.storage ? `${where} → ${b.storage}` : where, builtin ? scheduleLabel(b.every) : "Its own tool"].join(" · ");
   const runDisabled = !b.enabled || running || busy;
   return (
-    <li className="flex flex-col gap-2 px-4 py-3 transition-colors duration-150 hover:bg-muted/40 max-sm:rounded-xl max-sm:border max-sm:bg-card sm:flex-row sm:items-center sm:gap-4">
-      <div className="min-w-0 flex-1">
+    // On a phone the ⋯ stays on the name's line and the state goes under
+    // both (like the shared Row); from 640px all three sit side by side.
+    <li className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 gap-y-2 px-4 py-3 transition-colors duration-150 hover:bg-muted/40 max-sm:rounded-xl max-sm:border max-sm:bg-card sm:flex sm:flex-row sm:items-center sm:gap-4">
+      <div className="col-start-1 row-start-1 min-w-0 flex-1">
         <span className="font-mono text-sm font-medium">{b.name}</span>
         <div className="mt-0.5 text-xs text-muted-foreground [overflow-wrap:anywhere]">{detail}</div>
         {state === "failing" && health?.last_error ? <RowError error={health.last_error} /> : null}
       </div>
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 sm:w-60 sm:justify-end">
+      <div className="col-span-2 col-start-1 row-start-2 flex flex-wrap items-center gap-x-2 gap-y-1 sm:w-60 sm:justify-end">
         <span title={health?.last_error}>
           <StatusPill status={restoringRow ? RESTORING : backupStatus(state)} />
         </span>
         {health?.last_success ? (
           <span className="text-xs text-muted-foreground">Last copy {relativeTime(new Date(health.last_success * 1000))}</span>
         ) : null}
-        {note ? <span className="w-full text-xs text-muted-foreground sm:text-right">{note}</span> : null}
+        {note ? <span className="text-xs text-muted-foreground sm:w-full sm:text-right">{note}</span> : null}
       </div>
-      <div className="flex shrink-0 items-center justify-end gap-1">
+      <div data-testid="backup-row-actions" className="col-start-2 row-start-1 flex shrink-0 items-center justify-end gap-1 max-sm:-my-1 max-sm:-mr-2">
         {b.storage ? null : (
           <Button
             size="sm"

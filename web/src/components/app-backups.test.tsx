@@ -133,6 +133,8 @@ describe("AppBackups", () => {
     const replica = within(row("replica"));
     expect(replica.getByText("Custom · service litestream → s3 · Its own tool")).toBeInTheDocument();
     expect(replica.getByText("OK")).toBeInTheDocument();
+    // On a phone the ⋯ sits on the name's line (first grid row, last column).
+    expect(db.getByTestId("backup-row-actions")).toHaveClass("col-start-2", "row-start-1");
     // Flat rows, no table.
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
     expect(screen.getByRole("list", { name: "Backups" })).toBeInTheDocument();

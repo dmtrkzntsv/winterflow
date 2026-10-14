@@ -6,10 +6,13 @@
 web/src/
   components/        # Re-usable presentation & layout primitives
     ui/              # Low-level design-system / shadcn components (button, card …)
-    settings-*       # Feature-specific components for Settings page (tabs, sections)
-    <feature>-*      # Other feature-scoped components (dashboard-*, catalog-*, …)
+    app-page/        # The app page's header and tabs (Overview, Logs, Configuration, …)
+    alerts/          # Monitoring, Inbox and alert-rule components
+    new-app/         # The New app chooser and its Template / Compose / Git forms
+    <feature>-*      # Other feature-scoped components (app-*, backup-*, template-*, …)
 
-  pages/             # Route-level components rendered by React-Router
+  pages/             # Route-level components rendered by React-Router (settings-* are
+                     #   the Settings → Server / Organization / Account pages)
   hooks/             # Custom React hooks
   contexts/          # React Context providers & related reducers
   lib/               # Framework-agnostic helpers (api, config, routes, utils)

@@ -11,7 +11,7 @@ import { NotificationsContext, type NotificationsContextValue } from "@/context/
 import HomePage from "@/pages/home";
 import { fakeAPI } from "@/test/fake-api";
 
-// Every link and switch on the dashboard and in the sidebar stays inside the
+// Every link and switch on the Apps page and in the sidebar stays inside the
 // active server's scope (/server/:id/...).
 
 const selectServer = vi.fn();

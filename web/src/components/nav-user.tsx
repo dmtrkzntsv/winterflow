@@ -17,6 +17,7 @@ import { useSidebar } from "@/components/ui/use-sidebar";
 import { useAuth } from "@/context/use-auth";
 import { useUser } from "@/context/use-user";
 import { useThemePreference } from "@/hooks/use-theme";
+import { initials } from "@/lib/members";
 import { THEME_OPTIONS } from "@/lib/theme-options";
 import type { ThemePreference } from "@/lib/theme";
 
@@ -30,7 +31,8 @@ export function NavUser() {
   const [theme, setTheme] = useThemePreference();
   const { t } = useTranslation();
   const displayName = user?.name ?? (loading ? "Loading..." : "Unknown user");
-  const avatarFallback = user?.name?.slice(0, 2).toUpperCase() ?? "WF";
+  // The same initials as the member list (one helper for every avatar).
+  const avatarFallback = user?.name?.trim() ? initials(user.name, "") : "WF";
 
   const identity = (
     <>
@@ -70,7 +72,12 @@ export function NavUser() {
             <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Theme</DropdownMenuLabel>
             <DropdownMenuRadioGroup value={theme} onValueChange={(v) => setTheme(v as ThemePreference)}>
               {THEME_OPTIONS.map((item) => (
-                <DropdownMenuRadioItem key={item.value} value={item.value} className="min-h-10 gap-2">
+                <DropdownMenuRadioItem
+                  key={item.value}
+                  value={item.value}
+                  aria-label={item.label}
+                  className="min-h-10 gap-2"
+                >
                   <item.icon className="size-4" aria-hidden />
                   {item.label}
                 </DropdownMenuRadioItem>

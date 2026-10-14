@@ -14,7 +14,7 @@ function renderNav() {
   const logout = vi.fn();
   const auth = { logout } as unknown as AuthContextValue;
   const user = {
-    user: { id: "u-1", name: "Ann", picture: "", provider: "local" },
+    user: { id: "u-1", name: "Ann Lee", picture: "", provider: "local" },
     loading: false,
   } as UserContextValue;
   render(
@@ -47,6 +47,20 @@ describe("NavUser", () => {
     await user.click(screen.getByRole("menuitemradio", { name: "Dark" }));
     expect(document.documentElement).toHaveClass("dark");
     expect(localStorage.getItem(THEME_KEY)).toBe("dark");
+  });
+
+  it("shows the same initials as the member list", () => {
+    renderNav();
+    expect(screen.getAllByText("AL").length).toBeGreaterThan(0);
+  });
+
+  it("names every theme choice, System included", async () => {
+    const user = userEvent.setup();
+    renderNav();
+    await user.click(screen.getByRole("button", { name: /Ann/ }));
+    for (const name of ["Light", "Dark", "System"]) {
+      expect(await screen.findByRole("menuitemradio", { name })).toHaveAttribute("aria-label", name);
+    }
   });
 
   it("logs out", async () => {

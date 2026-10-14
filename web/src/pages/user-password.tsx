@@ -65,6 +65,8 @@ export default function UserPasswordPage() {
         <PasswordInput
           id={name}
           name={name}
+          // Password managers fill the current one and offer to save the new.
+          autoComplete={name === "current" ? "current-password" : "new-password"}
           required
           aria-invalid={invalid || undefined}
           aria-describedby={invalid ? `${name}-error` : undefined}

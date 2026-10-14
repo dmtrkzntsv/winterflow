@@ -38,6 +38,13 @@ async function fill(user: ReturnType<typeof userEvent.setup>, current: string, n
 }
 
 describe("UserPasswordPage", () => {
+  it("tells password managers which field is which", () => {
+    renderPage();
+    expect(screen.getByLabelText("Current password")).toHaveAttribute("autocomplete", "current-password");
+    expect(screen.getByLabelText("New password")).toHaveAttribute("autocomplete", "new-password");
+    expect(screen.getByLabelText("Confirm new password")).toHaveAttribute("autocomplete", "new-password");
+  });
+
   it("changes the password and goes home", async () => {
     const api = fakeAPI({ "/api/v1/user/change-password": null });
     const user = userEvent.setup({ delay: null });

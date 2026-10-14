@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -54,6 +54,14 @@ describe("AppMetricBlocks", () => {
     expect(screen.getByTestId("kpi-Network")).toHaveTextContent("2.0 KB/s");
   });
 
+  it("lays the four blocks out in pairs for a half-width widget", () => {
+    render(<AppMetricBlocks serverId="s1" appId="a1" layout="pair" />);
+    const grid = screen.getByTestId("kpi-CPU").parentElement!;
+    expect(grid).toHaveClass("grid-cols-2");
+    expect(grid).not.toHaveClass("lg:grid-cols-4");
+    expect(within(grid).getAllByTestId(/^kpi-/)).toHaveLength(4);
+  });
+
   it("shows tile skeletons until the first fetch lands", () => {
     data = null;
     loading = true;
@@ -70,15 +78,17 @@ describe("AppMetricBlocks", () => {
     expect(screen.getByTestId("kpi-Network")).toHaveTextContent("–");
   });
 
-  it("renders nothing without data and explains unavailable containers", () => {
+  it("says there is no data yet, and explains unavailable containers", () => {
     data = { interval_seconds: 60, points: [] };
-    const { container, rerender } = render(<AppMetricBlocks serverId="s1" appId="a1" />);
-    expect(container).toBeEmptyDOMElement();
+    const { rerender } = render(<AppMetricBlocks serverId="s1" appId="a1" />);
+    expect(screen.getByText("No data yet.")).toBeInTheDocument();
+    expect(screen.queryByTestId("kpi-CPU")).not.toBeInTheDocument();
     data = { interval_seconds: 60, points: [{ t: 0, unavailable: 1, unavailable_max: 1 }] };
     rerender(<AppMetricBlocks serverId="s1" appId="a2" />);
     expect(screen.getByText("Container metrics are unavailable on this host")).toBeInTheDocument();
     expect(screen.queryByTestId("kpi-CPU")).not.toBeInTheDocument();
   });
+
 
   it("still shows disk when container metrics are unavailable", () => {
     data = { interval_seconds: 60, points: [{ t: 0, unavailable: 1, disk: 2 * 1024 ** 3 }] };
@@ -102,6 +112,9 @@ describe("AppMetricsTab", () => {
   it("charts the app over the chosen range", async () => {
     render(<AppMetricsTab serverId="s1" appId="a1" />);
     expect(calls.at(-1)).toEqual(["s1", "a1", "1h"]);
+    // The alert rules are folded away until asked for.
+    expect(screen.queryByTestId("alerts-card")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Alert rules for this app" }));
     expect(screen.getByTestId("alerts-card")).toHaveTextContent("s1/a1");
     for (const title of ["CPU", "Memory", "Network", "Disk"]) {
       expect(screen.getByTestId(`chart-${title}`)).toBeInTheDocument();

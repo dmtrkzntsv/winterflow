@@ -98,7 +98,7 @@ export default function AppDetailsPage() {
   // ports the header and Access open.
   const [visit, setVisit] = useState({ tab, n: 0 });
   if (visit.tab !== tab) setVisit({ tab, n: tab === "overview" ? visit.n + 1 : visit.n });
-  const read = useAppDetail(app?.id ?? "", `${app?.version ?? ""}:${visit.n}`);
+  const read = useAppDetail(app?.id ?? "", app?.version ?? "", visit.n);
   const serverIp = servers.find((s) => s.id === app?.serverId)?.capabilities?.server_ip;
   const detail = read.appId === app?.id ? read.detail : null;
   const ports = useMemo(() => (detail ? portAddresses(appPublishedPorts(detail), serverIp) : []), [detail, serverIp]);

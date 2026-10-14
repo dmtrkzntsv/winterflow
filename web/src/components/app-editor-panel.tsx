@@ -15,6 +15,7 @@ import {
   emptyEditorState,
   stateFromDetail,
 } from "@/lib/app-editor-io";
+import { readAppDetail } from "@/hooks/use-app-detail";
 import { focusFirstInvalid, type FieldErrors } from "@/lib/field-errors";
 import { appSub } from "@/lib/routes";
 import { isManagedByTemplate } from "@/lib/templates";
@@ -55,7 +56,7 @@ export function AppEditorPanel({
   reloadSignal?: number;
   onDirtyChange?: (dirty: boolean) => void;
 }) {
-  const { saveApp, getApp, getPublicKey, refresh } = useApps();
+  const { apps, saveApp, getApp, getPublicKey, refresh } = useApps();
   const { activeServer, loading: serversLoading } = useServers();
   const domainsShown = !serversLoading && Boolean(activeServer?.features?.ingress);
   const toServer = useServerPath();
@@ -78,12 +79,15 @@ export function AppEditorPanel({
   // Only the latest read may land: an older answer arriving last must not
   // overwrite a newer one, nor clear the stale notice it raised.
   const seq = useRef(0);
-  const load = useCallback(async () => {
+  // load reads the app: version names the one the list holds, so the
+  // page's read of it is shared (readAppDetail); without it the read is
+  // afresh (History or an update changed the app under the list).
+  const load = useCallback(async (version?: string) => {
     const mine = ++seq.current;
     setLoading(true);
     setError(null);
     try {
-      const detail = await getApp(appId);
+      const detail = version === undefined ? await getApp(appId) : await readAppDetail(getApp, appId, version);
       if (mine !== seq.current) return;
       const loaded = stateFromDetail(appId, detail);
       setState(loaded);
@@ -98,8 +102,10 @@ export function AppEditorPanel({
     }
   }, [appId, getApp]);
 
+  // The first read is of the version the list holds: the page's read of it.
+  const listed = useRef(apps.find((a) => a.id === appId)?.version);
   useEffect(() => {
-    void load();
+    void load(listed.current);
   }, [load]);
 
   const handleSave = async (draft: boolean) => {
@@ -113,10 +119,11 @@ export function AppEditorPanel({
     setSaving(true);
     try {
       const payload = await buildSavePayload(state, getPublicKey, appId);
-      await saveApp({ ...payload, draft });
+      const list = await saveApp({ ...payload, draft });
       toast.success(draft ? "Draft saved — not deployed yet" : "App updated");
-      // Reload so masked secrets and server-side normalization are reflected.
-      await load();
+      // Reload so masked secrets and server-side normalization are reflected
+      // (the saved version: the page reads it too).
+      await load(list.find((a) => a.id === appId)?.version);
     } catch (e) {
       const message = e instanceof Error ? e.message : "";
       if (isManagedByTemplate(message)) {

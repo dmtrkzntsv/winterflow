@@ -4,7 +4,8 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppEditorPanel } from "@/components/app-editor-panel";
-import { AppsContext, type AppDetailPayload, type AppsContextValue } from "@/context/apps-context-base";
+import { AppsContext, type App, type AppDetailPayload, type AppsContextValue } from "@/context/apps-context-base";
+import { forgetAppDetails, readAppDetail } from "@/hooks/use-app-detail";
 import { flushPending } from "@/test/flush";
 
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
@@ -33,6 +34,7 @@ function renderPanel(
   onOpenHistory?: () => void,
 ) {
   const value = {
+    apps: [],
     getApp: vi.fn(async () => d),
     saveApp,
     getPublicKey: vi.fn(async () => "K"),
@@ -53,7 +55,7 @@ function renderPanel(
 function renderLive(saveApp: AppsContextValue["saveApp"], first: AppDetailPayload = detail) {
   let current = first;
   const getApp = vi.fn(async () => current);
-  const value = { getApp, saveApp, getPublicKey: vi.fn(async () => "K"), refresh: vi.fn(async () => {}) } as unknown as AppsContextValue;
+  const value = { apps: [], getApp, saveApp, getPublicKey: vi.fn(async () => "K"), refresh: vi.fn(async () => {}) } as unknown as AppsContextValue;
   const ui = (signal: number) => (
     <MemoryRouter>
       <AppsContext.Provider value={value}>
@@ -102,6 +104,32 @@ describe("AppEditorPanel", () => {
     servers = { activeServer: null, loading: true };
   });
   afterEach(() => vi.unstubAllGlobals());
+
+  it("shares the page's read of the listed version, and of the version a save made", async () => {
+    const user = userEvent.setup();
+    forgetAppDetails();
+    const getApp = vi.fn(async () => withVariable("PORT", "8080"));
+    // The page read version 3 already.
+    await readAppDetail(getApp, "a1", "3");
+    const saveApp = vi.fn<AppsContextValue["saveApp"]>(async () => [{ id: "a1", version: "4" } as App]);
+    const value = { apps: [{ id: "a1", version: "3" }], getApp, saveApp, getPublicKey: vi.fn(async () => "K"), refresh: vi.fn() };
+    render(
+      <MemoryRouter>
+        <AppsContext.Provider value={value as unknown as AppsContextValue}>
+          <AppEditorPanel appId="a1" />
+        </AppsContext.Provider>
+      </MemoryRouter>,
+    );
+    const field = await screen.findByRole("textbox", { name: "Value of PORT" });
+    expect(getApp).toHaveBeenCalledTimes(1);
+    await user.type(field, "1");
+    await user.click(screen.getByRole("button", { name: "Save & redeploy" }));
+    await waitFor(() => expect(getApp).toHaveBeenCalledTimes(2));
+    // The page's read of version 4 is that one.
+    readAppDetail(getApp, "a1", "4");
+    expect(getApp).toHaveBeenCalledTimes(2);
+    forgetAppDetails();
+  });
 
   it("explains a save refused because a template took the app over, and re-reads the list", async () => {
     const user = userEvent.setup();
@@ -318,7 +346,7 @@ describe("AppEditorPanel", () => {
   it("never lets an older read overwrite a newer one", async () => {
     const answers: ((d: AppDetailPayload) => void)[] = [];
     const getApp = vi.fn(() => new Promise<AppDetailPayload>((resolve) => answers.push(resolve)));
-    const value = { getApp, saveApp: vi.fn(), getPublicKey: vi.fn(async () => "K"), refresh: vi.fn(async () => {}) } as unknown as AppsContextValue;
+    const value = { apps: [], getApp, saveApp: vi.fn(), getPublicKey: vi.fn(async () => "K"), refresh: vi.fn(async () => {}) } as unknown as AppsContextValue;
     const ui = (signal: number) => (
       <MemoryRouter>
         <AppsContext.Provider value={value}>
@@ -342,6 +370,7 @@ describe("AppEditorPanel", () => {
     const user = userEvent.setup();
     const onDirtyChange = vi.fn();
     const value = {
+      apps: [],
       getApp: vi.fn(async () => withVariable("PORT", "8080")),
       saveApp: vi.fn(),
       getPublicKey: vi.fn(async () => "K"),

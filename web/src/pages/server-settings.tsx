@@ -16,7 +16,7 @@ import { serverFacts, versionLabel } from "@/lib/server-facts";
 import { serverStatus } from "@/lib/status";
 import { DockerSettings } from "@/pages/settings-docker";
 import { DomainsSettings } from "@/pages/settings-domains";
-import { StoragesCard } from "@/pages/settings-storages";
+import { StoragesSettings } from "@/pages/settings-storages";
 
 // Settings → Server: one page per section (the sub-menu is SettingsLayout's).
 // Each addresses the server in the URL through useDocker / useServers; the
@@ -142,12 +142,7 @@ export function ServerStoragesPage() {
   const docker = useDocker();
   const { activeServer } = useServers();
   if (!docker.hasServer || !activeServer) return <NoServer />;
-  return (
-    <div className="space-y-6">
-      <PageHeader title="Storages" subtitle={activeServer.name} />
-      <StoragesCard docker={docker} />
-    </div>
-  );
+  return <StoragesSettings key={activeServer.id} docker={docker} />;
 }
 
 // ServerDockerPage is the server's Docker resources (registries, networks,

@@ -42,8 +42,7 @@ vi.mock("@/context/use-servers", () => ({
 vi.mock("@/context/use-docker", () => ({ useDocker: () => docker }));
 vi.mock("sonner", () => ({ toast: { success: toastSuccess, error: toastError } }));
 vi.mock("@/pages/settings-domains", () => ({ DomainsSettings: () => <p>domains page</p> }));
-
-vi.mock("@/pages/settings-storages", () => ({ StoragesCard: () => <p>storages page</p> }));
+vi.mock("@/pages/settings-storages", () => ({ StoragesSettings: () => <p>storages page</p> }));
 vi.mock("@/pages/settings-docker", () => ({ DockerSettings: () => <p>docker page</p> }));
 
 function renderPage(page: ReactElement) {

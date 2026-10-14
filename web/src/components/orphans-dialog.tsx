@@ -1,30 +1,15 @@
-import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { toast } from "sonner";
 
-import { Button } from "@/components/ui/button";
-import { buttonVariants } from "@/components/ui/button-variants";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { Spinner } from "@/components/ui/spinner";
+import { ConfirmDialog } from "@/components/confirm-dialog";
+import { EmptyState } from "@/components/empty-state";
 import { InlineError } from "@/components/inline-error";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { ResponsiveDialog } from "@/components/responsive-dialog";
+import { Row, RowList } from "@/components/section";
+import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import type { Backups } from "@/context/use-backups";
+import { useNow } from "@/hooks/use-now";
 import { formatSize, type Orphan } from "@/lib/backups";
 import { returnFocusTo } from "@/lib/focus";
 import { cn, relativeTime } from "@/lib/utils";
@@ -42,10 +27,15 @@ function purgeLabel(o: Orphan, now: number): string {
 
 const copiesLabel = (n: number) => `${n} ${n === 1 ? "copy" : "copies"}`;
 
-// OrphansDialog lists a storage's "Backups of apps not on this server": a
-// deleted app's (named from its marker) or another server's sharing the
-// storage, each deletable after a confirmation. The parent remounts it
-// (key) per opening; returnFocus is where focus goes back on close.
+// shownName is how an orphan is named on screen: its app's name, never its
+// raw id (that one sits in a title, for hover).
+const shownName = (o: Orphan) => o.app_name || "an unknown app";
+
+// OrphansDialog lists the backups in a storage that belong to no app on
+// this server: a deleted app's (named from its marker) or another server's
+// sharing the storage, each deletable after a confirmation. The parent
+// remounts it (key) per opening; returnFocus is where focus goes back on
+// close.
 export function OrphansDialog({
   backups,
   storage,
@@ -62,163 +52,142 @@ export function OrphansDialog({
   const [items, setItems] = useState<Orphan[] | null>(null);
   const [error, setError] = useState("");
   const [confirm, setConfirm] = useState<Orphan | null>(null);
-  const [busy, setBusy] = useState(false);
+  const now = useNow();
   // The Delete button that opened the confirmation, and the footer's Close
   // button: focus goes back to the first one still on the page.
   const opener = useRef<HTMLElement | null>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
 
-  const load = useCallback(async () => {
-    setError("");
-    try {
-      setItems(await backups.listOrphans(storage));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "The storage could not be listed.");
-    }
-  }, [backups, storage]);
-
+  // Another listing is asked for by bumping the attempt (Try again).
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
-    if (open) void load();
-  }, [open, load]);
+    if (!open) return;
+    let live = true;
+    backups.listOrphans(storage).then(
+      (list) => {
+        if (!live) return;
+        setItems(list);
+        setError("");
+      },
+      (e) => {
+        if (live) setError(e instanceof Error ? e.message : "The storage could not be listed.");
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [open, backups, storage, attempt]);
 
   const remove = async (o: Orphan) => {
-    setBusy(true);
     try {
       const n = await backups.deleteOrphan(storage, o.app_id);
-      toast.success(`Backups of ${o.app_name || o.app_id} deleted`, {
+      toast.success(`Backups of ${shownName(o)} deleted`, {
         description: `${n} ${n === 1 ? "object" : "objects"} removed from ${storage}.`,
       });
       setItems((prev) => prev && prev.filter((x) => x.app_id !== o.app_id));
     } catch (e) {
       toast.error("Couldn't delete the backups", { description: e instanceof Error ? e.message : undefined });
-    } finally {
-      setConfirm(null);
-      setBusy(false);
+      throw e;
     }
   };
 
-  const now = Date.now();
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-3xl" onCloseAutoFocus={returnFocusTo(returnFocus)}>
-        <DialogHeader>
-          <DialogTitle>Backups of apps not on this server</DialogTitle>
-          <DialogDescription>
-            In <code className="font-mono text-foreground">{storage}</code>: copies of apps deleted here, or of another
-            server's apps sharing this storage.
-          </DialogDescription>
-        </DialogHeader>
-        {error ? (
-          <div className="grid justify-items-start gap-2">
-            <InlineError>{error}</InlineError>
-            <Button variant="outline" size="sm" onClick={() => void load()}>
-              Try again
-            </Button>
-          </div>
-        ) : items === null ? (
-          <div className="flex h-24 items-center justify-center">
-            <Spinner />
-          </div>
-        ) : items.length === 0 ? (
-          <p className="rounded-lg border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">
-            Every backup in this storage belongs to an app on this server.
-          </p>
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>App</TableHead>
-                <TableHead className="hidden sm:table-cell">Copies</TableHead>
-                <TableHead className="hidden sm:table-cell">Newest</TableHead>
-                <TableHead>Automatic deletion</TableHead>
-                <TableHead className="w-px">
-                  <span className="sr-only">Actions</span>
-                </TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {items.map((o) => (
-                <TableRow key={o.app_id}>
-                  <TableCell>
-                    <div className="font-medium [overflow-wrap:anywhere]">{o.app_name || "Unknown app"}</div>
-                    <div className="font-mono text-xs text-muted-foreground [overflow-wrap:anywhere]">{o.app_id}</div>
-                    {o.deleted_at ? <div className="text-xs text-muted-foreground">Deleted {day(o.deleted_at)}</div> : null}
-                    <div className="text-xs text-muted-foreground sm:hidden">
-                      {copiesLabel(o.copies)} · {formatSize(o.bytes)}
-                      {o.newest ? ` · ${relativeTime(new Date(o.newest * 1000), now)}` : ""}
-                    </div>
-                  </TableCell>
-                  <TableCell className="hidden sm:table-cell">
-                    {o.copies} · {formatSize(o.bytes)}
-                  </TableCell>
-                  <TableCell className="hidden sm:table-cell">{o.newest ? relativeTime(new Date(o.newest * 1000), now) : "—"}</TableCell>
-                  <TableCell className={cn("text-sm", !o.deleted_at && "text-muted-foreground")}>{purgeLabel(o, now)}</TableCell>
-                  <TableCell className="py-0.5 text-right">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="text-destructive hover:text-destructive"
-                      aria-label={`Delete the backups of ${o.app_name || o.app_id}`}
-                      onClick={(e) => {
-                        opener.current = e.currentTarget;
-                        setConfirm(o);
-                      }}
-                      disabled={busy}
-                    >
-                      Delete
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-        <DialogFooter>
-          <Button ref={closeButton} variant="outline" onClick={() => onOpenChange(false)}>
-            Close
+    <ResponsiveDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title="Backups of deleted apps"
+      description={
+        <>
+          In <code className="font-mono text-foreground">{storage}</code>: copies of apps deleted from this server, or of
+          another server's apps sharing this storage.
+        </>
+      }
+      className="sm:max-w-2xl"
+      onCloseAutoFocus={(e) => returnFocusTo(returnFocus)(e)}
+      footer={
+        <Button ref={closeButton} variant="outline" className="max-sm:h-10" onClick={() => onOpenChange(false)}>
+          Close
+        </Button>
+      }
+    >
+      {error ? (
+        <div className="grid justify-items-start gap-2">
+          <InlineError>{error}</InlineError>
+          <Button variant="outline" size="sm" className="max-sm:h-10" onClick={() => setAttempt((n) => n + 1)}>
+            Try again
           </Button>
-        </DialogFooter>
-      </DialogContent>
+        </div>
+      ) : items === null ? (
+        <div className="flex h-24 items-center justify-center">
+          <Spinner />
+        </div>
+      ) : items.length === 0 ? (
+        <EmptyState title="Every backup in this storage belongs to an app on this server." />
+      ) : (
+        <RowList label="Backups of deleted apps">
+          {items.map((o) => (
+            <Row
+              key={o.app_id}
+              title={<span title={o.app_id}>{o.app_name || "Unknown app"}</span>}
+              description={[
+                copiesLabel(o.copies),
+                formatSize(o.bytes),
+                o.newest ? relativeTime(new Date(o.newest * 1000), now) : "",
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+              meta={
+                <span className={cn(!o.deleted_at && "text-muted-foreground")}>
+                  {o.deleted_at ? `Deleted ${day(o.deleted_at)} · ` : ""}
+                  {purgeLabel(o, now)}
+                </span>
+              }
+              actions={
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-destructive hover:text-destructive max-sm:h-10"
+                  aria-label={`Delete the backups of ${o.app_name || o.app_id}`}
+                  onClick={(e) => {
+                    opener.current = e.currentTarget;
+                    setConfirm(o);
+                  }}
+                >
+                  Delete
+                </Button>
+              }
+            />
+          ))}
+        </RowList>
+      )}
       {/* A dialog of its own, so it is on screen however far the list is
           scrolled, takes focus (on Cancel), and Escape closes only it. */}
-      <AlertDialog open={confirm !== null} onOpenChange={(o) => !o && !busy && setConfirm(null)}>
-        {confirm ? (
-          <AlertDialogContent onCloseAutoFocus={returnFocusTo(opener, closeButton)}>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Delete these backups?</AlertDialogTitle>
-              <AlertDialogDescription>
-                {confirm.deleted_at ? (
-                  <>
-                    Delete every copy of <strong>{confirm.app_name || confirm.app_id}</strong> (
-                    {copiesLabel(confirm.copies)}, {formatSize(confirm.bytes)}) from {storage}? This cannot be undone.
-                  </>
-                ) : (
-                  <>
-                    This folder is not marked as deleted by this server, so it may hold the live backups of an app on
-                    another server that shares this storage. Deleting every copy of{" "}
-                    <strong>{confirm.app_name || confirm.app_id}</strong> ({copiesLabel(confirm.copies)},{" "}
-                    {formatSize(confirm.bytes)}) from {storage} is permanent, and that app would lose its backups. Delete
-                    only if you are sure nothing uses them.
-                  </>
-                )}
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                className={buttonVariants({ variant: "destructive" })}
-                disabled={busy}
-                onClick={(e) => {
-                  e.preventDefault();
-                  void remove(confirm);
-                }}
-              >
-                {busy ? "Deleting…" : "Delete backups"}
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        ) : null}
-      </AlertDialog>
-    </Dialog>
+      <ConfirmDialog
+        open={confirm !== null}
+        onOpenChange={(o) => !o && setConfirm(null)}
+        title="Delete these backups?"
+        description={
+          confirm ? (
+            confirm.deleted_at ? (
+              <>
+                Delete every copy of <strong>{shownName(confirm)}</strong> ({copiesLabel(confirm.copies)},{" "}
+                {formatSize(confirm.bytes)}) from {storage}? This cannot be undone.
+              </>
+            ) : (
+              <>
+                This folder is not marked as deleted by this server, so it may hold the live backups of an app on another
+                server that shares this storage. Deleting every copy of <strong>{shownName(confirm)}</strong> (
+                {copiesLabel(confirm.copies)}, {formatSize(confirm.bytes)}) from {storage} is permanent, and that app
+                would lose its backups. Delete only if you are sure nothing uses them.
+              </>
+            )
+          ) : null
+        }
+        confirmLabel="Delete backups"
+        pendingLabel="Deleting…"
+        onCloseAutoFocus={(e) => returnFocusTo(opener, closeButton)(e)}
+        onConfirm={() => (confirm ? remove(confirm) : undefined)}
+      />
+    </ResponsiveDialog>
   );
 }

@@ -117,15 +117,20 @@ export type AppsContextValue = {
   // variables) and awaits the result. Upsert: app.id present = edit,
   // absent = create. Resolves with the refreshed app list so callers can
   // locate a freshly created app (e.g. to navigate to it). A failure the
-  // agent reports is a SaveFailedError.
-  saveApp: (body: {
-    draft?: boolean;
-    source?: unknown;
-    app: Record<string, unknown>;
-    config: unknown;
-    files: { name: string; content: string; encrypted: boolean }[];
-    variables: { name: string; content: string; encrypted: boolean }[];
-  }) => Promise<App[]>;
+  // agent reports is a SaveFailedError; no result within timeoutMs (default:
+  // waitFor's) a WaitTimeoutError, after which the list is still re-read
+  // when the result arrives.
+  saveApp: (
+    body: {
+      draft?: boolean;
+      source?: unknown;
+      app: Record<string, unknown>;
+      config: unknown;
+      files: { name: string; content: string; encrypted: boolean }[];
+      variables: { name: string; content: string; encrypted: boolean }[];
+    },
+    opts?: { timeoutMs?: number },
+  ) => Promise<App[]>;
   // getPublicKey returns the server's ECIES public key for encrypting secrets.
   getPublicKey: () => Promise<string>;
   // getImageTags lists the registry tags available for an image (via the

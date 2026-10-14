@@ -10,6 +10,7 @@ import {
 import { useAuth } from "@/context/use-auth";
 import { useServers } from "@/context/use-servers";
 import { useNotifications } from "@/context/use-notifications";
+import { WaitTimeoutError } from "@/context/notifications-context-base";
 import { apiBase as base } from "@/config";
 import { dispatchCommand } from "@/lib/api";
 import type { BackupHealth } from "@/lib/backups";
@@ -278,7 +279,8 @@ export function AppsProvider({ children }: { children: ReactNode }) {
 
   // dispatchAndWait POSTs a fire-and-forward command, awaits its SSE result
   // by request_id, refreshes the list and status, and returns the refreshed
-  // list together with the result payload.
+  // list together with the result payload. A command that outlives the wait
+  // still re-reads the list when its result arrives (a slow create appears).
   const dispatchAndWait = useCallback(
     async (
       path: string,
@@ -286,6 +288,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       opts: { timeoutMs?: number; failure?: new (message: string) => Error } = {},
     ): Promise<{ list: App[]; payload: unknown }> => {
       if (!activeServerId) throw new Error("No active server");
+      let ref = "";
       // A refused command (400) carries the reason, e.g. an unknown storage.
       const payload = await dispatchCommand(
         waitFor,
@@ -295,8 +298,11 @@ export function AppsProvider({ children }: { children: ReactNode }) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ...body, server_id: activeServerId }),
         },
-        { timeoutMs: opts.timeoutMs, failure: opts.failure, refOptional: true },
-      );
+        { timeoutMs: opts.timeoutMs, failure: opts.failure, refOptional: true, onAccepted: (r) => (ref = r) },
+      ).catch((e: unknown) => {
+        if (e instanceof WaitTimeoutError && ref) pendingRefs.current.add(ref);
+        throw e;
+      });
       const [list] = await Promise.all([loadApps(), loadStatus()]);
       return { list, payload };
     },
@@ -494,7 +500,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
       config: unknown;
       files: { name: string; content: string; encrypted: boolean }[];
       variables: { name: string; content: string; encrypted: boolean }[];
-    }) => {
+    }, opts: { timeoutMs?: number } = {}) => {
       const { list } = await dispatchAndWait(
         "save-app",
         {
@@ -505,7 +511,7 @@ export function AppsProvider({ children }: { children: ReactNode }) {
           ...(body.source ? { source: body.source } : {}),
           ...(body.draft ? { draft: true } : {}),
         },
-        { failure: SaveFailedError },
+        { failure: SaveFailedError, timeoutMs: opts.timeoutMs },
       );
       // A deploy went through: the app no longer reads Failed.
       if (typeof body.app.id === "string" && !body.draft) clearDeployFailure(body.app.id);

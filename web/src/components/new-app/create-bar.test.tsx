@@ -33,4 +33,16 @@ describe("CreateBar", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Creating…" })).toBeDisabled();
   });
+
+  it("says a slow create is still running, links to Apps, and holds Create back for it", () => {
+    render(
+      <MemoryRouter>
+        <CreateBar busy={false} onCreate={() => {}} cancelTo="/" stillCreatingTo="/server/s1/apps" held />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("Still creating — this can take a few minutes. It will appear in Apps.");
+    expect(screen.getByRole("link", { name: "Apps" })).toHaveAttribute("href", "/server/s1/apps");
+    expect(screen.getByRole("button", { name: "Creating…" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+  });
 });

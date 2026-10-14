@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppsProvider } from "@/context/apps-context";
 import { DELETE_APP_TIMEOUT_MS, SaveFailedError } from "@/context/apps-context-base";
+import { WaitTimeoutError } from "@/context/notifications-context-base";
 import { useApps } from "@/context/use-apps";
 import { keepRevisions, keptRevisions, resetRevisionsCache, revisionsEpoch } from "@/lib/revisions";
 
@@ -236,6 +237,27 @@ describe("AppsProvider failed deploys", () => {
     const err = await result.current.saveApp({ app: { name: "web" }, config: {}, files: [], variables: [] }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(SaveFailedError);
     expect((err as Error).message).toBe("docker compose up: exit status 1: port is already allocated");
+  });
+
+  it("waits a save as long as asked, and re-reads the list when a save that outlived it answers", async () => {
+    const { result } = renderHook(() => useApps(), { wrapper });
+    await waitUntil(() => expect(result.current.loading).toBe(false));
+    waitFor.mockRejectedValueOnce(new WaitTimeoutError());
+    await expect(
+      result.current.saveApp({ app: { name: "web" }, config: {}, files: [], variables: [] }, { timeoutMs: 300_000 }),
+    ).rejects.toBeInstanceOf(WaitTimeoutError);
+    expect(waitFor).toHaveBeenCalledWith("save-1", 300_000);
+    const reads = () => accepting.mock.calls.filter(([u]) => String(u).includes("/api/v1/app/get-apps?")).length;
+    const before = reads();
+    act(() => {
+      for (const h of handlers) h({ type: "operation_result", ref: "save-1" });
+    });
+    await waitUntil(() => expect(reads()).toBe(before + 1));
+    // Only once: the ref is forgotten after its answer.
+    act(() => {
+      for (const h of handlers) h({ type: "operation_result", ref: "save-1" });
+    });
+    expect(reads()).toBe(before + 1);
   });
 
   it("reconciles: waits for the agent's list, then reads the catalog again", async () => {

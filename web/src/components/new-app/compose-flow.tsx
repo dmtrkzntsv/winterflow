@@ -54,7 +54,7 @@ export function ComposeFlow({ serverId }: { serverId: string }) {
     const pruned = pruneBlankAddresses(state);
     return ingressOn ? pruned : { ...pruned, config: { ...pruned.config, ingress: undefined } };
   }, [state, ingressOn]);
-  const { form, errors, invalid, busy, error, submit } = useCreateForm(serverId, ready);
+  const { form, errors, invalid, busy, error, stillCreating, held, submit } = useCreateForm(serverId, ready);
   const config = state.config;
   const setConfig = (patch: Partial<AppEditorState["config"]>) =>
     setState((s) => ({ ...s, config: { ...s.config, ...patch } }));
@@ -166,7 +166,15 @@ export function ComposeFlow({ serverId }: { serverId: string }) {
         />
       </Disclosure>
 
-      <CreateBar error={error} busy={busy} onCreate={create} cancelTo={appsPath(serverId)} invalid={invalid} />
+      <CreateBar
+        error={error}
+        busy={busy}
+        onCreate={create}
+        cancelTo={appsPath(serverId)}
+        invalid={invalid}
+        stillCreatingTo={stillCreating ? appsPath(serverId) : ""}
+        held={held}
+      />
     </div>
   );
 }

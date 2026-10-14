@@ -15,7 +15,7 @@ import type { AppEditorState, AppSourceConfig } from "@/types/app-config";
 // file; addresses and variables are added afterwards under Configuration.
 export function GitFlow({ serverId }: { serverId: string }) {
   const [state, setState] = useState<AppEditorState>(gitStart);
-  const { form, errors, invalid, busy, error, submit } = useCreateForm(serverId, state);
+  const { form, errors, invalid, busy, error, stillCreating, held, submit } = useCreateForm(serverId, state);
   const config = state.config;
   const source = config.source ?? newGitSource();
 
@@ -39,7 +39,15 @@ export function GitFlow({ serverId }: { serverId: string }) {
       <p className="text-sm text-muted-foreground">
         The app runs the repository's compose file. Add addresses and variables under Configuration once it is created.
       </p>
-      <CreateBar error={error} busy={busy} onCreate={() => submit()} cancelTo={appsPath(serverId)} invalid={invalid} />
+      <CreateBar
+        error={error}
+        busy={busy}
+        onCreate={() => submit()}
+        cancelTo={appsPath(serverId)}
+        invalid={invalid}
+        stillCreatingTo={stillCreating ? appsPath(serverId) : ""}
+        held={held}
+      />
     </div>
   );
 }

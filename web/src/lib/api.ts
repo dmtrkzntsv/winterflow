@@ -50,12 +50,19 @@ export function createJsonClient(base: string, fetchImpl?: typeof fetch): JsonCl
 // returns the payload. A refusal (non-2xx) carries the API's message; an
 // agent failure throws `failure` (default Error) with the agent's error.
 // With refOptional a 2xx without a request_id resolves undefined, else it
-// throws. (lib/templates.ts's command() is the instance-command variant.)
+// throws. onAccepted hears the request_id before the wait (a caller that
+// stops waiting can still recognise the late result). (lib/templates.ts's
+// command() is the instance-command variant.)
 export async function dispatchCommand(
   waitFor: (ref: string, timeoutMs?: number) => Promise<{ status?: number; error?: string; payload?: unknown }>,
   url: string,
   init: RequestInit,
-  opts: { timeoutMs?: number; failure?: new (message: string) => Error; refOptional?: boolean } = {},
+  opts: {
+    timeoutMs?: number;
+    failure?: new (message: string) => Error;
+    refOptional?: boolean;
+    onAccepted?: (ref: string) => void;
+  } = {},
 ): Promise<unknown> {
   const res = await fetch(url, { credentials: "include", ...init });
   if (!res.ok) throw await readApiError(res);
@@ -65,6 +72,7 @@ export async function dispatchCommand(
     if (opts.refOptional) return undefined;
     throw new Error("No request id");
   }
+  opts.onAccepted?.(ref);
   const result = await waitFor(ref, opts.timeoutMs);
   if (result.status && result.status !== 0) {
     throw new (opts.failure ?? Error)(result.error || "Operation failed");

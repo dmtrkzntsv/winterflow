@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ComposeFlow } from "@/components/new-app/compose-flow";
 import { AppsContext, SaveFailedError, type App, type AppsContextValue } from "@/context/apps-context-base";
+import { WaitTimeoutError } from "@/context/notifications-context-base";
 import { suggestAppLook } from "@/lib/app-look";
 import { fakeAPI } from "@/test/fake-api";
 import { stubViewport } from "@/test/media";
@@ -224,6 +225,24 @@ describe("ComposeFlow", () => {
     expect(screen.getByRole("button", { name: "Creating…" })).toBeDisabled();
     finish([app("old", "shop"), app("new1", "shop")]);
     expect(await screen.findByText("app new1")).toBeInTheDocument();
+    expect(saveApp).toHaveBeenCalledTimes(1);
+  });
+
+  it("says a create that outlived its wait is still running and won't create it again", async () => {
+    const user = userEvent.setup();
+    const saveApp = vi.fn(async () => Promise.reject(new WaitTimeoutError()));
+    const reconcile = vi.fn(async () => []);
+    renderFlow(saveApp, { reconcile });
+    await user.type(screen.getByLabelText("Name"), "shop");
+    await user.click(screen.getByRole("button", { name: "Create app" }));
+    expect(await screen.findByText(/Still creating — this can take a few minutes/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Apps" })).toHaveAttribute("href", "/server/s1");
+    expect(screen.getByRole("button", { name: "Creating…" })).toBeDisabled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(reconcile).not.toHaveBeenCalled();
+    // Another name is a different app: it can be created.
+    await user.type(screen.getByLabelText("Name"), "2");
+    expect(screen.getByRole("button", { name: "Create app" })).toBeEnabled();
     expect(saveApp).toHaveBeenCalledTimes(1);
   });
 

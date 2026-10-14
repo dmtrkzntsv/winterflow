@@ -333,8 +333,8 @@ export const SERVICES: ServiceSpec[] = [
     fields: [
       { key: "server", label: "Server", defaultValue: "ntfy.sh", placeholder: "ntfy.sh" },
       { key: "topic", label: "Topic", secret: true, placeholder: "my-alerts-7f3k", hint: "Anyone who knows a public topic can read it." },
-      { key: "username", label: "Username", optional: true },
-      { key: "password", label: "Password or token", secret: true, optional: true },
+      { key: "username", label: "Username", optional: true, advanced: true },
+      { key: "password", label: "Password or token", secret: true, optional: true, advanced: true },
     ],
     build: (f) => {
       const { hostPath, insecure } = splitHost(req(f, "server", "Server"), "server");

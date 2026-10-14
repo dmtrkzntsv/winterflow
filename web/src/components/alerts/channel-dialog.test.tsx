@@ -27,8 +27,20 @@ describe("ChannelDialog", () => {
     const user = userEvent.setup({ delay: null });
     render(<ChannelDialog open onOpenChange={() => {}} onSaved={onSaved} />);
 
-    await user.type(screen.getByLabelText("Name"), "Phone");
+    // The service comes first, and names the channel until the user does.
+    const service = screen.getByRole("radiogroup", { name: "Service" });
+    expect(service.compareDocumentPosition(screen.getByLabelText("Name")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByLabelText("Name")).toHaveValue("Telegram");
     await user.click(screen.getByRole("radio", { name: "ntfy" }));
+    expect(screen.getByLabelText("Name")).toHaveValue("ntfy");
+    // A new channel starts enabled; ntfy's sign-in waits under Advanced.
+    expect(screen.queryByLabelText("Enabled")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Username/)).not.toBeInTheDocument();
+    await user.clear(screen.getByLabelText("Name"));
+    await user.type(screen.getByLabelText("Name"), "Phone");
+    await user.click(screen.getByRole("radio", { name: "Telegram" }));
+    await user.click(screen.getByRole("radio", { name: "ntfy" }));
+    expect(screen.getByLabelText("Name")).toHaveValue("Phone");
     await user.type(screen.getByLabelText("Topic"), "wf-alerts");
     await user.click(screen.getByRole("button", { name: "Save" }));
 
@@ -88,9 +100,11 @@ describe("ChannelDialog", () => {
     await user.clear(screen.getByLabelText("Name"));
     await user.type(screen.getByLabelText("Name"), "Ops 2");
     await user.click(screen.getByLabelText("Default channel"));
+    // Editing, a channel can be turned off.
+    await user.click(screen.getByLabelText("Enabled"));
     await user.click(screen.getByRole("button", { name: "Save" }));
     expect(api.posted("/api/v1/alerts/save-channel")).toEqual([
-      { id: "c1", name: "Ops 2", url: "", fields: {}, is_default: false, enabled: true },
+      { id: "c1", name: "Ops 2", url: "", fields: {}, is_default: false, enabled: false },
     ]);
   });
 

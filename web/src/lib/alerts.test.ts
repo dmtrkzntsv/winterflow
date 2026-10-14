@@ -127,9 +127,10 @@ describe("alertTargetPath", () => {
 });
 
 describe("channel form wording", () => {
-  it("calls a raw Shoutrrr URL Other (URL) and folds SMTP's port and sign-in under Advanced", () => {
+  it("calls a raw Shoutrrr URL Other (URL) and folds SMTP's port and sign-in, and ntfy's sign-in, under Advanced", () => {
     expect(serviceSpec("raw").label).toBe("Other (URL)");
     expect(serviceSpec("email").fields.filter((f) => f.advanced).map((f) => f.key)).toEqual(["port", "username", "password"]);
-    expect(SERVICES.filter((s) => s.id !== "email").every((s) => s.fields.every((f) => !f.advanced))).toBe(true);
+    expect(serviceSpec("ntfy").fields.filter((f) => f.advanced).map((f) => f.key)).toEqual(["username", "password"]);
+    expect(SERVICES.filter((s) => s.id !== "email" && s.id !== "ntfy").every((s) => s.fields.every((f) => !f.advanced))).toBe(true);
   });
 });

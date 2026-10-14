@@ -62,11 +62,15 @@ function advancedShown(id: ServiceId, values: Record<string, string>): boolean {
 // "Change destination" is used, which needs the secrets again. Optional
 // connection details (SMTP port and sign-in) sit under "Advanced", which
 // opens by itself when the form can't be built. Its parent mounts it per
-// opening, so typed secrets do not outlive it.
+// opening, so typed secrets do not outlive it. A new channel picks its
+// service first and is named after it until the user names it; it starts
+// enabled (the switch shows when editing).
 export function ChannelDialog({ open, onOpenChange, channel, onSaved, returnFocus }: Props) {
   const editing = channel !== undefined;
   const firstService: ServiceId = channel ? channelService(channel) : "telegram";
-  const [name, setName] = useState(channel?.name ?? "");
+  // A new channel is named after its service until the user names it.
+  const [name, setName] = useState(channel?.name ?? serviceSpec(firstService).label);
+  const [named, setNamed] = useState(editing);
   const [service, setService] = useState<ServiceId>(firstService);
   const [values, setValues] = useState<Record<string, string>>(() => initialValues(firstService, channel));
   const [advanced, setAdvanced] = useState(() => advancedShown(firstService, initialValues(firstService, channel)));
@@ -93,6 +97,7 @@ export function ChannelDialog({ open, onOpenChange, channel, onSaved, returnFocu
   const pickService = (id: ServiceId) => {
     const next = initialValues(id, channel && channelService(channel) === id ? channel : undefined);
     setService(id);
+    if (!named) setName(serviceSpec(id).label);
     setValues(next);
     setAdvanced(advancedShown(id, next));
     setFormError(null);
@@ -206,6 +211,24 @@ export function ChannelDialog({ open, onOpenChange, channel, onSaved, returnFocu
     );
   };
 
+  // Editing, the name comes first; adding, the service does (the name
+  // follows it).
+  const nameField = (
+    <div className="space-y-1.5">
+      <Label htmlFor="channel-name">Name</Label>
+      <Input
+        id="channel-name"
+        value={name}
+        maxLength={64}
+        placeholder="Ops on Telegram"
+        onChange={(e) => {
+          setName(e.target.value);
+          setNamed(true);
+        }}
+      />
+    </div>
+  );
+
   return (
     <ResponsiveDialog
       open={open}
@@ -241,17 +264,7 @@ export function ChannelDialog({ open, onOpenChange, channel, onSaved, returnFocu
           void save();
         }}
       >
-        <div className="space-y-1.5">
-          <Label htmlFor="channel-name">Name</Label>
-          <Input
-            id="channel-name"
-            value={name}
-            maxLength={64}
-            placeholder="Ops on Telegram"
-            onChange={(e) => setName(e.target.value)}
-          />
-        </div>
-
+        {editing ? nameField : null}
         {changing ? (
           <>
             <div className="space-y-1.5">
@@ -275,6 +288,7 @@ export function ChannelDialog({ open, onOpenChange, channel, onSaved, returnFocu
                 ))}
               </div>
             </div>
+            {editing ? null : nameField}
             {basic.map(input)}
             {more.length > 0 ? (
               <Disclosure label="Advanced" open={advanced} onOpenChange={setAdvanced}>
@@ -302,12 +316,15 @@ export function ChannelDialog({ open, onOpenChange, channel, onSaved, returnFocu
           </div>
           <Switch id="channel-default" checked={isDefault} onCheckedChange={setIsDefault} />
         </div>
-        <div className="flex items-center justify-between gap-3">
-          <Label htmlFor="channel-enabled" className="max-sm:py-2.5">
-            Enabled
-          </Label>
-          <Switch id="channel-enabled" checked={enabled} onCheckedChange={setEnabled} />
-        </div>
+        {/* A new channel starts enabled: the switch is for turning one off later. */}
+        {editing ? (
+          <div className="flex items-center justify-between gap-3">
+            <Label htmlFor="channel-enabled" className="max-sm:py-2.5">
+              Enabled
+            </Label>
+            <Switch id="channel-enabled" checked={enabled} onCheckedChange={setEnabled} />
+          </div>
+        ) : null}
 
         {formError ? (
           <p role="alert" className="text-sm text-destructive">

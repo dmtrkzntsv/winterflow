@@ -99,10 +99,11 @@ export function LogsView({
     containers.reduce((w, c) => Math.max(w, c.length), 0),
   );
 
-  // The container picked in the chips; it goes back to All when that
-  // container has no lines any more.
+  // The container picked in the chips; it is dropped (back to All) when that
+  // container has no lines any more, so it can't silently return later.
   const [only, setOnly] = useState<string | null>(null);
   const active = only !== null && containers.includes(only) ? only : null;
+  if (only !== null && active === null) setOnly(null);
   const shown = useMemo(() => (active ? lines.filter((l) => l.container === active) : lines), [lines, active]);
 
   useEffect(() => {
@@ -145,16 +146,18 @@ export function LogsView({
             <span className="font-mono text-console-muted">{containers[0] ?? "Container output"}</span>
           )}
         </div>
-        <span className="text-xs tabular-nums text-console-muted">
-          {shown.length === 1 ? "1 line" : `${shown.length} lines`}
-        </span>
+        {(loading && lines.length === 0) || error ? null : (
+          <span className="text-xs tabular-nums text-console-muted">
+            {shown.length === 1 ? "1 line" : `${shown.length} lines`}
+          </span>
+        )}
         <Select
           value={String(tail)}
           onValueChange={(v) => onTailChange(Number(v))}
         >
           <SelectTrigger
             aria-label="Number of lines"
-            className="h-7 w-36 border-console-border bg-console-hover text-xs text-console-foreground"
+            className="h-7 w-36 max-sm:h-10 border-console-border bg-console-hover text-xs text-console-foreground"
           >
             <SelectValue />
           </SelectTrigger>
@@ -171,7 +174,7 @@ export function LogsView({
           variant="ghost"
           aria-label="Refresh logs"
           title="Refresh logs"
-          className="size-7 text-console-muted hover:bg-console-hover hover:text-console-foreground"
+          className="size-7 max-sm:size-10 text-console-muted hover:bg-console-hover hover:text-console-foreground"
           onClick={onRefresh}
           disabled={loading}
         >
@@ -204,8 +207,9 @@ export function LogsView({
           ref={scrollRef}
           role="log"
           aria-label="Logs"
+          tabIndex={0}
           onScroll={handleScroll}
-          className="flex-1 overflow-y-auto py-2 font-mono text-xs leading-5"
+          className="flex-1 overflow-y-auto py-2 font-mono focus-visible:ring-2 focus-visible:ring-console-foreground/60 focus-visible:outline-none focus-visible:ring-inset text-xs leading-5"
         >
           {shown.map((l, i) => (
             <div
@@ -240,7 +244,7 @@ export function LogsView({
       {!stickToBottom && shown.length > 0 ? (
         <Button
           size="sm"
-          className="absolute right-4 bottom-4 h-7 gap-1 rounded-full bg-console-foreground px-3 text-xs text-console shadow-lg hover:bg-console-foreground/90"
+          className="absolute right-4 bottom-4 h-7 max-sm:h-10 gap-1 rounded-full bg-console-foreground px-3 text-xs text-console shadow-lg hover:bg-console-foreground/90"
           onClick={jumpToBottom}
         >
           <ArrowDown className="size-3.5" aria-hidden /> Jump to latest

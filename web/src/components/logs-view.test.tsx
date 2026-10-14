@@ -32,6 +32,30 @@ describe("LogsView", () => {
     expect(screen.getByRole("log", { name: "Logs" })).toHaveTextContent("checkpoint");
   });
 
+  it("drops the container filter when its container leaves the lines", async () => {
+    const user = userEvent.setup();
+    const props = { loading: false, error: null, tail: 200, onTailChange: vi.fn(), onRefresh: vi.fn() };
+    const both = [line("web", "GET /"), line("db", "checkpoint")];
+    const { rerender } = render(<LogsView lines={both} {...props} />);
+    await user.click(within(screen.getByRole("group", { name: "Containers" })).getByRole("button", { name: "db" }));
+    expect(screen.getByText("1 line")).toBeInTheDocument();
+    rerender(<LogsView lines={[line("web", "GET /")]} {...props} />);
+    rerender(<LogsView lines={both} {...props} />);
+    const chips = screen.getByRole("group", { name: "Containers" });
+    expect(within(chips).getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("2 lines")).toBeInTheDocument();
+  });
+
+  it("hides the line count while loading the first lines or showing an error", () => {
+    const { unmount } = render(
+      <LogsView lines={[]} loading error={null} tail={200} onTailChange={vi.fn()} onRefresh={vi.fn()} />,
+    );
+    expect(screen.queryByText(/^\d+ lines?$/)).not.toBeInTheDocument();
+    unmount();
+    renderLogs([], { error: "agent offline" });
+    expect(screen.queryByText(/^\d+ lines?$/)).not.toBeInTheDocument();
+  });
+
   it("has no chips with one container, only its name", () => {
     renderLogs([line("web", "GET /")]);
     expect(screen.queryByRole("group", { name: "Containers" })).not.toBeInTheDocument();
@@ -51,6 +75,7 @@ describe("LogsView", () => {
     const user = userEvent.setup();
     renderLogs([line("web", "a"), line("web", "b")]);
     const log = screen.getByRole("log", { name: "Logs" });
+    expect(log).toHaveAttribute("tabindex", "0");
     Object.defineProperty(log, "scrollHeight", { configurable: true, value: 1000 });
     Object.defineProperty(log, "clientHeight", { configurable: true, value: 100 });
     log.scrollTop = 0;

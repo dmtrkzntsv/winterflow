@@ -1,7 +1,7 @@
 import { useLocation } from "react-router-dom";
 import { Plus } from "lucide-react";
 
-import { useNewAppDialog } from "@/components/new-app/use-new-app-dialog";
+import { useNewAppOpener } from "@/components/new-app/new-app-opener";
 import { SidebarLink } from "@/components/sidebar-link";
 import { StatusDot } from "@/components/status";
 import { SidebarMenuSub, SidebarMenuSubButton, SidebarMenuSubItem } from "@/components/ui/sidebar";
@@ -14,15 +14,16 @@ import { appStatus } from "@/lib/status";
 import { cn } from "@/lib/utils";
 
 // NavApps is the live app list under Apps: each app of the active server
-// with its status dot, then New app, which opens the same chooser as the
-// Apps page's button (closing the phone sheet first). Hidden when the
-// sidebar is collapsed to icons.
+// with its status dot, then New app, which opens the shell's chooser (the
+// same as the Apps page's button; it lives above the sidebar, so closing
+// the phone sheet first leaves it open). Hidden when the sidebar is
+// collapsed to icons.
 export function NavApps() {
   const { apps, statusByApp, deployFailures, loading } = useApps();
   const { activeServerId } = useServers();
   const { pathname } = useLocation();
   const { isMobile, setOpenMobile } = useSidebar();
-  const chooser = useNewAppDialog(activeServerId ?? "");
+  const openNewApp = useNewAppOpener();
   if (!activeServerId) return null;
   const serverApps = apps.filter((app) => app.serverId === activeServerId);
 
@@ -50,22 +51,23 @@ export function NavApps() {
           </SidebarMenuSubItem>
         );
       })}
-      <SidebarMenuSubItem>
-        <SidebarMenuSubButton asChild className="text-muted-foreground max-lg:h-10">
-          <button
-            type="button"
-            className="w-full"
-            onClick={() => {
-              if (isMobile) setOpenMobile(false);
-              chooser.open();
-            }}
-          >
-            <Plus />
-            <span>New app</span>
-          </button>
-        </SidebarMenuSubButton>
-        {chooser.dialog}
-      </SidebarMenuSubItem>
+      {openNewApp ? (
+        <SidebarMenuSubItem>
+          <SidebarMenuSubButton asChild className="text-muted-foreground max-lg:h-10">
+            <button
+              type="button"
+              className="w-full"
+              onClick={() => {
+                if (isMobile) setOpenMobile(false);
+                openNewApp();
+              }}
+            >
+              <Plus />
+              <span>New app</span>
+            </button>
+          </SidebarMenuSubButton>
+        </SidebarMenuSubItem>
+      ) : null}
     </SidebarMenuSub>
   );
 }

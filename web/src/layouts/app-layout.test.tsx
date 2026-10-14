@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -26,6 +27,10 @@ vi.mock("@/components/app-sidebar", () => ({
   },
 }));
 vi.mock("@/components/command-palette", () => ({ CommandPalette: () => null }));
+// The New app chooser has its own tests (with the sidebar).
+vi.mock("@/components/new-app/new-app-dialog-provider", () => ({
+  NewAppDialogProvider: ({ children }: { children: ReactNode }) => children,
+}));
 vi.mock("@/components/alerts/alert-toasts", () => ({ AlertToasts: () => null }));
 vi.mock("@/components/server-creation-dialog", () => ({ ServerSelectionDialog: () => null }));
 

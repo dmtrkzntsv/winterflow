@@ -1,13 +1,16 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AppSidebar } from "@/components/app-sidebar";
+import { NewAppDialogProvider } from "@/components/new-app/new-app-dialog-provider";
+import { SidebarProvider } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { SidebarContext, type SidebarContextProps } from "@/components/ui/use-sidebar";
+import { SidebarContext, useSidebar, type SidebarContextProps } from "@/components/ui/use-sidebar";
 import { CommandPaletteProvider } from "@/context/palette-context";
 import { useCommandPalette } from "@/context/use-palette";
+import { stubViewport } from "@/test/media";
 
 const ALPHA = { id: "s1", organizationId: "o", name: "Alpha", createdAt: "", lastSeenAt: null, capabilities: {} };
 let activeServerId: string | null = "s1";
@@ -66,8 +69,10 @@ function renderAt(url: string, isMobile = false, state: "expanded" | "collapsed"
       <CommandPaletteProvider>
         <TooltipProvider>
           <SidebarContext.Provider value={sidebarState(isMobile, state)}>
-            <AppSidebar />
-            <PaletteState />
+            <NewAppDialogProvider>
+              <AppSidebar />
+              <PaletteState />
+            </NewAppDialogProvider>
           </SidebarContext.Provider>
         </TooltipProvider>
       </CommandPaletteProvider>
@@ -177,6 +182,51 @@ describe("AppSidebar", () => {
     const dialog = await screen.findByRole("dialog", { name: "New app" });
     expect(dialog).toHaveTextContent("How do you want to start?");
     expect(screen.getByRole("link", { name: /Compose file/ })).toHaveAttribute("href", "/server/s1/new?from=compose");
+  });
+
+  it("keeps the New app chooser open on a phone once the sheet holding the button closes", async () => {
+    stubViewport(375);
+    const user = userEvent.setup();
+    function OpenMenu() {
+      const { setOpenMobile: open } = useSidebar();
+      return <button onClick={() => open(true)}>Open menu</button>;
+    }
+    render(
+      <MemoryRouter initialEntries={["/server/s1"]}>
+        <CommandPaletteProvider>
+          <TooltipProvider>
+            <SidebarProvider>
+              <NewAppDialogProvider>
+                <OpenMenu />
+                <AppSidebar />
+              </NewAppDialogProvider>
+            </SidebarProvider>
+          </TooltipProvider>
+        </CommandPaletteProvider>
+      </MemoryRouter>,
+    );
+    await user.click(screen.getByRole("button", { name: "Open menu" }));
+    await user.click(await screen.findByRole("button", { name: "New app" }));
+    // The sheet (and the button in it) is gone; the chooser stays.
+    await waitFor(() => expect(screen.queryByRole("button", { name: "New app" })).not.toBeInTheDocument());
+    const dialog = await screen.findByRole("dialog", { name: "New app" });
+    expect(dialog).toHaveTextContent("How do you want to start?");
+    expect(within(dialog).getByRole("link", { name: /Compose file/ })).toHaveAttribute("href", "/server/s1/new?from=compose");
+  });
+
+  it("offers no New app outside the shell's chooser", () => {
+    render(
+      <MemoryRouter initialEntries={["/server/s1"]}>
+        <CommandPaletteProvider>
+          <TooltipProvider>
+            <SidebarContext.Provider value={sidebarState(false)}>
+              <AppSidebar />
+            </SidebarContext.Provider>
+          </TooltipProvider>
+        </CommandPaletteProvider>
+      </MemoryRouter>,
+    );
+    expect(screen.queryByRole("button", { name: "New app" })).not.toBeInTheDocument();
   });
 
   it("closes the phone sheet when a link is followed", async () => {

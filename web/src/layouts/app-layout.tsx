@@ -5,6 +5,7 @@ import { Menu, Search } from "lucide-react"
 import { AlertToasts } from "@/components/alerts/alert-toasts"
 import { AppSidebar } from "@/components/app-sidebar"
 import { CommandPalette } from "@/components/command-palette"
+import { NewAppDialogProvider } from "@/components/new-app/new-app-dialog-provider"
 import { ServerSelectionDialog } from "@/components/server-creation-dialog"
 import { Button } from "@/components/ui/button"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
@@ -101,22 +102,25 @@ export function AppLayout() {
 
   // One unread-Inbox state for the shell: the sidebar badge and the Inbox
   // page read the same instance (one read per alert, not one per consumer).
+  // The New app chooser lives here too, above the sidebar's phone sheet.
   return (
     <PageTitleProvider>
       <InboxUnreadProvider>
         <CommandPaletteProvider>
           <SidebarProvider style={SIDEBAR_STYLE}>
-            <AppSidebar onAddServer={handleAddServer} />
-            <AppMain onAddServer={handleAddServer} />
-            <CommandPalette onAddServer={handleAddServer} />
-            <AlertToasts />
-            {!isStandalone ? (
-              <ServerSelectionDialog
-                isOpen={isServerDialogOpen}
-                onClose={() => setIsServerDialogOpen(false)}
-                onServerAdded={() => void refresh()}
-              />
-            ) : null}
+            <NewAppDialogProvider>
+              <AppSidebar onAddServer={handleAddServer} />
+              <AppMain onAddServer={handleAddServer} />
+              <CommandPalette onAddServer={handleAddServer} />
+              <AlertToasts />
+              {!isStandalone ? (
+                <ServerSelectionDialog
+                  isOpen={isServerDialogOpen}
+                  onClose={() => setIsServerDialogOpen(false)}
+                  onServerAdded={() => void refresh()}
+                />
+              ) : null}
+            </NewAppDialogProvider>
           </SidebarProvider>
         </CommandPaletteProvider>
       </InboxUnreadProvider>

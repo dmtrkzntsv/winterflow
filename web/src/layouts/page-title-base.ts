@@ -1,7 +1,7 @@
 import { createContext } from "react";
 
 // The product name the browser tab shows after the page's title.
-export const APP_NAME = "WinterFlow";
+export const APP_NAME = "Winterflow";
 
 // PageTitleContext carries the current page's title (the mobile top bar
 // shows it); SetPageTitleContext the setter pages call through

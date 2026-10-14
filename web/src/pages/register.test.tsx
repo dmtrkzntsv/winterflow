@@ -47,8 +47,8 @@ describe("RegisterPage", () => {
     auth.login.mockResolvedValue(undefined);
     renderRegister();
     expect(await screen.findByRole("heading", { level: 1, name: "Set up Winterflow" })).toBeInTheDocument();
-    // Nobody can log in yet: no account exists.
-    expect(screen.queryByRole("link", { name: "Log in" })).not.toBeInTheDocument();
+    // Nobody can sign in yet: no account exists.
+    expect(screen.queryByRole("link", { name: "Sign in" })).not.toBeInTheDocument();
     await fill(user);
     await user.click(screen.getByRole("button", { name: "Set up Winterflow" }));
     expect(await screen.findByText("home")).toBeInTheDocument();
@@ -60,14 +60,14 @@ describe("RegisterPage", () => {
     fakeAPI({ "/api/v1/auth/state": { bootstrap: false, registration_enabled: true } });
     renderRegister();
     expect(await screen.findByRole("heading", { level: 1, name: "Create an account" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Log in" })).toHaveAttribute("href", "/login");
+    expect(screen.getByRole("link", { name: "Sign in" })).toHaveAttribute("href", "/login");
   });
 
   it("says sign-up is closed when it is", async () => {
     fakeAPI({ "/api/v1/auth/state": { bootstrap: false, registration_enabled: false } });
     renderRegister();
     expect(await screen.findByRole("heading", { level: 1, name: "Registration is closed" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Back to log in" })).toHaveAttribute("href", "/login");
+    expect(screen.getByRole("link", { name: "Back to sign in" })).toHaveAttribute("href", "/login");
   });
 
   it("offers the form when the state can't be read (the server decides on submit)", async () => {

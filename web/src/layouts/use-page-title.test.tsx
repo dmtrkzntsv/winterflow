@@ -38,7 +38,7 @@ describe("usePageTitle", () => {
       </PageTitleProvider>,
     );
     await waitFor(() => expect(screen.getByTestId("bar")).toHaveTextContent("Members"));
-    expect(document.title).toBe("Members · WinterFlow");
+    expect(document.title).toBe("Members · Winterflow");
   });
 
   it("follows the page on navigation and clears when no page names itself", async () => {
@@ -57,6 +57,6 @@ describe("usePageTitle", () => {
 
   it("still names the browser tab outside the shell", () => {
     render(<Page title="Inbox" />);
-    expect(document.title).toBe("Inbox · WinterFlow");
+    expect(document.title).toBe("Inbox · Winterflow");
   });
 });

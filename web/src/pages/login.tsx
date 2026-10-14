@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { AuthScreen } from "@/components/auth-screen";
 import { LoginForm } from "@/components/login-form";
 import { apiBaseUrl } from "@/config";
+import { LoginError } from "@/context/auth-context-base";
 import { useAuth } from "@/context/use-auth";
 import { fetchAuthState } from "@/lib/auth-state";
 
@@ -104,7 +105,8 @@ export default function LoginPage() {
       navigate(redirectTo, { replace: true });
     } catch (err) {
       console.error("login failed", err);
-      setError(t("login.errorGeneric"));
+      const refused = err instanceof LoginError && [400, 401, 403].includes(err.status);
+      setError(t(refused ? "login.errorCredentials" : "login.errorGeneric"));
     } finally {
       setIsSubmitting(false);
     }

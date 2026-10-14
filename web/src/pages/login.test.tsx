@@ -4,6 +4,7 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import "@/lib/i18n";
+import { LoginError } from "@/context/auth-context-base";
 import LoginPage from "@/pages/login";
 import { fakeAPI } from "@/test/fake-api";
 
@@ -62,6 +63,28 @@ describe("LoginPage", () => {
     expect(screen.queryByRole("link", { name: "Create an account" })).not.toBeInTheDocument();
   });
 
+  it("says a refused sign-in is a wrong email or password, and anything else plainly", async () => {
+    const user = userEvent.setup();
+    fakeAPI({ "/api/v1/auth/state": { bootstrap: false, registration_enabled: false } });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    auth.login.mockRejectedValueOnce(new LoginError(403)).mockRejectedValueOnce(new Error("offline"));
+    renderLogin();
+    await user.type(screen.getByLabelText("Email"), "ann@example.test");
+    await user.type(screen.getByLabelText("Password"), "nope");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    expect(await screen.findByText("Wrong email or password.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    expect(await screen.findByText("We couldn't sign you in. Try again.")).toBeInTheDocument();
+  });
+
+  it("shows the snowflake over the heading and no terms on a self-hosted install", async () => {
+    fakeAPI({ "/api/v1/auth/state": { bootstrap: false, registration_enabled: false } });
+    renderLogin();
+    expect(screen.getByTestId("auth-logo")).toBeInTheDocument();
+    expect(screen.getByText("Sign in to Winterflow")).toBeInTheDocument();
+    expect(screen.queryByText(/Terms of Service/)).not.toBeInTheDocument();
+  });
+
   it("logs in and goes home", async () => {
     const user = userEvent.setup();
     fakeAPI({ "/api/v1/auth/state": { bootstrap: false, registration_enabled: false } });
@@ -69,7 +92,7 @@ describe("LoginPage", () => {
     renderLogin();
     await user.type(screen.getByLabelText("Email"), "ann@example.test");
     await user.type(screen.getByLabelText("Password"), "secret");
-    await user.click(screen.getByRole("button", { name: "Login" }));
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
     expect(auth.login).toHaveBeenCalledWith({ username: "ann@example.test", password: "secret" });
     expect(await screen.findByText("home")).toBeInTheDocument();
   });
@@ -81,7 +104,7 @@ describe("LoginPage", () => {
     renderLogin({ pathname: "/server/s1/app/a1", search: "?tab=metrics", hash: "#cpu" });
     await user.type(screen.getByLabelText("Email"), "ann@example.test");
     await user.type(screen.getByLabelText("Password"), "secret");
-    await user.click(screen.getByRole("button", { name: "Login" }));
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
     expect(await screen.findByTestId("where")).toHaveTextContent("/server/s1/app/a1?tab=metrics#cpu");
   });
 
@@ -98,7 +121,7 @@ describe("LoginPage", () => {
     renderLogin({ pathname, search: "?tab=metrics", hash: "#cpu" });
     await user.type(screen.getByLabelText("Email"), "ann@example.test");
     await user.type(screen.getByLabelText("Password"), "secret");
-    await user.click(screen.getByRole("button", { name: "Login" }));
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
     expect(await screen.findByText("home")).toBeInTheDocument();
   });
 
@@ -115,7 +138,7 @@ describe("LoginPage", () => {
     renderLogin(from);
     await user.type(screen.getByLabelText("Email"), "ann@example.test");
     await user.type(screen.getByLabelText("Password"), "secret");
-    await user.click(screen.getByRole("button", { name: "Login" }));
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
     expect(await screen.findByText("home")).toBeInTheDocument();
   });
 
@@ -165,7 +188,7 @@ describe("LoginPage", () => {
     });
     try {
       renderLogin();
-      const button = await screen.findByRole("button", { name: "Login with Google" });
+      const button = await screen.findByRole("button", { name: "Sign in with Google" });
       await waitFor(() => expect(button).toBeEnabled());
       await user.click(button);
       expect(assign).toHaveBeenCalledWith(expect.stringContaining("/auth/google/login?site=wf.test"));

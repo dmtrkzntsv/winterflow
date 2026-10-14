@@ -21,7 +21,7 @@ describe("NotFound", () => {
       </MemoryRouter>,
     );
     expect(screen.getByTestId("title")).toHaveTextContent("Not found");
-    expect(document.title).toBe("Not found · WinterFlow");
+    expect(document.title).toBe("Not found · Winterflow");
     expect(screen.getByRole("link", { name: "Go to Apps" })).toHaveAttribute("href", "/");
     expect(screen.queryByText(/dashboard/i)).not.toBeInTheDocument();
   });

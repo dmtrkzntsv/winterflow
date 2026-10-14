@@ -19,7 +19,7 @@ describe("PageHeader", () => {
     expect(screen.getByRole("heading", { level: 1, name: "Apps" })).toHaveClass("text-2xl", "font-semibold");
     expect(screen.getByText("homelab · 3 running")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "New app" })).toBeInTheDocument();
-    expect(document.title).toBe("Apps · WinterFlow");
+    expect(document.title).toBe("Apps · Winterflow");
   });
 
   it("offers a back link on nested pages", () => {

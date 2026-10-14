@@ -102,7 +102,7 @@ interface LogoProps extends Omit<LinkProps, 'to'> {
 export function Logo({ iconOnly = false, size = 'md', className, to = '/', ...props }: LogoProps) {
   return (
     <Link to={to} className={`logo-container !m-0 !p-0 ${className || ''}`} {...props}>
-      <span className="sr-only">WinterFlow.io</span>
+      <span className="sr-only">Winterflow</span>
       <LogoIcon size={size} />
       {!iconOnly && <LogoText size={size} className="ml-2" />}
     </Link>

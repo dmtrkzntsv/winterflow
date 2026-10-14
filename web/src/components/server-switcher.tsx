@@ -57,8 +57,8 @@ export function ServerSwitcher({ onAddServer }: { onAddServer?: () => void }) {
 
   if (!activeServer) {
     // Never collapse to nothing while loading or before the first server.
-    if (loading) return placeholderRow("WinterFlow", "Loading…");
-    if (isStandalone) return placeholderRow("WinterFlow", "This server");
+    if (loading) return placeholderRow("Winterflow", "Loading…");
+    if (isStandalone) return placeholderRow("Winterflow", "This server");
     return (
       <SidebarMenu>
         <SidebarMenuItem>

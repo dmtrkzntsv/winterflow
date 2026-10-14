@@ -73,7 +73,7 @@ describe("AppLayout", () => {
     expect(screen.getByText("Members body")).toBeInTheDocument();
     expect(screen.queryByRole("navigation", { name: /breadcrumb/i })).not.toBeInTheDocument();
     expect(screen.queryByTestId("mobile-top-bar")).not.toBeInTheDocument();
-    await waitFor(() => expect(document.title).toBe("Members · WinterFlow"));
+    await waitFor(() => expect(document.title).toBe("Members · Winterflow"));
   });
 
   it("shows a slim top bar on a phone: menu, the page's title, search", async () => {
@@ -118,7 +118,7 @@ describe("AppLayout", () => {
     act(() => report(true));
     await waitFor(() => expect(within(bar).queryByText("Apps")).not.toBeInTheDocument());
     // The browser tab keeps the title.
-    expect(document.title).toBe("Apps · WinterFlow");
+    expect(document.title).toBe("Apps · Winterflow");
     act(() => report(false));
     expect(await within(bar).findByText("Apps")).toBeInTheDocument();
   });

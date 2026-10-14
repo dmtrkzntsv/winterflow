@@ -13,7 +13,7 @@ import {
 const TOP_BAR_PX = 56;
 
 // usePageTitle names the current page: the shell's mobile top bar shows it
-// and the browser tab reads "<title> · WinterFlow". The page that unmounts
+// and the browser tab reads "<title> · Winterflow". The page that unmounts
 // clears it, so a page that names nothing never shows the last one's name.
 export function usePageTitle(title: string): void {
   const setTitle = useContext(SetPageTitleContext);

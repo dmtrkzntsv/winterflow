@@ -22,7 +22,7 @@ import { THEME_OPTIONS } from "@/lib/theme-options";
 import type { ThemePreference } from "@/lib/theme";
 
 // NavUser is the account footer of the sidebar: who is signed in, the
-// theme, Log out. The organization's and the account's pages are in
+// theme, Sign out. The organization's and the account's pages are in
 // Settings.
 export function NavUser() {
   const { isMobile } = useSidebar();

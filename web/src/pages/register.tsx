@@ -64,7 +64,7 @@ export default function RegisterPage() {
         toast.success("Welcome to Winterflow!");
         navigate("/", { replace: true });
       } catch {
-        toast.success("Account created — log in to continue");
+        toast.success("Account created — sign in to continue");
         navigate("/login", { state: { email } });
       }
     } catch (e) {
@@ -91,7 +91,7 @@ export default function RegisterPage() {
         <div className="flex min-h-64 flex-col items-center justify-center gap-6">
           <AuthHeading title="Registration is closed" subtitle="Ask someone in your organization to create an account for you." />
           <Button asChild variant="outline" className="min-h-10">
-            <Link to="/login">Back to log in</Link>
+            <Link to="/login">Back to sign in</Link>
           </Button>
         </div>
       </AuthScreen>
@@ -156,7 +156,7 @@ export default function RegisterPage() {
             <FieldDescription className="text-center text-sm">
               Already have an account?{" "}
               <Link to="/login" className="underline underline-offset-2">
-                Log in
+                Sign in
               </Link>
             </FieldDescription>
           )}

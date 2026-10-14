@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  sortRules,
   ALERT_METRICS,
   buildChannel,
   FieldError,
@@ -132,5 +133,19 @@ describe("channel form wording", () => {
     expect(serviceSpec("email").fields.filter((f) => f.advanced).map((f) => f.key)).toEqual(["port", "username", "password"]);
     expect(serviceSpec("ntfy").fields.filter((f) => f.advanced).map((f) => f.key)).toEqual(["username", "password"]);
     expect(SERVICES.filter((s) => s.id !== "email" && s.id !== "ntfy").every((s) => s.fields.every((f) => !f.advanced))).toBe(true);
+  });
+});
+
+describe("sortRules", () => {
+  it("lists server down first, then CPU, memory and disk, keeping the order within a metric", () => {
+    const rules = [
+      { id: "1", metric: "cpu" },
+      { id: "2", metric: "disk" },
+      { id: "3", metric: "down" },
+      { id: "4", metric: "memory" },
+      { id: "5", metric: "cpu" },
+      { id: "6", metric: "temperature" },
+    ] as const;
+    expect(sortRules([...rules]).map((r) => r.id)).toEqual(["3", "1", "5", "4", "2", "6"]);
   });
 });

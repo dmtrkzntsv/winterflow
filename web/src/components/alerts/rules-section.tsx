@@ -11,7 +11,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { alertsGet, alertsPost } from "@/hooks/use-alerts";
 import { useConfirmTarget } from "@/hooks/use-confirm-target";
-import { routingText, ruleSummary, type Channel, type Rule, type TargetKind } from "@/lib/alerts";
+import { routingText, ruleSummary, sortRules, type Channel, type Rule, type TargetKind } from "@/lib/alerts";
 import { returnFocusTo } from "@/lib/focus";
 import { cn } from "@/lib/utils";
 
@@ -77,7 +77,7 @@ export function RulesSection({ channels }: { channels: Channel[] }) {
   };
 
   const group = (kind: TargetKind, title: string) => {
-    const list = (rules ?? []).filter((r) => r.target_kind === kind);
+    const list = sortRules((rules ?? []).filter((r) => r.target_kind === kind));
     return (
       <section className="space-y-2" aria-label={title}>
         <h3 className="px-1 text-xs font-medium text-muted-foreground">{title}</h3>

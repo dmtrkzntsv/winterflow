@@ -139,6 +139,19 @@ export type AlertNotice = {
 
 export const ALERT_NOTIFICATION = "alert";
 
+// sortRules lists rules in the metrics' order — down first, then CPU,
+// memory, disk and the rest — keeping the API's order within a metric.
+export function sortRules<T extends Pick<Rule, "metric">>(rules: T[]): T[] {
+  const rank = (m: AlertMetric) => {
+    const i = ALERT_METRICS.findIndex((x) => x.metric === m);
+    return i < 0 ? ALERT_METRICS.length : i;
+  };
+  return rules
+    .map((r, i) => ({ r, i }))
+    .sort((a, b) => rank(a.r.metric) - rank(b.r.metric) || a.i - b.i)
+    .map(({ r }) => r);
+}
+
 // formatAlertValue renders a value in its metric's unit, as the
 // notifications do ("93%", "2.31", "12.4 MB/s", "71 °C", "14.2 GB").
 export function formatAlertValue(unit: AlertUnit, v: number): string {

@@ -45,7 +45,7 @@ function PaletteActions() {
       {groups.flatMap((g) =>
         g.actions.map((a) => (
           <li key={`${g.heading}-${a.id}`}>
-            <button type="button" onClick={a.run}>{`${g.heading}: ${a.label}`}</button>
+            <button type="button" disabled={a.disabled} onClick={a.run}>{`${g.heading}: ${a.label}`}</button>
           </li>
         )),
       )}
@@ -136,8 +136,21 @@ describe("AppDetailsPage", () => {
 
   it("offers nothing in the palette for an app that isn't there", async () => {
     renderPage("/app/zzz?tab=backups");
-    await screen.findByRole("list", { name: "Palette actions" });
-    expect(screen.queryAllByRole("button", { name: /^Shop:|^App:/ })).toHaveLength(0);
+    const list = await screen.findByRole("list", { name: "Palette actions" });
+    expect(within(list).queryAllByRole("button")).toHaveLength(0);
+  });
+
+  it("disables the palette's control actions while one is running", async () => {
+    const user = userEvent.setup();
+    const control = vi.fn(() => new Promise<void>(() => {}));
+    renderPage("/app/a1?tab=backups", {}, { ctx: { control } });
+    const list = await screen.findByRole("list", { name: "Palette actions" });
+    await user.click(within(list).getByRole("button", { name: "Shop: Restart" }));
+    expect(control).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(within(list).getByRole("button", { name: "Shop: Restart" })).toBeDisabled());
+    expect(within(list).getByRole("button", { name: "Shop: Stop" })).toBeDisabled();
+    expect(within(list).getByRole("button", { name: "Shop: Pull latest images" })).toBeDisabled();
+    expect(within(list).getByRole("button", { name: "Shop: View logs" })).toBeEnabled();
   });
 
   it("opens Configuration from its new name and from the old ?tab=editor", async () => {

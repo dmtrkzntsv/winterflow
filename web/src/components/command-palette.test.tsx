@@ -17,9 +17,9 @@ const SERVERS = [
 vi.mock("@/context/use-servers", () => ({
   useServers: () => ({ servers: SERVERS, activeServer: SERVERS[0], activeServerId: "s1", statusByServer: {}, loading: false }),
 }));
-vi.mock("@/context/use-apps", () => ({
-  useApps: () => ({ apps: [{ id: "a1", serverId: "s1", name: "Shop", version: "1", icon: "", color: "", createdAt: "" }] }),
-}));
+const SHOP = { id: "a1", serverId: "s1", name: "Shop", version: "1", icon: "", color: "", createdAt: "" };
+let apps = [SHOP];
+vi.mock("@/context/use-apps", () => ({ useApps: () => ({ apps }) }));
 vi.mock("@/context/use-profile", () => ({
   useProfile: () => ({ profile: { user_id: "u1", name: "Ann", email: "ann@example.test", must_change_password: false } }),
 }));
@@ -46,6 +46,7 @@ const input = () => screen.findByPlaceholderText("Search apps, pages and actions
 
 describe("CommandPalette", () => {
   afterEach(() => {
+    apps = [SHOP];
     localStorage.clear();
     act(() => setThemePreference("system"));
     document.documentElement.classList.remove("dark");
@@ -79,6 +80,17 @@ describe("CommandPalette", () => {
     await user.type(await input(), "beta");
     await user.click(screen.getByRole("option", { name: /Beta/ }));
     expect(screen.getByTestId("at")).toHaveTextContent("/server/s2");
+  });
+
+  it("reaches the second of two same-named apps with the keyboard", async () => {
+    apps = [SHOP, { ...SHOP, id: "a2" }];
+    const user = userEvent.setup();
+    renderPalette();
+    openWithKeyboard();
+    await user.type(await input(), "shop");
+    expect(screen.getAllByRole("option", { name: /Shop/ })).toHaveLength(2);
+    await user.keyboard("{ArrowDown}{Enter}");
+    expect(screen.getByTestId("at")).toHaveTextContent("/server/s1/app/a2");
   });
 
   it("shows recent items for an empty query, without the ones that are gone", async () => {

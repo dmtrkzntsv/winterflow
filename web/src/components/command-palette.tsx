@@ -34,9 +34,11 @@ const COMMAND_CLASS =
   "[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-muted-foreground [&_[cmdk-group]:not([hidden])_~[cmdk-group]]:pt-0 [&_[cmdk-group]]:px-2 [&_[cmdk-input-wrapper]_svg]:h-5 [&_[cmdk-input-wrapper]_svg]:w-5 [&_[cmdk-input]]:h-12 [&_[cmdk-item]]:px-2 [&_[cmdk-item]]:py-3 [&_[cmdk-item]_svg]:h-5 [&_[cmdk-item]_svg]:w-5";
 
 // itemValue is what cmdk filters on and tells items apart by: the group,
-// the label and the hint ("Settings: General (Organization)").
+// the label, the hint and the id ("Settings: General (Organization) settings:/…").
+// The id keeps two same-named apps or servers apart: cmdk treats equal values
+// as one item, so the second could not be reached with the keyboard.
 function itemValue(entry: PaletteNavEntry, prefix = ""): string {
-  return `${prefix}${entry.group}: ${entry.label}${entry.hint ? ` (${entry.hint})` : ""}`;
+  return `${prefix}${entry.group}: ${entry.label}${entry.hint ? ` (${entry.hint})` : ""} ${entry.id}`;
 }
 
 // CommandPalette is ⌘K (spec §2): jump to an app on this server, a page, a
@@ -96,7 +98,7 @@ export function CommandPalette({ onAddServer }: { onAddServer?: () => void }) {
                   {group.actions.map((action) => (
                     <CommandItem
                       key={action.id}
-                      value={`${group.heading}: ${action.label}`}
+                      value={`${group.heading}: ${action.label} ${action.id}`}
                       keywords={action.keywords}
                       disabled={action.disabled}
                       onSelect={() => run(action.run)}

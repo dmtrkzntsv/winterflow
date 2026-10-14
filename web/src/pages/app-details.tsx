@@ -140,16 +140,19 @@ export default function AppDetailsPage() {
   // ⌘K: this app's actions while its page is open, under its name. Stop and
   // Start have their own ids: the registry re-registers on id changes only.
   // Phase 2 adds Back up now.
+  // The control actions are disabled while one runs, like the page's buttons.
+  const busy = pending !== null;
   const paletteActions: PaletteAction[] = app
     ? [
-        { id: "app.restart", label: "Restart", icon: RotateCw, run: () => void runControl("restart") },
+        { id: "app.restart", label: "Restart", icon: RotateCw, disabled: busy, run: () => void runControl("restart") },
         canStop
-          ? { id: "app.stop", label: "Stop", icon: Square, run: () => void runControl("stop") }
-          : { id: "app.start", label: "Start", icon: Play, run: () => void runControl("start") },
+          ? { id: "app.stop", label: "Stop", icon: Square, disabled: busy, run: () => void runControl("stop") }
+          : { id: "app.start", label: "Start", icon: Play, disabled: busy, run: () => void runControl("start") },
         {
           id: "app.update",
           label: "Pull latest images",
           icon: ArrowUpCircle,
+          disabled: busy,
           keywords: ["update", "upgrade", "images"],
           run: () => void runControl("update"),
         },

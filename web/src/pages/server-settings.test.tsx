@@ -20,7 +20,7 @@ vi.mock("@/context/use-docker", () => ({
   }),
 }));
 vi.mock("@/pages/settings-domains", () => ({ DomainsCard: () => <p>domains card</p> }));
-vi.mock("@/pages/settings-volumes", () => ({ VolumesCard: () => <p>volumes card</p> }));
+vi.mock("@/pages/settings-docker", () => ({ DockerSettings: () => <p>docker settings</p> }));
 vi.mock("@/pages/settings-storages", () => ({ StoragesCard: () => <p>storages card</p> }));
 
 function renderPage(page: ReactElement) {
@@ -65,12 +65,9 @@ describe("server settings pages", () => {
     expect(screen.getByText("storages card")).toBeInTheDocument();
   });
 
-  it("stacks registries, networks and volumes on Docker", async () => {
+  it("shows the Docker resources", () => {
     renderPage(<ServerDockerPage />);
-    expect(screen.getByRole("heading", { level: 1, name: "Docker" })).toBeInTheDocument();
-    expect(await screen.findByText("No registries.")).toBeInTheDocument();
-    expect(await screen.findByText("No networks.")).toBeInTheDocument();
-    expect(screen.getByText("volumes card")).toBeInTheDocument();
+    expect(screen.getByText("docker settings")).toBeInTheDocument();
   });
 
   it("asks for a server when there is none", () => {

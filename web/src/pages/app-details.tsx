@@ -7,11 +7,14 @@ import {
   Play,
   RefreshCw,
   RotateCw,
+  ScrollText,
   Square,
   TriangleAlert,
 } from "lucide-react";
 import { toast } from "sonner";
 
+import type { PaletteAction } from "@/context/palette-context-base";
+import { usePaletteActions } from "@/context/use-palette";
 import { usePageTitle } from "@/layouts/use-page-title";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -126,6 +129,35 @@ export default function AppDetailsPage() {
     }
   };
 
+  const status = app ? statusByApp[app.id] : undefined;
+  // Unknown status offers Start too: we never infer "down" from missing data,
+  // but starting an already-running stack is harmless.
+  const canStop =
+    status !== undefined &&
+    status !== AppStatusCode.Stopped &&
+    status !== AppStatusCode.Unknown;
+
+  // ⌘K: this app's actions while its page is open, under its name. Stop and
+  // Start have their own ids: the registry re-registers on id changes only.
+  // Phase 2 adds Back up now.
+  const paletteActions: PaletteAction[] = app
+    ? [
+        { id: "app.restart", label: "Restart", icon: RotateCw, run: () => void runControl("restart") },
+        canStop
+          ? { id: "app.stop", label: "Stop", icon: Square, run: () => void runControl("stop") }
+          : { id: "app.start", label: "Start", icon: Play, run: () => void runControl("start") },
+        {
+          id: "app.update",
+          label: "Pull latest images",
+          icon: ArrowUpCircle,
+          keywords: ["update", "upgrade", "images"],
+          run: () => void runControl("update"),
+        },
+        { id: "app.logs", label: "View logs", icon: ScrollText, run: () => setTab("logs") },
+      ]
+    : [];
+  usePaletteActions(appLabel(app?.name, appId ?? ""), paletteActions);
+
   if (!app) {
     if (loading) return null;
     return (
@@ -136,13 +168,6 @@ export default function AppDetailsPage() {
     );
   }
 
-  const status = statusByApp[app.id];
-  // Unknown status offers Start too: we never infer "down" from missing data,
-  // but starting an already-running stack is harmless.
-  const canStop =
-    status !== undefined &&
-    status !== AppStatusCode.Stopped &&
-    status !== AppStatusCode.Unknown;
   const routes = (app.domains ?? []).filter((d) => d.kind === "route");
 
   const controlButton = (

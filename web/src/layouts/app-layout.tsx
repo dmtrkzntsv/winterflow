@@ -4,6 +4,7 @@ import { Menu, Search } from "lucide-react"
 
 import { AlertToasts } from "@/components/alerts/alert-toasts"
 import { AppSidebar } from "@/components/app-sidebar"
+import { CommandPalette } from "@/components/command-palette"
 import { ServerSelectionDialog } from "@/components/server-creation-dialog"
 import { Button } from "@/components/ui/button"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
@@ -92,6 +93,7 @@ export function AppLayout() {
         <SidebarProvider style={SIDEBAR_STYLE}>
           <AppSidebar onAddServer={handleAddServer} />
           <AppMain />
+          <CommandPalette onAddServer={handleAddServer} />
           <AlertToasts />
           {!isStandalone ? (
             <ServerSelectionDialog

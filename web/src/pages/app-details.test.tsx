@@ -4,7 +4,9 @@ import { Link, MemoryRouter, Outlet, Route, Routes, useLocation } from "react-ro
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppsContext, type App, type AppsContextValue } from "@/context/apps-context-base";
+import { CommandPaletteProvider } from "@/context/palette-context";
 import { NotificationsContext, type NotificationsContextValue } from "@/context/notifications-context-base";
+import { useCommandPalette } from "@/context/use-palette";
 import AppDetailsPage from "@/pages/app-details";
 import type { BackupHealth } from "@/lib/backups";
 import type { InstanceView, TemplateView } from "@/lib/templates";
@@ -35,6 +37,22 @@ const remove = vi.fn();
 const refresh = vi.fn(async () => {});
 const notifications = { connected: true, subscribe: () => () => {}, waitFor: vi.fn() } as NotificationsContextValue;
 
+// PaletteActions lists what the page offers in ⌘K, as buttons that run it.
+function PaletteActions() {
+  const { groups } = useCommandPalette();
+  return (
+    <ul aria-label="Palette actions">
+      {groups.flatMap((g) =>
+        g.actions.map((a) => (
+          <li key={`${g.heading}-${a.id}`}>
+            <button type="button" onClick={a.run}>{`${g.heading}: ${a.label}`}</button>
+          </li>
+        )),
+      )}
+    </ul>
+  );
+}
+
 // NewTemplate stands in for the template editor Save as template opens.
 function NewTemplate() {
   const state = useLocation().state as DraftState;
@@ -64,11 +82,13 @@ function renderPage(
     <MemoryRouter initialEntries={[url]}>
       <NotificationsContext.Provider value={notifications}>
         <AppsContext.Provider value={value}>
+          <CommandPaletteProvider>
           <Routes>
             <Route
               element={
                 <>
                   <Link to="/app/a2?tab=editor">go to a2</Link>
+                  <PaletteActions />
                   <Outlet />
                 </>
               }
@@ -78,6 +98,7 @@ function renderPage(
               <Route path="/templates/new" element={<NewTemplate />} />
             </Route>
           </Routes>
+          </CommandPaletteProvider>
         </AppsContext.Provider>
       </NotificationsContext.Provider>
     </MemoryRouter>,
@@ -89,6 +110,34 @@ describe("AppDetailsPage", () => {
     remove.mockReset();
     refresh.mockClear();
     for (const f of Object.values(toast)) f.mockReset();
+  });
+
+  it("offers its actions in the ⌘K palette", async () => {
+    const user = userEvent.setup();
+    const control = vi.fn(async () => {});
+    renderPage("/app/a1?tab=backups", {}, { ctx: { control } });
+    const list = await screen.findByRole("list", { name: "Palette actions" });
+    expect(within(list).getAllByRole("button").map((b) => b.textContent)).toEqual([
+      "Shop: Restart",
+      "Shop: Stop",
+      "Shop: Pull latest images",
+      "Shop: View logs",
+    ]);
+    await user.click(within(list).getByRole("button", { name: "Shop: Stop" }));
+    expect(control).toHaveBeenCalledWith("a1", "stop");
+  });
+
+  it("offers Start instead of Stop while the app is stopped", async () => {
+    renderPage("/app/a1?tab=backups", {}, { ctx: { statusByApp: { a1: 5 } } });
+    const list = await screen.findByRole("list", { name: "Palette actions" });
+    expect(within(list).getByRole("button", { name: "Shop: Start" })).toBeInTheDocument();
+    expect(within(list).queryByRole("button", { name: "Shop: Stop" })).not.toBeInTheDocument();
+  });
+
+  it("offers nothing in the palette for an app that isn't there", async () => {
+    renderPage("/app/zzz?tab=backups");
+    await screen.findByRole("list", { name: "Palette actions" });
+    expect(screen.queryAllByRole("button", { name: /^Shop:|^App:/ })).toHaveLength(0);
   });
 
   it("opens Configuration from its new name and from the old ?tab=editor", async () => {

@@ -27,6 +27,7 @@ vi.mock("@/context/use-profile", () => ({
 }));
 
 // The shell around the pages is not under test here.
+vi.mock("@/components/command-palette", () => ({ CommandPalette: () => null }));
 vi.mock("@/components/app-sidebar", () => ({ AppSidebar: () => null }));
 vi.mock("@/components/alerts/alert-toasts", () => ({ AlertToasts: () => null }));
 vi.mock("@/components/server-creation-dialog", () => ({ ServerSelectionDialog: () => null }));

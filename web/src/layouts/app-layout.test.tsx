@@ -25,6 +25,7 @@ vi.mock("@/components/app-sidebar", () => ({
     return <p>{useSidebar().openMobile ? "menu open" : "menu closed"}</p>;
   },
 }));
+vi.mock("@/components/command-palette", () => ({ CommandPalette: () => null }));
 vi.mock("@/components/alerts/alert-toasts", () => ({ AlertToasts: () => null }));
 vi.mock("@/components/server-creation-dialog", () => ({ ServerSelectionDialog: () => null }));
 

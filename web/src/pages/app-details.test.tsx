@@ -846,15 +846,23 @@ describe("AppDetailsPage of a template instance", () => {
   it("shows a pending instance's failure and asks for its secrets again", async () => {
     const user = userEvent.setup();
     instanceAPI({ ...INSTANCE, state: "pending", last_error: "pull access denied" });
-    renderPage("/app/a1?tab=editor", {}, managed);
+    renderPage("/app/a1?tab=editor", {}, { ...managed, ctx: { statusByApp: { a1: 5 } } });
     expect(await screen.findByText("pull access denied")).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent("Couldn't start: pull access denied");
     expect(screen.getByText("Not created yet")).toBeInTheDocument();
-    // A failed deploy reads Failed, not the stale status.
+    // A failed deploy reads Failed, not the stopped status.
     expect(screen.getAllByText("Failed").length).toBeGreaterThan(0);
     expect(screen.getByLabelText("SESSION_KEY")).toHaveAttribute("placeholder", "Encrypted in your browser");
     await user.click(screen.getByRole("button", { name: "Save & redeploy" }));
     expect(screen.getByText("Required")).toBeInTheDocument();
+  });
+
+  it("reads Running for a pending instance whose app a report shows running, keeping the failure's banner", async () => {
+    instanceAPI({ ...INSTANCE, state: "pending", last_error: "pull access denied" });
+    renderPage("/app/a1?tab=overview", {}, { ...managed, ctx: { statusByApp: { a1: 1 } } });
+    expect(await screen.findByRole("alert")).toHaveTextContent("Couldn't start: pull access denied");
+    expect(screen.queryByText("Failed")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Running").length).toBeGreaterThan(0);
   });
 
   it("shows a long deploy failure by its last line, the rest behind Show details", async () => {

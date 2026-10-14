@@ -23,7 +23,7 @@ import { StaleVarsBadge } from "@/components/stale-vars-badge";
 import { UnderlineTabs } from "@/components/underline-tabs";
 import { UnsavedChangesGuard } from "@/components/unsaved-changes-guard";
 import { UpgradeInstanceDialog } from "@/components/upgrade-instance-dialog";
-import type { ControlAction } from "@/context/apps-context-base";
+import { AppStatusCode, type ControlAction } from "@/context/apps-context-base";
 import type { PaletteAction } from "@/context/palette-context-base";
 import { useApps } from "@/context/use-apps";
 import { usePaletteActions } from "@/context/use-palette";
@@ -173,8 +173,12 @@ export default function AppDetailsPage() {
 
   const status = statusByApp[appId];
   // failure is why the app's deploy failed: a create's in this session, or
-  // a pending template instance's (its deploy never succeeded).
-  const failure = deployFailures?.[appId] || (inst?.state === "pending" ? inst.last_error : "") || "";
+  // a pending template instance's (its deploy never succeeded). The banner
+  // stays while the instance is pending; the pill reads Failed for it only
+  // while no report shows the app running (the status report wins).
+  const instanceFailure = (inst?.state === "pending" ? inst.last_error : "") || "";
+  const failure = deployFailures?.[appId] || instanceFailure;
+  const failed = !!deployFailures?.[appId] || (instanceFailure !== "" && status !== AppStatusCode.Active);
   const running = hasRunningContainers(status);
   // The control actions are disabled while one runs, like the header's.
   const busy = pending !== null;
@@ -235,7 +239,7 @@ export default function AppDetailsPage() {
         registrations={registrations}
         ports={ports}
         status={status}
-        failed={failure !== ""}
+        failed={failed}
         instance={inst}
         behind={behind}
         pending={pending}

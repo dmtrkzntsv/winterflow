@@ -1,24 +1,21 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { CircleCheck, CircleX } from "lucide-react";
+import { CircleX, Cloud, Folder } from "lucide-react";
 import { toast } from "sonner";
 
+import { Disclosure } from "@/components/disclosure";
+import { InlineError } from "@/components/inline-error";
+import { ResponsiveDialog } from "@/components/responsive-dialog";
+import { StatusDot } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { InlineError } from "@/components/inline-error";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import type { Docker } from "@/context/use-docker";
+import { useIsPhone } from "@/hooks/use-is-phone";
 import { returnFocusTo } from "@/lib/focus";
 import {
+  ADVANCED_FIELDS,
   DRAFT_FIELDS,
   draftFrom,
   draftProblem,
@@ -31,28 +28,46 @@ import {
   type StorageSaved,
   type StorageType,
 } from "@/lib/storages";
+import { cn } from "@/lib/utils";
 
 type Probe = { state: "idle" | "testing" } | { state: "ok" } | { state: "failed"; error: string };
+
+const FORM_ID = "storage-form";
 
 // fieldId is the id of a field's input.
 const fieldId = (field: DraftField) => `st-${field}`;
 
+const TYPE_ICON = { local: Folder, s3: Cloud } as const;
+
 // COPY is the wording that differs by type.
-const COPY: Record<StorageType, { namePlaceholder: string; test: string; testing: string; ok: string }> = {
-  local: { namePlaceholder: "e.g. backup-disk", test: "Check folder", testing: "Checking…", ok: "Folder is writable" },
-  s3: { namePlaceholder: "e.g. offsite", test: "Test connection", testing: "Testing…", ok: "Connection works" },
+const COPY: Record<StorageType, { hint: string; namePlaceholder: string; test: string; testing: string; ok: string }> = {
+  local: {
+    hint: "A folder on a disk attached to this server, such as a USB drive.",
+    namePlaceholder: "e.g. backup-disk",
+    test: "Check folder",
+    testing: "Checking…",
+    ok: "Folder is writable",
+  },
+  s3: {
+    hint: "A bucket at an S3-compatible provider: Backblaze, Wasabi, Cloudflare R2, MinIO…",
+    namePlaceholder: "e.g. offsite",
+    test: "Test connection",
+    testing: "Testing…",
+    ok: "Connection works",
+  },
 };
 
 const errorOf = (e: unknown) => (e instanceof Error ? e.message : "");
 
-// StorageDialog adds a storage, or (edit set) changes one: the name and type
-// are its identity, so an edit shows them instead of offering them. The
-// parent remounts it (key) per opening. Save tests again on the agent and
-// stores nothing when that fails. The typed secret never outlives the
-// dialog: it is wiped on every close. existing are the server's storage
-// names (an add can't reuse one); usedBy names the apps using the edited
-// storage; returnFocus is where focus goes back to on close (the dialog has
-// no trigger of its own).
+// StorageDialog adds a storage, or (edit set) changes one: the name and
+// type are its identity, so an edit shows them instead of offering them.
+// The type comes first; an S3 bucket asks for endpoint, bucket and keys,
+// with region, prefix and path-style under "Advanced" (open on an edit that
+// uses them). The parent remounts it (key) per opening. Save tests again on
+// the agent and stores nothing when that fails. The typed secret never
+// outlives the dialog: it is wiped on every close. existing are the
+// server's storage names (an add can't reuse one); usedBy names the apps
+// using the edited storage; returnFocus is where focus goes back on close.
 export function StorageDialog({
   docker,
   open,
@@ -72,6 +87,7 @@ export function StorageDialog({
   onOpenChange: (open: boolean) => void;
   onSaved: (saved: StorageSaved) => void;
 }) {
+  const phone = useIsPhone();
   const initial = useMemo(() => draftFrom(edit), [edit]);
   const [draft, setDraft] = useState<StorageDraft>(initial);
   const [probe, setProbe] = useState<Probe>({ state: "idle" });
@@ -82,6 +98,10 @@ export function StorageDialog({
   // The furthest field (DRAFT_FIELDS index) the user changed or left: a
   // problem shows once the user reached its field.
   const [reached, setReached] = useState(-1);
+  const [advanced, setAdvanced] = useState(() => Boolean(initial.region || initial.prefix || initial.pathStyle));
+  // A field to focus once it is on screen: one under Advanced appears only
+  // after Advanced opens.
+  const pendingFocus = useRef<DraftField | null>(null);
 
   // Answers can arrive after the dialog moved on. A save may run for
   // minutes: when it answers after this dialog closed (or unmounted, the
@@ -96,6 +116,15 @@ export function StorageDialog({
     },
     [],
   );
+  useEffect(() => {
+    const field = pendingFocus.current;
+    if (!field) return;
+    const el = document.getElementById(fieldId(field));
+    if (el) {
+      pendingFocus.current = null;
+      el.focus();
+    }
+  });
 
   const editing = edit !== null;
   const problem = draftProblem(draft, editing, editing ? [] : existing);
@@ -106,17 +135,23 @@ export function StorageDialog({
   const dirty = !editing || JSON.stringify(draft) !== JSON.stringify(initial);
 
   // A problem shows under its field once the user touched that field or
-  // moved past it to a later one — never for a field not reached yet.
+  // moved past it to a later one — and is on screen only while its field
+  // is (not folded under a closed Advanced).
   const shown = (field: DraftField) => problem?.field === field && reached >= DRAFT_FIELDS.indexOf(field);
-  const hidden = problem !== null && !shown(problem.field);
+  const onScreen = (field: DraftField) => advanced || !ADVANCED_FIELDS.includes(field);
+  const hidden = problem !== null && !(shown(problem.field) && onScreen(problem.field));
   const touch = (field: DraftField) => setReached((r) => Math.max(r, DRAFT_FIELDS.indexOf(field)));
 
-  // A problem the user hasn't reached yet (e.g. a secret never focused):
-  // Save and Test reveal every problem and go to it, sending nothing.
+  // A problem the user can't see (a secret never focused, a prefix folded
+  // away): Save and Test reveal every problem, open Advanced when the
+  // problem is in it, and go to it, sending nothing.
   const reveal = () => {
     if (!problem) return false;
     setReached(DRAFT_FIELDS.length - 1);
-    document.getElementById(fieldId(problem.field))?.focus();
+    if (ADVANCED_FIELDS.includes(problem.field)) setAdvanced(true);
+    const el = document.getElementById(fieldId(problem.field));
+    if (el) el.focus();
+    else pendingFocus.current = problem.field;
     return true;
   };
 
@@ -219,109 +254,137 @@ export function StorageDialog({
   const name = draft.name.trim();
 
   return (
-    <Dialog open={open} onOpenChange={changeOpen}>
-      <DialogContent
-        className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl"
-        onOpenAutoFocus={(e) => {
-          // Add: the name comes first. Edit: the caret goes to the end of
-          // the first field, its text not selected (one stray key would
-          // replace it).
-          const first = document.getElementById(fieldId(editing ? (local ? "path" : "endpoint") : "name"));
-          if (!(first instanceof HTMLInputElement)) return;
+    <ResponsiveDialog
+      open={open}
+      onOpenChange={changeOpen}
+      title={editing ? "Edit storage" : "Add storage"}
+      description={
+        editing ? (
+          <>
+            {STORAGE_TYPES[draft.type]} <code className="font-mono text-foreground">{edit.name}</code>.
+          </>
+        ) : (
+          "A folder or bucket backups and apps on this server can write to."
+        )
+      }
+      className="sm:max-w-xl"
+      onOpenAutoFocus={(e) => {
+        // A phone's sheet takes no autofocus: the keyboard would pop up
+        // over it before the user has seen the form.
+        if (phone) return;
+        // Add: the name (the type already has a choice made). Edit: the
+        // caret goes to the end of the first field, its text not selected
+        // (one stray key would replace it).
+        const first = document.getElementById(fieldId(editing ? (local ? "path" : "endpoint") : "name"));
+        if (!(first instanceof HTMLInputElement)) return;
+        e.preventDefault();
+        first.focus();
+        first.setSelectionRange(first.value.length, first.value.length);
+      }}
+      onCloseAutoFocus={returnFocusTo(returnFocus)}
+      footer={
+        <>
+          <Button type="button" variant="outline" className="max-sm:h-10" onClick={() => changeOpen(false)}>
+            Cancel
+          </Button>
+          {/* Enabled while a problem is out of sight, so Save can say
+              what is missing; disabled once the problem is on screen. */}
+          <Button type="submit" form={FORM_ID} className="max-sm:h-10" disabled={(problem !== null && !hidden) || busy || !dirty}>
+            {busy ? "Saving…" : "Save"}
+          </Button>
+        </>
+      }
+    >
+      <form
+        id={FORM_ID}
+        className="grid gap-4"
+        onSubmit={(e) => {
           e.preventDefault();
-          first.focus();
-          first.setSelectionRange(first.value.length, first.value.length);
+          if (busy || !dirty || reveal()) return;
+          void save();
         }}
-        onCloseAutoFocus={returnFocusTo(returnFocus)}
       >
-        <form
-          className="grid gap-4"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (busy || !dirty || reveal()) return;
-            void save();
-          }}
-        >
-          <DialogHeader>
-            <DialogTitle>{editing ? "Edit storage" : "Add storage"}</DialogTitle>
-            <DialogDescription>
-              {editing ? (
-                <>
-                  {STORAGE_TYPES[draft.type]}{" "}
-                  <code className="font-mono text-foreground">{edit.name}</code>.
-                </>
-              ) : (
-                "A folder or bucket backups and apps on this server can write to."
+        {/* Disabled while saving: what is shown is what is being saved. */}
+        <fieldset disabled={busy} className="grid min-w-0 gap-4">
+          {editing ? null : (
+            <>
+              <div className="grid gap-1.5">
+                <Label id="st-type-label">Type</Label>
+                <RadioGroup
+                  aria-labelledby="st-type-label"
+                  className="grid gap-2 sm:grid-cols-2"
+                  value={draft.type}
+                  onValueChange={(v) => set({ type: v as StorageType })}
+                >
+                  {(Object.keys(STORAGE_TYPES) as StorageType[]).map((t) => {
+                    const Icon = TYPE_ICON[t];
+                    return (
+                      <label
+                        key={t}
+                        className={cn(
+                          "flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors duration-150",
+                          draft.type === t && "border-primary bg-primary/5",
+                        )}
+                      >
+                        <RadioGroupItem
+                          value={t}
+                          aria-label={STORAGE_TYPES[t]}
+                          aria-describedby={`st-type-${t}-hint`}
+                          className="mt-0.5"
+                        />
+                        <span className="min-w-0 text-sm">
+                          <span className="flex items-center gap-1.5 font-medium">
+                            <Icon className="size-4 text-muted-foreground" aria-hidden />
+                            {STORAGE_TYPES[t]}
+                          </span>
+                          <span id={`st-type-${t}-hint`} className="block text-xs text-muted-foreground">
+                            {COPY[t].hint}
+                          </span>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </RadioGroup>
+              </div>
+              {field("name", "Name", draft.name, (v) => set({ name: v.toLowerCase() }, "name"), {
+                placeholder: copy.namePlaceholder,
+                hint: name ? `Compose files use it as \${${storageVar(name, "…")}}.` : "Lowercase letters, digits and hyphens.",
+              })}
+            </>
+          )}
+
+          {local ? (
+            field("path", "Folder", draft.path, (v) => set({ path: v }, "path"), {
+              placeholder: "/mnt/backup/winterflow",
+              hint: "An existing folder on the disk (under /mnt or /media), not its mount point.",
+            })
+          ) : (
+            <>
+              {field(
+                "endpoint",
+                "Endpoint",
+                draft.endpoint,
+                (v) =>
+                  // An IP address or localhost has no bucket.host names: on
+                  // an add, path-style follows the endpoint until the user
+                  // ticks or unticks it, then it never moves by itself.
+                  set(!editing && !pathStyleSet ? { endpoint: v, pathStyle: pathStyleDefault(v) } : { endpoint: v }, "endpoint"),
+                { placeholder: "https://s3.example.com" },
               )}
-            </DialogDescription>
-          </DialogHeader>
-
-          {/* Disabled while saving: what is shown is what is being saved. */}
-          <fieldset disabled={busy} className="grid min-w-0 gap-4">
-            {editing ? null : (
-              <>
-                <div className="grid gap-1.5">
-                  <Label id="st-type-label">Type</Label>
-                  <RadioGroup
-                    aria-labelledby="st-type-label"
-                    className="flex flex-wrap gap-x-6 gap-y-2"
-                    value={draft.type}
-                    onValueChange={(v) => set({ type: v as StorageType })}
-                  >
-                    {(Object.keys(STORAGE_TYPES) as StorageType[]).map((t) => (
-                      <div key={t} className="flex items-center gap-2">
-                        <RadioGroupItem value={t} id={`st-type-${t}`} />
-                        <Label htmlFor={`st-type-${t}`} className="font-normal">
-                          {STORAGE_TYPES[t]}
-                        </Label>
-                      </div>
-                    ))}
-                  </RadioGroup>
-                </div>
-                {field("name", "Name", draft.name, (v) => set({ name: v.toLowerCase() }, "name"), {
-                  placeholder: copy.namePlaceholder,
-                  hint: name
-                    ? `Compose files use it as \${${storageVar(name, "…")}}.`
-                    : "Lowercase letters, digits and hyphens.",
+              {field("bucket", "Bucket", draft.bucket, (v) => set({ bucket: v }, "bucket"))}
+              {field("accessKeyId", "Access key", draft.accessKeyId, (v) => set({ accessKeyId: v }, "accessKeyId"))}
+              {field("secret", "Secret key", draft.secret, (v) => set({ secret: v }, "secret"), {
+                type: "password",
+                hint: editing ? "Leave empty to keep." : "Encrypted in your browser; only this server can read it.",
+              })}
+              <Disclosure label="Advanced" open={advanced} onOpenChange={setAdvanced}>
+                {field("region", "Region", draft.region, (v) => set({ region: v }, "region"), {
+                  placeholder: "e.g. auto",
+                  hint: "Leave empty unless your provider asks for one.",
                 })}
-              </>
-            )}
-
-            {local ? (
-              field("path", "Folder", draft.path, (v) => set({ path: v }, "path"), {
-                placeholder: "/mnt/backup/winterflow",
-                hint: "An existing folder on the disk (under /mnt or /media), not its mount point.",
-              })
-            ) : (
-              <>
-                {field(
-                  "endpoint",
-                  "Endpoint",
-                  draft.endpoint,
-                  (v) =>
-                    // An IP address or localhost has no bucket.host names: on
-                    // an add, path-style follows the endpoint until the user
-                    // ticks or unticks it, then it never moves by itself.
-                    set(
-                      !editing && !pathStyleSet ? { endpoint: v, pathStyle: pathStyleDefault(v) } : { endpoint: v },
-                      "endpoint",
-                    ),
-                  { placeholder: "https://s3.example.com" },
-                )}
-                <div className="grid gap-4 sm:grid-cols-2">
-                  {field("region", "Region", draft.region, (v) => set({ region: v }, "region"), { placeholder: "e.g. auto" })}
-                  {field("bucket", "Bucket", draft.bucket, (v) => set({ bucket: v }, "bucket"))}
-                </div>
                 {field("prefix", "Prefix", draft.prefix, (v) => set({ prefix: v }, "prefix"), {
                   placeholder: "e.g. winterflow/",
                   hint: "Optional: everything is written under this folder of the bucket.",
-                })}
-                {field("accessKeyId", "Access key", draft.accessKeyId, (v) => set({ accessKeyId: v }, "accessKeyId"))}
-                {field("secret", "Secret key", draft.secret, (v) => set({ secret: v }, "secret"), {
-                  type: "password",
-                  hint: editing
-                    ? "Leave empty to keep."
-                    : "Encrypted in your browser; only this server can read it.",
                 })}
                 <label className="flex items-center gap-2 text-sm">
                   <Checkbox
@@ -334,72 +397,62 @@ export function StorageDialog({
                   />
                   Path-style addressing (MinIO and some providers)
                 </label>
-              </>
-            )}
+              </Disclosure>
+            </>
+          )}
 
-            {editing && apps.length > 0 ? (
-              <p className="rounded-md bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">
-                {/* The agent redeploys only the running ones (and skips an
-                    app with undeployed changes, with a warning). */}
-                {apps.length === 1
-                  ? `Saving redeploys the app that uses it if it's running: ${apps[0]}.`
-                  : `Saving redeploys the apps that use it if they're running: ${apps.join(", ")}.`}
-              </p>
-            ) : null}
-
-            <div className="flex min-h-9 flex-wrap items-center gap-3">
-              {/* Enabled while a problem is still hidden, like Save. */}
-              <Button
-                type="button"
-                variant="outline"
-                disabled={(problem !== null && !hidden) || probe.state === "testing"}
-                onClick={() => {
-                  if (!reveal()) void test();
-                }}
-              >
-                {probe.state === "testing" ? copy.testing : copy.test}
-              </Button>
-              {/* Only the result is announced, not the button's label. */}
-              <span role="status" className="flex min-w-0">
-                {probe.state === "ok" ? (
-                  <span className="flex items-center gap-1.5 text-sm text-emerald-700 dark:text-emerald-400">
-                    <CircleCheck className="size-4" /> {copy.ok}
-                  </span>
-                ) : probe.state === "failed" ? (
-                  <span className="flex items-start gap-1.5 text-sm text-destructive [overflow-wrap:anywhere]">
-                    <CircleX className="mt-0.5 size-4 shrink-0" /> {probe.error}
-                  </span>
-                ) : null}
-              </span>
-            </div>
-          </fieldset>
-
-          {busy ? (
-            <p role="status" className="text-sm text-muted-foreground">
-              {apps.length > 0
-                ? "Testing the storage and redeploying apps that use it…"
-                : "Testing the storage and saving it…"}{" "}
-              You can close this dialog: the save goes on.
+          {editing && apps.length > 0 ? (
+            <p className="rounded-md bg-status-warn/15 px-3 py-2 text-sm">
+              {/* The agent redeploys only the running ones (and skips an
+                  app with undeployed changes, with a warning). */}
+              {apps.length === 1
+                ? `Saving redeploys the app that uses it if it's running: ${apps[0]}.`
+                : `Saving redeploys the apps that use it if they're running: ${apps.join(", ")}.`}
             </p>
           ) : null}
-          {saveError ? (
-            <InlineError icon className="rounded-md bg-destructive/10 px-3 py-2 [overflow-wrap:anywhere]">
-              {saveError}
-            </InlineError>
-          ) : null}
 
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => changeOpen(false)}>
-              Cancel
+          <div className="flex min-h-9 flex-wrap items-center gap-3">
+            {/* Enabled while a problem is out of sight, like Save. */}
+            <Button
+              type="button"
+              variant="outline"
+              className="max-sm:h-10"
+              disabled={(problem !== null && !hidden) || probe.state === "testing"}
+              onClick={() => {
+                if (!reveal()) void test();
+              }}
+            >
+              {probe.state === "testing" ? copy.testing : copy.test}
             </Button>
-            {/* Enabled while a problem is still hidden, so Save can say
-                what is missing; disabled once the problem is on screen. */}
-            <Button type="submit" disabled={(problem !== null && !hidden) || busy || !dirty}>
-              {busy ? "Saving…" : "Save"}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+            {/* Only the result is announced, not the button's label. */}
+            <span role="status" className="flex min-w-0">
+              {probe.state === "ok" ? (
+                <span className="flex items-center gap-1.5 text-sm font-medium">
+                  <StatusDot tone="ok" /> {copy.ok}
+                </span>
+              ) : probe.state === "failed" ? (
+                <span className="flex items-start gap-1.5 text-sm text-destructive [overflow-wrap:anywhere]">
+                  <CircleX className="mt-0.5 size-4 shrink-0" /> {probe.error}
+                </span>
+              ) : null}
+            </span>
+          </div>
+        </fieldset>
+
+        {busy ? (
+          <p role="status" className="text-sm text-muted-foreground">
+            {apps.length > 0
+              ? "Testing the storage and redeploying apps that use it…"
+              : "Testing the storage and saving it…"}{" "}
+            You can close this dialog: the save goes on.
+          </p>
+        ) : null}
+        {saveError ? (
+          <InlineError icon className="rounded-md bg-destructive/10 px-3 py-2 [overflow-wrap:anywhere]">
+            {saveError}
+          </InlineError>
+        ) : null}
+      </form>
+    </ResponsiveDialog>
   );
 }

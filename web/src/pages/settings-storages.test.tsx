@@ -1,12 +1,13 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppsContext, type AppsContextValue } from "@/context/apps-context-base";
 import type { Docker } from "@/context/use-docker";
 import type { Storage, StorageDraft } from "@/lib/storages";
 import { StorageDialog } from "@/components/storage-dialog";
+import { stubViewport } from "@/test/media";
 import { StoragesCard } from "@/pages/settings-storages";
 
 // Links point into the active server's scope (/server/:id/...).
@@ -109,8 +110,8 @@ describe("StoragesCard", () => {
     renderCard(fakeDocker());
     expect(await screen.findByText("hetzner")).toHaveClass("font-mono");
     // Once in the Type column, once under the name on small screens.
-    expect(screen.getAllByText("S3-compatible")).toHaveLength(2);
-    expect(screen.getAllByText("Local folder")).toHaveLength(2);
+    expect(screen.getAllByText("S3 bucket")).toHaveLength(2);
+    expect(screen.getAllByText("Folder on this server")).toHaveLength(2);
     // Once in the Location column, once in the small-screen summary.
     expect(screen.getAllByText("https://fsn1.example.com/tenants/wf/")).toHaveLength(2);
     expect(screen.getAllByRole("link", { name: "Shop" })[0]).toHaveAttribute("href", "/server/srv-1/app/a1");
@@ -181,13 +182,12 @@ describe("StoragesCard", () => {
 
     await user.click(await screen.findByRole("button", { name: /Add storage/ }));
     const dialog = await screen.findByRole("dialog");
-    await user.click(within(dialog).getByRole("radio", { name: "S3-compatible" }));
+    await user.click(within(dialog).getByRole("radio", { name: "S3 bucket" }));
     await user.type(within(dialog).getByLabelText("Name"), "hetzner2");
     await user.type(within(dialog).getByLabelText("Endpoint"), "s3.example.com");
     expect(within(dialog).getByText("Use a URL like https://s3.example.com.")).toBeInTheDocument();
     await user.clear(within(dialog).getByLabelText("Endpoint"));
     await user.type(within(dialog).getByLabelText("Endpoint"), "https://s3.example.com");
-    await user.type(within(dialog).getByLabelText("Region"), "fsn1");
     await user.type(within(dialog).getByLabelText("Bucket"), "tenants");
     await user.type(within(dialog).getByLabelText("Access key"), "AKIA");
     // Not reached yet: no complaint. Left empty: it says what is missing.
@@ -196,6 +196,8 @@ describe("StoragesCard", () => {
     await user.tab();
     expect(within(dialog).getByText("Enter the secret key.")).toBeInTheDocument();
     await user.type(within(dialog).getByLabelText("Secret key"), "S3-PLAIN");
+    await user.click(within(dialog).getByRole("button", { name: "Advanced" }));
+    await user.type(within(dialog).getByLabelText("Region"), "fsn1");
     await user.click(within(dialog).getByRole("checkbox", { name: "Path-style addressing" }));
 
     await user.click(within(dialog).getByRole("button", { name: "Test connection" }));
@@ -462,6 +464,55 @@ describe("StorageDialog form", () => {
     return screen.findByRole("dialog");
   };
 
+  it("focuses the name on a desktop but leaves a phone's sheet alone", async () => {
+    const user = setupUser();
+    const dialog = await openAdd(user);
+    await waitFor(() => expect(within(dialog).getByLabelText("Name")).toHaveFocus());
+  });
+
+  describe("on a phone", () => {
+    afterEach(() => vi.unstubAllGlobals());
+
+    it("does not pop the keyboard over the sheet", async () => {
+      stubViewport(375);
+      const user = setupUser();
+      const dialog = await openAdd(user);
+      expect(within(dialog).getByLabelText("Name")).not.toHaveFocus();
+    });
+  });
+
+  it("opens Advanced to show a problem inside it", async () => {
+    const user = setupUser();
+    const docker = fakeDocker();
+    const dialog = await openAdd(user, docker);
+    await user.click(within(dialog).getByRole("radio", { name: "S3 bucket" }));
+    await user.type(within(dialog).getByLabelText("Name"), "offsite");
+    await user.type(within(dialog).getByLabelText("Endpoint"), "https://s3.example.com");
+    await user.type(within(dialog).getByLabelText("Bucket"), "tenants");
+    await user.type(within(dialog).getByLabelText("Access key"), "AKIA");
+    await user.type(within(dialog).getByLabelText("Secret key"), "S3-PLAIN");
+    await user.click(within(dialog).getByRole("button", { name: "Advanced" }));
+    await user.type(within(dialog).getByLabelText("Prefix"), "/x");
+    // Folded away again, the problem is out of sight: Save stays usable
+    // and, pressed, shows where the problem is instead of saving.
+    await user.click(within(dialog).getByRole("button", { name: "Advanced" }));
+    expect(within(dialog).queryByLabelText("Prefix")).not.toBeInTheDocument();
+    const save = within(dialog).getByRole("button", { name: "Save" });
+    expect(save).toBeEnabled();
+    await user.click(save);
+    expect(docker.saveStorage).not.toHaveBeenCalled();
+    expect(within(dialog).getByLabelText("Prefix")).toHaveFocus();
+    expect(within(dialog).getByText("Use folder names separated by /, like winterflow/.")).toBeInTheDocument();
+  });
+
+  it("keeps Advanced folded on an add", async () => {
+    const user = setupUser();
+    const dialog = await openAdd(user);
+    await user.click(within(dialog).getByRole("radio", { name: "S3 bucket" }));
+    expect(within(dialog).queryByLabelText("Region")).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("checkbox", { name: "Path-style addressing" })).not.toBeInTheDocument();
+  });
+
   it("refuses to add a name the server already has, at the name", async () => {
     const user = setupUser();
     const docker = fakeDocker();
@@ -500,7 +551,7 @@ describe("StorageDialog form", () => {
     const user = setupUser();
     const docker = fakeDocker();
     const dialog = await openAdd(user, docker);
-    await user.click(within(dialog).getByRole("radio", { name: "S3-compatible" }));
+    await user.click(within(dialog).getByRole("radio", { name: "S3 bucket" }));
     await user.type(within(dialog).getByLabelText("Name"), "offsite");
     await user.type(within(dialog).getByLabelText("Endpoint"), "https://s3.example.com");
     await user.type(within(dialog).getByLabelText("Bucket"), "tenants");
@@ -562,9 +613,10 @@ describe("StorageDialog form", () => {
     const user = setupUser();
     const dialog = await openAdd(user);
     const type = within(dialog).getByRole("radiogroup", { name: "Type" });
-    expect(within(type).getByRole("radio", { name: "Local folder" })).toBeChecked();
+    expect(within(type).getByRole("radio", { name: "Folder on this server" })).toBeChecked();
     expect(within(dialog).getByLabelText("Name")).toHaveAttribute("placeholder", "e.g. backup-disk");
-    await user.click(within(type).getByRole("radio", { name: "S3-compatible" }));
+    await user.click(within(type).getByRole("radio", { name: "S3 bucket" }));
+    await user.click(within(dialog).getByRole("button", { name: "Advanced" }));
     expect(within(dialog).getByLabelText("Name")).toHaveAttribute("placeholder", "e.g. offsite");
     expect(within(dialog).getByLabelText("Prefix")).toHaveAttribute("placeholder", "e.g. winterflow/");
     expect(within(dialog).getByLabelText("Region")).toHaveAttribute("placeholder", "e.g. auto");
@@ -574,7 +626,8 @@ describe("StorageDialog form", () => {
   it("turns path-style on for an IP or localhost endpoint until the user sets it", async () => {
     const user = setupUser();
     const dialog = await openAdd(user);
-    await user.click(within(dialog).getByRole("radio", { name: "S3-compatible" }));
+    await user.click(within(dialog).getByRole("radio", { name: "S3 bucket" }));
+    await user.click(within(dialog).getByRole("button", { name: "Advanced" }));
     const endpoint = within(dialog).getByLabelText("Endpoint");
     const pathStyle = within(dialog).getByRole("checkbox", { name: "Path-style addressing" });
     await user.type(endpoint, "http://127.0.0.1:9000");
@@ -592,7 +645,8 @@ describe("StorageDialog form", () => {
   it("keeps the user's path-style when the endpoint moves to an IP and back", async () => {
     const user = setupUser();
     const dialog = await openAdd(user);
-    await user.click(within(dialog).getByRole("radio", { name: "S3-compatible" }));
+    await user.click(within(dialog).getByRole("radio", { name: "S3 bucket" }));
+    await user.click(within(dialog).getByRole("button", { name: "Advanced" }));
     const endpoint = within(dialog).getByLabelText("Endpoint");
     const pathStyle = within(dialog).getByRole("checkbox", { name: "Path-style addressing" });
     await user.type(endpoint, "https://s3.example.com");
@@ -692,7 +746,7 @@ describe("StoragesCard layout", () => {
     const name = await screen.findByText("hetzner");
     // The Type column is hidden below sm; its badge moves under the name.
     expect(screen.getByRole("columnheader", { name: "Type" })).toHaveClass("hidden", "sm:table-cell");
-    expect(within(name.closest("td")!).getByText("S3-compatible").parentElement).toHaveClass("sm:hidden");
+    expect(within(name.closest("td")!).getByText("S3 bucket").parentElement).toHaveClass("sm:hidden");
     expect(screen.getAllByRole("link", { name: "Shop" })[0].closest(".whitespace-nowrap")).not.toBeNull();
   });
 

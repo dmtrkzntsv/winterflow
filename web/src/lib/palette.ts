@@ -19,6 +19,9 @@ export type PaletteNavEntry = {
   // hint tells same-named entries apart (the Settings section's title).
   hint?: string;
   keywords?: string[];
+  // serverId marks a "switch server" entry: picking it goes through
+  // selectServer (which keeps the page kind) rather than to `to`.
+  serverId?: string;
 };
 
 export type RecentEntry = { id: string; label: string; to: string };
@@ -70,7 +73,7 @@ export function paletteNavEntries({
   if (!standalone) {
     for (const server of servers) {
       if (server.id === serverId) continue;
-      entries.push({ id: `server:${server.id}`, group: "Servers", label: server.name, to: serverPath(server.id), hint: "Switch server", keywords: ["server", "switch"] });
+      entries.push({ id: `server:${server.id}`, group: "Servers", label: server.name, to: serverPath(server.id), hint: "Switch server", keywords: ["server", "switch"], serverId: server.id });
     }
   }
   if (serverId) {

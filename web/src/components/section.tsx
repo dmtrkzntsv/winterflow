@@ -85,7 +85,7 @@ export function Row({
         <div className="min-w-0">
           <div className="truncate text-sm font-medium">
             {to ? (
-              <Link to={to} className="after:absolute after:inset-0 focus-visible:outline-none focus-visible:underline">
+              <Link to={to} className="after:absolute after:inset-0 max-sm:after:rounded-xl focus-visible:underline focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-inset focus-visible:after:ring-ring">
                 {title}
               </Link>
             ) : (

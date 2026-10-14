@@ -28,10 +28,16 @@ export function UnderlineTabs<T extends string>({
   className,
 }: UnderlineTabsProps<T>) {
   const bar = useRef<HTMLDivElement | null>(null);
+  // Only the strip scrolls (scrollIntoView would scroll the page as well
+  // when the tabs sit below the fold).
   useEffect(() => {
-    bar.current
-      ?.querySelector<HTMLElement>('[role="tab"][data-state="active"]')
-      ?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+    const strip = bar.current;
+    const tab = strip?.querySelector<HTMLElement>('[role="tab"][data-state="active"]');
+    if (!strip || !tab) return;
+    const within = strip.getBoundingClientRect();
+    const at = tab.getBoundingClientRect();
+    if (at.left < within.left) strip.scrollLeft -= within.left - at.left;
+    else if (at.right > within.right) strip.scrollLeft += at.right - within.right;
   }, [value]);
 
   return (

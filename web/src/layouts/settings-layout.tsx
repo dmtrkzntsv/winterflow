@@ -2,6 +2,7 @@ import { Link, Navigate, NavLink, Outlet, useLocation } from "react-router-dom";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
 import { PageHeader } from "@/components/page-header";
+import { useProfile } from "@/context/use-profile";
 import { useServers } from "@/context/use-servers";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useSettingsSections } from "@/hooks/use-settings-sections";
@@ -47,8 +48,14 @@ function SettingsMenu({ sections, large = false }: { sections: SettingsSection[]
 export function SettingsLayout() {
   const sections = useSettingsSections();
   const isMobile = useIsMobile();
+  const { profile } = useProfile();
   const { pathname } = useLocation();
   const atIndex = pathname.replace(/\/+$/, "") === SETTINGS_PATH;
+
+  // A user on a temporary password may only set a new one: every other
+  // Settings page bounces back to Password, so the menu and the way back to
+  // it are left out.
+  if (profile?.must_change_password) return <Outlet />;
 
   if (isMobile) {
     if (atIndex) {

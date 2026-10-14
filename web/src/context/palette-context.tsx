@@ -5,10 +5,11 @@ import {
   type CommandPaletteContextValue,
   type PaletteActionGroup,
 } from "@/context/palette-context-base";
-import { isPaletteShortcut } from "@/lib/keyboard";
+import { hasOpenModal, isPaletteShortcut } from "@/lib/keyboard";
 
 // CommandPaletteProvider owns the palette's open state (⌘K / Ctrl+K
-// toggles it anywhere) and the contextual actions pages register.
+// toggles it anywhere except over another dialog, where it only closes the
+// palette itself) and the contextual actions pages register.
 export function CommandPaletteProvider({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const [registry, setRegistry] = useState<ReadonlyMap<string, PaletteActionGroup>>(() => new Map());
@@ -27,8 +28,11 @@ export function CommandPaletteProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (!isPaletteShortcut(event)) return;
+      // Always the page's: a held chord must not reach the browser's own.
       event.preventDefault();
-      setOpen((o) => !o);
+      if (event.repeat) return;
+      const overOtherDialog = hasOpenModal();
+      setOpen((o) => (o ? false : !overOtherDialog));
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);

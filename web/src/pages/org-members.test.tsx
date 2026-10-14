@@ -41,7 +41,7 @@ function fakeAPI() {
   return { calls, fetchMock };
 }
 
-function renderPage(section?: "organization" | "members") {
+function renderPage(section: "organization" | "members") {
   const profile = {
     profile: { user_id: ME.id, name: ME.name, email: ME.email, must_change_password: false },
   } as ProfileContextValue;
@@ -66,7 +66,7 @@ describe("OrgMembersPage", () => {
   });
 
   it("lists members without roles and lets any member manage them", async () => {
-    renderPage();
+    renderPage("members");
 
     const bobRow = (await screen.findByText("Bob")).closest("tr")!;
     expect(screen.queryByRole("columnheader", { name: "Role" })).not.toBeInTheDocument();
@@ -76,8 +76,6 @@ describe("OrgMembersPage", () => {
     expect(within(bobRow).getByRole("button", { name: "Remove" })).toBeInTheDocument();
     const meRow = screen.getByText("(you)").closest("tr")!;
     expect(within(meRow).queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
-    // The organization card is editable by every member.
-    expect(screen.getByRole("button", { name: /Edit/ })).toBeInTheDocument();
   });
 
   it("shows only the organization as Settings → Organization", async () => {
@@ -85,6 +83,8 @@ describe("OrgMembersPage", () => {
     expect(screen.getByRole("heading", { level: 1, name: "Organization" })).toBeInTheDocument();
     expect(screen.getAllByRole("heading", { name: "Organization" })).toHaveLength(1);
     expect(await screen.findByText("Homelab")).toBeInTheDocument();
+    // The organization card is editable by every member.
+    expect(screen.getByRole("button", { name: /Edit/ })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Add user/ })).not.toBeInTheDocument();
   });
 
@@ -98,7 +98,7 @@ describe("OrgMembersPage", () => {
 
   it("creates a user without a role", async () => {
     const user = userEvent.setup();
-    renderPage();
+    renderPage("members");
 
     await user.click(await screen.findByRole("button", { name: /Add user/ }));
     const dialog = await screen.findByRole("dialog");
@@ -116,7 +116,7 @@ describe("OrgMembersPage", () => {
 
   it("removes another member after confirmation", async () => {
     const user = userEvent.setup();
-    renderPage();
+    renderPage("members");
 
     const bobRow = (await screen.findByText("Bob")).closest("tr")!;
     await user.click(within(bobRow).getByRole("button", { name: "Remove" }));
@@ -128,7 +128,7 @@ describe("OrgMembersPage", () => {
 
   it("edits the organization", async () => {
     const user = userEvent.setup();
-    renderPage();
+    renderPage("organization");
 
     await screen.findByText("Homelab");
     await user.click(screen.getByRole("button", { name: /Edit/ }));

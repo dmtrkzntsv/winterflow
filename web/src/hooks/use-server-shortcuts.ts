@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 
 import { useServers } from "@/context/use-servers";
-import { serverShortcutIndex } from "@/lib/keyboard";
+import { hasOpenModal, serverShortcutIndex } from "@/lib/keyboard";
 
 // useServerShortcuts wires ⌘1…⌘9 (Ctrl elsewhere) to the switcher's
 // servers (selectServer decides where the tab lands). Keys past the last
@@ -12,7 +12,7 @@ export function useServerShortcuts(enabled: boolean): void {
     if (!enabled) return;
     const onKeyDown = (event: KeyboardEvent) => {
       const index = serverShortcutIndex(event);
-      if (index === null || index >= servers.length) return;
+      if (index === null || index >= servers.length || hasOpenModal()) return;
       event.preventDefault();
       selectServer(servers[index].id);
     };

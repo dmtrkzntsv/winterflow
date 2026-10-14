@@ -22,9 +22,16 @@ function commandOnly(e: KeyLike): boolean {
 
 // isPaletteShortcut is ⌘K / Ctrl+K: it opens the palette from anywhere,
 // text fields included. The physical key counts too (e.code), so it works on
-// non-Latin layouts, and a held key doesn't toggle the palette back and forth.
+// non-Latin layouts. A held key is the shortcut too (the caller swallows it so
+// the browser's own Ctrl+K never acts) but should not toggle the palette.
 export function isPaletteShortcut(e: KeyLike): boolean {
-  return !e.repeat && commandOnly(e) && (e.code === "KeyK" || e.key.toLowerCase() === "k");
+  return commandOnly(e) && (e.code === "KeyK" || e.key.toLowerCase() === "k");
+}
+
+// hasOpenModal is whether a dialog is open over the page (a form, a confirm,
+// the palette itself): the page's shortcuts leave the keyboard to it.
+export function hasOpenModal(): boolean {
+  return document.querySelector('[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]') !== null;
 }
 
 // serverShortcutIndex maps ⌘1…⌘9 (Ctrl elsewhere) to the index of the

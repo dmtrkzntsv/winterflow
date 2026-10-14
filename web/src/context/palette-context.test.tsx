@@ -67,6 +67,40 @@ describe("CommandPaletteProvider", () => {
     expect(event.defaultPrevented).toBe(true);
   });
 
+  it("swallows a held ⌘K without toggling the palette back", () => {
+    render(
+      <CommandPaletteProvider>
+        <State />
+      </CommandPaletteProvider>,
+    );
+    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    const held = new KeyboardEvent("keydown", { key: "k", ctrlKey: true, repeat: true, cancelable: true });
+    act(() => {
+      window.dispatchEvent(held);
+    });
+    expect(held.defaultPrevented).toBe(true);
+    expect(screen.getByTestId("open")).toHaveTextContent("open");
+  });
+
+  it("leaves ⌘K alone over another dialog, but still closes the palette itself", async () => {
+    render(
+      <CommandPaletteProvider>
+        <State />
+        <div role="dialog" data-state="open" />
+      </CommandPaletteProvider>,
+    );
+    const open = () => screen.getByTestId("open");
+    const event = new KeyboardEvent("keydown", { key: "k", ctrlKey: true, cancelable: true });
+    act(() => {
+      window.dispatchEvent(event);
+    });
+    expect(event.defaultPrevented).toBe(true);
+    expect(open()).toHaveTextContent("closed");
+    await userEvent.setup().click(screen.getByRole("button", { name: "open it" }));
+    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    expect(open()).toHaveTextContent("closed");
+  });
+
   it("collects the actions a page registers, with the latest handler, until it unmounts", async () => {
     const user = userEvent.setup();
     const first = vi.fn();

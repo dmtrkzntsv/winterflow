@@ -38,6 +38,17 @@ describe("useServerShortcuts", () => {
     expect(selectServer).not.toHaveBeenCalled();
   });
 
+  it("does nothing while a dialog is open", () => {
+    render(
+      <>
+        <Probe enabled />
+        <div role="dialog" data-state="open" />
+      </>,
+    );
+    expect(press({ key: "1", ctrlKey: true }).defaultPrevented).toBe(false);
+    expect(selectServer).not.toHaveBeenCalled();
+  });
+
   it("does nothing when disabled (a standalone install)", () => {
     render(<Probe enabled={false} />);
     press({ key: "1", ctrlKey: true });

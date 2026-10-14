@@ -8,7 +8,7 @@ import { readApiError } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -117,10 +117,9 @@ function Reveal({ value }: { value: string }) {
 // OrgMembersPage: any member manages the organization — its name/icon/color
 // and its users: create accounts with one-time temp passwords, reset
 // passwords, remove (anyone but yourself). There are no roles.
-// section picks one half for Settings → Organization / Members (each is its
-// own page, so the card title would repeat the page title and is dropped);
-// without it the page shows both (the pre-rebuild Organization page).
-export default function OrgMembersPage({ section }: { section?: "organization" | "members" }) {
+// section picks the half for Settings → Organization / Members (each is its
+// own page, so the card has no title of its own: the page title says it).
+export default function OrgMembersPage({ section }: { section: "organization" | "members" }) {
   usePageTitle(section === "members" ? "Members" : "Organization");
   const { profile } = useProfile();
 
@@ -271,10 +270,10 @@ export default function OrgMembersPage({ section }: { section?: "organization" |
       <h1 className="text-2xl font-semibold tracking-tight">
         {section === "members" ? "Members" : "Organization"}
       </h1>
-      {section !== "members" ? (
+      {section === "organization" ? (
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
-            {section ? <span /> : <CardTitle>Organization</CardTitle>}
+            <span />
             <Button size="sm" variant="outline" onClick={openOrgEdit}>
               <Pencil /> Edit
             </Button>
@@ -295,10 +294,10 @@ export default function OrgMembersPage({ section }: { section?: "organization" |
         </Card>
       ) : null}
 
-      {section !== "organization" ? (
+      {section === "members" ? (
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">
-            {section ? <span /> : <CardTitle>Members</CardTitle>}
+            <span />
             <Button size="sm" onClick={openAdd}>
               <Plus /> Add user
             </Button>

@@ -41,15 +41,16 @@ vi.mock("@/hooks/use-inbox-unread", () => ({
 vi.mock("@/components/nav-user", () => ({ NavUser: () => null }));
 
 const setOpenMobile = vi.fn();
-function sidebarState(isMobile: boolean): SidebarContextProps {
+const toggleSidebar = vi.fn();
+function sidebarState(isMobile: boolean, state: "expanded" | "collapsed" = "expanded"): SidebarContextProps {
   return {
-    state: "expanded",
+    state,
     open: true,
     setOpen: () => {},
     openMobile: isMobile,
     setOpenMobile,
     isMobile,
-    toggleSidebar: () => {},
+    toggleSidebar,
   };
 }
 
@@ -57,12 +58,12 @@ function PaletteState() {
   return <span data-testid="palette">{useCommandPalette().open ? "open" : "closed"}</span>;
 }
 
-function renderAt(url: string, isMobile = false) {
+function renderAt(url: string, isMobile = false, state: "expanded" | "collapsed" = "expanded") {
   return render(
     <MemoryRouter initialEntries={[url]}>
       <CommandPaletteProvider>
         <TooltipProvider>
-          <SidebarContext.Provider value={sidebarState(isMobile)}>
+          <SidebarContext.Provider value={sidebarState(isMobile, state)}>
             <AppSidebar />
             <PaletteState />
           </SidebarContext.Provider>
@@ -83,6 +84,17 @@ describe("AppSidebar", () => {
     activeServerId = "s1";
     unread = 0;
     setOpenMobile.mockClear();
+    toggleSidebar.mockClear();
+  });
+
+  it("has a visible control that collapses and expands the sidebar", async () => {
+    const user = userEvent.setup();
+    const { unmount } = renderAt("/server/s1");
+    await user.click(screen.getByRole("button", { name: "Collapse sidebar" }));
+    expect(toggleSidebar).toHaveBeenCalledTimes(1);
+    unmount();
+    renderAt("/server/s1", false, "collapsed");
+    expect(screen.getByRole("button", { name: "Expand sidebar" })).toBeInTheDocument();
   });
 
   it("lists Apps with the active server's apps and New app, then Monitoring, Inbox, Templates, and Settings", () => {

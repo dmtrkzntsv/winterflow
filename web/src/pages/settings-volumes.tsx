@@ -3,7 +3,8 @@ import { Link } from "react-router-dom";
 import { Plus, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
-import { DotLabel } from "@/components/app-status-badge";
+import { StatusDot } from "@/components/status";
+import type { StatusTone } from "@/lib/status";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -57,17 +58,16 @@ import { useServerPath } from "@/context/use-server-path";
 // Same dot + label language as AppStatusIndicator: the normal state stays
 // quiet, only Orphaned (data nobody owns any more) draws the eye.
 function VolumeStatus({ volume }: { volume: Volume }) {
-  const [label, dot, text] = volume.in_use
-    ? ["In use", "bg-status-ok", ""]
+  const [label, tone, text]: [string, StatusTone, string] = volume.in_use
+    ? ["In use", "ok", ""]
     : volume.orphan
-      ? ["Orphaned", "bg-status-warn", "text-amber-700 dark:text-amber-400"]
-      : ["Unused", "bg-status-idle", "text-muted-foreground"];
+      ? ["Orphaned", "warn", "text-amber-700 dark:text-amber-400"]
+      : ["Unused", "idle", "text-muted-foreground"];
   return (
-    <DotLabel
-      label={label}
-      dotClassName={dot}
-      className={cn("whitespace-nowrap", text)}
-    />
+    <span className={cn("inline-flex items-center gap-1.5 whitespace-nowrap", text)}>
+      <StatusDot tone={tone} />
+      {label}
+    </span>
   );
 }
 

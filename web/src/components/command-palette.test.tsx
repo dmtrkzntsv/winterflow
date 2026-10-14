@@ -14,8 +14,16 @@ const SERVERS = [
   { id: "s1", organizationId: "o", name: "Alpha", createdAt: "", lastSeenAt: null, capabilities: {}, features: { ingress: true } },
   { id: "s2", organizationId: "o", name: "Beta", createdAt: "", lastSeenAt: null, capabilities: {} },
 ];
+const selectServer = vi.fn();
 vi.mock("@/context/use-servers", () => ({
-  useServers: () => ({ servers: SERVERS, activeServer: SERVERS[0], activeServerId: "s1", statusByServer: {}, loading: false }),
+  useServers: () => ({
+    servers: SERVERS,
+    activeServer: SERVERS[0],
+    activeServerId: "s1",
+    selectServer,
+    statusByServer: {},
+    loading: false,
+  }),
 }));
 const SHOP = { id: "a1", serverId: "s1", name: "Shop", version: "1", icon: "", color: "", createdAt: "" };
 let apps = [SHOP];
@@ -46,6 +54,7 @@ const input = () => screen.findByPlaceholderText("Search apps, pages and actions
 
 describe("CommandPalette", () => {
   afterEach(() => {
+    selectServer.mockClear();
     apps = [SHOP];
     localStorage.clear();
     act(() => setThemePreference("system"));
@@ -79,7 +88,27 @@ describe("CommandPalette", () => {
     openWithKeyboard();
     await user.type(await input(), "beta");
     await user.click(screen.getByRole("option", { name: /Beta/ }));
-    expect(screen.getByTestId("at")).toHaveTextContent("/server/s2");
+    // Through selectServer, which keeps the page kind; the palette doesn't navigate itself.
+    expect(selectServer).toHaveBeenCalledWith("s2");
+    expect(screen.getByTestId("at")).toHaveTextContent("/server/s1");
+    expect(readRecent()[0]).toMatchObject({ id: "server:s2" });
+  });
+
+  it("searches names, hints and keywords, not ids or paths", async () => {
+    apps = [{ ...SHOP, id: "a-deadbeef-cafe", name: "Website" }];
+    const user = userEvent.setup();
+    renderPalette();
+    openWithKeyboard();
+    const box = await input();
+    await user.type(box, "dead");
+    expect(await screen.findByText("Nothing matches.")).toBeInTheDocument();
+    expect(screen.queryByRole("option")).not.toBeInTheDocument();
+    await user.clear(box);
+    await user.type(box, "logs");
+    expect(screen.queryByRole("option", { name: /Storages/ })).not.toBeInTheDocument();
+    await user.clear(box);
+    await user.type(box, "Web");
+    expect(screen.getByRole("option", { name: /Website/ })).toBeInTheDocument();
   });
 
   it("reaches the second of two same-named apps with the keyboard", async () => {

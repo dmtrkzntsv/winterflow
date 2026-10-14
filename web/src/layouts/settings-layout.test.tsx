@@ -8,6 +8,7 @@ import { stubViewport } from "@/test/media";
 type FakeServer = { id: string; name: string; features?: Record<string, boolean> };
 let active: FakeServer | null = { id: "s1", name: "Alpha", features: { ingress: true } };
 let email = "ann@example.test";
+let mustChange = false;
 
 vi.mock("@/context/use-servers", () => ({
   useServers: () => ({
@@ -18,7 +19,7 @@ vi.mock("@/context/use-servers", () => ({
   }),
 }));
 vi.mock("@/context/use-profile", () => ({
-  useProfile: () => ({ profile: { user_id: "u1", name: "Ann", email, must_change_password: false } }),
+  useProfile: () => ({ profile: { user_id: "u1", name: "Ann", email, must_change_password: mustChange } }),
 }));
 
 function Where() {
@@ -33,6 +34,7 @@ function renderAt(url: string) {
           <Route index element={<SettingsIndex />} />
           <Route path="organization" element={<p>organization body</p>} />
           <Route path="members" element={<p>members body</p>} />
+          <Route path="password" element={<p>password body</p>} />
         </Route>
         <Route path="/server/:serverId/settings" element={<SettingsLayout />}>
           <Route path="general" element={<p>general body</p>} />
@@ -48,6 +50,7 @@ describe("SettingsLayout", () => {
     vi.unstubAllGlobals();
     active = { id: "s1", name: "Alpha", features: { ingress: true } };
     email = "ann@example.test";
+    mustChange = false;
   });
 
   it("puts the sub-menu beside the page on a desktop", () => {
@@ -97,5 +100,14 @@ describe("SettingsLayout", () => {
     expect(screen.getByText("members body")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/settings");
     expect(screen.queryByRole("navigation", { name: "Settings" })).not.toBeInTheDocument();
+  });
+
+  it.each([false, true])("shows only the Password page, without a menu or a way back, to a user who must change the password (phone: %s)", (phone) => {
+    mustChange = true;
+    if (phone) stubViewport(375);
+    renderAt("/settings/password");
+    expect(screen.getByText("password body")).toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "Settings" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Settings" })).not.toBeInTheDocument();
   });
 });

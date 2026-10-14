@@ -3,9 +3,12 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 
-import { ConfirmDialog } from "@/components/confirm-dialog";
+import { ConfirmDialog, type ConfirmDialogProps } from "@/components/confirm-dialog";
 
-function Harness({ onConfirm }: { onConfirm: () => void | Promise<void> }) {
+function Harness({
+  onConfirm,
+  ...rest
+}: { onConfirm: () => void | Promise<void> } & Partial<Pick<ConfirmDialogProps, "destructive" | "description">>) {
   const [open, setOpen] = useState(true);
   return (
     <>
@@ -18,6 +21,7 @@ function Harness({ onConfirm }: { onConfirm: () => void | Promise<void> }) {
         confirmLabel="Remove"
         pendingLabel="Removing…"
         onConfirm={onConfirm}
+        {...rest}
       />
     </>
   );
@@ -56,5 +60,38 @@ describe("ConfirmDialog", () => {
     await userEvent.setup().click(screen.getByRole("button", { name: "Remove" }));
     expect(await screen.findByRole("button", { name: "Remove" })).toBeEnabled();
     expect(screen.getByText("open")).toBeInTheDocument();
+  });
+
+  it("keeps the dialog open on Escape while the action is pending", async () => {
+    const user = userEvent.setup();
+    let finish: () => void = () => {};
+    render(<Harness onConfirm={() => new Promise<void>((resolve) => (finish = resolve))} />);
+    await user.click(screen.getByRole("button", { name: "Remove" }));
+    await screen.findByRole("button", { name: "Removing…" });
+    await user.keyboard("{Escape}");
+    expect(screen.getByText("open")).toBeInTheDocument();
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+    finish();
+    expect(await screen.findByText("closed")).toBeInTheDocument();
+  });
+
+  it("closes on Escape when nothing is pending", async () => {
+    render(<Harness onConfirm={vi.fn()} />);
+    await userEvent.setup().keyboard("{Escape}");
+    expect(screen.getByText("closed")).toBeInTheDocument();
+  });
+
+  it("paints the action as a plain button when it is not destructive", () => {
+    render(<Harness onConfirm={vi.fn()} destructive={false} />);
+    const action = screen.getByRole("button", { name: "Remove" });
+    expect(action).not.toHaveClass("bg-destructive");
+    expect(action).toHaveClass("bg-primary");
+  });
+
+  it("needs no description", () => {
+    render(<Harness onConfirm={vi.fn()} description={undefined} />);
+    const dialog = screen.getByRole("alertdialog", { name: "Remove Bob?" });
+    expect(dialog).not.toHaveAttribute("aria-describedby");
+    expect(dialog).not.toHaveTextContent("Their account");
   });
 });

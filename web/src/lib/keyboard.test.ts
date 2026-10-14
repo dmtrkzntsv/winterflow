@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { isMacPlatform, isPaletteShortcut, modKeyLabel, serverShortcutIndex, shortcutLabel } from "@/lib/keyboard";
+import { hasOpenModal, isMacPlatform, isPaletteShortcut, modKeyLabel, serverShortcutIndex, shortcutLabel } from "@/lib/keyboard";
 
 const key = (
   k: string,
@@ -25,8 +25,8 @@ describe("isPaletteShortcut", () => {
     expect(isPaletteShortcut(key("л", { metaKey: true, code: "KeyL" }))).toBe(false);
   });
 
-  it("ignores a held key", () => {
-    expect(isPaletteShortcut(key("k", { metaKey: true, repeat: true }))).toBe(false);
+  it("is still the shortcut while held (the caller swallows it without toggling)", () => {
+    expect(isPaletteShortcut(key("k", { metaKey: true, repeat: true }))).toBe(true);
   });
 
   it("is not a plain K or one with Alt or Shift", () => {
@@ -76,5 +76,21 @@ describe("labels", () => {
     vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Mozilla/5.0 (X11; Linux x86_64)");
     expect(isMacPlatform()).toBe(false);
     expect(shortcutLabel("K")).toBe("Ctrl+K");
+  });
+});
+
+describe("hasOpenModal", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("sees an open dialog or alert dialog, not a closing one", () => {
+    expect(hasOpenModal()).toBe(false);
+    document.body.innerHTML = '<div role="dialog" data-state="closed"></div>';
+    expect(hasOpenModal()).toBe(false);
+    document.body.innerHTML = '<div role="alertdialog" data-state="open"></div>';
+    expect(hasOpenModal()).toBe(true);
+    document.body.innerHTML = '<div role="dialog" data-state="open"></div>';
+    expect(hasOpenModal()).toBe(true);
   });
 });

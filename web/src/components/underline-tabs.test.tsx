@@ -43,13 +43,20 @@ describe("UnderlineTabs", () => {
     expect(list.parentElement).toHaveClass("max-w-full", "overflow-x-auto");
   });
 
-  it("brings the selected tab into view", () => {
-    const scrolled: Element[] = [];
-    const spy = vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(function (this: Element) {
-      scrolled.push(this);
+  it("brings the selected tab into view by scrolling the tab strip alone, never the page", () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    const rect = (left: number, right: number) => ({ left, right, top: 0, bottom: 0, width: right - left, height: 0, x: left, y: 0, toJSON: () => ({}) });
+    const spy = vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (this: Element) {
+      if (this.getAttribute("role") === "tab") return this.textContent === "Logs" ? rect(300, 380) : rect(0, 80);
+      return this.classList.contains("overflow-x-auto") ? rect(0, 200) : rect(0, 0);
     });
     renderTabs("logs");
-    expect(scrolled).toContain(screen.getByRole("tab", { name: "Logs" }));
+    const strip = screen.getByRole("tablist").parentElement!;
+    expect(strip.scrollLeft).toBe(180);
+    expect(scrollIntoView).not.toHaveBeenCalled();
     spy.mockRestore();
+    // @ts-expect-error restoring jsdom's lack of scrollIntoView
+    delete Element.prototype.scrollIntoView;
   });
 });

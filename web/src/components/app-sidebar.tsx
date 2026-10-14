@@ -17,12 +17,29 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarRail,
+  SidebarTrigger,
 } from "@/components/ui/sidebar";
+import { useSidebar } from "@/components/ui/use-sidebar";
 import { useServers } from "@/context/use-servers";
 import { useInboxUnread } from "@/hooks/use-inbox-unread";
 import { unreadBadge } from "@/lib/inbox";
+import { shortcutLabel } from "@/lib/keyboard";
 import { navItemClass, sidebarNav, type NavItem } from "@/lib/nav";
 import { cn } from "@/lib/utils";
+
+// CollapseButton folds the sidebar to icons and back on a desktop (Ctrl/⌘+B
+// does the same); the phone's sheet has its own menu button.
+function CollapseButton() {
+  const { state } = useSidebar();
+  const label = state === "expanded" ? "Collapse sidebar" : "Expand sidebar";
+  return (
+    <SidebarTrigger
+      aria-label={label}
+      title={`${label} (${shortcutLabel("B")})`}
+      className="size-8 shrink-0 text-sidebar-foreground/70 max-lg:hidden"
+    />
+  );
+}
 
 // AppSidebar is the shell's navigation (spec §2): the server switcher and
 // search on top; Apps with the live app list, Monitoring, Inbox (unread
@@ -90,7 +107,12 @@ export function AppSidebar({ onAddServer }: { onAddServer?: () => void }) {
         </SidebarGroup>
       </SidebarContent>
       <SidebarFooter>
-        <NavUser />
+        <div className="flex items-center gap-1 group-data-[collapsible=icon]:flex-col">
+          <div className="min-w-0 flex-1 group-data-[collapsible=icon]:flex-none">
+            <NavUser />
+          </div>
+          <CollapseButton />
+        </div>
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>

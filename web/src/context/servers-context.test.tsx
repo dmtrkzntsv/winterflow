@@ -15,6 +15,7 @@ vi.mock("@/context/use-notifications", () => ({
 const SERVERS = [
   { id: "s1", organization_id: "o", name: "Alpha", created_at: "", last_seen_at: null },
   { id: "s2", organization_id: "o", name: "Beta", created_at: "", last_seen_at: null },
+  { id: "s3", organization_id: "o", name: "Gamma", created_at: "", last_seen_at: null, features: { ingress: true } },
 ];
 
 beforeEach(() => {
@@ -45,6 +46,7 @@ function Probe() {
       <span data-testid="at">{pathname + search}</span>
       <span data-testid="server">{activeServer?.name ?? "-"}</span>
       <button onClick={() => selectServer("s2")}>switch</button>
+      <button onClick={() => selectServer("s3")}>switch to ingress</button>
       <button onClick={() => selectServer(activeServer?.id ?? "")}>same</button>
     </div>
   );
@@ -103,12 +105,26 @@ describe("server-scoped URLs", () => {
     expect(await screen.findByText("Page not found")).toBeInTheDocument();
   });
 
-  it("opens the new server's General page when switching from a server's settings", async () => {
+  it("opens General when switching from a server's settings section the new server lacks (Domains without ingress)", async () => {
     renderAt("/server/s1/settings/domains?x=1");
     await screen.findByText("Alpha");
     act(() => screen.getByText("switch").click());
     expect(at()).toBe("/server/s2/settings/general");
     expect(server()).toBe("Beta");
+  });
+
+  it.each(["storages", "docker", "general"])("keeps the %s section when switching between servers' settings", async (section) => {
+    renderAt(`/server/s1/settings/${section}`);
+    await screen.findByText("Alpha");
+    act(() => screen.getByText("switch").click());
+    expect(at()).toBe(`/server/s2/settings/${section}`);
+  });
+
+  it("keeps Domains when the new server has ingress", async () => {
+    renderAt("/server/s1/settings/domains");
+    await screen.findByText("Alpha");
+    act(() => screen.getByText("switch to ingress").click());
+    expect(at()).toBe("/server/s3/settings/domains");
   });
 
   it("opens the server's General page when switching from the organization's settings", async () => {

@@ -1,3 +1,4 @@
+import { defaultFilter } from "cmdk";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Server } from "lucide-react";
@@ -33,12 +34,32 @@ const NAV_GROUPS: PaletteGroup[] = ["Apps", "Pages", "Settings", "Servers"];
 const COMMAND_CLASS =
   "[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-muted-foreground [&_[cmdk-group]:not([hidden])_~[cmdk-group]]:pt-0 [&_[cmdk-group]]:px-2 [&_[cmdk-input-wrapper]_svg]:h-5 [&_[cmdk-input-wrapper]_svg]:w-5 [&_[cmdk-input]]:h-12 [&_[cmdk-item]]:px-2 [&_[cmdk-item]]:py-3 [&_[cmdk-item]_svg]:h-5 [&_[cmdk-item]_svg]:w-5";
 
-// itemValue is what cmdk filters on and tells items apart by: the group,
-// the label, the hint and the id ("Settings: General (Organization) settings:/…").
-// The id keeps two same-named apps or servers apart: cmdk treats equal values
-// as one item, so the second could not be reached with the keyboard.
+// An item's cmdk value is its searchable text, then ID_MARK and its id. The id
+// keeps two same-named apps or servers apart (cmdk treats equal values as one
+// item, so the second could not be reached with the keyboard) but is never
+// searched: an app's uuid or a settings path would match any short query.
+const ID_MARK = "\u001f";
+
+function withId(text: string, id: string): string {
+  return `${text}${ID_MARK}${id}`;
+}
+
+// paletteFilter scores the text before the id (group, label, hint) fuzzily and
+// each keyword only where the query is a part of it: fuzzy matching across a
+// pile of keywords lets short queries hit unrelated items.
+function paletteFilter(value: string, search: string, keywords?: string[]): number {
+  const at = value.indexOf(ID_MARK);
+  const text = defaultFilter(at < 0 ? value : value.slice(0, at), search);
+  const query = search.toLowerCase();
+  const viaKeyword = (keywords ?? [])
+    .filter((keyword) => keyword.toLowerCase().includes(query))
+    .map((keyword) => defaultFilter(keyword, search) / 2);
+  return Math.max(text, ...viaKeyword);
+}
+
+// itemValue is the group, the label and the hint ("Settings: General (Organization)").
 function itemValue(entry: PaletteNavEntry, prefix = ""): string {
-  return `${prefix}${entry.group}: ${entry.label}${entry.hint ? ` (${entry.hint})` : ""} ${entry.id}`;
+  return withId(`${prefix}${entry.group}: ${entry.label}${entry.hint ? ` (${entry.hint})` : ""}`, entry.id);
 }
 
 // CommandPalette is ⌘K (spec §2): jump to an app on this server, a page, a
@@ -48,7 +69,7 @@ function itemValue(entry: PaletteNavEntry, prefix = ""): string {
 export function CommandPalette({ onAddServer }: { onAddServer?: () => void }) {
   const { open, setOpen, groups } = useCommandPalette();
   const navigate = useNavigate();
-  const { servers, activeServerId } = useServers();
+  const { servers, activeServerId, selectServer } = useServers();
   const { apps } = useApps();
   const settings = useSettingsSections();
   const [, setTheme] = useThemePreference();
@@ -68,7 +89,9 @@ export function CommandPalette({ onAddServer }: { onAddServer?: () => void }) {
   const go = (entry: PaletteNavEntry) => {
     pushRecent({ id: entry.id, label: entry.label, to: entry.to });
     close();
-    navigate(entry.to);
+    // Switching server keeps the page kind, as the switcher and ⌘1–⌘9 do.
+    if (entry.serverId) selectServer(entry.serverId);
+    else navigate(entry.to);
   };
   const run = (action: () => void) => {
     close();
@@ -85,7 +108,7 @@ export function CommandPalette({ onAddServer }: { onAddServer?: () => void }) {
     <Dialog open={open} onOpenChange={(next) => (next ? setOpen(true) : close())}>
       <DialogContent className="overflow-hidden p-0 sm:max-w-xl" aria-describedby={undefined}>
         <DialogTitle className="sr-only">Search</DialogTitle>
-        <Command loop className={COMMAND_CLASS}>
+        <Command loop filter={paletteFilter} className={COMMAND_CLASS}>
           <CommandInput value={query} onValueChange={setQuery} placeholder="Search apps, pages and actions…" />
           <CommandList className="max-h-[min(60vh,420px)]">
             <CommandEmpty>Nothing matches.</CommandEmpty>
@@ -98,7 +121,7 @@ export function CommandPalette({ onAddServer }: { onAddServer?: () => void }) {
                   {group.actions.map((action) => (
                     <CommandItem
                       key={action.id}
-                      value={`${group.heading}: ${action.label} ${action.id}`}
+                      value={withId(`${group.heading}: ${action.label}`, action.id)}
                       keywords={action.keywords}
                       disabled={action.disabled}
                       onSelect={() => run(action.run)}

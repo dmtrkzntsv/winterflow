@@ -75,8 +75,11 @@ describe("AppLayout", () => {
     const bar = screen.getByTestId("mobile-top-bar");
     expect(await within(bar).findByText("Monitoring")).toBeInTheDocument();
 
-    await user.click(within(bar).getByRole("button", { name: "Open menu" }));
+    const menu = within(bar).getByRole("button", { name: "Open menu" });
+    expect(menu).toHaveAttribute("aria-expanded", "false");
+    await user.click(menu);
     expect(screen.getByText("menu open")).toBeInTheDocument();
+    expect(menu).toHaveAttribute("aria-expanded", "true");
 
     await user.click(within(bar).getByRole("button", { name: "Search" }));
     expect(screen.getByText(/palette open/)).toBeInTheDocument();

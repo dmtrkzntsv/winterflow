@@ -40,6 +40,8 @@ describe("RowList", () => {
     expect(within(rows[0]).getByText("2 apps")).toBeInTheDocument();
     expect(within(rows[0]).getByRole("button", { name: "Edit" })).toBeInTheDocument();
     expect(within(rows[1]).queryByRole("link")).not.toBeInTheDocument();
+    // The link covers the row, so its keyboard focus rings the whole row.
+    expect(within(rows[0]).getByRole("link")).toHaveClass("focus-visible:after:ring-2", "focus-visible:after:ring-ring");
     // Only a row that is a link answers the pointer.
     expect(rows[0]).toHaveClass("hover:bg-muted/40");
     expect(rows[1]).not.toHaveClass("hover:bg-muted/40");

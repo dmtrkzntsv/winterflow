@@ -27,7 +27,7 @@ const SIDEBAR_STYLE = { "--sidebar-width": "15rem" } as CSSProperties
 // MobileTopBar is the phone/tablet chrome (below 1024px): the menu button
 // opens the sidebar sheet, the page names itself, search opens ⌘K.
 function MobileTopBar() {
-  const { setOpenMobile } = useSidebar()
+  const { openMobile, setOpenMobile } = useSidebar()
   const { openPalette } = useCommandPalette()
   const title = useCurrentPageTitle()
   return (
@@ -35,7 +35,15 @@ function MobileTopBar() {
       data-testid="mobile-top-bar"
       className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-1 border-b border-border/70 bg-background/70 px-2 backdrop-blur-md"
     >
-      <Button variant="ghost" size="icon" className="size-10" aria-label="Open menu" onClick={() => setOpenMobile(true)}>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="size-10"
+        aria-label="Open menu"
+        aria-haspopup="dialog"
+        aria-expanded={openMobile}
+        onClick={() => setOpenMobile(true)}
+      >
         <Menu className="size-5" />
       </Button>
       <p className="min-w-0 flex-1 truncate text-center text-[15px] font-semibold">{title}</p>

@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import {
   ArrowUpCircle,
   ExternalLink,
@@ -19,11 +19,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { TabsContent } from "@/components/ui/tabs";
 import { UnderlineTabs } from "@/components/underline-tabs";
+import { useDeleteApp, useSaveAsTemplate } from "@/hooks/use-app-actions";
 import { useHistorySheet } from "@/hooks/use-history-sheet";
 import { useTabParam } from "@/hooks/use-tab-param";
 import { LEGACY_APP_TABS, templatePath } from "@/lib/routes";
 import { Spinner } from "@/components/ui/spinner";
 import { AppLogsTab } from "@/components/app-page/app-logs-tab";
+import { DeleteAppDialog } from "@/components/delete-app-dialog";
 import { AppSettingsTab } from "@/components/app-page/app-settings-tab";
 import { HistorySheet } from "@/components/app-page/history-sheet";
 import type { Ownership } from "@/components/app-page/ownership";
@@ -49,7 +51,6 @@ import { needsAttention } from "@/lib/backups";
 import { appLabel } from "@/lib/kpi";
 import type { TemplateView } from "@/lib/templates";
 import { cn } from "@/lib/utils";
-import { useServerPath } from "@/context/use-server-path";
 import { NotFound } from "@/components/not-found";
 
 const TABS = ["logs", "metrics", "configuration", "backups", "settings"] as const;
@@ -57,9 +58,7 @@ type Tab = (typeof TABS)[number];
 
 export default function AppDetailsPage() {
   const { appId } = useParams();
-  const navigate = useNavigate();
-  const toServer = useServerPath();
-  const { apps, statusByApp, backupsByApp, loading, control, remove, rename, refresh } = useApps();
+  const { apps, statusByApp, backupsByApp, loading, control, rename, refresh } = useApps();
   const templatesApi = useTemplatesApi();
 
   const [tab, setTab] = useTabParam<Tab>(TABS, "logs", { aliases: LEGACY_APP_TABS });
@@ -91,6 +90,9 @@ export default function AppDetailsPage() {
   usePageTitle(appId ? appLabel(app?.name, appId) : "App");
 
   const [pending, setPending] = useState<ControlAction | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const deleteApp = useDeleteApp(appId ?? "");
+  const saveAsTemplate = useSaveAsTemplate(appId ?? "", app?.name ?? "");
 
   const runControl = async (action: ControlAction) => {
     if (!appId) return;
@@ -326,15 +328,14 @@ export default function AppDetailsPage() {
             ownership={ownership}
             onUnlinked={reloadManaged}
             onRename={rename}
-            onDelete={async (opts) => {
-              const result = await remove(app.id, opts);
-              navigate(toServer());
-              return result;
-            }}
+            onDelete={() => setDeleteOpen(true)}
+            onSaveAsTemplate={() => void saveAsTemplate.run()}
+            savingTemplate={saveAsTemplate.busy}
           />
         </TabsContent>
       </UnderlineTabs>
 
+      <DeleteAppDialog name={appLabel(app.name, app.id)} open={deleteOpen} onOpenChange={setDeleteOpen} onConfirm={deleteApp} />
       <HistorySheet key={app.id} appId={app.id} ownership={ownership} open={historyOpen} onOpenChange={setHistoryOpen} />
     </div>
   );

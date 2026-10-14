@@ -202,7 +202,7 @@ describe("AppDetailsPage", () => {
     let finish: (v: unknown) => void = () => {};
     remove.mockReturnValue(new Promise((resolve) => (finish = resolve)));
     renderPage("/app/a1?tab=settings", { a1: [{ name: "db", state: "ok" }] });
-    await user.click(await screen.findByRole("button", { name: /Delete Shop/ }));
+    await user.click(await screen.findByRole("button", { name: "Delete app…" }));
     await user.click(screen.getByRole("button", { name: "Delete app" }));
     expect(await screen.findByRole("button", { name: /Deleting Shop/ })).toBeDisabled();
     expect(screen.getByRole("status")).toHaveTextContent("This can take a few minutes");
@@ -215,17 +215,20 @@ describe("AppDetailsPage", () => {
     expect(await screen.findByText("the apps")).toBeInTheDocument();
   });
 
-  it("reports a failed delete and a delete with warnings", async () => {
+  it("keeps the dialog after a failed delete, then reports a delete with warnings", async () => {
     const user = userEvent.setup({ delay: null });
     remove.mockRejectedValueOnce(new Error("timed out"));
     renderPage("/app/a1?tab=settings");
-    await user.click(await screen.findByRole("button", { name: /Delete Shop/ }));
+    await user.click(await screen.findByRole("button", { name: "Delete app…" }));
     await user.click(screen.getByRole("button", { name: "Delete app" }));
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Delete failed", { description: "timed out" }));
     remove.mockResolvedValueOnce({ warnings: ["volume x is in use"], volumesDeleted: false, backupsDeleted: false });
-    await user.click(screen.getByRole("button", { name: /Delete Shop/ }));
-    await user.click(screen.getByRole("button", { name: "Delete app" }));
-    await waitFor(() => expect(toast.warning).toHaveBeenCalledWith("App deleted with cleanup warnings", { description: "volume x is in use" }));
+    // The dialog is still open: confirm again.
+    await user.click(await screen.findByRole("button", { name: "Delete app" }));
+    await waitFor(() =>
+      expect(toast.warning).toHaveBeenCalledWith("App deleted with cleanup warnings", { description: "volume x is in use" }),
+    );
+    expect(await screen.findByText("the apps")).toBeInTheDocument();
   });
 });
 

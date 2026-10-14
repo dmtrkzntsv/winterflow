@@ -1,20 +1,12 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { Ownership } from "@/components/app-page/ownership";
 import { ConfirmButton } from "@/components/confirm-button";
-import { DeleteAppDialog } from "@/components/delete-app-dialog";
-import { useApps } from "@/context/use-apps";
-import type { DeleteAppResult } from "@/context/apps-context-base";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
-import { deleteOutcome, type DeleteChoice } from "@/lib/delete-app";
-import { appLabel } from "@/lib/kpi";
-import { NEW_TEMPLATE_PATH } from "@/lib/routes";
-import { templateFromApp } from "@/lib/template-draft";
-import type { DraftState } from "@/pages/template-page";
 
 export function AppSettingsTab({
   appId,
@@ -23,6 +15,8 @@ export function AppSettingsTab({
   onUnlinked,
   onRename,
   onDelete,
+  onSaveAsTemplate,
+  savingTemplate,
 }: {
   appId: string;
   name: string;
@@ -31,15 +25,16 @@ export function AppSettingsTab({
   ownership: Ownership;
   onUnlinked: () => void;
   onRename: (appId: string, name: string) => Promise<void>;
-  onDelete: (opts: { deleteVolumes: boolean; deleteBackups: boolean }) => Promise<DeleteAppResult>;
+  // onDelete opens the page's delete dialog; onSaveAsTemplate runs the page's
+  // hook (savingTemplate while the app is read).
+  onDelete: () => void;
+  onSaveAsTemplate: () => void;
+  savingTemplate: boolean;
 }) {
-  const { backupsByApp, getApp } = useApps();
   const instance = ownership?.instance ?? null;
-  const navigate = useNavigate();
   const templatesApi = useTemplatesApi();
   const [newName, setNewName] = useState(name);
   const [busy, setBusy] = useState(false);
-  const [deleting, setDeleting] = useState(false);
 
   const save = async () => {
     setBusy(true);
@@ -66,41 +61,6 @@ export function AppSettingsTab({
       toast.error("Unlink failed", { description: e instanceof Error ? e.message : undefined });
     } finally {
       setBusy(false);
-    }
-  };
-
-  // saveAsTemplate opens a new template's editor prefilled from what the
-  // app's editor holds; nothing is saved until the template is.
-  const saveAsTemplate = async () => {
-    setBusy(true);
-    try {
-      const state: DraftState = { ...templateFromApp(appId, await getApp(appId)), appName: appLabel(name, appId) };
-      navigate(NEW_TEMPLATE_PATH, { state });
-    } catch (e) {
-      toast.error("Couldn't read the app", { description: e instanceof Error ? e.message : undefined });
-      setBusy(false);
-    }
-  };
-
-  const del = async (choice: DeleteChoice) => {
-    setBusy(true);
-    setDeleting(true);
-    try {
-      const hadBackups = (backupsByApp?.[appId]?.length ?? 0) > 0;
-      const res = await onDelete({ deleteVolumes: choice.withVolumes, deleteBackups: choice.withBackups });
-      const out = deleteOutcome(choice, res, { hadBackups });
-      if (out.level === "warning") {
-        toast.warning(out.title, { description: out.description });
-      } else {
-        toast.success(out.title, { description: out.description });
-      }
-    } catch (e) {
-      toast.error("Delete failed", {
-        description: e instanceof Error ? e.message : undefined,
-      });
-    } finally {
-      setBusy(false);
-      setDeleting(false);
     }
   };
 
@@ -174,7 +134,7 @@ export function AppSettingsTab({
             </p>
           </div>
           <div>
-            <Button variant="outline" disabled={busy} onClick={() => void saveAsTemplate()}>
+            <Button variant="outline" disabled={busy || savingTemplate} onClick={onSaveAsTemplate}>
               Save as template
             </Button>
           </div>
@@ -190,12 +150,14 @@ export function AppSettingsTab({
           </p>
         </div>
         <div>
-          <DeleteAppDialog
-            name={name}
+          <Button
+            variant="outline"
+            className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
             disabled={busy}
-            deleting={deleting}
-            onConfirm={(choice) => void del(choice)}
-          />
+            onClick={onDelete}
+          >
+            <Trash2 className="size-4" aria-hidden /> Delete app…
+          </Button>
         </div>
       </div>
     </div>

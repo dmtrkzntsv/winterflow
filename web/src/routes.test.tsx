@@ -37,8 +37,11 @@ vi.mock("@/components/server-creation-dialog", () => ({ ServerSelectionDialog: (
 vi.mock("@/pages/home", () => ({ default: () => <p>apps page</p> }));
 vi.mock("@/pages/app-details", () => ({ default: () => <p>app page</p> }));
 vi.mock("@/pages/monitoring", () => ({ default: () => <p>monitoring page</p> }));
-vi.mock("@/pages/create-app", () => ({ default: () => <p>compose page</p> }));
-vi.mock("@/pages/create-from-template", () => ({ default: () => <p>from template page</p> }));
+vi.mock("@/pages/new-app", () => ({
+  default: function NewAppStub() {
+    return <p>new app page {new URLSearchParams(useLocation().search).get("from") ?? "chooser"}</p>;
+  },
+}));
 vi.mock("@/pages/inbox", () => ({ default: () => <p>inbox page</p> }));
 vi.mock("@/pages/org-members", () => ({
   default: ({ section }: { section?: string }) => <p>org page {section}</p>,
@@ -102,9 +105,10 @@ describe("route table", () => {
 
   it.each([
     ["/server/s1", "apps page"],
-    ["/server/s1/new", "compose page"],
-    ["/server/s1/new?from=compose", "compose page"],
-    ["/server/s1/new?from=template", "from template page"],
+    ["/server/s1/new", "new app page chooser"],
+    ["/server/s1/new?from=compose", "new app page compose"],
+    ["/server/s1/new?from=template", "new app page template"],
+    ["/server/s1/new?from=git", "new app page git"],
     ["/server/s1/app/a1", "app page"],
     ["/server/s1/monitoring", "monitoring page"],
     ["/server/s1/settings/general", "server general"],
@@ -144,8 +148,8 @@ describe("route table", () => {
     ["/server/s1/settings?tab=domains", "/server/s1/settings/domains", "server domains"],
     ["/server/s1/settings?tab=storages", "/server/s1/settings/storages", "server storages"],
     ["/server/s1/settings?tab=variables", "/settings/variables", "shared variables page"],
-    ["/server/s1/create-app", "/server/s1/new", "compose page"],
-    ["/server/s1/create-app/template", "/server/s1/new?from=template", "from template page"],
+    ["/server/s1/create-app", "/server/s1/new?from=compose", "new app page compose"],
+    ["/server/s1/create-app/template", "/server/s1/new?from=template", "new app page template"],
     ["/org/members", "/settings/members", "org page members"],
     ["/org/variables", "/settings/variables", "shared variables page"],
     ["/org/alerts", "/inbox", "inbox page"],
@@ -171,7 +175,7 @@ describe("route table", () => {
     ["/org/alerts?tab=history&x=1", "/inbox?x=1", "inbox page"],
     ["/server/s1/settings?tab=volumes", "/server/s1/settings/docker", "server docker"],
     ["/server/s1/settings?tab=volumes&x=1", "/server/s1/settings/docker?x=1", "server docker"],
-    ["/server/s1/create-app?tab=x&y=2", "/server/s1/new?y=2", "compose page"],
+    ["/server/s1/create-app?tab=x&y=2", "/server/s1/new?from=compose&y=2", "new app page compose"],
     ["/org/members?tab=x", "/settings/members", "org page members"],
     ["/org/templates/t1?tab=x#versions", "/templates/t1#versions", "template page t1"],
   ])("sends %s to %s without a stale tab", async (from, to, page) => {

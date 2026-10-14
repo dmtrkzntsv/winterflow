@@ -67,7 +67,7 @@ export const appRoutes: RouteObject[] = [
         ],
       },
       // Before the rebuild: Add app and From template.
-      { path: "create-app", element: <LegacyRedirect to={({ params }) => newAppPath(params.serverId ?? "")} /> },
+      { path: "create-app", element: <LegacyRedirect to={({ params }) => newAppPath(params.serverId ?? "", "compose")} /> },
       {
         path: "create-app/template",
         element: <LegacyRedirect to={({ params }) => newAppPath(params.serverId ?? "", "template")} />,

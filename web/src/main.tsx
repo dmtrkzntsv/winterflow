@@ -1,6 +1,6 @@
 import { StrictMode } from "react"
 import { createRoot } from "react-dom/client"
-import { createBrowserRouter, Outlet, RouterProvider } from "react-router-dom"
+import { createBrowserRouter, Navigate, Outlet, RouterProvider } from "react-router-dom"
 
 import "@/styles/inter.css"
 import "@/lib/i18n"
@@ -21,7 +21,8 @@ import HomePage from "@/pages/home"
 import CreateAppPage from "@/pages/create-app"
 import AppDetailsPage from "@/pages/app-details"
 import MonitoringPage from "@/pages/monitoring"
-import SettingsPage from "@/pages/settings"
+import { SettingsLayout } from "@/layouts/settings-layout"
+import { ServerDockerPage, ServerDomainsPage, ServerGeneralPage, ServerStoragesPage } from "@/pages/server-settings"
 import UserTokensPage from "@/pages/user-tokens"
 import UserPasswordPage from "@/pages/user-password"
 import OrgMembersPage from "@/pages/org-members"
@@ -71,7 +72,17 @@ const router = createBrowserRouter([
               { path: "create-app/template", element: <CreateFromTemplatePage /> },
               { path: "app/:appId", element: <AppDetailsPage /> },
               { path: "monitoring", element: <MonitoringPage /> },
-              { path: "settings", element: <SettingsPage /> },
+              {
+                path: "settings",
+                element: <SettingsLayout />,
+                children: [
+                  { index: true, element: <Navigate to="general" replace /> },
+                  { path: "general", element: <ServerGeneralPage /> },
+                  { path: "domains", element: <ServerDomainsPage /> },
+                  { path: "storages", element: <ServerStoragesPage /> },
+                  { path: "docker", element: <ServerDockerPage /> },
+                ],
+              },
             ],
           },
           {

@@ -45,13 +45,13 @@ function fakeAPI() {
   return { calls, fetchMock };
 }
 
-function renderPage() {
+function renderPage(section?: "organization" | "members") {
   const profile = {
     profile: { user_id: ME.id, name: ME.name, email: ME.email, must_change_password: false },
   } as ProfileContextValue;
   return render(
     <ProfileContext.Provider value={profile}>
-      <OrgMembersPage />
+      <OrgMembersPage section={section} />
     </ProfileContext.Provider>,
   );
 }
@@ -82,6 +82,22 @@ describe("OrgMembersPage", () => {
     expect(within(meRow).queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
     // The organization card is editable by every member.
     expect(screen.getByRole("button", { name: /Edit/ })).toBeInTheDocument();
+  });
+
+  it("shows only the organization as Settings → Organization", async () => {
+    renderPage("organization");
+    expect(screen.getByRole("heading", { level: 1, name: "Organization" })).toBeInTheDocument();
+    expect(screen.getAllByRole("heading", { name: "Organization" })).toHaveLength(1);
+    expect(await screen.findByText("Homelab")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Add user/ })).not.toBeInTheDocument();
+  });
+
+  it("shows only the members as Settings → Members", async () => {
+    renderPage("members");
+    expect(screen.getByRole("heading", { level: 1, name: "Members" })).toBeInTheDocument();
+    expect(screen.getAllByText("Members")).toHaveLength(1);
+    expect(await screen.findByText("Bob")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Edit/ })).not.toBeInTheDocument();
   });
 
   it("creates a user without a role", async () => {

@@ -117,7 +117,10 @@ function Reveal({ value }: { value: string }) {
 // OrgMembersPage: any member manages the organization — its name/icon/color
 // and its users: create accounts with one-time temp passwords, reset
 // passwords, remove (anyone but yourself). There are no roles.
-export default function OrgMembersPage() {
+// section picks one half for Settings → Organization / Members (each is its
+// own page, so the card title would repeat the page title and is dropped);
+// without it the page shows both (the pre-rebuild Organization page).
+export default function OrgMembersPage({ section }: { section?: "organization" | "members" }) {
   const breadcrumbs = useMemo(
     () => [{ label: "Organization" }, { label: "Members" }],
     [],
@@ -269,62 +272,67 @@ export default function OrgMembersPage() {
 
   return (
     <div className="mx-auto w-full max-w-4xl space-y-6">
-      <h1 className="text-2xl font-semibold tracking-tight">Organization</h1>
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle>Organization</CardTitle>
-          <Button size="sm" variant="outline" onClick={openOrgEdit}>
-            <Pencil /> Edit
-          </Button>
-        </CardHeader>
-        <CardContent>
-          {org ? (
-            <div className="flex items-center gap-3">
-              <AppIcon icon={org.icon} color={org.color} className="size-10 rounded-lg" />
-              <div>
-                <p className="font-medium">{org.name}</p>
-                <p className="text-xs text-muted-foreground">{org.org_id}</p>
+      <h1 className="text-2xl font-semibold tracking-tight">
+        {section === "members" ? "Members" : "Organization"}
+      </h1>
+      {section !== "members" ? (
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between">
+            {section ? <span /> : <CardTitle>Organization</CardTitle>}
+            <Button size="sm" variant="outline" onClick={openOrgEdit}>
+              <Pencil /> Edit
+            </Button>
+          </CardHeader>
+          <CardContent>
+            {org ? (
+              <div className="flex items-center gap-3">
+                <AppIcon icon={org.icon} color={org.color} className="size-10 rounded-lg" />
+                <div>
+                  <p className="font-medium">{org.name}</p>
+                  <p className="text-xs text-muted-foreground">{org.org_id}</p>
+                </div>
               </div>
-            </div>
-          ) : (
-            <Spinner />
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle>Members</CardTitle>
-          <Button size="sm" onClick={openAdd}>
-            <Plus /> Add user
-          </Button>
-        </CardHeader>
-        <CardContent>
-          {loading ? (
-            <div className="flex min-h-32 items-center justify-center">
+            ) : (
               <Spinner />
-            </div>
-          ) : error ? (
-            <p className="text-sm text-destructive">{error}</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Email</TableHead>
-                  <TableHead>Provider</TableHead>
-                  <TableHead />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {members.map((m) => {
-                  const isSelf = m.id === profile?.user_id;
-                  return (
-                    <TableRow key={m.id}>
-                      <TableCell className="font-medium">
-                        {m.name}
-                        {isSelf ? (
-                          <span className="text-muted-foreground"> (you)</span>
+            )}
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {section !== "organization" ? (
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between">
+            {section ? <span /> : <CardTitle>Members</CardTitle>}
+            <Button size="sm" onClick={openAdd}>
+              <Plus /> Add user
+            </Button>
+          </CardHeader>
+          <CardContent>
+            {loading ? (
+              <div className="flex min-h-32 items-center justify-center">
+                <Spinner />
+              </div>
+            ) : error ? (
+              <p className="text-sm text-destructive">{error}</p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Email</TableHead>
+                    <TableHead>Provider</TableHead>
+                    <TableHead />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {members.map((m) => {
+                    const isSelf = m.id === profile?.user_id;
+                    return (
+                      <TableRow key={m.id}>
+                        <TableCell className="font-medium">
+                          {m.name}
+                          {isSelf ? (
+                            <span className="text-muted-foreground"> (you)</span>
                         ) : null}
                       </TableCell>
                       <TableCell>{m.email || "—"}</TableCell>
@@ -359,6 +367,7 @@ export default function OrgMembersPage() {
           )}
         </CardContent>
       </Card>
+      ) : null}
 
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent>

@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useCallback, useEffect, useState } from "react";
+import { Navigate } from "react-router-dom";
 import { Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
-import { useAppBreadcrumbs } from "@/layouts/use-app-layout";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -33,101 +32,78 @@ import {
   type Registry,
 } from "@/context/use-docker";
 import { useServers } from "@/context/use-servers";
+import { serverSettingsPath } from "@/lib/routes";
 import { DomainsCard } from "@/pages/settings-domains";
 import { StoragesCard } from "@/pages/settings-storages";
-import { VariablesCard } from "@/pages/settings-variables";
-import { createSharedVariablesApi } from "@/lib/shared-variables";
 import { VolumesCard } from "@/pages/settings-volumes";
 
-const TABS = ["registries", "networks", "volumes", "domains", "storages", "variables", "agent"] as const;
+// Settings → Server: one page per section (the sub-menu is SettingsLayout's).
+// Each addresses the server in the URL through useDocker / useServers.
 
-// SettingsPage is the server-level settings view (v1 "Server Settings"):
-// Docker registries, networks and volumes, registered domains (servers with
-// ingress only), storages, shared variables, plus agent self-update — one tab per section, synced to
-// ?tab= like the app details page.
-export default function SettingsPage() {
-  const breadcrumbs = useMemo(
-    () => [{ label: "Server" }, { label: "Settings" }],
-    [],
+function NoServer() {
+  return (
+    <p className="text-sm text-muted-foreground">
+      Select a server to manage its settings.
+    </p>
   );
-  useAppBreadcrumbs(breadcrumbs);
+}
 
+// ServerGeneralPage is the server's General page; for now the agent update
+// (phase 5 adds the server's facts).
+export function ServerGeneralPage() {
   const docker = useDocker();
-  const sharedApi = useMemo(() => createSharedVariablesApi(), []);
   const { activeServer } = useServers();
-  // Domains configure the embedded ingress: only servers running it.
-  const hasIngress = Boolean(activeServer?.features?.ingress);
-  const [searchParams, setSearchParams] = useSearchParams();
-
-  const tabParam = searchParams.get("tab") ?? "registries";
-  const tab =
-    (TABS as readonly string[]).includes(tabParam) &&
-    (tabParam !== "domains" || hasIngress)
-      ? tabParam
-      : "registries";
-  // A tab opened by link (?tab=storages) may sit past the bar's scrolled
-  // edge on a phone: bring it into view.
-  const tabBar = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    tabBar.current
-      ?.querySelector<HTMLElement>('[role="tab"][data-state="active"]')
-      ?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
-  }, [tab]);
-  const setTab = (next: string) => {
-    setSearchParams(next === "registries" ? {} : { tab: next }, {
-      replace: true,
-    });
-  };
-
-  if (!docker.hasServer) {
-    return (
-      <p className="text-sm text-muted-foreground">
-        Select a server to manage its settings.
-      </p>
-    );
-  }
-
+  if (!docker.hasServer || !activeServer) return <NoServer />;
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-semibold tracking-tight">Server settings</h1>
-      <Tabs value={tab} onValueChange={setTab}>
-        {/* Seven tabs are wider than a phone: the bar scrolls inside itself
-            instead of widening the page. */}
-        <div ref={tabBar} className="-mx-1 max-w-full overflow-x-auto px-1 pb-1">
-          <TabsList className="w-max">
-            <TabsTrigger value="registries">Registries</TabsTrigger>
-            <TabsTrigger value="networks">Networks</TabsTrigger>
-            <TabsTrigger value="volumes">Volumes</TabsTrigger>
-            {hasIngress ? <TabsTrigger value="domains">Domains</TabsTrigger> : null}
-            <TabsTrigger value="storages">Storages</TabsTrigger>
-            <TabsTrigger value="variables">Variables</TabsTrigger>
-            <TabsTrigger value="agent">Agent</TabsTrigger>
-          </TabsList>
-        </div>
-        <TabsContent value="registries">
-          <RegistriesCard docker={docker} />
-        </TabsContent>
-        <TabsContent value="networks">
-          <NetworksCard docker={docker} />
-        </TabsContent>
-        <TabsContent value="volumes">
-          <VolumesCard docker={docker} />
-        </TabsContent>
-        {hasIngress ? (
-          <TabsContent value="domains">
-            <DomainsCard docker={docker} />
-          </TabsContent>
-        ) : null}
-        <TabsContent value="storages">
-          <StoragesCard docker={docker} />
-        </TabsContent>
-        <TabsContent value="variables">
-          {activeServer ? <VariablesCard key={activeServer.id} serverId={activeServer.id} api={sharedApi} /> : null}
-        </TabsContent>
-        <TabsContent value="agent">
-          <AgentCard docker={docker} />
-        </TabsContent>
-      </Tabs>
+      <PageHeader title="General" subtitle={activeServer.name} />
+      <AgentCard docker={docker} />
+    </div>
+  );
+}
+
+// ServerDomainsPage configures the embedded ingress. A server without it
+// (switched to from another server's Domains page, or an old link) opens
+// its General page instead.
+export function ServerDomainsPage() {
+  const docker = useDocker();
+  const { activeServer } = useServers();
+  if (!docker.hasServer || !activeServer) return <NoServer />;
+  if (!activeServer.features?.ingress) {
+    return <Navigate replace to={serverSettingsPath(activeServer.id)} />;
+  }
+  return (
+    <div className="space-y-6">
+      <PageHeader title="Domains" subtitle={activeServer.name} />
+      <DomainsCard docker={docker} />
+    </div>
+  );
+}
+
+export function ServerStoragesPage() {
+  const docker = useDocker();
+  const { activeServer } = useServers();
+  if (!docker.hasServer || !activeServer) return <NoServer />;
+  return (
+    <div className="space-y-6">
+      <PageHeader title="Storages" subtitle={activeServer.name} />
+      <StoragesCard docker={docker} />
+    </div>
+  );
+}
+
+// ServerDockerPage stacks the Docker resources: registries, networks,
+// volumes.
+export function ServerDockerPage() {
+  const docker = useDocker();
+  const { activeServer } = useServers();
+  if (!docker.hasServer || !activeServer) return <NoServer />;
+  return (
+    <div className="space-y-6">
+      <PageHeader title="Docker" subtitle={activeServer.name} />
+      <RegistriesCard docker={docker} />
+      <NetworksCard docker={docker} />
+      <VolumesCard docker={docker} />
     </div>
   );
 }

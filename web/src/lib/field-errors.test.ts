@@ -7,9 +7,16 @@ describe("invalidAttrs", () => {
     expect(invalidAttrs("app-name", "Give the app a name.", "font-mono")).toEqual({
       "aria-invalid": true,
       "aria-describedby": "app-name-error",
-      className: "font-mono border-destructive focus-visible:ring-destructive",
+      className: "font-mono border-destructive focus-visible:border-destructive focus-visible:ring-destructive",
     });
     expect(errorId("app-name")).toBe("app-name-error");
+  });
+
+  it("keeps the red border on focus over a field's own focus border", () => {
+    const { className } = invalidAttrs("file-f1", "Name this file.", "border-transparent focus-visible:border-input");
+    expect(className.split(" ")).toContain("focus-visible:border-destructive");
+    expect(className.split(" ")).not.toContain("focus-visible:border-input");
+    expect(className.split(" ")).not.toContain("border-transparent");
   });
 
   it("leaves a fine field alone", () => {
@@ -40,11 +47,18 @@ describe("focusFirstInvalid", () => {
     document.body.innerHTML =
       '<div id="root"><input id="a" /><input id="b" aria-invalid="true" /><input id="c" aria-invalid="true" /></div>';
     const scroll = vi.fn();
+    // jsdom has none: the stub is in for this test only.
+    const original = Element.prototype.scrollIntoView;
     Element.prototype.scrollIntoView = scroll;
-    focusFirstInvalid(document.getElementById("root"));
-    await new Promise((r) => requestAnimationFrame(() => r(null)));
-    expect(document.activeElement?.id).toBe("b");
-    expect(scroll).toHaveBeenCalledWith({ block: "center" });
+    try {
+      focusFirstInvalid(document.getElementById("root"));
+      await new Promise((r) => requestAnimationFrame(() => r(null)));
+      expect(document.activeElement?.id).toBe("b");
+      expect(scroll).toHaveBeenCalledWith({ block: "center" });
+    } finally {
+      if (original) Element.prototype.scrollIntoView = original;
+      else Reflect.deleteProperty(Element.prototype, "scrollIntoView");
+    }
   });
 
   it("does nothing without an invalid field or a root", async () => {

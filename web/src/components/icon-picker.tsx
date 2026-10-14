@@ -8,6 +8,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { useIsPhone } from "@/hooks/use-is-phone";
 import { cn } from "@/lib/utils";
 import { APP_ICON_NAMES, getAppIcon } from "@/lib/app-icons";
 import { AppIcon } from "@/components/app-icon";
@@ -15,6 +16,9 @@ import { AppIcon } from "@/components/app-icon";
 // IconGrid is the searchable grid of app icons.
 export function IconGrid({ value, onPick }: { value?: string; onPick: (name: string) => void }) {
   const [query, setQuery] = useState("");
+  // The search takes focus on a desktop; on a phone that would raise the
+  // keyboard over the grid before anything was asked for.
+  const phone = useIsPhone();
 
   const filtered = query
     ? APP_ICON_NAMES.filter((n) =>
@@ -25,7 +29,7 @@ export function IconGrid({ value, onPick }: { value?: string; onPick: (name: str
   return (
     <div>
       <Input
-        autoFocus
+        autoFocus={!phone}
         placeholder="Search icons…"
         aria-label="Search icons"
         value={query}
@@ -82,6 +86,7 @@ export function IconPicker({
   disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const phone = useIsPhone();
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -90,7 +95,12 @@ export function IconPicker({
           <AppIcon icon={value} name={name} color={color} className="size-8" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-72 p-2" align="start">
+      <PopoverContent
+        className="w-72 p-2"
+        align="start"
+        // No search focus (and keyboard) on a phone; see AppLookPicker.
+        onOpenAutoFocus={phone ? (e) => e.preventDefault() : undefined}
+      >
         <IconGrid
           value={value}
           onPick={(next) => {

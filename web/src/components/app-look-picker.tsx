@@ -4,7 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { AppIcon } from "@/components/app-icon";
 import { IconGrid } from "@/components/icon-picker";
-import { APP_COLORS, DEFAULT_APP_COLOR, type AppLook } from "@/lib/app-look";
+import { useIsPhone } from "@/hooks/use-is-phone";
+import { APP_COLORS, DEFAULT_APP_COLOR, colorName, type AppLook } from "@/lib/app-look";
 import { cn } from "@/lib/utils";
 
 // AppLookPicker is the app's tile as a button: it opens the icon grid and
@@ -26,6 +27,7 @@ export function AppLookPicker({
   disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const phone = useIsPhone();
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
@@ -40,7 +42,13 @@ export function AppLookPicker({
           <AppIcon name={name} icon={icon} color={color} className="size-7" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-72 space-y-3 p-3" align="start">
+      <PopoverContent
+        className="w-72 space-y-3 p-3"
+        align="start"
+        // Radix focuses the first field (the icon search) on open; on a phone
+        // that raises the keyboard over the grid.
+        onOpenAutoFocus={phone ? (e) => e.preventDefault() : undefined}
+      >
         <IconGrid value={icon} onPick={(next) => onPick({ icon: next, color })} />
         <div className="space-y-1.5">
           <p className="text-xs font-medium text-muted-foreground">Colour</p>
@@ -49,10 +57,11 @@ export function AppLookPicker({
               <button
                 key={c}
                 type="button"
-                aria-label={`Colour ${c}`}
+                aria-label={colorName(c)}
+                title={colorName(c)}
                 aria-pressed={color === c}
                 className={cn(
-                  "size-7 rounded-md ring-offset-2 ring-offset-background",
+                  "size-7 rounded-md max-sm:size-10 ring-offset-2 ring-offset-background",
                   color === c && "ring-2 ring-primary",
                 )}
                 style={{ backgroundColor: c }}
@@ -63,7 +72,7 @@ export function AppLookPicker({
               type="color"
               aria-label="Custom colour"
               value={color || DEFAULT_APP_COLOR}
-              className="h-7 w-10 cursor-pointer rounded-md border bg-transparent p-0.5"
+              className="h-7 w-10 cursor-pointer max-sm:h-10 rounded-md border bg-transparent p-0.5"
               onChange={(e) => onPick({ icon, color: e.target.value })}
             />
           </div>

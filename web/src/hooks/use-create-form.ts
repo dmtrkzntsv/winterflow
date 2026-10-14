@@ -11,10 +11,10 @@ const NO_ERRORS: FieldErrors = {};
 // first Create marks every problem of ready (the state Create would send)
 // next to its field, calls onRefused so the form can open the sections
 // holding one, focuses the first bad field (attach form to the form's
-// root) and sends nothing; a clean Create saves the app. Messages appear
+// root) and sends nothing (and drops the last attempt's failure); a clean Create saves the app. Messages appear
 // only after the first attempt, then follow every edit.
 export function useCreateForm(serverId: string, ready: AppEditorState) {
-  const { create, busy, error } = useCreateApp(serverId);
+  const { create, busy, error, dismiss } = useCreateApp(serverId);
   const [tried, setTried] = useState(false);
   const form = useRef<HTMLDivElement>(null);
   const errors = useMemo(() => (tried ? editorErrors(ready) : NO_ERRORS), [tried, ready]);
@@ -23,6 +23,8 @@ export function useCreateForm(serverId: string, ready: AppEditorState) {
     setTried(true);
     const found = editorErrors(ready);
     if (Object.keys(found).length > 0) {
+      // The last attempt's failure no longer describes this form.
+      dismiss();
       onRefused?.(found);
       focusFirstInvalid(form.current);
       return;

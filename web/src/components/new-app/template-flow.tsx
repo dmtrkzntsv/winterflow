@@ -5,6 +5,7 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
 import { AppIcon } from "@/components/app-icon";
 import { Disclosure } from "@/components/disclosure";
 import { EmptyState } from "@/components/empty-state";
@@ -199,7 +200,15 @@ export function TemplateFlow({ serverId }: { serverId: string }) {
       />
     );
   }
-  if (templates === null) return <PageSpinner />;
+  if (templates === null) {
+    // The cards' place is held, so the form doesn't jump when they arrive.
+    return (
+      <div role="status" aria-label="Loading templates" className="grid gap-3 sm:grid-cols-2">
+        <Skeleton className="h-16 rounded-xl" />
+        <Skeleton className="h-16 rounded-xl" />
+      </div>
+    );
+  }
   if (templates.length === 0) {
     return (
       <EmptyState
@@ -233,6 +242,10 @@ export function TemplateFlow({ serverId }: { serverId: string }) {
                 setRevision(0);
                 setView(null);
                 setValues({});
+                // The next template's form starts untried and folded.
+                setTried(false);
+                setMoreOpen(false);
+                setError("");
               }}
               className={cn(
                 "flex min-h-16 items-center gap-3 rounded-xl border bg-card p-3 text-left transition-colors duration-150 hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60 motion-reduce:transition-none",
@@ -355,7 +368,13 @@ export function TemplateFlow({ serverId }: { serverId: string }) {
           </Disclosure>
 
           {error ? <ErrorText alert icon text={error} /> : null}
-          <CreateBar busy={busy} onCreate={() => void create()} cancelTo={appsPath(serverId)} invalid={invalid} />
+          <CreateBar
+            busy={busy}
+            waiting={storages === null}
+            onCreate={() => void create()}
+            cancelTo={appsPath(serverId)}
+            invalid={invalid}
+          />
         </>
       )}
     </div>

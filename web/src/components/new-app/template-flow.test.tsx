@@ -74,6 +74,23 @@ function accepted(api: ReturnType<typeof fakeAPI>, path = "/api/v1/instance/crea
   );
 }
 
+// held makes the API answer path only once release() is called.
+function held(api: ReturnType<typeof fakeAPI>, path: string) {
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const inner = api.fetchMock;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (new URL(url, "http://x").pathname === path) await gate;
+      return inner(url, init);
+    }),
+  );
+  return release;
+}
+
 function renderFlow() {
   return render(
     <MemoryRouter initialEntries={["/server/s1/new?from=template"]}>
@@ -292,6 +309,65 @@ describe("TemplateFlow", () => {
     renderFlow();
     const empty = await screen.findByLabelText("Storage for db");
     expect(within(empty).getByRole("option", { name: "No storage" })).toBeInTheDocument();
+  });
+
+  it("holds the cards' place with a skeleton while the templates are read", async () => {
+    const api = fakeAPI(routes());
+    const release = held(api, "/api/v1/template/get-templates");
+    renderFlow();
+    expect(screen.getByRole("status", { name: "Loading templates" })).toBeInTheDocument();
+    release();
+    expect(await screen.findByRole("button", { name: /twillingate/ })).toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "Loading templates" })).not.toBeInTheDocument();
+  });
+
+  it("keeps Create off until the server's storages are read", async () => {
+    const user = userEvent.setup();
+    let resolve: (names: string[]) => void = () => {};
+    serverStorages.mockImplementation(() => new Promise<string[]>((r) => (resolve = r)));
+    const bare = { ...VIEW, body: { ...VIEW.body, backups: { db: { enabled: true } } } };
+    const api = fakeAPI(routes({ "/api/v1/template/get-template": bare, "/api/v1/instance/create-instance": { request_id: "" } }));
+    renderFlow();
+    await screen.findByLabelText("NAME");
+    expect(screen.getByRole("button", { name: "Create app" })).toBeDisabled();
+    await act(async () => resolve(["tenants"]));
+    expect(screen.getByRole("button", { name: "Create app" })).toBeEnabled();
+    await fill(user);
+    await user.click(screen.getByRole("button", { name: "Create app" }));
+    await screen.findByText("the new app");
+    expect(api.posted("/api/v1/instance/create-instance")[0]).toMatchObject({ backups: { db: "tenants" } });
+  });
+
+  it("starts the next template untried and folded when the pick changes", async () => {
+    const user = userEvent.setup();
+    const optionalRequired = {
+      ...VIEW,
+      body: {
+        ...VIEW.body,
+        parameters: [...(VIEW.body.parameters ?? []), { name: "LABEL", pattern: "^x+$" }],
+      },
+    };
+    fakeAPI(
+      routes({
+        "/api/v1/template/get-templates": { templates: [SUMMARY, { ...SUMMARY, id: "t2", name: "blog" }] },
+        "/api/v1/template/get-template": (_: unknown, q: URLSearchParams) =>
+          q.get("id") === "t2" ? { ...optionalRequired, id: "t2", name: "blog" } : optionalRequired,
+      }),
+    );
+    renderFlow();
+    await user.click(await screen.findByRole("button", { name: /twillingate/ }));
+    await user.type(await screen.findByLabelText("NAME"), "abc");
+    await user.type(screen.getByLabelText("SESSION_KEY"), "s");
+    await user.click(screen.getByRole("button", { name: "More options" }));
+    await user.type(screen.getByLabelText("LABEL"), "no");
+    await user.click(screen.getByRole("button", { name: "Create app" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Some fields need attention.");
+
+    await user.click(screen.getByRole("button", { name: /blog/ }));
+    await screen.findByLabelText("NAME");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("LABEL")).not.toBeInTheDocument();
+    expect(screen.queryByText("Required")).not.toBeInTheDocument();
   });
 
   it("preselects this server's first storage for a backup without a default, and sends it", async () => {

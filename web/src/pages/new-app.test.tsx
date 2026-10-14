@@ -6,7 +6,6 @@ import { NotificationsContext, type NotificationsContextValue } from "@/context/
 import NewAppPage from "@/pages/new-app";
 import { fakeAPI } from "@/test/fake-api";
 
-vi.mock("@/context/use-servers", () => ({ useServers: () => ({ activeServerId: "s1" }) }));
 vi.mock("@/components/new-app/compose-flow", () => ({ ComposeFlow: ({ serverId }: { serverId: string }) => <p>compose form {serverId}</p> }));
 vi.mock("@/components/new-app/git-flow", () => ({ GitFlow: ({ serverId }: { serverId: string }) => <p>git form {serverId}</p> }));
 vi.mock("@/components/new-app/template-flow", () => ({
@@ -21,7 +20,7 @@ function renderAt(url: string) {
     <MemoryRouter initialEntries={[url]}>
       <NotificationsContext.Provider value={notifications}>
         <Routes>
-          <Route path="/server/s1/new" element={<NewAppPage />} />
+          <Route path="/server/:serverId/new" element={<NewAppPage />} />
         </Routes>
       </NotificationsContext.Provider>
     </MemoryRouter>,
@@ -48,5 +47,11 @@ describe("NewAppPage", () => {
     expect(screen.getByRole("heading", { level: 1, name: title })).toBeInTheDocument();
     expect(screen.getByText(body)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "New app" })).toHaveAttribute("href", "/server/s1/new");
+  });
+
+  it("uses the server in the address", () => {
+    renderAt("/server/s2/new?from=compose");
+    expect(screen.getByText("compose form s2")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "New app" })).toHaveAttribute("href", "/server/s2/new");
   });
 });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { getAppIcon } from "@/lib/app-icons";
-import { APP_COLORS, DEFAULT_APP_COLOR, suggestAppLook } from "@/lib/app-look";
+import { APP_COLORS, DEFAULT_APP_COLOR, colorName, suggestAppLook } from "@/lib/app-look";
 
 describe("suggestAppLook", () => {
   it("picks an icon from a word in the name", () => {
@@ -13,6 +13,22 @@ describe("suggestAppLook", () => {
 
   it("matches word starts only (feedback is not a database)", () => {
     expect(suggestAppLook("feedback").icon).toBe("");
+  });
+
+  it("matches the short stems doc, dev and stat as whole words only", () => {
+    expect(suggestAppLook("docs").icon).toBe("Book");
+    expect(suggestAppLook("my doc").icon).toBe("Book");
+    expect(suggestAppLook("dev").icon).toBe("Code");
+    expect(suggestAppLook("stats").icon).toBe("Activity");
+    for (const name of ["docker-registry", "devices", "static-site-x", "state", "devops"]) {
+      expect(suggestAppLook(name).icon, name).toBe(name === "static-site-x" ? "Globe" : "");
+    }
+  });
+
+  it("names the palette's colours in plain words", () => {
+    expect(APP_COLORS.map(colorName)).toEqual(["Sky", "Indigo", "Teal", "Green", "Amber", "Red", "Pink", "Slate"]);
+    expect(colorName("#ABCDEF")).toBe("Custom");
+    expect(colorName("#6366F1")).toBe("Indigo");
   });
 
   it("gives every name a stable colour from the palette", () => {

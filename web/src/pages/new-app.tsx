@@ -1,11 +1,10 @@
-import { useSearchParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 
 import { PageHeader } from "@/components/page-header";
 import { ComposeFlow } from "@/components/new-app/compose-flow";
 import { GitFlow } from "@/components/new-app/git-flow";
 import { NewAppChoices } from "@/components/new-app/new-app-choices";
 import { TemplateFlow } from "@/components/new-app/template-flow";
-import { useServers } from "@/context/use-servers";
 import { parseNewAppSource } from "@/lib/new-app";
 import { appsPath, newAppPath, type NewAppSource } from "@/lib/routes";
 
@@ -20,8 +19,8 @@ const TITLES: Record<NewAppSource, string> = {
 // page's New app opens).
 export default function NewAppPage() {
   const [params] = useSearchParams();
-  const { activeServerId } = useServers();
-  const serverId = activeServerId ?? "";
+  // The server is the one in the address, not whichever is active.
+  const { serverId = "" } = useParams();
   const from = parseNewAppSource(params.get("from"));
   return (
     <div className="mx-auto w-full max-w-3xl space-y-6">

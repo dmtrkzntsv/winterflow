@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { NameField } from "@/components/name-field";
 import { suggestAppLook } from "@/lib/app-look";
@@ -43,8 +43,37 @@ describe("NameField", () => {
     const user = userEvent.setup();
     render(<Harness />);
     await user.click(screen.getByRole("button", { name: "Change icon and colour" }));
-    await user.click(await screen.findByRole("button", { name: "Colour #6366f1" }));
+    await user.click(await screen.findByRole("button", { name: "Indigo" }));
     expect(look().color).toBe("#6366f1");
+  });
+
+  it("gives the colour swatches plain names", async () => {
+    const user = userEvent.setup();
+    render(<Harness />);
+    await user.click(screen.getByRole("button", { name: "Change icon and colour" }));
+    for (const name of ["Sky", "Indigo", "Teal", "Green", "Amber", "Red", "Pink", "Slate"]) {
+      expect(await screen.findByRole("button", { name })).toBeInTheDocument();
+    }
+    expect(screen.queryByRole("button", { name: /^Colour #/ })).not.toBeInTheDocument();
+  });
+
+  it("focuses the icon search on a desktop but not on a phone", async () => {
+    const user = userEvent.setup();
+    const { unmount } = render(<Harness />);
+    await user.click(screen.getByRole("button", { name: "Change icon and colour" }));
+    expect(await screen.findByRole("textbox", { name: "Search icons" })).toHaveFocus();
+    unmount();
+
+    vi.stubGlobal("matchMedia", () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
+    try {
+      render(<Harness />);
+      await user.click(screen.getByRole("button", { name: "Change icon and colour" }));
+      expect(await screen.findByRole("textbox", { name: "Search icons" })).not.toHaveFocus();
+      // Phone targets: a swatch is 40px.
+      expect(screen.getByRole("button", { name: "Indigo" })).toHaveClass("max-sm:size-10");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("shows its message", () => {

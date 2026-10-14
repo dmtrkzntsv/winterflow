@@ -16,7 +16,7 @@ export function invalidAttrs(id: string, message: string | undefined, className?
   return {
     "aria-invalid": message ? (true as const) : undefined,
     "aria-describedby": message ? errorId(id) : undefined,
-    className: cn(className, message && "border-destructive focus-visible:ring-destructive"),
+    className: cn(className, message && "border-destructive focus-visible:border-destructive focus-visible:ring-destructive"),
   };
 }
 

@@ -10,7 +10,8 @@ import type { AppEditorState } from "@/types/app-config";
 
 // useCreateApp saves a new app (app.save without an id: the agent creates
 // and deploys it) and opens its Overview, or the Apps page when the answer
-// doesn't list it yet. A failure stays on the form as error.
+// doesn't list it yet. A failure stays on the form as error until the next
+// attempt (or dismiss).
 export function useCreateApp(serverId: string) {
   const { apps, saveApp, getPublicKey } = useApps();
   const navigate = useNavigate();
@@ -34,5 +35,5 @@ export function useCreateApp(serverId: string) {
     }
   };
 
-  return { create, busy, error };
+  return { create, busy, error, dismiss: () => setError("") };
 }

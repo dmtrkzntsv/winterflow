@@ -230,6 +230,18 @@ describe("ComposeFlow", () => {
     expect(screen.getByRole("button", { name: "Create app" })).toBeEnabled();
   });
 
+  it("drops the last failure when the next attempt is refused for a field", async () => {
+    const user = userEvent.setup();
+    renderFlow(vi.fn(async () => Promise.reject(new Error("Error: port is already allocated"))));
+    await user.type(screen.getByLabelText("Name"), "shop");
+    await user.click(screen.getByRole("button", { name: "Create app" }));
+    expect(await screen.findByText("Error: port is already allocated")).toBeVisible();
+    await user.clear(screen.getByLabelText("Name"));
+    await user.click(screen.getByRole("button", { name: "Create app" }));
+    expect(screen.getByLabelText("Name")).toHaveAccessibleDescription("Give the app a name.");
+    expect(screen.queryByText("Error: port is already allocated")).not.toBeInTheDocument();
+  });
+
   it("keeps Create in reach at the bottom of a phone screen", () => {
     stubViewport(375);
     renderFlow(vi.fn());

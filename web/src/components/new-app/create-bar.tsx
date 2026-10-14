@@ -5,18 +5,21 @@ import { Button } from "@/components/ui/button";
 // CreateBar ends a create form: Cancel and the one filled Create app. On a
 // phone it sticks to the bottom of the screen so Create stays in reach;
 // from 640px up it sits under the form. invalid adds the one-line summary
-// of a refused attempt (each field says what is wrong).
+// of a refused attempt (each field says what is wrong). waiting holds
+// Create back while something the form needs is still being read.
 export function CreateBar({
   busy,
   onCreate,
   cancelTo,
   invalid = false,
+  waiting = false,
   label = "Create app",
 }: {
   busy: boolean;
   onCreate: () => void;
   cancelTo: string;
   invalid?: boolean;
+  waiting?: boolean;
   label?: string;
 }) {
   const navigate = useNavigate();
@@ -33,7 +36,7 @@ export function CreateBar({
       <Button variant="ghost" disabled={busy} onClick={() => navigate(cancelTo)}>
         Cancel
       </Button>
-      <Button className="max-sm:flex-1" disabled={busy} onClick={onCreate}>
+      <Button className="max-sm:flex-1" disabled={busy || waiting} onClick={onCreate}>
         {busy ? "Creating…" : label}
       </Button>
     </div>

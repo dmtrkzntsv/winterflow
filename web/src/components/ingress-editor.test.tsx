@@ -330,6 +330,24 @@ describe("ingress rows: messages", () => {
     expect(screen.getByLabelText("Port")).toHaveAccessibleDescription("Enter a port from 1 to 65535.");
   });
 
+  it("shows a redirect hostname's message under its row", () => {
+    render(
+      <Harness
+        ingress={{
+          domains: [],
+          redirects: [{ id: "r1", domain: "late.example.com", path: "", to: "https://x.example.com", code: 301, ssl: true }],
+        }}
+        errors={{ "redirect-host:r1": "Add late.example.com as an address or a whole-domain redirect above this rule first." }}
+      />,
+    );
+    const host = screen.getByLabelText("Redirect hostname");
+    expect(host).toHaveAttribute("aria-invalid", "true");
+    expect(host).toHaveAccessibleDescription(
+      "Add late.example.com as an address or a whole-domain redirect above this rule first.",
+    );
+    expect(host).toHaveClass("border-destructive");
+  });
+
   it("shows a redirect's messages under its fields", () => {
     render(
       <Harness

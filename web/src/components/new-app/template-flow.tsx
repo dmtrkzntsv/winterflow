@@ -19,6 +19,7 @@ import { ParameterFields } from "@/components/parameter-fields";
 import { useApps } from "@/context/use-apps";
 import { useBackups } from "@/context/use-backups";
 import { useHostCheck } from "@/hooks/use-host-check";
+import { useTemplateLooks } from "@/hooks/use-template-looks";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
 import { validHostname } from "@/lib/domains";
 import { errorHeadline } from "@/lib/errors";
@@ -57,6 +58,7 @@ export function TemplateFlow({ serverId }: { serverId: string }) {
   const api = useTemplatesApi();
 
   const [templates, setTemplates] = useState<TemplateSummary[] | null>(null);
+  const looks = useTemplateLooks(api, templates);
   const [templateId, setTemplateId] = useState("");
   const [revision, setRevision] = useState(0); // 0: the latest
   const [view, setView] = useState<TemplateView | null>(null);
@@ -309,8 +311,8 @@ export function TemplateFlow({ serverId }: { serverId: string }) {
             >
               <AppIcon
                 name={t.name}
-                icon={on && view ? view.body.icon : undefined}
-                color={on && view ? view.body.color : undefined}
+                icon={on && view ? view.body.icon : looks[t.id]?.icon}
+                color={on && view ? view.body.color : looks[t.id]?.color}
                 className="size-10 shrink-0 text-base"
               />
               <span className="min-w-0">

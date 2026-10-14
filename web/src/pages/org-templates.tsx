@@ -8,6 +8,7 @@ import { AppIcon } from "@/components/app-icon";
 import { EmptyState } from "@/components/empty-state";
 import { InlineError } from "@/components/inline-error";
 import { PageHeader } from "@/components/page-header";
+import { useTemplateLooks } from "@/hooks/use-template-looks";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
 import { NEW_TEMPLATE_PATH, templatePath } from "@/lib/routes";
 import { usageLabel, type TemplateSummary } from "@/lib/templates";
@@ -19,6 +20,7 @@ export default function OrgTemplatesPage() {
   const api = useTemplatesApi();
   const [list, setList] = useState<TemplateSummary[] | null>(null);
   const [error, setError] = useState("");
+  const looks = useTemplateLooks(api, list);
 
   useEffect(() => {
     api.listTemplates().then(setList, (e: unknown) => setError(e instanceof Error ? e.message : "Failed to load templates"));
@@ -56,7 +58,7 @@ export default function OrgTemplatesPage() {
                 to={templatePath(t.id)}
                 className="flex h-full items-start gap-3 rounded-xl border bg-card p-4 transition-colors duration-150 hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
               >
-                <AppIcon name={t.name} className="size-10 shrink-0 text-base" />
+                <AppIcon name={t.name} icon={looks[t.id]?.icon} color={looks[t.id]?.color} className="size-10 shrink-0 text-base" />
                 <div className="min-w-0 space-y-1">
                   <p className="truncate text-[15px] font-semibold">{t.name}</p>
                   <p className="text-sm text-muted-foreground">{usageLabel(t)}</p>

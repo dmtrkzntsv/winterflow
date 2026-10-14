@@ -166,7 +166,10 @@ describe("TemplateFlow", () => {
     expect(screen.getByRole("button", { name: /blog/ })).toHaveTextContent("Version 4");
     await user.click(screen.getByRole("button", { name: /blog/ }));
     expect(await screen.findByLabelText("NAME")).toBeInTheDocument();
-    expect(api.calls.find((c) => c.path === "/api/v1/template/get-template")?.query).toBe("?id=t2");
+    // Each card's look is read once per revision; the pick reads the latest.
+    expect(api.calls.filter((c) => c.path === "/api/v1/template/get-template").map((c) => c.query)).toEqual(
+      expect.arrayContaining(["?id=t1&revision=2", "?id=t2&revision=4", "?id=t2"]),
+    );
   });
 
   it("previews the name and the address with the domain coverage check", async () => {

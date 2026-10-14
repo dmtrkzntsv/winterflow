@@ -29,6 +29,28 @@ afterEach(() => {
 });
 
 describe("OrgTemplatesPage", () => {
+  it("draws each card with its template's icon and colour", async () => {
+    fakeAPI({
+      "/api/v1/template/get-templates": {
+        templates: [
+          { id: "t1", name: "notes", latest_revision: 2, instances: 0, behind: 0, updated_at: "2026-10-12T10:00:00Z" },
+          { id: "t2", name: "plain", latest_revision: 1, instances: 0, behind: 0, updated_at: "2026-10-12T10:00:00Z" },
+        ],
+      },
+      "/api/v1/template/get-template": (_: unknown, q: URLSearchParams) =>
+        q.get("id") === "t1"
+          ? { id: "t1", name: "notes", revision: 2, latest_revision: 2, body: { icon: "book", color: "#0d9488" } }
+          : new Error("gone"),
+    });
+    renderPage();
+    const notes = await screen.findByRole("link", { name: /notes/ });
+    const tile = () => notes.querySelector("div[style]") as HTMLElement;
+    await vi.waitFor(() => expect(tile().style.backgroundColor).toBe("rgb(13, 148, 136)"));
+    expect(tile().querySelector("svg")).not.toBeNull();
+    // A template whose look can't be read keeps its letter.
+    expect(within(screen.getByRole("link", { name: /plain/ })).getByText("P")).toBeInTheDocument();
+  });
+
   it("shows each template as a card: how many apps use it and when it changed", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-10-14T10:00:00Z"));

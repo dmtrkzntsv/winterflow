@@ -8,6 +8,7 @@ import { AppSidebar } from "@/components/app-sidebar"
 import { ServerSelectionDialog } from "@/components/server-creation-dialog"
 import { isStandalone } from "@/config"
 import { useServers } from "@/context/use-servers"
+import { settingsPath } from "@/lib/routes"
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -101,9 +102,9 @@ export function AppLayout() {
   // anything else.
   if (
     profile?.must_change_password &&
-    location.pathname !== "/user/password"
+    location.pathname !== settingsPath("password")
   ) {
-    return <Navigate to="/user/password" replace />
+    return <Navigate to={settingsPath("password")} replace />
   }
 
   // Adding servers is a cloud/distributed capability; the standalone build

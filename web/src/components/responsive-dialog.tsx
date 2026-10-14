@@ -78,17 +78,22 @@ export function ResponsiveDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className={cn("max-h-[90svh] overflow-y-auto", className)}
+        // A long body scrolls between the header and the footer, which
+        // stays in view.
+        className={cn("flex max-h-[90svh] flex-col", className)}
         onOpenAutoFocus={onOpenAutoFocus}
         onCloseAutoFocus={onCloseAutoFocus}
         {...describedBy}
       >
-        <DialogHeader>
+        <DialogHeader className="pr-8">
           <DialogTitle>{title}</DialogTitle>
           {description ? <DialogDescription>{description}</DialogDescription> : null}
         </DialogHeader>
-        {children}
-        {footer ? <DialogFooter>{footer}</DialogFooter> : null}
+        {/* Padded out to the dialog's edge so focus rings aren't clipped. */}
+        <div data-testid="dialog-body" className="-mx-6 -my-1 grid min-h-0 flex-1 content-start gap-4 overflow-y-auto px-6 py-1">
+          {children}
+        </div>
+        {footer ? <DialogFooter className="shrink-0">{footer}</DialogFooter> : null}
       </DialogContent>
     </Dialog>
   );

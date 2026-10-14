@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { Link, MemoryRouter, Outlet, Route, Routes, useLocation } from "react-router-dom";
+import { createMemoryRouter, createRoutesFromElements, Link, Outlet, Route, RouterProvider, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppsContext, type App, type AppsContextValue } from "@/context/apps-context-base";
@@ -52,9 +52,20 @@ vi.mock("@/context/use-backups", () => ({ useBackups: () => backupsApi }));
 // notifications).
 vi.mock("@/components/stale-vars-badge", () => ({ StaleVarsBadge: () => null }));
 vi.mock("@/components/app-editor-panel", () => ({
-  AppEditorPanel: ({ onOpenHistory, reloadSignal }: { onOpenHistory?: () => void; reloadSignal?: number }) => (
+  AppEditorPanel: ({
+    onOpenHistory,
+    reloadSignal,
+    onDirtyChange,
+  }: {
+    onOpenHistory?: () => void;
+    reloadSignal?: number;
+    onDirtyChange?: (dirty: boolean) => void;
+  }) => (
     <div>
       <p>{`reload signal ${reloadSignal}`}</p>
+      <button type="button" onClick={() => onDirtyChange?.(true)}>
+        make an edit
+      </button>
       <button type="button" onClick={onOpenHistory}>
         History
       </button>
@@ -127,31 +138,34 @@ function renderPage(
     refresh,
     ...over.ctx,
   } as unknown as AppsContextValue;
+  // A data router, as in the app: the page's unsaved-changes guard needs one.
+  const router = createMemoryRouter(
+    createRoutesFromElements(
+      <Route
+        element={
+          <>
+            <Link to="/app/a2?tab=editor">go to a2</Link>
+            <Link to="/app/a2?tab=settings">open a2 settings</Link>
+            <PaletteActions />
+            <Outlet />
+          </>
+        }
+      >
+        <Route path="/app/:appId" element={<AppDetailsPage />} />
+        <Route path="/server/srv-1" element={<p>the apps</p>} />
+        <Route path="/templates/new" element={<NewTemplate />} />
+      </Route>,
+    ),
+    { initialEntries: [url] },
+  );
   return render(
-    <MemoryRouter initialEntries={[url]}>
-      <NotificationsContext.Provider value={notifications}>
-        <AppsContext.Provider value={value}>
-          <CommandPaletteProvider>
-          <Routes>
-            <Route
-              element={
-                <>
-                  <Link to="/app/a2?tab=editor">go to a2</Link>
-                  <Link to="/app/a2?tab=settings">open a2 settings</Link>
-                  <PaletteActions />
-                  <Outlet />
-                </>
-              }
-            >
-              <Route path="/app/:appId" element={<AppDetailsPage />} />
-              <Route path="/server/srv-1" element={<p>the apps</p>} />
-              <Route path="/templates/new" element={<NewTemplate />} />
-            </Route>
-          </Routes>
-          </CommandPaletteProvider>
-        </AppsContext.Provider>
-      </NotificationsContext.Provider>
-    </MemoryRouter>,
+    <NotificationsContext.Provider value={notifications}>
+      <AppsContext.Provider value={value}>
+        <CommandPaletteProvider>
+          <RouterProvider router={router} />
+        </CommandPaletteProvider>
+      </AppsContext.Provider>
+    </NotificationsContext.Provider>,
   );
 }
 
@@ -452,6 +466,69 @@ describe("AppDetailsPage", () => {
     await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Roll back" }));
     await waitFor(() => expect(rollback).toHaveBeenCalledWith("a1", "aaaaaaaa"));
     expect(await screen.findByText("reload signal 1")).toBeInTheDocument();
+  });
+
+  it("reads Configuration again after Pull latest images", async () => {
+    const user = userEvent.setup();
+    const control = vi.fn(async () => {});
+    renderPage("/app/a1?tab=configuration", {}, { ctx: { control } });
+    expect(await screen.findByText("reload signal 0")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "More actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Pull latest images" }));
+    await waitFor(() => expect(control).toHaveBeenCalledWith("a1", "update"));
+    expect(await screen.findByText("reload signal 1")).toBeInTheDocument();
+  });
+
+  it("asks before another tab drops unsaved Configuration edits, and stays on Keep editing", async () => {
+    const user = userEvent.setup();
+    renderPage("/app/a1?tab=configuration");
+    await user.click(await screen.findByRole("button", { name: "make an edit" }));
+    await user.click(screen.getByRole("tab", { name: "Logs" }));
+    const ask = await screen.findByRole("alertdialog", { name: "Discard unsaved changes?" });
+    await user.click(within(ask).getByRole("button", { name: "Keep editing" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    expect(screen.getByText("the plain editor")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Configuration" })).toHaveAttribute("aria-selected", "true");
+
+    // ⌘K "View logs" asks too; Discard changes goes.
+    await user.click(screen.getByRole("button", { name: "Shop: View logs" }));
+    const again = await screen.findByRole("alertdialog", { name: "Discard unsaved changes?" });
+    await user.click(within(again).getByRole("button", { name: "Discard changes" }));
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Logs" })).toHaveAttribute("aria-selected", "true"));
+    expect(screen.queryByText("the plain editor")).not.toBeInTheDocument();
+  });
+
+  it("asks before another page drops unsaved Configuration edits, but not for History", async () => {
+    const user = userEvent.setup();
+    renderPage("/app/a1?tab=configuration", {}, {
+      ctx: {
+        apps: [
+          { id: "a1", serverId: "s", name: "Shop", version: "3", icon: "", color: "", createdAt: "" },
+          { id: "a2", serverId: "s", name: "Blog", version: "1", icon: "", color: "", createdAt: "" },
+        ],
+      },
+    });
+    await user.click(await screen.findByRole("button", { name: "make an edit" }));
+    // History opens over the tab: nothing is dropped.
+    await user.click(screen.getByRole("button", { name: "History" }));
+    expect(await screen.findByRole("dialog", { name: "History" })).toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "History" })).not.toBeInTheDocument());
+    // The sidebar's link to another app asks.
+    await user.click(screen.getByRole("link", { name: "open a2 settings" }));
+    const ask = await screen.findByRole("alertdialog", { name: "Discard unsaved changes?" });
+    await user.click(within(ask).getByRole("button", { name: "Discard changes" }));
+    expect(await screen.findByRole("heading", { level: 1, name: "Blog" })).toBeInTheDocument();
+  });
+
+  it("leaves without asking when Configuration holds no edits", async () => {
+    const user = userEvent.setup();
+    renderPage("/app/a1?tab=configuration");
+    await screen.findByText("the plain editor");
+    await user.click(screen.getByRole("tab", { name: "Logs" }));
+    await waitFor(() => expect(screen.getByRole("tab", { name: "Logs" })).toHaveAttribute("aria-selected", "true"));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   });
 
   it("marks the Backups tab when a backup is late or failing", async () => {

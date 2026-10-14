@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AppEditorPanel } from "@/components/app-editor-panel";
 import { AppsContext, type AppDetailPayload, type AppsContextValue } from "@/context/apps-context-base";
+import { flushPending } from "@/test/flush";
 
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
@@ -281,7 +282,7 @@ describe("AppEditorPanel", () => {
     live.rollBack(withVariable("PORT", "9090"), 1);
     expect(await screen.findByDisplayValue("9090")).toBeInTheDocument();
     expect(screen.queryByDisplayValue("8080")).not.toBeInTheDocument();
-    expect(screen.queryByText(/This app changed in History/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/This app changed since you opened it/)).not.toBeInTheDocument();
 
     // A save from here carries the rolled-back value.
     await user.type(screen.getByRole("textbox", { name: "Value of PORT" }), "1");
@@ -300,7 +301,7 @@ describe("AppEditorPanel", () => {
 
     live.rollBack(withVariable("PORT", "9090"), 1);
     const notice = await screen.findByText(
-      "This app changed in History. Reload to see the current version — your unsaved edits will be lost.",
+      "This app changed since you opened it (in History or by an update). Reload to see the current version — your unsaved edits will be lost.",
     );
     // The edit is still there, not discarded under the user.
     expect(screen.getByRole("textbox", { name: "Value of PORT" })).toHaveValue("80801");
@@ -309,8 +310,53 @@ describe("AppEditorPanel", () => {
 
     await user.click(within(notice.closest("[role=alert]") as HTMLElement).getByRole("button", { name: "Reload" }));
     expect(await screen.findByDisplayValue("9090")).toBeInTheDocument();
-    expect(screen.queryByText(/This app changed in History/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/This app changed since you opened it/)).not.toBeInTheDocument();
     expect(saveApp).not.toHaveBeenCalled();
+  });
+
+  it("never lets an older read overwrite a newer one", async () => {
+    const answers: ((d: AppDetailPayload) => void)[] = [];
+    const getApp = vi.fn(() => new Promise<AppDetailPayload>((resolve) => answers.push(resolve)));
+    const value = { getApp, saveApp: vi.fn(), getPublicKey: vi.fn(async () => "K"), refresh: vi.fn(async () => {}) } as unknown as AppsContextValue;
+    const ui = (signal: number) => (
+      <MemoryRouter>
+        <AppsContext.Provider value={value}>
+          <AppEditorPanel appId="a1" reloadSignal={signal} />
+        </AppsContext.Provider>
+      </MemoryRouter>
+    );
+    const view = render(ui(0));
+    await waitFor(() => expect(answers).toHaveLength(1));
+    view.rerender(ui(1)); // History changed the app while the first read ran
+    await waitFor(() => expect(answers).toHaveLength(2));
+    answers[1](withVariable("PORT", "9090"));
+    expect(await screen.findByDisplayValue("9090")).toBeInTheDocument();
+    answers[0](withVariable("PORT", "8080"));
+    await flushPending();
+    expect(screen.getByDisplayValue("9090")).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("8080")).not.toBeInTheDocument();
+  });
+
+  it("tells the page whether it holds unsaved edits, and that it holds none once gone", async () => {
+    const user = userEvent.setup();
+    const onDirtyChange = vi.fn();
+    const value = {
+      getApp: vi.fn(async () => withVariable("PORT", "8080")),
+      saveApp: vi.fn(),
+      getPublicKey: vi.fn(async () => "K"),
+      refresh: vi.fn(async () => {}),
+    } as unknown as AppsContextValue;
+    const view = render(
+      <MemoryRouter>
+        <AppsContext.Provider value={value}>
+          <AppEditorPanel appId="a1" onDirtyChange={onDirtyChange} />
+        </AppsContext.Provider>
+      </MemoryRouter>,
+    );
+    await user.type(await screen.findByRole("textbox", { name: "Value of PORT" }), "1");
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+    view.unmount();
+    expect(onDirtyChange).toHaveBeenLastCalledWith(false);
   });
 
   it("clears the History notice when the edits are discarded", async () => {
@@ -318,10 +364,10 @@ describe("AppEditorPanel", () => {
     const live = renderLive(vi.fn(), withVariable("PORT", "8080"));
     await user.type(await screen.findByRole("textbox", { name: "Value of PORT" }), "1");
     live.rollBack(withVariable("PORT", "9090"), 1);
-    await screen.findByText(/This app changed in History/);
+    await screen.findByText(/This app changed since you opened it/);
     await user.click(screen.getByRole("button", { name: "Discard" }));
     expect(await screen.findByDisplayValue("9090")).toBeInTheDocument();
-    expect(screen.queryByText(/This app changed in History/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/This app changed since you opened it/)).not.toBeInTheDocument();
   });
 
   it("sends the stored ingress, name, icon, colour and description unchanged", async () => {

@@ -229,6 +229,32 @@ describe("useAlertEvents", () => {
     expect(result.current.error).toBeNull();
   });
 
+  it("keeps the cursor of a live read that lands after a failed first page, so the history can still be paged", async () => {
+    const pending = pendingFetch();
+    const sse = fakeNotifications();
+    const { result } = renderHook(() => useAlertEvents("all", null), { wrapper: sse.Provider });
+    await waitFor(() => expect(pending).toHaveLength(1));
+    pending[0].fail("database is locked");
+    await waitFor(() => expect(result.current.error).toBe("database is locked"));
+    act(() => sse.emit({ type: "alert", ref: "", payload: {} }));
+    await waitFor(() => expect(pending).toHaveLength(2));
+    pending[1].resolve({ events: [event("e2"), event("e1")], next_cursor: "c1" });
+    await waitFor(() => expect(result.current.hasMore).toBe(true));
+    act(() => result.current.loadMore());
+    await waitFor(() => expect(pending).toHaveLength(3));
+    expect(pending[2].query).toBe("?cursor=c1");
+    pending[2].resolve({ events: [event("e0")], next_cursor: "" });
+    await waitFor(() => expect(result.current.events.map((e) => e.id)).toEqual(["e2", "e1", "e0"]));
+    expect(result.current.hasMore).toBe(false);
+
+    // A later live read leaves the loaded pages' cursor alone.
+    act(() => sse.emit({ type: "alert", ref: "", payload: {} }));
+    await waitFor(() => expect(pending).toHaveLength(4));
+    pending[3].resolve({ events: [event("e3"), event("e2")], next_cursor: "c9" });
+    await waitFor(() => expect(result.current.events.map((e) => e.id)).toEqual(["e3", "e2", "e1", "e0"]));
+    expect(result.current.hasMore).toBe(false);
+  });
+
   it("shows no events for new filters from the very first render, not the old list for a frame", async () => {
     fakeAPI({ "/api/v1/alerts/get-events": { events: [event("e1")], next_cursor: "c1" } });
     const renders: { kind: EventKindFilter; ids: string[]; loading: boolean; hasMore: boolean }[] = [];

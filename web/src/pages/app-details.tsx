@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, type Location } from "react-router-dom";
 import { ArrowUpCircle, DatabaseBackup, Play, RotateCw, ScrollText, Square, TriangleAlert } from "lucide-react";
 import { toast } from "sonner";
 
@@ -21,6 +21,7 @@ import { NotFound } from "@/components/not-found";
 import { LoadError, PageSpinner } from "@/components/page-states";
 import { StaleVarsBadge } from "@/components/stale-vars-badge";
 import { UnderlineTabs } from "@/components/underline-tabs";
+import { UnsavedChangesGuard } from "@/components/unsaved-changes-guard";
 import { UpgradeInstanceDialog } from "@/components/upgrade-instance-dialog";
 import type { ControlAction } from "@/context/apps-context-base";
 import type { PaletteAction } from "@/context/palette-context-base";
@@ -42,6 +43,15 @@ import type { TemplateView } from "@/lib/templates";
 
 const TABS = ["overview", "logs", "configuration", "backups", "metrics", "settings"] as const satisfies readonly AppTab[];
 type Tab = (typeof TABS)[number];
+
+// staysOnConfiguration: a navigation that keeps this app's Configuration
+// tab open (the History sheet's ?history=1) drops no edits.
+function staysOnConfiguration(next: Location, current: Location): boolean {
+  if (next.pathname !== current.pathname) return false;
+  const raw = new URLSearchParams(next.search).get("tab") ?? "";
+  const aliases: Readonly<Record<string, string>> = LEGACY_APP_TABS;
+  return (Object.hasOwn(aliases, raw) ? aliases[raw] : raw) === "configuration";
+}
 
 const CONTROL_DONE: Record<ControlAction, string> = {
   start: "App started",
@@ -92,6 +102,9 @@ export default function AppDetailsPage() {
   // historyChanges counts the roll backs and draft deploys done in History;
   // Configuration reads the app again on each (see AppEditorPanel).
   const [historyChanges, setHistoryChanges] = useState(0);
+  // configDirty: the Configuration editor holds unsaved edits; leaving the
+  // tab or the page asks first (UnsavedChangesGuard).
+  const [configDirty, setConfigDirty] = useState(false);
   const [upgrade, setUpgrade] = useState<{ appId: string; target: TemplateView } | null>(null);
   const upgradeTarget = upgrade && upgrade.appId === app?.id ? upgrade.target : null;
   const reloadManaged = () => void Promise.all([lookup.reload(), refresh()]);
@@ -127,6 +140,9 @@ export default function AppDetailsPage() {
     try {
       await control(appId, action);
       toast.success(CONTROL_DONE[action], { description: label });
+      // An update pulls a git-sourced app's source too: Configuration reads
+      // the app again (or says it changed while it holds edits).
+      if (action === "update") setHistoryChanges((n) => n + 1);
     } catch (e) {
       toast.error(CONTROL_FAILED[action], {
         description: [label, e instanceof Error ? e.message : ""].filter(Boolean).join(": "),
@@ -228,6 +244,12 @@ export default function AppDetailsPage() {
         />
       ) : null}
 
+      <UnsavedChangesGuard
+        when={tab === "configuration" && configDirty}
+        stays={staysOnConfiguration}
+        description="Your changes to this app's configuration haven't been saved. Leaving drops them."
+      />
+
       <UnderlineTabs<Tab>
         className="flex grow basis-0 flex-col"
         value={tab}
@@ -276,6 +298,7 @@ export default function AppDetailsPage() {
             onSaved={reloadManaged}
             onOpenHistory={() => setHistoryOpen(true)}
             historyChanges={historyChanges}
+            onDirtyChange={setConfigDirty}
             onUpgrade={() => void openUpgrade()}
           />
         </TabsContent>
@@ -322,6 +345,7 @@ function ConfigurationTab({
   onSaved,
   onOpenHistory,
   historyChanges,
+  onDirtyChange,
   onUpgrade,
 }: {
   appId: string;
@@ -331,6 +355,7 @@ function ConfigurationTab({
   // historyChanges counts the roll backs and draft deploys done in History:
   // the editor reads the app again, or says so when it holds edits.
   historyChanges: number;
+  onDirtyChange: (dirty: boolean) => void;
   // onUpgrade opens the page's update dialog (a template-managed app's
   // "A newer version is available").
   onUpgrade: () => void;
@@ -351,5 +376,7 @@ function ConfigurationTab({
       />
     );
   }
-  return <AppEditorPanel appId={appId} onOpenHistory={onOpenHistory} reloadSignal={historyChanges} />;
+  return (
+    <AppEditorPanel appId={appId} onOpenHistory={onOpenHistory} reloadSignal={historyChanges} onDirtyChange={onDirtyChange} />
+  );
 }

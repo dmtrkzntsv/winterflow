@@ -82,6 +82,23 @@ describe("TemplateEditor", () => {
     expect(screen.queryByLabelText("Pattern of NAME")).not.toBeInTheDocument();
   });
 
+  it("tabs through a parameter row in the order it reads, on a phone too (no CSS reordering)", async () => {
+    const user = start();
+    await user.click(screen.getByRole("button", { name: "Details of NAME" }));
+    const row = screen.getByLabelText("Parameter name").parentElement!;
+    const controls = [
+      screen.getByLabelText("Parameter name"),
+      screen.getByLabelText("Default of NAME"),
+      screen.getByRole("button", { name: "Details of NAME" }),
+      screen.getByRole("button", { name: "Remove NAME" }),
+      screen.getByLabelText("Description of NAME"),
+    ];
+    for (let i = 1; i < controls.length; i++) {
+      expect(controls[i - 1].compareDocumentPosition(controls[i]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+    for (const el of row.querySelectorAll("*")) expect(el.className.toString()).not.toMatch(/(^|\s)(max-sm:)?order-/);
+  });
+
   it("says what a closed row holds, and opens a new parameter's details", async () => {
     const draft = draftFromBody("shop", {
       files: { "compose.yaml": COMPOSE },

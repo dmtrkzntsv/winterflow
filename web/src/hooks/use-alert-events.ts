@@ -34,7 +34,9 @@ function eventParams(kind: EventKindFilter, serverId: string | null, cursor: str
 // yet on top (also while the first page itself is still loading: the two are
 // joined by id). The loaded pages and the cursor stay, and there is no
 // polling. Until the first page of the current filters is in, the hook shows
-// no events, never the previous filters' list.
+// no events, never the previous filters' list. A live read that lands before
+// any first page did (that one failed, or is still on its way) is the first
+// page: its cursor is kept, so the rest of the history can still be loaded.
 export function useAlertEvents(kind: EventKindFilter, serverId: string | null): AlertEventsState {
   const key = `${kind}|${serverId ?? ""}`;
   const [events, setEvents] = useState<AlertEvent[]>([]);
@@ -48,6 +50,10 @@ export function useAlertEvents(kind: EventKindFilter, serverId: string | null): 
   // generation numbers first-page loads: a live update read before the
   // filters changed is dropped.
   const generation = useRef(0);
+  // paged: a first page of the current filters has landed, so the cursor
+  // is the loaded pages' (a live read leaves it alone; without one, the
+  // live read's cursor is the only way on).
+  const paged = useRef(false);
 
   const load = useCallback(
     async (after: string) => {
@@ -57,6 +63,7 @@ export function useAlertEvents(kind: EventKindFilter, serverId: string | null): 
         // its cursor) go at once, so they never show under the new filter,
         // not even when this read fails.
         generation.current++;
+        paged.current = false;
         setListKey(key);
         setEvents([]);
         setCursor("");
@@ -73,6 +80,7 @@ export function useAlertEvents(kind: EventKindFilter, serverId: string | null): 
           return [...prev.filter((e) => !ids.has(e.id)), ...got];
         });
         setCursor(page.next_cursor);
+        if (!after) paged.current = true;
         setError(null);
       } catch (e) {
         if (request !== latest.current) return;
@@ -98,6 +106,10 @@ export function useAlertEvents(kind: EventKindFilter, serverId: string | null): 
         const fresh = (page.events ?? []).filter((e) => !known.has(e.id));
         return fresh.length > 0 ? [...fresh, ...prev] : prev;
       });
+      if (!paged.current) {
+        setCursor(page.next_cursor);
+        paged.current = true;
+      }
       setError(null);
     } catch {
       // A live update is best effort: the list stays as it is.

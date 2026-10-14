@@ -40,17 +40,21 @@ function panelErrors(state: AppEditorState, domainsShown: boolean): FieldErrors 
 // (app.save with the app id → new version + redeploy). A refused save
 // marks each bad field with its message. onOpenHistory opens the page's
 // History from the action bar. reloadSignal changes when History rolled the
-// app back or deployed its draft: the editor then reads the app again, or,
-// when it holds unsaved edits, says so and blocks saving until Reload (a
-// save from the old tree would silently undo the change).
+// app back or deployed its draft, or an update pulled its source: the
+// editor then reads the app again, or, when it holds unsaved edits, says so
+// and blocks saving until Reload (a save from the old tree would silently
+// undo the change). onDirtyChange hears whether it holds unsaved edits (the
+// page asks before leaving them), and false when it goes.
 export function AppEditorPanel({
   appId,
   onOpenHistory,
   reloadSignal = 0,
+  onDirtyChange,
 }: {
   appId: string;
   onOpenHistory?: () => void;
   reloadSignal?: number;
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   const { saveApp, getApp, getPublicKey, refresh } = useApps();
   const { activeServer, loading: serversLoading } = useServers();
@@ -69,24 +73,30 @@ export function AppEditorPanel({
   // sections holding a bad field again.
   const [tried, setTried] = useState(false);
   const [refused, setRefused] = useState(0);
-  // stale: the app changed in History while this editor held edits.
+  // stale: the app changed (History, an update) while this editor held edits.
   const [stale, setStale] = useState(false);
   const root = useRef<HTMLDivElement>(null);
 
+  // Only the latest read may land: an older answer arriving last must not
+  // overwrite a newer one, nor clear the stale notice it raised.
+  const seq = useRef(0);
   const load = useCallback(async () => {
+    const mine = ++seq.current;
     setLoading(true);
     setError(null);
     try {
       const detail = await getApp(appId);
+      if (mine !== seq.current) return;
       const loaded = stateFromDetail(appId, detail);
       setState(loaded);
       setBaseline(JSON.stringify(loaded));
       setTried(false);
       setStale(false);
     } catch (e) {
+      if (mine !== seq.current) return;
       setError(e instanceof Error ? e.message : "Failed to load app");
     } finally {
-      setLoading(false);
+      if (mine === seq.current) setLoading(false);
     }
   }, [appId, getApp]);
 
@@ -133,6 +143,11 @@ export function AppEditorPanel({
     () => baseline !== "" && JSON.stringify(state) !== baseline,
     [state, baseline],
   );
+
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
 
   // handled is the last reloadSignal acted on; the first value is the
   // mount's, whose load is the initial one.
@@ -208,7 +223,8 @@ export function AppEditorPanel({
           className="mb-6 flex flex-wrap items-center gap-3 rounded-lg border border-status-warn/50 bg-muted/40 px-4 py-3 text-sm"
         >
           <span className="mr-auto">
-            This app changed in History. Reload to see the current version — your unsaved edits will be lost.
+            This app changed since you opened it (in History or by an update). Reload to see the current version — your
+            unsaved edits will be lost.
           </span>
           <Button size="sm" variant="outline" onClick={() => void load()}>
             Reload

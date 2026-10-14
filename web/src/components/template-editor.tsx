@@ -176,10 +176,12 @@ export function TemplateEditor({ draft, onChange }: Props) {
                     value={p.secret ? "" : p.default}
                     disabled={p.secret}
                     placeholder={p.secret ? "No default (secret)" : "Default"}
-                    className="font-mono max-sm:order-1 max-sm:col-span-2"
+                    // Phones: under the name, the buttons beside both — the
+                    // order things are read and tabbed through is the DOM's.
+                    className="font-mono max-sm:col-start-1"
                     onChange={(e) => setParam(p.id, { default: e.target.value })}
                   />
-                  <div className="flex items-center justify-end gap-1">
+                  <div className="flex items-center justify-end gap-1 max-sm:col-start-2 max-sm:row-span-2 max-sm:row-start-1">
                     <Button
                       size="icon"
                       variant="ghost"
@@ -207,10 +209,10 @@ export function TemplateEditor({ draft, onChange }: Props) {
                     </Button>
                   </div>
                   {!open && flags.length > 0 ? (
-                    <p className="order-2 col-span-full text-xs text-muted-foreground">{flags.join(" · ")}</p>
+                    <p className="col-span-full text-xs text-muted-foreground">{flags.join(" · ")}</p>
                   ) : null}
                   {open ? (
-                    <div id={detailsId} className="order-2 col-span-full grid gap-3 rounded-md bg-muted/30 p-3 sm:grid-cols-2">
+                    <div id={detailsId} className="col-span-full grid gap-3 rounded-md bg-muted/30 p-3 sm:grid-cols-2">
                       <div className="grid gap-1.5">
                         <Label htmlFor={`${detailsId}-description`}>Description</Label>
                         <Input

@@ -95,7 +95,9 @@ export default function SharedVariablesSettingsPage({
   const keyedIds = (page.org?.servers ?? []).filter((s) => s.has_key).map((s) => s.server_id);
   // A pending sync is normal for a moment after every save, so it is only
   // mentioned once it has lasted, or when the server's agent is offline.
-  const now = useNow(10_000);
+  // The clock only ticks while a sync is pending (idle cost: none).
+  const anyPending = (page.org?.servers ?? []).some((s) => s.has_key && page.sync[s.server_id] === "pending");
+  const now = useNow(10_000, anyPending);
   const pending = (page.org?.servers ?? []).filter(
     (s) =>
       s.has_key &&

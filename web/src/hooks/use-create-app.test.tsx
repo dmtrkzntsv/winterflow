@@ -216,6 +216,17 @@ describe("useCreateApp", () => {
     expect(await screen.findByText("app n1")).toBeInTheDocument();
   });
 
+  it("still says why a late create failed when the agent's list can't be read", async () => {
+    const user = userEvent.setup();
+    const saveApp = vi.fn<SaveApp>(async () => Promise.reject(timeout("r5")));
+    const { reconcile } = setup(saveApp);
+    await user.click(screen.getByRole("button", { name: "create" }));
+    await screen.findByText("still shop");
+    reconcile.mockRejectedValueOnce(new Error("agent busy"));
+    act(() => settleLateCreate("r5", { failed: true, error: "pull access denied" }));
+    expect(await screen.findByText("error pull access denied")).toBeInTheDocument();
+  });
+
   it("opens the app a late failure left behind with the failure noted, not as created", async () => {
     const user = userEvent.setup();
     const saveApp = vi.fn<SaveApp>(async () => Promise.reject(timeout("r4")));

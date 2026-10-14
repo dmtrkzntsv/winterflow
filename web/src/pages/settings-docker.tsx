@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Plus } from "lucide-react";
 import { toast } from "sonner";
 
@@ -13,15 +13,15 @@ import { Row, RowList, Section } from "@/components/section";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { useApps } from "@/context/use-apps";
 import type { Docker, Network, Registry } from "@/context/use-docker";
 import { useConfirmTarget } from "@/hooks/use-confirm-target";
 import { returnFocusTo } from "@/lib/focus";
+import { groupNetworks, type ListedNetwork } from "@/lib/networks";
 import { VolumesSection } from "@/pages/settings-volumes";
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : undefined);
-
-// Built-in networks can't be removed: no removal is offered for them.
-const BUILTIN_NETWORKS = new Set(["bridge", "host", "none"]);
 
 // useResourceList lists one kind of Docker resource and lists it again on
 // demand; a failure keeps the last list and says what went wrong.
@@ -272,12 +272,27 @@ function CreateNetworkDialog({
   );
 }
 
+// NetworksSection is the server's Docker networks grouped like the
+// volumes: each app's under its name (its compose project's networks,
+// removable only with the app), then Other; Docker's built-in ones behind
+// a switch. Rows name a network without its project prefix; the full name
+// and id are on hover.
 function NetworksSection({ docker }: { docker: Docker }) {
+  const { apps } = useApps();
   const { items, loading, reload } = useResourceList<Network>(docker.listNetworks, "networks");
   const [creating, setCreating] = useState(false);
+  const [showBuiltin, setShowBuiltin] = useState(false);
   const removal = useConfirmTarget<Network>();
   const opener = useRef<HTMLElement | null>(null);
   const addButton = useRef<HTMLButtonElement | null>(null);
+  const { groups, builtin } = useMemo(() => groupNetworks(items ?? [], apps), [items, apps]);
+  // An app's networks go with the app; Docker's own never do.
+  const shown = [
+    ...groups.map((g) => ({ ...g, removable: !g.appId })),
+    ...(showBuiltin && builtin.length > 0
+      ? [{ label: "Built-in", networks: builtin.map((n) => ({ network: n, short: n.name })), removable: false }]
+      : []),
+  ];
 
   const remove = async (name: string) => {
     try {
@@ -289,6 +304,29 @@ function NetworksSection({ docker }: { docker: Docker }) {
       throw e;
     }
   };
+
+  const row = ({ network: n, short }: ListedNetwork, removable: boolean) => (
+    <Row
+      key={n.id ?? n.name}
+      title={
+        <span className="font-mono" title={[n.name, n.id ? `id ${n.id}` : ""].filter(Boolean).join(" · ")}>
+          {short}
+        </span>
+      }
+      description={[n.driver, n.scope].filter(Boolean).join(" · ") || undefined}
+      actions={
+        removable ? (
+          <RemoveButton
+            label={`Remove network ${n.name}`}
+            onClick={(trigger) => {
+              opener.current = trigger;
+              removal.ask(n);
+            }}
+          />
+        ) : null
+      }
+    />
+  );
 
   return (
     <Section
@@ -305,29 +343,29 @@ function NetworksSection({ docker }: { docker: Docker }) {
     >
       {items === null ? (
         <ListPlaceholder loading={loading} failed="Couldn't load networks." onRetry={() => void reload()} />
-      ) : items.length === 0 ? (
-        <EmptyState title="No networks yet." />
       ) : (
-        <RowList label="Networks">
-          {items.map((n) => (
-            <Row
-              key={n.id ?? n.name}
-              title={<span className="font-mono">{n.name}</span>}
-              description={[n.driver, n.scope].filter(Boolean).join(" · ") || undefined}
-              actions={
-                BUILTIN_NETWORKS.has(n.name) ? null : (
-                  <RemoveButton
-                    label={`Remove network ${n.name}`}
-                    onClick={(trigger) => {
-                      opener.current = trigger;
-                      removal.ask(n);
-                    }}
-                  />
-                )
-              }
-            />
-          ))}
-        </RowList>
+        <div className="space-y-3">
+          {builtin.length > 0 ? (
+            <div className="flex items-center justify-end gap-2 text-sm">
+              <Switch id="net-show-builtin" checked={showBuiltin} onCheckedChange={setShowBuiltin} />
+              <Label htmlFor="net-show-builtin" className="font-normal text-muted-foreground">
+                Show {builtin.length} built-in
+              </Label>
+            </div>
+          ) : null}
+          {shown.length === 0 ? (
+            <EmptyState title="No networks yet." />
+          ) : (
+            shown.map((g) => (
+              <div key={g.label} className="space-y-1.5">
+                <h3 className="px-1 text-xs font-medium text-muted-foreground">{g.label}</h3>
+                <RowList label={g.label}>
+                  {g.networks.map((n) => row(n, g.removable))}
+                </RowList>
+              </div>
+            ))
+          )}
+        </div>
       )}
       <CreateNetworkDialog docker={docker} open={creating} onOpenChange={setCreating} onCreated={reload} />
       <ConfirmDialog

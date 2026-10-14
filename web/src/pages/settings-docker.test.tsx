@@ -58,7 +58,38 @@ describe("DockerSettings", () => {
     expect(screen.getByRole("region", { name: "Volumes" })).toBeInTheDocument();
     expect(await screen.findByText("ghcr.io")).toBeInTheDocument();
     expect(await screen.findByText("proxy")).toBeInTheDocument();
-    expect(screen.getAllByText("bridge · local")).toHaveLength(2);
+    // Docker's own bridge waits behind the switch.
+    expect(screen.getAllByText("bridge · local")).toHaveLength(1);
+  });
+
+  it("groups networks by app, hides the built-in ones behind a switch, and names them in full on hover", async () => {
+    const user = setupUser();
+    const docker = fakeDocker({
+      listNetworks: vi.fn().mockResolvedValue([
+        { id: "n1", name: "bridge", driver: "bridge", scope: "local" },
+        { id: "n2", name: "wf-a1_default", driver: "bridge", scope: "local" },
+        { id: "n3", name: "proxy", driver: "bridge", scope: "local" },
+      ]),
+    });
+    const apps = { apps: [{ id: "a1", name: "Notes" }] } as unknown as AppsContextValue;
+    render(
+      <MemoryRouter>
+        <AppsContext.Provider value={apps}>
+          <DockerSettings docker={docker} />
+        </AppsContext.Provider>
+      </MemoryRouter>,
+    );
+    const section = screen.getByRole("region", { name: "Networks" });
+    const notes = await within(section).findByRole("list", { name: "Notes" });
+    expect(within(notes).getByText("default")).toHaveAttribute("title", "wf-a1_default · id n2");
+    // It goes with the app: no removal here.
+    expect(within(notes).queryByRole("button", { name: /Remove network/ })).not.toBeInTheDocument();
+    expect(within(within(section).getByRole("list", { name: "Other" })).getByRole("button", { name: "Remove network proxy" })).toBeInTheDocument();
+    expect(within(section).queryByText("bridge", { selector: "span.font-mono" })).not.toBeInTheDocument();
+    await user.click(within(section).getByRole("switch", { name: "Show 1 built-in" }));
+    const builtin = within(section).getByRole("list", { name: "Built-in" });
+    expect(builtin).toHaveTextContent("bridge");
+    expect(within(builtin).queryByRole("button")).not.toBeInTheDocument();
   });
 
   it("removes a registry only after a confirmation", async () => {

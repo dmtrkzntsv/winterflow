@@ -5,10 +5,17 @@
 import { ENCRYPTED } from "@/lib/ecies";
 import { localId, type AppEditorState, type AppVariableMeta, type DeclaredVariable } from "@/types/app-config";
 
+// RE2_ONLY matches syntax RE2 reads differently from JavaScript (or that
+// JavaScript rejects): \p/\P classes, POSIX [:classes:], \A, \z, \Q..\E,
+// \x{...} and (?flags) / (?P<name>) groups. A pattern holding any is left to
+// the server: the browser check must never reject what RE2 accepts.
+const RE2_ONLY = /\\[pPAzQ]|\\x\{|\[:|\(\?/;
+
 // matchesPattern tests value against an RE2 pattern as the agent does (the
-// whole value); a pattern JavaScript can't compile is left to the server.
+// whole value); a pattern JavaScript can't compile, or reads differently, is
+// left to the server.
 export function matchesPattern(pattern: string | undefined, value: string): boolean {
-  if (!pattern) return true;
+  if (!pattern || RE2_ONLY.test(pattern)) return true;
   try {
     return new RegExp(`^(?:${pattern})$`).test(value);
   } catch {

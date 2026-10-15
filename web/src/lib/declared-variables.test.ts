@@ -15,6 +15,13 @@ describe("matchesPattern", () => {
     expect(matchesPattern(undefined, "anything")).toBe(true);
     expect(matchesPattern("(", "x")).toBe(true);
   });
+
+  it("never rejects what RE2 would accept: RE2-only syntax is left to the server", () => {
+    for (const pattern of ["\\p{L}+", "\\pL+", "\\P{N}+", "[[:alpha:]]+", "\\A[a-z]+\\z", "\\Qabc\\E", "\\x{61}bc", "(?i)ABC", "(?P<w>[a-z]+)"]) {
+      expect(matchesPattern(pattern, "abc"), pattern).toBe(true);
+    }
+    expect(matchesPattern("[0-9]+", "abc")).toBe(false);
+  });
 });
 
 describe("declaredValueError", () => {

@@ -327,6 +327,12 @@ func (s *Spec) readOverrides(m *yaml.Node) error {
 			if body.Kind != yaml.MappingNode {
 				return invalid(field, "must be a mapping of the service's keys")
 			}
+			// The expose entries' host ports are added to the service's
+			// ports list (Render): anything else in its place would drop
+			// them.
+			if ports := value(body, "ports"); ports != nil && ports.Kind != yaml.SequenceNode {
+				return invalid(field+".ports", "must be a list of ports")
+			}
 			merged := mapping()
 			if prev := s.Overrides[name]; prev != nil {
 				merged.Content = append(merged.Content, prev.Content...)

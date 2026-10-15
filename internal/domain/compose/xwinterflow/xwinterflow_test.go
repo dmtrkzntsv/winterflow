@@ -178,6 +178,8 @@ func TestParseRules(t *testing.T) {
 		{"overrides other than services", "x-winterflow:\n  overrides:\n    volumes: {}\n", "x-winterflow.overrides.volumes: only services can be overridden"},
 		{"overrides unknown service", "x-winterflow:\n  overrides:\n    services:\n      web: { user: root }\n", `x-winterflow.overrides.services.web: "web" is not a service`},
 		{"override not a mapping", "x-winterflow:\n  overrides:\n    services:\n      app: [1]\n", "x-winterflow.overrides.services.app: must be a mapping"},
+		{"override ports null", "x-winterflow:\n  overrides:\n    services:\n      app: { ports: null }\n", "x-winterflow.overrides.services.app.ports: must be a list of ports"},
+		{"override ports a string", "x-winterflow:\n  overrides:\n    services:\n      app: { ports: \"8080:80\" }\n", "x-winterflow.overrides.services.app.ports: must be a list of ports"},
 		{"files not a list", "x-winterflow:\n  files: config.yml\n", "x-winterflow.files: must be a list"},
 		{"file outside", "x-winterflow:\n  files: [../etc/passwd]\n", `x-winterflow.files[0]: "../etc/passwd" is not a path`},
 		{"file absolute", "x-winterflow:\n  files: [/etc/passwd]\n", `x-winterflow.files[0]: "/etc/passwd" is not a path`},

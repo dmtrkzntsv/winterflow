@@ -7,18 +7,20 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import { AppIcon } from "@/components/app-icon";
 import { Disclosure } from "@/components/disclosure";
 import { EmptyState } from "@/components/empty-state";
-import { FormField } from "@/components/form-field";
-import { HostHints } from "@/components/host-hints";
+import { FieldMessage, FormField } from "@/components/form-field";
+import { HostnameField } from "@/components/hostname-field";
 import { NativeSelect } from "@/components/native-select";
 import { CreateBar } from "@/components/new-app/create-bar";
 import { LoadError, PageSpinner } from "@/components/page-states";
-import { ParameterFields } from "@/components/parameter-fields";
+import { VariableFields } from "@/components/variable-fields";
 import { useApps } from "@/context/use-apps";
 import { useBackups } from "@/context/use-backups";
-import { useHostCheck } from "@/hooks/use-host-check";
+import { useServers } from "@/context/use-servers";
+import { useRegistrations } from "@/hooks/use-registrations";
 import { useTemplateLooks } from "@/hooks/use-template-looks";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
 import { validHostname } from "@/lib/domains";
@@ -26,36 +28,35 @@ import { errorHeadline } from "@/lib/errors";
 import { focusFirstInvalid, invalidAttrs } from "@/lib/field-errors";
 import { uniqueAppName } from "@/lib/new-app";
 import { appPath, appsPath, serverSettingsPath, TEMPLATES_PATH } from "@/lib/routes";
-import {
-  expand,
-  fieldErrors,
-  newKey,
-  plainValues,
-  previewHosts,
-  splitValues,
-  type HostPreview,
-} from "@/lib/template-params";
+import { newKey, splitValues, variableErrors } from "@/lib/template-values";
 import {
   ApiError,
+  orgTemplates,
   sealSecrets,
-  type BackupDefault,
+  type BackupChoice,
+  type InstanceHost,
   type TemplateSummary,
   type TemplateView,
   type UpdateInstanceBody,
 } from "@/lib/templates";
 import { cn } from "@/lib/utils";
 
-// TemplateFlow is New app → From a template: pick a template (cards), fill
-// in its required values (optional ones under "More options", defaults
-// shown), pick storages for its backups, see the name and addresses the
-// app will get, then Create app. Secret values are encrypted in the
-// browser for this server. The version (latest by default) is under
-// "Advanced". initialTemplate is picked to begin with (a template page's
-// Create app).
+// TemplateFlow is New app → From a template: pick one of the org's
+// templates (cards), name the app (the template's name by default), fill in
+// the variables its compose file declares (required ones first, optional
+// ones under "More options", the compose file's own values shown), give
+// each http port it exposes a hostname when the server has registered
+// domains, turn on the backups it declares with a storage each, then
+// Create app. Secret values are encrypted in the browser for this server.
+// The version (latest by default) is under "Advanced". initialTemplate is
+// picked to begin with (a template page's Create app).
 export function TemplateFlow({ serverId, initialTemplate = "" }: { serverId: string; initialTemplate?: string }) {
   const navigate = useNavigate();
-  const { apps, refresh, reconcile, noteDeployFailure, rename } = useApps();
+  const { apps, refresh, reconcile, noteDeployFailure } = useApps();
   const { serverStorages } = useBackups();
+  const { servers } = useServers();
+  const ingressOn = Boolean(servers.find((s) => s.id === serverId)?.features?.ingress);
+  const { registrations, refresh: refreshDomains } = useRegistrations(serverId, ingressOn);
   const api = useTemplatesApi();
 
   const [templates, setTemplates] = useState<TemplateSummary[] | null>(null);
@@ -64,10 +65,12 @@ export function TemplateFlow({ serverId, initialTemplate = "" }: { serverId: str
   const [revision, setRevision] = useState(0); // 0: the latest
   const [view, setView] = useState<TemplateView | null>(null);
   const [values, setValues] = useState<Record<string, string>>({});
+  // hosts are the hostnames typed per http expose target.
+  const [hosts, setHosts] = useState<Record<string, string>>({});
   // storages are this server's storage names (null while read).
   const [storages, setStorages] = useState<string[] | null>(null);
-  // storageOverrides are the backup storages the user picked.
-  const [storageOverrides, setStorageOverrides] = useState<Record<string, string>>({});
+  // backups are the backups turned on, with their storage, by name.
+  const [backups, setBackups] = useState<Record<string, BackupChoice>>({});
   const [loadError, setLoadError] = useState("");
   // attempt counts Retry clicks: each one runs the reads again.
   const [attempt, setAttempt] = useState(0);
@@ -91,8 +94,9 @@ export function TemplateFlow({ serverId, initialTemplate = "" }: { serverId: str
   useEffect(() => {
     let live = true;
     api.listTemplates().then(
-      (list) => {
+      (all) => {
         if (!live) return;
+        const list = orgTemplates(all);
         setTemplates(list);
         // One template: nothing to choose.
         if (list.length === 1) setTemplateId((id) => id || list[0].id);
@@ -112,11 +116,7 @@ export function TemplateFlow({ serverId, initialTemplate = "" }: { serverId: str
     if (!templateId) return;
     let live = true;
     api.getTemplate(templateId, revision || undefined).then(
-      (v) => {
-        if (!live) return;
-        setView(v);
-        setStorageOverrides({});
-      },
+      (v) => live && setView(v),
       (e: unknown) => live && setLoadError(e instanceof Error ? e.message : "Failed to load the template"),
     );
     return () => {
@@ -124,32 +124,37 @@ export function TemplateFlow({ serverId, initialTemplate = "" }: { serverId: str
     };
   }, [api, templateId, revision, attempt]);
 
-  const params = useMemo(() => view?.body.parameters ?? [], [view]);
-  const required = params.filter((p) => p.required);
-  const optional = params.filter((p) => !p.required);
-  const errors = fieldErrors(params, values);
-  const plain = useMemo(() => plainValues(params, values), [params, values]);
-  const hosts = view ? previewHosts(view.body, plain) : [];
-  const appName = view ? expand(view.body.app_name, plain) : "";
+  const vars = useMemo(() => view?.detected.variables ?? [], [view]);
+  const required = vars.filter((v) => v.required);
+  const optional = vars.filter((v) => !v.required);
+  const errors = variableErrors(vars, values);
+  // Hostnames go to the http ports the compose file exposes, and only on a
+  // server that routes them (a registered domain covers each).
+  const targets = registrations.length > 0 ? (view?.detected.expose ?? []).filter((e) => e.protocol === "http") : [];
+  const hostErrors: Record<string, string> = {};
+  for (const t of targets) {
+    const h = (hosts[t.target] ?? "").trim();
+    if (h && !validHostname(h)) hostErrors[t.target] = "This isn't a valid hostname.";
+  }
+  const declaredBackups = view?.detected.backups ?? [];
+  const backupErrors: Record<string, string> = {};
+  for (const b of declaredBackups) {
+    const c = backups[b.name];
+    if (c?.enabled && !c.storage) backupErrors[b.name] = "Pick a storage to keep its backups in.";
+  }
   const otherNames = apps.filter((a) => a.serverId === serverId).map((a) => a.name);
-  const chosenName = name ?? uniqueAppName(appName, otherNames);
+  const chosenName = name ?? uniqueAppName(view?.name ?? "", otherNames);
   const nameTaken =
     chosenName.trim() !== "" && otherNames.some((n) => n.trim().toLowerCase() === chosenName.trim().toLowerCase());
-  // The name is asked for once the values are fine (it follows them).
-  const nameError = tried && !chosenName.trim() && Object.keys(errors).length === 0 ? "Give the app a name." : undefined;
-  const invalid = tried && (Object.keys(errors).length > 0 || nameError !== undefined);
-  const backups = Object.entries(view?.body.backups ?? {});
-
-  // storageFor is a backup's storage: the user's pick, else the template's
-  // default, else (a backup without one) this server's first storage.
-  const storageFor = (name: string, d: BackupDefault) =>
-    storageOverrides[name] ?? (d.storage || storages?.[0] || "");
+  const nameError = tried && !chosenName.trim() ? "Give the app a name." : undefined;
+  const problems = Object.keys(errors).length + Object.keys(hostErrors).length + Object.keys(backupErrors).length;
+  const invalid = tried && (problems > 0 || nameError !== undefined);
 
   // send creates the instance, or once the API holds this key (an earlier
   // attempt whose deploy failed: the instance is pending) updates it. A
   // refused create (a 4xx other than 409) claimed nothing; a 409 (the key is
   // held) or a 5xx (the claim came before the dispatch failed) may have.
-  const send = async (body: UpdateInstanceBody, template: TemplateView) => {
+  const send = async (body: UpdateInstanceBody, template: TemplateView, appName: string) => {
     if (claimed) {
       try {
         await api.updateInstance(body);
@@ -160,7 +165,7 @@ export function TemplateFlow({ serverId, initialTemplate = "" }: { serverId: str
     }
     setClaimed(true);
     try {
-      await api.createInstance({ ...body, template_id: template.id, revision: template.revision });
+      await api.createInstance({ ...body, template_id: template.id, revision: template.revision, name: appName });
     } catch (e) {
       if (e instanceof ApiError && e.status >= 400 && e.status < 500 && e.status !== 409) setClaimed(false);
       throw e;
@@ -170,10 +175,10 @@ export function TemplateFlow({ serverId, initialTemplate = "" }: { serverId: str
   const create = async () => {
     if (!view || !serverId) return;
     setTried(true);
-    const found = fieldErrors(params, values);
-    if (Object.keys(found).length > 0 || !chosenName.trim()) {
+    const found = variableErrors(vars, values);
+    if (problems > 0 || !chosenName.trim()) {
       // Opened for good, so fixing the value doesn't fold it away under the cursor.
-      if (optional.some((p) => found[p.name])) setMoreOpen(true);
+      if (optional.some((v) => found[v.name])) setMoreOpen(true);
       focusFirstInvalid(form.current);
       return;
     }
@@ -182,30 +187,29 @@ export function TemplateFlow({ serverId, initialTemplate = "" }: { serverId: str
     setBusy(true);
     setError("");
     try {
-      const { plain: given, typed } = splitValues(params, values);
-      const parameters = Object.fromEntries(Object.entries(given).filter(([, v]) => v !== ""));
+      const { plain, typed } = splitValues(vars, values);
+      const given = Object.fromEntries(Object.entries(plain).filter(([, v]) => v !== ""));
       const secrets = await sealSecrets(api, serverId, typed);
-      const overrides: Record<string, string> = {};
-      for (const [name, d] of backups) {
-        const picked = storageFor(name, d);
-        if (picked !== (d.storage ?? "")) overrides[name] = picked;
-      }
-      const body = {
+      const hostList: InstanceHost[] = targets
+        .map((t) => ({ host: (hosts[t.target] ?? "").trim(), expose: t.target }))
+        .filter((h) => h.host !== "");
+      const on = Object.fromEntries(Object.entries(backups).filter(([, c]) => c.enabled));
+      const body: UpdateInstanceBody = {
         server_id: serverId,
         key,
-        parameters,
-        secrets,
-        ...(Object.keys(overrides).length ? { backups: overrides } : {}),
+        ...(Object.keys(given).length ? { values: given } : {}),
+        ...(Object.keys(secrets).length ? { secrets } : {}),
+        ...(hostList.length ? { hosts: hostList } : {}),
+        ...(Object.keys(on).length ? { backups: on } : {}),
       };
       try {
-        await send(body, view);
+        await send(body, view, chosenName.trim());
       } catch (e) {
         // A deploy that failed may have left the app behind: open it.
         if (await openLeftApp(e)) return;
         throw e;
       }
       const [inst] = await Promise.all([api.getInstance(serverId, key), refresh()]);
-      await nameApp(inst.app_id);
       toast.success("App created");
       navigate(appPath(serverId, inst.app_id));
     } catch (e) {
@@ -213,19 +217,6 @@ export function TemplateFlow({ serverId, initialTemplate = "" }: { serverId: str
     } finally {
       sending.current = false;
       setBusy(false);
-    }
-  };
-
-  // nameApp gives the new app the name the user chose when the template
-  // renders another (the instance API takes no name: a rename does it). A
-  // failed rename leaves the template's name and says so.
-  const nameApp = async (appId: string) => {
-    const want = chosenName.trim();
-    if (!want || want === appName.trim()) return;
-    try {
-      await rename(appId, want);
-    } catch (e) {
-      toast.error(`Couldn't name the app ${want}`, { description: e instanceof Error ? e.message : undefined });
     }
   };
 
@@ -240,7 +231,6 @@ export function TemplateFlow({ serverId, initialTemplate = "" }: { serverId: str
     if (!list.some((a) => a.id === inst.app_id)) return false;
     const message = inst.last_error || (e instanceof Error ? e.message : "");
     if (message) noteDeployFailure(inst.app_id, message);
-    await nameApp(inst.app_id);
     toast.error("The app was created but couldn't start", { description: message ? errorHeadline(message) : undefined });
     navigate(appPath(serverId, inst.app_id));
     return true;
@@ -281,6 +271,11 @@ export function TemplateFlow({ serverId, initialTemplate = "" }: { serverId: str
   }
 
   const setValue = (name: string, v: string) => setValues((prev) => ({ ...prev, [name]: v }));
+  const setBackup = (name: string, patch: Partial<BackupChoice>) =>
+    setBackups((prev) => {
+      const cur = prev[name] ?? { enabled: false, storage: storages?.[0] ?? "" };
+      return { ...prev, [name]: { ...cur, ...patch } };
+    });
 
   return (
     <div ref={form} className="space-y-8">
@@ -299,6 +294,8 @@ export function TemplateFlow({ serverId, initialTemplate = "" }: { serverId: str
                 setRevision(0);
                 setView(null);
                 setValues({});
+                setHosts({});
+                setBackups({});
                 setName(null);
                 // The next template's form starts untried and folded.
                 setTried(false);
@@ -331,6 +328,13 @@ export function TemplateFlow({ serverId, initialTemplate = "" }: { serverId: str
         <PageSpinner />
       ) : (
         <>
+          {view.body.summary || view.body.description ? (
+            <div className="space-y-1 text-sm">
+              {view.body.summary ? <p className="font-medium">{view.body.summary}</p> : null}
+              {view.body.description ? <p className="whitespace-pre-line text-muted-foreground">{view.body.description}</p> : null}
+            </div>
+          ) : null}
+
           <FormField
             id="instance-name"
             label="App name"
@@ -341,7 +345,7 @@ export function TemplateFlow({ serverId, initialTemplate = "" }: { serverId: str
             <Input
               id="instance-name"
               value={chosenName}
-              placeholder={appName.trim() || "App name"}
+              placeholder={view.name}
               {...invalidAttrs("instance-name", nameError)}
               onChange={(e) => setName(e.target.value)}
             />
@@ -349,56 +353,92 @@ export function TemplateFlow({ serverId, initialTemplate = "" }: { serverId: str
 
           <section aria-label="Values" className="space-y-4">
             {required.length > 0 ? (
-              <ParameterFields params={required} values={values} onChange={setValue} showRequired={tried} />
+              <VariableFields vars={required} values={values} onChange={setValue} showRequired={tried} />
             ) : optional.length === 0 ? (
               <p className="text-sm text-muted-foreground">This template needs no values.</p>
             ) : null}
             {optional.length > 0 ? (
               <Disclosure open={moreOpen} onOpenChange={setMoreOpen}>
-                <p className="text-xs text-muted-foreground">Leave a field empty to use its default.</p>
-                <ParameterFields params={optional} values={values} onChange={setValue} showRequired={tried} />
+                <p className="text-xs text-muted-foreground">Leave a field empty to keep the compose file's value.</p>
+                <VariableFields vars={optional} values={values} onChange={setValue} showRequired={tried} />
               </Disclosure>
             ) : null}
             <p className="text-xs text-muted-foreground">Secret values are encrypted in your browser for this server.</p>
           </section>
 
-          {backups.length > 0 ? (
+          {targets.length > 0 ? (
+            <section aria-labelledby="hosts-title" className="space-y-3">
+              <h2 id="hosts-title" className="text-[15px] font-semibold">
+                Hostnames
+              </h2>
+              <p className="text-xs text-muted-foreground">Optional: a hostname for each web port the app exposes.</p>
+              {targets.map((t) => (
+                <HostnameField
+                  key={t.id}
+                  rowId={`host-${t.container}-${t.port}`}
+                  value={hosts[t.target] ?? ""}
+                  label={`Hostname for ${t.target}`}
+                  placeholder="app.example.com"
+                  rowClassName="flex flex-wrap items-center gap-2 sm:flex-nowrap"
+                  inputClassName="basis-full sm:basis-auto"
+                  checked
+                  serverId={serverId}
+                  registrations={registrations}
+                  error={tried ? hostErrors[t.target] : undefined}
+                  onChange={(v) => setHosts((prev) => ({ ...prev, [t.target]: v }))}
+                  onRegistration={() => {}}
+                  onReturn={refreshDomains}
+                >
+                  <span className="shrink-0 font-mono text-xs text-muted-foreground">→ {t.target}</span>
+                </HostnameField>
+              ))}
+            </section>
+          ) : null}
+
+          {declaredBackups.length > 0 ? (
             <section aria-labelledby="backups-title" className="space-y-3">
               <h2 id="backups-title" className="text-[15px] font-semibold">
                 Backups
               </h2>
-              {backups.map(([name, d]) => {
-                const value = storageFor(name, d);
-                const missing = value !== "" && storages !== null && !storages.includes(value);
+              {declaredBackups.map((b) => {
+                const c = backups[b.name] ?? { enabled: false, storage: storages?.[0] ?? "" };
+                const id = `storage-${b.name}`;
+                const message = tried ? backupErrors[b.name] : undefined;
                 return (
-                  <div key={name} className="grid gap-1.5">
-                    <Label htmlFor={`storage-${name}`}>
-                      <span>
-                        Keep backups of <code className="font-mono">{name}</code> in
-                      </span>
-                      {d.enabled ? null : <span className="text-xs font-normal text-muted-foreground">off by default</span>}
-                    </Label>
-                    <NativeSelect
-                      id={`storage-${name}`}
-                      aria-label={`Storage for ${name}`}
-                      value={value}
-                      onChange={(e) => setStorageOverrides((prev) => ({ ...prev, [name]: e.target.value }))}
-                    >
-                      {(d.storage ?? "") === "" ? <option value="">No storage</option> : null}
-                      {missing ? <option value={value}>{value} (not on this server)</option> : null}
-                      {(storages ?? []).map((s) => (
-                        <option key={s} value={s}>
-                          {s}
-                        </option>
-                      ))}
-                    </NativeSelect>
-                    {missing ? (
-                      <p className="text-xs text-destructive">
-                        This server has no storage named {value}.{" "}
-                        <Link to={serverSettingsPath(serverId, "storages")} className="underline underline-offset-4">
-                          Add it
+                  <div key={b.name} className="grid gap-1.5">
+                    <div className="flex flex-wrap items-center gap-3 max-sm:min-h-10">
+                      <Switch
+                        aria-label={`Back up ${b.name}`}
+                        checked={c.enabled}
+                        onCheckedChange={(enabled) => setBackup(b.name, { enabled })}
+                      />
+                      <Label htmlFor={id}>
+                        Keep backups of <code className="font-mono">{b.name}</code> in
+                      </Label>
+                      <NativeSelect
+                        id={id}
+                        aria-label={`Storage for ${b.name}`}
+                        value={c.storage ?? ""}
+                        disabled={!c.enabled}
+                        {...invalidAttrs(id, message, "max-sm:h-10")}
+                        onChange={(e) => setBackup(b.name, { storage: e.target.value })}
+                      >
+                        {(storages ?? []).length === 0 ? <option value="">No storage</option> : null}
+                        {(storages ?? []).map((s) => (
+                          <option key={s} value={s}>
+                            {s}
+                          </option>
+                        ))}
+                      </NativeSelect>
+                    </div>
+                    <FieldMessage id={id} message={message} />
+                    {storages !== null && storages.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">
+                        This server has no storage yet.{" "}
+                        <Link to={serverSettingsPath(serverId, "storages")} className="inline-flex items-center underline underline-offset-4 max-sm:min-h-10">
+                          Add one
                         </Link>{" "}
-                        or pick another.
+                        to keep backups.
                       </p>
                     ) : null}
                   </div>
@@ -407,21 +447,12 @@ export function TemplateFlow({ serverId, initialTemplate = "" }: { serverId: str
             </section>
           ) : null}
 
-          {hosts.length > 0 ? (
-            <section aria-label="Summary" className="space-y-2 rounded-xl border bg-muted/30 p-4 text-sm">
-              <ul aria-label="Addresses" className="space-y-2">
-                {hosts.map((h, i) => (
-                  <HostPreviewRow key={i} serverId={serverId} preview={h} />
-                ))}
-              </ul>
-            </section>
-          ) : null}
-
           <Disclosure label="Advanced">
             <div className="grid gap-1.5 sm:max-w-xs">
               <Label htmlFor="pick-version">Version</Label>
               <NativeSelect
                 id="pick-version"
+                className="max-sm:h-10"
                 value={String(revision)}
                 disabled={claimed}
                 onChange={(e) => setRevision(Number(e.target.value))}
@@ -448,26 +479,5 @@ export function TemplateFlow({ serverId, initialTemplate = "" }: { serverId: str
         </>
       )}
     </div>
-  );
-}
-
-// HostPreviewRow is one address the app will get, with the live check
-// (another app's host, or no registered domain covering it) once its
-// values are filled in.
-function HostPreviewRow({ serverId, preview }: { serverId: string; preview: HostPreview }) {
-  const ready = preview.missing.length === 0 && validHostname(preview.host);
-  const check = useHostCheck(serverId, undefined, preview.host, { enabled: ready && !!serverId, delay: 400 });
-  return (
-    <li>
-      <span className="text-muted-foreground">Will be available at </span>
-      <span className="font-mono">{preview.host || "…"}</span>
-      {preview.missing.length > 0 ? (
-        <p className="mt-1 text-xs text-muted-foreground">Fill in {preview.missing.join(", ")} to see the address.</p>
-      ) : !validHostname(preview.host) ? (
-        <p className="mt-1 text-xs text-destructive">This isn't a valid hostname yet.</p>
-      ) : check ? (
-        <HostHints id={`host-${preview.host}`} check={check} />
-      ) : null}
-    </li>
   );
 }

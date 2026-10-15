@@ -1,6 +1,6 @@
 # Process list on the Monitoring page — design
 
-Date: 2026-10-14. Status: approved in chat, awaiting spec review.
+Date: 2026-10-14. Status: implemented; see the Amendment at the end, which supersedes the per-process disk I/O parts.
 
 ## Goal
 
@@ -160,3 +160,25 @@ Existing installs get it on the next installer run.
 
 Process actions (kill, renice), a process tree view, history or charts per
 process, alerts on processes, Windows/macOS agents.
+
+## Amendment (2026-10-14, late): disk I/O per app or service, no extra privilege
+
+Supersedes every per-process disk I/O and `CAP_SYS_PTRACE` statement above.
+
+- **No `CAP_SYS_PTRACE`.** The unit goes back to `CAP_NET_BIND_SERVICE` only. The agent no longer reads `/proc/<pid>/io`, which needs a ptrace-mode access check for other users' processes.
+- **Disk I/O per cgroup.** Each process's group is its cgroup v2 path from `/proc/<pid>/cgroup` (the `0::` line). Container processes are grouped at their Docker scope (`docker-<id>.scope` or `docker/<id>`), so nested sub-cgroups add up under the container.
+  - Each group's `io.stat` (`<root>/sys/fs/cgroup/<path>/io.stat`, world-readable) is read **once per reading**. Its `rbytes`/`wbytes` are summed across devices.
+  - Rates are computed against the previous reading of the same group, under the same rules as CPU: a counter that goes down or a group missing from either reading gives `null`.
+  - Processes in the root cgroup (kernel threads) and cgroup v1 hosts have no group.
+- **Payload.**
+  - `Process` loses `read_bps`/`write_bps` and gains `group` (the group id, omitted when there is none).
+  - `ProcessListResponse` gains `groups`: `{id, label, kind, container_id?, app_id?, processes, read_bps, write_bps}`, covering every process seen (before the 2000 cap).
+  - `kind` is `container` | `service` | `scope` | `slice` | `other`.
+  - `label` is the cgroup leaf name (`postgresql.service`, `session-3.scope`). It is empty for containers, which the UI names by app, or else by the short container id.
+  - The agent fills each group's `app_id` from the status snapshot, as it does for processes.
+- **UI.**
+  - A "Disk by app or service" list sits above the process table: read/s, write/s and process count per group, busiest writers first. It shows the top 8, with "Show all".
+  - Clicking a group filters the table to it, with a removable chip.
+  - The table drops Read/s and Write/s and gains a Group column. The text filter matches the group name too.
+  - On a phone the table shows Process · CPU · Memory, and Group moves into the details.
+  - With no groups at all (a cgroup v1 host) the list says disk I/O per app needs cgroup v2.

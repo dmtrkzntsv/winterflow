@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -19,6 +20,9 @@ import (
 const (
 	clkTck     = 100 // USER_HZ: 100 in every Linux architecture's userspace ABI
 	cmdlineCap = 512
+	// cmdlineRead bounds the bytes read from /proc/<pid>/cmdline. It exceeds
+	// cmdlineCap because redaction needs the arguments the cap would cut.
+	cmdlineRead = 4096
 	// prevMaxAge: an older previous reading is not used for rates (nobody
 	// watched for a while); the call takes two readings instead.
 	prevMaxAge = 60 * time.Second
@@ -194,8 +198,8 @@ func (p *Processes) readPID(pid int, btime int64) (procReading, bool) {
 			proc.User = p.userName(uid)
 		}
 	}
-	if b, err := os.ReadFile(p.path("proc", dir, "cmdline")); err == nil {
-		proc.Cmdline = cleanCmdline(b)
+	if b, err := readHead(p.path("proc", dir, "cmdline"), cmdlineRead); err == nil {
+		proc.Cmdline = redactCmdline(b)
 	}
 	if b, err := os.ReadFile(p.path("proc", dir, "io")); err == nil {
 		c.read, c.write, c.io = parseIO(b)
@@ -293,11 +297,64 @@ func parseIO(b []byte) (read, write uint64, ok bool) {
 	return read, write, seenR && seenW
 }
 
-func cleanCmdline(b []byte) string {
-	if len(b) > cmdlineCap {
-		b = b[:cmdlineCap]
+// readHead reads at most n bytes of a file, so a huge argv is never read
+// in full.
+func readHead(path string, n int64) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
 	}
-	return strings.TrimRight(strings.ReplaceAll(string(b), "\x00", " "), " ")
+	defer f.Close()
+	return io.ReadAll(io.LimitReader(f, n))
+}
+
+var (
+	secretWords = []string{"pass", "secret", "token", "key", "auth", "cred"}
+	// assignArg is "NAME=value" with optional leading dashes (-x=1, --x=1,
+	// X=1); flagArg is a bare "-x" / "--name".
+	assignArg = regexp.MustCompile(`^-{0,2}([A-Za-z0-9_.-]+)=`)
+	flagArg   = regexp.MustCompile(`^--?[A-Za-z0-9_.-]+$`)
+	// urlPassword matches the password of URL userinfo (scheme://user:pass@).
+	urlPassword = regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.-]*://[^/:@\s]*):[^/@\s]*@`)
+)
+
+func secretName(name string) bool {
+	name = strings.ToLower(name)
+	for _, w := range secretWords {
+		if strings.Contains(name, w) {
+			return true
+		}
+	}
+	return false
+}
+
+// redactCmdline renders a raw /proc cmdline for display. Compose commands
+// and entrypoints carry secrets as arguments (--requirepass s3cret,
+// --password=x, DB_PASSWORD=x, postgres://user:pw@host), and secret values
+// never leave the agent, so those values become "***" here, before the cap.
+func redactCmdline(b []byte) string {
+	args := strings.Split(string(b), "\x00")
+	for len(args) > 0 && args[len(args)-1] == "" {
+		args = args[:len(args)-1]
+	}
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if m := assignArg.FindStringSubmatch(a); m != nil {
+			if secretName(m[1]) {
+				args[i] = a[:len(m[0])] + "***"
+			}
+		} else if flagArg.MatchString(a) && secretName(a) && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+			args[i+1] = "***"
+			i++
+			continue
+		}
+		args[i] = urlPassword.ReplaceAllString(args[i], "$1:***@")
+	}
+	s := strings.Join(args, " ")
+	if len(s) > cmdlineCap {
+		s = s[:cmdlineCap]
+	}
+	return strings.TrimRight(s, " ")
 }
 
 // dockerCgroup matches a Docker container's cgroup: systemd driver

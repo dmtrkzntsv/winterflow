@@ -239,10 +239,64 @@ func TestProcessesCapAndCmdline(t *testing.T) {
 	if resp.Total != command.MaxProcesses+5 || len(resp.Processes) != command.MaxProcesses {
 		t.Fatalf("total %d, listed %d", resp.Total, len(resp.Processes))
 	}
+	found, maxPID := false, 0
 	for _, p := range resp.Processes {
-		if p.PID == 10 && len(p.Cmdline) != 512 {
-			t.Fatalf("cmdline len %d", len(p.Cmdline))
+		if p.PID == 10 {
+			found = true
+			if len(p.Cmdline) != 512 {
+				t.Fatalf("cmdline len %d", len(p.Cmdline))
+			}
 		}
+		maxPID = max(maxPID, p.PID)
+	}
+	if !found {
+		t.Fatal("pid 10 not listed")
+	}
+	// Equal CPU and RSS: the highest pids are the ones dropped.
+	if want := 10 + command.MaxProcesses - 1; maxPID != want {
+		t.Fatalf("max listed pid %d, want %d", maxPID, want)
+	}
+}
+
+func TestRedactCmdline(t *testing.T) {
+	nul := func(args ...string) []byte { return []byte(strings.Join(args, "\x00") + "\x00") }
+	for name, tc := range map[string]struct {
+		in   []byte
+		want string
+	}{
+		"flag then value":     {nul("redis-server", "--requirepass", "s3cret"), "redis-server --requirepass ***"},
+		"flag=value":          {nul("app", "--password=hunter2"), "app --password=***"},
+		"env style":           {nul("env", "POSTGRES_PASSWORD=x", "psql"), "env POSTGRES_PASSWORD=*** psql"},
+		"upper-case name":     {nul("app", "--API_KEY=abc"), "app --API_KEY=***"},
+		"no keyword":          {nul("nginx", "-p", "8080"), "nginx -p 8080"},
+		"api key then flag":   {nul("app", "--api-key", "k", "--verbose"), "app --api-key *** --verbose"},
+		"secret flag, flag":   {nul("app", "--token", "--verbose"), "app --token --verbose"},
+		"token is last":       {nul("app", "--token"), "app --token"},
+		"url password":        {nul("app", "postgres://u:pw@db:5432/x"), "app postgres://u:***@db:5432/x"},
+		"url in assignment":   {nul("app", "DSN=postgres://u:pw@db/x"), "app DSN=postgres://u:***@db/x"},
+		"url without pass":    {nul("app", "postgres://u@db:5432/x", "https://example.com:8443/a"), "app postgres://u@db:5432/x https://example.com:8443/a"},
+		"plain arguments":     {nul("sh", "-c", "echo hi", "--name=web"), "sh -c echo hi --name=web"},
+		"empty":               {nil, ""},
+		"redacted before cap": {append(nul(strings.Repeat("x", 600)), nul("--password=p")...), strings.Repeat("x", 512)},
+	} {
+		if got := redactCmdline(tc.in); got != tc.want {
+			t.Errorf("%s: got %q want %q", name, got, tc.want)
+		}
+	}
+}
+
+func TestProcessesRedactsCmdline(t *testing.T) {
+	root := baseTree(t)
+	write(t, root, map[string]string{
+		"proc/42/cmdline": "redis-server\x00--requirepass\x00s3cret\x00--dsn=postgres://u:pw@db/x\x00",
+	})
+	resp, err := newTestProcesses(root, &fakeClock{t: time.Unix(1700001000, 0)}).List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "redis-server --requirepass *** --dsn=postgres://u:***@db/x"
+	if got := byPID(resp.Processes)[42].Cmdline; got != want {
+		t.Fatalf("cmdline = %q, want %q", got, want)
 	}
 }
 

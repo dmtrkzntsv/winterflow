@@ -126,7 +126,8 @@ var probes = map[string]probe{
 	"POST /api/v1/network/delete": {valid: func(s string) call {
 		return call{Method: http.MethodPost, Path: "/api/v1/network/delete", Query: sq(s), Body: map[string]any{"name": "n"}}
 	}, malformed: bad("POST", "/api/v1/network/delete")},
-	"GET /api/v1/volume/list": {valid: func(s string) call { return get("/api/v1/volume/list", sq(s)) }, malformed: bad("GET", "/api/v1/volume/list")},
+	"GET /api/v1/server/get-processes": {valid: func(s string) call { return get("/api/v1/server/get-processes", sq(s)) }, malformed: bad("GET", "/api/v1/server/get-processes")},
+	"GET /api/v1/volume/list":          {valid: func(s string) call { return get("/api/v1/volume/list", sq(s)) }, malformed: bad("GET", "/api/v1/volume/list")},
 	"POST /api/v1/volume/create": {valid: func(s string) call {
 		return call{Method: http.MethodPost, Path: "/api/v1/volume/create", Query: sq(s), Body: map[string]any{"name": "v"}}
 	}, malformed: bad("POST", "/api/v1/volume/create")},

@@ -12,6 +12,7 @@ import (
 	backupcli "winterflow/internal/app/backup/cli"
 	ingresscaddy "winterflow/internal/infra/ingress/caddy"
 	dockercompose "winterflow/internal/infra/orchestrator/docker_compose"
+	"winterflow/internal/infra/sysmetrics"
 	"winterflow/internal/infra/transport/bus"
 	grpcagent "winterflow/internal/infra/transport/grpc/agent"
 	"winterflow/internal/infra/transport/grpc/proto"
@@ -106,7 +107,13 @@ func main() {
 	// Backups run on their own goroutine, next to the source poller.
 	backups := backup.New(orchestrator, cfg.GetAgentDataDir(), log)
 	dispatcher.SetBackups(backups)
+	// The snapshot carries each app's backup health too and lets the metrics
+	// reporter reuse the status reporter's `docker ps`.
+	statusSnapshot := appagent.NewStatusSnapshot(appagent.WithBackupHealth(orchestrator, backups))
 	go appagent.RunBackups(ctx, orchestrator, backups, log)
+	// The processes tab reads /proc on request; the snapshot names each
+	// container's app.
+	dispatcher.SetProcesses(appagent.NewProcessLister(sysmetrics.NewProcesses("/", runtime.NumCPU()), statusSnapshot))
 	agent.SetDispatcher(dispatcher)
 
 	// Supervise the connection: connect, register, stream, and reconnect with
@@ -117,9 +124,6 @@ func main() {
 
 	// Periodic apps-status push: feeds the API's status cache and the SSE
 	// live-status pipeline. Ticks while the stream is down are skipped.
-	// The snapshot carries each app's backup health too and lets the metrics
-	// reporter reuse the status reporter's `docker ps`.
-	statusSnapshot := appagent.NewStatusSnapshot(appagent.WithBackupHealth(orchestrator, backups))
 	go appagent.RunStatusReporter(ctx, statusSnapshot, sink, 30*time.Second, backups.Changed(), log)
 
 	// Resource metrics: a server.metrics event every 60 s (procfs/cgroupfs

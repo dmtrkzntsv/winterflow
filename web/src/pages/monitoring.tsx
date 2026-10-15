@@ -9,13 +9,17 @@ import { Disclosure } from "@/components/disclosure";
 import { EmptyState } from "@/components/empty-state";
 import { KpiTile, KpiTileSkeleton } from "@/components/kpi-tile";
 import { ChartCardSkeleton, MetricChartCard, type ChartSeries } from "@/components/metric-chart";
+import { ProcessesTab } from "@/components/monitoring/processes-tab";
 import { PageHeader } from "@/components/page-header";
 import { RangeMenu } from "@/components/range-menu";
 import { Section } from "@/components/section";
 import { Card } from "@/components/ui/card";
+import { TabsContent } from "@/components/ui/tabs";
+import { UnderlineTabs } from "@/components/underline-tabs";
 import { useApps } from "@/context/use-apps";
 import { useServers } from "@/context/use-servers";
 import { useMetricsOverview, useServerMetrics } from "@/hooks/use-metrics";
+import { useTabParam } from "@/hooks/use-tab-param";
 import { appLabel, kpiNow, latestValue, withNetTotal } from "@/lib/kpi";
 import {
   chartColor,
@@ -55,6 +59,9 @@ function withPercents(points: MetricPoint[]): MetricPoint[] {
 function s(key: string, label: string, i: number): ChartSeries {
   return { key, label, color: chartColor(i) };
 }
+
+const TABS = ["overview", "processes"] as const;
+type Tab = (typeof TABS)[number];
 
 // Two compact tiles per row on a phone, four from lg.
 const KPI_GRID = "grid grid-cols-2 gap-3 lg:grid-cols-4";
@@ -118,10 +125,12 @@ function DockerDisk({ df }: { df: DockerDF | undefined }) {
   );
 }
 
-// MonitoringPage charts the active server (spec §5): firing alerts on top,
-// four KPI tiles, the four host charts, what each app uses, then Load, Disk
-// I/O, Temperature and Docker's disk usage under "More details" (not drawn
-// until opened), and the server's alert rules collapsed.
+// MonitoringPage shows the active server in two tabs (spec §5), the firing
+// alerts on top of both. Overview: four KPI tiles, the four host charts,
+// what each app uses, then Load, Disk I/O, Temperature and Docker's disk
+// usage under "More details" (not drawn until opened), and the server's
+// alert rules collapsed. Processes: the live process list, polled only
+// while that tab is open.
 export default function MonitoringPage() {
   const { activeServer, activeServerId } = useServers();
   const { apps } = useApps();
@@ -129,6 +138,7 @@ export default function MonitoringPage() {
   // coarser ranges fill in once their rollup buckets close.
   const [range, setRange] = useState<MetricsRange>("1h");
   const [mode, setMode] = useState<MetricsMode>("avg");
+  const [tab, setTab] = useTabParam<Tab>(TABS, "overview");
   const { data, loading, error, updatedAt, refresh } = useServerMetrics(activeServerId, range);
   const { data: overview, refresh: refreshOverview } = useMetricsOverview();
 
@@ -185,166 +195,189 @@ export default function MonitoringPage() {
         subtitle={
           <span className="inline-flex flex-wrap items-center gap-x-1.5">
             <span className="font-medium text-foreground">{serverName}</span>
-            <span aria-hidden>·</span>
-            <DataFreshness updatedAt={updatedAt} onRefresh={() => Promise.all([refresh(), refreshOverview()])} />
+            {tab === "overview" ? (
+              <>
+                <span aria-hidden>·</span>
+                <DataFreshness updatedAt={updatedAt} onRefresh={() => Promise.all([refresh(), refreshOverview()])} />
+              </>
+            ) : null}
           </span>
         }
-        actions={<RangeMenu range={range} onRangeChange={setRange} mode={mode} onModeChange={setMode} />}
+        actions={
+          tab === "overview" ? (
+            <RangeMenu range={range} onRangeChange={setRange} mode={mode} onModeChange={setMode} />
+          ) : undefined
+        }
       />
       <FiringBanner serverId={activeServerId} />
-      {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      <UnderlineTabs<Tab>
+        value={tab}
+        onValueChange={setTab}
+        label="Monitoring views"
+        items={[
+          { value: "overview", label: "Overview" },
+          { value: "processes", label: "Processes" },
+        ]}
+      >
+        <TabsContent value="overview" className="mt-6 space-y-6">
+          {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
-      {initial ? (
-        <>
-          <div className={KPI_GRID}>
-            {["CPU", "Memory", "Disk", "Network"].map((l) => (
-              <KpiTileSkeleton key={l} label={l} />
-            ))}
-          </div>
-          <div className={CHART_GRID}>
-            {HOST_CHARTS.map((t) => (
-              <ChartCardSkeleton key={t} title={t} className="h-full" />
-            ))}
-          </div>
-        </>
-      ) : (
-        <>
-          <div className={KPI_GRID} data-testid="kpi-grid">
-            <KpiTile
-              label="CPU"
-              value={formatPercent(now.cpu)}
-              sub={now.load1 !== undefined ? `Load ${now.load1.toFixed(2)}` : undefined}
-            />
-            <KpiTile
-              label="Memory"
-              value={formatPercent(now.mem_pct)}
-              sub={memTotal ? `${formatSize(memUsed)} of ${formatSize(memTotal)}` : undefined}
-            />
-            <KpiTile
-              label="Disk"
-              value={formatPercent(now.disk_pct)}
-              sub={
-                disk ? (
-                  <>
-                    {formatSize(disk.used)} of {formatSize(disk.total)}
-                    {disk.mount ? <span className="text-muted-foreground/70"> · {disk.mount}</span> : null}
-                  </>
-                ) : undefined
-              }
-            />
-            <KpiTile
-              label="Network"
-              value={formatRate(now.net_bps)}
-              sub={
-                now.net_bps !== undefined
-                  ? `In ${formatRate(now.net_rx_bps)} · Out ${formatRate(now.net_tx_bps)}`
-                  : undefined
-              }
-            />
-          </div>
+          {initial ? (
+            <>
+              <div className={KPI_GRID}>
+                {["CPU", "Memory", "Disk", "Network"].map((l) => (
+                  <KpiTileSkeleton key={l} label={l} />
+                ))}
+              </div>
+              <div className={CHART_GRID}>
+                {HOST_CHARTS.map((t) => (
+                  <ChartCardSkeleton key={t} title={t} className="h-full" />
+                ))}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className={KPI_GRID} data-testid="kpi-grid">
+                <KpiTile
+                  label="CPU"
+                  value={formatPercent(now.cpu)}
+                  sub={now.load1 !== undefined ? `Load ${now.load1.toFixed(2)}` : undefined}
+                />
+                <KpiTile
+                  label="Memory"
+                  value={formatPercent(now.mem_pct)}
+                  sub={memTotal ? `${formatSize(memUsed)} of ${formatSize(memTotal)}` : undefined}
+                />
+                <KpiTile
+                  label="Disk"
+                  value={formatPercent(now.disk_pct)}
+                  sub={
+                    disk ? (
+                      <>
+                        {formatSize(disk.used)} of {formatSize(disk.total)}
+                        {disk.mount ? <span className="text-muted-foreground/70"> · {disk.mount}</span> : null}
+                      </>
+                    ) : undefined
+                  }
+                />
+                <KpiTile
+                  label="Network"
+                  value={formatRate(now.net_bps)}
+                  sub={
+                    now.net_bps !== undefined
+                      ? `In ${formatRate(now.net_rx_bps)} · Out ${formatRate(now.net_tx_bps)}`
+                      : undefined
+                  }
+                />
+              </div>
 
-          <div className={CHART_GRID} data-testid="host-charts">
-            <MetricChartCard
-              height="fill"
-              title="CPU"
-              rows={rows(["cpu"])}
-              series={[s("cpu", "CPU", 0)]}
-              format={formatPercent}
-              range={range}
-            />
-            <MetricChartCard
-              height="fill"
-              title="Memory"
-              rows={rows(["mem_pct", "swap_pct"])}
-              series={[s("mem_pct", "Memory", 1), s("swap_pct", "Swap", 3)]}
-              format={formatPercent}
-              range={range}
-            />
-            <MetricChartCard
-              height="fill"
-              title="Disk usage"
-              description="Fullest filesystem"
-              rows={diskRows}
-              series={[s("disk_pct", "Used", 2)]}
-              format={formatPercent}
-              range={range}
-            />
-            <MetricChartCard
-              height="fill"
-              title="Network"
-              rows={rows(["net_rx_bps", "net_tx_bps"])}
-              series={[s("net_rx_bps", "In", 1), s("net_tx_bps", "Out", 3)]}
-              format={formatRate}
-              range={range}
-            />
-          </div>
-
-          <Section title="Apps">
-            <div className={CHART_GRID} data-testid="app-charts">
-              <MetricChartCard
-                height="fill"
-                title="CPU by app"
-                rows={stackApps(data?.apps ?? [], "cpu", mode)}
-                series={appSeries}
-                format={formatPercent}
-                range={range}
-                stacked={!peak}
-                lines={peak}
-              />
-              <MetricChartCard
-                height="fill"
-                title="Memory by app"
-                rows={stackApps(data?.apps ?? [], "mem_used", mode)}
-                series={appSeries}
-                format={formatSize}
-                range={range}
-                stacked={!peak}
-                lines={peak}
-              />
-            </div>
-          </Section>
-
-          {/* Collapsed by default: these charts are not drawn until opened. */}
-          <Disclosure label="More details">
-            <div className={CHART_GRID}>
-              <MetricChartCard
-                height="fill"
-                title="Load"
-                rows={rows(["load1", "load5", "load15"])}
-                series={[s("load1", "1 min", 0), s("load5", "5 min", 1), s("load15", "15 min", 2)]}
-                format={(v) => v.toFixed(2)}
-                scale="integer"
-                range={range}
-                lines
-              />
-              <MetricChartCard
-                height="fill"
-                title="Disk I/O"
-                rows={rows(["disk_read_bps", "disk_write_bps"])}
-                series={[s("disk_read_bps", "Read", 0), s("disk_write_bps", "Write", 1)]}
-                format={formatRate}
-                range={range}
-              />
-              {/* No temperature sensors: the chart is hidden, not empty. */}
-              {temps.series.length > 0 ? (
+              <div className={CHART_GRID} data-testid="host-charts">
                 <MetricChartCard
                   height="fill"
-                  title="Temperature"
-                  rows={temps.rows}
-                  series={temps.series}
-                  format={formatTemp}
+                  title="CPU"
+                  rows={rows(["cpu"])}
+                  series={[s("cpu", "CPU", 0)]}
+                  format={formatPercent}
                   range={range}
-                  lines
-                  className="md:col-span-2"
                 />
-              ) : null}
-            </div>
-            <DockerDisk df={df} />
-          </Disclosure>
-        </>
-      )}
+                <MetricChartCard
+                  height="fill"
+                  title="Memory"
+                  rows={rows(["mem_pct", "swap_pct"])}
+                  series={[s("mem_pct", "Memory", 1), s("swap_pct", "Swap", 3)]}
+                  format={formatPercent}
+                  range={range}
+                />
+                <MetricChartCard
+                  height="fill"
+                  title="Disk usage"
+                  description="Fullest filesystem"
+                  rows={diskRows}
+                  series={[s("disk_pct", "Used", 2)]}
+                  format={formatPercent}
+                  range={range}
+                />
+                <MetricChartCard
+                  height="fill"
+                  title="Network"
+                  rows={rows(["net_rx_bps", "net_tx_bps"])}
+                  series={[s("net_rx_bps", "In", 1), s("net_tx_bps", "Out", 3)]}
+                  format={formatRate}
+                  range={range}
+                />
+              </div>
 
-      <TargetAlertsCard serverId={activeServerId} targetLabel={activeServer?.name ?? "this server"} />
+              <Section title="Apps">
+                <div className={CHART_GRID} data-testid="app-charts">
+                  <MetricChartCard
+                    height="fill"
+                    title="CPU by app"
+                    rows={stackApps(data?.apps ?? [], "cpu", mode)}
+                    series={appSeries}
+                    format={formatPercent}
+                    range={range}
+                    stacked={!peak}
+                    lines={peak}
+                  />
+                  <MetricChartCard
+                    height="fill"
+                    title="Memory by app"
+                    rows={stackApps(data?.apps ?? [], "mem_used", mode)}
+                    series={appSeries}
+                    format={formatSize}
+                    range={range}
+                    stacked={!peak}
+                    lines={peak}
+                  />
+                </div>
+              </Section>
+
+              {/* Collapsed by default: these charts are not drawn until opened. */}
+              <Disclosure label="More details">
+                <div className={CHART_GRID}>
+                  <MetricChartCard
+                    height="fill"
+                    title="Load"
+                    rows={rows(["load1", "load5", "load15"])}
+                    series={[s("load1", "1 min", 0), s("load5", "5 min", 1), s("load15", "15 min", 2)]}
+                    format={(v) => v.toFixed(2)}
+                    scale="integer"
+                    range={range}
+                    lines
+                  />
+                  <MetricChartCard
+                    height="fill"
+                    title="Disk I/O"
+                    rows={rows(["disk_read_bps", "disk_write_bps"])}
+                    series={[s("disk_read_bps", "Read", 0), s("disk_write_bps", "Write", 1)]}
+                    format={formatRate}
+                    range={range}
+                  />
+                  {/* No temperature sensors: the chart is hidden, not empty. */}
+                  {temps.series.length > 0 ? (
+                    <MetricChartCard
+                      height="fill"
+                      title="Temperature"
+                      rows={temps.rows}
+                      series={temps.series}
+                      format={formatTemp}
+                      range={range}
+                      lines
+                      className="md:col-span-2"
+                    />
+                  ) : null}
+                </div>
+                <DockerDisk df={df} />
+              </Disclosure>
+            </>
+          )}
+
+          <TargetAlertsCard serverId={activeServerId} targetLabel={activeServer?.name ?? "this server"} />
+        </TabsContent>
+        <TabsContent value="processes" className="mt-6">
+          {tab === "processes" ? <ProcessesTab key={activeServerId} serverId={activeServerId} /> : null}
+        </TabsContent>
+      </UnderlineTabs>
     </div>
   );
 }

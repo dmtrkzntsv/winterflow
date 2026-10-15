@@ -33,3 +33,24 @@ func write(t *testing.T, root string, files map[string]string) {
 		}
 	}
 }
+
+func removeAll(t *testing.T, root, rel string) {
+	t.Helper()
+	if err := os.RemoveAll(filepath.Join(root, rel)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// link creates symlinks (relative path -> target) under root.
+func link(t *testing.T, root string, links map[string]string) {
+	t.Helper()
+	for rel, target := range links {
+		p := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, p); err != nil {
+			t.Fatal(err)
+		}
+	}
+}

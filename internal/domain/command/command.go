@@ -77,6 +77,9 @@ const (
 	// Container images.
 	TypeImageTags Type = "image.tags" // list available registry tags for an image
 
+	// Host processes (Monitoring's Processes tab).
+	TypeProcessList Type = "process.list" // read every process's CPU, memory and disk I/O
+
 	// Agent self-management.
 	TypeAgentUpdate Type = "agent.update"
 )
@@ -91,6 +94,12 @@ const (
 func (t Type) Detached() bool {
 	return t == TypeBackupRun || t == TypeBackupRestore || t == TypeVarsReload
 }
+
+// OffBridge reports whether the in-process bridge runs a command on a
+// goroutine of its own: the detached ones, plus process.list, whose /proc
+// reads can block on a hung process. The gRPC agent runs every request on
+// its own goroutine already.
+func (t Type) OffBridge() bool { return t.Detached() || t == TypeProcessList }
 
 // ContentTypeJSON is the envelope content type used for every command payload.
 const ContentTypeJSON = "application/json"

@@ -42,9 +42,10 @@ func NewInProcessBridge(b bus.Bus, cfg *config.ServerConfig, d CommandRunner, lo
 // done.
 func (br *InProcessBridge) Start(ctx context.Context) error {
 	bus.SubscribeJSON(ctx, br.bus, br.cfg.GetBusRequestQueue(), br.log, func(cmd bus.CommandMessage) {
-		// A detached command (backup.run) waits for work done elsewhere: it
-		// gets its own goroutine so the pipeline keeps draining.
-		if command.Type(cmd.Type).Detached() {
+		// A detached command (backup.run) waits for work done elsewhere, and
+		// a process.list can wait on a hung /proc read: each gets its own
+		// goroutine so the pipeline keeps draining.
+		if command.Type(cmd.Type).OffBridge() {
 			go br.handle(ctx, cmd)
 			return
 		}

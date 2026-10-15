@@ -41,8 +41,9 @@ func (r *Repository) deploy(ctx context.Context, appID string) error {
 	return nil
 }
 
-// renderDeployEnv writes every derived env file a deploy reads: the app's
-// secrets, the shared variables and the storage variables. deploy (via
+// renderDeployEnv writes every derived file a deploy reads: the app's
+// secrets, the shared variables, the storage variables and the
+// x-winterflow override file. deploy (via
 // composeUp) writes them again; this is for a compose command that runs
 // before it (UpdateApp's pull).
 func (r *Repository) renderDeployEnv(ctx context.Context, appID string) error {
@@ -55,7 +56,10 @@ func (r *Repository) renderDeployEnv(ctx context.Context, appID string) error {
 	if err != nil {
 		return err
 	}
-	return r.materializeStorageEnv(ctx, dir, files, cfg.backups)
+	if err := r.materializeStorageEnv(ctx, dir, files, cfg.backups); err != nil {
+		return err
+	}
+	return r.writeComposeOverride(dir, cfg.spec)
 }
 
 // StartApp brings an app up.

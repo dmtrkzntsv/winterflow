@@ -657,7 +657,8 @@ func (r *Repository) composeArgs(appID string, verb ...string) []string {
 
 // composeArgsFor is composeArgs with the app's compose files already
 // resolved and the profiles to activate (--profile; none: compose's own
-// COMPOSE_PROFILES handling).
+// COMPOSE_PROFILES handling). The x-winterflow override file, when a deploy
+// wrote one, is the last -f.
 func (r *Repository) composeArgsFor(appID string, files, profiles []string, verb ...string) []string {
 	args := []string{"compose", "--project-name", projectName(appID)}
 	dir := r.appDataDir(appID)
@@ -674,6 +675,10 @@ func (r *Repository) composeArgsFor(appID string, files, profiles []string, verb
 		if _, err := os.Stat(filepath.Join(dir, rel)); err == nil {
 			args = append(args, "--env-file", rel)
 		}
+	}
+	// The x-winterflow override file goes last, over every compose file.
+	if _, err := os.Stat(filepath.Join(dir, composeOverrideRel)); err == nil {
+		args = append(args, "-f", composeOverrideRel)
 	}
 	for _, p := range profiles {
 		args = append(args, "--profile", p)
@@ -730,6 +735,11 @@ func (r *Repository) composeUp(ctx context.Context, appID string) error {
 	// The storage variables are resolved on every deploy: a storage removed
 	// or changed since the last one must not be served stale.
 	if err := r.materializeStorageEnv(ctx, dir, files, cfg.backups); err != nil {
+		return err
+	}
+	// The x-winterflow block is applied through its override file, built
+	// from the files just read and the env files just written.
+	if err := r.writeComposeOverride(dir, cfg.spec); err != nil {
 		return err
 	}
 	// Every enabled sqlite and files backup must reach its data through the

@@ -45,7 +45,7 @@ func gitEnsure(dir string) error {
 // .gitignore lists them, and every commit excludes them (neverCommitted)
 // whatever .gitignore says — a rollback restores an old .gitignore that may
 // not list them.
-var derivedArtifacts = []string{envSecretsRel, envSharedRel, envSharedSecretsRel, deployedRel, runRel, storageEnvRel}
+var derivedArtifacts = []string{envSecretsRel, envSharedRel, envSharedSecretsRel, deployedRel, runRel, storageEnvRel, composeOverrideRel}
 
 // tempArtifacts are the temp files of the agent's own atomic writes in
 // .winterflow/ (fsutil.WriteFile's config.json.tmp): a crash mid-write

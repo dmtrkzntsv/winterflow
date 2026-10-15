@@ -270,7 +270,8 @@ func (r *Repository) managedPlainFiles(dir string) []string {
 
 // materializeSecrets decrypts the store with the agent's private key into the
 // gitignored deploy outputs: .env.secrets for variables (removed when there
-// are none) and each secret file at its path. Undecryptable entries are
+// are none; every value quoted with $ escaped, so compose reads a secret
+// like pa$word literally) and each secret file at its path. Undecryptable entries are
 // logged and skipped so one broken secret doesn't block a deploy.
 func (r *Repository) materializeSecrets(dir string, s secretStore) error {
 	var vars []resolvedItem
@@ -287,7 +288,7 @@ func (r *Repository) materializeSecrets(dir string, s secretStore) error {
 		if err := os.Remove(envSecretsPath); err != nil && !os.IsNotExist(err) {
 			return err
 		}
-	} else if err := os.WriteFile(envSecretsPath, marshalEnv(vars), 0o600); err != nil {
+	} else if err := os.WriteFile(envSecretsPath, marshalSharedEnv(vars), 0o600); err != nil {
 		return err
 	}
 

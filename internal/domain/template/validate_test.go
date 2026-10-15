@@ -87,6 +87,16 @@ func TestWarnings(t *testing.T) {
 	if got := Warnings(b, s, nil); len(got) != 3 {
 		t.Fatalf("without shared names = %q", got)
 	}
+	// A compose file that is not YAML declares nothing: its references
+	// are not reported as undeclared.
+	bad := Body{Files: map[string]string{"compose.yaml": "services: [\n  ${HOST}\n"}}
+	us, err := Parse(bad)
+	if err != nil || !us.Compose.Unparsed {
+		t.Fatalf("parse = %+v, %v", us, err)
+	}
+	if got := Warnings(bad, us, nil); len(got) != 0 {
+		t.Fatalf("an unparsed file's warnings = %q", got)
+	}
 }
 
 func TestDetect(t *testing.T) {

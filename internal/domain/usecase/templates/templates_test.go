@@ -147,10 +147,18 @@ func TestInspectTemplate(t *testing.T) {
 		t.Fatalf("a bad summary still shows the block: %+v, %v", got, err)
 	}
 	b = body()
-	b.Files["compose.yaml"] += "  bogus: 1\n"
+	b.Files["compose.yaml"] = "# ${NAME}\n" + b.Files["compose.yaml"] + "  bogus: 1\n"
 	got, err = f.uc.InspectTemplate(ctx, org1, b)
-	if err != nil || !strings.Contains(got.Problem, "x-winterflow.bogus") || len(got.Detected.Variables) != 0 {
+	if err != nil || !strings.Contains(got.Problem, "x-winterflow.bogus") || len(got.Detected.Variables) != 0 || len(got.Detected.Warnings) != 0 {
 		t.Fatalf("a bad block = %+v, %v", got, err)
+	}
+	// Files that don't parse report the problem, not every ${VAR} as
+	// undeclared.
+	b = body()
+	b.Files["compose.yaml"] = "services: [\n  image: ${IMAGE}\n"
+	got, err = f.uc.InspectTemplate(ctx, org1, b)
+	if err != nil || !strings.Contains(got.Problem, "not valid YAML") || len(got.Detected.Warnings) != 0 {
+		t.Fatalf("an unparsed file = %+v, %v", got, err)
 	}
 	if list, _ := f.uc.ListTemplates(ctx, org1); len(list.Templates) != 1 {
 		t.Fatalf("inspect stored something: %+v", list)

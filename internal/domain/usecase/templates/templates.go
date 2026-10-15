@@ -86,8 +86,11 @@ func (uc *UseCase) InspectTemplate(ctx context.Context, orgID string, b template
 		}
 		out.Problem = err.Error()
 		// What parses still shows: a bad summary leaves the block readable.
+		// Files that don't parse declare nothing, so every reference
+		// would read as undeclared: the problem is all there is to say.
 		if spec, err = template.Parse(b); err != nil {
-			spec = xwinterflow.Spec{}
+			out.Detected = template.Detect(xwinterflow.Spec{}, nil)
+			return out, nil
 		}
 	}
 	warnings, err := uc.warnings(ctx, orgID, b, spec)

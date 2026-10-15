@@ -53,6 +53,33 @@ func TestProcessListerMapsContainersToApps(t *testing.T) {
 	}
 }
 
+func TestProcessListerMapsGroupsToApps(t *testing.T) {
+	snap := NewStatusSnapshot(fixedStatus{apps: []command.AppStatus{
+		{AppID: "app-1", Containers: []command.ContainerStatus{{ContainerID: "c1"}}},
+	}})
+	if _, err := snap.StatusReport(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	src := &fakeProcSource{resp: command.ProcessListResponse{Groups: []command.ProcessGroup{
+		{ID: "/system.slice/x.service", Kind: "service"},
+		{ID: "/system.slice/docker-c1.scope", Kind: "container", ContainerID: "c1"},
+		{ID: "/system.slice/docker-c2.scope", Kind: "container", ContainerID: "unknown"},
+	}}}
+	l := NewProcessLister(src, snap)
+	l.goos = "linux"
+	resp, err := l.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Groups[0].AppID != "" || resp.Groups[1].AppID != "app-1" || resp.Groups[2].AppID != "" {
+		t.Fatalf("groups = %+v", resp.Groups)
+	}
+	// The read's own answer is left alone: later callers name apps afresh.
+	if src.resp.Groups[1].AppID != "" {
+		t.Fatal("the shared answer's groups were written")
+	}
+}
+
 func TestProcessListerNoSnapshotYet(t *testing.T) {
 	src := &fakeProcSource{resp: command.ProcessListResponse{Processes: []command.Process{{PID: 2, ContainerID: "c1"}}}}
 	l := NewProcessLister(src, NewStatusSnapshot(fixedStatus{}))

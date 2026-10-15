@@ -15,8 +15,13 @@ func statLine(pid int, comm, state string, ppid int, utime, stime uint64, thread
 		pid, comm, state, ppid, utime, stime, threads, start)
 }
 
-func ioFile(read, write uint64) string {
-	return fmt.Sprintf("rchar: 1\nwchar: 1\nsyscr: 1\nsyscw: 1\nread_bytes: %d\nwrite_bytes: %d\ncancelled_write_bytes: 0\n", read, write)
+// ioStat renders a cgroup v2 io.stat with one line per {rbytes, wbytes}.
+func ioStat(devs ...[2]uint64) string {
+	var b strings.Builder
+	for i, d := range devs {
+		fmt.Fprintf(&b, "8:%d rbytes=%d wbytes=%d rios=1 wios=1 dbytes=0 dios=0\n", i, d[0], d[1])
+	}
+	return b.String()
 }
 
 const cid = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -30,16 +35,15 @@ func baseTree(t *testing.T) string {
 		"proc/1/stat":    statLine(1, "systemd", "S", 0, 100, 0, 1, 500),
 		"proc/1/status":  "Name:\tsystemd\nUid:\t0\t0\t0\t0\nVmRSS:\t   100 kB\n",
 		"proc/1/cmdline": "/sbin/init\x00splash\x00",
-		"proc/1/io":      ioFile(1000, 2000),
 		"proc/1/cgroup":  "0::/init.scope\n",
 		// kthreadd and a kernel worker
-		"proc/2/stat": statLine(2, "kthreadd", "S", 0, 0, 0, 1, 10),
-		"proc/3/stat": statLine(3, "kworker/0:1", "I", 2, 0, 0, 1, 11),
+		"proc/2/stat":   statLine(2, "kthreadd", "S", 0, 0, 0, 1, 10),
+		"proc/3/stat":   statLine(3, "kworker/0:1", "I", 2, 0, 0, 1, 11),
+		"proc/3/cgroup": "0::/\n", // the root cgroup: no group
 		// a container process owned by alice
 		"proc/42/stat":    statLine(42, "nginx: worker", "R", 1, 10, 10, 4, 900),
 		"proc/42/status":  "Name:\tnginx\nUid:\t1000\t1000\t1000\t1000\nVmRSS:\t   250 kB\n",
 		"proc/42/cmdline": "nginx: worker process\x00",
-		"proc/42/io":      ioFile(0, 0),
 		"proc/42/cgroup":  "0::/system.slice/docker-" + cid + ".scope\n",
 		"proc/self/":      "", // non-numeric entries are skipped
 	})
@@ -82,7 +86,6 @@ func TestProcessesFirstCallTakesTwoReadings(t *testing.T) {
 	c.between = func() {
 		write(t, root, map[string]string{
 			"proc/1/stat":  statLine(1, "systemd", "S", 0, 150, 0, 1, 500), // +50 ticks in 1 s = 50 %
-			"proc/1/io":    ioFile(1000, 6000),                             // +4000 B/s written
 			"proc/42/stat": statLine(42, "nginx: worker", "R", 1, 110, 110, 4, 900),
 		})
 	}
@@ -100,9 +103,6 @@ func TestProcessesFirstCallTakesTwoReadings(t *testing.T) {
 	init := got[1]
 	if init.CPUPct == nil || *init.CPUPct != 50 {
 		t.Fatalf("pid 1 cpu = %v", init.CPUPct)
-	}
-	if init.WriteBps == nil || *init.WriteBps != 4000 || init.ReadBps == nil || *init.ReadBps != 0 {
-		t.Fatalf("pid 1 io = %v/%v", init.ReadBps, init.WriteBps)
 	}
 	if init.User != "root" || init.Cmdline != "/sbin/init splash" || init.RSS != 100*1024 || init.MemPct != 10 {
 		t.Fatalf("pid 1 = %+v", init)
@@ -177,8 +177,8 @@ func TestProcessesPIDReuse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p := byPID(resp.Processes)[42]; p.CPUPct != nil || p.WriteBps != nil {
-		t.Fatalf("reused pid inherited rates: %+v", p)
+	if p := byPID(resp.Processes)[42]; p.CPUPct != nil {
+		t.Fatalf("reused pid inherited its cpu: %+v", p)
 	}
 }
 
@@ -195,30 +195,214 @@ func TestProcessesVanishedPID(t *testing.T) {
 	}
 }
 
-func TestProcessesUnreadableIO(t *testing.T) {
+func byGroup(list []command.ProcessGroup) map[string]command.ProcessGroup {
+	m := map[string]command.ProcessGroup{}
+	for _, g := range list {
+		m[g.ID] = g
+	}
+	return m
+}
+
+const (
+	scopeID = "/system.slice/docker-" + cid + ".scope"
+	pgID    = "/system.slice/postgresql.service"
+)
+
+// groupTree is baseTree plus a service with two processes and two devices,
+// a second container process in a sub-cgroup of the container, a process
+// with only cgroup v1 lines and one whose cgroup path climbs out with "..".
+func groupTree(t *testing.T) string {
 	root := baseTree(t)
-	removeAll(t, root, "proc/42/io") // stands in for EACCES: the reader treats both alike
+	write(t, root, map[string]string{
+		"proc/43/stat":   statLine(43, "nginx: master", "S", 1, 0, 0, 1, 800),
+		"proc/43/cgroup": "0::" + scopeID + "/sub\n",
+		"proc/50/stat":   statLine(50, "postgres", "S", 1, 0, 0, 1, 600),
+		"proc/50/cgroup": "0::" + pgID + "\n",
+		"proc/51/stat":   statLine(51, "postgres", "S", 50, 0, 0, 1, 601),
+		"proc/51/cgroup": "0::" + pgID + " (deleted)\n",
+		"proc/60/stat":   statLine(60, "old", "S", 1, 0, 0, 1, 700),
+		"proc/60/cgroup": "12:memory:/user.slice\n4:cpu,cpuacct:/user.slice\n",
+		"proc/61/stat":   statLine(61, "odd", "S", 1, 0, 0, 1, 701),
+		"proc/61/cgroup": "0::/system.slice/../../etc\n",
+
+		"sys/fs/cgroup" + pgID + "/io.stat":        ioStat([2]uint64{1000, 1000}, [2]uint64{0, 5000}),
+		"sys/fs/cgroup" + scopeID + "/io.stat":     ioStat([2]uint64{100, 200}),
+		"sys/fs/cgroup" + scopeID + "/sub/io.stat": ioStat([2]uint64{9, 9}), // counted in the scope's own
+		"sys/fs/cgroup/etc/io.stat":                ioStat([2]uint64{1, 1}),
+		"sys/fs/cgroup/user.slice/io.stat":         ioStat([2]uint64{1, 1}),
+		"sys/fs/cgroup/init.scope/":                "", // no io.stat: rates unknown
+	})
+	return root
+}
+
+func TestProcessesGroups(t *testing.T) {
+	root := groupTree(t)
 	c := &fakeClock{t: time.Unix(1700001000, 0)}
-	resp, err := newTestProcesses(root, c).List()
+	c.between = func() {
+		write(t, root, map[string]string{
+			"sys/fs/cgroup" + pgID + "/io.stat":    ioStat([2]uint64{1500, 3000}, [2]uint64{0, 7000}), // +500 read, +4000 written in 1 s
+			"sys/fs/cgroup" + scopeID + "/io.stat": ioStat([2]uint64{100, 1200}),
+		})
+	}
+	p := newTestProcesses(root, c)
+	reads := map[string]int{}
+	p.ioStatRead = func(id string) { reads[id]++ }
+	resp, err := p.List()
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := byPID(resp.Processes)[42]
-	if p.ReadBps != nil || p.WriteBps != nil || p.CPUPct == nil {
-		t.Fatalf("pid 42 = %+v", p)
+	if resp.Total != 9 || len(resp.Groups) != 3 {
+		t.Fatalf("total %d, groups %+v", resp.Total, resp.Groups)
+	}
+	g := byGroup(resp.Groups)
+	pg := g[pgID]
+	if pg.Kind != "service" || pg.Label != "postgresql.service" || pg.ContainerID != "" || pg.Processes != 2 {
+		t.Fatalf("service group = %+v", pg)
+	}
+	if pg.ReadBps == nil || *pg.ReadBps != 500 || pg.WriteBps == nil || *pg.WriteBps != 4000 {
+		t.Fatalf("service rates = %v/%v", pg.ReadBps, pg.WriteBps)
+	}
+	ct := g[scopeID]
+	if ct.Kind != "container" || ct.Label != "" || ct.ContainerID != cid || ct.Processes != 2 {
+		t.Fatalf("container group = %+v", ct)
+	}
+	if ct.ReadBps == nil || *ct.ReadBps != 0 || ct.WriteBps == nil || *ct.WriteBps != 1000 {
+		t.Fatalf("container rates = %v/%v", ct.ReadBps, ct.WriteBps)
+	}
+	in := g["/init.scope"]
+	if in.Kind != "scope" || in.Label != "init.scope" || in.Processes != 1 || in.ReadBps != nil || in.WriteBps != nil {
+		t.Fatalf("group without io.stat = %+v", in)
+	}
+	// Busiest writer first; unknown rates last.
+	if resp.Groups[0].ID != pgID || resp.Groups[1].ID != scopeID || resp.Groups[2].ID != "/init.scope" {
+		t.Fatalf("group order = %+v", resp.Groups)
+	}
+	procs := byPID(resp.Processes)
+	for pid, want := range map[int]string{1: "/init.scope", 2: "", 3: "", 42: scopeID, 43: scopeID, 50: pgID, 51: pgID, 60: "", 61: ""} {
+		if got := procs[pid].Group; got != want {
+			t.Errorf("pid %d group = %q, want %q", pid, got, want)
+		}
+	}
+	// io.stat is read once per group and reading, never per process.
+	for _, id := range []string{pgID, scopeID, "/init.scope"} {
+		if reads[id] != 2 {
+			t.Errorf("%s io.stat read %d times over two readings", id, reads[id])
+		}
+	}
+	if len(reads) != 3 {
+		t.Errorf("io.stat reads = %v", reads)
 	}
 }
 
-func TestProcessesCountersBackwards(t *testing.T) {
-	root := baseTree(t)
+func TestProcessesGroupCountersBackwards(t *testing.T) {
+	root := groupTree(t)
 	c := &fakeClock{t: time.Unix(1700001000, 0)}
-	c.between = func() { write(t, root, map[string]string{"proc/1/io": ioFile(10, 10)}) }
+	c.between = func() {
+		write(t, root, map[string]string{"sys/fs/cgroup" + pgID + "/io.stat": ioStat([2]uint64{10, 10})})
+		removeAll(t, root, "sys/fs/cgroup"+scopeID+"/io.stat")
+	}
 	resp, err := newTestProcesses(root, c).List()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p := byPID(resp.Processes)[1]; p.ReadBps != nil || p.WriteBps != nil {
-		t.Fatalf("negative rate not dropped: %+v", p)
+	g := byGroup(resp.Groups)
+	if pg := g[pgID]; pg.ReadBps != nil || pg.WriteBps != nil || pg.Processes != 2 {
+		t.Fatalf("a counter that went down gave a rate: %+v", pg)
+	}
+	if ct := g[scopeID]; ct.ReadBps != nil || ct.WriteBps != nil || ct.Processes != 2 {
+		t.Fatalf("an io.stat gone in the second reading gave a rate: %+v", ct)
+	}
+}
+
+func TestProcessesGroupNewInSecondReading(t *testing.T) {
+	root := groupTree(t)
+	c := &fakeClock{t: time.Unix(1700001000, 0)}
+	c.between = func() {
+		write(t, root, map[string]string{
+			"proc/70/stat":   statLine(70, "new", "S", 1, 0, 0, 1, 990),
+			"proc/70/cgroup": "0::/system.slice/new.service\n",
+			"sys/fs/cgroup/system.slice/new.service/io.stat": ioStat([2]uint64{5, 5}),
+		})
+	}
+	resp, err := newTestProcesses(root, c).List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, ok := byGroup(resp.Groups)["/system.slice/new.service"]
+	if !ok || g.Processes != 1 || g.ReadBps != nil || g.WriteBps != nil {
+		t.Fatalf("new group = %+v (listed %v)", g, ok)
+	}
+}
+
+func TestSortGroups(t *testing.T) {
+	f := func(v float64) *float64 { return &v }
+	groups := []command.ProcessGroup{
+		{ID: "/nil-b"},
+		{ID: "/w100-r0", WriteBps: f(100), ReadBps: f(0)},
+		{ID: "/w100-r50-b", WriteBps: f(100), ReadBps: f(50)},
+		{ID: "/nil-a"},
+		{ID: "/w500", WriteBps: f(500), ReadBps: f(0)},
+		{ID: "/w100-r50-a", WriteBps: f(100), ReadBps: f(50)},
+		{ID: "/w0-r9", WriteBps: f(0), ReadBps: f(9)},
+	}
+	sortGroups(groups)
+	var got []string
+	for _, g := range groups {
+		got = append(got, g.ID)
+	}
+	want := "/w500 /w100-r50-a /w100-r50-b /w100-r0 /w0-r9 /nil-a /nil-b"
+	if strings.Join(got, " ") != want {
+		t.Fatalf("order = %v, want %s", got, want)
+	}
+}
+
+func TestGroupFromCgroup(t *testing.T) {
+	for in, want := range map[string][2]string{
+		"0::" + scopeID + "\n":                             {scopeID, cid},
+		"0::" + scopeID + "/sub/deeper\n":                  {scopeID, cid},
+		"0::/docker/" + cid + "\n":                         {"/docker/" + cid, cid},
+		"0::/docker/" + cid + "/init\n":                    {"/docker/" + cid, cid},
+		"0::/system.slice/foo.service (deleted)\n":         {"/system.slice/foo.service", ""},
+		"1:name=systemd:/init.scope\n0::/init.scope\n":     {"/init.scope", ""},
+		"0::/system.slice//x.service/\n":                   {"/system.slice/x.service", ""},
+		"0::/user.slice/user-1000.slice/session-2.scope\n": {"/user.slice/user-1000.slice/session-2.scope", ""},
+		"0::/\n":                          {"", ""},
+		"0::\n":                           {"", ""},
+		"12:memory:/docker/" + cid + "\n": {"", ""},
+		"0::/system.slice/../../etc\n":    {"", ""},
+		"0::/a/..\n":                      {"", ""},
+		"0::system.slice/x.service\n":     {"", ""},
+	} {
+		id, c := groupFromCgroup([]byte(in))
+		if id != want[0] || c != want[1] {
+			t.Errorf("%q: got %q %q, want %q %q", in, id, c, want[0], want[1])
+		}
+	}
+}
+
+func TestGroupKind(t *testing.T) {
+	for id, want := range map[string][2]string{
+		"/system.slice/postgresql.service":            {"service", "postgresql.service"},
+		"/user.slice/user-1000.slice/session-3.scope": {"scope", "session-3.scope"},
+		"/user.slice/user-1000.slice":                 {"slice", "user-1000.slice"},
+		"/kubepods/burstable":                         {"other", "burstable"},
+	} {
+		if kind, label := groupKind(id, ""); kind != want[0] || label != want[1] {
+			t.Errorf("%s: got %s %q, want %s %q", id, kind, label, want[0], want[1])
+		}
+	}
+	if kind, label := groupKind(scopeID, cid); kind != "container" || label != "" {
+		t.Errorf("container: got %s %q", kind, label)
+	}
+}
+
+func TestParseIOStat(t *testing.T) {
+	r, w := parseIOStat([]byte("8:0 rbytes=10 wbytes=20 rios=1 wios=2 dbytes=3 dios=4\n259:0 rbytes=5 wbytes=7 rios=1 wios=1 dbytes=0 dios=0\n8:16 rbytes=x wbytes\n"))
+	if r != 15 || w != 27 {
+		t.Fatalf("summed %d/%d, want 15/27", r, w)
+	}
+	if r, w := parseIOStat(nil); r != 0 || w != 0 {
+		t.Fatalf("empty io.stat = %d/%d", r, w)
 	}
 }
 
@@ -229,6 +413,7 @@ func TestProcessesCapAndCmdline(t *testing.T) {
 	}
 	for pid := 10; pid < 10+command.MaxProcesses+5; pid++ {
 		files[fmt.Sprintf("proc/%d/stat", pid)] = statLine(pid, "p", "S", 1, uint64(pid), 0, 1, 1)
+		files[fmt.Sprintf("proc/%d/cgroup", pid)] = fmt.Sprintf("0::/system.slice/s%d.service\n", pid%3)
 	}
 	files["proc/10/cmdline"] = strings.Repeat("x", 2000)
 	root := tree(t, files)
@@ -238,6 +423,14 @@ func TestProcessesCapAndCmdline(t *testing.T) {
 	}
 	if resp.Total != command.MaxProcesses+5 || len(resp.Processes) != command.MaxProcesses {
 		t.Fatalf("total %d, listed %d", resp.Total, len(resp.Processes))
+	}
+	// Groups cover every process seen, the ones past the cap too.
+	inGroups := 0
+	for _, g := range resp.Groups {
+		inGroups += g.Processes
+	}
+	if len(resp.Groups) != 3 || inGroups != resp.Total {
+		t.Fatalf("%d groups hold %d processes, want 3 holding %d", len(resp.Groups), inGroups, resp.Total)
 	}
 	found, maxPID := false, 0
 	for _, p := range resp.Processes {

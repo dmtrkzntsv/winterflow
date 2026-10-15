@@ -32,8 +32,9 @@ const (
 	firstGap = time.Second
 )
 
-// Processes reads every process under root/proc. It keeps the previous
-// reading per pid, so a call's CPU % and disk rates cover the time since
+// Processes reads every process under root/proc, and the disk I/O of
+// their cgroups under root/sys/fs/cgroup. It keeps the previous reading per
+// pid and per group, so a call's CPU % and disk rates cover the time since
 // the call before. File reads only.
 type Processes struct {
 	root  string
@@ -41,11 +42,14 @@ type Processes struct {
 	now   func() time.Time
 	sleep func(time.Duration)
 
-	mu     sync.Mutex
-	prev   map[int]procCounters
-	prevAt time.Time
-	users  map[int]string
-	userAt time.Time // /etc/passwd mtime users was read at
+	mu         sync.Mutex
+	prev       map[int]procCounters
+	prevGroups map[string]groupCounters
+	prevAt     time.Time
+	users      map[int]string
+	userAt     time.Time // /etc/passwd mtime users was read at
+
+	ioStatRead func(id string) // test hook: a group's io.stat is read
 }
 
 // NewProcesses reads under root ("/" in production).
@@ -53,17 +57,34 @@ func NewProcesses(root string, ncpu int) *Processes {
 	return &Processes{root: root, ncpu: ncpu, now: time.Now, sleep: time.Sleep}
 }
 
-// procCounters is what rates are computed from. start (starttime ticks)
-// tells a reused pid apart.
+// procCounters is what the CPU rate is computed from. start (starttime
+// ticks) tells a reused pid apart.
 type procCounters struct {
 	start, ticks uint64
-	read, write  uint64
-	io           bool
 }
 
 type procReading struct {
 	p command.Process
 	c procCounters
+}
+
+// groupCounters is a group's io.stat bytes, summed over its devices. ok is
+// false when io.stat was not readable (the io controller is off there, or
+// the cgroup went away).
+type groupCounters struct {
+	read, write uint64
+	ok          bool
+}
+
+type groupReading struct {
+	containerID string
+	c           groupCounters
+}
+
+// reading is one pass over /proc and the cgroups its processes are in.
+type reading struct {
+	procs  map[int]procReading
+	groups map[string]groupReading
 }
 
 func (p *Processes) path(parts ...string) string {
@@ -97,25 +118,37 @@ func (p *Processes) List() (command.ProcessListResponse, error) {
 		}
 	}
 	dt := now.Sub(p.prevAt).Seconds()
-	out := make([]command.Process, 0, len(cur))
-	for pid, r := range cur {
+	out := make([]command.Process, 0, len(cur.procs))
+	members := make(map[string]int, len(cur.groups))
+	for pid, r := range cur.procs {
 		proc := r.p
-		if prev, ok := p.prev[pid]; ok && prev.start == r.c.start && dt > 0 {
-			if r.c.ticks >= prev.ticks {
-				v := float64(r.c.ticks-prev.ticks) / clkTck / dt * 100
-				proc.CPUPct = &v
-			}
-			if r.c.io && prev.io && r.c.read >= prev.read && r.c.write >= prev.write {
-				rd := float64(r.c.read-prev.read) / dt
-				wr := float64(r.c.write-prev.write) / dt
-				proc.ReadBps, proc.WriteBps = &rd, &wr
-			}
+		if prev, ok := p.prev[pid]; ok && prev.start == r.c.start && dt > 0 && r.c.ticks >= prev.ticks {
+			v := float64(r.c.ticks-prev.ticks) / clkTck / dt * 100
+			proc.CPUPct = &v
 		}
 		if memTotal > 0 {
 			proc.MemPct = float64(proc.RSS) / float64(memTotal) * 100
 		}
+		if proc.Group != "" {
+			members[proc.Group]++
+		}
 		out = append(out, proc)
 	}
+	groups := make([]command.ProcessGroup, 0, len(cur.groups))
+	for id, r := range cur.groups {
+		kind, label := groupKind(id, r.containerID)
+		g := command.ProcessGroup{
+			ID: id, Label: label, Kind: kind, ContainerID: r.containerID, Processes: members[id],
+		}
+		if prev, ok := p.prevGroups[id]; ok && prev.ok && r.c.ok && dt > 0 &&
+			r.c.read >= prev.read && r.c.write >= prev.write {
+			rd := float64(r.c.read-prev.read) / dt
+			wr := float64(r.c.write-prev.write) / dt
+			g.ReadBps, g.WriteBps = &rd, &wr
+		}
+		groups = append(groups, g)
+	}
+	sortGroups(groups)
 	p.remember(cur, now)
 	sort.Slice(out, func(i, j int) bool {
 		ci, cj := cpuOf(out[i]), cpuOf(out[j])
@@ -132,7 +165,7 @@ func (p *Processes) List() (command.ProcessListResponse, error) {
 		out = out[:command.MaxProcesses]
 	}
 	return command.ProcessListResponse{
-		SampledAt: now.UnixMilli(), NCPU: p.ncpu, MemTotal: memTotal, Total: total, Processes: out,
+		SampledAt: now.UnixMilli(), NCPU: p.ncpu, MemTotal: memTotal, Total: total, Processes: out, Groups: groups,
 	}, nil
 }
 
@@ -143,48 +176,96 @@ func cpuOf(p command.Process) float64 {
 	return *p.CPUPct
 }
 
-func (p *Processes) remember(r map[int]procReading, at time.Time) {
-	p.prev = make(map[int]procCounters, len(r))
-	for pid, x := range r {
+// sortGroups orders groups busiest writer first, then reader; unknown
+// rates sort below every known one, and the ID breaks ties.
+func sortGroups(groups []command.ProcessGroup) {
+	rate := func(v *float64) float64 {
+		if v == nil {
+			return -1
+		}
+		return *v
+	}
+	sort.Slice(groups, func(i, j int) bool {
+		if wi, wj := rate(groups[i].WriteBps), rate(groups[j].WriteBps); wi != wj {
+			return wi > wj
+		}
+		if ri, rj := rate(groups[i].ReadBps), rate(groups[j].ReadBps); ri != rj {
+			return ri > rj
+		}
+		return groups[i].ID < groups[j].ID
+	})
+}
+
+func (p *Processes) remember(r reading, at time.Time) {
+	p.prev = make(map[int]procCounters, len(r.procs))
+	for pid, x := range r.procs {
 		p.prev[pid] = x.c
+	}
+	p.prevGroups = make(map[string]groupCounters, len(r.groups))
+	for id, g := range r.groups {
+		p.prevGroups[id] = g.c
 	}
 	p.prevAt = at
 }
 
-// read takes one reading of every process. A pid that vanishes while it is
-// read is skipped.
-func (p *Processes) read() (map[int]procReading, error) {
+// read takes one reading of every process, then of each distinct group's
+// io.stat (once per group, not per process). A pid that vanishes while it
+// is read is skipped.
+func (p *Processes) read() (reading, error) {
 	stat, err := os.ReadFile(p.path("proc", "stat"))
 	if err != nil {
-		return nil, err
+		return reading{}, err
 	}
 	btime := parseBtime(stat)
 	entries, err := os.ReadDir(p.path("proc"))
 	if err != nil {
-		return nil, err
+		return reading{}, err
 	}
-	out := make(map[int]procReading, len(entries))
+	out := reading{procs: make(map[int]procReading, len(entries)), groups: map[string]groupReading{}}
 	for _, e := range entries {
 		pid, err := strconv.Atoi(e.Name())
 		if err != nil || pid <= 0 {
 			continue
 		}
-		if r, ok := p.readPID(pid, btime); ok {
-			out[pid] = r
+		r, cont, ok := p.readPID(pid, btime)
+		if !ok {
+			continue
+		}
+		out.procs[pid] = r
+		if id := r.p.Group; id != "" {
+			if _, seen := out.groups[id]; !seen {
+				out.groups[id] = groupReading{containerID: cont, c: p.readIOStat(id)}
+			}
 		}
 	}
 	return out, nil
 }
 
-func (p *Processes) readPID(pid int, btime int64) (procReading, bool) {
+// readIOStat reads a group's io.stat. id is a clean absolute cgroup path
+// (groupFromCgroup), so the file stays under root/sys/fs/cgroup.
+func (p *Processes) readIOStat(id string) groupCounters {
+	if p.ioStatRead != nil {
+		p.ioStatRead(id)
+	}
+	b, err := os.ReadFile(p.path("sys", "fs", "cgroup", id, "io.stat"))
+	if err != nil {
+		return groupCounters{}
+	}
+	r, w := parseIOStat(b)
+	return groupCounters{read: r, write: w, ok: true}
+}
+
+// readPID reads one process; groupCID is the container id of its group
+// (empty when the group is no container's).
+func (p *Processes) readPID(pid int, btime int64) (r procReading, groupCID string, ok bool) {
 	dir := strconv.Itoa(pid)
 	b, err := os.ReadFile(p.path("proc", dir, "stat"))
 	if err != nil {
-		return procReading{}, false
+		return procReading{}, "", false
 	}
 	s, err := parsePIDStat(b)
 	if err != nil {
-		return procReading{}, false
+		return procReading{}, "", false
 	}
 	proc := command.Process{
 		PID: pid, PPID: s.ppid, Name: s.comm, State: s.state, Threads: s.threads,
@@ -202,13 +283,11 @@ func (p *Processes) readPID(pid int, btime int64) (procReading, bool) {
 	if b, err := readHead(p.path("proc", dir, "cmdline"), cmdlineRead); err == nil {
 		proc.Cmdline = redactCmdline(b)
 	}
-	if b, err := os.ReadFile(p.path("proc", dir, "io")); err == nil {
-		c.read, c.write, c.io = parseIO(b)
-	}
 	if b, err := os.ReadFile(p.path("proc", dir, "cgroup")); err == nil {
 		proc.ContainerID = containerIDFromCgroup(b)
+		proc.Group, groupCID = groupFromCgroup(b)
 	}
-	return procReading{p: proc, c: c}, true
+	return procReading{p: proc, c: c}, groupCID, true
 }
 
 type pidStat struct {
@@ -273,29 +352,6 @@ func parseStatus(b []byte) (uid int, rss uint64) {
 		}
 	}
 	return uid, rss
-}
-
-// parseIO reads the bytes that reached storage (read_bytes, write_bytes).
-func parseIO(b []byte) (read, write uint64, ok bool) {
-	var seenR, seenW bool
-	sc := bufio.NewScanner(bytes.NewReader(b))
-	for sc.Scan() {
-		key, val, found := strings.Cut(sc.Text(), ":")
-		if !found {
-			continue
-		}
-		v, err := strconv.ParseUint(strings.TrimSpace(val), 10, 64)
-		if err != nil {
-			continue
-		}
-		switch key {
-		case "read_bytes":
-			read, seenR = v, true
-		case "write_bytes":
-			write, seenW = v, true
-		}
-	}
-	return read, write, seenR && seenW
 }
 
 // readHead reads at most n bytes of a file, so a huge argv is never read
@@ -659,6 +715,94 @@ func containerIDFromCgroup(b []byte) string {
 		return string(m[1])
 	}
 	return ""
+}
+
+var (
+	dockerScope = regexp.MustCompile(`^docker-([0-9a-f]{64})\.scope$`)
+	dockerID    = regexp.MustCompile(`^[0-9a-f]{64}$`)
+)
+
+// groupFromCgroup returns a process's group: its cgroup v2 path (the "0::"
+// line of /proc/<pid>/cgroup), or "" when it has none: the root cgroup
+// (kernel threads), a cgroup v1 host, or a path that is not absolute or
+// climbs with "..". A container process is grouped at its Docker scope
+// (docker-<id>.scope or docker/<id>), so sub-cgroups inside the container
+// add up under it; containerID is then the container's id.
+func groupFromCgroup(b []byte) (id, containerID string) {
+	var raw string
+	found := false
+	for _, line := range strings.Split(string(b), "\n") {
+		if v, ok := strings.CutPrefix(line, "0::"); ok {
+			raw, found = strings.TrimSuffix(v, " (deleted)"), true
+			break
+		}
+	}
+	if !found || !strings.HasPrefix(raw, "/") {
+		return "", ""
+	}
+	parts := strings.Split(raw, "/")
+	for _, el := range parts {
+		if el == ".." {
+			return "", ""
+		}
+	}
+	for i, el := range parts {
+		if m := dockerScope.FindStringSubmatch(el); m != nil {
+			return path.Clean(strings.Join(parts[:i+1], "/")), m[1]
+		}
+		if el == "docker" && i+1 < len(parts) && dockerID.MatchString(parts[i+1]) {
+			return path.Clean(strings.Join(parts[:i+2], "/")), parts[i+1]
+		}
+	}
+	if id = path.Clean(raw); id == "/" {
+		return "", ""
+	}
+	return id, ""
+}
+
+// groupKind names a group's kind and label (its leaf, empty for a
+// container, which the UI names by its app).
+func groupKind(id, containerID string) (kind, label string) {
+	if containerID != "" {
+		return "container", ""
+	}
+	label = path.Base(id)
+	switch {
+	case strings.HasSuffix(label, ".service"):
+		return "service", label
+	case strings.HasSuffix(label, ".scope"):
+		return "scope", label
+	case strings.HasSuffix(label, ".slice"):
+		return "slice", label
+	}
+	return "other", label
+}
+
+// parseIOStat sums rbytes and wbytes over a cgroup v2 io.stat's lines
+// ("MAJ:MIN rbytes=N wbytes=N rios=N ..."), one per device. An empty file
+// (no I/O yet) is 0/0.
+func parseIOStat(b []byte) (read, write uint64) {
+	sc := bufio.NewScanner(bytes.NewReader(b))
+	for sc.Scan() {
+		f := strings.Fields(sc.Text())
+		for _, kv := range f[min(1, len(f)):] {
+			k, v, ok := strings.Cut(kv, "=")
+			if !ok {
+				continue
+			}
+			n, err := strconv.ParseUint(v, 10, 64)
+			if err != nil {
+				continue
+			}
+			switch k {
+			case "rbytes":
+				read += n
+			case "wbytes":
+				write += n
+			}
+		}
+	}
+	return read, write
 }
 
 // loadUsers rereads /etc/passwd when its mtime changed.

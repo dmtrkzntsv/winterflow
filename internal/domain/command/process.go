@@ -8,18 +8,35 @@ const MaxProcesses = 2000
 // ProcessListRequest asks the agent for its host's processes.
 type ProcessListRequest struct{}
 
-// ProcessListResponse is one reading of the host's processes.
+// ProcessListResponse is one reading of the host's processes. Disk I/O is
+// per group (cgroup v2 io.stat, readable without privilege), not per
+// process.
 type ProcessListResponse struct {
 	SampledAt int64     `json:"sampled_at"` // unix ms
 	NCPU      int       `json:"ncpu"`
 	MemTotal  uint64    `json:"mem_total"` // bytes
 	Total     int       `json:"total"`     // processes seen; len(Processes) is at most MaxProcesses
 	Processes []Process `json:"processes"`
+	// Groups holds the group of every process seen, the ones past the cap
+	// too: busiest writer first, then reader, unknown rates last, then ID.
+	Groups []ProcessGroup `json:"groups"`
 }
 
-// Process is one process. The rates are nil when unknown: the process
-// started between the two readings, or /proc/<pid>/io is not readable to
-// the agent (it needs CAP_SYS_PTRACE for other users' processes).
+// ProcessGroup is one cgroup's disk I/O: a container, a systemd service or
+// a session scope. Rates are nil when unknown (first sight, counter reset).
+type ProcessGroup struct {
+	ID          string   `json:"id"`    // cgroup v2 path, e.g. /system.slice/postgresql.service
+	Label       string   `json:"label"` // leaf name; empty for containers (the UI names them by app)
+	Kind        string   `json:"kind"`  // container | service | scope | slice | other
+	ContainerID string   `json:"container_id,omitempty"`
+	AppID       string   `json:"app_id,omitempty"`
+	Processes   int      `json:"processes"` // processes seen in it
+	ReadBps     *float64 `json:"read_bps"`
+	WriteBps    *float64 `json:"write_bps"`
+}
+
+// Process is one process. CPUPct is nil when unknown: the process started
+// between the two readings.
 type Process struct {
 	PID         int      `json:"pid"`
 	PPID        int      `json:"ppid"`
@@ -33,8 +50,7 @@ type Process struct {
 	CPUPct      *float64 `json:"cpu_pct"` // per core, top-style: may exceed 100
 	RSS         uint64   `json:"rss"`     // bytes
 	MemPct      float64  `json:"mem_pct"`
-	ReadBps     *float64 `json:"read_bps"`
-	WriteBps    *float64 `json:"write_bps"`
+	Group       string   `json:"group,omitempty"` // its ProcessGroup's ID; empty when none
 	ContainerID string   `json:"container_id,omitempty"`
 	AppID       string   `json:"app_id,omitempty"`
 }

@@ -35,11 +35,12 @@ func (noProcesses) List(context.Context) (command.ProcessListResponse, error) {
 	return command.ProcessListResponse{}, errNoProcesses
 }
 
-// ProcessLister reads the processes and names each container's app from
-// the status reporter's last snapshot (no docker call of its own). At most
-// one read runs at a time: a /proc read can block for good on a hung
-// process (cmdline takes its mmap_lock), and the calls behind it wait for
-// that read instead of each starting a goroutine that would hang too.
+// ProcessLister reads the processes and names each container's app, on
+// processes and on disk I/O groups, from the status reporter's last
+// snapshot (no docker call of its own). At most one read runs at a time:
+// a /proc read can block for good on a hung process (cmdline takes its
+// mmap_lock), and the calls behind it wait for that read instead of each
+// starting a goroutine that would hang too.
 type ProcessLister struct {
 	src    ProcessSource
 	status *StatusSnapshot
@@ -80,6 +81,7 @@ func (l *ProcessLister) List(ctx context.Context) (command.ProcessListResponse, 
 	// Every waiter gets the same answer: copy the rows before naming apps.
 	resp := f.resp
 	resp.Processes = append([]command.Process(nil), f.resp.Processes...)
+	resp.Groups = append(make([]command.ProcessGroup, 0, len(f.resp.Groups)), f.resp.Groups...)
 	if l.status != nil {
 		if apps, ok := l.status.Latest(); ok {
 			owner := map[string]string{}
@@ -91,6 +93,11 @@ func (l *ProcessLister) List(ctx context.Context) (command.ProcessListResponse, 
 			for i := range resp.Processes {
 				if id := resp.Processes[i].ContainerID; id != "" {
 					resp.Processes[i].AppID = owner[id]
+				}
+			}
+			for i := range resp.Groups {
+				if id := resp.Groups[i].ContainerID; id != "" {
+					resp.Groups[i].AppID = owner[id]
 				}
 			}
 		}

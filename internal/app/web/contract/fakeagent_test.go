@@ -315,9 +315,12 @@ func defaultScript(typ command.Type) script {
 		}
 	case command.TypeProcessList:
 		return func(json.RawMessage) reply {
-			cpu := 1.5
+			cpu, rd, wr := 1.5, 0.0, 4096.0
 			return reply{Payload: command.ProcessListResponse{SampledAt: 1700000000000, NCPU: 4, MemTotal: 1 << 30, Total: 1,
-				Processes: []command.Process{{PID: 1, Name: "init", User: "root", State: "S", Threads: 1, CPUPct: &cpu, RSS: 1 << 20}}}}
+				Processes: []command.Process{{PID: 1, Name: "init", User: "root", State: "S", Threads: 1, CPUPct: &cpu, RSS: 1 << 20,
+					Group: "/init.scope"}},
+				Groups: []command.ProcessGroup{{ID: "/init.scope", Label: "init.scope", Kind: "scope", Processes: 1,
+					ReadBps: &rd, WriteBps: &wr}}}}
 		}
 	case command.TypeVolumeCreate:
 		return func(raw json.RawMessage) reply {

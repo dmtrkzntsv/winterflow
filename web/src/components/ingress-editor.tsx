@@ -100,6 +100,9 @@ export function AddressRows({
           >
             {targets.length > 0 || d.expose ? (
               <NativeSelect
+                // The row's port field while it sends to an expose entry
+                // (the Port input holds the id otherwise).
+                id={d.expose ? portId : undefined}
                 aria-label="Send to"
                 value={d.expose ?? ""}
                 {...invalidAttrs(portId, d.expose ? portError : undefined, "w-40 shrink-0 max-sm:h-10")}

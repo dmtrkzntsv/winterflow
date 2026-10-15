@@ -15,7 +15,7 @@ const EXPOSE: ExposedPort[] = [
   { id: "db:5432/tcp", container: "db", port: 5432, protocol: "tcp", host_port: 20015, bind: "0.0.0.0", pinned: false },
 ];
 
-function Harness({ ingress, expose = EXPOSE }: { ingress: AppIngress; expose?: ExposedPort[] }) {
+function Harness({ ingress, expose = EXPOSE, errors }: { ingress: AppIngress; expose?: ExposedPort[]; errors?: Record<string, string> }) {
   const [state, setState] = useState<AppEditorState>({
     config: { id: "app-1", name: "x", files: [], variables: [], ingress },
     files: {},
@@ -25,7 +25,7 @@ function Harness({ ingress, expose = EXPOSE }: { ingress: AppIngress; expose?: E
   });
   return (
     <MemoryRouter>
-      <AddressRows state={state} onChange={setState} appId="app-1" serverId="srv-1" registrations={[]} onRefresh={() => {}} />
+      <AddressRows state={state} onChange={setState} appId="app-1" serverId="srv-1" registrations={[]} onRefresh={() => {}} errors={errors} />
       <output data-testid="ingress">{JSON.stringify(state.config.ingress)}</output>
     </MemoryRouter>
   );
@@ -53,6 +53,22 @@ describe("address rows: expose targets", () => {
     expect(domains()[0].expose).toBeUndefined();
     await user.type(screen.getByLabelText("Port"), "8088");
     expect(domains()[0]).toMatchObject({ upstream_port: 8088 });
+  });
+
+  it("is the row's port field while it sends to an entry: its id names the message", () => {
+    const message = "Pick one of the app's web ports.";
+    render(<Harness ingress={{ domains: [{ id: "d1", domain: "a.example.com", expose: "db:5432", upstream_port: "", ssl: true }], redirects: [] }} errors={{ "port:d1": message }} />);
+    const select = screen.getByRole("combobox", { name: "Send to" });
+    expect(select).toHaveAttribute("id", "port-d1");
+    expect(select).toHaveAttribute("aria-invalid", "true");
+    expect(select).toHaveAccessibleDescription(message);
+    expect(document.querySelectorAll("#port-d1")).toHaveLength(1);
+  });
+
+  it("leaves the id to the Port input while the row has a port", () => {
+    render(<Harness ingress={{ domains: [{ id: "d1", domain: "a.example.com", upstream_port: 8088, ssl: true }], redirects: [] }} />);
+    expect(screen.getByRole("combobox", { name: "Send to" })).not.toHaveAttribute("id");
+    expect(screen.getByLabelText("Port")).toHaveAttribute("id", "port-d1");
   });
 
   it("keeps the port field alone for an app without expose entries", () => {

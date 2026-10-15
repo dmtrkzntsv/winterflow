@@ -45,7 +45,14 @@ x-winterflow:
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	t.Cleanup(func() { _, _ = repo.DeleteApp(context.Background(), app.AppID, false, false) })
+	t.Cleanup(func() {
+		// Its own bound: the test's ctx may be spent by now.
+		cctx, ccancel := context.WithTimeout(context.Background(), time.Minute)
+		defer ccancel()
+		if _, err := repo.DeleteApp(cctx, app.AppID, false, false); err != nil {
+			t.Errorf("cleanup: %v", err)
+		}
+	})
 	if _, err := repo.SaveApp(ctx, app); err != nil {
 		t.Fatalf("SaveApp: %v", err)
 	}
@@ -55,11 +62,16 @@ x-winterflow:
 	}
 	var code int
 	for i := 0; i < 20 && code != http.StatusOK; i++ {
-		if resp, err := http.Get("http://127.0.0.1:" + strconv.Itoa(host) + "/"); err == nil {
+		if i > 0 {
+			time.Sleep(250 * time.Millisecond) // after an error and a non-200 alike
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://127.0.0.1:"+strconv.Itoa(host)+"/", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp, err := http.DefaultClient.Do(req); err == nil {
 			code = resp.StatusCode
 			resp.Body.Close()
-		} else {
-			time.Sleep(250 * time.Millisecond)
 		}
 	}
 	if code != http.StatusOK {

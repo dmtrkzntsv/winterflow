@@ -182,9 +182,11 @@ export default function TemplatePage() {
 
   const dirty = baseline === null || !sameDraft(draft, baseline);
   // The Detected panel: a saved version's own reading until the draft
-  // changes, else the API's reading of the draft (inspect-template).
+  // changes, else the API's reading of the draft (inspect-template). An
+  // existing template's placeholder draft (while it loads, or when it
+  // can't be read) is never read.
   const body = useMemo(() => bodyFromDraft(draft), [draft]);
-  const reading = dirty || !view;
+  const reading = !loadError && (dirty || (!view && !templateId));
   const inspected = useTemplateInspection(api, body, reading);
   const detectedPanel = reading ? (
     <TemplateDetected

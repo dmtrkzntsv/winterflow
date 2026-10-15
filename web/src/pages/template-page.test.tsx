@@ -416,6 +416,45 @@ describe("TemplatePage", () => {
     expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
   });
 
+  it("reads no draft back while a saved template loads, nor once it is read and clean", async () => {
+    const api = fakeAPI({
+      "/api/v1/template/get-template": view(3),
+      "/api/v1/template/inspect-template": inspected,
+      "/api/v1/instance/get-instances": { instances: [] },
+    });
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const inner = api.fetchMock;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (new URL(url, "http://x").pathname === "/api/v1/template/get-template") await gate;
+        return inner(url, init);
+      }),
+    );
+    renderPage("/templates/t1");
+    const inspectCalls = () => api.calls.filter((c) => c.path === "/api/v1/template/inspect-template");
+    // Past the inspection's 500 ms delay: the placeholder draft is not read.
+    await act(() => new Promise((r) => setTimeout(r, 700)));
+    expect(inspectCalls()).toEqual([]);
+    release();
+    await screen.findByLabelText("Summary");
+    await act(() => new Promise((r) => setTimeout(r, 700)));
+    expect(inspectCalls()).toEqual([]);
+  });
+
+  it("reads no draft back for a template that can't be read", async () => {
+    const api = fakeAPI({
+      "/api/v1/template/get-template": new ApiError("template not found", 404),
+      "/api/v1/template/inspect-template": inspected,
+      "/api/v1/instance/get-instances": { instances: [] },
+    });
+    renderPage("/templates/t1");
+    expect(await screen.findByText("Template not found")).toBeInTheDocument();
+    await act(() => new Promise((r) => setTimeout(r, 700)));
+    expect(api.calls.filter((c) => c.path === "/api/v1/template/inspect-template")).toEqual([]);
+  });
+
   it("shows Not found for another org's template, and retries other failures", async () => {
     fakeAPI({ "/api/v1/template/get-template": new ApiError("template not found", 404), "/api/v1/instance/get-instances": { instances: [] } });
     renderPage("/templates/t1");

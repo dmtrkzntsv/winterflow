@@ -115,14 +115,19 @@ func rate(prev, cur uint64, secs float64) *float64 {
 	return &r
 }
 
-// wholeDisk accepts physical whole disks: listed in /sys/block (partitions
-// are not) and not a loop/ram/dm/zram device. diskstats writes "/" in names
-// that sysfs spells "!" (cciss/c0d0).
+// wholeDisk accepts physical whole disks (isWholeDisk). diskstats writes
+// "/" in names that sysfs spells "!" (cciss/c0d0).
 func (h *Host) wholeDisk(name string) bool {
-	if virtualDisk(name) {
+	return isWholeDisk(h.root, strings.ReplaceAll(name, "/", "!"))
+}
+
+// isWholeDisk accepts a physical whole disk by its sysfs name: listed in
+// root/sys/block (partitions are not) and not a loop/ram/dm/zram/md device.
+func isWholeDisk(root, sysName string) bool {
+	if virtualDisk(sysName) {
 		return false
 	}
-	_, err := os.Stat(filepath.Join(h.root, "sys", "block", strings.ReplaceAll(name, "/", "!")))
+	_, err := os.Stat(filepath.Join(root, "sys", "block", sysName))
 	return err == nil
 }
 

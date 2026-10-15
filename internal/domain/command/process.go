@@ -9,8 +9,9 @@ const MaxProcesses = 2000
 type ProcessListRequest struct{}
 
 // ProcessListResponse is one reading of the host's processes. Disk I/O is
-// per group (cgroup v2 io.stat, readable without privilege), not per
-// process.
+// per group (cgroup v2 io.stat, readable without privilege, whole physical
+// disks only), not per process. A host without a cgroup v2 root has no
+// groups.
 type ProcessListResponse struct {
 	SampledAt int64     `json:"sampled_at"` // unix ms
 	NCPU      int       `json:"ncpu"`
@@ -18,7 +19,8 @@ type ProcessListResponse struct {
 	Total     int       `json:"total"`     // processes seen; len(Processes) is at most MaxProcesses
 	Processes []Process `json:"processes"`
 	// Groups holds the group of every process seen, the ones past the cap
-	// too: busiest writer first, then reader, unknown rates last, then ID.
+	// too: busiest writer first, then reader, unknown rates last; ties put
+	// containers first, then more processes, then the lower ID.
 	Groups []ProcessGroup `json:"groups"`
 }
 

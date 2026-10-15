@@ -15,11 +15,12 @@ func statLine(pid int, comm, state string, ppid int, utime, stime uint64, thread
 		pid, comm, state, ppid, utime, stime, threads, start)
 }
 
-// ioStat renders a cgroup v2 io.stat with one line per {rbytes, wbytes}.
+// ioStat renders a cgroup v2 io.stat with one line per {rbytes, wbytes},
+// on the whole disks sda (8:0) and sdb (8:16) of baseTree.
 func ioStat(devs ...[2]uint64) string {
 	var b strings.Builder
 	for i, d := range devs {
-		fmt.Fprintf(&b, "8:%d rbytes=%d wbytes=%d rios=1 wios=1 dbytes=0 dios=0\n", i, d[0], d[1])
+		fmt.Fprintf(&b, "8:%d rbytes=%d wbytes=%d rios=1 wios=1 dbytes=0 dios=0\n", i*16, d[0], d[1])
 	}
 	return b.String()
 }
@@ -27,10 +28,14 @@ func ioStat(devs ...[2]uint64) string {
 const cid = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
 func baseTree(t *testing.T) string {
-	return tree(t, map[string]string{
-		"proc/stat":    "cpu  1 2 3 4 5 6 7 8\nbtime 1700000000\n",
-		"proc/meminfo": "MemTotal: 1000 kB\nMemAvailable: 500 kB\n",
-		"etc/passwd":   "root:x:0:0:root:/root:/bin/sh\nalice:x:1000:1000::/home/alice:/bin/sh\n",
+	root := tree(t, map[string]string{
+		// a cgroup v2 host with two whole disks
+		"sys/fs/cgroup/cgroup.controllers": "cpuset cpu io memory pids\n",
+		"sys/block/sda/":                   "",
+		"sys/block/sdb/":                   "",
+		"proc/stat":                        "cpu  1 2 3 4 5 6 7 8\nbtime 1700000000\n",
+		"proc/meminfo":                     "MemTotal: 1000 kB\nMemAvailable: 500 kB\n",
+		"etc/passwd":                       "root:x:0:0:root:/root:/bin/sh\nalice:x:1000:1000::/home/alice:/bin/sh\n",
 		// systemd-like root process
 		"proc/1/stat":    statLine(1, "systemd", "S", 0, 100, 0, 1, 500),
 		"proc/1/status":  "Name:\tsystemd\nUid:\t0\t0\t0\t0\nVmRSS:\t   100 kB\n",
@@ -47,6 +52,11 @@ func baseTree(t *testing.T) string {
 		"proc/42/cgroup":  "0::/system.slice/docker-" + cid + ".scope\n",
 		"proc/self/":      "", // non-numeric entries are skipped
 	})
+	link(t, root, map[string]string{
+		"sys/dev/block/8:0":  "../../devices/pci0000:00/0000:00:17.0/ata1/host0/target0:0:0/0:0:0:0/block/sda",
+		"sys/dev/block/8:16": "../../devices/pci0000:00/0000:00:17.0/ata2/host1/target1:0:0/1:0:0:0/block/sdb",
+	})
+	return root
 }
 
 // fakeClock drives List: sleep advances the clock and runs between, which
@@ -344,13 +354,20 @@ func TestSortGroups(t *testing.T) {
 		{ID: "/w500", WriteBps: f(500), ReadBps: f(0)},
 		{ID: "/w100-r50-a", WriteBps: f(100), ReadBps: f(50)},
 		{ID: "/w0-r9", WriteBps: f(0), ReadBps: f(9)},
+		// equal rates: containers first, then more processes, then the id
+		{ID: "/z-ctr", Kind: "container", ContainerID: cid, WriteBps: f(0), ReadBps: f(0), Processes: 1},
+		{ID: "/a-svc-3", Kind: "service", WriteBps: f(0), ReadBps: f(0), Processes: 3},
+		{ID: "/b-svc-3", Kind: "service", WriteBps: f(0), ReadBps: f(0), Processes: 3},
+		{ID: "/c-svc-9", Kind: "service", WriteBps: f(0), ReadBps: f(0), Processes: 9},
+		{ID: "/nil-ctr", Kind: "container", ContainerID: cid},
+		{ID: "/nil-5", Kind: "scope", Processes: 5},
 	}
 	sortGroups(groups)
 	var got []string
 	for _, g := range groups {
 		got = append(got, g.ID)
 	}
-	want := "/w500 /w100-r50-a /w100-r50-b /w100-r0 /w0-r9 /nil-a /nil-b"
+	want := "/w500 /w100-r50-a /w100-r50-b /w100-r0 /w0-r9 /z-ctr /c-svc-9 /a-svc-3 /b-svc-3 /nil-ctr /nil-5 /nil-a /nil-b"
 	if strings.Join(got, " ") != want {
 		t.Fatalf("order = %v, want %s", got, want)
 	}
@@ -397,19 +414,138 @@ func TestGroupKind(t *testing.T) {
 }
 
 func TestParseIOStat(t *testing.T) {
-	r, w := parseIOStat([]byte("8:0 rbytes=10 wbytes=20 rios=1 wios=2 dbytes=3 dios=4\n259:0 rbytes=5 wbytes=7 rios=1 wios=1 dbytes=0 dios=0\n8:16 rbytes=x wbytes\n"))
+	all := func(string) bool { return true }
+	r, w := parseIOStat([]byte("8:0 rbytes=10 wbytes=20 rios=1 wios=2 dbytes=3 dios=4\n259:0 rbytes=5 wbytes=7 rios=1 wios=1 dbytes=0 dios=0\n8:16 rbytes=x wbytes\n"), all)
 	if r != 15 || w != 27 {
 		t.Fatalf("summed %d/%d, want 15/27", r, w)
 	}
-	if r, w := parseIOStat(nil); r != 0 || w != 0 {
+	if r, w := parseIOStat(nil, all); r != 0 || w != 0 {
 		t.Fatalf("empty io.stat = %d/%d", r, w)
+	}
+	var asked []string
+	only259 := func(dev string) bool { asked = append(asked, dev); return dev == "259:0" }
+	if r, w := parseIOStat([]byte("8:0 rbytes=10 wbytes=20\n259:0 rbytes=5 wbytes=7\n\n"), only259); r != 5 || w != 7 {
+		t.Fatalf("kept 259:0 only: %d/%d, want 5/7", r, w)
+	}
+	if strings.Join(asked, " ") != "8:0 259:0" {
+		t.Fatalf("devices asked = %v", asked)
+	}
+}
+
+// diskStat renders an io.stat line per device (MAJ:MIN -> {rbytes, wbytes}).
+func diskStat(devs map[string][2]uint64) string {
+	var b strings.Builder
+	for dev, d := range devs {
+		fmt.Fprintf(&b, "%s rbytes=%d wbytes=%d rios=1 wios=1 dbytes=0 dios=0\n", dev, d[0], d[1])
+	}
+	return b.String()
+}
+
+// A group's disk I/O counts whole physical disks only: zram swap, loop
+// files and device-mapper stacks (LVM, dm-crypt) on top of a disk are not
+// counted, as on the host Disk I/O chart.
+func TestProcessesGroupsCountOnlyWholeDisks(t *testing.T) {
+	root := baseTree(t)
+	write(t, root, map[string]string{
+		"sys/block/nvme0n1/": "", "sys/block/zram0/": "", "sys/block/loop0/": "", "sys/block/dm-0/": "",
+		"sys/fs/cgroup" + scopeID + "/io.stat": diskStat(map[string][2]uint64{
+			"259:0": {1000, 1000}, "251:0": {1000, 1000}, "7:0": {1000, 1000}, "253:0": {1000, 1000}, "259:1": {1000, 1000},
+		}),
+	})
+	link(t, root, map[string]string{
+		"sys/dev/block/259:0": "../../devices/pci0000:00/0000:00:1d.0/0000:02:00.0/nvme/nvme0/nvme0n1",
+		"sys/dev/block/259:1": "../../devices/pci0000:00/0000:00:1d.0/0000:02:00.0/nvme/nvme0/nvme0n1/nvme0n1p1",
+		"sys/dev/block/251:0": "../../devices/virtual/block/zram0",
+		"sys/dev/block/7:0":   "../../devices/virtual/block/loop0",
+		"sys/dev/block/253:0": "../../devices/virtual/block/dm-0",
+	})
+	grow := func(n uint64) {
+		write(t, root, map[string]string{"sys/fs/cgroup" + scopeID + "/io.stat": diskStat(map[string][2]uint64{
+			"259:0": {1000 + n, 1000 + 2*n}, "251:0": {9000 * n, 9000 * n}, "7:0": {7000 * n, 7000 * n},
+			"253:0": {5000 * n, 5000 * n}, "259:1": {3000 * n, 3000 * n},
+		})})
+	}
+	c := &fakeClock{t: time.Unix(1700001000, 0)}
+	c.between = func() { grow(100) }
+	p := newTestProcesses(root, c)
+	resp, err := p.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ct := byGroup(resp.Groups)[scopeID]
+	if ct.ReadBps == nil || *ct.ReadBps != 100 || ct.WriteBps == nil || *ct.WriteBps != 200 {
+		t.Fatalf("rates = %v/%v, want nvme0n1's 100/200", ct.ReadBps, ct.WriteBps)
+	}
+	// The verdict is kept per device: with the sysfs links gone the next
+	// reading still counts nvme0n1 and still skips the others.
+	removeAll(t, root, "sys/dev/block")
+	c.t = c.t.Add(time.Second)
+	grow(200)
+	resp, err = p.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ct = byGroup(resp.Groups)[scopeID]
+	if ct.ReadBps == nil || *ct.ReadBps != 100 || ct.WriteBps == nil || *ct.WriteBps != 200 {
+		t.Fatalf("cached rates = %v/%v, want 100/200", ct.ReadBps, ct.WriteBps)
+	}
+}
+
+// A device whose sysfs link cannot be read, or an io.stat key that is no
+// MAJ:MIN, is not counted.
+func TestProcessesGroupsUnknownDevice(t *testing.T) {
+	root := baseTree(t)
+	write(t, root, map[string]string{
+		"sys/fs/cgroup" + scopeID + "/io.stat": "8:32 rbytes=5 wbytes=5\n../../x rbytes=5 wbytes=5\n8:0 rbytes=1 wbytes=1\n",
+	})
+	c := &fakeClock{t: time.Unix(1700001000, 0)}
+	c.between = func() {
+		write(t, root, map[string]string{
+			"sys/fs/cgroup" + scopeID + "/io.stat": "8:32 rbytes=50 wbytes=50\n../../x rbytes=50 wbytes=50\n8:0 rbytes=2 wbytes=3\n",
+		})
+	}
+	resp, err := newTestProcesses(root, c).List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ct := byGroup(resp.Groups)[scopeID]
+	if ct.ReadBps == nil || *ct.ReadBps != 1 || ct.WriteBps == nil || *ct.WriteBps != 2 {
+		t.Fatalf("rates = %v/%v, want sda's 1/2", ct.ReadBps, ct.WriteBps)
+	}
+}
+
+// Without cgroup.controllers at the cgroup root (cgroup v1, or hybrid with
+// the unified tree under /sys/fs/cgroup/unified) the "0::" paths do not
+// name files under /sys/fs/cgroup: no groups at all.
+func TestProcessesHybridCgroupHasNoGroups(t *testing.T) {
+	root := groupTree(t)
+	removeAll(t, root, "sys/fs/cgroup/cgroup.controllers")
+	write(t, root, map[string]string{"proc/80/stat": statLine(80, "x", "S", 1, 0, 0, 1, 990), "proc/80/cgroup": "0::/system.slice/x.service\n"})
+	c := &fakeClock{t: time.Unix(1700001000, 0)}
+	p := newTestProcesses(root, c)
+	p.ioStatRead = func(id string) { t.Errorf("io.stat read for %s", id) }
+	resp, err := p.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Groups) != 0 {
+		t.Fatalf("groups = %+v", resp.Groups)
+	}
+	for _, proc := range resp.Processes {
+		if proc.Group != "" {
+			t.Errorf("pid %d group = %q", proc.PID, proc.Group)
+		}
+	}
+	if byPID(resp.Processes)[42].ContainerID != cid {
+		t.Fatal("container id lost")
 	}
 }
 
 func TestProcessesCapAndCmdline(t *testing.T) {
 	files := map[string]string{
-		"proc/stat":    "cpu  1 2 3 4 5 6 7 8\nbtime 1700000000\n",
-		"proc/meminfo": "MemTotal: 1000 kB\n",
+		"proc/stat":                        "cpu  1 2 3 4 5 6 7 8\nbtime 1700000000\n",
+		"proc/meminfo":                     "MemTotal: 1000 kB\n",
+		"sys/fs/cgroup/cgroup.controllers": "io\n",
 	}
 	for pid := 10; pid < 10+command.MaxProcesses+5; pid++ {
 		files[fmt.Sprintf("proc/%d/stat", pid)] = statLine(pid, "p", "S", 1, uint64(pid), 0, 1, 1)

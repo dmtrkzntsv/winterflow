@@ -48,13 +48,16 @@ type Processes struct {
 	prevAt     time.Time
 	users      map[int]string
 	userAt     time.Time // /etc/passwd mtime users was read at
+	// disks caches whether an io.stat device (MAJ:MIN) is a whole physical
+	// disk. Never pruned: it holds one entry per block device seen.
+	disks map[string]bool
 
 	ioStatRead func(id string) // test hook: a group's io.stat is read
 }
 
 // NewProcesses reads under root ("/" in production).
 func NewProcesses(root string, ncpu int) *Processes {
-	return &Processes{root: root, ncpu: ncpu, now: time.Now, sleep: time.Sleep}
+	return &Processes{root: root, ncpu: ncpu, now: time.Now, sleep: time.Sleep, disks: map[string]bool{}}
 }
 
 // procCounters is what the CPU rate is computed from. start (starttime
@@ -177,7 +180,8 @@ func cpuOf(p command.Process) float64 {
 }
 
 // sortGroups orders groups busiest writer first, then reader; unknown
-// rates sort below every known one, and the ID breaks ties.
+// rates sort below every known one. Ties put containers first, then the
+// group with more processes, then the lower ID.
 func sortGroups(groups []command.ProcessGroup) {
 	rate := func(v *float64) float64 {
 		if v == nil {
@@ -191,6 +195,12 @@ func sortGroups(groups []command.ProcessGroup) {
 		}
 		if ri, rj := rate(groups[i].ReadBps), rate(groups[j].ReadBps); ri != rj {
 			return ri > rj
+		}
+		if ci, cj := groups[i].ContainerID != "", groups[j].ContainerID != ""; ci != cj {
+			return ci
+		}
+		if groups[i].Processes != groups[j].Processes {
+			return groups[i].Processes > groups[j].Processes
 		}
 		return groups[i].ID < groups[j].ID
 	})
@@ -210,7 +220,8 @@ func (p *Processes) remember(r reading, at time.Time) {
 
 // read takes one reading of every process, then of each distinct group's
 // io.stat (once per group, not per process). A pid that vanishes while it
-// is read is skipped.
+// is read is skipped. Without a cgroup v2 root at sys/fs/cgroup there are
+// no groups.
 func (p *Processes) read() (reading, error) {
 	stat, err := os.ReadFile(p.path("proc", "stat"))
 	if err != nil {
@@ -221,13 +232,14 @@ func (p *Processes) read() (reading, error) {
 	if err != nil {
 		return reading{}, err
 	}
+	unified := p.unifiedCgroup()
 	out := reading{procs: make(map[int]procReading, len(entries)), groups: map[string]groupReading{}}
 	for _, e := range entries {
 		pid, err := strconv.Atoi(e.Name())
 		if err != nil || pid <= 0 {
 			continue
 		}
-		r, cont, ok := p.readPID(pid, btime)
+		r, cont, ok := p.readPID(pid, btime, unified)
 		if !ok {
 			continue
 		}
@@ -241,6 +253,14 @@ func (p *Processes) read() (reading, error) {
 	return out, nil
 }
 
+// unifiedCgroup says whether sys/fs/cgroup is a cgroup v2 root (it has
+// cgroup.controllers). On a cgroup v1 or hybrid host (the v2 tree mounted
+// at sys/fs/cgroup/unified) a "0::" path does not name a directory there.
+func (p *Processes) unifiedCgroup() bool {
+	_, err := os.Stat(p.path("sys", "fs", "cgroup", "cgroup.controllers"))
+	return err == nil
+}
+
 // readIOStat reads a group's io.stat. id is a clean absolute cgroup path
 // (groupFromCgroup), so the file stays under root/sys/fs/cgroup.
 func (p *Processes) readIOStat(id string) groupCounters {
@@ -251,13 +271,37 @@ func (p *Processes) readIOStat(id string) groupCounters {
 	if err != nil {
 		return groupCounters{}
 	}
-	r, w := parseIOStat(b)
+	r, w := parseIOStat(b, p.physicalDisk)
 	return groupCounters{read: r, write: w, ok: true}
 }
 
+// majMin is an io.stat device key.
+var majMin = regexp.MustCompile(`^[0-9]+:[0-9]+$`)
+
+// physicalDisk says whether an io.stat device (MAJ:MIN) is a whole
+// physical disk, by the host Disk I/O chart's rule (isWholeDisk), so zram
+// swap, loop files and device-mapper or md stacks over a disk are not
+// counted. sys/dev/block/<MAJ:MIN> links to the device's sysfs directory,
+// whose name is the kernel's. The verdict is cached per device.
+func (p *Processes) physicalDisk(dev string) bool {
+	if v, ok := p.disks[dev]; ok {
+		return v
+	}
+	if !majMin.MatchString(dev) {
+		return false
+	}
+	v := false
+	if target, err := os.Readlink(p.path("sys", "dev", "block", dev)); err == nil {
+		v = isWholeDisk(p.root, filepath.Base(target))
+	}
+	p.disks[dev] = v
+	return v
+}
+
 // readPID reads one process; groupCID is the container id of its group
-// (empty when the group is no container's).
-func (p *Processes) readPID(pid int, btime int64) (r procReading, groupCID string, ok bool) {
+// (empty when the group is no container's). Without unified (no cgroup v2
+// root) it has no group.
+func (p *Processes) readPID(pid int, btime int64, unified bool) (r procReading, groupCID string, ok bool) {
 	dir := strconv.Itoa(pid)
 	b, err := os.ReadFile(p.path("proc", dir, "stat"))
 	if err != nil {
@@ -285,7 +329,9 @@ func (p *Processes) readPID(pid int, btime int64) (r procReading, groupCID strin
 	}
 	if b, err := os.ReadFile(p.path("proc", dir, "cgroup")); err == nil {
 		proc.ContainerID = containerIDFromCgroup(b)
-		proc.Group, groupCID = groupFromCgroup(b)
+		if unified {
+			proc.Group, groupCID = groupFromCgroup(b)
+		}
 	}
 	return procReading{p: proc, c: c}, groupCID, true
 }
@@ -779,13 +825,16 @@ func groupKind(id, containerID string) (kind, label string) {
 }
 
 // parseIOStat sums rbytes and wbytes over a cgroup v2 io.stat's lines
-// ("MAJ:MIN rbytes=N wbytes=N rios=N ..."), one per device. An empty file
-// (no I/O yet) is 0/0.
-func parseIOStat(b []byte) (read, write uint64) {
+// ("MAJ:MIN rbytes=N wbytes=N rios=N ..."), one per device, counting the
+// devices keep accepts. An empty file (no I/O yet) is 0/0.
+func parseIOStat(b []byte, keep func(dev string) bool) (read, write uint64) {
 	sc := bufio.NewScanner(bytes.NewReader(b))
 	for sc.Scan() {
 		f := strings.Fields(sc.Text())
-		for _, kv := range f[min(1, len(f)):] {
+		if len(f) == 0 || !keep(f[0]) {
+			continue
+		}
+		for _, kv := range f[1:] {
 			k, v, ok := strings.Cut(kv, "=")
 			if !ok {
 				continue

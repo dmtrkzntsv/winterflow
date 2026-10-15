@@ -167,9 +167,10 @@ Supersedes every per-process disk I/O and `CAP_SYS_PTRACE` statement above.
 
 - **No `CAP_SYS_PTRACE`.** The unit goes back to `CAP_NET_BIND_SERVICE` only. The agent no longer reads `/proc/<pid>/io`, which needs a ptrace-mode access check for other users' processes.
 - **Disk I/O per cgroup.** Each process's group is its cgroup v2 path from `/proc/<pid>/cgroup` (the `0::` line). Container processes are grouped at their Docker scope (`docker-<id>.scope` or `docker/<id>`), so nested sub-cgroups add up under the container.
-  - Each group's `io.stat` (`<root>/sys/fs/cgroup/<path>/io.stat`, world-readable) is read **once per reading**. Its `rbytes`/`wbytes` are summed across devices.
+  - Each group's `io.stat` (`<root>/sys/fs/cgroup/<path>/io.stat`, world-readable) is read **once per reading**. Its `rbytes`/`wbytes` are summed over the **whole physical disks** only, by the rule the host Disk I/O chart uses (`isWholeDisk`: the device is in `/sys/block`, so not a partition, and is not loop/ram/dm/zram/md/nbd/sr). Each line's `MAJ:MIN` is resolved to the kernel name through the `<root>/sys/dev/block/<MAJ:MIN>` symlink once; the reader caches the verdict per device (never pruned; one entry per block device). zram swap, loop files and dm/md stacks (LVM, dm-crypt, RAID) are therefore not counted, so swapping out is not an app's disk write and a stack is not counted twice.
   - Rates are computed against the previous reading of the same group, under the same rules as CPU: a counter that goes down or a group missing from either reading gives `null`.
   - Processes in the root cgroup (kernel threads) and cgroup v1 hosts have no group.
+  - Each reading first checks for `<root>/sys/fs/cgroup/cgroup.controllers` (one stat). Without it (cgroup v1, or a hybrid host whose unified tree is mounted at `/sys/fs/cgroup/unified`) there are no groups and no process has a `group`.
 - **Payload.**
   - `Process` loses `read_bps`/`write_bps` and gains `group` (the group id, omitted when there is none).
   - `ProcessListResponse` gains `groups`: `{id, label, kind, container_id?, app_id?, processes, read_bps, write_bps}`, covering every process seen (before the 2000 cap).
@@ -177,7 +178,7 @@ Supersedes every per-process disk I/O and `CAP_SYS_PTRACE` statement above.
   - `label` is the cgroup leaf name (`postgresql.service`, `session-3.scope`). It is empty for containers, which the UI names by app, or else by the short container id.
   - The agent fills each group's `app_id` from the status snapshot, as it does for processes.
 - **UI.**
-  - A "Disk by app or service" list sits above the process table: read/s, write/s and process count per group, busiest writers first. It shows the top 8, with "Show all".
+  - A "Disk by app or service" list sits above the process table: read/s, write/s and process count per group, busiest writers first, then busiest readers, unknown rates last; ties put containers first, then more processes, then the id. It shows the top 8, with "Show all".
   - Clicking a group filters the table to it, with a removable chip.
   - The table drops Read/s and Write/s and gains a Group column. The text filter matches the group name too.
   - On a phone the table shows Process · CPU · Memory, and Group moves into the details.

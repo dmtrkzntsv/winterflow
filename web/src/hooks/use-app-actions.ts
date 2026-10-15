@@ -41,9 +41,9 @@ export function useDeleteApp(appId: string, onGone?: () => void): (choice: Delet
 }
 
 // useSaveAsTemplate opens a new template's editor prefilled from what the
-// app's editor holds (its files, its variables as parameters, its hosts and
-// backup settings); nothing is saved until the template is. busy while the
-// app is read.
+// app's editor holds (its files, name, icon and colour; its variable
+// values, hostnames and backups stay with the app); nothing is saved until
+// the template is. busy while the app is read.
 export function useSaveAsTemplate(appId: string, name: string): { run: () => Promise<void>; busy: boolean } {
   const { getApp } = useApps();
   const navigate = useNavigate();

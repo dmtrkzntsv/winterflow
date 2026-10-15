@@ -20,7 +20,7 @@ export type App = {
   createdAt: string;
   domains?: AppDomain[];
   // templateId is set while a template instance manages the app (its
-  // Configuration is then the instance's parameters).
+  // Configuration is then the instance's variables).
   templateId?: string;
 };
 

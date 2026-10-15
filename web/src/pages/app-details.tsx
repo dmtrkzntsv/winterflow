@@ -381,7 +381,7 @@ export default function AppDetailsPage() {
 }
 
 // ConfigurationTab is the app's editor, or for an app a template manages
-// its instance's parameters (never the plain editor, whose save would be
+// its instance's variables (never the plain editor, whose save would be
 // refused). onOpenHistory puts a History button in either panel's bar;
 // onUpgrade is the instance panel's "A newer version is available".
 function ConfigurationTab({

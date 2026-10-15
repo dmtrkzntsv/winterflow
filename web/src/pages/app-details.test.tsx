@@ -893,7 +893,7 @@ describe("AppDetailsPage of a template instance", () => {
     ]);
   });
 
-  it("asks before another tab drops unsaved parameter values", async () => {
+  it("asks before another tab drops unsaved variable values", async () => {
     const user = userEvent.setup();
     instanceAPI();
     renderPage("/app/a1?tab=configuration", {}, managed);

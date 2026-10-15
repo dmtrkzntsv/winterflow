@@ -9443,9 +9443,10 @@ components:
         backups:
           additionalProperties:
             $ref: '#/components/schemas/BackupChoice'
-          description: Backup settings by name. Accepted only while the instance is
-            pending (send them all again); afterwards change backups in the app's
-            Backups tab.
+          description: 'Backup settings by name. Accepted only while the instance
+            is pending: a sent list replaces the stored settings (send them all),
+            none sends the stored ones (the create''s) again. Afterwards change backups
+            in the app''s Backups tab.'
           type: object
         hosts:
           description: 'Present: the instance''s hostnames from now on (an empty list
@@ -9492,8 +9493,9 @@ components:
         backups:
           additionalProperties:
             $ref: '#/components/schemas/BackupChoice'
-          description: Backup settings by name. Accepted only while the instance is
-            pending; backups the revision adds start off.
+          description: 'Backup settings by name. Accepted only while the instance
+            is pending: a sent list replaces the stored settings, none sends the stored
+            ones (the create''s) again; backups the revision adds start off.'
           type: object
         hosts:
           description: 'Present: the instance''s hostnames from now on; absent: kept

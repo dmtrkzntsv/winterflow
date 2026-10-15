@@ -16,7 +16,7 @@ type UpdateInstanceRequest struct {
 	Values   map[string]string                `json:"values,omitempty" description:"New plain values, merged over the stored ones; an empty value clears one (the compose file's own value stands). A value may not contain $."`
 	Secrets  map[string]string                `json:"secrets,omitempty" description:"New secret values; a secret left out keeps its value (a pending instance holds none: send every required secret again)."`
 	Hosts    *[]model.InstanceHost            `json:"hosts,omitempty" description:"Present: the instance's hostnames from now on (an empty list removes them); absent: kept."`
-	Backups  map[string]template.BackupChoice `json:"backups,omitempty" description:"Backup settings by name. Accepted only while the instance is pending (send them all again); afterwards change backups in the app's Backups tab."`
+	Backups  map[string]template.BackupChoice `json:"backups,omitempty" description:"Backup settings by name. Accepted only while the instance is pending: a sent list replaces the stored settings (send them all), none sends the stored ones (the create's) again. Afterwards change backups in the app's Backups tab."`
 	Wait     bool                             `json:"wait,omitempty"`
 }
 
@@ -28,7 +28,7 @@ type UpgradeInstanceRequest struct {
 	Values   map[string]string                `json:"values,omitempty" description:"Values for variables the revision adds or changes; a value may not contain $."`
 	Secrets  map[string]string                `json:"secrets,omitempty" description:"Secret values for the revision; a secret left out keeps its value (a pending instance holds none: send every required secret again)."`
 	Hosts    *[]model.InstanceHost            `json:"hosts,omitempty" description:"Present: the instance's hostnames from now on; absent: kept (each must still be an http expose entry of the revision)."`
-	Backups  map[string]template.BackupChoice `json:"backups,omitempty" description:"Backup settings by name. Accepted only while the instance is pending; backups the revision adds start off."`
+	Backups  map[string]template.BackupChoice `json:"backups,omitempty" description:"Backup settings by name. Accepted only while the instance is pending: a sent list replaces the stored settings, none sends the stored ones (the create's) again; backups the revision adds start off."`
 	Wait     bool                             `json:"wait,omitempty"`
 }
 

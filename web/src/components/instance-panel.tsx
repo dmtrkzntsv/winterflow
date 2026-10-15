@@ -8,10 +8,10 @@ import { CodeEditor } from "@/components/code-editor";
 import { ConfigBar } from "@/components/config-bar";
 import { EditorSection } from "@/components/editor-section";
 import { InlineError } from "@/components/inline-error";
-import { ParameterFields } from "@/components/parameter-fields";
+import { VariableFields } from "@/components/variable-fields";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
 import { focusFirstInvalid } from "@/lib/field-errors";
-import { fieldErrors, splitValues } from "@/lib/template-params";
+import { splitValues, variableErrors } from "@/lib/template-values";
 import { sealSecrets, type InstanceView, type TemplateView } from "@/lib/templates";
 import { templatePath } from "@/lib/routes";
 
@@ -19,16 +19,18 @@ import { templatePath } from "@/lib/routes";
 // instance holds (secrets start blank: blank keeps them).
 function storedValues(current: TemplateView, instance: InstanceView): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const p of current.body.parameters ?? []) if (!p.secret) out[p.name] = instance.parameters?.[p.name] ?? "";
+  for (const v of current.detected.variables ?? []) if (!v.encrypted) out[v.name] = instance.values?.[v.name] ?? "";
   return out;
 }
 
 // InstancePanel is the Configuration tab of an app a template manages: the
-// template's files read-only, and in place of the editor a Parameters form
-// whose Save re-renders and redeploys the app. A secret keeps its value
-// unless a new one is typed; a pending instance (never created) holds none,
-// so every required secret is asked for again. When the template has a
-// newer version, an Update opens the page's update dialog.
+// template's files read-only, and in place of the editor the form over the
+// variables its compose files declare, whose Save re-renders and redeploys
+// the app. A value cleared goes back to the compose file's own. A secret
+// keeps its value unless a new one is typed; a pending instance (never
+// created) holds none, so every required secret is asked for again. When
+// the template has a newer version, an Update opens the page's update
+// dialog.
 export function InstancePanel({
   instance,
   current,
@@ -58,14 +60,15 @@ export function InstancePanel({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const root = useRef<HTMLDivElement>(null);
-  const params = current.body.parameters ?? [];
+  const vars = current.detected.variables ?? [];
+  const hosts = instance.hosts ?? [];
   const kept = instance.state === "created" ? Object.keys(instance.secrets ?? {}) : [];
-  const dirty = params.some((p) => (values[p.name] ?? "") !== (initial[p.name] ?? ""));
+  const dirty = vars.some((v) => (values[v.name] ?? "") !== (initial[v.name] ?? ""));
   useEffect(() => {
     onDirtyChange?.(dirty);
   }, [dirty, onDirtyChange]);
   useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
-  const refused = tried && Object.keys(fieldErrors(params, values, kept)).length > 0;
+  const refused = tried && Object.keys(variableErrors(vars, values, kept)).length > 0;
   const newer = onUpgrade !== undefined && latestRevision !== undefined && latestRevision > instance.revision;
   const note = (
     <>
@@ -79,28 +82,23 @@ export function InstancePanel({
 
   const save = async () => {
     setTried(true);
-    if (Object.keys(fieldErrors(params, values, kept)).length > 0) {
-      // ParameterFields marks each bad field once tried is set.
+    if (Object.keys(variableErrors(vars, values, kept)).length > 0) {
+      // VariableFields marks each bad field once tried is set.
       focusFirstInvalid(root.current);
       return;
     }
     setSaving(true);
     setError("");
     try {
-      const { plain, typed } = splitValues(params, values);
-      const parameters: Record<string, string> = {};
-      for (const p of params) {
-        const v = plain[p.name];
-        if (v === undefined || v === (initial[p.name] ?? "")) continue;
-        // A cleared value means "the default" here (the form says so), but
-        // the API keeps a given "" as set: send the default itself.
-        parameters[p.name] = v === "" && p.default ? p.default : v;
-      }
+      const { plain, typed } = splitValues(vars, values);
+      // Only what changed; a cleared value ("") goes back to the compose
+      // file's own.
+      const changed = Object.fromEntries(Object.entries(plain).filter(([name, v]) => v !== (initial[name] ?? "")));
       const secrets = await sealSecrets(api, instance.server_id, typed);
       await api.updateInstance({
         server_id: instance.server_id,
         key: instance.key,
-        ...(Object.keys(parameters).length ? { parameters } : {}),
+        ...(Object.keys(changed).length ? { values: changed } : {}),
         ...(Object.keys(secrets).length ? { secrets } : {}),
       });
       toast.success("Saved and redeployed");
@@ -155,14 +153,14 @@ export function InstancePanel({
         </InlineError>
       ) : null}
       <EditorSection
-        title="Parameters"
-        description="The values this app was created with. Secret values are encrypted in your browser for this server."
+        title="Variables"
+        description="The values this app was created with; a field left empty keeps the compose file's own. Secret values are encrypted in your browser for this server."
       >
-        {params.length === 0 ? (
+        {vars.length === 0 ? (
           <p className="text-sm text-muted-foreground">The template takes no values.</p>
         ) : (
-          <ParameterFields
-            params={params}
+          <VariableFields
+            vars={vars}
             values={values}
             onChange={(name, v) => setValues((prev) => ({ ...prev, [name]: v }))}
             kept={kept}
@@ -170,6 +168,18 @@ export function InstancePanel({
           />
         )}
       </EditorSection>
+      {hosts.length > 0 ? (
+        <EditorSection title="Hostnames" description="Set when the app was created from the template.">
+          <ul className="space-y-1 text-sm">
+            {hosts.map((h) => (
+              <li key={h.host}>
+                <span className="font-mono">{h.host}</span>
+                <span className="text-muted-foreground"> → {h.expose}</span>
+              </li>
+            ))}
+          </ul>
+        </EditorSection>
+      ) : null}
       <EditorSection title="Files" description="Read-only: the template's files, as the app runs them.">
         {Object.entries(current.body.files ?? {})
           .sort(([a], [b]) => a.localeCompare(b))

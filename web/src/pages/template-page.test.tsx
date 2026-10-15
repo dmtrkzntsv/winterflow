@@ -52,13 +52,25 @@ const BODY: TemplateBody = {
   backups: { db: { enabled: true, storage: "tenants" } },
 };
 
+// DETECTED is what the compose file declares (the update dialog reads it).
+const DETECTED = {
+  variables: [{ name: "NAME", required: true, encrypted: false, default: null, services: ["app"] }],
+  expose: [],
+  backups: [],
+  warnings: [],
+};
+
 function view(revision: number): TemplateView {
   return {
     id: "t1",
+    source: "org",
+    slug: "",
     name: "twillingate",
     latest_revision: revision,
+    withdrawn_at: null,
     revision,
     body: BODY,
+    detected: DETECTED,
     note: "",
     created_at: "2026-10-12T10:00:00Z",
     created_by: "u1",
@@ -423,8 +435,10 @@ describe("TemplatePage", () => {
       template_id: "t1",
       template_name: "twillingate",
       revision,
-      parameters: { NAME: "bakomi", PORT: "8081", VERSION: "1.0" },
+      name: "bakomi",
+      values: { NAME: "bakomi" },
       secrets: null,
+      hosts: [],
       state: "created",
       status_code: 1,
       last_error: "",
@@ -459,7 +473,7 @@ describe("TemplatePage", () => {
   it("updates all apps behind after a confirm, and shows the rollout", async () => {
     const user = userEvent.setup();
     const behind = { key: "k1", server_id: "s1", app_id: "a1", template_id: "t1", template_name: "twillingate", revision: 2,
-      parameters: { NAME: "bakomi" }, secrets: null, state: "created", status_code: 1, last_error: "",
+      name: "bakomi", values: { NAME: "bakomi" }, secrets: null, hosts: [], state: "created", status_code: 1, last_error: "",
       created_at: "2026-10-12T10:00:00Z", updated_at: "2026-10-12T10:00:00Z" };
     const api = fakeAPI({
       "/api/v1/template/get-template": view(3),
@@ -486,7 +500,7 @@ describe("TemplatePage", () => {
     const user = userEvent.setup();
     fakeAPI({
       "/api/v1/template/get-template": view(3),
-      "/api/v1/instance/get-instances": { instances: [{ key: "k1", server_id: "s1", app_id: "a1", revision: 1, state: "created", parameters: {} }] },
+      "/api/v1/instance/get-instances": { instances: [{ key: "k1", server_id: "s1", app_id: "a1", revision: 1, state: "created", values: {} }] },
       "/api/v1/template/upgrade-instances": Object.assign(new Error("an upgrade of this template is already running"), { status: 409 }),
     });
     renderPage("/templates/t1?tab=apps");

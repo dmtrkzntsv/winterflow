@@ -3,11 +3,11 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { InlineError } from "@/components/inline-error";
-import { ParameterFields } from "@/components/parameter-fields";
 import { ResponsiveDialog } from "@/components/responsive-dialog";
+import { VariableFields } from "@/components/variable-fields";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
 import { AppStatusCode } from "@/context/apps-context-base";
-import { defaultChanges, fieldErrors, splitValues, upgradeNeeds } from "@/lib/template-params";
+import { defaultChanges, splitValues, upgradeNeeds, variableErrors } from "@/lib/template-values";
 import { sealSecrets, type InstanceView, type TemplateView } from "@/lib/templates";
 
 type Props = {
@@ -26,11 +26,11 @@ type Props = {
 
 // UpgradeInstanceDialog updates one app to another version of its template,
 // asking only for the values the app doesn't hold yet (a newly required
-// parameter, a pending app's secrets), and naming the parameters left on
-// their default whose default the update changes.
+// variable, a pending app's secrets), and naming the variables left to the
+// compose file whose value the update changes.
 export function UpgradeInstanceDialog({ instance, appName, target, current, onClose, onDone }: Props) {
   const api = useTemplatesApi();
-  const needs = upgradeNeeds(target.body.parameters, instance);
+  const needs = upgradeNeeds(target.detected.variables, instance);
   const given =
     current && current.id === instance.template_id && current.revision === instance.revision ? current : null;
   const [read, setRead] = useState<{ view: TemplateView | null; error: string } | null>(null);
@@ -46,7 +46,7 @@ export function UpgradeInstanceDialog({ instance, appName, target, current, onCl
     };
   }, [api, given, instance.template_id, instance.revision]);
   const from = given ?? read?.view ?? null;
-  const changes = from ? defaultChanges(from.body.parameters, target.body.parameters, instance) : [];
+  const changes = from ? defaultChanges(from.detected.variables, target.detected.variables, instance) : [];
   const starts = instance.state === "created" && instance.status_code === AppStatusCode.Stopped;
   const [values, setValues] = useState<Record<string, string>>({});
   const [tried, setTried] = useState(false);
@@ -55,7 +55,7 @@ export function UpgradeInstanceDialog({ instance, appName, target, current, onCl
 
   const upgrade = async () => {
     setTried(true);
-    if (Object.keys(fieldErrors(needs, values)).length > 0) return;
+    if (Object.keys(variableErrors(needs, values)).length > 0) return;
     setBusy(true);
     setError("");
     try {
@@ -65,7 +65,7 @@ export function UpgradeInstanceDialog({ instance, appName, target, current, onCl
         server_id: instance.server_id,
         key: instance.key,
         revision: target.revision,
-        ...(Object.keys(plain).length ? { parameters: plain } : {}),
+        ...(Object.keys(plain).length ? { values: plain } : {}),
         ...(Object.keys(secrets).length ? { secrets } : {}),
       });
       toast.success(`Updated to version ${target.revision}`);
@@ -87,8 +87,9 @@ export function UpgradeInstanceDialog({ instance, appName, target, current, onCl
       title={`Update ${appName} to version ${target.revision}`}
       description={
         <>
-          The app is redeployed with {target.name} version {target.revision}; its backup settings stay. Values you set
-          stay; parameters left on their default take the new default.{starts ? " The app will be started." : ""}
+          The app is redeployed with {target.name} version {target.revision}; its backup settings and hostnames stay (a
+          backup the version adds starts off). Values you set stay; variables left to the compose file take its new
+          value.{starts ? " The app will be started." : ""}
         </>
       }
       footer={
@@ -114,14 +115,14 @@ export function UpgradeInstanceDialog({ instance, appName, target, current, onCl
             {changes.map((c) => (
               <li key={c.name}>
                 <code className="font-mono">{c.name}</code>: {c.from || "(empty)"} → {c.to || "(empty)"}{" "}
-                <span className="text-muted-foreground">(follows the template default)</span>
+                <span className="text-muted-foreground">(follows the compose file)</span>
               </li>
             ))}
           </ul>
         ) : null}
         {needs.length > 0 ? (
-          <ParameterFields
-            params={needs}
+          <VariableFields
+            vars={needs}
             values={values}
             onChange={(name, v) => setValues((prev) => ({ ...prev, [name]: v }))}
             showRequired={tried}

@@ -11,6 +11,7 @@ import AppDetailsPage from "@/pages/app-details";
 import type { BackupHealth } from "@/lib/backups";
 import type { InstanceView, TemplateView } from "@/lib/templates";
 import type { DraftState } from "@/lib/template-draft";
+import type { DeclaredVariable } from "@/types/app-config";
 import { trackActivity } from "@/lib/backup-activity";
 import { fakeAPI } from "@/test/fake-api";
 import { flushPending } from "@/test/flush";
@@ -722,8 +723,10 @@ const INSTANCE: InstanceView = {
   template_id: "t1",
   template_name: "twillingate",
   revision: 2,
-  parameters: { NAME: "bakomi" },
+  name: "bakomi",
+  values: { NAME: "bakomi" },
   secrets: { SESSION_KEY: "<encrypted>" },
+  hosts: [],
   state: "created",
   status_code: 1,
   last_error: "",
@@ -731,19 +734,35 @@ const INSTANCE: InstanceView = {
   updated_at: "2026-10-12T10:00:00Z",
 };
 
-const template = (revision: number, extra: TemplateView["body"]["parameters"] = []): TemplateView => ({
+const variable = (name: string, extra: Partial<DeclaredVariable> = {}): DeclaredVariable => ({
+  name,
+  required: false,
+  encrypted: false,
+  default: null,
+  services: ["app"],
+  ...extra,
+});
+
+const template = (revision: number, extra: DeclaredVariable[] = []): TemplateView => ({
   id: "t1",
+  source: "org",
+  slug: "",
   name: "twillingate",
   latest_revision: 3,
+  withdrawn_at: null,
   revision,
   body: {
     files: { "compose.yaml": "services:\n  app:\n    image: twillingate:${VERSION}\n" },
-    parameters: [{ name: "NAME", required: true }, { name: "SESSION_KEY", secret: true, required: true }, ...(extra ?? [])],
-    app_name: "${NAME}",
+    summary: "",
+    description: "",
     icon: "",
     color: "",
-    ingress: null,
-    backups: null,
+  },
+  detected: {
+    variables: [variable("NAME", { required: true }), variable("SESSION_KEY", { required: true, encrypted: true }), ...extra],
+    expose: [],
+    backups: [],
+    warnings: [],
   },
   note: "",
   created_at: "2026-10-12T10:00:00Z",
@@ -757,7 +776,7 @@ function instanceAPI(inst: InstanceView = INSTANCE, extra: Record<string, unknow
   return fakeAPI({
     "/api/v1/instance/get-instances": { instances: [inst] },
     "/api/v1/template/get-template": (_: unknown, q: URLSearchParams) =>
-      q.get("revision") ? template(Number(q.get("revision"))) : template(3, [{ name: "REGION", required: true }]),
+      q.get("revision") ? template(Number(q.get("revision"))) : template(3, [variable("REGION", { required: true })]),
     "/api/v1/server/get-public-key": { public_key: "K" },
     ...extra,
   });
@@ -784,7 +803,7 @@ describe("AppDetailsPage of a template instance", () => {
     await user.click(within(dialog).getByRole("button", { name: "Update to version 3" }));
     await waitFor(() => expect(refresh).toHaveBeenCalled());
     expect(api.posted("/api/v1/instance/upgrade-instance")).toEqual([
-      { server_id: "s", key: "k1", revision: 3, parameters: { REGION: "eu" } },
+      { server_id: "s", key: "k1", revision: 3, values: { REGION: "eu" } },
     ]);
   });
 
@@ -824,7 +843,7 @@ describe("AppDetailsPage of a template instance", () => {
     expect(within(dialog).getByRole("heading")).toHaveTextContent("Update Shop to version 3");
   });
 
-  it("shows the files read-only and a Parameters form instead of the editor", async () => {
+  it("shows the files read-only and a Variables form instead of the editor", async () => {
     const user = userEvent.setup();
     const api = instanceAPI(INSTANCE, { "/api/v1/instance/update-instance": { instance: INSTANCE, request_id: "", warnings: [] } });
     renderPage("/app/a1?tab=editor", {}, managed);
@@ -838,15 +857,15 @@ describe("AppDetailsPage of a template instance", () => {
     await user.type(screen.getByLabelText("NAME"), "shop");
     await user.click(screen.getByRole("button", { name: "Save & redeploy" }));
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Saved and redeployed"));
-    expect(api.posted("/api/v1/instance/update-instance")).toEqual([{ server_id: "s", key: "k1", parameters: { NAME: "shop" } }]);
+    expect(api.posted("/api/v1/instance/update-instance")).toEqual([{ server_id: "s", key: "k1", values: { NAME: "shop" } }]);
     expect(refresh).toHaveBeenCalled();
   });
 
-  it("sends a cleared value's default (the API would keep an empty value), else the empty value", async () => {
+  it("sends a cleared value as empty: the compose file's own value stands again", async () => {
     const user = userEvent.setup();
-    const extra = [{ name: "GREETING", default: "Hello" }, { name: "MOTTO" }];
+    const extra = [variable("GREETING", { default: "Hello" }), variable("MOTTO")];
     const api = instanceAPI(
-      { ...INSTANCE, parameters: { NAME: "bakomi", GREETING: "Hi", MOTTO: "carpe diem" } },
+      { ...INSTANCE, values: { NAME: "bakomi", GREETING: "Hi", MOTTO: "carpe diem" } },
       {
         "/api/v1/template/get-template": (_: unknown, q: URLSearchParams) => template(Number(q.get("revision") || 3), extra),
         "/api/v1/instance/update-instance": { instance: INSTANCE, request_id: "", warnings: [] },
@@ -858,7 +877,7 @@ describe("AppDetailsPage of a template instance", () => {
     await user.click(screen.getByRole("button", { name: "Save & redeploy" }));
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Saved and redeployed"));
     expect(api.posted("/api/v1/instance/update-instance")).toEqual([
-      { server_id: "s", key: "k1", parameters: { GREETING: "Hello", MOTTO: "" } },
+      { server_id: "s", key: "k1", values: { GREETING: "", MOTTO: "" } },
     ]);
   });
 
@@ -894,7 +913,7 @@ describe("AppDetailsPage of a template instance", () => {
     expect(screen.getAllByText("Failed").length).toBeGreaterThan(0);
     expect(screen.getByLabelText("SESSION_KEY")).toHaveAttribute("placeholder", "Encrypted in your browser");
     await user.click(screen.getByRole("button", { name: "Save & redeploy" }));
-    expect(screen.getByText("Required")).toBeInTheDocument();
+    expect(screen.getByText("Enter a value: this variable is required.")).toBeInTheDocument();
   });
 
   it("reads Running for a pending instance whose app a report shows running, keeping the failure's banner", async () => {
@@ -1045,7 +1064,7 @@ describe("AppDetailsPage of a template instance", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("shows a failed save of the parameters", async () => {
+  it("shows a failed save of the values", async () => {
     const user = userEvent.setup();
     instanceAPI(INSTANCE, { "/api/v1/instance/update-instance": new Error("render failed") });
     renderPage("/app/a1?tab=editor", {}, managed);

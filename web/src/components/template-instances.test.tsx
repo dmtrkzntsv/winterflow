@@ -7,6 +7,7 @@ import { TemplateInstances } from "@/components/template-instances";
 import { NotificationsContext, type NotificationsContextValue } from "@/context/notifications-context-base";
 import type { InstanceView, TemplateView } from "@/lib/templates";
 import { fakeAPI } from "@/test/fake-api";
+import type { DeclaredVariable } from "@/types/app-config";
 
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
@@ -20,24 +21,29 @@ vi.mock("@/context/use-servers", () => ({
 
 const notifications = { connected: true, subscribe: () => () => {}, waitFor: vi.fn() } as NotificationsContextValue;
 
+const v = (name: string, extra: Partial<DeclaredVariable> = {}): DeclaredVariable => ({
+  name,
+  required: false,
+  encrypted: false,
+  default: null,
+  services: ["app"],
+  ...extra,
+});
+
 const VIEW: TemplateView = {
   id: "t1",
+  source: "org",
+  slug: "",
   name: "twillingate",
   latest_revision: 3,
+  withdrawn_at: null,
   revision: 3,
-  body: {
-    files: { "compose.yaml": "services: {}\n" },
-    parameters: [
-      { name: "NAME", required: true },
-      { name: "REGION", required: true },
-      { name: "SESSION_KEY", secret: true, required: true },
-      { name: "GREETING", default: "Hiya" },
-    ],
-    app_name: "${NAME}",
-    icon: "",
-    color: "",
-    ingress: null,
-    backups: null,
+  body: { files: { "compose.yaml": "services: {}\n" }, summary: "", description: "", icon: "", color: "" },
+  detected: {
+    variables: [v("NAME", { required: true }), v("REGION", { required: true }), v("SESSION_KEY", { required: true, encrypted: true }), v("GREETING", { default: "Hiya" })],
+    expose: [],
+    backups: [],
+    warnings: [],
   },
   note: "",
   created_at: "2026-10-12T10:00:00Z",
@@ -45,13 +51,13 @@ const VIEW: TemplateView = {
   revisions: null,
 };
 
-// R2 is the revision the instances run: GREETING's default changes in r3.
+// R2 is the revision the instances run: GREETING's compose value changes in r3.
 const R2: TemplateView = {
   ...VIEW,
   revision: 2,
-  body: {
-    ...VIEW.body,
-    parameters: [{ name: "NAME", required: true }, { name: "SESSION_KEY", secret: true, required: true }, { name: "GREETING", default: "Howdy" }],
+  detected: {
+    ...VIEW.detected,
+    variables: [v("NAME", { required: true }), v("SESSION_KEY", { required: true, encrypted: true }), v("GREETING", { default: "Howdy" })],
   },
 };
 const R2_ROUTE = { "/api/v1/template/get-template": R2 };
@@ -63,8 +69,10 @@ const inst = (over: Partial<InstanceView>): InstanceView => ({
   template_id: "t1",
   template_name: "twillingate",
   revision: 2,
-  parameters: { NAME: "bakomi" },
+  name: "bakomi",
+  values: { NAME: "bakomi" },
   secrets: { SESSION_KEY: "<encrypted>" },
+  hosts: [],
   state: "created",
   status_code: 1,
   last_error: "",
@@ -96,7 +104,7 @@ describe("TemplateInstances", () => {
   it("lists the apps per server with their version and status", () => {
     renderInstances([
       inst({}),
-      inst({ key: "k2", server_id: "s2", app_id: "a2", revision: 3, parameters: { NAME: "shop" }, state: "pending", last_error: "pull failed" }),
+      inst({ key: "k2", server_id: "s2", app_id: "a2", revision: 3, name: "shop", values: { NAME: "shop" }, state: "pending", last_error: "pull failed" }),
     ]);
     const rows = screen.getAllByRole("listitem");
     expect(within(rows[0]).getByRole("link", { name: "bakomi" })).toHaveAttribute("href", "/server/s1/app/a1");
@@ -109,12 +117,12 @@ describe("TemplateInstances", () => {
     expect(within(rows[1]).queryByRole("button", { name: "Update" })).not.toBeInTheDocument();
   });
 
-  it("shows a renamed app by its current name, the rendered one for an app no longer listed", async () => {
+  it("shows a renamed app by its current name, the created one for an app no longer listed", async () => {
     fakeAPI({
       "/api/v1/app/get-apps": (_: unknown, q: URLSearchParams) =>
         q.get("server_id") === "s1" ? { apps: [{ id: "a1", name: "Family Notes" }] } : { apps: [] },
     });
-    renderInstances([inst({}), inst({ key: "k2", server_id: "s2", app_id: "gone", parameters: { NAME: "shop" } })]);
+    renderInstances([inst({}), inst({ key: "k2", server_id: "s2", app_id: "gone", name: "shop", values: { NAME: "shop" } })]);
     expect(await screen.findByRole("link", { name: "Family Notes" })).toHaveAttribute("href", "/server/s1/app/a1");
     expect(screen.queryByRole("link", { name: "bakomi" })).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: "shop" })).toBeInTheDocument();
@@ -138,29 +146,30 @@ describe("TemplateInstances", () => {
     expect(within(dialog).queryByLabelText("NAME")).not.toBeInTheDocument();
     expect(within(dialog).queryByLabelText("SESSION_KEY")).not.toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: "Update to version 3" }));
-    expect(within(dialog).getByText("Required")).toBeInTheDocument();
+    expect(within(dialog).getByText("Enter a value: this variable is required.")).toBeInTheDocument();
     expect(api.posted("/api/v1/instance/upgrade-instance")).toEqual([]);
 
     await user.type(within(dialog).getByLabelText("REGION"), "eu");
     await user.click(within(dialog).getByRole("button", { name: "Update to version 3" }));
     await waitFor(() => expect(onChanged).toHaveBeenCalled());
     expect(api.posted("/api/v1/instance/upgrade-instance")).toEqual([
-      { server_id: "s1", key: "k1", revision: 3, parameters: { REGION: "eu" } },
+      { server_id: "s1", key: "k1", revision: 3, values: { REGION: "eu" } },
     ]);
     expect(toast.success).toHaveBeenCalledWith("Updated to version 3");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("names the parameters left on their default whose value the upgrade changes", async () => {
+  it("names the variables left to the compose file whose value the upgrade changes", async () => {
     const user = userEvent.setup();
     const api = fakeAPI(R2_ROUTE);
     renderInstances([inst({})]);
     await user.click(screen.getByRole("button", { name: "Update" }));
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByRole("heading")).toHaveTextContent("Update bakomi to version 3");
-    expect(dialog).toHaveTextContent("Values you set stay; parameters left on their default take the new default.");
+    expect(dialog).toHaveTextContent("Values you set stay; variables left to the compose file take its new value.");
+    expect(dialog).toHaveTextContent("a backup the version adds starts off");
     const changes = await within(dialog).findByRole("list", { name: "Defaults that change" });
-    expect(changes).toHaveTextContent("GREETING: Howdy → Hiya (follows the template default)");
+    expect(changes).toHaveTextContent("GREETING: Howdy → Hiya (follows the compose file)");
     expect(api.calls.find((c) => c.path === "/api/v1/template/get-template")?.query).toBe("?id=t1&revision=2");
     expect(dialog).not.toHaveTextContent("The app will be started.");
   });
@@ -168,7 +177,7 @@ describe("TemplateInstances", () => {
   it("leaves out a default the instance overrides and says a stopped app starts", async () => {
     const user = userEvent.setup();
     fakeAPI(R2_ROUTE);
-    renderInstances([inst({ status_code: 5, parameters: { NAME: "bakomi", GREETING: "Yo" } })]);
+    renderInstances([inst({ status_code: 5, values: { NAME: "bakomi", GREETING: "Yo" } })]);
     await user.click(screen.getByRole("button", { name: "Update" }));
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toHaveTextContent("The app will be started.");
@@ -192,7 +201,7 @@ describe("TemplateInstances", () => {
       "/api/v1/server/get-public-key": { public_key: "K2" },
       "/api/v1/instance/upgrade-instance": { instance: inst({}), request_id: "", warnings: [] },
     });
-    renderInstances([inst({ server_id: "s2", state: "pending", parameters: { NAME: "x", REGION: "eu" } })]);
+    renderInstances([inst({ server_id: "s2", state: "pending", values: { NAME: "x", REGION: "eu" } })]);
     await user.click(screen.getByRole("button", { name: "Update" }));
     const dialog = await screen.findByRole("dialog");
     await user.type(within(dialog).getByLabelText("SESSION_KEY"), "hunter2");
@@ -207,7 +216,7 @@ describe("TemplateInstances", () => {
   it("keeps the dialog open with the reason when the server has no key", async () => {
     const user = userEvent.setup();
     const api = fakeAPI({ ...R2_ROUTE, "/api/v1/server/get-public-key": new Error("public key unavailable for this server") });
-    renderInstances([inst({ secrets: null, parameters: { NAME: "x", REGION: "eu" } })]);
+    renderInstances([inst({ secrets: null, values: { NAME: "x", REGION: "eu" } })]);
     await user.click(screen.getByRole("button", { name: "Update" }));
     const dialog = await screen.findByRole("dialog");
     await user.type(within(dialog).getByLabelText("SESSION_KEY"), "hunter2");

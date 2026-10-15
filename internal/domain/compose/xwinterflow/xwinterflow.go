@@ -86,7 +86,8 @@ type DeclaredVariable struct {
 	Pattern     string `json:"pattern,omitempty"`
 	Description string `json:"description,omitempty"`
 	// Default is the body literal of the first service whose environment
-	// has the key: nil when none has one, and always for a secret.
+	// has the key: nil when none has one, when it interpolates ($), and
+	// always for a secret.
 	Default *string `json:"default"`
 	// Services are the services whose environment has the key, in file
 	// order: the ones a value is applied to.
@@ -447,7 +448,8 @@ func (s *Spec) resolve(envs []envKey) error {
 				continue
 			}
 			if len(v.Services) == 0 {
-				if !v.Encrypted && e.literal != nil {
+				// A body value with $ is an interpolation (${LANGUAGE:-en}), not a literal.
+				if !v.Encrypted && e.literal != nil && !strings.Contains(*e.literal, "$") {
 					lit := *e.literal
 					v.Default = &lit
 				}

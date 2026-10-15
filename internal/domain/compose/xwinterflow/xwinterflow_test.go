@@ -222,3 +222,18 @@ func TestDescriptionFromComment(t *testing.T) {
 		t.Fatalf("description cut to %d bytes", len(d))
 	}
 }
+
+// A body value that interpolates ($) is not a literal default: no Default,
+// and no default-vs-pattern check.
+func TestInterpolatedBodyValueIsNoDefault(t *testing.T) {
+	const body = "services:\n  app:\n    image: a\n    environment:\n      LANGUAGE: ${LANGUAGE:-en}\nx-winterflow:\n  variables:\n    LANGUAGE: %s\n"
+	for name, decl := range map[string]string{"no pattern": "{}", "pattern": "{ pattern: '^[a-z]{2}$' }"} {
+		t.Run(name, func(t *testing.T) {
+			s := parse(t, ModeApp, strings.Replace(body, "%s", decl, 1))
+			v := s.Variables[0]
+			if v.Default != nil || !reflect.DeepEqual(v.Services, []string{"app"}) {
+				t.Fatalf("variable = %+v", v)
+			}
+		})
+	}
+}

@@ -7,7 +7,9 @@ import { EditorSection } from "@/components/editor-section";
 import { FilesSection } from "@/components/files-section";
 import { GitSourceFields } from "@/components/git-source-fields";
 import { ImageVersions } from "@/components/image-versions";
+import { DeclaredVariablesForm } from "@/components/declared-variables-form";
 import { AddressRows, RedirectRows } from "@/components/ingress-editor";
+import { PortsPanel } from "@/components/ports-panel";
 import { SharedVariablesHint } from "@/components/shared-variables-hint";
 import { VariablesEditor } from "@/components/variables-editor";
 import { useServers } from "@/context/use-servers";
@@ -15,6 +17,7 @@ import { useRegistrations } from "@/hooks/use-registrations";
 import { useSharedNames } from "@/hooks/use-shared-names";
 import { newGitSource } from "@/lib/app-editor-io";
 import { imageRefs } from "@/lib/compose-images";
+import { declaredRow } from "@/lib/declared-variables";
 import { hasErrorIn, type FieldErrors } from "@/lib/field-errors";
 import {
   isComposeFile,
@@ -59,6 +62,14 @@ export function AppEditor({ state, onChange, errors = {}, refused = 0 }: Props) 
     onRefresh: refresh,
     errors,
   };
+  const declaredNames = new Set((state.declared ?? []).map((d) => d.name));
+  // The rows the declared variables' form edits.
+  const declaredIds = new Set(
+    (state.declared ?? []).flatMap((d) => {
+      const row = declaredRow(state, d);
+      return row ? [row.id] : [];
+    }),
+  );
   const hasImages = state.config.files.some(
     (f) => isComposeFile(f.filename) && imageRefs(state.files[f.id] ?? "").length > 0,
   );
@@ -88,16 +99,25 @@ export function AppEditor({ state, onChange, errors = {}, refused = 0 }: Props) 
           </>
         }
       >
+        <DeclaredVariablesForm state={state} onChange={onChange} errors={errors} />
+        {declaredNames.size > 0 ? <h3 className="pt-2 text-sm font-medium">Other variables</h3> : null}
         <VariablesEditor
           state={state}
           onChange={onChange}
           shared={shared}
           errors={errors}
-          emptyNote={state.storageVariables.length === 0}
+          emptyNote={state.storageVariables.length === 0 && declaredNames.size === 0}
+          hidden={declaredIds}
         />
         <SharedVariablesHint shared={shared} />
         <StorageVariableRows vars={state.storageVariables} />
       </EditorSection>
+
+      {(state.expose ?? []).length > 0 ? (
+        <EditorSection title="Ports" description="The ports the compose file exposes, on the server's own port numbers.">
+          <PortsPanel state={state} onChange={onChange} serverIp={activeServer?.capabilities?.server_ip} errors={errors} />
+        </EditorSection>
+      ) : null}
 
       {/* activeServer is null while get-servers is in flight: render
           nothing until it resolves so a server with the proxy doesn't

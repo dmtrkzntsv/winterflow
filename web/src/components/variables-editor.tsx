@@ -22,6 +22,10 @@ type Props = {
   errors?: FieldErrors;
   // emptyNote says "No variables yet." when there are none.
   emptyNote?: boolean;
+  // hidden are the ids of rows another part of the editor edits (the
+  // declared variables' form): they are not listed here. By id, never by
+  // name: a row whose name is typed to match a hidden one stays.
+  hidden?: ReadonlySet<string>;
 };
 
 // VariablesEditor edits an app's variables: name, value (masked while
@@ -29,11 +33,12 @@ type Props = {
 // secret is never shown, nor its placeholder: it reads "Secret · set" with
 // Replace, which opens an empty field (left empty, or Keep current, keeps
 // the stored value). Secret values are encrypted by the save, never here.
-export function VariablesEditor({ state, onChange, shared, errors = {}, emptyNote = true }: Props) {
+export function VariablesEditor({ state, onChange, shared, errors = {}, emptyNote = true, hidden }: Props) {
   const [revealed, setRevealed] = useState<Record<string, boolean>>({});
   // replaced: the row whose new-value field Replace just opened (focused).
   const replaced = useRef<string | null>(null);
   const vars = state.config.variables;
+  const shown = hidden ? vars.filter((v) => !hidden.has(v.id)) : vars;
   // updateMeta changes a row's name; renamed away from the name the agent
   // holds its secret under, a stored secret starts empty and needs a new
   // value (renamed back while still empty, it keeps the stored one).
@@ -59,13 +64,13 @@ export function VariablesEditor({ state, onChange, shared, errors = {}, emptyNot
 
   return (
     <div className="space-y-3">
-      {vars.length === 0 ? (
+      {shown.length === 0 ? (
         emptyNote ? (
           <EmptyNote>No variables yet.</EmptyNote>
         ) : null
       ) : (
         <div className="divide-y rounded-md border">
-          {vars.map((v) => {
+          {shown.map((v) => {
             const value = state.variables[v.id] ?? "";
             const held = holdsStoredSecret(v, v.name);
             const kept = held && value === ENCRYPTED;

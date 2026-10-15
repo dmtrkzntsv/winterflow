@@ -20,16 +20,13 @@ import (
 const backupRunWait = command.BackupRunWait + 5*time.Minute
 
 // checkBackups validates the backups a save makes when its compose file is
-// in the request: the recipe, the request's backups list when its config
-// carries one (an enabled backup's storage must be on the server), and
-// returns which backup names WF_BACKUP_ references may use. The app editor
-// doesn't send the backups list (the agent keeps the stored one), so for an
-// edit without it a name outside the recipe is left to the agent.
-func (uc *UseCase) checkBackups(ctx context.Context, serverID string, contents [][]byte, config []byte, isNew bool) (func(string) bool, error) {
-	comp, err := recipe.ParseCompose(contents...)
-	if err != nil {
-		return nil, err
-	}
+// in the request (comp, parsed from it): the recipe, the request's backups
+// list when its config carries one (an enabled backup's storage must be on
+// the server), and returns which backup names WF_BACKUP_ references may use.
+// The app editor doesn't send the backups list (the agent keeps the stored
+// one), so for an edit without it a name outside the recipe is left to the
+// agent.
+func (uc *UseCase) checkBackups(ctx context.Context, serverID string, comp recipe.Compose, config []byte, isNew bool) (func(string) bool, error) {
 	var cfg struct {
 		Backups  *[]recipe.BackupConfig `json:"backups"`
 		Instance *struct {

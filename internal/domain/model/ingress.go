@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -23,16 +24,33 @@ type Ingress struct {
 	Redirects []IngressRedirect `json:"redirects"`
 }
 
-// IngressDomain maps a hostname to a host port the app's compose file
-// publishes (ideally bound to 127.0.0.1). SSL no longer decides anything for
-// the proxy: TLS follows the registered domain covering the hostname (see
-// RegisteredDomain). It still loads from old configs, picks the auto/off
-// mode when the agent first registers existing hostnames, and picks the
-// link scheme on app cards.
+// IngressDomain maps a hostname to the app: Expose names one of its http
+// expose entries (<service>:<port> of x-winterflow.expose, proxied to the
+// host port the agent allocated for it), UpstreamPort a host port the
+// compose file publishes itself (ideally bound to 127.0.0.1). Exactly one
+// is set. SSL no longer decides anything for the proxy: TLS follows the
+// registered domain covering the hostname (see RegisteredDomain). It still
+// picks the auto/off mode when the agent first registers existing
+// hostnames, and the link scheme on app cards.
 type IngressDomain struct {
 	Domain       string `json:"domain"`
-	UpstreamPort int    `json:"upstream_port"`
+	Expose       string `json:"expose,omitempty"`
+	UpstreamPort int    `json:"upstream_port,omitempty"`
 	SSL          bool   `json:"ssl"`
+}
+
+// exposeTargetRe is an expose target: a compose service name and a port.
+var exposeTargetRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]*:([0-9]{1,5})$`)
+
+// ValidExposeTarget reports whether s is <service>:<port> with a port from
+// 1 to 65535.
+func ValidExposeTarget(s string) bool {
+	m := exposeTargetRe.FindStringSubmatch(s)
+	if m == nil {
+		return false
+	}
+	port, err := strconv.Atoi(m[1])
+	return err == nil && port >= 1 && port <= 65535
 }
 
 // IngressRedirect is either a domain-level redirect (Path == "", preserves the
@@ -81,7 +99,14 @@ func (i *Ingress) Validate() error {
 		if err := claim(d.Domain, "domain"); err != nil {
 			return err
 		}
-		if d.UpstreamPort < 1 || d.UpstreamPort > 65535 {
+		switch {
+		case d.Expose != "" && d.UpstreamPort != 0:
+			return fmt.Errorf("domain %q: set expose or upstream_port, not both", d.Domain)
+		case d.Expose != "":
+			if !ValidExposeTarget(d.Expose) {
+				return fmt.Errorf("domain %q: expose %q is not <service>:<port>", d.Domain, d.Expose)
+			}
+		case d.UpstreamPort < 1 || d.UpstreamPort > 65535:
 			return fmt.Errorf("domain %q: upstream port %d out of range 1-65535", d.Domain, d.UpstreamPort)
 		}
 	}

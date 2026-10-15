@@ -1,6 +1,7 @@
 package model
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -40,6 +41,10 @@ func TestValidateRejects(t *testing.T) {
 		{"uppercase", func(i *Ingress) { i.Domains[0].Domain = "X.COM" }, "hostname"},
 		{"port zero", func(i *Ingress) { i.Domains[0].UpstreamPort = 0 }, "port"},
 		{"port too big", func(i *Ingress) { i.Domains[0].UpstreamPort = 70000 }, "port"},
+		{"expose and port", func(i *Ingress) { i.Domains[0].Expose = "app:8080" }, "not both"},
+		{"expose without port", func(i *Ingress) { i.Domains[0].UpstreamPort, i.Domains[0].Expose = 0, "app" }, "not <service>:<port>"},
+		{"expose port too big", func(i *Ingress) { i.Domains[0].UpstreamPort, i.Domains[0].Expose = 0, "app:70000" }, "not <service>:<port>"},
+		{"expose bad service", func(i *Ingress) { i.Domains[0].UpstreamPort, i.Domains[0].Expose = 0, "-app:80" }, "not <service>:<port>"},
 		{"dup within app", func(i *Ingress) { i.Domains[1].Domain = i.Domains[0].Domain }, "duplicate"},
 		{"dup route vs redirect", func(i *Ingress) { i.Redirects[0].Domain = i.Domains[0].Domain }, "duplicate"},
 		{"relative target", func(i *Ingress) { i.Redirects[0].To = "/nowhere" }, "absolute"},
@@ -66,6 +71,19 @@ func TestValidateRejects(t *testing.T) {
 				t.Fatalf("error %q does not mention %q", err, tc.errHas)
 			}
 		})
+	}
+}
+
+// A hostname may point at an http expose entry instead of a port.
+func TestValidateAcceptsExposeTarget(t *testing.T) {
+	ing := validIngress()
+	ing.Domains[0].UpstreamPort, ing.Domains[0].Expose = 0, "app:8080"
+	if err := ing.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(ing.Domains[0])
+	if string(raw) != `{"domain":"blog.example.com","expose":"app:8080","ssl":true}` {
+		t.Fatalf("json = %s", raw)
 	}
 }
 

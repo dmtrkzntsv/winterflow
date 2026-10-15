@@ -38,8 +38,32 @@ var keepKeys = map[string]bool{"recent": true, "daily": true, "monthly": true}
 // decoded. The recipe is checked only for its shape here (keys, types, duplicate names);
 // Validate checks the values.
 func ParseCompose(files ...[]byte) (Compose, error) {
+	return ParseComposeNodes(DecodeFiles(files...)...)
+}
+
+// DecodeFiles decodes each compose file once into its YAML node tree; a
+// file that is not valid YAML is nil.
+func DecodeFiles(files ...[]byte) []*yaml.Node {
+	out := make([]*yaml.Node, len(files))
+	for i, raw := range files {
+		var n yaml.Node
+		if yaml.Unmarshal(raw, &n) == nil {
+			out[i] = &n
+		}
+	}
+	return out
+}
+
+// ParseComposeNodes is ParseCompose over files DecodeFiles decoded: the
+// x-winterflow parser (internal/domain/compose/xwinterflow) reads the same
+// trees, so a compose file is parsed once. A nil tree sets Unparsed.
+func ParseComposeNodes(docs ...*yaml.Node) (Compose, error) {
 	out := Compose{Volumes: map[string]bool{}, Services: map[string][]string{}, Mounts: map[string][]Mount{}}
-	for _, raw := range files {
+	for _, node := range docs {
+		if node == nil {
+			out.Unparsed = true
+			continue
+		}
 		var doc struct {
 			Services map[string]struct {
 				Profiles []string    `yaml:"profiles"`
@@ -48,7 +72,7 @@ func ParseCompose(files ...[]byte) (Compose, error) {
 			Volumes     map[string]any `yaml:"volumes"`
 			XWinterflow yaml.Node      `yaml:"x-winterflow"`
 		}
-		if err := yaml.Unmarshal(raw, &doc); err != nil {
+		if err := node.Decode(&doc); err != nil {
 			var typeErr *yaml.TypeError
 			if !errors.As(err, &typeErr) {
 				out.Unparsed = true
@@ -85,8 +109,8 @@ func ParseCompose(files ...[]byte) (Compose, error) {
 	return out, nil
 }
 
-// parseRecipe decodes x-winterflow.backups. Other x-winterflow keys are left
-// to later features.
+// parseRecipe decodes x-winterflow.backups. The other x-winterflow keys are
+// the xwinterflow package's.
 func parseRecipe(x *yaml.Node) ([]BackupConfig, error) {
 	if x.Kind == 0 || x.Tag == "!!null" {
 		return nil, nil

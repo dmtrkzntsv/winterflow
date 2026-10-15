@@ -88,3 +88,17 @@ func (f *countingRefresher) RefreshDueSources(context.Context) []string {
 	f.calls.Add(1)
 	return f.updated
 }
+
+// After a source update the backup plan is reread and the proxy config
+// rebuilt: an upstream move can move an http expose port a hostname
+// resolves to.
+func TestAfterSourceUpdateReloadsBackupsAndIngress(t *testing.T) {
+	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
+	ing := &fakeIngress{warnings: []string{"a warning"}}
+	backups := 0
+	AfterSourceUpdate(context.Background(), func() { backups++ }, ing, log)()
+	if backups != 1 || ing.reloads != 1 {
+		t.Fatalf("backups %d, ingress reloads %d", backups, ing.reloads)
+	}
+	AfterSourceUpdate(context.Background(), nil, nil, log)() // nothing wired: no panic
+}

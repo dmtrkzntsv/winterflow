@@ -174,6 +174,26 @@ func (c *ServerConfig) GetBackupRetentionDays() int {
 	return 180
 }
 
+// Default EXPOSE_PORT_RANGE bounds.
+const (
+	DefaultExposePortLow  = 20000
+	DefaultExposePortHigh = 29999
+)
+
+// GetExposePortRange is the range the agent allocates host ports for
+// x-winterflow expose entries from (EXPOSE_PORT_RANGE, "low-high", default
+// 20000-29999). A malformed value, one outside 1-65535 or with low above
+// high, is the default. Read by standalone and agent.
+func (c *ServerConfig) GetExposePortRange() (low, high int) {
+	lo, hi, ok := strings.Cut(os.Getenv("EXPOSE_PORT_RANGE"), "-")
+	l, errL := strconv.Atoi(strings.TrimSpace(lo))
+	h, errH := strconv.Atoi(strings.TrimSpace(hi))
+	if !ok || errL != nil || errH != nil || l < 1 || h > 65535 || l > h {
+		return DefaultExposePortLow, DefaultExposePortHigh
+	}
+	return l, h
+}
+
 // GetAppsDir holds the rendered, ready-to-run deployments:
 // {dataDir}/apps/{appID}/.
 func (c *ServerConfig) GetAppsDir() string {

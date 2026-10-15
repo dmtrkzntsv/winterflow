@@ -18,11 +18,14 @@ import (
 )
 
 // AppIngress is one app's committed ingress plus its display name (from the
-// same config.json), which names the app in the domain delete refusal.
+// same config.json), which names the app in the domain delete refusal, and
+// the host ports of its http expose entries by target (<service>:<port>,
+// model.HTTPPorts of the same config.json's ports).
 type AppIngress struct {
 	AppID   string
 	Name    string
 	Ingress model.Ingress
+	Ports   map[string]int
 }
 
 // label is how messages name the app: its display name, else its id.
@@ -336,7 +339,16 @@ func BuildConfig(apps []AppIngress, regs []domains.Registration, opts Options) (
 			}
 		}
 		for _, d := range a.Ingress.Domains {
-			place(d.Domain, proxyRoute(d.Domain, d.UpstreamPort), true)
+			port := d.UpstreamPort
+			if d.Expose != "" {
+				host, ok := a.Ports[d.Expose]
+				if !ok {
+					warnings = append(warnings, fmt.Sprintf("app %s: domain %s: %s has no host port yet, skipping", a.AppID, d.Domain, d.Expose))
+					continue
+				}
+				port = host
+			}
+			place(d.Domain, proxyRoute(d.Domain, port), true)
 		}
 		for _, r := range a.Ingress.Redirects {
 			if r.Path == "" {

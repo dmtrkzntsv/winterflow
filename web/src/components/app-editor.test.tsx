@@ -82,6 +82,64 @@ describe("AppEditor storage variables", () => {
   });
 });
 
+describe("AppEditor declared variables", () => {
+  it("shows the declared variables' form first and lists only the others below", () => {
+    const s = emptyEditorState();
+    const state: AppEditorState = {
+      ...s,
+      declared: [{ name: "BASE_URL", required: true, encrypted: false, default: null, services: ["app"] }],
+      config: {
+        ...s.config,
+        variables: [
+          { id: "a", name: "BASE_URL", is_encrypted: false },
+          { id: "b", name: "EXTRA", is_encrypted: false },
+        ],
+      },
+      variables: { a: "https://x", b: "1" },
+      declaredRows: { BASE_URL: "a" },
+    };
+    render(<Harness initial={state} />);
+    expect(screen.getByRole("group", { name: "Declared variables" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Other variables" })).toBeInTheDocument();
+    const names = screen.getAllByRole("textbox", { name: "Variable name" }).map((el) => (el as HTMLInputElement).value);
+    expect(names).toEqual(["EXTRA"]);
+  });
+
+  it("keeps a free-form row whose name is typed to match a declared one, focused", async () => {
+    const user = userEvent.setup();
+    const s = emptyEditorState();
+    const state: AppEditorState = {
+      ...s,
+      declared: [{ name: "BASE_URL", required: false, encrypted: false, default: null, services: ["app"] }],
+      config: { ...s.config, variables: [{ id: "b", name: "", is_encrypted: false }] },
+      variables: { b: "" },
+      declaredRows: {},
+    };
+    render(<Harness initial={state} />);
+    const name = screen.getByRole("textbox", { name: "Variable name" });
+    await user.type(name, "BASE_URL");
+    expect(name).toBeInTheDocument();
+    expect(name).toHaveFocus();
+    expect(name).toHaveValue("BASE_URL");
+  });
+});
+
+describe("AppEditor ports", () => {
+  it("shows the Ports section only for an app with expose entries", () => {
+    servers = { activeServer: { id: "s1", features: {} }, loading: false };
+    const state: AppEditorState = {
+      ...emptyEditorState(),
+      expose: [{ id: "app:8080/http", container: "app", port: 8080, protocol: "http", host_port: 20013, bind: "127.0.0.1", pinned: false }],
+    };
+    const { unmount } = render(<Harness initial={state} />);
+    expect(screen.getByRole("heading", { name: "Ports" })).toBeInTheDocument();
+    expect(screen.getByRole("list", { name: "Ports" })).toHaveTextContent("port 20013");
+    unmount();
+    render(<Harness initial={emptyEditorState()} />);
+    expect(screen.queryByRole("heading", { name: "Ports" })).not.toBeInTheDocument();
+  });
+});
+
 describe("AppEditor", () => {
   it("shows only what runs: no name, icon, colour or description", () => {
     render(<Harness initial={emptyEditorState()} />);

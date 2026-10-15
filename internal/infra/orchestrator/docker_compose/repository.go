@@ -10,6 +10,7 @@
 //	  .winterflow/config.json    --   committed app config blob
 //	  .winterflow/secrets.json   --   committed, ECIES ciphertext only
 //	  .winterflow/source.lock    --   committed upstream SHA (git-sourced apps)
+//	                                    (config.json's ports: the expose entries' host ports)
 //	  compose.yml, <files...>    --   committed verbatim
 //	  .env                       --   committed plain variables
 //	  .env.secrets, source/      --   gitignored deploy artifacts
@@ -139,6 +140,14 @@ type Repository struct {
 	mountMu    sync.Mutex
 	mountCache map[string]mountCacheEntry
 
+	// portMu serializes host port allocations (see syncPorts); portIndex
+	// maps every allocated host port to its app and expose entry, built
+	// from the apps' config.json on first use and pruned in forgetApp.
+	// probePort checks a port is free (replaced in tests).
+	portMu    sync.Mutex
+	portIndex map[int]portOwner
+	probePort func(bind string, port int, protocol string) error
+
 	// hostStat stats a bind source on the host (replaced in tests).
 	hostStat func(path string) (fs.FileInfo, error)
 	// statFlight holds the host stats still running, one per path: a dead
@@ -182,6 +191,7 @@ func NewRepository(cfg *config.ServerConfig, log *logger.Logger) *Repository {
 		runCompose:       dockerIn,
 		composeOutput:    dockerOutputIn,
 		mountCache:       make(map[string]mountCacheEntry),
+		probePort:        probeListen,
 		hostStat:         os.Stat,
 		runHelper:        runDockerHelper,
 		runRestoreHelper: runDockerRestoreHelper,
@@ -220,6 +230,7 @@ func (r *Repository) forgetApp(appID string) {
 	r.mountMu.Lock()
 	delete(r.mountCache, appID)
 	r.mountMu.Unlock()
+	r.forgetPorts(appID)
 	r.restoreMu.Lock()
 	delete(r.restores, appID)
 	delete(r.ops, appID)

@@ -2,6 +2,7 @@ package command
 
 import (
 	"winterflow/internal/domain/backup/recipe"
+	"winterflow/internal/domain/compose/xwinterflow"
 	"winterflow/internal/domain/model"
 )
 
@@ -132,6 +133,28 @@ type GetAppResponse struct {
 	BackupTargets *recipe.Targets `json:"backup_targets,omitempty"`
 	// RetentionDays is the server's BACKUP_RETENTION_DAYS (0: no ceiling).
 	RetentionDays int `json:"retention_days,omitempty"`
+	// DeclaredVariables are the variables the compose files declare under
+	// x-winterflow (the editor's form), Expose their expose entries with
+	// the host ports the agent allocated, XWinterflowWarnings what the block
+	// gets away with (a literal volume name, an unused variable). Empty
+	// when the compose files can't be read (BackupsError says why).
+	DeclaredVariables   []xwinterflow.DeclaredVariable `json:"declared_variables,omitempty"`
+	Expose              []ExposedPort                  `json:"expose,omitempty"`
+	XWinterflowWarnings []string                       `json:"x_winterflow_warnings,omitempty"`
+}
+
+// ExposedPort is one x-winterflow expose entry with its host port.
+type ExposedPort struct {
+	ID        string `json:"id"` // <container>:<port>/<protocol>, the key of its pin
+	Container string `json:"container"`
+	Port      int    `json:"port"`
+	Protocol  string `json:"protocol"` // http | tcp | udp
+	// HostPort is 0 until a save allocates one.
+	HostPort int `json:"host_port"`
+	// Bind is 127.0.0.1 for http (reached through the ingress), 0.0.0.0
+	// for tcp and udp (reached on the server's address).
+	Bind   string `json:"bind"`
+	Pinned bool   `json:"pinned"`
 }
 
 // --- app.revisions --------------------------------------------------------

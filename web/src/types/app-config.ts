@@ -38,9 +38,34 @@ export type AppSourceConfig = {
 export type IngressDomain = {
   id: string; // localId, editor-only — stripped on save
   domain: string;
+  // expose names an http expose entry (<service>:<port>) the hostname
+  // proxies to; without it, upstream_port is a port the compose file
+  // publishes itself.
+  expose?: string;
   upstream_port: number | ""; // "" while the field is empty in the editor
   ssl: boolean;
 };
+
+// ExposedPort is an x-winterflow expose entry with the host port the agent
+// allocated (app.get's expose; host_port 0 until the first save).
+export type ExposedPort = {
+  id: string; // <container>:<port>/<protocol>
+  container: string;
+  port: number;
+  protocol: "http" | "tcp" | "udp";
+  host_port: number;
+  bind: string;
+  pinned: boolean;
+};
+
+// PortPin is an entry of the config's ports: the host port of an expose
+// entry, pinned when the user chose it.
+export type PortPin = { host: number | ""; pinned: boolean };
+
+// exposeTarget is how an ingress hostname names an expose entry.
+export function exposeTarget(e: ExposedPort): string {
+  return `${e.container}:${e.port}`;
+}
 
 export type IngressRedirect = {
   id: string;
@@ -67,6 +92,9 @@ export type AppConfig = {
   variables: AppVariableMeta[];
   source?: AppSourceConfig;
   ingress?: AppIngress;
+  // ports are the stored host ports by expose entry id; only the pinned
+  // ones are sent (a save without them unpins).
+  ports?: Record<string, PortPin>;
 };
 
 // StorageVariable is a WF_STORAGE_ variable the app's compose files
@@ -104,6 +132,8 @@ export type AppEditorState = {
   // The variables the compose files declare (last app.get; none for a new
   // app): their values are ordinary variables, edited through a form.
   declared?: DeclaredVariable[];
+  // The expose entries with their host ports (last app.get).
+  expose?: ExposedPort[];
 };
 
 let counter = 0;

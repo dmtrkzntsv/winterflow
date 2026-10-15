@@ -105,6 +105,22 @@ describe("AppEditor declared variables", () => {
   });
 });
 
+describe("AppEditor ports", () => {
+  it("shows the Ports section only for an app with expose entries", () => {
+    servers = { activeServer: { id: "s1", features: {} }, loading: false };
+    const state: AppEditorState = {
+      ...emptyEditorState(),
+      expose: [{ id: "app:8080/http", container: "app", port: 8080, protocol: "http", host_port: 20013, bind: "127.0.0.1", pinned: false }],
+    };
+    const { unmount } = render(<Harness initial={state} />);
+    expect(screen.getByRole("heading", { name: "Ports" })).toBeInTheDocument();
+    expect(screen.getByRole("list", { name: "Ports" })).toHaveTextContent("port 20013");
+    unmount();
+    render(<Harness initial={emptyEditorState()} />);
+    expect(screen.queryByRole("heading", { name: "Ports" })).not.toBeInTheDocument();
+  });
+});
+
 describe("AppEditor", () => {
   it("shows only what runs: no name, icon, colour or description", () => {
     render(<Harness initial={emptyEditorState()} />);

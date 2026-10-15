@@ -9,6 +9,7 @@ import { GitSourceFields } from "@/components/git-source-fields";
 import { ImageVersions } from "@/components/image-versions";
 import { DeclaredVariablesForm } from "@/components/declared-variables-form";
 import { AddressRows, RedirectRows } from "@/components/ingress-editor";
+import { PortsPanel } from "@/components/ports-panel";
 import { SharedVariablesHint } from "@/components/shared-variables-hint";
 import { VariablesEditor } from "@/components/variables-editor";
 import { useServers } from "@/context/use-servers";
@@ -103,6 +104,12 @@ export function AppEditor({ state, onChange, errors = {}, refused = 0 }: Props) 
         <SharedVariablesHint shared={shared} />
         <StorageVariableRows vars={state.storageVariables} />
       </EditorSection>
+
+      {(state.expose ?? []).length > 0 ? (
+        <EditorSection title="Ports" description="The ports the compose file exposes, on the server's own port numbers.">
+          <PortsPanel state={state} onChange={onChange} serverIp={activeServer?.capabilities?.server_ip} errors={errors} />
+        </EditorSection>
+      ) : null}
 
       {/* activeServer is null while get-servers is in flight: render
           nothing until it resolves so a server with the proxy doesn't

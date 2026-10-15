@@ -4,12 +4,20 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { FieldMessage } from "@/components/form-field";
+import { NativeSelect } from "@/components/native-select";
 import { HostnameField } from "@/components/hostname-field";
 import { EmptyNote } from "@/components/page-states";
 import { newAddressRow } from "@/lib/app-editor-io";
 import type { RegisteredDomain } from "@/lib/domains";
 import { invalidAttrs, type FieldErrors } from "@/lib/field-errors";
-import { localId, type AppEditorState, type AppIngress, type IngressDomain, type IngressRedirect } from "@/types/app-config";
+import {
+  exposeTarget,
+  localId,
+  type AppEditorState,
+  type AppIngress,
+  type IngressDomain,
+  type IngressRedirect,
+} from "@/types/app-config";
 
 export type IngressRowsProps = {
   state: AppEditorState;
@@ -58,6 +66,8 @@ export function AddressRows({
   const setIngress = (next: AppIngress) => onChange({ ...state, config: { ...state.config, ingress: next } });
   const update = (id: string, patch: Partial<IngressDomain>) =>
     setIngress({ ...ing, domains: ing.domains.map((d) => (d.id === id ? { ...d, ...patch } : d)) });
+  // The app's web ports (http expose entries) a hostname can be sent to.
+  const targets = (state.expose ?? []).filter((e) => e.protocol === "http").map(exposeTarget);
 
   return (
     <div className="space-y-3">
@@ -88,17 +98,35 @@ export function AddressRows({
             }}
             onReturn={onRefresh}
           >
-            <Input
-              id={portId}
-              value={d.upstream_port}
-              type="number"
-              inputMode="numeric"
-              placeholder="8088"
-              aria-label="Port"
-              title="The port the compose file publishes on 127.0.0.1"
-              {...invalidAttrs(portId, portError, "w-28 shrink-0")}
-              onChange={(e) => update(d.id, { upstream_port: e.target.value === "" ? "" : Number(e.target.value) })}
-            />
+            {targets.length > 0 || d.expose ? (
+              <NativeSelect
+                aria-label="Send to"
+                value={d.expose ?? ""}
+                {...invalidAttrs(portId, d.expose ? portError : undefined, "w-40 shrink-0")}
+                onChange={(e) => update(d.id, e.target.value ? { expose: e.target.value, upstream_port: "" } : { expose: undefined })}
+              >
+                {targets.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+                {d.expose && !targets.includes(d.expose) ? <option value={d.expose}>{d.expose}</option> : null}
+                <option value="">Port…</option>
+              </NativeSelect>
+            ) : null}
+            {d.expose ? null : (
+              <Input
+                id={portId}
+                value={d.upstream_port}
+                type="number"
+                inputMode="numeric"
+                placeholder="8088"
+                aria-label="Port"
+                title="The port the compose file publishes on 127.0.0.1"
+                {...invalidAttrs(portId, portError, "w-28 shrink-0")}
+                onChange={(e) => update(d.id, { upstream_port: e.target.value === "" ? "" : Number(e.target.value) })}
+              />
+            )}
             <Button
               size="icon"
               variant="ghost"
@@ -111,12 +139,16 @@ export function AddressRows({
           </HostnameField>
         );
       })}
-      {ing.domains.length > 0 ? (
+      {ing.domains.some((d) => !d.expose) ? (
         <p className="text-xs text-muted-foreground">
           The compose file must publish each port on 127.0.0.1, e.g. <code>127.0.0.1:8088:80</code>.
         </p>
       ) : null}
-      <Button size="sm" variant="outline" onClick={() => setIngress({ ...ing, domains: [...ing.domains, newAddressRow()] })}>
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={() => setIngress({ ...ing, domains: [...ing.domains, { ...newAddressRow(), ...(targets[0] ? { expose: targets[0] } : {}) }] })}
+      >
         <Plus className="size-4" /> {addLabel}
       </Button>
     </div>

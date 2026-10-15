@@ -2,7 +2,7 @@ import { createContext } from "react";
 
 import type { ContainerStatusWire } from "@/lib/app-status";
 import type { BackupHealth, BackupTargets, EffectiveBackup } from "@/lib/backups";
-import type { DeclaredVariable, StorageVariable } from "@/types/app-config";
+import type { DeclaredVariable, ExposedPort, StorageVariable } from "@/types/app-config";
 
 export type AppDomain = {
   domain: string;
@@ -167,6 +167,7 @@ export type AppDetailPayload = {
   retention_days?: number;
   // What the compose files' x-winterflow block declares (app.get).
   declared_variables?: DeclaredVariable[] | null;
+  expose?: ExposedPort[] | null;
   x_winterflow_warnings?: string[] | null;
   revision: number;
   available_revisions: number[] | null;

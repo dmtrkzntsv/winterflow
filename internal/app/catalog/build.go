@@ -190,19 +190,27 @@ func Build(o Options) (Report, error) {
 // file.
 func readApp(root, slug string) (e feed.Entry, lg *logo, skip string, err error) {
 	dir := filepath.Join(root, "apps", slug)
-	rawMeta, err := os.ReadFile(filepath.Join(dir, "metadata.json"))
+	metaPath := filepath.Join(dir, "metadata.json")
+	info, err := os.Lstat(metaPath)
 	if errors.Is(err, fs.ErrNotExist) {
 		return feed.Entry{}, nil, "no metadata.json", nil
 	}
 	if err != nil {
 		return feed.Entry{}, nil, "", err
 	}
-	composeRoot, err := os.OpenRoot(filepath.Join(dir, "compose"))
+	if !info.Mode().IsRegular() {
+		return feed.Entry{}, nil, "", errors.New("metadata.json: not a regular file")
+	}
+	rawMeta, err := os.ReadFile(metaPath)
+	if err != nil {
+		return feed.Entry{}, nil, "", err
+	}
+	composeRoot, err := openDir(filepath.Join(dir, "compose"))
 	if errors.Is(err, fs.ErrNotExist) {
 		return feed.Entry{}, nil, "no compose/compose.yml", nil
 	}
 	if err != nil {
-		return feed.Entry{}, nil, "", err
+		return feed.Entry{}, nil, "", fmt.Errorf("compose: %v", err)
 	}
 	defer composeRoot.Close()
 	compose, err := readRegular(composeRoot, "compose.yml")
@@ -256,9 +264,9 @@ func readLogo(root, name string) (*logo, error) {
 	if name == "" || !slices.Contains(logoExts, ext) {
 		return nil, nil
 	}
-	assets, err := os.OpenRoot(filepath.Join(root, "assets"))
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
+	assets, err := openDir(filepath.Join(root, "assets"))
+	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, errNotDir) {
+		return nil, nil // no assets folder, or a link standing in for it
 	}
 	if err != nil {
 		return nil, err
@@ -272,6 +280,21 @@ func readLogo(root, name string) (*logo, error) {
 		return nil, err
 	}
 	return &logo{data: b, ext: ext}, nil
+}
+
+var errNotDir = errors.New("not a real directory")
+
+// openDir opens name as a Root, but only when it is a real directory:
+// os.OpenRoot itself follows a link at its own path.
+func openDir(name string) (*os.Root, error) {
+	info, err := os.Lstat(name)
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() {
+		return nil, errNotDir
+	}
+	return os.OpenRoot(name)
 }
 
 // readRegular reads a regular file under r. A link that leaves r, a

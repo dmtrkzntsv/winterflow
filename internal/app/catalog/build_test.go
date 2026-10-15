@@ -342,6 +342,51 @@ func TestBuildRefusesEscapes(t *testing.T) {
 	}
 }
 
+// A link standing in for the compose folder, the assets folder or
+// metadata.json is not followed.
+func TestBuildRefusesLinkedRoots(t *testing.T) {
+	apps := copyFixture(t)
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	// plausible's compose folder becomes a link to a copy elsewhere.
+	elsewhere := filepath.Join(t.TempDir(), "compose")
+	must(os.CopyFS(elsewhere, os.DirFS(filepath.Join(apps, "apps/plausible/compose"))))
+	must(os.RemoveAll(filepath.Join(apps, "apps/plausible/compose")))
+	if err := os.Symlink(elsewhere, filepath.Join(apps, "apps/plausible/compose")); err != nil {
+		t.Skip("no symlinks:", err)
+	}
+	// actual-budget's metadata.json becomes a link.
+	meta := filepath.Join(apps, "apps/actual-budget/metadata.json")
+	moved := filepath.Join(t.TempDir(), "metadata.json")
+	must(os.Rename(meta, moved))
+	must(os.Symlink(moved, meta))
+	_, err := Build(options(t, apps))
+	var be *BuildError
+	if !errors.As(err, &be) || !reflect.DeepEqual(be.Problems, []string{
+		"actual-budget: metadata.json: not a regular file",
+		"plausible: compose: not a real directory",
+	}) {
+		t.Fatalf("err = %v", err)
+	}
+
+	// A linked assets folder means no logos.
+	apps = copyFixture(t)
+	assets := filepath.Join(apps, "assets")
+	other := filepath.Join(t.TempDir(), "assets")
+	must(os.Rename(assets, other))
+	must(os.Symlink(other, assets))
+	o := options(t, apps)
+	rep, err := Build(o)
+	must(err)
+	if !reflect.DeepEqual(rep.Warnings, []string{"actual-budget: no logo", "plausible: no logo"}) {
+		t.Fatalf("warnings = %q", rep.Warnings)
+	}
+}
+
 // A logo that is not an image is no logo, like a missing one.
 func TestBuildLogoExtension(t *testing.T) {
 	apps := copyFixture(t)
@@ -384,7 +429,7 @@ func TestBuildRefusesBaseURLParts(t *testing.T) {
 // no temp file is left beside the output.
 func TestCLITrimsKeyAndLeavesNoTemp(t *testing.T) {
 	_, key, _ := ed25519.GenerateKey(rand.Reader)
-	seed := base64.StdEncoding.EncodeToString(key.Seed()) + "\n"
+	seed := "  " + base64.StdEncoding.EncodeToString(key.Seed()) + " \t\n"
 	out := t.TempDir()
 	var stdout, stderr bytes.Buffer
 	code := Main([]string{"build", "--apps", fixture, "--out", out, "--base-url", "https://x.test", "--sign-key-env", "K"},

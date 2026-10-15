@@ -14,7 +14,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -92,8 +91,15 @@ type metadata struct {
 	Extension        string   `json:"extension"`
 }
 
-// logoExtRE is the extension a copied logo keeps.
-var logoExtRE = regexp.MustCompile(`^\.[a-z0-9]{1,5}$`)
+// logoExts are the extensions a published logo may have: images only, so a
+// metadata.json cannot make the feed's host serve anything else.
+var logoExts = []string{".png", ".svg", ".jpg", ".jpeg", ".webp", ".gif", ".avif"}
+
+// logo is a logo's bytes, read at validation time, and its extension.
+type logo struct {
+	data []byte
+	ext  string
+}
 
 // Build reads every apps/<slug>/ of o.Apps and writes the feed. An
 // installable app has metadata.json and compose/compose.yml, is not on the
@@ -104,6 +110,9 @@ func Build(o Options) (Report, error) {
 	base, err := url.Parse(o.BaseURL)
 	if err != nil || base.Scheme != "https" || base.Host == "" {
 		return Report{}, fmt.Errorf("--base-url %q is not an https URL", o.BaseURL)
+	}
+	if base.User != nil || strings.ContainsAny(o.BaseURL, "?#") {
+		return Report{}, fmt.Errorf("--base-url %q must not carry credentials, a query or a fragment", o.BaseURL)
 	}
 	now := time.Now
 	if o.Now != nil {
@@ -117,14 +126,14 @@ func Build(o Options) (Report, error) {
 		rep      Report
 		problems []string
 		entries  []feed.Entry
-		logos    = map[string]string{} // output name -> source path
+		logos    = map[string][]byte{} // output name -> bytes
 	)
 	for _, d := range dirs {
 		if !d.IsDir() {
 			continue
 		}
 		slug := d.Name()
-		e, logo, skip, err := readApp(o.Apps, slug)
+		e, lg, skip, err := readApp(o.Apps, slug)
 		switch {
 		case err != nil:
 			problems = append(problems, slug+": "+err.Error())
@@ -134,8 +143,8 @@ func Build(o Options) (Report, error) {
 			continue
 		}
 		logoName := ""
-		if logo != "" {
-			logoName = slug + strings.ToLower(filepath.Ext(logo))
+		if lg != nil {
+			logoName = slug + lg.ext
 			e.LogoURL = base.JoinPath(LogoDir, logoName).String()
 		}
 		e.Digest = feed.Digest(e.Files)
@@ -147,7 +156,7 @@ func Build(o Options) (Report, error) {
 		if logoName == "" {
 			rep.Warnings = append(rep.Warnings, slug+": no logo")
 		} else {
-			logos[logoName] = logo
+			logos[logoName] = lg.data
 		}
 		spec, _ := template.Parse(body) // Check validated it
 		for _, w := range template.Warnings(body, spec, nil) {
@@ -175,88 +184,177 @@ func Build(o Options) (Report, error) {
 }
 
 // readApp reads one apps folder: its entry (without digest and logo URL)
-// and its logo's path ("" when it has none), or why it is skipped.
-func readApp(root, slug string) (e feed.Entry, logo, skip string, err error) {
+// and its logo (nil when it has none), or why it is skipped. Every file is
+// read through an os.Root, so a symlink or a ".." cannot reach outside the
+// compose folder (or the assets folder, for the logo), and must be a regular
+// file.
+func readApp(root, slug string) (e feed.Entry, lg *logo, skip string, err error) {
 	dir := filepath.Join(root, "apps", slug)
 	rawMeta, err := os.ReadFile(filepath.Join(dir, "metadata.json"))
 	if errors.Is(err, fs.ErrNotExist) {
-		return feed.Entry{}, "", "no metadata.json", nil
+		return feed.Entry{}, nil, "no metadata.json", nil
 	}
 	if err != nil {
-		return feed.Entry{}, "", "", err
+		return feed.Entry{}, nil, "", err
 	}
-	composeDir := filepath.Join(dir, "compose")
-	compose, err := os.ReadFile(filepath.Join(composeDir, "compose.yml"))
+	composeRoot, err := os.OpenRoot(filepath.Join(dir, "compose"))
 	if errors.Is(err, fs.ErrNotExist) {
-		return feed.Entry{}, "", "no compose/compose.yml", nil
+		return feed.Entry{}, nil, "no compose/compose.yml", nil
 	}
 	if err != nil {
-		return feed.Entry{}, "", "", err
+		return feed.Entry{}, nil, "", err
+	}
+	defer composeRoot.Close()
+	compose, err := readRegular(composeRoot, "compose.yml")
+	if errors.Is(err, fs.ErrNotExist) {
+		return feed.Entry{}, nil, "no compose/compose.yml", nil
+	}
+	if err != nil {
+		return feed.Entry{}, nil, "", fmt.Errorf("compose/compose.yml: %v", err)
 	}
 	var m metadata
 	if err := json.Unmarshal(rawMeta, &m); err != nil {
-		return feed.Entry{}, "", "", fmt.Errorf("metadata.json: %v", err)
+		return feed.Entry{}, nil, "", fmt.Errorf("metadata.json: %v", err)
 	}
 	switch {
 	case m.WaitingList:
-		return feed.Entry{}, "", "on the waiting list", nil
+		return feed.Entry{}, nil, "on the waiting list", nil
 	case m.Extension != "":
-		return feed.Entry{}, "", fmt.Sprintf("an agent extension (%s), not an app", m.Extension), nil
+		return feed.Entry{}, nil, fmt.Sprintf("an agent extension (%s), not an app", m.Extension), nil
 	case m.Slug != "" && m.Slug != slug:
-		return feed.Entry{}, "", "", fmt.Errorf("metadata.json: slug %q is not the folder name", m.Slug)
+		return feed.Entry{}, nil, "", fmt.Errorf("metadata.json: slug %q is not the folder name", m.Slug)
 	}
 	files := map[string]string{"compose.yml": string(compose)}
 	spec, err := xwinterflow.Parse(xwinterflow.ModeTemplate, compose)
 	if err != nil {
-		return feed.Entry{}, "", "", err
+		return feed.Entry{}, nil, "", err
 	}
 	for _, f := range spec.Files {
-		b, err := os.ReadFile(filepath.Join(composeDir, filepath.FromSlash(f)))
+		b, err := readRegular(composeRoot, filepath.FromSlash(f))
 		if err != nil {
-			return feed.Entry{}, "", "", fmt.Errorf("x-winterflow.files: %s: %v", f, errors.Unwrap(err))
+			return feed.Entry{}, nil, "", fmt.Errorf("x-winterflow.files: %s: %v", f, err)
 		}
 		files[f] = string(b)
 	}
-	if m.Logo != "" && logoExtRE.MatchString(strings.ToLower(path.Ext(m.Logo))) {
-		p := filepath.Join(root, "assets", filepath.FromSlash(path.Clean("/"+m.Logo)))
-		if info, err := os.Stat(p); err == nil && info.Mode().IsRegular() {
-			logo = p
-		}
+	if lg, err = readLogo(root, m.Logo); err != nil {
+		return feed.Entry{}, nil, "", fmt.Errorf("logo %q: %v", m.Logo, err)
 	}
 	return feed.Entry{
 		Slug: slug, Name: m.Name, Summary: m.Summary, Description: m.Description,
 		Keywords: m.Keywords, Tags: m.Tags, AlternativeTo: m.AlternativeTo, License: m.License,
 		HomepageURL: m.HomepageURL, RepositoryURL: m.RepositoryURL, DocumentationURL: m.DocumentationURL,
 		Files: files,
-	}, logo, "", nil
+	}, lg, "", nil
 }
 
-// write puts the feed, its signature and the logos under o.Out; logos/ is
-// replaced as a whole, so a dropped app's logo goes with it.
-func write(o Options, raw []byte, logos map[string]string) error {
-	logoDir := filepath.Join(o.Out, LogoDir)
-	if err := os.RemoveAll(logoDir); err != nil {
+// readLogo reads the logo metadata.json names, relative to <root>/assets. No
+// logo, a missing file or an extension that is not an image's is (nil, nil);
+// a path that leaves assets/, a link out of it or a file that is not a
+// regular one is an error.
+func readLogo(root, name string) (*logo, error) {
+	ext := strings.ToLower(path.Ext(name))
+	if name == "" || !slices.Contains(logoExts, ext) {
+		return nil, nil
+	}
+	assets, err := os.OpenRoot(filepath.Join(root, "assets"))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer assets.Close()
+	b, err := readRegular(assets, filepath.FromSlash(name))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &logo{data: b, ext: ext}, nil
+}
+
+// readRegular reads a regular file under r. A link that leaves r, a
+// directory or a device is refused (not opened: a FIFO would block). The
+// error is the bare cause, without the path.
+func readRegular(r *os.Root, name string) ([]byte, error) {
+	cause := func(err error) error {
+		if pe, ok := errors.AsType[*fs.PathError](err); ok {
+			return pe.Err
+		}
 		return err
 	}
+	info, err := r.Stat(name)
+	if err != nil {
+		return nil, cause(err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, errors.New("not a regular file")
+	}
+	b, err := r.ReadFile(name)
+	return b, cause(err)
+}
+
+// write puts the logos, the signature and then the feed under o.Out, each
+// file by a rename of a temp file beside it, so a reader never sees a half
+// written file and the feed, which names the logos and is what the signature
+// covers, lands last. Logos the feed no longer lists are removed after it.
+func write(o Options, raw []byte, logos map[string][]byte) error {
+	logoDir := filepath.Join(o.Out, LogoDir)
 	if err := os.MkdirAll(logoDir, 0o755); err != nil {
 		return err
 	}
-	for name, src := range logos {
-		b, err := os.ReadFile(src)
-		if err != nil {
-			return err
-		}
-		if err := os.WriteFile(filepath.Join(logoDir, name), b, 0o644); err != nil {
+	for name, data := range logos {
+		if err := writeFile(filepath.Join(logoDir, name), data); err != nil {
 			return err
 		}
 	}
 	sigPath := filepath.Join(o.Out, SigFile)
 	if o.SigningKey != nil {
-		if err := os.WriteFile(sigPath, feed.Sign(o.SigningKey, raw), 0o644); err != nil {
+		if err := writeFile(sigPath, feed.Sign(o.SigningKey, raw)); err != nil {
 			return err
 		}
 	} else if err := os.Remove(sigPath); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	return os.WriteFile(filepath.Join(o.Out, FeedFile), raw, 0o644)
+	if err := writeFile(filepath.Join(o.Out, FeedFile), raw); err != nil {
+		return err
+	}
+	old, err := os.ReadDir(logoDir)
+	if err != nil {
+		return err
+	}
+	for _, d := range old {
+		if _, keep := logos[d.Name()]; !keep {
+			if err := os.RemoveAll(filepath.Join(logoDir, d.Name())); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// writeFile replaces name with data (0644) by renaming a temp file in its
+// folder.
+func writeFile(name string, data []byte) (err error) {
+	f, err := os.CreateTemp(filepath.Dir(name), "."+filepath.Base(name)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			f.Close()
+			os.Remove(f.Name())
+		}
+	}()
+	if _, err = f.Write(data); err != nil {
+		return err
+	}
+	if err = f.Chmod(0o644); err != nil {
+		return err
+	}
+	if err = f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), name)
 }

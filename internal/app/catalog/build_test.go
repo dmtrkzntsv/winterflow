@@ -280,3 +280,124 @@ func TestCLI(t *testing.T) {
 		t.Fatalf("keygen pair: %v", err)
 	}
 }
+
+// A symlink or ".." cannot carry a file from outside the compose folder or
+// the assets folder into the signed feed; each is that app's problem.
+func TestBuildRefusesEscapes(t *testing.T) {
+	secret := filepath.Join(t.TempDir(), "secret.txt")
+	if err := os.WriteFile(secret, []byte("secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	apps := copyFixture(t)
+	caddy := filepath.Join(apps, "apps/plausible/compose/Caddyfile")
+	if err := os.Remove(caddy); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(secret, caddy); err != nil {
+		t.Skip("no symlinks:", err)
+	}
+	for name, content := range map[string]string{
+		"apps/traversal/metadata.json":       `{"name": "T", "logo": "../../x.png"}`,
+		"apps/traversal/compose/compose.yml": "services: {app: {image: x}}\n",
+		"apps/dirlogo/metadata.json":         `{"name": "D", "logo": "dir.png"}`,
+		"apps/dirlogo/compose/compose.yml":   "services: {app: {image: x}}\n",
+		"assets/dir.png/.keep":               "",
+		"apps/linklogo/metadata.json":        `{"name": "L", "logo": "link.png"}`,
+		"apps/linklogo/compose/compose.yml":  "services: {app: {image: x}}\n",
+		"apps/dirfile/metadata.json":         `{"name": "F"}`,
+		"apps/dirfile/compose/compose.yml":   "services: {app: {image: x}}\nx-winterflow: {files: [sub]}\n",
+		"apps/dirfile/compose/sub/.keep":     "",
+	} {
+		p := filepath.Join(apps, filepath.FromSlash(name))
+		_ = os.MkdirAll(filepath.Dir(p), 0o755)
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(secret, filepath.Join(apps, "assets/link.png")); err != nil {
+		t.Fatal(err)
+	}
+	o := options(t, apps)
+	_, err := Build(o)
+	var be *BuildError
+	if !errors.As(err, &be) {
+		t.Fatalf("err = %v", err)
+	}
+	for i, want := range []string{
+		"dirfile: x-winterflow.files: sub: not a regular file",
+		"dirlogo: logo \"dir.png\": not a regular file",
+		"linklogo: logo \"link.png\": path escapes from parent",
+		"plausible: x-winterflow.files: Caddyfile: path escapes from parent",
+		"traversal: logo \"../../x.png\": path escapes from parent",
+	} {
+		if i >= len(be.Problems) || be.Problems[i] != want {
+			t.Errorf("problem %d = %q, want %q", i, be.Problems, want)
+		}
+	}
+	if len(be.Problems) != 5 {
+		t.Errorf("problems = %q", be.Problems)
+	}
+	if entries, _ := os.ReadDir(o.Out); len(entries) != 0 {
+		t.Fatalf("a failed build wrote %v", entries)
+	}
+}
+
+// A logo that is not an image is no logo, like a missing one.
+func TestBuildLogoExtension(t *testing.T) {
+	apps := copyFixture(t)
+	p := filepath.Join(apps, "apps/actual-budget/metadata.json")
+	raw, _ := os.ReadFile(p)
+	if err := os.WriteFile(p, bytes.Replace(raw, []byte("actual-budget.svg"), []byte("actual-budget.html"), 1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(apps, "assets/actual-budget/actual-budget.html"), []byte("<script>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	o := options(t, apps)
+	rep, err := Build(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(rep.Warnings, []string{"actual-budget: no logo", "plausible: no logo"}) {
+		t.Fatalf("warnings = %q", rep.Warnings)
+	}
+	f, _ := readFeed(t, o.Out)
+	if f.Apps[0].LogoURL != "" {
+		t.Fatalf("logo = %q", f.Apps[0].LogoURL)
+	}
+	if entries, _ := os.ReadDir(filepath.Join(o.Out, LogoDir)); len(entries) != 0 {
+		t.Fatalf("logos = %v", entries)
+	}
+}
+
+func TestBuildRefusesBaseURLParts(t *testing.T) {
+	for _, u := range []string{"https://user:pw@winterflow.io/catalog/", "https://winterflow.io/catalog/?a=b", "https://winterflow.io/catalog/#x", "https://winterflow.io/catalog/?"} {
+		o := options(t, fixture)
+		o.BaseURL = u
+		if _, err := Build(o); err == nil || !strings.Contains(err.Error(), "--base-url") {
+			t.Errorf("%s: %v", u, err)
+		}
+	}
+}
+
+// A signing key with a trailing newline (a secret file) still parses, and
+// no temp file is left beside the output.
+func TestCLITrimsKeyAndLeavesNoTemp(t *testing.T) {
+	_, key, _ := ed25519.GenerateKey(rand.Reader)
+	seed := base64.StdEncoding.EncodeToString(key.Seed()) + "\n"
+	out := t.TempDir()
+	var stdout, stderr bytes.Buffer
+	code := Main([]string{"build", "--apps", fixture, "--out", out, "--base-url", "https://x.test", "--sign-key-env", "K"},
+		&stdout, &stderr, func(string) string { return seed })
+	if code != 0 {
+		t.Fatalf("%d %s", code, stderr.String())
+	}
+	for _, dir := range []string{out, filepath.Join(out, LogoDir)} {
+		entries, _ := os.ReadDir(dir)
+		for _, e := range entries {
+			if strings.Contains(e.Name(), ".tmp-") {
+				t.Fatalf("left %s", e.Name())
+			}
+		}
+	}
+}

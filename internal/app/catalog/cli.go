@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strings"
 
 	feed "winterflow/internal/domain/catalog"
 )
@@ -56,7 +57,7 @@ func build(args []string, stdout, stderr io.Writer, getenv func(string) string) 
 		return 2
 	}
 	if keyEnv != "" {
-		v := getenv(keyEnv)
+		v := strings.TrimSpace(getenv(keyEnv))
 		if v == "" {
 			fmt.Fprintf(stderr, "catalog build: %s is not set\n", keyEnv)
 			return 1

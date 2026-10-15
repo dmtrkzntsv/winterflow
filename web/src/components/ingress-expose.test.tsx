@@ -45,6 +45,7 @@ describe("address rows: expose targets", () => {
     const select = screen.getByRole("combobox", { name: "Send to" });
     expect([...select.querySelectorAll("option")].map((o) => o.textContent)).toEqual(["app:8080", "admin:9000", "Port…"]);
     expect(domains()[0]).toMatchObject({ expose: "app:8080" });
+    expect(select).toHaveClass("max-sm:h-10");
     expect(screen.queryByLabelText("Port")).not.toBeInTheDocument();
     await user.selectOptions(select, "admin:9000");
     expect(domains()[0]).toMatchObject({ expose: "admin:9000", upstream_port: "" });

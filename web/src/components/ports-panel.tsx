@@ -48,7 +48,7 @@ export function PortsPanel({ state, onChange, serverIp, errors = {} }: Props) {
               <span className="ml-auto text-muted-foreground">
                 {e.host_port ? `port ${e.host_port}` : "port allocated on deploy"}
               </span>
-              <label className="flex items-center gap-2 text-xs">
+              <label className="flex items-center gap-2 text-xs max-sm:min-h-10">
                 <Switch
                   aria-label={`Pin port of ${e.id}`}
                   checked={pinned}

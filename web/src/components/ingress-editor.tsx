@@ -102,7 +102,7 @@ export function AddressRows({
               <NativeSelect
                 aria-label="Send to"
                 value={d.expose ?? ""}
-                {...invalidAttrs(portId, d.expose ? portError : undefined, "w-40 shrink-0")}
+                {...invalidAttrs(portId, d.expose ? portError : undefined, "w-40 shrink-0 max-sm:h-10")}
                 onChange={(e) => update(d.id, e.target.value ? { expose: e.target.value, upstream_port: "" } : { expose: undefined })}
               >
                 {targets.map((t) => (

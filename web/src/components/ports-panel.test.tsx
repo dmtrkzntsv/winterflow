@@ -60,4 +60,10 @@ describe("PortsPanel", () => {
     render(<PortsPanel state={emptyEditorState()} onChange={() => {}} />);
     expect(screen.queryByRole("list", { name: "Ports" })).not.toBeInTheDocument();
   });
+
+  it("keeps the pin control a phone-sized tap target", () => {
+    render(<Harness />);
+    const label = screen.getByRole("switch", { name: "Pin port of app:8080/http" }).closest("label");
+    expect(label).toHaveClass("max-sm:min-h-10", "items-center");
+  });
 });

@@ -314,22 +314,45 @@ var (
 	// Patterns match a token with its shell quotes stripped from the front.
 	// assignArg is "NAME=value" with optional leading dashes (-x=1, --x=1,
 	// X=1); flagArg is a bare "-x" / "--name"; headerArg is an HTTP header
-	// name ("Authorization:"); shortPass is an attached "-p<value>".
+	// name ("Authorization:"), maybe after wget's "--header=", up to its ':'.
 	assignArg = regexp.MustCompile(`^["']*-{0,2}([A-Za-z0-9_.-]+)=`)
 	flagArg   = regexp.MustCompile(`^["']*--?[A-Za-z0-9_.-]+["']*$`)
-	headerArg = regexp.MustCompile(`^["']*([A-Za-z0-9_-]+):["']*$`)
-	shortPass = regexp.MustCompile(`^["']*-p`)
+	headerArg = regexp.MustCompile(`^["']*(?:--header=["']*)?([A-Za-z0-9_-]+):`)
 	// urlScheme finds the start of URL userinfo (scheme://).
 	urlScheme = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://`)
 
-	// mysqlClients take their password attached to -p (-psecret); a bare -p
-	// prompts instead.
-	mysqlClients = map[string]bool{
-		"mysql": true, "mysqldump": true, "mysqladmin": true,
-		"mariadb": true, "mariadb-dump": true, "mysqlsh": true,
+	// passOpts are the short options that carry a password, by the client
+	// that reads them (named anywhere earlier in the command line, so the
+	// shell form "sh -c 'redis-cli -a x'" counts too).
+	passOpts = map[string]passOpt{
+		// A bare -p prompts instead.
+		"mysql": mysqlPass, "mysqldump": mysqlPass, "mysqladmin": mysqlPass,
+		"mariadb": mysqlPass, "mariadb-dump": mysqlPass, "mysqlsh": mysqlPass,
+		"redis-cli": redisPass, "keydb-cli": redisPass, "valkey-cli": redisPass, "redis-benchmark": redisPass,
+		// sshpass takes one -p, before the command it runs (ssh -p 22).
+		"sshpass": {flag: "-p", attached: true, next: true, once: true},
+		"mongo":   mongoPass, "mongosh": mongoPass, "mongodump": mongoPass, "mongorestore": mongoPass,
+		"mongoexport": mongoPass, "mongoimport": mongoPass,
 	}
+	mysqlPass = passOpt{flag: "-p", attached: true}
+	redisPass = passOpt{flag: "-a", attached: true, next: true}
+	mongoPass = passOpt{flag: "-p", next: true}
+
+	// userClients take user:password in -u/--user (and -U/--proxy-user);
+	// a value without ':' makes curl prompt.
+	userClients = map[string]bool{"curl": true, "wget": true}
+	userFlags   = map[string]bool{"-u": true, "--user": true, "-U": true, "--proxy-user": true}
+	headerFlags = map[string]bool{"-H": true, "--header": true}
 	authSchemes = map[string]bool{"bearer": true, "basic": true, "token": true, "digest": true}
 )
+
+// passOpt is a client's password option: attached (-psecret) and/or as
+// the next argument (-a secret).
+type passOpt struct {
+	flag           string
+	attached, next bool
+	once           bool // only the first is the client's
+}
 
 func secretName(name string) bool {
 	name = strings.ToLower(name)
@@ -353,6 +376,15 @@ func openWrap(tok string) byte {
 	return 0
 }
 
+// openQuote returns the first quote in tok when tok does not close it
+// ("--header='Authorization:"), 0 otherwise.
+func openQuote(tok string) byte {
+	if k := strings.IndexAny(tok, `"'`); k >= 0 && strings.Count(tok, tok[k:k+1])%2 == 1 {
+		return tok[k]
+	}
+	return 0
+}
+
 func trailingQuotes(tok string) string {
 	return tok[len(strings.TrimRight(tok, `"'`)):]
 }
@@ -370,23 +402,25 @@ func closeIdx(args []string, from int, q byte) int {
 
 // redactTail redacts the value in args[i] after its first prefixLen bytes
 // (the name and "="). It returns the replacement and the last token used:
-// a quoted value spans tokens up to the one that closes the quote.
+// a quoted value spans tokens up to the one that closes the quote, which
+// may open in the prefix (--user='admin:p w').
 func redactTail(args []string, i, prefixLen int) (string, int) {
 	tok := args[i]
 	prefix, rem := tok[:prefixLen], tok[prefixLen:]
-	if q := openWrap(tok); q != 0 {
-		return prefix + "***" + string(q), closeIdx(args, i+1, q)
+	pq := strings.IndexAny(prefix, `"'`)
+	if pq >= 0 && strings.Count(tok, prefix[pq:pq+1])%2 == 1 {
+		return prefix + "***" + prefix[pq:pq+1], closeIdx(args, i+1, prefix[pq])
 	}
 	if rem != "" && isQuote(rem[0]) {
 		if strings.Count(rem, rem[:1])%2 == 1 {
 			return prefix + "***", closeIdx(args, i+1, rem[0])
 		}
-		if isQuote(tok[0]) {
-			return prefix + "***" + tok[:1], i
+		if pq >= 0 {
+			return prefix + "***" + prefix[pq:pq+1], i
 		}
 		return prefix + "***", i
 	}
-	if isQuote(tok[0]) {
+	if pq >= 0 {
 		return prefix + "***" + trailingQuotes(rem), i
 	}
 	return prefix + "***", i
@@ -439,7 +473,8 @@ func redactURL(tok string) string {
 // --password=x, DB_PASSWORD=x, postgres://user:pw@host, curl -H
 // "Authorization: Bearer x"), and secret values never leave the agent, so
 // those values become "***" here, before the cap. It is best-effort: it
-// knows common shapes (shell quotes, attached mysql -p, URL userinfo, auth
+// knows common shapes (shell quotes, client password options such as
+// mysql -p and redis-cli -a, curl -u user:pass, URL userinfo, auth
 // headers), not every way a program takes a secret.
 func redactCmdline(b []byte) string {
 	// Tokens, not arguments: sh -c "redis-server --requirepass x" holds a
@@ -449,11 +484,16 @@ func redactCmdline(b []byte) string {
 		args = append(args, strings.Fields(a)...)
 	}
 	out := make([]string, 0, len(args))
-	mysql := false
+	var pass []passOpt // password options of the clients seen so far
+	user := false      // a curl/wget was seen
 	for i := 0; i < len(args); i++ {
 		tok := args[i]
-		if mysqlClients[path.Base(strings.Trim(tok, `"'`))] {
-			mysql = true
+		bare := strings.Trim(tok, `"'`)
+		if o, ok := passOpts[path.Base(bare)]; ok {
+			pass = append(pass, o)
+		}
+		if userClients[path.Base(bare)] {
+			user = true
 		}
 		if m := assignArg.FindStringSubmatch(tok); m != nil && secretName(m[1]) {
 			s, j := redactTail(args, i, len(m[0]))
@@ -461,33 +501,21 @@ func redactCmdline(b []byte) string {
 			i = j
 			continue
 		}
-		if loc := shortPass.FindStringIndex(tok); mysql && loc != nil && loc[1] < len(tok) && !strings.HasPrefix(tok[loc[1]:], "-") {
-			s, j := redactTail(args, i, loc[1])
-			out = append(out, s)
+		if s, j, ok := redactPassOpt(args, i, &pass); ok {
+			out = append(out, s...)
 			i = j
 			continue
 		}
-		if m := headerArg.FindStringSubmatch(tok); m != nil && secretName(m[1]) {
-			out = append(out, tok)
-			wrap, j := openWrap(tok), i+1
-			if !canRedactNext(args, j) {
+		if user {
+			if s, j, ok := redactUserOpt(args, i); ok {
+				out = append(out, s...)
+				i = j
 				continue
 			}
-			if authSchemes[strings.ToLower(strings.Trim(args[j], `"'`))] {
-				out = append(out, args[j])
-				if wrap != 0 && strings.IndexByte(args[j], wrap) >= 0 {
-					i = j
-					continue
-				}
-				j++
-				if !canRedactNext(args, j) {
-					i = j - 1
-					continue
-				}
-			}
-			s, k := redactNext(args, j, wrap)
-			out = append(out, s)
-			i = k
+		}
+		if s, j, ok := redactHeader(args, i); ok {
+			out = append(out, s...)
+			i = j
 			continue
 		}
 		if flagArg.MatchString(tok) && secretName(tok) && canRedactNext(args, i+1) {
@@ -504,6 +532,122 @@ func redactCmdline(b []byte) string {
 		s = s[:cmdlineCap]
 	}
 	return strings.TrimRight(s, " ")
+}
+
+// redactPassOpt redacts a password given to a client's option (-psecret,
+// -a secret). It returns the output tokens and the last token used; ok is
+// false when args[i] is no such option.
+func redactPassOpt(args []string, i int, pass *[]passOpt) ([]string, int, bool) {
+	tok := args[i]
+	lead := len(tok) - len(strings.TrimLeft(tok, `"'`))
+	for k, o := range *pass {
+		var out []string
+		j := i
+		switch rest := tok[lead:]; {
+		case o.attached && strings.HasPrefix(rest, o.flag) && strings.Trim(rest[len(o.flag):], `"'`) != "" &&
+			!strings.HasPrefix(rest[len(o.flag):], "-"):
+			var s string
+			s, j = redactTail(args, i, lead+len(o.flag))
+			out = []string{s}
+		case o.next && strings.Trim(tok, `"'`) == o.flag && canRedactNext(args, i+1):
+			var s string
+			s, j = redactNext(args, i+1, openWrap(tok))
+			out = []string{tok, s}
+		default:
+			continue
+		}
+		if o.once {
+			*pass = append((*pass)[:k:k], (*pass)[k+1:]...)
+		}
+		return out, j, true
+	}
+	return nil, i, false
+}
+
+// redactUserOpt keeps the user of curl's -u user:password (--user,
+// -uuser:password, --user=user:password, and the proxy forms) and redacts
+// the password. ok is false when args[i] is no such option or its value has
+// no ':' (curl then prompts).
+func redactUserOpt(args []string, i int) ([]string, int, bool) {
+	tok := args[i]
+	bare := strings.TrimLeft(tok, `"'`)
+	lead := len(tok) - len(bare)
+	if userFlags[strings.TrimRight(bare, `"'`)] {
+		if !canRedactNext(args, i+1) {
+			return nil, i, false
+		}
+		s, j, ok := redactCredential(args, i+1, 0)
+		return []string{tok, s}, j, ok
+	}
+	for flag := range userFlags {
+		start := len(flag) // -uadmin:pw
+		if strings.HasPrefix(flag, "--") {
+			start++ // --user=admin:pw
+			flag += "="
+		}
+		if strings.HasPrefix(bare, flag) && len(bare) > len(flag) {
+			s, j, ok := redactCredential(args, i, lead+start)
+			return []string{s}, j, ok
+		}
+	}
+	return nil, i, false
+}
+
+// redactCredential redacts what follows the first ':' of a user:password
+// value starting at args[i][start:].
+func redactCredential(args []string, i, start int) (string, int, bool) {
+	colon := strings.IndexByte(args[i][start:], ':')
+	if colon < 0 {
+		return "", i, false
+	}
+	s, j := redactTail(args, i, start+colon+1)
+	return s, j, true
+}
+
+// redactHeader redacts an HTTP header with a secret name: its value may
+// follow in the next tokens ("Authorization: Bearer x", also after wget's
+// "--header=") or, in a header given to -H / --header / --header=, be
+// attached ("X-Api-Key:abc", "Authorization:Bearer x"). An auth scheme
+// (Bearer, Basic, ...) is kept. ok is false when args[i] is no such header.
+func redactHeader(args []string, i int) ([]string, int, bool) {
+	tok := args[i]
+	m := headerArg.FindStringSubmatch(tok)
+	if m == nil || !secretName(m[1]) {
+		return nil, i, false
+	}
+	rest := strings.Trim(tok[len(m[0]):], `"'`)
+	if rest != "" {
+		// Attached values only in a header argument: elsewhere a
+		// "keycloak:8080" is a host and port.
+		inHeader := strings.Contains(m[0], "--header=") || i > 0 && headerFlags[strings.Trim(args[i-1], `"'`)]
+		if !inHeader {
+			return nil, i, false
+		}
+		if !authSchemes[strings.ToLower(rest)] {
+			s, j := redactTail(args, i, len(m[0]))
+			return []string{s}, j, true
+		}
+	}
+	out := []string{tok}
+	wrap, j := openQuote(tok), i+1
+	if rest != "" && wrap == 0 && strings.ContainsAny(tok, `"'`) {
+		return out, i, true // "Authorization:Bearer" closes its quote: no value
+	}
+	if !canRedactNext(args, j) {
+		return out, i, true
+	}
+	if rest == "" && authSchemes[strings.ToLower(strings.Trim(args[j], `"'`))] {
+		out = append(out, args[j])
+		if wrap != 0 && strings.IndexByte(args[j], wrap) >= 0 {
+			return out, j, true
+		}
+		j++
+		if !canRedactNext(args, j) {
+			return out, j - 1, true
+		}
+	}
+	s, k := redactNext(args, j, wrap)
+	return append(out, s), k, true
 }
 
 // dockerCgroup matches a Docker container's cgroup: systemd driver

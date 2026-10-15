@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"winterflow/internal/domain/backup/recipe"
+	"winterflow/internal/domain/compose/xwinterflow"
 	"winterflow/pkg/fsutil"
 )
 
@@ -30,8 +31,9 @@ const stopOffTimeout = 2 * time.Minute
 const backupsKey = "backups"
 
 // appBackupConfig is what an app's compose files and config.json say about
-// its backups.
+// its backups, with the x-winterflow spec they were read from (one parse).
 type appBackupConfig struct {
+	spec      xwinterflow.Spec
 	compose   recipe.Compose
 	overrides []recipe.BackupConfig
 	backups   []recipe.EffectiveBackup
@@ -83,8 +85,8 @@ func (r *Repository) appBackups(dir string, files []string) (appBackupConfig, er
 	contents, readErr := composeContents(dir, files)
 	var parseErr error
 	if readErr == nil {
-		cfg.compose, parseErr = recipe.ParseCompose(contents...)
-		cfg.composeOK = parseErr == nil
+		cfg.spec, parseErr = xwinterflow.Parse(xwinterflow.ModeApp, contents...)
+		cfg.compose, cfg.composeOK = cfg.spec.Compose, parseErr == nil
 	}
 	overrides, overridesErr := r.readOverrides(dir)
 	cfg.overrides, cfg.overridesOK = overrides, overridesErr == nil
@@ -209,31 +211,30 @@ func applyBackupDefaults(cfg []byte) []byte {
 	return out
 }
 
-// cleanBackups validates the app's backups after a save wrote its files and
-// drops overrides of backups the recipe no longer has (warnings).
-func (r *Repository) cleanBackups(dir string) ([]string, error) {
-	contents, err := composeContents(dir, r.appComposeFiles(dir))
+// cleanBackups validates the app's x-winterflow block and backups after a
+// save wrote its files and drops overrides of backups the recipe no longer
+// has (warnings, with the block's own). The spec it parsed is returned for
+// the rest of the save.
+func (r *Repository) cleanBackups(dir string) (xwinterflow.Spec, []string, error) {
+	spec, err := r.appSpec(dir)
 	if err != nil {
-		return nil, fmt.Errorf("read compose files: %w", err)
+		return xwinterflow.Spec{}, nil, err
 	}
-	comp, err := recipe.ParseCompose(contents...)
-	if err != nil {
-		return nil, err
-	}
+	comp := spec.Compose
 	overrides, err := r.readOverrides(dir)
 	if err != nil {
-		return nil, err
+		return xwinterflow.Spec{}, nil, err
 	}
 	kept, warnings := recipe.Clean(comp, overrides)
 	if _, err := recipe.Effective(comp, kept); err != nil {
-		return nil, err
+		return xwinterflow.Spec{}, nil, err
 	}
 	if len(kept) != len(overrides) || (len(kept) > 0 && !reflect.DeepEqual(kept, overrides)) {
 		if err := r.writeOverrides(dir, kept); err != nil {
-			return nil, err
+			return xwinterflow.Spec{}, nil, err
 		}
 	}
-	return warnings, nil
+	return spec, append(warnings, spec.Warnings...), nil
 }
 
 // backupProfiles are the compose profiles of the app's enabled custom

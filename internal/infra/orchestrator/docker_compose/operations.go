@@ -98,6 +98,11 @@ func (r *Repository) saveWithoutDeploy(app command.AppPayload) (string, error) {
 // writers of the app's files); the files are then written and committed in one
 // step under it.
 func (r *Repository) save(app command.AppPayload, forDeploy bool) (string, []string, error) {
+	// The pins the save carries: without a ports key, the stored ones stay.
+	pins, pinsSent, err := model.ParsePorts(app.Config)
+	if err != nil {
+		return "", nil, err
+	}
 	dir := r.appDataDir(app.AppID)
 	_, statErr := os.Stat(dir)
 	created := errors.Is(statErr, fs.ErrNotExist) // this save creates the app's folder
@@ -127,14 +132,26 @@ func (r *Repository) save(app command.AppPayload, forDeploy bool) (string, []str
 		return "", nil, fmt.Errorf("init app repo: %w", err)
 	}
 
+	prevPorts, err := r.readPorts(dir)
+	if err != nil {
+		return "", nil, err
+	}
+	if !pinsSent {
+		pins = pinnedOnly(prevPorts)
+	}
 	store, err := r.writeAppStore(dir, app)
 	if err != nil {
 		return "", nil, fmt.Errorf("write app store: %w", err)
 	}
 
-	// The backups must be valid against the compose file being saved (for
-	// a git-sourced app, the one just pulled); nothing is committed if not.
-	warnings, err := r.cleanBackups(dir)
+	// The x-winterflow block and the backups must be valid against the
+	// compose file being saved (for a git-sourced app, the one just pulled),
+	// an ingress hostname may only point at one of its http expose entries,
+	// and every expose entry gets its host port; nothing is committed if not.
+	spec, warnings, err := r.cleanBackups(dir)
+	if err == nil {
+		err = r.applyExpose(app.AppID, dir, app.Config, spec, prevPorts, pins)
+	}
 	if err != nil {
 		restoreSource := r.undoSave(dir, created, savedPaths(app))
 		unlock()
@@ -336,6 +353,11 @@ func (r *Repository) rollbackWithoutDeploy(appID, hash string) (string, error) {
 			}
 		}
 	}
+	// The restored revision's ports come back where no other app took them
+	// meanwhile (a pin another app holds refuses the rollback).
+	if err := r.restorePorts(appID, dir); err != nil {
+		return "", err
+	}
 	short := hash
 	if len(short) > 8 {
 		short = short[:8]
@@ -478,6 +500,16 @@ func (r *Repository) refreshSourceWithoutDeploy(appID string) (bool, string, err
 	// it just wrote makes the next poll see nothing new.
 	unlock, _ := r.lockApp(context.Background(), appID)
 	defer unlock()
+	// The upstream compose file may add or drop expose entries. A failure
+	// here is left for the deploy to report: the source lock is already
+	// written, so a poll that gave up would never commit this update.
+	if spec, err := r.appSpec(dir); err != nil {
+		r.log.Warn("source update: read x-winterflow", "app_id", appID, "error", err)
+	} else if ports, err := r.readPorts(dir); err != nil {
+		r.log.Warn("source update: read ports", "app_id", appID, "error", err)
+	} else if err := r.syncPorts(appID, dir, spec.Expose, ports, pinnedOnly(ports)); err != nil {
+		r.log.Warn("source update: allocate ports", "app_id", appID, "error", err)
+	}
 	if _, err := gitCommitAll(dir, "update source to "+short); err != nil {
 		return false, "", fmt.Errorf("commit source update: %w", err)
 	}

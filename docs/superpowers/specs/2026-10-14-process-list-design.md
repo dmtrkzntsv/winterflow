@@ -37,6 +37,7 @@ type ProcessListResponse struct {
     SampledAt int64     `json:"sampled_at"` // unix ms
     NCPU      int       `json:"ncpu"`
     MemTotal  uint64    `json:"mem_total"`  // bytes
+    Total     int       `json:"total"`      // processes seen; at most MaxProcesses (2000) are listed, busiest first
     Processes []Process `json:"processes"`
 }
 
@@ -90,15 +91,15 @@ type Process struct {
   `TypeProcessList`, with a 10 s deadline on the call.
 - Container → app: match `ContainerID` against the status reporter's
   `StatusSnapshot` (same source as the metrics loop; no `docker ps`).
-- Off Linux (`statfs_other.go` style build tags) the handler answers an
-  error "process list is only available on Linux".
+- Off Linux (`runtime.GOOS` check) the handler answers an error "process
+  list is only available on Linux".
 
 ### API
 
-- Usecase: `GetProcesses(ctx, userID, serverID) (requestID string, err error)`
-  dispatching `TypeProcessList`, beside `GetLogs`.
-- Route `GET /api/v1/server/get-processes?server_id=…` in the server
-  handler's `Routes` table: `RequireServerAccess`, then dispatch, then
+- Route `GET /api/v1/server/get-processes?server_id=…` in the docker
+  handler (which already hosts the server-addressed agent list commands
+  and dispatches without a usecase), tag `metrics`: its `caller` helper
+  (`RequireServerAccess`), then dispatch, then
   `202 + request_id` (same `accepted` shape as get-logs). The result payload
   is `command.ProcessListResponse`; document it as the route's result
   schema in the route table so `make openapi` covers it.

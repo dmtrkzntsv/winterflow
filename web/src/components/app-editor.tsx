@@ -17,6 +17,7 @@ import { useRegistrations } from "@/hooks/use-registrations";
 import { useSharedNames } from "@/hooks/use-shared-names";
 import { newGitSource } from "@/lib/app-editor-io";
 import { imageRefs } from "@/lib/compose-images";
+import { declaredRow } from "@/lib/declared-variables";
 import { hasErrorIn, type FieldErrors } from "@/lib/field-errors";
 import {
   isComposeFile,
@@ -62,6 +63,13 @@ export function AppEditor({ state, onChange, errors = {}, refused = 0 }: Props) 
     errors,
   };
   const declaredNames = new Set((state.declared ?? []).map((d) => d.name));
+  // The rows the declared variables' form edits.
+  const declaredIds = new Set(
+    (state.declared ?? []).flatMap((d) => {
+      const row = declaredRow(state, d);
+      return row ? [row.id] : [];
+    }),
+  );
   const hasImages = state.config.files.some(
     (f) => isComposeFile(f.filename) && imageRefs(state.files[f.id] ?? "").length > 0,
   );
@@ -99,7 +107,7 @@ export function AppEditor({ state, onChange, errors = {}, refused = 0 }: Props) 
           shared={shared}
           errors={errors}
           emptyNote={state.storageVariables.length === 0 && declaredNames.size === 0}
-          hidden={declaredNames}
+          hidden={declaredIds}
         />
         <SharedVariablesHint shared={shared} />
         <StorageVariableRows vars={state.storageVariables} />

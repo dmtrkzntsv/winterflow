@@ -3,7 +3,7 @@
 // editor state, validating it (editorErrors), and building the app.save
 // payload (encrypting touched secrets, passing the "<encrypted>" placeholder
 // through so the agent preserves stored values).
-import { declaredRow, declaredValueError } from "@/lib/declared-variables";
+import { declaredRow, declaredRowsOf, declaredValueError } from "@/lib/declared-variables";
 import { validHostname } from "@/lib/domains";
 import { ENCRYPTED, encryptSecret } from "@/lib/ecies";
 import type { FieldErrors } from "@/lib/field-errors";
@@ -144,6 +144,7 @@ export function stateFromDetail(
     variables,
     storageVariables: d.storage_variables ?? [],
     declared: d.declared_variables ?? [],
+    declaredRows: declaredRowsOf(d.declared_variables ?? [], varMetas),
     expose: d.expose ?? [],
   };
 }
@@ -230,8 +231,17 @@ export function editorErrors(state: AppEditorState, draft = false): FieldErrors 
     if (renamedStoredSecret(f, f.filename, content)) out[`file:${f.id}:content`] = RENAMED_FILE;
     else if (placeholderMisuse(f, f.filename, content)) out[`file:${f.id}:content`] = PLACEHOLDER_REFUSED_FILE;
   }
+  // A name used twice: the row a declared variable's form edits keeps it,
+  // every other row is flagged (it would replace or be replaced by it).
+  const declaredIds = new Set(Object.values(state.declaredRows ?? {}));
+  const firstOf = new Map<string, string>();
+  for (const v of [...config.variables].sort((a, b) => Number(declaredIds.has(b.id)) - Number(declaredIds.has(a.id)))) {
+    const name = v.name.trim();
+    if (name && !firstOf.has(name)) firstOf.set(name, v.id);
+  }
   for (const v of config.variables) {
     if (!v.name.trim()) out[`var:${v.id}`] = "Name this variable.";
+    else if (firstOf.get(v.name.trim()) !== v.id) out[`var:${v.id}`] = "Another variable has this name.";
     const value = state.variables[v.id] ?? "";
     if (renamedStoredSecret(v, v.name, value)) out[`var:${v.id}:value`] = RENAMED_VAR;
     else if (placeholderMisuse(v, v.name, value)) out[`var:${v.id}:value`] = PLACEHOLDER_REFUSED;
@@ -360,9 +370,9 @@ export async function buildSavePayload(
   }
   // A declared variable left empty is not sent: the compose file's own
   // value stands.
-  const declaredNames = new Set((state.declared ?? []).map((d) => d.name));
+  const declaredIds = new Set((state.declared ?? []).map((d) => declaredRow(state, d)?.id));
   const sentVariables = state.config.variables.filter(
-    (v) => !(declaredNames.has(v.name.trim()) && (state.variables[v.id] ?? "") === "" && !holdsStoredSecret(v, v.name)),
+    (v) => !(declaredIds.has(v.id) && (state.variables[v.id] ?? "") === "" && !holdsStoredSecret(v, v.name)),
   );
   const fileKept = (f: AppFileMeta) => keepsStored(f, f.filename, state.files[f.id] ?? "");
   const varKept = (v: AppVariableMeta) => keepsStored(v, v.name, state.variables[v.id] ?? "");

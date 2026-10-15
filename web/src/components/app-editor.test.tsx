@@ -96,12 +96,31 @@ describe("AppEditor declared variables", () => {
         ],
       },
       variables: { a: "https://x", b: "1" },
+      declaredRows: { BASE_URL: "a" },
     };
     render(<Harness initial={state} />);
     expect(screen.getByRole("group", { name: "Declared variables" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Other variables" })).toBeInTheDocument();
     const names = screen.getAllByRole("textbox", { name: "Variable name" }).map((el) => (el as HTMLInputElement).value);
     expect(names).toEqual(["EXTRA"]);
+  });
+
+  it("keeps a free-form row whose name is typed to match a declared one, focused", async () => {
+    const user = userEvent.setup();
+    const s = emptyEditorState();
+    const state: AppEditorState = {
+      ...s,
+      declared: [{ name: "BASE_URL", required: false, encrypted: false, default: null, services: ["app"] }],
+      config: { ...s.config, variables: [{ id: "b", name: "", is_encrypted: false }] },
+      variables: { b: "" },
+      declaredRows: {},
+    };
+    render(<Harness initial={state} />);
+    const name = screen.getByRole("textbox", { name: "Variable name" });
+    await user.type(name, "BASE_URL");
+    expect(name).toBeInTheDocument();
+    expect(name).toHaveFocus();
+    expect(name).toHaveValue("BASE_URL");
   });
 });
 

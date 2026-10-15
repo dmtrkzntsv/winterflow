@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { emptyEditorState } from "@/lib/app-editor-io";
-import { declaredPatternHint, declaredRow, declaredValueError, matchesPattern, setDeclaredValue } from "@/lib/declared-variables";
+import { declaredPatternHint, declaredRow, declaredRowsOf, declaredValueError, matchesPattern, setDeclaredValue } from "@/lib/declared-variables";
 import type { DeclaredVariable } from "@/types/app-config";
 
 const BASE: DeclaredVariable = { name: "BASE_URL", required: true, encrypted: false, pattern: "https?://.+", default: "http://localhost", services: ["app"] };
@@ -21,6 +21,23 @@ describe("matchesPattern", () => {
       expect(matchesPattern(pattern, "abc"), pattern).toBe(true);
     }
     expect(matchesPattern("[0-9]+", "abc")).toBe(false);
+  });
+});
+
+describe("declaredRow", () => {
+  it("is the row fixed at load or by the form, never one whose name is typed to match", () => {
+    const start = emptyEditorState();
+    start.config.variables = [{ id: "a", name: "OTHER", is_encrypted: false }];
+    start.declaredRows = declaredRowsOf([BASE], start.config.variables);
+    expect(declaredRow(start, BASE)).toBeUndefined();
+    // A free-form row renamed to the declared name stays a free-form row.
+    const typed = { ...start, config: { ...start.config, variables: [{ id: "a", name: "BASE_URL", is_encrypted: false }] } };
+    expect(declaredRow(typed, BASE)).toBeUndefined();
+    // The form's first value adds the declared row, which it then keeps.
+    const set = setDeclaredValue(typed, BASE, "https://x");
+    const row = declaredRow(set, BASE);
+    expect(row?.id).not.toBe("a");
+    expect(declaredRow(setDeclaredValue(set, BASE, "https://y"), BASE)?.id).toBe(row?.id);
   });
 });
 
@@ -61,6 +78,7 @@ describe("setDeclaredValue", () => {
     const start = emptyEditorState();
     start.config.variables = [{ id: "v", name: "TOKEN", is_encrypted: false }];
     start.variables = { v: "old" };
+    start.declaredRows = declaredRowsOf([TOKEN], start.config.variables);
     const s = setDeclaredValue(start, TOKEN, "1234");
     expect(s.config.variables[0]).toMatchObject({ id: "v", is_encrypted: true });
     expect(s.variables.v).toBe("1234");

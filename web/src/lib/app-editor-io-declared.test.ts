@@ -45,6 +45,39 @@ describe("app editor io: declared variables", () => {
     expect(editorErrors(setDeclaredValue(s, BASE, "https://notes.example.com"))).toEqual({});
   });
 
+  it("flags a name used twice on the free-form row, never on the declared one", async () => {
+    const s = setDeclaredValue(loaded(), BASE, "https://notes.example.com");
+    const extra = s.config.variables.find((v) => v.name === "EXTRA")!;
+    const dup = { ...s, config: { ...s.config, variables: s.config.variables.map((v) => (v.id === extra.id ? { ...v, name: "BASE_URL" } : v)) } };
+    expect(editorErrors(dup)).toEqual({ [`var:${extra.id}`]: "Another variable has this name." });
+    // Loaded with two rows of one name: the first is the declared one.
+    const twice = stateFromDetail("app-1", {
+      app: {
+        app_id: "app-1",
+        config: b64(JSON.stringify({ name: "notes", files: [{ filename: "compose.yml" }], variables: [{ name: "BASE_URL" }, { name: "BASE_URL" }] })),
+        files: [{ name: "compose.yml", content: b64("services: {}") }],
+        variables: [
+          { name: "BASE_URL", content: b64("https://a") },
+          { name: "BASE_URL", content: b64("https://b") },
+        ],
+      },
+      declared_variables: [BASE],
+      revision: 1,
+      available_revisions: null,
+    });
+    const [first, second] = twice.config.variables;
+    expect(twice.declaredRows).toEqual({ BASE_URL: first.id });
+    expect(editorErrors(twice)).toEqual({ [`var:${second.id}`]: "Another variable has this name." });
+  });
+
+  it("drops only the declared row when its value is empty", async () => {
+    const s = loaded();
+    s.config.variables.push({ id: "free", name: "LANGUAGE", is_encrypted: false });
+    s.variables.free = "";
+    const payload = await buildSavePayload(setDeclaredValue(setDeclaredValue(s, BASE, "https://x"), LANG, ""), async () => "PUB", "app-1");
+    expect(payload.config.variables.map((v) => v.name)).toEqual(["TOKEN", "EXTRA", "LANGUAGE", "BASE_URL"]);
+  });
+
   it("lets a draft leave a required value empty, nothing else", () => {
     const s = loaded();
     expect(editorErrors(s, true)).toEqual({});

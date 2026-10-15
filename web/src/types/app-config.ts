@@ -132,6 +132,10 @@ export type AppEditorState = {
   // The variables the compose files declare (last app.get; none for a new
   // app): their values are ordinary variables, edited through a form.
   declared?: DeclaredVariable[];
+  // declaredRows names the variable row (by id) holding each declared
+  // variable's value: fixed at load (the first row of that name) or when
+  // the form first sets one, never by a name typed in a free-form row.
+  declaredRows?: Record<string, string>;
   // The expose entries with their host ports (last app.get).
   expose?: ExposedPort[];
 };

@@ -61,6 +61,7 @@ describe("DeclaredVariablesForm", () => {
       declared: DECLARED,
       config: { ...emptyEditorState().config, variables: [{ id: "s", name: "SESSION_SECRET", is_encrypted: true, storedAs: "SESSION_SECRET" }] },
       variables: { s: "<encrypted>" },
+      declaredRows: { SESSION_SECRET: "s" },
     };
     render(<Harness start={start} />);
     expect(screen.getByText("Secret · set")).toBeInTheDocument();

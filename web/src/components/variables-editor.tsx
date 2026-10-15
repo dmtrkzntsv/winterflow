@@ -22,8 +22,9 @@ type Props = {
   errors?: FieldErrors;
   // emptyNote says "No variables yet." when there are none.
   emptyNote?: boolean;
-  // hidden are names another part of the editor edits (the declared
-  // variables' form): their rows are not listed here.
+  // hidden are the ids of rows another part of the editor edits (the
+  // declared variables' form): they are not listed here. By id, never by
+  // name: a row whose name is typed to match a hidden one stays.
   hidden?: ReadonlySet<string>;
 };
 
@@ -37,7 +38,7 @@ export function VariablesEditor({ state, onChange, shared, errors = {}, emptyNot
   // replaced: the row whose new-value field Replace just opened (focused).
   const replaced = useRef<string | null>(null);
   const vars = state.config.variables;
-  const shown = hidden ? vars.filter((v) => !hidden.has(v.name.trim())) : vars;
+  const shown = hidden ? vars.filter((v) => !hidden.has(v.id)) : vars;
   // updateMeta changes a row's name; renamed away from the name the agent
   // holds its secret under, a stored secret starts empty and needs a new
   // value (renamed back while still empty, it keeps the stored one).

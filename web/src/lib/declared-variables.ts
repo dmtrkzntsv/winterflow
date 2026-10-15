@@ -25,9 +25,23 @@ export function matchesPattern(pattern: string | undefined, value: string): bool
   }
 }
 
-// declaredRow is the variable row holding v's value (by name).
+// declaredRow is the variable row holding v's value (state.declaredRows),
+// undefined until the app has one: a free-form row whose name is typed to
+// match never becomes it.
 export function declaredRow(state: AppEditorState, v: DeclaredVariable): AppVariableMeta | undefined {
-  return state.config.variables.find((row) => row.name.trim() === v.name);
+  const id = state.declaredRows?.[v.name];
+  return id === undefined ? undefined : state.config.variables.find((row) => row.id === id);
+}
+
+// declaredRowsOf maps each declared variable to the first row of its name,
+// as an app is loaded.
+export function declaredRowsOf(declared: DeclaredVariable[], rows: AppVariableMeta[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const v of declared) {
+    const row = rows.find((r) => r.name.trim() === v.name);
+    if (row) out[v.name] = row.id;
+  }
+  return out;
 }
 
 // declaredValueError is what blocks value for v ("" when nothing):
@@ -49,7 +63,8 @@ export function declaredPatternHint(v: DeclaredVariable, value: string, held: bo
 }
 
 // setDeclaredValue sets v's value, adding its row (secret when v is) the
-// first time; a row of a secret variable becomes secret.
+// first time and recording it as v's; a row of a secret variable becomes
+// secret.
 export function setDeclaredValue(state: AppEditorState, v: DeclaredVariable, value: string): AppEditorState {
   const row = declaredRow(state, v);
   if (row) {
@@ -63,5 +78,6 @@ export function setDeclaredValue(state: AppEditorState, v: DeclaredVariable, val
     ...state,
     config: { ...state.config, variables: [...state.config.variables, { id, name: v.name, is_encrypted: v.encrypted }] },
     variables: { ...state.variables, [id]: value },
+    declaredRows: { ...state.declaredRows, [v.name]: id },
   };
 }

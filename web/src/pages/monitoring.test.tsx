@@ -42,6 +42,9 @@ vi.mock("@/components/alerts/target-alerts-card", () => ({
 vi.mock("@/components/alerts/firing-banner", () => ({
   FiringBanner: (p: { serverId: string; appId?: string }) => <div data-testid="firing-banner">{p.serverId}</div>,
 }));
+vi.mock("@/components/monitoring/processes-tab", () => ({
+  ProcessesTab: (p: { serverId: string }) => <div data-testid="processes-tab">{p.serverId}</div>,
+}));
 vi.mock("@/hooks/use-metrics", () => ({
   useServerMetrics: (...args: unknown[]) => {
     useServerMetrics(...args);
@@ -297,5 +300,26 @@ describe("MonitoringPage", { timeout: 20_000 }, () => {
     expect(screen.queryByTestId("chart-CPU")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "More details" })).not.toBeInTheDocument();
     expect(screen.getByTestId("data-as-of")).toHaveTextContent("Loading data");
+  });
+
+  it("opens the Processes tab, mounted only while selected", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    expect(screen.queryByTestId("processes-tab")).toBeNull();
+    await user.click(screen.getByRole("tab", { name: "Processes" }));
+    expect(screen.getByTestId("processes-tab")).toHaveTextContent("s1");
+    await user.click(screen.getByRole("tab", { name: "Overview" }));
+    expect(screen.queryByTestId("processes-tab")).toBeNull();
+  });
+
+  it("hides the range menu and the overview freshness on the Processes tab", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(screen.getByRole("tab", { name: "Processes" }));
+    const header = screen.getByRole("banner");
+    expect(header).toHaveTextContent("prod-1");
+    expect(within(header).queryByRole("button", { name: /^Range:/ })).toBeNull();
+    expect(screen.queryByTestId("data-as-of")).toBeNull();
+    expect(screen.queryByTestId("kpi-grid")).toBeNull();
   });
 });

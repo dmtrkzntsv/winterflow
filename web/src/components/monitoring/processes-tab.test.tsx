@@ -224,6 +224,28 @@ describe("ProcessesTab", () => {
     expect(screen.queryByRole("button", { name: /Show all/ })).not.toBeInTheDocument();
   });
 
+  it("tells an app's containers apart, in the list and the chip", async () => {
+    const user = userEvent.setup();
+    result = {
+      ...result,
+      data: {
+        ...LIST,
+        processes: [...LIST.processes, p({ pid: 11, name: "mariadbd", app_id: "app-1", group: "c3" })],
+        groups: [
+          { ...LIST.groups[0], label: "wf-app-1-web-1" },
+          g({ id: "c3", kind: "container", container_id: "bbbbbbbbbbbbbbbb", app_id: "app-1", label: "wf-app-1-db-1" }),
+        ],
+      },
+    };
+    renderTab();
+    const rows = within(groupList()).getAllByRole("button");
+    expect(rows[0]).toHaveTextContent("Nextcloud · web");
+    expect(rows[1]).toHaveTextContent("Nextcloud · db");
+    await user.click(rows[1]);
+    expect(names()).toEqual(["mariadbd"]);
+    expect(screen.getByText("Group: Nextcloud · db")).toBeInTheDocument();
+  });
+
   it("filters the table to a group, with a chip, and clears it", async () => {
     const user = userEvent.setup();
     renderTab();

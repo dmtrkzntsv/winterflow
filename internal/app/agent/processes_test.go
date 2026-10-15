@@ -55,15 +55,16 @@ func TestProcessListerMapsContainersToApps(t *testing.T) {
 
 func TestProcessListerMapsGroupsToApps(t *testing.T) {
 	snap := NewStatusSnapshot(fixedStatus{apps: []command.AppStatus{
-		{AppID: "app-1", Containers: []command.ContainerStatus{{ContainerID: "c1"}}},
+		{AppID: "app-1", Containers: []command.ContainerStatus{{ContainerID: "c1", Name: "wf-app-1-web-1"}, {ContainerID: "c3", Name: "wf-app-1-db-1"}}},
 	}})
 	if _, err := snap.StatusReport(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	src := &fakeProcSource{resp: command.ProcessListResponse{Groups: []command.ProcessGroup{
-		{ID: "/system.slice/x.service", Kind: "service"},
+		{ID: "/system.slice/x.service", Kind: "service", Label: "x.service"},
 		{ID: "/system.slice/docker-c1.scope", Kind: "container", ContainerID: "c1"},
 		{ID: "/system.slice/docker-c2.scope", Kind: "container", ContainerID: "unknown"},
+		{ID: "/system.slice/docker-c3.scope", Kind: "container", ContainerID: "c3"},
 	}}}
 	l := NewProcessLister(src, snap)
 	l.goos = "linux"
@@ -71,11 +72,16 @@ func TestProcessListerMapsGroupsToApps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resp.Groups[0].AppID != "" || resp.Groups[1].AppID != "app-1" || resp.Groups[2].AppID != "" {
+	if resp.Groups[0].AppID != "" || resp.Groups[1].AppID != "app-1" || resp.Groups[2].AppID != "" || resp.Groups[3].AppID != "app-1" {
 		t.Fatalf("groups = %+v", resp.Groups)
 	}
+	// A container's label is its name, so the UI tells an app's containers
+	// apart; one missing from the snapshot keeps none.
+	if resp.Groups[1].Label != "wf-app-1-web-1" || resp.Groups[3].Label != "wf-app-1-db-1" || resp.Groups[2].Label != "" || resp.Groups[0].Label != "x.service" {
+		t.Fatalf("labels = %+v", resp.Groups)
+	}
 	// The read's own answer is left alone: later callers name apps afresh.
-	if src.resp.Groups[1].AppID != "" {
+	if src.resp.Groups[1].AppID != "" || src.resp.Groups[1].Label != "" {
 		t.Fatal("the shared answer's groups were written")
 	}
 }

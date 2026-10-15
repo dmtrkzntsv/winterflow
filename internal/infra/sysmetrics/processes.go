@@ -807,7 +807,7 @@ func groupFromCgroup(b []byte) (id, containerID string) {
 }
 
 // groupKind names a group's kind and label (its leaf, empty for a
-// container, which the UI names by its app).
+// container: the agent labels it with the container's name).
 func groupKind(id, containerID string) (kind, label string) {
 	if containerID != "" {
 		return "container", ""

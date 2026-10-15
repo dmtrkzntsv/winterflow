@@ -1,3 +1,5 @@
+import { serviceLabels } from "@/lib/app-summary";
+
 // ProcessInfo mirrors command.Process (process.list's result). cpu_pct is
 // null when unknown (started between readings).
 export type ProcessInfo = {
@@ -22,7 +24,7 @@ export type ProcessInfo = {
 // when unknown (first reading, or the cgroup's io controller is off).
 export type ProcessGroup = {
   id: string;
-  label: string; // empty for containers
+  label: string; // a container's name (empty when the agent has no status for it)
   kind: "container" | "service" | "scope" | "slice" | "other";
   container_id?: string;
   app_id?: string;
@@ -50,14 +52,33 @@ type GroupLabel = (id: string) => string | undefined;
 
 const TEXT_KEYS: ReadonlySet<SortKey> = new Set(["name", "app", "user", "pid", "group"]);
 
-// groupName is what the UI calls a group: a container by its app (else its
-// short id), anything else by its cgroup name.
-export function groupName(g: ProcessGroup | undefined, appName: AppName): string | undefined {
-  if (!g) return undefined;
+// groupName is what the UI calls a group: a container by its app and its
+// compose service ("Nextcloud · web"; the app alone without a service), else
+// by its short id; anything else by its cgroup name. groupNames works the
+// services out.
+export function groupName(g: ProcessGroup, appName: AppName, service = ""): string {
   if (g.kind === "container" && g.container_id) {
-    return (g.app_id ? appName(g.app_id) : undefined) ?? `container ${g.container_id.slice(0, 12)}`;
+    const app = g.app_id ? appName(g.app_id) : undefined;
+    if (!app) return `container ${g.container_id.slice(0, 12)}`;
+    return service ? `${app} · ${service}` : app;
   }
   return g.label || g.id;
+}
+
+// groupNames names every group, keyed by id. An app's containers are named
+// by service together, so replicas keep their number ("worker-2").
+export function groupNames(groups: ProcessGroup[], appName: AppName): Map<string, string> {
+  const byApp = new Map<string, ProcessGroup[]>();
+  for (const g of groups) {
+    if (g.kind !== "container" || !g.app_id || !g.label) continue;
+    byApp.set(g.app_id, [...(byApp.get(g.app_id) ?? []), g]);
+  }
+  const services = new Map<string, string>();
+  for (const [appId, list] of byApp) {
+    const labels = serviceLabels(appId, list.map((g) => ({ name: g.label })));
+    list.forEach((g, i) => services.set(g.id, labels[i]));
+  }
+  return new Map(groups.map((g) => [g.id, groupName(g, appName, services.get(g.id))]));
 }
 
 // defaultDir is a column's first sort direction: amounts biggest first,

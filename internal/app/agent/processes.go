@@ -37,7 +37,8 @@ func (noProcesses) List(context.Context) (command.ProcessListResponse, error) {
 
 // ProcessLister reads the processes and names each container's app, on
 // processes and on disk I/O groups, from the status reporter's last
-// snapshot (no docker call of its own). At most one read runs at a time:
+// snapshot (no docker call of its own). A container group's label is the
+// container's name there, so the UI tells an app's containers apart. At most one read runs at a time:
 // a /proc read can block for good on a hung process (cmdline takes its
 // mmap_lock), and the calls behind it wait for that read instead of each
 // starting a goroutine that would hang too.
@@ -84,20 +85,22 @@ func (l *ProcessLister) List(ctx context.Context) (command.ProcessListResponse, 
 	resp.Groups = append(make([]command.ProcessGroup, 0, len(f.resp.Groups)), f.resp.Groups...)
 	if l.status != nil {
 		if apps, ok := l.status.Latest(); ok {
-			owner := map[string]string{}
+			type container struct{ appID, name string }
+			owner := map[string]container{}
 			for _, a := range apps {
 				for _, c := range a.Containers {
-					owner[c.ContainerID] = a.AppID
+					owner[c.ContainerID] = container{appID: a.AppID, name: c.Name}
 				}
 			}
 			for i := range resp.Processes {
 				if id := resp.Processes[i].ContainerID; id != "" {
-					resp.Processes[i].AppID = owner[id]
+					resp.Processes[i].AppID = owner[id].appID
 				}
 			}
 			for i := range resp.Groups {
 				if id := resp.Groups[i].ContainerID; id != "" {
-					resp.Groups[i].AppID = owner[id]
+					c := owner[id]
+					resp.Groups[i].AppID, resp.Groups[i].Label = c.appID, c.name
 				}
 			}
 		}

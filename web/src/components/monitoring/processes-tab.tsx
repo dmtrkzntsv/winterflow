@@ -20,7 +20,7 @@ import {
   defaultDir,
   filterProcesses,
   formatUptime,
-  groupName,
+  groupNames,
   sortProcesses,
   type AppFilter,
   type ProcessGroup,
@@ -72,7 +72,7 @@ export function ProcessesTab({ serverId }: { serverId: string }) {
   }, [apps]);
   const groups = useMemo(() => data?.groups ?? [], [data]);
   const groupLabel = useMemo(() => {
-    const names = new Map(groups.map((g) => [g.id, groupName(g, appName) ?? g.id]));
+    const names = groupNames(groups, appName);
     return (id: string) => names.get(id);
   }, [groups, appName]);
   const appIds = useMemo(
@@ -159,7 +159,7 @@ export function ProcessesTab({ serverId }: { serverId: string }) {
   const shownGroups = allGroups ? groups : groups.slice(0, GROUPS_SHOWN);
   const groupRow = (g: ProcessGroup) => {
     const active = groupFilter === g.id;
-    const name = groupName(g, appName);
+    const name = groupLabel(g.id);
     return (
       <li key={g.id}>
         <button

@@ -28,7 +28,7 @@ type ProcessListResponse struct {
 // a session scope. Rates are nil when unknown (first sight, counter reset).
 type ProcessGroup struct {
 	ID          string   `json:"id"`    // cgroup v2 path, e.g. /system.slice/postgresql.service
-	Label       string   `json:"label"` // leaf name; empty for containers (the UI names them by app)
+	Label       string   `json:"label"` // leaf name; for a container its name from the status snapshot, empty when it is in none
 	Kind        string   `json:"kind"`  // container | service | scope | slice | other
 	ContainerID string   `json:"container_id,omitempty"`
 	AppID       string   `json:"app_id,omitempty"`

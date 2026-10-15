@@ -175,8 +175,9 @@ Supersedes every per-process disk I/O and `CAP_SYS_PTRACE` statement above.
   - `Process` loses `read_bps`/`write_bps` and gains `group` (the group id, omitted when there is none).
   - `ProcessListResponse` gains `groups`: `{id, label, kind, container_id?, app_id?, processes, read_bps, write_bps}`, covering every process seen (before the 2000 cap).
   - `kind` is `container` | `service` | `scope` | `slice` | `other`.
-  - `label` is the cgroup leaf name (`postgresql.service`, `session-3.scope`). It is empty for containers, which the UI names by app, or else by the short container id.
+  - `label` is the cgroup leaf name (`postgresql.service`, `session-3.scope`). For a container the agent sets it to the container's `name` from the status snapshot (`wf-<app>-web-1`); it stays empty for a container the snapshot does not hold.
   - The agent fills each group's `app_id` from the status snapshot, as it does for processes.
+  - The UI names a container with an app `<app> · <service>`, the service from `serviceLabels` (as the Logs tab: `web`, `db`, `worker-2`) over that app's containers in the list together, so replicas keep their number; the app alone when the label is empty; `container <12-char id>` without an app. The group list, the Group column and the filter chip use the same name.
 - **UI.**
   - A "Disk by app or service" list sits above the process table: read/s, write/s and process count per group, busiest writers first, then busiest readers, unknown rates last; ties put containers first, then more processes, then the id. It shows the top 8, with "Show all".
   - Clicking a group filters the table to it, with a removable chip.

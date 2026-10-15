@@ -5,6 +5,7 @@ import {
   filterProcesses,
   formatUptime,
   groupName,
+  groupNames,
   sortProcesses,
   type ProcessGroup,
   type ProcessInfo,
@@ -109,16 +110,34 @@ describe("defaultDir and formatUptime", () => {
 });
 
 describe("groupName", () => {
-  it("names a container by its app, else by its short id", () => {
+  it("names a container by its app and service, else by its short id", () => {
     expect(groupName(GROUPS.c1, appName)).toBe("Nextcloud");
-    const orphan = g({ id: "c2", kind: "container", container_id: "0123456789abcdef" });
-    expect(groupName(orphan, appName)).toBe("container 0123456789ab");
+    expect(groupName(GROUPS.c1, appName, "web")).toBe("Nextcloud · web");
+    const orphan = g({ id: "c2", kind: "container", container_id: "0123456789abcdef", label: "wf-x-web-1" });
+    expect(groupName(orphan, appName, "web")).toBe("container 0123456789ab");
+    const unknownApp = g({ id: "c3", kind: "container", container_id: "0123456789abcdef", app_id: "gone" });
+    expect(groupName(unknownApp, appName)).toBe("container 0123456789ab");
   });
   it("uses the label of anything else, the id when it has none", () => {
     expect(groupName(GROUPS.s1, appName)).toBe("ssh.service");
     expect(groupName(g({ id: "/user.slice", kind: "slice" }), appName)).toBe("/user.slice");
   });
-  it("is undefined without a group", () => {
-    expect(groupName(undefined, appName)).toBeUndefined();
+});
+
+describe("groupNames", () => {
+  const ctr = (id: string, label: string, app_id = "app-1") =>
+    g({ id, kind: "container", container_id: `${id}0123456789abcdef`, app_id, label });
+  it("tells an app's containers apart by their compose service", () => {
+    const n = groupNames([ctr("a", "wf-app-1-web-1"), ctr("b", "wf-app-1-db-1"), GROUPS.s1], appName);
+    expect(n.get("a")).toBe("Nextcloud · web");
+    expect(n.get("b")).toBe("Nextcloud · db");
+    expect(n.get("s1")).toBe("ssh.service");
+  });
+  it("keeps the replica number where a service has several", () => {
+    const n = groupNames([ctr("a", "wf-app-1-worker-1"), ctr("b", "wf-app-1-worker-2"), ctr("c", "wf-app-1-web-1")], appName);
+    expect([n.get("a"), n.get("b"), n.get("c")]).toEqual(["Nextcloud · worker-1", "Nextcloud · worker-2", "Nextcloud · web"]);
+  });
+  it("names a container without a label by its app alone", () => {
+    expect(groupNames([ctr("a", "")], appName).get("a")).toBe("Nextcloud");
   });
 });

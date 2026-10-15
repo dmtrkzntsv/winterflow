@@ -199,6 +199,48 @@
     }
   },
   {
+    "name": "read template",
+    "status": 200,
+    "body": {
+      "data": {
+        "body": {
+          "color": "",
+          "description": "",
+          "files": {
+            "compose.yaml": "services: {app: {image: x}}\n"
+          },
+          "icon": "",
+          "summary": "Parity"
+        },
+        "created_at": "<time>Z",
+        "created_by": "<id-6>",
+        "detected": {
+          "backups": [],
+          "expose": [],
+          "variables": [],
+          "warnings": []
+        },
+        "id": "<id-8>",
+        "latest_revision": 1,
+        "name": "parity",
+        "note": "",
+        "revision": 1,
+        "revisions": [
+          {
+            "created_at": "<time>Z",
+            "created_by": "<id-6>",
+            "note": "",
+            "revision": 1
+          }
+        ],
+        "slug": "",
+        "source": "org",
+        "withdrawn_at": null
+      },
+      "success": true
+    }
+  },
+  {
     "name": "create instance (wait)",
     "status": 200,
     "body": {
@@ -206,9 +248,10 @@
         "instance": {
           "app_id": "<id-9>",
           "created_at": "<time>Z",
+          "hosts": [],
           "key": "parity-1",
           "last_error": "",
-          "parameters": {},
+          "name": "parity",
           "revision": 1,
           "secrets": {},
           "server_id": "<id-2>",
@@ -216,7 +259,8 @@
           "status_code": 0,
           "template_id": "<id-8>",
           "template_name": "parity",
-          "updated_at": "<time>Z"
+          "updated_at": "<time>Z",
+          "values": {}
         },
         "request_id": "<id-10>",
         "warnings": []
@@ -237,7 +281,10 @@
             "instances": 1,
             "latest_revision": 1,
             "name": "parity",
-            "updated_at": "<time>Z"
+            "slug": "",
+            "source": "org",
+            "updated_at": "<time>Z",
+            "withdrawn_at": null
           }
         ]
       },

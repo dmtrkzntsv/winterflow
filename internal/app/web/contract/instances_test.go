@@ -50,19 +50,22 @@ func newInstanceEnv(t *testing.T) instanceEnv {
 	return instanceEnv{e: e, owner: owner, sid: sid, tplID: saved.ID, secret: cryptotest.Ciphertext(t, "s3cret")}
 }
 
-// create is a waited create of key with NAME and PORT.
-func (ie instanceEnv) create(key, name, port string) htpl.CreateInstanceRequest {
+// create is a waited create of key with NAME, the app name shop-<name>,
+// the hostname <name>.example.test on app:8080 and backup db on "disk".
+func (ie instanceEnv) create(key, name string) htpl.CreateInstanceRequest {
 	return htpl.CreateInstanceRequest{
-		ServerID: ie.sid, Key: key, TemplateID: ie.tplID, Parameters: map[string]string{"NAME": name, "PORT": port},
-		Secrets: map[string]string{"SECRET_KEY": ie.secret}, Wait: true,
+		ServerID: ie.sid, Key: key, TemplateID: ie.tplID, Name: "shop-" + name, Values: map[string]string{"NAME": name},
+		Secrets: map[string]string{"SECRET_KEY": ie.secret},
+		Hosts:   []model.InstanceHost{{Host: name + ".example.test", Expose: "app:8080"}},
+		Backups: map[string]template.BackupChoice{"db": {Enabled: true, Storage: "disk"}}, Wait: true,
 	}
 }
 
 // created creates key and returns the waited result.
-func (ie instanceEnv) created(t *testing.T, key, name, port string) htpl.InstanceResult {
+func (ie instanceEnv) created(t *testing.T, key, name string) htpl.InstanceResult {
 	t.Helper()
 	var res htpl.InstanceResult
-	r := ie.owner.post(t, "/api/v1/instance/create-instance", ie.create(key, name, port)).expect(t, http.StatusOK)
+	r := ie.owner.post(t, "/api/v1/instance/create-instance", ie.create(key, name)).expect(t, http.StatusOK)
 	noSecrets(t, string(r.Body))
 	r.data(t, &res)
 	return res
@@ -83,19 +86,25 @@ func TestInstanceCreate(t *testing.T) {
 	ie := newInstanceEnv(t)
 	e, owner, sid := ie.e, ie.owner, ie.sid
 
-	res := ie.created(t, "tenant-1", "acme", "9001")
+	res := ie.created(t, "tenant-1", "acme")
 	appID := res.Instance.AppID
 	t.Run("create with wait answers the instance", func(t *testing.T) {
 		if res.Instance.State != "created" || res.Instance.Revision != 1 || res.Instance.Secrets["SECRET_KEY"] != command.EncryptedPlaceholder ||
-			res.Instance.Parameters["NAME"] != "acme" || res.Instance.TemplateName != "shop" || res.RequestID == "" {
+			res.Instance.Values["NAME"] != "acme" || res.Instance.TemplateName != "shop" || res.Instance.Name != "shop-acme" ||
+			len(res.Instance.Hosts) != 1 || res.RequestID == "" {
 			t.Fatalf("result = %+v", res)
 		}
 		req := lastSave(t, e)
 		var cfg map[string]json.RawMessage
 		_ = json.Unmarshal(req.App.Config, &cfg)
 		if req.App.AppID != appID || string(cfg["template_id"]) != `"`+ie.tplID+`"` ||
-			string(cfg["backups"]) != `[{"name":"db","enabled":true,"storage":"disk"}]` {
+			string(cfg["backups"]) != `[{"name":"db","enabled":true,"storage":"disk"}]` ||
+			string(cfg["ingress"]) != `{"domains":[{"domain":"acme.example.test","expose":"app:8080","ssl":false}],"redirects":[]}` {
 			t.Fatalf("dispatched config = %s", req.App.Config)
+		}
+		// One app variable per value; VERSION was left to the compose file.
+		if len(req.App.Variables) != 2 {
+			t.Fatalf("variables = %+v", req.App.Variables)
 		}
 		apps := listApps(t, owner, sid)
 		if len(apps) != 1 || apps[0].ID != appID || apps[0].Name != "shop-acme" || apps[0].TemplateID != ie.tplID || len(apps[0].Domains) != 1 {
@@ -110,20 +119,22 @@ func TestInstanceCreate(t *testing.T) {
 	t.Run("a replay makes no second app; other values are a conflict", func(t *testing.T) {
 		n := len(e.agent.seen(command.TypeAppSave))
 		var again htpl.InstanceResult
-		replay := ie.create("tenant-1", "acme", "9001")
+		replay := ie.create("tenant-1", "acme")
 		replay.Secrets = map[string]string{"SECRET_KEY": cryptotest.Ciphertext(t, "s3cret")} // new bytes, the same secret
 		owner.post(t, "/api/v1/instance/create-instance", replay).expect(t, http.StatusOK).data(t, &again)
 		if again.Instance.AppID != appID || again.RequestID != "" || len(e.agent.seen(command.TypeAppSave)) != n {
 			t.Fatalf("replay = %+v", again)
 		}
-		owner.post(t, "/api/v1/instance/create-instance", ie.create("tenant-1", "acme", "9002")).expect(t, http.StatusConflict)
+		other := ie.create("tenant-1", "acme")
+		other.Values["VERSION"] = "2.0"
+		owner.post(t, "/api/v1/instance/create-instance", other).expect(t, http.StatusConflict)
 	})
 	t.Run("a host another app holds is refused before the key is claimed", func(t *testing.T) {
-		owner.post(t, "/api/v1/instance/create-instance", ie.create("tenant-x", "acme", "9009")).expect(t, http.StatusBadRequest)
+		owner.post(t, "/api/v1/instance/create-instance", ie.create("tenant-x", "acme")).expect(t, http.StatusBadRequest)
 		owner.get(t, "/api/v1/instance/get-instance", url.Values{"server_id": {sid}, "key": {"tenant-x"}}).expect(t, http.StatusNotFound)
 	})
 	t.Run("without wait the result arrives over SSE", func(t *testing.T) {
-		in := ie.create("tenant-2", "bravo", "9002")
+		in := ie.create("tenant-2", "bravo")
 		in.Wait = false
 		var saved command.SaveAppResponse
 		owner.succeed(t, call{Method: http.MethodPost, Path: "/api/v1/instance/create-instance", Body: in}, &saved)
@@ -133,7 +144,7 @@ func TestInstanceCreate(t *testing.T) {
 	})
 	t.Run("a failed deploy answers 502; the same request retries it", func(t *testing.T) {
 		e.agent.fail(command.TypeAppSave, "pull access denied")
-		r := owner.post(t, "/api/v1/instance/create-instance", ie.create("tenant-3", "charlie", "9003")).expect(t, http.StatusBadGateway)
+		r := owner.post(t, "/api/v1/instance/create-instance", ie.create("tenant-3", "charlie")).expect(t, http.StatusBadGateway)
 		if !strings.Contains(string(r.Body), "pull access denied") {
 			t.Fatalf("502 body = %s", r.Body)
 		}
@@ -142,7 +153,7 @@ func TestInstanceCreate(t *testing.T) {
 		}
 		e.agent.on(command.TypeAppSave, defaultScript(command.TypeAppSave))
 		var retried htpl.InstanceResult
-		owner.post(t, "/api/v1/instance/create-instance", ie.create("tenant-3", "charlie", "9003")).expect(t, http.StatusOK).data(t, &retried)
+		owner.post(t, "/api/v1/instance/create-instance", ie.create("tenant-3", "charlie")).expect(t, http.StatusOK).data(t, &retried)
 		if retried.Instance.State != "created" || retried.Instance.LastError != "" {
 			t.Fatalf("retried = %+v", retried.Instance)
 		}
@@ -163,14 +174,24 @@ func TestInstanceCreate(t *testing.T) {
 			t.Fatalf("templates = %+v", tpls)
 		}
 	})
-	t.Run("parameters are checked", func(t *testing.T) {
-		bad := ie.create("tenant-4", "UPPER", "9004")
+	t.Run("values and hostnames are checked", func(t *testing.T) {
+		bad := ie.create("tenant-4", "UPPER")
+		bad.Hosts = nil
 		r := owner.post(t, "/api/v1/instance/create-instance", bad).expect(t, http.StatusBadRequest)
-		if !strings.Contains(string(r.Body), "parameters.NAME") {
+		if !strings.Contains(string(r.Body), "variable NAME") {
 			t.Fatalf("body = %s", r.Body)
 		}
-		bad = ie.create("tenant-4", "delta", "9004")
+		bad = ie.create("tenant-4", "delta")
 		bad.Secrets = nil
+		owner.post(t, "/api/v1/instance/create-instance", bad).expect(t, http.StatusBadRequest)
+		bad = ie.create("tenant-4", "delta")
+		bad.Hosts = []model.InstanceHost{{Host: "delta.example.test", Expose: "app:9999"}}
+		r = owner.post(t, "/api/v1/instance/create-instance", bad).expect(t, http.StatusBadRequest)
+		if !strings.Contains(string(r.Body), "hosts[0].expose") {
+			t.Fatalf("body = %s", r.Body)
+		}
+		bad = ie.create("tenant-4", "delta")
+		bad.Hosts = []model.InstanceHost{{Host: "delta.elsewhere.test", Expose: "app:8080"}}
 		owner.post(t, "/api/v1/instance/create-instance", bad).expect(t, http.StatusBadRequest)
 	})
 }
@@ -179,9 +200,9 @@ func TestInstanceCreate(t *testing.T) {
 func TestInstancesOfAnotherOrgAreNotFound(t *testing.T) {
 	t.Parallel()
 	ie := newInstanceEnv(t)
-	ie.created(t, "tenant-1", "acme", "9001")
+	ie.created(t, "tenant-1", "acme")
 	mallory, foreign := ie.e.foreignClient(t)
-	in := ie.create("k", "acme", "9001")
+	in := ie.create("k", "acme")
 	in.ServerID = foreign
 	mallory.post(t, "/api/v1/instance/create-instance", in).expect(t, http.StatusNotFound)
 	mallory.get(t, "/api/v1/instance/get-instances", url.Values{"template_id": {ie.tplID}}).expect(t, http.StatusNotFound)
@@ -198,13 +219,13 @@ func TestInstanceUpdateAndUpgrade(t *testing.T) {
 	t.Parallel()
 	ie := newInstanceEnv(t)
 	e, owner, sid := ie.e, ie.owner, ie.sid
-	ie.created(t, "tenant-1", "acme", "9001")
+	ie.created(t, "tenant-1", "acme")
 
-	t.Run("update without wait answers 202 and keeps the secret", func(t *testing.T) {
+	t.Run("update without wait answers 202 and keeps the secret and the hosts", func(t *testing.T) {
 		owner.succeed(t, call{Method: http.MethodPost, Path: "/api/v1/instance/update-instance",
-			Body: htpl.UpdateInstanceRequest{ServerID: sid, Key: "tenant-1", Parameters: map[string]string{"VERSION": "2.0"}}}, nil)
+			Body: htpl.UpdateInstanceRequest{ServerID: sid, Key: "tenant-1", Values: map[string]string{"VERSION": "2.0"}}}, nil)
 		got := instanceOf(t, owner, sid, "tenant-1")
-		if got.Parameters["VERSION"] != "2.0" || got.Parameters["NAME"] != "acme" {
+		if got.Values["VERSION"] != "2.0" || got.Values["NAME"] != "acme" || len(got.Hosts) != 1 {
 			t.Fatalf("after update = %+v", got)
 		}
 		save := lastSave(t, e)
@@ -213,36 +234,43 @@ func TestInstanceUpdateAndUpgrade(t *testing.T) {
 				t.Fatalf("an update re-sent the secret: %q", v.Content)
 			}
 		}
-		if strings.Contains(string(save.App.Config), `"backups"`) {
-			t.Fatalf("an update replaced the backups list: %s", save.App.Config)
+		if strings.Contains(string(save.App.Config), `"backups"`) || !strings.Contains(string(save.App.Config), `"acme.example.test"`) {
+			t.Fatalf("an update's config: %s", save.App.Config)
+		}
+	})
+	t.Run("update replaces the hosts when given", func(t *testing.T) {
+		hosts := []model.InstanceHost{{Host: "shop.example.test", Expose: "app:8080"}}
+		var res htpl.InstanceResult
+		owner.post(t, "/api/v1/instance/update-instance", htpl.UpdateInstanceRequest{ServerID: sid, Key: "tenant-1", Hosts: &hosts, Wait: true}).
+			expect(t, http.StatusOK).data(t, &res)
+		if len(res.Instance.Hosts) != 1 || res.Instance.Hosts[0].Host != "shop.example.test" {
+			t.Fatalf("hosts = %+v", res.Instance.Hosts)
 		}
 	})
 	t.Run("update checks the values", func(t *testing.T) {
 		owner.post(t, "/api/v1/instance/update-instance", htpl.UpdateInstanceRequest{ServerID: sid, Key: "tenant-1",
-			Parameters: map[string]string{"NOPE": "1"}}).expect(t, http.StatusBadRequest)
+			Values: map[string]string{"NOPE": "1"}}).expect(t, http.StatusBadRequest)
 		owner.post(t, "/api/v1/instance/update-instance", htpl.UpdateInstanceRequest{ServerID: sid, Key: "nope"}).
 			expect(t, http.StatusNotFound)
 	})
 	t.Run("a created instance's backups are changed in the Backups tab", func(t *testing.T) {
 		for _, path := range []string{"/api/v1/instance/update-instance", "/api/v1/instance/upgrade-instance"} {
 			r := owner.post(t, path, map[string]any{"server_id": sid, "key": "tenant-1", "revision": 1,
-				"backups": map[string]string{"db": "disk"}}).expect(t, http.StatusBadRequest)
+				"backups": map[string]any{"db": map[string]any{"enabled": true, "storage": "disk"}}}).expect(t, http.StatusBadRequest)
 			if !strings.Contains(string(r.Body), "backups can only be set while the instance is pending") {
 				t.Fatalf("%s body = %s", path, r.Body)
 			}
 		}
 	})
-	t.Run("upgrade adds the defaults of new backups only", func(t *testing.T) {
-		next := shopBody(strings.Replace(shopCompose, "path: shop.db }\n", "path: shop.db }\n    - { name: media, type: files, volume: data }\n", 1))
-		next.Backups["media"] = template.BackupDefault{Enabled: true, Storage: "disk", Every: "6h"}
-		next.Backups["db"] = template.BackupDefault{Enabled: true, Storage: "elsewhere"}
-		if saved := saveTemplate(t, owner, htpl.SaveTemplateRequest{ID: ie.tplID, Name: "shop", Body: next, BaseRevision: 1}); saved.Revision != 2 {
+	t.Run("upgrade keeps the values and sends no backups list", func(t *testing.T) {
+		next := strings.Replace(shopCompose, "path: shop.db }\n", "path: shop.db }\n    - { name: media, type: files, volume: data }\n", 1)
+		if saved := saveTemplate(t, owner, htpl.SaveTemplateRequest{ID: ie.tplID, Name: "shop", Body: shopBody(next), BaseRevision: 1}); saved.Revision != 2 {
 			t.Fatalf("saved = %+v", saved)
 		}
 		var res htpl.InstanceResult
 		owner.post(t, "/api/v1/instance/upgrade-instance", htpl.UpgradeInstanceRequest{ServerID: sid, Key: "tenant-1", Revision: 2, Wait: true}).
 			expect(t, http.StatusOK).data(t, &res)
-		if res.Instance.Revision != 2 || res.Instance.Parameters["VERSION"] != "2.0" {
+		if res.Instance.Revision != 2 || res.Instance.Values["VERSION"] != "2.0" {
 			t.Fatalf("upgraded = %+v", res.Instance)
 		}
 		var cfg struct {
@@ -250,19 +278,23 @@ func TestInstanceUpdateAndUpgrade(t *testing.T) {
 			Instance template.Marker `json:"instance"`
 		}
 		_ = json.Unmarshal(lastSave(t, e).App.Config, &cfg)
-		if cfg.Backups != nil || len(cfg.Instance.BackupDefaults) != 1 || cfg.Instance.BackupDefaults[0].Name != "media" || cfg.Instance.Revision != 2 {
+		if cfg.Backups != nil || cfg.Instance.Revision != 2 {
 			t.Fatalf("upgrade config = %s", lastSave(t, e).App.Config)
 		}
 	})
-	t.Run("an upgrade checks the new defaults' storages and revision", func(t *testing.T) {
-		next := shopBody(strings.Replace(shopCompose, "path: shop.db }\n", "path: shop.db }\n    - { name: logs, type: files, volume: data }\n", 1))
-		next.Backups["logs"] = template.BackupDefault{Enabled: true, Storage: "nowhere"}
-		saveTemplate(t, owner, htpl.SaveTemplateRequest{ID: ie.tplID, Name: "shop", Body: next, BaseRevision: 2})
+	t.Run("an upgrade a newly required value is missing for is refused", func(t *testing.T) {
+		next := strings.NewReplacer(
+			"      VERSION: \"1.0\"\n", "      VERSION: \"1.0\"\n      REGION: \"\"\n",
+			"    VERSION: {}\n", "    VERSION: {}\n    REGION: { required: true }\n",
+		).Replace(shopCompose)
+		saveTemplate(t, owner, htpl.SaveTemplateRequest{ID: ie.tplID, Name: "shop", Body: shopBody(next), BaseRevision: 2})
 		r := owner.post(t, "/api/v1/instance/upgrade-instance", htpl.UpgradeInstanceRequest{ServerID: sid, Key: "tenant-1", Revision: 3}).
 			expect(t, http.StatusBadRequest)
-		if !strings.Contains(string(r.Body), "there is no storage") || !strings.Contains(string(r.Body), "nowhere") {
+		if !strings.Contains(string(r.Body), "variable REGION: a value is required") {
 			t.Fatalf("body = %s", r.Body)
 		}
+		owner.post(t, "/api/v1/instance/upgrade-instance", htpl.UpgradeInstanceRequest{ServerID: sid, Key: "tenant-1", Revision: 3,
+			Values: map[string]string{"REGION": "eu"}, Wait: true}).expect(t, http.StatusOK)
 		owner.post(t, "/api/v1/instance/upgrade-instance", htpl.UpgradeInstanceRequest{ServerID: sid, Key: "tenant-1", Revision: 9}).
 			expect(t, http.StatusNotFound)
 	})
@@ -276,15 +308,15 @@ func TestInstanceUpdatePending(t *testing.T) {
 	e, owner, sid := ie.e, ie.owner, ie.sid
 
 	e.agent.fail(command.TypeAppSave, "pull access denied")
-	owner.post(t, "/api/v1/instance/create-instance", ie.create("tenant-p", "pending", "9100")).expect(t, http.StatusBadGateway)
-	if got := instanceOf(t, owner, sid, "tenant-p"); got.State != "pending" {
+	owner.post(t, "/api/v1/instance/create-instance", ie.create("tenant-p", "pending")).expect(t, http.StatusBadGateway)
+	if got := instanceOf(t, owner, sid, "tenant-p"); got.State != "pending" || got.Name != "shop-pending" {
 		t.Fatalf("tenant-p = %+v", got)
 	}
 	e.agent.on(command.TypeAppSave, defaultScript(command.TypeAppSave))
 
 	r := owner.post(t, "/api/v1/instance/update-instance", htpl.UpdateInstanceRequest{ServerID: sid, Key: "tenant-p",
-		Parameters: map[string]string{"VERSION": "3.0"}}).expect(t, http.StatusBadRequest)
-	if !strings.Contains(string(r.Body), "secrets.SECRET_KEY") {
+		Values: map[string]string{"VERSION": "3.0"}}).expect(t, http.StatusBadRequest)
+	if !strings.Contains(string(r.Body), "variable SECRET_KEY: a value is required") {
 		t.Fatalf("a pending update without the secret: %s", r.Body)
 	}
 	r = owner.post(t, "/api/v1/instance/update-instance", htpl.UpdateInstanceRequest{ServerID: sid, Key: "tenant-p",
@@ -295,9 +327,9 @@ func TestInstanceUpdatePending(t *testing.T) {
 	again := cryptotest.Ciphertext(t, "s3cret")
 	var res htpl.InstanceResult
 	owner.post(t, "/api/v1/instance/update-instance", htpl.UpdateInstanceRequest{ServerID: sid, Key: "tenant-p",
-		Parameters: map[string]string{"VERSION": "3.0"}, Secrets: map[string]string{"SECRET_KEY": again},
-		Backups: map[string]string{"db": "disk"}, Wait: true}).expect(t, http.StatusOK).data(t, &res)
-	if res.Instance.State != "created" || res.Instance.Parameters["VERSION"] != "3.0" {
+		Values: map[string]string{"VERSION": "3.0"}, Secrets: map[string]string{"SECRET_KEY": again},
+		Backups: map[string]template.BackupChoice{"db": {Enabled: true, Storage: "disk"}}, Wait: true}).expect(t, http.StatusOK).data(t, &res)
+	if res.Instance.State != "created" || res.Instance.Values["VERSION"] != "3.0" {
 		t.Fatalf("updated = %+v", res.Instance)
 	}
 	save := lastSave(t, e)
@@ -307,11 +339,45 @@ func TestInstanceUpdatePending(t *testing.T) {
 		}
 	}
 	var cfg struct {
+		Name    string                           `json:"name"`
 		Backups []struct{ Name, Storage string } `json:"backups"`
 	}
 	_ = json.Unmarshal(save.App.Config, &cfg)
-	if len(cfg.Backups) != 1 || cfg.Backups[0].Name != "db" || cfg.Backups[0].Storage != "disk" {
-		t.Fatalf("a pending update's backups = %s", save.App.Config)
+	if cfg.Name != "shop-pending" || len(cfg.Backups) != 1 || cfg.Backups[0].Name != "db" || cfg.Backups[0].Storage != "disk" {
+		t.Fatalf("a pending update's config = %s", save.App.Config)
+	}
+}
+
+// A catalog template is installed in the caller's org; two orgs upgrading
+// it don't block each other.
+func TestCatalogInstances(t *testing.T) {
+	t.Parallel()
+	ie := newInstanceEnv(t)
+	e, owner, sid := ie.e, ie.owner, ie.sid
+	cat := dbtest.ID(902)
+	catalogTemplate(t, e, cat, "shop", shopBody(shopCompose))
+	in := ie.create("cat-1", "cata")
+	in.TemplateID, in.Name = cat, ""
+	var res htpl.InstanceResult
+	owner.post(t, "/api/v1/instance/create-instance", in).expect(t, http.StatusOK).data(t, &res)
+	if res.Instance.TemplateID != cat || res.Instance.Name != "Shop" {
+		t.Fatalf("created = %+v", res.Instance)
+	}
+	mallory, foreign := e.foreignClient(t)
+	mine := htpl.CreateInstanceRequest{ServerID: foreign, Key: "cat-1", TemplateID: cat, Values: map[string]string{"NAME": "mall"},
+		Secrets: map[string]string{"SECRET_KEY": ie.secret}, Wait: true}
+	mallory.post(t, "/api/v1/instance/create-instance", mine).expect(t, http.StatusOK)
+	for _, c := range []*client{owner, mallory} {
+		var v model.RolloutView
+		c.post(t, "/api/v1/template/upgrade-instances", htpl.UpgradeInstancesRequest{ID: cat}).expect(t, http.StatusOK).data(t, &v)
+		if v.ScopeKey != cat {
+			t.Fatalf("queued = %+v", v)
+		}
+	}
+	var list tuc.InstanceList
+	owner.get(t, "/api/v1/instance/get-instances", url.Values{"template_id": {cat}}).expect(t, http.StatusOK).data(t, &list)
+	if len(list.Instances) != 1 || list.Instances[0].ServerID != sid {
+		t.Fatalf("the owner's instances of the catalog template = %+v", list)
 	}
 }
 
@@ -319,7 +385,7 @@ func TestInstanceLifecycle(t *testing.T) {
 	t.Parallel()
 	ie := newInstanceEnv(t)
 	e, owner, sid := ie.e, ie.owner, ie.sid
-	appID := ie.created(t, "tenant-1", "acme", "9001").Instance.AppID
+	appID := ie.created(t, "tenant-1", "acme").Instance.AppID
 
 	t.Run("control", func(t *testing.T) {
 		owner.succeed(t, call{Method: http.MethodPost, Path: "/api/v1/instance/control-instance",
@@ -353,7 +419,7 @@ func TestInstanceLifecycle(t *testing.T) {
 		}
 	})
 	t.Run("a freed key makes a new app; delete retires it", func(t *testing.T) {
-		again := ie.created(t, "tenant-1", "bravo", "9002")
+		again := ie.created(t, "tenant-1", "bravo")
 		if again.Instance.AppID == appID || again.RequestID == "" {
 			t.Fatalf("a freed key took over the unlinked app: %+v", again)
 		}
@@ -367,7 +433,7 @@ func TestInstanceLifecycle(t *testing.T) {
 		if req := decode[command.DeleteAppRequest](dels[len(dels)-1].Payload); req.AppID != again.Instance.AppID || !req.DeleteVolumes {
 			t.Fatalf("app.delete = %+v", req)
 		}
-		owner.post(t, "/api/v1/instance/create-instance", ie.create("tenant-1", "bravo", "9002")).expect(t, http.StatusConflict)
+		owner.post(t, "/api/v1/instance/create-instance", ie.create("tenant-1", "bravo")).expect(t, http.StatusConflict)
 		n := len(e.agent.seen(command.TypeAppDelete))
 		owner.post(t, "/api/v1/instance/delete-instance", htpl.DeleteInstanceRequest{ServerID: sid, Key: "tenant-1"}).expect(t, http.StatusOK)
 		if len(e.agent.seen(command.TypeAppDelete)) != n {
@@ -387,7 +453,7 @@ func TestInstanceAppThroughTheAppRoutes(t *testing.T) {
 	t.Parallel()
 	ie := newInstanceEnv(t)
 	e, owner, sid := ie.e, ie.owner, ie.sid
-	appID := ie.created(t, "tenant-1", "acme", "9001").Instance.AppID
+	appID := ie.created(t, "tenant-1", "acme").Instance.AppID
 	saves := len(e.agent.seen(command.TypeAppSave))
 
 	r := owner.post(t, "/api/v1/app/save-app", happ.SaveAppRequest{ServerID: sid, App: model.App{ID: appID, Name: "hijack"},
@@ -406,7 +472,7 @@ func TestInstanceAppThroughTheAppRoutes(t *testing.T) {
 	owner.succeed(t, call{Method: http.MethodPost, Path: "/api/v1/app/delete-app",
 		Body: happ.DeleteAppRequest{ServerID: sid, AppID: appID}}, nil)
 	eventually(t, func() bool { return instanceOf(t, owner, sid, "tenant-1").State == "deleted" })
-	r = owner.post(t, "/api/v1/instance/create-instance", ie.create("tenant-1", "acme", "9001")).expect(t, http.StatusConflict)
+	r = owner.post(t, "/api/v1/instance/create-instance", ie.create("tenant-1", "acme")).expect(t, http.StatusConflict)
 	if !strings.Contains(string(r.Body), "this key belonged to a deleted instance") {
 		t.Fatalf("replay body = %s", r.Body)
 	}

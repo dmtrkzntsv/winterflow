@@ -28,6 +28,11 @@ type SaveTemplateRequest struct {
 	BaseRevision int64         `json:"base_revision" description:"The latest revision the editor read (0 for a new template); another one is a 409."`
 }
 
+// InspectTemplateRequest is the body of POST inspect-template.
+type InspectTemplateRequest struct {
+	Body template.Body `json:"body" required:"true"`
+}
+
 // TemplateIDRequest is the body of POST delete-template.
 type TemplateIDRequest struct {
 	ID string `json:"id" required:"true"`
@@ -97,6 +102,24 @@ func (h *Handler) SaveTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	webutil.Success(w, "template saved", out)
+}
+
+func (h *Handler) InspectTemplate(w http.ResponseWriter, r *http.Request) {
+	_, orgID, ok := h.callerOrg(w, r)
+	if !ok {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxSaveBytes)
+	req, ok := webutil.DecodeBody[InspectTemplateRequest](w, r)
+	if !ok {
+		return
+	}
+	out, err := h.uc.InspectTemplate(r.Context(), orgID, req.Body)
+	if err != nil {
+		h.fail(w, err, "inspect the template")
+		return
+	}
+	webutil.Success(w, "", out)
 }
 
 func (h *Handler) DeleteTemplate(w http.ResponseWriter, r *http.Request) {

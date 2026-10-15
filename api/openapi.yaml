@@ -4970,6 +4970,7 @@ paths:
         $ref: '#/components/schemas/TestStorageResponse'
   /api/v1/template/delete-template:
     post:
+      description: A catalog template is read-only (403).
       operationId: templateDeleteTemplate
       requestBody:
         content:
@@ -5009,6 +5010,12 @@ paths:
               schema:
                 type: string
           description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
         "404":
           content:
             application/json:
@@ -5024,7 +5031,7 @@ paths:
       security:
       - bearer: []
       - cookie: []
-      summary: Delete a template without live instances
+      summary: Delete an org template without live instances
       tags:
       - templates
   /api/v1/template/get-template:
@@ -5085,8 +5092,8 @@ paths:
       security:
       - bearer: []
       - cookie: []
-      summary: A template revision's body (the latest by default) and the revision
-        list
+      summary: A template revision's body (the latest by default), what its compose
+        files declare, and the revision list
       tags:
       - templates
   /api/v1/template/get-templates:
@@ -5128,13 +5135,64 @@ paths:
       security:
       - bearer: []
       - cookie: []
-      summary: The org's templates with their instance counts
+      summary: The org's templates, then the catalog's, with the org's instance counts
+      tags:
+      - templates
+  /api/v1/template/inspect-template:
+    post:
+      description: 'Stores nothing: the editor''s Detected panel follows the files
+        with it. A body a save would refuse answers 200 with the problem.'
+      operationId: templateInspectTemplate
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InspectTemplateRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Inspection'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+      security:
+      - bearer: []
+      - cookie: []
+      summary: What a template body declares and the first problem a save would refuse
       tags:
       - templates
   /api/v1/template/save-template:
     post:
-      description: 'base_revision must be the latest revision (409 otherwise: someone
-        saved meanwhile). warnings name file references nothing provides.'
+      description: 'The compose files'' x-winterflow block declares the variables,
+        exposed ports and backups. base_revision must be the latest revision (409
+        otherwise: someone saved meanwhile). warnings name a variable nothing uses
+        and file references nothing provides. A catalog template is read-only (403).'
       operationId: templateSaveTemplate
       requestBody:
         content:
@@ -5174,6 +5232,12 @@ paths:
               schema:
                 type: string
           description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
         "404":
           content:
             application/json:
@@ -5189,7 +5253,7 @@ paths:
       security:
       - bearer: []
       - cookie: []
-      summary: Create a template or add a revision
+      summary: Create an org template or add a revision
       tags:
       - templates
   /api/v1/template/upgrade-instances:
@@ -6105,6 +6169,14 @@ components:
       required:
       - status
       type: object
+    BackupChoice:
+      properties:
+        enabled:
+          type: boolean
+        storage:
+          description: A storage name on the instance's server; required when enabled.
+          type: string
+      type: object
     BackupConfig:
       properties:
         enabled:
@@ -6138,32 +6210,6 @@ components:
         volume:
           type: string
       type: object
-    BackupDefault:
-      properties:
-        enabled:
-          type: boolean
-        every:
-          type: string
-        keep:
-          $ref: '#/components/schemas/Keep'
-        storage:
-          description: A storage name, looked up on the instance's server.
-          type: string
-      required:
-      - enabled
-      type: object
-    BackupDefaultInput:
-      properties:
-        enabled:
-          type: boolean
-        every:
-          type: string
-        keep:
-          $ref: '#/components/schemas/KeepInput'
-        storage:
-          description: A storage name, looked up on the instance's server.
-          type: string
-      type: object
     BackupHealth:
       properties:
         last_error:
@@ -6181,17 +6227,10 @@ components:
       type: object
     Body:
       properties:
-        app_name:
-          description: May use ${PARAM} of plain parameters.
-          type: string
-        backups:
-          additionalProperties:
-            $ref: '#/components/schemas/BackupDefault'
-          description: Per recipe backup name, the settings an instance starts with.
-          type:
-          - object
-          - "null"
         color:
+          type: string
+        description:
+          description: At most 4000 characters.
           type: string
         files:
           additionalProperties:
@@ -6203,43 +6242,22 @@ components:
           - "null"
         icon:
           type: string
-        ingress:
-          description: Hostname -> host port rows; hosts and ports may use ${PARAM}
-            of plain parameters.
-          items:
-            $ref: '#/components/schemas/IngressRow'
-          type:
-          - array
-          - "null"
-        parameters:
-          description: Each becomes an app variable of the same name.
-          items:
-            $ref: '#/components/schemas/Parameter'
-          type:
-          - array
-          - "null"
+        summary:
+          description: One line about the app, at most 200 characters.
+          type: string
       required:
       - files
-      - parameters
-      - app_name
+      - summary
+      - description
       - icon
       - color
-      - ingress
-      - backups
       type: object
     BodyInput:
       properties:
-        app_name:
-          description: May use ${PARAM} of plain parameters.
-          type: string
-        backups:
-          additionalProperties:
-            $ref: '#/components/schemas/BackupDefaultInput'
-          description: Per recipe backup name, the settings an instance starts with.
-          type:
-          - object
-          - "null"
         color:
+          type: string
+        description:
+          description: At most 4000 characters.
           type: string
         files:
           additionalProperties:
@@ -6251,24 +6269,11 @@ components:
           - "null"
         icon:
           type: string
-        ingress:
-          description: Hostname -> host port rows; hosts and ports may use ${PARAM}
-            of plain parameters.
-          items:
-            $ref: '#/components/schemas/IngressRowInput'
-          type:
-          - array
-          - "null"
-        parameters:
-          description: Each becomes an app variable of the same name.
-          items:
-            $ref: '#/components/schemas/ParameterInput'
-          type:
-          - array
-          - "null"
+        summary:
+          description: One line about the app, at most 200 characters.
+          type: string
       required:
       - files
-      - app_name
       type: object
     BuiltinVariable:
       properties:
@@ -6468,20 +6473,24 @@ components:
       properties:
         backups:
           additionalProperties:
-            type: string
-          description: Backup name -> storage name, replacing the template default's
-            storage.
+            $ref: '#/components/schemas/BackupChoice'
+          description: Settings of the backups the compose file declares, by name;
+            a backup left out starts off.
           type: object
+        hosts:
+          description: Hostnames, each routed to an http expose entry (<service>:<port>)
+            of the template; each must be covered by a domain registered on the server.
+          items:
+            $ref: '#/components/schemas/InstanceHostInput'
+          type: array
         key:
           description: The caller's id for the instance, unique in the org among instances
             not unlinked; a retried create with the same key and values makes no second
             app.
           type: string
-        parameters:
-          additionalProperties:
-            type: string
-          description: Plain parameter values by name; a value may not contain $.
-          type: object
+        name:
+          description: 'The app''s name; absent: the template''s name.'
+          type: string
         revision:
           description: 'Absent or 0: the latest.'
           format: int64
@@ -6489,13 +6498,20 @@ components:
         secrets:
           additionalProperties:
             type: string
-          description: Secret parameter values by name, ECIES-encrypted with the server's
-            public key.
+          description: Values of the encrypted variables by name, ECIES-encrypted
+            with the server's public key.
           type: object
         server_id:
           type: string
         template_id:
           type: string
+        values:
+          additionalProperties:
+            type: string
+          description: Plain values of the variables the compose file declares, by
+            name; a value may not contain $. A variable left out keeps the compose
+            file's own value.
+          type: object
         wait:
           description: Hold the request for the outcome (at most 10 minutes).
           type: boolean
@@ -6831,6 +6847,78 @@ components:
       - channel_name
       - ok
       - error
+      type: object
+    Detected:
+      properties:
+        backups:
+          items:
+            $ref: '#/components/schemas/DetectedBackup'
+          type:
+          - array
+          - "null"
+        expose:
+          items:
+            $ref: '#/components/schemas/DetectedExpose'
+          type:
+          - array
+          - "null"
+        variables:
+          items:
+            $ref: '#/components/schemas/DeclaredVariable'
+          type:
+          - array
+          - "null"
+        warnings:
+          items:
+            type: string
+          type:
+          - array
+          - "null"
+      required:
+      - variables
+      - expose
+      - backups
+      - warnings
+      type: object
+    DetectedBackup:
+      properties:
+        name:
+          type: string
+        type:
+          enum:
+          - sqlite
+          - files
+          - custom
+          type: string
+      required:
+      - name
+      - type
+      type: object
+    DetectedExpose:
+      properties:
+        container:
+          type: string
+        id:
+          description: <container>:<port>/<protocol>
+          type: string
+        port:
+          type: integer
+        protocol:
+          enum:
+          - http
+          - tcp
+          - udp
+          type: string
+        target:
+          description: '<container>:<port>: what a hostname''s expose names (http
+            entries only).'
+          type: string
+      required:
+      - id
+      - target
+      - container
+      - port
+      - protocol
       type: object
     Disk:
       properties:
@@ -7359,30 +7447,6 @@ components:
         to:
           type: string
       type: object
-    IngressRow:
-      properties:
-        host:
-          type: string
-        port:
-          $ref: '#/components/schemas/Port'
-        service:
-          type: string
-      required:
-      - host
-      - port
-      type: object
-    IngressRowInput:
-      properties:
-        host:
-          type: string
-        port:
-          $ref: '#/components/schemas/PortInput'
-        service:
-          type: string
-      required:
-      - host
-      - port
-      type: object
     InheritedVariable:
       properties:
         description:
@@ -7421,6 +7485,42 @@ components:
       - updated_by
       - missing_on
       - overridden
+      type: object
+    InspectTemplateRequest:
+      properties:
+        body:
+          $ref: '#/components/schemas/BodyInput'
+      required:
+      - body
+      type: object
+    Inspection:
+      properties:
+        detected:
+          $ref: '#/components/schemas/Detected'
+          description: What the compose files declare, as far as they parse.
+        problem:
+          description: The first thing save-template would refuse; empty when none.
+          type: string
+      required:
+      - detected
+      - problem
+      type: object
+    InstanceHost:
+      properties:
+        expose:
+          type: string
+        host:
+          type: string
+      required:
+      - host
+      - expose
+      type: object
+    InstanceHostInput:
+      properties:
+        expose:
+          type: string
+        host:
+          type: string
       type: object
     InstanceKeyRequest:
       properties:
@@ -7469,18 +7569,22 @@ components:
         created_at:
           format: date-time
           type: string
+        hosts:
+          description: Hostnames routed to the app's http expose entries.
+          items:
+            $ref: '#/components/schemas/InstanceHost'
+          type:
+          - array
+          - "null"
         key:
           type: string
         last_error:
           description: The last failed command's error; empty after a success.
           type: string
-        parameters:
-          additionalProperties:
-            type: string
-          description: Values the callers set; the others use the revision's default.
-          type:
-          - object
-          - "null"
+        name:
+          description: The app name the create asked for (a later rename shows in
+            the app list).
+          type: string
         revision:
           format: int64
           type: integer
@@ -7507,6 +7611,14 @@ components:
         updated_at:
           format: date-time
           type: string
+        values:
+          additionalProperties:
+            type: string
+          description: Plain values the callers set; a variable left out keeps the
+            compose file's own value.
+          type:
+          - object
+          - "null"
       required:
       - key
       - server_id
@@ -7514,8 +7626,10 @@ components:
       - template_id
       - template_name
       - revision
-      - parameters
+      - name
+      - values
       - secrets
+      - hosts
       - state
       - status_code
       - last_error
@@ -8021,56 +8135,6 @@ components:
       required:
       - servers
       type: object
-    Parameter:
-      properties:
-        default:
-          description: Plain parameters only; must match pattern and may not contain
-            $.
-          type:
-          - "null"
-          - string
-        description:
-          type: string
-        name:
-          description: ^[A-Z][A-Z0-9_]*$; not COMPOSE_PROJECT_NAME or WF_*.
-          type: string
-        pattern:
-          description: Go RE2 regular expression a value must match, at most 512 bytes.
-          type: string
-        required:
-          type: boolean
-        secret:
-          description: Values arrive ECIES-encrypted for the server and are never
-            returned.
-          type: boolean
-      required:
-      - name
-      type: object
-    ParameterInput:
-      properties:
-        default:
-          description: Plain parameters only; must match pattern and may not contain
-            $.
-          type:
-          - "null"
-          - string
-        description:
-          type: string
-        name:
-          description: ^[A-Z][A-Z0-9_]*$; not COMPOSE_PROJECT_NAME or WF_*.
-          type: string
-        pattern:
-          description: Go RE2 regular expression a value must match, at most 512 bytes.
-          type: string
-        required:
-          type: boolean
-        secret:
-          description: Values arrive ECIES-encrypted for the server and are never
-            returned.
-          type: boolean
-      required:
-      - name
-      type: object
     PendingServer:
       properties:
         name:
@@ -8086,16 +8150,6 @@ components:
         format: double
         type: number
       type: object
-    Port:
-      description: A host port 1-65535, or "${PARAM}" of a plain parameter.
-      type:
-      - integer
-      - string
-    PortInput:
-      description: A host port 1-65535, or "${PARAM}" of a plain parameter.
-      type:
-      - integer
-      - string
     Profile:
       properties:
         email:
@@ -9184,13 +9238,13 @@ components:
     TemplateSummary:
       properties:
         behind:
-          description: Instances on a revision older than the latest.
+          description: Of those, the ones on a revision older than the latest.
           format: int64
           type: integer
         id:
           type: string
         instances:
-          description: Pending and created instances.
+          description: The org's pending and created instances.
           format: int64
           type: integer
         latest_revision:
@@ -9198,15 +9252,35 @@ components:
           type: integer
         name:
           type: string
+        slug:
+          description: A catalog template's id in the catalog; empty for an org template.
+          type: string
+        source:
+          description: 'org: the organization''s own (editable); catalog: the same
+            for every organization (read-only).'
+          enum:
+          - org
+          - catalog
+          type: string
         updated_at:
           format: date-time
           type: string
+        withdrawn_at:
+          description: When the catalog dropped the template (listed only while the
+            org has instances of it); null otherwise.
+          format: date-time
+          type:
+          - "null"
+          - string
       required:
       - id
+      - source
+      - slug
       - name
       - latest_revision
       - instances
       - behind
+      - withdrawn_at
       - updated_at
       type: object
     TemplateView:
@@ -9218,6 +9292,9 @@ components:
           type: string
         created_by:
           type: string
+        detected:
+          $ref: '#/components/schemas/Detected'
+          description: What the revision's compose files declare under x-winterflow.
         id:
           type: string
         latest_revision:
@@ -9236,12 +9313,30 @@ components:
           type:
           - array
           - "null"
+        slug:
+          type: string
+        source:
+          enum:
+          - org
+          - catalog
+          type: string
+        withdrawn_at:
+          description: When the catalog dropped the template (it takes no new installs);
+            null otherwise.
+          format: date-time
+          type:
+          - "null"
+          - string
       required:
       - id
+      - source
+      - slug
       - name
       - latest_revision
+      - withdrawn_at
       - revision
       - body
+      - detected
       - note
       - created_at
       - created_by
@@ -9347,20 +9442,21 @@ components:
       properties:
         backups:
           additionalProperties:
-            type: string
-          description: 'Backup name -> storage name, replacing the template default''s
-            storage. Accepted only while the instance is pending; afterwards change
-            backups in the app''s Backups tab. A pending instance keeps none of the
-            create''s overrides: send them again.'
+            $ref: '#/components/schemas/BackupChoice'
+          description: Backup settings by name. Accepted only while the instance is
+            pending (send them all again); afterwards change backups in the app's
+            Backups tab.
           type: object
+        hosts:
+          description: 'Present: the instance''s hostnames from now on (an empty list
+            removes them); absent: kept.'
+          items:
+            $ref: '#/components/schemas/InstanceHostInput'
+          type:
+          - "null"
+          - array
         key:
           type: string
-        parameters:
-          additionalProperties:
-            type: string
-          description: New plain values, merged over the stored ones; a value may
-            not contain $.
-          type: object
         secrets:
           additionalProperties:
             type: string
@@ -9369,6 +9465,13 @@ components:
           type: object
         server_id:
           type: string
+        values:
+          additionalProperties:
+            type: string
+          description: New plain values, merged over the stored ones; an empty value
+            clears one (the compose file's own value stands). A value may not contain
+            $.
+          type: object
         wait:
           type: boolean
       required:
@@ -9388,20 +9491,20 @@ components:
       properties:
         backups:
           additionalProperties:
-            type: string
-          description: 'Backup name -> storage name, replacing the template default''s
-            storage. Accepted only while the instance is pending; afterwards change
-            backups in the app''s Backups tab. A pending instance keeps none of the
-            create''s overrides: send them again.'
+            $ref: '#/components/schemas/BackupChoice'
+          description: Backup settings by name. Accepted only while the instance is
+            pending; backups the revision adds start off.
           type: object
+        hosts:
+          description: 'Present: the instance''s hostnames from now on; absent: kept
+            (each must still be an http expose entry of the revision).'
+          items:
+            $ref: '#/components/schemas/InstanceHostInput'
+          type:
+          - "null"
+          - array
         key:
           type: string
-        parameters:
-          additionalProperties:
-            type: string
-          description: Values for parameters the revision adds or changes; a value
-            may not contain $.
-          type: object
         revision:
           format: int64
           minimum: 1
@@ -9414,6 +9517,12 @@ components:
           type: object
         server_id:
           type: string
+        values:
+          additionalProperties:
+            type: string
+          description: Values for variables the revision adds or changes; a value
+            may not contain $.
+          type: object
         wait:
           type: boolean
       required:

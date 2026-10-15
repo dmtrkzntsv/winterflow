@@ -193,6 +193,7 @@ var probes = map[string]probe{
 	"GET /api/v1/template/get-template":       {malformed: bad("GET", "/api/v1/template/get-template")},
 	"POST /api/v1/template/save-template":     {malformed: bad("POST", "/api/v1/template/save-template")},
 	"POST /api/v1/template/delete-template":   {malformed: bad("POST", "/api/v1/template/delete-template")},
+	"POST /api/v1/template/inspect-template":  {malformed: bad("POST", "/api/v1/template/inspect-template")},
 	"POST /api/v1/template/upgrade-instances": {malformed: bad("POST", "/api/v1/template/upgrade-instances")},
 	"GET /api/v1/rollout/get-rollouts":        {malformed: bad("GET", "/api/v1/rollout/get-rollouts")},
 	"POST /api/v1/rollout/stop-rollout":       {malformed: bad("POST", "/api/v1/rollout/stop-rollout")},

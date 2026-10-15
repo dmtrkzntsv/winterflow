@@ -137,8 +137,9 @@ func TestParity(t *testing.T) {
 
 	var tpl tuc.SavedTemplate
 	rec("save template", p.post(t, "/api/v1/template/save-template", htpl.SaveTemplateRequest{
-		Name: "parity", Body: template.Body{Files: map[string]string{"compose.yaml": "services: {app: {image: x}}\n"}, AppName: "parity-app"},
+		Name: "parity", Body: template.Body{Files: map[string]string{"compose.yaml": "services: {app: {image: x}}\n"}, Summary: "Parity"},
 	})).expect(t, http.StatusOK).data(t, &tpl)
+	rec("read template", p.get(t, "/api/v1/template/get-template", url.Values{"id": {tpl.ID}})).expect(t, http.StatusOK)
 	rec("create instance (wait)", p.post(t, "/api/v1/instance/create-instance", htpl.CreateInstanceRequest{
 		ServerID: sid, Key: "parity-1", TemplateID: tpl.ID, Wait: true,
 	})).expect(t, http.StatusOK)

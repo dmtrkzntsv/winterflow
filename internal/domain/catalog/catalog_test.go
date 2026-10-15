@@ -104,6 +104,7 @@ func TestSignAndVerify(t *testing.T) {
 		"not base64":        {pk, feed, []byte("not a signature")},
 		"a short signature": {pk, feed, []byte(base64.StdEncoding.EncodeToString([]byte("short")))},
 		"an empty .sig":     {pk, feed, nil},
+		"a nil key":         {nil, feed, sig},
 	} {
 		if err := Verify(c.key, c.feed, c.sig); !errors.Is(err, ErrSignature) {
 			t.Errorf("%s: %v", name, err)
@@ -234,4 +235,23 @@ func aliasBomb() string {
 		prev = name
 	}
 	return out
+}
+
+// TestGoldenVectors pins the digest and signature formats the catalog
+// builder and every installed API must agree on.
+func TestGoldenVectors(t *testing.T) {
+	const wantDigest = "sha256:d5daca8685846b6a583060be1ae7a6dd26b2d9b9fc20a1d62a9990ce75ad0394"
+	got := Digest(map[string]string{"compose.yml": "services: {}\n", "a/b.conf": "x"})
+	if got != wantDigest {
+		t.Errorf("digest = %q, want %q", got, wantDigest)
+	}
+	seed := make([]byte, ed25519.SeedSize)
+	for i := range seed {
+		seed[i] = byte(i)
+	}
+	sig := string(Sign(ed25519.NewKeyFromSeed(seed), []byte(`{"format":1,"apps":[]}`)))
+	const wantSig = "T+2V2bD3E4cVQ3oapdAU0RXHLUi1voRfzfsZwS/3uYJo0zUg4mjubwbjBumkDNPoZMqwHRf7mxjFUpeu6BGMAA==\n"
+	if sig != wantSig {
+		t.Errorf("signature = %q, want %q", sig, wantSig)
+	}
 }

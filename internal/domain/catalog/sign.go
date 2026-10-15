@@ -58,6 +58,9 @@ func Sign(key ed25519.PrivateKey, feed []byte) []byte {
 // Verify checks sig (a .sig file: surrounding whitespace is ignored)
 // against the exact bytes of feed.
 func Verify(key ed25519.PublicKey, feed, sig []byte) error {
+	if len(key) != ed25519.PublicKeySize {
+		return ErrSignature
+	}
 	raw, err := base64.StdEncoding.DecodeString(string(bytes.TrimSpace(sig)))
 	if err != nil || len(raw) != ed25519.SignatureSize || !ed25519.Verify(key, feed, raw) {
 		return ErrSignature

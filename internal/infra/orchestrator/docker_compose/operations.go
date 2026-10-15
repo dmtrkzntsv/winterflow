@@ -664,8 +664,8 @@ func (r *Repository) composeArgs(appID string, verb ...string) []string {
 
 // composeArgsFor is composeArgs with the app's compose files already
 // resolved and the profiles to activate (--profile; none: compose's own
-// COMPOSE_PROFILES handling). The x-winterflow override file, when a deploy
-// wrote one, is the last -f.
+// COMPOSE_PROFILES handling). The x-winterflow override file, when there is
+// one (every commit and deploy re-renders it), is the last -f.
 func (r *Repository) composeArgsFor(appID string, files, profiles []string, verb ...string) []string {
 	return r.composeArgsWith(appID, files, profiles, true, verb...)
 }

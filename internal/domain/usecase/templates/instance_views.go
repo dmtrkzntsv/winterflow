@@ -15,11 +15,13 @@ type InstanceView struct {
 	TemplateID   string `json:"template_id" description:"Empty once the template is deleted."`
 	TemplateName string `json:"template_name"`
 	Revision     int64  `json:"revision"`
-	// Parameters are the values callers set; parameters left out use the
-	// revision's default.
-	Parameters map[string]string `json:"parameters" description:"Values the callers set; the others use the revision's default."`
-	Secrets    map[string]string `json:"secrets" description:"Each secret given, as \"<encrypted>\": values are never returned."`
-	State      string            `json:"state" description:"pending, created, deleted or unlinked (only an unlink's own answer shows unlinked: the key then finds nothing)."`
+	Name         string `json:"name" description:"The app name the create asked for (a later rename shows in the app list)."`
+	// Values are the plain values callers set; a variable left out keeps
+	// the compose file's own value.
+	Values  map[string]string    `json:"values" description:"Plain values the callers set; a variable left out keeps the compose file's own value."`
+	Secrets map[string]string    `json:"secrets" description:"Each secret given, as \"<encrypted>\": values are never returned."`
+	Hosts   []model.InstanceHost `json:"hosts" description:"Hostnames routed to the app's http expose entries."`
+	State   string               `json:"state" description:"pending, created, deleted or unlinked (only an unlink's own answer shows unlinked: the key then finds nothing)."`
 	// StatusCode is the app's latest container status (0 unknown).
 	StatusCode command.ContainerStatusCode `json:"status_code"`
 	LastError  string                      `json:"last_error" description:"The last failed command's error; empty after a success."`
@@ -56,13 +58,17 @@ func buildView(inst model.Instance, templateName string, codes map[string]comman
 	for _, n := range inst.SecretNames {
 		secrets[n] = command.EncryptedPlaceholder
 	}
-	params := inst.Params
-	if params == nil {
-		params = map[string]string{}
+	values := inst.Params
+	if values == nil {
+		values = map[string]string{}
+	}
+	hosts := inst.Hosts
+	if hosts == nil {
+		hosts = []model.InstanceHost{}
 	}
 	return InstanceView{
 		Key: inst.Key, ServerID: inst.ServerID, AppID: inst.AppID, TemplateID: inst.TemplateID,
-		TemplateName: templateName, Revision: inst.Revision, Parameters: params, Secrets: secrets,
+		TemplateName: templateName, Revision: inst.Revision, Name: inst.Name, Values: values, Secrets: secrets, Hosts: hosts,
 		State: string(inst.State), StatusCode: codes[inst.AppID], LastError: inst.LastError,
 		CreatedAt: inst.CreatedAt, UpdatedAt: inst.UpdatedAt,
 	}

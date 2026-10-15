@@ -8,12 +8,15 @@ import (
 
 // TemplateSummary is one row of GET get-templates.
 type TemplateSummary struct {
-	ID             string    `json:"id"`
-	Name           string    `json:"name"`
-	LatestRevision int64     `json:"latest_revision"`
-	Instances      int64     `json:"instances" description:"Pending and created instances."`
-	Behind         int64     `json:"behind" description:"Instances on a revision older than the latest."`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID             string     `json:"id"`
+	Source         string     `json:"source" enum:"org,catalog" description:"org: the organization's own (editable); catalog: the same for every organization (read-only)."`
+	Slug           string     `json:"slug" description:"A catalog template's id in the catalog; empty for an org template."`
+	Name           string     `json:"name"`
+	LatestRevision int64      `json:"latest_revision"`
+	Instances      int64      `json:"instances" description:"The org's pending and created instances."`
+	Behind         int64      `json:"behind" description:"Of those, the ones on a revision older than the latest."`
+	WithdrawnAt    *time.Time `json:"withdrawn_at" description:"When the catalog dropped the template (listed only while the org has instances of it); null otherwise."`
+	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
 // TemplateList is the data of GET get-templates.
@@ -29,14 +32,18 @@ type TemplateRevisionInfo struct {
 	CreatedBy string    `json:"created_by"`
 }
 
-// TemplateView is the data of GET get-template: one revision's body and
-// the revision list, newest first.
+// TemplateView is the data of GET get-template: one revision's body, what
+// its compose files declare, and the revision list, newest first.
 type TemplateView struct {
 	ID             string                 `json:"id"`
+	Source         string                 `json:"source" enum:"org,catalog"`
+	Slug           string                 `json:"slug"`
 	Name           string                 `json:"name"`
 	LatestRevision int64                  `json:"latest_revision"`
+	WithdrawnAt    *time.Time             `json:"withdrawn_at" description:"When the catalog dropped the template (it takes no new installs); null otherwise."`
 	Revision       int64                  `json:"revision"`
 	Body           template.Body          `json:"body"`
+	Detected       template.Detected      `json:"detected" description:"What the revision's compose files declare under x-winterflow."`
 	Note           string                 `json:"note"`
 	CreatedAt      time.Time              `json:"created_at"`
 	CreatedBy      string                 `json:"created_by"`
@@ -48,7 +55,14 @@ type SavedTemplate struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
 	Revision int64  `json:"revision"`
-	// Warnings name file references nothing provides (a typo, or a
-	// shared variable the servers must have).
+	// Warnings are what the save points out: a variable nothing uses, a
+	// file reference nothing provides (a typo, or a shared variable the
+	// servers must have).
 	Warnings []string `json:"warnings"`
+}
+
+// Inspection is the data of POST inspect-template.
+type Inspection struct {
+	Detected template.Detected `json:"detected" description:"What the compose files declare, as far as they parse."`
+	Problem  string            `json:"problem" description:"The first thing save-template would refuse; empty when none."`
 }

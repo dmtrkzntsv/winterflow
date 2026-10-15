@@ -45,10 +45,10 @@ func TestUpdateKeepsValuesAndSecrets(t *testing.T) {
 	if _, err := f.uc.UpdateInstance(ctx, "u1", org1, templates.UpdateInput{ServerID: srv2, Key: "k1"}); !errors.Is(err, model.ErrInstanceNotFound) {
 		t.Fatalf("on another server: %v", err)
 	}
-	if _, err := f.uc.UpdateInstance(ctx, "u1", org1, templates.UpdateInput{ServerID: srv1, Key: "k1", Params: map[string]string{"NOPE": "x"}}); !errors.Is(err, model.ErrRejected) {
-		t.Fatalf("unknown parameter: %v", err)
+	if _, err := f.uc.UpdateInstance(ctx, "u1", org1, templates.UpdateInput{ServerID: srv1, Key: "k1", Values: map[string]string{"NOPE": "x"}}); !errors.Is(err, model.ErrRejected) {
+		t.Fatalf("an undeclared variable: %v", err)
 	}
-	out, err := f.uc.UpdateInstance(ctx, "u1", org1, templates.UpdateInput{ServerID: srv1, Key: "k1", Params: map[string]string{"VERSION": "2"}})
+	out, err := f.uc.UpdateInstance(ctx, "u1", org1, templates.UpdateInput{ServerID: srv1, Key: "k1", Values: map[string]string{"VERSION": "2"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,31 +63,74 @@ func TestUpdateKeepsValuesAndSecrets(t *testing.T) {
 	}
 	f.disp.reply(t, port.CommandResult{Success: true})
 	received(t, out.Done)
-	if v, _ := out.Final(ctx); v.Parameters["VERSION"] != "2" || v.Parameters["NAME"] != "acme" || v.Revision != 1 {
+	if v, _ := out.Final(ctx); v.Values["VERSION"] != "2" || v.Values["NAME"] != "acme" || v.Revision != 1 {
 		t.Fatalf("after update = %+v", v)
 	}
 }
 
-func TestUpgradeSendsNewBackupDefaults(t *testing.T) {
+// An update renders the app under its current name (a rename since the
+// create counts) and keeps the hostnames unless new ones are given.
+func TestUpdateKeepsTheNameAndHosts(t *testing.T) {
+	f := newFixture(t, nil)
+	ctx := dbtest.Ctx(t)
+	in := f.create(map[string]string{"NAME": "acme"})
+	in.Name = "Acme"
+	in.Hosts = []model.InstanceHost{{Host: "acme.example.test", Expose: "app:8080"}}
+	out, err := f.uc.CreateInstance(ctx, "u1", org1, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.disp.reply(t, port.CommandResult{Success: true})
+	received(t, out.Done)
+	appID := f.disp.last(t).Payload.(command.SaveAppRequest).App.AppID
+	if err := f.apps.RenameApp(ctx, appID, "Renamed"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.uc.UpdateInstance(ctx, "u1", org1, templates.UpdateInput{ServerID: srv1, Key: "k1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, cfg := saved(t, f); cfg.Name != "Renamed" || len(cfg.Ingress.Domains) != 1 || cfg.Ingress.Domains[0].Domain != "acme.example.test" {
+		t.Fatalf("an update's config = %+v", cfg)
+	}
+	none := []model.InstanceHost{}
+	if _, err := f.uc.UpdateInstance(ctx, "u1", org1, templates.UpdateInput{ServerID: srv1, Key: "k1", Hosts: &none}); err != nil {
+		t.Fatal(err)
+	}
+	if _, cfg := saved(t, f); len(cfg.Ingress.Domains) != 0 {
+		t.Fatalf("hosts not replaced: %+v", cfg.Ingress)
+	}
+	bad := []model.InstanceHost{{Host: "x.example.test", Expose: "db:1"}}
+	if _, err := f.uc.UpdateInstance(ctx, "u1", org1, templates.UpdateInput{ServerID: srv1, Key: "k1", Hosts: &bad}); !errors.Is(err, model.ErrRejected) || errors.Is(err, templates.ErrNeedsValues) {
+		t.Fatalf("a given host on no http entry: %v", err)
+	}
+}
+
+// An upgrade re-renders with the stored values: a newly required variable
+// without one is ErrNeedsValues (as is a stored hostname whose expose entry
+// the revision dropped), and it sends no backups list, so a backup the
+// revision adds starts off.
+func TestUpgradeNeedsValuesAndSendsNoBackups(t *testing.T) {
 	f := newFixture(t, nil)
 	ctx := dbtest.Ctx(t)
 	created(t, f)
 
 	b := body()
-	b.Files["compose.yaml"] = strings.Replace(compose, "path: shop.db }\n", "path: shop.db }\n    - { name: media, type: files, volume: data }\n", 1)
-	b.Backups["media"] = template.BackupDefault{Every: "6h"}
-	b.Parameters = append(b.Parameters, template.Parameter{Name: "REGION", Required: true})
+	b.Files["compose.yaml"] = strings.NewReplacer(
+		"path: shop.db }\n", "path: shop.db }\n    - { name: media, type: files, volume: data }\n",
+		"      KEY: \"changeme\"\n", "      KEY: \"changeme\"\n      REGION: \"\"\n",
+		"    VERSION: {}\n", "    VERSION: {}\n    REGION: { required: true }\n",
+	).Replace(compose)
 	if _, err := f.uc.SaveTemplate(ctx, "u1", org1, templates.SaveInput{ID: f.tpl.ID, Name: "shop", Body: b, BaseRevision: 1}); err != nil {
 		t.Fatal(err)
 	}
 	_, err := f.uc.UpdateInstance(ctx, "u1", org1, templates.UpdateInput{ServerID: srv1, Key: "k1", Revision: 2})
-	if !errors.Is(err, model.ErrRejected) || !errors.Is(err, templates.ErrNeedsValues) || !strings.Contains(err.Error(), "parameters.REGION: required") {
+	if !errors.Is(err, model.ErrRejected) || !errors.Is(err, templates.ErrNeedsValues) || !strings.Contains(err.Error(), "variable REGION: a value is required") {
 		t.Fatalf("a newly required value missing: %v", err)
 	}
 	if _, err := f.uc.UpdateInstance(ctx, "u1", org1, templates.UpdateInput{ServerID: srv1, Key: "k1", Revision: 5}); !errors.Is(err, model.ErrNotFound) {
 		t.Fatalf("an unknown revision: %v", err)
 	}
-	up, err := f.uc.UpdateInstance(ctx, "u1", org1, templates.UpdateInput{ServerID: srv1, Key: "k1", Revision: 2, Params: map[string]string{"REGION": "eu"}})
+	up, err := f.uc.UpdateInstance(ctx, "u1", org1, templates.UpdateInput{ServerID: srv1, Key: "k1", Revision: 2, Values: map[string]string{"REGION": "eu"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,25 +139,50 @@ func TestUpgradeSendsNewBackupDefaults(t *testing.T) {
 		Instance template.Marker `json:"instance"`
 	}
 	_ = json.Unmarshal(f.disp.last(t).Payload.(command.SaveAppRequest).App.Config, &cfg)
-	if cfg.Backups != nil || cfg.Instance.Revision != 2 || len(cfg.Instance.BackupDefaults) != 1 || cfg.Instance.BackupDefaults[0].Name != "media" {
+	if cfg.Backups != nil || cfg.Instance.Revision != 2 {
 		t.Fatalf("upgrade config: backups %s marker %+v", cfg.Backups, cfg.Instance)
 	}
 	f.disp.reply(t, port.CommandResult{Success: true})
 	received(t, up.Done)
-	if v, _ := up.Final(ctx); v.Revision != 2 || v.Parameters["REGION"] != "eu" {
+	if v, _ := up.Final(ctx); v.Revision != 2 || v.Values["REGION"] != "eu" {
 		t.Fatalf("upgraded = %+v", v)
 	}
 	list, err := f.uc.ListTemplates(ctx, org1)
 	if err != nil || list.Templates[0].Instances != 1 || list.Templates[0].Behind != 0 {
 		t.Fatalf("templates = %+v, %v", list, err)
 	}
+
+	// Revision 3 no longer exposes app:8080: the stored hostname can't
+	// follow, so Upgrade all would skip the instance.
+	hosted := f.create(map[string]string{"NAME": "acme"})
+	hosted.Key, hosted.Revision = "k2", 1
+	hosted.Hosts = []model.InstanceHost{{Host: "k2.example.test", Expose: "app:8080"}}
+	out, err := f.uc.CreateInstance(ctx, "u1", org1, hosted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.disp.reply(t, port.CommandResult{Success: true})
+	received(t, out.Done)
+	b.Files["compose.yaml"] = strings.Replace(b.Files["compose.yaml"], "    - { container: app, port: 8080 }\n", "    - { container: app, port: 9090 }\n", 1)
+	if _, err := f.uc.SaveTemplate(ctx, "u1", org1, templates.SaveInput{ID: f.tpl.ID, Name: "shop", Body: b, BaseRevision: 2}); err != nil {
+		t.Fatal(err)
+	}
+	_, err = f.uc.UpdateInstance(ctx, "u1", org1, templates.UpdateInput{ServerID: srv1, Key: "k2", Revision: 3, Values: map[string]string{"REGION": "eu"}})
+	if !errors.Is(err, templates.ErrNeedsValues) || !strings.Contains(err.Error(), "hosts[0].expose") {
+		t.Fatalf("a stored host the revision can't route: %v", err)
+	}
+}
+
+// savedConfig is what the tests read of a dispatched save's config.
+type savedConfig struct {
+	Name     string
+	Ingress  model.Ingress
+	Backups  []struct{ Name, Storage string }
+	Instance template.Marker
 }
 
 // saved is the last dispatched save's variable by name and its config.
-func saved(t *testing.T, f fixture) (vars map[string]command.ContentItem, cfg struct {
-	Backups  []struct{ Name, Storage string }
-	Instance template.Marker
-}) {
+func saved(t *testing.T, f fixture) (vars map[string]command.ContentItem, cfg savedConfig) {
 	t.Helper()
 	req := f.disp.last(t).Payload.(command.SaveAppRequest)
 	vars = map[string]command.ContentItem{}
@@ -135,8 +203,8 @@ func TestUpdatePendingSendsSecretsAndBackups(t *testing.T) {
 	ctx := dbtest.Ctx(t)
 	pendingInstance(t, f)
 
-	in := templates.UpdateInput{ServerID: srv1, Key: "k1", Params: map[string]string{"VERSION": "2"}}
-	if _, err := f.uc.UpdateInstance(ctx, "u1", org1, in); !errors.Is(err, model.ErrRejected) || !strings.Contains(err.Error(), "secrets.KEY") {
+	in := templates.UpdateInput{ServerID: srv1, Key: "k1", Values: map[string]string{"VERSION": "2"}}
+	if _, err := f.uc.UpdateInstance(ctx, "u1", org1, in); !errors.Is(err, model.ErrRejected) || !strings.Contains(err.Error(), "variable KEY: a value is required") {
 		t.Fatalf("a pending update without the required secret: %v", err)
 	}
 	if f.disp.count() != 1 {
@@ -153,12 +221,12 @@ func TestUpdatePendingSendsSecretsAndBackups(t *testing.T) {
 	if k := vars["KEY"]; string(k.Content) != again || !k.Encrypted {
 		t.Fatalf("the secret = %+v", k)
 	}
-	if len(cfg.Backups) != 1 || cfg.Backups[0].Name != "db" || len(cfg.Instance.BackupDefaults) != 0 {
-		t.Fatalf("config: backups %+v marker %+v", cfg.Backups, cfg.Instance)
+	if cfg.Backups == nil || len(cfg.Backups) != 0 {
+		t.Fatalf("config: backups %+v (want the whole, empty list)", cfg.Backups)
 	}
 	f.disp.reply(t, port.CommandResult{Success: true})
 	received(t, out.Done)
-	if v, _ := out.Final(ctx); v.State != "created" || v.Parameters["VERSION"] != "2" || v.Parameters["NAME"] != "acme" || v.Secrets["KEY"] != command.EncryptedPlaceholder {
+	if v, _ := out.Final(ctx); v.State != "created" || v.Values["VERSION"] != "2" || v.Values["NAME"] != "acme" || v.Secrets["KEY"] != command.EncryptedPlaceholder {
 		t.Fatalf("after the update = %+v", v)
 	}
 }
@@ -168,11 +236,11 @@ func TestUpdatePendingBackupsOverride(t *testing.T) {
 	ctx := dbtest.Ctx(t)
 	pendingInstance(t, f)
 
-	in := templates.UpdateInput{ServerID: srv1, Key: "k1", Secrets: map[string]string{"KEY": f.secret}, Backups: map[string]string{"nope": "disk"}}
+	in := templates.UpdateInput{ServerID: srv1, Key: "k1", Secrets: map[string]string{"KEY": f.secret}, Backups: map[string]template.BackupChoice{"nope": {Storage: "disk"}}}
 	if _, err := f.uc.UpdateInstance(ctx, "u1", org1, in); !errors.Is(err, model.ErrRejected) {
-		t.Fatalf("an override of an unknown backup: %v", err)
+		t.Fatalf("a setting of an unknown backup: %v", err)
 	}
-	in.Backups = map[string]string{"db": "disk"}
+	in.Backups = map[string]template.BackupChoice{"db": {Storage: "disk"}}
 	if _, err := f.uc.UpdateInstance(ctx, "u1", org1, in); err != nil {
 		t.Fatal(err)
 	}
@@ -188,17 +256,15 @@ func TestUpgradePendingSendsTheWholeBackupsList(t *testing.T) {
 
 	b := body()
 	b.Files["compose.yaml"] = strings.Replace(compose, "path: shop.db }\n", "path: shop.db }\n    - { name: media, type: files, volume: data }\n", 1)
-	b.Backups["media"] = template.BackupDefault{Every: "6h"}
 	if _, err := f.uc.SaveTemplate(ctx, "u1", org1, templates.SaveInput{ID: f.tpl.ID, Name: "shop", Body: b, BaseRevision: 1}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.uc.UpdateInstance(ctx, "u1", org1, templates.UpdateInput{ServerID: srv1, Key: "k1", Revision: 2,
-		Secrets: map[string]string{"KEY": f.secret}, Backups: map[string]string{"media": "disk"}}); err != nil {
+		Secrets: map[string]string{"KEY": f.secret}, Backups: map[string]template.BackupChoice{"media": {Storage: "disk"}}}); err != nil {
 		t.Fatal(err)
 	}
 	_, cfg := saved(t, f)
-	if len(cfg.Backups) != 2 || cfg.Backups[1].Name != "media" || cfg.Backups[1].Storage != "disk" ||
-		cfg.Instance.Revision != 2 || len(cfg.Instance.BackupDefaults) != 0 {
+	if len(cfg.Backups) != 1 || cfg.Backups[0].Name != "media" || cfg.Backups[0].Storage != "disk" || cfg.Instance.Revision != 2 {
 		t.Fatalf("config: backups %+v marker %+v", cfg.Backups, cfg.Instance)
 	}
 }
@@ -209,7 +275,7 @@ func TestUpdateCreatedRefusesBackups(t *testing.T) {
 	f := newFixture(t, nil)
 	created(t, f)
 	sent := f.disp.count()
-	_, err := f.uc.UpdateInstance(dbtest.Ctx(t), "u1", org1, templates.UpdateInput{ServerID: srv1, Key: "k1", Backups: map[string]string{"db": "disk"}})
+	_, err := f.uc.UpdateInstance(dbtest.Ctx(t), "u1", org1, templates.UpdateInput{ServerID: srv1, Key: "k1", Backups: map[string]template.BackupChoice{"db": {Storage: "disk"}}})
 	if !errors.Is(err, model.ErrRejected) || !strings.Contains(err.Error(), "backups can only be set while the instance is pending") {
 		t.Fatalf("err = %v", err)
 	}

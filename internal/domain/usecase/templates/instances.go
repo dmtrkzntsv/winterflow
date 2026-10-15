@@ -32,10 +32,14 @@ type CreateInput struct {
 	TemplateID string
 	// Revision 0 is the latest.
 	Revision int64
-	Params   map[string]string
-	Secrets  map[string]string
-	// Backups overrides the storage of template backup defaults by name.
-	Backups map[string]string
+	// Name is the app's name; "" is the template's name.
+	Name    string
+	Values  map[string]string
+	Secrets map[string]string
+	Hosts   []model.InstanceHost
+	// Backups are the settings of the backups the compose file declares,
+	// by name; a backup without one starts off.
+	Backups map[string]template.BackupChoice
 }
 
 // CreateInstance creates the instance, or replays a create the key already
@@ -43,7 +47,8 @@ type CreateInput struct {
 // dispatched) or dispatches a pending one's save again; a different
 // request is model.ErrKeyInUse, a deleted instance's key
 // model.ErrKeyRetired. The key is claimed only once the rendered app passes
-// every save-app check.
+// every save-app check. A withdrawn catalog template takes no new installs
+// (model.ErrTemplateWithdrawn).
 func (uc *UseCase) CreateInstance(ctx context.Context, userID, orgID string, in CreateInput) (Outcome, error) {
 	if err := ValidateKey(in.Key); err != nil {
 		return Outcome{}, err
@@ -52,29 +57,42 @@ func (uc *UseCase) CreateInstance(ctx context.Context, userID, orgID string, in 
 	if err != nil {
 		return Outcome{}, err
 	}
+	if tpl.WithdrawnAt != nil {
+		return Outcome{}, model.ErrTemplateWithdrawn
+	}
 	revision := in.Revision
 	if revision == 0 {
 		revision = tpl.LatestRevision
 	}
-	body, err := uc.revision(ctx, tpl.ID, revision)
+	body, spec, err := uc.revision(ctx, tpl.ID, revision)
 	if err != nil {
 		return Outcome{}, err
 	}
-	values, err := template.Resolve(body, template.Stored{}, template.Given{Params: in.Params, Secrets: in.Secrets})
+	name := in.Name
+	if name == "" {
+		name = tpl.Name
+	}
+	if err := template.CheckName(name); err != nil {
+		return Outcome{}, err
+	}
+	if err := template.CheckHosts(spec, in.Hosts); err != nil {
+		return Outcome{}, err
+	}
+	values, err := template.Resolve(spec, template.Stored{}, template.Given{Values: in.Values, Secrets: in.Secrets})
 	if err != nil {
 		return Outcome{}, err
 	}
-	backups, err := template.CreateBackups(body, in.Backups)
+	backups, err := template.CreateBackups(spec, in.Backups)
 	if err != nil {
 		return Outcome{}, err
 	}
 	hash := template.RequestHash(template.HashInput{
-		ServerID: in.ServerID, TemplateID: tpl.ID, Revision: in.Revision,
-		Params: in.Params, SecretNames: slices.Collect(maps.Keys(in.Secrets)), Backups: in.Backups,
+		ServerID: in.ServerID, TemplateID: tpl.ID, Revision: in.Revision, Name: in.Name,
+		Values: in.Values, SecretNames: slices.Collect(maps.Keys(in.Secrets)), Hosts: in.Hosts, Backups: in.Backups,
 	})
 	render := func(appID string) (appuc.CheckedSave, error) {
 		app, payload, err := template.Render(body, template.Input{
-			AppID: appID, Values: values, Backups: backups,
+			AppID: appID, Name: name, Values: values, Hosts: in.Hosts, Backups: backups,
 			Marker: &template.Marker{TemplateID: tpl.ID, TemplateName: tpl.Name, Revision: revision, Key: in.Key},
 		})
 		if err != nil {
@@ -96,8 +114,8 @@ func (uc *UseCase) CreateInstance(ctx context.Context, userID, orgID string, in 
 	}
 	inst, inserted, err := uc.repo.ClaimInstance(ctx, model.Instance{
 		ID: util.GenerateID(), OrgID: orgID, Key: in.Key, AppID: checked.AppID(), ServerID: in.ServerID,
-		TemplateID: tpl.ID, Revision: revision, Params: values.Stored.Params, SecretNames: values.Stored.SecretNames,
-		RequestHash: hash,
+		TemplateID: tpl.ID, Revision: revision, Name: name, Params: values.Stored.Values, SecretNames: values.Stored.SecretNames,
+		Hosts: in.Hosts, RequestHash: hash,
 	})
 	if err != nil {
 		return Outcome{}, err
@@ -106,7 +124,7 @@ func (uc *UseCase) CreateInstance(ctx context.Context, userID, orgID string, in 
 		// Another create claimed the key in between.
 		return uc.replay(ctx, userID, inst, tpl.Name, hash, revision, values, render)
 	}
-	return uc.dispatchSave(ctx, userID, inst, checked, revision, values)
+	return uc.dispatchSave(ctx, userID, inst, checked, revision, values, in.Hosts)
 }
 
 // replay answers a create whose key is taken.
@@ -124,17 +142,17 @@ func (uc *UseCase) replay(ctx context.Context, userID string, inst model.Instanc
 	if err != nil {
 		return Outcome{}, err
 	}
-	return uc.dispatchSave(ctx, userID, inst, checked, revision, values)
+	return uc.dispatchSave(ctx, userID, inst, checked, revision, values, inst.Hosts)
 }
 
 // dispatchSave dispatches a rendered save; its confirmation records the
-// revision and values (state created), a failure the error.
-func (uc *UseCase) dispatchSave(ctx context.Context, userID string, inst model.Instance, checked appuc.CheckedSave, revision int64, values template.Values) (Outcome, error) {
+// revision, values and hosts (state created), a failure the error.
+func (uc *UseCase) dispatchSave(ctx context.Context, userID string, inst model.Instance, checked appuc.CheckedSave, revision int64, values template.Values, hosts []model.InstanceHost) (Outcome, error) {
 	// The hook lives as long as the result is awaited: it keeps only what
 	// it records, not the secret ciphertexts.
 	id, stored := inst.ID, values.Stored
 	observer, done := uc.observe(inst, func(ctx context.Context) error {
-		return uc.repo.MarkSaved(ctx, id, revision, stored.Params, stored.SecretNames, nil)
+		return uc.repo.MarkSaved(ctx, id, revision, stored.Values, stored.SecretNames, hosts)
 	})
 	requestID, err := uc.apps.DispatchSave(ctx, userID, checked, observer)
 	return outcome(requestID, err, done, uc.reread(inst))
@@ -145,6 +163,25 @@ func (uc *UseCase) reread(inst model.Instance) func(ctx context.Context) (Instan
 	return func(ctx context.Context) (InstanceView, error) {
 		return uc.GetInstance(ctx, inst.OrgID, inst.ServerID, inst.Key)
 	}
+}
+
+// appName is the name a render of inst's app uses: the app's current name
+// in the API's app list (a rename since the create counts), else the name
+// the create asked for, else fallback (the template's).
+func (uc *UseCase) appName(ctx context.Context, inst model.Instance, fallback string) string {
+	if apps, err := uc.apps.GetApps(ctx, inst.ServerID); err == nil {
+		for _, a := range apps {
+			if a.ID == inst.AppID && a.Name != "" {
+				return a.Name
+			}
+		}
+	} else {
+		uc.log.Error("instance: read the app's name", "error", err, "app_id", inst.AppID)
+	}
+	if inst.Name != "" {
+		return inst.Name
+	}
+	return fallback
 }
 
 // GetInstance returns the instance with key on serverID (a deleted one
@@ -161,8 +198,8 @@ func (uc *UseCase) GetInstance(ctx context.Context, orgID, serverID, key string)
 }
 
 // ListInstances lists the org's pending and created instances, narrowed
-// to a server and/or a template when given (another org's template is
-// model.ErrTemplateNotFound).
+// to a server and/or a template when given (a template the org can't read
+// is model.ErrTemplateNotFound).
 func (uc *UseCase) ListInstances(ctx context.Context, orgID, serverID, templateID string) (InstanceList, error) {
 	names, err := uc.repo.ListTemplateNames(ctx, orgID)
 	if err != nil {

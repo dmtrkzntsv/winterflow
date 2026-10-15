@@ -18,15 +18,11 @@ import (
 	apprepo "winterflow/internal/infra/db/repository/app"
 )
 
-const shopCompose = "services:\n  app:\n    image: example/shop:${VERSION}\n"
-
+// shopBody is template "shop" declaring a required NAME with pattern.
 func shopBody(pattern string) template.Body {
-	def := "1"
-	return template.Body{
-		Files:      map[string]string{"compose.yaml": shopCompose},
-		Parameters: []template.Parameter{{Name: "NAME", Required: true, Pattern: pattern}, {Name: "VERSION", Default: &def}},
-		AppName:    "shop-${NAME}",
-	}
+	compose := "services:\n  app:\n    image: example/shop:1\n    environment:\n      - NAME\n" +
+		"x-winterflow:\n  variables:\n    NAME: { required: true, pattern: \"" + pattern + "\" }\n"
+	return template.Body{Files: map[string]string{"compose.yaml": compose}}
 }
 
 // shop saves template "shop" (r1) with created instances named names on
@@ -40,7 +36,9 @@ func (e *env) shop(t *testing.T, tu *templates.UseCase, names ...string) (templa
 	}
 	apps := map[string]string{}
 	for _, n := range names {
-		out, err := tu.CreateInstance(ctx, "u1", org1, templates.CreateInput{ServerID: srv1, Key: n, TemplateID: tpl.ID, Params: map[string]string{"NAME": n}})
+		out, err := tu.CreateInstance(ctx, "u1", org1, templates.CreateInput{
+			ServerID: srv1, Key: n, TemplateID: tpl.ID, Name: "shop-" + n, Values: map[string]string{"NAME": n},
+		})
 		if err != nil {
 			t.Fatal(err)
 		}

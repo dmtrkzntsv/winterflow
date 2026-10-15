@@ -46,7 +46,8 @@ func (uc *UseCase) DeleteInstance(ctx context.Context, userID, orgID, serverID, 
 }
 
 // UnlinkInstance saves the app as an ordinary app (no marker, no template
-// id) at its current revision and values; on success the key is free.
+// id) at its current revision, values and hostnames; on success the key is
+// free.
 func (uc *UseCase) UnlinkInstance(ctx context.Context, userID, orgID, serverID, key string) (Outcome, error) {
 	inst, err := uc.live(ctx, orgID, serverID, key)
 	if err != nil {
@@ -55,15 +56,18 @@ func (uc *UseCase) UnlinkInstance(ctx context.Context, userID, orgID, serverID, 
 	if inst.State != model.InstanceCreated {
 		return Outcome{}, model.ErrInstanceNotCreated
 	}
-	body, err := uc.revision(ctx, inst.TemplateID, inst.Revision)
+	body, spec, err := uc.revision(ctx, inst.TemplateID, inst.Revision)
 	if err != nil {
 		return Outcome{}, err
 	}
-	values, err := template.Resolve(body, template.Stored{Params: inst.Params, SecretNames: inst.SecretNames}, template.Given{})
+	values, err := template.Resolve(spec, template.Stored{Values: inst.Params, SecretNames: inst.SecretNames}, template.Given{})
 	if err != nil {
 		return Outcome{}, err
 	}
-	app, payload, err := template.Render(body, template.Input{AppID: inst.AppID, Values: values})
+	name := uc.templateName(ctx, orgID, inst.TemplateID)
+	app, payload, err := template.Render(body, template.Input{
+		AppID: inst.AppID, Name: uc.appName(ctx, inst, name), Values: values, Hosts: inst.Hosts,
+	})
 	if err != nil {
 		return Outcome{}, err
 	}
@@ -79,7 +83,6 @@ func (uc *UseCase) UnlinkInstance(ctx context.Context, userID, orgID, serverID, 
 	if err != nil {
 		return Outcome{}, err
 	}
-	name := uc.templateName(ctx, orgID, inst.TemplateID)
 	final := func(ctx context.Context) (InstanceView, error) {
 		// The key no longer finds an unlinked instance: read it by id.
 		got, err := uc.repo.GetInstanceByID(ctx, id)

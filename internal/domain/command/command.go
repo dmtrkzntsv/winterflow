@@ -77,6 +77,9 @@ const (
 	// Container images.
 	TypeImageTags Type = "image.tags" // list available registry tags for an image
 
+	// Host processes (Monitoring's Processes tab).
+	TypeProcessList Type = "process.list" // read every process's CPU, memory and disk I/O
+
 	// Agent self-management.
 	TypeAgentUpdate Type = "agent.update"
 )

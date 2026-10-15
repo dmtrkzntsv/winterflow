@@ -33,3 +33,10 @@ func write(t *testing.T, root string, files map[string]string) {
 		}
 	}
 }
+
+func removeAll(t *testing.T, root, rel string) {
+	t.Helper()
+	if err := os.RemoveAll(filepath.Join(root, rel)); err != nil {
+		t.Fatal(err)
+	}
+}

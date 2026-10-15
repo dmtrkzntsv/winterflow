@@ -105,9 +105,9 @@ type Result struct {
 // whole feed is refused when its signature does not verify against the
 // key, its format is unknown, it lists no app, or it is older than a feed
 // already applied (ErrStale) or dated in the future (ErrFuture). Each
-// valid entry is applied; templates the feed no longer lists are
-// withdrawn; the feed's generated_at is then stamped on every catalog
-// template.
+// valid entry is applied; the feed's generated_at is then stamped on every
+// catalog template, and the templates the feed no longer lists are
+// withdrawn.
 func (s *Syncer) Sync(ctx context.Context) (Result, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -150,6 +150,14 @@ func (s *Syncer) Sync(ctx context.Context) (Result, error) {
 			return res, err
 		}
 	}
+	// The stamp comes before the withdrawals: once it lands, a replica still
+	// holding an older mirror fails every write (catalog_feed_at is past its
+	// feed), so it can no longer un-withdraw a template between our
+	// withdraw and our stamp. A failed withdraw below still keeps no ETag,
+	// so the next sync withdraws again.
+	if err := s.repo.StampCatalog(ctx, f.GeneratedAt); err != nil {
+		return res, err
+	}
 	for _, st := range states {
 		if listed[st.Slug] || st.WithdrawnAt != nil {
 			continue
@@ -161,9 +169,6 @@ func (s *Syncer) Sync(ctx context.Context) (Result, error) {
 		if ok {
 			res.Withdrawn++
 		}
-	}
-	if err := s.repo.StampCatalog(ctx, f.GeneratedAt); err != nil {
-		return res, err
 	}
 	s.etag = got.ETag
 	return res, nil

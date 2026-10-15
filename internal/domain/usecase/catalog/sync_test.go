@@ -300,6 +300,63 @@ func (r *failingRepo) ApplyCatalog(ctx context.Context, base *model.CatalogState
 	return r.CatalogRepository.ApplyCatalog(ctx, base, e)
 }
 
+// failingTail fails WithdrawCatalog or StampCatalog while its flag is set.
+type failingTail struct {
+	port.CatalogRepository
+	failWithdraw, failStamp atomic.Bool
+}
+
+func (r *failingTail) WithdrawCatalog(ctx context.Context, id string, at, feedAt time.Time) (bool, error) {
+	if r.failWithdraw.Load() {
+		return false, errors.New("database is locked")
+	}
+	return r.CatalogRepository.WithdrawCatalog(ctx, id, at, feedAt)
+}
+
+func (r *failingTail) StampCatalog(ctx context.Context, feedAt time.Time) error {
+	if r.failStamp.Load() {
+		return errors.New("database is locked")
+	}
+	return r.CatalogRepository.StampCatalog(ctx, feedAt)
+}
+
+// A withdraw or a stamp that fails keeps no ETag either: the next sync
+// fetches the feed in full and finishes the job.
+func TestSyncRetriesAFailedWithdrawOrStamp(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		fail func(*failingTail)
+	}{
+		{"withdraw", func(r *failingTail) { r.failWithdraw.Store(true) }},
+		{"stamp", func(r *failingTail) { r.failStamp.Store(true) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t)
+			e.feed.publish(t, e.key, g1, app("budget", "Budget", "actual:1"), app("notes", "Notes", "notes:1"))
+			e.run(t)
+			repo := &failingTail{CatalogRepository: e.repo}
+			s := e.syncer(repo, e.key.Public().(ed25519.PublicKey))
+			e.feed.publish(t, e.key, g2, app("budget", "Budget", "actual:1"))
+			tc.fail(repo)
+			if _, err := s.Sync(dbtest.Ctx(t)); err == nil {
+				t.Fatal("a failed write reported success")
+			}
+			repo.failWithdraw.Store(false)
+			repo.failStamp.Store(false)
+			res, err := s.Sync(dbtest.Ctx(t))
+			if err != nil || res.NotModified {
+				t.Fatalf("retry = %+v, %v", res, err)
+			}
+			if got := e.feed.etags(); got[len(got)-1] != "" {
+				t.Fatalf("asked with %q", got)
+			}
+			if st := e.states(t); st["notes"].WithdrawnAt == nil || st["budget"].WithdrawnAt != nil || !st["budget"].FeedAt.Equal(g2) {
+				t.Fatalf("states = %+v", st)
+			}
+		})
+	}
+}
+
 // A sync that failed midway keeps no ETag: the next one fetches the whole
 // feed again instead of a 304 hiding what was never applied.
 func TestSyncRetriesAFailedApply(t *testing.T) {

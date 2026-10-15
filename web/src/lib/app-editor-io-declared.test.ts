@@ -41,8 +41,15 @@ describe("app editor io: declared variables", () => {
   it("names a missing required value and a value breaking its rule, by decl:<NAME>", () => {
     const s = loaded();
     expect(editorErrors(s)).toEqual({ "decl:BASE_URL": "Enter a value: this variable is required." });
-    expect(editorErrors(setDeclaredValue(s, BASE, "notes"))).toEqual({ "decl:BASE_URL": "Must match https?://.+." });
+    expect(editorErrors(setDeclaredValue(s, BASE, "has$dollar"))).toEqual({ "decl:BASE_URL": "A plain value can't contain $." });
     expect(editorErrors(setDeclaredValue(s, BASE, "https://notes.example.com"))).toEqual({});
+  });
+
+  it("never blocks a save on a pattern: JavaScript's engine is not RE2", async () => {
+    const s = setDeclaredValue(setDeclaredValue(loaded(), BASE, "notes"), TOKEN, "x");
+    expect(editorErrors(s)).toEqual({});
+    const payload = await buildSavePayload(s, async () => "PUB", "app-1");
+    expect(payload.variables).toContainEqual({ name: "BASE_URL", encrypted: false, content: "notes" });
   });
 
   it("sends a declared variable only with a value: empty, the compose file's own stands", async () => {

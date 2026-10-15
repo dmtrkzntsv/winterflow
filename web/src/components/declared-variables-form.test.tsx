@@ -35,14 +35,17 @@ describe("DeclaredVariablesForm", () => {
     expect(screen.getByLabelText(/SESSION_SECRET/)).toHaveAttribute("type", "password");
   });
 
-  it("checks the pattern as you type and stores the value as a variable", async () => {
+  it("hints at a pattern mismatch as you type, without flagging the field invalid", async () => {
     const user = userEvent.setup();
     render(<Harness start={{ ...emptyEditorState(), declared: DECLARED }} />);
     await user.type(screen.getByLabelText(/BASE_URL/), "notes");
-    expect(screen.getByText("Must match https?://.+.")).toBeInTheDocument();
+    const hint = "May not match https?://.+; the server checks it on save.";
+    expect(screen.getByText(hint)).toBeInTheDocument();
+    expect(screen.getByLabelText(/BASE_URL/)).not.toHaveAttribute("aria-invalid");
+    expect(screen.getByLabelText(/BASE_URL/)).toHaveAccessibleDescription(hint);
     await user.clear(screen.getByLabelText(/BASE_URL/));
     await user.type(screen.getByLabelText(/BASE_URL/), "https://notes.example.com");
-    expect(screen.queryByText(/Must match/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/May not match/)).not.toBeInTheDocument();
     await user.type(screen.getByLabelText(/SESSION_SECRET/), "s3cret");
     expect(state().vars).toMatchObject([
       { name: "BASE_URL", is_encrypted: false },

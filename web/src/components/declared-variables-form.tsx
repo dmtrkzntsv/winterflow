@@ -4,9 +4,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { FieldMessage } from "@/components/form-field";
 import { holdsStoredSecret } from "@/lib/app-editor-io";
-import { declaredRow, declaredValueError, setDeclaredValue } from "@/lib/declared-variables";
+import { declaredPatternHint, declaredRow, declaredValueError, setDeclaredValue } from "@/lib/declared-variables";
 import { ENCRYPTED } from "@/lib/ecies";
-import { invalidAttrs, type FieldErrors } from "@/lib/field-errors";
+import { errorId, invalidAttrs, type FieldErrors } from "@/lib/field-errors";
 import type { AppEditorState } from "@/types/app-config";
 
 type Props = {
@@ -34,6 +34,8 @@ export function DeclaredVariablesForm({ state, onChange, errors = {} }: Props) {
         const id = `decl-${v.name}`;
         const live = value === "" ? "" : declaredValueError(v, value, held);
         const message = errors[`decl:${v.name}`] || live;
+        const hint = message ? "" : declaredPatternHint(v, value, held);
+        const hintId = `${id}-hint`;
         return (
           <div key={v.name} className="space-y-1.5">
             <label htmlFor={id} className="flex items-center gap-1.5 text-sm font-medium">
@@ -61,10 +63,16 @@ export function DeclaredVariablesForm({ state, onChange, errors = {} }: Props) {
                 autoComplete="off"
                 placeholder={held ? "Leave empty to keep the current value" : (v.default ?? "")}
                 {...invalidAttrs(id, message, "font-mono")}
+                aria-describedby={message ? errorId(id) : hint ? hintId : undefined}
                 onChange={(e) => onChange(setDeclaredValue(state, v, e.target.value))}
               />
             )}
             <FieldMessage id={id} message={message} />
+            {hint ? (
+              <p id={hintId} className="text-xs text-muted-foreground">
+                {hint}
+              </p>
+            ) : null}
           </div>
         );
       })}

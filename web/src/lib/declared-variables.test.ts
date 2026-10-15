@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { emptyEditorState } from "@/lib/app-editor-io";
-import { declaredRow, declaredValueError, matchesPattern, setDeclaredValue } from "@/lib/declared-variables";
+import { declaredPatternHint, declaredRow, declaredValueError, matchesPattern, setDeclaredValue } from "@/lib/declared-variables";
 import type { DeclaredVariable } from "@/types/app-config";
 
 const BASE: DeclaredVariable = { name: "BASE_URL", required: true, encrypted: false, pattern: "https?://.+", default: "http://localhost", services: ["app"] };
@@ -27,13 +27,23 @@ describe("matchesPattern", () => {
 describe("declaredValueError", () => {
   it("mirrors the server's rules", () => {
     expect(declaredValueError(BASE, "", false)).toBe("Enter a value: this variable is required.");
-    expect(declaredValueError(BASE, "notes", false)).toBe("Must match https?://.+.");
+    expect(declaredValueError(BASE, "notes", false)).toBe("");
     expect(declaredValueError(BASE, "https://x/$y", false)).toBe("A plain value can't contain $.");
     expect(declaredValueError(BASE, "https://notes.example.com", false)).toBe("");
     expect(declaredValueError(TOKEN, "", false)).toBe("");
-    expect(declaredValueError(TOKEN, "pa$1", false)).toBe("Must match [0-9]{4}.");
+    expect(declaredValueError(TOKEN, "pa$1", false)).toBe("");
     expect(declaredValueError(TOKEN, "1234", false)).toBe("");
     expect(declaredValueError({ ...TOKEN, required: true }, "<encrypted>", true)).toBe("");
+  });
+});
+
+describe("declaredPatternHint", () => {
+  it("only hints, never errors: a mismatch is the server's call", () => {
+    expect(declaredPatternHint(BASE, "notes", false)).toBe("May not match https?://.+; the server checks it on save.");
+    expect(declaredPatternHint(TOKEN, "pa$1", false)).toBe("May not match [0-9]{4}; the server checks it on save.");
+    expect(declaredPatternHint(BASE, "https://notes.example.com", false)).toBe("");
+    expect(declaredPatternHint(BASE, "", false)).toBe("");
+    expect(declaredPatternHint({ ...TOKEN, required: true }, "<encrypted>", true)).toBe("");
   });
 });
 

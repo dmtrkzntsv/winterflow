@@ -491,20 +491,26 @@ func TestProcessesGroupsCountOnlyWholeDisks(t *testing.T) {
 	}
 }
 
-// A device whose sysfs link cannot be read, or an io.stat key that is no
-// MAJ:MIN, is not counted.
+// A device whose sysfs link cannot be read, or whose /sys/block entry is
+// missing, is not counted, and neither is an io.stat key that is no
+// MAJ:MIN. Such a verdict is not kept: once the device's link and entry
+// appear (hot-plug, a transient failure) the next reading counts it.
 func TestProcessesGroupsUnknownDevice(t *testing.T) {
 	root := baseTree(t)
-	write(t, root, map[string]string{
-		"sys/fs/cgroup" + scopeID + "/io.stat": "8:32 rbytes=5 wbytes=5\n../../x rbytes=5 wbytes=5\n8:0 rbytes=1 wbytes=1\n",
-	})
-	c := &fakeClock{t: time.Unix(1700001000, 0)}
-	c.between = func() {
-		write(t, root, map[string]string{
-			"sys/fs/cgroup" + scopeID + "/io.stat": "8:32 rbytes=50 wbytes=50\n../../x rbytes=50 wbytes=50\n8:0 rbytes=2 wbytes=3\n",
-		})
+	// sdc (8:32) has no link yet; sdd (8:48) has a link but no /sys/block entry.
+	link(t, root, map[string]string{"sys/dev/block/8:48": "../../devices/pci0000:00/ata4/host3/target3:0:0/3:0:0:0/block/sdd"})
+	n := uint64(0)
+	grow := func() {
+		n++
+		write(t, root, map[string]string{"sys/fs/cgroup" + scopeID + "/io.stat": fmt.Sprintf(
+			"8:32 rbytes=%d wbytes=%d\n8:48 rbytes=%d wbytes=%d\n../../x rbytes=%d wbytes=%d\n8:0 rbytes=%d wbytes=%d\n",
+			100*n, 100*n, 1000*n, 1000*n, 50*n, 50*n, n, 2*n)})
 	}
-	resp, err := newTestProcesses(root, c).List()
+	grow()
+	c := &fakeClock{t: time.Unix(1700001000, 0)}
+	c.between = grow
+	p := newTestProcesses(root, c)
+	resp, err := p.List()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -512,6 +518,28 @@ func TestProcessesGroupsUnknownDevice(t *testing.T) {
 	if ct.ReadBps == nil || *ct.ReadBps != 1 || ct.WriteBps == nil || *ct.WriteBps != 2 {
 		t.Fatalf("rates = %v/%v, want sda's 1/2", ct.ReadBps, ct.WriteBps)
 	}
+	write(t, root, map[string]string{"sys/block/sdc/": "", "sys/block/sdd/": ""})
+	link(t, root, map[string]string{"sys/dev/block/8:32": "../../devices/pci0000:00/ata3/host2/target2:0:0/2:0:0:0/block/sdc"})
+	// The reading that first counts sdc and sdd jumps by their totals;
+	// the one after it has their rates.
+	for range 2 {
+		c.t = c.t.Add(time.Second)
+		grow()
+		if resp, err = p.List(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ct = byGroup(resp.Groups)[scopeID]
+	if ct.ReadBps == nil || *ct.ReadBps != 1101 || ct.WriteBps == nil || *ct.WriteBps != 1102 {
+		t.Fatalf("rates = %s/%s, want sda+sdc+sdd's 1101/1102", bps(ct.ReadBps), bps(ct.WriteBps))
+	}
+}
+
+func bps(v *float64) string {
+	if v == nil {
+		return "nil"
+	}
+	return fmt.Sprint(*v)
 }
 
 // Without cgroup.controllers at the cgroup root (cgroup v1, or hybrid with

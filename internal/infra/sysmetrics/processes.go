@@ -282,7 +282,10 @@ var majMin = regexp.MustCompile(`^[0-9]+:[0-9]+$`)
 // physical disk, by the host Disk I/O chart's rule (isWholeDisk), so zram
 // swap, loop files and device-mapper or md stacks over a disk are not
 // counted. sys/dev/block/<MAJ:MIN> links to the device's sysfs directory,
-// whose name is the kernel's. The verdict is cached per device.
+// whose name is the kernel's. Only a settled verdict is cached per device:
+// a virtual device, or a whole disk found in sys/block. A link or entry
+// that cannot be read is retried next reading, so a hot-plugged disk or a
+// transient failure is not excluded for good.
 func (p *Processes) physicalDisk(dev string) bool {
 	if v, ok := p.disks[dev]; ok {
 		return v
@@ -290,12 +293,20 @@ func (p *Processes) physicalDisk(dev string) bool {
 	if !majMin.MatchString(dev) {
 		return false
 	}
-	v := false
-	if target, err := os.Readlink(p.path("sys", "dev", "block", dev)); err == nil {
-		v = isWholeDisk(p.root, filepath.Base(target))
+	target, err := os.Readlink(p.path("sys", "dev", "block", dev))
+	if err != nil {
+		return false
 	}
-	p.disks[dev] = v
-	return v
+	name := filepath.Base(target)
+	if virtualDisk(name) {
+		p.disks[dev] = false
+		return false
+	}
+	if !isWholeDisk(p.root, name) {
+		return false
+	}
+	p.disks[dev] = true
+	return true
 }
 
 // readPID reads one process; groupCID is the container id of its group

@@ -236,8 +236,7 @@ export function editorErrors(state: AppEditorState): FieldErrors {
     else if (placeholderMisuse(v, v.name, value)) out[`var:${v.id}:value`] = PLACEHOLDER_REFUSED;
   }
   const pinned = new Map<number, string>();
-  for (const [id, p] of Object.entries(config.ports ?? {})) {
-    if (!p.pinned) continue;
+  for (const [id, p] of livePins(state)) {
     const host = Number(p.host);
     if (p.host === "" || !Number.isInteger(host) || host < 1 || host > 65535) out[`pin:${id}`] = "Enter a port from 1 to 65535.";
     else if (pinned.has(host)) out[`pin:${id}`] = `${pinned.get(host)} is pinned to this port already.`;
@@ -285,6 +284,14 @@ export function editorErrors(state: AppEditorState): FieldErrors {
     if (host) out[`redirect-host:${r.id}`] = host;
   }
   return out;
+}
+
+// livePins are the pins of the app's expose entries as app.get listed
+// them: a pin of an entry that is gone is neither checked nor sent (the
+// server drops it too: a removed entry loses its port on the save).
+function livePins(state: AppEditorState): [string, PortPin][] {
+  const live = new Set((state.expose ?? []).map((e) => e.id));
+  return Object.entries(state.config.ports ?? {}).filter(([id, p]) => p.pinned && live.has(id));
 }
 
 type SecretItem = { is_encrypted: boolean; storedAs?: string };
@@ -385,11 +392,7 @@ export async function buildSavePayload(
     })),
     // Only the pins: the agent keeps every other port, and a save without
     // an entry unpins it.
-    ports: Object.fromEntries(
-      Object.entries(state.config.ports ?? {})
-        .filter(([, p]) => p.pinned)
-        .map(([id, p]) => [id, { host: Number(p.host), pinned: true }]),
-    ),
+    ports: Object.fromEntries(livePins(state).map(([id, p]) => [id, { host: Number(p.host), pinned: true }])),
     ...(state.config.ingress
       ? {
           ingress: {

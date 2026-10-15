@@ -22,8 +22,10 @@ func (s Spec) CheckTargets(ing *model.Ingress) error {
 	return nil
 }
 
-// CheckPins refuses pins the app can't take: one for an id that is no
-// expose entry of it, or two entries pinned to the same host port.
+// CheckPins refuses pins the app can't take: two entries pinned to the
+// same host port. A pin for an id that is no expose entry of the app (an
+// entry the compose file no longer has) is ignored, as the agent ignores
+// it: removed entries lose their allocation on the save.
 func (s Spec) CheckPins(ports map[string]model.PortAllocation) error {
 	ids := map[string]bool{}
 	for _, e := range s.Expose {
@@ -37,11 +39,8 @@ func (s Spec) CheckPins(ports map[string]model.PortAllocation) error {
 	byHost := map[int]string{}
 	for _, id := range keys {
 		p := ports[id]
-		if !p.Pinned {
+		if !p.Pinned || !ids[id] {
 			continue
-		}
-		if !ids[id] {
-			return fmt.Errorf("%w: %s is not an expose entry of this app", model.ErrPortsInvalid, id)
 		}
 		if other, dup := byHost[p.Host]; dup {
 			return fmt.Errorf("%w: %s and %s are both pinned to port %d", model.ErrPortsInvalid, other, id, p.Host)

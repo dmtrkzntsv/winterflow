@@ -33,8 +33,13 @@ func TestCheckPins(t *testing.T) {
 	if err := s.CheckPins(map[string]model.PortAllocation{"db:5432/tcp": {Host: 5432, Pinned: true}, "gone:1/http": {Host: 1}}); err != nil {
 		t.Fatal(err)
 	}
+	// A pin for an entry the compose file no longer has is dropped by the
+	// save, never refused: not even when it shares a live pin's port.
+	stale := map[string]model.PortAllocation{"web:80/http": {Host: 5432, Pinned: true}, "db:5432/tcp": {Host: 5432, Pinned: true}}
+	if err := s.CheckPins(stale); err != nil {
+		t.Fatal(err)
+	}
 	cases := map[string]map[string]model.PortAllocation{
-		"web:80/http is not an expose entry":                    {"web:80/http": {Host: 8080, Pinned: true}},
 		"app:8080/http and db:5432/tcp are both pinned to port": {"app:8080/http": {Host: 5432, Pinned: true}, "db:5432/tcp": {Host: 5432, Pinned: true}},
 	}
 	for want, pins := range cases {

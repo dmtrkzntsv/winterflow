@@ -47,6 +47,11 @@ func TestSaveAppChecksXWinterflow(t *testing.T) {
 	if disp, err := save(declaredCompose, `{"ports":{"db:5432/tcp":{"host":5432,"pinned":true}}}`, ok, secret); err != nil || len(disp.all) != 1 {
 		t.Fatalf("valid save: %v, %d dispatches", err, len(disp.all))
 	}
+	// A pin of an entry the compose file no longer has (the editor still
+	// sends what app.get returned) is dropped by the agent, not refused.
+	if disp, err := save(declaredCompose, `{"ports":{"web:80/http":{"host":80,"pinned":true},"db:5432/tcp":{"host":80,"pinned":true}}}`, ok); err != nil || len(disp.all) != 1 {
+		t.Fatalf("stale pin: %v, %d dispatches", err, len(disp.all))
+	}
 	cases := []struct {
 		name, compose, config string
 		vars                  []command.ContentItem
@@ -57,7 +62,6 @@ func TestSaveAppChecksXWinterflow(t *testing.T) {
 		{"pattern", declaredCompose, `{}`, []command.ContentItem{plain("BASE_URL", "notes")}, `variable BASE_URL: "notes" does not match`},
 		{"dollar", declaredCompose, `{}`, []command.ContentItem{plain("BASE_URL", "https://x/$y")}, "variable BASE_URL: a plain value can't contain $"},
 		{"secret sent plain", declaredCompose, `{}`, []command.ContentItem{ok, plain("TOKEN", "t")}, "variable TOKEN: it is a secret"},
-		{"pin of no entry", declaredCompose, `{"ports":{"web:80/http":{"host":80,"pinned":true}}}`, []command.ContentItem{ok}, "web:80/http is not an expose entry"},
 		{"malformed pin", declaredCompose, `{"ports":{"db:5432/tcp":{"host":0,"pinned":true}}}`, []command.ContentItem{ok}, "0 is not a port"},
 		{"tcp ingress target", declaredCompose, `{"ingress":{"domains":[{"domain":"db.example.com","expose":"db:5432","ssl":true}],"redirects":[]}}`,
 			[]command.ContentItem{ok}, "db:5432 is not an http expose entry"},

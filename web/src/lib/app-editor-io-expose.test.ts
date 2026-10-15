@@ -47,12 +47,25 @@ describe("app editor io: expose and pins", () => {
   it("refuses a target that is not a web port and a bad or shared pin", () => {
     const s = loaded();
     s.config.ingress!.domains[0].expose = "db:5432";
-    s.config.ports = { "app:8080/http": { host: 5432, pinned: true }, "db:5432/tcp": { host: 5432, pinned: true }, "x:1/tcp": { host: "", pinned: true } };
+    s.config.ports = { "app:8080/http": { host: 5432, pinned: true }, "db:5432/tcp": { host: "", pinned: true } };
     const id = s.config.ingress!.domains[0].id;
     expect(editorErrors(s)).toEqual({
       [`port:${id}`]: "Pick one of the app's web ports.",
-      "pin:db:5432/tcp": "app:8080/http is pinned to this port already.",
-      "pin:x:1/tcp": "Enter a port from 1 to 65535.",
+      "pin:db:5432/tcp": "Enter a port from 1 to 65535.",
     });
+    s.config.ports = { "app:8080/http": { host: 5432, pinned: true }, "db:5432/tcp": { host: 5432, pinned: true } };
+    expect(editorErrors(s)["pin:db:5432/tcp"]).toBe("app:8080/http is pinned to this port already.");
+  });
+
+  it("neither checks nor sends a pin of an entry that is gone", async () => {
+    const s = loaded();
+    s.config.ports = {
+      "app:8080/http": { host: 5432, pinned: true },
+      "gone:1/tcp": { host: 5432, pinned: true },
+      "old:2/tcp": { host: "", pinned: true },
+    };
+    expect(editorErrors(s)).toEqual({});
+    const payload = await buildSavePayload(s, async () => "PUB", "app-1");
+    expect(payload.config.ports).toEqual({ "app:8080/http": { host: 5432, pinned: true } });
   });
 });

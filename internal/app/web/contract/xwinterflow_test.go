@@ -49,7 +49,6 @@ func TestSaveAppXWinterflow(t *testing.T) {
 		`variable BASE_URL: \"notes\" does not match`:                          save(`{}`, happ.ContentItemRequest{Name: "BASE_URL", Content: "notes"}),
 		"variable BASE_URL: a plain value can't contain $":                     save(`{}`, happ.ContentItemRequest{Name: "BASE_URL", Content: "https://x/$y"}),
 		"db:5432 is not an http expose entry of this app":                      save(`{"ingress":{"domains":[{"domain":"db.example.test","expose":"db:5432","ssl":true}],"redirects":[]}}`, ok),
-		"web:80/http is not an expose entry of this app":                       save(`{"ports":{"web:80/http":{"host":8080,"pinned":true}}}`, ok),
 		"domain \\\"a.example.test\\\": set expose or upstream_port, not both": save(`{"ingress":{"domains":[{"domain":"a.example.test","expose":"app:8080","upstream_port":80,"ssl":true}],"redirects":[]}}`, ok),
 	} {
 		r.expect(t, http.StatusBadRequest)
@@ -61,9 +60,11 @@ func TestSaveAppXWinterflow(t *testing.T) {
 		t.Fatalf("%d refused save(s) reached the agent", n)
 	}
 	var saved command.SaveAppResponse
+	// A pin of an entry the compose file no longer has (web:80/http) is
+	// dropped by the agent, never a 400.
 	owner.succeed(t, call{Method: http.MethodPost, Path: "/api/v1/app/save-app", Body: happ.SaveAppRequest{
 		ServerID: sid, App: model.App{Name: "notes", Icon: "box", Color: "#112233"},
-		Config:    json.RawMessage(`{"ingress":{"domains":[{"domain":"notes.example.test","expose":"app:8080","ssl":true}],"redirects":[]},"ports":{"db:5432/tcp":{"host":5432,"pinned":true}}}`),
+		Config:    json.RawMessage(`{"ingress":{"domains":[{"domain":"notes.example.test","expose":"app:8080","ssl":true}],"redirects":[]},"ports":{"db:5432/tcp":{"host":5432,"pinned":true},"web:80/http":{"host":5432,"pinned":true}}}`),
 		Files:     []happ.ContentItemRequest{{Name: "compose.yml", Content: xwfCompose}},
 		Variables: []happ.ContentItemRequest{ok},
 	}}, &saved)

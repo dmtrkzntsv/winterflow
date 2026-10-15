@@ -460,3 +460,17 @@ func TestGetAppShowsExposeAndDeclaredVariables(t *testing.T) {
 		t.Fatalf("variables = %+v, warnings = %v", resp.DeclaredVariables, resp.XWinterflowWarnings)
 	}
 }
+
+// A pin of an entry the compose file no longer has is dropped with the
+// entry, never refused (the API agrees: CheckPins ignores it).
+func TestStalePinIsDropped(t *testing.T) {
+	r, _ := portRepo(t)
+	pins := `"ports":{"db:5432/tcp":{"host":5432,"pinned":true},"gone:1/tcp":{"host":5432,"pinned":true}}`
+	if _, err := r.saveWithoutDeploy(exposePayload("app-1", exposeCompose, pins)); err != nil {
+		t.Fatal(err)
+	}
+	got := portsOf(t, r, "app-1")
+	if _, ok := got["gone:1/tcp"]; ok || got["db:5432/tcp"] != (model.PortAllocation{Host: 5432, Pinned: true}) || len(got) != 2 {
+		t.Fatalf("ports = %+v", got)
+	}
+}

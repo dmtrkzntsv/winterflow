@@ -79,9 +79,54 @@ describe("ProcessesTab", () => {
     const user = userEvent.setup();
     const { rerender } = renderTab();
     await user.click(screen.getByRole("button", { name: "Sort by Process" }));
-    result = { ...result, data: { ...LIST, processes: [...LIST.processes, p({ pid: 3, name: "aaa", cpu_pct: 90 })] } };
+    // aaa is first by name but last by CPU; zzz is first by CPU but last by name.
+    result = {
+      ...result,
+      data: { ...LIST, processes: [...LIST.processes, p({ pid: 3, name: "aaa", cpu_pct: 0 }), p({ pid: 4, name: "zzz", cpu_pct: 90 })] },
+    };
     rerender(<MemoryRouter><ProcessesTab serverId="s1" /></MemoryRouter>);
     expect(names()[0]).toBe("aaa");
+    expect(names()[0]).not.toBe("zzz");
+    expect(names().at(-1)).toBe("zzz");
+  });
+
+  it("filters by the App select", async () => {
+    const user = userEvent.setup();
+    renderTab();
+    await user.click(screen.getByRole("combobox", { name: "App" }));
+    await user.click(await screen.findByRole("option", { name: "Host only" }));
+    expect(names()).toEqual(["sshd", "bash"]);
+    await user.click(screen.getByRole("combobox", { name: "App" }));
+    await user.click(await screen.findByRole("option", { name: "Nextcloud" }));
+    expect(names()).toEqual(["postgres"]);
+  });
+
+  it("drops an app filter whose app left the list", async () => {
+    const user = userEvent.setup();
+    const { rerender } = renderTab();
+    await user.click(screen.getByRole("combobox", { name: "App" }));
+    await user.click(await screen.findByRole("option", { name: "Nextcloud" }));
+    expect(names()).toEqual(["postgres"]);
+    result = { ...result, data: { ...LIST, processes: LIST.processes.filter((x) => x.pid !== 10) } };
+    rerender(<MemoryRouter><ProcessesTab serverId="s1" /></MemoryRouter>);
+    expect(names()).toEqual(["sshd", "bash"]);
+    expect(screen.getByRole("combobox", { name: "App" })).toHaveTextContent("All processes");
+  });
+
+  it("expands a row's details with a keyboard-reachable button", async () => {
+    const user = userEvent.setup();
+    renderTab();
+    const btn = screen.getByRole("button", { name: "Details for sshd" });
+    expect(btn).toHaveAttribute("aria-expanded", "false");
+    await user.click(btn);
+    expect(btn).toHaveAttribute("aria-expanded", "true");
+    const details = screen.getAllByRole("row").find((r) => within(r).queryAllByRole("term").length > 0)!;
+    for (const label of ["App", "User", "PID", "Read/s", "Threads", "Uptime"]) {
+      expect(within(details).getByText(label)).toBeInTheDocument();
+    }
+    await user.click(btn);
+    expect(btn).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryAllByRole("term")).toHaveLength(0);
   });
 
   it("filters by text, by app, and shows kernel threads on request", async () => {

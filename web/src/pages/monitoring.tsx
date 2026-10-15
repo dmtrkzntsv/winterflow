@@ -60,10 +60,10 @@ function s(key: string, label: string, i: number): ChartSeries {
   return { key, label, color: chartColor(i) };
 }
 
-// Two compact tiles per row on a phone, four from lg.
 const TABS = ["overview", "processes"] as const;
 type Tab = (typeof TABS)[number];
 
+// Two compact tiles per row on a phone, four from lg.
 const KPI_GRID = "grid grid-cols-2 gap-3 lg:grid-cols-4";
 // One chart per row below md, two from md. Fixed rows with plots that fill
 // them: cards in a row end level whether or not they carry a legend.
@@ -375,7 +375,7 @@ export default function MonitoringPage() {
           <TargetAlertsCard serverId={activeServerId} targetLabel={activeServer?.name ?? "this server"} />
         </TabsContent>
         <TabsContent value="processes" className="mt-6">
-          {tab === "processes" ? <ProcessesTab serverId={activeServerId} /> : null}
+          {tab === "processes" ? <ProcessesTab key={activeServerId} serverId={activeServerId} /> : null}
         </TabsContent>
       </UnderlineTabs>
     </div>

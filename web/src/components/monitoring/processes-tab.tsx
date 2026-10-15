@@ -1,6 +1,6 @@
 import { Fragment, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowDown, ArrowUp, Pause, Play } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronRight, Pause, Play } from "lucide-react";
 
 import { DataFreshness } from "@/components/data-freshness";
 import { Button } from "@/components/ui/button";
@@ -64,13 +64,22 @@ export function ProcessesTab({ serverId }: { serverId: string }) {
     const names = new Map(apps.map((a) => [a.id, appLabel(a.name)]));
     return (id: string) => names.get(id);
   }, [apps]);
-  const rows = useMemo(
-    () => sortProcesses(filterProcesses(data?.processes ?? [], { text, app, kernel }, appName), sort.key, sort.dir, appName),
-    [data, text, app, kernel, appName, sort],
-  );
   const appIds = useMemo(
     () => [...new Set((data?.processes ?? []).flatMap((p) => (p.app_id ? [p.app_id] : [])))],
     [data],
+  );
+  // A chosen app that has left the list (stopped, gone) no longer filters:
+  // the select would show nothing while the table hid every row.
+  const appFilter: AppFilter = data && app.startsWith("app:") && !appIds.includes(app.slice(4)) ? "all" : app;
+  const rows = useMemo(
+    () =>
+      sortProcesses(
+        filterProcesses(data?.processes ?? [], { text, app: appFilter, kernel }, appName),
+        sort.key,
+        sort.dir,
+        appName,
+      ),
+    [data, text, appFilter, kernel, appName, sort],
   );
   // The agent's sample time (unix ms), so uptimes do not drift between polls.
   const now = data?.sampled_at ?? 0;
@@ -82,18 +91,28 @@ export function ProcessesTab({ serverId }: { serverId: string }) {
     switch (key) {
       case "name":
         return (
-          <div className="min-w-0 max-w-[18rem]">
-            <div data-testid="process-name" className="truncate font-medium">{p.name}</div>
-            {p.cmdline ? (
-              <div className="truncate text-xs text-muted-foreground" title={p.cmdline}>{p.cmdline}</div>
-            ) : null}
+          <div className="flex min-w-0 max-w-[18rem] items-start gap-1">
+            <button
+              type="button"
+              aria-expanded={open === p.pid}
+              aria-label={`Details for ${p.name}`}
+              onClick={() => setOpen((cur) => (cur === p.pid ? null : p.pid))}
+              className="-ml-1 mt-0.5 shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground md:hidden"
+            >
+              <ChevronRight className={cn("size-4 transition-transform", open === p.pid && "rotate-90")} />
+            </button>
+            <div className="min-w-0">
+              <div data-testid="process-name" className="truncate font-medium">{p.name}</div>
+              {p.cmdline ? (
+                <div className="truncate text-xs text-muted-foreground" title={p.cmdline}>{p.cmdline}</div>
+              ) : null}
+            </div>
           </div>
         );
       case "app":
         return p.app_id ? (
           <Link
             to={appPath(serverId, p.app_id)}
-            onClick={(e) => e.stopPropagation()}
             className="inline-flex max-w-40 truncate rounded-md bg-secondary px-2 py-0.5 text-xs font-medium text-secondary-foreground hover:underline"
           >
             {appName(p.app_id) ?? p.app_id}
@@ -134,7 +153,7 @@ export function ProcessesTab({ serverId }: { serverId: string }) {
           onChange={(e) => setText(e.target.value)}
           className="w-full sm:w-72"
         />
-        <Select value={app} onValueChange={(v) => setApp(v as AppFilter)}>
+        <Select value={appFilter} onValueChange={(v) => setApp(v as AppFilter)}>
           <SelectTrigger aria-label="App" className="w-44">
             <SelectValue />
           </SelectTrigger>
@@ -215,11 +234,7 @@ export function ProcessesTab({ serverId }: { serverId: string }) {
             ) : (
               rows.map((p) => (
                 <Fragment key={p.pid}>
-                  <TableRow
-                    data-testid="process-row"
-                    onClick={() => setOpen((cur) => (cur === p.pid ? null : p.pid))}
-                    className="cursor-pointer md:cursor-default"
-                  >
+                  <TableRow data-testid="process-row">
                     {COLUMNS.map((c) => (
                       <TableCell key={c.key} className={cn(c.wide && WIDE, c.numeric && "text-right tabular-nums")}>
                         {cell(p, c.key)}

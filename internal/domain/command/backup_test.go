@@ -59,6 +59,22 @@ func TestDetached(t *testing.T) {
 	}
 }
 
+func TestOffBridge(t *testing.T) {
+	for _, typ := range []Type{TypeBackupRun, TypeBackupRestore, TypeVarsReload, TypeProcessList} {
+		if !typ.OffBridge() {
+			t.Errorf("%s should run off the bridge", typ)
+		}
+	}
+	for _, typ := range []Type{TypeBackupPoints, TypeAppSave, TypeAppsStatus, TypeStorageOrphans, TypeVarsSync} {
+		if typ.OffBridge() {
+			t.Errorf("%s should run on the bridge", typ)
+		}
+	}
+	if TypeProcessList.Detached() {
+		t.Error("process.list answers at once: it is not detached")
+	}
+}
+
 func TestRestoreAndOrphanRequestsValidate(t *testing.T) {
 	for _, r := range []interface{ Validate() error }{
 		RestoreBackupRequest{AppID: "a1", Backup: "db", Point: "20261011T120000Z-scheduled"},

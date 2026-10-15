@@ -95,6 +95,12 @@ func (t Type) Detached() bool {
 	return t == TypeBackupRun || t == TypeBackupRestore || t == TypeVarsReload
 }
 
+// OffBridge reports whether the in-process bridge runs a command on a
+// goroutine of its own: the detached ones, plus process.list, whose /proc
+// reads can block on a hung process. The gRPC agent runs every request on
+// its own goroutine already.
+func (t Type) OffBridge() bool { return t.Detached() || t == TypeProcessList }
+
 // ContentTypeJSON is the envelope content type used for every command payload.
 const ContentTypeJSON = "application/json"
 

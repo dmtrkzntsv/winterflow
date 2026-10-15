@@ -103,56 +103,64 @@ func TestInProcessBridgeErrorsStayCorrelated(t *testing.T) {
 	}
 }
 
-// blockingRunner holds backup.run until released and answers everything
-// else at once.
-type blockingRunner struct{ release chan struct{} }
+// blockingRunner holds one command type until released and answers
+// everything else at once.
+type blockingRunner struct {
+	held    command.Type
+	release chan struct{}
+}
 
 func (b blockingRunner) Dispatch(_ context.Context, req *proto.RequestEnvelope) *proto.ResponseEnvelope {
-	if command.Type(req.Type) == command.TypeBackupRun {
+	if command.Type(req.Type) == b.held {
 		<-b.release
 	}
 	resp, _ := codec.EncodeResponse("local", req.RequestId, command.Type(req.Type), proto.ResponseCode_RESPONSE_CODE_SUCCESS, "ok", struct{}{})
 	return resp
 }
 
-// A backup.run waiting for its run never holds up the commands behind it.
-func TestInProcessBridgeDetachesBackupRuns(t *testing.T) {
-	t.Setenv("AGENT_DATA_DIR", t.TempDir())
-	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
-	cfg := config.NewServerConfig("standalone")
-	b := membus.NewBus(log)
-	runner := blockingRunner{release: make(chan struct{})}
-	bridge := NewInProcessBridge(b, cfg, runner, log)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	results, cancelSub, _ := b.Subscribe(ctx, cfg.GetBusResponseQueue())
-	defer cancelSub()
-	_ = bridge.Start(ctx)
-	time.Sleep(20 * time.Millisecond)
-	for _, c := range []bus.CommandMessage{
-		{AgentID: "local", RequestID: "run", Type: string(command.TypeBackupRun), Payload: []byte(`{}`)},
-		{AgentID: "local", RequestID: "list", Type: string(command.TypeAppsList), Payload: []byte(`{}`)},
-	} {
-		if err := b.Publish(ctx, cfg.GetBusRequestQueue(), c); err != nil {
-			t.Fatal(err)
-		}
-	}
-	next := func() string {
-		select {
-		case msg := <-results:
-			var ntf model.Notification
-			_ = json.Unmarshal([]byte(msg.Payload), &ntf)
-			return ntf.Ref
-		case <-time.After(2 * time.Second):
-			t.Fatal("no result")
-			return ""
-		}
-	}
-	if ref := next(); ref != "list" {
-		t.Fatalf("first result = %s: the bridge waited for backup.run", ref)
-	}
-	close(runner.release)
-	if ref := next(); ref != "run" {
-		t.Fatalf("second result = %s", ref)
+// A backup.run waiting for its run, or a process.list stuck on a hung
+// process's /proc file, never holds up the commands behind it.
+func TestInProcessBridgeRunsOffBridgeCommandsAside(t *testing.T) {
+	for _, held := range []command.Type{command.TypeBackupRun, command.TypeProcessList} {
+		t.Run(string(held), func(t *testing.T) {
+			t.Setenv("AGENT_DATA_DIR", t.TempDir())
+			log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
+			cfg := config.NewServerConfig("standalone")
+			b := membus.NewBus(log)
+			runner := blockingRunner{held: held, release: make(chan struct{})}
+			bridge := NewInProcessBridge(b, cfg, runner, log)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			results, cancelSub, _ := b.Subscribe(ctx, cfg.GetBusResponseQueue())
+			defer cancelSub()
+			_ = bridge.Start(ctx)
+			time.Sleep(20 * time.Millisecond)
+			for _, c := range []bus.CommandMessage{
+				{AgentID: "local", RequestID: "held", Type: string(held), Payload: []byte(`{}`)},
+				{AgentID: "local", RequestID: "list", Type: string(command.TypeAppsList), Payload: []byte(`{}`)},
+			} {
+				if err := b.Publish(ctx, cfg.GetBusRequestQueue(), c); err != nil {
+					t.Fatal(err)
+				}
+			}
+			next := func() string {
+				select {
+				case msg := <-results:
+					var ntf model.Notification
+					_ = json.Unmarshal([]byte(msg.Payload), &ntf)
+					return ntf.Ref
+				case <-time.After(2 * time.Second):
+					t.Fatal("no result")
+					return ""
+				}
+			}
+			if ref := next(); ref != "list" {
+				t.Fatalf("first result = %s: the bridge waited for %s", ref, held)
+			}
+			close(runner.release)
+			if ref := next(); ref != "held" {
+				t.Fatalf("second result = %s", ref)
+			}
+		})
 	}
 }

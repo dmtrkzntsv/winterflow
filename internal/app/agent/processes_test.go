@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -77,6 +79,129 @@ func TestProcessListerHonoursDeadline(t *testing.T) {
 	defer cancel()
 	if _, err := l.List(ctx); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// countingProcSource counts its reads and holds each one until a value
+// arrives on release.
+type countingProcSource struct {
+	entered atomic.Int32
+	release chan struct{}
+}
+
+func (c *countingProcSource) List() (command.ProcessListResponse, error) {
+	n := c.entered.Add(1)
+	<-c.release
+	return command.ProcessListResponse{Total: int(n), Processes: []command.Process{{PID: int(n), ContainerID: "c1"}}}, nil
+}
+
+// waitIdle waits for the lister's read in flight, if any, to finish.
+func waitIdle(t *testing.T, l *ProcessLister) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		l.mu.Lock()
+		idle := l.flight == nil
+		l.mu.Unlock()
+		if idle {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the read never finished")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// A hung /proc read is read once: the calls behind it wait for it (each
+// bounded by its own ctx) instead of piling up goroutines of their own.
+func TestProcessListerOneReadInFlight(t *testing.T) {
+	src := &countingProcSource{release: make(chan struct{})}
+	l := NewProcessLister(src, nil)
+	l.goos = "linux"
+	var wg sync.WaitGroup
+	errs := make([]error, 5)
+	for i := range errs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+			defer cancel()
+			_, errs[i] = l.List(ctx)
+		}()
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("call %d: err = %v", i, err)
+		}
+	}
+	if n := src.entered.Load(); n != 1 {
+		t.Fatalf("source read %d times while one read hung", n)
+	}
+	src.release <- struct{}{}
+	waitIdle(t, l)
+	// The next call after the read finished starts a fresh one.
+	go func() { src.release <- struct{}{} }()
+	resp, err := l.List(context.Background())
+	if err != nil || resp.Total != 2 || src.entered.Load() != 2 {
+		t.Fatalf("resp %+v err %v reads %d", resp, err, src.entered.Load())
+	}
+}
+
+// Every caller still waiting when the read ends gets its answer, each with
+// its own copy of the rows (app names are filled in per call).
+func TestProcessListerSharesTheReadInFlight(t *testing.T) {
+	snap := NewStatusSnapshot(fixedStatus{apps: []command.AppStatus{
+		{AppID: "app-1", Containers: []command.ContainerStatus{{ContainerID: "c1"}}},
+	}})
+	if _, err := snap.StatusReport(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	src := &countingProcSource{release: make(chan struct{})}
+	l := NewProcessLister(src, snap)
+	l.goos = "linux"
+	joined := make(chan struct{}, 2)
+	l.joined = func() { joined <- struct{}{} }
+	type result struct {
+		resp command.ProcessListResponse
+		err  error
+	}
+	out := make(chan result, 2)
+	call := func() {
+		resp, err := l.List(context.Background())
+		out <- result{resp, err}
+	}
+	go call()
+	for src.entered.Load() == 0 {
+		time.Sleep(time.Millisecond)
+	}
+	go call()
+	select {
+	case <-joined:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the second call never joined the read in flight")
+	}
+	src.release <- struct{}{}
+	var got []result
+	for range 2 {
+		select {
+		case r := <-out:
+			got = append(got, r)
+		case <-time.After(2 * time.Second):
+			t.Fatal("a caller never got the read's answer")
+		}
+	}
+	for _, r := range got {
+		if r.err != nil || r.resp.Total != 1 || len(r.resp.Processes) != 1 || r.resp.Processes[0].AppID != "app-1" {
+			t.Fatalf("resp %+v err %v", r.resp, r.err)
+		}
+	}
+	if &got[0].resp.Processes[0] == &got[1].resp.Processes[0] {
+		t.Fatal("the callers share one slice of rows")
+	}
+	if n := src.entered.Load(); n != 1 {
+		t.Fatalf("source read %d times for one read", n)
 	}
 }
 

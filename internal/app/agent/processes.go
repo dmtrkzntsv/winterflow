@@ -4,13 +4,14 @@ import (
 	"context"
 	"errors"
 	"runtime"
+	"sync"
 	"time"
 
 	"winterflow/internal/domain/command"
 )
 
-// processListTimeout bounds a process.list: it runs on the standalone
-// bridge's single goroutine, so it must never hang.
+// processListTimeout bounds a process.list's wait for its read (the
+// standalone bridge runs it on a goroutine of its own, command.OffBridge).
 const processListTimeout = 10 * time.Second
 
 var (
@@ -35,11 +36,25 @@ func (noProcesses) List(context.Context) (command.ProcessListResponse, error) {
 }
 
 // ProcessLister reads the processes and names each container's app from
-// the status reporter's last snapshot (no docker call of its own).
+// the status reporter's last snapshot (no docker call of its own). At most
+// one read runs at a time: a /proc read can block for good on a hung
+// process (cmdline takes its mmap_lock), and the calls behind it wait for
+// that read instead of each starting a goroutine that would hang too.
 type ProcessLister struct {
 	src    ProcessSource
 	status *StatusSnapshot
 	goos   string
+
+	mu     sync.Mutex
+	flight *procFlight // the read in flight, nil when none
+	joined func()      // test hook: a call joined the read in flight
+}
+
+// procFlight is one read: resp and err are set before done is closed.
+type procFlight struct {
+	done chan struct{}
+	resp command.ProcessListResponse
+	err  error
 }
 
 // NewProcessLister reads through src; status may be nil (no app names).
@@ -48,29 +63,23 @@ func NewProcessLister(src ProcessSource, status *StatusSnapshot) *ProcessLister 
 }
 
 // List reads the processes, giving up when ctx ends (the read goes on in
-// the background and its answer is dropped; file reads end on their own).
+// the background; the next call waits for it rather than reading again).
 func (l *ProcessLister) List(ctx context.Context) (command.ProcessListResponse, error) {
 	if l.goos != "linux" {
 		return command.ProcessListResponse{}, errProcessesUnsupported
 	}
-	type result struct {
-		resp command.ProcessListResponse
-		err  error
-	}
-	ch := make(chan result, 1)
-	go func() {
-		resp, err := l.src.List()
-		ch <- result{resp, err}
-	}()
-	var r result
+	f := l.read()
 	select {
-	case r = <-ch:
+	case <-f.done:
 	case <-ctx.Done():
 		return command.ProcessListResponse{}, ctx.Err()
 	}
-	if r.err != nil {
-		return command.ProcessListResponse{}, r.err
+	if f.err != nil {
+		return command.ProcessListResponse{}, f.err
 	}
+	// Every waiter gets the same answer: copy the rows before naming apps.
+	resp := f.resp
+	resp.Processes = append([]command.Process(nil), f.resp.Processes...)
 	if l.status != nil {
 		if apps, ok := l.status.Latest(); ok {
 			owner := map[string]string{}
@@ -79,12 +88,34 @@ func (l *ProcessLister) List(ctx context.Context) (command.ProcessListResponse, 
 					owner[c.ContainerID] = a.AppID
 				}
 			}
-			for i := range r.resp.Processes {
-				if id := r.resp.Processes[i].ContainerID; id != "" {
-					r.resp.Processes[i].AppID = owner[id]
+			for i := range resp.Processes {
+				if id := resp.Processes[i].ContainerID; id != "" {
+					resp.Processes[i].AppID = owner[id]
 				}
 			}
 		}
 	}
-	return r.resp, nil
+	return resp, nil
+}
+
+// read joins the read in flight or starts one.
+func (l *ProcessLister) read() *procFlight {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if f := l.flight; f != nil {
+		if l.joined != nil {
+			l.joined()
+		}
+		return f
+	}
+	f := &procFlight{done: make(chan struct{})}
+	l.flight = f
+	go func() {
+		f.resp, f.err = l.src.List()
+		l.mu.Lock()
+		l.flight = nil
+		l.mu.Unlock()
+		close(f.done)
+	}()
+	return f
 }

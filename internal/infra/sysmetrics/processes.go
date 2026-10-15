@@ -71,12 +71,38 @@ type procReading struct {
 	c procCounters
 }
 
-// groupCounters is a group's io.stat bytes, summed over its devices. ok is
-// false when io.stat was not readable (the io controller is off there, or
-// the cgroup went away).
+// groupCounters is a group's io.stat bytes per counted device (MAJ:MIN).
+// ok is false when io.stat was not readable (the io controller is off
+// there, or the cgroup went away).
 type groupCounters struct {
+	devs map[string]devCounters
+	ok   bool
+}
+
+// devCounters is one device's line of an io.stat.
+type devCounters struct {
 	read, write uint64
-	ok          bool
+}
+
+// groupRates is the bytes/s between two readings of a group, summed over
+// the devices counted in both: a device that starts counting (new, or its
+// lookup succeeded only now) or leaves adds nothing, so it never makes the
+// rate jump, and neither does a counter that went down.
+func groupRates(prev, cur groupCounters, dt float64) (read, write float64) {
+	var rd, wr uint64
+	for dev, c := range cur.devs {
+		pc, ok := prev.devs[dev]
+		if !ok {
+			continue
+		}
+		if c.read >= pc.read {
+			rd += c.read - pc.read
+		}
+		if c.write >= pc.write {
+			wr += c.write - pc.write
+		}
+	}
+	return float64(rd) / dt, float64(wr) / dt
 }
 
 type groupReading struct {
@@ -143,10 +169,8 @@ func (p *Processes) List() (command.ProcessListResponse, error) {
 		g := command.ProcessGroup{
 			ID: id, Label: label, Kind: kind, ContainerID: r.containerID, Processes: members[id],
 		}
-		if prev, ok := p.prevGroups[id]; ok && prev.ok && r.c.ok && dt > 0 &&
-			r.c.read >= prev.read && r.c.write >= prev.write {
-			rd := float64(r.c.read-prev.read) / dt
-			wr := float64(r.c.write-prev.write) / dt
+		if prev, ok := p.prevGroups[id]; ok && prev.ok && r.c.ok && dt > 0 {
+			rd, wr := groupRates(prev, r.c, dt)
 			g.ReadBps, g.WriteBps = &rd, &wr
 		}
 		groups = append(groups, g)
@@ -271,8 +295,7 @@ func (p *Processes) readIOStat(id string) groupCounters {
 	if err != nil {
 		return groupCounters{}
 	}
-	r, w := parseIOStat(b, p.physicalDisk)
-	return groupCounters{read: r, write: w, ok: true}
+	return groupCounters{devs: parseIOStat(b, p.physicalDisk), ok: true}
 }
 
 // majMin is an io.stat device key.
@@ -835,16 +858,18 @@ func groupKind(id, containerID string) (kind, label string) {
 	return "other", label
 }
 
-// parseIOStat sums rbytes and wbytes over a cgroup v2 io.stat's lines
-// ("MAJ:MIN rbytes=N wbytes=N rios=N ..."), one per device, counting the
-// devices keep accepts. An empty file (no I/O yet) is 0/0.
-func parseIOStat(b []byte, keep func(dev string) bool) (read, write uint64) {
+// parseIOStat reads rbytes and wbytes per device from a cgroup v2
+// io.stat's lines ("MAJ:MIN rbytes=N wbytes=N rios=N ..."), keeping the
+// devices keep accepts. An empty file (no I/O yet) has none.
+func parseIOStat(b []byte, keep func(dev string) bool) map[string]devCounters {
+	out := map[string]devCounters{}
 	sc := bufio.NewScanner(bytes.NewReader(b))
 	for sc.Scan() {
 		f := strings.Fields(sc.Text())
 		if len(f) == 0 || !keep(f[0]) {
 			continue
 		}
+		d := out[f[0]]
 		for _, kv := range f[1:] {
 			k, v, ok := strings.Cut(kv, "=")
 			if !ok {
@@ -856,13 +881,14 @@ func parseIOStat(b []byte, keep func(dev string) bool) (read, write uint64) {
 			}
 			switch k {
 			case "rbytes":
-				read += n
+				d.read += n
 			case "wbytes":
-				write += n
+				d.write += n
 			}
 		}
+		out[f[0]] = d
 	}
-	return read, write
+	return out
 }
 
 // loadUsers rereads /etc/passwd when its mtime changed.

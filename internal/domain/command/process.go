@@ -25,7 +25,8 @@ type ProcessListResponse struct {
 }
 
 // ProcessGroup is one cgroup's disk I/O: a container, a systemd service or
-// a session scope. Rates are nil when unknown (first sight, counter reset).
+// a session scope. Rates are nil when unknown (first sight, io.stat not
+// readable); a device that starts or stops counting adds nothing.
 type ProcessGroup struct {
 	ID          string   `json:"id"`    // cgroup v2 path, e.g. /system.slice/postgresql.service
 	Label       string   `json:"label"` // leaf name; for a container its name from the status snapshot, empty when it is in none

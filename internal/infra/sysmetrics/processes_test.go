@@ -2,6 +2,7 @@ package sysmetrics
 
 import (
 	"fmt"
+	"maps"
 	"strings"
 	"testing"
 	"time"
@@ -316,8 +317,10 @@ func TestProcessesGroupCountersBackwards(t *testing.T) {
 		t.Fatal(err)
 	}
 	g := byGroup(resp.Groups)
-	if pg := g[pgID]; pg.ReadBps != nil || pg.WriteBps != nil || pg.Processes != 2 {
-		t.Fatalf("a counter that went down gave a rate: %+v", pg)
+	// sda went down and sdb left: neither device adds anything, and the
+	// group, read both times, still has a rate.
+	if pg := g[pgID]; pg.ReadBps == nil || *pg.ReadBps != 0 || pg.WriteBps == nil || *pg.WriteBps != 0 || pg.Processes != 2 {
+		t.Fatalf("devices that went down or left: %s/%s, want 0/0 (%+v)", bps(pg.ReadBps), bps(pg.WriteBps), pg)
 	}
 	if ct := g[scopeID]; ct.ReadBps != nil || ct.WriteBps != nil || ct.Processes != 2 {
 		t.Fatalf("an io.stat gone in the second reading gave a rate: %+v", ct)
@@ -415,17 +418,18 @@ func TestGroupKind(t *testing.T) {
 
 func TestParseIOStat(t *testing.T) {
 	all := func(string) bool { return true }
-	r, w := parseIOStat([]byte("8:0 rbytes=10 wbytes=20 rios=1 wios=2 dbytes=3 dios=4\n259:0 rbytes=5 wbytes=7 rios=1 wios=1 dbytes=0 dios=0\n8:16 rbytes=x wbytes\n"), all)
-	if r != 15 || w != 27 {
-		t.Fatalf("summed %d/%d, want 15/27", r, w)
+	got := parseIOStat([]byte("8:0 rbytes=10 wbytes=20 rios=1 wios=2 dbytes=3 dios=4\n259:0 rbytes=5 wbytes=7 rios=1 wios=1 dbytes=0 dios=0\n8:16 rbytes=x wbytes\n"), all)
+	want := map[string]devCounters{"8:0": {10, 20}, "259:0": {5, 7}, "8:16": {}}
+	if !maps.Equal(got, want) {
+		t.Fatalf("parsed %v, want %v", got, want)
 	}
-	if r, w := parseIOStat(nil, all); r != 0 || w != 0 {
-		t.Fatalf("empty io.stat = %d/%d", r, w)
+	if got := parseIOStat(nil, all); len(got) != 0 {
+		t.Fatalf("empty io.stat = %v", got)
 	}
 	var asked []string
 	only259 := func(dev string) bool { asked = append(asked, dev); return dev == "259:0" }
-	if r, w := parseIOStat([]byte("8:0 rbytes=10 wbytes=20\n259:0 rbytes=5 wbytes=7\n\n"), only259); r != 5 || w != 7 {
-		t.Fatalf("kept 259:0 only: %d/%d, want 5/7", r, w)
+	if got := parseIOStat([]byte("8:0 rbytes=10 wbytes=20\n259:0 rbytes=5 wbytes=7\n\n"), only259); !maps.Equal(got, map[string]devCounters{"259:0": {5, 7}}) {
+		t.Fatalf("kept 259:0 only: %v", got)
 	}
 	if strings.Join(asked, " ") != "8:0 259:0" {
 		t.Fatalf("devices asked = %v", asked)
@@ -520,18 +524,38 @@ func TestProcessesGroupsUnknownDevice(t *testing.T) {
 	}
 	write(t, root, map[string]string{"sys/block/sdc/": "", "sys/block/sdd/": ""})
 	link(t, root, map[string]string{"sys/dev/block/8:32": "../../devices/pci0000:00/ata3/host2/target2:0:0/2:0:0:0/block/sdc"})
-	// The reading that first counts sdc and sdd jumps by their totals;
-	// the one after it has their rates.
-	for range 2 {
+	// The reading that first counts sdc and sdd has no previous counters
+	// for them: only sda's delta, no jump by their totals. The one after
+	// it has their rates.
+	for i, want := range [][2]float64{{1, 2}, {1101, 1102}} {
 		c.t = c.t.Add(time.Second)
 		grow()
 		if resp, err = p.List(); err != nil {
 			t.Fatal(err)
 		}
+		ct = byGroup(resp.Groups)[scopeID]
+		if ct.ReadBps == nil || *ct.ReadBps != want[0] || ct.WriteBps == nil || *ct.WriteBps != want[1] {
+			t.Fatalf("reading %d: rates = %s/%s, want %v", i+1, bps(ct.ReadBps), bps(ct.WriteBps), want)
+		}
 	}
-	ct = byGroup(resp.Groups)[scopeID]
-	if ct.ReadBps == nil || *ct.ReadBps != 1101 || ct.WriteBps == nil || *ct.WriteBps != 1102 {
-		t.Fatalf("rates = %s/%s, want sda+sdc+sdd's 1101/1102", bps(ct.ReadBps), bps(ct.WriteBps))
+}
+
+// A device that leaves a group's io.stat between readings adds nothing:
+// the rate is the other devices' delta, never negative or nil.
+func TestProcessesGroupDeviceLeaves(t *testing.T) {
+	root := baseTree(t)
+	write(t, root, map[string]string{"sys/fs/cgroup" + scopeID + "/io.stat": ioStat([2]uint64{100, 100}, [2]uint64{9000, 9000})})
+	c := &fakeClock{t: time.Unix(1700001000, 0)}
+	c.between = func() {
+		write(t, root, map[string]string{"sys/fs/cgroup" + scopeID + "/io.stat": ioStat([2]uint64{130, 170})})
+	}
+	resp, err := newTestProcesses(root, c).List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ct := byGroup(resp.Groups)[scopeID]
+	if ct.ReadBps == nil || *ct.ReadBps != 30 || ct.WriteBps == nil || *ct.WriteBps != 70 {
+		t.Fatalf("rates = %s/%s, want sda's 30/70", bps(ct.ReadBps), bps(ct.WriteBps))
 	}
 }
 

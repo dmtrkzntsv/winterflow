@@ -363,9 +363,11 @@ MemoryMax=${MEMORY_MAX}
 TasksMax=512
 LimitNOFILE=65536
 
-# Allow binding the ingress ports 80/443 without root.
-AmbientCapabilities=CAP_NET_BIND_SERVICE
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+# Allow binding the ingress ports 80/443 without root, and reading every
+# process's disk I/O (/proc/<pid>/io) for Monitoring's Processes tab. The
+# agent already holds the Docker socket, which is root-equivalent.
+AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_SYS_PTRACE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_SYS_PTRACE
 
 # Hardening. The Docker socket stays writable: app deployment shells out to
 # 'docker compose'. /mnt and /media (the usual mount points of USB disks and

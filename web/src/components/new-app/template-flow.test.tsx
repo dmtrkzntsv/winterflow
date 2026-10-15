@@ -465,6 +465,25 @@ describe("TemplateFlow", () => {
     expect(api.posted("/api/v1/instance/create-instance")[0]).toMatchObject({ backups: { db: { enabled: true, storage: "local" } } });
   });
 
+  it("holds the backup switches until the storages are read, then sends the storage shown", async () => {
+    const user = userEvent.setup();
+    let resolve: (names: string[]) => void = () => {};
+    serverStorages.mockImplementation(() => new Promise<string[]>((r) => (resolve = r)));
+    const api = fakeAPI(routes({ "/api/v1/instance/create-instance": { request_id: "" } }));
+    renderFlow();
+    await screen.findByLabelText("Storage for db");
+    expect(screen.getByRole("switch", { name: "Back up db" })).toBeDisabled();
+    await act(async () => resolve(["tenants", "local"]));
+    const toggle = screen.getByRole("switch", { name: "Back up db" });
+    expect(toggle).toBeEnabled();
+    await user.click(toggle);
+    expect(screen.getByLabelText("Storage for db")).toHaveValue("tenants");
+    await fill(user);
+    await user.click(screen.getByRole("button", { name: "Create app" }));
+    await screen.findByText("the new app");
+    expect(api.posted("/api/v1/instance/create-instance")[0]).toMatchObject({ backups: { db: { enabled: true, storage: "tenants" } } });
+  });
+
   it("refuses a backup turned on without a storage, linking to Storages", async () => {
     const user = userEvent.setup();
     serverStorages.mockImplementation(async () => []);

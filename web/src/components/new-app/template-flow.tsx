@@ -137,10 +137,16 @@ export function TemplateFlow({ serverId, initialTemplate = "" }: { serverId: str
     if (h && !validHostname(h)) hostErrors[t.target] = "This isn't a valid hostname.";
   }
   const declaredBackups = view?.detected.backups ?? [];
+  // choice is a backup's setting as shown: until a storage is picked the
+  // select shows this server's first one, and that is the one sent.
+  const choice = (name: string): BackupChoice => {
+    const c = backups[name] ?? { enabled: false, storage: "" };
+    return { ...c, storage: c.storage || (storages?.[0] ?? "") };
+  };
   const backupErrors: Record<string, string> = {};
   for (const b of declaredBackups) {
-    const c = backups[b.name];
-    if (c?.enabled && !c.storage) backupErrors[b.name] = "Pick a storage to keep its backups in.";
+    const c = choice(b.name);
+    if (c.enabled && !c.storage) backupErrors[b.name] = "Pick a storage to keep its backups in.";
   }
   const otherNames = apps.filter((a) => a.serverId === serverId).map((a) => a.name);
   const chosenName = name ?? uniqueAppName(view?.name ?? "", otherNames);
@@ -193,7 +199,7 @@ export function TemplateFlow({ serverId, initialTemplate = "" }: { serverId: str
       const hostList: InstanceHost[] = targets
         .map((t) => ({ host: (hosts[t.target] ?? "").trim(), expose: t.target }))
         .filter((h) => h.host !== "");
-      const on = Object.fromEntries(Object.entries(backups).filter(([, c]) => c.enabled));
+      const on = Object.fromEntries(declaredBackups.map((b) => [b.name, choice(b.name)] as const).filter(([, c]) => c.enabled));
       const body: UpdateInstanceBody = {
         server_id: serverId,
         key,
@@ -273,7 +279,7 @@ export function TemplateFlow({ serverId, initialTemplate = "" }: { serverId: str
   const setValue = (name: string, v: string) => setValues((prev) => ({ ...prev, [name]: v }));
   const setBackup = (name: string, patch: Partial<BackupChoice>) =>
     setBackups((prev) => {
-      const cur = prev[name] ?? { enabled: false, storage: storages?.[0] ?? "" };
+      const cur = prev[name] ?? { enabled: false, storage: "" };
       return { ...prev, [name]: { ...cur, ...patch } };
     });
 
@@ -401,7 +407,7 @@ export function TemplateFlow({ serverId, initialTemplate = "" }: { serverId: str
                 Backups
               </h2>
               {declaredBackups.map((b) => {
-                const c = backups[b.name] ?? { enabled: false, storage: storages?.[0] ?? "" };
+                const c = choice(b.name);
                 const id = `storage-${b.name}`;
                 const message = tried ? backupErrors[b.name] : undefined;
                 return (
@@ -410,6 +416,9 @@ export function TemplateFlow({ serverId, initialTemplate = "" }: { serverId: str
                       <Switch
                         aria-label={`Back up ${b.name}`}
                         checked={c.enabled}
+                        // Off until the storages are read: the select has
+                        // nothing to show yet.
+                        disabled={storages === null}
                         onCheckedChange={(enabled) => setBackup(b.name, { enabled })}
                       />
                       <Label htmlFor={id}>

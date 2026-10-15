@@ -41,8 +41,9 @@ func (r *Repository) deploy(ctx context.Context, appID string) error {
 	return nil
 }
 
-// renderDeployEnv writes every derived env file a deploy reads: the app's
-// secrets, the shared variables and the storage variables. deploy (via
+// renderDeployEnv writes every derived file a deploy reads: the app's
+// secrets, the shared variables, the storage variables and the
+// x-winterflow override file. deploy (via
 // composeUp) writes them again; this is for a compose command that runs
 // before it (UpdateApp's pull).
 func (r *Repository) renderDeployEnv(ctx context.Context, appID string) error {
@@ -55,7 +56,10 @@ func (r *Repository) renderDeployEnv(ctx context.Context, appID string) error {
 	if err != nil {
 		return err
 	}
-	return r.materializeStorageEnv(ctx, dir, files, cfg.backups)
+	if err := r.materializeStorageEnv(ctx, dir, files, cfg.backups); err != nil {
+		return err
+	}
+	return r.writeComposeOverride(dir, cfg.spec)
 }
 
 // StartApp brings an app up.
@@ -318,6 +322,17 @@ func (r *Repository) GetApp(ctx context.Context, appID string) (command.GetAppRe
 	if cfg.composeOK && !cfg.compose.Unparsed {
 		t := cfg.compose.Targets()
 		resp.BackupTargets = &t
+	}
+	// What the x-winterflow block declares: the editor's variables form
+	// and ports panel.
+	if cfg.composeOK {
+		resp.DeclaredVariables = cfg.spec.Variables
+		resp.XWinterflowWarnings = cfg.spec.Warnings
+		ports, err := r.readPorts(dir)
+		if err != nil {
+			r.log.Warn("read app ports", "app_id", appID, "error", err)
+		}
+		resp.Expose = exposedPorts(cfg.spec.Expose, ports)
 	}
 	resp.RetentionDays = r.cfg.GetBackupRetentionDays()
 	return resp, nil

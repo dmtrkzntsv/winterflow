@@ -11,10 +11,13 @@ import (
 	"winterflow/pkg/util"
 )
 
-// QueueUpgrade queues "Upgrade all": the template's created instances on a
-// revision below revision (0: the latest) move to it, oldest first, one at
-// a time. Another org's template or an unknown revision is not found; a
-// template with an upgrade still active is model.ErrRolloutActive.
+// QueueUpgrade queues "Upgrade all": the org's created instances of the
+// template on a revision below revision (0: the latest) move to it, oldest
+// first, one at a time. The rollout's scope is the org and the template
+// (model.UpgradeScopeKey), so two orgs upgrading the same catalog template
+// don't block each other. A template the org can't read or an unknown
+// revision is not found; a template the org is still upgrading is
+// model.ErrRolloutActive.
 func (uc *UseCase) QueueUpgrade(ctx context.Context, userID, orgID, templateID string, revision int64) (model.RolloutView, error) {
 	tpl, err := uc.d.Templates.GetTemplate(ctx, orgID, templateID)
 	if err != nil {
@@ -31,7 +34,8 @@ func (uc *UseCase) QueueUpgrade(ctx context.Context, userID, orgID, templateID s
 		return model.RolloutView{}, err
 	}
 	v, ok, err := uc.queue(ctx, model.Rollout{
-		ID: util.GenerateID(), OrgID: orgID, Kind: model.RolloutTemplateUpgrade, Scope: scope, ScopeKey: tpl.ID, CreatedBy: userID,
+		ID: util.GenerateID(), OrgID: orgID, Kind: model.RolloutTemplateUpgrade, Scope: scope,
+		ScopeKey: model.UpgradeScopeKey(orgID, tpl.ID), CreatedBy: userID,
 	})
 	if err == nil && !ok {
 		err = model.ErrRolloutActive

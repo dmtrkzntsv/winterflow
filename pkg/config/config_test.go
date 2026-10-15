@@ -191,6 +191,23 @@ func TestGetBackupRetentionDays(t *testing.T) {
 	}
 }
 
+func TestGetExposePortRange(t *testing.T) {
+	c := NewServerConfig("standalone")
+	for v, want := range map[string][2]int{
+		"": {20000, 29999}, "30000-30099": {30000, 30099}, " 1 - 65535 ": {1, 65535}, "5000-5000": {5000, 5000},
+		"30000": {20000, 29999}, "a-b": {20000, 29999}, "0-10": {20000, 29999}, "10-70000": {20000, 29999}, "300-200": {20000, 29999},
+	} {
+		t.Setenv("EXPOSE_PORT_RANGE", v)
+		if lo, hi := c.GetExposePortRange(); lo != want[0] || hi != want[1] {
+			t.Errorf("EXPOSE_PORT_RANGE=%q: %d-%d, want %d-%d", v, lo, hi, want[0], want[1])
+		}
+	}
+	unsetenv(t, "EXPOSE_PORT_RANGE")
+	if lo, hi := c.GetExposePortRange(); lo != 20000 || hi != 29999 {
+		t.Fatalf("unset: %d-%d", lo, hi)
+	}
+}
+
 func TestCertPathsDeriveFromCertDir(t *testing.T) {
 	c := NewServerConfig("distributed")
 	t.Setenv("HUB_CERT_DIR", "/etc/wf/certs")

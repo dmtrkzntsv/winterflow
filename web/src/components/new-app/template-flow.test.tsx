@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,6 +7,7 @@ import { TemplateFlow } from "@/components/new-app/template-flow";
 import { NotificationsContext, type NotificationsContextValue } from "@/context/notifications-context-base";
 import { ApiError, LOAD_TIMEOUT_MS, type TemplateView } from "@/lib/templates";
 import { fakeAPI } from "@/test/fake-api";
+import type { DeclaredVariable } from "@/types/app-config";
 
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
@@ -14,35 +15,51 @@ vi.mock("@/lib/ecies", () => ({
   ENCRYPTED: "<encrypted>",
   encryptSecret: vi.fn(async (value: string, key: string) => `ct(${key}):${value}`),
 }));
-vi.mock("@/context/use-servers", () => ({ useServers: () => ({ activeServerId: "s1" }) }));
+// ingress says whether server s1 runs the built-in proxy (hostnames).
+const ingress = vi.hoisted(() => ({ on: false }));
+vi.mock("@/context/use-servers", () => ({
+  useServers: () => ({ activeServerId: "s1", servers: [{ id: "s1", name: "alpha", features: { ingress: ingress.on } }] }),
+}));
 const refresh = vi.hoisted(() => vi.fn(async () => {}));
 const reconcile = vi.hoisted(() => vi.fn(async (): Promise<{ id: string }[]> => []));
 const noteDeployFailure = vi.hoisted(() => vi.fn());
-const rename = vi.hoisted(() => vi.fn(async () => {}));
 const apps = vi.hoisted(() => ({ list: [] as { id: string; name: string; serverId: string }[] }));
 vi.mock("@/context/use-apps", () => ({
-  useApps: () => ({ apps: apps.list, refresh, reconcile, noteDeployFailure, rename }),
+  useApps: () => ({ apps: apps.list, refresh, reconcile, noteDeployFailure }),
 }));
 const serverStorages = vi.hoisted(() => vi.fn(async () => ["tenants", "local"]));
 vi.mock("@/context/use-backups", () => ({ useBackups: () => ({ serverStorages }) }));
 
+const v = (name: string, extra: Partial<DeclaredVariable> = {}): DeclaredVariable => ({
+  name,
+  required: false,
+  encrypted: false,
+  default: null,
+  services: ["app"],
+  ...extra,
+});
+
 const VIEW: TemplateView = {
   id: "t1",
+  source: "org",
+  slug: "",
   name: "twillingate",
   latest_revision: 2,
+  withdrawn_at: null,
   revision: 2,
-  body: {
-    files: { "compose.yaml": "services: {}\n" },
-    parameters: [
-      { name: "MEMORY_MAX", default: "256m", pattern: "^[0-9]+m$" },
-      { name: "NAME", required: true, pattern: "^[a-z]{3,20}$", description: "Instance name" },
-      { name: "SESSION_KEY", secret: true, required: true },
+  body: { files: { "compose.yaml": "services: {}\n" }, summary: "Analytics for one tenant", description: "", icon: "chart", color: "" },
+  detected: {
+    variables: [
+      v("MEMORY_MAX", { default: "256m" }),
+      v("NAME", { required: true, pattern: "^[a-z]{3,20}$", description: "Instance name" }),
+      v("SESSION_KEY", { required: true, encrypted: true }),
     ],
-    app_name: "${NAME}",
-    icon: "chart",
-    color: "",
-    ingress: [{ host: "${NAME}.twillingate.app", port: 8080 }],
-    backups: { db: { enabled: true, storage: "tenants" } },
+    expose: [
+      { id: "app:8080/http", target: "app:8080", container: "app", port: 8080, protocol: "http" },
+      { id: "app:9000/tcp", target: "app:9000", container: "app", port: 9000, protocol: "tcp" },
+    ],
+    backups: [{ name: "db", type: "sqlite" }],
+    warnings: [],
   },
   note: "",
   created_at: "2026-10-12T10:00:00Z",
@@ -53,7 +70,7 @@ const VIEW: TemplateView = {
   ],
 };
 
-const SUMMARY = { id: "t1", name: "twillingate", latest_revision: 2, instances: 0, behind: 0, updated_at: "" };
+const SUMMARY = { id: "t1", source: "org", slug: "", name: "twillingate", latest_revision: 2, instances: 0, behind: 0, withdrawn_at: null, updated_at: "" };
 
 const waitFor_ = vi.fn();
 const notifications = { connected: true, subscribe: () => () => {}, waitFor: waitFor_ } as NotificationsContextValue;
@@ -64,6 +81,7 @@ const routes = (extra: Record<string, unknown> = {}) => ({
   "/api/v1/domains/check": { available: true, covered: false, registration: null, claims: null },
   "/api/v1/server/get-public-key": { public_key: "K1" },
   "/api/v1/instance/get-instance": { app_id: "app-9", key: "k" },
+  "/api/v1/domain/get-domains": { domains: [{ name: "*.example.com", tls: "auto" }] },
   ...extra,
 });
 
@@ -124,7 +142,7 @@ beforeEach(() => {
   reconcile.mockReset();
   reconcile.mockImplementation(async () => []);
   noteDeployFailure.mockReset();
-  rename.mockReset();
+  ingress.on = false;
   apps.list = [];
   waitFor_.mockReset();
   serverStorages.mockImplementation(async () => ["tenants", "local"]);
@@ -137,32 +155,37 @@ describe("TemplateFlow", () => {
     fakeAPI(routes());
     renderFlow();
     expect(await screen.findByRole("button", { name: /twillingate/ })).toHaveAttribute("aria-pressed", "true");
+    expect(await screen.findByText("Analytics for one tenant")).toBeInTheDocument();
     const fields = await screen.findAllByRole("textbox");
     expect(fields[0]).toHaveAccessibleName("App name");
     expect(fields[1]).toHaveAccessibleName("Instance name (NAME)");
-    // Optional values wait under More options, their defaults shown.
+    // Optional values wait under More options, the compose file's shown.
     expect(screen.queryByLabelText("MEMORY_MAX")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "More options" }));
     expect(screen.getByLabelText("MEMORY_MAX")).toHaveAttribute("placeholder", "Default: 256m");
+    // A pattern mismatch is a hint (the server decides); a $ is refused.
     await user.type(screen.getByLabelText("Instance name (NAME)"), "Shop");
-    expect(screen.getByText("Must match ^[a-z]{3,20}$")).toBeInTheDocument();
-    expect(screen.getByLabelText("Instance name (NAME)")).toHaveAttribute("aria-invalid", "true");
-    expect(screen.getByLabelText("Instance name (NAME)")).toHaveAccessibleDescription("Must match ^[a-z]{3,20}$");
-    expect(screen.getByLabelText("MEMORY_MAX")).not.toHaveAttribute("aria-invalid");
-    expect(screen.queryByText("Required")).not.toBeInTheDocument();
+    expect(screen.getByText("May not match ^[a-z]{3,20}$; the server checks it on save.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Instance name (NAME)")).not.toHaveAttribute("aria-invalid");
+    await user.type(screen.getByLabelText("MEMORY_MAX"), "$x");
+    expect(screen.getByLabelText("MEMORY_MAX")).toHaveAttribute("aria-invalid", "true");
+    expect(screen.queryByText("Enter a value: this variable is required.")).not.toBeInTheDocument();
   });
 
-  it("waits for a pick when there are several templates", async () => {
+  it("lists the org's own templates only, and waits for a pick when there are several", async () => {
     const user = userEvent.setup();
     const api = fakeAPI(
       routes({
-        "/api/v1/template/get-templates": { templates: [SUMMARY, { ...SUMMARY, id: "t2", name: "blog", latest_revision: 4 }] },
+        "/api/v1/template/get-templates": {
+          templates: [SUMMARY, { ...SUMMARY, id: "t2", name: "blog", latest_revision: 4 }, { ...SUMMARY, id: "c1", source: "catalog", name: "Catalog app" }],
+        },
         "/api/v1/template/get-template": (_: unknown, q: URLSearchParams) =>
           q.get("id") === "t2" ? { ...VIEW, id: "t2", name: "blog", latest_revision: 4, revision: 4 } : VIEW,
       }),
     );
     renderFlow();
     expect(await screen.findByText("Pick a template to continue.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Catalog app/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /blog/ })).toHaveTextContent("Version 4");
     await user.click(screen.getByRole("button", { name: /blog/ }));
     expect(await screen.findByLabelText("Instance name (NAME)")).toBeInTheDocument();
@@ -191,43 +214,59 @@ describe("TemplateFlow", () => {
     expect(screen.queryByText("Pick a template to continue.")).not.toBeInTheDocument();
   });
 
-  it("previews the name and the address with the domain coverage check", async () => {
+  it("offers a hostname per http port on a server that routes them, checking its coverage", async () => {
     const user = userEvent.setup();
-    const api = fakeAPI(routes());
+    ingress.on = true;
+    const api = fakeAPI(routes({ "/api/v1/instance/create-instance": { request_id: "" } }));
     renderFlow();
-    expect(await screen.findByText("Fill in NAME to see the address.")).toBeInTheDocument();
-    await user.type(screen.getByLabelText("Instance name (NAME)"), "shop");
-    const addresses = screen.getByRole("list", { name: "Addresses" });
-    expect(within(addresses).getByText("shop.twillingate.app")).toBeInTheDocument();
-    expect(within(addresses).getByText(/Will be available at/)).toBeInTheDocument();
-    expect(await within(addresses).findByText(/No domain on this server covers this hostname/)).toBeInTheDocument();
-    const checks = api.calls.filter((c) => c.path === "/api/v1/domains/check");
-    expect(checks.at(-1)?.query).toBe("?server_id=s1&domain=shop.twillingate.app");
-    expect(screen.getByLabelText("App name")).toHaveValue("shop");
+    const host = await screen.findByLabelText("Hostname for app:8080");
+    // The tcp port takes no hostname.
+    expect(screen.queryByLabelText("Hostname for app:9000")).not.toBeInTheDocument();
+    await user.type(host, "shop.twillingate.app");
+    expect(await screen.findByText(/No domain on this server covers this hostname/)).toBeInTheDocument();
+    expect(api.calls.filter((c) => c.path === "/api/v1/domains/check").at(-1)?.query).toBe("?server_id=s1&domain=shop.twillingate.app");
+    await user.clear(host);
+    await user.type(host, "bad_host!.com");
+    await fill(user);
+    await user.click(screen.getByRole("button", { name: "Create app" }));
+    expect(host).toHaveAccessibleDescription(/This isn't a valid hostname./);
+    expect(api.posted("/api/v1/instance/create-instance")).toEqual([]);
+    await user.clear(host);
+    await user.type(host, "shop.example.com");
+    await user.click(screen.getByRole("button", { name: "Create app" }));
+    await screen.findByText("the new app");
+    expect(api.posted("/api/v1/instance/create-instance")[0]).toMatchObject({ hosts: [{ host: "shop.example.com", expose: "app:8080" }] });
   });
 
-  it("creates the app with encrypted secrets and a browser key, then opens it", async () => {
+  it("asks for no hostname on a server without the built-in proxy", async () => {
+    fakeAPI(routes());
+    renderFlow();
+    await screen.findByLabelText("Instance name (NAME)");
+    expect(screen.queryByRole("heading", { name: "Hostnames" })).not.toBeInTheDocument();
+  });
+
+  it("creates the app with encrypted secrets, its name and a browser key, then opens it", async () => {
     const user = userEvent.setup();
     const api = fakeAPI(routes({ "/api/v1/instance/create-instance": { request_id: "r1" } }));
     accepted(api);
     waitFor_.mockResolvedValue({ status: 0 });
     renderFlow();
     await user.click(await screen.findByRole("button", { name: "Create app" }));
-    expect(screen.getAllByText("Required")).toHaveLength(2);
+    expect(screen.getAllByText("Enter a value: this variable is required.")).toHaveLength(2);
     await waitFor(() => expect(screen.getByLabelText("Instance name (NAME)")).toHaveFocus());
     await user.type(screen.getByLabelText("Instance name (NAME)"), "shop");
     await user.type(screen.getByLabelText("SESSION_KEY"), "hunter2");
-    await user.selectOptions(screen.getByLabelText("Storage for db"), "local");
     await user.click(screen.getByRole("button", { name: "Create app" }));
     expect(await screen.findByText("the new app")).toBeInTheDocument();
     const [sent] = api.posted("/api/v1/instance/create-instance") as Record<string, unknown>[];
-    expect(sent).toMatchObject({
+    expect(sent).toEqual({
       server_id: "s1",
+      key: sent.key,
       template_id: "t1",
       revision: 2,
-      parameters: { NAME: "shop" },
+      name: "twillingate",
+      values: { NAME: "shop" },
       secrets: { SESSION_KEY: "ct(K1):hunter2" },
-      backups: { db: "local" },
     });
     expect(sent.key).toMatch(/^[0-9a-f-]{36}$/);
     expect(JSON.stringify(api.calls)).not.toContain('"hunter2"');
@@ -235,23 +274,18 @@ describe("TemplateFlow", () => {
     expect(refresh).toHaveBeenCalled();
     expect(toast.success).toHaveBeenCalledWith("App created");
     expect(api.calls.find((c) => c.path === "/api/v1/instance/get-instance")?.query).toBe(`?server_id=s1&key=${sent.key}`);
-    // The name is the template's: nothing to rename.
-    expect(rename).not.toHaveBeenCalled();
   });
 
   it("names the app after the template, numbered when the server has one of that name", async () => {
     const user = userEvent.setup();
-    apps.list = [{ id: "x", name: "shop", serverId: "s1" }, { id: "y", name: "shop 2", serverId: "other" }];
-    const api = fakeAPI(routes({ "/api/v1/instance/create-instance": { request_id: "r1" } }));
-    accepted(api);
-    waitFor_.mockResolvedValue({ status: 0 });
+    apps.list = [{ id: "x", name: "twillingate", serverId: "s1" }, { id: "y", name: "twillingate 2", serverId: "other" }];
+    const api = fakeAPI(routes({ "/api/v1/instance/create-instance": { request_id: "" } }));
     renderFlow();
-    await user.type(await screen.findByLabelText("Instance name (NAME)"), "shop");
-    expect(screen.getByLabelText("App name")).toHaveValue("shop 2");
-    await user.type(screen.getByLabelText("SESSION_KEY"), "s");
+    await fill(user);
+    expect(screen.getByLabelText("App name")).toHaveValue("twillingate 2");
     await user.click(screen.getByRole("button", { name: "Create app" }));
     expect(await screen.findByText("the new app")).toBeInTheDocument();
-    expect(rename).toHaveBeenCalledWith("app-9", "shop 2");
+    expect(api.posted("/api/v1/instance/create-instance")[0]).toMatchObject({ name: "twillingate 2" });
   });
 
   it("warns about a name already used, and asks for one when it is cleared", async () => {
@@ -276,11 +310,11 @@ describe("TemplateFlow", () => {
     renderFlow();
     await fill(user);
     await user.click(screen.getByRole("button", { name: "More options" }));
-    await user.type(screen.getByLabelText("MEMORY_MAX"), "lots");
+    await user.type(screen.getByLabelText("MEMORY_MAX"), "lo$ts");
     await user.click(screen.getByRole("button", { name: "More options" }));
     expect(screen.queryByLabelText("MEMORY_MAX")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Create app" }));
-    expect(screen.getByLabelText("MEMORY_MAX")).toHaveAccessibleDescription("Must match ^[0-9]+m$");
+    expect(screen.getByLabelText("MEMORY_MAX")).toHaveAccessibleDescription("A plain value can't contain $.");
     await waitFor(() => expect(screen.getByLabelText("MEMORY_MAX")).toHaveFocus());
     expect(screen.getByRole("alert")).toHaveTextContent("Some fields need attention.");
     expect(api.posted("/api/v1/instance/create-instance")).toEqual([]);
@@ -297,7 +331,7 @@ describe("TemplateFlow", () => {
     const api = fakeAPI(
       routes({
         "/api/v1/instance/create-instance": () =>
-          refuse ? new ApiError('invalid template: parameters.NAME: "abc" is taken', 400) : { request_id: "r1" },
+          refuse ? new ApiError('invalid variable value: variable NAME: "abc" is taken', 400) : { request_id: "r1" },
         "/api/v1/instance/update-instance": { request_id: "r2" },
       }),
     );
@@ -394,22 +428,6 @@ describe("TemplateFlow", () => {
     expect(updates).toEqual([expect.objectContaining({ key: creates[0].key })]);
   });
 
-  it("keeps a template's own storage, offering No storage only for a backup without one", async () => {
-    fakeAPI(routes());
-    const { unmount } = renderFlow();
-    const select = await screen.findByLabelText("Storage for db");
-    expect(select).toHaveValue("tenants");
-    expect(within(select).queryByRole("option", { name: "No storage" })).not.toBeInTheDocument();
-    unmount();
-    vi.unstubAllGlobals();
-
-    const bare = { ...VIEW, body: { ...VIEW.body, backups: { db: { enabled: false } } } };
-    fakeAPI(routes({ "/api/v1/template/get-template": bare }));
-    renderFlow();
-    const empty = await screen.findByLabelText("Storage for db");
-    expect(within(empty).getByRole("option", { name: "No storage" })).toBeInTheDocument();
-  });
-
   it("holds the cards' place with a skeleton while the templates are read", async () => {
     const api = fakeAPI(routes());
     const release = held(api, "/api/v1/template/get-templates");
@@ -421,31 +439,68 @@ describe("TemplateFlow", () => {
   });
 
   it("keeps Create off until the server's storages are read", async () => {
-    const user = userEvent.setup();
     let resolve: (names: string[]) => void = () => {};
     serverStorages.mockImplementation(() => new Promise<string[]>((r) => (resolve = r)));
-    const bare = { ...VIEW, body: { ...VIEW.body, backups: { db: { enabled: true } } } };
-    const api = fakeAPI(routes({ "/api/v1/template/get-template": bare, "/api/v1/instance/create-instance": { request_id: "" } }));
+    fakeAPI(routes());
     renderFlow();
     await screen.findByLabelText("Instance name (NAME)");
     expect(screen.getByRole("button", { name: "Create app" })).toBeDisabled();
     await act(async () => resolve(["tenants"]));
     expect(screen.getByRole("button", { name: "Create app" })).toBeEnabled();
+  });
+
+  it("turns on a declared backup with a storage of this server; the rest start off", async () => {
+    const user = userEvent.setup();
+    const api = fakeAPI(routes({ "/api/v1/instance/create-instance": { request_id: "" } }));
+    renderFlow();
+    const storage = await screen.findByLabelText("Storage for db");
+    expect(screen.getByRole("switch", { name: "Back up db" })).not.toBeChecked();
+    expect(storage).toBeDisabled();
+    await user.click(screen.getByRole("switch", { name: "Back up db" }));
+    expect(storage).toHaveValue("tenants");
+    await user.selectOptions(storage, "local");
     await fill(user);
     await user.click(screen.getByRole("button", { name: "Create app" }));
     await screen.findByText("the new app");
-    expect(api.posted("/api/v1/instance/create-instance")[0]).toMatchObject({ backups: { db: "tenants" } });
+    expect(api.posted("/api/v1/instance/create-instance")[0]).toMatchObject({ backups: { db: { enabled: true, storage: "local" } } });
+  });
+
+  it("holds the backup switches until the storages are read, then sends the storage shown", async () => {
+    const user = userEvent.setup();
+    let resolve: (names: string[]) => void = () => {};
+    serverStorages.mockImplementation(() => new Promise<string[]>((r) => (resolve = r)));
+    const api = fakeAPI(routes({ "/api/v1/instance/create-instance": { request_id: "" } }));
+    renderFlow();
+    await screen.findByLabelText("Storage for db");
+    expect(screen.getByRole("switch", { name: "Back up db" })).toBeDisabled();
+    await act(async () => resolve(["tenants", "local"]));
+    const toggle = screen.getByRole("switch", { name: "Back up db" });
+    expect(toggle).toBeEnabled();
+    await user.click(toggle);
+    expect(screen.getByLabelText("Storage for db")).toHaveValue("tenants");
+    await fill(user);
+    await user.click(screen.getByRole("button", { name: "Create app" }));
+    await screen.findByText("the new app");
+    expect(api.posted("/api/v1/instance/create-instance")[0]).toMatchObject({ backups: { db: { enabled: true, storage: "tenants" } } });
+  });
+
+  it("refuses a backup turned on without a storage, linking to Storages", async () => {
+    const user = userEvent.setup();
+    serverStorages.mockImplementation(async () => []);
+    const api = fakeAPI(routes());
+    renderFlow();
+    await screen.findByLabelText("Storage for db");
+    expect(screen.getByRole("link", { name: "Add one" })).toHaveAttribute("href", "/server/s1/settings/storages");
+    await user.click(screen.getByRole("switch", { name: "Back up db" }));
+    await fill(user);
+    await user.click(screen.getByRole("button", { name: "Create app" }));
+    expect(screen.getByLabelText("Storage for db")).toHaveAccessibleDescription("Pick a storage to keep its backups in.");
+    expect(api.posted("/api/v1/instance/create-instance")).toEqual([]);
   });
 
   it("starts the next template untried and folded when the pick changes", async () => {
     const user = userEvent.setup();
-    const optionalRequired = {
-      ...VIEW,
-      body: {
-        ...VIEW.body,
-        parameters: [...(VIEW.body.parameters ?? []), { name: "LABEL", pattern: "^x+$" }],
-      },
-    };
+    const optionalRequired = { ...VIEW, detected: { ...VIEW.detected, variables: [...(VIEW.detected.variables ?? []), v("LABEL")] } };
     fakeAPI(
       routes({
         "/api/v1/template/get-templates": { templates: [SUMMARY, { ...SUMMARY, id: "t2", name: "blog" }] },
@@ -458,7 +513,7 @@ describe("TemplateFlow", () => {
     await user.type(await screen.findByLabelText("Instance name (NAME)"), "abc");
     await user.type(screen.getByLabelText("SESSION_KEY"), "s");
     await user.click(screen.getByRole("button", { name: "More options" }));
-    await user.type(screen.getByLabelText("LABEL"), "no");
+    await user.type(screen.getByLabelText("LABEL"), "$no");
     await user.click(screen.getByRole("button", { name: "Create app" }));
     expect(screen.getByRole("alert")).toHaveTextContent("Some fields need attention.");
 
@@ -466,42 +521,7 @@ describe("TemplateFlow", () => {
     await screen.findByLabelText("Instance name (NAME)");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("LABEL")).not.toBeInTheDocument();
-    expect(screen.queryByText("Required")).not.toBeInTheDocument();
-  });
-
-  it("preselects this server's first storage for a backup without a default, and sends it", async () => {
-    const user = userEvent.setup();
-    const bare = { ...VIEW, body: { ...VIEW.body, backups: { db: { enabled: true } } } };
-    const api = fakeAPI(routes({ "/api/v1/template/get-template": bare, "/api/v1/instance/create-instance": { request_id: "" } }));
-    renderFlow();
-    await waitFor(() => expect(screen.getByLabelText("Storage for db")).toHaveValue("tenants"));
-    await fill(user);
-    await user.click(screen.getByRole("button", { name: "Create app" }));
-    await screen.findByText("the new app");
-    expect(api.posted("/api/v1/instance/create-instance")[0]).toMatchObject({ backups: { db: "tenants" } });
-  });
-
-  it("sends no storage when the server has none", async () => {
-    const user = userEvent.setup();
-    serverStorages.mockImplementation(async () => []);
-    const bare = { ...VIEW, body: { ...VIEW.body, backups: { db: { enabled: true } } } };
-    const api = fakeAPI(routes({ "/api/v1/template/get-template": bare, "/api/v1/instance/create-instance": { request_id: "" } }));
-    renderFlow();
-    expect(await screen.findByLabelText("Storage for db")).toHaveValue("");
-    await fill(user);
-    await user.click(screen.getByRole("button", { name: "Create app" }));
-    await screen.findByText("the new app");
-    expect(api.posted("/api/v1/instance/create-instance")[0]).not.toHaveProperty("backups");
-  });
-
-  it("flags a template storage this server doesn't have, linking to Storages", async () => {
-    serverStorages.mockImplementation(async () => ["local"]);
-    fakeAPI(routes());
-    renderFlow();
-    expect(await screen.findByText("This server has no storage named tenants.", { exact: false })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "tenants (not on this server)" })).toBeInTheDocument();
-    expect(screen.getByLabelText("Storage for db")).toHaveValue("tenants");
-    expect(screen.getByRole("link", { name: "Add it" })).toHaveAttribute("href", "/server/s1/settings/storages");
+    expect(screen.queryByText("Enter a value: this variable is required.")).not.toBeInTheDocument();
   });
 
   it("loads an older version from Advanced", async () => {

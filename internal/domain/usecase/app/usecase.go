@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 	"winterflow/internal/domain/command"
+	"winterflow/internal/domain/compose/xwinterflow"
 	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/port"
 	"winterflow/pkg/logger"
@@ -462,6 +463,24 @@ func (uc *UseCase) CheckSave(ctx context.Context, serverID string, app model.App
 		return CheckedSave{}, err
 	}
 
+	// The compose files in the request, parsed once: their x-winterflow
+	// block, the declared variables' values, the pins and the ingress
+	// targets are checked here. A git-sourced app's compose file is
+	// upstream: the agent checks it at save and deploy.
+	var spec *xwinterflow.Spec
+	var contents [][]byte
+	if payload.Source == nil {
+		contents = payloadCompose(payload)
+		s, err := xwinterflow.Parse(xwinterflow.ModeApp, contents...)
+		if err != nil {
+			return CheckedSave{}, err
+		}
+		spec = &s
+	}
+	if err := checkDeclared(spec, payload, draft); err != nil {
+		return CheckedSave{}, err
+	}
+
 	// Ingress rides the config blob. Parse + validate + conflict-check here so
 	// a bad config is a synchronous 400, not an async agent failure. ing==nil
 	// (no "ingress" key) means the feature is untouched: skip everything.
@@ -472,6 +491,11 @@ func (uc *UseCase) CheckSave(ctx context.Context, serverID string, app model.App
 	if ing != nil {
 		if err := ing.Validate(); err != nil {
 			return CheckedSave{}, fmt.Errorf("%w: %v", model.ErrIngressInvalid, err)
+		}
+		if spec != nil {
+			if err := spec.CheckTargets(ing); err != nil {
+				return CheckedSave{}, err
+			}
 		}
 		if err := uc.requireCovered(ctx, serverID, app.ID, ing); err != nil {
 			return CheckedSave{}, err
@@ -492,7 +516,7 @@ func (uc *UseCase) CheckSave(ctx context.Context, serverID string, app model.App
 		}
 	}
 
-	if err := uc.requireStorageRefs(ctx, serverID, payload, isNew); err != nil {
+	if err := uc.requireStorageRefs(ctx, serverID, payload, spec, contents, isNew); err != nil {
 		return CheckedSave{}, err
 	}
 	return CheckedSave{serverID: serverID, app: app, req: req, ing: ing}, nil

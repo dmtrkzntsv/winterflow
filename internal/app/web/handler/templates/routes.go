@@ -16,29 +16,39 @@ func (h *Handler) Routes(api.Guards) []api.Route {
 // templateRoutes are the org-scoped template routes.
 func (h *Handler) templateRoutes() []api.Route {
 	org := []int{http.StatusBadRequest, http.StatusNotFound}
+	own := []int{http.StatusBadRequest, http.StatusForbidden, http.StatusNotFound, http.StatusConflict}
 	orgConflict := []int{http.StatusBadRequest, http.StatusNotFound, http.StatusConflict}
 	return []api.Route{
 		{
 			Method: http.MethodGet, Path: "/api/v1/template/get-templates", Handler: h.ListTemplates, Auth: api.User,
-			Summary: "The org's templates with their instance counts", Tag: "templates",
+			Summary: "The org's templates, then the catalog's, with the org's instance counts", Tag: "templates",
 			Response: tuc.TemplateList{}, Errors: []int{http.StatusBadRequest},
 		},
 		{
 			Method: http.MethodGet, Path: "/api/v1/template/get-template", Handler: h.GetTemplate, Auth: api.User,
-			Summary: "A template revision's body (the latest by default) and the revision list", Tag: "templates",
+			Summary: "A template revision's body (the latest by default), what its compose files declare, and the revision list", Tag: "templates",
 			Query: TemplateQuery{}, Response: tuc.TemplateView{}, Errors: org,
 		},
 		{
 			Method: http.MethodPost, Path: "/api/v1/template/save-template", Handler: h.SaveTemplate, Auth: api.User,
-			Summary: "Create a template or add a revision", Tag: "templates",
-			Description: "base_revision must be the latest revision (409 otherwise: someone saved meanwhile). " +
-				"warnings name file references nothing provides.",
-			Request: SaveTemplateRequest{}, Response: tuc.SavedTemplate{}, Errors: orgConflict,
+			Summary: "Create an org template or add a revision", Tag: "templates",
+			Description: "The compose files' x-winterflow block declares the variables, exposed ports and backups. " +
+				"base_revision must be the latest revision (409 otherwise: someone saved meanwhile). " +
+				"warnings name a variable nothing uses and file references nothing provides. A catalog template is read-only (403).",
+			Request: SaveTemplateRequest{}, Response: tuc.SavedTemplate{}, Errors: own,
+		},
+		{
+			Method: http.MethodPost, Path: "/api/v1/template/inspect-template", Handler: h.InspectTemplate, Auth: api.User,
+			Summary: "What a template body declares and the first problem a save would refuse", Tag: "templates",
+			Description: "Stores nothing: the editor's Detected panel follows the files with it. A body a save would refuse " +
+				"answers 200 with the problem.",
+			Request: InspectTemplateRequest{}, Response: tuc.Inspection{}, Errors: []int{http.StatusBadRequest},
 		},
 		{
 			Method: http.MethodPost, Path: "/api/v1/template/delete-template", Handler: h.DeleteTemplate, Auth: api.User,
-			Summary: "Delete a template without live instances", Tag: "templates",
-			Request: TemplateIDRequest{}, Errors: orgConflict,
+			Summary: "Delete an org template without live instances", Tag: "templates",
+			Description: "A catalog template is read-only (403).",
+			Request:     TemplateIDRequest{}, Errors: own,
 		},
 		{
 			Method: http.MethodPost, Path: "/api/v1/template/upgrade-instances", Handler: h.UpgradeInstances, Auth: api.User,

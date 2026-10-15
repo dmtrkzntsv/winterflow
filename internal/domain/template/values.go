@@ -2,32 +2,33 @@ package template
 
 import (
 	"maps"
-	"regexp"
 	"slices"
 	"strings"
 
 	"winterflow/internal/domain/command"
+	"winterflow/internal/domain/compose/xwinterflow"
 	"winterflow/pkg/crypto"
 )
 
-// Given are the values one call sends: plain values by name, and secret
-// ciphertexts (ECIES for the instance's server) by name.
+// Given are the values one call sends for the declared variables: plain
+// values by name, and secret ciphertexts (ECIES for the instance's server)
+// by name.
 type Given struct {
-	Params  map[string]string
+	Values  map[string]string
 	Secrets map[string]string
 }
 
 // Stored are an instance's recorded values: the plain values its callers
-// set (not the defaults) and the names of the secrets it was given.
+// set (never "") and the names of the secrets it was given.
 type Stored struct {
-	Params      map[string]string
+	Values      map[string]string
 	SecretNames []string
 }
 
-// Values are what a render uses: every plain parameter's value (set, or
-// its default; "" when it has neither) and, per secret parameter that has
-// one, the ciphertext or command.EncryptedPlaceholder (the agent keeps its
-// stored value).
+// Values are what a render sends: each plain variable that has a value
+// (one without keeps the compose file's own) and, per secret variable that
+// has one, the ciphertext or command.EncryptedPlaceholder (the agent keeps
+// its stored value).
 type Values struct {
 	Plain   map[string]string
 	Secrets map[string]string
@@ -35,33 +36,35 @@ type Values struct {
 	Stored Stored
 }
 
-// Resolve checks a call's values against the body's parameters and merges
-// them over the stored ones (a stored value of a parameter the body no
-// longer has, or that changed between plain and secret, is dropped). The
-// error names the parameter: unknown, a secret sent as a plain value or the
-// other way round, a required one missing, a value that doesn't match its
-// pattern, a plain value with a $ (compose would interpolate it from the
-// app's .env), a secret that is not an ECIES ciphertext (the agent would
-// commit a plaintext to the app's history).
-func Resolve(b Body, stored Stored, given Given) (Values, error) {
-	for _, name := range slices.Sorted(maps.Keys(given.Params)) {
-		p, ok := b.param(name)
+// Resolve checks a call's values against the declared variables and merges
+// them over the stored ones: a given "" clears a stored plain value (the
+// compose file's own value stands again); a stored value of a variable the
+// revision no longer declares, or that changed between plain and secret,
+// is dropped. The error names the variable: undeclared, a secret sent as a
+// plain value or the other way round, a plain value with a $ (compose
+// would interpolate it from the app's .env), a secret that is not an ECIES
+// ciphertext (the agent would commit a plaintext to the app's history);
+// then the declared rules (xwinterflow CheckValues: a required one
+// missing, a plain value failing its pattern).
+func Resolve(spec xwinterflow.Spec, stored Stored, given Given) (Values, error) {
+	for _, name := range slices.Sorted(maps.Keys(given.Values)) {
+		v, ok := spec.Variable(name)
 		switch {
 		case !ok:
-			return Values{}, Invalid("parameters."+name, "the template has no parameter %s", name)
-		case p.Secret:
-			return Values{}, Invalid("parameters."+name, "%s is a secret: send it in secrets, encrypted for the server", name)
-		case strings.Contains(given.Params[name], "$"):
-			return Values{}, Invalid("parameters."+name, "may not contain $")
+			return Values{}, Invalid("values."+name, "the template declares no variable %s", name)
+		case v.Encrypted:
+			return Values{}, Invalid("values."+name, "%s is a secret: send it in secrets, encrypted for the server", name)
+		case strings.Contains(given.Values[name], "$"):
+			return Values{}, Invalid("values."+name, "may not contain $")
 		}
 	}
 	for _, name := range slices.Sorted(maps.Keys(given.Secrets)) {
-		p, ok := b.param(name)
+		v, ok := spec.Variable(name)
 		switch {
 		case !ok:
-			return Values{}, Invalid("secrets."+name, "the template has no parameter %s", name)
-		case !p.Secret:
-			return Values{}, Invalid("secrets."+name, "%s is not a secret parameter: send it in parameters", name)
+			return Values{}, Invalid("secrets."+name, "the template declares no variable %s", name)
+		case !v.Encrypted:
+			return Values{}, Invalid("secrets."+name, "%s is not a secret: send it in values", name)
 		case given.Secrets[name] == "" || given.Secrets[name] == command.EncryptedPlaceholder:
 			return Values{}, Invalid("secrets."+name, "a ciphertext is required (leave the secret out to keep its value)")
 		case crypto.CheckCiphertext(given.Secrets[name]) != nil:
@@ -72,41 +75,33 @@ func Resolve(b Body, stored Stored, given Given) (Values, error) {
 	for _, n := range stored.SecretNames {
 		had[n] = true
 	}
-	out := Values{Plain: map[string]string{}, Secrets: map[string]string{}, Stored: Stored{Params: map[string]string{}}}
-	for _, p := range b.Parameters {
-		if p.Secret {
-			switch ct, ok := given.Secrets[p.Name]; {
+	out := Values{Plain: map[string]string{}, Secrets: map[string]string{}, Stored: Stored{Values: map[string]string{}, SecretNames: []string{}}}
+	secret := map[string]bool{}
+	for _, v := range spec.Variables {
+		if v.Encrypted {
+			switch ct, ok := given.Secrets[v.Name]; {
 			case ok:
-				out.Secrets[p.Name] = ct
-			case had[p.Name]:
-				out.Secrets[p.Name] = command.EncryptedPlaceholder
-			case p.Required:
-				return Values{}, Invalid("secrets."+p.Name, "required")
+				out.Secrets[v.Name] = ct
+			case had[v.Name]:
+				out.Secrets[v.Name] = command.EncryptedPlaceholder
 			default:
 				continue
 			}
-			out.Stored.SecretNames = append(out.Stored.SecretNames, p.Name)
+			secret[v.Name] = true
+			out.Stored.SecretNames = append(out.Stored.SecretNames, v.Name)
 			continue
 		}
-		v, set := given.Params[p.Name]
+		val, set := given.Values[v.Name]
 		if !set {
-			v, set = stored.Params[p.Name]
+			val = stored.Values[v.Name]
 		}
-		if set {
-			out.Stored.Params[p.Name] = v
-		} else if p.Default != nil {
-			v = *p.Default
+		if val != "" {
+			out.Plain[v.Name] = val
+			out.Stored.Values[v.Name] = val
 		}
-		if p.Required && v == "" {
-			return Values{}, Invalid("parameters."+p.Name, "required")
-		}
-		if set && p.Pattern != "" {
-			re, err := regexp.Compile(p.Pattern)
-			if err != nil || !re.MatchString(v) {
-				return Values{}, Invalid("parameters."+p.Name, "%q does not match the pattern %s", v, p.Pattern)
-			}
-		}
-		out.Plain[p.Name] = v
+	}
+	if err := spec.CheckValues(out.Plain, secret); err != nil {
+		return Values{}, err
 	}
 	slices.Sort(out.Stored.SecretNames)
 	return out, nil

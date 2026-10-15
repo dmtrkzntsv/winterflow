@@ -288,7 +288,8 @@ func (r *Repository) appComposeModel(ctx context.Context, appID string, files []
 }
 
 // composeModelKey changes whenever what compose config reads may have:
-// the commit and the derived env files. "" when there is no commit.
+// the commit, the derived env files and the x-winterflow override file.
+// "" when there is no commit.
 func (r *Repository) composeModelKey(dir string) string {
 	head, err := gitHead(dir)
 	if err != nil {
@@ -296,7 +297,7 @@ func (r *Repository) composeModelKey(dir string) string {
 	}
 	h := sha256.New()
 	h.Write([]byte(head))
-	for _, rel := range []string{envSharedRel, envSharedSecretsRel, storageEnvRel, envSecretsRel} {
+	for _, rel := range []string{envSharedRel, envSharedSecretsRel, storageEnvRel, envSecretsRel, composeOverrideRel} {
 		raw, _ := os.ReadFile(filepath.Join(dir, rel))
 		h.Write([]byte{0})
 		h.Write(raw)

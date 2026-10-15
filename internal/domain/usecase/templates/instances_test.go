@@ -1,6 +1,7 @@
 package templates_test
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -17,8 +18,8 @@ import (
 )
 
 // create is a create-instance of key k1 on srv1 with the given values.
-func (f fixture) create(params map[string]string) templates.CreateInput {
-	return templates.CreateInput{ServerID: srv1, Key: "k1", TemplateID: f.tpl.ID, Params: params, Secrets: map[string]string{"KEY": f.secret}}
+func (f fixture) create(values map[string]string) templates.CreateInput {
+	return templates.CreateInput{ServerID: srv1, Key: "k1", TemplateID: f.tpl.ID, Values: values, Secrets: map[string]string{"KEY": f.secret}}
 }
 
 // received waits for an outcome's result.
@@ -58,7 +59,8 @@ func TestCreateClaimsDispatchesAndRecords(t *testing.T) {
 		t.Fatalf("result = %+v", res)
 	}
 	got, err := out.Final(ctx)
-	if err != nil || got.State != "created" || got.Parameters["NAME"] != "acme" || got.Secrets["KEY"] != command.EncryptedPlaceholder {
+	if err != nil || got.State != "created" || got.Values["NAME"] != "acme" || got.Secrets["KEY"] != command.EncryptedPlaceholder ||
+		got.Name != "shop" || len(got.Hosts) != 0 {
 		t.Fatalf("after the result = %+v, %v", got, err)
 	}
 	list, err := f.uc.ListInstances(ctx, org1, srv1, f.tpl.ID)
@@ -106,17 +108,41 @@ func TestCreateReplays(t *testing.T) {
 	}
 }
 
+// A create renders the app the caller asked for: its name, a hostname per
+// http expose entry, the backups it turned on, one variable per value.
+func TestCreateRendersNameHostsAndBackups(t *testing.T) {
+	f := newFixture(t, nil)
+	ctx := dbtest.Ctx(t)
+	in := f.create(map[string]string{"NAME": "acme", "VERSION": ""})
+	in.Name = "Acme shop"
+	in.Hosts = []model.InstanceHost{{Host: "acme.example.test", Expose: "app:8080"}}
+	in.Backups = map[string]template.BackupChoice{"db": {Enabled: true, Storage: "disk"}}
+	out, err := f.uc.CreateInstance(ctx, "u1", org1, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vars, cfg := saved(t, f)
+	if len(vars) != 2 || string(vars["NAME"].Content) != "acme" || string(vars["KEY"].Content) != f.secret || !vars["KEY"].Encrypted {
+		t.Fatalf("variables = %+v", vars)
+	}
+	if cfg.Name != "Acme shop" || len(cfg.Ingress.Domains) != 1 || cfg.Ingress.Domains[0].Expose != "app:8080" ||
+		len(cfg.Backups) != 1 || cfg.Backups[0].Storage != "disk" || cfg.Instance.Key != "k1" {
+		t.Fatalf("config = %+v", cfg)
+	}
+	f.disp.reply(t, port.CommandResult{Success: true})
+	received(t, out.Done)
+	if v, _ := out.Final(ctx); v.Name != "Acme shop" || len(v.Hosts) != 1 || v.Hosts[0].Host != "acme.example.test" {
+		t.Fatalf("created = %+v", v)
+	}
+}
+
 // A create whose rendered app fails a save-app check claims nothing: the
 // caller can fix the request and use the same key.
 func TestCreateRefusedBeforeTheClaim(t *testing.T) {
 	f := newFixture(t, noStorages{})
 	ctx := dbtest.Ctx(t)
-	b := body()
-	b.Backups["db"] = template.BackupDefault{Enabled: true, Storage: "nowhere"}
-	if _, err := f.uc.SaveTemplate(ctx, "u1", org1, templates.SaveInput{ID: f.tpl.ID, Name: "shop", Body: b, BaseRevision: 1}); err != nil {
-		t.Fatal(err)
-	}
 	in := f.create(map[string]string{"NAME": "acme"})
+	in.Backups = map[string]template.BackupChoice{"db": {Enabled: true, Storage: "nowhere"}}
 	_, err := f.uc.CreateInstance(ctx, "u1", org1, in)
 	if !errors.Is(err, model.ErrRejected) || !strings.Contains(err.Error(), `no storage "nowhere"`) {
 		t.Fatalf("err = %v", err)
@@ -124,7 +150,7 @@ func TestCreateRefusedBeforeTheClaim(t *testing.T) {
 	if _, err := f.uc.GetInstance(ctx, org1, srv1, "k1"); !errors.Is(err, model.ErrInstanceNotFound) || f.disp.count() != 0 {
 		t.Fatalf("a refused create claimed the key: %v", err)
 	}
-	in.Revision = 1 // its backup is off
+	in.Backups = nil // the backup starts off
 	if _, err := f.uc.CreateInstance(ctx, "u1", org1, in); err != nil {
 		t.Fatalf("the fixed request: %v", err)
 	}
@@ -144,15 +170,25 @@ func TestCreateErrors(t *testing.T) {
 	if _, err := f.uc.CreateInstance(ctx, "u1", org1, f.create(map[string]string{"NAME": "UPPER"})); !errors.Is(err, model.ErrRejected) {
 		t.Fatalf("off-pattern value: %v", err)
 	}
+	named := f.create(map[string]string{"NAME": "acme"})
+	named.Name = " padded"
+	if _, err := f.uc.CreateInstance(ctx, "u1", org1, named); !errors.Is(err, model.ErrRejected) || !strings.Contains(err.Error(), "name") {
+		t.Fatalf("a bad app name: %v", err)
+	}
+	hosted := f.create(map[string]string{"NAME": "acme"})
+	hosted.Hosts = []model.InstanceHost{{Host: "a.example.test", Expose: "app:9999"}}
+	if _, err := f.uc.CreateInstance(ctx, "u1", org1, hosted); !errors.Is(err, model.ErrRejected) || !strings.Contains(err.Error(), "hosts[0].expose") {
+		t.Fatalf("a host on no http entry: %v", err)
+	}
 	missing := f.create(map[string]string{"NAME": "acme"})
 	missing.Revision = 7
 	if _, err := f.uc.CreateInstance(ctx, "u1", org1, missing); !errors.Is(err, model.ErrNotFound) {
 		t.Fatalf("missing revision: %v", err)
 	}
 	backups := f.create(map[string]string{"NAME": "acme"})
-	backups.Backups = map[string]string{"media": "disk"}
+	backups.Backups = map[string]template.BackupChoice{"media": {Storage: "disk"}}
 	if _, err := f.uc.CreateInstance(ctx, "u1", org1, backups); !errors.Is(err, model.ErrRejected) {
-		t.Fatalf("an override of an unknown backup: %v", err)
+		t.Fatalf("a setting of an unknown backup: %v", err)
 	}
 	out, _ := f.uc.CreateInstance(ctx, "u1", org1, f.create(map[string]string{"NAME": "acme"}))
 	f.disp.reply(t, port.CommandResult{Error: "pull failed"})
@@ -237,5 +273,147 @@ func TestViewsCarryTheAppStatus(t *testing.T) {
 		if v.StatusCode != want {
 			t.Errorf("%s status = %v, want %v", v.Key, v.StatusCode, want)
 		}
+	}
+}
+
+// A catalog template is installed like an org's own; one the catalog
+// withdrew takes no new installs.
+func TestCreateFromTheCatalog(t *testing.T) {
+	f := newFixture(t, nil)
+	ctx := dbtest.Ctx(t)
+	raw, err := template.Encode(body())
+	if err != nil {
+		t.Fatal(err)
+	}
+	catID, goneID := dbtest.ID(41), dbtest.ID(42)
+	at := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	for _, c := range []model.Template{
+		{ID: catID, Source: model.TemplateSourceCatalog, Slug: "shop", Name: "Shop"},
+		{ID: goneID, Source: model.TemplateSourceCatalog, Slug: "gone", Name: "Gone", WithdrawnAt: &at},
+	} {
+		if err := f.repo.CreateTemplate(ctx, c, model.TemplateRevision{Body: raw, Digest: "sha256:x"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	in := f.create(map[string]string{"NAME": "acme"})
+	in.TemplateID = catID
+	if _, err := f.uc.CreateInstance(ctx, "u1", org1, in); err != nil {
+		t.Fatal(err)
+	}
+	if _, cfg := saved(t, f); cfg.Name != "Shop" || cfg.Instance.TemplateID != catID {
+		t.Fatalf("config = %+v", cfg)
+	}
+	in.Key, in.TemplateID = "k2", goneID
+	if _, err := f.uc.CreateInstance(ctx, "u1", org1, in); !errors.Is(err, model.ErrTemplateWithdrawn) || !errors.Is(err, model.ErrConflict) {
+		t.Fatalf("a withdrawn template: %v", err)
+	}
+	list, err := f.uc.ListInstances(ctx, org2, "", catID)
+	if err != nil || len(list.Instances) != 0 {
+		t.Fatalf("another org's instances of the catalog template = %+v, %v", list, err)
+	}
+}
+
+// withdrawnRepo reads every catalog template as withdrawn.
+type withdrawnRepo struct{ port.TemplateRepository }
+
+func (r withdrawnRepo) GetTemplate(ctx context.Context, orgID, id string) (model.Template, error) {
+	t, err := r.TemplateRepository.GetTemplate(ctx, orgID, id)
+	if err == nil && t.Catalog() {
+		at := time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC)
+		t.WithdrawnAt = &at
+	}
+	return t, err
+}
+
+// A created instance's replay is answered from the DB whatever happened to
+// the template since: nothing is checked against a later revision.
+func TestCreatedReplayIgnoresLaterRevisions(t *testing.T) {
+	f := newFixture(t, nil)
+	ctx := dbtest.Ctx(t)
+	in := f.create(map[string]string{"NAME": "acme"})
+	in.Hosts = []model.InstanceHost{{Host: "acme.example.test", Expose: "app:8080"}}
+	out, err := f.uc.CreateInstance(ctx, "u1", org1, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.disp.reply(t, port.CommandResult{Success: true})
+	received(t, out.Done)
+
+	// r2 adds a required variable and drops the expose entry the host uses.
+	b := body()
+	b.Files["compose.yaml"] = strings.Replace(strings.Replace(compose, "port: 8080", "port: 9090", 1),
+		"    VERSION: {}\n", "    VERSION: {}\n    MORE: { required: true }\n", 1) + "# ${MORE}\n"
+	if _, err := f.uc.SaveTemplate(ctx, "u1", org1, templates.SaveInput{ID: f.tpl.ID, Name: "shop", Body: b, BaseRevision: 1}); err != nil {
+		t.Fatal(err)
+	}
+	sent := f.disp.count()
+	again, err := f.uc.CreateInstance(ctx, "u1", org1, in)
+	if err != nil || again.Instance == nil || again.Instance.Revision != 1 || again.Instance.State != "created" || f.disp.count() != sent {
+		t.Fatalf("replay after r2 = %+v, %v", again, err)
+	}
+}
+
+// A withdrawn catalog template still answers the replay of a create it
+// took; a pending one is not completed from it.
+func TestReplayOfAWithdrawnCatalogTemplate(t *testing.T) {
+	f := newFixture(t, nil)
+	ctx := dbtest.Ctx(t)
+	raw, err := template.Encode(body())
+	if err != nil {
+		t.Fatal(err)
+	}
+	catID := dbtest.ID(41)
+	if err := f.repo.CreateTemplate(ctx, model.Template{ID: catID, Source: model.TemplateSourceCatalog, Slug: "shop", Name: "Shop"},
+		model.TemplateRevision{Body: raw, Digest: "sha256:x"}); err != nil {
+		t.Fatal(err)
+	}
+	in := f.create(map[string]string{"NAME": "acme"})
+	in.TemplateID = catID
+	out, err := f.uc.CreateInstance(ctx, "u1", org1, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.disp.reply(t, port.CommandResult{Success: true})
+	received(t, out.Done)
+	pending := in
+	pending.Key = "k2"
+	if _, err := f.uc.CreateInstance(ctx, "u1", org1, pending); err != nil {
+		t.Fatal(err)
+	}
+
+	withdrawn := templates.New(templates.Deps{Repo: withdrawnRepo{f.repo}, Apps: appuc.NewUseCase(&appuc.Deps{CommandDispatcher: f.disp, AppRepository: f.apps, Log: dbtest.Log}), Log: dbtest.Log})
+	sent := f.disp.count()
+	again, err := withdrawn.CreateInstance(ctx, "u1", org1, in)
+	if err != nil || again.Instance == nil || again.Instance.State != "created" || f.disp.count() != sent {
+		t.Fatalf("replay of a created instance = %+v, %v", again, err)
+	}
+	if _, err := withdrawn.CreateInstance(ctx, "u1", org1, pending); !errors.Is(err, model.ErrTemplateWithdrawn) || f.disp.count() != sent {
+		t.Fatalf("replay of a pending instance: %v", err)
+	}
+	pending.Key = "k3"
+	if _, err := withdrawn.CreateInstance(ctx, "u1", org1, pending); !errors.Is(err, model.ErrTemplateWithdrawn) {
+		t.Fatalf("a new install: %v", err)
+	}
+}
+
+// A pending replay renders the revision and the name the instance was
+// claimed with, not the template's latest.
+func TestPendingReplayKeepsItsRevisionAndName(t *testing.T) {
+	f := newFixture(t, nil)
+	ctx := dbtest.Ctx(t)
+	in := f.create(map[string]string{"NAME": "acme"})
+	if _, err := f.uc.CreateInstance(ctx, "u1", org1, in); err != nil {
+		t.Fatal(err)
+	}
+	b := body()
+	b.Files["compose.yaml"] = strings.Replace(compose, "    VERSION: {}\n", "    VERSION: {}\n    MORE: { required: true }\n", 1) + "# ${MORE}\n"
+	if _, err := f.uc.SaveTemplate(ctx, "u1", org1, templates.SaveInput{ID: f.tpl.ID, Name: "store", Body: b, BaseRevision: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.uc.CreateInstance(ctx, "u1", org1, in); err != nil {
+		t.Fatalf("pending replay: %v", err)
+	}
+	if _, cfg := saved(t, f); cfg.Name != "shop" || cfg.Instance.Revision != 1 || f.disp.count() != 2 {
+		t.Fatalf("pending replay config: name %q marker %+v", cfg.Name, cfg.Instance)
 	}
 }

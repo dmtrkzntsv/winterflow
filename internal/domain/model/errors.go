@@ -8,10 +8,12 @@ import "errors"
 // unresolved or reserved storage variable. ErrNotFound marks an unknown
 // template, revision or instance key, or one of another org (404).
 // ErrConflict marks a request the current state refuses (409).
+// ErrForbidden marks a change to something the caller may only read (403).
 var (
-	ErrRejected = errors.New("rejected")
-	ErrNotFound = errors.New("not found")
-	ErrConflict = errors.New("conflict")
+	ErrRejected  = errors.New("rejected")
+	ErrNotFound  = errors.New("not found")
+	ErrConflict  = errors.New("conflict")
+	ErrForbidden = errors.New("forbidden")
 )
 
 // classified is a sentinel error that also matches its class.

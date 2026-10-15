@@ -28,8 +28,8 @@ func (pgsqlQuerier) GetTemplateIDByName(ctx context.Context, db backend.DBTX, p 
 	return pgsqlgen.New(db).GetTemplateIDByName(ctx, pgsqlgen.GetTemplateIDByNameParams(p))
 }
 
-func (pgsqlQuerier) ListTemplates(ctx context.Context, db backend.DBTX, orgID string) ([]summaryRow, error) {
-	rows, err := pgsqlgen.New(db).ListTemplates(ctx, orgID)
+func (pgsqlQuerier) ListTemplates(ctx context.Context, db backend.DBTX, p listParams) ([]summaryRow, error) {
+	rows, err := pgsqlgen.New(db).ListTemplates(ctx, pgsqlgen.ListTemplatesParams(p))
 	if err != nil {
 		return nil, err
 	}
@@ -40,7 +40,7 @@ func (pgsqlQuerier) ListTemplates(ctx context.Context, db backend.DBTX, orgID st
 	return out, nil
 }
 
-func (pgsqlQuerier) ListTemplateNames(ctx context.Context, db backend.DBTX, orgID string) ([]nameRow, error) {
+func (pgsqlQuerier) ListTemplateNames(ctx context.Context, db backend.DBTX, orgID *string) ([]nameRow, error) {
 	rows, err := pgsqlgen.New(db).ListTemplateNames(ctx, orgID)
 	if err != nil {
 		return nil, err
@@ -111,6 +111,10 @@ func instanceRows(rows []pgsqlgen.TemplateInstance, err error) ([]instanceRow, e
 
 func (pgsqlQuerier) MarkTemplateInstanceSaved(ctx context.Context, db backend.DBTX, p savedParams) error {
 	return pgsqlgen.New(db).MarkTemplateInstanceSaved(ctx, pgsqlgen.MarkTemplateInstanceSavedParams(p))
+}
+
+func (pgsqlQuerier) SetTemplateInstanceBackups(ctx context.Context, db backend.DBTX, p backupsParams) error {
+	return pgsqlgen.New(db).SetTemplateInstanceBackups(ctx, pgsqlgen.SetTemplateInstanceBackupsParams(p))
 }
 
 func (pgsqlQuerier) SetTemplateInstanceState(ctx context.Context, db backend.DBTX, p stateParams) error {

@@ -520,3 +520,19 @@ x-winterflow:
 		t.Fatal(err)
 	}
 }
+
+// DecodeFiles decodes each file once; ParseComposeNodes reads the trees
+// (the x-winterflow parser shares them) and marks an undecodable one.
+func TestParseComposeNodesSharesDecodedFiles(t *testing.T) {
+	docs := DecodeFiles([]byte(compose), []byte("services: [\n"))
+	if len(docs) != 2 || docs[0] == nil || docs[1] != nil {
+		t.Fatalf("decoded = %v", docs)
+	}
+	c, err := ParseComposeNodes(docs...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.Unparsed || len(c.Recipe) != 3 || !c.Volumes["data"] {
+		t.Fatalf("compose = %+v", c)
+	}
+}

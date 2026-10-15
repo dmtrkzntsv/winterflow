@@ -3,12 +3,14 @@
 // editor state, validating it (editorErrors), and building the app.save
 // payload (encrypting touched secrets, passing the "<encrypted>" placeholder
 // through so the agent preserves stored values).
+import { declaredRow, declaredRowsOf, declaredValueError } from "@/lib/declared-variables";
 import { validHostname } from "@/lib/domains";
 import { ENCRYPTED, encryptSecret } from "@/lib/ecies";
 import type { FieldErrors } from "@/lib/field-errors";
 import type { AppDetailPayload } from "@/context/apps-context-base";
 import {
   DEFAULT_COMPOSE,
+  exposeTarget,
   isComposeFile,
   localId,
   type AppEditorState,
@@ -17,6 +19,7 @@ import {
   type AppVariableMeta,
   type IngressDomain,
   type IngressRedirect,
+  type PortPin,
 } from "@/types/app-config";
 
 export function emptyEditorState(): AppEditorState {
@@ -101,10 +104,11 @@ export function stateFromDetail(
   const ingress = cfgIngress
     ? {
         domains: (cfgIngress.domains ?? []).map((dom) => {
-          const v = dom as { domain?: string; upstream_port?: number; ssl?: boolean };
+          const v = dom as { domain?: string; expose?: string; upstream_port?: number; ssl?: boolean };
           return {
             id: localId("dom"),
             domain: v.domain ?? "",
+            ...(v.expose ? { expose: v.expose } : {}),
             upstream_port: v.upstream_port ?? ("" as const),
             ssl: v.ssl ?? false,
           };
@@ -134,10 +138,14 @@ export function stateFromDetail(
       variables: varMetas,
       source: cfgSource,
       ingress,
+      ports: (cfg as { ports?: Record<string, PortPin> }).ports ?? {},
     },
     files,
     variables,
     storageVariables: d.storage_variables ?? [],
+    declared: d.declared_variables ?? [],
+    declaredRows: declaredRowsOf(d.declared_variables ?? [], varMetas),
+    expose: d.expose ?? [],
   };
 }
 
@@ -159,7 +167,7 @@ export function newAddressRow(): IngressDomain {
 export function pruneBlankAddresses(state: AppEditorState): AppEditorState {
   const ing = state.config.ingress;
   if (!ing) return state;
-  const domains = ing.domains.filter((d) => d.domain.trim() !== "" || d.upstream_port !== "");
+  const domains = ing.domains.filter((d) => d.domain.trim() !== "" || d.upstream_port !== "" || Boolean(d.expose));
   const redirects = ing.redirects.filter((r) => r.domain.trim() !== "" || r.path.trim() !== "" || r.to.trim() !== "");
   const ingress = domains.length > 0 || redirects.length > 0 ? { domains, redirects } : undefined;
   return { ...state, config: { ...state.config, ingress } };
@@ -200,12 +208,13 @@ function redirectTargetError(r: IngressRedirect): string {
 
 // editorErrors names every problem in the editor's state by field: name,
 // repo_url, branch, files, file:<id>, file:<id>:content, var:<id>,
-// var:<id>:value, domain:<id>, port:<id>, redirect-host:<id>,
+// var:<id>:value, decl:<NAME>, domain:<id>, port:<id>, redirect-host:<id>,
 // redirect-path:<id>, redirect-to:<id>. Ingress rows are
 // read in the order the server's Validate reads them: addresses, then
 // redirects, each claiming its hostname; a path rule needs a hostname
-// claimed above it.
-export function editorErrors(state: AppEditorState): FieldErrors {
+// claimed above it. A draft (saved, not deployed) may leave a required
+// declared variable empty.
+export function editorErrors(state: AppEditorState, draft = false): FieldErrors {
   const out: FieldErrors = {};
   const { config } = state;
   if (!config.name.trim()) out.name = "Give the app a name.";
@@ -222,11 +231,33 @@ export function editorErrors(state: AppEditorState): FieldErrors {
     if (renamedStoredSecret(f, f.filename, content)) out[`file:${f.id}:content`] = RENAMED_FILE;
     else if (placeholderMisuse(f, f.filename, content)) out[`file:${f.id}:content`] = PLACEHOLDER_REFUSED_FILE;
   }
+  // A name used twice: the row a declared variable's form edits keeps it,
+  // every other row is flagged (it would replace or be replaced by it).
+  const declaredIds = new Set(Object.values(state.declaredRows ?? {}));
+  const firstOf = new Map<string, string>();
+  for (const v of [...config.variables].sort((a, b) => Number(declaredIds.has(b.id)) - Number(declaredIds.has(a.id)))) {
+    const name = v.name.trim();
+    if (name && !firstOf.has(name)) firstOf.set(name, v.id);
+  }
   for (const v of config.variables) {
     if (!v.name.trim()) out[`var:${v.id}`] = "Name this variable.";
+    else if (firstOf.get(v.name.trim()) !== v.id) out[`var:${v.id}`] = "Another variable has this name.";
     const value = state.variables[v.id] ?? "";
     if (renamedStoredSecret(v, v.name, value)) out[`var:${v.id}:value`] = RENAMED_VAR;
     else if (placeholderMisuse(v, v.name, value)) out[`var:${v.id}:value`] = PLACEHOLDER_REFUSED;
+  }
+  const pinned = new Map<number, string>();
+  for (const [id, p] of livePins(state)) {
+    const host = Number(p.host);
+    if (p.host === "" || !Number.isInteger(host) || host < 1 || host > 65535) out[`pin:${id}`] = "Enter a port from 1 to 65535.";
+    else if (pinned.has(host)) out[`pin:${id}`] = `${pinned.get(host)} is pinned to this port already.`;
+    else pinned.set(host, id);
+  }
+  for (const d of state.declared ?? []) {
+    const row = declaredRow(state, d);
+    const value = row ? (state.variables[row.id] ?? "") : "";
+    const message = declaredValueError(d, value, row !== undefined && holdsStoredSecret(row, row.name), draft);
+    if (message) out[`decl:${d.name}`] = message;
   }
 
   const ing = config.ingress;
@@ -238,9 +269,14 @@ export function editorErrors(state: AppEditorState): FieldErrors {
     seen.add(host);
     return "";
   };
+  const webTargets = new Set((state.expose ?? []).filter((e) => e.protocol === "http").map(exposeTarget));
   for (const d of ing.domains) {
     const host = claim(d.domain);
     if (host) out[`domain:${d.id}`] = host;
+    if (d.expose) {
+      if (!webTargets.has(d.expose)) out[`port:${d.id}`] = "Pick one of the app's web ports.";
+      continue;
+    }
     const port = Number(d.upstream_port);
     if (d.upstream_port === "" || !Number.isInteger(port) || port < 1 || port > 65535)
       out[`port:${d.id}`] = "Enter a port from 1 to 65535.";
@@ -259,6 +295,14 @@ export function editorErrors(state: AppEditorState): FieldErrors {
     if (host) out[`redirect-host:${r.id}`] = host;
   }
   return out;
+}
+
+// livePins are the pins of the app's expose entries as app.get listed
+// them: a pin of an entry that is gone is neither checked nor sent (the
+// server drops it too: a removed entry loses its port on the save).
+function livePins(state: AppEditorState): [string, PortPin][] {
+  const live = new Set((state.expose ?? []).map((e) => e.id));
+  return Object.entries(state.config.ports ?? {}).filter(([id, p]) => p.pinned && live.has(id));
 }
 
 type SecretItem = { is_encrypted: boolean; storedAs?: string };
@@ -324,18 +368,24 @@ export async function buildSavePayload(
     if (renamedStoredSecret(v, v.name, value)) throw new Error(`${v.name.trim() || "A variable"}: ${RENAMED_VAR}`);
     if (placeholderMisuse(v, v.name, value)) throw new Error(`${v.name.trim() || "A variable"}: ${PLACEHOLDER_REFUSED}`);
   }
+  // A declared variable left empty is not sent: the compose file's own
+  // value stands.
+  const declaredIds = new Set((state.declared ?? []).map((d) => declaredRow(state, d)?.id));
+  const sentVariables = state.config.variables.filter(
+    (v) => !(declaredIds.has(v.id) && (state.variables[v.id] ?? "") === "" && !holdsStoredSecret(v, v.name)),
+  );
   const fileKept = (f: AppFileMeta) => keepsStored(f, f.filename, state.files[f.id] ?? "");
   const varKept = (v: AppVariableMeta) => keepsStored(v, v.name, state.variables[v.id] ?? "");
   const needsKey =
     state.config.files.some((f) => f.is_encrypted && !fileKept(f)) ||
-    state.config.variables.some((v) => v.is_encrypted && !varKept(v));
+    sentVariables.some((v) => v.is_encrypted && !varKept(v));
   const publicKey = needsKey ? await getPublicKey() : "";
 
   const files = await Promise.all(
     state.config.files.map((f) => mapItem(f.filename, state.files[f.id] ?? "", f.is_encrypted, fileKept(f), publicKey)),
   );
   const variables = await Promise.all(
-    state.config.variables.map((v) => mapItem(v.name, state.variables[v.id] ?? "", v.is_encrypted, varKept(v), publicKey)),
+    sentVariables.map((v) => mapItem(v.name, state.variables[v.id] ?? "", v.is_encrypted, varKept(v), publicKey)),
   );
 
   const config = {
@@ -347,18 +397,21 @@ export async function buildSavePayload(
       filename: f.filename.trim(),
       is_encrypted: f.is_encrypted,
     })),
-    variables: state.config.variables.map((v) => ({
+    variables: sentVariables.map((v) => ({
       name: v.name.trim(),
       is_encrypted: v.is_encrypted,
     })),
+    // Only the pins: the agent keeps every other port, and a save without
+    // an entry unpins it.
+    ports: Object.fromEntries(livePins(state).map(([id, p]) => [id, { host: Number(p.host), pinned: true }])),
     ...(state.config.ingress
       ? {
           ingress: {
-            domains: state.config.ingress.domains.map((d) => ({
-              domain: d.domain.trim(),
-              upstream_port: Number(d.upstream_port),
-              ssl: d.ssl,
-            })),
+            domains: state.config.ingress.domains.map((d) =>
+              d.expose
+                ? { domain: d.domain.trim(), expose: d.expose, ssl: d.ssl }
+                : { domain: d.domain.trim(), upstream_port: Number(d.upstream_port), ssl: d.ssl },
+            ),
             redirects: state.config.ingress.redirects.map((r) => ({
               domain: r.domain.trim(),
               ...(r.path ? { path: r.path.trim() } : {}),

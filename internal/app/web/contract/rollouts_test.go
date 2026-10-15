@@ -84,8 +84,8 @@ func TestUpgradeAllRollout(t *testing.T) {
 	t.Parallel()
 	ie := newInstanceEnv(t)
 	e, owner, sid := ie.e, ie.owner, ie.sid
-	a := ie.created(t, "tenant-1", "acme", "9001").Instance.AppID
-	b := ie.created(t, "tenant-2", "bolt", "9002").Instance.AppID
+	a := ie.created(t, "tenant-1", "acme").Instance.AppID
+	b := ie.created(t, "tenant-2", "bolt").Instance.AppID
 	reportRunning(t, e, sid, fixed(a, b), nil, nil)
 	saveTemplate(t, owner, htpl.SaveTemplateRequest{ID: ie.tplID, Name: "shop", Body: shopBody(shopCompose), BaseRevision: 1})
 
@@ -131,8 +131,8 @@ func TestStopRollout(t *testing.T) {
 	t.Parallel()
 	ie := newInstanceEnv(t)
 	e, owner, sid := ie.e, ie.owner, ie.sid
-	a := ie.created(t, "tenant-1", "acme", "9001").Instance.AppID
-	b := ie.created(t, "tenant-2", "bolt", "9002").Instance.AppID
+	a := ie.created(t, "tenant-1", "acme").Instance.AppID
+	b := ie.created(t, "tenant-2", "bolt").Instance.AppID
 	reportRunning(t, e, sid, fixed(a, b), nil, nil)
 	saveTemplate(t, owner, htpl.SaveTemplateRequest{ID: ie.tplID, Name: "shop", Body: shopBody(shopCompose), BaseRevision: 1})
 

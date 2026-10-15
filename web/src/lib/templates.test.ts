@@ -13,6 +13,7 @@ import {
   INSTANCE_WAIT_MS,
   usageLabel,
   isManagedByTemplate,
+  orgTemplates,
   LOAD_TIMEOUT_MS,
   sealSecrets,
   TOO_LONG,
@@ -99,7 +100,7 @@ describe("createTemplatesApi", () => {
       "/api/v1/template/delete-template": null,
     });
     const t = createTemplatesApi(ok);
-    const body = { files: {}, parameters: [], app_name: "x", icon: "", color: "", ingress: [], backups: {} };
+    const body = { files: {}, summary: "", description: "", icon: "", color: "" };
     expect((await t.saveTemplate({ id: "t1", name: "shop", body, base_revision: 2 })).revision).toBe(3);
     const err = await t.saveTemplate({ id: "t1", name: "shop", body, base_revision: 1 }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiError);
@@ -203,6 +204,22 @@ describe("createTemplatesApi", () => {
     const err = await createTemplatesApi(ok).unlinkInstance("s1", "k1").catch((e: unknown) => e);
     expect((err as ApiError).message).toBe("instance not found");
     expect((err as ApiError).status).toBe(404);
+  });
+});
+
+describe("inspectTemplate", () => {
+  it("posts the body and answers what it declares", async () => {
+    const inspection = { detected: { variables: [], expose: [], backups: [], warnings: [] }, problem: "files: a compose file is required" };
+    const api = fakeAPI({ "/api/v1/template/inspect-template": inspection });
+    const body = { files: {}, summary: "", description: "", icon: "", color: "" };
+    expect(await createTemplatesApi(ok).inspectTemplate(body)).toEqual(inspection);
+    expect(api.posted("/api/v1/template/inspect-template")).toEqual([{ body }]);
+  });
+});
+
+describe("orgTemplates", () => {
+  it("keeps the org's own templates", () => {
+    expect(orgTemplates([{ source: "org", id: "a" }, { source: "catalog", id: "b" }])).toEqual([{ source: "org", id: "a" }]);
   });
 });
 

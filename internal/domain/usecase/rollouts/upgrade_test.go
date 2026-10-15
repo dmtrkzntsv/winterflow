@@ -18,15 +18,11 @@ import (
 	apprepo "winterflow/internal/infra/db/repository/app"
 )
 
-const shopCompose = "services:\n  app:\n    image: example/shop:${VERSION}\n"
-
+// shopBody is template "shop" declaring a required NAME with pattern.
 func shopBody(pattern string) template.Body {
-	def := "1"
-	return template.Body{
-		Files:      map[string]string{"compose.yaml": shopCompose},
-		Parameters: []template.Parameter{{Name: "NAME", Required: true, Pattern: pattern}, {Name: "VERSION", Default: &def}},
-		AppName:    "shop-${NAME}",
-	}
+	compose := "services:\n  app:\n    image: example/shop:1\n    environment:\n      - NAME\n" +
+		"x-winterflow:\n  variables:\n    NAME: { required: true, pattern: \"" + pattern + "\" }\n"
+	return template.Body{Files: map[string]string{"compose.yaml": compose}}
 }
 
 // shop saves template "shop" (r1) with created instances named names on
@@ -40,7 +36,9 @@ func (e *env) shop(t *testing.T, tu *templates.UseCase, names ...string) (templa
 	}
 	apps := map[string]string{}
 	for _, n := range names {
-		out, err := tu.CreateInstance(ctx, "u1", org1, templates.CreateInput{ServerID: srv1, Key: n, TemplateID: tpl.ID, Params: map[string]string{"NAME": n}})
+		out, err := tu.CreateInstance(ctx, "u1", org1, templates.CreateInput{
+			ServerID: srv1, Key: n, TemplateID: tpl.ID, Name: "shop-" + n, Values: map[string]string{"NAME": n},
+		})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -94,6 +92,9 @@ func TestQueueUpgradeChecksTheTemplateAndTheScope(t *testing.T) {
 	v, err := e.uc.QueueUpgrade(ctx, "u1", org1, tpl.ID, 0)
 	if err != nil || v.State != "queued" || v.Kind != model.RolloutTemplateUpgrade || v.ScopeKey != tpl.ID || v.Revision != 1 || v.CreatedBy != "u1" {
 		t.Fatalf("queued = %+v, %v", v, err)
+	}
+	if stored := e.get(t, v.ID); stored.ScopeKey != model.UpgradeScopeKey(org1, tpl.ID) {
+		t.Fatalf("stored scope key = %q", stored.ScopeKey)
 	}
 	if _, err := e.uc.QueueUpgrade(ctx, "u1", org1, tpl.ID, 0); !errors.Is(err, model.ErrRolloutActive) || !errors.Is(err, model.ErrConflict) {
 		t.Fatalf("a second upgrade: %v", err)
@@ -194,11 +195,11 @@ type markFails struct {
 	on atomic.Bool
 }
 
-func (m *markFails) MarkSaved(ctx context.Context, id string, revision int64, params map[string]string, secretNames []string) error {
+func (m *markFails) MarkSaved(ctx context.Context, id string, revision int64, params map[string]string, secretNames []string, hosts []model.InstanceHost) error {
 	if m.on.Load() {
 		return errors.New("database is locked")
 	}
-	return m.TemplateRepository.MarkSaved(ctx, id, revision, params, secretNames)
+	return m.TemplateRepository.MarkSaved(ctx, id, revision, params, secretNames, hosts)
 }
 
 // A step that went through but left the instance below the target (its
@@ -233,5 +234,66 @@ func TestUpgradeDoesNotRepickAnInstanceItCouldNotRecord(t *testing.T) {
 	save := "app.save " + apps2["acme"]
 	if got := a.commands(); !slices.Equal(got, []string{save, save}) {
 		t.Fatalf("commands = %v: the instance was saved again", got)
+	}
+}
+
+// Two orgs upgrade the same catalog template at once: each rollout is the
+// org's own (scope key <org_id>:<template_id>) and moves only its
+// instances.
+func TestUpgradeOfACatalogTemplateIsPerOrg(t *testing.T) {
+	e := newEnv(t)
+	_, tu := e.withAgent(t)
+	ctx := dbtest.Ctx(t)
+	raw, err := template.Encode(shopBody("^[a-z]+$"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cat := dbtest.ID(41)
+	if err := e.tpl.CreateTemplate(ctx, model.Template{ID: cat, Source: model.TemplateSourceCatalog, Slug: "shop", Name: "Shop"},
+		model.TemplateRevision{Body: raw}); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ org, srv string }{{org1, srv1}, {org2, srv2}} {
+		out, err := tu.CreateInstance(ctx, "u1", c.org, templates.CreateInput{ServerID: c.srv, Key: "k", TemplateID: cat, Values: map[string]string{"NAME": "acme"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		<-out.Done
+	}
+	views := map[string]model.RolloutView{}
+	for _, org := range []string{org1, org2} {
+		v, err := e.uc.QueueUpgrade(ctx, "u1", org, cat, 0)
+		if err != nil || v.ScopeKey != cat {
+			t.Fatalf("%s queues = %+v, %v", org, v, err)
+		}
+		views[org] = v
+	}
+	if _, err := e.uc.QueueUpgrade(ctx, "u1", org1, cat, 0); !errors.Is(err, model.ErrRolloutActive) {
+		t.Fatalf("org1's second upgrade: %v", err)
+	}
+	for _, org := range []string{org1, org2} {
+		list, err := e.uc.List(ctx, org, model.RolloutTemplateUpgrade, cat)
+		if err != nil || len(list) != 1 || list[0].ID != views[org].ID {
+			t.Fatalf("%s list = %+v, %v", org, list, err)
+		}
+	}
+}
+
+// Deleting a template deletes its queued upgrade rollouts: they are stored
+// under the key the repository deletes by.
+func TestDeletingATemplateRemovesItsQueuedUpgrade(t *testing.T) {
+	e := newEnv(t)
+	_, tu := e.withAgent(t)
+	ctx := dbtest.Ctx(t)
+	tpl, _ := e.shop(t, tu)
+	v, err := e.uc.QueueUpgrade(ctx, "u1", org1, tpl.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.tpl.DeleteTemplate(ctx, org1, tpl.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := e.repo.ListRollouts(ctx, org1, model.RolloutTemplateUpgrade, ""); err != nil || len(got) != 0 {
+		t.Fatalf("rollouts after the delete = %+v, %v (queued %s)", got, err, v.ID)
 	}
 }

@@ -24,7 +24,9 @@ const managedEnvVar = "COMPOSE_PROJECT_NAME"
 // shell). The env files are added in the order winterflow passes them
 // (composeArgsFor), each optional one only when it exists: they are
 // prepended to "$@" last-first, so compose sees .env.shared
-// .env.shared.secrets .env .winterflow/storage.env .env.secrets.
+// .env.shared.secrets .env .winterflow/storage.env .env.secrets, and then,
+// when a deploy wrote it, -f .winterflow/compose.winterflow.yml as the last
+// compose file.
 func runHelperScript(project string, files, profiles []string) []byte {
 	cmd := "exec docker compose --project-name " + project
 	for _, f := range files {
@@ -38,6 +40,7 @@ func runHelperScript(project string, files, profiles []string) []byte {
 # Runs docker compose with the same flags winterflow uses, so a manual run
 # controls the same stack. Usage: .winterflow/run.sh up -d | down | logs -f
 cd "$(dirname "$0")/.." || exit 1
+if [ -f ` + composeOverrideRel + ` ]; then set -- -f ` + composeOverrideRel + ` "$@"; fi
 if [ -f ` + envSecretsRel + ` ]; then set -- --env-file ` + envSecretsRel + ` "$@"; fi
 if [ -f ` + storageEnvRel + ` ]; then set -- --env-file ` + storageEnvRel + ` "$@"; fi
 set -- --env-file ` + envRel + ` "$@"

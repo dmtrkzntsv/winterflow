@@ -98,6 +98,11 @@ func (r *Repository) saveWithoutDeploy(app command.AppPayload) (string, error) {
 // writers of the app's files); the files are then written and committed in one
 // step under it.
 func (r *Repository) save(app command.AppPayload, forDeploy bool) (string, []string, error) {
+	// The pins the save carries: without a ports key, the stored ones stay.
+	pins, pinsSent, err := model.ParsePorts(app.Config)
+	if err != nil {
+		return "", nil, err
+	}
 	dir := r.appDataDir(app.AppID)
 	_, statErr := os.Stat(dir)
 	created := errors.Is(statErr, fs.ErrNotExist) // this save creates the app's folder
@@ -127,14 +132,27 @@ func (r *Repository) save(app command.AppPayload, forDeploy bool) (string, []str
 		return "", nil, fmt.Errorf("init app repo: %w", err)
 	}
 
+	r.ensurePortIndex() // before writeAppStore replaces config.json
+	prevPorts, err := r.readPorts(dir)
+	if err != nil {
+		return "", nil, err
+	}
+	if !pinsSent {
+		pins = pinnedOnly(prevPorts)
+	}
 	store, err := r.writeAppStore(dir, app)
 	if err != nil {
 		return "", nil, fmt.Errorf("write app store: %w", err)
 	}
 
-	// The backups must be valid against the compose file being saved (for
-	// a git-sourced app, the one just pulled); nothing is committed if not.
-	warnings, err := r.cleanBackups(dir)
+	// The x-winterflow block and the backups must be valid against the
+	// compose file being saved (for a git-sourced app, the one just pulled),
+	// an ingress hostname may only point at one of its http expose entries,
+	// and every expose entry gets its host port; nothing is committed if not.
+	spec, warnings, err := r.cleanBackups(dir)
+	if err == nil {
+		err = r.applyExpose(app.AppID, dir, app.Config, spec, prevPorts, pins)
+	}
 	if err != nil {
 		restoreSource := r.undoSave(dir, created, savedPaths(app))
 		unlock()
@@ -156,6 +174,9 @@ func (r *Repository) save(app command.AppPayload, forDeploy bool) (string, []str
 	} else if err = r.materializeSecrets(dir, store); err != nil {
 		err = fmt.Errorf("materialize secrets: %w", err)
 	}
+	// The override file follows the compose files just committed, a draft's
+	// too: until the next deploy, every compose command passes it.
+	r.refreshComposeOverride(app.AppID, dir)
 	if err != nil {
 		return "", nil, err
 	}
@@ -321,6 +342,7 @@ func (r *Repository) rollbackWithoutDeploy(appID, hash string) (string, error) {
 	if _, err := os.Stat(dir); err != nil {
 		return "", fmt.Errorf("app %s not found", appID)
 	}
+	r.ensurePortIndex() // before the restored revision's config.json replaces the current
 	if err := gitRestore(dir, hash); err != nil {
 		return "", fmt.Errorf("restore %s: %w", hash, err)
 	}
@@ -336,6 +358,11 @@ func (r *Repository) rollbackWithoutDeploy(appID, hash string) (string, error) {
 			}
 		}
 	}
+	// The restored revision's ports come back where no other app took them
+	// meanwhile (a pin another app holds refuses the rollback).
+	if err := r.restorePorts(appID, dir); err != nil {
+		return "", err
+	}
 	short := hash
 	if len(short) > 8 {
 		short = short[:8]
@@ -344,7 +371,9 @@ func (r *Repository) rollbackWithoutDeploy(appID, hash string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("commit rollback: %w", err)
 	}
-	if err := r.materializeForDeploy(dir, loadSecretStore(dir)); err != nil {
+	err = r.materializeForDeploy(dir, loadSecretStore(dir))
+	r.refreshComposeOverride(appID, dir)
+	if err != nil {
 		return "", err
 	}
 	// The restored config may carry a different name — keep the symlink true.
@@ -478,7 +507,20 @@ func (r *Repository) refreshSourceWithoutDeploy(appID string) (bool, string, err
 	// it just wrote makes the next poll see nothing new.
 	unlock, _ := r.lockApp(context.Background(), appID)
 	defer unlock()
-	if _, err := gitCommitAll(dir, "update source to "+short); err != nil {
+	// The upstream compose file may add or drop expose entries. A failure
+	// here is left for the deploy to report: the source lock is already
+	// written, so a poll that gave up would never commit this update.
+	r.ensurePortIndex()
+	if spec, err := r.appSpec(dir); err != nil {
+		r.log.Warn("source update: read x-winterflow", "app_id", appID, "error", err)
+	} else if ports, err := r.readPorts(dir); err != nil {
+		r.log.Warn("source update: read ports", "app_id", appID, "error", err)
+	} else if err := r.syncPorts(appID, dir, spec.Expose, ports, pinnedOnly(ports)); err != nil {
+		r.log.Warn("source update: allocate ports", "app_id", appID, "error", err)
+	}
+	_, err = gitCommitAll(dir, "update source to "+short)
+	r.refreshComposeOverride(appID, dir) // source/ moved either way
+	if err != nil {
 		return false, "", fmt.Errorf("commit source update: %w", err)
 	}
 	return true, sha, nil
@@ -622,8 +664,15 @@ func (r *Repository) composeArgs(appID string, verb ...string) []string {
 
 // composeArgsFor is composeArgs with the app's compose files already
 // resolved and the profiles to activate (--profile; none: compose's own
-// COMPOSE_PROFILES handling).
+// COMPOSE_PROFILES handling). The x-winterflow override file, when there is
+// one (every commit and deploy re-renders it), is the last -f.
 func (r *Repository) composeArgsFor(appID string, files, profiles []string, verb ...string) []string {
+	return r.composeArgsWith(appID, files, profiles, true, verb...)
+}
+
+// composeArgsWith is composeArgsFor, passing the override file only with
+// override.
+func (r *Repository) composeArgsWith(appID string, files, profiles []string, override bool, verb ...string) []string {
 	args := []string{"compose", "--project-name", projectName(appID)}
 	dir := r.appDataDir(appID)
 	for _, f := range files {
@@ -639,6 +688,10 @@ func (r *Repository) composeArgsFor(appID string, files, profiles []string, verb
 		if _, err := os.Stat(filepath.Join(dir, rel)); err == nil {
 			args = append(args, "--env-file", rel)
 		}
+	}
+	// The x-winterflow override file goes last, over every compose file.
+	if _, err := os.Stat(filepath.Join(dir, composeOverrideRel)); err == nil && override {
+		args = append(args, "-f", composeOverrideRel)
 	}
 	for _, p := range profiles {
 		args = append(args, "--profile", p)
@@ -697,6 +750,11 @@ func (r *Repository) composeUp(ctx context.Context, appID string) error {
 	if err := r.materializeStorageEnv(ctx, dir, files, cfg.backups); err != nil {
 		return err
 	}
+	// The x-winterflow block is applied through its override file, built
+	// from the files just read and the env files just written.
+	if err := r.writeComposeOverride(dir, cfg.spec); err != nil {
+		return err
+	}
 	// Every enabled sqlite and files backup must reach its data through the
 	// app's own mounts.
 	if _, err := r.resolveBackups(ctx, appID, files, cfg.backups); err != nil {
@@ -720,9 +778,12 @@ func (r *Repository) composeDown(ctx context.Context, appID string, volumes bool
 		return nil
 	}
 	// Every profile is activated: down removes all of the project's services,
-	// whatever the recipe says or whether it can be read at all.
+	// whatever the recipe says or whether it can be read at all. The
+	// override file is left out: it only adds ports and environment to the
+	// services, which down doesn't need, so a stop or a delete never depends
+	// on it.
 	dir := r.appDataDir(appID)
-	args := r.composeArgsFor(appID, r.appComposeFiles(dir), []string{"*"}, composeDownVerb(volumes)...)
+	args := r.composeArgsWith(appID, r.appComposeFiles(dir), []string{"*"}, false, composeDownVerb(volumes)...)
 	return r.composeExec(ctx, appID, args)
 }
 

@@ -17,12 +17,12 @@ import { useTemplatesApi } from "@/hooks/use-templates-api";
 import { appLabel } from "@/lib/kpi";
 import { appPath } from "@/lib/routes";
 import { appStatus } from "@/lib/status";
-import { expand, plainValues } from "@/lib/template-params";
 import type { InstanceView, TemplateView } from "@/lib/templates";
 
-// instanceName is an app's name as the latest version renders it.
+// instanceName is the name an app was created with (the template's when it
+// asked for none).
 function instanceName(view: TemplateView, inst: InstanceView): string {
-  return appLabel(expand(view.body.app_name, plainValues(view.body.parameters, inst.parameters ?? {})));
+  return appLabel(inst.name || view.name);
 }
 
 // TemplateInstances is the "Apps using it" tab: the apps a template runs
@@ -54,7 +54,7 @@ export function TemplateInstances({
   const [confirmAll, setConfirmAll] = useState(false);
   const serverName = (id: string) => servers.find((s) => s.id === id)?.name ?? "a server";
   // An app renamed since it was created goes by its current name; the
-  // rendered one stands in for an app the catalog doesn't list.
+  // created one stands in for an app the catalog doesn't list.
   const current = useAppNames(instances.map((i) => i.server_id));
   const nameOf = (inst: InstanceView) => {
     const live = current.get(inst.app_id);
@@ -157,7 +157,7 @@ export function TemplateInstances({
         onOpenChange={setConfirmAll}
         destructive={false}
         title={`Update ${behind} ${behind === 1 ? "app" : "apps"} to version ${latest}?`}
-        description="They are updated one at a time, oldest first, each keeping its own values. Stopped apps will be started. An app that needs a new value is skipped (update it on its own); the first failure stops the rest."
+        description="They are updated one at a time, oldest first, each keeping its own values and hostnames. Stopped apps will be started. An app that needs a new value is skipped (update it on its own); the first failure stops the rest."
         confirmLabel="Update all"
         onConfirm={() => onUpgradeAll?.()}
       />

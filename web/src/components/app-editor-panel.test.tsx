@@ -175,7 +175,7 @@ describe("AppEditorPanel", () => {
     await user.click(screen.getByRole("button", { name: "Save & redeploy" }));
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith("This app is managed by a template", {
-        description: "Change it through its parameters, or detach it from the template in Settings first.",
+        description: "Change it through its variables, or detach it from the template in Settings first.",
       }),
     );
     expect(refresh).toHaveBeenCalled();
@@ -491,6 +491,24 @@ describe("AppEditorPanel", () => {
       domains: [expect.objectContaining({ domain: "shop.example.com", upstream_port: 8080, ssl: true })],
       redirects: [expect.objectContaining({ domain: "old.example.com", to: "https://shop.example.com", code: 301 })],
     });
+  });
+
+  it("saves a draft without a required declared value, but never deploys it", async () => {
+    const user = userEvent.setup();
+    const saveApp = vi.fn<AppsContextValue["saveApp"]>(async () => []);
+    renderPanel(saveApp, vi.fn(async () => {}), {
+      ...detail,
+      declared_variables: [
+        { name: "BASE_URL", required: true, encrypted: false, default: null, services: ["app"] },
+        { name: "LANGUAGE", required: false, encrypted: false, default: "en", services: ["app"] },
+      ],
+    });
+    await user.type(await screen.findByRole("textbox", { name: /LANGUAGE/ }), "de");
+    await user.click(screen.getByRole("button", { name: "Save & redeploy" }));
+    expect(screen.getByRole("textbox", { name: /BASE_URL/ })).toHaveAccessibleDescription("Enter a value: this variable is required.");
+    expect(saveApp).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(saveApp).toHaveBeenCalledWith(expect.objectContaining({ draft: true })));
   });
 
   it("ends a refused Save draft from the phone ⋯ menu with focus on the first bad field", async () => {

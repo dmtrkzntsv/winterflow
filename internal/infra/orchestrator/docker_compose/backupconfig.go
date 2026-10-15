@@ -1,7 +1,6 @@
 package dockercompose
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -18,6 +17,7 @@ import (
 	"time"
 
 	"winterflow/internal/domain/backup/recipe"
+	"winterflow/internal/domain/compose/xwinterflow"
 	"winterflow/pkg/fsutil"
 )
 
@@ -30,8 +30,9 @@ const stopOffTimeout = 2 * time.Minute
 const backupsKey = "backups"
 
 // appBackupConfig is what an app's compose files and config.json say about
-// its backups.
+// its backups, with the x-winterflow spec they were read from (one parse).
 type appBackupConfig struct {
+	spec      xwinterflow.Spec
 	compose   recipe.Compose
 	overrides []recipe.BackupConfig
 	backups   []recipe.EffectiveBackup
@@ -83,8 +84,8 @@ func (r *Repository) appBackups(dir string, files []string) (appBackupConfig, er
 	contents, readErr := composeContents(dir, files)
 	var parseErr error
 	if readErr == nil {
-		cfg.compose, parseErr = recipe.ParseCompose(contents...)
-		cfg.composeOK = parseErr == nil
+		cfg.spec, parseErr = xwinterflow.Parse(xwinterflow.ModeApp, contents...)
+		cfg.compose, cfg.composeOK = cfg.spec.Compose, parseErr == nil
 	}
 	overrides, overridesErr := r.readOverrides(dir)
 	cfg.overrides, cfg.overridesOK = overrides, overridesErr == nil
@@ -147,93 +148,30 @@ func keepBackups(next, prev []byte) []byte {
 	return out
 }
 
-// instanceKey is the key of a template instance's marker in config.json;
-// backupDefaultsKey the marker's list of backups to add (the API sends it
-// on an upgrade that brings backups new to the app).
-const (
-	instanceKey       = "instance"
-	backupDefaultsKey = "backup_defaults"
-)
-
-// applyBackupDefaults adds each instance.backup_defaults entry to the
-// backups list unless the list already has that name (a stored setting,
-// Backups-tab changes included, always wins), and drops backup_defaults
-// from the marker: it is an instruction for this save, not state. A blob
-// without defaults, or one that doesn't parse, comes back unchanged.
-func applyBackupDefaults(cfg []byte) []byte {
-	if !bytes.Contains(cfg, []byte(backupDefaultsKey)) {
-		return cfg // nearly every save: skip decoding the blob
-	}
-	var top map[string]json.RawMessage
-	if json.Unmarshal(cfg, &top) != nil || top == nil {
-		return cfg
-	}
-	var marker map[string]json.RawMessage
-	if json.Unmarshal(top[instanceKey], &marker) != nil || marker[backupDefaultsKey] == nil {
-		return cfg
-	}
-	var defaults, list []recipe.BackupConfig
-	if json.Unmarshal(marker[backupDefaultsKey], &defaults) != nil {
-		return cfg
-	}
-	if raw, ok := top[backupsKey]; ok && json.Unmarshal(raw, &list) != nil {
-		return cfg
-	}
-	have := map[string]bool{}
-	for _, b := range list {
-		have[b.Name] = true
-	}
-	for _, d := range defaults {
-		if !have[d.Name] {
-			list = append(list, d)
-			have[d.Name] = true
-		}
-	}
-	delete(marker, backupDefaultsKey)
-	rawMarker, err := json.Marshal(marker)
+// cleanBackups validates the app's x-winterflow block and backups after a
+// save wrote its files and drops overrides of backups the recipe no longer
+// has (warnings, with the block's own). The spec it parsed is returned for
+// the rest of the save.
+func (r *Repository) cleanBackups(dir string) (xwinterflow.Spec, []string, error) {
+	spec, err := r.appSpec(dir)
 	if err != nil {
-		return cfg
+		return xwinterflow.Spec{}, nil, err
 	}
-	top[instanceKey] = rawMarker
-	if len(list) > 0 {
-		rawList, err := json.Marshal(list)
-		if err != nil {
-			return cfg
-		}
-		top[backupsKey] = rawList
-	}
-	out, err := json.Marshal(top)
-	if err != nil {
-		return cfg
-	}
-	return out
-}
-
-// cleanBackups validates the app's backups after a save wrote its files and
-// drops overrides of backups the recipe no longer has (warnings).
-func (r *Repository) cleanBackups(dir string) ([]string, error) {
-	contents, err := composeContents(dir, r.appComposeFiles(dir))
-	if err != nil {
-		return nil, fmt.Errorf("read compose files: %w", err)
-	}
-	comp, err := recipe.ParseCompose(contents...)
-	if err != nil {
-		return nil, err
-	}
+	comp := spec.Compose
 	overrides, err := r.readOverrides(dir)
 	if err != nil {
-		return nil, err
+		return xwinterflow.Spec{}, nil, err
 	}
 	kept, warnings := recipe.Clean(comp, overrides)
 	if _, err := recipe.Effective(comp, kept); err != nil {
-		return nil, err
+		return xwinterflow.Spec{}, nil, err
 	}
 	if len(kept) != len(overrides) || (len(kept) > 0 && !reflect.DeepEqual(kept, overrides)) {
 		if err := r.writeOverrides(dir, kept); err != nil {
-			return nil, err
+			return xwinterflow.Spec{}, nil, err
 		}
 	}
-	return warnings, nil
+	return spec, append(warnings, spec.Warnings...), nil
 }
 
 // backupProfiles are the compose profiles of the app's enabled custom

@@ -4,18 +4,20 @@ import (
 	"context"
 	"errors"
 
+	"winterflow/internal/domain/compose/xwinterflow"
 	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/template"
 )
 
-// ErrBackupsNotPending is a backups override sent for an instance the
-// agent already confirmed: its backups belong to the app's Backups tab.
+// ErrBackupsNotPending is a backups setting sent for an instance the agent
+// already confirmed: its backups belong to the app's Backups tab.
 var ErrBackupsNotPending = model.Rejected("backups can only be set while the instance is pending; change them in the app's Backups tab")
 
-// ErrNeedsValues marks an update or upgrade the values at hand can't
-// render (a newly required parameter without a default, a stored value the
-// revision's pattern refuses): an "Upgrade all" rollout skips such an
-// instance. The error's message is the validation's.
+// ErrNeedsValues marks an update or upgrade the instance's stored choices
+// can't render: a newly required variable without a value, a stored value
+// the revision's pattern refuses, a hostname whose expose entry the
+// revision no longer has. An "Upgrade all" rollout skips such an instance.
+// The error's message is the validation's.
 var ErrNeedsValues = errors.New("the instance needs new values for this revision")
 
 // needsValues is a values error that also matches ErrNeedsValues.
@@ -29,11 +31,13 @@ type UpdateInput struct {
 	ServerID string
 	Key      string
 	Revision int64
-	Params   map[string]string
+	Values   map[string]string
 	Secrets  map[string]string
-	// Backups overrides the storage of template backup defaults by name;
-	// accepted only while the instance is pending.
-	Backups map[string]string
+	// Hosts, when non-nil, replace the instance's hostnames.
+	Hosts *[]model.InstanceHost
+	// Backups are backup settings by name; accepted only while the
+	// instance is pending.
+	Backups map[string]template.BackupChoice
 }
 
 // live returns the org's instance with key on serverID: model.ErrInstanceNotFound
@@ -54,14 +58,17 @@ func (uc *UseCase) live(ctx context.Context, orgID, serverID, key string) (model
 }
 
 // UpdateInstance re-renders the instance's revision with new values (merged
-// over the stored ones) and redeploys; with in.Revision set it moves to
-// that revision (an upgrade), adding the backup defaults of backups the
-// new revision brings.
+// over the stored ones) and hostnames, and redeploys; with in.Revision set
+// it moves to that revision (an upgrade). An upgrade sends no backups
+// list: the app keeps its settings, and a backup the revision adds starts
+// off.
 //
 // A pending instance was never confirmed by the agent: the agent holds none
 // of its secrets and no backups list. Its render therefore takes every
-// secret from the caller (none is kept) and sends the whole backups list
-// (the template defaults plus in.Backups) instead of marker defaults.
+// secret from the caller (none is kept) and sends the whole backups list:
+// in.Backups when sent (they replace the instance's stored settings), else
+// the stored ones (the create's), less any backup the revision no longer
+// declares.
 func (uc *UseCase) UpdateInstance(ctx context.Context, userID, orgID string, in UpdateInput) (Outcome, error) {
 	inst, err := uc.live(ctx, orgID, in.ServerID, in.Key)
 	if err != nil {
@@ -76,34 +83,39 @@ func (uc *UseCase) UpdateInstance(ctx context.Context, userID, orgID string, in 
 		return Outcome{}, err
 	}
 	revision := inst.Revision
-	upgrade := in.Revision != 0 && in.Revision != inst.Revision
-	if upgrade {
+	if in.Revision != 0 {
 		revision = in.Revision
 	}
-	body, err := uc.revision(ctx, tpl.ID, revision)
+	body, spec, err := uc.revision(ctx, tpl.ID, revision)
 	if err != nil {
 		return Outcome{}, err
 	}
-	marker := &template.Marker{TemplateID: tpl.ID, TemplateName: tpl.Name, Revision: revision, Key: inst.Key}
-	if upgrade && !pending {
-		// The current revision matters only here: which backups are new.
-		current, err := uc.revision(ctx, tpl.ID, inst.Revision)
-		if err != nil {
-			return Outcome{}, err
-		}
-		if marker.BackupDefaults, err = template.NewBackupDefaults(current, body); err != nil {
-			return Outcome{}, err
-		}
+	hosts := inst.Hosts
+	if in.Hosts != nil {
+		hosts = *in.Hosts
 	}
-	stored := template.Stored{Params: inst.Params, SecretNames: inst.SecretNames}
-	input := template.Input{AppID: inst.AppID, Marker: marker}
+	if err := template.CheckHosts(spec, hosts); err != nil {
+		if in.Hosts == nil {
+			return Outcome{}, needsValues{err} // the stored hosts no longer fit
+		}
+		return Outcome{}, err
+	}
+	stored := template.Stored{Values: inst.Params, SecretNames: inst.SecretNames}
+	input := template.Input{
+		AppID: inst.AppID, Name: uc.appName(ctx, inst, tpl.Name), Hosts: hosts,
+		Marker: &template.Marker{TemplateID: tpl.ID, TemplateName: tpl.Name, Revision: revision, Key: inst.Key},
+	}
 	if pending {
 		stored.SecretNames = nil
-		if input.Backups, err = template.CreateBackups(body, in.Backups); err != nil {
+		choices := in.Backups
+		if len(choices) == 0 {
+			choices = declaredOnly(spec, inst.Backups)
+		}
+		if input.Backups, err = template.CreateBackups(spec, choices); err != nil {
 			return Outcome{}, err
 		}
 	}
-	values, err := template.Resolve(body, stored, template.Given{Params: in.Params, Secrets: in.Secrets})
+	values, err := template.Resolve(spec, stored, template.Given{Values: in.Values, Secrets: in.Secrets})
 	if err != nil {
 		return Outcome{}, needsValues{err}
 	}
@@ -116,5 +128,21 @@ func (uc *UseCase) UpdateInstance(ctx context.Context, userID, orgID string, in 
 	if err != nil {
 		return Outcome{}, err
 	}
-	return uc.dispatchSave(ctx, userID, inst, checked, revision, values)
+	if pending && len(in.Backups) > 0 {
+		if err := uc.repo.SetBackups(ctx, inst.ID, in.Backups); err != nil {
+			return Outcome{}, err
+		}
+	}
+	return uc.dispatchSave(ctx, userID, inst, checked, revision, values, hosts)
+}
+
+// declaredOnly is the choices for the backups spec declares.
+func declaredOnly(spec xwinterflow.Spec, choices map[string]template.BackupChoice) map[string]template.BackupChoice {
+	out := map[string]template.BackupChoice{}
+	for _, r := range spec.Compose.Recipe {
+		if c, ok := choices[r.Name]; ok {
+			out[r.Name] = c
+		}
+	}
+	return out
 }

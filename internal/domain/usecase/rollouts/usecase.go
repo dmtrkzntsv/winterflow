@@ -171,8 +171,9 @@ func (uc *UseCase) queue(ctx context.Context, r model.Rollout) (model.RolloutVie
 }
 
 // List returns an org's rollouts of kind: the active ones first, then the
-// ended ones newest first (scopeKey narrows to one scope). Another org's
-// template, or another org as a vars_reload scope, is not found.
+// ended ones newest first (scopeKey narrows to one scope: a template id for
+// template_upgrade, the org id for vars_reload). A template the org can't
+// read, or another org as a vars_reload scope, is not found.
 func (uc *UseCase) List(ctx context.Context, orgID, kind, scopeKey string) ([]model.RolloutView, error) {
 	switch {
 	case kind != model.RolloutTemplateUpgrade && kind != model.RolloutVarsReload:
@@ -183,6 +184,7 @@ func (uc *UseCase) List(ctx context.Context, orgID, kind, scopeKey string) ([]mo
 		if _, err := uc.d.Templates.GetTemplate(ctx, orgID, scopeKey); err != nil {
 			return nil, err
 		}
+		scopeKey = model.UpgradeScopeKey(orgID, scopeKey)
 	}
 	list, err := uc.d.Repo.ListRollouts(ctx, orgID, kind, scopeKey)
 	if err != nil {
@@ -247,6 +249,9 @@ func viewOf(r model.Rollout, name string) model.RolloutView {
 	}
 	if r.Kind == model.RolloutTemplateUpgrade {
 		if s, err := upgradeScope(r); err == nil {
+			// The API names an upgrade's scope by its template; the stored
+			// key also holds the org.
+			v.ScopeKey = s.TemplateID
 			v.Revision = s.Revision
 		}
 	}

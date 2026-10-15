@@ -223,9 +223,12 @@ type SharedVariable struct {
 
 type Template struct {
 	ID             string
-	OrgID          string
+	Source         string
+	OrgID          *string
+	Slug           string
 	Name           string
 	LatestRevision int64
+	WithdrawnAt    *types.DateTime
 	CreatedAt      types.DateTime
 	CreatedBy      string
 	UpdatedAt      types.DateTime
@@ -239,8 +242,11 @@ type TemplateInstance struct {
 	ServerID    string
 	TemplateID  *string
 	Revision    int64
+	Name        string
 	Params      string
 	SecretNames string
+	Hosts       string
+	Backups     string
 	RequestHash string
 	State       string
 	LastError   string
@@ -253,6 +259,7 @@ type TemplateRevision struct {
 	Revision   int64
 	Body       string
 	Note       string
+	Digest     string
 	CreatedAt  types.DateTime
 	CreatedBy  string
 }

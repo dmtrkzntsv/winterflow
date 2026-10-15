@@ -2,13 +2,11 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 	"time"
 
-	"winterflow/internal/domain/backup/recipe"
 	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/port"
@@ -78,37 +76,6 @@ func TestObserversRunAfterTheDB(t *testing.T) {
 	if _, err := uc.ControlApp(context.Background(), "u", "srv", "a1", command.ControlStart); err != nil || disp.last().OnResult != nil {
 		t.Fatalf("plain control: %v", err)
 	}
-}
-
-// An upgrade's backup defaults need their storage on the server like a
-// backups list does.
-func TestSaveChecksInstanceBackupDefaults(t *testing.T) {
-	ss := newFakeServerStorages(model.StorageSummary{Name: "disk", Type: model.StorageLocal, Location: "/mnt"})
-	uc := newStoragesUseCase(&recordingDispatcher{}, ss)
-	compose := "services: {app: {image: x, volumes: [data:/data]}}\nvolumes: {data: {}}\nx-winterflow:\n  backups:\n" +
-		"    - {name: db, type: sqlite, volume: data, path: a.db}\n    - {name: media, type: files, volume: data}\n"
-	save := func(defaults []recipe.BackupConfig) error {
-		cfg := `{"instance":{"template_id":"t","template_name":"s","revision":2,"key":"k","backup_defaults":` + mustJSON(t, defaults) + `}}`
-		_, err := uc.CheckSave(context.Background(), "srv-1", model.App{ID: "a1", Name: "x"}, command.AppPayload{
-			Config: []byte(cfg), Files: []command.ContentItem{{Name: "compose.yml", Content: []byte(compose)}},
-		}, false)
-		return err
-	}
-	if err := save([]recipe.BackupConfig{{Name: "media", Enabled: true, Storage: "disk"}, {Name: "db", Storage: "gone"}}); err != nil {
-		t.Fatalf("a known storage (and a disabled default's): %v", err)
-	}
-	if err := save([]recipe.BackupConfig{{Name: "media", Enabled: true, Storage: "gone"}}); !errors.Is(err, model.ErrRejected) || !strings.Contains(err.Error(), `no storage "gone"`) {
-		t.Fatalf("an unknown storage: %v", err)
-	}
-}
-
-func mustJSON(t *testing.T, v any) string {
-	t.Helper()
-	raw, err := json.Marshal(v)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(raw)
 }
 
 // A command with an observer keeps its result past the dispatcher's default

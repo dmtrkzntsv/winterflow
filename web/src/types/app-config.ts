@@ -78,6 +78,19 @@ export type StorageVariable = {
   secret: boolean;
 };
 
+// DeclaredVariable is a variable the compose files declare under
+// x-winterflow (app.get's declared_variables): the editor shows these first,
+// as a form. default is the compose file's own value (never a secret's).
+export type DeclaredVariable = {
+  name: string;
+  required: boolean;
+  encrypted: boolean;
+  pattern?: string;
+  description?: string;
+  default: string | null;
+  services: string[] | null;
+};
+
 // Editor working state: the config metadata plus content maps keyed by id.
 export type AppEditorState = {
   config: AppConfig;
@@ -88,6 +101,9 @@ export type AppEditorState = {
   // Read-only rows from the last app.get: provided by the server's
   // storages, never saved with the app's variables.
   storageVariables: StorageVariable[];
+  // The variables the compose files declare (last app.get; none for a new
+  // app): their values are ordinary variables, edited through a form.
+  declared?: DeclaredVariable[];
 };
 
 let counter = 0;

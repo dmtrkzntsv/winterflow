@@ -3,6 +3,7 @@
 // editor state, validating it (editorErrors), and building the app.save
 // payload (encrypting touched secrets, passing the "<encrypted>" placeholder
 // through so the agent preserves stored values).
+import { declaredRow, declaredValueError } from "@/lib/declared-variables";
 import { validHostname } from "@/lib/domains";
 import { ENCRYPTED, encryptSecret } from "@/lib/ecies";
 import type { FieldErrors } from "@/lib/field-errors";
@@ -138,6 +139,7 @@ export function stateFromDetail(
     files,
     variables,
     storageVariables: d.storage_variables ?? [],
+    declared: d.declared_variables ?? [],
   };
 }
 
@@ -200,7 +202,7 @@ function redirectTargetError(r: IngressRedirect): string {
 
 // editorErrors names every problem in the editor's state by field: name,
 // repo_url, branch, files, file:<id>, file:<id>:content, var:<id>,
-// var:<id>:value, domain:<id>, port:<id>, redirect-host:<id>,
+// var:<id>:value, decl:<NAME>, domain:<id>, port:<id>, redirect-host:<id>,
 // redirect-path:<id>, redirect-to:<id>. Ingress rows are
 // read in the order the server's Validate reads them: addresses, then
 // redirects, each claiming its hostname; a path rule needs a hostname
@@ -227,6 +229,12 @@ export function editorErrors(state: AppEditorState): FieldErrors {
     const value = state.variables[v.id] ?? "";
     if (renamedStoredSecret(v, v.name, value)) out[`var:${v.id}:value`] = RENAMED_VAR;
     else if (placeholderMisuse(v, v.name, value)) out[`var:${v.id}:value`] = PLACEHOLDER_REFUSED;
+  }
+  for (const d of state.declared ?? []) {
+    const row = declaredRow(state, d);
+    const value = row ? (state.variables[row.id] ?? "") : "";
+    const message = declaredValueError(d, value, row !== undefined && holdsStoredSecret(row, row.name));
+    if (message) out[`decl:${d.name}`] = message;
   }
 
   const ing = config.ingress;
@@ -324,18 +332,24 @@ export async function buildSavePayload(
     if (renamedStoredSecret(v, v.name, value)) throw new Error(`${v.name.trim() || "A variable"}: ${RENAMED_VAR}`);
     if (placeholderMisuse(v, v.name, value)) throw new Error(`${v.name.trim() || "A variable"}: ${PLACEHOLDER_REFUSED}`);
   }
+  // A declared variable left empty is not sent: the compose file's own
+  // value stands.
+  const declaredNames = new Set((state.declared ?? []).map((d) => d.name));
+  const sentVariables = state.config.variables.filter(
+    (v) => !(declaredNames.has(v.name.trim()) && (state.variables[v.id] ?? "") === "" && !holdsStoredSecret(v, v.name)),
+  );
   const fileKept = (f: AppFileMeta) => keepsStored(f, f.filename, state.files[f.id] ?? "");
   const varKept = (v: AppVariableMeta) => keepsStored(v, v.name, state.variables[v.id] ?? "");
   const needsKey =
     state.config.files.some((f) => f.is_encrypted && !fileKept(f)) ||
-    state.config.variables.some((v) => v.is_encrypted && !varKept(v));
+    sentVariables.some((v) => v.is_encrypted && !varKept(v));
   const publicKey = needsKey ? await getPublicKey() : "";
 
   const files = await Promise.all(
     state.config.files.map((f) => mapItem(f.filename, state.files[f.id] ?? "", f.is_encrypted, fileKept(f), publicKey)),
   );
   const variables = await Promise.all(
-    state.config.variables.map((v) => mapItem(v.name, state.variables[v.id] ?? "", v.is_encrypted, varKept(v), publicKey)),
+    sentVariables.map((v) => mapItem(v.name, state.variables[v.id] ?? "", v.is_encrypted, varKept(v), publicKey)),
   );
 
   const config = {
@@ -347,7 +361,7 @@ export async function buildSavePayload(
       filename: f.filename.trim(),
       is_encrypted: f.is_encrypted,
     })),
-    variables: state.config.variables.map((v) => ({
+    variables: sentVariables.map((v) => ({
       name: v.name.trim(),
       is_encrypted: v.is_encrypted,
     })),

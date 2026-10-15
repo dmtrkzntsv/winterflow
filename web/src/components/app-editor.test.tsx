@@ -82,6 +82,29 @@ describe("AppEditor storage variables", () => {
   });
 });
 
+describe("AppEditor declared variables", () => {
+  it("shows the declared variables' form first and lists only the others below", () => {
+    const s = emptyEditorState();
+    const state: AppEditorState = {
+      ...s,
+      declared: [{ name: "BASE_URL", required: true, encrypted: false, default: null, services: ["app"] }],
+      config: {
+        ...s.config,
+        variables: [
+          { id: "a", name: "BASE_URL", is_encrypted: false },
+          { id: "b", name: "EXTRA", is_encrypted: false },
+        ],
+      },
+      variables: { a: "https://x", b: "1" },
+    };
+    render(<Harness initial={state} />);
+    expect(screen.getByRole("group", { name: "Declared variables" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Other variables" })).toBeInTheDocument();
+    const names = screen.getAllByRole("textbox", { name: "Variable name" }).map((el) => (el as HTMLInputElement).value);
+    expect(names).toEqual(["EXTRA"]);
+  });
+});
+
 describe("AppEditor", () => {
   it("shows only what runs: no name, icon, colour or description", () => {
     render(<Harness initial={emptyEditorState()} />);

@@ -247,3 +247,166 @@ func TestRunHelperPassesTheOverrideFileLast(t *testing.T) {
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}
 }
+
+// renamedCompose is varsCompose's app service renamed to web.
+var renamedCompose = strings.ReplaceAll(strings.ReplaceAll(varsCompose, "  app:\n", "  web:\n"), "container: app", "container: web")
+
+// overrideOf is the app's override file ("" when there is none).
+func overrideOf(t *testing.T, r *Repository, appID string) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(r.appDataDir(appID), composeOverrideRel))
+	if os.IsNotExist(err) {
+		return ""
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
+}
+
+// The override file follows every commit, not only a deploy: a draft that
+// renames the exposed service, a rollback and a source update leave no file
+// naming a service the compose files no longer have (every compose command
+// before the next deploy would fail on it).
+func TestOverrideFileFollowsEveryCommit(t *testing.T) {
+	r, _ := portRepo(t)
+	calls := recordCompose(r)
+	p := exposePayload("app-1", varsCompose, "")
+	p.Variables = []command.ContentItem{{Name: "BASE_URL", Content: []byte("https://x.example.com")}}
+	v1, _, err := r.SaveAppResult(context.Background(), p, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := overrideOf(t, r, "app-1"); !strings.Contains(got, "  app:\n") || !strings.Contains(got, "BASE_URL: ${BASE_URL}") {
+		t.Fatalf("deployed override:\n%s", got)
+	}
+
+	p.Files[0].Content = []byte(renamedCompose)
+	if _, _, err := r.SaveAppResult(context.Background(), p, true); err != nil {
+		t.Fatal(err)
+	}
+	got := overrideOf(t, r, "app-1")
+	if strings.Contains(got, "  app:\n") || !strings.Contains(got, "  web:\n") || !strings.Contains(got, `:8080"`) {
+		t.Fatalf("draft override:\n%s", got)
+	}
+
+	if _, err := r.rollbackWithoutDeploy("app-1", v1); err != nil {
+		t.Fatal(err)
+	}
+	if got := overrideOf(t, r, "app-1"); !strings.Contains(got, "  app:\n") || strings.Contains(got, "  web:\n") {
+		t.Fatalf("rolled-back override:\n%s", got)
+	}
+
+	// A draft without the block removes the file.
+	p.Files[0].Content = []byte("services:\n  app: { image: nginx }\n")
+	if _, _, err := r.SaveAppResult(context.Background(), p, true); err != nil {
+		t.Fatal(err)
+	}
+	if got := overrideOf(t, r, "app-1"); got != "" {
+		t.Fatalf("override kept without a block:\n%s", got)
+	}
+	if len(*calls) != 1 { // only the first save deployed
+		t.Fatalf("compose calls: %v", *calls)
+	}
+}
+
+// A deploy refused on a value keeps an override file of the current
+// services, without the variables' lines.
+func TestRefusedValueLeavesACurrentOverrideFile(t *testing.T) {
+	r, _ := portRepo(t)
+	recordCompose(r)
+	p := exposePayload("app-1", varsCompose, "")
+	p.Variables = []command.ContentItem{{Name: "BASE_URL", Content: []byte("https://x.example.com")}}
+	if _, _, err := r.SaveAppResult(context.Background(), p, false); err != nil {
+		t.Fatal(err)
+	}
+	p.Files[0].Content = []byte(renamedCompose)
+	p.Variables = []command.ContentItem{{Name: "BASE_URL", Content: []byte("not-a-url")}}
+	if _, _, err := r.SaveAppResult(context.Background(), p, false); !errors.Is(err, xwinterflow.ErrValue) {
+		t.Fatalf("err = %v", err)
+	}
+	got := overrideOf(t, r, "app-1")
+	if strings.Contains(got, "  app:\n") || !strings.Contains(got, "  web:\n") || strings.Contains(got, "BASE_URL") {
+		t.Fatalf("override after a refused value:\n%s", got)
+	}
+	if !strings.Contains(got, "PIN_CODE: ${PIN}") || !strings.Contains(got, `:8080"`) {
+		t.Fatalf("override lost what it can apply:\n%s", got)
+	}
+}
+
+// A git source update renaming the exposed service re-renders the file.
+func TestSourceUpdateRefreshesTheOverrideFile(t *testing.T) {
+	r, _ := portRepo(t)
+	up, commit := newUpstream(t)
+	commit("compose.yml", "services:\n  app: { image: nginx }\nx-winterflow:\n  expose: [{ container: app, port: 80 }]\n")
+	if _, err := r.saveWithoutDeploy(sourcePayload(up, "")); err != nil {
+		t.Fatal(err)
+	}
+	if got := overrideOf(t, r, "git-app"); !strings.Contains(got, "  app:\n") {
+		t.Fatalf("override:\n%s", got)
+	}
+	commit("compose.yml", "services:\n  web: { image: nginx }\nx-winterflow:\n  expose: [{ container: web, port: 80 }]\n")
+	if changed, _, err := r.refreshSourceWithoutDeploy("git-app"); err != nil || !changed {
+		t.Fatalf("refresh = %v %v", changed, err)
+	}
+	if got := overrideOf(t, r, "git-app"); strings.Contains(got, "  app:\n") || !strings.Contains(got, "  web:\n") {
+		t.Fatalf("override after the update:\n%s", got)
+	}
+}
+
+// compose down (stop, delete, a restore's stop) never passes the override
+// file: it needs only the project's containers.
+func TestComposeDownLeavesOutTheOverrideFile(t *testing.T) {
+	r, _ := portRepo(t)
+	if _, err := r.saveWithoutDeploy(exposePayload("app-1", exposeCompose, "")); err != nil {
+		t.Fatal(err)
+	}
+	if overrideOf(t, r, "app-1") == "" {
+		t.Fatal("no override file to leave out")
+	}
+	calls := recordCompose(r)
+	for _, volumes := range []bool{false, true} {
+		if err := r.composeDown(context.Background(), "app-1", volumes); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, args := range *calls {
+		if strings.Contains(strings.Join(args, " "), composeOverrideRel) || lastF(args) != "compose.yml" {
+			t.Fatalf("down args = %v", args)
+		}
+	}
+	if len(*calls) != 2 {
+		t.Fatalf("calls = %v", *calls)
+	}
+}
+
+// The override file is replaced whole (temp file and rename): a symlink in
+// its place is replaced, its target never written.
+func TestOverrideFileIsWrittenAtomically(t *testing.T) {
+	r, _ := portRepo(t)
+	if _, err := r.saveWithoutDeploy(exposePayload("app-1", "services:\n  app: { image: nginx }\n", "")); err != nil {
+		t.Fatal(err)
+	}
+	dir := r.appDataDir("app-1")
+	target := filepath.Join(t.TempDir(), "elsewhere.yml")
+	writeFileT(t, filepath.Dir(target), filepath.Base(target), "untouched\n")
+	if err := os.MkdirAll(filepath.Join(dir, ".winterflow"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(dir, composeOverrideRel)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.saveWithoutDeploy(exposePayload("app-1", exposeCompose, "")); err != nil {
+		t.Fatal(err)
+	}
+	if raw, _ := os.ReadFile(target); string(raw) != "untouched\n" {
+		t.Fatalf("symlink target written: %s", raw)
+	}
+	info, err := os.Lstat(filepath.Join(dir, composeOverrideRel))
+	if err != nil || !info.Mode().IsRegular() {
+		t.Fatalf("override file = %v %v", info, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, composeOverrideRel+".tmp")); !os.IsNotExist(err) {
+		t.Fatalf("temp file left: %v", err)
+	}
+}

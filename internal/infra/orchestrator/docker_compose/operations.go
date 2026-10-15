@@ -174,6 +174,9 @@ func (r *Repository) save(app command.AppPayload, forDeploy bool) (string, []str
 	} else if err = r.materializeSecrets(dir, store); err != nil {
 		err = fmt.Errorf("materialize secrets: %w", err)
 	}
+	// The override file follows the compose files just committed, a draft's
+	// too: until the next deploy, every compose command passes it.
+	r.refreshComposeOverride(app.AppID, dir)
 	if err != nil {
 		return "", nil, err
 	}
@@ -368,7 +371,9 @@ func (r *Repository) rollbackWithoutDeploy(appID, hash string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("commit rollback: %w", err)
 	}
-	if err := r.materializeForDeploy(dir, loadSecretStore(dir)); err != nil {
+	err = r.materializeForDeploy(dir, loadSecretStore(dir))
+	r.refreshComposeOverride(appID, dir)
+	if err != nil {
 		return "", err
 	}
 	// The restored config may carry a different name — keep the symlink true.
@@ -513,7 +518,9 @@ func (r *Repository) refreshSourceWithoutDeploy(appID string) (bool, string, err
 	} else if err := r.syncPorts(appID, dir, spec.Expose, ports, pinnedOnly(ports)); err != nil {
 		r.log.Warn("source update: allocate ports", "app_id", appID, "error", err)
 	}
-	if _, err := gitCommitAll(dir, "update source to "+short); err != nil {
+	_, err = gitCommitAll(dir, "update source to "+short)
+	r.refreshComposeOverride(appID, dir) // source/ moved either way
+	if err != nil {
 		return false, "", fmt.Errorf("commit source update: %w", err)
 	}
 	return true, sha, nil
@@ -660,6 +667,12 @@ func (r *Repository) composeArgs(appID string, verb ...string) []string {
 // COMPOSE_PROFILES handling). The x-winterflow override file, when a deploy
 // wrote one, is the last -f.
 func (r *Repository) composeArgsFor(appID string, files, profiles []string, verb ...string) []string {
+	return r.composeArgsWith(appID, files, profiles, true, verb...)
+}
+
+// composeArgsWith is composeArgsFor, passing the override file only with
+// override.
+func (r *Repository) composeArgsWith(appID string, files, profiles []string, override bool, verb ...string) []string {
 	args := []string{"compose", "--project-name", projectName(appID)}
 	dir := r.appDataDir(appID)
 	for _, f := range files {
@@ -677,7 +690,7 @@ func (r *Repository) composeArgsFor(appID string, files, profiles []string, verb
 		}
 	}
 	// The x-winterflow override file goes last, over every compose file.
-	if _, err := os.Stat(filepath.Join(dir, composeOverrideRel)); err == nil {
+	if _, err := os.Stat(filepath.Join(dir, composeOverrideRel)); err == nil && override {
 		args = append(args, "-f", composeOverrideRel)
 	}
 	for _, p := range profiles {
@@ -765,9 +778,12 @@ func (r *Repository) composeDown(ctx context.Context, appID string, volumes bool
 		return nil
 	}
 	// Every profile is activated: down removes all of the project's services,
-	// whatever the recipe says or whether it can be read at all.
+	// whatever the recipe says or whether it can be read at all. The
+	// override file is left out: it only adds ports and environment to the
+	// services, which down doesn't need, so a stop or a delete never depends
+	// on it.
 	dir := r.appDataDir(appID)
-	args := r.composeArgsFor(appID, r.appComposeFiles(dir), []string{"*"}, composeDownVerb(volumes)...)
+	args := r.composeArgsWith(appID, r.appComposeFiles(dir), []string{"*"}, false, composeDownVerb(volumes)...)
 	return r.composeExec(ctx, appID, args)
 }
 

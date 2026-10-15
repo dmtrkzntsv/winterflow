@@ -11,26 +11,28 @@ const notifications = { connected: true, subscribe: () => () => {}, waitFor: vi.
 
 const body = (image: string, extra: Record<string, string> = {}): TemplateBody => ({
   files: { "compose.yaml": `services:\n  app:\n    image: ${image}\n`, ...extra },
-  parameters: [{ name: "NAME", required: true }],
-  app_name: "${NAME}",
+  summary: "A shop",
+  description: "",
   icon: "",
   color: "",
-  ingress: null,
-  backups: null,
 });
 
 const BODIES: Record<string, TemplateBody> = {
   "1": body("app:1"),
   "2": body("app:1", { Caddyfile: ":80" }),
-  "3": { ...body("app:2", { Caddyfile: ":80" }), app_name: "shop-${NAME}" },
+  "3": { ...body("app:2", { Caddyfile: ":80" }), summary: "A shop for teams" },
 };
 
 const VIEW: TemplateView = {
   id: "t1",
+  source: "org",
+  slug: "",
   name: "shop",
   latest_revision: 3,
+  withdrawn_at: null,
   revision: 3,
   body: BODIES["3"],
+  detected: { variables: [], expose: [], backups: [], warnings: [] },
   note: "",
   created_at: "2026-10-12T10:00:00Z",
   created_by: "u1",
@@ -71,7 +73,7 @@ describe("TemplateRevisions", () => {
     expect(within(compose).getByText("- image: app:1", { exact: false })).toBeInTheDocument();
     expect(within(compose).getByText("+ image: app:2", { exact: false })).toBeInTheDocument();
     const settings = screen.getByRole("region", { name: "Changes to template settings" });
-    expect(settings).toHaveTextContent('+ "app_name": "shop-${NAME}",');
+    expect(settings).toHaveTextContent('+ "summary": "A shop for teams"');
 
     await user.click(screen.getByRole("button", { name: "Changes from version 1" }));
     const added = await screen.findByRole("region", { name: "Changes to Caddyfile" });

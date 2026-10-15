@@ -11,11 +11,13 @@ import { PageHeader } from "@/components/page-header";
 import { useTemplateLooks } from "@/hooks/use-template-looks";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
 import { NEW_TEMPLATE_PATH, templatePath } from "@/lib/routes";
-import { usageLabel, type TemplateSummary } from "@/lib/templates";
+import { orgTemplates, usageLabel, type TemplateSummary } from "@/lib/templates";
 import { relativeTime } from "@/lib/utils";
 
-// OrgTemplatesPage is /templates: the organization's templates as cards
-// (how many apps use each, when it last changed) and New template.
+// OrgTemplatesPage is /templates: the organization's own templates as cards
+// (how many apps use each, when it last changed) and New template. (The
+// catalog's templates, listed after them by the API, get their section with
+// the catalog gallery.)
 export default function OrgTemplatesPage() {
   const api = useTemplatesApi();
   const [list, setList] = useState<TemplateSummary[] | null>(null);
@@ -23,7 +25,10 @@ export default function OrgTemplatesPage() {
   const looks = useTemplateLooks(api, list);
 
   useEffect(() => {
-    api.listTemplates().then(setList, (e: unknown) => setError(e instanceof Error ? e.message : "Failed to load templates"));
+    api.listTemplates().then(
+      (all) => setList(orgTemplates(all)),
+      (e: unknown) => setError(e instanceof Error ? e.message : "Failed to load templates"),
+    );
   }, [api]);
 
   return (

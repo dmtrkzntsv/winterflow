@@ -33,13 +33,13 @@ describe("OrgTemplatesPage", () => {
     fakeAPI({
       "/api/v1/template/get-templates": {
         templates: [
-          { id: "t1", name: "notes", latest_revision: 2, instances: 0, behind: 0, updated_at: "2026-10-12T10:00:00Z" },
-          { id: "t2", name: "plain", latest_revision: 1, instances: 0, behind: 0, updated_at: "2026-10-12T10:00:00Z" },
+          { id: "t1", source: "org", name: "notes", latest_revision: 2, instances: 0, behind: 0, updated_at: "2026-10-12T10:00:00Z" },
+          { id: "t2", source: "org", name: "plain", latest_revision: 1, instances: 0, behind: 0, updated_at: "2026-10-12T10:00:00Z" },
         ],
       },
       "/api/v1/template/get-template": (_: unknown, q: URLSearchParams) =>
         q.get("id") === "t1"
-          ? { id: "t1", name: "notes", revision: 2, latest_revision: 2, body: { icon: "book", color: "#0d9488" } }
+          ? { id: "t1", source: "org", name: "notes", revision: 2, latest_revision: 2, body: { icon: "book", color: "#0d9488" } }
           : new Error("gone"),
     });
     renderPage();
@@ -57,7 +57,7 @@ describe("OrgTemplatesPage", () => {
     const user = userEvent.setup();
     fakeAPI({
       "/api/v1/template/get-templates": {
-        templates: [{ id: "t1", name: "twillingate", latest_revision: 5, instances: 12, behind: 3, updated_at: "2026-10-12T10:00:00Z" }],
+        templates: [{ id: "t1", source: "org", name: "twillingate", latest_revision: 5, instances: 12, behind: 3, updated_at: "2026-10-12T10:00:00Z" }],
       },
     });
     renderPage();
@@ -69,6 +69,20 @@ describe("OrgTemplatesPage", () => {
     expect(screen.queryByText("r5")).not.toBeInTheDocument();
     await user.click(card);
     expect(await screen.findByText("template page")).toBeInTheDocument();
+  });
+
+  it("lists the org's own templates only (the catalog's come with the gallery)", async () => {
+    fakeAPI({
+      "/api/v1/template/get-templates": {
+        templates: [
+          { id: "t1", source: "org", name: "mine", latest_revision: 1, instances: 0, behind: 0, updated_at: "2026-10-12T10:00:00Z" },
+          { id: "c1", source: "catalog", slug: "actual", name: "Actual Budget", latest_revision: 1, instances: 0, behind: 0, updated_at: "2026-10-12T10:00:00Z" },
+        ],
+      },
+    });
+    renderPage();
+    expect(await screen.findByRole("link", { name: /mine/ })).toBeInTheDocument();
+    expect(screen.queryByText("Actual Budget")).not.toBeInTheDocument();
   });
 
   it("offers New template as a link, and says what to do when there is none", async () => {

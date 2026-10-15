@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { Ellipsis, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -19,6 +19,7 @@ import { NotFound } from "@/components/not-found";
 import { PageHeader } from "@/components/page-header";
 import { LoadError, PageSpinner } from "@/components/page-states";
 import { RolloutStrip } from "@/components/rollout-strip";
+import { TemplateDetected } from "@/components/template-detected";
 import { TemplateEditor } from "@/components/template-editor";
 import { TemplateInstances } from "@/components/template-instances";
 import { TemplateRevisions } from "@/components/template-revisions";
@@ -27,6 +28,7 @@ import { useServers } from "@/context/use-servers";
 import { useRollout } from "@/hooks/use-rollout";
 import { useRolloutsApi } from "@/hooks/use-rollouts-api";
 import { useTabParam } from "@/hooks/use-tab-param";
+import { useTemplateInspection } from "@/hooks/use-template-inspection";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
 import { isActive } from "@/lib/rollouts";
 import { bodyFromDraft, draftFromBody, draftProblem, emptyDraft, type DraftState, type TemplateDraft } from "@/lib/template-draft";
@@ -179,6 +181,21 @@ export default function TemplatePage() {
   };
 
   const dirty = baseline === null || !sameDraft(draft, baseline);
+  // The Detected panel: a saved version's own reading until the draft
+  // changes, else the API's reading of the draft (inspect-template).
+  const body = useMemo(() => bodyFromDraft(draft), [draft]);
+  const reading = dirty || !view;
+  const inspected = useTemplateInspection(api, body, reading);
+  const detectedPanel = reading ? (
+    <TemplateDetected
+      detected={inspected.inspection?.detected ?? null}
+      problem={inspected.checking ? "" : (inspected.inspection?.problem ?? "")}
+      error={inspected.error}
+      checking={inspected.checking}
+    />
+  ) : (
+    <TemplateDetected detected={view?.detected ?? null} />
+  );
 
   const problem = tried ? draftProblem(draft) : null;
 
@@ -192,13 +209,13 @@ export default function TemplatePage() {
       const saved = await api.saveTemplate({
         ...(view ? { id: view.id } : {}),
         name: draft.name,
-        body: bodyFromDraft(draft),
+        body,
         ...(note.trim() ? { note: note.trim() } : {}),
         base_revision: view?.latest_revision ?? 0,
       });
       toast.success(`Saved version ${saved.revision}`);
       if (saved.warnings?.length) {
-        toast.warning("Check these references", { description: saved.warnings.join("\n") });
+        toast.warning("Check these warnings", { description: saved.warnings.join("\n") });
       }
       setNote("");
       if (!view) {
@@ -292,7 +309,7 @@ export default function TemplatePage() {
           </Button>
         </StickyActionBar>
       ) : null}
-      <TemplateEditor draft={draft} onChange={setDraft} />
+      <TemplateEditor draft={draft} onChange={setDraft} detected={detectedPanel} />
     </>
   );
 
@@ -343,8 +360,9 @@ export default function TemplatePage() {
       {prefill ? (
         <div className="space-y-2 rounded-md border bg-muted/30 px-4 py-3 text-sm text-muted-foreground">
           <p>
-            Built from <span className="font-medium text-foreground">{prefill.appName}</span>. Replace what else differs
-            per app, such as hostnames, with <code className="font-mono">{"${PARAM}"}</code> parameters before saving.
+            Built from <span className="font-medium text-foreground">{prefill.appName}</span>. Before saving, declare under{" "}
+            <code className="font-mono">x-winterflow</code> what differs per app: the variables each app fills in and the
+            ports it exposes.
           </p>
           {prefill.notes.length ? (
             <ul className="list-disc space-y-1 pl-4">

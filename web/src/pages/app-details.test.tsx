@@ -113,7 +113,7 @@ function NewTemplate() {
   const state = useLocation().state as DraftState;
   return (
     <p>
-      new template {state.draft.name} with {state.draft.parameters.length} parameters from {state.appName}
+      new template {state.draft.name} with {state.draft.files.length} files from {state.appName}: {state.notes.join(" ")}
     </p>
   );
 }
@@ -1136,7 +1136,11 @@ describe("AppDetailsPage: Save as template", () => {
     }));
     renderPage("/app/a1?tab=settings", {}, { ctx: { getApp } });
     await user.click(await screen.findByRole("button", { name: "Save as template" }));
-    expect(await screen.findByText("new template shop with 1 parameters from Shop")).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        "new template shop with 1 files from Shop: The app's variable values stay with the app: declare what each app fills in under x-winterflow.variables.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("reports an app it can't read", async () => {

@@ -1,0 +1,81 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+
+import { apiBaseUrl } from "@/config";
+import { WaitTimeoutError } from "@/context/notifications-context-base";
+import { useNotifications } from "@/context/use-notifications";
+import { readApiError } from "@/lib/api";
+import type { ProcessList } from "@/lib/processes";
+
+export const PROCESS_POLL_MS = 5000;
+export const PROCESS_WAIT_MS = 15000;
+
+const base = apiBaseUrl.endsWith("/") ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
+
+type State = { serverId: string | null; data: ProcessList | null; error: string | null; updatedAt: number | null };
+
+// useProcesses polls the server's process list while enabled: one request
+// at a time (dispatch, wait for its SSE result, then 5 s), so a slow agent
+// never piles requests up. Disabling, unmounting or another server stops
+// the loop; a reply that arrives after that is dropped.
+export function useProcesses(serverId: string | null, enabled: boolean) {
+  const { waitFor } = useNotifications();
+  const [state, setState] = useState<State>({ serverId: null, data: null, error: null, updatedAt: null });
+  // wake ends the loop's current wait (Refresh); a no-op otherwise.
+  const wake = useRef<() => void>(() => {});
+
+  useEffect(() => {
+    if (!serverId || !enabled) return;
+    let live = true;
+    const ctl = new AbortController();
+    let timer: number | undefined;
+    let resolveSleep: (() => void) | undefined;
+    const sleep = (ms: number) =>
+      new Promise<void>((r) => {
+        resolveSleep = r;
+        timer = window.setTimeout(r, ms);
+      });
+    wake.current = () => {
+      window.clearTimeout(timer);
+      resolveSleep?.();
+    };
+    const update = (patch: Partial<State>) =>
+      setState((cur) => ({ ...(cur.serverId === serverId ? cur : { data: null, error: null, updatedAt: null }), ...patch, serverId }));
+
+    void (async () => {
+      while (live) {
+        try {
+          const res = await fetch(`${base}/api/v1/server/get-processes?server_id=${encodeURIComponent(serverId)}`, {
+            credentials: "include",
+            signal: ctl.signal,
+          });
+          if (!res.ok) throw await readApiError(res);
+          const accepted = (await res.json()) as { data?: { request_id?: string } };
+          const ref = accepted.data?.request_id;
+          if (!ref) throw new Error("No request id");
+          const n = await waitFor(ref, PROCESS_WAIT_MS);
+          if (!live) return;
+          if (n.status && n.status !== 0) throw new Error(n.error || "Failed to list processes");
+          update({ data: n.payload as ProcessList, error: null, updatedAt: Date.now() });
+        } catch (e) {
+          if (!live) return;
+          update({
+            error: e instanceof WaitTimeoutError ? "The server did not answer in time." : e instanceof Error ? e.message : "Failed to list processes",
+          });
+        }
+        if (!live) return;
+        await sleep(PROCESS_POLL_MS);
+      }
+    })();
+
+    return () => {
+      live = false;
+      ctl.abort();
+      window.clearTimeout(timer);
+      wake.current = () => {};
+    };
+  }, [serverId, enabled, waitFor]);
+
+  const refresh = useCallback(() => wake.current(), []);
+  const mine = state.serverId === serverId;
+  return { data: mine ? state.data : null, error: mine ? state.error : null, updatedAt: mine ? state.updatedAt : null, refresh };
+}

@@ -23,13 +23,23 @@ func valueError(name, format string, args ...any) error {
 // match the pattern and may not contain $ (compose interpolates .env). A
 // secret's pattern is checked once it is decrypted (CheckSecretValues).
 func (s Spec) CheckValues(plain map[string]string, secret map[string]bool) error {
+	return s.checkValues(plain, secret, true)
+}
+
+// CheckDraftValues is CheckValues for a draft: a required variable may
+// still be empty (the deploy needs it), every other rule applies.
+func (s Spec) CheckDraftValues(plain map[string]string, secret map[string]bool) error {
+	return s.checkValues(plain, secret, false)
+}
+
+func (s Spec) checkValues(plain map[string]string, secret map[string]bool, required bool) error {
 	for _, v := range s.Variables {
 		if secret[v.Name] {
 			continue
 		}
 		val := plain[v.Name]
 		switch {
-		case val == "" && v.Required:
+		case val == "" && v.Required && required:
 			return valueError(v.Name, "a value is required")
 		case val == "":
 		case v.Encrypted:

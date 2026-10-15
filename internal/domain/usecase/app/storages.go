@@ -64,8 +64,9 @@ func payloadCompose(p command.AppPayload) [][]byte {
 // files declare (a required one missing, a plain value failing its pattern
 // or holding $) or whose pins the app can't take; the pins' syntax is
 // checked even without a compose file in the request. Secret values are
-// ciphertext here: the agent checks their pattern once decrypted.
-func checkDeclared(spec *xwinterflow.Spec, p command.AppPayload) error {
+// ciphertext here: the agent checks their pattern once decrypted. A draft
+// may leave a required variable empty (its deploy may not).
+func checkDeclared(spec *xwinterflow.Spec, p command.AppPayload, draft bool) error {
 	pins, _, err := model.ParsePorts(p.Config)
 	if err != nil || spec == nil {
 		return err
@@ -80,6 +81,9 @@ func checkDeclared(spec *xwinterflow.Spec, p command.AppPayload) error {
 		} else {
 			plain[v.ItemName()] = string(v.Content)
 		}
+	}
+	if draft {
+		return spec.CheckDraftValues(plain, secret)
 	}
 	return spec.CheckValues(plain, secret)
 }

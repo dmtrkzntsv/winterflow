@@ -31,10 +31,12 @@ export function declaredRow(state: AppEditorState, v: DeclaredVariable): AppVari
 }
 
 // declaredValueError is what blocks value for v ("" when nothing):
-// held says a stored secret stands for it (left as is or empty).
-export function declaredValueError(v: DeclaredVariable, value: string, held: boolean): string {
+// held says a stored secret stands for it (left as is or empty). A draft
+// may leave a required variable empty (the server agrees: only a deploy
+// needs it).
+export function declaredValueError(v: DeclaredVariable, value: string, held: boolean, draft = false): string {
   if (held && (value === "" || value === ENCRYPTED)) return "";
-  if (value === "") return v.required ? "Enter a value: this variable is required." : "";
+  if (value === "") return v.required && !draft ? "Enter a value: this variable is required." : "";
   if (!v.encrypted && value.includes("$")) return "A plain value can't contain $.";
   return "";
 }

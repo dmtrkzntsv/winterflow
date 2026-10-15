@@ -73,6 +73,30 @@ func TestSaveAppXWinterflow(t *testing.T) {
 	}
 }
 
+// A draft save may leave a required declared variable empty; a deploying
+// save may not.
+func TestSaveAppDraftWithoutARequiredValue(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	owner := e.claim(t)
+	sid := owner.serverID(t)
+	body := func(draft bool) happ.SaveAppRequest {
+		return happ.SaveAppRequest{
+			ServerID: sid, App: model.App{Name: "notes", Icon: "box", Color: "#112233"}, Config: json.RawMessage(`{}`),
+			Files: []happ.ContentItemRequest{{Name: "compose.yml", Content: xwfCompose}}, Draft: draft,
+		}
+	}
+	r := owner.do(t, call{Method: http.MethodPost, Path: "/api/v1/app/save-app", Body: body(false)})
+	r.expect(t, http.StatusBadRequest)
+	if !strings.Contains(string(r.Body), "variable BASE_URL: a value is required") {
+		t.Fatalf("body = %s", r.Body)
+	}
+	owner.succeed(t, call{Method: http.MethodPost, Path: "/api/v1/app/save-app", Body: body(true)}, nil)
+	if n := len(e.agent.seen(command.TypeAppSave)); n != 1 {
+		t.Fatalf("%d save(s) reached the agent, want the draft", n)
+	}
+}
+
 // get-app carries the declared variables and the expose entries with their
 // host ports (validated against api/openapi.yaml like every answer).
 func TestGetAppXWinterflow(t *testing.T) {

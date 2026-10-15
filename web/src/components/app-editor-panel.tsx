@@ -23,12 +23,13 @@ import type { AppEditorState } from "@/types/app-config";
 
 const NO_ERRORS: FieldErrors = {};
 
-// panelErrors are editorErrors' problems the Configuration tab can show.
-// Without the built-in proxy, or until the server is known, the Domains
-// section is not shown, so a stored address or redirect (saved as it was
-// loaded) can't block Save invisibly.
-function panelErrors(state: AppEditorState, domainsShown: boolean): FieldErrors {
-  const found = editorErrors(state);
+// panelErrors are editorErrors' problems the Configuration tab can show
+// (for a draft: without a required variable left empty). Without the
+// built-in proxy, or until the server is known, the Domains section is not
+// shown, so a stored address or redirect (saved as it was loaded) can't
+// block Save invisibly.
+function panelErrors(state: AppEditorState, domainsShown: boolean, draft: boolean): FieldErrors {
+  const found = editorErrors(state, draft);
   if (domainsShown) return found;
   return Object.fromEntries(
     Object.entries(found).filter(([k]) => !/^(domain:|port:|redirect-)/.test(k)),
@@ -72,6 +73,9 @@ export function AppEditorPanel({
   // sections holding a bad field again.
   const [tried, setTried] = useState(false);
   const [refused, setRefused] = useState(0);
+  // triedDraft: the refused save was a draft's, whose rules the messages
+  // then follow.
+  const [triedDraft, setTriedDraft] = useState(false);
   // stale: the app changed (History, an update) while this editor held edits.
   const [stale, setStale] = useState(false);
   const root = useRef<HTMLDivElement>(null);
@@ -114,8 +118,9 @@ export function AppEditorPanel({
 
   const handleSave = async (draft: boolean) => {
     if (stale) return;
-    if (Object.keys(panelErrors(state, domainsShown)).length > 0) {
+    if (Object.keys(panelErrors(state, domainsShown, draft)).length > 0) {
       setTried(true);
+      setTriedDraft(draft);
       setRefused((n) => n + 1);
       focusFirstInvalid(root.current);
       return;
@@ -169,7 +174,7 @@ export function AppEditorPanel({
     else void load();
   }, [reloadSignal, dirty, load]);
 
-  const errors = tried ? panelErrors(state, domainsShown) : NO_ERRORS;
+  const errors = tried ? panelErrors(state, domainsShown, triedDraft) : NO_ERRORS;
   const [firstKey, firstMessage] = Object.entries(errors)[0] ?? [];
 
   if (loading) return <PageSpinner />;

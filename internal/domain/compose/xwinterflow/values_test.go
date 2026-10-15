@@ -55,3 +55,20 @@ func TestCheckSecretValues(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// A draft may leave a required variable empty; every other rule holds.
+func TestCheckDraftValues(t *testing.T) {
+	s := parse(t, ModeApp, notes)
+	if err := s.CheckDraftValues(map[string]string{}, map[string]bool{}); err != nil {
+		t.Fatal(err)
+	}
+	for want, plain := range map[string]map[string]string{
+		`variable BASE_URL: "notes" does not match`:        {"BASE_URL": "notes"},
+		"variable BASE_URL: a plain value can't contain $": {"BASE_URL": "https://x/$y"},
+		"variable SESSION_SECRET: it is a secret":          {"SESSION_SECRET": "s"},
+	} {
+		if err := s.CheckDraftValues(plain, map[string]bool{}); !errors.Is(err, ErrValue) || !strings.Contains(err.Error(), want) {
+			t.Fatalf("err = %v, want %q", err, want)
+		}
+	}
+}

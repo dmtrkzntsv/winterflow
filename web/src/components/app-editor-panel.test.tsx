@@ -493,6 +493,24 @@ describe("AppEditorPanel", () => {
     });
   });
 
+  it("saves a draft without a required declared value, but never deploys it", async () => {
+    const user = userEvent.setup();
+    const saveApp = vi.fn<AppsContextValue["saveApp"]>(async () => []);
+    renderPanel(saveApp, vi.fn(async () => {}), {
+      ...detail,
+      declared_variables: [
+        { name: "BASE_URL", required: true, encrypted: false, default: null, services: ["app"] },
+        { name: "LANGUAGE", required: false, encrypted: false, default: "en", services: ["app"] },
+      ],
+    });
+    await user.type(await screen.findByRole("textbox", { name: /LANGUAGE/ }), "de");
+    await user.click(screen.getByRole("button", { name: "Save & redeploy" }));
+    expect(screen.getByRole("textbox", { name: /BASE_URL/ })).toHaveAccessibleDescription("Enter a value: this variable is required.");
+    expect(saveApp).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(saveApp).toHaveBeenCalledWith(expect.objectContaining({ draft: true })));
+  });
+
   it("ends a refused Save draft from the phone ⋯ menu with focus on the first bad field", async () => {
     vi.stubGlobal("matchMedia", () => ({ matches: true, addEventListener: () => {}, removeEventListener: () => {} }));
     const user = userEvent.setup();

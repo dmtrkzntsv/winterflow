@@ -45,6 +45,12 @@ describe("app editor io: declared variables", () => {
     expect(editorErrors(setDeclaredValue(s, BASE, "https://notes.example.com"))).toEqual({});
   });
 
+  it("lets a draft leave a required value empty, nothing else", () => {
+    const s = loaded();
+    expect(editorErrors(s, true)).toEqual({});
+    expect(editorErrors(setDeclaredValue(s, BASE, "has$dollar"), true)).toEqual({ "decl:BASE_URL": "A plain value can't contain $." });
+  });
+
   it("never blocks a save on a pattern: JavaScript's engine is not RE2", async () => {
     const s = setDeclaredValue(setDeclaredValue(loaded(), BASE, "notes"), TOKEN, "x");
     expect(editorErrors(s)).toEqual({});

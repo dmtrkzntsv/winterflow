@@ -477,7 +477,7 @@ func (uc *UseCase) CheckSave(ctx context.Context, serverID string, app model.App
 		}
 		spec = &s
 	}
-	if err := checkDeclared(spec, payload); err != nil {
+	if err := checkDeclared(spec, payload, draft); err != nil {
 		return CheckedSave{}, err
 	}
 

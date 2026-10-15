@@ -211,8 +211,9 @@ function redirectTargetError(r: IngressRedirect): string {
 // redirect-path:<id>, redirect-to:<id>. Ingress rows are
 // read in the order the server's Validate reads them: addresses, then
 // redirects, each claiming its hostname; a path rule needs a hostname
-// claimed above it.
-export function editorErrors(state: AppEditorState): FieldErrors {
+// claimed above it. A draft (saved, not deployed) may leave a required
+// declared variable empty.
+export function editorErrors(state: AppEditorState, draft = false): FieldErrors {
   const out: FieldErrors = {};
   const { config } = state;
   if (!config.name.trim()) out.name = "Give the app a name.";
@@ -245,7 +246,7 @@ export function editorErrors(state: AppEditorState): FieldErrors {
   for (const d of state.declared ?? []) {
     const row = declaredRow(state, d);
     const value = row ? (state.variables[row.id] ?? "") : "";
-    const message = declaredValueError(d, value, row !== undefined && holdsStoredSecret(row, row.name));
+    const message = declaredValueError(d, value, row !== undefined && holdsStoredSecret(row, row.name), draft);
     if (message) out[`decl:${d.name}`] = message;
   }
 

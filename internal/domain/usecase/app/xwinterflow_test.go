@@ -79,6 +79,31 @@ func TestSaveAppChecksXWinterflow(t *testing.T) {
 	}
 }
 
+// A draft may leave a required declared variable empty (the ruling at
+// Task 6); its pattern, $ and secret checks still apply.
+func TestSaveAppDraftSkipsOnlyTheRequiredRule(t *testing.T) {
+	ctx := context.Background()
+	save := func(draft bool, vars ...command.ContentItem) (*recordingDispatcher, error) {
+		disp := &recordingDispatcher{}
+		p := command.AppPayload{Config: []byte(`{}`), Variables: vars,
+			Files: []command.ContentItem{{Name: "compose.yml", Content: []byte(declaredCompose)}}}
+		_, err := newStoragesUseCase(disp, nil).SaveApp(ctx, "u", "srv-1", model.App{Name: "demo"}, p, draft)
+		return disp, err
+	}
+	if disp, err := save(true); err != nil || len(disp.all) != 1 {
+		t.Fatalf("draft without the required value: %v, %d dispatches", err, len(disp.all))
+	}
+	if _, err := save(false); !errors.Is(err, model.ErrRejected) || !strings.Contains(err.Error(), "a value is required") {
+		t.Fatalf("deploy without the required value: %v", err)
+	}
+	if _, err := save(true, command.ContentItem{Name: "BASE_URL", Content: []byte("notes")}); !errors.Is(err, model.ErrRejected) || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("draft with a pattern mismatch: %v", err)
+	}
+	if _, err := save(true, command.ContentItem{Name: "TOKEN", Content: []byte("t")}); !errors.Is(err, model.ErrRejected) || !strings.Contains(err.Error(), "it is a secret") {
+		t.Fatalf("draft with a secret sent plain: %v", err)
+	}
+}
+
 // A git-sourced app's compose file is upstream: the agent checks it; the
 // pins' syntax is still checked here.
 func TestSaveAppLeavesAGitSourcedBlockToTheAgent(t *testing.T) {

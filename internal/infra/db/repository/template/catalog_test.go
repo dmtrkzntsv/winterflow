@@ -104,3 +104,36 @@ func TestInstanceNameAndHostsRoundTrip(t *testing.T) {
 		t.Fatalf("after a save without hosts = %+v", got.Hosts)
 	}
 }
+
+// An instance's backup settings round-trip through the claim and change
+// only while it is pending.
+func TestInstanceBackupsRoundTrip(t *testing.T) {
+	r, _ := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	mustCreate(t, r, org1, tpl1, "shop")
+	got, _, err := r.ClaimInstance(ctx, instance(1, "none"))
+	if err != nil || got.Backups == nil || len(got.Backups) != 0 {
+		t.Fatalf("claimed without backups = %+v, %v", got.Backups, err)
+	}
+	inst := instance(2, "k")
+	inst.Backups = map[string]model.BackupChoice{"db": {Enabled: true, Storage: "disk"}}
+	got, _, err = r.ClaimInstance(ctx, inst)
+	if err != nil || got.Backups["db"] != inst.Backups["db"] {
+		t.Fatalf("claimed = %+v, %v", got.Backups, err)
+	}
+	if err := r.SetBackups(ctx, got.ID, map[string]model.BackupChoice{"db": {Storage: "nas"}}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := r.GetInstance(ctx, org1, "k"); got.Backups["db"] != (model.BackupChoice{Storage: "nas"}) {
+		t.Fatalf("after SetBackups = %+v", got.Backups)
+	}
+	if err := r.MarkSaved(ctx, got.ID, 1, nil, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.SetBackups(ctx, got.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := r.GetInstance(ctx, org1, "k"); got.Backups["db"] != (model.BackupChoice{Storage: "nas"}) {
+		t.Fatalf("a created instance's backups changed: %+v", got.Backups)
+	}
+}

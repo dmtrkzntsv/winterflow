@@ -7,9 +7,10 @@
 -- templates.source is org (an org's own, editable) or catalog (the same
 -- for every org, read-only; org_id NULL, slug set, withdrawn_at once the
 -- feed drops it). template_instances.name is the app name the create
--- asked for (renders use the app's current name once it has one) and hosts
+-- asked for (renders use the app's current name once it has one), hosts
 -- the instance's ingress hostnames ([{host, expose}]), rendered into every
--- save.
+-- save, and backups the backup settings the create asked for
+-- ({name: {enabled, storage}}), sent again by a pending instance's renders.
 --
 -- A template_upgrade rollout's scope key becomes <org_id>:<template_id>
 -- (73 characters): SQLite does not enforce VARCHAR lengths, so only the
@@ -66,6 +67,7 @@ CREATE TABLE template_instances (
     params TEXT NOT NULL,
     secret_names TEXT NOT NULL,
     hosts TEXT NOT NULL,
+    backups TEXT NOT NULL,
     request_hash VARCHAR(64) NOT NULL,
     state VARCHAR(16) NOT NULL,
     last_error TEXT NOT NULL DEFAULT '',

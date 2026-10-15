@@ -72,8 +72,8 @@ ORDER BY revision DESC;
 -- name: ClaimTemplateInstance :execrows
 -- A live key (the partial unique index) inserts nothing (0 rows).
 INSERT INTO template_instances (id, org_id, instance_key, app_id, server_id, template_id, revision,
-    name, params, secret_names, hosts, request_hash, state, last_error, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', '', ?, ?)
+    name, params, secret_names, hosts, backups, request_hash, state, last_error, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', '', ?, ?)
 ON CONFLICT DO NOTHING;
 
 -- name: GetLiveTemplateInstance :one
@@ -98,6 +98,10 @@ ORDER BY i.created_at ASC, i.id ASC;
 UPDATE template_instances
 SET revision = ?, params = ?, secret_names = ?, hosts = ?, state = 'created', last_error = '', updated_at = ?
 WHERE id = ? AND state IN ('pending', 'created');
+
+-- name: SetTemplateInstanceBackups :exec
+-- A pending instance's backup settings; a confirmed one's belong to the app.
+UPDATE template_instances SET backups = ?, updated_at = ? WHERE id = ? AND state = 'pending';
 
 -- name: SetTemplateInstanceState :exec
 UPDATE template_instances

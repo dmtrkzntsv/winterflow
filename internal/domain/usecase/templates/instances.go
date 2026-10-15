@@ -44,17 +44,30 @@ type CreateInput struct {
 
 // CreateInstance creates the instance, or replays a create the key already
 // made: the same request answers the created instance (nothing is
-// dispatched) or dispatches a pending one's save again; a different
-// request is model.ErrKeyInUse, a deleted instance's key
-// model.ErrKeyRetired. The key is claimed only once the rendered app passes
-// every save-app check. A withdrawn catalog template takes no new installs
-// (model.ErrTemplateWithdrawn).
+// dispatched, nothing is checked again: a later revision or a withdrawn
+// template changes nothing) or dispatches a pending one's save again, at
+// the revision and with the name it was claimed with; a different request
+// is model.ErrKeyInUse, a deleted instance's key model.ErrKeyRetired. The
+// key is claimed only once the rendered app passes every save-app check. A
+// withdrawn catalog template takes no new installs and completes no
+// pending one (model.ErrTemplateWithdrawn).
 func (uc *UseCase) CreateInstance(ctx context.Context, userID, orgID string, in CreateInput) (Outcome, error) {
 	if err := ValidateKey(in.Key); err != nil {
 		return Outcome{}, err
 	}
 	tpl, err := uc.repo.GetTemplate(ctx, orgID, in.TemplateID)
 	if err != nil {
+		return Outcome{}, err
+	}
+	hash := template.RequestHash(template.HashInput{
+		ServerID: in.ServerID, TemplateID: tpl.ID, Revision: in.Revision, Name: in.Name,
+		Values: in.Values, SecretNames: slices.Collect(maps.Keys(in.Secrets)), Hosts: in.Hosts, Backups: in.Backups,
+	})
+	existing, err := uc.repo.GetInstance(ctx, orgID, in.Key)
+	switch {
+	case err == nil:
+		return uc.replay(ctx, userID, existing, tpl, hash, in)
+	case !errors.Is(err, model.ErrNotFound):
 		return Outcome{}, err
 	}
 	if tpl.WithdrawnAt != nil {
@@ -64,33 +77,62 @@ func (uc *UseCase) CreateInstance(ctx context.Context, userID, orgID string, in 
 	if revision == 0 {
 		revision = tpl.LatestRevision
 	}
-	body, spec, err := uc.revision(ctx, tpl.ID, revision)
-	if err != nil {
-		return Outcome{}, err
-	}
 	name := in.Name
 	if name == "" {
 		name = tpl.Name
 	}
-	if err := template.CheckName(name); err != nil {
+	c, err := uc.prepareCreate(ctx, tpl, revision, name, in)
+	if err != nil {
 		return Outcome{}, err
 	}
-	if err := template.CheckHosts(spec, in.Hosts); err != nil {
+	checked, err := c.render(util.GenerateID())
+	if err != nil {
 		return Outcome{}, err
+	}
+	inst, inserted, err := uc.repo.ClaimInstance(ctx, model.Instance{
+		ID: util.GenerateID(), OrgID: orgID, Key: in.Key, AppID: checked.AppID(), ServerID: in.ServerID,
+		TemplateID: tpl.ID, Revision: revision, Name: name, Params: c.values.Stored.Values, SecretNames: c.values.Stored.SecretNames,
+		Hosts: in.Hosts, Backups: in.Backups, RequestHash: hash,
+	})
+	if err != nil {
+		return Outcome{}, err
+	}
+	if !inserted {
+		// Another create claimed the key in between.
+		return uc.replay(ctx, userID, inst, tpl, hash, in)
+	}
+	return uc.dispatchSave(ctx, userID, inst, checked, revision, c.values, in.Hosts)
+}
+
+// createRender is a create checked against one revision: its resolved
+// values and the render of its app (by app id).
+type createRender struct {
+	values template.Values
+	render func(appID string) (appuc.CheckedSave, error)
+}
+
+// prepareCreate checks a create against the revision and returns its
+// render.
+func (uc *UseCase) prepareCreate(ctx context.Context, tpl model.Template, revision int64, name string, in CreateInput) (createRender, error) {
+	body, spec, err := uc.revision(ctx, tpl.ID, revision)
+	if err != nil {
+		return createRender{}, err
+	}
+	if err := template.CheckName(name); err != nil {
+		return createRender{}, err
+	}
+	if err := template.CheckHosts(spec, in.Hosts); err != nil {
+		return createRender{}, err
 	}
 	values, err := template.Resolve(spec, template.Stored{}, template.Given{Values: in.Values, Secrets: in.Secrets})
 	if err != nil {
-		return Outcome{}, err
+		return createRender{}, err
 	}
 	backups, err := template.CreateBackups(spec, in.Backups)
 	if err != nil {
-		return Outcome{}, err
+		return createRender{}, err
 	}
-	hash := template.RequestHash(template.HashInput{
-		ServerID: in.ServerID, TemplateID: tpl.ID, Revision: in.Revision, Name: in.Name,
-		Values: in.Values, SecretNames: slices.Collect(maps.Keys(in.Secrets)), Hosts: in.Hosts, Backups: in.Backups,
-	})
-	render := func(appID string) (appuc.CheckedSave, error) {
+	return createRender{values: values, render: func(appID string) (appuc.CheckedSave, error) {
 		app, payload, err := template.Render(body, template.Input{
 			AppID: appID, Name: name, Values: values, Hosts: in.Hosts, Backups: backups,
 			Marker: &template.Marker{TemplateID: tpl.ID, TemplateName: tpl.Name, Revision: revision, Key: in.Key},
@@ -99,50 +141,37 @@ func (uc *UseCase) CreateInstance(ctx context.Context, userID, orgID string, in 
 			return appuc.CheckedSave{}, err
 		}
 		return uc.apps.CheckSave(ctx, in.ServerID, app, payload, false)
-	}
-
-	existing, err := uc.repo.GetInstance(ctx, orgID, in.Key)
-	switch {
-	case err == nil:
-		return uc.replay(ctx, userID, existing, tpl.Name, hash, revision, values, render)
-	case !errors.Is(err, model.ErrNotFound):
-		return Outcome{}, err
-	}
-	checked, err := render(util.GenerateID())
-	if err != nil {
-		return Outcome{}, err
-	}
-	inst, inserted, err := uc.repo.ClaimInstance(ctx, model.Instance{
-		ID: util.GenerateID(), OrgID: orgID, Key: in.Key, AppID: checked.AppID(), ServerID: in.ServerID,
-		TemplateID: tpl.ID, Revision: revision, Name: name, Params: values.Stored.Values, SecretNames: values.Stored.SecretNames,
-		Hosts: in.Hosts, RequestHash: hash,
-	})
-	if err != nil {
-		return Outcome{}, err
-	}
-	if !inserted {
-		// Another create claimed the key in between.
-		return uc.replay(ctx, userID, inst, tpl.Name, hash, revision, values, render)
-	}
-	return uc.dispatchSave(ctx, userID, inst, checked, revision, values, in.Hosts)
+	}}, nil
 }
 
-// replay answers a create whose key is taken.
-func (uc *UseCase) replay(ctx context.Context, userID string, inst model.Instance, templateName, hash string, revision int64, values template.Values, render func(string) (appuc.CheckedSave, error)) (Outcome, error) {
+// replay answers a create whose key is taken. A pending instance's save is
+// dispatched again at the revision it was claimed at, with the name it was
+// claimed with (the same request: its hash matched).
+func (uc *UseCase) replay(ctx context.Context, userID string, inst model.Instance, tpl model.Template, hash string, in CreateInput) (Outcome, error) {
 	switch {
 	case inst.State == model.InstanceDeleted:
 		return Outcome{}, model.ErrKeyRetired
 	case inst.RequestHash != hash:
 		return Outcome{}, model.ErrKeyInUse
 	case inst.State == model.InstanceCreated:
-		v := uc.view(inst, templateName)
+		v := uc.view(inst, tpl.Name)
 		return Outcome{Instance: &v}, nil
+	case tpl.WithdrawnAt != nil:
+		return Outcome{}, model.ErrTemplateWithdrawn
 	}
-	checked, err := render(inst.AppID)
+	name := inst.Name
+	if name == "" {
+		name = tpl.Name
+	}
+	c, err := uc.prepareCreate(ctx, tpl, inst.Revision, name, in)
 	if err != nil {
 		return Outcome{}, err
 	}
-	return uc.dispatchSave(ctx, userID, inst, checked, revision, values, inst.Hosts)
+	checked, err := c.render(inst.AppID)
+	if err != nil {
+		return Outcome{}, err
+	}
+	return uc.dispatchSave(ctx, userID, inst, checked, inst.Revision, c.values, inst.Hosts)
 }
 
 // dispatchSave dispatches a rendered save; its confirmation records the

@@ -1,6 +1,7 @@
 package templates_test
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -309,5 +310,110 @@ func TestCreateFromTheCatalog(t *testing.T) {
 	list, err := f.uc.ListInstances(ctx, org2, "", catID)
 	if err != nil || len(list.Instances) != 0 {
 		t.Fatalf("another org's instances of the catalog template = %+v, %v", list, err)
+	}
+}
+
+// withdrawnRepo reads every catalog template as withdrawn.
+type withdrawnRepo struct{ port.TemplateRepository }
+
+func (r withdrawnRepo) GetTemplate(ctx context.Context, orgID, id string) (model.Template, error) {
+	t, err := r.TemplateRepository.GetTemplate(ctx, orgID, id)
+	if err == nil && t.Catalog() {
+		at := time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC)
+		t.WithdrawnAt = &at
+	}
+	return t, err
+}
+
+// A created instance's replay is answered from the DB whatever happened to
+// the template since: nothing is checked against a later revision.
+func TestCreatedReplayIgnoresLaterRevisions(t *testing.T) {
+	f := newFixture(t, nil)
+	ctx := dbtest.Ctx(t)
+	in := f.create(map[string]string{"NAME": "acme"})
+	in.Hosts = []model.InstanceHost{{Host: "acme.example.test", Expose: "app:8080"}}
+	out, err := f.uc.CreateInstance(ctx, "u1", org1, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.disp.reply(t, port.CommandResult{Success: true})
+	received(t, out.Done)
+
+	// r2 adds a required variable and drops the expose entry the host uses.
+	b := body()
+	b.Files["compose.yaml"] = strings.Replace(strings.Replace(compose, "port: 8080", "port: 9090", 1),
+		"    VERSION: {}\n", "    VERSION: {}\n    MORE: { required: true }\n", 1) + "# ${MORE}\n"
+	if _, err := f.uc.SaveTemplate(ctx, "u1", org1, templates.SaveInput{ID: f.tpl.ID, Name: "shop", Body: b, BaseRevision: 1}); err != nil {
+		t.Fatal(err)
+	}
+	sent := f.disp.count()
+	again, err := f.uc.CreateInstance(ctx, "u1", org1, in)
+	if err != nil || again.Instance == nil || again.Instance.Revision != 1 || again.Instance.State != "created" || f.disp.count() != sent {
+		t.Fatalf("replay after r2 = %+v, %v", again, err)
+	}
+}
+
+// A withdrawn catalog template still answers the replay of a create it
+// took; a pending one is not completed from it.
+func TestReplayOfAWithdrawnCatalogTemplate(t *testing.T) {
+	f := newFixture(t, nil)
+	ctx := dbtest.Ctx(t)
+	raw, err := template.Encode(body())
+	if err != nil {
+		t.Fatal(err)
+	}
+	catID := dbtest.ID(41)
+	if err := f.repo.CreateTemplate(ctx, model.Template{ID: catID, Source: model.TemplateSourceCatalog, Slug: "shop", Name: "Shop"},
+		model.TemplateRevision{Body: raw, Digest: "sha256:x"}); err != nil {
+		t.Fatal(err)
+	}
+	in := f.create(map[string]string{"NAME": "acme"})
+	in.TemplateID = catID
+	out, err := f.uc.CreateInstance(ctx, "u1", org1, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.disp.reply(t, port.CommandResult{Success: true})
+	received(t, out.Done)
+	pending := in
+	pending.Key = "k2"
+	if _, err := f.uc.CreateInstance(ctx, "u1", org1, pending); err != nil {
+		t.Fatal(err)
+	}
+
+	withdrawn := templates.New(templates.Deps{Repo: withdrawnRepo{f.repo}, Apps: appuc.NewUseCase(&appuc.Deps{CommandDispatcher: f.disp, AppRepository: f.apps, Log: dbtest.Log}), Log: dbtest.Log})
+	sent := f.disp.count()
+	again, err := withdrawn.CreateInstance(ctx, "u1", org1, in)
+	if err != nil || again.Instance == nil || again.Instance.State != "created" || f.disp.count() != sent {
+		t.Fatalf("replay of a created instance = %+v, %v", again, err)
+	}
+	if _, err := withdrawn.CreateInstance(ctx, "u1", org1, pending); !errors.Is(err, model.ErrTemplateWithdrawn) || f.disp.count() != sent {
+		t.Fatalf("replay of a pending instance: %v", err)
+	}
+	pending.Key = "k3"
+	if _, err := withdrawn.CreateInstance(ctx, "u1", org1, pending); !errors.Is(err, model.ErrTemplateWithdrawn) {
+		t.Fatalf("a new install: %v", err)
+	}
+}
+
+// A pending replay renders the revision and the name the instance was
+// claimed with, not the template's latest.
+func TestPendingReplayKeepsItsRevisionAndName(t *testing.T) {
+	f := newFixture(t, nil)
+	ctx := dbtest.Ctx(t)
+	in := f.create(map[string]string{"NAME": "acme"})
+	if _, err := f.uc.CreateInstance(ctx, "u1", org1, in); err != nil {
+		t.Fatal(err)
+	}
+	b := body()
+	b.Files["compose.yaml"] = strings.Replace(compose, "    VERSION: {}\n", "    VERSION: {}\n    MORE: { required: true }\n", 1) + "# ${MORE}\n"
+	if _, err := f.uc.SaveTemplate(ctx, "u1", org1, templates.SaveInput{ID: f.tpl.ID, Name: "store", Body: b, BaseRevision: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.uc.CreateInstance(ctx, "u1", org1, in); err != nil {
+		t.Fatalf("pending replay: %v", err)
+	}
+	if _, cfg := saved(t, f); cfg.Name != "shop" || cfg.Instance.Revision != 1 || f.disp.count() != 2 {
+		t.Fatalf("pending replay config: name %q marker %+v", cfg.Name, cfg.Instance)
 	}
 }

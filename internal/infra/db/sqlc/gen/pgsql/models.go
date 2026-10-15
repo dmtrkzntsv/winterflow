@@ -246,6 +246,7 @@ type TemplateInstance struct {
 	Params      string
 	SecretNames string
 	Hosts       string
+	Backups     string
 	RequestHash string
 	State       string
 	LastError   string

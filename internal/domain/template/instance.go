@@ -56,10 +56,7 @@ func ingressOf(hosts []model.InstanceHost) *model.Ingress {
 
 // BackupChoice is an instance's setting for one backup its compose file
 // declares.
-type BackupChoice struct {
-	Enabled bool   `json:"enabled"`
-	Storage string `json:"storage,omitempty" description:"A storage name on the instance's server; required when enabled."`
-}
+type BackupChoice = model.BackupChoice
 
 // CreateBackups is the backups list a new instance starts with: one entry
 // per choice, by name. A choice must name a backup the revision declares;

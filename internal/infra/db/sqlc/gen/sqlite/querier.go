@@ -236,6 +236,8 @@ type Querier interface {
 	// the caller's primary organization only).
 	ServerInOrganization(ctx context.Context, arg ServerInOrganizationParams) (bool, error)
 	SetAlertEventDeliveries(ctx context.Context, arg SetAlertEventDeliveriesParams) error
+	// A pending instance's backup settings; a confirmed one's belong to the app.
+	SetTemplateInstanceBackups(ctx context.Context, arg SetTemplateInstanceBackupsParams) error
 	SetTemplateInstanceError(ctx context.Context, arg SetTemplateInstanceErrorParams) error
 	SetTemplateInstanceState(ctx context.Context, arg SetTemplateInstanceStateParams) error
 	StartRolloutStep(ctx context.Context, arg StartRolloutStepParams) (int64, error)

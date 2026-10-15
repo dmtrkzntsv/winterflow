@@ -75,6 +75,10 @@ func (sqliteQuerier) MarkTemplateInstanceSaved(ctx context.Context, db backend.D
 	return sqlitegen.New(db).MarkTemplateInstanceSaved(ctx, p)
 }
 
+func (sqliteQuerier) SetTemplateInstanceBackups(ctx context.Context, db backend.DBTX, p backupsParams) error {
+	return sqlitegen.New(db).SetTemplateInstanceBackups(ctx, p)
+}
+
 func (sqliteQuerier) SetTemplateInstanceState(ctx context.Context, db backend.DBTX, p stateParams) error {
 	return sqlitegen.New(db).SetTemplateInstanceState(ctx, p)
 }

@@ -43,8 +43,8 @@ func (q *Queries) BumpTemplateRevision(ctx context.Context, arg BumpTemplateRevi
 
 const claimTemplateInstance = `-- name: ClaimTemplateInstance :execrows
 INSERT INTO template_instances (id, org_id, instance_key, app_id, server_id, template_id, revision,
-    name, params, secret_names, hosts, request_hash, state, last_error, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', '', ?, ?)
+    name, params, secret_names, hosts, backups, request_hash, state, last_error, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', '', ?, ?)
 ON CONFLICT DO NOTHING
 `
 
@@ -60,6 +60,7 @@ type ClaimTemplateInstanceParams struct {
 	Params      string
 	SecretNames string
 	Hosts       string
+	Backups     string
 	RequestHash string
 	CreatedAt   types.DateTime
 	UpdatedAt   types.DateTime
@@ -79,6 +80,7 @@ func (q *Queries) ClaimTemplateInstance(ctx context.Context, arg ClaimTemplateIn
 		arg.Params,
 		arg.SecretNames,
 		arg.Hosts,
+		arg.Backups,
 		arg.RequestHash,
 		arg.CreatedAt,
 		arg.UpdatedAt,
@@ -122,7 +124,7 @@ func (q *Queries) DeleteTemplateRollouts(ctx context.Context, scopeKey string) e
 }
 
 const getLiveTemplateInstance = `-- name: GetLiveTemplateInstance :one
-SELECT id, org_id, instance_key, app_id, server_id, template_id, revision, name, params, secret_names, hosts, request_hash, state, last_error, created_at, updated_at FROM template_instances WHERE org_id = ? AND instance_key = ? AND state <> 'unlinked'
+SELECT id, org_id, instance_key, app_id, server_id, template_id, revision, name, params, secret_names, hosts, backups, request_hash, state, last_error, created_at, updated_at FROM template_instances WHERE org_id = ? AND instance_key = ? AND state <> 'unlinked'
 `
 
 type GetLiveTemplateInstanceParams struct {
@@ -145,6 +147,7 @@ func (q *Queries) GetLiveTemplateInstance(ctx context.Context, arg GetLiveTempla
 		&i.Params,
 		&i.SecretNames,
 		&i.Hosts,
+		&i.Backups,
 		&i.RequestHash,
 		&i.State,
 		&i.LastError,
@@ -222,7 +225,7 @@ func (q *Queries) GetTemplateIDByName(ctx context.Context, arg GetTemplateIDByNa
 }
 
 const getTemplateInstanceByID = `-- name: GetTemplateInstanceByID :one
-SELECT id, org_id, instance_key, app_id, server_id, template_id, revision, name, params, secret_names, hosts, request_hash, state, last_error, created_at, updated_at FROM template_instances WHERE id = ?
+SELECT id, org_id, instance_key, app_id, server_id, template_id, revision, name, params, secret_names, hosts, backups, request_hash, state, last_error, created_at, updated_at FROM template_instances WHERE id = ?
 `
 
 func (q *Queries) GetTemplateInstanceByID(ctx context.Context, id string) (TemplateInstance, error) {
@@ -240,6 +243,7 @@ func (q *Queries) GetTemplateInstanceByID(ctx context.Context, id string) (Templ
 		&i.Params,
 		&i.SecretNames,
 		&i.Hosts,
+		&i.Backups,
 		&i.RequestHash,
 		&i.State,
 		&i.LastError,
@@ -345,7 +349,7 @@ func (q *Queries) InsertTemplateRevision(ctx context.Context, arg InsertTemplate
 }
 
 const listLiveTemplateInstances = `-- name: ListLiveTemplateInstances :many
-SELECT id, org_id, instance_key, app_id, server_id, template_id, revision, name, params, secret_names, hosts, request_hash, state, last_error, created_at, updated_at FROM template_instances
+SELECT id, org_id, instance_key, app_id, server_id, template_id, revision, name, params, secret_names, hosts, backups, request_hash, state, last_error, created_at, updated_at FROM template_instances
 WHERE org_id = ? AND state IN ('pending', 'created')
 ORDER BY created_at ASC, id ASC
 `
@@ -371,6 +375,7 @@ func (q *Queries) ListLiveTemplateInstances(ctx context.Context, orgID string) (
 			&i.Params,
 			&i.SecretNames,
 			&i.Hosts,
+			&i.Backups,
 			&i.RequestHash,
 			&i.State,
 			&i.LastError,
@@ -539,7 +544,7 @@ func (q *Queries) ListTemplates(ctx context.Context, arg ListTemplatesParams) ([
 }
 
 const listUpgradableInstances = `-- name: ListUpgradableInstances :many
-SELECT i.id, i.org_id, i.instance_key, i.app_id, i.server_id, i.template_id, i.revision, i.name, i.params, i.secret_names, i.hosts, i.request_hash, i.state, i.last_error, i.created_at, i.updated_at FROM template_instances AS i
+SELECT i.id, i.org_id, i.instance_key, i.app_id, i.server_id, i.template_id, i.revision, i.name, i.params, i.secret_names, i.hosts, i.backups, i.request_hash, i.state, i.last_error, i.created_at, i.updated_at FROM template_instances AS i
 JOIN servers AS s ON s.server_id = i.server_id AND s.organization_id = i.org_id
 WHERE i.org_id = ? AND i.template_id = ? AND i.state = 'created' AND i.revision < ?
 ORDER BY i.created_at ASC, i.id ASC
@@ -575,6 +580,7 @@ func (q *Queries) ListUpgradableInstances(ctx context.Context, arg ListUpgradabl
 			&i.Params,
 			&i.SecretNames,
 			&i.Hosts,
+			&i.Backups,
 			&i.RequestHash,
 			&i.State,
 			&i.LastError,
@@ -638,6 +644,22 @@ type RetireTemplateInstancesForAppParams struct {
 // stays retired.
 func (q *Queries) RetireTemplateInstancesForApp(ctx context.Context, arg RetireTemplateInstancesForAppParams) error {
 	_, err := q.db.ExecContext(ctx, retireTemplateInstancesForApp, arg.UpdatedAt, arg.ServerID, arg.AppID)
+	return err
+}
+
+const setTemplateInstanceBackups = `-- name: SetTemplateInstanceBackups :exec
+UPDATE template_instances SET backups = ?, updated_at = ? WHERE id = ? AND state = 'pending'
+`
+
+type SetTemplateInstanceBackupsParams struct {
+	Backups   string
+	UpdatedAt types.DateTime
+	ID        string
+}
+
+// A pending instance's backup settings; a confirmed one's belong to the app.
+func (q *Queries) SetTemplateInstanceBackups(ctx context.Context, arg SetTemplateInstanceBackupsParams) error {
+	_, err := q.db.ExecContext(ctx, setTemplateInstanceBackups, arg.Backups, arg.UpdatedAt, arg.ID)
 	return err
 }
 

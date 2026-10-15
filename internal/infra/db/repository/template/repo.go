@@ -39,6 +39,7 @@ type (
 	liveParams     = sqlitegen.GetLiveTemplateInstanceParams
 	savedParams    = sqlitegen.MarkTemplateInstanceSavedParams
 	stateParams    = sqlitegen.SetTemplateInstanceStateParams
+	backupsParams  = sqlitegen.SetTemplateInstanceBackupsParams
 	errorParams    = sqlitegen.SetTemplateInstanceErrorParams
 	forAppParams   = sqlitegen.GetLiveTemplateInstanceForAppParams
 	retireParams   = sqlitegen.RetireTemplateInstancesForAppParams
@@ -64,6 +65,7 @@ type querier interface {
 	ListUpgradableInstances(ctx context.Context, db backend.DBTX, p upgradeParams) ([]instanceRow, error)
 	MarkTemplateInstanceSaved(ctx context.Context, db backend.DBTX, p savedParams) error
 	SetTemplateInstanceState(ctx context.Context, db backend.DBTX, p stateParams) error
+	SetTemplateInstanceBackups(ctx context.Context, db backend.DBTX, p backupsParams) error
 	SetTemplateInstanceError(ctx context.Context, db backend.DBTX, p errorParams) error
 	GetTemplateInstanceByID(ctx context.Context, db backend.DBTX, id string) (instanceRow, error)
 	GetLiveTemplateInstanceForApp(ctx context.Context, db backend.DBTX, p forAppParams) (string, error)
@@ -275,6 +277,10 @@ func (r *Repo) ClaimInstance(ctx context.Context, inst model.Instance) (model.In
 	if err != nil {
 		return model.Instance{}, false, err
 	}
+	backups, err := encodeBackups(inst.Backups)
+	if err != nil {
+		return model.Instance{}, false, err
+	}
 	now := types.NewDateTime()
 	var (
 		out      model.Instance
@@ -284,7 +290,7 @@ func (r *Repo) ClaimInstance(ctx context.Context, inst model.Instance) (model.In
 		p := claimParams{
 			ID: inst.ID, OrgID: inst.OrgID, InstanceKey: inst.Key, AppID: inst.AppID, ServerID: inst.ServerID,
 			TemplateID: util.RefString(inst.TemplateID), Revision: inst.Revision, Name: inst.Name, Params: params,
-			SecretNames: names, Hosts: hosts, RequestHash: inst.RequestHash, CreatedAt: now, UpdatedAt: now,
+			SecretNames: names, Hosts: hosts, Backups: backups, RequestHash: inst.RequestHash, CreatedAt: now, UpdatedAt: now,
 		}
 		n, err := r.q.ClaimTemplateInstance(ctx, r.tx.Querier(ctx), p)
 		if err != nil {
@@ -384,6 +390,17 @@ func (r *Repo) MarkSaved(ctx context.Context, id string, revision int64, params 
 	})
 }
 
+// SetBackups replaces a pending instance's backup settings.
+func (r *Repo) SetBackups(ctx context.Context, id string, backups map[string]model.BackupChoice) error {
+	b, err := encodeBackups(backups)
+	if err != nil {
+		return err
+	}
+	return r.q.SetTemplateInstanceBackups(ctx, r.tx.Querier(ctx), backupsParams{
+		Backups: b, UpdatedAt: types.NewDateTime(), ID: id,
+	})
+}
+
 // SetState moves a live instance to state.
 func (r *Repo) SetState(ctx context.Context, id string, state model.InstanceState) error {
 	return r.q.SetTemplateInstanceState(ctx, r.tx.Querier(ctx), stateParams{
@@ -421,6 +438,15 @@ func encodeValues(params map[string]string, secretNames []string, hosts []model.
 	return string(p), string(n), string(h), nil
 }
 
+// encodeBackups serializes backup settings (an object; nil is {}).
+func encodeBackups(backups map[string]model.BackupChoice) (string, error) {
+	if backups == nil {
+		backups = map[string]model.BackupChoice{}
+	}
+	b, err := json.Marshal(backups)
+	return string(b), err
+}
+
 func hydrateTemplate(row templateRow) model.Template {
 	t := model.Template{
 		ID: row.ID, Source: row.Source, OrgID: util.DerefString(row.OrgID), Slug: row.Slug, Name: row.Name,
@@ -449,6 +475,9 @@ func hydrateInstance(row instanceRow) (model.Instance, error) {
 	}
 	if err := json.Unmarshal([]byte(row.Hosts), &inst.Hosts); err != nil {
 		return model.Instance{}, fmt.Errorf("instance %s: hosts: %w", row.ID, err)
+	}
+	if err := json.Unmarshal([]byte(row.Backups), &inst.Backups); err != nil {
+		return model.Instance{}, fmt.Errorf("instance %s: backups: %w", row.ID, err)
 	}
 	return inst, nil
 }

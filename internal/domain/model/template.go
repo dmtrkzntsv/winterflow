@@ -113,12 +113,23 @@ type Instance struct {
 	Params      map[string]string
 	SecretNames []string
 	// Hosts are the instance's ingress hostnames.
-	Hosts       []InstanceHost
+	Hosts []InstanceHost
+	// Backups are the backup settings the create (or a later update while
+	// pending) asked for, by name: a pending instance's renders send them
+	// again. Once the agent confirmed a save the app's own settings rule.
+	Backups     map[string]BackupChoice
 	RequestHash string
 	State       InstanceState
 	LastError   string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+}
+
+// BackupChoice is an instance's setting for one backup its compose file
+// declares.
+type BackupChoice struct {
+	Enabled bool   `json:"enabled"`
+	Storage string `json:"storage,omitempty" description:"A storage name on the instance's server; required when enabled."`
 }
 
 // InstanceHost is one ingress hostname of an instance: Host routed to the

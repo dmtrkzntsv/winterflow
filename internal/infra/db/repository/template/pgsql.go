@@ -113,6 +113,10 @@ func (pgsqlQuerier) MarkTemplateInstanceSaved(ctx context.Context, db backend.DB
 	return pgsqlgen.New(db).MarkTemplateInstanceSaved(ctx, pgsqlgen.MarkTemplateInstanceSavedParams(p))
 }
 
+func (pgsqlQuerier) SetTemplateInstanceBackups(ctx context.Context, db backend.DBTX, p backupsParams) error {
+	return pgsqlgen.New(db).SetTemplateInstanceBackups(ctx, pgsqlgen.SetTemplateInstanceBackupsParams(p))
+}
+
 func (pgsqlQuerier) SetTemplateInstanceState(ctx context.Context, db backend.DBTX, p stateParams) error {
 	return pgsqlgen.New(db).SetTemplateInstanceState(ctx, pgsqlgen.SetTemplateInstanceStateParams(p))
 }

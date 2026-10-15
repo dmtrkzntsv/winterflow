@@ -65,6 +65,9 @@ type TemplateRepository interface {
 	// hosts and state created, last error cleared. A deleted or unlinked
 	// instance is left alone.
 	MarkSaved(ctx context.Context, id string, revision int64, params map[string]string, secretNames []string, hosts []model.InstanceHost) error
+	// SetBackups replaces a pending instance's backup settings (a
+	// created one is left alone: the app's own settings rule).
+	SetBackups(ctx context.Context, id string, backups map[string]model.BackupChoice) error
 	// SetState moves a pending or created instance to state (deleted,
 	// unlinked), clearing its last error.
 	SetState(ctx context.Context, id string, state model.InstanceState) error

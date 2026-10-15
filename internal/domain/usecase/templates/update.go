@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"winterflow/internal/domain/compose/xwinterflow"
 	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/template"
 )
@@ -64,8 +65,10 @@ func (uc *UseCase) live(ctx context.Context, orgID, serverID, key string) (model
 //
 // A pending instance was never confirmed by the agent: the agent holds none
 // of its secrets and no backups list. Its render therefore takes every
-// secret from the caller (none is kept) and sends the whole backups list
-// (in.Backups).
+// secret from the caller (none is kept) and sends the whole backups list:
+// in.Backups when sent (they replace the instance's stored settings), else
+// the stored ones (the create's), less any backup the revision no longer
+// declares.
 func (uc *UseCase) UpdateInstance(ctx context.Context, userID, orgID string, in UpdateInput) (Outcome, error) {
 	inst, err := uc.live(ctx, orgID, in.ServerID, in.Key)
 	if err != nil {
@@ -104,7 +107,11 @@ func (uc *UseCase) UpdateInstance(ctx context.Context, userID, orgID string, in 
 	}
 	if pending {
 		stored.SecretNames = nil
-		if input.Backups, err = template.CreateBackups(spec, in.Backups); err != nil {
+		choices := in.Backups
+		if len(choices) == 0 {
+			choices = declaredOnly(spec, inst.Backups)
+		}
+		if input.Backups, err = template.CreateBackups(spec, choices); err != nil {
 			return Outcome{}, err
 		}
 	}
@@ -121,5 +128,21 @@ func (uc *UseCase) UpdateInstance(ctx context.Context, userID, orgID string, in 
 	if err != nil {
 		return Outcome{}, err
 	}
+	if pending && len(in.Backups) > 0 {
+		if err := uc.repo.SetBackups(ctx, inst.ID, in.Backups); err != nil {
+			return Outcome{}, err
+		}
+	}
 	return uc.dispatchSave(ctx, userID, inst, checked, revision, values, hosts)
+}
+
+// declaredOnly is the choices for the backups spec declares.
+func declaredOnly(spec xwinterflow.Spec, choices map[string]template.BackupChoice) map[string]template.BackupChoice {
+	out := map[string]template.BackupChoice{}
+	for _, r := range spec.Compose.Recipe {
+		if c, ok := choices[r.Name]; ok {
+			out[r.Name] = c
+		}
+	}
+	return out
 }

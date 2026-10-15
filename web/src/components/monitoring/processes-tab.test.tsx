@@ -204,7 +204,42 @@ describe("ProcessesTab", () => {
     expect(rows[1]).toHaveTextContent("service");
     expect(rows[1]).toHaveTextContent("1 process");
     expect(rows[2]).toHaveTextContent("container 0123456789ab");
-    expect(within(rows[2]).getAllByText("—")).toHaveLength(2);
+    // No accounting at all: one dash, explained.
+    expect(within(rows[2]).getByTitle("No disk accounting for this group")).toHaveTextContent("—");
+    expect(rows[2]).toHaveAccessibleName(/No disk accounting for this group/);
+  });
+
+  it("spaces the disk card as a column", () => {
+    renderTab();
+    const card = screen.getByRole("heading", { name: "Disk by app or service" }).parentElement!;
+    expect(card).toHaveClass("flex", "flex-col", "gap-2", "p-3.5");
+  });
+
+  it("reads the rates as text, not labels, and keeps list semantics", () => {
+    renderTab();
+    expect(groupList()).toHaveAttribute("role", "list");
+    const row = within(groupList()).getAllByRole("button")[0];
+    expect(row).toHaveAccessibleName(/Read\s*1\.0 KB\/s/);
+    expect(row).toHaveAccessibleName(/Write\s*2\.0 KB\/s/);
+    expect(row.querySelectorAll("[aria-label]")).toHaveLength(0);
+  });
+
+  it("titles the truncated Group cell with the full name", () => {
+    renderTab();
+    const sshd = screen.getAllByTestId("process-row").find((r) => within(r).queryByText("sshd"))!;
+    expect(within(sshd).getByText("ssh.service")).toHaveAttribute("title", "ssh.service");
+  });
+
+  it("says a group's processes are beyond the busiest shown", async () => {
+    const user = userEvent.setup();
+    result = {
+      ...result,
+      data: { ...LIST, total: 9, groups: [...LIST.groups, g({ id: "far", label: "far.service", processes: 5 })] },
+    };
+    renderTab();
+    await user.click(within(groupList()).getByRole("button", { name: /far\.service/ }));
+    expect(screen.getByText("This group's processes are beyond the busiest 4 shown.")).toBeInTheDocument();
+    expect(screen.queryByText("No processes match.")).not.toBeInTheDocument();
   });
 
   it("shows the first 8 groups and the rest on request", async () => {

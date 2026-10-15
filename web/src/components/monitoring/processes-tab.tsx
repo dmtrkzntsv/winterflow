@@ -46,6 +46,7 @@ const COLUMNS: { key: SortKey; label: string; wide?: boolean; numeric?: boolean 
 const WIDE = "hidden md:table-cell";
 
 const GROUPS_SHOWN = 8;
+const NO_ACCOUNTING = "No disk accounting for this group";
 const rate = (v: number | null) => (v === null ? "—" : formatRate(v));
 const count = (n: number) => `${n} process${n === 1 ? "" : "es"}`;
 
@@ -95,6 +96,12 @@ export function ProcessesTab({ serverId }: { serverId: string }) {
       ),
     [data, text, appFilter, kernel, groupFilter, appName, groupLabel, sort],
   );
+  // The chosen group has processes, but none among the listed (busiest)
+  // ones: the table is empty for that reason, not because of a filter.
+  const beyondCap =
+    groupFilter !== null &&
+    (groups.find((g) => g.id === groupFilter)?.processes ?? 0) > 0 &&
+    !(data?.processes ?? []).some((p) => p.group === groupFilter);
   // The agent's sample time (unix ms), so uptimes do not drift between polls.
   const now = data?.sampled_at ?? 0;
 
@@ -145,10 +152,13 @@ export function ProcessesTab({ serverId }: { serverId: string }) {
             <span className="ml-1 text-xs text-muted-foreground">{formatPercent(p.mem_pct)}</span>
           </>
         );
-      case "group":
-        return p.group ? (
-          <span className="block max-w-40 truncate text-muted-foreground">{groupLabel(p.group) ?? p.group}</span>
-        ) : null;
+      case "group": {
+        if (!p.group) return null;
+        const name = groupLabel(p.group) ?? p.group;
+        return (
+          <span className="block max-w-40 truncate text-muted-foreground" title={name}>{name}</span>
+        );
+      }
       case "threads":
         return p.threads;
       case "uptime":
@@ -175,8 +185,24 @@ export function ProcessesTab({ serverId }: { serverId: string }) {
             <span className="font-medium">{name}</span>
             {g.kind !== "container" ? <span className="ml-1.5 text-xs text-muted-foreground">{g.kind}</span> : null}
           </span>
-          <span aria-label={`Read ${rate(g.read_bps)}`} className="text-right tabular-nums">{rate(g.read_bps)}</span>
-          <span aria-label={`Write ${rate(g.write_bps)}`} className="text-right tabular-nums">{rate(g.write_bps)}</span>
+          {g.read_bps === null && g.write_bps === null ? (
+            // The cgroup has no io.stat (its io controller is off) or is new.
+            <span title={NO_ACCOUNTING} className="col-span-2 text-right text-muted-foreground">
+              <span aria-hidden="true">—</span>
+              <span className="sr-only">{NO_ACCOUNTING}</span>
+            </span>
+          ) : (
+            <>
+              <span className="text-right tabular-nums">
+                <span className="sr-only">Read </span>
+                {rate(g.read_bps)}
+              </span>
+              <span className="text-right tabular-nums">
+                <span className="sr-only">Write </span>
+                {rate(g.write_bps)}
+              </span>
+            </>
+          )}
           <span className="hidden text-right text-xs text-muted-foreground sm:block">{count(g.processes)}</span>
         </button>
       </li>
@@ -186,7 +212,7 @@ export function ProcessesTab({ serverId }: { serverId: string }) {
   return (
     <div className="space-y-4">
       {data ? (
-        <Card className="gap-2 p-3.5">
+        <Card className="flex flex-col gap-2 p-3.5">
           <h3 className="text-sm font-medium text-muted-foreground">Disk by app or service</h3>
           {groups.length === 0 ? (
             <p className="text-sm text-muted-foreground">Disk I/O per app or service needs cgroup v2 on this server.</p>
@@ -200,7 +226,8 @@ export function ProcessesTab({ serverId }: { serverId: string }) {
                 <span className="text-right">Read/s</span>
                 <span className="text-right">Write/s</span>
               </div>
-              <ul aria-label="Disk by app or service">{shownGroups.map(groupRow)}</ul>
+              {/* role="list": a list-style-none <ul> loses its list role in Safari. */}
+              <ul role="list" aria-label="Disk by app or service">{shownGroups.map(groupRow)}</ul>
               {groups.length > GROUPS_SHOWN ? (
                 <Button variant="ghost" size="sm" className="self-start" onClick={() => setAllGroups((x) => !x)}>
                   {allGroups ? "Show fewer" : `Show all (${groups.length})`}
@@ -311,7 +338,7 @@ export function ProcessesTab({ serverId }: { serverId: string }) {
             {rows.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={COLUMNS.length} className="py-8 text-center text-muted-foreground">
-                  No processes match.
+                  {beyondCap ? `This group's processes are beyond the busiest ${data.processes.length} shown.` : "No processes match."}
                 </TableCell>
               </TableRow>
             ) : (

@@ -82,3 +82,14 @@ const (
 	// CatalogSkipped: another replica, or a newer feed, wrote it first.
 	CatalogSkipped CatalogOutcome = "skipped"
 )
+
+// CatalogFetch is one fetch of the feed and its signature.
+type CatalogFetch struct {
+	// NotModified: the feed still has the ETag asked with (a 304); Feed
+	// and Sig are nil then.
+	NotModified bool
+	// Feed is catalog.json's exact bytes, Sig catalog.json.sig's.
+	Feed, Sig []byte
+	// ETag is the feed's, to ask with next time ("" when it sent none).
+	ETag string
+}

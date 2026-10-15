@@ -31,3 +31,10 @@ type CatalogRepository interface {
 	// reflects (only ever moving it forward).
 	StampCatalog(ctx context.Context, feedAt time.Time) error
 }
+
+// CatalogFetcher gets the signed catalog feed (internal/infra/catalogfeed).
+type CatalogFetcher interface {
+	// FetchCatalog GETs the feed with If-None-Match: etag ("" asks for it
+	// whatever it is), then its signature.
+	FetchCatalog(ctx context.Context, etag string) (model.CatalogFetch, error)
+}

@@ -227,6 +227,23 @@ func TestDispatcherReloadsIngressAfterMutations(t *testing.T) {
 	}
 }
 
+// An update (a git-sourced app's source moved) reloads the ingress: its
+// http expose ports may have moved; stop never does.
+func TestControlUpdateReloadsIngress(t *testing.T) {
+	t.Setenv("AGENT_DATA_DIR", t.TempDir())
+	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
+	ing := &fakeIngress{}
+	d := NewDispatcher(dockercompose.NewRepository(config.NewServerConfig("standalone"), log), ing, log)
+	d.Dispatch(context.Background(), envelope(string(command.TypeAppControl), []byte(`{"app_id":"a1","action":"stop"}`)))
+	if ing.reloads != 0 {
+		t.Fatalf("stop reloaded the ingress %d times", ing.reloads)
+	}
+	d.Dispatch(context.Background(), envelope(string(command.TypeAppControl), []byte(`{"app_id":"a1","action":"update"}`)))
+	if ing.reloads != 1 {
+		t.Fatalf("update reloaded the ingress %d times, want 1", ing.reloads)
+	}
+}
+
 // TestSaveResponseCarriesIngressWarnings proves app.save attaches the ingress
 // manager's warnings to the response payload on a successful save.
 func TestSaveResponseCarriesIngressWarnings(t *testing.T) {

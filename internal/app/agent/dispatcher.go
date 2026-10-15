@@ -172,7 +172,12 @@ func (d *Dispatcher) newHandlers() map[command.Type]handlerFunc {
 				err = fmt.Errorf("unknown control action %q", in.Action)
 			}
 			if in.Action == command.ControlUpdate {
-				d.backups.Reload() // a git-sourced app's compose file may have moved
+				// A git-sourced app's compose file may have moved: its
+				// backups and its http expose ports with it (the ports
+				// move at the source commit, before the deploy that may
+				// fail).
+				d.backups.Reload()
+				d.reloadIngress(ctx)
 			}
 			return command.ControlAppResponse{AppID: in.AppID, Action: in.Action}, err
 		}),

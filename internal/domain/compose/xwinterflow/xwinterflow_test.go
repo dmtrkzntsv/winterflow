@@ -239,3 +239,49 @@ func TestInterpolatedBodyValueIsNoDefault(t *testing.T) {
 		})
 	}
 }
+
+// rails is the catalog's merge-key pattern: services share one definition
+// through an anchor (x-app: &app), and one more reuses its environment
+// alone (environment: *app-env).
+const rails = `x-app: &app
+  image: example/rails:7
+  environment: &app-env
+    # The app's public URL, e.g. https://rails.example.com
+    BASE_URL: "http://localhost:3000"
+    SECRET_KEY_BASE: "changeme"
+services:
+  web:
+    <<: *app
+    command: serve
+  worker:
+    <<: *app
+    command: work
+  cron:
+    image: example/cron:1
+    environment: *app-env
+x-winterflow:
+  expose:
+    - { container: web, port: 3000 }
+  variables:
+    BASE_URL: { required: true, pattern: "^https?://.+" }
+    SECRET_KEY_BASE: { required: true, encrypted: true }
+`
+
+// A variable in a merged or aliased environment is the services' own: no
+// "nothing uses it" warning, its default and description come from the
+// anchor, and Render sets it in every service that has it.
+func TestMergedEnvironments(t *testing.T) {
+	s := parse(t, ModeTemplate, rails)
+	if len(s.Warnings) != 0 {
+		t.Fatalf("warnings = %q", s.Warnings)
+	}
+	base, _ := s.Variable("BASE_URL")
+	if !reflect.DeepEqual(base.Services, []string{"web", "worker", "cron"}) || base.Default == nil ||
+		*base.Default != "http://localhost:3000" || base.Description != "The app's public URL, e.g. https://rails.example.com" {
+		t.Fatalf("BASE_URL = %+v", base)
+	}
+	if secret, _ := s.Variable("SECRET_KEY_BASE"); len(secret.Services) != 3 || secret.Default != nil {
+		t.Fatalf("SECRET_KEY_BASE = %+v", secret)
+	}
+	golden(t, "merged", render(t, s, []string{"BASE_URL", "SECRET_KEY_BASE"}, map[string]int{"web:3000/http": 20001}))
+}

@@ -95,12 +95,14 @@ func validFileName(name string) bool {
 }
 
 // Warnings are what a save should point out without refusing it: the
-// parser's (a variable nothing uses), then each ${VAR} the files reference
-// that nothing provides: not a declared variable, not a WF_ or
+// parser's (a variable nothing uses), then each ${VAR} the compose files
+// reference that nothing provides: not a declared variable, not a WF_ or
 // COMPOSE_PROJECT_NAME name, not an org shared variable (shared reports
-// those), and without a fallback of its own. A compose file that is not
-// valid YAML (spec.Compose.Unparsed) declares nothing, so the references
-// are left out: every one would read as undeclared.
+// those), and without a fallback of its own. Only compose files count:
+// compose interpolates nothing else, so a $uri in an nginx.conf is the
+// container's. A compose file that is not valid YAML
+// (spec.Compose.Unparsed) declares nothing, so the references are left
+// out: every one would read as undeclared.
 func Warnings(b Body, spec xwinterflow.Spec, shared func(name string) bool) []string {
 	if shared == nil {
 		shared = func(string) bool { return false }
@@ -110,8 +112,8 @@ func Warnings(b Body, spec xwinterflow.Spec, shared func(name string) bool) []st
 		return out
 	}
 	refs := map[string]bool{}
-	for _, name := range slices.Sorted(maps.Keys(b.Files)) {
-		varref.Undefaulted([]byte(b.Files[name]), refs)
+	for _, raw := range b.composeContents() {
+		varref.Undefaulted(raw, refs)
 	}
 	for _, name := range slices.Sorted(maps.Keys(refs)) {
 		if _, ok := spec.Variable(name); ok || model.ReservedVariableName(name) || shared(name) {

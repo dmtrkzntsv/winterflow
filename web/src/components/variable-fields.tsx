@@ -1,3 +1,5 @@
+import { useId } from "react";
+
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -34,17 +36,21 @@ type Props = {
 // small beside it), else by its name; a secret carries a Secret tag. A
 // value that may not match the pattern gets a hint: the server decides.
 export function VariableFields({ vars, values, onChange, kept = [], showRequired = false }: Props) {
+  // Field ids are unique per form: the upgrade dialog's fields open over
+  // the instance panel's, with the same variables.
+  const base = useId();
   const errors = variableErrors(vars, values, kept);
   return (
     <div className="grid gap-4">
       {requiredFirst(vars).map((v) => {
-        const id = `var-${v.name}`;
+        const id = `${base}-var-${v.name}`;
         const err = errors[v.name] ?? "";
         const shown = err !== "" && (err !== REQUIRED || showRequired) ? err : undefined;
         const value = values[v.name] ?? "";
         const held = v.encrypted && kept.includes(v.name);
         const hint = shown ? "" : declaredPatternHint(v, value, held);
-        const attrs = invalidAttrs(id, shown, v.encrypted ? undefined : "font-mono");
+        // A phone gets the 40px touch height (the masked input is 36px).
+        const attrs = invalidAttrs(id, shown, v.encrypted ? "max-sm:h-10" : "font-mono");
         return (
           <div key={v.name} className="grid gap-1.5">
             <Label htmlFor={id} className="flex flex-wrap items-baseline gap-x-2 gap-y-1">

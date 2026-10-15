@@ -47,6 +47,28 @@ describe("VariableFields", () => {
     expect(screen.getAllByText("Enter a value: this variable is required.")).toHaveLength(1);
   });
 
+  it("gives two forms over the same variable their own field ids", () => {
+    render(
+      <>
+        <VariableFields vars={[v("NAME"), v("KEY", { encrypted: true })]} values={{}} onChange={vi.fn()} />
+        <VariableFields vars={[v("NAME"), v("KEY", { encrypted: true })]} values={{}} onChange={vi.fn()} />
+      </>,
+    );
+    for (const name of ["NAME", "KEY"]) {
+      const [a, b] = screen.getAllByLabelText(name);
+      expect(a.id).not.toBe(b.id);
+      for (const input of [a, b]) {
+        expect(document.querySelectorAll(`[id="${input.id}"]`)).toHaveLength(1);
+        expect(document.querySelector(`label[for="${input.id}"]`)?.textContent).toContain(name);
+      }
+    }
+  });
+
+  it("gives a secret field the phone touch height", () => {
+    render(<VariableFields vars={[v("KEY", { encrypted: true })]} values={{}} onChange={vi.fn()} />);
+    expect(screen.getByLabelText("KEY")).toHaveClass("max-sm:h-10");
+  });
+
   it("reports each change by name", async () => {
     const onChange = vi.fn();
     render(<VariableFields vars={[v("NAME")]} values={{}} onChange={onChange} />);

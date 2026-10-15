@@ -114,7 +114,11 @@ func (m *Manager) readApps() ([]AppIngress, []string, error) {
 			Name string `json:"name"`
 		}
 		_ = json.Unmarshal(raw, &meta) // ParseIngress already proved it is JSON
-		out = append(out, AppIngress{AppID: appID, Name: meta.Name, Ingress: *ing})
+		ports, _, err := model.ParsePorts(raw)
+		if err != nil {
+			warnings = append(warnings, "app "+appID+": unreadable ports, its expose targets are skipped: "+err.Error())
+		}
+		out = append(out, AppIngress{AppID: appID, Name: meta.Name, Ingress: *ing, Ports: model.HTTPPorts(ports)})
 	}
 	return out, warnings, nil
 }

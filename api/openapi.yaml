@@ -7227,18 +7227,21 @@ components:
       properties:
         domain:
           type: string
+        expose:
+          type: string
         ssl:
           type: boolean
         upstream_port:
           type: integer
       required:
       - domain
-      - upstream_port
       - ssl
       type: object
     IngressDomainInput:
       properties:
         domain:
+          type: string
+        expose:
           type: string
         ssl:
           type: boolean

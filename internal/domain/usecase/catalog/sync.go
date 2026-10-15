@@ -27,6 +27,7 @@ import (
 const (
 	DefaultFirst   = time.Minute
 	DefaultEvery   = 24 * time.Hour
+	DefaultRetry   = 5 * time.Minute
 	DefaultTimeout = 5 * time.Minute
 	// MaxClockSkew is how far in the future a feed's generated_at may be:
 	// a feed stamped further ahead (a builder with a wrong clock) would
@@ -218,10 +219,16 @@ type Schedule struct {
 	Every time.Duration
 	// Timeout bounds one sync (DefaultTimeout).
 	Timeout time.Duration
+	// Retry is the wait after a failed sync (DefaultRetry); it doubles on
+	// every further failure, up to Every, and resets after a success.
+	Retry time.Duration
 }
 
 // Run syncs after sch.First, then every sch.Every, until ctx ends. A
-// failed sync is logged and retried at the next tick; nothing is fatal.
+// failed sync is logged and retried after sch.Retry, doubling on each
+// further failure up to sch.Every (a fresh install whose first sync hits a
+// transient error must not show an empty catalog for a whole Every); the
+// backoff resets after a success, a 304 included. Nothing is fatal.
 func (s *Syncer) Run(ctx context.Context, sch Schedule) {
 	if sch.First <= 0 {
 		sch.First = DefaultFirst
@@ -232,6 +239,10 @@ func (s *Syncer) Run(ctx context.Context, sch Schedule) {
 	if sch.Timeout <= 0 {
 		sch.Timeout = DefaultTimeout
 	}
+	if sch.Retry <= 0 {
+		sch.Retry = DefaultRetry
+	}
+	retry := min(sch.Retry, sch.Every)
 	timer := time.NewTimer(sch.First)
 	defer timer.Stop()
 	for {
@@ -240,24 +251,32 @@ func (s *Syncer) Run(ctx context.Context, sch Schedule) {
 			return
 		case <-timer.C:
 		}
-		s.runOnce(ctx, sch.Timeout)
-		timer.Reset(sch.Every)
+		if s.runOnce(ctx, sch.Timeout) {
+			retry = min(sch.Retry, sch.Every)
+			timer.Reset(sch.Every)
+			continue
+		}
+		timer.Reset(retry)
+		retry = min(retry*2, sch.Every)
 	}
 }
 
-func (s *Syncer) runOnce(ctx context.Context, timeout time.Duration) {
+// runOnce runs one bounded sync and reports whether it succeeded.
+func (s *Syncer) runOnce(ctx context.Context, timeout time.Duration) bool {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	res, err := s.Sync(ctx)
 	switch {
 	case err != nil:
 		s.log.Error("catalog sync failed", "error", err)
+		return false
 	case res.NotModified:
 		s.log.Debug("catalog: the feed has not changed")
 	default:
 		s.log.Info("catalog synced", "inserted", res.Inserted, "revised", res.Revised, "updated", res.Updated,
 			"unchanged", res.Unchanged, "skipped", res.Skipped, "invalid", res.Invalid, "withdrawn", res.Withdrawn)
 	}
+	return true
 }
 
 // WithdrawAll withdraws every catalog template: CATALOG_URL is empty, so

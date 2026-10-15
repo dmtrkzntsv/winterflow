@@ -441,7 +441,7 @@ func TestRun(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		e.sync.Run(ctx, catalog.Schedule{First: time.Millisecond, Every: 5 * time.Millisecond, Timeout: time.Second})
+		e.sync.Run(ctx, catalog.Schedule{First: time.Millisecond, Every: 5 * time.Millisecond, Retry: time.Millisecond, Timeout: time.Second})
 		close(done)
 	}()
 	deadline := time.After(10 * time.Second)
@@ -473,6 +473,90 @@ func TestRun(t *testing.T) {
 	}
 	cancel()
 	<-done
+}
+
+// A failed sync is retried after Retry, long before Every, so a fresh
+// install does not wait a whole Every for its catalog.
+func TestRunRetriesAFailureBeforeEvery(t *testing.T) {
+	e := newEnv(t)
+	e.feed.err = errors.New("connection reset")
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		e.sync.Run(ctx, catalog.Schedule{First: time.Millisecond, Every: time.Hour, Retry: 5 * time.Millisecond, Timeout: time.Second})
+		close(done)
+	}()
+	deadline := time.After(10 * time.Second)
+	for len(e.feed.etags()) < 1 {
+		select {
+		case <-deadline:
+			t.Fatal("Run never synced")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	e.feed.mu.Lock()
+	e.feed.err = nil
+	e.feed.mu.Unlock()
+	e.feed.publish(t, e.key, g1, app("budget", "Budget", "actual:1"))
+	for len(e.states(t)) == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("Run did not retry before Every")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	cancel()
+	<-done
+}
+
+// timedFetcher fails every fetch and records when each happened.
+type timedFetcher struct {
+	mu sync.Mutex
+	at []time.Time
+}
+
+func (f *timedFetcher) FetchCatalog(context.Context, string) (model.CatalogFetch, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.at = append(f.at, time.Now())
+	return model.CatalogFetch{}, errors.New("down")
+}
+
+func (f *timedFetcher) times() []time.Time {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]time.Time{}, f.at...)
+}
+
+// The retry wait doubles on each failure (never shorter than Retry, then
+// twice that) and is capped at Every.
+func TestRunBacksOffAndCapsAtEvery(t *testing.T) {
+	e := newEnv(t)
+	tf := &timedFetcher{}
+	s := catalog.New(catalog.Deps{Repo: e.repo, Fetcher: tf, Log: dbtest.Log})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		s.Run(ctx, catalog.Schedule{First: time.Millisecond, Every: 40 * time.Millisecond, Retry: 10 * time.Millisecond, Timeout: time.Second})
+		close(done)
+	}()
+	deadline := time.After(10 * time.Second)
+	for len(tf.times()) < 5 {
+		select {
+		case <-deadline:
+			t.Fatal("Run stopped retrying")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	cancel()
+	<-done
+	at := tf.times()
+	// Timers never fire early: the gaps are at least 10ms, 20ms, 40ms, 40ms.
+	for i, min := range []time.Duration{10, 20, 40, 40} {
+		if gap := at[i+1].Sub(at[i]); gap < min*time.Millisecond {
+			t.Fatalf("gap %d = %v, want at least %v", i, gap, min*time.Millisecond)
+		}
+	}
 }
 
 // A zero Schedule takes the defaults (the first sync a minute away): a

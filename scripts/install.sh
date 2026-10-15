@@ -363,14 +363,9 @@ MemoryMax=${MEMORY_MAX}
 TasksMax=512
 LimitNOFILE=65536
 
-# Allow binding the ingress ports 80/443 without root, and reading every
-# process's disk I/O (/proc/<pid>/io) for Monitoring's Processes tab.
-# CAP_SYS_PTRACE also lets the agent read any process's memory and
-# environment (/proc/*/environ, process_vm_readv, ptrace attach); it grants
-# nothing new, since the agent already holds the Docker socket, which is
-# root-equivalent.
-AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_SYS_PTRACE
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_SYS_PTRACE
+# Allow binding the ingress ports 80/443 without root.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 
 # Hardening. The Docker socket stays writable: app deployment shells out to
 # 'docker compose'. /mnt and /media (the usual mount points of USB disks and

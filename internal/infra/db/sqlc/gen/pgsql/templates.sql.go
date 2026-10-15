@@ -11,6 +11,41 @@ import (
 	"winterflow/internal/infra/db/types"
 )
 
+const bumpCatalogTemplate = `-- name: BumpCatalogTemplate :execrows
+UPDATE templates
+SET latest_revision = latest_revision + 1, name = $1, catalog = $2, withdrawn_at = NULL,
+    catalog_feed_at = $3, updated_at = $4
+WHERE id = $5 AND source = 'catalog' AND latest_revision = $6
+  AND (catalog_feed_at IS NULL OR catalog_feed_at <= $3)
+`
+
+type BumpCatalogTemplateParams struct {
+	Name           string
+	Catalog        string
+	FeedAt         *types.DateTime
+	UpdatedAt      types.DateTime
+	ID             string
+	LatestRevision int64
+}
+
+// A catalog template's next revision from the base the sync read, its
+// name and metadata, withdrawn_at cleared: 0 rows when another replica
+// moved latest_revision, or a newer feed wrote the template.
+func (q *Queries) BumpCatalogTemplate(ctx context.Context, arg BumpCatalogTemplateParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, bumpCatalogTemplate,
+		arg.Name,
+		arg.Catalog,
+		arg.FeedAt,
+		arg.UpdatedAt,
+		arg.ID,
+		arg.LatestRevision,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const bumpTemplateRevision = `-- name: BumpTemplateRevision :execrows
 UPDATE templates
 SET latest_revision = latest_revision + 1, name = $1, updated_at = $2
@@ -181,7 +216,7 @@ func (q *Queries) GetLiveTemplateInstanceForApp(ctx context.Context, arg GetLive
 }
 
 const getTemplate = `-- name: GetTemplate :one
-SELECT id, source, org_id, slug, name, latest_revision, withdrawn_at, created_at, created_by, updated_at FROM templates WHERE id = $1 AND (org_id = $2 OR source = 'catalog')
+SELECT id, source, org_id, slug, name, latest_revision, withdrawn_at, created_at, created_by, updated_at, catalog, catalog_feed_at FROM templates WHERE id = $1 AND (org_id = $2 OR source = 'catalog')
 `
 
 type GetTemplateParams struct {
@@ -204,6 +239,8 @@ func (q *Queries) GetTemplate(ctx context.Context, arg GetTemplateParams) (Templ
 		&i.CreatedAt,
 		&i.CreatedBy,
 		&i.UpdatedAt,
+		&i.Catalog,
+		&i.CatalogFeedAt,
 	)
 	return i, err
 }
@@ -279,21 +316,23 @@ func (q *Queries) GetTemplateRevision(ctx context.Context, arg GetTemplateRevisi
 
 const insertTemplate = `-- name: InsertTemplate :execrows
 
-INSERT INTO templates (id, source, org_id, slug, name, latest_revision, withdrawn_at, created_at, created_by, updated_at)
-VALUES ($1, $2, $3, $4, $5, 1, $6, $7, $8, $9)
+INSERT INTO templates (id, source, org_id, slug, name, latest_revision, withdrawn_at, catalog, catalog_feed_at, created_at, created_by, updated_at)
+VALUES ($1, $2, $3, $4, $5, 1, $6, $7, $8, $9, $10, $11)
 ON CONFLICT DO NOTHING
 `
 
 type InsertTemplateParams struct {
-	ID          string
-	Source      string
-	OrgID       *string
-	Slug        string
-	Name        string
-	WithdrawnAt *types.DateTime
-	CreatedAt   types.DateTime
-	CreatedBy   string
-	UpdatedAt   types.DateTime
+	ID            string
+	Source        string
+	OrgID         *string
+	Slug          string
+	Name          string
+	WithdrawnAt   *types.DateTime
+	Catalog       string
+	CatalogFeedAt *types.DateTime
+	CreatedAt     types.DateTime
+	CreatedBy     string
+	UpdatedAt     types.DateTime
 }
 
 // Templates, their immutable revisions and their instances. A template is
@@ -301,7 +340,8 @@ type InsertTemplateParams struct {
 // org_id NULL): an org reads its own and every catalog template, and
 // changes only its own.
 // A taken org name or catalog slug inserts nothing (0 rows): the caller
-// answers 400.
+// answers 400 (save-template) or skips the entry (the catalog sync lost
+// the race to another replica).
 func (q *Queries) InsertTemplate(ctx context.Context, arg InsertTemplateParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, insertTemplate,
 		arg.ID,
@@ -310,6 +350,8 @@ func (q *Queries) InsertTemplate(ctx context.Context, arg InsertTemplateParams) 
 		arg.Slug,
 		arg.Name,
 		arg.WithdrawnAt,
+		arg.Catalog,
+		arg.CatalogFeedAt,
 		arg.CreatedAt,
 		arg.CreatedBy,
 		arg.UpdatedAt,
@@ -346,6 +388,59 @@ func (q *Queries) InsertTemplateRevision(ctx context.Context, arg InsertTemplate
 		arg.CreatedBy,
 	)
 	return err
+}
+
+const listCatalogTemplates = `-- name: ListCatalogTemplates :many
+SELECT t.id, t.slug, t.name, t.catalog, t.latest_revision, t.withdrawn_at, t.catalog_feed_at, r.digest
+FROM templates AS t
+JOIN template_revisions AS r ON r.template_id = t.id AND r.revision = t.latest_revision
+WHERE t.source = 'catalog'
+ORDER BY t.slug
+`
+
+type ListCatalogTemplatesRow struct {
+	ID             string
+	Slug           string
+	Name           string
+	Catalog        string
+	LatestRevision int64
+	WithdrawnAt    *types.DateTime
+	CatalogFeedAt  *types.DateTime
+	Digest         string
+}
+
+// Every catalog template with its latest revision's digest: what the
+// catalog sync compares a feed with.
+func (q *Queries) ListCatalogTemplates(ctx context.Context) ([]ListCatalogTemplatesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listCatalogTemplates)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListCatalogTemplatesRow{}
+	for rows.Next() {
+		var i ListCatalogTemplatesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Slug,
+			&i.Name,
+			&i.Catalog,
+			&i.LatestRevision,
+			&i.WithdrawnAt,
+			&i.CatalogFeedAt,
+			&i.Digest,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listLiveTemplateInstances = `-- name: ListLiveTemplateInstances :many
@@ -472,13 +567,13 @@ func (q *Queries) ListTemplateRevisions(ctx context.Context, templateID string) 
 }
 
 const listTemplates = `-- name: ListTemplates :many
-SELECT t.id, t.source, t.org_id, t.slug, t.name, t.latest_revision, t.withdrawn_at, t.created_at, t.created_by, t.updated_at,
+SELECT t.id, t.source, t.org_id, t.slug, t.name, t.latest_revision, t.withdrawn_at, t.catalog, t.created_at, t.created_by, t.updated_at,
     COUNT(i.id) AS instances,
     CAST(COALESCE(SUM(CASE WHEN i.revision < t.latest_revision THEN 1 ELSE 0 END), 0) AS BIGINT) AS behind
 FROM templates AS t
 LEFT JOIN template_instances AS i ON i.template_id = t.id AND i.org_id = $1 AND i.state IN ('pending', 'created')
 WHERE t.org_id = $2 OR t.source = 'catalog'
-GROUP BY t.id, t.source, t.org_id, t.slug, t.name, t.latest_revision, t.withdrawn_at, t.created_at, t.created_by, t.updated_at
+GROUP BY t.id, t.source, t.org_id, t.slug, t.name, t.latest_revision, t.withdrawn_at, t.catalog, t.created_at, t.created_by, t.updated_at
 HAVING t.source = 'org' OR t.withdrawn_at IS NULL OR COUNT(i.id) > 0
 ORDER BY t.source DESC, t.name ASC, t.id ASC
 `
@@ -496,6 +591,7 @@ type ListTemplatesRow struct {
 	Name           string
 	LatestRevision int64
 	WithdrawnAt    *types.DateTime
+	Catalog        string
 	CreatedAt      types.DateTime
 	CreatedBy      string
 	UpdatedAt      types.DateTime
@@ -524,6 +620,7 @@ func (q *Queries) ListTemplates(ctx context.Context, arg ListTemplatesParams) ([
 			&i.Name,
 			&i.LatestRevision,
 			&i.WithdrawnAt,
+			&i.Catalog,
 			&i.CreatedAt,
 			&i.CreatedBy,
 			&i.UpdatedAt,
@@ -693,4 +790,78 @@ type SetTemplateInstanceStateParams struct {
 func (q *Queries) SetTemplateInstanceState(ctx context.Context, arg SetTemplateInstanceStateParams) error {
 	_, err := q.db.ExecContext(ctx, setTemplateInstanceState, arg.State, arg.UpdatedAt, arg.ID)
 	return err
+}
+
+const stampCatalogTemplates = `-- name: StampCatalogTemplates :exec
+UPDATE templates
+SET catalog_feed_at = $1
+WHERE source = 'catalog' AND (catalog_feed_at IS NULL OR catalog_feed_at < $1)
+`
+
+// The feed every catalog template now reflects: a later sync of an older
+// feed is refused as a whole.
+func (q *Queries) StampCatalogTemplates(ctx context.Context, feedAt *types.DateTime) error {
+	_, err := q.db.ExecContext(ctx, stampCatalogTemplates, feedAt)
+	return err
+}
+
+const updateCatalogTemplate = `-- name: UpdateCatalogTemplate :execrows
+UPDATE templates
+SET name = $1, catalog = $2, withdrawn_at = NULL,
+    catalog_feed_at = $3, updated_at = $4
+WHERE id = $5 AND source = 'catalog'
+  AND (catalog_feed_at IS NULL OR catalog_feed_at <= $3)
+`
+
+type UpdateCatalogTemplateParams struct {
+	Name      string
+	Catalog   string
+	FeedAt    *types.DateTime
+	UpdatedAt types.DateTime
+	ID        string
+}
+
+// A catalog template's name and metadata in place, withdrawn_at cleared:
+// 0 rows when a newer feed wrote it.
+func (q *Queries) UpdateCatalogTemplate(ctx context.Context, arg UpdateCatalogTemplateParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, updateCatalogTemplate,
+		arg.Name,
+		arg.Catalog,
+		arg.FeedAt,
+		arg.UpdatedAt,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+const withdrawCatalogTemplate = `-- name: WithdrawCatalogTemplate :execrows
+UPDATE templates
+SET withdrawn_at = $1, updated_at = $2
+WHERE id = $3 AND source = 'catalog' AND withdrawn_at IS NULL
+  AND (catalog_feed_at IS NULL OR catalog_feed_at <= $4)
+`
+
+type WithdrawCatalogTemplateParams struct {
+	WithdrawnAt *types.DateTime
+	UpdatedAt   types.DateTime
+	ID          string
+	FeedAt      *types.DateTime
+}
+
+// A catalog template the feed no longer lists: 0 rows when it is withdrawn
+// already or a newer feed wrote it.
+func (q *Queries) WithdrawCatalogTemplate(ctx context.Context, arg WithdrawCatalogTemplateParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, withdrawCatalogTemplate,
+		arg.WithdrawnAt,
+		arg.UpdatedAt,
+		arg.ID,
+		arg.FeedAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }

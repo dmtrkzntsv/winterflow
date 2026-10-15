@@ -5,9 +5,10 @@
 
 -- name: InsertTemplate :execrows
 -- A taken org name or catalog slug inserts nothing (0 rows): the caller
--- answers 400.
-INSERT INTO templates (id, source, org_id, slug, name, latest_revision, withdrawn_at, created_at, created_by, updated_at)
-VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
+-- answers 400 (save-template) or skips the entry (the catalog sync lost
+-- the race to another replica).
+INSERT INTO templates (id, source, org_id, slug, name, latest_revision, withdrawn_at, catalog, catalog_feed_at, created_at, created_by, updated_at)
+VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
 ON CONFLICT DO NOTHING;
 
 -- name: BumpTemplateRevision :execrows
@@ -29,13 +30,13 @@ SELECT id FROM templates WHERE source = 'org' AND org_id = ? AND name = ?;
 -- org has live instances of it), each by name. One pass over the org's
 -- live instances: instances counts them, behind those on a revision older
 -- than the latest.
-SELECT t.id, t.source, t.org_id, t.slug, t.name, t.latest_revision, t.withdrawn_at, t.created_at, t.created_by, t.updated_at,
+SELECT t.id, t.source, t.org_id, t.slug, t.name, t.latest_revision, t.withdrawn_at, t.catalog, t.created_at, t.created_by, t.updated_at,
     COUNT(i.id) AS instances,
     CAST(COALESCE(SUM(CASE WHEN i.revision < t.latest_revision THEN 1 ELSE 0 END), 0) AS INTEGER) AS behind
 FROM templates AS t
 LEFT JOIN template_instances AS i ON i.template_id = t.id AND i.org_id = ? AND i.state IN ('pending', 'created')
 WHERE t.org_id = ? OR t.source = 'catalog'
-GROUP BY t.id, t.source, t.org_id, t.slug, t.name, t.latest_revision, t.withdrawn_at, t.created_at, t.created_by, t.updated_at
+GROUP BY t.id, t.source, t.org_id, t.slug, t.name, t.latest_revision, t.withdrawn_at, t.catalog, t.created_at, t.created_by, t.updated_at
 HAVING t.source = 'org' OR t.withdrawn_at IS NULL OR COUNT(i.id) > 0
 ORDER BY t.source DESC, t.name ASC, t.id ASC;
 
@@ -55,6 +56,49 @@ WHERE templates.id = ? AND templates.source = 'org' AND templates.org_id = ?
 -- name: DeleteTemplateRollouts :exec
 -- A deleted template's upgrade rollouts (scope key: <org_id>:<template_id>).
 DELETE FROM rollouts WHERE kind = 'template_upgrade' AND scope_key = ?;
+
+-- name: ListCatalogTemplates :many
+-- Every catalog template with its latest revision's digest: what the
+-- catalog sync compares a feed with.
+SELECT t.id, t.slug, t.name, t.catalog, t.latest_revision, t.withdrawn_at, t.catalog_feed_at, r.digest
+FROM templates AS t
+JOIN template_revisions AS r ON r.template_id = t.id AND r.revision = t.latest_revision
+WHERE t.source = 'catalog'
+ORDER BY t.slug;
+
+-- name: BumpCatalogTemplate :execrows
+-- A catalog template's next revision from the base the sync read, its
+-- name and metadata, withdrawn_at cleared: 0 rows when another replica
+-- moved latest_revision, or a newer feed wrote the template.
+UPDATE templates
+SET latest_revision = latest_revision + 1, name = sqlc.arg(name), catalog = sqlc.arg(catalog), withdrawn_at = NULL,
+    catalog_feed_at = sqlc.arg(feed_at), updated_at = sqlc.arg(updated_at)
+WHERE id = sqlc.arg(id) AND source = 'catalog' AND latest_revision = sqlc.arg(latest_revision)
+  AND (catalog_feed_at IS NULL OR catalog_feed_at <= sqlc.arg(feed_at));
+
+-- name: UpdateCatalogTemplate :execrows
+-- A catalog template's name and metadata in place, withdrawn_at cleared:
+-- 0 rows when a newer feed wrote it.
+UPDATE templates
+SET name = sqlc.arg(name), catalog = sqlc.arg(catalog), withdrawn_at = NULL,
+    catalog_feed_at = sqlc.arg(feed_at), updated_at = sqlc.arg(updated_at)
+WHERE id = sqlc.arg(id) AND source = 'catalog'
+  AND (catalog_feed_at IS NULL OR catalog_feed_at <= sqlc.arg(feed_at));
+
+-- name: WithdrawCatalogTemplate :execrows
+-- A catalog template the feed no longer lists: 0 rows when it is withdrawn
+-- already or a newer feed wrote it.
+UPDATE templates
+SET withdrawn_at = sqlc.arg(withdrawn_at), updated_at = sqlc.arg(updated_at)
+WHERE id = sqlc.arg(id) AND source = 'catalog' AND withdrawn_at IS NULL
+  AND (catalog_feed_at IS NULL OR catalog_feed_at <= sqlc.arg(feed_at));
+
+-- name: StampCatalogTemplates :exec
+-- The feed every catalog template now reflects: a later sync of an older
+-- feed is refused as a whole.
+UPDATE templates
+SET catalog_feed_at = sqlc.arg(feed_at)
+WHERE source = 'catalog' AND (catalog_feed_at IS NULL OR catalog_feed_at < sqlc.arg(feed_at));
 
 -- name: InsertTemplateRevision :exec
 INSERT INTO template_revisions (template_id, revision, body, note, digest, created_at, created_by)

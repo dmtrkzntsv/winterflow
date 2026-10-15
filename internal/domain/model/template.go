@@ -43,7 +43,8 @@ func ManagedByTemplate(name string) error {
 
 // Template is a stack definition; its body lives in revisions. An org
 // template (Source TemplateSourceOrg) belongs to OrgID; a catalog template
-// (TemplateSourceCatalog) has no OrgID, a Slug, and WithdrawnAt once the
+// (TemplateSourceCatalog) has no OrgID, a Slug, CatalogMeta (what the
+// catalog says about it; nil for an org template) and WithdrawnAt once the
 // catalog dropped it.
 type Template struct {
 	ID             string
@@ -53,6 +54,7 @@ type Template struct {
 	Name           string
 	LatestRevision int64
 	WithdrawnAt    *time.Time
+	CatalogMeta    *CatalogMeta
 	CreatedAt      time.Time
 	CreatedBy      string
 	UpdatedAt      time.Time

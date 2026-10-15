@@ -1,6 +1,9 @@
 package model
 
-import "slices"
+import (
+	"slices"
+	"time"
+)
 
 // CatalogMeta is what the catalog says about a catalog template besides
 // its name and files: the gallery's text, search words and links. The
@@ -37,3 +40,45 @@ func (m CatalogMeta) Normalized() CatalogMeta {
 	}
 	return m
 }
+
+// CatalogState is what the catalog sync reads of one catalog template.
+type CatalogState struct {
+	ID             string
+	Slug           string
+	Name           string
+	Meta           CatalogMeta
+	LatestRevision int64
+	// Digest is the latest revision's.
+	Digest      string
+	WithdrawnAt *time.Time
+	// FeedAt is the generated_at of the newest feed the sync applied to
+	// the template; nil when no sync wrote it.
+	FeedAt *time.Time
+}
+
+// CatalogEntry is one valid feed entry as the sync applies it.
+type CatalogEntry struct {
+	Slug string
+	Name string
+	Meta CatalogMeta
+	// Body is the encoded revision body (files, summary, description).
+	Body   []byte
+	Digest string
+	// FeedAt is the feed's generated_at.
+	FeedAt time.Time
+}
+
+// CatalogOutcome is what applying one entry did.
+type CatalogOutcome string
+
+const (
+	// CatalogInserted: a new catalog template, revision 1.
+	CatalogInserted CatalogOutcome = "inserted"
+	// CatalogRevised: the files changed, a new revision.
+	CatalogRevised CatalogOutcome = "revised"
+	// CatalogUpdated: the name or metadata changed in place, or a
+	// withdrawn template came back.
+	CatalogUpdated CatalogOutcome = "updated"
+	// CatalogSkipped: another replica, or a newer feed, wrote it first.
+	CatalogSkipped CatalogOutcome = "skipped"
+)

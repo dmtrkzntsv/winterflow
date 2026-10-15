@@ -232,6 +232,8 @@ type Template struct {
 	CreatedAt      types.DateTime
 	CreatedBy      string
 	UpdatedAt      types.DateTime
+	Catalog        string
+	CatalogFeedAt  *types.DateTime
 }
 
 type TemplateInstance struct {

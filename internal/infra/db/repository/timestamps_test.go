@@ -147,6 +147,10 @@ func TestSQLiteTimestampsAreDateTimeText(t *testing.T) {
 		model.TemplateRevision{Body: []byte(`{}`)}); err != nil {
 		t.Fatal(err)
 	}
+	// catalog_feed_at: a catalog template the sync wrote.
+	if _, err := templates.ApplyCatalog(ctx, nil, model.CatalogEntry{Slug: "fed", Name: "Fed", Body: []byte(`{}`), Digest: "sha256:x", FeedAt: at}); err != nil {
+		t.Fatal(err)
+	}
 	if _, _, err := templates.ClaimInstance(ctx, model.Instance{
 		ID: dbtest.ID(502), OrgID: orgID, Key: "k", AppID: appID, ServerID: srv.ID, TemplateID: tplID, Revision: 1, RequestHash: "h",
 	}); err != nil {

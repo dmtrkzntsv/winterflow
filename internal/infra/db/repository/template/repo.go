@@ -45,6 +45,10 @@ type (
 	retireParams   = sqlitegen.RetireTemplateInstancesForAppParams
 	upgradeParams  = sqlitegen.ListUpgradableInstancesParams
 	listParams     = sqlitegen.ListTemplatesParams
+	catalogRow     = sqlitegen.ListCatalogTemplatesRow
+	catBumpParams  = sqlitegen.BumpCatalogTemplateParams
+	catUpdParams   = sqlitegen.UpdateCatalogTemplateParams
+	withdrawParams = sqlitegen.WithdrawCatalogTemplateParams
 )
 
 type querier interface {
@@ -70,6 +74,11 @@ type querier interface {
 	GetTemplateInstanceByID(ctx context.Context, db backend.DBTX, id string) (instanceRow, error)
 	GetLiveTemplateInstanceForApp(ctx context.Context, db backend.DBTX, p forAppParams) (string, error)
 	RetireTemplateInstancesForApp(ctx context.Context, db backend.DBTX, p retireParams) error
+	ListCatalogTemplates(ctx context.Context, db backend.DBTX) ([]catalogRow, error)
+	BumpCatalogTemplate(ctx context.Context, db backend.DBTX, p catBumpParams) (int64, error)
+	UpdateCatalogTemplate(ctx context.Context, db backend.DBTX, p catUpdParams) (int64, error)
+	WithdrawCatalogTemplate(ctx context.Context, db backend.DBTX, p withdrawParams) (int64, error)
+	StampCatalogTemplates(ctx context.Context, db backend.DBTX, feedAt *types.DateTime) error
 }
 
 // Repo is the templates repository.
@@ -79,7 +88,10 @@ type Repo struct {
 	log *logger.Logger
 }
 
-var _ port.TemplateRepository = (*Repo)(nil)
+var (
+	_ port.TemplateRepository = (*Repo)(nil)
+	_ port.CatalogRepository  = (*Repo)(nil)
+)
 
 // New builds the repository for driver (backend.SQLite or backend.Postgres).
 func New(tx *backend.TxManager, driver string, log *logger.Logger) (*Repo, error) {
@@ -106,6 +118,11 @@ func (r *Repo) CreateTemplate(ctx context.Context, t model.Template, rev model.T
 			at := types.DateTime(t.WithdrawnAt.UTC())
 			p.WithdrawnAt = &at
 		}
+		meta, err := encodeMeta(t.CatalogMeta)
+		if err != nil {
+			return err
+		}
+		p.Catalog = meta
 	default:
 		return fmt.Errorf("template %s: unknown source %q", t.ID, t.Source)
 	}
@@ -192,7 +209,7 @@ func (r *Repo) ListTemplates(ctx context.Context, orgID string) ([]model.Templat
 		out = append(out, model.TemplateSummary{
 			Template: hydrateTemplate(templateRow{
 				ID: row.ID, Source: row.Source, OrgID: row.OrgID, Slug: row.Slug, Name: row.Name,
-				LatestRevision: row.LatestRevision, WithdrawnAt: row.WithdrawnAt,
+				LatestRevision: row.LatestRevision, WithdrawnAt: row.WithdrawnAt, Catalog: row.Catalog,
 				CreatedAt: row.CreatedAt, CreatedBy: row.CreatedBy, UpdatedAt: row.UpdatedAt,
 			}),
 			Instances: row.Instances,
@@ -456,6 +473,10 @@ func hydrateTemplate(row templateRow) model.Template {
 	if row.WithdrawnAt != nil {
 		at := row.WithdrawnAt.Time()
 		t.WithdrawnAt = &at
+	}
+	if t.Catalog() {
+		meta := decodeMeta(row.Catalog)
+		t.CatalogMeta = &meta
 	}
 	return t
 }

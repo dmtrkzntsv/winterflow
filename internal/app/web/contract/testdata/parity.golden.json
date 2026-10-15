@@ -212,6 +212,7 @@
           "icon": "",
           "summary": "Parity"
         },
+        "catalog": null,
         "created_at": "<time>Z",
         "created_by": "<id-6>",
         "detected": {
@@ -277,6 +278,7 @@
         "templates": [
           {
             "behind": 0,
+            "catalog": null,
             "id": "<id-8>",
             "instances": 1,
             "latest_revision": 1,

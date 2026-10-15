@@ -6356,6 +6356,53 @@ components:
       - name
       - value
       type: object
+    CatalogMeta:
+      properties:
+        alternative_to:
+          description: Apps this one replaces, as search words.
+          items:
+            type: string
+          type:
+          - array
+          - "null"
+        description:
+          type: string
+        documentation_url:
+          type: string
+        homepage_url:
+          type: string
+        keywords:
+          items:
+            type: string
+          type:
+          - array
+          - "null"
+        license:
+          type: string
+        logo_url:
+          type: string
+        repository_url:
+          type: string
+        summary:
+          type: string
+        tags:
+          items:
+            type: string
+          type:
+          - array
+          - "null"
+      required:
+      - summary
+      - description
+      - keywords
+      - tags
+      - alternative_to
+      - license
+      - homepage_url
+      - repository_url
+      - documentation_url
+      - logo_url
+      type: object
     ChangePasswordRequest:
       properties:
         current_password:
@@ -9412,6 +9459,12 @@ components:
           description: Of those, the ones on a revision older than the latest.
           format: int64
           type: integer
+        catalog:
+          anyOf:
+          - type: "null"
+          - $ref: '#/components/schemas/CatalogMeta'
+          description: What the catalog says about a catalog template (summary, search
+            words, links, logo); null for an org template.
         id:
           type: string
         instances:
@@ -9452,12 +9505,19 @@ components:
       - instances
       - behind
       - withdrawn_at
+      - catalog
       - updated_at
       type: object
     TemplateView:
       properties:
         body:
           $ref: '#/components/schemas/Body'
+        catalog:
+          anyOf:
+          - type: "null"
+          - $ref: '#/components/schemas/CatalogMeta'
+          description: What the catalog says about a catalog template; null for an
+            org template.
         created_at:
           format: date-time
           type: string
@@ -9505,6 +9565,7 @@ components:
       - name
       - latest_revision
       - withdrawn_at
+      - catalog
       - revision
       - body
       - detected

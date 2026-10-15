@@ -3,6 +3,7 @@ package templates
 import (
 	"time"
 
+	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/template"
 )
 
@@ -16,7 +17,10 @@ type TemplateSummary struct {
 	Instances      int64      `json:"instances" description:"The org's pending and created instances."`
 	Behind         int64      `json:"behind" description:"Of those, the ones on a revision older than the latest."`
 	WithdrawnAt    *time.Time `json:"withdrawn_at" description:"When the catalog dropped the template (listed only while the org has instances of it); null otherwise."`
-	UpdatedAt      time.Time  `json:"updated_at"`
+	// Catalog is what the catalog says about a catalog template; null for
+	// an org template.
+	Catalog   *model.CatalogMeta `json:"catalog" description:"What the catalog says about a catalog template (summary, search words, links, logo); null for an org template."`
+	UpdatedAt time.Time          `json:"updated_at"`
 }
 
 // TemplateList is the data of GET get-templates.
@@ -41,6 +45,7 @@ type TemplateView struct {
 	Name           string                 `json:"name"`
 	LatestRevision int64                  `json:"latest_revision"`
 	WithdrawnAt    *time.Time             `json:"withdrawn_at" description:"When the catalog dropped the template (it takes no new installs); null otherwise."`
+	Catalog        *model.CatalogMeta     `json:"catalog" description:"What the catalog says about a catalog template; null for an org template."`
 	Revision       int64                  `json:"revision"`
 	Body           template.Body          `json:"body"`
 	Detected       template.Detected      `json:"detected" description:"What the revision's compose files declare under x-winterflow."`

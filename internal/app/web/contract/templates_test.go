@@ -51,15 +51,16 @@ func saveTemplate(t *testing.T, c *client, req htpl.SaveTemplateRequest) tuc.Sav
 	return out
 }
 
-// catalogTemplate inserts a catalog template with body (nothing in the API
-// creates one: the catalog sync will).
+// catalogTemplate inserts a catalog template with body, as the catalog
+// sync would (catalog_test.go drives the sync itself).
 func catalogTemplate(t *testing.T, e *env, id, slug string, body template.Body) {
 	t.Helper()
 	raw, err := template.Encode(body)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := e.deps.TemplateRepository.CreateTemplate(e.dbCtx(t), model.Template{ID: id, Source: model.TemplateSourceCatalog, Slug: slug, Name: "Shop"},
+	meta := &model.CatalogMeta{Summary: body.Summary, Keywords: []string{"store"}, LogoURL: "https://winterflow.io/catalog/logos/" + slug + ".png"}
+	if err := e.deps.TemplateRepository.CreateTemplate(e.dbCtx(t), model.Template{ID: id, Source: model.TemplateSourceCatalog, Slug: slug, Name: "Shop", CatalogMeta: meta},
 		model.TemplateRevision{Body: raw, Digest: "sha256:" + slug}); err != nil {
 		t.Fatal(err)
 	}
@@ -113,12 +114,13 @@ func TestTemplateRoutes(t *testing.T) {
 	t.Run("list and read with what the compose file declares", func(t *testing.T) {
 		var list tuc.TemplateList
 		owner.get(t, "/api/v1/template/get-templates", nil).expect(t, http.StatusOK).data(t, &list)
-		if len(list.Templates) != 1 || list.Templates[0].LatestRevision != 2 || list.Templates[0].Instances != 0 || list.Templates[0].Source != "org" {
+		if len(list.Templates) != 1 || list.Templates[0].LatestRevision != 2 || list.Templates[0].Instances != 0 || list.Templates[0].Source != "org" ||
+			list.Templates[0].Catalog != nil {
 			t.Fatalf("list = %+v", list)
 		}
 		var view tuc.TemplateView
 		owner.get(t, "/api/v1/template/get-template", url.Values{"id": {saved.ID}, "revision": {"1"}}).expect(t, http.StatusOK).data(t, &view)
-		if view.Revision != 1 || view.Note != "first" || view.Body.Summary != "A shop" || len(view.Revisions) != 2 {
+		if view.Revision != 1 || view.Note != "first" || view.Body.Summary != "A shop" || len(view.Revisions) != 2 || view.Catalog != nil {
 			t.Fatalf("view = %+v", view)
 		}
 		d := view.Detected
@@ -165,12 +167,14 @@ func TestCatalogTemplatesAreReadOnly(t *testing.T) {
 	for _, c := range []*client{owner, mallory} {
 		var list tuc.TemplateList
 		c.get(t, "/api/v1/template/get-templates", nil).expect(t, http.StatusOK).data(t, &list)
-		if len(list.Templates) != 1 || list.Templates[0].ID != cat || list.Templates[0].Source != "catalog" || list.Templates[0].Slug != "shop" {
+		if len(list.Templates) != 1 || list.Templates[0].ID != cat || list.Templates[0].Source != "catalog" || list.Templates[0].Slug != "shop" ||
+			list.Templates[0].Catalog == nil || list.Templates[0].Catalog.LogoURL != "https://winterflow.io/catalog/logos/shop.png" {
 			t.Fatalf("list = %+v", list)
 		}
 		var view tuc.TemplateView
 		c.get(t, "/api/v1/template/get-template", url.Values{"id": {cat}}).expect(t, http.StatusOK).data(t, &view)
-		if view.Source != "catalog" || len(view.Detected.Variables) != 3 {
+		if view.Source != "catalog" || len(view.Detected.Variables) != 3 || view.Catalog == nil || view.Catalog.Summary != "A shop" ||
+			len(view.Catalog.Keywords) != 1 || view.Catalog.Tags == nil {
 			t.Fatalf("view = %+v", view)
 		}
 	}

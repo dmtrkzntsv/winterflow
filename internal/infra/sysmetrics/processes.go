@@ -309,7 +309,7 @@ func readHead(path string, n int64) ([]byte, error) {
 }
 
 var (
-	secretWords = []string{"pass", "secret", "token", "key", "auth", "cred"}
+	secretWords = []string{"pass", "pwd", "secret", "token", "key", "auth", "cred"}
 	// assignArg is "NAME=value" with optional leading dashes (-x=1, --x=1,
 	// X=1); flagArg is a bare "-x" / "--name".
 	assignArg = regexp.MustCompile(`^-{0,2}([A-Za-z0-9_.-]+)=`)
@@ -333,9 +333,11 @@ func secretName(name string) bool {
 // --password=x, DB_PASSWORD=x, postgres://user:pw@host), and secret values
 // never leave the agent, so those values become "***" here, before the cap.
 func redactCmdline(b []byte) string {
-	args := strings.Split(string(b), "\x00")
-	for len(args) > 0 && args[len(args)-1] == "" {
-		args = args[:len(args)-1]
+	// Tokens, not arguments: sh -c "redis-server --requirepass x" holds a
+	// whole command line in one argument. The output is space-joined anyway.
+	var args []string
+	for _, a := range strings.Split(string(b), "\x00") {
+		args = append(args, strings.Fields(a)...)
 	}
 	for i := 0; i < len(args); i++ {
 		a := args[i]

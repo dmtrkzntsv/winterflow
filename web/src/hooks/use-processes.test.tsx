@@ -49,15 +49,70 @@ describe("useProcesses", () => {
   });
 
   it("drops a late reply after the server changed", async () => {
-    fakeAPI({ "/api/v1/server/get-processes": { request_id: "r1" } });
-    let release!: (n: Notification) => void;
-    waitFor_.mockImplementationOnce(() => new Promise((r) => (release = r)));
+    const api = fakeAPI({ "/api/v1/server/get-processes": { request_id: "r1" } });
+    let release1!: (n: Notification) => void;
+    let release2!: (n: Notification) => void;
+    waitFor_.mockImplementationOnce(() => new Promise((r) => (release1 = r)));
+    waitFor_.mockImplementationOnce(() => new Promise((r) => (release2 = r)));
     const { result, rerender } = renderHook(({ id }) => useProcesses(id, true), { wrapper, initialProps: { id: "s1" } });
     await waitFor(() => expect(waitFor_).toHaveBeenCalledTimes(1));
     rerender({ id: "s2" });
-    await act(async () => release({ type: "operation_result", ref: "r1", status: 0, payload: { ...LIST, ncpu: 99 } }));
-    await waitFor(() => expect(result.current.data?.ncpu).toBe(4)); // s2's own reply
-    expect(result.current.data?.ncpu).not.toBe(99);
+    await waitFor(() => expect(waitFor_).toHaveBeenCalledTimes(2));
+    const before = api.calls.length;
+    await act(async () => release1({ type: "operation_result", ref: "r1", status: 0, payload: { ...LIST, ncpu: 99 } }));
+    // s2 has not replied yet: s1's late reply must not show, and s1 is not polled again.
+    expect(result.current.data).toBeNull();
+    await act(() => vi.advanceTimersByTimeAsync(PROCESS_POLL_MS * 2));
+    expect(result.current.data).toBeNull();
+    expect(api.calls.slice(before).filter((c) => c.query.includes("server_id=s1"))).toHaveLength(0);
+    expect(api.calls.filter((c) => c.query.includes("server_id=s1"))).toHaveLength(1);
+    await act(async () => release2({ type: "operation_result", ref: "r1", status: 0, payload: LIST }));
+    await waitFor(() => expect(result.current.data?.ncpu).toBe(4));
+  });
+
+  it("does not keep a dropped reply for when the page returns to that server", async () => {
+    fakeAPI({ "/api/v1/server/get-processes": { request_id: "r1" } });
+    let release1!: (n: Notification) => void;
+    let release3!: (n: Notification) => void;
+    waitFor_.mockImplementationOnce(() => new Promise((r) => (release1 = r)));
+    waitFor_.mockImplementationOnce(() => new Promise(() => {})); // s2 never answers
+    waitFor_.mockImplementationOnce(() => new Promise((r) => (release3 = r)));
+    const { result, rerender } = renderHook(({ id }) => useProcesses(id, true), { wrapper, initialProps: { id: "s1" } });
+    await waitFor(() => expect(waitFor_).toHaveBeenCalledTimes(1));
+    rerender({ id: "s2" });
+    await waitFor(() => expect(waitFor_).toHaveBeenCalledTimes(2));
+    await act(async () => release1({ type: "operation_result", ref: "r1", status: 0, payload: { ...LIST, ncpu: 99 } }));
+    rerender({ id: "s1" });
+    await waitFor(() => expect(waitFor_).toHaveBeenCalledTimes(3));
+    // The superseded loop's 99 was dropped, so s1 shows nothing until its new reply.
+    expect(result.current.data).toBeNull();
+    await act(async () => release3({ type: "operation_result", ref: "r1", status: 0, payload: LIST }));
+    await waitFor(() => expect(result.current.data?.ncpu).toBe(4));
+  });
+
+  it("never overlaps requests: the next one waits for the reply, then 5 s", async () => {
+    const api = fakeAPI({ "/api/v1/server/get-processes": { request_id: "r1" } });
+    let release!: (n: Notification) => void;
+    waitFor_.mockImplementationOnce(() => new Promise((r) => (release = r)));
+    const { result } = renderHook(() => useProcesses("s1", true), { wrapper });
+    await waitFor(() => expect(waitFor_).toHaveBeenCalledTimes(1));
+    await act(() => vi.advanceTimersByTimeAsync(PROCESS_POLL_MS * 3));
+    expect(api.calls).toHaveLength(1);
+    await act(async () => release({ type: "operation_result", ref: "r1", status: 0, payload: LIST }));
+    await waitFor(() => expect(result.current.data?.ncpu).toBe(4));
+    await act(() => vi.advanceTimersByTimeAsync(PROCESS_POLL_MS - 100));
+    expect(api.calls).toHaveLength(1);
+    await act(() => vi.advanceTimersByTimeAsync(200));
+    await waitFor(() => expect(api.calls).toHaveLength(2));
+  });
+
+  it("stops when unmounted while sleeping", async () => {
+    const api = fakeAPI({ "/api/v1/server/get-processes": { request_id: "r1" } });
+    const { result, unmount } = renderHook(() => useProcesses("s1", true), { wrapper });
+    await waitFor(() => expect(result.current.data).not.toBeNull());
+    unmount();
+    await act(() => vi.advanceTimersByTimeAsync(PROCESS_POLL_MS * 3));
+    expect(api.calls).toHaveLength(1);
   });
 
   it("shows a timeout and keeps polling, keeping the last good data", async () => {

@@ -39,20 +39,23 @@ type TemplateRevisionInfo struct {
 // TemplateView is the data of GET get-template: one revision's body, what
 // its compose files declare, and the revision list, newest first.
 type TemplateView struct {
-	ID             string                 `json:"id"`
-	Source         string                 `json:"source" enum:"org,catalog"`
-	Slug           string                 `json:"slug"`
-	Name           string                 `json:"name"`
-	LatestRevision int64                  `json:"latest_revision"`
-	WithdrawnAt    *time.Time             `json:"withdrawn_at" description:"When the catalog dropped the template (it takes no new installs); null otherwise."`
-	Catalog        *model.CatalogMeta     `json:"catalog" description:"What the catalog says about a catalog template; null for an org template."`
-	Revision       int64                  `json:"revision"`
-	Body           template.Body          `json:"body"`
-	Detected       template.Detected      `json:"detected" description:"What the revision's compose files declare under x-winterflow."`
-	Note           string                 `json:"note"`
-	CreatedAt      time.Time              `json:"created_at"`
-	CreatedBy      string                 `json:"created_by"`
-	Revisions      []TemplateRevisionInfo `json:"revisions"`
+	ID             string     `json:"id"`
+	Source         string     `json:"source" enum:"org,catalog"`
+	Slug           string     `json:"slug"`
+	Name           string     `json:"name"`
+	LatestRevision int64      `json:"latest_revision"`
+	WithdrawnAt    *time.Time `json:"withdrawn_at" description:"When the catalog dropped the template (it takes no new installs); null otherwise."`
+	// Catalog is what the catalog says about a catalog template; null for
+	// an org template. A catalog template's current summary and description
+	// are catalog.*; body.* are frozen at the revision.
+	Catalog   *model.CatalogMeta     `json:"catalog" description:"What the catalog says about a catalog template; null for an org template."`
+	Revision  int64                  `json:"revision"`
+	Body      template.Body          `json:"body"`
+	Detected  template.Detected      `json:"detected" description:"What the revision's compose files declare under x-winterflow."`
+	Note      string                 `json:"note"`
+	CreatedAt time.Time              `json:"created_at"`
+	CreatedBy string                 `json:"created_by"`
+	Revisions []TemplateRevisionInfo `json:"revisions"`
 }
 
 // SavedTemplate is the data of POST save-template.

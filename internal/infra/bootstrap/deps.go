@@ -35,6 +35,9 @@ type Deps struct {
 	SharedVariableRepository port.SharedVariableRepository
 	// TemplateRepository stores templates, their revisions and instances.
 	TemplateRepository port.TemplateRepository
+	// CatalogRepository is the same repository as the catalog sync sees
+	// it (StartCatalog).
+	CatalogRepository port.CatalogRepository
 	// Instances is the templates usecase the instance routes and the
 	// rollout queue's upgrade steps share.
 	Instances *templates.UseCase

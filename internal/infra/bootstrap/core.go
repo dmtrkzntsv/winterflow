@@ -98,6 +98,7 @@ func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerCon
 		ServerStorageRepository:  r.serverStorage,
 		SharedVariableRepository: r.sharedVar,
 		TemplateRepository:       r.template,
+		CatalogRepository:        r.template,
 		Instances:                instances,
 		Rollouts:                 queue,
 		CommandDispatcher:        dispatcher,

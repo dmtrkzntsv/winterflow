@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"winterflow/internal/domain/command"
 	"winterflow/internal/domain/compose/xwinterflow"
 	"winterflow/internal/domain/model"
 	"winterflow/pkg/fsutil"
@@ -278,4 +279,18 @@ func (r *Repository) restorePorts(appID, dir string) error {
 		r.restoreSource(appID, dir)
 	}
 	return fmt.Errorf("rollback: %w", err)
+}
+
+// exposedPorts is app.get's view of the expose entries with their host
+// ports (0 while unallocated).
+func exposedPorts(entries []xwinterflow.Expose, ports map[string]model.PortAllocation) []command.ExposedPort {
+	out := make([]command.ExposedPort, 0, len(entries))
+	for _, e := range entries {
+		p := ports[e.ID()]
+		out = append(out, command.ExposedPort{
+			ID: e.ID(), Container: e.Container, Port: e.Port, Protocol: e.Protocol,
+			HostPort: p.Host, Bind: e.Bind(), Pinned: p.Pinned,
+		})
+	}
+	return out
 }

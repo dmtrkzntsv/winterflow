@@ -1,6 +1,7 @@
 package dockercompose
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -434,4 +435,28 @@ func TestRestartedAgentKeepsPortsAndPins(t *testing.T) {
 			t.Fatalf("err = %v", err)
 		}
 	})
+}
+
+// app.get shows the declared variables and each expose entry with its host
+// port, bind address and pin.
+func TestGetAppShowsExposeAndDeclaredVariables(t *testing.T) {
+	r, _ := portRepo(t)
+	compose := exposeCompose + "  variables:\n    LONELY: {}\n"
+	if _, err := r.saveWithoutDeploy(exposePayload("app-1", compose, `"ports":{"db:5432/tcp":{"host":5432,"pinned":true}}`)); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := r.GetApp(context.Background(), "app-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []command.ExposedPort{
+		{ID: "app:8080/http", Container: "app", Port: 8080, Protocol: "http", HostPort: 31000, Bind: "127.0.0.1"},
+		{ID: "db:5432/tcp", Container: "db", Port: 5432, Protocol: "tcp", HostPort: 5432, Bind: "0.0.0.0", Pinned: true},
+	}
+	if !reflect.DeepEqual(resp.Expose, want) {
+		t.Fatalf("expose = %+v", resp.Expose)
+	}
+	if len(resp.DeclaredVariables) != 1 || resp.DeclaredVariables[0].Name != "LONELY" || len(resp.XWinterflowWarnings) != 1 {
+		t.Fatalf("variables = %+v, warnings = %v", resp.DeclaredVariables, resp.XWinterflowWarnings)
+	}
 }

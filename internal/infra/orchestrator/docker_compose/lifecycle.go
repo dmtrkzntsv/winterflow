@@ -323,6 +323,17 @@ func (r *Repository) GetApp(ctx context.Context, appID string) (command.GetAppRe
 		t := cfg.compose.Targets()
 		resp.BackupTargets = &t
 	}
+	// What the x-winterflow block declares: the editor's variables form
+	// and ports panel.
+	if cfg.composeOK {
+		resp.DeclaredVariables = cfg.spec.Variables
+		resp.XWinterflowWarnings = cfg.spec.Warnings
+		ports, err := r.readPorts(dir)
+		if err != nil {
+			r.log.Warn("read app ports", "app_id", appID, "error", err)
+		}
+		resp.Expose = exposedPorts(cfg.spec.Expose, ports)
+	}
 	resp.RetentionDays = r.cfg.GetBackupRetentionDays()
 	return resp, nil
 }

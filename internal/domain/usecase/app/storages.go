@@ -5,32 +5,23 @@ import (
 	"encoding/json"
 
 	"winterflow/internal/domain/command"
+	"winterflow/internal/domain/compose/xwinterflow"
 	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/port"
 )
 
-// requireStorageRefs refuses a save whose compose file (in the request)
-// declares invalid backups, or references a WF_STORAGE_ variable of a
-// storage the server doesn't have or a WF_BACKUP_ variable of a backup the
-// app doesn't declare. The compose files are picked the way the agent picks
-// them (model.DetectComposeFiles). A git-sourced app's compose file is not
-// in the request: the agent checks it at save and deploy. Without the
-// storage index (old wiring) the agent's storage check is the only one.
-func (uc *UseCase) requireStorageRefs(ctx context.Context, serverID string, p command.AppPayload, isNew bool) error {
-	if p.Source != nil {
+// requireStorageRefs refuses a save whose compose file (in the request,
+// parsed into spec from contents) declares invalid backups, or references a
+// WF_STORAGE_ variable of a storage the server doesn't have or a WF_BACKUP_
+// variable of a backup the app doesn't declare. A git-sourced app's compose
+// file is not in the request (spec nil): the agent checks it at save and
+// deploy. Without the storage index (old wiring) the agent's storage check
+// is the only one.
+func (uc *UseCase) requireStorageRefs(ctx context.Context, serverID string, p command.AppPayload, spec *xwinterflow.Spec, contents [][]byte, isNew bool) error {
+	if spec == nil {
 		return nil
 	}
-	files := map[string][]byte{}
-	for _, f := range p.Files {
-		if !f.Encrypted {
-			files[f.ItemName()] = f.Content
-		}
-	}
-	var contents [][]byte
-	for _, name := range model.DetectComposeFiles(func(n string) bool { _, ok := files[n]; return ok }) {
-		contents = append(contents, files[name])
-	}
-	backupDeclared, err := uc.checkBackups(ctx, serverID, contents, p.Config, isNew)
+	backupDeclared, err := uc.checkBackups(ctx, serverID, spec.Compose, p.Config, isNew)
 	if err != nil {
 		return err
 	}
@@ -51,6 +42,46 @@ func (uc *UseCase) requireStorageRefs(ctx context.Context, serverID string, p co
 	}
 	_, err = model.CheckStorageRefs(refs, func(name string) bool { return uc.serverStorages == nil || have[name] }, backupDeclared)
 	return err
+}
+
+// payloadCompose is the contents of the request's compose files, picked the
+// way the agent picks them (model.DetectComposeFiles).
+func payloadCompose(p command.AppPayload) [][]byte {
+	files := map[string][]byte{}
+	for _, f := range p.Files {
+		if !f.Encrypted {
+			files[f.ItemName()] = f.Content
+		}
+	}
+	var contents [][]byte
+	for _, name := range model.DetectComposeFiles(func(n string) bool { _, ok := files[n]; return ok }) {
+		contents = append(contents, files[name])
+	}
+	return contents
+}
+
+// checkDeclared refuses a save whose values break the variables the compose
+// files declare (a required one missing, a plain value failing its pattern
+// or holding $) or whose pins the app can't take; the pins' syntax is
+// checked even without a compose file in the request. Secret values are
+// ciphertext here: the agent checks their pattern once decrypted.
+func checkDeclared(spec *xwinterflow.Spec, p command.AppPayload) error {
+	pins, _, err := model.ParsePorts(p.Config)
+	if err != nil || spec == nil {
+		return err
+	}
+	if err := spec.CheckPins(pins); err != nil {
+		return err
+	}
+	plain, secret := map[string]string{}, map[string]bool{}
+	for _, v := range p.Variables {
+		if v.Encrypted {
+			secret[v.ItemName()] = true
+		} else {
+			plain[v.ItemName()] = string(v.Content)
+		}
+	}
+	return spec.CheckValues(plain, secret)
 }
 
 // ServerStorages reads the server's storages from the server_storages index

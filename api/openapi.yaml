@@ -6600,6 +6600,35 @@ components:
       required:
       - name
       type: object
+    DeclaredVariable:
+      properties:
+        default:
+          type:
+          - "null"
+          - string
+        description:
+          type: string
+        encrypted:
+          type: boolean
+        name:
+          type: string
+        pattern:
+          type: string
+        required:
+          type: boolean
+        services:
+          items:
+            type: string
+          type:
+          - array
+          - "null"
+      required:
+      - name
+      - required
+      - encrypted
+      - default
+      - services
+      type: object
     DeleteAppRequest:
       properties:
         app_id:
@@ -7050,6 +7079,31 @@ components:
       - events
       - next_cursor
       type: object
+    ExposedPort:
+      properties:
+        bind:
+          type: string
+        container:
+          type: string
+        host_port:
+          type: integer
+        id:
+          type: string
+        pinned:
+          type: boolean
+        port:
+          type: integer
+        protocol:
+          type: string
+      required:
+      - id
+      - container
+      - port
+      - protocol
+      - host_port
+      - bind
+      - pinned
+      type: object
     FormDataLoginForm:
       properties:
         aud:
@@ -7073,11 +7127,23 @@ components:
           type: string
         backups_error:
           type: string
+        declared_variables:
+          items:
+            $ref: '#/components/schemas/DeclaredVariable'
+          type: array
+        expose:
+          items:
+            $ref: '#/components/schemas/ExposedPort'
+          type: array
         retention_days:
           type: integer
         storage_variables:
           items:
             $ref: '#/components/schemas/StorageVariable'
+          type: array
+        x_winterflow_warnings:
+          items:
+            type: string
           type: array
       required:
       - app

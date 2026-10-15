@@ -138,10 +138,10 @@ export function AppEditorPanel({
       const message = e instanceof Error ? e.message : "";
       if (isManagedByTemplate(message)) {
         // A template instance took the app over (the list was stale): its
-        // Configuration is the instance's parameters, shown once the list
+        // Configuration is the instance's variables, shown once the list
         // is read again.
         toast.error("This app is managed by a template", {
-          description: "Change it through its parameters, or detach it from the template in Settings first.",
+          description: "Change it through its variables, or detach it from the template in Settings first.",
         });
         void refresh();
         return;

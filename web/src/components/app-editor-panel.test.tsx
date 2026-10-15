@@ -175,7 +175,7 @@ describe("AppEditorPanel", () => {
     await user.click(screen.getByRole("button", { name: "Save & redeploy" }));
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith("This app is managed by a template", {
-        description: "Change it through its parameters, or detach it from the template in Settings first.",
+        description: "Change it through its variables, or detach it from the template in Settings first.",
       }),
     );
     expect(refresh).toHaveBeenCalled();

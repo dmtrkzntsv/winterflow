@@ -46,8 +46,8 @@ func ErrorStatus(w http.ResponseWriter, status int, message string) {
 }
 
 // StatusFor is the status an error class answers with: model.ErrNotFound
-// 404, model.ErrConflict 409, anything else (model.ErrRejected included)
-// 400.
+// 404, model.ErrConflict 409, model.ErrForbidden 403, anything else
+// (model.ErrRejected included) 400.
 func StatusFor(err error) int {
 	switch {
 	case errors.Is(err, model.ErrRejected):
@@ -56,16 +56,18 @@ func StatusFor(err error) int {
 		return http.StatusNotFound
 	case errors.Is(err, model.ErrConflict):
 		return http.StatusConflict
+	case errors.Is(err, model.ErrForbidden):
+		return http.StatusForbidden
 	}
 	return http.StatusBadRequest
 }
 
 // Fail answers a usecase error: a classified one (model.ErrNotFound,
-// ErrConflict, ErrRejected) with its status (StatusFor) and message,
-// anything else logged ("<area>: <what>") and answered with a generic 400
-// "failed to <what>".
+// ErrConflict, ErrForbidden, ErrRejected) with its status (StatusFor) and
+// message, anything else logged ("<area>: <what>") and answered with a
+// generic 400 "failed to <what>".
 func Fail(w http.ResponseWriter, log *logger.Logger, area string, err error, what string) {
-	if errors.Is(err, model.ErrNotFound) || errors.Is(err, model.ErrConflict) || errors.Is(err, model.ErrRejected) {
+	if errors.Is(err, model.ErrNotFound) || errors.Is(err, model.ErrConflict) || errors.Is(err, model.ErrForbidden) || errors.Is(err, model.ErrRejected) {
 		ErrorStatus(w, StatusFor(err), err.Error())
 		return
 	}

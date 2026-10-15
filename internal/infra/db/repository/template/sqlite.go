@@ -27,11 +27,11 @@ func (sqliteQuerier) GetTemplateIDByName(ctx context.Context, db backend.DBTX, p
 	return sqlitegen.New(db).GetTemplateIDByName(ctx, p)
 }
 
-func (sqliteQuerier) ListTemplates(ctx context.Context, db backend.DBTX, orgID string) ([]summaryRow, error) {
-	return sqlitegen.New(db).ListTemplates(ctx, orgID)
+func (sqliteQuerier) ListTemplates(ctx context.Context, db backend.DBTX, p listParams) ([]summaryRow, error) {
+	return sqlitegen.New(db).ListTemplates(ctx, p)
 }
 
-func (sqliteQuerier) ListTemplateNames(ctx context.Context, db backend.DBTX, orgID string) ([]nameRow, error) {
+func (sqliteQuerier) ListTemplateNames(ctx context.Context, db backend.DBTX, orgID *string) ([]nameRow, error) {
 	return sqlitegen.New(db).ListTemplateNames(ctx, orgID)
 }
 
@@ -73,6 +73,10 @@ func (sqliteQuerier) ListUpgradableInstances(ctx context.Context, db backend.DBT
 
 func (sqliteQuerier) MarkTemplateInstanceSaved(ctx context.Context, db backend.DBTX, p savedParams) error {
 	return sqlitegen.New(db).MarkTemplateInstanceSaved(ctx, p)
+}
+
+func (sqliteQuerier) SetTemplateInstanceBackups(ctx context.Context, db backend.DBTX, p backupsParams) error {
+	return sqlitegen.New(db).SetTemplateInstanceBackups(ctx, p)
 }
 
 func (sqliteQuerier) SetTemplateInstanceState(ctx context.Context, db backend.DBTX, p stateParams) error {

@@ -16,8 +16,10 @@ const instance: InstanceView = {
   template_id: "t1",
   template_name: "twillingate",
   revision: 2,
-  parameters: { NAME: "bakomi" },
+  name: "bakomi",
+  values: { NAME: "bakomi" },
   secrets: {},
+  hosts: [{ host: "bakomi.example.com", expose: "app:8080" }],
   state: "created",
   status_code: 1,
   last_error: "",
@@ -25,20 +27,19 @@ const instance: InstanceView = {
   updated_at: "2026-10-12T10:00:00Z",
 };
 
+const NAME = { name: "NAME", required: true, encrypted: false, default: null, services: ["app"] };
+const LANG = { name: "LANG", required: false, encrypted: false, default: "en", services: ["app"] };
+
 const current: TemplateView = {
   id: "t1",
+  source: "org",
+  slug: "",
   name: "twillingate",
   latest_revision: 2,
+  withdrawn_at: null,
   revision: 2,
-  body: {
-    files: { "compose.yaml": "services: {}\n" },
-    parameters: [{ name: "NAME", required: true }],
-    app_name: "${NAME}",
-    icon: "",
-    color: "",
-    ingress: null,
-    backups: null,
-  },
+  body: { files: { "compose.yaml": "services: {}\n" }, summary: "", description: "", icon: "", color: "" },
+  detected: { variables: [NAME], expose: [], backups: [], warnings: [] },
   note: "",
   created_at: "2026-10-12T10:00:00Z",
   created_by: "u1",
@@ -104,13 +105,7 @@ describe("InstancePanel", () => {
     api.updateInstance = updateInstance;
     const withSecret: TemplateView = {
       ...current,
-      body: {
-        ...current.body,
-        parameters: [
-          { name: "NAME", required: true },
-          { name: "TOKEN", required: true, secret: true },
-        ],
-      },
+      detected: { ...current.detected, variables: [NAME, { name: "TOKEN", required: true, encrypted: true, default: null, services: ["app"] }] },
     };
     renderPanel({ instance: { ...instance, state: "pending", secrets: {} }, current: withSecret });
     await user.click(screen.getByRole("button", { name: "Save & redeploy" }));
@@ -123,6 +118,29 @@ describe("InstancePanel", () => {
     await user.type(screen.getByLabelText("TOKEN"), "s3cret");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByText("Unsaved changes")).toBeInTheDocument();
+  });
+
+  it("sends only the values that changed; a cleared one goes back to the compose file's", async () => {
+    const user = userEvent.setup();
+    const updateInstance = vi.fn(async () => {});
+    api.updateInstance = updateInstance;
+    const onSaved = vi.fn();
+    renderPanel({
+      instance: { ...instance, values: { NAME: "bakomi", LANG: "de" } },
+      current: { ...current, detected: { ...current.detected, variables: [NAME, LANG] } },
+      onSaved,
+    });
+    expect(screen.getByLabelText("LANG")).toHaveAttribute("placeholder", "Default: en");
+    await user.clear(screen.getByLabelText("LANG"));
+    await user.click(screen.getByRole("button", { name: "Save & redeploy" }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    expect(updateInstance).toHaveBeenCalledWith({ server_id: "s", key: "k1", values: { LANG: "" } });
+  });
+
+  it("shows the hostnames the app was created with", () => {
+    renderPanel();
+    expect(screen.getByText("bakomi.example.com")).toBeInTheDocument();
+    expect(screen.getByText("→ app:8080")).toBeInTheDocument();
   });
 
   it("keeps the bar to Save and a ⋯ menu on a phone once edited", async () => {

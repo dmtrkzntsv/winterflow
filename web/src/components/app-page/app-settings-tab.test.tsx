@@ -179,6 +179,10 @@ describe("AppSettingsTab", () => {
     expect(screen.queryByText(/are set by/)).not.toBeInTheDocument();
     // Its template section offers to start a template from it.
     expect(screen.getByRole("button", { name: "Save as template" })).toBeInTheDocument();
+    // It says what a template takes from the app, and what stays.
+    expect(
+      screen.getByText("Start a template from this app: its files, name, icon and colour. Its variable values, hostnames and backups stay with the app, which stays as it is."),
+    ).toBeInTheDocument();
     unmount();
     renderTab({ ownership: { ...gone, loading: true } });
     await screen.findByDisplayValue("Old");

@@ -10,7 +10,11 @@ import { NotificationsContext, type NotificationsContextValue } from "@/context/
 import { fakeAPI } from "@/test/fake-api";
 
 const notifications = { connected: true, subscribe: () => () => {}, waitFor: vi.fn() } as NotificationsContextValue;
-const ONE = [{ id: "t1", name: "twillingate", latest_revision: 2, instances: 0, behind: 0, updated_at: "" }];
+const ONE = [
+  { id: "t1", source: "org", name: "twillingate", latest_revision: 2, instances: 0, behind: 0, updated_at: "" },
+  // A catalog template is not the org's own: it doesn't count.
+  { id: "c1", source: "catalog", name: "Actual Budget", latest_revision: 1, instances: 0, behind: 0, updated_at: "" },
+];
 
 function At() {
   const l = useLocation();
@@ -87,6 +91,16 @@ describe("NewAppButton", () => {
     expect(screen.getByRole("link", { name: /From a template/ })).toBeInTheDocument();
     expect(screen.queryByTestId("template-choice-skeleton")).not.toBeInTheDocument();
     expect(api.calls).toHaveLength(1);
+  });
+
+  it("leaves the template out when the organization has only catalog templates", async () => {
+    const user = userEvent.setup();
+    const api = fakeAPI({ "/api/v1/template/get-templates": { templates: ONE.slice(1) } });
+    renderIn(<NewAppButton serverId="s1" />);
+    await user.click(screen.getByRole("button", { name: "New app" }));
+    await waitFor(() => expect(api.calls).toHaveLength(1));
+    await waitFor(() => expect(screen.queryByTestId("template-choice-skeleton")).not.toBeInTheDocument());
+    expect(screen.queryByRole("link", { name: /From a template/ })).not.toBeInTheDocument();
   });
 
   it("leaves the template out when the templates can't be read", async () => {

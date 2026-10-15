@@ -209,7 +209,7 @@ function TemplateSection({
   if (!instance) {
     return (
       <Section title="Template">
-        <ActionCard text="Start a template from this app: its files, its variables as parameters, its addresses and backup settings. The app stays as it is.">
+        <ActionCard text="Start a template from this app: its files, name, icon and colour. Its variable values, hostnames and backups stay with the app, which stays as it is.">
           <Button variant="outline" className="max-sm:h-10" disabled={savingTemplate} onClick={onSaveAsTemplate}>
             Save as template
           </Button>

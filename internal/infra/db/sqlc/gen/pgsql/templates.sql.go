@@ -14,18 +14,19 @@ import (
 const bumpTemplateRevision = `-- name: BumpTemplateRevision :execrows
 UPDATE templates
 SET latest_revision = latest_revision + 1, name = $1, updated_at = $2
-WHERE id = $3 AND org_id = $4 AND latest_revision = $5
+WHERE id = $3 AND source = 'org' AND org_id = $4 AND latest_revision = $5
 `
 
 type BumpTemplateRevisionParams struct {
 	Name           string
 	UpdatedAt      types.DateTime
 	ID             string
-	OrgID          string
+	OrgID          *string
 	LatestRevision int64
 }
 
-// Optimistic: 0 rows when latest_revision moved past the caller's base.
+// An org template's next revision. Optimistic: 0 rows when latest_revision
+// moved past the caller's base.
 func (q *Queries) BumpTemplateRevision(ctx context.Context, arg BumpTemplateRevisionParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, bumpTemplateRevision,
 		arg.Name,
@@ -42,8 +43,8 @@ func (q *Queries) BumpTemplateRevision(ctx context.Context, arg BumpTemplateRevi
 
 const claimTemplateInstance = `-- name: ClaimTemplateInstance :execrows
 INSERT INTO template_instances (id, org_id, instance_key, app_id, server_id, template_id, revision,
-    params, secret_names, request_hash, state, last_error, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending', '', $11, $12)
+    name, params, secret_names, hosts, backups, request_hash, state, last_error, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'pending', '', $14, $15)
 ON CONFLICT DO NOTHING
 `
 
@@ -55,8 +56,11 @@ type ClaimTemplateInstanceParams struct {
 	ServerID    string
 	TemplateID  *string
 	Revision    int64
+	Name        string
 	Params      string
 	SecretNames string
+	Hosts       string
+	Backups     string
 	RequestHash string
 	CreatedAt   types.DateTime
 	UpdatedAt   types.DateTime
@@ -72,8 +76,11 @@ func (q *Queries) ClaimTemplateInstance(ctx context.Context, arg ClaimTemplateIn
 		arg.ServerID,
 		arg.TemplateID,
 		arg.Revision,
+		arg.Name,
 		arg.Params,
 		arg.SecretNames,
+		arg.Hosts,
+		arg.Backups,
 		arg.RequestHash,
 		arg.CreatedAt,
 		arg.UpdatedAt,
@@ -86,7 +93,7 @@ func (q *Queries) ClaimTemplateInstance(ctx context.Context, arg ClaimTemplateIn
 
 const deleteTemplate = `-- name: DeleteTemplate :execrows
 DELETE FROM templates
-WHERE templates.id = $1 AND templates.org_id = $2
+WHERE templates.id = $1 AND templates.source = 'org' AND templates.org_id = $2
   AND NOT EXISTS (
     SELECT 1 FROM template_instances AS i
     WHERE i.template_id = templates.id AND i.state IN ('pending', 'created'))
@@ -94,10 +101,10 @@ WHERE templates.id = $1 AND templates.org_id = $2
 
 type DeleteTemplateParams struct {
 	ID    string
-	OrgID string
+	OrgID *string
 }
 
-// Refused (0 rows) while an instance is pending or created.
+// An org template; refused (0 rows) while an instance is pending or created.
 func (q *Queries) DeleteTemplate(ctx context.Context, arg DeleteTemplateParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, deleteTemplate, arg.ID, arg.OrgID)
 	if err != nil {
@@ -110,14 +117,14 @@ const deleteTemplateRollouts = `-- name: DeleteTemplateRollouts :exec
 DELETE FROM rollouts WHERE kind = 'template_upgrade' AND scope_key = $1
 `
 
-// A deleted template's upgrade rollouts (scope key: the template id).
+// A deleted template's upgrade rollouts (scope key: <org_id>:<template_id>).
 func (q *Queries) DeleteTemplateRollouts(ctx context.Context, scopeKey string) error {
 	_, err := q.db.ExecContext(ctx, deleteTemplateRollouts, scopeKey)
 	return err
 }
 
 const getLiveTemplateInstance = `-- name: GetLiveTemplateInstance :one
-SELECT id, org_id, instance_key, app_id, server_id, template_id, revision, params, secret_names, request_hash, state, last_error, created_at, updated_at FROM template_instances WHERE org_id = $1 AND instance_key = $2 AND state <> 'unlinked'
+SELECT id, org_id, instance_key, app_id, server_id, template_id, revision, name, params, secret_names, hosts, backups, request_hash, state, last_error, created_at, updated_at FROM template_instances WHERE org_id = $1 AND instance_key = $2 AND state <> 'unlinked'
 `
 
 type GetLiveTemplateInstanceParams struct {
@@ -136,8 +143,11 @@ func (q *Queries) GetLiveTemplateInstance(ctx context.Context, arg GetLiveTempla
 		&i.ServerID,
 		&i.TemplateID,
 		&i.Revision,
+		&i.Name,
 		&i.Params,
 		&i.SecretNames,
+		&i.Hosts,
+		&i.Backups,
 		&i.RequestHash,
 		&i.State,
 		&i.LastError,
@@ -171,22 +181,26 @@ func (q *Queries) GetLiveTemplateInstanceForApp(ctx context.Context, arg GetLive
 }
 
 const getTemplate = `-- name: GetTemplate :one
-SELECT id, org_id, name, latest_revision, created_at, created_by, updated_at FROM templates WHERE id = $1 AND org_id = $2
+SELECT id, source, org_id, slug, name, latest_revision, withdrawn_at, created_at, created_by, updated_at FROM templates WHERE id = $1 AND (org_id = $2 OR source = 'catalog')
 `
 
 type GetTemplateParams struct {
 	ID    string
-	OrgID string
+	OrgID *string
 }
 
+// A template the org may read: its own or a catalog one.
 func (q *Queries) GetTemplate(ctx context.Context, arg GetTemplateParams) (Template, error) {
 	row := q.db.QueryRowContext(ctx, getTemplate, arg.ID, arg.OrgID)
 	var i Template
 	err := row.Scan(
 		&i.ID,
+		&i.Source,
 		&i.OrgID,
+		&i.Slug,
 		&i.Name,
 		&i.LatestRevision,
+		&i.WithdrawnAt,
 		&i.CreatedAt,
 		&i.CreatedBy,
 		&i.UpdatedAt,
@@ -195,11 +209,11 @@ func (q *Queries) GetTemplate(ctx context.Context, arg GetTemplateParams) (Templ
 }
 
 const getTemplateIDByName = `-- name: GetTemplateIDByName :one
-SELECT id FROM templates WHERE org_id = $1 AND name = $2
+SELECT id FROM templates WHERE source = 'org' AND org_id = $1 AND name = $2
 `
 
 type GetTemplateIDByNameParams struct {
-	OrgID string
+	OrgID *string
 	Name  string
 }
 
@@ -211,7 +225,7 @@ func (q *Queries) GetTemplateIDByName(ctx context.Context, arg GetTemplateIDByNa
 }
 
 const getTemplateInstanceByID = `-- name: GetTemplateInstanceByID :one
-SELECT id, org_id, instance_key, app_id, server_id, template_id, revision, params, secret_names, request_hash, state, last_error, created_at, updated_at FROM template_instances WHERE id = $1
+SELECT id, org_id, instance_key, app_id, server_id, template_id, revision, name, params, secret_names, hosts, backups, request_hash, state, last_error, created_at, updated_at FROM template_instances WHERE id = $1
 `
 
 func (q *Queries) GetTemplateInstanceByID(ctx context.Context, id string) (TemplateInstance, error) {
@@ -225,8 +239,11 @@ func (q *Queries) GetTemplateInstanceByID(ctx context.Context, id string) (Templ
 		&i.ServerID,
 		&i.TemplateID,
 		&i.Revision,
+		&i.Name,
 		&i.Params,
 		&i.SecretNames,
+		&i.Hosts,
+		&i.Backups,
 		&i.RequestHash,
 		&i.State,
 		&i.LastError,
@@ -237,7 +254,7 @@ func (q *Queries) GetTemplateInstanceByID(ctx context.Context, id string) (Templ
 }
 
 const getTemplateRevision = `-- name: GetTemplateRevision :one
-SELECT template_id, revision, body, note, created_at, created_by FROM template_revisions WHERE template_id = $1 AND revision = $2
+SELECT template_id, revision, body, note, digest, created_at, created_by FROM template_revisions WHERE template_id = $1 AND revision = $2
 `
 
 type GetTemplateRevisionParams struct {
@@ -253,6 +270,7 @@ func (q *Queries) GetTemplateRevision(ctx context.Context, arg GetTemplateRevisi
 		&i.Revision,
 		&i.Body,
 		&i.Note,
+		&i.Digest,
 		&i.CreatedAt,
 		&i.CreatedBy,
 	)
@@ -261,27 +279,37 @@ func (q *Queries) GetTemplateRevision(ctx context.Context, arg GetTemplateRevisi
 
 const insertTemplate = `-- name: InsertTemplate :execrows
 
-INSERT INTO templates (id, org_id, name, latest_revision, created_at, created_by, updated_at)
-VALUES ($1, $2, $3, 1, $4, $5, $6)
+INSERT INTO templates (id, source, org_id, slug, name, latest_revision, withdrawn_at, created_at, created_by, updated_at)
+VALUES ($1, $2, $3, $4, $5, 1, $6, $7, $8, $9)
 ON CONFLICT DO NOTHING
 `
 
 type InsertTemplateParams struct {
-	ID        string
-	OrgID     string
-	Name      string
-	CreatedAt types.DateTime
-	CreatedBy string
-	UpdatedAt types.DateTime
+	ID          string
+	Source      string
+	OrgID       *string
+	Slug        string
+	Name        string
+	WithdrawnAt *types.DateTime
+	CreatedAt   types.DateTime
+	CreatedBy   string
+	UpdatedAt   types.DateTime
 }
 
-// Templates, their immutable revisions and their instances.
-// A taken name inserts nothing (0 rows): the caller answers 400.
+// Templates, their immutable revisions and their instances. A template is
+// an org's own (source org, org_id set) or the catalog's (source catalog,
+// org_id NULL): an org reads its own and every catalog template, and
+// changes only its own.
+// A taken org name or catalog slug inserts nothing (0 rows): the caller
+// answers 400.
 func (q *Queries) InsertTemplate(ctx context.Context, arg InsertTemplateParams) (int64, error) {
 	result, err := q.db.ExecContext(ctx, insertTemplate,
 		arg.ID,
+		arg.Source,
 		arg.OrgID,
+		arg.Slug,
 		arg.Name,
+		arg.WithdrawnAt,
 		arg.CreatedAt,
 		arg.CreatedBy,
 		arg.UpdatedAt,
@@ -293,8 +321,8 @@ func (q *Queries) InsertTemplate(ctx context.Context, arg InsertTemplateParams) 
 }
 
 const insertTemplateRevision = `-- name: InsertTemplateRevision :exec
-INSERT INTO template_revisions (template_id, revision, body, note, created_at, created_by)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO template_revisions (template_id, revision, body, note, digest, created_at, created_by)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 `
 
 type InsertTemplateRevisionParams struct {
@@ -302,6 +330,7 @@ type InsertTemplateRevisionParams struct {
 	Revision   int64
 	Body       string
 	Note       string
+	Digest     string
 	CreatedAt  types.DateTime
 	CreatedBy  string
 }
@@ -312,6 +341,7 @@ func (q *Queries) InsertTemplateRevision(ctx context.Context, arg InsertTemplate
 		arg.Revision,
 		arg.Body,
 		arg.Note,
+		arg.Digest,
 		arg.CreatedAt,
 		arg.CreatedBy,
 	)
@@ -319,7 +349,7 @@ func (q *Queries) InsertTemplateRevision(ctx context.Context, arg InsertTemplate
 }
 
 const listLiveTemplateInstances = `-- name: ListLiveTemplateInstances :many
-SELECT id, org_id, instance_key, app_id, server_id, template_id, revision, params, secret_names, request_hash, state, last_error, created_at, updated_at FROM template_instances
+SELECT id, org_id, instance_key, app_id, server_id, template_id, revision, name, params, secret_names, hosts, backups, request_hash, state, last_error, created_at, updated_at FROM template_instances
 WHERE org_id = $1 AND state IN ('pending', 'created')
 ORDER BY created_at ASC, id ASC
 `
@@ -341,8 +371,11 @@ func (q *Queries) ListLiveTemplateInstances(ctx context.Context, orgID string) (
 			&i.ServerID,
 			&i.TemplateID,
 			&i.Revision,
+			&i.Name,
 			&i.Params,
 			&i.SecretNames,
+			&i.Hosts,
+			&i.Backups,
 			&i.RequestHash,
 			&i.State,
 			&i.LastError,
@@ -363,7 +396,7 @@ func (q *Queries) ListLiveTemplateInstances(ctx context.Context, orgID string) (
 }
 
 const listTemplateNames = `-- name: ListTemplateNames :many
-SELECT id, name FROM templates WHERE org_id = $1
+SELECT id, name FROM templates WHERE org_id = $1 OR source = 'catalog'
 `
 
 type ListTemplateNamesRow struct {
@@ -371,8 +404,9 @@ type ListTemplateNamesRow struct {
 	Name string
 }
 
-// Names only (the instance list shows them).
-func (q *Queries) ListTemplateNames(ctx context.Context, orgID string) ([]ListTemplateNamesRow, error) {
+// The names of the templates the org may read (the instance list shows
+// them).
+func (q *Queries) ListTemplateNames(ctx context.Context, orgID *string) ([]ListTemplateNamesRow, error) {
 	rows, err := q.db.QueryContext(ctx, listTemplateNames, orgID)
 	if err != nil {
 		return nil, err
@@ -438,21 +472,30 @@ func (q *Queries) ListTemplateRevisions(ctx context.Context, templateID string) 
 }
 
 const listTemplates = `-- name: ListTemplates :many
-SELECT t.id, t.org_id, t.name, t.latest_revision, t.created_at, t.created_by, t.updated_at,
+SELECT t.id, t.source, t.org_id, t.slug, t.name, t.latest_revision, t.withdrawn_at, t.created_at, t.created_by, t.updated_at,
     COUNT(i.id) AS instances,
     CAST(COALESCE(SUM(CASE WHEN i.revision < t.latest_revision THEN 1 ELSE 0 END), 0) AS BIGINT) AS behind
 FROM templates AS t
-LEFT JOIN template_instances AS i ON i.template_id = t.id AND i.state IN ('pending', 'created')
-WHERE t.org_id = $1
-GROUP BY t.id, t.org_id, t.name, t.latest_revision, t.created_at, t.created_by, t.updated_at
-ORDER BY t.name ASC
+LEFT JOIN template_instances AS i ON i.template_id = t.id AND i.org_id = $1 AND i.state IN ('pending', 'created')
+WHERE t.org_id = $2 OR t.source = 'catalog'
+GROUP BY t.id, t.source, t.org_id, t.slug, t.name, t.latest_revision, t.withdrawn_at, t.created_at, t.created_by, t.updated_at
+HAVING t.source = 'org' OR t.withdrawn_at IS NULL OR COUNT(i.id) > 0
+ORDER BY t.source DESC, t.name ASC, t.id ASC
 `
+
+type ListTemplatesParams struct {
+	OrgID   string
+	OrgID_2 *string
+}
 
 type ListTemplatesRow struct {
 	ID             string
-	OrgID          string
+	Source         string
+	OrgID          *string
+	Slug           string
 	Name           string
 	LatestRevision int64
+	WithdrawnAt    *types.DateTime
 	CreatedAt      types.DateTime
 	CreatedBy      string
 	UpdatedAt      types.DateTime
@@ -460,10 +503,12 @@ type ListTemplatesRow struct {
 	Behind         int64
 }
 
-// One pass over the live instances: instances counts them, behind those on
-// a revision older than the latest.
-func (q *Queries) ListTemplates(ctx context.Context, orgID string) ([]ListTemplatesRow, error) {
-	rows, err := q.db.QueryContext(ctx, listTemplates, orgID)
+// The org's templates, then the catalog's (a withdrawn one only while the
+// org has live instances of it), each by name. One pass over the org's
+// live instances: instances counts them, behind those on a revision older
+// than the latest.
+func (q *Queries) ListTemplates(ctx context.Context, arg ListTemplatesParams) ([]ListTemplatesRow, error) {
+	rows, err := q.db.QueryContext(ctx, listTemplates, arg.OrgID, arg.OrgID_2)
 	if err != nil {
 		return nil, err
 	}
@@ -473,9 +518,12 @@ func (q *Queries) ListTemplates(ctx context.Context, orgID string) ([]ListTempla
 		var i ListTemplatesRow
 		if err := rows.Scan(
 			&i.ID,
+			&i.Source,
 			&i.OrgID,
+			&i.Slug,
 			&i.Name,
 			&i.LatestRevision,
+			&i.WithdrawnAt,
 			&i.CreatedAt,
 			&i.CreatedBy,
 			&i.UpdatedAt,
@@ -496,7 +544,7 @@ func (q *Queries) ListTemplates(ctx context.Context, orgID string) ([]ListTempla
 }
 
 const listUpgradableInstances = `-- name: ListUpgradableInstances :many
-SELECT i.id, i.org_id, i.instance_key, i.app_id, i.server_id, i.template_id, i.revision, i.params, i.secret_names, i.request_hash, i.state, i.last_error, i.created_at, i.updated_at FROM template_instances AS i
+SELECT i.id, i.org_id, i.instance_key, i.app_id, i.server_id, i.template_id, i.revision, i.name, i.params, i.secret_names, i.hosts, i.backups, i.request_hash, i.state, i.last_error, i.created_at, i.updated_at FROM template_instances AS i
 JOIN servers AS s ON s.server_id = i.server_id AND s.organization_id = i.org_id
 WHERE i.org_id = $1 AND i.template_id = $2 AND i.state = 'created' AND i.revision < $3
 ORDER BY i.created_at ASC, i.id ASC
@@ -528,8 +576,11 @@ func (q *Queries) ListUpgradableInstances(ctx context.Context, arg ListUpgradabl
 			&i.ServerID,
 			&i.TemplateID,
 			&i.Revision,
+			&i.Name,
 			&i.Params,
 			&i.SecretNames,
+			&i.Hosts,
+			&i.Backups,
 			&i.RequestHash,
 			&i.State,
 			&i.LastError,
@@ -551,14 +602,15 @@ func (q *Queries) ListUpgradableInstances(ctx context.Context, arg ListUpgradabl
 
 const markTemplateInstanceSaved = `-- name: MarkTemplateInstanceSaved :exec
 UPDATE template_instances
-SET revision = $1, params = $2, secret_names = $3, state = 'created', last_error = '', updated_at = $4
-WHERE id = $5 AND state IN ('pending', 'created')
+SET revision = $1, params = $2, secret_names = $3, hosts = $4, state = 'created', last_error = '', updated_at = $5
+WHERE id = $6 AND state IN ('pending', 'created')
 `
 
 type MarkTemplateInstanceSavedParams struct {
 	Revision    int64
 	Params      string
 	SecretNames string
+	Hosts       string
 	UpdatedAt   types.DateTime
 	ID          string
 }
@@ -569,6 +621,7 @@ func (q *Queries) MarkTemplateInstanceSaved(ctx context.Context, arg MarkTemplat
 		arg.Revision,
 		arg.Params,
 		arg.SecretNames,
+		arg.Hosts,
 		arg.UpdatedAt,
 		arg.ID,
 	)
@@ -591,6 +644,22 @@ type RetireTemplateInstancesForAppParams struct {
 // stays retired.
 func (q *Queries) RetireTemplateInstancesForApp(ctx context.Context, arg RetireTemplateInstancesForAppParams) error {
 	_, err := q.db.ExecContext(ctx, retireTemplateInstancesForApp, arg.UpdatedAt, arg.ServerID, arg.AppID)
+	return err
+}
+
+const setTemplateInstanceBackups = `-- name: SetTemplateInstanceBackups :exec
+UPDATE template_instances SET backups = $1, updated_at = $2 WHERE id = $3 AND state = 'pending'
+`
+
+type SetTemplateInstanceBackupsParams struct {
+	Backups   string
+	UpdatedAt types.DateTime
+	ID        string
+}
+
+// A pending instance's backup settings; a confirmed one's belong to the app.
+func (q *Queries) SetTemplateInstanceBackups(ctx context.Context, arg SetTemplateInstanceBackupsParams) error {
+	_, err := q.db.ExecContext(ctx, setTemplateInstanceBackups, arg.Backups, arg.UpdatedAt, arg.ID)
 	return err
 }
 

@@ -77,6 +77,8 @@ func (noStorages) ReplaceForServer(context.Context, string, []model.StorageSumma
 
 type fixture struct {
 	uc   *templates.UseCase
+	repo *templaterepo.Repo
+	apps *apprepo.Repo
 	disp *dispatcher
 	tpl  templates.SavedTemplate
 	// secret is the KEY ciphertext create sends.
@@ -85,31 +87,34 @@ type fixture struct {
 
 const compose = `services:
   app:
-    image: example/shop:${VERSION}
+    image: example/shop:1
+    environment:
+      NAME: "shop"
+      VERSION: "1"
+      KEY: "changeme"
     volumes: [data:/data]
 volumes: { data: {} }
 x-winterflow:
+  expose:
+    - { container: app, port: 8080 }
+  variables:
+    NAME: { required: true, pattern: "^[a-z]+$" }
+    VERSION: {}
+    KEY: { required: true, encrypted: true }
   backups:
     - { name: db, type: sqlite, volume: data, path: shop.db }
 `
 
-func strp(s string) *string { return &s }
-
+// body is template "shop": NAME required (lowercase), VERSION optional
+// (the compose file's "1"), KEY a required secret, app:8080 exposed, a
+// sqlite backup "db".
 func body() template.Body {
-	return template.Body{
-		Files: map[string]string{"compose.yaml": compose},
-		Parameters: []template.Parameter{
-			{Name: "NAME", Required: true, Pattern: "^[a-z]+$"},
-			{Name: "VERSION", Default: strp("1")},
-			{Name: "KEY", Secret: true, Required: true},
-		},
-		AppName: "shop-${NAME}",
-		Backups: map[string]template.BackupDefault{"db": {Enabled: false}},
-	}
+	return template.Body{Files: map[string]string{"compose.yaml": compose}, Summary: "A shop", Icon: "cart"}
 }
 
 // newFixture is the usecase over a real database (org1 owns srv1, org2
-// srv2) and a recording dispatcher, with template "shop" saved in org1.
+// srv2) and a recording dispatcher, with template "shop" (body) saved in
+// org1.
 // storages, when set, is the server storage index save-app checks.
 func newFixture(t *testing.T, storages port.ServerStorageRepository) fixture {
 	t.Helper()
@@ -140,5 +145,5 @@ func newFixtureWith(t *testing.T, storages port.ServerStorageRepository, status 
 	if err != nil {
 		t.Fatal(err)
 	}
-	return fixture{uc: uc, disp: disp, tpl: tpl, secret: cryptotest.Ciphertext(t, "key")}
+	return fixture{uc: uc, repo: repo, apps: apps, disp: disp, tpl: tpl, secret: cryptotest.Ciphertext(t, "key")}
 }

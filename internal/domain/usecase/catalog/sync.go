@@ -11,6 +11,8 @@ import (
 	"crypto/ed25519"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -46,7 +48,8 @@ var (
 // switched off).
 var anyFeed = time.Date(9999, 12, 31, 0, 0, 0, 0, time.UTC)
 
-// Deps wires a Syncer. Now may be nil (time.Now).
+// Deps wires a Syncer. Now may be nil (time.Now); Log may be nil (logs
+// nothing).
 type Deps struct {
 	Repo    port.CatalogRepository
 	Fetcher port.CatalogFetcher
@@ -76,7 +79,11 @@ func New(d Deps) *Syncer {
 	if now == nil {
 		now = time.Now
 	}
-	return &Syncer{repo: d.Repo, fetcher: d.Fetcher, key: d.Key, log: d.Log, now: now}
+	log := d.Log
+	if log == nil {
+		log = &logger.Logger{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	}
+	return &Syncer{repo: d.Repo, fetcher: d.Fetcher, key: d.Key, log: log, now: now}
 }
 
 // Result is what one sync did.

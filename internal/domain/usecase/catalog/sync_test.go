@@ -430,3 +430,17 @@ func TestRunDefaults(t *testing.T) {
 		t.Fatalf("synced %d times", len(got))
 	}
 }
+
+// A Syncer built without a logger logs nothing and does not panic, also
+// on the paths that log (an invalid entry, a failed sync).
+func TestNewWithoutALogger(t *testing.T) {
+	e := newEnv(t)
+	s := catalog.New(catalog.Deps{Repo: e.repo, Fetcher: e.feed, Key: e.key.Public().(ed25519.PublicKey), Now: func() time.Time { return now }})
+	bad := app("broken", "Broken", "x:1")
+	bad.Digest = "sha256:wrong"
+	e.feed.publish(t, e.key, g1, app("budget", "Budget", "actual:1"), bad)
+	res, err := s.Sync(dbtest.Ctx(t))
+	if err != nil || res.Invalid != 1 || res.Inserted != 1 {
+		t.Fatalf("sync = %+v, %v", res, err)
+	}
+}

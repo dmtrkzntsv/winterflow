@@ -148,6 +148,24 @@ describe("useProcesses", () => {
     expect(api.calls.at(-1)?.query).toBe("?server_id=s2");
   });
 
+  it("explains a stuck process read and keeps polling", async () => {
+    const api = fakeAPI({ "/api/v1/server/get-processes": { request_id: "r1" } });
+    waitFor_.mockResolvedValueOnce({ type: "operation_result", ref: "r1", status: 1, error: "context deadline exceeded" });
+    const { result } = renderHook(() => useProcesses("s1", true), { wrapper });
+    await waitFor(() => expect(result.current.error).toBe("The server is still reading processes; retrying."));
+    await act(() => vi.advanceTimersByTimeAsync(PROCESS_POLL_MS + 10));
+    await waitFor(() => expect(api.calls).toHaveLength(2));
+    await waitFor(() => expect(result.current.data?.ncpu).toBe(4));
+    expect(result.current.error).toBeNull();
+  });
+
+  it("explains a stuck read whatever wraps the agent's error", async () => {
+    fakeAPI({ "/api/v1/server/get-processes": { request_id: "r1" } });
+    waitFor_.mockResolvedValueOnce({ type: "operation_result", ref: "r1", status: 1, error: "list processes: context deadline exceeded" });
+    const { result } = renderHook(() => useProcesses("s1", true), { wrapper });
+    await waitFor(() => expect(result.current.error).toBe("The server is still reading processes; retrying."));
+  });
+
   it("reports the agent's error", async () => {
     fakeAPI({ "/api/v1/server/get-processes": { request_id: "r1" } });
     waitFor_.mockResolvedValue({ type: "operation_result", ref: "r1", status: 1, error: "process list is only available on Linux" });

@@ -14,6 +14,9 @@ const base = apiBaseUrl.endsWith("/") ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
 // An agent that predates process.list answers every request with this.
 const UNSUPPORTED = /unsupported command type/i;
 const AGENT_TOO_OLD = "This server's agent is too old to list processes. Update the agent.";
+// The agent gave up waiting for its /proc read (a hung process can hold
+// one for good); the next poll waits for the same read again.
+const READ_STUCK = /context deadline exceeded/i;
 
 type State = { serverId: string | null; data: ProcessList | null; error: string | null; updatedAt: number | null };
 
@@ -65,6 +68,7 @@ export function useProcesses(serverId: string | null, enabled: boolean) {
               update({ error: AGENT_TOO_OLD });
               return;
             }
+            if (READ_STUCK.test(n.error ?? "")) throw new Error("The server is still reading processes; retrying.");
             throw new Error(n.error || "Failed to list processes");
           }
           update({ data: n.payload as ProcessList, error: null, updatedAt: Date.now() });

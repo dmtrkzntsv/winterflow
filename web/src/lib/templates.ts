@@ -48,14 +48,13 @@ export type Inspection = { detected: Detected; problem: string };
 export type TemplateSource = "org" | "catalog";
 
 // CatalogMeta is what the catalog says about a catalog template besides its
-// name and files (null for an org template). Go encodes an empty list as
-// null.
+// name and files (null for an org template). The lists are never null.
 export type CatalogMeta = {
   summary: string;
   description: string;
-  keywords: string[] | null;
-  tags: string[] | null;
-  alternative_to: string[] | null; // apps this one replaces, as search words
+  keywords: string[];
+  tags: string[];
+  alternative_to: string[]; // apps this one replaces, as search words
   license: string;
   homepage_url: string;
   repository_url: string;

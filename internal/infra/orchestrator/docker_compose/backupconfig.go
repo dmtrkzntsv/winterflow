@@ -1,7 +1,6 @@
 package dockercompose
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -145,68 +144,6 @@ func keepBackups(next, prev []byte) []byte {
 	out, err := json.Marshal(n)
 	if err != nil {
 		return next
-	}
-	return out
-}
-
-// instanceKey is the key of a template instance's marker in config.json;
-// backupDefaultsKey the marker's list of backups to add (the API sends it
-// on an upgrade that brings backups new to the app).
-const (
-	instanceKey       = "instance"
-	backupDefaultsKey = "backup_defaults"
-)
-
-// applyBackupDefaults adds each instance.backup_defaults entry to the
-// backups list unless the list already has that name (a stored setting,
-// Backups-tab changes included, always wins), and drops backup_defaults
-// from the marker: it is an instruction for this save, not state. A blob
-// without defaults, or one that doesn't parse, comes back unchanged.
-func applyBackupDefaults(cfg []byte) []byte {
-	if !bytes.Contains(cfg, []byte(backupDefaultsKey)) {
-		return cfg // nearly every save: skip decoding the blob
-	}
-	var top map[string]json.RawMessage
-	if json.Unmarshal(cfg, &top) != nil || top == nil {
-		return cfg
-	}
-	var marker map[string]json.RawMessage
-	if json.Unmarshal(top[instanceKey], &marker) != nil || marker[backupDefaultsKey] == nil {
-		return cfg
-	}
-	var defaults, list []recipe.BackupConfig
-	if json.Unmarshal(marker[backupDefaultsKey], &defaults) != nil {
-		return cfg
-	}
-	if raw, ok := top[backupsKey]; ok && json.Unmarshal(raw, &list) != nil {
-		return cfg
-	}
-	have := map[string]bool{}
-	for _, b := range list {
-		have[b.Name] = true
-	}
-	for _, d := range defaults {
-		if !have[d.Name] {
-			list = append(list, d)
-			have[d.Name] = true
-		}
-	}
-	delete(marker, backupDefaultsKey)
-	rawMarker, err := json.Marshal(marker)
-	if err != nil {
-		return cfg
-	}
-	top[instanceKey] = rawMarker
-	if len(list) > 0 {
-		rawList, err := json.Marshal(list)
-		if err != nil {
-			return cfg
-		}
-		top[backupsKey] = rawList
-	}
-	out, err := json.Marshal(top)
-	if err != nil {
-		return cfg
 	}
 	return out
 }

@@ -1,9 +1,10 @@
 import { Fragment, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowDown, ArrowUp, ChevronRight, Pause, Play } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronRight, Pause, Play, X } from "lucide-react";
 
 import { DataFreshness } from "@/components/data-freshness";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -19,8 +20,10 @@ import {
   defaultDir,
   filterProcesses,
   formatUptime,
+  groupName,
   sortProcesses,
   type AppFilter,
+  type ProcessGroup,
   type ProcessInfo,
   type SortDir,
   type SortKey,
@@ -36,14 +39,15 @@ const COLUMNS: { key: SortKey; label: string; wide?: boolean; numeric?: boolean 
   { key: "pid", label: "PID", wide: true, numeric: true },
   { key: "cpu", label: "CPU", numeric: true },
   { key: "mem", label: "Memory", numeric: true },
-  { key: "read", label: "Read/s", wide: true, numeric: true },
-  { key: "write", label: "Write/s", numeric: true },
+  { key: "group", label: "Group", wide: true },
   { key: "threads", label: "Threads", wide: true, numeric: true },
   { key: "uptime", label: "Uptime", wide: true, numeric: true },
 ];
 const WIDE = "hidden md:table-cell";
 
+const GROUPS_SHOWN = 8;
 const rate = (v: number | null) => (v === null ? "—" : formatRate(v));
+const count = (n: number) => `${n} process${n === 1 ? "" : "es"}`;
 
 // ProcessesTab lists the server's processes, polled only while this tab is
 // mounted (Monitoring mounts it only while selected), the page is visible
@@ -58,12 +62,19 @@ export function ProcessesTab({ serverId }: { serverId: string }) {
   const [text, setText] = useState("");
   const [app, setApp] = useState<AppFilter>("all");
   const [kernel, setKernel] = useState(false);
+  const [group, setGroup] = useState<string | null>(null);
+  const [allGroups, setAllGroups] = useState(false);
   const [open, setOpen] = useState<number | null>(null);
 
   const appName = useMemo(() => {
     const names = new Map(apps.map((a) => [a.id, appLabel(a.name)]));
     return (id: string) => names.get(id);
   }, [apps]);
+  const groups = useMemo(() => data?.groups ?? [], [data]);
+  const groupLabel = useMemo(() => {
+    const names = new Map(groups.map((g) => [g.id, groupName(g, appName) ?? g.id]));
+    return (id: string) => names.get(id);
+  }, [groups, appName]);
   const appIds = useMemo(
     () => [...new Set((data?.processes ?? []).flatMap((p) => (p.app_id ? [p.app_id] : [])))],
     [data],
@@ -71,15 +82,18 @@ export function ProcessesTab({ serverId }: { serverId: string }) {
   // A chosen app that has left the list (stopped, gone) no longer filters:
   // the select would show nothing while the table hid every row.
   const appFilter: AppFilter = data && app.startsWith("app:") && !appIds.includes(app.slice(4)) ? "all" : app;
+  // Likewise a chosen group that has left the list.
+  const groupFilter = data && group !== null && !groups.some((g) => g.id === group) ? null : group;
   const rows = useMemo(
     () =>
       sortProcesses(
-        filterProcesses(data?.processes ?? [], { text, app: appFilter, kernel }, appName),
+        filterProcesses(data?.processes ?? [], { text, app: appFilter, kernel, group: groupFilter }, appName, groupLabel),
         sort.key,
         sort.dir,
         appName,
+        groupLabel,
       ),
-    [data, text, appFilter, kernel, appName, sort],
+    [data, text, appFilter, kernel, groupFilter, appName, groupLabel, sort],
   );
   // The agent's sample time (unix ms), so uptimes do not drift between polls.
   const now = data?.sampled_at ?? 0;
@@ -131,10 +145,10 @@ export function ProcessesTab({ serverId }: { serverId: string }) {
             <span className="ml-1 text-xs text-muted-foreground">{formatPercent(p.mem_pct)}</span>
           </>
         );
-      case "read":
-        return rate(p.read_bps);
-      case "write":
-        return rate(p.write_bps);
+      case "group":
+        return p.group ? (
+          <span className="block max-w-40 truncate text-muted-foreground">{groupLabel(p.group) ?? p.group}</span>
+        ) : null;
       case "threads":
         return p.threads;
       case "uptime":
@@ -142,13 +156,66 @@ export function ProcessesTab({ serverId }: { serverId: string }) {
     }
   };
 
+  const shownGroups = allGroups ? groups : groups.slice(0, GROUPS_SHOWN);
+  const groupRow = (g: ProcessGroup) => {
+    const active = groupFilter === g.id;
+    const name = groupName(g, appName);
+    return (
+      <li key={g.id}>
+        <button
+          type="button"
+          aria-pressed={active}
+          onClick={() => setGroup(active ? null : g.id)}
+          className={cn(
+            "grid w-full grid-cols-[minmax(0,1fr)_4.5rem_4.5rem] items-baseline gap-x-3 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted sm:grid-cols-[minmax(0,1fr)_5.5rem_5.5rem_6rem]",
+            active && "bg-muted",
+          )}
+        >
+          <span className="min-w-0 truncate">
+            <span className="font-medium">{name}</span>
+            {g.kind !== "container" ? <span className="ml-1.5 text-xs text-muted-foreground">{g.kind}</span> : null}
+          </span>
+          <span aria-label={`Read ${rate(g.read_bps)}`} className="text-right tabular-nums">{rate(g.read_bps)}</span>
+          <span aria-label={`Write ${rate(g.write_bps)}`} className="text-right tabular-nums">{rate(g.write_bps)}</span>
+          <span className="hidden text-right text-xs text-muted-foreground sm:block">{count(g.processes)}</span>
+        </button>
+      </li>
+    );
+  };
+
   return (
     <div className="space-y-4">
+      {data ? (
+        <Card className="gap-2 p-3.5">
+          <h3 className="text-sm font-medium text-muted-foreground">Disk by app or service</h3>
+          {groups.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Disk I/O per app or service needs cgroup v2 on this server.</p>
+          ) : (
+            <>
+              <div
+                aria-hidden="true"
+                className="grid grid-cols-[minmax(0,1fr)_4.5rem_4.5rem] gap-x-3 px-2 text-xs text-muted-foreground sm:grid-cols-[minmax(0,1fr)_5.5rem_5.5rem_6rem]"
+              >
+                <span />
+                <span className="text-right">Read/s</span>
+                <span className="text-right">Write/s</span>
+              </div>
+              <ul aria-label="Disk by app or service">{shownGroups.map(groupRow)}</ul>
+              {groups.length > GROUPS_SHOWN ? (
+                <Button variant="ghost" size="sm" className="self-start" onClick={() => setAllGroups((x) => !x)}>
+                  {allGroups ? "Show fewer" : `Show all (${groups.length})`}
+                </Button>
+              ) : null}
+            </>
+          )}
+        </Card>
+      ) : null}
+
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <Input
           type="search"
           aria-label="Filter processes"
-          placeholder="Filter by name, command, user, PID or app"
+          placeholder="Filter by name, command, user, PID, app or group"
           value={text}
           onChange={(e) => setText(e.target.value)}
           className="w-full sm:w-72"
@@ -169,6 +236,19 @@ export function ProcessesTab({ serverId }: { serverId: string }) {
           <Switch id="kernel-threads" checked={kernel} onCheckedChange={setKernel} aria-label="Show kernel threads" />
           <Label htmlFor="kernel-threads" className="text-sm font-normal">Kernel threads</Label>
         </div>
+        {groupFilter !== null ? (
+          <span className="inline-flex items-center gap-1 rounded-md bg-secondary py-0.5 pl-2 pr-1 text-xs font-medium text-secondary-foreground">
+            <span>Group: {groupLabel(groupFilter)}</span>
+            <button
+              type="button"
+              aria-label="Clear group filter"
+              onClick={() => setGroup(null)}
+              className="rounded p-0.5 hover:bg-background/60"
+            >
+              <X className="size-3" />
+            </button>
+          </span>
+        ) : null}
         <div className="ml-auto flex items-center gap-2 text-sm text-muted-foreground">
           {data ? (
             <span>

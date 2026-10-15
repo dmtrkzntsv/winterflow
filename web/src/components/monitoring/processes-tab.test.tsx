@@ -4,7 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ProcessesTab } from "@/components/monitoring/processes-tab";
-import type { ProcessInfo, ProcessList } from "@/lib/processes";
+import type { ProcessGroup, ProcessInfo, ProcessList } from "@/lib/processes";
 
 const useProcesses = vi.fn();
 let result: { data: ProcessList | null; error: string | null; updatedAt: number | null; refresh: () => void };
@@ -20,18 +20,31 @@ vi.mock("@/context/use-apps", () => ({ useApps: () => ({ apps: [{ id: "app-1", n
 
 const p = (o: Partial<ProcessInfo>): ProcessInfo => ({
   pid: 1, ppid: 0, name: "x", cmdline: "", user: "root", state: "S", threads: 1, start_time: 0,
-  kernel: false, cpu_pct: 0, rss: 0, mem_pct: 0, read_bps: 0, write_bps: 0, ...o,
+  kernel: false, cpu_pct: 0, rss: 0, mem_pct: 0, ...o,
+});
+
+const g = (o: Partial<ProcessGroup>): ProcessGroup => ({
+  id: "g", label: "", kind: "service", processes: 1, read_bps: null, write_bps: null, ...o,
 });
 
 const LIST: ProcessList = {
   sampled_at: 0, ncpu: 4, mem_total: 1 << 30, total: 4,
   processes: [
-    p({ pid: 10, name: "postgres", cpu_pct: 5, app_id: "app-1", write_bps: null, read_bps: null }),
-    p({ pid: 7, name: "sshd", cpu_pct: 20 }),
+    p({ pid: 10, name: "postgres", cpu_pct: 5, app_id: "app-1", group: "c1" }),
+    p({ pid: 7, name: "sshd", cpu_pct: 20, group: "ssh" }),
     p({ pid: 2, name: "kthreadd", kernel: true }),
-    p({ pid: 8, name: "bash", cpu_pct: 1 }),
+    p({ pid: 8, name: "bash", cpu_pct: 1, group: "c2" }),
+  ],
+  groups: [
+    g({ id: "c1", kind: "container", container_id: "aaaaaaaaaaaaaaaa", app_id: "app-1", processes: 3, read_bps: 1024, write_bps: 2048 }),
+    g({ id: "ssh", label: "ssh.service", processes: 1, read_bps: 0, write_bps: 512 }),
+    g({ id: "c2", kind: "container", container_id: "0123456789abcdef", processes: 2 }),
   ],
 };
+
+function groupList() {
+  return screen.getByRole("list", { name: "Disk by app or service" });
+}
 
 function names() {
   return within(screen.getByRole("table")).getAllByTestId("process-name").map((n) => n.textContent);
@@ -121,7 +134,7 @@ describe("ProcessesTab", () => {
     await user.click(btn);
     expect(btn).toHaveAttribute("aria-expanded", "true");
     const details = screen.getAllByRole("row").find((r) => within(r).queryAllByRole("term").length > 0)!;
-    for (const label of ["App", "User", "PID", "Read/s", "Threads", "Uptime"]) {
+    for (const label of ["App", "User", "PID", "Group", "Threads", "Uptime"]) {
       expect(within(details).getByText(label)).toBeInTheDocument();
     }
     await user.click(btn);
@@ -155,11 +168,107 @@ describe("ProcessesTab", () => {
     expect(screen.getByText("No processes match.")).toBeInTheDocument();
   });
 
-  it("renders a dash for unknown rates and links the app", () => {
+  it("links the app and shows the group in the table", () => {
     renderTab();
     const row = screen.getAllByTestId("process-row").find((r) => within(r).queryByText("postgres"))!;
-    expect(within(row).getAllByText("—").length).toBeGreaterThanOrEqual(2);
     expect(within(row).getByRole("link", { name: "Nextcloud" })).toHaveAttribute("href", "/server/s1/app/app-1");
+    const sshd = screen.getAllByTestId("process-row").find((r) => within(r).queryByText("sshd"))!;
+    expect(within(sshd).getByText("ssh.service")).toBeInTheDocument();
+  });
+
+  it("has a Group column and no per-process disk columns", () => {
+    renderTab();
+    const table = screen.getByRole("table");
+    expect(within(table).getByRole("button", { name: "Sort by Group" })).toBeInTheDocument();
+    expect(within(table).queryByRole("button", { name: "Sort by Read/s" })).not.toBeInTheDocument();
+    expect(within(table).queryByRole("button", { name: "Sort by Write/s" })).not.toBeInTheDocument();
+  });
+
+  it("sorts by group name", async () => {
+    const user = userEvent.setup();
+    renderTab();
+    await user.click(screen.getByRole("button", { name: "Sort by Group" }));
+    // container 0123… (bash), Nextcloud (postgres), ssh.service (sshd)
+    expect(names()).toEqual(["bash", "postgres", "sshd"]);
+  });
+
+  it("lists disk I/O per app or service, with a dash for unknown rates", () => {
+    renderTab();
+    const rows = within(groupList()).getAllByRole("button");
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toHaveTextContent("Nextcloud");
+    expect(rows[0]).toHaveTextContent("1.0 KB/s");
+    expect(rows[0]).toHaveTextContent("2.0 KB/s");
+    expect(rows[0]).toHaveTextContent("3 processes");
+    expect(rows[1]).toHaveTextContent("ssh.service");
+    expect(rows[1]).toHaveTextContent("service");
+    expect(rows[1]).toHaveTextContent("1 process");
+    expect(rows[2]).toHaveTextContent("container 0123456789ab");
+    expect(within(rows[2]).getAllByText("—")).toHaveLength(2);
+  });
+
+  it("shows the first 8 groups and the rest on request", async () => {
+    const user = userEvent.setup();
+    const groups = Array.from({ length: 11 }, (_, i) => g({ id: `u${i}`, label: `unit${i}.service` }));
+    result = { ...result, data: { ...LIST, groups } };
+    renderTab();
+    expect(within(groupList()).getAllByRole("button")).toHaveLength(8);
+    await user.click(screen.getByRole("button", { name: "Show all (11)" }));
+    expect(within(groupList()).getAllByRole("button")).toHaveLength(11);
+    await user.click(screen.getByRole("button", { name: "Show fewer" }));
+    expect(within(groupList()).getAllByRole("button")).toHaveLength(8);
+  });
+
+  it("offers no toggle for 8 groups or fewer", () => {
+    renderTab();
+    expect(screen.queryByRole("button", { name: /Show all/ })).not.toBeInTheDocument();
+  });
+
+  it("filters the table to a group, with a chip, and clears it", async () => {
+    const user = userEvent.setup();
+    renderTab();
+    await user.click(within(groupList()).getByRole("button", { name: /ssh\.service/ }));
+    expect(names()).toEqual(["sshd"]);
+    expect(within(groupList()).getByRole("button", { name: /ssh\.service/ })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("Group: ssh.service")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Clear group filter" }));
+    expect(names()).toEqual(["sshd", "postgres", "bash"]);
+    expect(screen.queryByText("Group: ssh.service")).not.toBeInTheDocument();
+    expect(within(groupList()).getByRole("button", { name: /ssh\.service/ })).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("clears the group filter by clicking the active row again", async () => {
+    const user = userEvent.setup();
+    renderTab();
+    const row = () => within(groupList()).getByRole("button", { name: /Nextcloud/ });
+    await user.click(row());
+    expect(names()).toEqual(["postgres"]);
+    await user.click(row());
+    expect(names()).toEqual(["sshd", "postgres", "bash"]);
+  });
+
+  it("drops a group filter whose group left the list", async () => {
+    const user = userEvent.setup();
+    const { rerender } = renderTab();
+    await user.click(within(groupList()).getByRole("button", { name: /ssh\.service/ }));
+    result = { ...result, data: { ...LIST, groups: LIST.groups.filter((x) => x.id !== "ssh") } };
+    rerender(<MemoryRouter><ProcessesTab serverId="s1" /></MemoryRouter>);
+    expect(names()).toEqual(["sshd", "postgres", "bash"]);
+    expect(screen.queryByRole("button", { name: "Clear group filter" })).not.toBeInTheDocument();
+  });
+
+  it("matches the group name in the text filter", async () => {
+    const user = userEvent.setup();
+    renderTab();
+    await user.type(screen.getByRole("searchbox", { name: "Filter processes" }), "ssh.service");
+    expect(names()).toEqual(["sshd"]);
+  });
+
+  it("says disk I/O needs cgroup v2 when there are no groups", () => {
+    result = { ...result, data: { ...LIST, processes: LIST.processes.map((x) => ({ ...x, group: undefined })), groups: [] } };
+    renderTab();
+    expect(screen.getByText("Disk I/O per app or service needs cgroup v2 on this server.")).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Disk by app or service" })).not.toBeInTheDocument();
   });
 
   it("shows skeleton rows before the first answer and an inline error after", () => {

@@ -11,7 +11,7 @@ const ctx = { connected: true, subscribe: () => () => {}, waitFor: waitFor_ } as
 const wrapper = ({ children }: { children: ReactNode }) => (
   <NotificationsContext.Provider value={ctx}>{children}</NotificationsContext.Provider>
 );
-const LIST = { sampled_at: 1, ncpu: 4, mem_total: 1, total: 1, processes: [{ pid: 1 }] };
+const LIST = { sampled_at: 1, ncpu: 4, mem_total: 1, total: 1, processes: [{ pid: 1 }], groups: [] };
 
 describe("useProcesses", () => {
   beforeEach(() => {

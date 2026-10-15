@@ -4091,6 +4091,64 @@ paths:
       summary: Delete a server-level shared variable
       tags:
       - variables
+  /api/v1/server/get-processes:
+    get:
+      operationId: serverGetProcesses
+      parameters:
+      - description: Target server id.
+        in: query
+        name: server_id
+        required: true
+        schema:
+          description: Target server id.
+          type: string
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/AcceptedData'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: List the server's processes (CPU, memory, disk I/O)
+      tags:
+      - metrics
+      x-operation-result:
+        $ref: '#/components/schemas/ProcessListResponse'
   /api/v1/server/get-public-key:
     get:
       operationId: serverGetPublicKey
@@ -8027,6 +8085,90 @@ components:
       type:
       - integer
       - string
+    Process:
+      properties:
+        app_id:
+          type: string
+        cmdline:
+          type: string
+        container_id:
+          type: string
+        cpu_pct:
+          type:
+          - "null"
+          - number
+        kernel:
+          type: boolean
+        mem_pct:
+          format: double
+          type: number
+        name:
+          type: string
+        pid:
+          type: integer
+        ppid:
+          type: integer
+        read_bps:
+          type:
+          - "null"
+          - number
+        rss:
+          minimum: 0
+          type: integer
+        start_time:
+          format: int64
+          type: integer
+        state:
+          type: string
+        threads:
+          type: integer
+        user:
+          type: string
+        write_bps:
+          type:
+          - "null"
+          - number
+      required:
+      - pid
+      - ppid
+      - name
+      - cmdline
+      - user
+      - state
+      - threads
+      - start_time
+      - kernel
+      - cpu_pct
+      - rss
+      - mem_pct
+      - read_bps
+      - write_bps
+      type: object
+    ProcessListResponse:
+      properties:
+        mem_total:
+          minimum: 0
+          type: integer
+        ncpu:
+          type: integer
+        processes:
+          items:
+            $ref: '#/components/schemas/Process'
+          type:
+          - array
+          - "null"
+        sampled_at:
+          format: int64
+          type: integer
+        total:
+          type: integer
+      required:
+      - sampled_at
+      - ncpu
+      - mem_total
+      - total
+      - processes
+      type: object
     Profile:
       properties:
         email:

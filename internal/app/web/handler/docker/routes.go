@@ -10,7 +10,7 @@ import (
 // Routes is the docker handler's slice of the route table. Every route is
 // server-addressed (server_id query) and agent-bound (202 + request_id).
 // Any org member may call any of them; 403 means the server belongs to
-// another org.
+// another org. Plus the server's process list (tag metrics).
 func (h *Handler) Routes(api.Guards) []api.Route {
 	errs := []int{http.StatusBadRequest, http.StatusForbidden}
 	route := func(method, path string, hf http.HandlerFunc, summary string, req, result any) api.Route {
@@ -20,7 +20,7 @@ func (h *Handler) Routes(api.Guards) []api.Route {
 			Accepted: true, Result: result, Errors: errs,
 		}
 	}
-	return []api.Route{
+	routes := []api.Route{
 		route(http.MethodGet, "/api/v1/registry/list", h.ListRegistries,
 			"List the agent's Docker registry logins", nil, command.ListRegistriesResponse{}),
 		route(http.MethodPost, "/api/v1/registry/create", h.CreateRegistry,
@@ -42,4 +42,8 @@ func (h *Handler) Routes(api.Guards) []api.Route {
 		route(http.MethodPost, "/api/v1/agent/update", h.UpdateAgent,
 			"Self-update the agent binary", command.UpdateAgentRequest{}, command.UpdateAgentResponse{}),
 	}
+	processes := route(http.MethodGet, "/api/v1/server/get-processes", h.GetProcesses,
+		"List the server's processes (CPU, memory, disk I/O)", nil, command.ProcessListResponse{})
+	processes.Tag = "metrics"
+	return append(routes, processes)
 }

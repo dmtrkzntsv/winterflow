@@ -70,6 +70,7 @@ func TestDockerHandlersReturn202(t *testing.T) {
 		{"delete-volume", func(h *Handler) http.HandlerFunc { return h.DeleteVolume }, "POST", `{"name":"data"}`},
 		{"update-agent", func(h *Handler) http.HandlerFunc { return h.UpdateAgent }, "POST",
 			`{"version":"1.2.3"}`},
+		{"get-processes", func(h *Handler) http.HandlerFunc { return h.GetProcesses }, "GET", ""},
 	}
 
 	for _, tc := range cases {
@@ -93,6 +94,26 @@ func TestDockerHandlersReturn202(t *testing.T) {
 				t.Fatalf("dispatched as %+v", fd.last)
 			}
 		})
+	}
+}
+
+func TestGetProcessesDispatchesProcessList(t *testing.T) {
+	h, fd := newHandler(t)
+	h.GetProcesses(httptest.NewRecorder(), authed(httptest.NewRequest("GET", "/x?server_id=s1", nil)))
+	if fd.last.Type != command.TypeProcessList {
+		t.Fatalf("type = %q", fd.last.Type)
+	}
+	if _, ok := fd.last.Payload.(command.ProcessListRequest); !ok {
+		t.Fatalf("payload = %#v", fd.last.Payload)
+	}
+}
+
+func TestGetProcessesRejectsForeignServer(t *testing.T) {
+	h, fd := newHandler(t)
+	w := httptest.NewRecorder()
+	h.GetProcesses(w, authed(httptest.NewRequest("GET", "/x?server_id=other", nil)))
+	if w.Code != http.StatusForbidden || fd.last.AgentID != "" {
+		t.Fatalf("status %d, dispatched %+v", w.Code, fd.last)
 	}
 }
 

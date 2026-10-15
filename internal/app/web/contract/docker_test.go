@@ -28,6 +28,7 @@ func TestDockerRoutes(t *testing.T) {
 		{http.MethodPost, "/api/v1/volume/create", command.CreateVolumeRequest{Name: "data"}},
 		{http.MethodPost, "/api/v1/volume/delete", command.DeleteVolumeRequest{Name: "data"}},
 		{http.MethodPost, "/api/v1/agent/update", command.UpdateAgentRequest{Version: "v261010.1"}},
+		{http.MethodGet, "/api/v1/server/get-processes", nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.path, func(t *testing.T) {
@@ -64,5 +65,8 @@ func TestDockerRoutes(t *testing.T) {
 		e.agent.fail(command.TypeAgentUpdate, "no such release")
 		owner.failWith(t, call{Method: http.MethodPost, Path: "/api/v1/agent/update", Query: q,
 			Body: command.UpdateAgentRequest{Version: "v0"}}, "no such release")
+		e.agent.fail(command.TypeProcessList, "process list is only available on Linux")
+		owner.failWith(t, call{Method: http.MethodGet, Path: "/api/v1/server/get-processes", Query: q},
+			"process list is only available on Linux")
 	})
 }

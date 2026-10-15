@@ -1,6 +1,7 @@
 // Package docker exposes HTTP handlers for Docker resources (registries,
-// networks and volumes). All operations are agent-bound: handlers validate, dispatch, and
-// return 202 {request_id}; results arrive over SSE.
+// networks and volumes) and the host's process list. All operations are
+// agent-bound: handlers validate, dispatch, and return 202 {request_id};
+// results arrive over SSE.
 package docker
 
 import (
@@ -181,6 +182,24 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	accepted(w, "agent update dispatched", reqID)
+}
+
+// --- processes ---
+
+// GetProcesses dispatches a process.list: 202 + request_id; the processes
+// arrive over SSE as the command's result. Monitoring's Processes tab polls
+// it only while it is open.
+func (h *Handler) GetProcesses(w http.ResponseWriter, r *http.Request) {
+	userID, serverID, ok := h.caller(w, r)
+	if !ok {
+		return
+	}
+	reqID, err := h.dispatch(r.Context(), userID, serverID, command.TypeProcessList, command.ProcessListRequest{})
+	if err != nil {
+		webutil.Error(w, "failed to list processes", nil)
+		return
+	}
+	accepted(w, "process list dispatched", reqID)
 }
 
 func (h *Handler) DeleteNetwork(w http.ResponseWriter, r *http.Request) {

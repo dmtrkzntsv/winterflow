@@ -52,7 +52,7 @@ func (uc *UseCase) SaveTemplate(ctx context.Context, userID, orgID string, in Sa
 			return SavedTemplate{}, template.Invalid("base_revision", "a new template has none (0)")
 		}
 		out.ID, out.Revision = util.GenerateID(), 1
-		err = uc.repo.CreateTemplate(ctx, model.Template{ID: out.ID, OrgID: orgID, Name: in.Name, CreatedBy: userID}, rev)
+		err = uc.repo.CreateTemplate(ctx, model.Template{ID: out.ID, Source: model.TemplateSourceOrg, OrgID: orgID, Name: in.Name, CreatedBy: userID}, rev)
 	} else {
 		out.Revision, err = uc.repo.AddRevision(ctx, orgID, in.ID, in.Name, in.BaseRevision, rev)
 	}

@@ -12,7 +12,8 @@ import (
 
 type Querier interface {
 	BumpServerVarsRevision(ctx context.Context, serverID string) error
-	// Optimistic: 0 rows when latest_revision moved past the caller's base.
+	// An org template's next revision. Optimistic: 0 rows when latest_revision
+	// moved past the caller's base.
 	BumpTemplateRevision(ctx context.Context, arg BumpTemplateRevisionParams) (int64, error)
 	ClaimRollout(ctx context.Context, arg ClaimRolloutParams) (int64, error)
 	// A live key (the partial unique index) inserts nothing (0 rows).
@@ -47,9 +48,9 @@ type Querier interface {
 	DeleteSharedCiphertextsByServer(ctx context.Context, serverID string) error
 	DeleteSharedCiphertextsByVariable(ctx context.Context, variableID string) error
 	DeleteSharedVariable(ctx context.Context, id string) error
-	// Refused (0 rows) while an instance is pending or created.
+	// An org template; refused (0 rows) while an instance is pending or created.
 	DeleteTemplate(ctx context.Context, arg DeleteTemplateParams) (int64, error)
-	// A deleted template's upgrade rollouts (scope key: the template id).
+	// A deleted template's upgrade rollouts (scope key: <org_id>:<template_id>).
 	DeleteTemplateRollouts(ctx context.Context, scopeKey string) error
 	DeleteToken(ctx context.Context, arg DeleteTokenParams) (int64, error)
 	DeleteUser(ctx context.Context, userID string) error
@@ -93,6 +94,7 @@ type Querier interface {
 	GetServerSharedVariableByName(ctx context.Context, arg GetServerSharedVariableByNameParams) (SharedVariable, error)
 	GetServerVarsInfo(ctx context.Context, serverID string) (GetServerVarsInfoRow, error)
 	GetSharedVariable(ctx context.Context, id string) (SharedVariable, error)
+	// A template the org may read: its own or a catalog one.
 	GetTemplate(ctx context.Context, arg GetTemplateParams) (Template, error)
 	GetTemplateIDByName(ctx context.Context, arg GetTemplateIDByNameParams) (string, error)
 	GetTemplateInstanceByID(ctx context.Context, id string) (TemplateInstance, error)
@@ -124,8 +126,12 @@ type Querier interface {
 	// Gap fill: never overwrites a copy (a concurrent rotation's new value wins).
 	InsertSharedCiphertextIfAbsent(ctx context.Context, arg InsertSharedCiphertextIfAbsentParams) error
 	InsertSharedVariable(ctx context.Context, arg InsertSharedVariableParams) error
-	// Templates, their immutable revisions and their instances.
-	// A taken name inserts nothing (0 rows): the caller answers 400.
+	// Templates, their immutable revisions and their instances. A template is
+	// an org's own (source org, org_id set) or the catalog's (source catalog,
+	// org_id NULL): an org reads its own and every catalog template, and
+	// changes only its own.
+	// A taken org name or catalog slug inserts nothing (0 rows): the caller
+	// answers 400.
 	InsertTemplate(ctx context.Context, arg InsertTemplateParams) (int64, error)
 	InsertTemplateRevision(ctx context.Context, arg InsertTemplateRevisionParams) error
 	// Personal access tokens (hashed at rest).
@@ -185,12 +191,15 @@ type Querier interface {
 	ListServersByUser(ctx context.Context, userID string) ([]Server, error)
 	ListSharedCiphertextsForServer(ctx context.Context, serverID string) ([]ListSharedCiphertextsForServerRow, error)
 	ListTargetAlertOverrides(ctx context.Context, arg ListTargetAlertOverridesParams) ([]AlertOverride, error)
-	// Names only (the instance list shows them).
-	ListTemplateNames(ctx context.Context, orgID string) ([]ListTemplateNamesRow, error)
+	// The names of the templates the org may read (the instance list shows
+	// them).
+	ListTemplateNames(ctx context.Context, orgID *string) ([]ListTemplateNamesRow, error)
 	ListTemplateRevisions(ctx context.Context, templateID string) ([]ListTemplateRevisionsRow, error)
-	// One pass over the live instances: instances counts them, behind those on
-	// a revision older than the latest.
-	ListTemplates(ctx context.Context, orgID string) ([]ListTemplatesRow, error)
+	// The org's templates, then the catalog's (a withdrawn one only while the
+	// org has live instances of it), each by name. One pass over the org's
+	// live instances: instances counts them, behind those on a revision older
+	// than the latest.
+	ListTemplates(ctx context.Context, arg ListTemplatesParams) ([]ListTemplatesRow, error)
 	ListTokensByUser(ctx context.Context, userID string) ([]UserToken, error)
 	// Alerts: channels, rules, overrides, states, events (see migration 0013).
 	ListUnseededOrganizationIDs(ctx context.Context) ([]string, error)

@@ -43,6 +43,7 @@ type (
 	forAppParams   = sqlitegen.GetLiveTemplateInstanceForAppParams
 	retireParams   = sqlitegen.RetireTemplateInstancesForAppParams
 	upgradeParams  = sqlitegen.ListUpgradableInstancesParams
+	listParams     = sqlitegen.ListTemplatesParams
 )
 
 type querier interface {
@@ -50,8 +51,8 @@ type querier interface {
 	BumpTemplateRevision(ctx context.Context, db backend.DBTX, p bumpParams) (int64, error)
 	GetTemplate(ctx context.Context, db backend.DBTX, p getParams) (templateRow, error)
 	GetTemplateIDByName(ctx context.Context, db backend.DBTX, p byNameParams) (string, error)
-	ListTemplates(ctx context.Context, db backend.DBTX, orgID string) ([]summaryRow, error)
-	ListTemplateNames(ctx context.Context, db backend.DBTX, orgID string) ([]nameRow, error)
+	ListTemplates(ctx context.Context, db backend.DBTX, p listParams) ([]summaryRow, error)
+	ListTemplateNames(ctx context.Context, db backend.DBTX, orgID *string) ([]nameRow, error)
 	DeleteTemplate(ctx context.Context, db backend.DBTX, p deleteParams) (int64, error)
 	DeleteTemplateRollouts(ctx context.Context, db backend.DBTX, templateID string) error
 	InsertTemplateRevision(ctx context.Context, db backend.DBTX, p insertRevision) error
@@ -90,12 +91,24 @@ func New(tx *backend.TxManager, driver string, log *logger.Logger) (*Repo, error
 }
 
 // CreateTemplate inserts the template (latest_revision 1) and revision 1.
+// An org template keeps no slug or withdrawal; a catalog one no org.
 func (r *Repo) CreateTemplate(ctx context.Context, t model.Template, rev model.TemplateRevision) error {
 	now := types.NewDateTime()
+	p := insertParams{ID: t.ID, Source: t.Source, Name: t.Name, CreatedAt: now, CreatedBy: t.CreatedBy, UpdatedAt: now}
+	switch t.Source {
+	case model.TemplateSourceOrg:
+		p.OrgID = &t.OrgID
+	case model.TemplateSourceCatalog:
+		p.Slug = t.Slug
+		if t.WithdrawnAt != nil {
+			at := types.DateTime(t.WithdrawnAt.UTC())
+			p.WithdrawnAt = &at
+		}
+	default:
+		return fmt.Errorf("template %s: unknown source %q", t.ID, t.Source)
+	}
 	return r.tx.WithTx(ctx, func(ctx context.Context) error {
-		n, err := r.q.InsertTemplate(ctx, r.tx.Querier(ctx), insertParams{
-			ID: t.ID, OrgID: t.OrgID, Name: t.Name, CreatedAt: now, CreatedBy: t.CreatedBy, UpdatedAt: now,
-		})
+		n, err := r.q.InsertTemplate(ctx, r.tx.Querier(ctx), p)
 		if err != nil {
 			return err
 		}
@@ -113,15 +126,15 @@ func (r *Repo) AddRevision(ctx context.Context, orgID, templateID, name string, 
 	now := types.NewDateTime()
 	next := base + 1
 	err := r.tx.WithTx(ctx, func(ctx context.Context) error {
-		cur, err := r.q.GetTemplate(ctx, r.tx.Querier(ctx), getParams{ID: templateID, OrgID: orgID})
-		if errors.Is(err, sql.ErrNoRows) {
+		cur, err := r.q.GetTemplate(ctx, r.tx.Querier(ctx), getParams{ID: templateID, OrgID: &orgID})
+		if errors.Is(err, sql.ErrNoRows) || (err == nil && cur.Source != model.TemplateSourceOrg) {
 			return model.ErrTemplateNotFound
 		}
 		if err != nil {
 			return err
 		}
 		if cur.Name != name {
-			switch other, err := r.q.GetTemplateIDByName(ctx, r.tx.Querier(ctx), byNameParams{OrgID: orgID, Name: name}); {
+			switch other, err := r.q.GetTemplateIDByName(ctx, r.tx.Querier(ctx), byNameParams{OrgID: &orgID, Name: name}); {
 			case err == nil && other != templateID:
 				return model.ErrTemplateNameTaken
 			case err != nil && !errors.Is(err, sql.ErrNoRows):
@@ -129,7 +142,7 @@ func (r *Repo) AddRevision(ctx context.Context, orgID, templateID, name string, 
 			}
 		}
 		n, err := r.q.BumpTemplateRevision(ctx, r.tx.Querier(ctx), bumpParams{
-			Name: name, UpdatedAt: now, ID: templateID, OrgID: orgID, LatestRevision: base,
+			Name: name, UpdatedAt: now, ID: templateID, OrgID: &orgID, LatestRevision: base,
 		})
 		if err != nil {
 			return err
@@ -149,13 +162,13 @@ func (r *Repo) AddRevision(ctx context.Context, orgID, templateID, name string, 
 func (r *Repo) insertRevision(ctx context.Context, rev model.TemplateRevision, now types.DateTime) error {
 	return r.q.InsertTemplateRevision(ctx, r.tx.Querier(ctx), insertRevision{
 		TemplateID: rev.TemplateID, Revision: rev.Revision, Body: string(rev.Body), Note: rev.Note,
-		CreatedAt: now, CreatedBy: rev.CreatedBy,
+		Digest: rev.Digest, CreatedAt: now, CreatedBy: rev.CreatedBy,
 	})
 }
 
-// GetTemplate returns the org's template.
+// GetTemplate returns the org's template or a catalog one.
 func (r *Repo) GetTemplate(ctx context.Context, orgID, templateID string) (model.Template, error) {
-	row, err := r.q.GetTemplate(ctx, r.tx.Querier(ctx), getParams{ID: templateID, OrgID: orgID})
+	row, err := r.q.GetTemplate(ctx, r.tx.Querier(ctx), getParams{ID: templateID, OrgID: &orgID})
 	if errors.Is(err, sql.ErrNoRows) {
 		return model.Template{}, model.ErrTemplateNotFound
 	}
@@ -165,9 +178,10 @@ func (r *Repo) GetTemplate(ctx context.Context, orgID, templateID string) (model
 	return hydrateTemplate(row), nil
 }
 
-// ListTemplates returns the org's templates by name with instance counts.
+// ListTemplates returns the org's templates, then the catalog's, each by
+// name, with the org's instance counts.
 func (r *Repo) ListTemplates(ctx context.Context, orgID string) ([]model.TemplateSummary, error) {
-	rows, err := r.q.ListTemplates(ctx, r.tx.Querier(ctx), orgID)
+	rows, err := r.q.ListTemplates(ctx, r.tx.Querier(ctx), listParams{OrgID: orgID, OrgID_2: &orgID})
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +189,8 @@ func (r *Repo) ListTemplates(ctx context.Context, orgID string) ([]model.Templat
 	for _, row := range rows {
 		out = append(out, model.TemplateSummary{
 			Template: hydrateTemplate(templateRow{
-				ID: row.ID, OrgID: row.OrgID, Name: row.Name, LatestRevision: row.LatestRevision,
+				ID: row.ID, Source: row.Source, OrgID: row.OrgID, Slug: row.Slug, Name: row.Name,
+				LatestRevision: row.LatestRevision, WithdrawnAt: row.WithdrawnAt,
 				CreatedAt: row.CreatedAt, CreatedBy: row.CreatedBy, UpdatedAt: row.UpdatedAt,
 			}),
 			Instances: row.Instances,
@@ -185,9 +200,9 @@ func (r *Repo) ListTemplates(ctx context.Context, orgID string) ([]model.Templat
 	return out, nil
 }
 
-// ListTemplateNames returns the org's template names by id.
+// ListTemplateNames returns the names of the templates the org may read.
 func (r *Repo) ListTemplateNames(ctx context.Context, orgID string) (map[string]string, error) {
-	rows, err := r.q.ListTemplateNames(ctx, r.tx.Querier(ctx), orgID)
+	rows, err := r.q.ListTemplateNames(ctx, r.tx.Querier(ctx), &orgID)
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +224,7 @@ func (r *Repo) GetRevision(ctx context.Context, templateID string, revision int6
 	}
 	return model.TemplateRevision{
 		TemplateID: row.TemplateID, Revision: row.Revision, Body: []byte(row.Body), Note: row.Note,
-		CreatedAt: row.CreatedAt.Time(), CreatedBy: row.CreatedBy,
+		Digest: row.Digest, CreatedAt: row.CreatedAt.Time(), CreatedBy: row.CreatedBy,
 	}, nil
 }
 
@@ -229,20 +244,21 @@ func (r *Repo) ListRevisions(ctx context.Context, templateID string) ([]model.Te
 	return out, nil
 }
 
-// DeleteTemplate deletes the template unless an instance is live: one
-// guarded statement, then a read to tell "in use" from "unknown". Its
-// upgrade rollouts go in the same transaction.
+// DeleteTemplate deletes the org's template unless an instance is live:
+// one guarded statement, then a read to tell "in use" from "unknown" (a
+// catalog template is unknown here). The org's upgrade rollouts of it go
+// in the same transaction.
 func (r *Repo) DeleteTemplate(ctx context.Context, orgID, templateID string) error {
 	return r.tx.WithTx(ctx, func(ctx context.Context) error {
-		n, err := r.q.DeleteTemplate(ctx, r.tx.Querier(ctx), deleteParams{ID: templateID, OrgID: orgID})
+		n, err := r.q.DeleteTemplate(ctx, r.tx.Querier(ctx), deleteParams{ID: templateID, OrgID: &orgID})
 		if err != nil {
 			return err
 		}
 		if n > 0 {
-			return r.q.DeleteTemplateRollouts(ctx, r.tx.Querier(ctx), templateID)
+			return r.q.DeleteTemplateRollouts(ctx, r.tx.Querier(ctx), model.UpgradeScopeKey(orgID, templateID))
 		}
-		_, err = r.q.GetTemplate(ctx, r.tx.Querier(ctx), getParams{ID: templateID, OrgID: orgID})
-		if errors.Is(err, sql.ErrNoRows) {
+		cur, err := r.q.GetTemplate(ctx, r.tx.Querier(ctx), getParams{ID: templateID, OrgID: &orgID})
+		if errors.Is(err, sql.ErrNoRows) || (err == nil && cur.Source != model.TemplateSourceOrg) {
 			return model.ErrTemplateNotFound
 		}
 		if err != nil {
@@ -255,7 +271,7 @@ func (r *Repo) DeleteTemplate(ctx context.Context, orgID, templateID string) err
 // ClaimInstance inserts inst as pending, or returns the live instance that
 // holds its key (the partial unique index makes the insert a no-op).
 func (r *Repo) ClaimInstance(ctx context.Context, inst model.Instance) (model.Instance, bool, error) {
-	params, names, err := encodeValues(inst.Params, inst.SecretNames)
+	params, names, hosts, err := encodeValues(inst.Params, inst.SecretNames, inst.Hosts)
 	if err != nil {
 		return model.Instance{}, false, err
 	}
@@ -267,8 +283,8 @@ func (r *Repo) ClaimInstance(ctx context.Context, inst model.Instance) (model.In
 	err = r.tx.WithTx(ctx, func(ctx context.Context) error {
 		p := claimParams{
 			ID: inst.ID, OrgID: inst.OrgID, InstanceKey: inst.Key, AppID: inst.AppID, ServerID: inst.ServerID,
-			TemplateID: util.RefString(inst.TemplateID), Revision: inst.Revision, Params: params, SecretNames: names,
-			RequestHash: inst.RequestHash, CreatedAt: now, UpdatedAt: now,
+			TemplateID: util.RefString(inst.TemplateID), Revision: inst.Revision, Name: inst.Name, Params: params,
+			SecretNames: names, Hosts: hosts, RequestHash: inst.RequestHash, CreatedAt: now, UpdatedAt: now,
 		}
 		n, err := r.q.ClaimTemplateInstance(ctx, r.tx.Querier(ctx), p)
 		if err != nil {
@@ -358,13 +374,13 @@ func hydrateInstances(rows []instanceRow, err error) ([]model.Instance, error) {
 }
 
 // MarkSaved records a confirmed save.
-func (r *Repo) MarkSaved(ctx context.Context, id string, revision int64, params map[string]string, secretNames []string) error {
-	p, names, err := encodeValues(params, secretNames)
+func (r *Repo) MarkSaved(ctx context.Context, id string, revision int64, params map[string]string, secretNames []string, hosts []model.InstanceHost) error {
+	p, names, h, err := encodeValues(params, secretNames, hosts)
 	if err != nil {
 		return err
 	}
 	return r.q.MarkTemplateInstanceSaved(ctx, r.tx.Querier(ctx), savedParams{
-		Revision: revision, Params: p, SecretNames: names, UpdatedAt: types.NewDateTime(), ID: id,
+		Revision: revision, Params: p, SecretNames: names, Hosts: h, UpdatedAt: types.NewDateTime(), ID: id,
 	})
 }
 
@@ -382,36 +398,46 @@ func (r *Repo) SetError(ctx context.Context, id, msg string) error {
 	})
 }
 
-// encodeValues serializes the plain values (an object; nil is {}) and the
-// secret names (sorted; nil is []).
-func encodeValues(params map[string]string, secretNames []string) (string, string, error) {
+// encodeValues serializes the plain values (an object; nil is {}), the
+// secret names (sorted; nil is []) and the hosts (in order; nil is []).
+func encodeValues(params map[string]string, secretNames []string, hosts []model.InstanceHost) (string, string, string, error) {
 	if params == nil {
 		params = map[string]string{}
 	}
 	p, err := json.Marshal(params)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	names := append([]string{}, secretNames...)
 	sort.Strings(names)
 	n, err := json.Marshal(names)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
-	return string(p), string(n), nil
+	h, err := json.Marshal(append([]model.InstanceHost{}, hosts...))
+	if err != nil {
+		return "", "", "", err
+	}
+	return string(p), string(n), string(h), nil
 }
 
 func hydrateTemplate(row templateRow) model.Template {
-	return model.Template{
-		ID: row.ID, OrgID: row.OrgID, Name: row.Name, LatestRevision: row.LatestRevision,
-		CreatedAt: row.CreatedAt.Time(), CreatedBy: row.CreatedBy, UpdatedAt: row.UpdatedAt.Time(),
+	t := model.Template{
+		ID: row.ID, Source: row.Source, OrgID: util.DerefString(row.OrgID), Slug: row.Slug, Name: row.Name,
+		LatestRevision: row.LatestRevision, CreatedAt: row.CreatedAt.Time(), CreatedBy: row.CreatedBy,
+		UpdatedAt: row.UpdatedAt.Time(),
 	}
+	if row.WithdrawnAt != nil {
+		at := row.WithdrawnAt.Time()
+		t.WithdrawnAt = &at
+	}
+	return t
 }
 
 func hydrateInstance(row instanceRow) (model.Instance, error) {
 	inst := model.Instance{
 		ID: row.ID, OrgID: row.OrgID, Key: row.InstanceKey, AppID: row.AppID, ServerID: row.ServerID,
-		TemplateID: util.DerefString(row.TemplateID), Revision: row.Revision, RequestHash: row.RequestHash,
+		TemplateID: util.DerefString(row.TemplateID), Revision: row.Revision, Name: row.Name, RequestHash: row.RequestHash,
 		State: model.InstanceState(row.State), LastError: row.LastError,
 		CreatedAt: row.CreatedAt.Time(), UpdatedAt: row.UpdatedAt.Time(),
 	}
@@ -420,6 +446,9 @@ func hydrateInstance(row instanceRow) (model.Instance, error) {
 	}
 	if err := json.Unmarshal([]byte(row.SecretNames), &inst.SecretNames); err != nil {
 		return model.Instance{}, fmt.Errorf("instance %s: secret_names: %w", row.ID, err)
+	}
+	if err := json.Unmarshal([]byte(row.Hosts), &inst.Hosts); err != nil {
+		return model.Instance{}, fmt.Errorf("instance %s: hosts: %w", row.ID, err)
 	}
 	return inst, nil
 }

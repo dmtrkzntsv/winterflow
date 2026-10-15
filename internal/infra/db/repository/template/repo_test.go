@@ -31,7 +31,7 @@ func newRepo(t *testing.T) (*Repo, *db.DB) {
 
 func mustCreate(t *testing.T, r *Repo, orgID, id, name string) {
 	t.Helper()
-	err := r.CreateTemplate(dbtest.Ctx(t), model.Template{ID: id, OrgID: orgID, Name: name, CreatedBy: "u"},
+	err := r.CreateTemplate(dbtest.Ctx(t), model.Template{ID: id, Source: model.TemplateSourceOrg, OrgID: orgID, Name: name, CreatedBy: "u"},
 		model.TemplateRevision{Body: []byte(`{"files":{}}`), Note: "first", CreatedBy: "u"})
 	if err != nil {
 		t.Fatal(err)
@@ -56,7 +56,7 @@ func TestTemplateNamesAreUniquePerOrg(t *testing.T) {
 	r, _ := newRepo(t)
 	ctx := dbtest.Ctx(t)
 	mustCreate(t, r, org1, tpl1, "shop")
-	err := r.CreateTemplate(ctx, model.Template{ID: tpl2, OrgID: org1, Name: "shop"}, model.TemplateRevision{Body: []byte(`{}`)})
+	err := r.CreateTemplate(ctx, model.Template{ID: tpl2, Source: model.TemplateSourceOrg, OrgID: org1, Name: "shop"}, model.TemplateRevision{Body: []byte(`{}`)})
 	if !errors.Is(err, model.ErrTemplateNameTaken) || !errors.Is(err, model.ErrRejected) {
 		t.Fatalf("same name in the org: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestUnlinkFreesTheKeyAndDeleteRetiresIt(t *testing.T) {
 	ctx := dbtest.Ctx(t)
 	mustCreate(t, r, org1, tpl1, "shop")
 	first, _, _ := r.ClaimInstance(ctx, instance(1, "k"))
-	if err := r.MarkSaved(ctx, first.ID, 2, map[string]string{"NAME": "b"}, nil); err != nil {
+	if err := r.MarkSaved(ctx, first.ID, 2, map[string]string{"NAME": "b"}, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	saved, err := r.GetInstance(ctx, org1, "k")
@@ -194,7 +194,7 @@ func TestUnlinkFreesTheKeyAndDeleteRetiresIt(t *testing.T) {
 		t.Fatal("a deleted instance's key was claimed again")
 	}
 	// A late save confirmation does not revive a deleted instance.
-	if err := r.MarkSaved(ctx, second.ID, 3, nil, nil); err != nil {
+	if err := r.MarkSaved(ctx, second.ID, 3, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if got, _ := r.GetInstance(ctx, org1, "k"); got.State != model.InstanceDeleted {
@@ -254,7 +254,7 @@ func TestListInstancesAndBehind(t *testing.T) {
 	if _, err := r.AddRevision(ctx, org1, tpl1, "shop", 1, model.TemplateRevision{Body: []byte(`{}`)}); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.MarkSaved(ctx, a.ID, 2, nil, nil); err != nil {
+	if err := r.MarkSaved(ctx, a.ID, 2, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	list, _ := r.ListTemplates(ctx, org1)
@@ -283,7 +283,7 @@ func TestListUpgradableInstances(t *testing.T) {
 		if _, _, err := r.ClaimInstance(ctx, inst); err != nil {
 			t.Fatal(err)
 		}
-		if err := r.MarkSaved(ctx, inst.ID, rev, inst.Params, inst.SecretNames); err != nil {
+		if err := r.MarkSaved(ctx, inst.ID, rev, inst.Params, inst.SecretNames, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -369,9 +369,9 @@ func TestInstanceLinksForApp(t *testing.T) {
 	}
 }
 
-// Deleting a template deletes its upgrade rollouts (scope key: the template
-// id), not another template's nor the org's reloads; a refused delete
-// keeps them.
+// Deleting a template deletes the org's upgrade rollouts of it (scope key:
+// <org_id>:<template_id>), not another template's nor the org's reloads; a
+// refused delete keeps them.
 func TestDeleteTemplateDeletesItsRollouts(t *testing.T) {
 	r, d := newRepo(t)
 	ctx := dbtest.Ctx(t)
@@ -382,8 +382,8 @@ func TestDeleteTemplateDeletesItsRollouts(t *testing.T) {
 	mustCreate(t, r, org1, tpl1, "shop")
 	mustCreate(t, r, org1, tpl2, "blog")
 	for i, ro := range []model.Rollout{
-		{Kind: model.RolloutTemplateUpgrade, ScopeKey: tpl1},
-		{Kind: model.RolloutTemplateUpgrade, ScopeKey: tpl2},
+		{Kind: model.RolloutTemplateUpgrade, ScopeKey: model.UpgradeScopeKey(org1, tpl1)},
+		{Kind: model.RolloutTemplateUpgrade, ScopeKey: model.UpgradeScopeKey(org1, tpl2)},
 		{Kind: model.RolloutVarsReload, ScopeKey: org1},
 	} {
 		ro.ID, ro.OrgID, ro.Scope = dbtest.ID(300+i), org1, []byte(`{}`)
@@ -404,7 +404,7 @@ func TestDeleteTemplateDeletesItsRollouts(t *testing.T) {
 	if err := r.DeleteTemplate(ctx, org1, tpl1); err != nil {
 		t.Fatal(err)
 	}
-	if n := dbtest.QueryString(t, d, `SELECT COUNT(*) FROM rollouts WHERE scope_key = ?`, tpl1); n != "0" || count() != "2" {
+	if n := dbtest.QueryString(t, d, `SELECT COUNT(*) FROM rollouts WHERE scope_key = ?`, model.UpgradeScopeKey(org1, tpl1)); n != "0" || count() != "2" {
 		t.Fatalf("rollouts of the deleted template: %s, all: %s", n, count())
 	}
 }

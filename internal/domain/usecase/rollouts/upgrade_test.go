@@ -194,11 +194,11 @@ type markFails struct {
 	on atomic.Bool
 }
 
-func (m *markFails) MarkSaved(ctx context.Context, id string, revision int64, params map[string]string, secretNames []string) error {
+func (m *markFails) MarkSaved(ctx context.Context, id string, revision int64, params map[string]string, secretNames []string, hosts []model.InstanceHost) error {
 	if m.on.Load() {
 		return errors.New("database is locked")
 	}
-	return m.TemplateRepository.MarkSaved(ctx, id, revision, params, secretNames)
+	return m.TemplateRepository.MarkSaved(ctx, id, revision, params, secretNames, hosts)
 }
 
 // A step that went through but left the instance below the target (its

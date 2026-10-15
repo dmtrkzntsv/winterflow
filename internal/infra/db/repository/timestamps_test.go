@@ -138,7 +138,12 @@ func TestSQLiteTimestampsAreDateTimeText(t *testing.T) {
 	}
 
 	tplID := dbtest.ID(501)
-	if err := templates.CreateTemplate(ctx, model.Template{ID: tplID, OrgID: orgID, Name: "shop"},
+	if err := templates.CreateTemplate(ctx, model.Template{ID: tplID, Source: model.TemplateSourceOrg, OrgID: orgID, Name: "shop"},
+		model.TemplateRevision{Body: []byte(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
+	// withdrawn_at: a catalog template the feed dropped.
+	if err := templates.CreateTemplate(ctx, model.Template{ID: dbtest.ID(503), Source: model.TemplateSourceCatalog, Slug: "gone", Name: "Gone", WithdrawnAt: &at},
 		model.TemplateRevision{Body: []byte(`{}`)}); err != nil {
 		t.Fatal(err)
 	}

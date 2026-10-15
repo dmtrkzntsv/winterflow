@@ -27,11 +27,11 @@ func (sqliteQuerier) GetTemplateIDByName(ctx context.Context, db backend.DBTX, p
 	return sqlitegen.New(db).GetTemplateIDByName(ctx, p)
 }
 
-func (sqliteQuerier) ListTemplates(ctx context.Context, db backend.DBTX, orgID string) ([]summaryRow, error) {
-	return sqlitegen.New(db).ListTemplates(ctx, orgID)
+func (sqliteQuerier) ListTemplates(ctx context.Context, db backend.DBTX, p listParams) ([]summaryRow, error) {
+	return sqlitegen.New(db).ListTemplates(ctx, p)
 }
 
-func (sqliteQuerier) ListTemplateNames(ctx context.Context, db backend.DBTX, orgID string) ([]nameRow, error) {
+func (sqliteQuerier) ListTemplateNames(ctx context.Context, db backend.DBTX, orgID *string) ([]nameRow, error) {
 	return sqlitegen.New(db).ListTemplateNames(ctx, orgID)
 }
 

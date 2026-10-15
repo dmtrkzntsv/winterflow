@@ -1,54 +1,64 @@
--- Templates, their immutable revisions and their instances.
+-- Templates, their immutable revisions and their instances. A template is
+-- an org's own (source org, org_id set) or the catalog's (source catalog,
+-- org_id NULL): an org reads its own and every catalog template, and
+-- changes only its own.
 
 -- name: InsertTemplate :execrows
--- A taken name inserts nothing (0 rows): the caller answers 400.
-INSERT INTO templates (id, org_id, name, latest_revision, created_at, created_by, updated_at)
-VALUES ($1, $2, $3, 1, $4, $5, $6)
+-- A taken org name or catalog slug inserts nothing (0 rows): the caller
+-- answers 400.
+INSERT INTO templates (id, source, org_id, slug, name, latest_revision, withdrawn_at, created_at, created_by, updated_at)
+VALUES ($1, $2, $3, $4, $5, 1, $6, $7, $8, $9)
 ON CONFLICT DO NOTHING;
 
 -- name: BumpTemplateRevision :execrows
--- Optimistic: 0 rows when latest_revision moved past the caller's base.
+-- An org template's next revision. Optimistic: 0 rows when latest_revision
+-- moved past the caller's base.
 UPDATE templates
 SET latest_revision = latest_revision + 1, name = $1, updated_at = $2
-WHERE id = $3 AND org_id = $4 AND latest_revision = $5;
+WHERE id = $3 AND source = 'org' AND org_id = $4 AND latest_revision = $5;
 
 -- name: GetTemplate :one
-SELECT * FROM templates WHERE id = $1 AND org_id = $2;
+-- A template the org may read: its own or a catalog one.
+SELECT * FROM templates WHERE id = $1 AND (org_id = $2 OR source = 'catalog');
 
 -- name: GetTemplateIDByName :one
-SELECT id FROM templates WHERE org_id = $1 AND name = $2;
+SELECT id FROM templates WHERE source = 'org' AND org_id = $1 AND name = $2;
 
 -- name: ListTemplates :many
--- One pass over the live instances: instances counts them, behind those on
--- a revision older than the latest.
-SELECT t.id, t.org_id, t.name, t.latest_revision, t.created_at, t.created_by, t.updated_at,
+-- The org's templates, then the catalog's (a withdrawn one only while the
+-- org has live instances of it), each by name. One pass over the org's
+-- live instances: instances counts them, behind those on a revision older
+-- than the latest.
+SELECT t.id, t.source, t.org_id, t.slug, t.name, t.latest_revision, t.withdrawn_at, t.created_at, t.created_by, t.updated_at,
     COUNT(i.id) AS instances,
     CAST(COALESCE(SUM(CASE WHEN i.revision < t.latest_revision THEN 1 ELSE 0 END), 0) AS BIGINT) AS behind
 FROM templates AS t
-LEFT JOIN template_instances AS i ON i.template_id = t.id AND i.state IN ('pending', 'created')
-WHERE t.org_id = $1
-GROUP BY t.id, t.org_id, t.name, t.latest_revision, t.created_at, t.created_by, t.updated_at
-ORDER BY t.name ASC;
+LEFT JOIN template_instances AS i ON i.template_id = t.id AND i.org_id = $1 AND i.state IN ('pending', 'created')
+WHERE t.org_id = $2 OR t.source = 'catalog'
+GROUP BY t.id, t.source, t.org_id, t.slug, t.name, t.latest_revision, t.withdrawn_at, t.created_at, t.created_by, t.updated_at
+HAVING t.source = 'org' OR t.withdrawn_at IS NULL OR COUNT(i.id) > 0
+ORDER BY t.source DESC, t.name ASC, t.id ASC;
 
 -- name: ListTemplateNames :many
--- Names only (the instance list shows them).
-SELECT id, name FROM templates WHERE org_id = $1;
+-- The names of the templates the org may read (the instance list shows
+-- them).
+SELECT id, name FROM templates WHERE org_id = $1 OR source = 'catalog';
 
 -- name: DeleteTemplate :execrows
--- Refused (0 rows) while an instance is pending or created.
+-- An org template; refused (0 rows) while an instance is pending or created.
 DELETE FROM templates
-WHERE templates.id = $1 AND templates.org_id = $2
+WHERE templates.id = $1 AND templates.source = 'org' AND templates.org_id = $2
   AND NOT EXISTS (
     SELECT 1 FROM template_instances AS i
     WHERE i.template_id = templates.id AND i.state IN ('pending', 'created'));
 
 -- name: DeleteTemplateRollouts :exec
--- A deleted template's upgrade rollouts (scope key: the template id).
+-- A deleted template's upgrade rollouts (scope key: <org_id>:<template_id>).
 DELETE FROM rollouts WHERE kind = 'template_upgrade' AND scope_key = $1;
 
 -- name: InsertTemplateRevision :exec
-INSERT INTO template_revisions (template_id, revision, body, note, created_at, created_by)
-VALUES ($1, $2, $3, $4, $5, $6);
+INSERT INTO template_revisions (template_id, revision, body, note, digest, created_at, created_by)
+VALUES ($1, $2, $3, $4, $5, $6, $7);
 
 -- name: GetTemplateRevision :one
 SELECT * FROM template_revisions WHERE template_id = $1 AND revision = $2;
@@ -62,8 +72,8 @@ ORDER BY revision DESC;
 -- name: ClaimTemplateInstance :execrows
 -- A live key (the partial unique index) inserts nothing (0 rows).
 INSERT INTO template_instances (id, org_id, instance_key, app_id, server_id, template_id, revision,
-    params, secret_names, request_hash, state, last_error, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending', '', $11, $12)
+    name, params, secret_names, hosts, request_hash, state, last_error, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'pending', '', $13, $14)
 ON CONFLICT DO NOTHING;
 
 -- name: GetLiveTemplateInstance :one
@@ -86,8 +96,8 @@ ORDER BY i.created_at ASC, i.id ASC;
 -- name: MarkTemplateInstanceSaved :exec
 -- A save the agent confirmed; a deleted or unlinked row stays as it is.
 UPDATE template_instances
-SET revision = $1, params = $2, secret_names = $3, state = 'created', last_error = '', updated_at = $4
-WHERE id = $5 AND state IN ('pending', 'created');
+SET revision = $1, params = $2, secret_names = $3, hosts = $4, state = 'created', last_error = '', updated_at = $5
+WHERE id = $6 AND state IN ('pending', 'created');
 
 -- name: SetTemplateInstanceState :exec
 UPDATE template_instances

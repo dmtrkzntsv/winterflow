@@ -3,7 +3,7 @@ package model
 import "time"
 
 // Template errors. ErrTemplateNameTaken matches ErrRejected (400 naming
-// the field).
+// the field); ErrCatalogReadOnly matches ErrForbidden (403).
 var (
 	ErrTemplateNotFound     = &classified{"template not found", ErrNotFound}
 	ErrTemplateRevisionGone = &classified{"template revision not found", ErrNotFound}
@@ -14,7 +14,21 @@ var (
 	ErrKeyInUse             = &classified{"key in use with different values: update the instance instead", ErrConflict}
 	ErrKeyRetired           = &classified{"this key belonged to a deleted instance", ErrConflict}
 	ErrInstanceNotCreated   = &classified{"the instance was never created: retry the create or delete it", ErrConflict}
+	ErrCatalogReadOnly      = &classified{"catalog templates are read-only", ErrForbidden}
+	ErrTemplateWithdrawn    = &classified{"this template was withdrawn from the catalog: it takes no new installs", ErrConflict}
 )
+
+// Template sources: an org's own template, or one of the catalog (the same
+// for every org, read-only to all of them).
+const (
+	TemplateSourceOrg     = "org"
+	TemplateSourceCatalog = "catalog"
+)
+
+// UpgradeScopeKey is a template_upgrade rollout's scope key: one active
+// upgrade per org and template, so two orgs upgrading the same catalog
+// template don't block each other.
+func UpgradeScopeKey(orgID, templateID string) string { return orgID + ":" + templateID }
 
 // ManagedByTemplate refuses save-app or rollback-app on an app a live
 // (pending or created) instance manages: its changes go through the
@@ -27,12 +41,18 @@ func ManagedByTemplate(name string) error {
 	return &classified{"this app is managed by " + by + ": update the instance or unlink it", ErrConflict}
 }
 
-// Template is an org's stack definition; its body lives in revisions.
+// Template is a stack definition; its body lives in revisions. An org
+// template (Source TemplateSourceOrg) belongs to OrgID; a catalog template
+// (TemplateSourceCatalog) has no OrgID, a Slug, and WithdrawnAt once the
+// catalog dropped it.
 type Template struct {
 	ID             string
+	Source         string
 	OrgID          string
+	Slug           string
 	Name           string
 	LatestRevision int64
+	WithdrawnAt    *time.Time
 	CreatedAt      time.Time
 	CreatedBy      string
 	UpdatedAt      time.Time
@@ -47,12 +67,17 @@ type TemplateSummary struct {
 	Behind    int64
 }
 
-// TemplateRevision is one immutable revision: Body is the JSON body.
+// Catalog reports whether t is a catalog template.
+func (t Template) Catalog() bool { return t.Source == TemplateSourceCatalog }
+
+// TemplateRevision is one immutable revision: Body is the JSON body;
+// Digest identifies a catalog revision's files ("" for an org's).
 type TemplateRevision struct {
 	TemplateID string
 	Revision   int64
 	Body       []byte
 	Note       string
+	Digest     string
 	CreatedAt  time.Time
 	CreatedBy  string
 }
@@ -81,13 +106,24 @@ type Instance struct {
 	// TemplateID is "" once the template is gone.
 	TemplateID string
 	Revision   int64
-	// Params are the plain parameter values; SecretNames the secret
-	// parameters a value was given for (never a value).
+	// Name is the app name the create asked for.
+	Name string
+	// Params are the plain variable values given; SecretNames the secret
+	// variables a value was given for (never a value).
 	Params      map[string]string
 	SecretNames []string
+	// Hosts are the instance's ingress hostnames.
+	Hosts       []InstanceHost
 	RequestHash string
 	State       InstanceState
 	LastError   string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+}
+
+// InstanceHost is one ingress hostname of an instance: Host routed to the
+// http expose entry Expose (<service>:<port>) of the template's compose.
+type InstanceHost struct {
+	Host   string `json:"host"`
+	Expose string `json:"expose"`
 }

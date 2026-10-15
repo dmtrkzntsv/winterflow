@@ -134,7 +134,7 @@ func (uc *UseCase) dispatchSave(ctx context.Context, userID string, inst model.I
 	// it records, not the secret ciphertexts.
 	id, stored := inst.ID, values.Stored
 	observer, done := uc.observe(inst, func(ctx context.Context) error {
-		return uc.repo.MarkSaved(ctx, id, revision, stored.Params, stored.SecretNames)
+		return uc.repo.MarkSaved(ctx, id, revision, stored.Params, stored.SecretNames, nil)
 	})
 	requestID, err := uc.apps.DispatchSave(ctx, userID, checked, observer)
 	return outcome(requestID, err, done, uc.reread(inst))

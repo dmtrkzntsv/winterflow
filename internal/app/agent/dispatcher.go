@@ -23,11 +23,12 @@ import (
 // encodes the typed result back into a ResponseEnvelope. Adding a command is
 // one registration line in newHandlers plus the orchestrator method.
 type Dispatcher struct {
-	orch    *dockercompose.Repository
-	ingress port.IngressManager
-	reloads *ReloadWorker
-	backups Backups
-	runWait time.Duration // bound of a backup.run / backup.restore
+	orch      *dockercompose.Repository
+	ingress   port.IngressManager
+	reloads   *ReloadWorker
+	backups   Backups
+	processes Processes
+	runWait   time.Duration // bound of a backup.run / backup.restore
 	// reloadWait bounds a single-app vars.reload.
 	reloadWait time.Duration
 	log        *logger.Logger
@@ -42,7 +43,7 @@ func NewDispatcher(orch *dockercompose.Repository, ingress port.IngressManager, 
 	if ingress == nil {
 		ingress = noIngress{}
 	}
-	d := &Dispatcher{orch: orch, ingress: ingress, backups: noBackups{}, runWait: command.BackupRunWait,
+	d := &Dispatcher{orch: orch, ingress: ingress, backups: noBackups{}, processes: noProcesses{}, runWait: command.BackupRunWait,
 		reloadWait: command.ReloadAppWait, log: log}
 	d.handlers = d.newHandlers()
 	return d
@@ -59,6 +60,10 @@ func (d *Dispatcher) WithReloads(w *ReloadWorker) *Dispatcher {
 	d.reloads = w
 	return d
 }
+
+// SetProcesses wires process.list (standalone and agent do, before the
+// first command can arrive); without it process.list answers an error.
+func (d *Dispatcher) SetProcesses(p Processes) { d.processes = p }
 
 // reloadIngress rebuilds the proxy config after a mutation. Warnings are
 // returned for responses that carry them (app.save, domain.create/delete)
@@ -322,6 +327,12 @@ func (d *Dispatcher) newHandlers() map[command.Type]handlerFunc {
 		command.TypeImageTags: handle(d, func(ctx context.Context, in command.ImageTagsRequest) (command.ImageTagsResponse, error) {
 			tags, err := d.orch.ImageTags(ctx, in.Image)
 			return command.ImageTagsResponse{Image: in.Image, Tags: tags}, err
+		}),
+
+		command.TypeProcessList: handle(d, func(ctx context.Context, _ command.ProcessListRequest) (command.ProcessListResponse, error) {
+			ctx, cancel := context.WithTimeout(ctx, processListTimeout)
+			defer cancel()
+			return d.processes.List(ctx)
 		}),
 
 		command.TypeAgentUpdate: handle(d, func(ctx context.Context, in command.UpdateAgentRequest) (command.UpdateAgentResponse, error) {

@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"context"
 	"encoding/json"
+	"runtime"
 	"time"
 	appagent "winterflow/internal/app/agent"
 	"winterflow/internal/app/agent/backup"
@@ -12,6 +13,7 @@ import (
 	serverrepo "winterflow/internal/infra/db/repository/server"
 	ingresscaddy "winterflow/internal/infra/ingress/caddy"
 	dockercompose "winterflow/internal/infra/orchestrator/docker_compose"
+	"winterflow/internal/infra/sysmetrics"
 	"winterflow/internal/infra/transport/bus"
 	membus "winterflow/internal/infra/transport/mem/bus"
 	"winterflow/pkg/config"
@@ -71,6 +73,13 @@ func BootstrapStandalone(ctx context.Context, log *logger.Logger, cfg *config.Se
 	// Backups run on their own goroutine, never on the bridge's.
 	backups := backup.New(orchestrator, cfg.GetAgentDataDir(), log)
 	agentDispatcher.SetBackups(backups)
+	// The snapshot carries each app's backup health too and lets the metrics
+	// reporter reuse the status reporter's `docker ps` instead of running its
+	// own.
+	statusSnapshot := appagent.NewStatusSnapshot(appagent.WithBackupHealth(orchestrator, backups))
+	// The processes tab reads /proc on request; the snapshot names each
+	// container's app.
+	agentDispatcher.SetProcesses(appagent.NewProcessLister(sysmetrics.NewProcesses("/", runtime.NumCPU()), statusSnapshot))
 	go appagent.RunBackups(ctx, orchestrator, backups, log)
 	bridge := appagent.NewInProcessBridge(b, cfg, agentDispatcher, log)
 	if err := bridge.Start(ctx); err != nil {
@@ -90,10 +99,6 @@ func BootstrapStandalone(ctx context.Context, log *logger.Logger, cfg *config.Se
 	// the box itself. Run the same status reporter the distributed agent runs,
 	// publishing apps.status straight onto the in-process events queue — that
 	// feeds the status cache (doubling as the liveness pulse) and the SSE push.
-	// The snapshot carries each app's backup health too and lets the metrics
-	// reporter reuse the status reporter's `docker ps` instead of running its
-	// own.
-	statusSnapshot := appagent.NewStatusSnapshot(appagent.WithBackupHealth(orchestrator, backups))
 	go appagent.RunStatusReporter(ctx, statusSnapshot, sink, 30*time.Second, backups.Changed(), log)
 
 	// Resource metrics (server.metrics every 60 s, disk scan hourly) through

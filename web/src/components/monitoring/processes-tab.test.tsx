@@ -129,6 +129,20 @@ describe("ProcessesTab", () => {
     expect(screen.queryAllByRole("term")).toHaveLength(0);
   });
 
+  it("shows the full command line in a row's details", async () => {
+    const user = userEvent.setup();
+    const cmdline = "/usr/sbin/sshd -D -o ListenAddress=0.0.0.0 -o PermitRootLogin=no " + "x".repeat(200);
+    result = { ...result, data: { ...LIST, processes: [p({ pid: 7, name: "sshd", cmdline })] } };
+    renderTab();
+    await user.click(screen.getByRole("button", { name: "Details for sshd" }));
+    const details = screen.getAllByRole("row").find((r) => within(r).queryAllByRole("term").length > 0)!;
+    const term = within(details).getByText("Command");
+    const value = term.nextElementSibling as HTMLElement;
+    expect(value.tagName).toBe("DD");
+    expect(value).toHaveTextContent(cmdline);
+    expect(value).toHaveClass("break-all");
+  });
+
   it("filters by text, by app, and shows kernel threads on request", async () => {
     const user = userEvent.setup();
     renderTab();
@@ -156,6 +170,14 @@ describe("ProcessesTab", () => {
     rerender(<MemoryRouter><ProcessesTab serverId="s1" /></MemoryRouter>);
     expect(screen.getByText("The server did not answer in time.")).toBeInTheDocument();
     expect(names()).toHaveLength(3); // the last good list stays
+  });
+
+  it("shows an error without the skeleton when nothing has loaded", () => {
+    result = { data: null, error: "This server's agent is too old to list processes. Update the agent.", updatedAt: null, refresh: vi.fn() };
+    renderTab();
+    expect(screen.getByText("This server's agent is too old to list processes. Update the agent.")).toBeInTheDocument();
+    expect(screen.queryByTestId("processes-loading")).not.toBeInTheDocument();
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
   });
 
   it("says when the list is cut", () => {

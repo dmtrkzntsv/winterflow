@@ -11,12 +11,18 @@ export const PROCESS_WAIT_MS = 15000;
 
 const base = apiBaseUrl.endsWith("/") ? apiBaseUrl.slice(0, -1) : apiBaseUrl;
 
+// An agent that predates process.list answers every request with this.
+const UNSUPPORTED = /unsupported command type/i;
+const AGENT_TOO_OLD = "This server's agent is too old to list processes. Update the agent.";
+
 type State = { serverId: string | null; data: ProcessList | null; error: string | null; updatedAt: number | null };
 
 // useProcesses polls the server's process list while enabled: one request
 // at a time (dispatch, wait for its SSE result, then 5 s), so a slow agent
 // never piles requests up. Disabling, unmounting or another server stops
-// the loop; a reply that arrives after that is dropped.
+// the loop; a reply that arrives after that is dropped. An agent that
+// predates process.list stops it too: asking again cannot help until the
+// agent is updated (another server or a remount starts over).
 export function useProcesses(serverId: string | null, enabled: boolean) {
   const { waitFor } = useNotifications();
   const [state, setState] = useState<State>({ serverId: null, data: null, error: null, updatedAt: null });
@@ -54,7 +60,13 @@ export function useProcesses(serverId: string | null, enabled: boolean) {
           if (!ref) throw new Error("No request id");
           const n = await waitFor(ref, PROCESS_WAIT_MS);
           if (!live) return;
-          if (n.status && n.status !== 0) throw new Error(n.error || "Failed to list processes");
+          if (n.status && n.status !== 0) {
+            if (UNSUPPORTED.test(n.error ?? "")) {
+              update({ error: AGENT_TOO_OLD });
+              return;
+            }
+            throw new Error(n.error || "Failed to list processes");
+          }
           update({ data: n.payload as ProcessList, error: null, updatedAt: Date.now() });
         } catch (e) {
           if (!live) return;

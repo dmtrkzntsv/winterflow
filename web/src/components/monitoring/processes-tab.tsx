@@ -91,7 +91,7 @@ export function ProcessesTab({ serverId }: { serverId: string }) {
     switch (key) {
       case "name":
         return (
-          <div className="flex min-w-0 max-w-[18rem] items-start gap-1">
+          <div className="flex min-w-0 max-w-[45vw] items-start gap-1 md:max-w-[18rem]">
             <button
               type="button"
               aria-expanded={open === p.pid}
@@ -192,12 +192,15 @@ export function ProcessesTab({ serverId }: { serverId: string }) {
 
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
 
+      {/* An error before any answer replaces the skeleton. */}
       {!data ? (
-        <div data-testid="processes-loading" className="space-y-2">
-          {Array.from({ length: 8 }, (_, i) => (
-            <Skeleton key={i} className="h-9 w-full" />
-          ))}
-        </div>
+        error ? null : (
+          <div data-testid="processes-loading" className="space-y-2">
+            {Array.from({ length: 8 }, (_, i) => (
+              <Skeleton key={i} className="h-9 w-full" />
+            ))}
+          </div>
+        )
       ) : (
         <Table>
           <TableHeader>
@@ -251,6 +254,12 @@ export function ProcessesTab({ serverId }: { serverId: string }) {
                               <dd className="tabular-nums">{cell(p, c.key) ?? "—"}</dd>
                             </Fragment>
                           ))}
+                          {p.cmdline ? (
+                            <>
+                              <dt className="col-span-2 text-muted-foreground">Command</dt>
+                              <dd className="col-span-2 break-all font-mono">{p.cmdline}</dd>
+                            </>
+                          ) : null}
                         </dl>
                       </TableCell>
                     </TableRow>

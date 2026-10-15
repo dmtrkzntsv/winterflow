@@ -136,6 +136,18 @@ describe("useProcesses", () => {
     await waitFor(() => expect(api.calls).toHaveLength(2));
   });
 
+  it("stops polling an agent that predates process.list, until the server changes", async () => {
+    const api = fakeAPI({ "/api/v1/server/get-processes": { request_id: "r1" } });
+    waitFor_.mockResolvedValueOnce({ type: "operation_result", ref: "r1", status: 1, error: "unsupported command type: process.list" });
+    const { result, rerender } = renderHook(({ id }) => useProcesses(id, true), { wrapper, initialProps: { id: "s1" } });
+    await waitFor(() => expect(result.current.error).toBe("This server's agent is too old to list processes. Update the agent."));
+    await act(() => vi.advanceTimersByTimeAsync(PROCESS_POLL_MS * 3));
+    expect(api.calls).toHaveLength(1);
+    rerender({ id: "s2" });
+    await waitFor(() => expect(result.current.data?.ncpu).toBe(4));
+    expect(api.calls.at(-1)?.query).toBe("?server_id=s2");
+  });
+
   it("reports the agent's error", async () => {
     fakeAPI({ "/api/v1/server/get-processes": { request_id: "r1" } });
     waitFor_.mockResolvedValue({ type: "operation_result", ref: "r1", status: 1, error: "process list is only available on Linux" });

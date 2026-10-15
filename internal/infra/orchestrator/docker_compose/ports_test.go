@@ -359,3 +359,79 @@ func TestProbeListen(t *testing.T) {
 		t.Fatal("a held udp port probed free")
 	}
 }
+
+// After an agent restart the index is built from disk before a save or
+// rollback replaces the app's config.json: the app's own ports are still
+// its own (never probed) and a pin another app holds is still refused.
+func TestRestartedAgentKeepsPortsAndPins(t *testing.T) {
+	pinned := `"ports":{"db:5432/tcp":{"host":5432,"pinned":true}}`
+	heldByOwnContainers := func(string, int, string) error { return errors.New("held by a running container") }
+
+	t.Run("save without ports keeps them", func(t *testing.T) {
+		r, _ := portRepo(t)
+		if _, err := r.saveWithoutDeploy(exposePayload("app-1", exposeCompose, "")); err != nil {
+			t.Fatal(err)
+		}
+		first := portsOf(t, r, "app-1")
+		fresh := NewRepository(r.cfg, r.log)
+		fresh.probePort = heldByOwnContainers
+		if _, err := fresh.saveWithoutDeploy(exposePayload("app-1", exposeCompose, "")); err != nil {
+			t.Fatal(err)
+		}
+		if got := portsOf(t, fresh, "app-1"); !reflect.DeepEqual(got, first) {
+			t.Fatalf("ports moved after a restart: %+v -> %+v", first, got)
+		}
+	})
+
+	t.Run("colliding pin refused", func(t *testing.T) {
+		r, _ := portRepo(t)
+		if _, err := r.saveWithoutDeploy(exposePayload("app-1", exposeCompose, pinned)); err != nil {
+			t.Fatal(err)
+		}
+		fresh := NewRepository(r.cfg, r.log)
+		fresh.probePort = heldByOwnContainers
+		_, err := fresh.saveWithoutDeploy(exposePayload("app-2", exposeCompose, pinned))
+		if !errors.Is(err, ErrPortTaken) || !strings.Contains(err.Error(), "port 5432 is used by the app app-1") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+
+	t.Run("rollback keeps the revision's ports without probing", func(t *testing.T) {
+		r, _ := portRepo(t)
+		v1, err := r.saveWithoutDeploy(exposePayload("app-1", exposeCompose, ""))
+		if err != nil {
+			t.Fatal(err)
+		}
+		first := portsOf(t, r, "app-1")
+		if _, err := r.saveWithoutDeploy(exposePayload("app-1", exposeCompose, `"note":"v2"`)); err != nil {
+			t.Fatal(err)
+		}
+		fresh := NewRepository(r.cfg, r.log)
+		fresh.probePort = heldByOwnContainers
+		if _, err := fresh.rollbackWithoutDeploy("app-1", v1); err != nil {
+			t.Fatal(err)
+		}
+		if got := portsOf(t, fresh, "app-1"); !reflect.DeepEqual(got, first) {
+			t.Fatalf("ports moved on rollback after a restart: %+v -> %+v", first, got)
+		}
+	})
+
+	t.Run("rollback refused by another app's pin", func(t *testing.T) {
+		r, _ := portRepo(t)
+		v1, err := r.saveWithoutDeploy(exposePayload("app-1", exposeCompose, pinned))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := r.saveWithoutDeploy(exposePayload("app-1", "services:\n  app: { image: nginx }\n", "")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := r.saveWithoutDeploy(exposePayload("app-2", exposeCompose, pinned)); err != nil {
+			t.Fatal(err)
+		}
+		fresh := NewRepository(r.cfg, r.log)
+		fresh.probePort = heldByOwnContainers
+		if _, err := fresh.rollbackWithoutDeploy("app-1", v1); !errors.Is(err, ErrPortTaken) {
+			t.Fatalf("err = %v", err)
+		}
+	})
+}

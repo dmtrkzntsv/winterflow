@@ -132,6 +132,7 @@ func (r *Repository) save(app command.AppPayload, forDeploy bool) (string, []str
 		return "", nil, fmt.Errorf("init app repo: %w", err)
 	}
 
+	r.ensurePortIndex() // before writeAppStore replaces config.json
 	prevPorts, err := r.readPorts(dir)
 	if err != nil {
 		return "", nil, err
@@ -338,6 +339,7 @@ func (r *Repository) rollbackWithoutDeploy(appID, hash string) (string, error) {
 	if _, err := os.Stat(dir); err != nil {
 		return "", fmt.Errorf("app %s not found", appID)
 	}
+	r.ensurePortIndex() // before the restored revision's config.json replaces the current
 	if err := gitRestore(dir, hash); err != nil {
 		return "", fmt.Errorf("restore %s: %w", hash, err)
 	}
@@ -503,6 +505,7 @@ func (r *Repository) refreshSourceWithoutDeploy(appID string) (bool, string, err
 	// The upstream compose file may add or drop expose entries. A failure
 	// here is left for the deploy to report: the source lock is already
 	// written, so a poll that gave up would never commit this update.
+	r.ensurePortIndex()
 	if spec, err := r.appSpec(dir); err != nil {
 		r.log.Warn("source update: read x-winterflow", "app_id", appID, "error", err)
 	} else if ports, err := r.readPorts(dir); err != nil {

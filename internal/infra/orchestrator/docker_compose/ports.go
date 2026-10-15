@@ -83,9 +83,24 @@ func (r *Repository) loadPortIndexLocked() {
 			continue
 		}
 		for id, p := range ports {
+			if o, dup := r.portIndex[p.Host]; dup {
+				r.log.Warn("host port claimed by two apps", "port", p.Host,
+					"app_id", o.appID, "entry", o.entry, "other_app_id", e.Name(), "other_entry", id)
+				continue // the first app (by folder name) keeps it
+			}
 			r.portIndex[p.Host] = portOwner{appID: e.Name(), entry: id}
 		}
 	}
+}
+
+// ensurePortIndex builds the port index if it isn't yet. Every mutator
+// calls it before it first changes the app's config.json (a save writing the
+// payload's, a rollback restoring an old revision's): the index must show
+// the ports the app holds now, not the ones it is about to have.
+func (r *Repository) ensurePortIndex() {
+	r.portMu.Lock()
+	defer r.portMu.Unlock()
+	r.loadPortIndexLocked()
 }
 
 // syncPorts gives every expose entry of the app in dir its host port and

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -310,12 +311,24 @@ func readHead(path string, n int64) ([]byte, error) {
 
 var (
 	secretWords = []string{"pass", "pwd", "secret", "token", "key", "auth", "cred"}
+	// Patterns match a token with its shell quotes stripped from the front.
 	// assignArg is "NAME=value" with optional leading dashes (-x=1, --x=1,
-	// X=1); flagArg is a bare "-x" / "--name".
-	assignArg = regexp.MustCompile(`^-{0,2}([A-Za-z0-9_.-]+)=`)
-	flagArg   = regexp.MustCompile(`^--?[A-Za-z0-9_.-]+$`)
-	// urlPassword matches the password of URL userinfo (scheme://user:pass@).
-	urlPassword = regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.-]*://[^/:@\s]*):[^/@\s]*@`)
+	// X=1); flagArg is a bare "-x" / "--name"; headerArg is an HTTP header
+	// name ("Authorization:"); shortPass is an attached "-p<value>".
+	assignArg = regexp.MustCompile(`^["']*-{0,2}([A-Za-z0-9_.-]+)=`)
+	flagArg   = regexp.MustCompile(`^["']*--?[A-Za-z0-9_.-]+["']*$`)
+	headerArg = regexp.MustCompile(`^["']*([A-Za-z0-9_-]+):["']*$`)
+	shortPass = regexp.MustCompile(`^["']*-p`)
+	// urlScheme finds the start of URL userinfo (scheme://).
+	urlScheme = regexp.MustCompile(`[A-Za-z][A-Za-z0-9+.-]*://`)
+
+	// mysqlClients take their password attached to -p (-psecret); a bare -p
+	// prompts instead.
+	mysqlClients = map[string]bool{
+		"mysql": true, "mysqldump": true, "mysqladmin": true,
+		"mariadb": true, "mariadb-dump": true, "mysqlsh": true,
+	}
+	authSchemes = map[string]bool{"bearer": true, "basic": true, "token": true, "digest": true}
 )
 
 func secretName(name string) bool {
@@ -328,10 +341,106 @@ func secretName(name string) bool {
 	return false
 }
 
+func isQuote(c byte) bool { return c == '"' || c == '\'' }
+
+// openWrap returns the quote that opens tok and is not closed inside it
+// ("\"Authorization:" or `'--password=a`): the quoted text goes on into the
+// following tokens. 0 when there is none.
+func openWrap(tok string) byte {
+	if tok != "" && isQuote(tok[0]) && strings.Count(tok, tok[:1])%2 == 1 {
+		return tok[0]
+	}
+	return 0
+}
+
+func trailingQuotes(tok string) string {
+	return tok[len(strings.TrimRight(tok, `"'`)):]
+}
+
+// closeIdx is the first token from `from` that holds the quote q, that is
+// the one that closes it. An unterminated quote swallows the rest.
+func closeIdx(args []string, from int, q byte) int {
+	for k := from; k < len(args); k++ {
+		if strings.IndexByte(args[k], q) >= 0 {
+			return k
+		}
+	}
+	return len(args) - 1
+}
+
+// redactTail redacts the value in args[i] after its first prefixLen bytes
+// (the name and "="). It returns the replacement and the last token used:
+// a quoted value spans tokens up to the one that closes the quote.
+func redactTail(args []string, i, prefixLen int) (string, int) {
+	tok := args[i]
+	prefix, rem := tok[:prefixLen], tok[prefixLen:]
+	if q := openWrap(tok); q != 0 {
+		return prefix + "***" + string(q), closeIdx(args, i+1, q)
+	}
+	if rem != "" && isQuote(rem[0]) {
+		if strings.Count(rem, rem[:1])%2 == 1 {
+			return prefix + "***", closeIdx(args, i+1, rem[0])
+		}
+		if isQuote(tok[0]) {
+			return prefix + "***" + tok[:1], i
+		}
+		return prefix + "***", i
+	}
+	if isQuote(tok[0]) {
+		return prefix + "***" + trailingQuotes(rem), i
+	}
+	return prefix + "***", i
+}
+
+// redactNext redacts the value token args[j] that follows a secret name.
+// wrap is the quote the name's token left open, if any: the value then runs
+// to the token that closes it.
+func redactNext(args []string, j int, wrap byte) (string, int) {
+	if wrap != 0 {
+		return "***" + string(wrap), closeIdx(args, j, wrap)
+	}
+	t := args[j]
+	if isQuote(t[0]) && strings.Count(t, t[:1])%2 == 1 {
+		return "***", closeIdx(args, j+1, t[0])
+	}
+	if isQuote(t[0]) {
+		return "***", j
+	}
+	return "***" + trailingQuotes(t), j
+}
+
+// canRedactNext says whether args[j] is a value: it exists and is not
+// itself an option.
+func canRedactNext(args []string, j int) bool {
+	return j < len(args) && !strings.HasPrefix(strings.TrimLeft(args[j], `"'`), "-")
+}
+
+// redactURL hides the password of URL userinfo (scheme://user:pass@host).
+// The password may hold '@' and '/', so it runs up to the last '@'.
+func redactURL(tok string) string {
+	loc := urlScheme.FindStringIndex(tok)
+	if loc == nil {
+		return tok
+	}
+	rest := tok[loc[1]:]
+	at := strings.LastIndexByte(rest, '@')
+	if at < 0 {
+		return tok
+	}
+	user, _, hasPass := strings.Cut(rest[:at], ":")
+	if !hasPass {
+		return tok
+	}
+	return tok[:loc[1]] + user + ":***@" + rest[at+1:]
+}
+
 // redactCmdline renders a raw /proc cmdline for display. Compose commands
 // and entrypoints carry secrets as arguments (--requirepass s3cret,
-// --password=x, DB_PASSWORD=x, postgres://user:pw@host), and secret values
-// never leave the agent, so those values become "***" here, before the cap.
+// --password=x, DB_PASSWORD=x, postgres://user:pw@host, curl -H
+// "Authorization: Bearer x"), and secret values never leave the agent, so
+// those values become "***" here, before the cap. It is best-effort: it
+// knows common shapes (shell quotes, attached mysql -p, URL userinfo, auth
+// headers), not every way a program takes a secret.
 func redactCmdline(b []byte) string {
 	// Tokens, not arguments: sh -c "redis-server --requirepass x" holds a
 	// whole command line in one argument. The output is space-joined anyway.
@@ -339,20 +448,58 @@ func redactCmdline(b []byte) string {
 	for _, a := range strings.Split(string(b), "\x00") {
 		args = append(args, strings.Fields(a)...)
 	}
+	out := make([]string, 0, len(args))
+	mysql := false
 	for i := 0; i < len(args); i++ {
-		a := args[i]
-		if m := assignArg.FindStringSubmatch(a); m != nil {
-			if secretName(m[1]) {
-				args[i] = a[:len(m[0])] + "***"
-			}
-		} else if flagArg.MatchString(a) && secretName(a) && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
-			args[i+1] = "***"
-			i++
+		tok := args[i]
+		if mysqlClients[path.Base(strings.Trim(tok, `"'`))] {
+			mysql = true
+		}
+		if m := assignArg.FindStringSubmatch(tok); m != nil && secretName(m[1]) {
+			s, j := redactTail(args, i, len(m[0]))
+			out = append(out, s)
+			i = j
 			continue
 		}
-		args[i] = urlPassword.ReplaceAllString(args[i], "$1:***@")
+		if loc := shortPass.FindStringIndex(tok); mysql && loc != nil && loc[1] < len(tok) && !strings.HasPrefix(tok[loc[1]:], "-") {
+			s, j := redactTail(args, i, loc[1])
+			out = append(out, s)
+			i = j
+			continue
+		}
+		if m := headerArg.FindStringSubmatch(tok); m != nil && secretName(m[1]) {
+			out = append(out, tok)
+			wrap, j := openWrap(tok), i+1
+			if !canRedactNext(args, j) {
+				continue
+			}
+			if authSchemes[strings.ToLower(strings.Trim(args[j], `"'`))] {
+				out = append(out, args[j])
+				if wrap != 0 && strings.IndexByte(args[j], wrap) >= 0 {
+					i = j
+					continue
+				}
+				j++
+				if !canRedactNext(args, j) {
+					i = j - 1
+					continue
+				}
+			}
+			s, k := redactNext(args, j, wrap)
+			out = append(out, s)
+			i = k
+			continue
+		}
+		if flagArg.MatchString(tok) && secretName(tok) && canRedactNext(args, i+1) {
+			out = append(out, tok)
+			s, k := redactNext(args, i+1, openWrap(tok))
+			out = append(out, s)
+			i = k
+			continue
+		}
+		out = append(out, redactURL(tok))
 	}
-	s := strings.Join(args, " ")
+	s := strings.Join(out, " ")
 	if len(s) > cmdlineCap {
 		s = s[:cmdlineCap]
 	}

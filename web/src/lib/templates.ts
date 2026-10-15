@@ -1,51 +1,69 @@
 // Templates and their instances: types mirroring the API
 // (internal/domain/template, internal/domain/usecase/templates) and the API
-// client. A template is org-level; an instance is an app on one server
-// rendered from a template revision. Secret parameter values travel only as
-// ECIES ciphertexts for the instance's server (lib/ecies); no route ever
-// returns one.
+// client. A template is an org's own (editable) or the catalog's (the same
+// for every org, read-only); an instance is an app on one server rendered
+// from a template revision. What an instance fills in, which ports it
+// exposes and which backups it can turn on come from the compose files'
+// x-winterflow block (detected). Secret values travel only as ECIES
+// ciphertexts for the instance's server (lib/ecies); no route ever returns
+// one.
 import { apiBase } from "@/config";
 import { WaitTimeoutError } from "@/context/notifications-context-base";
 import { createJsonClient, jsonPost } from "@/lib/api";
-import type { Keep } from "@/lib/backups";
 import { encryptSecret } from "@/lib/ecies";
+import type { DeclaredVariable } from "@/types/app-config";
 
-export type Parameter = {
-  name: string;
-  secret?: boolean;
-  required?: boolean;
-  // null/absent: no default ("" is a default, but renders the same).
-  default?: string | null;
-  pattern?: string; // Go RE2
-  description?: string;
-};
-
-// IngressRow routes host to the host port the compose file publishes; port
-// is a number or exactly "${PARAM}".
-export type IngressRow = { host: string; service?: string; port: number | string };
-
-export type BackupDefault = { enabled: boolean; storage?: string; every?: string; keep?: Keep | null };
-
-// TemplateBody is a revision's body. Go encodes an empty map or list as
-// null.
+// TemplateBody is a revision's body: the app's files and how the template
+// reads in a list. Go encodes an empty map as null.
 export type TemplateBody = {
   files: Record<string, string> | null;
-  parameters: Parameter[] | null;
-  app_name: string;
+  summary: string;
+  description: string;
   icon: string;
   color: string;
-  ingress: IngressRow[] | null;
-  backups: Record<string, BackupDefault> | null;
 };
+
+export type DetectedExpose = {
+  id: string; // <container>:<port>/<protocol>
+  target: string; // <container>:<port>: what a hostname's expose names
+  container: string;
+  port: number;
+  protocol: "http" | "tcp" | "udp";
+};
+
+export type DetectedBackup = { name: string; type: "sqlite" | "files" | "custom" };
+
+// Detected is what a body's compose files declare under x-winterflow.
+export type Detected = {
+  variables: DeclaredVariable[] | null;
+  expose: DetectedExpose[] | null;
+  backups: DetectedBackup[] | null;
+  warnings: string[] | null;
+};
+
+// Inspection is inspect-template's answer: what a body declares (as far
+// as it parses) and the first problem a save would refuse ("" when none).
+export type Inspection = { detected: Detected; problem: string };
+
+export type TemplateSource = "org" | "catalog";
 
 export type TemplateSummary = {
   id: string;
+  source: TemplateSource;
+  slug: string; // a catalog template's id in the catalog
   name: string;
   latest_revision: number;
-  instances: number; // pending and created
-  behind: number; // on a revision older than the latest
+  instances: number; // the org's pending and created ones
+  behind: number; // of those, on a revision older than the latest
+  withdrawn_at: string | null; // when the catalog dropped it
   updated_at: string;
 };
+
+// orgTemplates are the org's own templates of a list (the catalog's are
+// listed after them).
+export function orgTemplates<T extends Pick<TemplateSummary, "source">>(list: T[]): T[] {
+  return list.filter((t) => t.source === "org");
+}
 
 // usageLabel says how many apps use a template, in plain words: "Used by
 // 12 apps · 3 on an older version" ("Not used by any app yet" without any).
@@ -59,10 +77,14 @@ export type TemplateRevisionInfo = { revision: number; note: string; created_at:
 
 export type TemplateView = {
   id: string;
+  source: TemplateSource;
+  slug: string;
   name: string;
   latest_revision: number;
+  withdrawn_at: string | null;
   revision: number;
   body: TemplateBody;
+  detected: Detected;
   note: string;
   created_at: string;
   created_by: string;
@@ -81,6 +103,13 @@ export type SaveTemplateBody = {
 
 export type InstanceState = "pending" | "created" | "deleted" | "unlinked";
 
+// InstanceHost routes a hostname to an http expose entry (its target).
+export type InstanceHost = { host: string; expose: string };
+
+// BackupChoice is an instance's setting for one backup its compose file
+// declares; a backup without one starts off.
+export type BackupChoice = { enabled: boolean; storage?: string };
+
 export type InstanceView = {
   key: string;
   server_id: string;
@@ -88,8 +117,10 @@ export type InstanceView = {
   template_id: string;
   template_name: string;
   revision: number;
-  parameters: Record<string, string> | null; // values callers set
+  name: string; // the app name the create asked for
+  values: Record<string, string> | null; // plain values callers set
   secrets: Record<string, string> | null; // name -> "<encrypted>"
+  hosts: InstanceHost[] | null;
   state: InstanceState;
   status_code: number;
   last_error: string;
@@ -98,11 +129,12 @@ export type InstanceView = {
 };
 
 // InstanceValues are what create, update and upgrade send: plain values,
-// secret ciphertexts and (while pending) backup storages, by name.
+// secret ciphertexts, hostnames and (while pending) backup settings.
 export type InstanceValues = {
-  parameters?: Record<string, string>;
+  values?: Record<string, string>;
   secrets?: Record<string, string>;
-  backups?: Record<string, string>;
+  hosts?: InstanceHost[];
+  backups?: Record<string, BackupChoice>;
 };
 
 export type CreateInstanceBody = InstanceValues & {
@@ -110,6 +142,7 @@ export type CreateInstanceBody = InstanceValues & {
   key: string;
   template_id: string;
   revision?: number;
+  name?: string;
 };
 
 export type UpdateInstanceBody = InstanceValues & { server_id: string; key: string };
@@ -152,6 +185,8 @@ export type TemplatesApi = {
   // client reads each one once (the rest of the view is as of that read).
   getRevision(id: string, revision: number): Promise<TemplateView>;
   saveTemplate(body: SaveTemplateBody): Promise<SavedTemplate>;
+  // inspectTemplate reads a body as a save would, storing nothing.
+  inspectTemplate(body: TemplateBody): Promise<Inspection>;
   deleteTemplate(id: string): Promise<void>;
   listInstances(filter: { serverId?: string; templateId?: string }): Promise<InstanceView[]>;
   getInstance(serverId: string, key: string): Promise<InstanceView>;
@@ -259,6 +294,7 @@ export function createTemplatesApi(waitFor: WaitFor, fetchImpl?: typeof fetch): 
     getTemplate,
     getRevision,
     saveTemplate: (body) => call<SavedTemplate>("/api/v1/template/save-template", jsonPost(body)),
+    inspectTemplate: (body) => call<Inspection>("/api/v1/template/inspect-template", jsonPost({ body })),
     deleteTemplate: async (id) => {
       await call<null>("/api/v1/template/delete-template", jsonPost({ id }));
     },

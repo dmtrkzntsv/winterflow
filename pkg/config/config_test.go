@@ -494,3 +494,32 @@ func TestAllowsPrivateAlertTargets(t *testing.T) {
 		t.Error("an unknown value must keep the topology default")
 	}
 }
+
+func TestCatalogConfig(t *testing.T) {
+	c := NewServerConfig("distributed")
+	unsetenv(t, "CATALOG_URL")
+	unsetenv(t, "CATALOG_PUBLIC_KEY")
+	unsetenv(t, "CATALOG_REFRESH")
+	if c.GetCatalogURL() != DefaultCatalogURL || c.GetCatalogPublicKey() != DefaultCatalogPublicKey || c.GetCatalogRefresh() != 24*time.Hour {
+		t.Fatalf("defaults = %q %q %v", c.GetCatalogURL(), c.GetCatalogPublicKey(), c.GetCatalogRefresh())
+	}
+	// Set but empty switches the catalog off; an empty key is the default.
+	t.Setenv("CATALOG_URL", "")
+	t.Setenv("CATALOG_PUBLIC_KEY", " ")
+	if c.GetCatalogURL() != "" || c.GetCatalogPublicKey() != DefaultCatalogPublicKey {
+		t.Fatalf("empty = %q %q", c.GetCatalogURL(), c.GetCatalogPublicKey())
+	}
+	t.Setenv("CATALOG_URL", " http://127.0.0.1:8080/catalog.json ")
+	t.Setenv("CATALOG_PUBLIC_KEY", "a2V5")
+	if c.GetCatalogURL() != "http://127.0.0.1:8080/catalog.json" || c.GetCatalogPublicKey() != "a2V5" {
+		t.Fatalf("set = %q %q", c.GetCatalogURL(), c.GetCatalogPublicKey())
+	}
+	for v, want := range map[string]time.Duration{
+		"6h": 6 * time.Hour, "1m": 5 * time.Minute, "soon": 24 * time.Hour, "-1h": 24 * time.Hour, "0": 24 * time.Hour,
+	} {
+		t.Setenv("CATALOG_REFRESH", v)
+		if got := c.GetCatalogRefresh(); got != want {
+			t.Errorf("CATALOG_REFRESH=%s: %v, want %v", v, got, want)
+		}
+	}
+}

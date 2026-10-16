@@ -112,11 +112,12 @@ func TestCatalogTemplatesAreReadOnly(t *testing.T) {
 	}
 	for _, org := range []string{org1, org2} {
 		v, err := f.uc.GetTemplate(ctx, org, cat, 0)
-		if err != nil || v.Source != model.TemplateSourceCatalog || v.Slug != "shop" || len(v.Detected.Variables) != 3 {
+		if err != nil || v.Source != model.TemplateSourceCatalog || v.Slug != "shop" || len(v.Detected.Variables) != 3 || v.Catalog == nil {
 			t.Fatalf("%s reads %+v, %v", org, v, err)
 		}
 	}
-	if list, _ := f.uc.ListTemplates(ctx, org1); len(list.Templates) != 2 || list.Templates[1].ID != cat {
+	if list, _ := f.uc.ListTemplates(ctx, org1); len(list.Templates) != 2 || list.Templates[1].ID != cat ||
+		list.Templates[0].Catalog != nil || list.Templates[1].Catalog == nil || list.Templates[1].Catalog.Keywords == nil {
 		t.Fatalf("org1 list = %+v", list)
 	}
 	_, err = f.uc.SaveTemplate(ctx, "u1", org1, templates.SaveInput{ID: cat, Name: "shop", Body: body(), BaseRevision: 1})

@@ -11,6 +11,10 @@ import (
 )
 
 type Querier interface {
+	// A catalog template's next revision from the base the sync read, its
+	// name and metadata, withdrawn_at cleared: 0 rows when another replica
+	// moved latest_revision, or a newer feed wrote the template.
+	BumpCatalogTemplate(ctx context.Context, arg BumpCatalogTemplateParams) (int64, error)
 	BumpServerVarsRevision(ctx context.Context, serverID string) error
 	// An org template's next revision. Optimistic: 0 rows when latest_revision
 	// moved past the caller's base.
@@ -131,7 +135,8 @@ type Querier interface {
 	// org_id NULL): an org reads its own and every catalog template, and
 	// changes only its own.
 	// A taken org name or catalog slug inserts nothing (0 rows): the caller
-	// answers 400.
+	// answers 400 (save-template) or skips the entry (the catalog sync lost
+	// the race to another replica).
 	InsertTemplate(ctx context.Context, arg InsertTemplateParams) (int64, error)
 	InsertTemplateRevision(ctx context.Context, arg InsertTemplateRevisionParams) error
 	// Personal access tokens (hashed at rest).
@@ -152,6 +157,9 @@ type Querier interface {
 	// The apps catalog (a reconciled cache of what agents report).
 	ListAppsByServer(ctx context.Context, serverID string) ([]App, error)
 	ListCapabilitiesByUser(ctx context.Context, userID string) ([]ListCapabilitiesByUserRow, error)
+	// Every catalog template with its latest revision's digest: what the
+	// catalog sync compares a feed with.
+	ListCatalogTemplates(ctx context.Context) ([]ListCatalogTemplatesRow, error)
 	ListCiphertextServersByOrg(ctx context.Context, orgID string) ([]ListCiphertextServersByOrgRow, error)
 	// The worker's idle query: active rollouts nobody holds a live lease on.
 	// Times are stored to the second, so a lease ending now counts as ended
@@ -240,6 +248,9 @@ type Querier interface {
 	SetTemplateInstanceBackups(ctx context.Context, arg SetTemplateInstanceBackupsParams) error
 	SetTemplateInstanceError(ctx context.Context, arg SetTemplateInstanceErrorParams) error
 	SetTemplateInstanceState(ctx context.Context, arg SetTemplateInstanceStateParams) error
+	// The feed every catalog template now reflects: a later sync of an older
+	// feed is refused as a whole.
+	StampCatalogTemplates(ctx context.Context, feedAt *types.DateTime) error
 	StartRolloutStep(ctx context.Context, arg StartRolloutStepParams) (int64, error)
 	// Ends a rollout nobody is driving (queued, parked, or whose owner's lease
 	// expired) as stopped. 0 rows: someone holds a live lease (stop_requested
@@ -248,6 +259,9 @@ type Querier interface {
 	TouchServerLastSeen(ctx context.Context, arg TouchServerLastSeenParams) error
 	TouchTokenLastUsed(ctx context.Context, arg TouchTokenLastUsedParams) error
 	UpdateAlertRule(ctx context.Context, arg UpdateAlertRuleParams) (int64, error)
+	// A catalog template's name and metadata in place, withdrawn_at cleared:
+	// 0 rows when a newer feed wrote it.
+	UpdateCatalogTemplate(ctx context.Context, arg UpdateCatalogTemplateParams) (int64, error)
 	UpdateNotificationChannel(ctx context.Context, arg UpdateNotificationChannelParams) (int64, error)
 	UpdateOrganization(ctx context.Context, arg UpdateOrganizationParams) (int64, error)
 	UpdatePassword(ctx context.Context, arg UpdatePasswordParams) (int64, error)
@@ -260,6 +274,9 @@ type Querier interface {
 	UpsertServerStorage(ctx context.Context, arg UpsertServerStorageParams) error
 	UpsertSharedCiphertext(ctx context.Context, arg UpsertSharedCiphertextParams) error
 	UserOwnsServer(ctx context.Context, arg UserOwnsServerParams) (bool, error)
+	// A catalog template the feed no longer lists: 0 rows when it is withdrawn
+	// already or a newer feed wrote it.
+	WithdrawCatalogTemplate(ctx context.Context, arg WithdrawCatalogTemplateParams) (int64, error)
 }
 
 var _ Querier = (*Queries)(nil)

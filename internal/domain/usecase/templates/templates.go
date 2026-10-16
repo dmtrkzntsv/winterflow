@@ -151,7 +151,7 @@ func (uc *UseCase) ListTemplates(ctx context.Context, orgID string) (TemplateLis
 	for _, t := range list {
 		out.Templates = append(out.Templates, TemplateSummary{
 			ID: t.ID, Source: t.Source, Slug: t.Slug, Name: t.Name, LatestRevision: t.LatestRevision,
-			Instances: t.Instances, Behind: t.Behind, WithdrawnAt: t.WithdrawnAt, UpdatedAt: t.UpdatedAt,
+			Instances: t.Instances, Behind: t.Behind, WithdrawnAt: t.WithdrawnAt, Catalog: t.CatalogMeta, UpdatedAt: t.UpdatedAt,
 		})
 	}
 	return out, nil
@@ -189,7 +189,7 @@ func (uc *UseCase) GetTemplate(ctx context.Context, orgID, id string, revision i
 	}
 	out := TemplateView{
 		ID: t.ID, Source: t.Source, Slug: t.Slug, Name: t.Name, LatestRevision: t.LatestRevision, WithdrawnAt: t.WithdrawnAt,
-		Revision: rev.Revision, Body: body, Detected: detected, Note: rev.Note, CreatedAt: rev.CreatedAt, CreatedBy: rev.CreatedBy,
+		Catalog: t.CatalogMeta, Revision: rev.Revision, Body: body, Detected: detected, Note: rev.Note, CreatedAt: rev.CreatedAt, CreatedBy: rev.CreatedBy,
 		Revisions: make([]TemplateRevisionInfo, 0, len(revs)),
 	}
 	for _, r := range revs {

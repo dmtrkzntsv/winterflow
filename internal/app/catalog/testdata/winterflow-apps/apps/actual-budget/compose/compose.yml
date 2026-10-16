@@ -1,0 +1,18 @@
+services:
+  app:
+    image: actualbudget/actual-server:25.10.0
+    restart: unless-stopped
+    environment:
+      # The public URL the browser uses, e.g. https://budget.example.com
+      ACTUAL_URL: "http://localhost:5006"
+    volumes:
+      - data:/data
+volumes:
+  data:
+x-winterflow:
+  expose:
+    - { container: app, port: 5006 }
+  variables:
+    ACTUAL_URL: { required: true, pattern: "^https?://.+" }
+  backups:
+    - { name: data, type: files, volume: data }

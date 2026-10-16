@@ -5,6 +5,7 @@ import (
 
 	"winterflow/internal/infra/db/backend"
 	pgsqlgen "winterflow/internal/infra/db/sqlc/gen/pgsql"
+	"winterflow/internal/infra/db/types"
 )
 
 type pgsqlQuerier struct{}
@@ -136,4 +137,32 @@ func (pgsqlQuerier) GetLiveTemplateInstanceForApp(ctx context.Context, db backen
 
 func (pgsqlQuerier) RetireTemplateInstancesForApp(ctx context.Context, db backend.DBTX, p retireParams) error {
 	return pgsqlgen.New(db).RetireTemplateInstancesForApp(ctx, pgsqlgen.RetireTemplateInstancesForAppParams(p))
+}
+
+func (pgsqlQuerier) ListCatalogTemplates(ctx context.Context, db backend.DBTX) ([]catalogRow, error) {
+	rows, err := pgsqlgen.New(db).ListCatalogTemplates(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]catalogRow, len(rows))
+	for i, row := range rows {
+		out[i] = catalogRow(row)
+	}
+	return out, nil
+}
+
+func (pgsqlQuerier) BumpCatalogTemplate(ctx context.Context, db backend.DBTX, p catBumpParams) (int64, error) {
+	return pgsqlgen.New(db).BumpCatalogTemplate(ctx, pgsqlgen.BumpCatalogTemplateParams(p))
+}
+
+func (pgsqlQuerier) UpdateCatalogTemplate(ctx context.Context, db backend.DBTX, p catUpdParams) (int64, error) {
+	return pgsqlgen.New(db).UpdateCatalogTemplate(ctx, pgsqlgen.UpdateCatalogTemplateParams(p))
+}
+
+func (pgsqlQuerier) WithdrawCatalogTemplate(ctx context.Context, db backend.DBTX, p withdrawParams) (int64, error) {
+	return pgsqlgen.New(db).WithdrawCatalogTemplate(ctx, pgsqlgen.WithdrawCatalogTemplateParams(p))
+}
+
+func (pgsqlQuerier) StampCatalogTemplates(ctx context.Context, db backend.DBTX, feedAt *types.DateTime) error {
+	return pgsqlgen.New(db).StampCatalogTemplates(ctx, feedAt)
 }

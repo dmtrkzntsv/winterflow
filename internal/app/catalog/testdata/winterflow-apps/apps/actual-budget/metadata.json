@@ -1,0 +1,23 @@
+{
+  "id": "6c0d3c1e-actual-budget",
+  "slug": "actual-budget",
+  "keywords": ["budget", "finance"],
+  "tags": ["finance"],
+  "alternative_to": ["YNAB", "Mint"],
+  "waiting_list": false,
+  "name": "Actual Budget",
+  "logo": "actual-budget/actual-budget.svg",
+  "screenshots": [],
+  "summary": "A local-first personal finance app",
+  "description": "Envelope budgeting that keeps your data on your server.",
+  "license": "MIT",
+  "license_url": "https://github.com/actualbudget/actual/blob/master/LICENSE.txt",
+  "repository_url": "https://github.com/actualbudget/actual",
+  "stars": 15000,
+  "last_updated": "2026-09-30",
+  "update_ttl_days": 30,
+  "registry_url": "https://hub.docker.com/r/actualbudget/actual-server",
+  "documentation_url": "https://actualbudget.org/docs",
+  "sponsorship": "https://opencollective.com/actual",
+  "homepage_url": "https://actualbudget.org"
+}

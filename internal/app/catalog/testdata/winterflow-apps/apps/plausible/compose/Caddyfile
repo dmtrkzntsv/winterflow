@@ -1,0 +1,4 @@
+:80 {
+	# {$UPSTREAM} and ${UPSTREAM} here are Caddy's, not compose's
+	reverse_proxy plausible:8000
+}

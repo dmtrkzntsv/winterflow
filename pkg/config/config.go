@@ -425,6 +425,47 @@ func (c *ServerConfig) IsStandalone() bool {
 	return c.mode == "standalone"
 }
 
+// DefaultCatalogURL is where winterflow.io publishes the catalog feed.
+const DefaultCatalogURL = "https://winterflow.io/catalog/catalog.json"
+
+// DefaultCatalogPublicKey verifies the published catalog feed: the ed25519
+// public key (standard base64) whose private half signs winterflow.io's
+// build of the feed.
+const DefaultCatalogPublicKey = "QAyhWPQDK0IS8UvVtNA3X/vXwSisba2Lx/7bxI3CG0E="
+
+// minCatalogRefresh keeps CATALOG_REFRESH from polling the feed more than
+// every 5 minutes.
+const minCatalogRefresh = 5 * time.Minute
+
+// GetCatalogURL is the catalog feed the API syncs (api, standalone).
+// Unset is DefaultCatalogURL; set but empty switches the catalog off.
+func (c *ServerConfig) GetCatalogURL() string {
+	if v, ok := os.LookupEnv("CATALOG_URL"); ok {
+		return strings.TrimSpace(v)
+	}
+	return DefaultCatalogURL
+}
+
+// GetCatalogPublicKey is the key the feed's signature must verify against
+// (api, standalone; default DefaultCatalogPublicKey).
+func (c *ServerConfig) GetCatalogPublicKey() string {
+	if v := strings.TrimSpace(os.Getenv("CATALOG_PUBLIC_KEY")); v != "" {
+		return v
+	}
+	return DefaultCatalogPublicKey
+}
+
+// GetCatalogRefresh is how often the API syncs the catalog feed (api,
+// standalone): a Go duration, default 24h; an unparsable or non-positive
+// value is 24h, anything under 5m is raised to 5m.
+func (c *ServerConfig) GetCatalogRefresh() time.Duration {
+	d, err := time.ParseDuration(strings.TrimSpace(os.Getenv("CATALOG_REFRESH")))
+	if err != nil || d <= 0 {
+		return 24 * time.Hour
+	}
+	return max(d, minCatalogRefresh)
+}
+
 // GetGitHubReleasesURL is the base URL self-update binaries are downloaded
 // from. The expected layout is {base}/{vYYMMDD.N}/winterflow-{component}-{os}-{arch}
 // where component is "standalone" or "agent" — the asset naming produced by

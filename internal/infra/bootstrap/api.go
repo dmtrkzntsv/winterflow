@@ -37,6 +37,7 @@ func BootstrapAPI(ctx context.Context, log *logger.Logger, cfg *config.ServerCon
 	// WireCore has started the response subscriber, so replies reach the
 	// waiting steps; the Hub consumes the request queue independently.
 	StartRollouts(ctx, deps)
+	StartCatalog(ctx, deps)
 	return deps
 }
 

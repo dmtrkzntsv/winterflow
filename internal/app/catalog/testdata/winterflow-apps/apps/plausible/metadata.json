@@ -1,0 +1,14 @@
+{
+  "slug": "plausible",
+  "name": "Plausible Analytics",
+  "logo": "plausible/plausible.png",
+  "summary": "Simple, privacy-friendly web analytics",
+  "description": "Lightweight analytics without cookies.",
+  "keywords": ["analytics"],
+  "tags": ["analytics"],
+  "alternative_to": ["Google Analytics"],
+  "license": "AGPL-3.0",
+  "repository_url": "https://github.com/plausible/analytics",
+  "documentation_url": "https://plausible.io/docs",
+  "waiting_list": false
+}

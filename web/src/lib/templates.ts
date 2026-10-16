@@ -47,6 +47,21 @@ export type Inspection = { detected: Detected; problem: string };
 
 export type TemplateSource = "org" | "catalog";
 
+// CatalogMeta is what the catalog says about a catalog template besides its
+// name and files (null for an org template). The lists are never null.
+export type CatalogMeta = {
+  summary: string;
+  description: string;
+  keywords: string[];
+  tags: string[];
+  alternative_to: string[]; // apps this one replaces, as search words
+  license: string;
+  homepage_url: string;
+  repository_url: string;
+  documentation_url: string;
+  logo_url: string;
+};
+
 export type TemplateSummary = {
   id: string;
   source: TemplateSource;
@@ -56,6 +71,7 @@ export type TemplateSummary = {
   instances: number; // the org's pending and created ones
   behind: number; // of those, on a revision older than the latest
   withdrawn_at: string | null; // when the catalog dropped it
+  catalog?: CatalogMeta | null; // a catalog template's metadata; null for an org one
   updated_at: string;
 };
 
@@ -82,6 +98,7 @@ export type TemplateView = {
   name: string;
   latest_revision: number;
   withdrawn_at: string | null;
+  catalog?: CatalogMeta | null;
   revision: number;
   body: TemplateBody;
   detected: Detected;

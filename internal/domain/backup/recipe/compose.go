@@ -41,14 +41,19 @@ func ParseCompose(files ...[]byte) (Compose, error) {
 	return ParseComposeNodes(DecodeFiles(files...)...)
 }
 
-// DecodeFiles decodes each compose file once into its YAML node tree; a
-// file that is not valid YAML is nil.
+// DecodeFiles decodes each compose file once into its YAML node tree, with
+// its aliases and merge keys expanded (expand): every reader of the tree
+// sees a service's merged keys as its own. A file that is not valid YAML,
+// or whose aliases expand past MaxExpandedNodes or into themselves, is nil.
 func DecodeFiles(files ...[]byte) []*yaml.Node {
 	out := make([]*yaml.Node, len(files))
 	for i, raw := range files {
 		var n yaml.Node
-		if yaml.Unmarshal(raw, &n) == nil {
-			out[i] = &n
+		if yaml.Unmarshal(raw, &n) != nil {
+			continue
+		}
+		if x, err := expand(&n); err == nil {
+			out[i] = x
 		}
 	}
 	return out

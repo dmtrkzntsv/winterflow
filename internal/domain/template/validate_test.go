@@ -1,6 +1,7 @@
 package template
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -36,6 +37,7 @@ func TestValidateRules(t *testing.T) {
 		"a long color":         {func(b *Body) { b.Color = strings.Repeat("c", 33) }, "color"},
 		"not YAML":             {func(b *Body) { b.Files["compose.yaml"] = "services: [\n" }, "not valid YAML"},
 		"an unknown block key": {func(b *Body) { b.Files["compose.yaml"] += "  volumes: {}\n" }, "x-winterflow.volumes"},
+		"an alias bomb":        {func(b *Body) { b.Files["compose.yaml"] = aliasBomb }, "not valid YAML"},
 		"a default off pattern": {func(b *Body) {
 			b.Files["compose.yaml"] = strings.Replace(notesCompose, `LANGUAGE: "en"`, `LANGUAGE: "english"`, 1)
 		}, "x-winterflow.variables.LANGUAGE.pattern"},
@@ -55,6 +57,18 @@ func TestValidateRules(t *testing.T) {
 		})
 	}
 }
+
+// aliasBomb is a dozen lines whose aliases would expand to ten million
+// nodes: refused as not valid YAML before it costs the API its memory.
+var aliasBomb = func() string {
+	out := "services: {app: {image: x}}\nx-a: &a [x, x, x, x, x, x, x, x, x, x]\n"
+	for i, prev := 0, "a"; i < 6; i++ {
+		name := fmt.Sprintf("x-l%d", i)
+		out += name + ": &" + name + " [" + strings.Repeat("*"+prev+", ", 9) + "*" + prev + "]\n"
+		prev = name
+	}
+	return out
+}()
 
 func TestValidateName(t *testing.T) {
 	if err := ValidateName("notes-2"); err != nil {
@@ -76,6 +90,9 @@ func TestWarnings(t *testing.T) {
 	b := notes()
 	b.Files["compose.yaml"] = strings.Replace(notesCompose, "    DB_PASSWORD: { encrypted: true }\n", "    DB_PASSWORD: { encrypted: true }\n    UNUSED: {}\n", 1) +
 		"# ${WF_APP_ID} ${ORG_SMTP}\n"
+	// compose interpolates only compose files: a reference in another file
+	// is the container's business (an nginx $uri, an envsubst template).
+	b.Files["nginx.conf"] = "location / { try_files $uri ${FRONT_URL}; }\n"
 	s, err := Validate(b)
 	if err != nil {
 		t.Fatal(err)

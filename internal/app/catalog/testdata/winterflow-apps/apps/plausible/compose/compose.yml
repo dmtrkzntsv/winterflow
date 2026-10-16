@@ -1,0 +1,34 @@
+x-env: &env
+  # Signs sessions. Generate with: openssl rand -base64 48
+  SECRET_KEY_BASE: "changeme"
+  CLICKHOUSE_DATABASE_URL: http://events:8123/plausible
+services:
+  plausible: &plausible
+    image: ghcr.io/plausible/community-edition:v2.1.4
+    environment:
+      <<: *env
+      # The public URL, e.g. https://plausible.example.com
+      BASE_URL: "http://localhost:8000"
+  migrate:
+    <<: *plausible
+    command: /entrypoint.sh db migrate
+  caddy:
+    image: caddy:2
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+  events:
+    image: clickhouse/clickhouse-server:24.3
+    volumes:
+      - events:/var/lib/clickhouse
+      - ./clickhouse/logs.xml:/etc/clickhouse-server/config.d/logs.xml:ro
+volumes:
+  events:
+x-winterflow:
+  expose:
+    - { container: caddy, port: 80 }
+  variables:
+    BASE_URL: { required: true, pattern: "^https?://.+" }
+    SECRET_KEY_BASE: { required: true, encrypted: true }
+  files:
+    - Caddyfile
+    - clickhouse/logs.xml

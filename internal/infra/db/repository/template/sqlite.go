@@ -5,6 +5,7 @@ import (
 
 	"winterflow/internal/infra/db/backend"
 	sqlitegen "winterflow/internal/infra/db/sqlc/gen/sqlite"
+	"winterflow/internal/infra/db/types"
 )
 
 type sqliteQuerier struct{}
@@ -97,4 +98,24 @@ func (sqliteQuerier) GetLiveTemplateInstanceForApp(ctx context.Context, db backe
 
 func (sqliteQuerier) RetireTemplateInstancesForApp(ctx context.Context, db backend.DBTX, p retireParams) error {
 	return sqlitegen.New(db).RetireTemplateInstancesForApp(ctx, p)
+}
+
+func (sqliteQuerier) ListCatalogTemplates(ctx context.Context, db backend.DBTX) ([]catalogRow, error) {
+	return sqlitegen.New(db).ListCatalogTemplates(ctx)
+}
+
+func (sqliteQuerier) BumpCatalogTemplate(ctx context.Context, db backend.DBTX, p catBumpParams) (int64, error) {
+	return sqlitegen.New(db).BumpCatalogTemplate(ctx, p)
+}
+
+func (sqliteQuerier) UpdateCatalogTemplate(ctx context.Context, db backend.DBTX, p catUpdParams) (int64, error) {
+	return sqlitegen.New(db).UpdateCatalogTemplate(ctx, p)
+}
+
+func (sqliteQuerier) WithdrawCatalogTemplate(ctx context.Context, db backend.DBTX, p withdrawParams) (int64, error) {
+	return sqlitegen.New(db).WithdrawCatalogTemplate(ctx, p)
+}
+
+func (sqliteQuerier) StampCatalogTemplates(ctx context.Context, db backend.DBTX, feedAt *types.DateTime) error {
+	return sqlitegen.New(db).StampCatalogTemplates(ctx, feedAt)
 }

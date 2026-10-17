@@ -5026,6 +5026,51 @@ paths:
       - storages
       x-operation-result:
         $ref: '#/components/schemas/TestStorageResponse'
+  /api/v1/template/catalog-logo:
+    get:
+      description: Only the current catalog logo at winterflow.io/catalog/logos is
+        fetched. Missing, unsafe, or unavailable images answer 404.
+      operationId: templateCatalogLogo
+      parameters:
+      - in: query
+        name: id
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          content:
+            image/*:
+              schema:
+                type: string
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not Found
+      security:
+      - bearer: []
+      - cookie: []
+      summary: The current logo of a catalog template, served from this origin
+      tags:
+      - templates
   /api/v1/template/delete-template:
     post:
       description: A catalog template is read-only (403).

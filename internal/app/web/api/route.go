@@ -69,7 +69,10 @@ type Route struct {
 	// Raw marks a library route whose body is Response itself, not the
 	// webutil envelope; its errors are the library's {"error": "..."}.
 	Raw bool
-	// ContentType is a Raw route's response media type (default JSON).
+	// Binary answers its 200 with image bytes, while errors retain the
+	// ordinary API error envelope. ContentType documents the image media type.
+	Binary bool
+	// ContentType is a Raw or Binary route's response media type (default JSON).
 	ContentType string
 	// Form is an application/x-www-form-urlencoded alternative to Request.
 	Form any

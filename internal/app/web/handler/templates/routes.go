@@ -30,6 +30,12 @@ func (h *Handler) templateRoutes() []api.Route {
 			Query: TemplateQuery{}, Response: tuc.TemplateView{}, Errors: org,
 		},
 		{
+			Method: http.MethodGet, Path: "/api/v1/template/catalog-logo", Handler: h.CatalogLogo, Auth: api.User,
+			Summary: "The current logo of a catalog template, served from this origin", Tag: "templates",
+			Description: "Only the current catalog logo at winterflow.io/catalog/logos is fetched. Missing, unsafe, or unavailable images answer 404.",
+			Query:       CatalogLogoQuery{}, Binary: true, ContentType: "image/*", Errors: org,
+		},
+		{
 			Method: http.MethodPost, Path: "/api/v1/template/save-template", Handler: h.SaveTemplate, Auth: api.User,
 			Summary: "Create an org template or add a revision", Tag: "templates",
 			Description: "The compose files' x-winterflow block declares the variables, exposed ports and backups. " +

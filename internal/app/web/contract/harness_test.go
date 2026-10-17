@@ -70,6 +70,10 @@ var testLog = logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Ser
 // newEnv builds the stack the way BootstrapStandalone does (WireCore over an
 // in-memory bus + InProcessBridge), minus Docker, certs and ingress.
 func newEnv(t *testing.T) *env {
+	return newEnvWithLogoClient(t, nil)
+}
+
+func newEnvWithLogoClient(t *testing.T, logoClient *http.Client) *env {
 	t.Helper()
 	cfg := config.NewServerConfig("standalone")
 	conn, err := db.Open(testLog, freshDB(t))
@@ -89,6 +93,7 @@ func newEnv(t *testing.T) *env {
 	deps, _ := bootstrap.WireCore(ctx, b, conn, cfg, testLog, bootstrap.WithRolloutTiming(rollouts.Timing{
 		HealthSettle: 100 * time.Millisecond, HealthPoll: 50 * time.Millisecond,
 	}))
+	deps.CatalogLogoClient = logoClient
 	agent := newFakeAgent()
 	if err := appagent.NewInProcessBridge(b, cfg, agent, testLog).Start(ctx); err != nil {
 		t.Fatal(err)

@@ -4,6 +4,7 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { AppIcon } from "@/components/app-icon";
+import { CatalogLogo } from "@/components/catalog-logo";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { EmptyState } from "@/components/empty-state";
 import { ErrorText } from "@/components/error-text";
@@ -116,11 +117,11 @@ export function TemplateInstances({
             <Row
               key={inst.key}
               to={appPath(inst.server_id, inst.app_id)}
-              leading={<AppIcon name={name} icon={view.body.icon} color={view.body.color} className="size-8 shrink-0 text-sm" />}
+              leading={view.source === "catalog" ? <CatalogLogo template={view} icon={view.body.icon} color={view.body.color} className="size-8 shrink-0 text-sm" /> : <AppIcon name={name} icon={view.body.icon} color={view.body.color} className="size-8 shrink-0 text-sm" />}
               title={name}
               description={`on ${serverName(inst.server_id)}`}
               detail={pending && inst.last_error ? <ErrorText text={inst.last_error} /> : null}
-              meta={old ? `Version ${inst.revision} (latest is ${latest})` : `Version ${inst.revision}`}
+              meta={old ? `Version ${inst.revision} (latest is ${latest})${view.source === "catalog" ? " · Upgrade available" : ""}` : `Version ${inst.revision}`}
               actions={
                 <>
                   {pending ? (

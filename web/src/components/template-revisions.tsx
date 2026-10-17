@@ -6,6 +6,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { InlineError } from "@/components/inline-error";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
 import { diffLines, hunks } from "@/lib/line-diff";
+import { catalogComposeExample } from "@/lib/catalog-compose";
 import type { TemplateBody, TemplateView } from "@/lib/templates";
 import { cn, relativeTime } from "@/lib/utils";
 
@@ -14,16 +15,19 @@ const SETTINGS = "template settings";
 
 // revisionTexts are a body's comparable texts: each file, and its other
 // fields as indented JSON.
-function revisionTexts(body: TemplateBody): Record<string, string> {
+function revisionTexts(body: TemplateBody, catalog: boolean): Record<string, string> {
   const { files, ...rest } = body;
-  return { ...(files ?? {}), [SETTINGS]: JSON.stringify(rest, null, 2) };
+  const shownFiles = Object.fromEntries(Object.entries(files ?? {}).map(([name, content]) => [
+    name, catalog && /\.ya?ml$/i.test(name) ? catalogComposeExample(content) : content,
+  ]));
+  return { ...shownFiles, [SETTINGS]: JSON.stringify(rest, null, 2) };
 }
 
 type FileDiff = { name: string; status: "added" | "removed" | "changed"; hunks: ReturnType<typeof hunks> };
 
-function diffBodies(before: TemplateBody, after: TemplateBody): FileDiff[] {
-  const a = revisionTexts(before);
-  const b = revisionTexts(after);
+function diffBodies(before: TemplateBody, after: TemplateBody, catalog: boolean): FileDiff[] {
+  const a = revisionTexts(before, catalog);
+  const b = revisionTexts(after, catalog);
   const names = [...new Set([...Object.keys(a), ...Object.keys(b)])].sort();
   const out: FileDiff[] = [];
   for (const name of names) {
@@ -55,7 +59,7 @@ export function TemplateRevisions({ view }: { view: TemplateView }) {
     setFailed((f) => (f?.revision === revision ? null : f));
     try {
       const [prev, cur] = await Promise.all([api.getRevision(view.id, revision - 1), api.getRevision(view.id, revision)]);
-      setDiffs((d) => ({ ...d, [revision]: diffBodies(prev.body, cur.body) }));
+      setDiffs((d) => ({ ...d, [revision]: diffBodies(prev.body, cur.body, view.source === "catalog") }));
     } catch (e) {
       setFailed({ revision, message: e instanceof Error ? e.message : "Failed to load the versions" });
     }

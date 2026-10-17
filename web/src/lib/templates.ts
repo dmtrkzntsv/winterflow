@@ -56,6 +56,9 @@ export type CatalogMeta = {
   tags: string[];
   alternative_to: string[]; // apps this one replaces, as search words
   license: string;
+  license_url?: string;
+  stars?: number | null;
+  sponsorship_url?: string;
   homepage_url: string;
   repository_url: string;
   documentation_url: string;

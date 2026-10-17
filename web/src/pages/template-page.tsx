@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
-import { Ellipsis, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, BookOpen, Ellipsis, ExternalLink, Github, Heart, Plus, Star, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -31,6 +31,8 @@ import { useRolloutsApi } from "@/hooks/use-rollouts-api";
 import { useTabParam } from "@/hooks/use-tab-param";
 import { useTemplateInspection } from "@/hooks/use-template-inspection";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
+import { useHeadingInView, usePageTitle } from "@/layouts/use-page-title";
+import { catalogComposeExample } from "@/lib/catalog-compose";
 import { isActive } from "@/lib/rollouts";
 import { bodyFromDraft, draftFromBody, draftProblem, emptyDraft, type DraftState, type TemplateDraft } from "@/lib/template-draft";
 import { ApiError, usageLabel, type InstanceView, type TemplateView } from "@/lib/templates";
@@ -64,28 +66,70 @@ function CatalogTemplatePage({
   onInstancesChanged: () => void;
 }) {
   const [confirmUpgrade, setConfirmUpgrade] = useState(false);
+  usePageTitle(view.name);
+  const heading = useHeadingInView<HTMLHeadingElement>();
   const behind = instances.filter((i) => i.state === "created" && i.revision < view.latest_revision).length;
   const files = Object.entries(view.body.files ?? {}).sort(([a], [b]) => a.localeCompare(b));
   const catalog = view.catalog;
   return (
     <div className="space-y-6">
-      <PageHeader
-        title={view.name}
-        subtitle={catalog?.summary}
-        back={BACK}
-        actions={!view.withdrawn_at
-          ? <CreateAppButton templateId={view.id} servers={servers} activeServerId={activeServerId} />
-          : null}
-      />
-      <div className="flex items-start gap-4">
-        <CatalogLogo template={view} className="size-16 shrink-0 text-xl" />
-        <div className="min-w-0 space-y-2 text-sm">
-          {catalog?.description ? <p>{catalog.description}</p> : null}
-          <div className="flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground">
-            {catalog?.license ? <span>License: {catalog.license}</span> : null}
-            {catalog?.homepage_url ? <a href={catalog.homepage_url} target="_blank" rel="noreferrer" className="text-foreground underline underline-offset-2">Homepage</a> : null}
-          </div>
+      <Link to={BACK.to} className="inline-flex min-h-9 items-center gap-2 text-sm text-muted-foreground hover:text-foreground">
+        <ArrowLeft className="size-4" aria-hidden /> Back to {BACK.label}
+      </Link>
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_18rem]">
+        <div className="space-y-6">
+          <header className="flex flex-col gap-5 sm:flex-row sm:items-start">
+            <CatalogLogo template={view} className="size-28 shrink-0 rounded-xl border bg-card p-2 text-3xl shadow-sm" />
+            <div className="min-w-0 space-y-3">
+              <h1 ref={heading} className="text-3xl font-semibold tracking-tight">{view.name}</h1>
+              {catalog?.summary ? <p className="text-base text-muted-foreground">{catalog.summary}</p> : null}
+              {catalog?.tags?.length ? (
+                <div className="flex flex-wrap gap-2">
+                  {catalog.tags.map((tag) => <span key={tag} className="rounded-md border bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground">{tag}</span>)}
+                </div>
+              ) : null}
+              {catalog?.alternative_to?.length ? (
+                <p className="text-sm text-muted-foreground">Alternative to: {catalog.alternative_to.join(", ")}</p>
+              ) : null}
+              <div className="flex flex-wrap gap-2 pt-1">
+                {catalog?.homepage_url ? <a href={catalog.homepage_url} target="_blank" rel="noreferrer" className="inline-flex min-h-9 items-center gap-2 rounded-md border px-3 py-1.5 text-sm font-medium hover:bg-muted"><ExternalLink className="size-4" aria-hidden /> Website</a> : null}
+                {catalog?.repository_url ? <a href={catalog.repository_url} target="_blank" rel="noreferrer" className="inline-flex min-h-9 items-center gap-2 rounded-md border px-3 py-1.5 text-sm font-medium hover:bg-muted"><Github className="size-4" aria-hidden /> Repository</a> : null}
+                {catalog?.documentation_url ? <a href={catalog.documentation_url} target="_blank" rel="noreferrer" className="inline-flex min-h-9 items-center gap-2 rounded-md border px-3 py-1.5 text-sm font-medium hover:bg-muted"><BookOpen className="size-4" aria-hidden /> Docs</a> : null}
+              </div>
+            </div>
+          </header>
+          {catalog?.description ? (
+            <section aria-label="About" className="border-t pt-5">
+              <h2 className="mb-2 text-lg font-semibold">About</h2>
+              <p className="whitespace-pre-line text-sm leading-6 text-muted-foreground">{catalog.description}</p>
+            </section>
+          ) : null}
         </div>
+        <aside className="self-start rounded-xl border bg-card p-5 text-sm">
+          <h2 className="mb-4 text-base font-semibold">Details</h2>
+          {catalog?.license ? (
+            <div className="flex items-center justify-between gap-3 py-2">
+              <span className="text-muted-foreground">License</span>
+              {catalog.license_url ? <a href={catalog.license_url} target="_blank" rel="noreferrer" className="font-medium text-primary hover:underline">{catalog.license}</a> : <span className="font-medium">{catalog.license}</span>}
+            </div>
+          ) : null}
+          {catalog?.repository_url ? (
+            <div className="flex items-center justify-between gap-3 py-2">
+              <span className="text-muted-foreground">GitHub stars</span>
+              {catalog.stars != null ? <span className="inline-flex items-center gap-1 font-medium"><Star className="size-4 fill-amber-400 text-amber-400" aria-hidden /> {catalog.stars.toLocaleString()}</span> : <a href={catalog.repository_url} target="_blank" rel="noreferrer" className="text-primary hover:underline">See on GitHub</a>}
+            </div>
+          ) : null}
+          {!view.withdrawn_at ? <div className="mt-5"><CreateAppButton templateId={view.id} servers={servers} activeServerId={activeServerId} /></div> : null}
+          {catalog?.repository_url || catalog?.sponsorship_url ? (
+            <div className="mt-5 border-t pt-4">
+              <h3 className="mb-2 font-medium">Support this project</h3>
+              <div className="flex flex-col gap-2 text-primary">
+                {catalog.repository_url ? <a href={catalog.repository_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 hover:underline"><Github className="size-4" aria-hidden /> Add a star on GitHub ↗</a> : null}
+                {catalog.sponsorship_url ? <a href={catalog.sponsorship_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 hover:underline"><Heart className="size-4" aria-hidden /> Sponsor this project ↗</a> : null}
+              </div>
+            </div>
+          ) : null}
+        </aside>
       </div>
       {view.withdrawn_at ? (
         <div role="note" className="rounded-md border bg-muted/30 px-4 py-3 text-sm">
@@ -104,7 +148,7 @@ function CatalogTemplatePage({
         {files.length ? files.map(([filename, content]) => (
           <div key={filename} className="overflow-hidden rounded-md border">
             <h3 className="border-b bg-muted/40 px-3 py-2 font-mono text-xs">{filename}</h3>
-            <pre aria-label={`Content of ${filename}`} className="max-h-96 overflow-auto p-3 font-mono text-xs leading-5">{content}</pre>
+            <pre aria-label={`Content of ${filename}`} className="max-h-96 overflow-auto p-3 font-mono text-xs leading-5">{/\.ya?ml$/i.test(filename) ? catalogComposeExample(content) : content}</pre>
           </div>
         )) : <p className="text-sm text-muted-foreground">No files in this version.</p>}
       </section>

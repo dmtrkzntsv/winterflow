@@ -6424,10 +6424,18 @@ components:
           - "null"
         license:
           type: string
+        license_url:
+          type: string
         logo_url:
           type: string
         repository_url:
           type: string
+        sponsorship_url:
+          type: string
+        stars:
+          type:
+          - "null"
+          - integer
         summary:
           type: string
         tags:
@@ -6443,6 +6451,7 @@ components:
       - tags
       - alternative_to
       - license
+      - license_url
       - homepage_url
       - repository_url
       - documentation_url

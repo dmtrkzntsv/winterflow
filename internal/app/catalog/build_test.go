@@ -97,6 +97,7 @@ func TestBuildTheFixture(t *testing.T) {
 	}
 	budget, plausible := f.Apps[0], f.Apps[1]
 	if budget.Slug != "actual-budget" || budget.Name != "Actual Budget" || budget.License != "MIT" ||
+		budget.Stars == nil || *budget.Stars != 15000 || budget.LicenseURL != "https://github.com/actualbudget/actual/blob/master/LICENSE.txt" || budget.SponsorshipURL != "https://opencollective.com/actual" ||
 		budget.LogoURL != "https://winterflow.io/catalog/logos/actual-budget.svg" ||
 		!reflect.DeepEqual(budget.AlternativeTo, []string{"YNAB", "Mint"}) || budget.HomepageURL != "https://actualbudget.org" {
 		t.Fatalf("actual-budget = %+v", budget)

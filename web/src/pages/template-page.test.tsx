@@ -91,14 +91,17 @@ function catalogView(withdrawn = false): TemplateView {
       tags: [],
       alternative_to: ["YNAB"],
       license: "MIT",
+      license_url: "https://example.org/license",
+      stars: 11155,
+      sponsorship_url: "https://example.org/sponsor",
       homepage_url: "https://example.org/actual",
-      repository_url: "",
-      documentation_url: "",
+      repository_url: "https://github.com/example/actual",
+      documentation_url: "https://example.org/docs",
       logo_url: "",
     },
     body: {
       ...BODY,
-      files: { "compose.yaml": "services:\n  actual:\n    image: actual:old\n" },
+      files: { "compose.yml": "services:\n  actual:\n    image: actual:old\nx-winterflow:\n  expose:\n    - { container: actual, port: 8080 }\n" },
       summary: "Frozen summary",
       description: "Frozen description",
       icon: "book",
@@ -162,10 +165,16 @@ describe("TemplatePage", () => {
     expect(await screen.findByRole("heading", { name: "Actual Budget" })).toBeInTheDocument();
     expect(screen.getByText("Current catalog summary")).toBeInTheDocument();
     expect(screen.getByText("Current catalog description")).toBeInTheDocument();
-    expect(screen.getByText("License: MIT")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Homepage" })).toHaveAttribute("href", "https://example.org/actual");
-    expect(screen.getByRole("link", { name: "Homepage" })).toHaveAttribute("rel", "noreferrer");
-    expect(screen.getByLabelText("Content of compose.yaml")).toHaveTextContent("image: actual:old");
+    expect(screen.getByText("Alternative to: YNAB")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Website" })).toHaveAttribute("href", "https://example.org/actual");
+    expect(screen.getByRole("link", { name: "Website" })).toHaveAttribute("rel", "noreferrer");
+    expect(screen.getByRole("link", { name: "Repository" })).toHaveAttribute("href", "https://github.com/example/actual");
+    expect(screen.getByRole("link", { name: "Docs" })).toHaveAttribute("href", "https://example.org/docs");
+    expect(screen.getByRole("link", { name: "MIT" })).toHaveAttribute("href", "https://example.org/license");
+    expect(screen.getByText("11,155")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Sponsor this project/ })).toHaveAttribute("href", "https://example.org/sponsor");
+    expect(screen.getByLabelText("Content of compose.yml")).toHaveTextContent("image: actual:old");
+    expect(screen.getByLabelText("Content of compose.yml")).not.toHaveTextContent("x-winterflow");
     expect(screen.getByRole("heading", { name: "Versions" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Apps using it" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Create app" })).toHaveAttribute("href", "/server/s1/new?from=template&template=c1");

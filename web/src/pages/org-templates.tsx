@@ -48,13 +48,12 @@ function CatalogCard({ template, used = false, onProgress }: {
   };
 
   return (
-    <li className="min-w-0 rounded-xl border bg-card p-4">
+    <li className="relative min-w-0 rounded-xl border bg-card p-4 transition-colors duration-150 hover:bg-muted/40 focus-within:ring-2 focus-within:ring-ring motion-reduce:transition-none">
+      <Link to={templatePath(template.id)} aria-label={template.name} className="absolute inset-0 rounded-xl focus-visible:outline-none" />
       <div className="flex items-start gap-3">
         <CatalogLogo template={template} className="size-10 shrink-0 text-base" />
         <div className="min-w-0 flex-1 space-y-1">
-          <Link to={templatePath(template.id)} className="block truncate text-[15px] font-semibold hover:underline focus-visible:underline">
-            {template.name}
-          </Link>
+          <p className="truncate text-[15px] font-semibold">{template.name}</p>
           {template.catalog?.summary ? <p className="text-sm text-muted-foreground">{template.catalog.summary}</p> : null}
           {used ? <p className="text-xs text-muted-foreground">{usageLabel(template)}</p> : null}
           {template.behind > 0 ? <p className="text-xs font-medium text-amber-700 dark:text-amber-400">Upgrade available</p> : null}
@@ -62,13 +61,13 @@ function CatalogCard({ template, used = false, onProgress }: {
         </div>
       </div>
       {used && template.behind > 0 ? (
-        <div className="mt-3 flex justify-end">
+        <div className="relative z-10 mt-3 flex justify-end">
           <Button size="sm" variant="outline" disabled={!!rollout && isActive(rollout)} onClick={() => setConfirm(true)}>
             Upgrade all
           </Button>
         </div>
       ) : null}
-      {used ? <div className="mt-3"><RolloutStrip rollout={rollout} serverName={() => "a server"} onStop={stop} /></div> : null}
+      {used ? <div className="relative z-10 mt-3"><RolloutStrip rollout={rollout} serverName={() => "a server"} onStop={stop} /></div> : null}
       <ConfirmDialog
         open={confirm}
         onOpenChange={setConfirm}

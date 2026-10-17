@@ -170,9 +170,30 @@ func TestCheck(t *testing.T) {
 		Summary: "A local-first personal finance app", Description: "Envelope budgeting.",
 		Keywords: []string{"budget"}, Tags: []string{}, AlternativeTo: []string{"YNAB"}, License: "MIT",
 		HomepageURL: "https://actualbudget.org", LogoURL: "https://winterflow.io/catalog/logos/actual-budget.png",
+		LicenseURL: "", SponsorshipURL: "",
 	}
 	if !meta.Equal(want) || meta.Tags == nil {
 		t.Fatalf("meta = %+v", meta)
+	}
+}
+
+func TestCheckPreservesOptionalMetadata(t *testing.T) {
+	e := entry()
+	stars := 5
+	e.Stars = &stars
+	e.LicenseURL = "https://example.com/license"
+	e.SponsorshipURL = "https://example.com/sponsor"
+	_, meta, err := e.Check()
+	if err != nil || meta.Stars == nil || *meta.Stars != stars || meta.LicenseURL != e.LicenseURL || meta.SponsorshipURL != e.SponsorshipURL {
+		t.Fatalf("meta = %+v, err = %v", meta, err)
+	}
+	raw, err := Encode(Feed{Format: FormatVersion, GeneratedAt: time.Now(), Apps: []Entry{e}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := Decode(raw)
+	if err != nil || f.Apps[0].Stars == nil || *f.Apps[0].Stars != stars || f.Apps[0].LicenseURL != e.LicenseURL || f.Apps[0].SponsorshipURL != e.SponsorshipURL {
+		t.Fatalf("entry = %+v, err = %v", f.Apps, err)
 	}
 }
 
@@ -192,6 +213,10 @@ func TestCheckRefuses(t *testing.T) {
 		"an empty tag":        {func(e *Entry) { e.Tags = []string{""} }, "tags[0]"},
 		"a long alternative":  {func(e *Entry) { e.AlternativeTo = []string{strings.Repeat("y", 101)} }, "alternative_to[0]"},
 		"a long license":      {func(e *Entry) { e.License = strings.Repeat("l", 101) }, "license"},
+		"negative stars":      {func(e *Entry) { n := -1; e.Stars = &n }, "stars"},
+		"excessive stars":     {func(e *Entry) { n := 1_000_000_001; e.Stars = &n }, "stars"},
+		"http license url":    {func(e *Entry) { e.LicenseURL = "http://example.com/license" }, "license_url"},
+		"http sponsorship":    {func(e *Entry) { e.SponsorshipURL = "http://example.com/sponsor" }, "sponsorship_url"},
 		"an http homepage":    {func(e *Entry) { e.HomepageURL = "http://actualbudget.org" }, "homepage_url"},
 		"a javascript logo":   {func(e *Entry) { e.LogoURL = "javascript:alert(1)" }, "logo_url"},
 		"a host-less URL":     {func(e *Entry) { e.RepositoryURL = "https:///x" }, "repository_url"},

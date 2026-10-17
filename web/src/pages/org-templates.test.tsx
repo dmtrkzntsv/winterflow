@@ -95,10 +95,13 @@ describe("OrgTemplatesPage", () => {
     expect(org.compareDocumentPosition(used) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(used.compareDocumentPosition(grid) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(within(used).getByRole("link", { name: "Actual Budget" })).toBeInTheDocument();
+    expect(within(used).getByRole("link", { name: "Actual Budget" })).toHaveClass("absolute", "inset-0");
+    expect(within(used).getByRole("link", { name: "Actual Budget" }).closest("li")).toContainElement(within(used).getByText("Private finances"));
     expect(within(used).getByText("Used by 2 apps · 1 on an older version")).toBeInTheDocument();
     expect(within(used).getByText("Upgrade available")).toBeInTheDocument();
     expect(within(grid).queryByText("Actual Budget")).not.toBeInTheDocument();
     expect(within(grid).getByRole("link", { name: "Blog" })).toBeInTheDocument();
+    expect(within(grid).getByRole("link", { name: "Blog" })).toHaveClass("absolute", "inset-0");
   });
 
   it("searches the remaining catalog by current summary, keyword and alternative", async () => {

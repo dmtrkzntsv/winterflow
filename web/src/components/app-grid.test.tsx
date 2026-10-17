@@ -70,7 +70,7 @@ describe("AppGrid", () => {
     listedInstances = [{ key: "k1", server_id: "srv-1", app_id: "a1", template_id: "t1", template_name: "Proxy", revision: 2, name: "Shop", values: {}, secrets: {}, hosts: [], state: "created", status_code: 1, last_error: "", created_at: "", updated_at: "" }];
     renderGrid({ apps: [app("a1", "Shop", { templateId: "t1" })] });
     expect(await within(card("Shop")).findByText("Upgrade available")).toBeInTheDocument();
-    expect(within(card("Shop")).getByRole("presentation")).toHaveAttribute("src", "http://localhost:3000/api/v1/template/catalog-logo?id=t1&v=https%3A%2F%2Fwinterflow.io%2Fcatalog%2Flogos%2Fproxy.svg");
+    expect(within(card("Shop")).getByRole("presentation")).toHaveAttribute("src", "https://winterflow.io/catalog/logos/proxy.svg");
   });
   it("opens an address under a registered domain by https, whatever the route's own flag says", async () => {
     const api = fakeAPI({

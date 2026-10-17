@@ -9,7 +9,7 @@
 - Reuse the shipped org template editor, live Detected panel, Save as template, instance form, hostname fields, backup storage choices, revision comparison, and rollout flow. Do not rebuild them.
 - `catalog.*` and the top-level template `name` are the current catalog identity and search data. `body.*`, `detected`, and the revision list describe immutable compose revisions. Thus a catalog detail page opened on an old revision still shows the current logo, description, license, and homepage. Never use `body.summary`, `body.description`, `body.icon`, or `body.color` as a catalog metadata fallback.
 - Keep withdrawn catalog templates visible on `/templates` only when the API lists them because this org has instances. Show the withdrawal note on their detail page; disable new installs. Existing instances, revision history, and upgrades remain accessible.
-- **Logos:** serve them through Winterflow, so the browser does not contact `winterflow.io`. Add an authenticated, same-origin image route keyed by catalog template ID. The server reads the current `catalog.logo_url`, accepts only `https://winterflow.io/catalog/logos/<safe filename>` (including redirects), bounds fetch time and bytes, checks the image type, and serves with `nosniff`, a restrictive policy for SVG, and short browser caching. Missing or failed images fall back to the existing `AppIcon`. A URL from another origin is never fetched by this route. This is one small API addition in the UI PR, not a change to feed sync or storage. No new page CSP exception is needed.
+- **Logos:** load the current `catalog.logo_url` directly in the browser. Missing or failed images fall back to the existing `AppIcon`. Browsers contact the catalog image host, and no image proxy route is needed. The page currently sends no Content Security Policy restricting image origins.
 - Old catalog revision pruning is outside this PR. Do not delete revisions or add retention settings.
 - The Templates **index** has no tabs: org templates first, Catalog below. Org template detail keeps its existing tabs; catalog detail has read-only Files, Versions, and Apps using it sections, with no edit/delete actions.
 
@@ -23,11 +23,10 @@
 
 ## Tasks
 
-### 1. Shared catalog presentation, search, and logo route
+### 1. Shared catalog presentation and search
 
 - [ ] Add a pure `templateSearch` helper in `web/src/lib/templates.ts` (or a nearby module): trim and case-fold the query; match name and summary for both sources, and `catalog.keywords` plus `catalog.alternative_to` for catalog entries. Preserve input order. Treat missing optional metadata and an empty query safely. Unit-test those fields and source order.
-- [ ] Build one reusable `CatalogLogo` component for cards, detail headers, palette rows, and instances. It uses the same-origin image URL for catalog entries with a logo and falls back to `AppIcon` on load failure or no logo. Keep useful accessible names and avoid a broken-image flash.
-- [ ] Add the authenticated image route to `internal/app/web/handler/templates/routes.go` and its handler. Resolve the template through the caller's org; refuse org templates, withdrawn entries without org access, non-catalog logo URLs, redirects outside the fixed origin/path, unsupported image types, and oversized responses. Use a deadline, bounded reads, `nosniff`, and a restrictive SVG response policy. Return a controlled miss so the component falls back. Inject the HTTP client for local server tests. Document the raw image response in the route table, register its image types in the contract validator, regenerate `api/openapi.yaml`, and add route and contract tests, including the no-arbitrary-fetch rule. Preserve the existing feed's `catalog.logo_url` unchanged.
+- [ ] Build one reusable `CatalogLogo` component for cards, detail headers, palette rows, and instances. It loads `catalog.logo_url` directly and falls back to `AppIcon` on load failure or no logo. Keep useful accessible names and avoid a broken-image flash.
 - [ ] Refactor `web/src/hooks/use-template-looks.ts` into the shared latest-org-view loader. Bound concurrent reads; cache by revision so picker, Templates, and palette can reuse results without loading every catalog body. Test stale result handling when the list changes.
 
 ### 2. New app picker and install header
@@ -52,7 +51,7 @@
 
 ### 5. Verification and delivery
 
-- [ ] Run focused Vitest files while building, then `pnpm --dir web run lint`, `pnpm --dir web run build`, and `make web-test`. Run Go handler/contract tests for the image route, `make openapi`, `go test ./...`, and `make test-pg` if Docker is available. Run the repo's changed-line coverage gate against `origin/main` and address any failures.
+- [ ] Run focused Vitest files while building, then `pnpm --dir web run lint`, `pnpm --dir web run build`, and `make web-test`. Run `make openapi`, `go test ./...`, and `make test-pg` if Docker is available. Run the repo's changed-line coverage gate against `origin/main` and address any failures.
 - [ ] Manually exercise a standalone instance with an active catalog: catalog-only New app, phone picker, install with values/hostname/backups, catalog detail and Upgrade all, and an instance after a newer feed revision. Capture desktop and phone screenshots for the PR.
 - [ ] Ship one PR with the spec and this plan linked, motivation, the logo decision, validation commands, screenshots, and any configuration note. Keep revision pruning for a separate proposal.
 
@@ -62,4 +61,4 @@
 2. The Templates index shows org entries, then used catalog entries, then the remaining catalog grid. Catalog detail is read-only, including for a withdrawn template that still has instances.
 3. The palette exposes org templates immediately and matching active catalog templates after typing, installing on the active server.
 4. Catalog logos and upgrade availability appear where catalog instances are shown. All catalog identity text and logos follow current `catalog.*`; compose files, detected fields, and revision diffs follow `body.*`.
-5. Browser image requests stay on the Winterflow origin, with fallback tiles when a logo cannot be served. No old catalog revision is pruned by this PR.
+5. Browser image requests use the current catalog URL, with fallback tiles when a logo cannot be loaded. No old catalog revision is pruned by this PR.

@@ -1,8 +1,6 @@
 package bootstrap
 
 import (
-	"net/http"
-
 	"winterflow/internal/domain/metrics"
 	"winterflow/internal/domain/port"
 	"winterflow/internal/domain/service/alerting"
@@ -37,8 +35,6 @@ type Deps struct {
 	SharedVariableRepository port.SharedVariableRepository
 	// TemplateRepository stores templates, their revisions and instances.
 	TemplateRepository port.TemplateRepository
-	// CatalogLogoClient optionally supplies the outbound logo transport.
-	CatalogLogoClient *http.Client
 	// CatalogRepository is the same repository as the catalog sync sees
 	// it (StartCatalog).
 	CatalogRepository port.CatalogRepository

@@ -150,7 +150,6 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 	templatesAPI := htemplates.NewHandler(&htemplates.Deps{
 		Logger:                  d.Log,
 		Templates:               d.TemplateRepository,
-		LogoClient:              d.CatalogLogoClient,
 		SharedVariables:         d.SharedVariableRepository,
 		Users:                   d.UserService,
 		Servers:                 d.ServerRepository,

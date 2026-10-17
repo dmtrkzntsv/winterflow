@@ -217,7 +217,7 @@ describe("TemplateFlow", () => {
     renderFlow("");
     await user.click(await screen.findByRole("button", { name: /Actual Budget/ }));
     await screen.findByText("Current catalog description");
-    expect(document.querySelector('img[src*="catalog-logo"]')).toHaveAttribute("src", expect.stringContaining("current.png"));
+    expect(document.querySelector('img[src*="winterflow.io/catalog/logos/"]')).toHaveAttribute("src", "https://winterflow.io/catalog/logos/current.png");
     await user.click(screen.getByRole("button", { name: "Advanced" }));
     await user.selectOptions(screen.getByLabelText("Version"), "2");
     expect(await screen.findByText("Current catalog description")).toBeInTheDocument();

@@ -110,7 +110,7 @@ describe("TemplateInstances", () => {
     renderInstances([inst({ revision: 2 })], catalogView);
     const row = screen.getByRole("listitem");
     expect(within(row).getByText(/Upgrade available/)).toBeInTheDocument();
-    expect(within(row).getByRole("presentation")).toHaveAttribute("src", "http://localhost:3000/api/v1/template/catalog-logo?id=t1&v=https%3A%2F%2Fwinterflow.io%2Fcatalog%2Flogos%2Fexample.svg");
+    expect(within(row).getByRole("presentation")).toHaveAttribute("src", "https://winterflow.io/catalog/logos/example.svg");
   });
   it("lists the apps per server with their version and status", () => {
     renderInstances([

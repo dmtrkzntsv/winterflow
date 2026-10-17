@@ -1,14 +1,13 @@
 import { useState } from "react";
 
 import { AppIcon } from "@/components/app-icon";
-import { apiBase } from "@/config";
 import type { CatalogMeta, TemplateSummary } from "@/lib/templates";
 import { cn } from "@/lib/utils";
 
 type LogoTemplate = Pick<TemplateSummary, "id" | "source" | "name"> & { catalog?: Pick<CatalogMeta, "logo_url"> | null };
 
-// The logo is requested from Winterflow. The colored initial remains behind
-// it until the image loads and is the fallback for a missing/broken logo.
+// The colored initial remains behind the catalog image until it loads and is
+// the fallback for a missing/broken logo.
 export function CatalogLogo({
   template,
   icon,
@@ -29,9 +28,10 @@ export function CatalogLogo({
       <AppIcon name={template.name} icon={icon} color={color} className="size-full" />
       {logo && failed !== key ? (
         <img
-          src={`${apiBase}/api/v1/template/catalog-logo?id=${encodeURIComponent(template.id)}&v=${encodeURIComponent(logo)}`}
+          src={logo}
           alt=""
           loading="lazy"
+          referrerPolicy="no-referrer"
           onLoad={() => setLoaded(key)}
           onError={() => setFailed(key)}
           className={cn("absolute inset-0 size-full rounded-md bg-card object-contain", loaded === key ? "opacity-100" : "opacity-0")}

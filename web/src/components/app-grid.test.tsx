@@ -6,14 +6,23 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppGrid } from "@/components/app-grid";
 import { AppsContext, type App, type AppsContextValue } from "@/context/apps-context-base";
 import { fakeAPI } from "@/test/fake-api";
+import type { InstanceView, TemplateSummary } from "@/lib/templates";
 
-afterEach(() => vi.unstubAllGlobals());
+let listedTemplates: TemplateSummary[] = [];
+let listedInstances: InstanceView[] = [];
+afterEach(() => {
+  vi.unstubAllGlobals();
+  listedTemplates = [];
+  listedInstances = [];
+});
 
 // Links point into the active server's scope (/server/:id/...).
 let activeServerId = "srv-1";
 // srv-1 runs the built-in proxy: its registered domains decide HTTPS.
 const servers = [{ id: "srv-1", features: { ingress: true } }];
+const templatesApi = { listTemplates: async () => listedTemplates, listInstances: async () => listedInstances };
 vi.mock("@/context/use-servers", () => ({ useServers: () => ({ activeServerId, servers }) }));
+vi.mock("@/hooks/use-templates-api", () => ({ useTemplatesApi: () => templatesApi }));
 
 const app = (id: string, name: string, over: Partial<App> = {}): App => ({
   id,
@@ -53,6 +62,16 @@ function renderGrid(over: Partial<AppsContextValue>) {
 const card = (name: string) => screen.getByRole("link", { name }).closest("li")!;
 
 describe("AppGrid", () => {
+  it("shows a catalog instance upgrade state even without an address or warning", async () => {
+    listedTemplates = [{
+      id: "t1", source: "catalog", slug: "proxy", name: "Proxy", latest_revision: 4, instances: 1, behind: 1,
+      withdrawn_at: null, updated_at: "", catalog: { summary: "", description: "", keywords: [], tags: [], alternative_to: [], license: "", homepage_url: "", repository_url: "", documentation_url: "", logo_url: "https://winterflow.io/catalog/logos/proxy.svg" },
+    }];
+    listedInstances = [{ key: "k1", server_id: "srv-1", app_id: "a1", template_id: "t1", template_name: "Proxy", revision: 2, name: "Shop", values: {}, secrets: {}, hosts: [], state: "created", status_code: 1, last_error: "", created_at: "", updated_at: "" }];
+    renderGrid({ apps: [app("a1", "Shop", { templateId: "t1" })] });
+    expect(await within(card("Shop")).findByText("Upgrade available")).toBeInTheDocument();
+    expect(within(card("Shop")).getByRole("presentation")).toHaveAttribute("src", "http://localhost:3000/api/v1/template/catalog-logo?id=t1&v=https%3A%2F%2Fwinterflow.io%2Fcatalog%2Flogos%2Fproxy.svg");
+  });
   it("opens an address under a registered domain by https, whatever the route's own flag says", async () => {
     const api = fakeAPI({
       "/api/v1/domain/get-domains": { domains: [{ name: "*.tunnel.example", tls: "off" }] },

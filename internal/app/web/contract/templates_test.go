@@ -1,6 +1,8 @@
 package contract_test
 
 import (
+	"bytes"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -185,3 +187,30 @@ func TestCatalogTemplatesAreReadOnly(t *testing.T) {
 	}
 	mallory.post(t, "/api/v1/template/delete-template", htpl.TemplateIDRequest{ID: cat}).expect(t, http.StatusForbidden)
 }
+
+// The browser sees a same-origin image, while only the server reaches the
+// fixed catalog logo origin. This also exercises the raw-image OpenAPI 200.
+func TestCatalogLogo(t *testing.T) {
+	t.Parallel()
+	image := []byte("\x89PNG\r\n\x1a\ncontract-logo")
+	client := &http.Client{Transport: logoRoundTrip(func(r *http.Request) (*http.Response, error) {
+		if r.URL.String() != "https://winterflow.io/catalog/logos/shop.png" {
+			t.Fatalf("unexpected outbound logo URL: %s", r.URL)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(bytes.NewReader(image)), ContentLength: int64(len(image))}, nil
+	})}
+	e := newEnvWithLogoClient(t, client)
+	owner := e.claim(t)
+	id := dbtest.ID(902)
+	catalogTemplate(t, e, id, "shop", shopBody(shopCompose))
+	r := owner.get(t, "/api/v1/template/catalog-logo", url.Values{"id": {id}}).expect(t, http.StatusOK)
+	if !bytes.Equal(r.Body, image) || r.Header.Get("Content-Type") != "image/png" || r.Header.Get("X-Content-Type-Options") != "nosniff" {
+		t.Fatalf("logo = %d %v %q", r.Status, r.Header, r.Body)
+	}
+	owner.get(t, "/api/v1/template/catalog-logo", url.Values{"id": {dbtest.ID(903)}}).expect(t, http.StatusNotFound)
+	e.anon().get(t, "/api/v1/template/catalog-logo", url.Values{"id": {id}}).expect(t, http.StatusUnauthorized)
+}
+
+type logoRoundTrip func(*http.Request) (*http.Response, error)
+
+func (f logoRoundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

@@ -13,6 +13,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { TabsContent } from "@/components/ui/tabs";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { CatalogLogo } from "@/components/catalog-logo";
 import { StickyActionBar } from "@/components/editor-section";
 import { InlineError } from "@/components/inline-error";
 import { NotFound } from "@/components/not-found";
@@ -42,6 +43,91 @@ type Tab = (typeof TABS)[number];
 const TAB_ALIASES: Readonly<Record<string, Tab>> = { instances: "apps", revisions: "versions" };
 
 const BACK = { to: TEMPLATES_PATH, label: "Templates" };
+
+function CatalogTemplatePage({
+  view,
+  instances,
+  servers,
+  activeServerId,
+  rollout,
+  stop,
+  onUpgradeAll,
+  onInstancesChanged,
+}: {
+  view: TemplateView;
+  instances: InstanceView[];
+  servers: { id: string; name: string }[];
+  activeServerId: string | null;
+  rollout: ReturnType<typeof useRollout>["rollout"];
+  stop: ReturnType<typeof useRollout>["stop"];
+  onUpgradeAll: () => Promise<void>;
+  onInstancesChanged: () => void;
+}) {
+  const [confirmUpgrade, setConfirmUpgrade] = useState(false);
+  const behind = instances.filter((i) => i.state === "created" && i.revision < view.latest_revision).length;
+  const files = Object.entries(view.body.files ?? {}).sort(([a], [b]) => a.localeCompare(b));
+  const catalog = view.catalog;
+  return (
+    <div className="space-y-6">
+      <PageHeader
+        title={view.name}
+        subtitle={catalog?.summary}
+        back={BACK}
+        actions={!view.withdrawn_at
+          ? <CreateAppButton templateId={view.id} servers={servers} activeServerId={activeServerId} />
+          : null}
+      />
+      <div className="flex items-start gap-4">
+        <CatalogLogo template={view} className="size-16 shrink-0 text-xl" />
+        <div className="min-w-0 space-y-2 text-sm">
+          {catalog?.description ? <p>{catalog.description}</p> : null}
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground">
+            {catalog?.license ? <span>License: {catalog.license}</span> : null}
+            {catalog?.homepage_url ? <a href={catalog.homepage_url} target="_blank" rel="noreferrer" className="text-foreground underline underline-offset-2">Homepage</a> : null}
+          </div>
+        </div>
+      </div>
+      {view.withdrawn_at ? (
+        <div role="note" className="rounded-md border bg-muted/30 px-4 py-3 text-sm">
+          Withdrawn from the catalog. Existing apps and versions remain available.
+        </div>
+      ) : null}
+      <RolloutStrip rollout={rollout} serverName={(id) => servers.find((s) => s.id === id)?.name ?? "a server"} onStop={stop} />
+      {behind > 0 ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-muted/30 px-4 py-3 text-sm">
+          <span>{behind} {behind === 1 ? "app has" : "apps have"} an upgrade available.</span>
+          <Button disabled={!!rollout && isActive(rollout)} onClick={() => setConfirmUpgrade(true)}>Upgrade all</Button>
+        </div>
+      ) : null}
+      <section aria-labelledby="catalog-files-heading" className="space-y-3">
+        <h2 id="catalog-files-heading" className="text-lg font-semibold">Files</h2>
+        {files.length ? files.map(([filename, content]) => (
+          <div key={filename} className="overflow-hidden rounded-md border">
+            <h3 className="border-b bg-muted/40 px-3 py-2 font-mono text-xs">{filename}</h3>
+            <pre aria-label={`Content of ${filename}`} className="max-h-96 overflow-auto p-3 font-mono text-xs leading-5">{content}</pre>
+          </div>
+        )) : <p className="text-sm text-muted-foreground">No files in this version.</p>}
+      </section>
+      <section aria-labelledby="catalog-versions-heading" className="space-y-3">
+        <h2 id="catalog-versions-heading" className="text-lg font-semibold">Versions</h2>
+        <TemplateRevisions view={view} />
+      </section>
+      <section aria-labelledby="catalog-apps-heading" className="space-y-3">
+        <h2 id="catalog-apps-heading" className="text-lg font-semibold">Apps using it</h2>
+        <TemplateInstances view={view} instances={instances} onChanged={onInstancesChanged} />
+      </section>
+      <ConfirmDialog
+        open={confirmUpgrade}
+        onOpenChange={setConfirmUpgrade}
+        destructive={false}
+        title={`Upgrade ${behind} ${behind === 1 ? "app" : "apps"} to version ${view.latest_revision}?`}
+        description="Apps are updated one at a time. An app needing a new value is skipped; the first failure stops the rest."
+        confirmLabel="Upgrade all"
+        onConfirm={onUpgradeAll}
+      />
+    </div>
+  );
+}
 
 // sameDraft says whether d still holds what base held. A field the editor
 // didn't touch keeps its reference; only the others are compared by value
@@ -271,6 +357,21 @@ export default function TemplatePage() {
         <PageHeader title={title} back={BACK} />
         <PageSpinner />
       </div>
+    );
+  }
+
+  if (view?.source === "catalog") {
+    return (
+      <CatalogTemplatePage
+        view={view}
+        instances={instances}
+        servers={servers}
+        activeServerId={activeServerId}
+        rollout={rollout}
+        stop={stop}
+        onUpgradeAll={upgradeAll}
+        onInstancesChanged={reloadInstances}
+      />
     );
   }
 

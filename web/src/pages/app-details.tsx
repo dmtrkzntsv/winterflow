@@ -252,6 +252,7 @@ export default function AppDetailsPage() {
         status={status}
         failed={failed}
         instance={inst}
+        template={ownership?.current ?? null}
         behind={behind}
         pending={pending}
         onControl={(action) => void runControl(action)}

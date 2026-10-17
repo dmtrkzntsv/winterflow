@@ -40,7 +40,9 @@ type RolloutQueue interface {
 // Deps wires the handler; with zero Deps (route documentation) it is never
 // called.
 type Deps struct {
-	Logger                  *logger.Logger
+	Logger *logger.Logger
+	// LogoClient is optional; injecting a client allows local image tests.
+	LogoClient              *http.Client
 	Templates               port.TemplateRepository
 	SharedVariables         tuc.SharedNames
 	Users                   webutil.OrgResolver
@@ -59,12 +61,14 @@ type Deps struct {
 
 // Handler serves the template and instance routes.
 type Handler struct {
-	uc        *tuc.UseCase
-	rollouts  RolloutQueue
-	users     webutil.OrgResolver
-	servers   InstanceServers
-	log       *logger.Logger
-	waitBound time.Duration
+	uc         *tuc.UseCase
+	rollouts   RolloutQueue
+	users      webutil.OrgResolver
+	servers    InstanceServers
+	log        *logger.Logger
+	logoClient *http.Client
+	templates  port.TemplateRepository
+	waitBound  time.Duration
 }
 
 // NewHandler wires the usecases.
@@ -73,7 +77,7 @@ func NewHandler(d *Deps) *Handler {
 	if uc == nil {
 		uc = newUseCase(d)
 	}
-	return &Handler{uc: uc, rollouts: d.Rollouts, users: d.Users, servers: d.Servers, log: d.Logger, waitBound: WaitBound}
+	return &Handler{uc: uc, rollouts: d.Rollouts, users: d.Users, servers: d.Servers, log: d.Logger, waitBound: WaitBound, logoClient: d.LogoClient, templates: d.Templates}
 }
 
 // newUseCase builds a templates usecase from d's repositories.

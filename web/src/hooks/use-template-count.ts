@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
 import { useTemplatesApi } from "@/hooks/use-templates-api";
-import { orgTemplates } from "@/lib/templates";
 
 // useTemplateCount is how many templates of its own the organization has
 // (what New app → From a template offers), read once
@@ -16,7 +15,7 @@ export function useTemplateCount(enabled = true): number | null {
     if (!enabled || started.current) return;
     started.current = true;
     api.listTemplates().then(
-      (list) => setCount(orgTemplates(list).length),
+      (list) => setCount(list.filter((t) => t.source === "org" || (t.source === "catalog" && !t.withdrawn_at)).length),
       () => setCount(0),
     );
   }, [enabled, api]);

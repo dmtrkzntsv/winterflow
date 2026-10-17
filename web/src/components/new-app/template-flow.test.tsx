@@ -71,6 +71,38 @@ const VIEW: TemplateView = {
 };
 
 const SUMMARY = { id: "t1", source: "org", slug: "", name: "twillingate", latest_revision: 2, instances: 0, behind: 0, withdrawn_at: null, updated_at: "" };
+const CATALOG = {
+  ...SUMMARY,
+  id: "c1",
+  source: "catalog",
+  slug: "actual-budget",
+  name: "Actual Budget",
+  latest_revision: 3,
+  catalog: {
+    summary: "Plan your money",
+    description: "Current catalog description",
+    keywords: ["finance"],
+    tags: [],
+    alternative_to: ["mint"],
+    license: "MIT",
+    homepage_url: "https://actualbudget.org",
+    repository_url: "",
+    documentation_url: "",
+    logo_url: "https://winterflow.io/catalog/logos/actual-budget.png",
+  },
+};
+const CATALOG_VIEW: TemplateView = {
+  ...VIEW,
+  id: "c1",
+  source: "catalog",
+  slug: "actual-budget",
+  name: "Actual Budget",
+  latest_revision: 3,
+  revision: 3,
+  catalog: CATALOG.catalog,
+  body: { ...VIEW.body, summary: "Frozen old summary", description: "Frozen old description", icon: "Box" },
+  revisions: [{ revision: 3, note: "latest", created_at: "2026-10-16T10:00:00Z", created_by: "catalog" }, ...(VIEW.revisions ?? [])],
+};
 
 const waitFor_ = vi.fn();
 const notifications = { connected: true, subscribe: () => () => {}, waitFor: waitFor_ } as NotificationsContextValue;
@@ -115,12 +147,12 @@ function held(api: ReturnType<typeof fakeAPI>, path: string) {
   return release;
 }
 
-function renderFlow() {
+function renderFlow(initialTemplate = "t1") {
   return render(
     <MemoryRouter initialEntries={["/server/s1/new?from=template"]}>
       <NotificationsContext.Provider value={notifications}>
         <Routes>
-          <Route path="/server/s1/new" element={<TemplateFlow serverId="s1" />} />
+          <Route path="/server/s1/new" element={<TemplateFlow serverId="s1" initialTemplate={initialTemplate} />} />
           <Route path="/server/s1/app/:appId" element={<p>the new app</p>} />
           <Route path="/templates" element={<p>templates</p>} />
         </Routes>
@@ -150,11 +182,85 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("TemplateFlow", () => {
-  it("picks the only template and asks for its required values first", async () => {
+  it("searches both sources by summary, keywords, and alternative-to", async () => {
+    const user = userEvent.setup();
+    fakeAPI(routes({
+      "/api/v1/template/get-templates": { templates: [SUMMARY, CATALOG] },
+      "/api/v1/template/get-template": (_: unknown, q: URLSearchParams) => q.get("id") === "c1" ? CATALOG_VIEW : VIEW,
+    }));
+    renderFlow("");
+    const search = await screen.findByRole("searchbox", { name: "Search templates" });
+    await user.type(search, "analytics");
+    expect(await screen.findByRole("button", { name: /twillingate/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Actual Budget/ })).not.toBeInTheDocument();
+    await user.clear(search);
+    await user.type(search, "finance");
+    expect(screen.getByRole("button", { name: /Actual Budget/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /twillingate/ })).not.toBeInTheDocument();
+    await user.clear(search);
+    await user.type(search, "mint");
+    expect(screen.getByRole("button", { name: /Actual Budget/ })).toBeInTheDocument();
+  });
+
+  it("installs a catalog template using current metadata and the selected revision's form", async () => {
+    const user = userEvent.setup();
+    const newerCatalogView = {
+      ...CATALOG_VIEW,
+      catalog: { ...CATALOG_VIEW.catalog!, logo_url: "https://winterflow.io/catalog/logos/current.png" },
+    };
+    const api = fakeAPI(routes({
+      "/api/v1/template/get-templates": { templates: [CATALOG] },
+      "/api/v1/template/get-template": (_: unknown, q: URLSearchParams) =>
+        q.get("revision") === "2" ? { ...newerCatalogView, revision: 2 } : newerCatalogView,
+      "/api/v1/instance/create-instance": { request_id: "" },
+    }));
+    renderFlow("");
+    await user.click(await screen.findByRole("button", { name: /Actual Budget/ }));
+    await screen.findByText("Current catalog description");
+    expect(document.querySelector('img[src*="catalog-logo"]')).toHaveAttribute("src", expect.stringContaining("current.png"));
+    await user.click(screen.getByRole("button", { name: "Advanced" }));
+    await user.selectOptions(screen.getByLabelText("Version"), "2");
+    expect(await screen.findByText("Current catalog description")).toBeInTheDocument();
+    expect(screen.queryByText("Frozen old description")).not.toBeInTheDocument();
+    expect(screen.getByText("License: MIT")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Homepage" })).toHaveAttribute("href", "https://actualbudget.org");
+    expect(screen.getByRole("link", { name: "Homepage" })).toHaveAttribute("rel", "noreferrer");
+    await fill(user);
+    await user.click(screen.getByRole("button", { name: "Install" }));
+    expect(await screen.findByText("the new app")).toBeInTheDocument();
+    expect(api.posted("/api/v1/instance/create-instance")[0]).toMatchObject({ template_id: "c1", revision: 2, name: "Actual Budget" });
+  });
+
+  it("does not open a withdrawn direct template link", async () => {
+    fakeAPI(routes({ "/api/v1/template/get-templates": { templates: [SUMMARY, { ...CATALOG, withdrawn_at: "2026-10-16T00:00:00Z" }] } }));
+    renderFlow("c1");
+    expect(await screen.findByRole("alert")).toHaveTextContent("no longer available");
+    expect(screen.getByRole("button", { name: /twillingate/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Actual Budget/ })).not.toBeInTheDocument();
+  });
+
+  it("uses a full-screen sheet for the picker on phones", async () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: query === "(max-width: 639px)",
+      media: query,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }));
+    const user = userEvent.setup();
+    fakeAPI(routes({ "/api/v1/template/get-templates": { templates: [CATALOG] }, "/api/v1/template/get-template": CATALOG_VIEW }));
+    renderFlow("");
+    const sheet = await screen.findByRole("dialog", { name: "Choose a template" });
+    expect(sheet).toHaveClass("!h-[100svh]", "!w-screen");
+    await user.click(screen.getByRole("button", { name: /Actual Budget/ }));
+    expect(await screen.findByLabelText("App name")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Choose a template" })).not.toBeInTheDocument();
+  });
+
+  it("opens a direct template link and asks for its required values first", async () => {
     const user = userEvent.setup();
     fakeAPI(routes());
     renderFlow();
-    expect(await screen.findByRole("button", { name: /twillingate/ })).toHaveAttribute("aria-pressed", "true");
+    expect(await screen.findByText("twillingate")).toBeInTheDocument();
     expect(await screen.findByText("Analytics for one tenant")).toBeInTheDocument();
     const fields = await screen.findAllByRole("textbox");
     expect(fields[0]).toHaveAccessibleName("App name");
@@ -172,7 +278,7 @@ describe("TemplateFlow", () => {
     expect(screen.queryByText("Enter a value: this variable is required.")).not.toBeInTheDocument();
   });
 
-  it("lists the org's own templates only, and waits for a pick when there are several", async () => {
+  it("lists org templates before catalog templates, then opens the picked form", async () => {
     const user = userEvent.setup();
     const api = fakeAPI(
       routes({
@@ -183,10 +289,10 @@ describe("TemplateFlow", () => {
           q.get("id") === "t2" ? { ...VIEW, id: "t2", name: "blog", latest_revision: 4, revision: 4 } : VIEW,
       }),
     );
-    renderFlow();
-    expect(await screen.findByText("Pick a template to continue.")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Catalog app/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /blog/ })).toHaveTextContent("Version 4");
+    renderFlow("");
+    expect(await screen.findByRole("searchbox", { name: "Search templates" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Catalog app/ })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Your templates" }).compareDocumentPosition(screen.getByRole("heading", { name: "Catalog" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await user.click(screen.getByRole("button", { name: /blog/ }));
     expect(await screen.findByLabelText("Instance name (NAME)")).toBeInTheDocument();
     // Each card's look is read once per revision; the pick reads the latest.
@@ -210,8 +316,8 @@ describe("TemplateFlow", () => {
         </NotificationsContext.Provider>
       </MemoryRouter>,
     );
-    expect(await screen.findByRole("button", { name: /blog/ })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.queryByText("Pick a template to continue.")).not.toBeInTheDocument();
+    expect(await screen.findByText("blog")).toBeInTheDocument();
+    expect(screen.queryByRole("searchbox", { name: "Search templates" })).not.toBeInTheDocument();
   });
 
   it("offers a hostname per http port on a server that routes them, checking its coverage", async () => {
@@ -228,12 +334,12 @@ describe("TemplateFlow", () => {
     await user.clear(host);
     await user.type(host, "bad_host!.com");
     await fill(user);
-    await user.click(screen.getByRole("button", { name: "Create app" }));
+    await user.click(screen.getByRole("button", { name: "Install" }));
     expect(host).toHaveAccessibleDescription(/This isn't a valid hostname./);
     expect(api.posted("/api/v1/instance/create-instance")).toEqual([]);
     await user.clear(host);
     await user.type(host, "shop.example.com");
-    await user.click(screen.getByRole("button", { name: "Create app" }));
+    await user.click(screen.getByRole("button", { name: "Install" }));
     await screen.findByText("the new app");
     expect(api.posted("/api/v1/instance/create-instance")[0]).toMatchObject({ hosts: [{ host: "shop.example.com", expose: "app:8080" }] });
   });
@@ -251,12 +357,12 @@ describe("TemplateFlow", () => {
     accepted(api);
     waitFor_.mockResolvedValue({ status: 0 });
     renderFlow();
-    await user.click(await screen.findByRole("button", { name: "Create app" }));
+    await user.click(await screen.findByRole("button", { name: "Install" }));
     expect(screen.getAllByText("Enter a value: this variable is required.")).toHaveLength(2);
     await waitFor(() => expect(screen.getByLabelText("Instance name (NAME)")).toHaveFocus());
     await user.type(screen.getByLabelText("Instance name (NAME)"), "shop");
     await user.type(screen.getByLabelText("SESSION_KEY"), "hunter2");
-    await user.click(screen.getByRole("button", { name: "Create app" }));
+    await user.click(screen.getByRole("button", { name: "Install" }));
     expect(await screen.findByText("the new app")).toBeInTheDocument();
     const [sent] = api.posted("/api/v1/instance/create-instance") as Record<string, unknown>[];
     expect(sent).toEqual({
@@ -283,7 +389,7 @@ describe("TemplateFlow", () => {
     renderFlow();
     await fill(user);
     expect(screen.getByLabelText("App name")).toHaveValue("twillingate 2");
-    await user.click(screen.getByRole("button", { name: "Create app" }));
+    await user.click(screen.getByRole("button", { name: "Install" }));
     expect(await screen.findByText("the new app")).toBeInTheDocument();
     expect(api.posted("/api/v1/instance/create-instance")[0]).toMatchObject({ name: "twillingate 2" });
   });
@@ -299,7 +405,7 @@ describe("TemplateFlow", () => {
     await user.type(field, "blog");
     expect(screen.getByText("Another app on this server already has this name.")).toBeInTheDocument();
     await user.clear(field);
-    await user.click(screen.getByRole("button", { name: "Create app" }));
+    await user.click(screen.getByRole("button", { name: "Install" }));
     expect(field).toHaveAccessibleDescription("Give the app a name.");
     expect(api.posted("/api/v1/instance/create-instance")).toEqual([]);
   });
@@ -313,7 +419,7 @@ describe("TemplateFlow", () => {
     await user.type(screen.getByLabelText("MEMORY_MAX"), "lo$ts");
     await user.click(screen.getByRole("button", { name: "More options" }));
     expect(screen.queryByLabelText("MEMORY_MAX")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Create app" }));
+    await user.click(screen.getByRole("button", { name: "Install" }));
     expect(screen.getByLabelText("MEMORY_MAX")).toHaveAccessibleDescription("A plain value can't contain $.");
     await waitFor(() => expect(screen.getByLabelText("MEMORY_MAX")).toHaveFocus());
     expect(screen.getByRole("alert")).toHaveTextContent("Some fields need attention.");
@@ -337,22 +443,22 @@ describe("TemplateFlow", () => {
     );
     renderFlow();
     await fill(user);
-    await user.click(screen.getByRole("button", { name: "Create app" }));
+    await user.click(screen.getByRole("button", { name: "Install" }));
     expect(await screen.findByRole("alert")).toHaveTextContent('"abc" is taken');
 
     refuse = false;
     accepted(api);
     waitFor_.mockResolvedValueOnce({ status: 1, error: "pull access denied" });
-    await user.click(screen.getByRole("button", { name: "Create app" }));
+    await user.click(screen.getByRole("button", { name: "Install" }));
     expect(await screen.findByText("pull access denied")).toBeInTheDocument();
     // The template and version are fixed once the API holds the key.
-    expect(screen.getByRole("button", { name: /twillingate/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Change template" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Advanced" }));
     expect(screen.getByLabelText("Version")).toBeDisabled();
 
     accepted(api, "/api/v1/instance/update-instance");
     waitFor_.mockResolvedValueOnce({ status: 0 });
-    await user.click(screen.getByRole("button", { name: "Create app" }));
+    await user.click(screen.getByRole("button", { name: "Install" }));
     expect(await screen.findByText("the new app")).toBeInTheDocument();
     const creates = api.posted("/api/v1/instance/create-instance") as { key: string }[];
     const updates = api.posted("/api/v1/instance/update-instance") as { key: string; secrets: unknown }[];
@@ -368,7 +474,7 @@ describe("TemplateFlow", () => {
     waitFor_.mockResolvedValueOnce({ status: 1, error: "Container web  Creating\nError: pull access denied\n" });
     renderFlow();
     await fill(user);
-    await user.click(screen.getByRole("button", { name: "Create app" }));
+    await user.click(screen.getByRole("button", { name: "Install" }));
     expect(await screen.findByText("Error: pull access denied")).toBeVisible();
     expect(screen.getByRole("alert")).toContainElement(screen.getByText("Details"));
     expect(screen.getByText(/Container web Creating/)).not.toBeVisible();
@@ -387,7 +493,7 @@ describe("TemplateFlow", () => {
     waitFor_.mockResolvedValueOnce({ status: 1, error: "docker compose up: exit status 1: port is already allocated" });
     renderFlow();
     await fill(user);
-    await user.click(screen.getByRole("button", { name: "Create app" }));
+    await user.click(screen.getByRole("button", { name: "Install" }));
     expect(await screen.findByText("the new app")).toBeInTheDocument();
     expect(noteDeployFailure).toHaveBeenCalledWith("app-9", "port is already allocated");
     expect(toast.error).toHaveBeenCalledWith("The app was created but couldn't start", {
@@ -400,7 +506,7 @@ describe("TemplateFlow", () => {
     fakeAPI(routes({ "/api/v1/instance/create-instance": new ApiError("bad value", 400) }));
     renderFlow();
     await fill(user);
-    await user.click(screen.getByRole("button", { name: "Create app" }));
+    await user.click(screen.getByRole("button", { name: "Install" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("bad value");
     expect(reconcile).not.toHaveBeenCalled();
   });
@@ -415,12 +521,12 @@ describe("TemplateFlow", () => {
     );
     renderFlow();
     await fill(user);
-    await user.click(screen.getByRole("button", { name: "Create app" }));
+    await user.click(screen.getByRole("button", { name: "Install" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("the key may be held");
 
     accepted(api, "/api/v1/instance/update-instance");
     waitFor_.mockResolvedValueOnce({ status: 0 });
-    await user.click(screen.getByRole("button", { name: "Create app" }));
+    await user.click(screen.getByRole("button", { name: "Install" }));
     expect(await screen.findByText("the new app")).toBeInTheDocument();
     const creates = api.posted("/api/v1/instance/create-instance") as { key: string }[];
     const updates = api.posted("/api/v1/instance/update-instance") as { key: string }[];
@@ -434,7 +540,7 @@ describe("TemplateFlow", () => {
     renderFlow();
     expect(screen.getByRole("status", { name: "Loading templates" })).toBeInTheDocument();
     release();
-    expect(await screen.findByRole("button", { name: /twillingate/ })).toBeInTheDocument();
+    expect(await screen.findByText("twillingate")).toBeInTheDocument();
     expect(screen.queryByRole("status", { name: "Loading templates" })).not.toBeInTheDocument();
   });
 
@@ -444,9 +550,9 @@ describe("TemplateFlow", () => {
     fakeAPI(routes());
     renderFlow();
     await screen.findByLabelText("Instance name (NAME)");
-    expect(screen.getByRole("button", { name: "Create app" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Install" })).toBeDisabled();
     await act(async () => resolve(["tenants"]));
-    expect(screen.getByRole("button", { name: "Create app" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Install" })).toBeEnabled();
   });
 
   it("turns on a declared backup with a storage of this server; the rest start off", async () => {
@@ -460,7 +566,7 @@ describe("TemplateFlow", () => {
     expect(storage).toHaveValue("tenants");
     await user.selectOptions(storage, "local");
     await fill(user);
-    await user.click(screen.getByRole("button", { name: "Create app" }));
+    await user.click(screen.getByRole("button", { name: "Install" }));
     await screen.findByText("the new app");
     expect(api.posted("/api/v1/instance/create-instance")[0]).toMatchObject({ backups: { db: { enabled: true, storage: "local" } } });
   });
@@ -479,7 +585,7 @@ describe("TemplateFlow", () => {
     await user.click(toggle);
     expect(screen.getByLabelText("Storage for db")).toHaveValue("tenants");
     await fill(user);
-    await user.click(screen.getByRole("button", { name: "Create app" }));
+    await user.click(screen.getByRole("button", { name: "Install" }));
     await screen.findByText("the new app");
     expect(api.posted("/api/v1/instance/create-instance")[0]).toMatchObject({ backups: { db: { enabled: true, storage: "tenants" } } });
   });
@@ -493,7 +599,7 @@ describe("TemplateFlow", () => {
     expect(screen.getByRole("link", { name: "Add one" })).toHaveAttribute("href", "/server/s1/settings/storages");
     await user.click(screen.getByRole("switch", { name: "Back up db" }));
     await fill(user);
-    await user.click(screen.getByRole("button", { name: "Create app" }));
+    await user.click(screen.getByRole("button", { name: "Install" }));
     expect(screen.getByLabelText("Storage for db")).toHaveAccessibleDescription("Pick a storage to keep its backups in.");
     expect(api.posted("/api/v1/instance/create-instance")).toEqual([]);
   });
@@ -509,14 +615,15 @@ describe("TemplateFlow", () => {
       }),
     );
     renderFlow();
-    await user.click(await screen.findByRole("button", { name: /twillingate/ }));
+    await screen.findByLabelText("Instance name (NAME)");
     await user.type(await screen.findByLabelText("Instance name (NAME)"), "abc");
     await user.type(screen.getByLabelText("SESSION_KEY"), "s");
     await user.click(screen.getByRole("button", { name: "More options" }));
     await user.type(screen.getByLabelText("LABEL"), "$no");
-    await user.click(screen.getByRole("button", { name: "Create app" }));
+    await user.click(screen.getByRole("button", { name: "Install" }));
     expect(screen.getByRole("alert")).toHaveTextContent("Some fields need attention.");
 
+    await user.click(screen.getByRole("button", { name: "Change template" }));
     await user.click(screen.getByRole("button", { name: /blog/ }));
     await screen.findByLabelText("Instance name (NAME)");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
@@ -541,7 +648,7 @@ describe("TemplateFlow", () => {
   it("points to Templates when the org has none, and shows load failures", async () => {
     fakeAPI(routes({ "/api/v1/template/get-templates": { templates: [] } }));
     renderFlow();
-    expect(await screen.findByText("Your organization has no templates yet.")).toBeInTheDocument();
+    expect(await screen.findByText("No templates are available to install yet.")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Go to Templates" })).toHaveAttribute("href", "/templates");
     vi.unstubAllGlobals();
 

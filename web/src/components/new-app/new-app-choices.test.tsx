@@ -12,7 +12,7 @@ import { fakeAPI } from "@/test/fake-api";
 const notifications = { connected: true, subscribe: () => () => {}, waitFor: vi.fn() } as NotificationsContextValue;
 const ONE = [
   { id: "t1", source: "org", name: "twillingate", latest_revision: 2, instances: 0, behind: 0, updated_at: "" },
-  // A catalog template is not the org's own: it doesn't count.
+  // Catalog templates also make the template path available.
   { id: "c1", source: "catalog", name: "Actual Budget", latest_revision: 1, instances: 0, behind: 0, updated_at: "" },
 ];
 
@@ -93,12 +93,21 @@ describe("NewAppButton", () => {
     expect(api.calls).toHaveLength(1);
   });
 
-  it("leaves the template out when the organization has only catalog templates", async () => {
+  it("offers the template path when the organization has only catalog templates", async () => {
     const user = userEvent.setup();
     const api = fakeAPI({ "/api/v1/template/get-templates": { templates: ONE.slice(1) } });
     renderIn(<NewAppButton serverId="s1" />);
     await user.click(screen.getByRole("button", { name: "New app" }));
     await waitFor(() => expect(api.calls).toHaveLength(1));
+    await waitFor(() => expect(screen.queryByTestId("template-choice-skeleton")).not.toBeInTheDocument());
+    expect(screen.getByRole("link", { name: /From a template/ })).toBeInTheDocument();
+  });
+
+  it("leaves the template path out when its only catalog entry is withdrawn", async () => {
+    const user = userEvent.setup();
+    fakeAPI({ "/api/v1/template/get-templates": { templates: [{ ...ONE[1], withdrawn_at: "2026-10-16T00:00:00Z" }] } });
+    renderIn(<NewAppButton serverId="s1" />);
+    await user.click(screen.getByRole("button", { name: "New app" }));
     await waitFor(() => expect(screen.queryByTestId("template-choice-skeleton")).not.toBeInTheDocument());
     expect(screen.queryByRole("link", { name: /From a template/ })).not.toBeInTheDocument();
   });

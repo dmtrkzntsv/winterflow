@@ -1,16 +1,17 @@
 import { Activity, Inbox, LayoutGrid, LayoutTemplate, Plus, Server, type LucideIcon } from "lucide-react";
 
 import { appLabel } from "@/lib/kpi";
-import { INBOX_PATH, TEMPLATES_PATH, appPath, appsPath, monitoringPath, newAppPath } from "@/lib/routes";
+import { INBOX_PATH, TEMPLATES_PATH, appPath, appsPath, monitoringPath, newAppFromTemplatePath, newAppPath, templatePath } from "@/lib/routes";
 import { serverPath } from "@/lib/server-paths";
 import type { SettingsSection } from "@/lib/settings-nav";
+import type { TemplateSummary } from "@/lib/templates";
 
 // The ⌘K palette's destinations (spec §2): the apps on this server, every
 // page, every Settings section, the other servers, and New app. Contextual
 // actions (an app page's Restart, …) come from the palette context, theme
 // and Add server from the palette itself.
 
-export type PaletteGroup = "Apps" | "Pages" | "Settings" | "Servers" | "Actions";
+export type PaletteGroup = "Apps" | "Pages" | "Templates" | "Settings" | "Servers" | "Actions";
 
 export type PaletteNavEntry = {
   // id is stable across sessions (recent items are stored by it).
@@ -27,6 +28,7 @@ export type PaletteNavEntry = {
   // icon leads the entry; an app's entry has appId instead (its status dot).
   icon?: LucideIcon;
   appId?: string;
+  templateId?: string;
 };
 
 export type RecentEntry = { id: string; label: string; to: string };
@@ -40,6 +42,8 @@ export function paletteNavEntries({
   servers,
   settings,
   standalone,
+  templates = [],
+  templateSummaries = {},
 }: {
   serverId: string | null;
   // apps may span servers; only the active server's are offered.
@@ -47,6 +51,8 @@ export function paletteNavEntries({
   servers: { id: string; name: string }[];
   settings: SettingsSection[];
   standalone: boolean;
+  templates?: TemplateSummary[];
+  templateSummaries?: Record<string, string>;
 }): PaletteNavEntry[] {
   const entries: PaletteNavEntry[] = [];
   if (serverId) {
@@ -63,6 +69,15 @@ export function paletteNavEntries({
     { id: "page:inbox", group: "Pages", label: "Inbox", to: INBOX_PATH, keywords: ["alerts", "notifications"], icon: Inbox },
     { id: "page:templates", group: "Pages", label: "Templates", to: TEMPLATES_PATH, keywords: ["stack"], icon: LayoutTemplate },
   );
+  for (const template of templates) {
+    if (template.source === "catalog" && template.withdrawn_at) continue;
+    entries.push({
+      id: `template:${template.id}`, group: "Templates", label: template.name,
+      to: serverId ? newAppFromTemplatePath(serverId, template.id) : templatePath(template.id),
+      keywords: [templateSummaries[template.id] ?? template.catalog?.summary ?? "", ...(template.catalog?.keywords ?? []), ...(template.catalog?.alternative_to ?? [])].filter(Boolean),
+      templateId: template.id,
+    });
+  }
   for (const section of settings) {
     for (const item of section.items) {
       entries.push({

@@ -1,9 +1,10 @@
 import { defaultFilter } from "cmdk";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Server } from "lucide-react";
 
 import { StatusDot } from "@/components/status";
+import { CatalogLogo } from "@/components/catalog-logo";
 
 import {
   Command,
@@ -19,6 +20,8 @@ import { useApps } from "@/context/use-apps";
 import { useCommandPalette } from "@/context/use-palette";
 import { useServers } from "@/context/use-servers";
 import { useSettingsSections } from "@/hooks/use-settings-sections";
+import { useTemplatesApi } from "@/hooks/use-templates-api";
+import { useTemplateLooks } from "@/hooks/use-template-looks";
 import { useThemePreference } from "@/hooks/use-theme";
 import {
   paletteNavEntries,
@@ -31,7 +34,7 @@ import {
 import { appStatus } from "@/lib/status";
 import { THEME_OPTIONS } from "@/lib/theme-options";
 
-const NAV_GROUPS: PaletteGroup[] = ["Apps", "Pages", "Settings", "Servers"];
+const NAV_GROUPS: PaletteGroup[] = ["Apps", "Pages", "Templates", "Settings", "Servers"];
 
 // The same cmdk styling the vendored CommandDialog uses.
 const COMMAND_CLASS =
@@ -84,12 +87,21 @@ export function CommandPalette({ onAddServer }: { onAddServer?: () => void }) {
   const { servers, activeServerId, selectServer } = useServers();
   const { apps, statusByApp, deployFailures } = useApps();
   const settings = useSettingsSections();
+  const templatesApi = useTemplatesApi();
+  const [templates, setTemplates] = useState<Awaited<ReturnType<typeof templatesApi.listTemplates>>>([]);
+  const looks = useTemplateLooks(templatesApi, templates);
+  useEffect(() => {
+    if (!open) return;
+    let current = true;
+    templatesApi.listTemplates().then((list) => { if (current) setTemplates(list); }, () => {});
+    return () => { current = false; };
+  }, [open, templatesApi]);
   const [, setTheme] = useThemePreference();
   const [query, setQuery] = useState("");
 
   const entries = useMemo(
-    () => paletteNavEntries({ serverId: activeServerId, apps, servers, settings, standalone: isStandalone }),
-    [activeServerId, apps, servers, settings],
+    () => paletteNavEntries({ serverId: activeServerId, apps, servers, settings, standalone: isStandalone, templates, templateSummaries: Object.fromEntries(Object.entries(looks).map(([id, look]) => [id, look.summary])) }),
+    [activeServerId, apps, servers, settings, templates, looks],
   );
   // Read again on every open: another tab may have added to the list.
   const recent = useMemo(() => (open ? visibleRecent(readRecent(), entries) : []), [open, entries]);
@@ -113,7 +125,9 @@ export function CommandPalette({ onAddServer }: { onAddServer?: () => void }) {
   // hint and the ↵ sit at the end.
   const navItem = (entry: PaletteNavEntry, prefix = "") => (
     <CommandItem key={prefix + entry.id} value={itemValue(entry, prefix)} keywords={entry.keywords} onSelect={() => go(entry)}>
-      {entry.appId ? (
+      {entry.templateId && templates.find((t) => t.id === entry.templateId && t.source === "catalog") ? (
+        <CatalogLogo template={templates.find((t) => t.id === entry.templateId)!} className="size-5 shrink-0 rounded text-xs" />
+      ) : entry.appId ? (
         <span className="flex size-4 shrink-0 items-center justify-center" data-testid="palette-app-status">
           <StatusDot tone={appStatus(statusByApp[entry.appId], Boolean(deployFailures?.[entry.appId])).tone} />
         </span>
@@ -161,7 +175,7 @@ export function CommandPalette({ onAddServer }: { onAddServer?: () => void }) {
               ) : null,
             )}
             {NAV_GROUPS.map((name) => {
-              const list = entries.filter((e) => e.group === name);
+              const list = entries.filter((e) => e.group === name && (name !== "Templates" || query !== "" || e.templateId === undefined || templates.find((t) => t.id === e.templateId)?.source === "org"));
               return list.length > 0 ? (
                 <CommandGroup key={name} heading={name}>
                   {list.map((entry) => navItem(entry))}

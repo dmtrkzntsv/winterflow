@@ -8,13 +8,15 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
-import { AppIcon } from "@/components/app-icon";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { CatalogLogo } from "@/components/catalog-logo";
 import { Disclosure } from "@/components/disclosure";
 import { EmptyState } from "@/components/empty-state";
 import { FieldMessage, FormField } from "@/components/form-field";
 import { HostnameField } from "@/components/hostname-field";
 import { NativeSelect } from "@/components/native-select";
 import { CreateBar } from "@/components/new-app/create-bar";
+import { TemplatePicker } from "@/components/new-app/template-picker";
 import { LoadError, PageSpinner } from "@/components/page-states";
 import { VariableFields } from "@/components/variable-fields";
 import { useApps } from "@/context/use-apps";
@@ -22,16 +24,17 @@ import { useBackups } from "@/context/use-backups";
 import { useServers } from "@/context/use-servers";
 import { useRegistrations } from "@/hooks/use-registrations";
 import { useTemplateLooks } from "@/hooks/use-template-looks";
+import { PHONE_QUERY } from "@/components/responsive-dialog";
+import { useMediaQuery } from "@/hooks/use-media-query";
 import { useTemplatesApi } from "@/hooks/use-templates-api";
 import { validHostname } from "@/lib/domains";
 import { errorHeadline } from "@/lib/errors";
 import { focusFirstInvalid, invalidAttrs } from "@/lib/field-errors";
 import { uniqueAppName } from "@/lib/new-app";
-import { appPath, appsPath, serverSettingsPath, TEMPLATES_PATH } from "@/lib/routes";
+import { appPath, appsPath, newAppPath, serverSettingsPath, TEMPLATES_PATH } from "@/lib/routes";
 import { newKey, splitValues, variableErrors } from "@/lib/template-values";
 import {
   ApiError,
-  orgTemplates,
   sealSecrets,
   type BackupChoice,
   type InstanceHost,
@@ -39,10 +42,9 @@ import {
   type TemplateView,
   type UpdateInstanceBody,
 } from "@/lib/templates";
-import { cn } from "@/lib/utils";
 
-// TemplateFlow is New app → From a template: pick one of the org's
-// templates (cards), name the app (the template's name by default), fill in
+// TemplateFlow is New app → From a template: pick an org or catalog
+// template, name the app (the template's name by default), fill in
 // the variables its compose file declares (required ones first, optional
 // ones under "More options", the compose file's own values shown), give
 // each http port it exposes a hostname when the server has registered
@@ -52,6 +54,7 @@ import { cn } from "@/lib/utils";
 // picked to begin with (a template page's Create app).
 export function TemplateFlow({ serverId, initialTemplate = "" }: { serverId: string; initialTemplate?: string }) {
   const navigate = useNavigate();
+  const phone = useMediaQuery(PHONE_QUERY);
   const { apps, refresh, reconcile, noteDeployFailure } = useApps();
   const { serverStorages } = useBackups();
   const { servers } = useServers();
@@ -62,6 +65,8 @@ export function TemplateFlow({ serverId, initialTemplate = "" }: { serverId: str
   const [templates, setTemplates] = useState<TemplateSummary[] | null>(null);
   const looks = useTemplateLooks(api, templates);
   const [templateId, setTemplateId] = useState(initialTemplate);
+  const [pickerOpen, setPickerOpen] = useState(!initialTemplate);
+  const [selectionError, setSelectionError] = useState("");
   const [revision, setRevision] = useState(0); // 0: the latest
   const [view, setView] = useState<TemplateView | null>(null);
   const [values, setValues] = useState<Record<string, string>>({});
@@ -96,10 +101,8 @@ export function TemplateFlow({ serverId, initialTemplate = "" }: { serverId: str
     api.listTemplates().then(
       (all) => {
         if (!live) return;
-        const list = orgTemplates(all);
+        const list = all.filter((t) => !t.withdrawn_at);
         setTemplates(list);
-        // One template: nothing to choose.
-        if (list.length === 1) setTemplateId((id) => id || list[0].id);
       },
       (e: unknown) => live && setLoadError(e instanceof Error ? e.message : "Failed to load templates"),
     );
@@ -109,20 +112,36 @@ export function TemplateFlow({ serverId, initialTemplate = "" }: { serverId: str
   }, [api, attempt]);
 
   useEffect(() => {
+    if (!templates || !templateId || templates.some((t) => t.id === templateId)) return;
+    setTemplateId("");
+    setPickerOpen(true);
+    setSelectionError("This template is no longer available to install. Pick another template.");
+  }, [templates, templateId]);
+
+  useEffect(() => {
     serverStorages().then(setStorages, () => setStorages([]));
   }, [serverStorages]);
 
   useEffect(() => {
-    if (!templateId) return;
+    if (!templateId || !templates?.some((t) => t.id === templateId)) return;
     let live = true;
     api.getTemplate(templateId, revision || undefined).then(
-      (v) => live && setView(v),
+      (v) => {
+        if (!live) return;
+        if (v.withdrawn_at) {
+          setTemplateId("");
+          setPickerOpen(true);
+          setSelectionError("This template was withdrawn from the catalog. Pick another template.");
+          return;
+        }
+        setView(v);
+      },
       (e: unknown) => live && setLoadError(e instanceof Error ? e.message : "Failed to load the template"),
     );
     return () => {
       live = false;
     };
-  }, [api, templateId, revision, attempt]);
+  }, [api, templateId, revision, attempt, templates]);
 
   const vars = useMemo(() => view?.detected.variables ?? [], [view]);
   const required = vars.filter((v) => v.required);
@@ -254,7 +273,7 @@ export function TemplateFlow({ serverId, initialTemplate = "" }: { serverId: str
     );
   }
   if (templates === null) {
-    // The cards' place is held, so the form doesn't jump when they arrive.
+    // The picker's place is held, so the page does not jump when it arrives.
     return (
       <div role="status" aria-label="Loading templates" className="grid gap-3 sm:grid-cols-2">
         <Skeleton className="h-16 rounded-xl" />
@@ -265,7 +284,7 @@ export function TemplateFlow({ serverId, initialTemplate = "" }: { serverId: str
   if (templates.length === 0) {
     return (
       <EmptyState
-        title="Your organization has no templates yet."
+        title="No templates are available to install yet."
         icon={LayoutTemplate}
         action={
           <Button asChild variant="outline">
@@ -283,50 +302,77 @@ export function TemplateFlow({ serverId, initialTemplate = "" }: { serverId: str
       return { ...prev, [name]: { ...cur, ...patch } };
     });
 
+  const pick = (t: TemplateSummary) => {
+    if (claimed || busy) return;
+    if (t.id !== templateId) {
+      setTemplateId(t.id);
+      setRevision(0);
+      setView(null);
+      setValues({});
+      setHosts({});
+      setBackups({});
+      setName(null);
+      setTried(false);
+      setMoreOpen(false);
+      setError("");
+    }
+    setSelectionError("");
+    setPickerOpen(false);
+  };
+
+  if (pickerOpen) {
+    const picker = <TemplatePicker templates={templates} looks={looks} onPick={pick} />;
+    if (phone) {
+      return (
+        <Sheet
+          open
+          onOpenChange={(open) => {
+            if (open) return;
+            setPickerOpen(false);
+            if (!templateId) navigate(newAppPath(serverId));
+          }}
+        >
+          <SheetContent side="right" className="!inset-0 !h-[100svh] !w-screen !max-w-none !border-0 p-0">
+            <SheetHeader className="border-b px-4 py-4 pr-14 text-left">
+              <SheetTitle>Choose a template</SheetTitle>
+              <SheetDescription>Search your templates and the catalog.</SheetDescription>
+            </SheetHeader>
+            <div className="h-[calc(100svh-5rem)] overflow-y-auto px-4 py-5 pb-[max(1rem,env(safe-area-inset-bottom))]">
+              {selectionError ? <p role="alert" className="mb-4 text-sm text-destructive">{selectionError}</p> : null}
+              {picker}
+            </div>
+          </SheetContent>
+        </Sheet>
+      );
+    }
+    return (
+      <div className="space-y-4">
+        {selectionError ? <p role="alert" className="text-sm text-destructive">{selectionError}</p> : null}
+        {picker}
+      </div>
+    );
+  }
+
+  const selected = templates.find((t) => t.id === templateId);
+  // The detail read may contain newer catalog identity than the list read.
+  const presentation = view ?? selected;
+
   return (
     <div ref={form} className="space-y-8">
-      <div role="group" aria-label="Templates" className="grid gap-3 sm:grid-cols-2">
-        {templates.map((t) => {
-          const on = t.id === templateId;
-          return (
-            <button
-              key={t.id}
-              type="button"
-              aria-pressed={on}
-              disabled={claimed}
-              onClick={() => {
-                if (on) return;
-                setTemplateId(t.id);
-                setRevision(0);
-                setView(null);
-                setValues({});
-                setHosts({});
-                setBackups({});
-                setName(null);
-                // The next template's form starts untried and folded.
-                setTried(false);
-                setMoreOpen(false);
-                setError("");
-              }}
-              className={cn(
-                "flex min-h-16 items-center gap-3 rounded-xl border bg-card p-3 text-left transition-colors duration-150 hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60 motion-reduce:transition-none",
-                on && "border-primary ring-2 ring-primary/30",
-              )}
-            >
-              <AppIcon
-                name={t.name}
-                icon={on && view ? view.body.icon : looks[t.id]?.icon}
-                color={on && view ? view.body.color : looks[t.id]?.color}
-                className="size-10 shrink-0 text-base"
-              />
-              <span className="min-w-0">
-                <span className="block truncate font-medium">{t.name}</span>
-                <span className="block text-xs text-muted-foreground">Version {t.latest_revision}</span>
-              </span>
-            </button>
-          );
-        })}
-      </div>
+      {presentation ? (
+        <div className="flex items-center justify-between gap-3 rounded-xl border bg-card p-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <CatalogLogo template={presentation} icon={looks[presentation.id]?.icon} color={looks[presentation.id]?.color} className="size-10" />
+            <div className="min-w-0">
+              <p className="truncate font-medium">{presentation.name}</p>
+              <p className="text-xs text-muted-foreground">Version {presentation.latest_revision}</p>
+            </div>
+          </div>
+          <Button type="button" variant="outline" size="sm" disabled={claimed || busy} onClick={() => setPickerOpen(true)}>
+            Change template
+          </Button>
+        </div>
+      ) : null}
 
       {!templateId ? (
         <p className="text-sm text-muted-foreground">Pick a template to continue.</p>
@@ -334,12 +380,28 @@ export function TemplateFlow({ serverId, initialTemplate = "" }: { serverId: str
         <PageSpinner />
       ) : (
         <>
-          {view.body.summary || view.body.description ? (
-            <div className="space-y-1 text-sm">
-              {view.body.summary ? <p className="font-medium">{view.body.summary}</p> : null}
-              {view.body.description ? <p className="whitespace-pre-line text-muted-foreground">{view.body.description}</p> : null}
-            </div>
-          ) : null}
+          <div className="space-y-2 text-sm">
+            {view.source === "catalog" ? (
+              <>
+                {view.catalog?.description ? <p className="whitespace-pre-line text-muted-foreground">{view.catalog.description}</p> : null}
+                {view.catalog?.license || view.catalog?.homepage_url ? (
+                  <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                    {view.catalog.license ? <span>License: {view.catalog.license}</span> : null}
+                    {view.catalog.homepage_url ? (
+                      <a href={view.catalog.homepage_url} target="_blank" rel="noreferrer" className="underline underline-offset-4">
+                        Homepage
+                      </a>
+                    ) : null}
+                  </div>
+                ) : null}
+              </>
+            ) : (
+              <>
+                {view.body.summary ? <p className="font-medium">{view.body.summary}</p> : null}
+                {view.body.description ? <p className="whitespace-pre-line text-muted-foreground">{view.body.description}</p> : null}
+              </>
+            )}
+          </div>
 
           <FormField
             id="instance-name"
@@ -464,7 +526,10 @@ export function TemplateFlow({ serverId, initialTemplate = "" }: { serverId: str
                 className="max-sm:h-10"
                 value={String(revision)}
                 disabled={claimed}
-                onChange={(e) => setRevision(Number(e.target.value))}
+                onChange={(e) => {
+                  setView(null);
+                  setRevision(Number(e.target.value));
+                }}
               >
                 <option value="0">Latest (version {view.latest_revision})</option>
                 {(view.revisions ?? []).map((r) => (
@@ -484,6 +549,8 @@ export function TemplateFlow({ serverId, initialTemplate = "" }: { serverId: str
             onCreate={() => void create()}
             cancelTo={appsPath(serverId)}
             invalid={invalid}
+            createLabel="Install"
+            busyLabel="Installing…"
           />
         </>
       )}

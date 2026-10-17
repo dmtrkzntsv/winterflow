@@ -23,6 +23,8 @@ export function CreateBar({
   error = "",
   stillCreatingTo = "",
   held = false,
+  createLabel = "Create app",
+  busyLabel = "Creating…",
 }: {
   busy: boolean;
   onCreate: () => void;
@@ -32,6 +34,8 @@ export function CreateBar({
   error?: string;
   stillCreatingTo?: string;
   held?: boolean;
+  createLabel?: string;
+  busyLabel?: string;
 }) {
   const navigate = useNavigate();
   const errorBox = useRef<HTMLDivElement>(null);
@@ -73,7 +77,7 @@ export function CreateBar({
           Cancel
         </Button>
         <Button className="max-sm:flex-1" disabled={busy || waiting || held} onClick={onCreate}>
-          {busy || held ? "Creating…" : "Create app"}
+          {busy || held ? busyLabel : createLabel}
         </Button>
       </div>
     </>

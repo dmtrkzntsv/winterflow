@@ -74,6 +74,46 @@ function view(revision: number): TemplateView {
   };
 }
 
+function catalogView(withdrawn = false): TemplateView {
+  return {
+    ...view(3),
+    id: "c1",
+    source: "catalog",
+    slug: "actual",
+    name: "Actual Budget",
+    revision: 1,
+    latest_revision: 3,
+    withdrawn_at: withdrawn ? "2026-10-15T10:00:00Z" : null,
+    catalog: {
+      summary: "Current catalog summary",
+      description: "Current catalog description",
+      keywords: ["finance"],
+      tags: [],
+      alternative_to: ["YNAB"],
+      license: "MIT",
+      license_url: "https://example.org/license",
+      stars: 11155,
+      sponsorship_url: "https://example.org/sponsor",
+      homepage_url: "https://example.org/actual",
+      repository_url: "https://github.com/example/actual",
+      documentation_url: "https://example.org/docs",
+      logo_url: "",
+    },
+    body: {
+      ...BODY,
+      files: { "compose.yml": "services:\n  actual:\n    image: actual:old\nx-winterflow:\n  expose:\n    - { container: actual, port: 8080 }\n" },
+      summary: "Frozen summary",
+      description: "Frozen description",
+      icon: "book",
+    },
+    revisions: [
+      { revision: 3, note: "latest", created_at: "2026-10-14T10:00:00Z", created_by: "catalog" },
+      { revision: 2, note: "", created_at: "2026-10-13T10:00:00Z", created_by: "catalog" },
+      { revision: 1, note: "", created_at: "2026-10-12T10:00:00Z", created_by: "catalog" },
+    ],
+  };
+}
+
 // inspected is inspect-template's answer for any body.
 const inspected = { detected: DETECTED, problem: "" };
 
@@ -116,6 +156,60 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("TemplatePage", () => {
+  it("shows catalog identity from current metadata and an older revision's files read-only", async () => {
+    const api = fakeAPI({
+      "/api/v1/template/get-template": catalogView(),
+      "/api/v1/instance/get-instances": { instances: [] },
+    });
+    renderPage("/templates/c1");
+    expect(await screen.findByRole("heading", { name: "Actual Budget" })).toBeInTheDocument();
+    expect(screen.getByText("Current catalog summary")).toBeInTheDocument();
+    expect(screen.getByText("Current catalog description")).toBeInTheDocument();
+    expect(screen.getByText("Alternative to: YNAB")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Website" })).toHaveAttribute("href", "https://example.org/actual");
+    expect(screen.getByRole("link", { name: "Website" })).toHaveAttribute("rel", "noreferrer");
+    expect(screen.getByRole("link", { name: "Repository" })).toHaveAttribute("href", "https://github.com/example/actual");
+    expect(screen.getByRole("link", { name: "Docs" })).toHaveAttribute("href", "https://example.org/docs");
+    expect(screen.getByRole("link", { name: "MIT" })).toHaveAttribute("href", "https://example.org/license");
+    expect(screen.getByText("11,155")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Sponsor this project/ })).toHaveAttribute("href", "https://example.org/sponsor");
+    expect(screen.getByLabelText("Content of compose.yml")).toHaveTextContent("image: actual:old");
+    expect(screen.getByLabelText("Content of compose.yml")).not.toHaveTextContent("x-winterflow");
+    expect(screen.getByRole("heading", { name: "Versions" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Apps using it" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Create app" })).toHaveAttribute("href", "/server/s1/new?from=template&template=c1");
+    expect(screen.queryByText("Frozen summary")).not.toBeInTheDocument();
+    expect(screen.queryByText("Frozen description")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Template name")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Save/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "More actions" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+    expect(api.calls.some((c) => c.path === "/api/v1/template/inspect-template")).toBe(false);
+  });
+
+  it("keeps withdrawn catalog details and upgrades available, but hides Create app", async () => {
+    const user = userEvent.setup();
+    const old = {
+      key: "k1", server_id: "s1", app_id: "a1", template_id: "c1", template_name: "Actual Budget", revision: 1,
+      name: "budget", values: {}, secrets: null, hosts: [], state: "created", status_code: 1, last_error: "",
+      created_at: "2026-10-12T10:00:00Z", updated_at: "2026-10-12T10:00:00Z",
+    };
+    const api = fakeAPI({
+      "/api/v1/template/get-template": catalogView(true),
+      "/api/v1/instance/get-instances": { instances: [old] },
+      "/api/v1/rollout/get-rollouts": { rollouts: [] },
+      "/api/v1/template/upgrade-instances": rollout({ scope_key: "c1", revision: 3, state: "queued" }),
+      "/api/v1/app/get-apps": { apps: [] },
+    });
+    renderPage("/templates/c1");
+    expect(await screen.findByText(/Withdrawn from the catalog/)).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Create app" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Upgrade all" }));
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Upgrade all" }));
+    expect(api.posted("/api/v1/template/upgrade-instances")).toEqual([{ id: "c1", revision: 3 }]);
+    expect(await screen.findByText("Update to version 3 queued…")).toBeInTheDocument();
+  });
+
   it("adds a template as version 1, then opens it", async () => {
     const user = userEvent.setup();
     const api = fakeAPI({

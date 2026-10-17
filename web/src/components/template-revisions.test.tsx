@@ -44,10 +44,10 @@ const VIEW: TemplateView = {
   })),
 };
 
-function renderRevisions() {
+function renderRevisions(view = VIEW) {
   return render(
     <NotificationsContext.Provider value={notifications}>
-      <TemplateRevisions view={VIEW} />
+      <TemplateRevisions view={view} />
     </NotificationsContext.Provider>,
   );
 }
@@ -55,6 +55,25 @@ function renderRevisions() {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("TemplateRevisions", () => {
+  it("omits catalog-only installation metadata from Compose changes", async () => {
+    const user = userEvent.setup();
+    const catalogView: TemplateView = { ...VIEW, source: "catalog" };
+    fakeAPI({
+      "/api/v1/template/get-template": (_: unknown, q: URLSearchParams) => ({
+        ...catalogView,
+        body: {
+          ...body(q.get("revision") === "2" ? "app:2" : "app:1"),
+          files: { "compose.yaml": `services:\n  app:\n    image: ${q.get("revision") === "2" ? "app:2" : "app:1"}\nx-winterflow:\n  variables:\n    TOKEN: { encrypted: true }\n` },
+        },
+      }),
+    });
+    renderRevisions(catalogView);
+    await user.click(screen.getByRole("button", { name: "Changes from version 1" }));
+    const compose = await screen.findByRole("region", { name: "Changes to compose.yaml" });
+    expect(compose).toHaveTextContent("image: app:2");
+    expect(compose).not.toHaveTextContent("x-winterflow");
+  });
+
   it("shows each revision's changes against the one before", async () => {
     const user = userEvent.setup();
     fakeAPI({

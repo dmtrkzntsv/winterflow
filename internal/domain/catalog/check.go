@@ -35,8 +35,9 @@ func (e Entry) Check() (template.Body, model.CatalogMeta, error) {
 		return template.Body{}, model.CatalogMeta{}, invalid("name", "one line of 1 to %d characters, no surrounding spaces", MaxName)
 	}
 	meta := model.CatalogMeta{
+		Stars:   e.Stars,
 		Summary: e.Summary, Description: e.Description,
-		Keywords: e.Keywords, Tags: e.Tags, AlternativeTo: e.AlternativeTo, License: e.License,
+		Keywords: e.Keywords, Tags: e.Tags, AlternativeTo: e.AlternativeTo, License: e.License, LicenseURL: e.LicenseURL, SponsorshipURL: e.SponsorshipURL,
 		HomepageURL: e.HomepageURL, RepositoryURL: e.RepositoryURL, DocumentationURL: e.DocumentationURL, LogoURL: e.LogoURL,
 	}.Normalized()
 	for _, l := range []struct {
@@ -50,9 +51,12 @@ func (e Entry) Check() (template.Body, model.CatalogMeta, error) {
 	if len(e.License) > MaxLicense || strings.ContainsAny(e.License, "\r\n") {
 		return template.Body{}, model.CatalogMeta{}, invalid("license", "one line of at most %d characters", MaxLicense)
 	}
+	if e.Stars != nil && (*e.Stars < 0 || *e.Stars > 1_000_000_000) {
+		return template.Body{}, model.CatalogMeta{}, invalid("stars", "must be between 0 and 1000000000")
+	}
 	for _, u := range [][2]string{
 		{"homepage_url", e.HomepageURL}, {"repository_url", e.RepositoryURL},
-		{"documentation_url", e.DocumentationURL}, {"logo_url", e.LogoURL},
+		{"documentation_url", e.DocumentationURL}, {"logo_url", e.LogoURL}, {"license_url", e.LicenseURL}, {"sponsorship_url", e.SponsorshipURL},
 	} {
 		if err := checkURL(u[0], u[1]); err != nil {
 			return template.Body{}, model.CatalogMeta{}, err

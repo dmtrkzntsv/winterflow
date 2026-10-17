@@ -75,6 +75,7 @@ func (e *BuildError) Error() string {
 
 // metadata is what the builder reads of apps/<slug>/metadata.json.
 type metadata struct {
+	Stars            *int     `json:"stars"`
 	Slug             string   `json:"slug"`
 	Name             string   `json:"name"`
 	Summary          string   `json:"summary"`
@@ -83,6 +84,8 @@ type metadata struct {
 	Tags             []string `json:"tags"`
 	AlternativeTo    []string `json:"alternative_to"`
 	License          string   `json:"license"`
+	LicenseURL       string   `json:"license_url"`
+	SponsorshipURL   string   `json:"sponsorship"`
 	HomepageURL      string   `json:"homepage_url"`
 	RepositoryURL    string   `json:"repository_url"`
 	DocumentationURL string   `json:"documentation_url"`
@@ -249,7 +252,7 @@ func readApp(root, slug string) (e feed.Entry, lg *logo, skip string, err error)
 	}
 	return feed.Entry{
 		Slug: slug, Name: m.Name, Summary: m.Summary, Description: m.Description,
-		Keywords: m.Keywords, Tags: m.Tags, AlternativeTo: m.AlternativeTo, License: m.License,
+		Stars: m.Stars, Keywords: m.Keywords, Tags: m.Tags, AlternativeTo: m.AlternativeTo, License: m.License, LicenseURL: m.LicenseURL, SponsorshipURL: m.SponsorshipURL,
 		HomepageURL: m.HomepageURL, RepositoryURL: m.RepositoryURL, DocumentationURL: m.DocumentationURL,
 		Files: files,
 	}, lg, "", nil

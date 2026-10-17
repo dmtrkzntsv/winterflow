@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -6,8 +6,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { NotificationsContext, type NotificationsContextValue } from "@/context/notifications-context-base";
 import OrgTemplatesPage from "@/pages/org-templates";
 import { fakeAPI } from "@/test/fake-api";
+import { rollout } from "@/test/rollouts";
 
-const notifications = { connected: true, subscribe: () => () => {}, waitFor: vi.fn() } as NotificationsContextValue;
+type Listener = Parameters<NotificationsContextValue["subscribe"]>[0];
+const listeners = new Set<Listener>();
+const notifications = { connected: true, subscribe: (fn: Listener) => {
+  listeners.add(fn);
+  return () => { listeners.delete(fn); };
+}, waitFor: vi.fn() } as NotificationsContextValue;
 
 function renderPage() {
   return render(
@@ -71,18 +77,81 @@ describe("OrgTemplatesPage", () => {
     expect(await screen.findByText("template page")).toBeInTheDocument();
   });
 
-  it("lists the org's own templates only (the catalog's come with the gallery)", async () => {
+  it("shows org templates before the catalog, with used catalog entries before its grid", async () => {
     fakeAPI({
       "/api/v1/template/get-templates": {
         templates: [
           { id: "t1", source: "org", name: "mine", latest_revision: 1, instances: 0, behind: 0, updated_at: "2026-10-12T10:00:00Z" },
-          { id: "c1", source: "catalog", slug: "actual", name: "Actual Budget", latest_revision: 1, instances: 0, behind: 0, updated_at: "2026-10-12T10:00:00Z" },
+          { id: "c1", source: "catalog", slug: "actual", name: "Actual Budget", latest_revision: 3, instances: 2, behind: 1, updated_at: "2026-10-12T10:00:00Z", catalog: { summary: "Private finances" } },
+          { id: "c2", source: "catalog", slug: "blog", name: "Blog", latest_revision: 1, instances: 0, behind: 0, updated_at: "2026-10-12T10:00:00Z", catalog: { summary: "Publish writing" } },
         ],
       },
     });
     renderPage();
     expect(await screen.findByRole("link", { name: /mine/ })).toBeInTheDocument();
-    expect(screen.queryByText("Actual Budget")).not.toBeInTheDocument();
+    const org = screen.getByRole("list", { name: "Your templates" });
+    const used = screen.getByRole("list", { name: "Catalog templates in use" });
+    const grid = screen.getByRole("list", { name: "Catalog templates" });
+    expect(org.compareDocumentPosition(used) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(used.compareDocumentPosition(grid) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(used).getByRole("link", { name: "Actual Budget" })).toBeInTheDocument();
+    expect(within(used).getByRole("link", { name: "Actual Budget" })).toHaveClass("absolute", "inset-0");
+    expect(within(used).getByRole("link", { name: "Actual Budget" }).closest("li")).toContainElement(within(used).getByText("Private finances"));
+    expect(within(used).getByText("Used by 2 apps · 1 on an older version")).toBeInTheDocument();
+    expect(within(used).getByText("Upgrade available")).toBeInTheDocument();
+    expect(within(grid).queryByText("Actual Budget")).not.toBeInTheDocument();
+    expect(within(grid).getByRole("link", { name: "Blog" })).toBeInTheDocument();
+    expect(within(grid).getByRole("link", { name: "Blog" })).toHaveClass("absolute", "inset-0");
+  });
+
+  it("searches the remaining catalog by current summary, keyword and alternative", async () => {
+    const user = userEvent.setup();
+    fakeAPI({
+      "/api/v1/template/get-templates": {
+        templates: [
+          { id: "c1", source: "catalog", name: "Actual", latest_revision: 1, instances: 0, behind: 0, withdrawn_at: null,
+            catalog: { summary: "Private finances", keywords: ["budget"], alternative_to: ["YNAB"] } },
+          { id: "c2", source: "catalog", name: "Ghost", latest_revision: 2, instances: 1, behind: 0, withdrawn_at: "2026-10-15",
+            catalog: { summary: "Old" } },
+        ],
+      },
+    });
+    renderPage();
+    expect(await screen.findByRole("link", { name: "Actual" })).toBeInTheDocument();
+    expect(screen.getByText("Withdrawn from the catalog")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Create app" })).not.toBeInTheDocument();
+    const search = screen.getByRole("textbox", { name: "Search catalog" });
+    for (const term of ["finances", "budget", "ynab"]) {
+      await user.clear(search);
+      await user.type(search, term);
+      expect(within(screen.getByRole("list", { name: "Catalog templates" })).getByRole("link", { name: "Actual" })).toBeInTheDocument();
+    }
+    await user.clear(search);
+    await user.type(search, "unmatched");
+    expect(screen.getByText("No catalog templates match your search.")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Ghost" })).toBeInTheDocument();
+  });
+
+  it("confirms Upgrade all and refreshes used counts as rollout progresses", async () => {
+    const user = userEvent.setup();
+    let behind = 2;
+    const api = fakeAPI({
+      "/api/v1/template/get-templates": () => ({ templates: [{ id: "c1", source: "catalog", name: "Actual", latest_revision: 3, instances: 2, behind, withdrawn_at: null }] }),
+      "/api/v1/rollout/get-rollouts": { rollouts: [] },
+      "/api/v1/template/upgrade-instances": rollout({ scope_key: "c1", revision: 3, state: "queued" }),
+    });
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: "Upgrade all" }));
+    expect(screen.getByRole("alertdialog")).toHaveTextContent("Upgrade 2 apps to version 3?");
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Upgrade all" }));
+    expect(api.posted("/api/v1/template/upgrade-instances")).toEqual([{ id: "c1", revision: 3 }]);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Upgrade all" })).toBeDisabled());
+    behind = 1;
+    act(() => {
+      for (const fn of listeners) fn({ type: "rollout", payload: rollout({ scope_key: "c1", revision: 3, done: 1, state: "running" }) } as Parameters<Listener>[0]);
+    });
+    await waitFor(() => expect(api.calls.filter((c) => c.path === "/api/v1/template/get-templates")).toHaveLength(2));
+    expect(screen.getByText("Used by 2 apps · 1 on an older version")).toBeInTheDocument();
   });
 
   it("offers New template as a link, and says what to do when there is none", async () => {

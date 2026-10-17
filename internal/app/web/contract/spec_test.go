@@ -29,7 +29,7 @@ var specPath = filepath.Join("..", "..", "..", "..", "api", "openapi.yaml")
 // image/*); kin-openapi has no decoder for image types, so those bodies are
 // validated as files.
 func init() {
-	for _, ct := range []string{"image/*", "image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp", "image/x-icon", "image/vnd.microsoft.icon"} {
+	for _, ct := range []string{"image/*", "image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml", "image/bmp", "image/x-icon", "image/vnd.microsoft.icon"} {
 		openapi3filter.RegisterBodyDecoder(ct, openapi3filter.FileBodyDecoder)
 	}
 }

@@ -330,7 +330,7 @@ func (b *builder) addRoute(rt api.Route) error {
 	switch {
 	case rt.Events != nil:
 		oc.AddRespStructure(rt.Events, oapi.WithContentType("text/event-stream"), oapi.WithHTTPStatus(http.StatusOK))
-	case rt.Raw:
+	case rt.Raw || rt.Binary:
 		oc.AddRespStructure(rt.Response, oapi.WithContentType(rt.ContentType), oapi.WithHTTPStatus(http.StatusOK))
 	case rt.Accepted:
 		oc.AddRespStructure(envelope(AcceptedData{}), oapi.WithHTTPStatus(http.StatusAccepted))

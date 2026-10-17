@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Boxes, FileCode2, LayoutTemplate, TriangleAlert } from "lucide-react";
 
@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { AppIcon } from "@/components/app-icon";
+import { CatalogLogo } from "@/components/catalog-logo";
 import { EmptyState } from "@/components/empty-state";
 import { StatusPill } from "@/components/status";
 import type { App } from "@/context/apps-context-base";
@@ -13,6 +14,7 @@ import { useApps } from "@/context/use-apps";
 import { useServerPath } from "@/context/use-server-path";
 import { useServers } from "@/context/use-servers";
 import { useAddressRegistrations } from "@/hooks/use-registrations";
+import { useTemplatesApi } from "@/hooks/use-templates-api";
 import { appWarning, filterApps, FILTER_THRESHOLD, primaryAddress, type AppWarning } from "@/lib/app-summary";
 import type { RegisteredDomain } from "@/lib/domains";
 import { TILE_GRID } from "@/lib/grid";
@@ -20,6 +22,7 @@ import { appLabel } from "@/lib/kpi";
 import { appSub, newAppSub } from "@/lib/routes";
 import { appStatus } from "@/lib/status";
 import { cn } from "@/lib/utils";
+import type { InstanceView, TemplateSummary } from "@/lib/templates";
 
 function AppTileSkeleton() {
   return (
@@ -70,6 +73,8 @@ function AppCard({
   warning,
   registrations,
   index,
+  template,
+  instance,
 }: {
   app: App;
   code: number | undefined;
@@ -77,14 +82,17 @@ function AppCard({
   warning: AppWarning | null;
   registrations: RegisteredDomain[];
   index: number;
+  template?: TemplateSummary;
+  instance?: InstanceView;
 }) {
   const toServer = useServerPath();
   const address = primaryAddress(app, registrations);
   const named = Boolean(app.name?.trim());
+  const upgradeAvailable = template?.source === "catalog" && instance !== undefined && instance.revision < template.latest_revision;
   return (
     <li className="app-card-in relative min-w-0" style={{ animationDelay: `${Math.min(index, 5) * 20}ms` }}>
       <Card className="flex h-full items-center gap-3 p-3.5 transition-colors duration-150 hover:border-primary/40">
-        <AppIcon name={app.name} icon={app.icon} color={app.color} className="size-10 shrink-0 rounded-lg text-base" />
+        {template?.source === "catalog" ? <CatalogLogo template={template} icon={app.icon} color={app.color} className="size-10 shrink-0 rounded-lg text-base" /> : <AppIcon name={app.name} icon={app.icon} color={app.color} className="size-10 shrink-0 rounded-lg text-base" />}
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex items-center justify-between gap-2">
             <Link
@@ -98,7 +106,7 @@ function AppCard({
             </Link>
             <StatusPill status={appStatus(code, failed)} />
           </div>
-          {address || warning ? (
+          {address || warning || upgradeAvailable ? (
             <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
               {address ? (
                 <a
@@ -110,6 +118,7 @@ function AppCard({
                   {address.host}
                 </a>
               ) : null}
+              {upgradeAvailable ? <span className="relative z-10 ml-auto shrink-0 rounded-full bg-status-warn/15 px-2 py-0.5 text-[11px] font-medium">Upgrade available</span> : null}
               {warning ? (
                 <span className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-full bg-status-warn/15 px-2 py-0.5 text-[11px] font-medium text-foreground">
                   <TriangleAlert className="size-3 text-status-warn" aria-hidden />
@@ -130,6 +139,17 @@ export function AppGrid() {
   const { apps, statusByApp, backupsByApp, staleVarsByApp, deployFailures, loading, error } = useApps();
   const { activeServerId } = useServers();
   const registrations = useAddressRegistrations(activeServerId);
+  const templatesApi = useTemplatesApi();
+  const [catalog, setCatalog] = useState<{ serverId: string | null; templates: TemplateSummary[]; instances: InstanceView[] }>({ serverId: null, templates: [], instances: [] });
+  useEffect(() => {
+    let current = true;
+    if (!activeServerId) return;
+    Promise.all([templatesApi.listTemplates(), templatesApi.listInstances({ serverId: activeServerId })]).then(([templates, instances]) => {
+      if (current) setCatalog({ serverId: activeServerId, templates, instances });
+    }, () => {});
+    return () => { current = false; };
+  }, [activeServerId, templatesApi]);
+  const currentCatalog = catalog.serverId === activeServerId ? catalog : { serverId: activeServerId, templates: [], instances: [] };
   const [query, setQuery] = useState("");
   // The page outlives a server switch: a query typed on one server is not
   // carried to the next.
@@ -183,6 +203,8 @@ export function AppGrid() {
               warning={appWarning(backupsByApp?.[app.id], staleVarsByApp?.[app.id], statusByApp[app.id])}
               registrations={registrations}
               index={index}
+              template={currentCatalog.templates.find((t) => t.id === app.templateId)}
+              instance={currentCatalog.instances.find((i) => i.app_id === app.id && i.template_id === app.templateId)}
             />
           ))}
         </ul>

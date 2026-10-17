@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Spinner } from "@/components/ui/spinner";
 import { AppIcon } from "@/components/app-icon";
+import { CatalogLogo } from "@/components/catalog-logo";
 import { StatusPill } from "@/components/status";
 import type { App, ControlAction } from "@/context/apps-context-base";
 import { hasRunningContainers } from "@/lib/app-status";
@@ -31,7 +32,7 @@ import { useHeadingInView } from "@/layouts/use-page-title";
 import { appLabel } from "@/lib/kpi";
 import { templatePath } from "@/lib/routes";
 import { appStatus } from "@/lib/status";
-import type { InstanceView } from "@/lib/templates";
+import type { InstanceView, TemplateView } from "@/lib/templates";
 import { cn } from "@/lib/utils";
 
 export type AppHeaderProps = {
@@ -48,6 +49,7 @@ export type AppHeaderProps = {
   // instance is the template instance managing the app (null: a plain app,
   // or not read yet).
   instance: InstanceView | null;
+  template?: TemplateView | null;
   // behind: the template has a newer version than the app runs.
   behind: boolean;
   pending: ControlAction | null;
@@ -81,7 +83,7 @@ export function AppHeader(p: AppHeaderProps) {
   return (
     <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
       <div className="flex min-w-0 items-center gap-4">
-        <AppIcon name={app.name} icon={app.icon} color={app.color} className="size-14 shrink-0 rounded-xl text-xl" />
+        {p.template?.source === "catalog" ? <CatalogLogo template={p.template} icon={app.icon} color={app.color} className="size-14 shrink-0 rounded-xl text-xl" /> : <AppIcon name={app.name} icon={app.icon} color={app.color} className="size-14 shrink-0 rounded-xl text-xl" />}
         <div className="min-w-0 space-y-1.5">
           <h1 ref={h1} className={cn("truncate text-2xl font-semibold tracking-tight", !named && "text-muted-foreground")}>
             {appLabel(app.name)}
@@ -112,6 +114,7 @@ export function AppHeader(p: AppHeaderProps) {
                 From template {p.instance.template_name}
               </Link>
             ) : null}
+            {p.behind && p.template?.source === "catalog" ? <span className="rounded-full bg-status-warn/15 px-2 py-0.5 text-xs font-medium">Upgrade available</span> : null}
             {p.instance?.state === "pending" ? <Badge variant="outline">Not created yet</Badge> : null}
             {p.behind ? (
               <Button

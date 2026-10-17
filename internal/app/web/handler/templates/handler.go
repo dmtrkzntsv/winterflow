@@ -64,6 +64,7 @@ type Handler struct {
 	users     webutil.OrgResolver
 	servers   InstanceServers
 	log       *logger.Logger
+	templates port.TemplateRepository
 	waitBound time.Duration
 }
 
@@ -73,7 +74,7 @@ func NewHandler(d *Deps) *Handler {
 	if uc == nil {
 		uc = newUseCase(d)
 	}
-	return &Handler{uc: uc, rollouts: d.Rollouts, users: d.Users, servers: d.Servers, log: d.Logger, waitBound: WaitBound}
+	return &Handler{uc: uc, rollouts: d.Rollouts, users: d.Users, servers: d.Servers, log: d.Logger, waitBound: WaitBound, templates: d.Templates}
 }
 
 // newUseCase builds a templates usecase from d's repositories.

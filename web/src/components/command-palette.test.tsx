@@ -15,6 +15,7 @@ const SERVERS = [
   { id: "s2", organizationId: "o", name: "Beta", createdAt: "", lastSeenAt: null, capabilities: {} },
 ];
 const selectServer = vi.fn();
+const templatesApi = { listTemplates: async () => [], getRevision: async () => ({ body: { icon: "", color: "", summary: "" } }) };
 vi.mock("@/context/use-servers", () => ({
   useServers: () => ({
     servers: SERVERS,
@@ -28,6 +29,7 @@ vi.mock("@/context/use-servers", () => ({
 const SHOP = { id: "a1", serverId: "s1", name: "Shop", version: "1", icon: "", color: "", createdAt: "" };
 let apps = [SHOP];
 vi.mock("@/context/use-apps", () => ({ useApps: () => ({ apps, statusByApp: { a1: 1 }, deployFailures: {} }) }));
+vi.mock("@/hooks/use-templates-api", () => ({ useTemplatesApi: () => templatesApi }));
 vi.mock("@/context/use-profile", () => ({
   useProfile: () => ({ profile: { user_id: "u1", name: "Ann", email: "ann@example.test", must_change_password: false } }),
 }));

@@ -34,6 +34,7 @@ type Feed struct {
 // Entry is one app of the feed: a catalog template's name, metadata and
 // files, with the digest of the files.
 type Entry struct {
+	Stars            *int              `json:"stars,omitempty"`
 	Slug             string            `json:"slug"`
 	Name             string            `json:"name"`
 	Summary          string            `json:"summary"`
@@ -42,6 +43,8 @@ type Entry struct {
 	Tags             []string          `json:"tags"`
 	AlternativeTo    []string          `json:"alternative_to"`
 	License          string            `json:"license"`
+	LicenseURL       string            `json:"license_url,omitempty"`
+	SponsorshipURL   string            `json:"sponsorship_url,omitempty"`
 	HomepageURL      string            `json:"homepage_url"`
 	RepositoryURL    string            `json:"repository_url"`
 	DocumentationURL string            `json:"documentation_url"`

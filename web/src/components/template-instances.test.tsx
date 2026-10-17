@@ -83,11 +83,11 @@ const inst = (over: Partial<InstanceView>): InstanceView => ({
 
 const onChanged = vi.fn();
 
-function renderInstances(instances: InstanceView[]) {
+function renderInstances(instances: InstanceView[], view = VIEW) {
   return render(
     <MemoryRouter>
       <NotificationsContext.Provider value={notifications}>
-        <TemplateInstances view={VIEW} instances={instances} onChanged={onChanged} />
+        <TemplateInstances view={view} instances={instances} onChanged={onChanged} />
       </NotificationsContext.Provider>
     </MemoryRouter>,
   );
@@ -101,6 +101,17 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("TemplateInstances", () => {
+  it("uses the current catalog logo and labels an older catalog instance for upgrade", () => {
+    const catalogView: TemplateView = {
+      ...VIEW,
+      source: "catalog",
+      catalog: { summary: "Current summary", description: "Current description", keywords: [], tags: [], alternative_to: [], license: "MIT", homepage_url: "", repository_url: "", documentation_url: "", logo_url: "https://winterflow.io/catalog/logos/example.svg" },
+    };
+    renderInstances([inst({ revision: 2 })], catalogView);
+    const row = screen.getByRole("listitem");
+    expect(within(row).getByText(/Upgrade available/)).toBeInTheDocument();
+    expect(within(row).getByRole("presentation")).toHaveAttribute("src", "https://winterflow.io/catalog/logos/example.svg");
+  });
   it("lists the apps per server with their version and status", () => {
     renderInstances([
       inst({}),

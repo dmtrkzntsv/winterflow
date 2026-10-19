@@ -13,7 +13,7 @@ describe("paletteNavEntries", () => {
   it("offers active templates and uses detail pages when no server is selected", () => {
     const templates = [
       { id: "org1", source: "org" as const, slug: "org1", name: "Org stack", latest_revision: 1, instances: 0, behind: 0, withdrawn_at: null, updated_at: "" },
-      { id: "cat1", source: "catalog" as const, slug: "cat1", name: "Catalog stack", latest_revision: 1, instances: 0, behind: 0, withdrawn_at: null, updated_at: "", catalog: { keywords: ["proxy"], alternative_to: ["nginx"], summary: "Reverse proxy", description: "", tags: [], license: "", homepage_url: "", repository_url: "", documentation_url: "", logo_url: "" } },
+      { id: "cat1", source: "catalog" as const, slug: "cat1", name: "Catalog stack", latest_revision: 1, instances: 0, behind: 0, withdrawn_at: null, updated_at: "", catalog: { keywords: ["proxy"], alternative_to: ["nginx"], summary: "Reverse proxy", description: "", tags: [], license: "", homepage_url: "", repository_url: "", documentation_url: "", sponsorship: [], logo_url: "" } },
       { id: "cat2", source: "catalog" as const, slug: "cat2", name: "Gone", latest_revision: 1, instances: 1, behind: 0, withdrawn_at: "today", updated_at: "" },
     ];
     const withServer = paletteNavEntries({ serverId: "s1", apps: [], servers, settings, standalone: false, templates });

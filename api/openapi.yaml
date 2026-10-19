@@ -6356,6 +6356,16 @@ components:
       - name
       - value
       type: object
+    CatalogLink:
+      properties:
+        name:
+          type: string
+        url:
+          type: string
+      required:
+      - name
+      - url
+      type: object
     CatalogMeta:
       properties:
         alternative_to:
@@ -6385,8 +6395,13 @@ components:
           type: string
         repository_url:
           type: string
-        sponsorship_url:
-          type: string
+        sponsorship:
+          description: Ways to support the project, in the catalog's order.
+          items:
+            $ref: '#/components/schemas/CatalogLink'
+          type:
+          - array
+          - "null"
         stars:
           type:
           - "null"
@@ -6407,6 +6422,7 @@ components:
       - alternative_to
       - license
       - license_url
+      - sponsorship
       - homepage_url
       - repository_url
       - documentation_url

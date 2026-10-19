@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -83,10 +84,21 @@ var reviewedSchemes = map[string]string{
 	"slack": "client", "teams": "client", "telegram": "client", "twilio": "client", "wecom": "client", "zulip": "client",
 }
 
+// refuseHook, when set, replaces refusedAddress, so tests can refuse a
+// specific listener. It is atomic because a sender's background dial (the
+// MQTT client's reconnect loop) can outlive the send that started it.
+var refuseHook atomic.Pointer[func(address string) bool]
+
 // refused reports whether a connection to address (host:port, the
-// resolved IP) must fail; a variable so tests can refuse a specific
-// listener.
-var refused = func(address string) bool {
+// resolved IP) must fail.
+func refused(address string) bool {
+	if h := refuseHook.Load(); h != nil {
+		return (*h)(address)
+	}
+	return refusedAddress(address)
+}
+
+func refusedAddress(address string) bool {
 	host, _, err := net.SplitHostPort(address)
 	if err != nil {
 		return true

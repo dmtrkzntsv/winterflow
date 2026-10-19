@@ -71,6 +71,8 @@ function CatalogTemplatePage({
   const behind = instances.filter((i) => i.state === "created" && i.revision < view.latest_revision).length;
   const files = Object.entries(view.body.files ?? {}).sort(([a], [b]) => a.localeCompare(b));
   const catalog = view.catalog;
+  // The repository link already asks for a star; a sponsorship entry pointing at it would repeat it.
+  const sponsorship = (catalog?.sponsorship ?? []).filter((s) => s.url !== catalog?.repository_url);
   return (
     <div className="space-y-6">
       <Link to={BACK.to} className="inline-flex min-h-9 items-center gap-2 text-sm text-muted-foreground hover:text-foreground">
@@ -120,12 +122,12 @@ function CatalogTemplatePage({
             </div>
           ) : null}
           {!view.withdrawn_at ? <div className="mt-5"><CreateAppButton templateId={view.id} servers={servers} activeServerId={activeServerId} /></div> : null}
-          {catalog?.repository_url || catalog?.sponsorship_url ? (
+          {catalog && (catalog.repository_url || sponsorship.length > 0) ? (
             <div className="mt-5 border-t pt-4">
               <h3 className="mb-2 font-medium">Support this project</h3>
               <div className="flex flex-col gap-2 text-primary">
                 {catalog.repository_url ? <a href={catalog.repository_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 hover:underline"><Github className="size-4" aria-hidden /> Add a star on GitHub ↗</a> : null}
-                {catalog.sponsorship_url ? <a href={catalog.sponsorship_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 hover:underline"><Heart className="size-4" aria-hidden /> Sponsor this project ↗</a> : null}
+                {sponsorship.map((s) => <a key={s.url} href={s.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 hover:underline"><Heart className="size-4" aria-hidden /> {s.name} ↗</a>)}
               </div>
             </div>
           ) : null}

@@ -30,6 +30,7 @@ const catalog: TemplateSummary = {
     homepage_url: "",
     repository_url: "",
     documentation_url: "",
+    sponsorship: [],
     logo_url: "",
   },
 };

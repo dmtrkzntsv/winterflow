@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"testing/iotest"
@@ -170,9 +171,9 @@ func TestCheck(t *testing.T) {
 		Summary: "A local-first personal finance app", Description: "Envelope budgeting.",
 		Keywords: []string{"budget"}, Tags: []string{}, AlternativeTo: []string{"YNAB"}, License: "MIT",
 		HomepageURL: "https://actualbudget.org", LogoURL: "https://winterflow.io/catalog/logos/actual-budget.png",
-		LicenseURL: "", SponsorshipURL: "",
+		LicenseURL: "", Sponsorship: []model.CatalogLink{},
 	}
-	if !meta.Equal(want) || meta.Tags == nil {
+	if !meta.Equal(want) || meta.Tags == nil || meta.Sponsorship == nil {
 		t.Fatalf("meta = %+v", meta)
 	}
 }
@@ -182,9 +183,9 @@ func TestCheckPreservesOptionalMetadata(t *testing.T) {
 	stars := 5
 	e.Stars = &stars
 	e.LicenseURL = "https://example.com/license"
-	e.SponsorshipURL = "https://example.com/sponsor"
+	e.Sponsorship = []model.CatalogLink{{Name: "Open Collective", URL: "https://example.com/sponsor"}}
 	_, meta, err := e.Check()
-	if err != nil || meta.Stars == nil || *meta.Stars != stars || meta.LicenseURL != e.LicenseURL || meta.SponsorshipURL != e.SponsorshipURL {
+	if err != nil || meta.Stars == nil || *meta.Stars != stars || meta.LicenseURL != e.LicenseURL || !slices.Equal(meta.Sponsorship, e.Sponsorship) {
 		t.Fatalf("meta = %+v, err = %v", meta, err)
 	}
 	raw, err := Encode(Feed{Format: FormatVersion, GeneratedAt: time.Now(), Apps: []Entry{e}})
@@ -192,7 +193,7 @@ func TestCheckPreservesOptionalMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	f, err := Decode(raw)
-	if err != nil || f.Apps[0].Stars == nil || *f.Apps[0].Stars != stars || f.Apps[0].LicenseURL != e.LicenseURL || f.Apps[0].SponsorshipURL != e.SponsorshipURL {
+	if err != nil || f.Apps[0].Stars == nil || *f.Apps[0].Stars != stars || f.Apps[0].LicenseURL != e.LicenseURL || !slices.Equal(f.Apps[0].Sponsorship, e.Sponsorship) {
 		t.Fatalf("entry = %+v, err = %v", f.Apps, err)
 	}
 }
@@ -202,28 +203,31 @@ func TestCheckRefuses(t *testing.T) {
 		edit func(*Entry)
 		want string
 	}{
-		"an upper-case slug":  {func(e *Entry) { e.Slug = "Actual" }, "slug"},
-		"a slug with a slash": {func(e *Entry) { e.Slug = "a/b" }, "slug"},
-		"a long slug":         {func(e *Entry) { e.Slug = strings.Repeat("a", 129) }, "slug"},
-		"no name":             {func(e *Entry) { e.Name = "" }, "name"},
-		"a padded name":       {func(e *Entry) { e.Name = " Actual" }, "name"},
-		"a two-line name":     {func(e *Entry) { e.Name = "a\nb" }, "name"},
-		"a long name":         {func(e *Entry) { e.Name = strings.Repeat("n", 256) }, "name"},
-		"51 keywords":         {func(e *Entry) { e.Keywords = make([]string, 51) }, "keywords"},
-		"an empty tag":        {func(e *Entry) { e.Tags = []string{""} }, "tags[0]"},
-		"a long alternative":  {func(e *Entry) { e.AlternativeTo = []string{strings.Repeat("y", 101)} }, "alternative_to[0]"},
-		"a long license":      {func(e *Entry) { e.License = strings.Repeat("l", 101) }, "license"},
-		"negative stars":      {func(e *Entry) { n := -1; e.Stars = &n }, "stars"},
-		"excessive stars":     {func(e *Entry) { n := 1_000_000_001; e.Stars = &n }, "stars"},
-		"http license url":    {func(e *Entry) { e.LicenseURL = "http://example.com/license" }, "license_url"},
-		"http sponsorship":    {func(e *Entry) { e.SponsorshipURL = "http://example.com/sponsor" }, "sponsorship_url"},
-		"an http homepage":    {func(e *Entry) { e.HomepageURL = "http://actualbudget.org" }, "homepage_url"},
-		"a javascript logo":   {func(e *Entry) { e.LogoURL = "javascript:alert(1)" }, "logo_url"},
-		"a host-less URL":     {func(e *Entry) { e.RepositoryURL = "https:///x" }, "repository_url"},
-		"a long URL":          {func(e *Entry) { e.DocumentationURL = "https://x.test/" + strings.Repeat("p", 2048) }, "documentation_url"},
-		"a stale digest":      {func(e *Entry) { e.Files["compose.yml"] += "# edited\n" }, "digest"},
-		"no compose file":     {func(e *Entry) { e.Files = map[string]string{"x.conf": ""}; e.Digest = Digest(e.Files) }, "a compose file is required"},
-		"a long summary":      {func(e *Entry) { e.Summary = strings.Repeat("s", 201) }, "summary"},
+		"an upper-case slug":          {func(e *Entry) { e.Slug = "Actual" }, "slug"},
+		"a slug with a slash":         {func(e *Entry) { e.Slug = "a/b" }, "slug"},
+		"a long slug":                 {func(e *Entry) { e.Slug = strings.Repeat("a", 129) }, "slug"},
+		"no name":                     {func(e *Entry) { e.Name = "" }, "name"},
+		"a padded name":               {func(e *Entry) { e.Name = " Actual" }, "name"},
+		"a two-line name":             {func(e *Entry) { e.Name = "a\nb" }, "name"},
+		"a long name":                 {func(e *Entry) { e.Name = strings.Repeat("n", 256) }, "name"},
+		"51 keywords":                 {func(e *Entry) { e.Keywords = make([]string, 51) }, "keywords"},
+		"an empty tag":                {func(e *Entry) { e.Tags = []string{""} }, "tags[0]"},
+		"a long alternative":          {func(e *Entry) { e.AlternativeTo = []string{strings.Repeat("y", 101)} }, "alternative_to[0]"},
+		"a long license":              {func(e *Entry) { e.License = strings.Repeat("l", 101) }, "license"},
+		"negative stars":              {func(e *Entry) { n := -1; e.Stars = &n }, "stars"},
+		"excessive stars":             {func(e *Entry) { n := 1_000_000_001; e.Stars = &n }, "stars"},
+		"http license url":            {func(e *Entry) { e.LicenseURL = "http://example.com/license" }, "license_url"},
+		"http sponsorship":            {func(e *Entry) { e.Sponsorship = []model.CatalogLink{{Name: "s", URL: "http://example.com/sponsor"}} }, "sponsorship[0].url"},
+		"a sponsorship without a url": {func(e *Entry) { e.Sponsorship = []model.CatalogLink{{Name: "s"}} }, "sponsorship[0].url"},
+		"an unnamed sponsorship":      {func(e *Entry) { e.Sponsorship = []model.CatalogLink{{URL: "https://example.com/sponsor"}} }, "sponsorship[0].name"},
+		"51 sponsorships":             {func(e *Entry) { e.Sponsorship = make([]model.CatalogLink, 51) }, "sponsorship"},
+		"an http homepage":            {func(e *Entry) { e.HomepageURL = "http://actualbudget.org" }, "homepage_url"},
+		"a javascript logo":           {func(e *Entry) { e.LogoURL = "javascript:alert(1)" }, "logo_url"},
+		"a host-less URL":             {func(e *Entry) { e.RepositoryURL = "https:///x" }, "repository_url"},
+		"a long URL":                  {func(e *Entry) { e.DocumentationURL = "https://x.test/" + strings.Repeat("p", 2048) }, "documentation_url"},
+		"a stale digest":              {func(e *Entry) { e.Files["compose.yml"] += "# edited\n" }, "digest"},
+		"no compose file":             {func(e *Entry) { e.Files = map[string]string{"x.conf": ""}; e.Digest = Digest(e.Files) }, "a compose file is required"},
+		"a long summary":              {func(e *Entry) { e.Summary = strings.Repeat("s", 201) }, "summary"},
 		"a shared volume name": {func(e *Entry) {
 			setCompose(e, strings.Replace(budgetCompose, "  data:\nx-", "  data: { name: budget }\nx-", 1))
 		}, "would be shared"},

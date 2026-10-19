@@ -88,6 +88,7 @@ const CATALOG = {
     homepage_url: "https://actualbudget.org",
     repository_url: "",
     documentation_url: "",
+    sponsorship: [],
     logo_url: "https://winterflow.io/catalog/logos/actual-budget.png",
   },
 };

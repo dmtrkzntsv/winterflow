@@ -65,7 +65,7 @@ describe("AppGrid", () => {
   it("shows a catalog instance upgrade state even without an address or warning", async () => {
     listedTemplates = [{
       id: "t1", source: "catalog", slug: "proxy", name: "Proxy", latest_revision: 4, instances: 1, behind: 1,
-      withdrawn_at: null, updated_at: "", catalog: { summary: "", description: "", keywords: [], tags: [], alternative_to: [], license: "", homepage_url: "", repository_url: "", documentation_url: "", logo_url: "https://winterflow.io/catalog/logos/proxy.svg" },
+      withdrawn_at: null, updated_at: "", catalog: { summary: "", description: "", keywords: [], tags: [], alternative_to: [], license: "", homepage_url: "", repository_url: "", documentation_url: "", sponsorship: [], logo_url: "https://winterflow.io/catalog/logos/proxy.svg" },
     }];
     listedInstances = [{ key: "k1", server_id: "srv-1", app_id: "a1", template_id: "t1", template_name: "Proxy", revision: 2, name: "Shop", values: {}, secrets: {}, hosts: [], state: "created", status_code: 1, last_error: "", created_at: "", updated_at: "" }];
     renderGrid({ apps: [app("a1", "Shop", { templateId: "t1" })] });

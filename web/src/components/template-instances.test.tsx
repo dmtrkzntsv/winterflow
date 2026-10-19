@@ -105,7 +105,7 @@ describe("TemplateInstances", () => {
     const catalogView: TemplateView = {
       ...VIEW,
       source: "catalog",
-      catalog: { summary: "Current summary", description: "Current description", keywords: [], tags: [], alternative_to: [], license: "MIT", homepage_url: "", repository_url: "", documentation_url: "", logo_url: "https://winterflow.io/catalog/logos/example.svg" },
+      catalog: { summary: "Current summary", description: "Current description", keywords: [], tags: [], alternative_to: [], license: "MIT", homepage_url: "", repository_url: "", documentation_url: "", sponsorship: [], logo_url: "https://winterflow.io/catalog/logos/example.svg" },
     };
     renderInstances([inst({ revision: 2 })], catalogView);
     const row = screen.getByRole("listitem");

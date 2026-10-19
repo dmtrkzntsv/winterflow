@@ -20,6 +20,7 @@ import (
 
 	feed "winterflow/internal/domain/catalog"
 	"winterflow/internal/domain/compose/xwinterflow"
+	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/template"
 )
 
@@ -75,23 +76,23 @@ func (e *BuildError) Error() string {
 
 // metadata is what the builder reads of apps/<slug>/metadata.json.
 type metadata struct {
-	Stars            *int     `json:"stars"`
-	Slug             string   `json:"slug"`
-	Name             string   `json:"name"`
-	Summary          string   `json:"summary"`
-	Description      string   `json:"description"`
-	Keywords         []string `json:"keywords"`
-	Tags             []string `json:"tags"`
-	AlternativeTo    []string `json:"alternative_to"`
-	License          string   `json:"license"`
-	LicenseURL       string   `json:"license_url"`
-	SponsorshipURL   string   `json:"sponsorship"`
-	HomepageURL      string   `json:"homepage_url"`
-	RepositoryURL    string   `json:"repository_url"`
-	DocumentationURL string   `json:"documentation_url"`
-	Logo             string   `json:"logo"`
-	WaitingList      bool     `json:"waiting_list"`
-	Extension        string   `json:"extension"`
+	Stars            *int                `json:"stars"`
+	Slug             string              `json:"slug"`
+	Name             string              `json:"name"`
+	Summary          string              `json:"summary"`
+	Description      string              `json:"description"`
+	Keywords         []string            `json:"keywords"`
+	Tags             []string            `json:"tags"`
+	AlternativeTo    []string            `json:"alternative_to"`
+	License          string              `json:"license"`
+	LicenseURL       string              `json:"license_url"`
+	Sponsorship      []model.CatalogLink `json:"sponsorship"`
+	HomepageURL      string              `json:"homepage_url"`
+	RepositoryURL    string              `json:"repository_url"`
+	DocumentationURL string              `json:"documentation_url"`
+	Logo             string              `json:"logo"`
+	WaitingList      bool                `json:"waiting_list"`
+	Extension        string              `json:"extension"`
 }
 
 // logoExts are the extensions a published logo may have: images only, so a
@@ -252,7 +253,7 @@ func readApp(root, slug string) (e feed.Entry, lg *logo, skip string, err error)
 	}
 	return feed.Entry{
 		Slug: slug, Name: m.Name, Summary: m.Summary, Description: m.Description,
-		Stars: m.Stars, Keywords: m.Keywords, Tags: m.Tags, AlternativeTo: m.AlternativeTo, License: m.License, LicenseURL: m.LicenseURL, SponsorshipURL: m.SponsorshipURL,
+		Stars: m.Stars, Keywords: m.Keywords, Tags: m.Tags, AlternativeTo: m.AlternativeTo, License: m.License, LicenseURL: m.LicenseURL, Sponsorship: m.Sponsorship,
 		HomepageURL: m.HomepageURL, RepositoryURL: m.RepositoryURL, DocumentationURL: m.DocumentationURL,
 		Files: files,
 	}, lg, "", nil

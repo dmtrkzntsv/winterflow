@@ -93,7 +93,10 @@ function catalogView(withdrawn = false): TemplateView {
       license: "MIT",
       license_url: "https://example.org/license",
       stars: 11155,
-      sponsorship_url: "https://example.org/sponsor",
+      sponsorship: [
+        { name: "Add a star on GitHub", url: "https://github.com/example/actual" },
+        { name: "Open Collective", url: "https://example.org/sponsor" },
+      ],
       homepage_url: "https://example.org/actual",
       repository_url: "https://github.com/example/actual",
       documentation_url: "https://example.org/docs",
@@ -172,7 +175,8 @@ describe("TemplatePage", () => {
     expect(screen.getByRole("link", { name: "Docs" })).toHaveAttribute("href", "https://example.org/docs");
     expect(screen.getByRole("link", { name: "MIT" })).toHaveAttribute("href", "https://example.org/license");
     expect(screen.getByText("11,155")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Sponsor this project/ })).toHaveAttribute("href", "https://example.org/sponsor");
+    expect(screen.getByRole("link", { name: /Open Collective/ })).toHaveAttribute("href", "https://example.org/sponsor");
+    expect(screen.getAllByRole("link", { name: /Add a star on GitHub/ })).toHaveLength(1);
     expect(screen.getByLabelText("Content of compose.yml")).toHaveTextContent("image: actual:old");
     expect(screen.getByLabelText("Content of compose.yml")).not.toHaveTextContent("x-winterflow");
     expect(screen.getByRole("heading", { name: "Versions" })).toBeInTheDocument();

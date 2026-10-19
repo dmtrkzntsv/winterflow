@@ -37,7 +37,7 @@ func (e Entry) Check() (template.Body, model.CatalogMeta, error) {
 	meta := model.CatalogMeta{
 		Stars:   e.Stars,
 		Summary: e.Summary, Description: e.Description,
-		Keywords: e.Keywords, Tags: e.Tags, AlternativeTo: e.AlternativeTo, License: e.License, LicenseURL: e.LicenseURL, SponsorshipURL: e.SponsorshipURL,
+		Keywords: e.Keywords, Tags: e.Tags, AlternativeTo: e.AlternativeTo, License: e.License, LicenseURL: e.LicenseURL, Sponsorship: e.Sponsorship,
 		HomepageURL: e.HomepageURL, RepositoryURL: e.RepositoryURL, DocumentationURL: e.DocumentationURL, LogoURL: e.LogoURL,
 	}.Normalized()
 	for _, l := range []struct {
@@ -56,11 +56,14 @@ func (e Entry) Check() (template.Body, model.CatalogMeta, error) {
 	}
 	for _, u := range [][2]string{
 		{"homepage_url", e.HomepageURL}, {"repository_url", e.RepositoryURL},
-		{"documentation_url", e.DocumentationURL}, {"logo_url", e.LogoURL}, {"license_url", e.LicenseURL}, {"sponsorship_url", e.SponsorshipURL},
+		{"documentation_url", e.DocumentationURL}, {"logo_url", e.LogoURL}, {"license_url", e.LicenseURL},
 	} {
 		if err := checkURL(u[0], u[1]); err != nil {
 			return template.Body{}, model.CatalogMeta{}, err
 		}
+	}
+	if err := checkLinks("sponsorship", meta.Sponsorship); err != nil {
+		return template.Body{}, model.CatalogMeta{}, err
 	}
 	if got := Digest(e.Files); e.Digest != got {
 		return template.Body{}, model.CatalogMeta{}, invalid("digest", "%q is not the files' digest (%s)", e.Digest, got)
@@ -82,6 +85,27 @@ func checkList(field string, list []string) error {
 	for i, s := range list {
 		if s == "" || len(s) > MaxListItem || strings.ContainsAny(s, "\r\n") {
 			return invalid(fmt.Sprintf("%s[%d]", field, i), "one line of 1 to %d characters", MaxListItem)
+		}
+	}
+	return nil
+}
+
+// checkLinks accepts at most MaxListLen links, each a one-line name of 1 to
+// MaxListItem characters and an https URL.
+func checkLinks(field string, links []model.CatalogLink) error {
+	if len(links) > MaxListLen {
+		return invalid(field, "at most %d entries", MaxListLen)
+	}
+	for i, l := range links {
+		f := fmt.Sprintf("%s[%d]", field, i)
+		if l.Name == "" || len(l.Name) > MaxListItem || strings.ContainsAny(l.Name, "\r\n") {
+			return invalid(f+".name", "one line of 1 to %d characters", MaxListItem)
+		}
+		if l.URL == "" {
+			return invalid(f+".url", "missing")
+		}
+		if err := checkURL(f+".url", l.URL); err != nil {
+			return err
 		}
 	}
 	return nil

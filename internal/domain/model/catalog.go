@@ -9,19 +9,19 @@ import (
 // its name and files: the gallery's text, search words and links. The
 // sync updates it in place (a fixed description never makes a revision).
 type CatalogMeta struct {
-	Stars            *int     `json:"stars,omitempty"`
-	Summary          string   `json:"summary"`
-	Description      string   `json:"description"`
-	Keywords         []string `json:"keywords"`
-	Tags             []string `json:"tags"`
-	AlternativeTo    []string `json:"alternative_to" description:"Apps this one replaces, as search words."`
-	License          string   `json:"license"`
-	LicenseURL       string   `json:"license_url"`
-	SponsorshipURL   string   `json:"sponsorship_url,omitempty"`
-	HomepageURL      string   `json:"homepage_url"`
-	RepositoryURL    string   `json:"repository_url"`
-	DocumentationURL string   `json:"documentation_url"`
-	LogoURL          string   `json:"logo_url"`
+	Stars            *int          `json:"stars,omitempty"`
+	Summary          string        `json:"summary"`
+	Description      string        `json:"description"`
+	Keywords         []string      `json:"keywords"`
+	Tags             []string      `json:"tags"`
+	AlternativeTo    []string      `json:"alternative_to" description:"Apps this one replaces, as search words."`
+	License          string        `json:"license"`
+	LicenseURL       string        `json:"license_url"`
+	Sponsorship      []CatalogLink `json:"sponsorship" description:"Ways to support the project, in the catalog's order."`
+	HomepageURL      string        `json:"homepage_url"`
+	RepositoryURL    string        `json:"repository_url"`
+	DocumentationURL string        `json:"documentation_url"`
+	LogoURL          string        `json:"logo_url"`
 }
 
 // Equal reports whether m and o say the same (a nil list equals an empty
@@ -31,7 +31,8 @@ func (m CatalogMeta) Equal(o CatalogMeta) bool {
 		slices.Equal(m.Keywords, o.Keywords) && slices.Equal(m.Tags, o.Tags) &&
 		slices.Equal(m.AlternativeTo, o.AlternativeTo) && m.License == o.License &&
 		m.HomepageURL == o.HomepageURL && m.RepositoryURL == o.RepositoryURL &&
-		m.DocumentationURL == o.DocumentationURL && m.LogoURL == o.LogoURL && m.LicenseURL == o.LicenseURL && m.SponsorshipURL == o.SponsorshipURL
+		m.DocumentationURL == o.DocumentationURL && m.LogoURL == o.LogoURL && m.LicenseURL == o.LicenseURL &&
+		slices.Equal(m.Sponsorship, o.Sponsorship)
 }
 
 func equalInt(a, b *int) bool { return a == nil && b == nil || a != nil && b != nil && *a == *b }
@@ -43,7 +44,17 @@ func (m CatalogMeta) Normalized() CatalogMeta {
 			*l = []string{}
 		}
 	}
+	if m.Sponsorship == nil {
+		m.Sponsorship = []CatalogLink{}
+	}
 	return m
+}
+
+// CatalogLink is a named link of the catalog metadata, such as one way to
+// sponsor a project.
+type CatalogLink struct {
+	Name string `json:"name"`
+	URL  string `json:"url"`
 }
 
 // CatalogState is what the catalog sync reads of one catalog template.

@@ -170,9 +170,8 @@ func TestGuardedSendRefusesRedirectsToPrivate(t *testing.T) {
 	}))
 	defer redirector.Close()
 	// Allow the redirector (a public host in real life), refuse the target.
-	old := refused
-	refused = func(address string) bool { return address == target }
-	defer func() { refused = old }()
+	refuse := func(address string) bool { return address == target }
+	defer refuseHook.Store(refuseHook.Swap(&refuse))
 
 	from := strings.TrimPrefix(redirector.URL, "http://")
 	guarded := NewShoutrrr(2*time.Second, false)

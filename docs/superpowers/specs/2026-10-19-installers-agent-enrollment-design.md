@@ -210,8 +210,9 @@ receives a question and a question nobody hears is lost):
 | `agent-auth-reply:<hub_id>` | API → the asking hub | `{request_id, verdict, reason}` |
 | `agent-revoke:<REGION>` | API → all hubs | `{server_id}` on server delete |
 
-- `verdict`: `allowed`, `revoked` (server deleted), or `unknown` (no such
-  server, or the fingerprint doesn't match its active certificate).
+- `verdict`: `allowed`, `unknown` (no such server, which includes a deleted
+  one: its rows are gone), or `revoked` (the server exists but this
+  certificate is not its active one). Both refusals mean `PermissionDenied`.
 - Each hub generates a `hub_id` at start and subscribes to its own reply
   channel. `REGION` scoping matches today's queues; per-region splitting is
   future work.

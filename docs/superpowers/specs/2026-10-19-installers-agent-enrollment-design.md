@@ -19,7 +19,8 @@ the UI, done.
 
 ## Goals
 
-1. **Standalone install** stays the existing `install.sh` flow, SQLite only.
+1. **Standalone install** stays the existing `install.sh` flow, on SQLite by
+   default.
 2. **Control-plane install**: API and Hub as systemd services on one host,
    Postgres and Redis on the same host, each detected and installed only after
    asking.
@@ -45,7 +46,8 @@ the UI, done.
 - An agent that ends up running but unenrolled, retrying a hub it can't reach.
   A failed enrollment leaves the service disabled and stopped.
 - The agent's private key leaving the agent's machine.
-- Standalone growing a Postgres or Redis dependency.
+- Standalone *requiring* Postgres or Redis. (Pointing it at Postgres by
+  choice stays allowed.)
 - An installer that clobbers an existing Postgres/Redis setup or regenerates
   the CA / passwords on a rerun.
 
@@ -68,8 +70,9 @@ the UI, done.
   10 codes (~100 minutes) the script fails and the agent service is left
   disabled and stopped.
 - **Existing agents keep their hub.** No re-discovery for now.
-- **Standalone is SQLite only; distributed requires Postgres** (as PR #33:
-  startup refuses the other).
+- **Standalone defaults to SQLite but may use Postgres** if `DATABASE_URL`
+  says so; the installer always sets it up on SQLite. **Distributed requires
+  Postgres** (startup refuses SQLite).
 - **One control-plane host for now**, multiple hubs later.
 - **TLS:** the owner runs Caddy with Cloudflare certificates in front of the
   API; the hub is exposed directly on its port.
@@ -175,8 +178,9 @@ separate `install-distributed.sh` only to delete it.
 
 ### Standalone
 
-Unchanged apart from PR #33's config change: default `DATABASE_URL`
-`sqlite://…`, refuse non-SQLite.
+Unchanged apart from a config change: `DATABASE_URL` defaults to
+`sqlite://winterflow.sqlite` when unset; a `postgres://` URL is still
+accepted. Anything else is refused at startup.
 
 ### Web UI
 

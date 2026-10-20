@@ -19,7 +19,7 @@
 - Hub waits at most 5 s for the API's auth reply; no reply = `Unavailable`.
 - Agent: 5 consecutive `PermissionDenied` (retry gaps 1m, 2m, 3m, 4m) → exit code 78; unit has `RestartPreventExitStatus=78`. `Unavailable` and every other failure: existing 1–30 s backoff forever. A successful connection resets the count.
 - Bus channels: `agent-auth:<REGION>`, `agent-auth-reply:<hub_id>`, `agent-revoke:<REGION>`.
-- Standalone is SQLite-only, distributed API Postgres-only (startup refuses otherwise). None of the hub auth applies to standalone.
+- Standalone defaults to SQLite (installer always uses it) but accepts Postgres; distributed API is Postgres-only (startup refuses SQLite). None of the hub auth applies to standalone.
 - Every new/changed env var goes into `.env.example` in the same task (CLAUDE.md rule). Every route change: `make openapi`, contract test + `probes` entry. New SQL: same `-- name:` in `query/sqlite` and `query/pgsql`, `make sqlc`, shapes test. Migrations identical in both engines, ASCII only.
 - Every network operation has a deadline; pending-reply maps are pruned on timeout (CLAUDE.md stability rules).
 - `install.sh` stays one curl-pipeable file; installers never touch the firewall, Caddy, or global Postgres/Redis config; reruns keep CA, passwords, JWT secret, data.
@@ -36,7 +36,7 @@
 
 ### Task 1: Topology database rules and new config
 
-Absorbs PR #33's Go config change.
+Absorbs PR #33's Go config change, relaxed: standalone may still use Postgres.
 
 **Files:**
 - Modify: `pkg/config/config.go` (`GetDbURL` ~:46; add getters next to `GetHubPort` ~:207)
@@ -47,18 +47,18 @@ Absorbs PR #33's Go config change.
 **Interfaces:**
 - Produces:
   - `func (c *ServerConfig) GetDbURL() string` — standalone default `sqlite://winterflow.sqlite` when unset.
-  - `func (c *ServerConfig) ValidateDatabaseURL() error` — standalone requires `sqlite://`, distributed requires `postgres://` (accept `postgresql://` too).
+  - `func (c *ServerConfig) ValidateDatabaseURL() error` — standalone accepts `sqlite://` or `postgres://`/`postgresql://`, distributed requires `postgres://`/`postgresql://`; any other scheme is an error for both.
   - `func (c *ServerConfig) GetAgentHubAddr() string` — env `AGENT_HUB_ADDR`, `host:port`.
   - `func (c *ServerConfig) ValidateEnrollment() error` — distributed API only: `AGENT_HUB_ADDR` is a valid `host:port`, and `GetHubCACertPath()` / `GetHubCAKeyPath()` files exist and parse as a matching pair.
   - `func (c *ServerConfig) GetAgentAuthChannel() string` = `"agent-auth:" + REGION`
   - `func (c *ServerConfig) GetAgentRevokeChannel() string` = `"agent-revoke:" + REGION`
   - `func AgentAuthReplyChannel(hubID string) string` = `"agent-auth-reply:" + hubID`
 
-- [ ] **Step 1: Write failing tests** `TestGetDbURLStandaloneDefault` (unset → `sqlite://winterflow.sqlite`), `TestValidateDatabaseURL` (table: standalone+sqlite ok, standalone+postgres err, distributed+postgres ok, distributed+postgresql ok, distributed+sqlite err, distributed+empty err), `TestValidateEnrollment` (missing addr err, `hub-01.winterflow.dev:50051` ok, `nohost` err, missing CA key err, valid pair from a `t.TempDir()` CA ok), `TestAgentChannels` (`REGION=eu` → `agent-auth:eu`, `agent-revoke:eu`; `AgentAuthReplyChannel("h1")` → `agent-auth-reply:h1`).
+- [ ] **Step 1: Write failing tests** `TestGetDbURLStandaloneDefault` (unset → `sqlite://winterflow.sqlite`), `TestValidateDatabaseURL` (table: standalone+sqlite ok, standalone+postgres ok, standalone+mysql err, distributed+postgres ok, distributed+postgresql ok, distributed+sqlite err, distributed+empty err), `TestValidateEnrollment` (missing addr err, `hub-01.winterflow.dev:50051` ok, `nohost` err, missing CA key err, valid pair from a `t.TempDir()` CA ok), `TestAgentChannels` (`REGION=eu` → `agent-auth:eu`, `agent-revoke:eu`; `AgentAuthReplyChannel("h1")` → `agent-auth-reply:h1`).
 - [ ] **Step 2: Run** `go test ./pkg/config/ -run 'DbURL|DatabaseURL|Enrollment|AgentChannels'` — FAIL (undefined).
 - [ ] **Step 3: Implement** the getters; `BootstrapStandalone` fatals on `ValidateDatabaseURL`, `BootstrapAPI` fatals on `ValidateDatabaseURL` and `ValidateEnrollment`. `.env.example`: document `AGENT_HUB_ADDR` (distributed API; address handed to enrolling agents), note that the API reads the CA pair from `HUB_CERT_DIR`, and the standalone `DATABASE_URL` default.
 - [ ] **Step 4: Run** `go test ./pkg/config/ ./internal/infra/bootstrap/...` — PASS. Run `go test ./internal/app/web/contract/` — PASS (contract setup may need `AGENT_HUB_ADDR` + a temp CA; add to its `TestMain` if bootstrap is used there).
-- [ ] **Step 5: Commit** `feat(config): SQLite-only standalone, Postgres-only API, enrollment settings`
+- [ ] **Step 5: Commit** `feat(config): SQLite by default for standalone, Postgres-only API, enrollment settings`
 
 ### Task 2: Certificate helpers
 

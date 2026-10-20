@@ -188,33 +188,59 @@ codes / start again" case if the API reports it.
 
 ### Hub identity and revocation
 
-Two checks on every agent connection, both in the hub's `RegisterAgent`:
+Two checks when an agent registers with a hub (`RegisterAgent`, i.e. when a
+connection opens; not on heartbeats, no caching):
 
 1. **Identity:** reject an `AgentId` that differs from the verified client
    certificate's CN.
-2. **Active list:** reject a server id that is not on the active-server list.
+2. **Ask the API:** the hub asks the API whether this server and this exact
+   certificate are still active.
 
-*(My call on the mechanism; the owner asked for "a list of active servers or
-reject the connection".)* The hub has no database, but it already shares
-Redis with the API, so the list lives there:
+Decided with the owner: the hub asks the API (the database stays the only
+source of truth) rather than reading a server list synced into Redis. A
+synced list can't tell "deleted" from "the copy is missing", and the agent
+must be able to trust a "no" enough to stop.
 
-- The API owns it: a Redis set (name region-independent, e.g.
-  `servers:active`) of server ids. A claim adds the id; deleting a server
-  removes it. The API rebuilds the set from the `servers` table at startup,
-  so the database stays the source of truth and a flushed Redis heals itself.
-- On delete the API also publishes a revocation message on the bus. Every hub
-  that holds that agent's stream closes it at once, so the agent drops
-  without waiting for its next reconnect.
-- A hub that can't reach Redis refuses the connection (fail closed). The
-  agent's existing backoff (1–30 s) retries it.
-- Defense in depth: the API ignores responses and events tagged with a server
-  id it doesn't know.
-- A rejected agent logs the refusal clearly and keeps backing off. It does not
-  exit, so restarting the service isn't needed after a mistaken delete is
-  undone by re-enrolling.
+**Messages** (on the existing bus; Redis pub/sub, so every API replica
+receives a question and a question nobody hears is lost):
+
+| Channel | Direction | Payload |
+|---|---|---|
+| `agent-auth:<REGION>` | hub → API | `{request_id, hub_id, server_id, cert_fingerprint}` |
+| `agent-auth-reply:<hub_id>` | API → the asking hub | `{request_id, verdict, reason}` |
+| `agent-revoke:<REGION>` | API → all hubs | `{server_id}` on server delete |
+
+- `verdict`: `allowed`, `revoked` (server deleted), or `unknown` (no such
+  server, or the fingerprint doesn't match its active certificate).
+- Each hub generates a `hub_id` at start and subscribes to its own reply
+  channel. `REGION` scoping matches today's queues; per-region splitting is
+  future work.
+
+**API:** a small usecase `agentauth.Check(server_id, fingerprint) -> verdict`
+reading `servers` and the server's active certificate
+(`server_certificates`). Every replica answers; the hub takes the first reply
+per `request_id` and drops the rest. Deleting a server publishes
+`agent-revoke`. Defense in depth: the API also ignores responses and events
+tagged with a server id it doesn't know.
+
+**Hub:** waits up to 5 s for a reply.
+- `allowed`: accept the stream.
+- `revoked` / `unknown`: refuse with gRPC `PermissionDenied` and the reason.
+- no reply in time, or a bus error: refuse with `Unavailable` (fail closed,
+  but transient).
+- On `agent-revoke`: close that agent's stream if this hub holds it.
+
+**Agent:**
+- `PermissionDenied` five times in a row (spread over about 10 minutes): log
+  the reason and exit with code 78. The unit sets
+  `RestartPreventExitStatus=78`, so systemd leaves it stopped until someone
+  restarts it by hand.
+- `Unavailable` (or any other failure): the normal 1-30 s retry loop,
+  forever. An API or Redis outage never makes agents give up.
+- Any successful connection resets the count.
 
 Re-enrolling a box issues a new server id; the old id is never reactivated.
-Standalone's in-process bridge is unaffected.
+None of this applies to standalone (in-process bridge, one built-in agent).
 
 ### TLS and exposure
 

@@ -137,13 +137,10 @@ Decided with the owner:
 
 - **GitHub release** (public): only the standalone and agent binaries,
   renamed to `winterflow-<os>-<arch>` (standalone) and `agent-<os>-<arch>`.
-  For a transition the release keeps publishing the old names
-  (`winterflow-standalone-*`, `winterflow-agent-*`) as well, because the
-  self-updater in already-installed binaries (`updater.go`) and old copies
-  of `install.sh` download those. *(My call: keep the old names for at
-  least 3 months / until every known install has updated; dropping them is
-  a separate, deliberate change.)* The new self-updater and scripts use the
-  new names.
+  The old names (`winterflow-standalone-*`, `winterflow-agent-*`) are
+  dropped outright (owner's decision): binaries installed before this
+  change can no longer self-update and need the installer rerun once. The
+  self-updater and scripts use the new names.
 - **Cloudflare R2** (private, S3-compatible): every binary, with the
   `winterflow-` prefix: `winterflow-standalone`, `winterflow-agent`,
   `winterflow-api`, `winterflow-hub`, each `-<os>-<arch>`, plus

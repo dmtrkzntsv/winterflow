@@ -18,7 +18,7 @@
 - Agent cert CN = `server_id`; the CSR's own subject is ignored. Agent private key never leaves the agent box (0600, service user).
 - Hub waits at most 5 s for the API's auth reply; no reply = `Unavailable`.
 - Agent: 5 consecutive `PermissionDenied` (retry gaps 1m, 2m, 3m, 4m) → exit code 78; unit has `RestartPreventExitStatus=78`. `Unavailable` and every other failure: existing 1–30 s backoff forever. A successful connection resets the count.
-- Release assets: GitHub gets `winterflow-<os>-<arch>` (standalone) and `agent-<os>-<arch>`, plus the old `winterflow-standalone-*` / `winterflow-agent-*` names during the transition. R2 gets `winterflow-{standalone,agent,api,hub}-<os>-<arch>` + `checksums.txt` under `releases/<tag>/`, and `releases/latest` (text: the tag). R2 env vars: `WINTERFLOW_R2_ENDPOINT`, `WINTERFLOW_R2_BUCKET`, `WINTERFLOW_R2_ACCESS_KEY_ID`, `WINTERFLOW_R2_SECRET_ACCESS_KEY`.
+- Release assets: GitHub gets `winterflow-<os>-<arch>` (standalone) and `agent-<os>-<arch>`; the old names are no longer published. R2 gets `winterflow-{standalone,agent,api,hub}-<os>-<arch>` + `checksums.txt` under `releases/<tag>/`, and `releases/latest` (text: the tag). R2 env vars: `WINTERFLOW_R2_ENDPOINT`, `WINTERFLOW_R2_BUCKET`, `WINTERFLOW_R2_ACCESS_KEY_ID`, `WINTERFLOW_R2_SECRET_ACCESS_KEY`.
 - Agent shortcut: `https://get.winterflow.dev/agent` (redirect owned outside the repo) → raw GitHub `scripts/install-agent.sh`.
 - Bus channels: `agent-auth:<REGION>`, `agent-auth-reply:<hub_id>`, `agent-revoke:<REGION>`.
 - Standalone defaults to SQLite (installer always uses it) but accepts Postgres; distributed API is Postgres-only (startup refuses SQLite). None of the hub auth applies to standalone.
@@ -268,7 +268,7 @@ No delete route exists today; revocation needs one.
 ### Task 11: Release assets, R2 upload, hub PKI subcommand
 
 **Files:**
-- Modify: `.goreleaser.yaml` (standalone + agent only; archive `name_template` gives `winterflow-<os>-<arch>` for standalone and `agent-<os>-<arch>` for agent; old names published too via a second archive/`extra_files` copy)
+- Modify: `.goreleaser.yaml` (standalone + agent only; archive `name_template` gives `winterflow-<os>-<arch>` for standalone and `agent-<os>-<arch>` for agent; the old names are not published)
 - Create: `scripts/build-distributed.sh` (builds `winterflow-api` with a web build using `VITE_APP_MODE=distributed`, and `winterflow-hub`; `CGO_ENABLED=0`, same platforms and ldflags as goreleaser; writes `dist-r2/` with all four `winterflow-*` binaries copied from goreleaser's `dist/` plus a fresh `checksums.txt`)
 - Create: `scripts/upload-r2.sh` (uploads `dist-r2/*` to `releases/<tag>/` and writes `releases/latest`; `curl --aws-sigv4 "aws:amz:auto:s3" --user "$KEY:$SECRET"`; exits 0 with a warning when any R2 var is unset)
 - Modify: `.github/workflows/release.yml` (after goreleaser: run both scripts with the four R2 secrets in env; never echo them)

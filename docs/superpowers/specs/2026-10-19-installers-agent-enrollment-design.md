@@ -131,15 +131,62 @@ the UI input stay as they are.
 The claimed result stays retrievable by `poll_secret` for a short window
 (e.g. 15 minutes) so a script that lost its connection can still collect it.
 
-### Agent install (`install.sh --agent`)
+### Releases and distribution
 
-Same file, same machinery as standalone (Docker check/offer, service user,
+Decided with the owner:
+
+- **GitHub release** (public): only the standalone and agent binaries,
+  renamed to `winterflow-<os>-<arch>` (standalone) and `agent-<os>-<arch>`.
+  For a transition the release keeps publishing the old names
+  (`winterflow-standalone-*`, `winterflow-agent-*`) as well, because the
+  self-updater in already-installed binaries (`updater.go`) and old copies
+  of `install.sh` download those. *(My call: keep the old names for at
+  least 3 months / until every known install has updated; dropping them is
+  a separate, deliberate change.)* The new self-updater and scripts use the
+  new names.
+- **Cloudflare R2** (private, S3-compatible): every binary, with the
+  `winterflow-` prefix: `winterflow-standalone`, `winterflow-agent`,
+  `winterflow-api`, `winterflow-hub`, each `-<os>-<arch>`, plus
+  `checksums.txt`, under `releases/<tag>/`, and `releases/latest` holding
+  the newest tag. Uploaded by the same release run, same version.
+- The API binary uploaded to R2 embeds a web UI built with
+  `VITE_APP_MODE=distributed` (its own build step), so no runtime mode
+  switch is needed.
+- **Credentials are environment variables** the owner sets (in GitHub
+  Actions secrets for upload, in the shell for the control-plane install).
+  *(My call on names)*: `WINTERFLOW_R2_ENDPOINT` (the account's S3
+  endpoint URL), `WINTERFLOW_R2_BUCKET`, `WINTERFLOW_R2_ACCESS_KEY_ID`,
+  `WINTERFLOW_R2_SECRET_ACCESS_KEY`. The release job skips the R2 upload
+  with a warning when they are absent (forks, PRs). The installer
+  downloads with `curl --aws-sigv4 "aws:amz:auto:s3"` (curl >= 7.75), so
+  no AWS CLI is needed.
+
+### Scripts
+
+Three separate files, each self-contained so it works piped from curl.
+The helpers they share (download + checksum, service user, Docker offer,
+journald namespace, limits, `--dry-run`, `--uninstall`/`--purge`) are
+copied into each; a test fails when a shared helper's copies differ.
+
+- `scripts/install.sh`: standalone, as today (new asset name). The only
+  installer the README mentions, by its GitHub URL.
+- `scripts/install-agent.sh`: the agent. The UI shows it through the
+  shortcut `https://get.winterflow.dev/agent`, which redirects to this
+  script's raw GitHub URL. The redirect is set up by the owner outside
+  this repo.
+- `scripts/install-control-plane.sh`: Postgres, Redis, API, Hub. Not in the
+  README; refuses to start without the R2 variables.
+
+### Agent install (`install-agent.sh`)
+
+Same machinery as standalone (Docker check/offer, service user,
 hardened unit, journald namespace, CPU/memory limits, `--dry-run`,
 `--uninstall`/`--purge`, `--yes`, `--version`, `--binary`):
 
 1. Resolve the API URL (`--url`, else default; https required except a
    loopback host for testing).
-2. Install the `agent` binary (release asset; static as backups require).
+2. Install the agent binary (GitHub release asset `agent-<os>-<arch>`,
+   installed as `/usr/local/bin/winterflow-agent`; static as backups require).
 3. Generate the agent key + CSR locally (`openssl` or a hidden binary
    subcommand — builder's call; the binary is preferred so there is no
    openssl dependency). Key 0600, owned by the service user.
@@ -155,12 +202,14 @@ hardened unit, journald namespace, CPU/memory limits, `--dry-run`,
 Piped (`curl | sudo bash`) runs are non-interactive, as standalone already is;
 the code display and polling work without a TTY.
 
-### Control-plane install (`install.sh --control-plane`)
+### Control-plane install (`install-control-plane.sh`)
 
-Finishes PR #33's direction, folded into the same file. *(My call)* This
-work absorbs #33 — its Go config change, docs and CI checks — onto a fresh
-branch, and #33 is closed once the new PR is open, rather than merging a
-separate `install-distributed.sh` only to delete it.
+Finishes PR #33's direction. *(My call)* This work absorbs #33 — its Go
+config change, docs and CI checks — onto a fresh branch, and #33 is closed
+once the new PR is open.
+
+- Downloads `winterflow-api` and `winterflow-hub` from R2 (latest, or
+  `--version`), verifying `checksums.txt`.
 
 - Installs `api` and `hub` binaries, units `winterflow-api` and
   `winterflow-hub`, same hardening/journald/limits approach as standalone.
@@ -186,7 +235,7 @@ accepted. Anything else is refused at startup.
 
 The "Add server" dialog builds the command from the API's own origin instead
 of the hard-coded `get.winterflow.io` line, e.g.
-`curl -fsSL <script URL> | sudo bash -s -- --agent --url <API origin>`.
+`curl -fsSL https://get.winterflow.dev/agent | sudo bash -s -- --url <API origin>`.
 The code step is unchanged (same route). Error copy gains the "too many
 codes / start again" case if the API reports it.
 
@@ -267,9 +316,6 @@ None of this applies to standalone (in-process bridge, one built-in agent).
 - Table layout for pending enrollments, endpoint names/shapes (within the
   above), poll interval, response field names.
 - Key/CSR generation mechanism on the agent.
-- Whether `install.sh` is refactored into sections or a second file is
-  generated — but it must remain a single curl-pipeable file.
-- How the script URL in the UI is served (GitHub raw as today, or served by
-  the API).
+- How the shared-helper sync test marks the shared blocks.
 - Contract tests, OpenAPI, `.env.example` updates follow the repo rules
   (CLAUDE.md).

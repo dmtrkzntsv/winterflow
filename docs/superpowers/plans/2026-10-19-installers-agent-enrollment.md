@@ -4,7 +4,7 @@
 
 **Goal:** One script installs Winterflow as standalone, as a distributed control plane (API + Hub + local Postgres/Redis), or as an agent that enrolls with a code typed into the hosted UI; hubs admit only agents whose server still exists.
 
-**Architecture:** The API gains an unauthenticated enrollment API (CSR in, code out, signed cert back after a user claims the code) and signs agent certs with the CA it now holds. Hubs verify each connecting agent's certificate name and ask the API over the existing Redis bus whether the server and certificate are still active; deleting a server revokes it. Enrollment logic on the agent side is a hidden `winterflow-agent enroll` subcommand that `install.sh --agent` calls.
+**Architecture:** The API gains an unauthenticated enrollment API (CSR in, code out, signed cert back after a user claims the code) and signs agent certs with the CA it now holds. Hubs verify each connecting agent's certificate name and ask the API over the existing Redis bus whether the server and certificate are still active; deleting a server revokes it. Enrollment logic on the agent side is a hidden `winterflow-agent enroll` subcommand that `install-agent.sh` calls. GitHub releases carry only standalone and agent; all four binaries go to private Cloudflare R2.
 
 **Tech Stack:** Go 1.27 (chi, sqlc over SQLite/Postgres, grpc, go-redis), bash + systemd, React 19 (web).
 
@@ -18,18 +18,20 @@
 - Agent cert CN = `server_id`; the CSR's own subject is ignored. Agent private key never leaves the agent box (0600, service user).
 - Hub waits at most 5 s for the API's auth reply; no reply = `Unavailable`.
 - Agent: 5 consecutive `PermissionDenied` (retry gaps 1m, 2m, 3m, 4m) → exit code 78; unit has `RestartPreventExitStatus=78`. `Unavailable` and every other failure: existing 1–30 s backoff forever. A successful connection resets the count.
+- Release assets: GitHub gets `winterflow-<os>-<arch>` (standalone) and `agent-<os>-<arch>`, plus the old `winterflow-standalone-*` / `winterflow-agent-*` names during the transition. R2 gets `winterflow-{standalone,agent,api,hub}-<os>-<arch>` + `checksums.txt` under `releases/<tag>/`, and `releases/latest` (text: the tag). R2 env vars: `WINTERFLOW_R2_ENDPOINT`, `WINTERFLOW_R2_BUCKET`, `WINTERFLOW_R2_ACCESS_KEY_ID`, `WINTERFLOW_R2_SECRET_ACCESS_KEY`.
+- Agent shortcut: `https://get.winterflow.dev/agent` (redirect owned outside the repo) → raw GitHub `scripts/install-agent.sh`.
 - Bus channels: `agent-auth:<REGION>`, `agent-auth-reply:<hub_id>`, `agent-revoke:<REGION>`.
 - Standalone defaults to SQLite (installer always uses it) but accepts Postgres; distributed API is Postgres-only (startup refuses SQLite). None of the hub auth applies to standalone.
 - Every new/changed env var goes into `.env.example` in the same task (CLAUDE.md rule). Every route change: `make openapi`, contract test + `probes` entry. New SQL: same `-- name:` in `query/sqlite` and `query/pgsql`, `make sqlc`, shapes test. Migrations identical in both engines, ASCII only.
 - Every network operation has a deadline; pending-reply maps are pruned on timeout (CLAUDE.md stability rules).
-- `install.sh` stays one curl-pipeable file; installers never touch the firewall, Caddy, or global Postgres/Redis config; reruns keep CA, passwords, JWT secret, data.
+- Three self-contained scripts (`install.sh` standalone, `install-agent.sh`, `install-control-plane.sh`), each curl-pipeable; installers never touch the firewall, Caddy, or global Postgres/Redis config; reruns keep CA, passwords, JWT secret, data.
 
 ## Review Focus
 
 1. **Claim races a refresh**: a user types code N while the script has just refreshed to N+1. Expect "code has expired" for N (not a 500, not a claim), and N+1 works. → Task 4 test `TestClaimOldCodeAfterRefresh`.
 2. **Script loses the network after the claim** and polls again minutes later. Expect `claimed` with the same cert, not a second server. Past 15 minutes: `expired`, and the server exists without a collected cert. → Task 4 test `TestStatusClaimedIsIdempotent`.
 3. **Two API replicas answer the same auth question**, or a reply arrives after the 5 s timeout. Expect the first reply used, late/duplicate replies dropped without leaking map entries or blocking. → Task 8 test `TestAuthorizerLateAndDuplicateReplies`.
-4. **Agent rerun on an already-enrolled box** (`install.sh --agent` again). Expect binary/unit refreshed, no new enrollment, cert untouched, service restarted. → Task 13 dry-run test `agent_rerun_keeps_enrollment`.
+4. **Agent rerun on an already-enrolled box** (`install-agent.sh` again). Expect binary/unit refreshed, no new enrollment, cert untouched, service restarted. → Task 13 dry-run test `agent_rerun_keeps_enrollment`.
 5. **Agent stream sends a heartbeat/event with a different `AgentId`** than its cert. Expect the stream closed, nothing published for the foreign id. → Task 8 test `TestStreamRejectsForeignAgentID`.
 
 ---
@@ -263,21 +265,23 @@ No delete route exists today; revocation needs one.
 - [ ] **Step 4: Run** — PASS.
 - [ ] **Step 5: Commit** `feat(agent): enroll subcommand that shows a code and collects the signed certificate`
 
-### Task 11: Release binaries for the control plane
+### Task 11: Release assets, R2 upload, hub PKI subcommand
 
 **Files:**
-- Modify: `.goreleaser.yaml` (builds `api` → `winterflow-api`, `hub` → `winterflow-hub`; same env/goos/goarch/ldflags as `agent`)
-- Modify: `cmd/hub/main.go` (hidden `pki` subcommand: `winterflow-hub pki --dir D --host H [--host H2]` → `cert.EnsureHubPKI`, prints `changed`/`unchanged`)
-- Modify: `internal/app/web/spa` (inject `<meta name="wf-app-mode" content="standalone|distributed">` into the served shell from the running binary's topology), `web/src/config.ts` (read the meta first, fall back to `VITE_APP_MODE`), `Makefile` (`make build` also builds hub/agent as PR #33 added)
-- Test: `internal/app/web/spa/*_test.go`, `web/src/config.test.ts`, a `cmd/hub` test for `pki`
+- Modify: `.goreleaser.yaml` (standalone + agent only; archive `name_template` gives `winterflow-<os>-<arch>` for standalone and `agent-<os>-<arch>` for agent; old names published too via a second archive/`extra_files` copy)
+- Create: `scripts/build-distributed.sh` (builds `winterflow-api` with a web build using `VITE_APP_MODE=distributed`, and `winterflow-hub`; `CGO_ENABLED=0`, same platforms and ldflags as goreleaser; writes `dist-r2/` with all four `winterflow-*` binaries copied from goreleaser's `dist/` plus a fresh `checksums.txt`)
+- Create: `scripts/upload-r2.sh` (uploads `dist-r2/*` to `releases/<tag>/` and writes `releases/latest`; `curl --aws-sigv4 "aws:amz:auto:s3" --user "$KEY:$SECRET"`; exits 0 with a warning when any R2 var is unset)
+- Modify: `.github/workflows/release.yml` (after goreleaser: run both scripts with the four R2 secrets in env; never echo them)
+- Modify: `internal/infra/orchestrator/docker_compose/updater.go:75` (new names: standalone → `winterflow-<os>-<arch>`, agent → `agent-<os>-<arch>`), `cmd/hub/main.go` (hidden `pki` subcommand: `winterflow-hub pki --dir D --host H [--host H2]` → `cert.EnsureHubPKI`, prints `changed`/`unchanged`), `Makefile` (build hub/agent too, as PR #33)
+- Test: `internal/infra/orchestrator/docker_compose/updater_test.go`, `cmd/hub/main_test.go`, `scripts/release_test.sh` (new)
 
-Why: the release builds the SPA once in standalone mode; the API binary must still render the distributed UI.
+The workflow edit must be pushed over SSH (the gh token lacks the `workflow` scope). Do not create or change repository secrets; the owner adds them.
 
-- [ ] **Step 1: Write failing tests**: `TestShellCarriesAppMode` (served index contains the meta for each topology), web `reads app mode from meta`, `TestPKISubcommand` (creates files, second run prints `unchanged`).
+- [ ] **Step 1: Write failing tests**: `TestUpdaterAssetNames` (standalone → `winterflow-linux-amd64`, agent → `agent-linux-amd64`), `TestPKISubcommand` (creates files, second run prints `unchanged`), `release_test.sh`: `upload_skips_without_env` (exit 0, warning), `upload_dry_lists_keys` (with fake env and `--dry-run`: prints `releases/v1/winterflow-api-linux-amd64` … and `releases/latest`), `goreleaser_names` (`goreleaser check` + grep the config for both name sets, skipped when goreleaser is absent).
 - [ ] **Step 2: Run** — FAIL.
 - [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run** `go test ./internal/app/web/spa/ ./cmd/hub/`, `pnpm --dir web test -- config`, `goreleaser check` (if installed) — PASS.
-- [ ] **Step 5: Commit** `build: release the API and hub binaries; app mode comes from the server`
+- [ ] **Step 4: Run** `go test ./internal/infra/orchestrator/docker_compose/ ./cmd/hub/`, `bash scripts/release_test.sh`, `bash scripts/build-distributed.sh --dry-run` — PASS.
+- [ ] **Step 5: Commit** `build: renamed GitHub assets; all binaries to R2; hub pki subcommand`
 
 ### Task 12: Web UI — install command and removing a server
 
@@ -288,7 +292,7 @@ Why: the release builds the SPA once in standalone mode; the API binary must sti
 **Interfaces:**
 - Consumes: Task 5 (claim errors incl. 429), Task 6 route.
 - Produces: `buildInstallCommand(apiOrigin: string): string` →
-  `curl -fsSL https://raw.githubusercontent.com/dmtrkzntsv/winterflow/main/scripts/install.sh | sudo bash -s -- --agent --url <apiOrigin>`. Copy for the code step: codes refresh every 10 minutes on the server, the installer gives up after 10. `codeProblem` maps `too many attempts, wait a minute` to plain words. Remove server: a confirm dialog saying the server disconnects at once, its apps vanish from Winterflow but keep running on the machine, and reconnecting it means running the installer again.
+  `curl -fsSL https://get.winterflow.dev/agent | sudo bash -s -- --url <apiOrigin>`. Copy for the code step: codes refresh every 10 minutes on the server, the installer gives up after 10. `codeProblem` maps `too many attempts, wait a minute` to plain words. Remove server: a confirm dialog saying the server disconnects at once, its apps vanish from Winterflow but keep running on the machine, and reconnecting it means running the installer again.
 
 - [ ] **Step 1: Write failing tests**: `buildInstallCommand uses the API origin`, dialog renders the command with `apiBase`, rate-limit message mapped, remove-server confirm calls `delete-server` and refreshes the list.
 - [ ] **Step 2: Run** `pnpm --dir web test` — FAIL.
@@ -296,30 +300,47 @@ Why: the release builds the SPA once in standalone mode; the API binary must sti
 - [ ] **Step 4: Run** `pnpm --dir web test`, `pnpm --dir web run lint`, `pnpm --dir web run build` — PASS.
 - [ ] **Step 5: Commit** `feat(web): install command from this instance; remove a server`
 
-### Task 13: `install.sh` modes
+### Task 13: `install-agent.sh` (and standalone asset rename)
 
 **Files:**
-- Modify: `scripts/install.sh`, `scripts/install_test.sh`, `.github/workflows/ci.yml` (only if the test invocation changes)
+- Create: `scripts/install-agent.sh`, `scripts/install_agent_test.sh`
+- Modify: `scripts/install.sh` (`release_asset_name` → `winterflow-<os>-<arch>`), `scripts/install_test.sh` (golden updated for the name only), `.github/workflows/ci.yml` (run the new test)
+- Create: `scripts/shared_helpers_test.sh` — extracts blocks between `# --- shared: <name> ---` / `# --- end shared ---` markers from every installer and fails when copies of the same block differ.
 
 **Interfaces:**
-- Consumes: release assets `winterflow-{standalone,agent,api,hub}-linux-<arch>` (Task 11), `winterflow-agent enroll` exit codes (Task 10), `winterflow-hub pki` (Task 11), `ValidateEnrollment` env (Task 1).
-- Modes: no mode flag = standalone (unchanged behavior and output); `--agent`; `--control-plane`. Shared code (download + checksum, service user, Docker offer, journald namespace, limits, `--dry-run`, `--uninstall`/`--purge`, `--yes`, `--version`, `--binary`) is reused per mode; `release_asset_name` takes the binary name.
-- `--agent [--url URL]`: Docker check; install `/usr/local/bin/winterflow-agent`; `/etc/winterflow/agent.env` (`AGENT_DATA_DIR=/var/lib/winterflow`, `HUB_CERT_DIR=/var/lib/winterflow/certs`, plus the enroll output appended); unit `winterflow-agent.service` with the standalone hardening, `RestartPreventExitStatus=78`, installed but **not enabled** until `enroll` exits 0. Without `--url`: interactive run asks with `https://api.winterflow.dev` pre-filled; piped run uses it silently. Enroll exit 3 → skip enrollment (rerun). Exit 2/1 → print the failure, leave unit disabled and stopped, exit non-zero.
-- `--control-plane`: Debian/Ubuntu only (else clear error). Detect Postgres (`psql`/`postgresql` service) and Redis (`redis-server`); ask before `apt-get install` of each missing one (`--yes` = yes; declining = exit with what to install). Create role/db `winterflow` with a generated password only if absent (password kept in `/etc/winterflow/control-plane.env` and reused). Ask: public UI URL (→ `ALLOWED_ORIGINS`, secure cookies), API port (default 8080, bound to 127.0.0.1), hub public address (default `$(hostname -f):50051`). Run `winterflow-hub pki --dir /var/lib/winterflow/pki --host <hub host> --host $(hostname -f)`. Units `winterflow-api.service` (env: `DATABASE_URL=postgres://…`, `REDIS_*`, `REGION`, `HUB_CERT_DIR` = the pki dir, `AGENT_HUB_ADDR`, JWT secret) and `winterflow-hub.service` (CA cert + hub pair only; the CA key file is not readable by the hub's user — separate users `winterflow-api` / `winterflow-hub`, key owned by `winterflow-api`, mode 0600). On finish print: proxy your Caddy to `127.0.0.1:<port>`, open TCP `<hub port>`, and the URL to open.
-- Standalone, untouched except the shared refactor.
+- Consumes: GitHub asset `agent-<os>-<arch>` (Task 11), `winterflow-agent enroll` exit codes (Task 10).
+- Behavior: Docker check/offer; install `/usr/local/bin/winterflow-agent`; `/etc/winterflow/agent.env` (`AGENT_DATA_DIR=/var/lib/winterflow`, `HUB_CERT_DIR=/var/lib/winterflow/certs`, plus the enroll output); unit `winterflow-agent.service` with standalone's hardening and limits, `RestartPreventExitStatus=78`, installed but **not enabled** until `enroll` exits 0. `--url` optional: without it an interactive run asks with `https://api.winterflow.dev` pre-filled, a piped run uses it silently. Enroll exit 3 → skip enrollment (rerun: refresh binary/unit, restart). Exit 2/1 → print the failure, leave the unit disabled and stopped, exit non-zero. Options: `--url`, `--version`, `--binary`, `--user`, `--cpu-quota`, `--memory-max`, `--yes`, `--dry-run`, `--uninstall`, `--purge`.
 
-- [ ] **Step 1: Extend `install_test.sh` with failing dry-run cases**: `standalone_unchanged` (output matches the previous dry-run golden), `agent_unit_has_restart_prevent_78`, `agent_default_url_piped`, `agent_url_flag`, `agent_rerun_keeps_enrollment` (fake existing `agent.crt` in a temp root → no enroll call in the plan), `control_plane_units_and_env` (both units; API env has `AGENT_HUB_ADDR`, `DATABASE_URL=postgres://`; hub env has no CA key path), `control_plane_refuses_non_debian`.
-- [ ] **Step 2: Run** `bash scripts/install_test.sh` — FAIL.
-- [ ] **Step 3: Implement.** Dry-run prints every file and the commands it would run, as today.
-- [ ] **Step 4: Run** `bash scripts/install_test.sh`, `bash -n scripts/install.sh`, `shellcheck scripts/install.sh` (if available) — PASS.
-- [ ] **Step 5: Commit** `feat(install): agent and control-plane modes`
+- [ ] **Step 1: Write failing dry-run tests**: `agent_unit_has_restart_prevent_78`, `agent_default_url_piped`, `agent_url_flag`, `agent_rerun_keeps_enrollment` (fake existing `agent.crt` under a temp root → no enroll call in the printed plan), `agent_downloads_new_asset_name`; `standalone_uses_new_asset_name`; `shared_helpers_identical`.
+- [ ] **Step 2: Run** the three test scripts — FAIL.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run** `bash scripts/install_test.sh && bash scripts/install_agent_test.sh && bash scripts/shared_helpers_test.sh`, `bash -n` on both scripts, `shellcheck` (if available) — PASS.
+- [ ] **Step 5: Commit** `feat(install): agent installer that enrolls with a code`
 
-### Task 14: Docs, full check, PR
+### Task 14: `install-control-plane.sh`
 
 **Files:**
-- Modify: `CLAUDE.md` (Architecture: enrollment, agent auth, delete-server; Commands: install modes), `AGENTS.md`, `README.md` (install section for all three modes, Caddy + open hub port note)
+- Create: `scripts/install-control-plane.sh`, `scripts/install_control_plane_test.sh`
+- Modify: `.github/workflows/ci.yml` (run the new test)
+
+**Interfaces:**
+- Consumes: R2 layout and env vars (Task 11), `winterflow-hub pki` (Task 11), `ValidateEnrollment` env (Task 1).
+- Behavior: refuses to start (clear message naming the four variables) unless the `WINTERFLOW_R2_*` variables are set; downloads `winterflow-api` and `winterflow-hub` (`releases/latest`, or `--version`) with `curl --aws-sigv4`, verifies `checksums.txt`. Debian/Ubuntu only. Detect Postgres and Redis; ask before `apt-get install` of each missing one (`--yes` = yes; declining = exit naming what to install). Create role/db `winterflow` with a generated password only if absent (kept in `/etc/winterflow/control-plane.env`, reused on rerun). Ask: public UI URL (→ `ALLOWED_ORIGINS`, secure cookies), API port (default 8080, bound to 127.0.0.1), hub public address (default `$(hostname -f):50051`). Run `winterflow-hub pki --dir /var/lib/winterflow/pki --host <hub host> --host $(hostname -f)`. Units `winterflow-api.service` (env: `DATABASE_URL=postgres://…`, Redis, `REGION`, `HUB_CERT_DIR` = pki dir, `AGENT_HUB_ADDR`, JWT secret) and `winterflow-hub.service` (CA cert + hub pair only). Separate users `winterflow-api` / `winterflow-hub`; `ca.key` owned by `winterflow-api`, 0600. Shared helpers copied with markers (Task 13's sync test covers this file too). Finish by printing: proxy Caddy to `127.0.0.1:<port>`, open TCP `<hub port>`, the URL to open.
+
+- [ ] **Step 1: Write failing dry-run tests**: `refuses_without_r2_env`, `downloads_from_r2_with_sigv4` (printed curl uses `--aws-sigv4` and `releases/latest`), `units_and_env` (both units; API env has `AGENT_HUB_ADDR`, `DATABASE_URL=postgres://`; hub env has no CA key path), `refuses_non_debian`, `rerun_keeps_password` (existing env file → same password in plan).
+- [ ] **Step 2: Run** `bash scripts/install_control_plane_test.sh` — FAIL.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run** it plus `bash scripts/shared_helpers_test.sh`, `bash -n`, `shellcheck` — PASS.
+- [ ] **Step 5: Commit** `feat(install): control-plane installer (API, hub, Postgres, Redis) from R2`
+
+### Task 15: Docs, full check, PR
+
+**Files:**
+- Modify: `CLAUDE.md` (Architecture: enrollment, agent auth, delete-server, release/R2 layout; Commands: the three scripts and their tests), `AGENTS.md`
+- Modify: `README.md` — mentions only the standalone script, by its GitHub URL
+- Create: `docs/install-control-plane.md` (R2 variables, Caddy proxy, open hub port; not linked from the README)
 
 - [ ] **Step 1: Write the docs.**
-- [ ] **Step 2: Run the CI reproduction from CLAUDE.md** (`make test`, `make test-pg …`, `make web-test`, `go run ./tools/diffcov --base main --min 80 …`, `make lint`, `make sqlc-check`, `bash scripts/install_test.sh`) — all PASS, diff coverage ≥ 80%.
+- [ ] **Step 2: Run the CI reproduction from CLAUDE.md** (`make test`, `make test-pg …`, `make web-test`, `go run ./tools/diffcov --base main --min 80 …`, `make lint`, `make sqlc-check`, all `scripts/*_test.sh`) — all PASS, diff coverage ≥ 80%.
 - [ ] **Step 3: Commit** `docs: installers and agent enrollment`
-- [ ] **Step 4: Push, open a draft PR**; after it's open, comment on PR #33 that it's superseded and close it (the approved design absorbs #33).
+- [ ] **Step 4: Push, open a draft PR**; after it's open, comment on PR #33 that it's superseded and close it (the approved design absorbs #33). Tell the owner to add the four R2 secrets to GitHub Actions and the `get.winterflow.dev/agent` redirect.

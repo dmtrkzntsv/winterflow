@@ -32,8 +32,8 @@ the UI, done.
 
 ## Non-goals
 
-- Regions. Hubs may sit anywhere; there is no region concept beyond the
-  existing `REGION` bus namespace (one per deployment).
+- Regions. There are none: hubs may sit anywhere, and the existing `REGION`
+  setting is removed (see "No regions").
 - Adding hubs on other hosts via the installer (a hub on another host is
   configured by hand for now; the control-plane installer sets up one).
 - Moving already-enrolled agents to a new hub. An agent keeps the hub address
@@ -91,11 +91,19 @@ the UI, done.
 ### Hubs and who signs certificates
 
 The **API** signs agent certificates, not a hub: the API is the one component
-every hub shares, so adding a hub in another region later needs no change to
-enrollment. The CA private key lives with the API; each hub only needs the CA
+every hub shares, so adding a hub later needs no change to enrollment. The CA private key lives with the API; each hub only needs the CA
 certificate (to verify agents) and its own server certificate.
 
 The distributed API refuses to start without the CA key/cert pair.
+
+### No regions
+
+Decided with the owner: Winterflow has no regions. The `REGION` setting and
+the queue-name overrides (`BUS_REQUEST_QUEUE`, `BUS_RESPONSE_QUEUE`,
+`BUS_EVENTS_QUEUE`) are removed; bus channels have fixed names: `responses`,
+`events`, `hubs`, `agent-auth`, `agent-auth-reply:<hub_id>`, `agent-revoke`,
+`requests:<hub_id>` per hub, and `requests` for standalone's in-process
+bridge. One Redis serves one deployment.
 
 ### Hub registry and routing
 
@@ -107,7 +115,7 @@ The distributed API refuses to start without the CA key/cert pair.
 - `HUB_ACCEPTING` — `true` by default; `false` drains the hub: it keeps its
   servers but gets no new ones.
 
-**Status reports:** every 30 s each hub publishes on `hubs:<REGION>`:
+**Status reports:** every 30 s each hub publishes on `hubs`:
 `{hub_id, public_addr, capacity, connected_agents, accepting, version}`. The
 API upserts a `hubs` table (`hub_id` PK, `public_addr`, `capacity`,
 `connected_agents`, `accepting`, `version`, `last_seen`). A hub is **active**
@@ -128,7 +136,7 @@ row; last write wins, which is fine since reports are idempotent.
 **Command routing:** today every hub listens on one shared request queue and
 a hub that lacks the target agent answers "agent not connected", which can
 beat the real answer. With several hubs that breaks commands, so *(my call)*
-each hub consumes its own queue `requests:<REGION>:<hub_id>`, and the API
+each hub consumes its own queue `requests:<hub_id>`, and the API
 publishes each command to the queue of the hub its server is on (server ->
 hub cached in memory, refreshed on miss). A server with no `hub_id` (none
 exist in distributed today) gets "server has no hub; reinstall the agent".
@@ -297,16 +305,15 @@ receives a question and a question nobody hears is lost):
 
 | Channel | Direction | Payload |
 |---|---|---|
-| `agent-auth:<REGION>` | hub → API | `{request_id, hub_id, server_id, cert_fingerprint}` |
+| `agent-auth` | hub → API | `{request_id, hub_id, server_id, cert_fingerprint}` |
 | `agent-auth-reply:<hub_id>` | API → the asking hub | `{request_id, verdict, reason}` |
-| `agent-revoke:<REGION>` | API → all hubs | `{server_id}` on server delete |
+| `agent-revoke` | API → all hubs | `{server_id}` on server delete |
 
 - `verdict`: `allowed`, `unknown` (no such server, which includes a deleted
   one: its rows are gone), or `revoked` (the server exists but this
   certificate is not its active one). Both refusals mean `PermissionDenied`.
-- Each hub generates a `hub_id` at start and subscribes to its own reply
-  channel. `REGION` scoping matches today's queues; per-region splitting is
-  future work.
+- Each hub subscribes to its own reply channel, named with its stable
+  `hub_id` (the host part of `HUB_PUBLIC_ADDR`).
 
 **API:** a small usecase `agentauth.Check(server_id, fingerprint) -> verdict`
 reading `servers` and the server's active certificate

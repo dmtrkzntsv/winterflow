@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** One script installs Winterflow as standalone, as a distributed control plane (API + Hub + local Postgres/Redis), or as an agent that enrolls with a code typed into the hosted UI; hubs admit only agents whose server still exists.
+**Goal:** Three scripts install Winterflow as standalone, as a distributed control plane (API + Hub + local Postgres/Redis, binaries from R2), or as an agent that enrolls with a code typed into the hosted UI; hubs admit only agents whose server still exists.
 
 **Architecture:** The API gains an unauthenticated enrollment API (CSR in, code out, signed cert back after a user claims the code) and signs agent certs with the CA it now holds. Hubs verify each connecting agent's certificate name and ask the API over the existing Redis bus whether the server and certificate are still active; deleting a server revokes it. Enrollment logic on the agent side is a hidden `winterflow-agent enroll` subcommand that `install-agent.sh` calls. GitHub releases carry only standalone and agent; all four binaries go to private Cloudflare R2.
 

@@ -3,7 +3,7 @@ BIN_DIR := bin
 STANDALONE_BIN := $(BIN_DIR)/standalone
 API_BIN := $(BIN_DIR)/api
 
-.PHONY: build lint standalone api web web-build third-party-licenses test web-test cover diffcov openapi test-pg sqlc sqlc-check
+.PHONY: build distributed-build lint standalone api web web-build third-party-licenses test web-test cover diffcov openapi test-pg sqlc sqlc-check
 
 # Release build: bundle the SPA first so go:embed picks up a fresh web/dist,
 # then compile. The binaries are fully self-contained (API + web UI) and
@@ -12,6 +12,13 @@ API_BIN := $(BIN_DIR)/api
 build: web-build
 	CGO_ENABLED=0 $(GO) build -o $(STANDALONE_BIN) ./cmd/standalone
 	CGO_ENABLED=0 $(GO) build -o $(API_BIN) ./cmd/api
+
+# Control-plane build for scripts/install-distributed.sh. The API embeds the
+# distributed-flavor SPA, while the Hub has no web assets of its own.
+distributed-build:
+	VITE_APP_MODE=distributed $(MAKE) web-build
+	CGO_ENABLED=0 $(GO) build -o $(API_BIN) ./cmd/api
+	CGO_ENABLED=0 $(GO) build -o $(BIN_DIR)/hub ./cmd/hub
 
 # Production SPA bundle into web/dist (what go:embed ships). web/.env.production
 # pins the bundle to same-origin + standalone mode; override via shell env, e.g.

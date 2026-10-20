@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path"
 	"path/filepath"
@@ -43,7 +44,30 @@ func (c *ServerConfig) GetSecureCookies() bool {
 }
 
 func (c *ServerConfig) GetDbURL() string {
-	return os.Getenv("DATABASE_URL")
+	if url := os.Getenv("DATABASE_URL"); url != "" {
+		return url
+	}
+	if c.IsStandalone() {
+		return "sqlite://winterflow.sqlite"
+	}
+	return ""
+}
+
+// ValidateDatabaseURL keeps each installed topology on its supported database.
+// A distributed API needs a shared database; standalone owns its local SQLite
+// file and has no reason to require a PostgreSQL service.
+func (c *ServerConfig) ValidateDatabaseURL() error {
+	url := c.GetDbURL()
+	if c.IsStandalone() {
+		if strings.HasPrefix(url, "sqlite://") {
+			return nil
+		}
+		return fmt.Errorf("standalone requires a sqlite:// DATABASE_URL")
+	}
+	if strings.HasPrefix(url, "postgres://") {
+		return nil
+	}
+	return fmt.Errorf("distributed API requires a postgres:// DATABASE_URL")
 }
 
 func (c *ServerConfig) GetAllowedOrigins() string {

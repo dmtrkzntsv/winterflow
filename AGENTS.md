@@ -41,6 +41,7 @@ Layering is hexagonal: `internal/domain/{model,port,usecase,service}` (business 
 
 ## Build, Test, and Development Commands
 - `make build` – compiles the standalone and API binaries into `bin/`.
+- `make distributed-build` – bundles the distributed UI and builds `bin/api` and `bin/hub` for the systemd installer.
 - `make api | make hub | make agent` – runs the selected service with `go run`.
 - `make web` – starts the Vite dev server via `pnpm --dir web dev`.
 - `pnpm --dir web run build` – type-checks (`tsc -b`) and produces a production bundle.

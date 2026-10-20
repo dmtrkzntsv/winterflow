@@ -97,7 +97,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: install.sh dry-run suite
-        run: bash scripts/install_test.sh
+        run: |
+          bash scripts/install_test.sh
+          bash scripts/install_distributed_test.sh
 
   # Generated sqlc code (internal/infra/db/sqlc/gen) must match the queries
   # and migrations it is built from.

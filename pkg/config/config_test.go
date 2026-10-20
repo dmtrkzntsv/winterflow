@@ -24,6 +24,29 @@ func TestIsStandalone(t *testing.T) {
 	}
 }
 
+func TestValidateDatabaseURL(t *testing.T) {
+	tests := []struct {
+		mode, url string
+		valid     bool
+	}{
+		{"standalone", "sqlite:///var/lib/winterflow/winterflow.sqlite", true},
+		{"standalone", "postgres://localhost/winterflow", false},
+		{"standalone", "", true},
+		{"distributed", "postgres://localhost/winterflow", true},
+		{"distributed", "sqlite://winterflow.sqlite", false},
+		{"distributed", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.mode+"/"+tt.url, func(t *testing.T) {
+			t.Setenv("DATABASE_URL", tt.url)
+			err := NewServerConfig(tt.mode).ValidateDatabaseURL()
+			if (err == nil) != tt.valid {
+				t.Fatalf("ValidateDatabaseURL() = %v, want valid %v", err, tt.valid)
+			}
+		})
+	}
+}
+
 func TestSimpleEnvGetters(t *testing.T) {
 	c := NewServerConfig("standalone")
 	tests := []struct {
@@ -35,7 +58,6 @@ func TestSimpleEnvGetters(t *testing.T) {
 		{"GetLogLevel", "LOG_LEVEL", c.GetLogLevel},
 		{"GetApiPort", "API_PORT", c.GetApiPort},
 		{"GetWebURL", "WEB_URL", c.GetWebURL},
-		{"GetDbURL", "DATABASE_URL", c.GetDbURL},
 		{"GetJwtSecret", "JWT_SECRET", c.GetJwtSecret},
 		{"GetHubHost", "HUB_HOST", c.GetHubHost},
 		{"GetHubPort", "HUB_PORT", c.GetHubPort},
@@ -55,6 +77,16 @@ func TestSimpleEnvGetters(t *testing.T) {
 				t.Fatalf("%s = %q, want %q", tt.name, tt.get(), "some-value")
 			}
 		})
+	}
+}
+
+func TestGetDbURLDefault(t *testing.T) {
+	unsetenv(t, "DATABASE_URL")
+	if got := NewServerConfig("standalone").GetDbURL(); got != "sqlite://winterflow.sqlite" {
+		t.Fatalf("standalone default = %q", got)
+	}
+	if got := NewServerConfig("distributed").GetDbURL(); got != "" {
+		t.Fatalf("distributed default = %q, want empty", got)
 	}
 }
 

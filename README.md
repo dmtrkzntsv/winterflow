@@ -7,7 +7,7 @@ change is a revision you can roll back, secrets are end-to-end encrypted, and
 an optional embedded reverse proxy (Caddy) can serve your apps with
 automatic HTTPS (off by default — enable with `INGRESS_ENABLED=true`).
 
-## Install
+## Install standalone
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/dmtrkzntsv/winterflow/main/scripts/install.sh | sudo bash
@@ -130,6 +130,49 @@ agent, and the Docker Compose orchestrator — in one process over SQLite.
 The same codebase also builds a horizontally scalable **distributed** topology
 (`api` ⇄ Redis ⇄ `hub` ⇄ `agent` over mTLS gRPC) for managing many servers
 from one control plane; see [CLAUDE.md](CLAUDE.md) for how the pieces fit.
+
+### Install the distributed control plane
+
+The distributed installer sets up four services on one **Debian or Ubuntu host
+with systemd**: PostgreSQL and Redis from the distribution packages, plus the
+WinterFlow API and Hub as separate systemd units. PostgreSQL and Redis listen
+locally; only the API port and the Hub's mTLS gRPC port need to be reachable
+from outside this host. The API embeds the distributed web UI. Docker is needed
+on managed agent hosts, not on the control-plane host. The installer detects
+PostgreSQL and Redis and asks before installing either missing package; use
+`--yes` for unattended installation.
+
+Build from this checkout with Go 1.27.2+, Node 22 and the pnpm version pinned in
+`web/package.json`:
+
+```sh
+pnpm --dir web install --frozen-lockfile
+make distributed-build
+sudo bash scripts/install-distributed.sh --hub-host hub.example.com --web-url https://flow.example.com
+```
+
+Replace the host names with your own. `--hub-host` must be a DNS name or IPv4
+address that agents can reach; it is placed in the Hub certificate. Publish
+`WEB_URL` through your HTTPS reverse proxy to API port 8080, and allow agents
+to reach Hub port 50051. Use `--port` or `--hub-port` to change those ports.
+Run `bash scripts/install-distributed.sh --dry-run --hub-host hub.example.com`
+to inspect the files first.
+
+The installer creates separate `api.env` and `hub.env` files under
+`/etc/winterflow-distributed`, keeping the API's generated JWT secret and local
+PostgreSQL credentials out of the Hub process. It stores the Hub CA
+and certificate under `/etc/winterflow-distributed/certs`. Keep the CA private
+key, configuration, and PostgreSQL database backed up. Rerunning the installer
+updates the two WinterFlow binaries and units while keeping credentials,
+database, and CA.
+Inspect the services with `systemctl status winterflow-api winterflow-hub
+postgresql redis-server` and their logs with `journalctl -u winterflow-api -u
+winterflow-hub -f`.
+
+This script installs the **control plane**. Each managed server still needs an
+agent with Docker Compose and a client certificate trusted by the Hub. The
+repository does not yet include an automated agent provisioning or pairing
+installer for this setup.
 
 ## License
 

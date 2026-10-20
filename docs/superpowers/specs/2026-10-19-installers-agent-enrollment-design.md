@@ -32,8 +32,10 @@ the UI, done.
 
 ## Non-goals
 
-- Multiple hubs / regions at once. The design must not block them (see
-  "Hubs"), but only one hub address is handed out now.
+- Regions. Hubs may sit anywhere; there is no region concept beyond the
+  existing `REGION` bus namespace (one per deployment).
+- Adding hubs on other hosts via the installer (a hub on another host is
+  configured by hand for now; the control-plane installer sets up one).
 - Moving already-enrolled agents to a new hub. An agent keeps the hub address
   it got at enrollment; changing it later is a separate project.
 - Running the API or Hub on separate hosts from each other via the installer.
@@ -62,9 +64,13 @@ the UI, done.
   the info"; with a compiled-in default it always does, so the prompt is just
   a confirmable fallback.)*
 - **The API picks the hub.** The agent is never told a hub address on the
-  command line. The API holds the hub address as a setting and returns it in
-  the enrollment response, so hub placement can change later without changing
-  the install command. Hubs will be named like `hub-01.winterflow.dev`.
+  command line; the enrollment response carries it. Hubs will be named like
+  `hub-01.winterflow.dev`.
+- **Hubs announce themselves.** Each hub has its capacity in its own config
+  and reports its state to the API while it runs; the API knows the active
+  hubs from those reports. There is no hub list to maintain by hand.
+- **A random hub per agent.** Each enrolling server gets a random active hub
+  that has room, which spreads load and respects capacity.
 - **Code lifetime.** Each code is valid for 10 minutes. When it expires the
   script fetches a fresh code and prints it, without rerunning anything. After
   10 codes (~100 minutes) the script fails and the agent service is left
@@ -73,7 +79,8 @@ the UI, done.
 - **Standalone defaults to SQLite but may use Postgres** if `DATABASE_URL`
   says so; the installer always sets it up on SQLite. **Distributed requires
   Postgres** (startup refuses SQLite).
-- **One control-plane host for now**, multiple hubs later.
+- **One control-plane host for now**; more hubs can join later just by
+  starting them with the same Redis.
 - **TLS:** the owner runs Caddy with Cloudflare certificates in front of the
   API; the hub is exposed directly on its port.
 - **Deleting a server locks its agent out** (see "Hub identity and
@@ -88,11 +95,45 @@ every hub shares, so adding a hub in another region later needs no change to
 enrollment. The CA private key lives with the API; each hub only needs the CA
 certificate (to verify agents) and its own server certificate.
 
-API setting: `AGENT_HUB_ADDR` (`host:port`, e.g. `hub-01.winterflow.dev:50051`)
-— the address returned to enrolling agents. Distributed API refuses to start
-without it (and without the CA key/cert paths). Later this can become a
-per-region choice; the enrollment response already carries the address, so
-only the API changes.
+The distributed API refuses to start without the CA key/cert pair.
+
+### Hub registry and routing
+
+**Hub config** (on each hub host):
+- `HUB_PUBLIC_ADDR` — the `host:port` agents use, e.g.
+  `hub-01.winterflow.dev:50051`. Its host part is the hub's permanent id
+  (`hub_id`), so a server can record which hub it is on.
+- `HUB_CAPACITY` — how many servers this hub should carry (default 1000).
+- `HUB_ACCEPTING` — `true` by default; `false` drains the hub: it keeps its
+  servers but gets no new ones.
+
+**Status reports:** every 30 s each hub publishes on `hubs:<REGION>`:
+`{hub_id, public_addr, capacity, connected_agents, accepting, version}`. The
+API upserts a `hubs` table (`hub_id` PK, `public_addr`, `capacity`,
+`connected_agents`, `accepting`, `version`, `last_seen`). A hub is **active**
+while its last report is under 90 s old. Every API replica writes the same
+row; last write wins, which is fine since reports are idempotent.
+
+**Picking a hub** (at claim time, when the certificate is signed):
+- Candidates: active, accepting hubs whose assigned servers (rows in
+  `servers` with that `hub_id`) are below capacity. Pick one at random.
+- *(My call)* If every active hub is full, pick the active hub with the
+  lowest assigned/capacity ratio and log a warning: enrollment never blocks
+  on capacity.
+- If no hub is active, the claim fails with "no hub is available, try again
+  in a minute" (the code stays valid; the user retries).
+- `servers.hub_id` records the choice; the status response returns that
+  hub's `public_addr`.
+
+**Command routing:** today every hub listens on one shared request queue and
+a hub that lacks the target agent answers "agent not connected", which can
+beat the real answer. With several hubs that breaks commands, so *(my call)*
+each hub consumes its own queue `requests:<REGION>:<hub_id>`, and the API
+publishes each command to the queue of the hub its server is on (server ->
+hub cached in memory, refreshed on miss). A server with no `hub_id` (none
+exist in distributed today) gets "server has no hub; reinstall the agent".
+Responses and events keep their shared queues. Standalone's in-process
+bridge keeps the single queue.
 
 ### Enrollment protocol (new)
 
@@ -110,7 +151,7 @@ per-IP rate limiter (`internal/app/web/middleware/ratelimit`):
 3. `POST /api/v1/agent/enroll/status` — with `poll_secret`: `pending`,
    `expired` (code lapsed, refresh available), `failed` (cap reached), or
    `claimed` with the signed certificate, the CA certificate, `server_id` and
-   the hub address. The script polls every few seconds.
+   the address of the hub picked for it. The script polls every few seconds.
 4. Claim: the **existing** authenticated `POST /api/v1/server/register {code}`.
    On claim the API assigns the `server_id`, signs the stored CSR with
    `CN = server_id` (the CSR's own subject is ignored), creates the `servers`
@@ -218,8 +259,8 @@ once the new PR is open.
   cert, the hub the CA cert and its own cert/key. Reruns keep CA, DB
   password, JWT secret, data.
 - Asks for the hub's public address (default: this host's FQDN with the hub
-  port) and writes it as `AGENT_HUB_ADDR`; asks for the API port as standalone
-  does.
+  port) and capacity (default 1000) and writes them as `HUB_PUBLIC_ADDR` /
+  `HUB_CAPACITY`; asks for the API port as standalone does.
 - Debian/Ubuntu first (as PR #33); other distros fail with a clear message.
 
 ### Standalone
@@ -303,7 +344,7 @@ None of this applies to standalone (in-process bridge, one built-in agent).
 - **Hub:** exposed directly on its port with no proxy in front. Its server
   certificate comes from Winterflow's own CA (agents trust it through the CA
   certificate they get at enrollment). The certificate's SAN must include the
-  host in `AGENT_HUB_ADDR`, so the installer asks for that address first and
+  host in `HUB_PUBLIC_ADDR`, so the installer asks for that address first and
   issues the certificate for it (plus the local hostname). A rerun with a
   changed address reissues the hub certificate and keeps the CA. The installer
   reminds the owner to open the port. It does not touch the firewall.

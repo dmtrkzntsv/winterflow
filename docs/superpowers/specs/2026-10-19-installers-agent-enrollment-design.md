@@ -101,9 +101,11 @@ The distributed API refuses to start without the CA key/cert pair.
 Decided with the owner: Winterflow has no regions. The `REGION` setting and
 the queue-name overrides (`BUS_REQUEST_QUEUE`, `BUS_RESPONSE_QUEUE`,
 `BUS_EVENTS_QUEUE`) are removed; bus channels have fixed names: `responses`,
-`events`, `hubs`, `agent-auth`, `agent-auth-reply:<hub_id>`, `agent-revoke`,
+`events`, `agent-auth`, `agent-auth-reply:<hub_id>`, `agent-revoke`,
 `requests:<hub_id>` per hub, and `requests` for standalone's in-process
-bridge. One Redis serves one deployment.
+bridge. One Redis serves one hosted Winterflow: the API replicas and every
+hub, wherever the hubs run. Standalone is a single-server install with no
+hubs and no Redis.
 
 ### Hub registry and routing
 
@@ -115,20 +117,21 @@ bridge. One Redis serves one deployment.
 - `HUB_ACCEPTING` — `true` by default; `false` drains the hub: it keeps its
   servers but gets no new ones.
 
-**Status reports:** every 30 s each hub publishes on `hubs`:
-`{hub_id, public_addr, capacity, connected_agents, accepting, version}`. The
-API upserts a `hubs` table (`hub_id` PK, `public_addr`, `capacity`,
-`connected_agents`, `accepting`, `version`, `last_seen`). A hub is **active**
-while its last report is under 90 s old. Every API replica writes the same
-row; last write wins, which is fine since reports are idempotent.
+**Live hub list in Redis** (decided with the owner; no database table):
+every 30 s each hub writes the key `hub:<hub_id>` with a 90 s expiry, value
+JSON `{hub_id, public_addr, capacity, connected_agents, accepting, version}`.
+A hub that stops or dies drops out when its key expires. The API reads the
+list with `SCAN MATCH hub:*` when it needs it (at a claim); the count of
+hubs is small, so no index is kept. The database stores only
+`servers.hub_id`, used for routing and to count each hub's assigned servers.
 
 **Picking a hub** (at claim time, when the certificate is signed):
-- Candidates: active, accepting hubs whose assigned servers (rows in
+- Candidates: hubs listed in Redis, accepting, whose assigned servers (rows in
   `servers` with that `hub_id`) are below capacity. Pick one at random.
-- *(My call)* If every active hub is full, pick the active hub with the
+- *(My call)* If every listed hub is full, pick the listed hub with the
   lowest assigned/capacity ratio and log a warning: enrollment never blocks
   on capacity.
-- If no hub is active, the claim fails with "no hub is available, try again
+- If no hub is listed, the claim fails with "no hub is available, try again
   in a minute" (the code stays valid; the user retries).
 - `servers.hub_id` records the choice; the status response returns that
   hub's `public_addr`.

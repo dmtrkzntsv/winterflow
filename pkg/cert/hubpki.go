@@ -2,7 +2,10 @@ package cert
 
 import (
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -90,16 +93,19 @@ func EnsureServerCert(dir, base string, hosts []string) (bool, error) {
 	if fileExists(certPath) && fileExists(keyPath) {
 		if cur, _, err := loadCertificate(certPath); err == nil &&
 			cur.CheckSignatureFrom(caCert) == nil && sansEqual(cur, dns, ips) && time.Now().Before(cur.NotAfter) {
-			return false, nil
+			if _, err := tls.LoadX509KeyPair(certPath, keyPath); err == nil {
+				return false, nil
+			}
 		}
 	}
 
-	if err := GeneratePrivateKey(keyPath); err != nil {
-		return false, err
-	}
-	key, err := loadECPrivateKey(keyPath)
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("generate %s key: %w", base, err)
+	}
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return false, fmt.Errorf("marshal %s key: %w", base, err)
 	}
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
@@ -120,10 +126,45 @@ func EnsureServerCert(dir, base string, hosts []string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("create %s certificate: %w", base, err)
 	}
-	if err := saveCertificate(string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})), certPath); err != nil {
+	// Key first, certificate last, each by a rename: a crash in between leaves
+	// a pair that does not match, which the check above reissues.
+	if err := writeFileAtomic(keyPath, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), 0o600); err != nil {
+		return false, err
+	}
+	if err := writeFileAtomic(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600); err != nil {
 		return false, err
 	}
 	return true, nil
+}
+
+// writeFileAtomic writes data to a temp file beside path, syncs it and
+// renames it over path.
+func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp*")
+	if err != nil {
+		return fmt.Errorf("create temp file for %s: %w", path, err)
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp) // no-op after a successful rename
+	if err := f.Chmod(mode); err != nil {
+		f.Close()
+		return fmt.Errorf("chmod %s: %w", tmp, err)
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return fmt.Errorf("write %s: %w", tmp, err)
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return fmt.Errorf("sync %s: %w", tmp, err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close %s: %w", tmp, err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return fmt.Errorf("replace %s: %w", path, err)
+	}
+	return nil
 }
 
 func createCA(certPath, keyPath string) error {

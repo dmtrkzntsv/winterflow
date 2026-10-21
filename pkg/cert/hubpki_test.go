@@ -1,6 +1,7 @@
 package cert
 
 import (
+	"crypto/tls"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -95,5 +96,34 @@ func TestEnsureServerCert(t *testing.T) {
 	}
 	if _, err := EnsureServerCert(dir, "../x", []string{"h"}); err == nil {
 		t.Fatal("path in name accepted")
+	}
+}
+
+// A crash between writing a fresh key and its certificate used to leave a pair
+// that every later run reported as unchanged.
+func TestEnsureServerCertReissuesMismatchedPair(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := EnsureHubPKI(dir, []string{"hub.example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := EnsureServerCert(dir, "redis", []string{"127.0.0.1"}); err != nil {
+		t.Fatal(err)
+	}
+	keyPath := filepath.Join(dir, "redis.key")
+	if err := GeneratePrivateKey(keyPath); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := EnsureServerCert(dir, "redis", []string{"127.0.0.1"})
+	if err != nil || !changed {
+		t.Fatalf("mismatched pair: changed=%v err=%v", changed, err)
+	}
+	if _, err := tls.LoadX509KeyPair(filepath.Join(dir, "redis.crt"), keyPath); err != nil {
+		t.Fatalf("pair after reissue: %v", err)
+	}
+	if fi, err := os.Stat(keyPath); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("key mode: %v %v", fi, err)
+	}
+	if m, _ := filepath.Glob(filepath.Join(dir, "*.tmp*")); len(m) != 0 {
+		t.Fatalf("temp files left: %v", m)
 	}
 }

@@ -107,8 +107,8 @@ no data and joins the existing control plane.
 
    Whoever holds the token chooses the new hub's host name, so hand it over
    only to the person who runs the hub.
-3. On the new machine, open the hub port (default 50051; the installer does
-   not touch the firewall) and run:
+3. On the new machine, open the hub's port (the one in `--public-addr`, or
+   `--listen-port` if given; the installer does not touch the firewall) and run:
 
    ```sh
    export WINTERFLOW_R2_ENDPOINT=... WINTERFLOW_R2_ACCESS_KEY_ID=... WINTERFLOW_R2_SECRET_ACCESS_KEY=...
@@ -120,19 +120,20 @@ no data and joins the existing control plane.
    Other flags: `--capacity`, `--listen-port`, `--api-url`, `--version`,
    `--r2-bucket`, `--yes`, `--dry-run`. The public address's host goes into
    the hub's certificate and is the hub's id; it cannot change later. The
-   new hub appears in the hub list within a minute and new servers are placed
-   on it.
+   hub registers within about 30 s and new servers can then be placed on it.
 
 New agents are spread over accepting hubs; existing agents stay where they
 are until a hub drains.
 
 ## Draining and moving agents
 
-On a hub's machine (as root, in the hub's environment):
+The subcommand needs the hub's own settings (`HUB_PUBLIC_ADDR`, `REDIS_*`), so
+load its env file. On a hub-only machine that is `/etc/winterflow/hub.env`; on
+the control plane's own hub it is `/etc/winterflow/control-plane-hub.env`:
 
 ```sh
-winterflow-hub drain      # stop taking agents and send the connected ones to other hubs
-winterflow-hub undrain    # accept agents again
+sudo bash -c 'set -a; . /etc/winterflow/hub.env; exec winterflow-hub drain'     # stop taking agents, send the connected ones to other hubs
+sudo bash -c 'set -a; . /etc/winterflow/hub.env; exec winterflow-hub undrain'   # accept agents again
 ```
 
 A draining hub announces it, tells each connected agent to move (about 20 per

@@ -182,7 +182,7 @@ export function ServerSelectionDialog({ isOpen, onClose, onServerAdded }: Props)
             </p>
           ) : null}
           <p className="text-muted-foreground">
-            When it finishes, it shows a 6-character code. You enter that code in the next step. The code changes every 10 minutes, and the installer stops waiting after 10 minutes, so run it again if it times out.{" "}
+            When it finishes, it shows a 6-character code. You enter that code in the next step. The code changes every 10 minutes. After 10 codes (about 100 minutes) the installer stops waiting, so run it again if it times out.{" "}
             <a
               href="https://docs.winterflow.io/quick-start"
               target="_blank"

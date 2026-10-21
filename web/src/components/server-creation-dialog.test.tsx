@@ -36,6 +36,7 @@ describe("ServerSelectionDialog", () => {
     const { onClose, onServerAdded } = renderDialog();
     const dialog = screen.getByRole("dialog", { name: "Add a server" });
     expect(dialog).toHaveTextContent("Step 1 of 2");
+    expect(dialog).toHaveTextContent("After 10 codes (about 100 minutes) the installer stops waiting");
     expect(screen.getByTestId("install-command")).toHaveTextContent(COMMAND);
     await user.click(within(dialog).getByRole("button", { name: "Copy" }));
     expect(await navigator.clipboard.readText()).toBe(COMMAND);

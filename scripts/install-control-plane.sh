@@ -89,6 +89,10 @@ HUB_UNIT="${INSTALL_ROOT}/etc/systemd/system/winterflow-hub.service"
 REDIS_SERVICE="redis-server@winterflow.service"
 REDIS_CONF="${INSTALL_ROOT}/etc/redis/redis-winterflow.conf"
 REDIS_TLS_DIR="${INSTALL_ROOT}/etc/redis/winterflow-tls"
+# A drop-in for this instance only; the template and the default unit stay as
+# the package ships them.
+REDIS_DROPIN_DIR="${INSTALL_ROOT}/etc/systemd/system/${REDIS_SERVICE}.d"
+REDIS_DROPIN="${REDIS_DROPIN_DIR}/winterflow.conf"
 REDIS_DATA_DIR="${INSTALL_ROOT}/var/lib/redis/winterflow"
 REDIS_PORT=6380
 JOURNAL_NAMESPACE="winterflow"
@@ -239,7 +243,9 @@ valid_host() {
 }
 
 valid_ip() {
-    # An IPv4 or IPv6 literal for Redis's bind list.
+    # An IPv4 or IPv6 literal for Redis's bind list. Wildcards are refused:
+    # Redis would then listen on every interface.
+    case "$1" in 0.0.0.0|::|'[::]') return 1 ;; esac
     printf '%s' "$1" | grep -qE '^([0-9]{1,3}(\.[0-9]{1,3}){3}|[0-9A-Fa-f:]*:[0-9A-Fa-f:.]*)$'
 }
 
@@ -489,8 +495,15 @@ ensure_packages() {
 # --- Renderers (shared by install and --dry-run) ------------------------------
 
 shown() {
-    # shown VALUE -> VALUE, or <generated> in a dry run of a fresh install.
-    printf '%s' "${1:-<generated>}"
+    # shown VALUE -> VALUE in a real run. A dry run never prints a secret:
+    # <generated> for a fresh one, a sha256 fingerprint for a kept one.
+    if [ -z "$1" ]; then
+        printf '<generated>'
+    elif [ "$DRY_RUN" -eq 1 ]; then
+        printf '<kept sha256:%s>' "$(printf '%s' "$1" | sha256sum | cut -c1-8)"
+    else
+        printf '%s' "$1"
+    fi
 }
 
 render_state() {
@@ -570,6 +583,27 @@ daemonize no
 pidfile /run/redis-winterflow/redis-server.pid
 logfile ""
 dir ${REDIS_DATA_DIR}
+EOF
+}
+
+render_redis_dropin() {
+    # Redis exits when a bind address is not up yet (a Tailscale IP at boot);
+    # Debian's template restarts it at once and gives up at the start limit,
+    # leaving the API without its bus. Keep retrying every 5 s instead.
+    local tailscale=""
+    if [ -n "$REDIS_BIND" ]; then
+        tailscale="After=tailscaled.service"
+    fi
+    cat <<EOF
+# Written by install-control-plane.sh for redis-server@winterflow only.
+[Unit]
+Wants=network-online.target
+After=network-online.target
+${tailscale}
+StartLimitIntervalSec=0
+
+[Service]
+RestartSec=5s
 EOF
 }
 
@@ -690,13 +724,9 @@ hub_pki_hosts() { uniq_words "${HUB_PUBLIC_ADDR%:*}" "$FQDN"; }
 
 redis_pki_hosts() {
     # 127.0.0.1 because the API and the local hub dial Redis there (the
-    # client checks it against the certificate); wildcard binds are no names.
-    local w binds=""
-    for w in $REDIS_BIND; do
-        case "$w" in 0.0.0.0|::) ;; *) binds="${binds} ${w}" ;; esac
-    done
+    # client checks it against the certificate), plus each bind address.
     # shellcheck disable=SC2086 # word lists by design
-    uniq_words 127.0.0.1 "$FQDN" $REDIS_HOSTS $binds
+    uniq_words 127.0.0.1 "$FQDN" $REDIS_HOSTS $REDIS_BIND
 }
 
 pki_args() {
@@ -837,6 +867,10 @@ start_redis() {
     install -d -m 750 -o "$REDIS_USER" -g "$REDIS_USER" "$REDIS_DATA_DIR"
     put_file "$REDIS_CONF" 640 root "$REDIS_USER" < <(render_redis_conf)
     [ "$PUT_CHANGED" -eq 0 ] || REDIS_CHANGED=1
+    install -d -m 755 -o root -g root "$REDIS_DROPIN_DIR"
+    put_file "$REDIS_DROPIN" 644 root root < <(render_redis_dropin)
+    [ "$PUT_CHANGED" -eq 0 ] || REDIS_CHANGED=1
+    systemctl daemon-reload
     systemctl enable "$REDIS_SERVICE" >/dev/null
     if [ "$REDIS_CHANGED" -eq 1 ] || ! systemctl is-active --quiet "$REDIS_SERVICE"; then
         log "(Re)starting ${REDIS_SERVICE}"
@@ -859,6 +893,7 @@ render_uninstall() {
 systemctl disable --now winterflow-api winterflow-hub
 rm -f ${API_UNIT} ${HUB_UNIT} ${API_DEST} ${HUB_DEST}
 systemctl disable --now ${REDIS_SERVICE}
+rm -f ${REDIS_DROPIN}
 systemctl daemon-reload
 EOF
 }
@@ -891,6 +926,8 @@ uninstall() {
     rm -f "$API_UNIT" "$HUB_UNIT" "$API_DEST" "$HUB_DEST"
     log "Stopping and disabling ${REDIS_SERVICE} (its config and data stay)"
     systemctl disable --now "$REDIS_SERVICE" 2>/dev/null || true
+    rm -f "$REDIS_DROPIN"
+    rmdir "$REDIS_DROPIN_DIR" 2>/dev/null || true
     systemctl daemon-reload
     log "Removed the services and binaries."
     render_kept
@@ -968,6 +1005,10 @@ main() {
         CHANNEL="$RELEASE_VERSION"
     fi
 
+    # Nothing below uses relative paths; runuser -u postgres would warn about
+    # a caller's cwd it cannot enter.
+    cd /
+
     if [ "$UNINSTALL" -eq 1 ]; then
         if [ "$DRY_RUN" -eq 0 ]; then
             [ "$(id -u)" -eq 0 ] || die "must run as root (try: sudo $0 --uninstall)"
@@ -1023,6 +1064,9 @@ main() {
         echo
         echo "### ${REDIS_CONF}"
         render_redis_conf
+        echo
+        echo "### ${REDIS_DROPIN}"
+        render_redis_dropin
         if [ "$HAS_LOG_NAMESPACE" -eq 1 ]; then
             echo
             echo "### ${JOURNAL_CONF}"

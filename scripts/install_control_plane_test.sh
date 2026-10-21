@@ -61,6 +61,10 @@ dry --hub-addr 'bad/host:50051' >/dev/null && fail "invalid hub address rejected
 dry --hub-addr hub.example.com:8080 --port 8080 >/dev/null && fail "api and hub ports must differ" "exit 0" || pass "api and hub ports must differ"
 dry --capacity abc >/dev/null && fail "non-numeric capacity rejected" "exit 0" || pass "non-numeric capacity rejected"
 dry --redis-bind 'not an ip' >/dev/null && fail "invalid redis bind rejected" "exit 0" || pass "invalid redis bind rejected"
+for w in 0.0.0.0 ::; do
+    dry --redis-bind "$w" >/dev/null && fail "wildcard redis bind ${w} rejected" "exit 0" || pass "wildcard redis bind ${w} rejected"
+done
+assert_contains "cd / before running commands" "$src" "cd /"
 dry --r2-bucket 'Bad_Bucket' >/dev/null && fail "invalid bucket rejected" "exit 0" || pass "invalid bucket rejected"
 
 # --- refuses_without_r2_env ---------------------------------------------------
@@ -164,6 +168,7 @@ assert_contains "uninstall: stops the units" "$out_un" "systemctl disable --now 
 assert_contains "uninstall: removes the units" "$out_un" "rm -f /etc/systemd/system/winterflow-api.service /etc/systemd/system/winterflow-hub.service"
 assert_contains "uninstall: removes the binaries" "$out_un" "/usr/local/bin/winterflow-api /usr/local/bin/winterflow-hub"
 assert_contains "uninstall: disables the redis instance" "$out_un" "systemctl disable --now redis-server@winterflow.service"
+assert_contains "uninstall: removes the redis drop-in" "$out_un" "rm -f /etc/systemd/system/redis-server@winterflow.service.d/winterflow.conf"
 assert_contains "uninstall: keeps the control-plane data" "$out_un" "kept: /var/lib/winterflow-control"
 assert_contains "uninstall: keeps the env files" "$out_un" "/etc/winterflow/control-plane.env"
 assert_contains "uninstall: keeps the redis config" "$out_un" "/etc/redis/redis-winterflow.conf"
@@ -191,6 +196,19 @@ for f in "$api_env" "$hub_env"; do
 done
 assert_not_contains "default redis instance untouched" "$src" "/etc/redis/redis.conf"
 
+# The instance survives a bind address that is not up yet (a Tailscale IP at
+# boot): a drop-in for this instance only keeps restarting it.
+dropin="$(section "$out" /etc/systemd/system/redis-server@winterflow.service.d/winterflow.conf)"
+assert_contains "redis drop-in: no start limit" "$dropin" "StartLimitIntervalSec=0"
+assert_contains "redis drop-in: restart delay" "$dropin" "RestartSec=5s"
+assert_contains "redis drop-in: after network-online" "$dropin" "After=network-online.target"
+assert_contains "redis drop-in: wants network-online" "$dropin" "Wants=network-online.target"
+assert_contains "redis drop-in: after tailscaled with --redis-bind" "$dropin" "After=tailscaled.service"
+dropin_plain="$(section "$(dry)" /etc/systemd/system/redis-server@winterflow.service.d/winterflow.conf)"
+assert_contains "redis drop-in: always written" "$dropin_plain" "StartLimitIntervalSec=0"
+assert_not_contains "redis drop-in: tailscaled only with --redis-bind" "$dropin_plain" "tailscaled"
+assert_not_contains "redis drop-in: never for the default instance" "$src" "redis-server.service.d"
+
 # --- rerun_keeps_password -----------------------------------------------------
 
 rerun="$(new_root rerun debian)"
@@ -208,11 +226,18 @@ REDIS_HOSTS=kept.tail.ts.net
 EOF
 out_rerun="$(WF_INSTALL_ROOT="$rerun" bash "$SCRIPT" --dry-run 2>&1)" || fail "rerun dry-run exits 0" "exit $?: $out_rerun"
 out_rerun="${out_rerun//$rerun/}"
-assert_contains "rerun_keeps_password: postgres" "$(section "$out_rerun" "/etc/winterflow/control-plane-api.env")" "postgres://winterflow:aaaa1111bbbb2222@"
-assert_contains "rerun_keeps_password: redis api" "$(section "$out_rerun" "/etc/winterflow/control-plane-api.env")" "REDIS_PASSWORD=cccc3333dddd4444"
-assert_contains "rerun_keeps_password: redis hub" "$(section "$out_rerun" "/etc/winterflow/control-plane-hub.env")" "REDIS_PASSWORD=cccc3333dddd4444"
-assert_contains "rerun_keeps_password: redis conf" "$(section "$out_rerun" "/etc/redis/redis-winterflow.conf")" "requirepass cccc3333dddd4444"
-assert_contains "rerun keeps the jwt secret" "$out_rerun" "JWT_SECRET=eeee5555ffff6666"
+# Dry-run shows kept secrets only as a sha256 fingerprint (first 8 hex).
+fp() { printf '<kept sha256:%s>' "$(printf '%s' "$1" | sha256sum | cut -c1-8)"; }
+pg_fp="$(fp aaaa1111bbbb2222)"; redis_fp="$(fp cccc3333dddd4444)"; jwt_fp="$(fp eeee5555ffff6666)"
+assert_contains "rerun_keeps_password: postgres" "$(section "$out_rerun" "/etc/winterflow/control-plane-api.env")" "postgres://winterflow:${pg_fp}@"
+assert_contains "rerun_keeps_password: redis api" "$(section "$out_rerun" "/etc/winterflow/control-plane-api.env")" "REDIS_PASSWORD=${redis_fp}"
+assert_contains "rerun_keeps_password: redis hub" "$(section "$out_rerun" "/etc/winterflow/control-plane-hub.env")" "REDIS_PASSWORD=${redis_fp}"
+assert_contains "rerun_keeps_password: redis conf" "$(section "$out_rerun" "/etc/redis/redis-winterflow.conf")" "requirepass ${redis_fp}"
+assert_contains "rerun_keeps_password: state file" "$(section "$out_rerun" "/etc/winterflow/control-plane.env")" "POSTGRES_PASSWORD=${pg_fp}"
+assert_contains "rerun keeps the jwt secret" "$out_rerun" "JWT_SECRET=${jwt_fp}"
+for raw in aaaa1111bbbb2222 cccc3333dddd4444 eeee5555ffff6666; do
+    assert_not_contains "dry-run masks kept secret ${raw:0:4}..." "$out_rerun" "$raw"
+done
 assert_contains "rerun keeps settings: web url" "$out_rerun" "WEB_URL=https://kept.example.com"
 assert_contains "rerun keeps settings: hub addr" "$out_rerun" "HUB_PUBLIC_ADDR=hub-kept.example.com:50052"
 assert_contains "rerun keeps settings: redis bind" "$out_rerun" "bind 127.0.0.1 10.0.0.9"
@@ -346,6 +371,9 @@ STUB
     [ -f "$r1/etc/systemd/system/winterflow-api.service" ] && [ -f "$r1/etc/systemd/system/winterflow-hub.service" ] \
         && pass "real run: units written" || fail "real run: units written" "missing"
     assert_contains "real run: redis instance restarted" "$(cat "$r1/calls")" "systemctl restart redis-server@winterflow.service"
+    assert_contains "real run: redis drop-in installed" "$(cat "$r1/etc/systemd/system/redis-server@winterflow.service.d/winterflow.conf" 2>/dev/null)" "StartLimitIntervalSec=0"
+    grep -q "daemon-reload" "$r1/calls" && [ "$(grep -n 'daemon-reload' "$r1/calls" | head -1 | cut -d: -f1)" -lt "$(grep -n 'restart redis-server@winterflow' "$r1/calls" | cut -d: -f1)" ] \
+        && pass "real run: daemon-reload before redis restart" || fail "real run: daemon-reload before redis restart" "$(cat "$r1/calls")"
     assert_not_contains "real run: default redis untouched" "$(cat "$r1/calls")" "redis-server.service"
     assert_contains "real run: services restarted" "$(cat "$r1/calls")" "systemctl restart winterflow-api winterflow-hub"
     assert_not_contains "real run: nothing installed with apt" "$(cat "$r1/calls")" "apt-get install"
@@ -377,6 +405,7 @@ STUB
     [ -f "$r1/var/lib/winterflow-control/pki/ca.key" ] && [ -f "$r1/etc/winterflow/control-plane.env" ] && [ -f "$r1/etc/redis/redis-winterflow.conf" ] \
         && pass "uninstall: CA, state and redis config kept" || fail "uninstall: CA, state and redis config kept" "removed"
     assert_contains "uninstall: redis instance disabled" "$(cat "$r1/calls")" "systemctl disable --now redis-server@winterflow.service"
+    [ ! -e "$r1/etc/systemd/system/redis-server@winterflow.service.d" ] && pass "uninstall: redis drop-in removed" || fail "uninstall: redis drop-in removed" "still there"
 
     # A role that exists without a kept password is refused, not overwritten.
     r2="$tmp/real2"; mkdir -p "$r2"; make_stubs "$r2"; : > "$r2/role"

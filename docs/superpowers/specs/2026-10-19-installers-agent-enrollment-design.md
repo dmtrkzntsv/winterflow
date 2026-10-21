@@ -34,12 +34,10 @@ the UI, done.
 
 - Regions. There are none: hubs may sit anywhere, and the existing `REGION`
   setting is removed (see "No regions").
-- Adding hubs on other hosts via the installer (a hub on another host is
-  configured by hand for now; the control-plane installer sets up one).
-- Moving already-enrolled agents to a new hub. An agent keeps the hub address
-  it got at enrollment; changing it later is a separate project.
 - Running the API or Hub on separate hosts from each other via the installer.
-- Postgres/Redis on remote hosts, managed services, or HA. Local packages only.
+- Managed Postgres/Redis or HA. The control-plane installer uses local
+  packages; remote hubs reach that Redis over the network (the owner uses
+  Tailscale), always with TLS and a password.
 - Packaging (deb/rpm), containers for the control plane.
 - Certificate renewal/rotation (agent certs stay long-lived as today).
 
@@ -75,7 +73,12 @@ the UI, done.
   script fetches a fresh code and prints it, without rerunning anything. After
   10 codes (~100 minutes) the script fails and the agent service is left
   disabled and stopped.
-- **Existing agents keep their hub.** No re-discovery for now.
+- **Agents move between hubs.** Draining a hub (a command, or stopping it)
+  moves its agents to other hubs; a hub unreachable for a few minutes has its
+  agents moved automatically. Both use one mechanism (see "Agent
+  migration").
+- **Hub-only machines** get their own install/update script and join with a
+  one-time token.
 - **Standalone defaults to SQLite but may use Postgres** if `DATABASE_URL`
   says so; the installer always sets it up on SQLite. **Distributed requires
   Postgres** (startup refuses SQLite).
@@ -136,14 +139,15 @@ hubs and no Redis.
 
 **Live hub list in Redis** (decided with the owner; no database table):
 every 30 s each hub writes the key `hub:status:<hub_id>` with a 90 s expiry, value
-JSON `{hub_id, public_addr, capacity, connected_agents, accepting, version}`.
+JSON `{hub_id, public_addr, capacity, connected_agents, accepting, draining,
+version}`. A draining hub is never picked and its agents are moved.
 A hub that stops or dies drops out when its key expires. The API reads the
 list with `SCAN MATCH hub:status:*` when it needs it (at a claim); the count of
 hubs is small, so no index is kept. The database stores only
 `servers.hub_id`, used for routing and to count each hub's assigned servers.
 
 **Picking a hub** (at claim time, when the certificate is signed):
-- Candidates: hubs listed in Redis, accepting, whose assigned servers (rows in
+- Candidates: hubs listed in Redis, accepting, not draining, whose assigned servers (rows in
   `servers` with that `hub_id`) are below capacity. Pick one at random.
 - *(My call)* If every listed hub is full, pick the listed hub with the
   lowest assigned/capacity ratio and log a warning: enrollment never blocks
@@ -157,11 +161,92 @@ hubs is small, so no index is kept. The database stores only
 a hub that lacks the target agent answers "agent not connected", which can
 beat the real answer. With several hubs that breaks commands, so *(my call)*
 each hub consumes its own queue `bus:requests:<hub_id>`, and the API
-publishes each command to the queue of the hub its server is on (server ->
-hub cached in memory, refreshed on miss). A server with no `hub_id` (none
+publishes each command to the queue of the hub its server is on, read from
+`servers.hub_id` on every command. *(My call: no cache. Commands are
+user-initiated, not polled, so one indexed read is cheap, and a cache would
+go stale on other API replicas when an agent migrates.)* A server with no `hub_id` (none
 exist in distributed today) gets "server has no hub; reinstall the agent".
 Responses and events keep their shared queues. Standalone's in-process
 bridge keeps the single queue.
+
+### Redis over TLS with a password
+
+Every Redis connection (API and every hub) uses TLS and a password, even on
+one host or over Tailscale.
+- Client settings: `REDIS_ADDR`, `REDIS_PASSWORD` (existing), plus
+  `REDIS_TLS` (default `true` in distributed; `false` only for local
+  development) and `REDIS_CA_CERT_PATH` (the CA that signed Redis's
+  certificate; defaults to the Winterflow CA certificate).
+- The control-plane installer does not touch the distro's default Redis.
+  *(My call)* It runs a dedicated instance, `redis-server@winterflow`
+  (Debian's template unit, its own `/etc/redis/redis-winterflow.conf`):
+  TLS only on port 6380, `requirepass` with a generated password, a server
+  certificate issued by the Winterflow CA for the host's names (including
+  its Tailscale name if the owner gives one), bound to localhost plus the
+  addresses the owner lists. Reruns keep the password.
+
+### Hub join tokens
+
+How a hub on another machine gets its certificate (decided with the owner):
+1. On the API host, `winterflow-api hub-token [--ttl 1h]` prints a token
+   `wfh_<32 random bytes, base64url>` once. Postgres stores only its
+   SHA-256, expiry, and `used_at` (table `hub_join_tokens`); expired or used
+   rows are pruned after a day.
+2. `install-hub.sh --token wfh_...` makes the hub's key on the hub machine
+   and sends a CSR, the token and the hub's public address to
+   `POST /api/v1/hub/enroll` (public, behind the per-IP limiter).
+3. The API consumes the token in one conditional update (unused and
+   unexpired), signs a server certificate with `CN = hub_id` and the public
+   host as its SAN, and returns it with the CA certificate.
+- The Redis address and password are not part of the token; the installer
+  takes them as `--redis-url rediss://:<password>@<host>:6380`, so a leaked
+  token cannot reveal them.
+
+### Agent migration
+
+One mechanism for both cases (decided with the owner): **the agent asks the
+API where to go.**
+
+**Asking:** `POST /api/v1/agent/hub` with `{server_id, timestamp, nonce}`
+and the agent's ECDSA signature over them (header `X-Winterflow-Signature`).
+The API verifies it against the server's active certificate and refuses a
+timestamp more than 5 minutes off. No new secret is needed: the agent's
+key is its credential. Behind the per-IP limiter.
+
+**Answer:**
+- The server's hub is listed in Redis and not draining: `{hub_addr, moved:
+  false}` ("stay": the problem is probably the agent's own network).
+- Otherwise: pick a hub as at enrollment (excluding the current one),
+  update `servers.hub_id`, answer `{hub_addr, moved: true}`. No hub
+  available: 503, the agent asks again later.
+
+**When the agent asks:**
+- *Planned:* its hub tells it to move (draining, below).
+- *Unplanned:* it has not reached its hub for 3 minutes; then every 3
+  minutes while it still can't.
+- *Stale assignment:* the hub refuses it because the server is now assigned
+  elsewhere (verdict `moved`, below).
+
+The agent keeps its current hub in `{AGENT_DATA_DIR}/hub.json` (written
+atomically), which overrides `HUB_HOST`/`HUB_PORT` from its env file, and
+reconnects there. Enrollment writes the API URL to the env file as
+`WINTERFLOW_API_URL` so the agent knows where to ask.
+
+**Hub side check:** `server.verify` also compares the server's `hub_id` with
+the asking hub; a mismatch answers verdict `moved` ("this server belongs to
+another hub"), which the hub turns into gRPC `FailedPrecondition`. The agent
+treats that as "ask the API now", never as a denial.
+
+**Draining:**
+- `winterflow-hub drain` sets `hub:draining:<hub_id>` in Redis (no expiry,
+  survives restarts); `winterflow-hub undrain` deletes it. The running hub
+  checks it every 5 s and announces `draining: true`.
+- Stopping the hub (`systemctl stop`) drains first, then exits.
+- A draining hub sends each connected agent a `hub.move` message over its
+  stream (an envelope type the agent handles itself, not a command for the
+  dispatcher), about 20 agents per second so the API isn't flooded, then
+  refuses new connections with `FailedPrecondition`. On stop it waits until
+  its streams are empty or 2 minutes pass (unit `TimeoutStopSec=150`).
 
 ### Enrollment protocol (new)
 
@@ -210,22 +295,33 @@ Decided with the owner:
   dropped outright (owner's decision): binaries installed before this
   change can no longer self-update and need the installer rerun once. The
   self-updater and scripts use the new names.
-- **Cloudflare R2** (private, S3-compatible): every binary, with the
-  `winterflow-` prefix: `winterflow-standalone`, `winterflow-agent`,
-  `winterflow-api`, `winterflow-hub`, each `-<os>-<arch>`, plus
-  `checksums.txt`, under `releases/<tag>/`, and `releases/latest` holding
-  the newest tag. Uploaded by the same release run, same version.
-- The API binary uploaded to R2 embeds a web UI built with
-  `VITE_APP_MODE=distributed` (its own build step), so no runtime mode
-  switch is needed.
-- **Credentials are environment variables** the owner sets (in GitHub
-  Actions secrets for upload, in the shell for the control-plane install).
-  *(My call on names)*: `WINTERFLOW_R2_ENDPOINT` (the account's S3
-  endpoint URL), `WINTERFLOW_R2_BUCKET`, `WINTERFLOW_R2_ACCESS_KEY_ID`,
-  `WINTERFLOW_R2_SECRET_ACCESS_KEY`. The release job skips the R2 upload
-  with a warning when they are absent (forks, PRs). The installer
-  downloads with `curl --aws-sigv4 "aws:amz:auto:s3"` (curl >= 7.75), so
-  no AWS CLI is needed.
+- **Cloudflare R2** (private, S3-compatible), uploaded the way econumo does
+  it (decided with the owner; see econumo's `Makefile` `release-binaries` /
+  `cdn-upload` and `.github/workflows/publish-release.yml`):
+  - `make release-binaries` cross-compiles every binary with the `winterflow-`
+    prefix into `release-out/`: `winterflow-standalone`, `winterflow-agent`,
+    `winterflow-api`, `winterflow-hub`, each `-linux-<arch>`, plus
+    `SHA256SUMS`. The API is built against a web UI compiled with
+    `VITE_APP_MODE=distributed`, so no runtime mode switch is needed.
+  - `make cdn-upload CHANNEL=<vX|latest|dev>` copies `release-out/` with the
+    AWS CLI to `s3://$(R2_BUCKET)/winterflow/$(CHANNEL)/` (`--endpoint-url`,
+    `--content-type application/octet-stream`; versions get
+    `public, max-age=31536000, immutable`, `latest`/`dev` get `no-cache`;
+    `AWS_REQUEST_CHECKSUM_CALCULATION=when_required` because R2 rejects the
+    CLI's extra checksum headers).
+  - Environment: `WINTERFLOW_R2_ENDPOINT` (required,
+    `https://<account_id>.r2.cloudflarestorage.com`),
+    `WINTERFLOW_R2_ACCESS_KEY_ID`, `WINTERFLOW_R2_SECRET_ACCESS_KEY` (mapped
+    to `AWS_*` for the aws call only). The bucket is a Makefile default
+    (`R2_BUCKET`), as in econumo, not a secret.
+  - The release workflow runs `make cdn-upload` for the version and for
+    `latest`, with the three values from GitHub secrets
+    (`R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`); it skips the
+    upload with a warning when the endpoint is absent (forks).
+  - Installers that need R2 (control plane, hub) read the same three
+    `WINTERFLOW_R2_*` variables and download with
+    `curl --aws-sigv4 "aws:amz:auto:s3"` (curl >= 7.75), so no AWS CLI is
+    needed on servers; they verify `SHA256SUMS`.
 
 ### Scripts
 
@@ -242,6 +338,9 @@ copied into each; a test fails when a shared helper's copies differ.
   this repo.
 - `scripts/install-control-plane.sh`: Postgres, Redis, API, Hub. Not in the
   README; refuses to start without the R2 variables.
+- `scripts/install-hub.sh`: one more hub on its own machine; install or
+  update. Not in the README; needs the R2 variables and, on first install, a
+  join token.
 
 ### Agent install (`install-agent.sh`)
 
@@ -289,7 +388,28 @@ once the new PR is open.
 - Asks for the hub's public address (default: this host's FQDN with the hub
   port) and capacity (default 1000) and writes them as `HUB_PUBLIC_ADDR` /
   `HUB_CAPACITY`; asks for the API port as standalone does.
+- Redis: the dedicated TLS instance described in "Redis over TLS with a
+  password".
 - Debian/Ubuntu first (as PR #33); other distros fail with a clear message.
+
+### Hub install (`install-hub.sh`)
+
+Installs or updates one hub on its own machine.
+- Needs the `WINTERFLOW_R2_*` variables; downloads `winterflow-hub` from R2
+  (`latest` or `--version`) and verifies `SHA256SUMS`.
+- First install needs `--token wfh_...` (see "Hub join tokens"),
+  `--public-addr hub-02.winterflow.dev:50051`, `--redis-url rediss://...`,
+  optional `--capacity` (default 1000) and `--api-url` (default
+  `https://api.winterflow.dev`). It makes the hub key locally, enrolls, writes
+  the certificate, CA certificate and env (`HUB_PUBLIC_ADDR`,
+  `HUB_CAPACITY`, Redis settings), and starts `winterflow-hub.service` with
+  the same hardening, journald namespace and limits as the other units,
+  `TimeoutStopSec=150`.
+- Rerun on an installed hub = update: replace the binary, keep certificate
+  and settings (flags given again override settings), restart. Restarting
+  drains first, so agents move away and come back as needed.
+- The control-plane installer keeps setting up its own local hub directly
+  (it holds the CA), without a token.
 
 ### Standalone
 
@@ -332,6 +452,9 @@ receives a question and a question nobody hears is lost):
 - `verdict`: `allowed`, `unknown` (no such server, which includes a deleted
   one: its rows are gone), or `revoked` (the server exists but this
   certificate is not its active one). Both refusals mean `PermissionDenied`.
+  A fourth verdict, `moved` (the server is assigned to another hub), maps to
+  `FailedPrecondition` and sends the agent to ask the API (see "Agent
+  migration").
 - Each hub subscribes to its own reply channel, named with its stable
   `hub_id` (the host part of `HUB_PUBLIC_ADDR`).
 
@@ -356,6 +479,8 @@ tagged with a server id it doesn't know.
   restarts it by hand.
 - `Unavailable` (or any other failure): the normal 1-30 s retry loop,
   forever. An API or Redis outage never makes agents give up.
+- `FailedPrecondition` (moved, or the hub is draining): ask the API where
+  to go, then connect there. Never counts as a denial.
 - Any successful connection resets the count.
 
 Re-enrolling a box issues a new server id; the old id is never reactivated.

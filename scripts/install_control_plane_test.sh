@@ -144,7 +144,7 @@ assert_not_contains "units_and_env: hub has no jwt" "$hub_env" "JWT_SECRET"
 assert_contains "units_and_env: hub unit" "$hub_unit" "ExecStart=/usr/local/bin/winterflow-hub"
 assert_contains "units_and_env: hub user" "$hub_unit" "User=winterflow-hub"
 assert_contains "units_and_env: hub env file" "$hub_unit" "EnvironmentFile=/etc/winterflow/control-plane-hub.env"
-assert_contains "units_and_env: hub drains on stop" "$hub_unit" "TimeoutStopSec=150"
+assert_contains "units_and_env: hub stop timeout" "$hub_unit" "TimeoutStopSec=150"
 assert_contains "units_and_env: journal namespace" "$out" "LogNamespace=winterflow"
 
 plan="$(section "$out" plan)"

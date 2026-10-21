@@ -75,7 +75,15 @@ type Agent struct {
 	// retryBackoff overrides the {base, max} of the ordinary reconnect
 	// backoff (tests).
 	retryBackoff *[2]time.Duration
+	// settle is how long a stream must stay up for its connection to count as
+	// a success that resets the denial count (default streamSettle).
+	settle time.Duration
+	// now and sleep are the clock and waiter Run uses (tests replace them).
+	now   func() time.Time
+	sleep func(ctx context.Context, d time.Duration) bool
 }
+
+const streamSettle = 2 * time.Minute
 
 // ErrRevoked is returned by Run once the hub has refused this server
 // maxDenials times in a row: the server was removed or its certificate is no
@@ -535,6 +543,17 @@ func (a *Agent) Run(ctx context.Context) error {
 	}
 	backoff := baseBackoff
 	denials := 0
+	settle := streamSettle
+	if a.settle > 0 {
+		settle = a.settle
+	}
+	now, sleep := a.now, a.sleep
+	if now == nil {
+		now = time.Now
+	}
+	if sleep == nil {
+		sleep = util.Sleep
+	}
 	bringUp := a.bringUp
 	if bringUp == nil {
 		bringUp = a.connectRegisterStream
@@ -551,7 +570,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		wait := a.deniedBackoff[min(denials-1, len(a.deniedBackoff)-1)]
 		a.log.Warn("hub refused this server, will retry",
 			"error", cause, "denials", denials, "retry_in", wait.String())
-		return util.Sleep(ctx, wait), nil
+		return sleep(ctx, wait), nil
 	}
 
 	for {
@@ -571,13 +590,14 @@ func (a *Agent) Run(ctx context.Context) error {
 			}
 			a.log.Warn("agent connection attempt failed, will retry",
 				"error", err, "retry_in", backoff.String())
-			if !util.Sleep(ctx, backoff) {
+			if !sleep(ctx, backoff) {
 				return nil
 			}
 			backoff = nextBackoff(backoff, maxBackoff)
 			continue
 		}
 
+		upAt := now()
 		// Connected and streaming: wait for the stream to end or for shutdown.
 		select {
 		case <-ctx.Done():
@@ -589,6 +609,11 @@ func (a *Agent) Run(ctx context.Context) error {
 			endErr = streamErr()
 		}
 		a.teardownConn()
+		if now().Sub(upAt) >= settle {
+			// A stream that stayed up was a real connection: it resets the
+			// count even when it ends in a denial (a later revoke).
+			denials = 0
+		}
 		if status.Code(endErr) == codes.PermissionDenied {
 			// The hub cut or refused the stream (a revoke): a denial, and
 			// the connection is not a success that resets the count.
@@ -601,7 +626,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		denials = 0
 		backoff = baseBackoff
 		a.log.Warn("agent stream ended, reconnecting", "agent_id", a.agentID, "error", endErr)
-		if !util.Sleep(ctx, backoff) {
+		if !sleep(ctx, backoff) {
 			return nil
 		}
 		backoff = nextBackoff(backoff, maxBackoff)

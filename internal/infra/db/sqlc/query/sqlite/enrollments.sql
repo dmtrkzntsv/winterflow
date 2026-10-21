@@ -23,7 +23,7 @@ WHERE enrollment_id = ? AND state = 'pending';
 
 -- name: ClaimEnrollment :execrows
 UPDATE agent_enrollments
-SET state = 'claimed', code = NULL, code_expires_at = NULL, server_id = ?, certificate = ?, claimed_at = ?
+SET state = 'claimed', code = NULL, code_expires_at = NULL, server_id = ?, certificate = ?, hub_addr = ?, claimed_at = ?
 WHERE enrollment_id = ? AND code = ? AND state = 'pending' AND code_expires_at > ?;
 
 -- name: InsertServerWithHub :exec

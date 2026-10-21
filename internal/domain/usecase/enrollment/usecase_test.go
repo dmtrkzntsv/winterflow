@@ -74,7 +74,7 @@ func (f *fakeRepo) Claim(_ context.Context, c port.ClaimEnrollment) (model.Serve
 	if e == nil || e.State != model.EnrollmentPending || e.Code != c.Code || !c.Now.Before(e.CodeExpiresAt) {
 		return model.Server{}, model.ErrRegistrationCodeExpired
 	}
-	e.State, e.ServerID, e.Certificate, e.ClaimedAt, e.Code = model.EnrollmentClaimed, c.ServerID, c.Certificate, c.Now, ""
+	e.State, e.ServerID, e.Certificate, e.HubAddr, e.ClaimedAt, e.Code = model.EnrollmentClaimed, c.ServerID, c.Certificate, c.HubAddr, c.Now, ""
 	s := model.Server{ID: c.ServerID, OrganizationID: c.OrganizationID}
 	f.servers[s.ID] = s
 	f.hubIDs[s.ID] = c.HubID
@@ -274,6 +274,13 @@ func TestClaimSignsAsServerID(t *testing.T) {
 	}
 	if st.HubAddr != "hub-01.winterflow.dev:443" || st.CACertificate == "" {
 		t.Fatalf("%+v", st)
+	}
+	// Another replica (fresh instance, a picker that now fails) reads the
+	// same hub from the row.
+	other := New(e.repo, e.uc.signer, fakePicker{err: hubs.ErrNoHub}, e.uc.now)
+	st2, err := other.Status(ctx, r.PollSecret)
+	if err != nil || st2.HubAddr != st.HubAddr || st2.Certificate != st.Certificate {
+		t.Fatalf("fresh instance: %+v %v", st2, err)
 	}
 }
 

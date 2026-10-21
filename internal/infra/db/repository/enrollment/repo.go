@@ -106,6 +106,7 @@ func hydrate(r row) model.Enrollment {
 		State:          model.EnrollmentState(r.State),
 		ServerID:       deref(r.ServerID),
 		Certificate:    deref(r.Certificate),
+		HubAddr:        deref(r.HubAddr),
 		ClaimedAt:      derefTime(r.ClaimedAt),
 		CreatedAt:      r.CreatedAt.Time(),
 	}
@@ -187,6 +188,7 @@ func (r *Repo) Claim(ctx context.Context, c port.ClaimEnrollment) (model.Server,
 		n, err := r.q.ClaimEnrollment(ctx, db, claimParams{
 			ServerID:      &c.ServerID,
 			Certificate:   &c.Certificate,
+			HubAddr:       &c.HubAddr,
 			ClaimedAt:     &now,
 			EnrollmentID:  c.EnrollmentID,
 			Code:          &c.Code,

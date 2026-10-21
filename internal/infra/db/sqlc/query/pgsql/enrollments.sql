@@ -23,8 +23,8 @@ WHERE enrollment_id = $1 AND state = 'pending';
 
 -- name: ClaimEnrollment :execrows
 UPDATE agent_enrollments
-SET state = 'claimed', code = NULL, code_expires_at = NULL, server_id = $1, certificate = $2, claimed_at = $3
-WHERE enrollment_id = $4 AND code = $5 AND state = 'pending' AND code_expires_at > $6;
+SET state = 'claimed', code = NULL, code_expires_at = NULL, server_id = $1, certificate = $2, hub_addr = $3, claimed_at = $4
+WHERE enrollment_id = $5 AND code = $6 AND state = 'pending' AND code_expires_at > $7;
 
 -- name: InsertServerWithHub :exec
 INSERT INTO servers (server_id, organization_id, name, created_at, hub_id)

@@ -15,7 +15,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"sync"
 	"time"
 
 	"winterflow/internal/domain/model"
@@ -69,21 +68,13 @@ type UseCase struct {
 	signer Signer
 	hubs   HubPicker
 	now    func() time.Time
-
-	mu       sync.Mutex
-	hubAddrs map[string]claimedHub // enrollment id -> hub of its claim
-}
-
-type claimedHub struct {
-	addr string
-	at   time.Time
 }
 
 func New(repo port.EnrollmentRepository, signer Signer, hubs HubPicker, now func() time.Time) *UseCase {
 	if now == nil {
 		now = time.Now
 	}
-	return &UseCase{repo: repo, signer: signer, hubs: hubs, now: now, hubAddrs: map[string]claimedHub{}}
+	return &UseCase{repo: repo, signer: signer, hubs: hubs, now: now}
 }
 
 func hashSecret(s string) string {
@@ -119,7 +110,6 @@ func (u *UseCase) Start(ctx context.Context, csrPEM, hostname string) (StartResu
 	if err := u.repo.Prune(ctx, now); err != nil {
 		return StartResult{}, fmt.Errorf("prune enrollments: %w", err)
 	}
-	u.pruneHubs(now)
 	n, err := u.repo.CountPending(ctx)
 	if err != nil {
 		return StartResult{}, fmt.Errorf("count enrollments: %w", err)
@@ -194,12 +184,8 @@ func (u *UseCase) Status(ctx context.Context, pollSecret string) (Status, error)
 		if !e.ClaimedAt.IsZero() && now.After(e.ClaimedAt.Add(ClaimedTTL)) {
 			return Status{}, model.ErrNotFound
 		}
-		hubAddr, err := u.claimedHubAddr(ctx, e.ID)
-		if err != nil {
-			return Status{}, err
-		}
 		return Status{State: "claimed", CodesLeft: left, ServerID: e.ServerID, Certificate: e.Certificate,
-			CACertificate: u.signer.CACertPEM(), HubAddr: hubAddr}, nil
+			CACertificate: u.signer.CACertPEM(), HubAddr: e.HubAddr}, nil
 	case model.EnrollmentFailed:
 		return Status{State: "failed"}, nil
 	}
@@ -210,33 +196,6 @@ func (u *UseCase) Status(ctx context.Context, pollSecret string) (Status, error)
 		return Status{State: "expired", CodesLeft: left}, nil
 	}
 	return Status{State: "pending", Code: e.Code, ExpiresAt: e.CodeExpiresAt, CodesLeft: left}, nil
-}
-
-// claimedHubAddr is the public address of the hub the claim assigned. It is
-// remembered per process; another replica (or a restart) falls back to a
-// fresh pick.
-func (u *UseCase) claimedHubAddr(ctx context.Context, enrollmentID string) (string, error) {
-	u.mu.Lock()
-	h, ok := u.hubAddrs[enrollmentID]
-	u.mu.Unlock()
-	if ok {
-		return h.addr, nil
-	}
-	hub, err := u.hubs.Pick(ctx)
-	if err != nil {
-		return "", err
-	}
-	return hub.PublicAddr, nil
-}
-
-func (u *UseCase) pruneHubs(now time.Time) {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-	for id, h := range u.hubAddrs {
-		if now.Sub(h.at) > ClaimedTTL {
-			delete(u.hubAddrs, id)
-		}
-	}
 }
 
 // Claim binds the enrollment holding code to orgID: picks a hub, creates the
@@ -268,6 +227,7 @@ func (u *UseCase) Claim(ctx context.Context, code, orgID string) (model.Server, 
 		ServerID:       serverID,
 		OrganizationID: orgID,
 		HubID:          hub.ID,
+		HubAddr:        hub.PublicAddr,
 		CertificateID:  util.GenerateID(),
 		Certificate:    certPEM,
 		CertExpiresAt:  expires,
@@ -276,8 +236,5 @@ func (u *UseCase) Claim(ctx context.Context, code, orgID string) (model.Server, 
 	if err != nil {
 		return model.Server{}, err
 	}
-	u.mu.Lock()
-	u.hubAddrs[e.ID] = claimedHub{addr: hub.PublicAddr, at: now}
-	u.mu.Unlock()
 	return srv, nil
 }

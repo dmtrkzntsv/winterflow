@@ -10,8 +10,8 @@ import (
 // ClaimEnrollment is what a successful claim materializes: the server (in
 // OrganizationID, assigned to HubID) and its active certificate.
 type ClaimEnrollment struct {
-	EnrollmentID, Code, ServerID, OrganizationID, HubID, CertificateID, Certificate string
-	CertExpiresAt, Now                                                              time.Time
+	EnrollmentID, Code, ServerID, OrganizationID, HubID, HubAddr, CertificateID, Certificate string
+	CertExpiresAt, Now                                                                       time.Time
 }
 
 // EnrollmentRepository stores agent enrollments (distributed topology).

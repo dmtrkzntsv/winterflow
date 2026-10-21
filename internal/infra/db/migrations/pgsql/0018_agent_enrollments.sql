@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS agent_enrollments (
     state TEXT NOT NULL,
     server_id UUID,
     certificate TEXT,
+    hub_addr TEXT,
     claimed_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

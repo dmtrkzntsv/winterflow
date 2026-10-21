@@ -48,7 +48,7 @@ func enrollment(n int, code string, expires time.Time) model.Enrollment {
 func claim(e model.Enrollment, at time.Time) port.ClaimEnrollment {
 	return port.ClaimEnrollment{
 		EnrollmentID: e.ID, Code: e.Code, ServerID: srv, OrganizationID: org,
-		HubID: "hub-01.winterflow.dev", CertificateID: cert, Certificate: "PEM",
+		HubID: "hub-01.winterflow.dev", HubAddr: "hub-01.winterflow.dev:443", CertificateID: cert, Certificate: "PEM",
 		CertExpiresAt: at.Add(24 * time.Hour), Now: at,
 	}
 }
@@ -144,7 +144,7 @@ func TestClaimCreatesServerAndCert(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.State != model.EnrollmentClaimed || got.Code != "" || got.ServerID != srv || got.Certificate != "PEM" || got.ClaimedAt.IsZero() {
+	if got.State != model.EnrollmentClaimed || got.Code != "" || got.ServerID != srv || got.Certificate != "PEM" || got.HubAddr != "hub-01.winterflow.dev:443" || got.ClaimedAt.IsZero() {
 		t.Fatalf("claimed row: %+v", got)
 	}
 }

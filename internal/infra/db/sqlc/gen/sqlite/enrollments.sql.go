@@ -13,13 +13,14 @@ import (
 
 const claimEnrollment = `-- name: ClaimEnrollment :execrows
 UPDATE agent_enrollments
-SET state = 'claimed', code = NULL, code_expires_at = NULL, server_id = ?, certificate = ?, claimed_at = ?
+SET state = 'claimed', code = NULL, code_expires_at = NULL, server_id = ?, certificate = ?, hub_addr = ?, claimed_at = ?
 WHERE enrollment_id = ? AND code = ? AND state = 'pending' AND code_expires_at > ?
 `
 
 type ClaimEnrollmentParams struct {
 	ServerID      *string
 	Certificate   *string
+	HubAddr       *string
 	ClaimedAt     *types.DateTime
 	EnrollmentID  string
 	Code          *string
@@ -30,6 +31,7 @@ func (q *Queries) ClaimEnrollment(ctx context.Context, arg ClaimEnrollmentParams
 	result, err := q.db.ExecContext(ctx, claimEnrollment,
 		arg.ServerID,
 		arg.Certificate,
+		arg.HubAddr,
 		arg.ClaimedAt,
 		arg.EnrollmentID,
 		arg.Code,
@@ -53,7 +55,7 @@ func (q *Queries) CountPendingEnrollments(ctx context.Context) (int64, error) {
 }
 
 const getEnrollmentByCode = `-- name: GetEnrollmentByCode :one
-SELECT enrollment_id, poll_secret_hash, csr, hostname, code, code_expires_at, codes_issued, state, server_id, certificate, claimed_at, created_at FROM agent_enrollments WHERE code = ?
+SELECT enrollment_id, poll_secret_hash, csr, hostname, code, code_expires_at, codes_issued, state, server_id, certificate, hub_addr, claimed_at, created_at FROM agent_enrollments WHERE code = ?
 `
 
 func (q *Queries) GetEnrollmentByCode(ctx context.Context, code *string) (AgentEnrollment, error) {
@@ -70,6 +72,7 @@ func (q *Queries) GetEnrollmentByCode(ctx context.Context, code *string) (AgentE
 		&i.State,
 		&i.ServerID,
 		&i.Certificate,
+		&i.HubAddr,
 		&i.ClaimedAt,
 		&i.CreatedAt,
 	)
@@ -77,7 +80,7 @@ func (q *Queries) GetEnrollmentByCode(ctx context.Context, code *string) (AgentE
 }
 
 const getEnrollmentByID = `-- name: GetEnrollmentByID :one
-SELECT enrollment_id, poll_secret_hash, csr, hostname, code, code_expires_at, codes_issued, state, server_id, certificate, claimed_at, created_at FROM agent_enrollments WHERE enrollment_id = ?
+SELECT enrollment_id, poll_secret_hash, csr, hostname, code, code_expires_at, codes_issued, state, server_id, certificate, hub_addr, claimed_at, created_at FROM agent_enrollments WHERE enrollment_id = ?
 `
 
 func (q *Queries) GetEnrollmentByID(ctx context.Context, enrollmentID string) (AgentEnrollment, error) {
@@ -94,6 +97,7 @@ func (q *Queries) GetEnrollmentByID(ctx context.Context, enrollmentID string) (A
 		&i.State,
 		&i.ServerID,
 		&i.Certificate,
+		&i.HubAddr,
 		&i.ClaimedAt,
 		&i.CreatedAt,
 	)
@@ -101,7 +105,7 @@ func (q *Queries) GetEnrollmentByID(ctx context.Context, enrollmentID string) (A
 }
 
 const getEnrollmentBySecretHash = `-- name: GetEnrollmentBySecretHash :one
-SELECT enrollment_id, poll_secret_hash, csr, hostname, code, code_expires_at, codes_issued, state, server_id, certificate, claimed_at, created_at FROM agent_enrollments WHERE poll_secret_hash = ?
+SELECT enrollment_id, poll_secret_hash, csr, hostname, code, code_expires_at, codes_issued, state, server_id, certificate, hub_addr, claimed_at, created_at FROM agent_enrollments WHERE poll_secret_hash = ?
 `
 
 func (q *Queries) GetEnrollmentBySecretHash(ctx context.Context, pollSecretHash string) (AgentEnrollment, error) {
@@ -118,6 +122,7 @@ func (q *Queries) GetEnrollmentBySecretHash(ctx context.Context, pollSecretHash 
 		&i.State,
 		&i.ServerID,
 		&i.Certificate,
+		&i.HubAddr,
 		&i.ClaimedAt,
 		&i.CreatedAt,
 	)

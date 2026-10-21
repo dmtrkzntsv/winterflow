@@ -110,3 +110,7 @@ func (sqliteQuerier) DeleteServerDomainRows(ctx context.Context, db backend.DBTX
 func (sqliteQuerier) DeleteServerEnrollments(ctx context.Context, db backend.DBTX, serverID string) error {
 	return sqlitegen.New(db).DeleteServerEnrollments(ctx, &serverID)
 }
+
+func (sqliteQuerier) GetActiveServerCertificate(ctx context.Context, db backend.DBTX, serverID string) (string, error) {
+	return sqlitegen.New(db).GetActiveServerCertificate(ctx, serverID)
+}

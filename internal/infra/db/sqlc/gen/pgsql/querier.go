@@ -82,6 +82,8 @@ type Querier interface {
 	// replicas evaluate the same events).
 	FireAlertState(ctx context.Context, arg FireAlertStateParams) (int64, error)
 	GetActiveRollout(ctx context.Context, arg GetActiveRolloutParams) (Rollout, error)
+	// The newest active certificate of a server (no row: none).
+	GetActiveServerCertificate(ctx context.Context, serverID string) (string, error)
 	// GetAlertEventTrimCutoff is the newest event of an org that falls outside
 	// the newest `keep` (none when the org has at most `keep`).
 	GetAlertEventTrimCutoff(ctx context.Context, arg GetAlertEventTrimCutoffParams) (GetAlertEventTrimCutoffRow, error)

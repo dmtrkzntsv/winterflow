@@ -5,9 +5,11 @@ import (
 	enrollmentrepo "winterflow/internal/infra/db/repository/enrollment"
 
 	"winterflow/internal/domain/metrics"
+	"winterflow/internal/domain/port"
 	"winterflow/internal/domain/service/alerting"
 	notificationsvc "winterflow/internal/domain/service/notification"
 	"winterflow/internal/domain/service/status"
+	"winterflow/internal/domain/usecase/agentauth"
 	"winterflow/internal/domain/usecase/hubs"
 	"winterflow/internal/domain/usecase/sharedvars"
 	"winterflow/internal/infra/db"
@@ -95,6 +97,17 @@ func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerCon
 	instances := newInstances(r, dispatcher, statusCache, log)
 	queue := newRollouts(r, instances, dispatcher, statusCache, nm, o.rolloutTiming, log)
 
+	// Distributed only: hubs ask the API whether a connecting agent's
+	// certificate is still its server's active one, and a deleted server's
+	// agent is dropped by a broadcast. Standalone has no hubs.
+	var revoker port.Revoker
+	if !cfg.IsStandalone() {
+		if err := agentauth.StartResponder(ctx, b, cfg, r.server, log); err != nil {
+			log.Fatalf("failed to subscribe to %s: %v", cfg.GetHubRequestsChannel(), err)
+		}
+		revoker = agentauth.NewBusRevoker(b, cfg)
+	}
+
 	return &Deps{
 		Log:                      log,
 		Cfg:                      cfg,
@@ -119,6 +132,7 @@ func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerCon
 		ChannelBox:               al.box,
 		HubPicker:                picker,
 		EnrollmentRepository:     r.enrollment,
+		Revoker:                  revoker,
 	}, r.server
 }
 

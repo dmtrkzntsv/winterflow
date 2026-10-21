@@ -92,6 +92,10 @@ func (f *statusFanout) appsStatus(ctx context.Context, serverID string, apps []c
 // eventSink applies agent-initiated events to the status cache and the DB, and
 // pushes liveness/app-status transitions to browsers over SSE.
 type eventSink struct {
+	// known, when set, tells whether serverID is a server of this API; an
+	// event from any other id is dropped (a revoked or deleted agent's
+	// stragglers, a forged id). Nil keeps every event (standalone).
+	known func(ctx context.Context, serverID string) bool
 	cache *status.Cache
 	store eventStore
 	fan   *statusFanout
@@ -160,6 +164,10 @@ func (f fanSync) heartbeat(serverID string) {
 }
 
 func (s *eventSink) handle(ctx context.Context, ev bus.EventMessage) {
+	if s.known != nil && !s.known(ctx, ev.ServerID) {
+		s.log.Debug("dropping event from unknown server", "server_id", ev.ServerID, "kind", ev.Kind)
+		return
+	}
 	var transition bool
 	now := time.Now()
 	switch ev.Kind {
@@ -317,6 +325,9 @@ func startEventsSubscriber(ctx context.Context, b bus.Bus, cache *status.Cache, 
 		metrics: ms,
 		latest:  latest,
 		alerts:  alerts,
+	}
+	if !cfg.IsStandalone() {
+		sink.known = newKnownServers(serverRepo).known
 	}
 	if vars != nil {
 		sink.vars = vars

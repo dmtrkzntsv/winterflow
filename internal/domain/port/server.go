@@ -53,6 +53,10 @@ type ServerRepository interface {
 	// none, model.ErrNotFound when there is no such server.
 	ServerHub(ctx context.Context, serverID string) (string, error)
 
+	// ActiveServerCertificate returns the server's newest active certificate
+	// as stored (PEM, or base64 of it); model.ErrNotFound when it has none.
+	ActiveServerCertificate(ctx context.Context, serverID string) (string, error)
+
 	// CountServersByHub returns how many servers each hub carries.
 	CountServersByHub(ctx context.Context) (map[string]int, error)
 

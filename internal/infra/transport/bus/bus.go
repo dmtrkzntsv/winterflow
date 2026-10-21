@@ -70,3 +70,47 @@ type EventMessage struct {
 	Kind     EventKind `json:"kind"`
 	Payload  []byte    `json:"payload"`
 }
+
+// Hub <-> API control messages (agent authentication). Hubs ask over
+// hub:requests, the API answers on hub:responses:<hub_id>, and announces
+// revocations on hub:broadcast.
+
+// HubRequestVerify asks whether a connecting agent's certificate is still
+// the active one of its server.
+const HubRequestVerify = "server.verify"
+
+// HubBroadcastRevoked tells every hub to drop a server's agent.
+const HubBroadcastRevoked = "server.revoked"
+
+// HubRequest is a hub -> API request on hub:requests; Type is
+// HubRequestVerify today.
+type HubRequest struct {
+	Type            string `json:"type"`
+	RequestID       string `json:"request_id"`
+	HubID           string `json:"hub_id"`
+	ServerID        string `json:"server_id"`
+	CertFingerprint string `json:"cert_fingerprint"`
+}
+
+// AgentVerdict is the API's answer to an agent authentication check.
+type AgentVerdict string
+
+const (
+	VerdictAllowed AgentVerdict = "allowed"
+	VerdictRevoked AgentVerdict = "revoked"
+	VerdictUnknown AgentVerdict = "unknown"
+)
+
+// HubResponse is the API -> hub reply on hub:responses:<hub_id>.
+type HubResponse struct {
+	RequestID string       `json:"request_id"`
+	Verdict   AgentVerdict `json:"verdict"`
+	Reason    string       `json:"reason,omitempty"`
+}
+
+// HubBroadcast is an API -> every hub message on hub:broadcast; Type is
+// HubBroadcastRevoked today.
+type HubBroadcast struct {
+	Type     string `json:"type"`
+	ServerID string `json:"server_id"`
+}

@@ -97,6 +97,21 @@ func (q *Queries) DeleteServerRow(ctx context.Context, serverID string) error {
 	return err
 }
 
+const getActiveServerCertificate = `-- name: GetActiveServerCertificate :one
+SELECT certificate FROM server_certificates
+WHERE server_id = $1 AND is_active = TRUE
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+// The newest active certificate of a server (no row: none).
+func (q *Queries) GetActiveServerCertificate(ctx context.Context, serverID string) (string, error) {
+	row := q.db.QueryRowContext(ctx, getActiveServerCertificate, serverID)
+	var certificate string
+	err := row.Scan(&certificate)
+	return certificate, err
+}
+
 const getCapability = `-- name: GetCapability :one
 SELECT value FROM server_capabilities WHERE server_id = $1 AND name = $2
 `

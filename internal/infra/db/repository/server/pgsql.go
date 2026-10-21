@@ -143,3 +143,7 @@ func (pgsqlQuerier) DeleteServerDomainRows(ctx context.Context, db backend.DBTX,
 func (pgsqlQuerier) DeleteServerEnrollments(ctx context.Context, db backend.DBTX, serverID string) error {
 	return pgsqlgen.New(db).DeleteServerEnrollments(ctx, &serverID)
 }
+
+func (pgsqlQuerier) GetActiveServerCertificate(ctx context.Context, db backend.DBTX, serverID string) (string, error) {
+	return pgsqlgen.New(db).GetActiveServerCertificate(ctx, serverID)
+}

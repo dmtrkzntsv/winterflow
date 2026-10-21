@@ -111,3 +111,10 @@ DELETE FROM app_domains WHERE server_id = ?;
 -- agent_enrollments.server_id carries no foreign key either; the row holds
 -- the issued certificate.
 DELETE FROM agent_enrollments WHERE server_id = ?;
+
+-- name: GetActiveServerCertificate :one
+-- The newest active certificate of a server (no row: none).
+SELECT certificate FROM server_certificates
+WHERE server_id = ? AND is_active = TRUE
+ORDER BY created_at DESC
+LIMIT 1;

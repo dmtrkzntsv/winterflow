@@ -425,3 +425,22 @@ func TestDeleteServerCascades(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestActiveServerCertificate(t *testing.T) {
+	repo, d := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	dbtest.SeedOrg(t, d, org1)
+	dbtest.SeedMember(t, d, alice, org1)
+	register(t, repo, "111111", time.Now().Add(time.Hour))
+
+	if _, err := repo.ActiveServerCertificate(ctx, pendingSrv); !errors.Is(err, model.ErrNotFound) {
+		t.Fatalf("unclaimed: err = %v", err)
+	}
+	if _, err := repo.ClaimServer(ctx, dto.ClaimServerDTO{Code: "111111", OrganizationID: org1}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.ActiveServerCertificate(ctx, pendingSrv)
+	if err != nil || got != base64.StdEncoding.EncodeToString([]byte("PEM")) {
+		t.Fatalf("got %q, %v", got, err)
+	}
+}

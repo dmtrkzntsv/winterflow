@@ -20,7 +20,8 @@ type DeleteServerRequest struct {
 // DeleteServer removes a server and its data from the API and tells the hubs
 // to drop its agent. Containers on the box are not touched. A failed
 // revocation publish is logged: the hub's connect-time check still denies the
-// agent's next connection, since its certificate and row are gone.
+// agent's next connection, since its certificate and row are gone. Refused
+// with 409 where agents do not enroll by code (standalone).
 func (h *Handler) DeleteServer(w http.ResponseWriter, r *http.Request) {
 	userID, ok := util.RequireUser(w, r)
 	if !ok {
@@ -32,6 +33,12 @@ func (h *Handler) DeleteServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !util.RequireServerAccess(w, r, h.servers, userID, req.ServerID) {
+		return
+	}
+	// Without code enrollment (standalone) the server is the embedded agent,
+	// which could never be added back.
+	if h.claims == nil {
+		util.ErrorStatus(w, http.StatusConflict, "this instance's own server can't be deleted")
 		return
 	}
 	if err := h.servers.DeleteServer(r.Context(), req.ServerID); err != nil {

@@ -176,8 +176,19 @@ func (f *fakeRevoker) Revoke(_ context.Context, id string) error {
 	return f.err
 }
 
+// noClaims stands in for the enrollment usecase: delete-server is refused
+// where agents do not enroll by code.
+type noClaims struct{}
+
+func (noClaims) Claim(context.Context, string, string) (model.Server, error) {
+	return model.Server{}, errors.New("unused")
+}
+
 func postDelete(t *testing.T, h *Handler, userID, serverID string) *httptest.ResponseRecorder {
 	t.Helper()
+	if h.claims == nil {
+		h.claims = noClaims{}
+	}
 	body := strings.NewReader(`{"server_id":"` + serverID + `"}`)
 	w := httptest.NewRecorder()
 	h.DeleteServer(w, authedAs(t, httptest.NewRequest("POST", "/api/v1/server/delete-server", body), userID))
@@ -227,6 +238,26 @@ func TestDeleteServerOtherOrg403(t *testing.T) {
 	}
 	if owns, _ := h.servers.UserOwnsServer(dbtest.Ctx(t), "x", serverID); owns {
 		t.Fatal("unexpected ownership")
+	}
+}
+
+// Standalone's one server comes from its embedded agent and cannot be added
+// again once deleted.
+func TestDeleteServerRefusedWithoutEnrollment(t *testing.T) {
+	h, userID, serverID, _ := newEnv(t)
+	rev := &fakeRevoker{}
+	h.revoker = rev
+	body := strings.NewReader(`{"server_id":"` + serverID + `"}`)
+	w := httptest.NewRecorder()
+	h.DeleteServer(w, authedAs(t, httptest.NewRequest("POST", "/api/v1/server/delete-server", body), userID))
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 (body %s)", w.Code, w.Body.String())
+	}
+	if owns, _ := h.servers.UserOwnsServer(dbtest.Ctx(t), userID, serverID); !owns {
+		t.Fatal("server deleted")
+	}
+	if len(rev.ids) != 0 {
+		t.Fatal("revoked")
 	}
 }
 

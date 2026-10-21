@@ -36,6 +36,9 @@
 #   export WINTERFLOW_R2_ACCESS_KEY_ID=... WINTERFLOW_R2_SECRET_ACCESS_KEY=...
 #   sudo -E bash install-hub.sh --token wfh_... --public-addr hub-02.example.com:50051 \
 #       --redis-url 'rediss://:<password>@cp.example.com:6380'
+#   # or keep the secrets out of the process list:
+#   export WINTERFLOW_HUB_TOKEN=wfh_... WINTERFLOW_HUB_REDIS_URL='rediss://:<password>@cp.example.com:6380'
+#   sudo -E bash install-hub.sh --public-addr hub-02.example.com:50051
 #   sudo -E bash install-hub.sh                      # update a joined hub
 #
 # Options:
@@ -48,7 +51,9 @@
 #                        later (the certificate is for that name).
 #   --redis-url URL      The control plane's Redis, rediss://:<password>@host:port
 #                        (TLS only; redis:// is refused). Required on the first
-#                        install.
+#                        install. Prefer WINTERFLOW_HUB_REDIS_URL in the
+#                        environment: a flag shows the password in the process
+#                        list.
 #   --capacity N         Agents this hub should carry (default: kept, else 1000).
 #   --listen-port PORT   Port to listen on when it differs from the public
 #                        address's port, e.g. behind a port forward (default:
@@ -88,6 +93,7 @@ R2_PROJECT="winterflow"
 DEFAULT_API_URL="https://api.winterflow.dev"
 
 JOIN_TOKEN="${WINTERFLOW_HUB_TOKEN:-}"
+REDIS_URL_ARG="${WINTERFLOW_HUB_REDIS_URL:-}"
 API_URL="$DEFAULT_API_URL"
 HUB_PUBLIC_ADDR=""
 HUB_CAPACITY=""
@@ -393,47 +399,22 @@ download_binary() {
 
 # --- Join (certificate) -------------------------------------------------------
 
-enroll_url() { printf '%s/api/v1/hub/enroll' "${API_URL%/}"; }
-
-enroll_proto() {
-    case "$API_URL" in http://*) printf '=http' ;; *) printf '=https' ;; esac
-}
-
-json_field() {
-    # json_field FILE NAME -> the string value of "NAME" in the API's compact
-    # JSON, with \n escapes turned into newlines (PEM) and nothing else
-    # unescaped: PEM and the API's messages carry no other escapes.
-    sed -n "s/.*\"$2\":\"\\([^\"]*\\)\".*/\\1/p" "$1" | head -n 1 | sed 's/\\n/\n/g'
-}
-
 enroll() {
-    # Make the key, post the request, store ca.crt and hub.crt. The token
-    # travels in the request body on stdin, never on a command line.
-    local csr csr_json body status resp="${WORK_DIR}/enroll.json"
-    "$HUB_DEST" csr --key "${CERT_DIR}/hub.key" --host "${HUB_PUBLIC_ADDR%:*}" > "${WORK_DIR}/hub.csr" \
-        || die "winterflow-hub csr failed"
-    chown root:"$HUB_USER" "${CERT_DIR}/hub.key"
-    chmod 640 "${CERT_DIR}/hub.key"
-    csr="$(cat "${WORK_DIR}/hub.csr")"
-    csr_json="$(printf '%s\n' "$csr" | awk 'BEGIN{ORS="\\n"} {print}')"
-    body="$(printf '{"token":"%s","csr":"%s","public_addr":"%s"}' "$JOIN_TOKEN" "$csr_json" "$HUB_PUBLIC_ADDR")"
-    log "Joining the control plane at $(enroll_url)"
-    status="$(printf '%s' "$body" | curl -sS --proto "$(enroll_proto)" --connect-timeout 20 --max-time 60 \
-        -H 'Content-Type: application/json' --data @- -o "$resp" -w '%{http_code}' "$(enroll_url)")" \
-        || die "could not reach $(enroll_url)"
-    case "$status" in
-        200) ;;
-        400) die "the control plane refused the join: $(json_field "$resp" message) (a token works once and expires after an hour; ask for a new one)" ;;
-        429) die "the control plane is rate limiting joins; wait a minute and rerun" ;;
-        *) die "the control plane answered HTTP ${status} to the join: $(json_field "$resp" message)" ;;
+    # Make (or keep) the key and redeem the token: `winterflow-hub join`
+    # posts the request, checks that the certificate matches the key and
+    # chains to the CA, and stores ca.crt and hub.crt. The token reaches it
+    # on stdin, never a command line.
+    local st=0 out
+    out="$(printf '%s\n' "$JOIN_TOKEN" | "$HUB_DEST" join --api-url "$API_URL" \
+        --public-addr "$HUB_PUBLIC_ADDR" --cert-dir "$CERT_DIR" 2>&1)" || st=$?
+    case "$st" in
+        0) ;;
+        2) die "${out} (a token works once and expires after an hour; ask for a new one)" ;;
+        *) die "joining the control plane failed: ${out}" ;;
     esac
-    json_field "$resp" certificate > "${WORK_DIR}/hub.crt"
-    json_field "$resp" ca_certificate > "${WORK_DIR}/ca.crt"
-    grep -q 'BEGIN CERTIFICATE' "${WORK_DIR}/hub.crt" && grep -q 'BEGIN CERTIFICATE' "${WORK_DIR}/ca.crt" \
-        || die "the control plane's answer carried no certificate"
-    put_file "${CERT_DIR}/ca.crt" 644 root "$HUB_USER" < "${WORK_DIR}/ca.crt"
-    put_file "${CERT_DIR}/hub.crt" 644 root "$HUB_USER" < "${WORK_DIR}/hub.crt"
-    log "Joined: certificate for ${HUB_PUBLIC_ADDR%:*} stored in ${CERT_DIR}"
+    chown root:"$HUB_USER" "${CERT_DIR}/hub.key" "${CERT_DIR}/hub.crt" "${CERT_DIR}/ca.crt"
+    chmod 640 "${CERT_DIR}/hub.key"
+    log "$out"
 }
 
 # --- Renderers (shared by install and --dry-run) ------------------------------
@@ -542,10 +523,10 @@ render_plan() {
     if [ "$JOINED" -eq 1 ]; then
         echo "joined: ${CERT_DIR}/hub.crt exists; certificate and key kept, no token needed"
     else
-        echo "${HUB_DEST} csr --key ${CERT_DIR}/hub.key --host ${HUB_PUBLIC_ADDR%:*}"
-        echo "  ${CERT_DIR}: root:${HUB_USER} 0750; hub.key 0640 (made here, never sent)"
-        echo "POST $(enroll_url) {token: <hidden>, csr, public_addr: ${HUB_PUBLIC_ADDR}}"
-        echo "  stores ca.crt and hub.crt in ${CERT_DIR}"
+        echo "${HUB_DEST} join --api-url ${API_URL} --public-addr ${HUB_PUBLIC_ADDR} --cert-dir ${CERT_DIR}   (token on stdin, hidden)"
+        echo "  POST ${API_URL}/api/v1/hub/enroll {token, csr, public_addr}; hub.key made here and never sent"
+        echo "  checks the certificate matches the key and chains to the CA, then stores ca.crt and hub.crt"
+        echo "  ${CERT_DIR}: root:${HUB_USER} 0750; hub.key 0640"
     fi
     echo "systemctl enable winterflow-hub; systemctl restart winterflow-hub (stopping drains first, up to 2 minutes)"
 }
@@ -628,6 +609,7 @@ uninstall() {
         return 0
     fi
     if [ "$PURGE" -eq 1 ]; then
+        [ -t 0 ] || [ "$ASSUME_YES" -eq 1 ] || die "--purge deletes the hub's key and settings: pass --yes when there is no terminal to ask"
         confirm "Delete this hub's key, certificates and settings? It must join again with a new token." \
             || die "aborted"
     fi
@@ -636,9 +618,12 @@ uninstall() {
     rm -f "$HUB_UNIT" "$HUB_DEST"
     systemctl daemon-reload
     if [ "$PURGE" -eq 1 ]; then
+        # The user goes only when this installer's settings exist (it made it).
+        local had_env=0
+        [ ! -f "$ENV_FILE" ] || had_env=1
         rm -rf "$CERT_DIR" "$HUB_HOME"
         rm -f "$ENV_FILE"
-        if id "$HUB_USER" >/dev/null 2>&1; then userdel "$HUB_USER" 2>/dev/null || warn "could not delete the user ${HUB_USER}"; fi
+        if [ "$had_env" -eq 1 ] && id "$HUB_USER" >/dev/null 2>&1; then userdel "$HUB_USER" 2>/dev/null || warn "could not delete the user ${HUB_USER}"; fi
     fi
     log "Removed the service and binary."
     render_kept
@@ -646,7 +631,7 @@ uninstall() {
 
 check_settings() {
     [ -n "$HUB_PUBLIC_ADDR" ] || die "--public-addr host:port is required"
-    [ -n "$REDIS_ADDR" ] && [ -n "$REDIS_PASSWORD" ] || die "--redis-url rediss://:<password>@host:port is required"
+    [ -n "$REDIS_ADDR" ] && [ -n "$REDIS_PASSWORD" ] || die "--redis-url (or WINTERFLOW_HUB_REDIS_URL) rediss://:<password>@host:port is required"
     if [ "$JOINED" -eq 0 ]; then
         [ -n "$JOIN_TOKEN" ] || die "--token is required on the first install (ask the control plane's operator for a hub join token)"
     fi
@@ -658,7 +643,7 @@ main() {
         case "$1" in
             --token)        JOIN_TOKEN="${2:?--token needs a value}"; shift 2 ;;
             --public-addr)  arg_public_addr="${2:?--public-addr needs host:port}"; shift 2 ;;
-            --redis-url)    parse_redis_url "${2:?--redis-url needs a URL}"; shift 2 ;;
+            --redis-url)    REDIS_URL_ARG="${2:?--redis-url needs a URL}"; shift 2 ;;
             --capacity)     HUB_CAPACITY="${2:?--capacity needs a number}"; shift 2 ;;
             --listen-port)  HUB_PORT="${2:?--listen-port needs a port}"; shift 2 ;;
             --api-url)      API_URL="${2:?--api-url needs a URL}"; shift 2 ;;
@@ -684,12 +669,20 @@ main() {
     [ "$PURGE" -eq 0 ] || [ "$UNINSTALL" -eq 1 ] || die "--purge only goes with --uninstall"
     valid_api_url "$API_URL" || die "--api-url must be https:// (http:// only for localhost), got: ${API_URL}"
     API_URL="${API_URL%/}"
+    [ -z "$REDIS_URL_ARG" ] || parse_redis_url "$REDIS_URL_ARG"
     [ -z "$JOIN_TOKEN" ] || valid_token "$JOIN_TOKEN" || die "the join token must look like wfh_..."
     [ -z "$arg_public_addr" ] || valid_hostport "$arg_public_addr" || die "--public-addr must be host:port (a DNS name or IPv4), got: ${arg_public_addr}"
     [ -z "$HUB_CAPACITY" ] || valid_capacity "$HUB_CAPACITY" || die "--capacity must be a positive number, got: ${HUB_CAPACITY}"
     [ -z "$HUB_PORT" ] || valid_port "$HUB_PORT" || die "--listen-port must be a port number, got: ${HUB_PORT}"
 
     cd /
+
+    # Before every branch (uninstall and dry runs included): the control plane
+    # and the standalone install use the same unit and binary names.
+    [ ! -f "${CONFIG_DIR}/winterflow.env" ] \
+        || die "a standalone WinterFlow install exists on this host (${CONFIG_DIR}/winterflow.env); this installer is for hub-only hosts"
+    [ ! -f "${CONFIG_DIR}/control-plane.env" ] \
+        || die "a control plane is installed on this host (${CONFIG_DIR}/control-plane.env); it runs its own hub, and this installer is for hub-only hosts"
 
     if [ "$UNINSTALL" -eq 1 ]; then
         if [ "$DRY_RUN" -eq 0 ]; then
@@ -706,10 +699,6 @@ main() {
     if [ "$DRY_RUN" -eq 0 ]; then
         [ "$(id -u)" -eq 0 ] || die "must run as root (try: sudo -E $0)"
         command -v systemctl >/dev/null 2>&1 || die "systemd is required (systemctl not found)"
-        [ ! -f "${CONFIG_DIR}/winterflow.env" ] \
-            || die "a standalone WinterFlow install exists on this host (${CONFIG_DIR}/winterflow.env); use a separate host for the hub"
-        [ ! -f "${CONFIG_DIR}/control-plane.env" ] \
-            || die "a control plane is installed on this host (${CONFIG_DIR}/control-plane.env); it already runs a hub"
     fi
 
     if [ -f "${CERT_DIR}/hub.crt" ] && [ -f "${CERT_DIR}/hub.key" ] && [ -f "${CERT_DIR}/ca.crt" ]; then

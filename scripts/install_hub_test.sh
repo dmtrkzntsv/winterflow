@@ -85,6 +85,12 @@ dry --token "$TOKEN" --public-addr "$ADDR" --redis-url "rediss://cp.example.com:
 dry --token "$TOKEN" --public-addr "$ADDR" --redis-url "rediss://:${REDIS_PW}@cp.example.com" >/dev/null \
     && fail "redis url without port refused" "exit 0" || pass "redis url without port refused"
 
+o="$(WINTERFLOW_HUB_REDIS_URL="$REDIS_URL" WF_INSTALL_ROOT="$debian" bash "$SCRIPT" --dry-run --token "$TOKEN" --public-addr "$ADDR" 2>&1)" \
+    && pass "redis url from the environment accepted" || fail "redis url from the environment accepted" "$o"
+assert_contains "redis url from the environment: used" "$o" "REDIS_ADDR=cp.example.com:6380"
+assert_not_contains "redis url from the environment: password not printed" "$o" "$REDIS_PW"
+assert_contains "redis password path documented" "$help_out" "WINTERFLOW_HUB_REDIS_URL"
+
 # --- refuses_without_r2_env ---------------------------------------------------
 
 for v in WINTERFLOW_R2_ENDPOINT WINTERFLOW_R2_ACCESS_KEY_ID WINTERFLOW_R2_SECRET_ACCESS_KEY; do
@@ -131,10 +137,10 @@ assert_contains "enrolls_and_writes_env: redis password line" "$env_out" "REDIS_
 assert_contains "enrolls_and_writes_env: redis tls" "$env_out" "REDIS_TLS=true"
 assert_contains "enrolls_and_writes_env: redis ca is the joined ca" "$env_out" "REDIS_CA_CERT_PATH=/var/lib/winterflow-hub/certs/ca.crt"
 assert_not_contains "enrolls_and_writes_env: no CA key anywhere" "$out" "ca.key"
-assert_contains "enrolls_and_writes_env: csr step" "$plan" "winterflow-hub csr --key /var/lib/winterflow-hub/certs/hub.key --host hub-02.example.com"
+assert_contains "enrolls_and_writes_env: join step" "$plan" "winterflow-hub join --api-url https://api.winterflow.dev --public-addr hub-02.example.com:50051 --cert-dir /var/lib/winterflow-hub/certs"
 assert_contains "enrolls_and_writes_env: POST shown" "$plan" "POST https://api.winterflow.dev/api/v1/hub/enroll"
 assert_contains "enrolls_and_writes_env: key stays here" "$plan" "hub.key 0640"
-assert_contains "enrolls_and_writes_env: api url option" "$(dry "${join_args[@]}" --api-url https://api.example.com)" "POST https://api.example.com/api/v1/hub/enroll"
+assert_contains "enrolls_and_writes_env: api url option" "$(dry "${join_args[@]}" --api-url https://api.example.com)" "--api-url https://api.example.com"
 assert_not_contains "enrolls_and_writes_env: token never printed" "$out" "$TOKEN"
 assert_not_contains "enrolls_and_writes_env: redis password never printed" "$out" "$REDIS_PW"
 assert_not_contains "enrolls_and_writes_env: r2 secret never printed" "$out" "$SECRET"
@@ -143,7 +149,7 @@ assert_contains "downloads: latest hub" "$out" "https://acct.r2.cloudflarestorag
 assert_contains "downloads: checksums" "$out" "/econumo/winterflow/latest/SHA256SUMS"
 assert_contains "--version picks the channel" "$(dry "${join_args[@]}" --version 260101.1 --r2-bucket other-bucket)" "/other-bucket/winterflow/v260101.1/winterflow-hub-linux-"
 assert_not_contains "secret not on the curl command line" "$src" 'SECRET_ACCESS_KEY" "'
-assert_contains "token travels on stdin" "$src" "--data @-"
+assert_contains "token travels on stdin" "$src" "printf '%s\\n' \"\$JOIN_TOKEN\" | "
 assert_contains "listen port default is the public port; capacity default" "$(dry "${join_args[@]}")" "HUB_CAPACITY=1000"
 out_lp="$(dry "${join_args[@]}" --listen-port 8443)"
 assert_contains "listen-port overrides HUB_PORT" "$out_lp" "HUB_PORT=8443"
@@ -184,7 +190,7 @@ out_rerun="$(WF_INSTALL_ROOT="$rerun" bash "$SCRIPT" --dry-run 2>&1)" || fail "r
 out_rerun="${out_rerun//$rerun/}"
 assert_contains "rerun_updates_without_token: no enroll" "$(section "$out_rerun" plan)" "no token needed"
 assert_not_contains "rerun_updates_without_token: no POST" "$out_rerun" "POST "
-assert_not_contains "rerun_updates_without_token: no csr" "$out_rerun" "hub csr"
+assert_not_contains "rerun_updates_without_token: no join" "$out_rerun" "hub join"
 assert_contains "rerun_updates_without_token: binary replaced" "$out_rerun" "install /usr/local/bin/winterflow-hub"
 assert_contains "rerun_updates_without_token: download" "$out_rerun" "winterflow-hub-linux-"
 assert_contains "rerun_updates_without_token: restart" "$out_rerun" "systemctl restart winterflow-hub"
@@ -242,41 +248,30 @@ STUB
         printf '#!/bin/sh\necho PONG\n' > "$bin/redis-cli"
         printf '#!/bin/sh\ncase "$1" in -s) echo Linux;; -m) echo x86_64;; esac\n' > "$bin/uname"
         for a in chown useradd sleep; do printf '#!/bin/sh\nexit 0\n' > "$bin/$a"; done
-        # curl: R2 downloads serve r2/<name>; the join POST logs its stdin
-        # body and answers $r/enroll-status with $r/enroll-body.
+        # curl: R2 downloads serve r2/<name>; the credentials arrive on stdin.
         cat > "$bin/curl" <<STUB
 #!/bin/sh
 if [ "\$1" = "--version" ]; then echo "curl 8.5.0 (x86_64-pc-linux-gnu)"; exit 0; fi
 echo "curl \$*" >> "$r/curl-args"
-out=""; url=""; status=""
-while [ \$# -gt 0 ]; do case "\$1" in -o) out="\$2"; shift 2 ;; -w) status=1; shift 2 ;; -*) shift ;; *) url="\$1"; shift ;; esac; done
-case "\$url" in
-    */api/v1/hub/enroll)
-        cat > "$r/enroll-stdin"
-        cp "$r/enroll-body" "\$out"
-        cat "$r/enroll-status"
-        ;;
-    *)
-        cat >> "$r/curl-stdin"
-        cp "$r/r2/\${url##*/}" "\$out"
-        ;;
-esac
+out=""; url=""
+while [ \$# -gt 0 ]; do case "\$1" in -o) out="\$2"; shift 2 ;; -*) shift ;; *) url="\$1"; shift ;; esac; done
+cat >> "$r/curl-stdin"
+cp "$r/r2/\${url##*/}" "\$out"
 STUB
-        cat > "$r/r2/winterflow-hub-linux-amd64" <<'STUB'
+        # fake winterflow-hub: only `join`. It logs its argv and stdin and
+        # writes the key and certificates, or fails with $r/join-exit.
+        cat > "$r/r2/winterflow-hub-linux-amd64" <<STUB
 #!/bin/sh
-# fake winterflow-hub: only the csr subcommand
-[ "$1" = csr ] || exit 0
-shift
-while [ $# -gt 0 ]; do case "$1" in --key) key="$2"; shift 2 ;; --host) host="$2"; shift 2 ;; *) shift ;; esac; done
-[ -f "$key" ] || echo "private key" > "$key"
-chmod 600 "$key"
-echo "-----BEGIN CERTIFICATE REQUEST-----"
-echo "CSR-FOR-$host"
-echo "-----END CERTIFICATE REQUEST-----"
+[ "\$1" = join ] || exit 0
+echo "\$*" >> "$r/join-args"
+cat > "$r/join-stdin"
+if [ -f "$r/join-exit" ]; then echo "the control plane refused the join: invalid or expired token" >&2; exit "\$(cat "$r/join-exit")"; fi
+while [ \$# -gt 0 ]; do case "\$1" in --cert-dir) dir="\$2"; shift 2 ;; *) shift ;; esac; done
+echo "private key" > "\$dir/hub.key"; chmod 600 "\$dir/hub.key"
+echo HUBCERT > "\$dir/hub.crt"; echo CACERT > "\$dir/ca.crt"
+echo "joined: certificate stored"
 STUB
         (cd "$r/r2" && sha256sum winterflow-hub-linux-amd64 > SHA256SUMS)
-        printf '200' > "$r/enroll-status"
-        printf '%s' '{"success":true,"message":"hub enrolled","data":{"certificate":"-----BEGIN CERTIFICATE-----\nHUBCERT\n-----END CERTIFICATE-----\n","ca_certificate":"-----BEGIN CERTIFICATE-----\nCACERT\n-----END CERTIFICATE-----\n"}}' > "$r/enroll-body"
         chmod +x "$bin"/*
         mkdir -p "$r/etc" "$r/usr/local/bin" "$r/etc/systemd/system"
         printf 'ID=debian\n' > "$r/etc/os-release"
@@ -301,13 +296,12 @@ STUB
     [ "$(stat -c %a "$r1/etc/winterflow/hub.env")" = 600 ] && pass "real run: hub.env 0600" || fail "real run: hub.env 0600" "$(stat -c %a "$r1/etc/winterflow/hub.env")"
     assert_contains "real run: env password" "$(cat "$r1/etc/winterflow/hub.env")" "REDIS_PASSWORD=${REDIS_PW}"
     assert_contains "real run: env addr" "$(cat "$r1/etc/winterflow/hub.env")" "REDIS_ADDR=cp.example.com:6380"
-    assert_contains "real run: POST body has the token" "$(cat "$r1/enroll-stdin")" "\"token\":\"${TOKEN}\""
-    assert_contains "real run: POST body has the csr, newlines escaped" "$(cat "$r1/enroll-stdin")" '"csr":"-----BEGIN CERTIFICATE REQUEST-----\nCSR-FOR-hub-02.example.com\n-----END CERTIFICATE REQUEST-----\n"'
-    assert_contains "real run: POST body has the address" "$(cat "$r1/enroll-stdin")" "\"public_addr\":\"${ADDR}\""
-    assert_not_contains "real run: token never on a command line" "$(cat "$r1/curl-args")" "$TOKEN"
+    assert_contains "real run: join gets the token on stdin" "$(cat "$r1/join-stdin")" "$TOKEN"
+    assert_contains "real run: join args" "$(cat "$r1/join-args")" "join --api-url https://api.winterflow.dev --public-addr ${ADDR} --cert-dir ${cd1}"
+    assert_not_contains "real run: token never in join's argv" "$(cat "$r1/join-args")" "$TOKEN"
+    assert_not_contains "real run: token never on a curl command line" "$(cat "$r1/curl-args")" "$TOKEN"
     assert_not_contains "real run: r2 secret never on a command line" "$(cat "$r1/curl-args")" "$SECRET"
     assert_contains "real run: r2 secret passed on curl's stdin" "$(cat "$r1/curl-stdin")" "$SECRET"
-    assert_contains "real run: joins the default api" "$(cat "$r1/curl-args")" "https://api.winterflow.dev/api/v1/hub/enroll"
     assert_not_contains "real run: password not in the output" "$RUN_OUT" "$REDIS_PW"
     assert_not_contains "real run: token not in the output" "$RUN_OUT" "$TOKEN"
     [ -x "$r1/usr/local/bin/winterflow-hub" ] && pass "real run: binary installed" || fail "real run: binary installed" "missing"
@@ -315,10 +309,10 @@ STUB
     assert_contains "real run: service restarted" "$(cat "$r1/calls")" "systemctl restart winterflow-hub"
 
     # Rerun: no token, no enroll, binary replaced, restart, settings kept.
-    : > "$r1/calls"; rm -f "$r1/enroll-stdin"
+    : > "$r1/calls"; rm -f "$r1/join-args"
     run_hub "$r1" --capacity 77
     [ "$RUN_STATUS" -eq 0 ] && pass "rerun: installer succeeds without a token" || fail "rerun: installer succeeds without a token" "status $RUN_STATUS: $RUN_OUT"
-    [ ! -e "$r1/enroll-stdin" ] && pass "rerun: no enroll request" || fail "rerun: no enroll request" "posted"
+    [ ! -e "$r1/join-args" ] && pass "rerun: no join" || fail "rerun: no join" "joined"
     assert_contains "rerun: capacity overridden" "$(cat "$r1/etc/winterflow/hub.env")" "HUB_CAPACITY=77"
     assert_contains "rerun: redis password kept" "$(cat "$r1/etc/winterflow/hub.env")" "REDIS_PASSWORD=${REDIS_PW}"
     assert_contains "rerun: addr kept" "$(cat "$r1/etc/winterflow/hub.env")" "HUB_PUBLIC_ADDR=${ADDR}"
@@ -334,14 +328,31 @@ STUB
         && pass "uninstall: unit and binary removed" || fail "uninstall: unit and binary removed" "still there"
     [ -f "$cd1/hub.key" ] && [ -f "$r1/etc/winterflow/hub.env" ] \
         && pass "uninstall: certs and env kept" || fail "uninstall: certs and env kept" "removed"
+    RUN_OUT="$(PATH="$r1/stubs:$PATH" WF_INSTALL_ROOT="$r1" bash "$SCRIPT" --uninstall --purge </dev/null 2>&1)" && RUN_STATUS=0 || RUN_STATUS=$?
+    [ "$RUN_STATUS" -ne 0 ] && [ -f "$cd1/hub.key" ] && pass "purge without a terminal needs --yes" || fail "purge without a terminal needs --yes" "status $RUN_STATUS"
     RUN_OUT="$(PATH="$r1/stubs:$PATH" WF_INSTALL_ROOT="$r1" bash "$SCRIPT" --uninstall --purge --yes </dev/null 2>&1)" || true
     [ ! -e "$cd1" ] && [ ! -e "$r1/etc/winterflow/hub.env" ] \
         && pass "purge: certs and env removed" || fail "purge: certs and env removed" "still there"
 
-    # A refused join (400) stops the install and says why; nothing is started.
+    # A control-plane or standalone host is never touched: install, uninstall
+    # and purge all refuse (the units and binary names are shared).
+    for marker in control-plane.env winterflow.env; do
+        r5="$tmp/real5-$marker"; mkdir -p "$r5"; make_stubs "$r5"
+        mkdir -p "$r5/etc/winterflow"; : > "$r5/etc/winterflow/$marker"
+        echo cp-binary > "$r5/usr/local/bin/winterflow-hub"; echo cp-unit > "$r5/etc/systemd/system/winterflow-hub.service"
+        for mode in "" "--uninstall" "--uninstall --purge --yes" "--dry-run" "--dry-run --uninstall"; do
+            : > "$r5/calls"
+            # shellcheck disable=SC2086 # mode is a word list
+            RUN_OUT="$(PATH="$r5/stubs:$PATH" WF_INSTALL_ROOT="$r5" TMPDIR="$r5" bash "$SCRIPT" --yes $mode "${join_args[@]}" </dev/null 2>&1)" \
+                && fail "${marker} host refused: '${mode}'" "exit 0" || pass "${marker} host refused: '${mode}'"
+            [ ! -s "$r5/calls" ] && [ "$(cat "$r5/usr/local/bin/winterflow-hub")" = cp-binary ] && [ -f "$r5/etc/systemd/system/winterflow-hub.service" ] \
+                && pass "${marker} host untouched: '${mode}'" || fail "${marker} host untouched: '${mode}'" "$(cat "$r5/calls")"
+        done
+    done
+
+    # A refused join (exit 2) stops the install and says why; nothing is started.
     r2="$tmp/real2"; mkdir -p "$r2"; make_stubs "$r2"
-    printf '400' > "$r2/enroll-status"
-    printf '%s' '{"success":false,"message":"invalid or expired token","data":null}' > "$r2/enroll-body"
+    printf '2' > "$r2/join-exit"
     run_hub "$r2" "${join_args[@]}"
     [ "$RUN_STATUS" -ne 0 ] && pass "refused join: installer fails" || fail "refused join: installer fails" "status 0"
     assert_contains "refused join: says why" "$RUN_OUT" "invalid or expired token"
@@ -355,7 +366,7 @@ STUB
     run_hub "$r3" "${join_args[@]}"
     [ "$RUN_STATUS" -ne 0 ] && pass "checksum mismatch: installer fails" || fail "checksum mismatch: installer fails" "status 0"
     assert_contains "checksum mismatch: says so" "$RUN_OUT" "checksum mismatch for winterflow-hub-linux-amd64"
-    [ ! -e "$r3/enroll-stdin" ] && pass "checksum mismatch: token not spent" || fail "checksum mismatch: token not spent" "posted"
+    [ ! -e "$r3/join-args" ] && pass "checksum mismatch: token not spent" || fail "checksum mismatch: token not spent" "joined"
 fi
 
 echo

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -24,10 +25,15 @@ func main() {
 		}
 		return
 	}
-	// Hidden subcommand for the hub installer: make a key and print a CSR.
-	if len(os.Args) > 1 && os.Args[1] == "csr" {
-		if err := runCSR(os.Args[2:], os.Stdout); err != nil {
+	// Hidden subcommand for the hub installer: redeem a join token for the
+	// hub's certificate (exit 2: the control plane refused the token).
+	if len(os.Args) > 1 && os.Args[1] == "join" {
+		if err := runJoin(os.Args[2:], os.Stdin, os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, err)
+			var je *joinError
+			if errors.As(err, &je) {
+				os.Exit(je.code)
+			}
 			os.Exit(1)
 		}
 		return

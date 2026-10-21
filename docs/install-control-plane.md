@@ -105,8 +105,9 @@ no data and joins the existing control plane.
    sudo bash -c 'set -a; . /etc/winterflow/control-plane.env; . /etc/winterflow/control-plane-api.env; exec winterflow-api hub-token'   # --ttl 30m for another lifetime
    ```
 
-   Whoever holds the token chooses the new hub's host name, so hand it over
-   only to the person who runs the hub.
+   Whoever holds the token chooses the new hub's host name (any but one a
+   running hub already uses), so hand it over only to the person who runs
+   the hub.
 3. On the new machine, open the hub's port (the one in `--public-addr`, or
    `--listen-port` if given; the installer does not touch the firewall) and run:
 

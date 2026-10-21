@@ -2252,6 +2252,47 @@ paths:
       summary: Check whether a hostname is free on a server
       tags:
       - apps
+  /api/v1/hub/enroll:
+    post:
+      operationId: hubEnroll
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnrollRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/EnrollResponse'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "429":
+          content:
+            text/plain:
+              schema:
+                type: string
+          description: Too Many Requests
+      summary: Redeem a one-time hub join token for the hub's server certificate
+      tags:
+      - enroll
   /api/v1/image/get-tags:
     get:
       operationId: imageGetTags
@@ -7431,6 +7472,25 @@ components:
       required:
       - servers
       - pending_servers
+      type: object
+    EnrollRequest:
+      properties:
+        csr:
+          type: string
+        public_addr:
+          type: string
+        token:
+          type: string
+      type: object
+    EnrollResponse:
+      properties:
+        ca_certificate:
+          type: string
+        certificate:
+          type: string
+      required:
+      - certificate
+      - ca_certificate
       type: object
     Error:
       properties:

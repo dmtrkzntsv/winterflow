@@ -14,6 +14,7 @@ import (
 	hauth "winterflow/internal/app/web/handler/auth"
 	hdocker "winterflow/internal/app/web/handler/docker"
 	henroll "winterflow/internal/app/web/handler/enroll"
+	hhubjoin "winterflow/internal/app/web/handler/hubjoin"
 	"winterflow/internal/app/web/handler/monitoring"
 	"winterflow/internal/app/web/handler/notification"
 	horg "winterflow/internal/app/web/handler/org"
@@ -52,7 +53,8 @@ func (s *Server) registerRoutes() {
 		EnrollStartLimit: enrollStartLimiter.Middleware}
 	routes := routeTable(s.Deps, guards)
 	if s.Deps.Enrollment == nil {
-		// Standalone: agents do not enroll by code; the routes answer 404.
+		// Standalone: agents do not enroll by code and there are no hubs to
+		// join; the routes answer 404.
 		routes = slices.DeleteFunc(routes, func(rt api.Route) bool { return rt.Tag == "enroll" })
 	}
 	api.Register(s.Router, routes, authMW)
@@ -114,7 +116,12 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 	if d.Revoker != nil {
 		revoker = d.Revoker
 	}
+	var hubJoiner hhubjoin.Joiner
+	if d.HubJoin != nil {
+		hubJoiner = d.HubJoin
+	}
 	enrollAPI := henroll.NewHandler(&henroll.Deps{Logger: d.Log, Enrollments: enrollments})
+	hubJoinAPI := hhubjoin.NewHandler(&hhubjoin.Deps{Logger: d.Log, Joiner: hubJoiner})
 	serversAPI := server.NewHandler(&server.Deps{
 		Logger:           d.Log,
 		ServerRepository: d.ServerRepository,
@@ -199,6 +206,7 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 	}}
 	for _, table := range [][]api.Route{
 		enrollAPI.Routes(g),
+		hubJoinAPI.Routes(g),
 		authAPI.Routes(g),
 		notificationAPI.Routes(g),
 		appsAPI.Routes(g),

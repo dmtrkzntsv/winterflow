@@ -18,6 +18,7 @@ import (
 	apprepo "winterflow/internal/infra/db/repository/app"
 	appdomainrepo "winterflow/internal/infra/db/repository/appdomain"
 	enrollmentrepo "winterflow/internal/infra/db/repository/enrollment"
+	hubtokenrepo "winterflow/internal/infra/db/repository/hubtoken"
 	metricrepo "winterflow/internal/infra/db/repository/metric"
 	rolloutrepo "winterflow/internal/infra/db/repository/rollout"
 	serverrepo "winterflow/internal/infra/db/repository/server"
@@ -116,6 +117,14 @@ func TestSQLiteTimestampsAreDateTimeText(t *testing.T) {
 		CertExpiresAt: at.Add(365 * 24 * time.Hour), Now: time.Now().In(zone),
 	}); err != nil {
 		t.Fatal(err)
+	}
+
+	hubTokens := must(hubtokenrepo.New(d.Tx, d.Driver))
+	if err := hubTokens.Create(ctx, "hub-token-hash", time.Now().In(zone).Add(time.Hour), time.Now().In(zone)); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := hubTokens.Consume(ctx, "hub-token-hash", "hub-01", time.Now().In(zone)); err != nil || !ok {
+		t.Fatalf("consume hub token: %v, %v", ok, err)
 	}
 
 	appID := dbtest.ID(301)

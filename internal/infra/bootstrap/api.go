@@ -4,6 +4,7 @@ import (
 	"context"
 	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/usecase/enrollment"
+	"winterflow/internal/domain/usecase/hubjoin"
 	"winterflow/internal/infra/cert"
 	"winterflow/internal/infra/db"
 	"winterflow/internal/infra/transport/bus"
@@ -54,6 +55,7 @@ func BootstrapAPI(ctx context.Context, log *logger.Logger, cfg *config.ServerCon
 		log.Fatalf("load the CA: %v", err)
 	}
 	deps.Enrollment = enrollment.New(deps.EnrollmentRepository, signer, deps.HubPicker, nil)
+	deps.HubJoin = hubjoin.New(deps.HubTokenRepository, signer, nil)
 	StartRollouts(ctx, deps)
 	StartCatalog(ctx, deps)
 	return deps

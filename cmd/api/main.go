@@ -26,6 +26,18 @@ func main() {
 	if err != nil {
 		log.Info(".env not found, using system environment variables")
 	}
+
+	// Hidden maintenance subcommand: print a one-time hub join token.
+	if len(os.Args) > 1 && os.Args[1] == "hub-token" {
+		if err := cfg.ValidateDatabaseURL(); err != nil {
+			log.Fatalf("invalid configuration: %v", err)
+		}
+		if err := runHubToken(os.Args[2:], cfg.GetDbURL(), log, os.Stdout); err != nil {
+			log.Fatalf("hub-token: %v", err)
+		}
+		return
+	}
+
 	log.Info("Service starting", "pid", os.Getpid())
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

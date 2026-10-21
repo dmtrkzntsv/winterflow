@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"log"
 	"math/big"
+	"net"
 	"os"
 	"path/filepath"
 	"time"
@@ -203,20 +204,9 @@ func SignCSRAs(csrPEM, commonName string, caCert *x509.Certificate, caKey crypto
 	if commonName == "" {
 		return "", time.Time{}, fmt.Errorf("common name is required")
 	}
-	block, _ := pem.Decode([]byte(csrPEM))
-	if block == nil {
-		return "", time.Time{}, fmt.Errorf("failed to decode CSR PEM")
-	}
-	csr, err := x509.ParseCertificateRequest(block.Bytes)
+	pub, err := parseP256CSR(csrPEM)
 	if err != nil {
-		return "", time.Time{}, fmt.Errorf("failed to parse CSR: %w", err)
-	}
-	if err := csr.CheckSignature(); err != nil {
-		return "", time.Time{}, fmt.Errorf("invalid CSR signature: %w", err)
-	}
-	pub, ok := csr.PublicKey.(*ecdsa.PublicKey)
-	if !ok || pub.Curve != elliptic.P256() {
-		return "", time.Time{}, fmt.Errorf("CSR key must be ECDSA P-256")
+		return "", time.Time{}, err
 	}
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	if err != nil {
@@ -232,6 +222,73 @@ func SignCSRAs(csrPEM, commonName string, caCert *x509.Certificate, caKey crypto
 		KeyUsage:              x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 		BasicConstraintsValid: true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, &template, caCert, pub, caKey)
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("failed to create certificate: %w", err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})), expiresAt, nil
+}
+
+// parseP256CSR decodes a PEM CSR, checks its signature and returns its
+// ECDSA P-256 public key.
+func parseP256CSR(csrPEM string) (*ecdsa.PublicKey, error) {
+	block, _ := pem.Decode([]byte(csrPEM))
+	if block == nil {
+		return nil, fmt.Errorf("failed to decode CSR PEM")
+	}
+	csr, err := x509.ParseCertificateRequest(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse CSR: %w", err)
+	}
+	if err := csr.CheckSignature(); err != nil {
+		return nil, fmt.Errorf("invalid CSR signature: %w", err)
+	}
+	pub, ok := csr.PublicKey.(*ecdsa.PublicKey)
+	if !ok || pub.Curve != elliptic.P256() {
+		return nil, fmt.Errorf("CSR key must be ECDSA P-256")
+	}
+	return pub, nil
+}
+
+// SignHubCSR issues a server-auth-only certificate for a hub's CSR with the
+// subject CN=hubID and a SAN for each of hosts (an IP address or a DNS name).
+// The CSR's own subject and requested names are ignored.
+func SignHubCSR(csrPEM, hubID string, hosts []string, caCert *x509.Certificate, caKey crypto.Signer, validityYears int) (string, time.Time, error) {
+	if caCert == nil || caKey == nil {
+		return "", time.Time{}, fmt.Errorf("CA certificate and key are required")
+	}
+	if validityYears <= 0 {
+		return "", time.Time{}, fmt.Errorf("validityYears must be positive")
+	}
+	if hubID == "" || len(hosts) == 0 {
+		return "", time.Time{}, fmt.Errorf("hub id and at least one host are required")
+	}
+	pub, err := parseP256CSR(csrPEM)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("failed to generate serial number: %w", err)
+	}
+	now := time.Now()
+	expiresAt := now.AddDate(validityYears, 0, 0)
+	template := x509.Certificate{
+		SerialNumber:          serial,
+		Subject:               pkix.Name{CommonName: hubID},
+		NotBefore:             now.Add(-time.Hour),
+		NotAfter:              expiresAt,
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+	}
+	for _, h := range hosts {
+		if ip := net.ParseIP(h); ip != nil {
+			template.IPAddresses = append(template.IPAddresses, ip)
+		} else {
+			template.DNSNames = append(template.DNSNames, h)
+		}
 	}
 	der, err := x509.CreateCertificate(rand.Reader, &template, caCert, pub, caKey)
 	if err != nil {

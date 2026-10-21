@@ -26,6 +26,7 @@ type Querier interface {
 	// Done, unless the scope was extended since the worker read it (0 rows: it
 	// looks again).
 	CompleteRollout(ctx context.Context, arg CompleteRolloutParams) (int64, error)
+	ConsumeHubJoinToken(ctx context.Context, arg ConsumeHubJoinTokenParams) (int64, error)
 	CountFiringAlertsByServer(ctx context.Context) ([]CountFiringAlertsByServerRow, error)
 	CountPendingEnrollments(ctx context.Context) (int64, error)
 	CountPendingEnrollmentsByIP(ctx context.Context, clientIp string) (int64, error)
@@ -135,6 +136,8 @@ type Querier interface {
 	InsertCredentials(ctx context.Context, arg InsertCredentialsParams) error
 	// Agent enrollments (code-based pairing).
 	InsertEnrollment(ctx context.Context, arg InsertEnrollmentParams) error
+	// One-time hub join tokens (hashed at rest).
+	InsertHubJoinToken(ctx context.Context, arg InsertHubJoinTokenParams) error
 	// metric_samples: monitoring time series (see migration 0010).
 	InsertMetricSample(ctx context.Context, arg InsertMetricSampleParams) error
 	InsertNotificationChannel(ctx context.Context, arg InsertNotificationChannelParams) error
@@ -247,6 +250,7 @@ type Querier interface {
 	// A save the agent confirmed; a deleted or unlinked row stays as it is.
 	MarkTemplateInstanceSaved(ctx context.Context, arg MarkTemplateInstanceSavedParams) error
 	PruneEnrollments(ctx context.Context, arg PruneEnrollmentsParams) error
+	PruneHubJoinTokens(ctx context.Context, arg PruneHubJoinTokensParams) error
 	// Keeps the newest ended rollouts of a scope.
 	PruneRollouts(ctx context.Context, arg PruneRolloutsParams) error
 	// Lifts vars_revision past an agent-reported revision the API never issued

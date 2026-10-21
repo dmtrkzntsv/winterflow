@@ -49,7 +49,7 @@ func TestRouteTableMatchesRouter(t *testing.T) {
 // usecase, so the public enroll routes answer 404.
 func TestEnrollRoutesNotMountedWithoutEnrollment(t *testing.T) {
 	h := testServer(t)
-	for _, p := range []string{"/api/v1/agent/enroll", "/api/v1/agent/enroll/refresh", "/api/v1/agent/enroll/status"} {
+	for _, p := range []string{"/api/v1/agent/enroll", "/api/v1/agent/enroll/refresh", "/api/v1/agent/enroll/status", "/api/v1/hub/enroll"} {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, p, strings.NewReader("{}")))
 		if rec.Code != http.StatusNotFound {

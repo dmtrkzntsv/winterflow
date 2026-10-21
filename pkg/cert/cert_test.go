@@ -348,3 +348,59 @@ func TestFingerprintStable(t *testing.T) {
 		t.Error("expected error for junk")
 	}
 }
+
+func TestSignHubCSR(t *testing.T) {
+	caCert, caKey, _, _ := selfSignedCA(t, t.TempDir())
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	certPEM, exp, err := SignHubCSR(csrFor(t, "evil", key), "hub-01.example.com", []string{"hub-01.example.com", "203.0.113.7"}, caCert, caKey, 2)
+	if err != nil {
+		t.Fatalf("SignHubCSR: %v", err)
+	}
+	block, _ := pem.Decode([]byte(certPEM))
+	c, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Subject.CommonName != "hub-01.example.com" {
+		t.Errorf("CN = %q", c.Subject.CommonName)
+	}
+	if len(c.DNSNames) != 1 || c.DNSNames[0] != "hub-01.example.com" {
+		t.Errorf("DNSNames = %v", c.DNSNames)
+	}
+	if len(c.IPAddresses) != 1 || c.IPAddresses[0].String() != "203.0.113.7" {
+		t.Errorf("IPAddresses = %v", c.IPAddresses)
+	}
+	if len(c.ExtKeyUsage) != 1 || c.ExtKeyUsage[0] != x509.ExtKeyUsageServerAuth {
+		t.Errorf("ExtKeyUsage = %v", c.ExtKeyUsage)
+	}
+	if d := exp.Sub(c.NotAfter); d < 0 || d > time.Second {
+		t.Errorf("expiry %v != NotAfter %v", exp, c.NotAfter)
+	}
+	pool := x509.NewCertPool()
+	pool.AddCert(caCert)
+	if _, err := c.Verify(x509.VerifyOptions{Roots: pool, DNSName: "hub-01.example.com", KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}); err != nil {
+		t.Errorf("does not verify: %v", err)
+	}
+}
+
+func TestSignHubCSRRejects(t *testing.T) {
+	caCert, caKey, _, _ := selfSignedCA(t, t.TempDir())
+	p256, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	p384, _ := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	good := csrFor(t, "x", p256)
+	for name, f := range map[string]func() error{
+		"p384": func() error {
+			_, _, err := SignHubCSR(csrFor(t, "x", p384), "h", []string{"h"}, caCert, caKey, 1)
+			return err
+		},
+		"garbage":  func() error { _, _, err := SignHubCSR("nope", "h", []string{"h"}, caCert, caKey, 1); return err },
+		"no hosts": func() error { _, _, err := SignHubCSR(good, "h", nil, caCert, caKey, 1); return err },
+		"no id":    func() error { _, _, err := SignHubCSR(good, "", []string{"h"}, caCert, caKey, 1); return err },
+		"no years": func() error { _, _, err := SignHubCSR(good, "h", []string{"h"}, caCert, caKey, 0); return err },
+		"no ca":    func() error { _, _, err := SignHubCSR(good, "h", []string{"h"}, nil, nil, 1); return err },
+	} {
+		if f() == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}

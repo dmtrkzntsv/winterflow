@@ -97,6 +97,8 @@ type Agent struct {
 	fallbackHub func() string
 	// moveCh carries a hub.move from the stream to Run (buffered, 1).
 	moveCh chan struct{}
+	// askFloor overrides the least gap between hub-prompted asks (tests).
+	askFloor time.Duration
 }
 
 const streamSettle = 2 * time.Minute
@@ -578,10 +580,11 @@ func (a *Agent) replyWait() time.Duration {
 //
 // It asks the API which hub to connect to (migrate) when the hub sends
 // hub.move, when the hub answers FailedPrecondition (the server belongs to
-// another hub, or the hub is draining), and once the agent has had no stream
-// for unreachableAsk, then every unreachableAsk while that lasts. A move is
-// stored in hub.json and dialed at once; a stay or a failed ask keeps
-// retrying the current hub.
+// another hub, or the hub is draining), both at most once per askFloor, and
+// once the agent has had no stream for unreachableAsk, then every
+// unreachableAsk while that lasts. An answer naming another hub is stored in
+// hub.json and dialed at once; a stay or a failed ask keeps retrying the
+// current hub.
 func (a *Agent) Run(ctx context.Context) error {
 	baseBackoff, maxBackoff := 1*time.Second, 30*time.Second
 	if a.retryBackoff != nil {
@@ -627,6 +630,14 @@ func (a *Agent) Run(ctx context.Context) error {
 		lastAsk = now()
 		return a.migrate(ctx, why)
 	}
+	// floorLeft is how long until a hub-prompted ask may run (askFloor
+	// after the last ask of any kind).
+	floorLeft := func() time.Duration {
+		if lastAsk.IsZero() {
+			return 0
+		}
+		return a.floor() - now().Sub(lastAsk)
+	}
 	// unreachable asks once the hub has been out of reach for
 	// unreachableAsk, then every unreachableAsk while it still is.
 	unreachable := func() bool {
@@ -657,8 +668,9 @@ func (a *Agent) Run(ctx context.Context) error {
 				continue
 			case codes.FailedPrecondition:
 				// The hub says this server belongs elsewhere (or it is
-				// draining): ask now. Not a denial.
-				if ask("hub refused: " + err.Error()) {
+				// draining): ask now, at most once per askFloor. Not a
+				// denial.
+				if floorLeft() <= 0 && ask("hub refused: "+err.Error()) {
 					backoff = baseBackoff
 					continue
 				}
@@ -680,7 +692,10 @@ func (a *Agent) Run(ctx context.Context) error {
 		upAt := now()
 		// Connected and streaming: wait for the stream to end, for shutdown,
 		// or for the hub to tell this agent to move.
+		// A hub.move inside askFloor of the last ask waits for the floor
+		// (pending), then asks.
 		moving := false
+		var pending <-chan time.Time
 	wait:
 		for {
 			select {
@@ -689,6 +704,19 @@ func (a *Agent) Run(ctx context.Context) error {
 			case <-done:
 				break wait
 			case <-a.moveCh:
+				if pending != nil {
+					continue
+				}
+				if left := floorLeft(); left > 0 {
+					pending = time.After(left)
+					continue
+				}
+				if ask("hub asked to move") {
+					moving = true
+					break wait
+				}
+			case <-pending:
+				pending = nil
 				if ask("hub asked to move") {
 					moving = true
 					break wait
@@ -724,7 +752,7 @@ func (a *Agent) Run(ctx context.Context) error {
 		}
 		denials = 0
 		backoff = baseBackoff
-		if status.Code(endErr) == codes.FailedPrecondition && ask("hub ended the stream: "+endErr.Error()) {
+		if status.Code(endErr) == codes.FailedPrecondition && floorLeft() <= 0 && ask("hub ended the stream: "+endErr.Error()) {
 			continue
 		}
 		a.log.Warn("agent stream ended, reconnecting", "agent_id", a.agentID, "error", endErr)

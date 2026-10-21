@@ -17,7 +17,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -85,6 +84,12 @@ func (f *fakeAPI) count() int {
 // migrating builds an agent that asks the fake API, keeps its hub in a temp
 // dir, and uses a fake clock that advances by every wait it takes.
 func migrating(t *testing.T, addr string, moved bool) (*Agent, *fakeAPI, context.Context, context.CancelFunc) {
+	a, api, ctx, cancel, _ := migratingClock(t, addr, moved)
+	return a, api, ctx, cancel
+}
+
+// migratingClock is migrating plus a func that moves the fake clock.
+func migratingClock(t *testing.T, addr string, moved bool) (*Agent, *fakeAPI, context.Context, context.CancelFunc, func(time.Duration)) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -119,7 +124,8 @@ func migrating(t *testing.T, addr string, moved bool) (*Agent, *fakeAPI, context
 		mu.Unlock()
 		return ctx.Err() == nil
 	}
-	return a, api, ctx, cancel
+	advance := func(d time.Duration) { mu.Lock(); clock = clock.Add(d); mu.Unlock() }
+	return a, api, ctx, cancel, advance
 }
 
 type failDispatcher struct{ t *testing.T }
@@ -160,7 +166,7 @@ func TestMoveMessageTriggersAsk(t *testing.T) {
 }
 
 func TestFailedPreconditionTriggersAskNotDenial(t *testing.T) {
-	a, api, ctx, cancel := migrating(t, "hub-01:443", false)
+	a, api, ctx, cancel := migrating(t, "env-hub:50051", false)
 	moved := fmt.Errorf("register: %w", status.Error(codes.FailedPrecondition, "server belongs to another hub"))
 	n := 0
 	var waits []time.Duration
@@ -177,13 +183,72 @@ func TestFailedPreconditionTriggersAskNotDenial(t *testing.T) {
 	if err := a.Run(ctx); err != nil {
 		t.Fatalf("Run = %v, want nil (FailedPrecondition is not a denial)", err)
 	}
-	if api.count() != 7 {
-		t.Fatalf("asks = %d, want one per refusal (7)", api.count())
+	// Refusals at 0, 1, 3, 7, 15, 31 and 61 s (the ordinary backoff); asks
+	// at least askFloor apart: 0, 31 and 61 s.
+	if api.count() != 3 {
+		t.Fatalf("asks = %d, want 3 (at 0, 31 and 61 s)", api.count())
 	}
-	for _, w := range waits[:7] {
+	for _, w := range waits[:6] {
 		if w >= time.Minute {
 			t.Fatalf("waits = %v: a denial backoff was used", waits)
 		}
+	}
+}
+
+func TestStayAnswerNamingAnotherHubMoves(t *testing.T) {
+	// The server belongs to live hub-b; the agent dials env-hub (a stale
+	// hub.json, a lost answer): the API's "stay" names hub-b, which is a move.
+	a, _, ctx, cancel := migrating(t, "hub-b.winterflow.dev:443", false)
+	var dials []string
+	a.bringUp = func(context.Context) (<-chan struct{}, func() error, error) {
+		dials = append(dials, a.hubAddr())
+		if len(dials) > 1 {
+			cancel()
+			return nil, nil, errors.New("script over")
+		}
+		return nil, nil, status.Error(codes.FailedPrecondition, "server belongs to another hub")
+	}
+	if err := a.Run(ctx); err != nil {
+		t.Fatalf("Run = %v", err)
+	}
+	if fmt.Sprint(dials) != "[env-hub:50051 hub-b.winterflow.dev:443]" {
+		t.Fatalf("dials = %v", dials)
+	}
+	host, port, ok := NewHubStore(filepath.Dir(a.hubStore.path)).Load()
+	if !ok || host != "hub-b.winterflow.dev" || port != "443" {
+		t.Fatalf("stored hub = %q %q %v", host, port, ok)
+	}
+}
+
+func TestMoveRequestsHonorAskFloor(t *testing.T) {
+	a, api, ctx, cancel := migrating(t, "env-hub:50051", false)
+	a.askFloor = 300 * time.Millisecond // real time: the pending move's timer
+	done := make(chan struct{})
+	n := 0
+	a.bringUp = func(context.Context) (<-chan struct{}, func() error, error) {
+		n++
+		if n > 1 {
+			cancel()
+			return nil, nil, errors.New("script over")
+		}
+		a.requestMove() // the hub's hub.move, after Run dropped stale ones
+		return done, func() error { return nil }, nil
+	}
+	go func() {
+		<-api.hit
+		// A second move inside the floor waits for it, then asks.
+		a.requestMove()
+		if c := api.count(); c != 1 {
+			t.Errorf("asks right after the second move = %d, want 1", c)
+		}
+		<-api.hit
+		close(done)
+	}()
+	if err := a.Run(ctx); err != nil {
+		t.Fatalf("Run = %v", err)
+	}
+	if api.count() != 2 {
+		t.Fatalf("asks = %d, want 2", api.count())
 	}
 }
 
@@ -217,35 +282,38 @@ func TestUnreachableThreeMinutesAsks(t *testing.T) {
 }
 
 func TestStayKeepsHub(t *testing.T) {
-	a, api, ctx, cancel := migrating(t, "hub-01:443", false)
+	a, api, ctx, cancel, advance := migratingClock(t, "hub-01:443", false)
 	if err := a.hubStore.Save("hub-01", "443"); err != nil {
 		t.Fatal(err)
 	}
-	var bringUps atomic.Int32
 	var dials []string
 	done := make(chan struct{})
 	a.bringUp = func(context.Context) (<-chan struct{}, func() error, error) {
 		dials = append(dials, a.hubAddr())
-		if bringUps.Add(1) > 1 {
+		if len(dials) > 1 {
 			cancel()
 			return nil, nil, errors.New("script over")
 		}
-		go a.handleRequest(ctx, nil, &proto.RequestEnvelope{Type: string(command.HubMove)})
+		a.requestMove() // the hub's hub.move, after Run dropped stale ones
 		return done, func() error { return nil }, nil
 	}
 	go func() {
 		<-api.hit
-		time.Sleep(50 * time.Millisecond) // a reconnect would happen now
-		if n := bringUps.Load(); n != 1 {
-			t.Errorf("bring-ups after a stay = %d, want 1 (the stream is kept)", n)
-		}
+		// The stay kept the stream: a second hub.move, past the floor, is
+		// read by the same wait and asks again.
+		advance(time.Minute)
+		a.requestMove()
+		<-api.hit
 		close(done)
 	}()
 	if err := a.Run(ctx); err != nil {
 		t.Fatalf("Run = %v", err)
 	}
+	if api.count() != 2 {
+		t.Fatalf("asks = %d, want 2", api.count())
+	}
 	if fmt.Sprint(dials) != "[hub-01:443 hub-01:443]" {
-		t.Fatalf("dials = %v", dials)
+		t.Fatalf("dials = %v (a stay must not reconnect)", dials)
 	}
 }
 

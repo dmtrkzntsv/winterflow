@@ -22,6 +22,9 @@ const (
 	// unreachableAsk is how long the agent goes without its hub before it
 	// asks the API where to connect, and the gap between asks after that.
 	unreachableAsk = 3 * time.Minute
+	// askFloor is the least time between two asks prompted by the hub
+	// (FailedPrecondition, hub.move).
+	askFloor = 30 * time.Second
 	// maxAskBody bounds the API's answer.
 	maxAskBody = 64 << 10
 )
@@ -124,22 +127,25 @@ func (a *Agent) askWhere(ctx context.Context) (addr string, moved bool, err erro
 	return env.Data.HubAddr, env.Data.Moved, nil
 }
 
-// migrate asks the API where to connect and, when it moved this server,
-// stores the new hub. It reports whether the agent should reconnect at
-// once; a stay or a failed ask keeps the current hub (the caller retries).
+// migrate asks the API where to connect and, when the answer names a hub
+// other than the one the agent dials (a move, or a "stay" on a hub the
+// agent is not using: a stale hub.json, an answer lost after the API moved
+// the server), stores it. It reports whether the agent should reconnect at
+// once; a stay on the current hub or a failed ask keeps it (the caller
+// retries).
 func (a *Agent) migrate(ctx context.Context, why string) bool {
 	addr, moved, err := a.askWhere(ctx)
 	if err != nil {
 		a.log.Warn("asking the API which hub to connect to failed", "reason", why, "error", err)
 		return false
 	}
-	if !moved {
-		a.log.Info("the API says to stay on the current hub", "reason", why, "hub", addr)
-		return false
-	}
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil || host == "" || port == "" {
 		a.log.Warn("the API answered an unusable hub address", "reason", why, "hub", addr)
+		return false
+	}
+	if hubAddress(host, port) == a.hubAddr() {
+		a.log.Info("the API says to stay on the current hub", "reason", why, "hub", addr, "moved", moved)
 		return false
 	}
 	if a.hubStore == nil {
@@ -149,8 +155,17 @@ func (a *Agent) migrate(ctx context.Context, why string) bool {
 	if err := a.hubStore.Save(host, port); err != nil {
 		a.log.Error("failed to store the new hub; using it until restart", "error", err, "hub", addr)
 	}
-	a.log.Info("moved to another hub", "reason", why, "hub", addr)
+	a.log.Info("moved to another hub", "reason", why, "hub", addr, "moved", moved)
 	return true
+}
+
+// floor is the least time between hub-prompted asks (askFloor; tests
+// shorten it).
+func (a *Agent) floor() time.Duration {
+	if a.askFloor > 0 {
+		return a.askFloor
+	}
+	return askFloor
 }
 
 func (a *Agent) clock() time.Time {

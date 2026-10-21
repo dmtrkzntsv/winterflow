@@ -652,10 +652,12 @@ stop_unit() {
 }
 
 set_aside_enrollment() {
-    # --reenroll: stop the agent, move its certificate, key and CA aside and
-    # drop the enrollment lines from agent.env (a copy of the old file is kept
-    # beside it, root-only), so the enrollment below runs as on a fresh
-    # machine. Every step is checked: callers run it in a condition.
+    # --reenroll: stop the agent, move its certificate, key and CA aside, move
+    # hub.json aside (the hub the API last moved the old server to; it would
+    # override the new enrollment's HUB_HOST/HUB_PORT) and drop the
+    # enrollment lines from agent.env (a copy of the old file is kept beside
+    # it, root-only), so the enrollment below runs as on a fresh machine.
+    # Every step is checked: callers run it in a condition.
     local ts f
     ts="$(date -u +%Y%m%dT%H%M%SZ)" || return 1
     log "Re-enrolling: stopping ${SERVICE_NAME}; the old enrollment is kept as *.old-${ts}"
@@ -665,6 +667,9 @@ set_aside_enrollment() {
             mv -f "${CERT_DIR}/${f}" "${CERT_DIR}/${f}.old-${ts}" || return 1
         fi
     done
+    if [ -e "${DATA_DIR}/hub.json" ]; then
+        mv -f "${DATA_DIR}/hub.json" "${DATA_DIR}/hub.json.old-${ts}" || return 1
+    fi
     if [ -f "$ENV_FILE" ]; then
         cp -p "$ENV_FILE" "${ENV_FILE}.old-${ts}" || return 1
         write_env_file "" || return 1
@@ -793,7 +798,7 @@ main() {
         echo
         echo "### enrollment"
         if agent_enrolled && [ "$REENROLL" -eq 1 ]; then
-            echo "re-enroll: ${SERVICE_NAME} is stopped; agent.crt, agent.key, ca.crt and the"
+            echo "re-enroll: ${SERVICE_NAME} is stopped; agent.crt, agent.key, ca.crt, hub.json and the"
             echo "HUB_HOST/HUB_PORT/AGENT_ID/WINTERFLOW_API_URL lines of ${ENV_FILE} are"
             echo "set aside as *.old-<timestamp>, then:"
             echo "winterflow-agent enroll --url ${API_URL} --cert-dir ${CERT_DIR} --env-out <temp file>"

@@ -366,6 +366,11 @@ func TestRevokeClosesStream(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer cancelResponses()
+	events, cancelEvents, err := env.bus.Subscribe(env.ctx, env.cfg.GetBusEventsQueue())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cancelEvents()
 
 	agent := grpcagent.NewAgent(env.log, env.cfg, "srv-1")
 	agent.SetDispatcher(appagent.NewDispatcher(dockercompose.NewRepository(env.cfg, env.log), nil, env.log))
@@ -383,15 +388,16 @@ func TestRevokeClosesStream(t *testing.T) {
 		defer c()
 		_ = agent.Stop(stopCtx)
 	})
-	time.Sleep(200 * time.Millisecond) // first heartbeat binds the stream
+	recvEvent(t, events, bus.EventServerOnline) // the stream is bound and heartbeating
 
 	// A broadcast for another server changes nothing.
 	if err := env.bus.Publish(env.ctx, env.cfg.GetHubBroadcastChannel(), bus.HubBroadcast{Type: bus.HubBroadcastRevoked, ServerID: "srv-2"}); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(100 * time.Millisecond)
-	if !agent.IsStreamActive() {
-		t.Fatal("stream closed by another server's revocation")
+	for end := time.Now().Add(200 * time.Millisecond); time.Now().Before(end); time.Sleep(10 * time.Millisecond) {
+		if !agent.IsStreamActive() {
+			t.Fatal("stream closed by another server's revocation")
+		}
 	}
 
 	if err := env.bus.Publish(env.ctx, env.cfg.GetHubBroadcastChannel(), bus.HubBroadcast{Type: bus.HubBroadcastRevoked, ServerID: "srv-1"}); err != nil {
@@ -422,5 +428,102 @@ func TestRevokeClosesStream(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("no result for the command")
+	}
+}
+
+// openStream opens a raw stream and waits for the hub to acknowledge a
+// heartbeat, so the stream is bound when it returns.
+func openStream(t *testing.T, ctx context.Context, c proto.AgentServiceClient, agentID string) proto.AgentService_AgentStreamClient {
+	t.Helper()
+	stream, err := c.AgentStream(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Send(&proto.AgentMessage{Message: &proto.AgentMessage_Heartbeat{Heartbeat: &proto.AgentHeartbeat{
+		Base: &proto.BaseMessage{AgentId: agentID},
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	cmd, err := stream.Recv()
+	if err != nil || cmd.GetHeartbeatResponse() == nil {
+		t.Fatalf("heartbeat ack = %v, %v", cmd, err)
+	}
+	return stream
+}
+
+func TestStreamRequiresRegistration(t *testing.T) {
+	env := startHub(t, "srv-1", allowAll{})
+	events, cancelEvents, err := env.bus.Subscribe(env.ctx, env.cfg.GetBusEventsQueue())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cancelEvents()
+	responses, cancelResponses, err := env.bus.Subscribe(env.ctx, env.cfg.GetBusResponseQueue())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cancelResponses()
+
+	sctx, cancel := context.WithTimeout(env.ctx, 5*time.Second)
+	defer cancel()
+	stream, err := dialHub(t, env.cfg).AgentStream(sctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = stream.Send(&proto.AgentMessage{Message: &proto.AgentMessage_Event{Event: &proto.AgentEvent{
+		Base: &proto.BaseMessage{AgentId: "srv-1"},
+		Kind: string(bus.EventAppsStatus),
+	}}})
+	_ = stream.Send(&proto.AgentMessage{Message: &proto.AgentMessage_Response{Response: &proto.ResponseEnvelope{
+		Base:      &proto.BaseResponse{AgentId: "srv-1"},
+		RequestId: "forged",
+	}}})
+	if _, err := stream.Recv(); status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("err = %v, want Unauthenticated", err)
+	}
+	select {
+	case msg := <-events:
+		t.Fatalf("event published for an unregistered agent: %s", msg.Payload)
+	case msg := <-responses:
+		t.Fatalf("response published for an unregistered agent: %s", msg.Payload)
+	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+// A second stream of the same agent replaces the first; the first one's
+// cleanup must not drop the second's registration, and a revocation reaches
+// the live stream.
+func TestSecondStreamReplacesFirst(t *testing.T) {
+	env := startHub(t, "srv-1", allowAll{})
+	c := dialHub(t, env.cfg)
+	if err := register(env.ctx, c, "srv-1"); err != nil {
+		t.Fatal(err)
+	}
+	sctx, cancel := context.WithTimeout(env.ctx, 10*time.Second)
+	defer cancel()
+	first := openStream(t, sctx, c, "srv-1")
+	second := openStream(t, sctx, c, "srv-1")
+
+	if _, err := first.Recv(); status.Code(err) != codes.Aborted {
+		t.Fatalf("first stream err = %v, want Aborted", err)
+	}
+
+	// The first handler has returned (its status arrived after its cleanup
+	// ran); a command still reaches the second stream.
+	if err := env.bus.Publish(env.ctx, env.cfg.HubRequestQueue(env.cfg.GetHubID()), bus.CommandMessage{
+		AgentID: "srv-1", RequestID: "req-second", Type: string(command.TypeAppsList), Payload: []byte(`{}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cmd, err := second.Recv()
+	if err != nil || cmd.GetRequest().GetRequestId() != "req-second" {
+		t.Fatalf("second stream got %v, %v", cmd, err)
+	}
+
+	if err := env.bus.Publish(env.ctx, env.cfg.GetHubBroadcastChannel(), bus.HubBroadcast{Type: bus.HubBroadcastRevoked, ServerID: "srv-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := second.Recv(); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("second stream err after revoke = %v, want PermissionDenied", err)
 	}
 }

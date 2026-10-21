@@ -43,8 +43,8 @@ type agent struct {
 	streamActive bool
 	lastSeen     time.Time
 	stream       grpc.BidiStreamingServer[proto.AgentMessage, proto.ServerCommand] // Reference to the active stream
-	// closeStream ends the bound stream's handler (revocation); nil until a
-	// stream is bound.
+	// closeStream ends the bound stream's handler (revocation, or a newer
+	// stream of the same agent); nil until a stream is bound.
 	closeStream context.CancelCauseFunc
 
 	// sendMu serializes writes to the stream: gRPC forbids concurrent SendMsg
@@ -70,11 +70,20 @@ func NewHub(log *logger.Logger, cfg *config.ServerConfig, b bus.Bus, auth Author
 		log:    log,
 		srv:    createServer(log, cfg),
 		bus:    b,
-		auth:   auth,
+		auth:   failClosed(auth),
 	}
 	proto.RegisterAgentServiceServer(h.srv, h)
 
 	return h
+}
+
+// failClosed turns a typed-nil *BusAuthorizer into a nil Authorizer, so a
+// missing authorizer refuses registrations instead of panicking.
+func failClosed(auth Authorizer) Authorizer {
+	if ba, ok := auth.(*BusAuthorizer); ok && ba == nil {
+		return nil
+	}
+	return auth
 }
 
 // StartBusBridge subscribes to this hub's own request queue
@@ -106,8 +115,12 @@ func (h *Hub) StartBusBridge(ctx context.Context) error {
 	return nil
 }
 
-// errRevoked ends a revoked server's stream.
-var errRevoked = errors.New("server revoked")
+var (
+	// errRevoked ends a revoked server's stream.
+	errRevoked = errors.New("server revoked")
+	// errReplaced ends a stream when the same agent opens a newer one.
+	errReplaced = errors.New("replaced by a newer stream")
+)
 
 // revoke drops a server's agent if this hub holds it: its stream (if bound)
 // is closed and its registration deleted.
@@ -429,6 +442,41 @@ func (h *Hub) AgentStream(stream grpc.BidiStreamingServer[proto.AgentMessage, pr
 	// stream, which unblocks that Recv.
 	ctx, closeStream := context.WithCancelCause(stream.Context())
 	defer closeStream(nil)
+
+	// Only a registered agent may stream: RegisterAgent is where the API
+	// vouches for the certificate. One stream per agent: a newer stream
+	// closes the one bound before it.
+	h.agentsLock.Lock()
+	agent, registered := h.agents[certID]
+	if !registered {
+		h.agentsLock.Unlock()
+		h.log.Warn("Agent not registered, closing stream", "agent_id", certID)
+		return status.Error(codes.Unauthenticated, "agent not registered")
+	}
+	if agent.closeStream != nil {
+		agent.closeStream(errReplaced)
+	}
+	agent.streamActive = true
+	agent.stream = stream
+	agent.closeStream = closeStream
+	agent.lastSeen = time.Now()
+	h.agentsLock.Unlock()
+	agentID := certID
+
+	defer func() {
+		h.agentsLock.Lock()
+		// Remove the agent entirely on stream close: a disconnected agent
+		// should not linger in the registry (it would appear registered, and
+		// stale entries accumulate across reconnects). It re-registers on
+		// reconnect. Only delete while the entry still holds this stream, so
+		// a newer stream that already took it over isn't clobbered.
+		if cur, ok := h.agents[agentID]; ok && cur.stream == stream {
+			delete(h.agents, agentID)
+		}
+		h.agentsLock.Unlock()
+		h.log.Info("Agent stream closed", "agent_id", agentID)
+	}()
+
 	msgs := make(chan recvResult)
 	go func() {
 		for {
@@ -444,34 +492,19 @@ func (h *Hub) AgentStream(stream grpc.BidiStreamingServer[proto.AgentMessage, pr
 		}
 	}()
 
-	var agentID string
-	var agent *agent
-
-	defer func() {
-		if agentID != "" {
-			h.agentsLock.Lock()
-			// Remove the agent entirely on stream close: a disconnected agent
-			// should not linger in the registry (it would appear registered, and
-			// stale entries accumulate across reconnects). It re-registers on
-			// reconnect. Only delete if the map still points at this stream, so a
-			// fast reconnect that already replaced the entry isn't clobbered.
-			if cur, ok := h.agents[agentID]; ok && cur == agent {
-				delete(h.agents, agentID)
-			}
-			h.agentsLock.Unlock()
-			h.log.Info("Agent stream closed", "agent_id", agentID)
-		}
-	}()
-
 	h.log.Info("New agent stream connection established", "agent_id", certID)
 
 	for {
 		var msg *proto.AgentMessage
 		select {
 		case <-ctx.Done():
-			if errors.Is(context.Cause(ctx), errRevoked) {
+			switch cause := context.Cause(ctx); {
+			case errors.Is(cause, errRevoked):
 				h.log.Info("closing revoked agent's stream", "agent_id", certID)
 				return status.Error(codes.PermissionDenied, "server revoked")
+			case errors.Is(cause, errReplaced):
+				h.log.Info("closing agent stream replaced by a newer one", "agent_id", certID)
+				return status.Error(codes.Aborted, "replaced by a newer stream")
 			}
 			return ctx.Err()
 		case r := <-msgs:
@@ -494,30 +527,9 @@ func (h *Hub) AgentStream(stream grpc.BidiStreamingServer[proto.AgentMessage, pr
 				continue
 			}
 
-			if agentID == "" {
-				agentID = certID
-				h.log.Info("Agent stream identified", "agent_id", agentID)
-
-				h.agentsLock.Lock()
-				if existingAgent, exists := h.agents[agentID]; exists {
-					agent = existingAgent
-					agent.streamActive = true
-					agent.stream = stream
-					agent.closeStream = closeStream
-					agent.lastSeen = time.Now()
-				} else {
-					h.agentsLock.Unlock()
-					h.log.Warn("Agent not registered, closing stream", "agent_id", agentID)
-					return status.Errorf(codes.Unauthenticated, "agent not registered")
-				}
-				h.agentsLock.Unlock()
-			}
-
-			if agent != nil {
-				h.agentsLock.Lock()
-				agent.lastSeen = time.Now()
-				h.agentsLock.Unlock()
-			}
+			h.agentsLock.Lock()
+			agent.lastSeen = time.Now()
+			h.agentsLock.Unlock()
 
 			// A heartbeat is a liveness pulse: tell the API the server is up so
 			// it can update last_seen + the in-memory status cache.
@@ -548,11 +560,9 @@ func (h *Hub) AgentStream(stream grpc.BidiStreamingServer[proto.AgentMessage, pr
 		case *proto.AgentMessage_Event:
 			// Unsolicited agent push (e.g. apps.status): forward verbatim onto
 			// the events queue. Also a liveness signal.
-			if agent != nil {
-				h.agentsLock.Lock()
-				agent.lastSeen = time.Now()
-				h.agentsLock.Unlock()
-			}
+			h.agentsLock.Lock()
+			agent.lastSeen = time.Now()
+			h.agentsLock.Unlock()
 			h.publishEvent(bus.EventKind(payload.Event.Kind), certID, payload.Event.Payload)
 
 		case *proto.AgentMessage_Response:

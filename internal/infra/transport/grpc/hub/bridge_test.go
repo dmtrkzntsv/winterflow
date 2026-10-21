@@ -123,3 +123,17 @@ func TestPublishNotificationSuccess(t *testing.T) {
 		t.Fatal("no result published")
 	}
 }
+
+// A typed-nil *BusAuthorizer must fail closed like a nil Authorizer.
+func TestFailClosedTypedNilAuthorizer(t *testing.T) {
+	var ba *BusAuthorizer
+	if failClosed(ba) != nil {
+		t.Fatal("typed nil kept")
+	}
+	if failClosed(nil) != nil {
+		t.Fatal("nil changed")
+	}
+	if _, ok := failClosed(&BusAuthorizer{}).(*BusAuthorizer); !ok {
+		t.Fatal("real authorizer dropped")
+	}
+}

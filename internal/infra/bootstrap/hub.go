@@ -19,7 +19,7 @@ type HubDeps struct {
 	Cfg      *config.ServerConfig
 	Bus      *redisbus.Bus
 	Registry *hubsreg.Registry
-	Auth     *grpchub.BusAuthorizer
+	Auth     grpchub.Authorizer
 }
 
 // BootstrapHUB connects to Redis and returns the Hub's dependencies. The

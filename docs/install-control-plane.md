@@ -86,7 +86,7 @@ curl -fsSL https://get.winterflow.dev/agent | sudo bash -s -- --url https://app.
 ```
 
 The agent installer prints a 6-character code (valid 10 minutes, refreshed
-automatically up to 10 times); type it into the UI. The control plane signs the
+automatically, up to 10 codes in total); type it into the UI. The control plane signs the
 agent's certificate, picks a hub for it and the installer starts the service.
 
 ## Owner to-dos

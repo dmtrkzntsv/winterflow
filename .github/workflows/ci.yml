@@ -108,6 +108,9 @@ jobs:
       - name: shared installer helpers stay identical
         run: bash scripts/shared_helpers_test.sh
 
+      - name: release build and upload contract
+        run: bash scripts/release_test.sh
+
   # Generated sqlc code (internal/infra/db/sqlc/gen) must match the queries
   # and migrations it is built from.
   sqlc:

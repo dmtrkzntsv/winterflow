@@ -181,7 +181,7 @@ fetch_url() {
 release_asset_name() {
     # Map this machine to a release asset. The naming is a contract with
     # .goreleaser.yaml and the agent self-updater:
-    # winterflow-standalone-{os}-{arch}, arch as Go spells it.
+    # winterflow-{os}-{arch}, arch as Go spells it.
     local os arch
     os="$(uname -s | tr '[:upper:]' '[:lower:]')"
     [ "$os" = "linux" ] || die "prebuilt binaries are linux-only (this is ${os}); build from source (see --help)"
@@ -191,7 +191,7 @@ release_asset_name() {
         armv6l|armv7l) arch=arm ;;
         *) die "no prebuilt binary for $(uname -m); build from source (see --help)" ;;
     esac
-    printf 'winterflow-standalone-%s-%s' "$os" "$arch"
+    printf 'winterflow-%s-%s' "$os" "$arch"
 }
 
 download_release() {

@@ -56,7 +56,7 @@ assert_contains "piped --help points at the repo" "$out_pipe_help" "github.com"
 # .goreleaser.yaml, every supported arch is mapped, and downloads are
 # checksum-verified.
 assert_contains "--help documents --version" "$(bash "$INSTALL_SH" --help)" "--version TAG"
-assert_contains "asset naming matches goreleaser" "$src" "winterflow-standalone-%s-%s"
+assert_contains "asset naming matches goreleaser" "$src" "winterflow-%s-%s"
 assert_contains "amd64 mapped" "$src" "x86_64"
 assert_contains "arm64 mapped" "$src" "aarch64"
 assert_contains "32-bit arm mapped" "$src" "armv7l"

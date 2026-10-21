@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -15,6 +16,15 @@ import (
 )
 
 func main() {
+	// Hidden subcommand for the installers: issue the hub/Redis PKI and exit.
+	if len(os.Args) > 1 && os.Args[1] == "pki" {
+		if err := runPKI(os.Args[2:], os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	err := godotenv.Load()
 	cfg := config.NewServerConfig("distributed")
 	log := logger.NewLogger(logger.LoggerConfiguration{

@@ -19,8 +19,6 @@ import (
 const (
 	hubCACertFile = "ca.crt"
 	hubCAKeyFile  = "ca.key"
-	hubCertFile   = "hub.crt"
-	hubKeyFile    = "hub.key"
 
 	hubPKIValidityYears = 10
 )
@@ -50,7 +48,6 @@ func EnsureHubPKI(dir string, hubHosts []string) (bool, error) {
 		return false, fmt.Errorf("create PKI directory: %w", err)
 	}
 	caCertPath, caKeyPath := filepath.Join(dir, hubCACertFile), filepath.Join(dir, hubCAKeyFile)
-	hubCertPath, hubKeyPath := filepath.Join(dir, hubCertFile), filepath.Join(dir, hubKeyFile)
 
 	changed := false
 	caCertExists, caKeyExists := fileExists(caCertPath), fileExists(caKeyPath)
@@ -64,23 +61,43 @@ func EnsureHubPKI(dir string, hubHosts []string) (bool, error) {
 		}
 		changed = true
 	}
-	caCert, caKey, err := LoadCA(caCertPath, caKeyPath)
+	serverChanged, err := EnsureServerCert(dir, "hub", hubHosts)
 	if err != nil {
 		return false, err
 	}
+	return changed || serverChanged, nil
+}
 
-	dns, ips := splitHosts(hubHosts)
-	if fileExists(hubCertPath) && fileExists(hubKeyPath) {
-		if cur, _, err := loadCertificate(hubCertPath); err == nil &&
+// EnsureServerCert makes dir hold a server certificate <base>.crt / <base>.key
+// for hosts, signed by the CA already in dir (ca.crt / ca.key; see
+// EnsureHubPKI). It is (re)issued, with a fresh key, when absent, not signed by
+// the CA, expired, or when its SANs differ from hosts. It reports whether
+// anything was written.
+func EnsureServerCert(dir, base string, hosts []string) (bool, error) {
+	if len(hosts) == 0 {
+		return false, fmt.Errorf("at least one host is required")
+	}
+	if base == "" || base != filepath.Base(base) {
+		return false, fmt.Errorf("invalid certificate name %q", base)
+	}
+	caCert, caKey, err := LoadCA(filepath.Join(dir, hubCACertFile), filepath.Join(dir, hubCAKeyFile))
+	if err != nil {
+		return false, err
+	}
+	certPath, keyPath := filepath.Join(dir, base+".crt"), filepath.Join(dir, base+".key")
+
+	dns, ips := splitHosts(hosts)
+	if fileExists(certPath) && fileExists(keyPath) {
+		if cur, _, err := loadCertificate(certPath); err == nil &&
 			cur.CheckSignatureFrom(caCert) == nil && sansEqual(cur, dns, ips) && time.Now().Before(cur.NotAfter) {
-			return changed, nil
+			return false, nil
 		}
 	}
 
-	if err := GeneratePrivateKey(hubKeyPath); err != nil {
+	if err := GeneratePrivateKey(keyPath); err != nil {
 		return false, err
 	}
-	hubKey, err := loadECPrivateKey(hubKeyPath)
+	key, err := loadECPrivateKey(keyPath)
 	if err != nil {
 		return false, err
 	}
@@ -90,7 +107,7 @@ func EnsureHubPKI(dir string, hubHosts []string) (bool, error) {
 	}
 	tmpl := &x509.Certificate{
 		SerialNumber:          serial,
-		Subject:               pkix.Name{CommonName: hubHosts[0]},
+		Subject:               pkix.Name{CommonName: hosts[0]},
 		NotBefore:             time.Now().Add(-time.Hour),
 		NotAfter:              time.Now().AddDate(hubPKIValidityYears, 0, 0),
 		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
@@ -99,11 +116,11 @@ func EnsureHubPKI(dir string, hubHosts []string) (bool, error) {
 		DNSNames:              dns,
 		IPAddresses:           ips,
 	}
-	der, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, &hubKey.PublicKey, caKey)
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, caCert, &key.PublicKey, caKey)
 	if err != nil {
-		return false, fmt.Errorf("create hub certificate: %w", err)
+		return false, fmt.Errorf("create %s certificate: %w", base, err)
 	}
-	if err := saveCertificate(string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})), hubCertPath); err != nil {
+	if err := saveCertificate(string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})), certPath); err != nil {
 		return false, err
 	}
 	return true, nil

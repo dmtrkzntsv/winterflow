@@ -3,7 +3,7 @@ BIN_DIR := bin
 STANDALONE_BIN := $(BIN_DIR)/standalone
 API_BIN := $(BIN_DIR)/api
 
-.PHONY: build lint standalone api web web-build third-party-licenses test web-test cover diffcov openapi test-pg sqlc sqlc-check
+.PHONY: build lint standalone api web web-build release-binaries cdn-upload third-party-licenses test web-test cover diffcov openapi test-pg sqlc sqlc-check
 
 # Release build: bundle the SPA first so go:embed picks up a fresh web/dist,
 # then compile. The binaries are fully self-contained (API + web UI) and
@@ -12,6 +12,8 @@ API_BIN := $(BIN_DIR)/api
 build: web-build
 	CGO_ENABLED=0 $(GO) build -o $(STANDALONE_BIN) ./cmd/standalone
 	CGO_ENABLED=0 $(GO) build -o $(API_BIN) ./cmd/api
+	CGO_ENABLED=0 $(GO) build -o $(BIN_DIR)/hub ./cmd/hub
+	CGO_ENABLED=0 $(GO) build -o $(BIN_DIR)/agent ./cmd/agent
 
 # Production SPA bundle into web/dist (what go:embed ships). web/.env.production
 # pins the bundle to same-origin + standalone mode; override via shell env, e.g.
@@ -20,6 +22,71 @@ build: web-build
 web-build:
 	pnpm --dir web run build
 	@touch web/dist/.gitkeep
+
+# Release binaries for the R2 mirror (what the install scripts download):
+# release-out/winterflow-{standalone,agent,api,hub}-linux-{amd64,arm64,arm}
+# plus SHA256SUMS. The standalone binary embeds the standalone SPA
+# (web/.env.production), the api binary the distributed one, so the web is
+# built twice in that order; hub and agent embed nothing. Same flags as
+# .goreleaser.yaml: static, -trimpath, GOARM=6, version through ldflags
+# (VERSION without the leading v, like goreleaser's {{ .Version }}).
+VERSION ?= $(shell git describe --tags --always 2>/dev/null | sed 's/^v//')
+RELEASE_LDFLAGS = -s -w -X winterflow/pkg/version.version=$(VERSION)
+RELEASE_ARCHES = amd64 arm64 arm
+RELEASE_OUT = release-out
+RELEASE_FILES = $(foreach c,standalone agent api hub,$(foreach a,$(RELEASE_ARCHES),winterflow-$(c)-linux-$(a)))
+
+define NL
+
+
+endef
+release_build = CGO_ENABLED=0 GOOS=linux GOARCH=$(2) $(if $(filter arm,$(2)),GOARM=6) $(GO) build -trimpath -ldflags "$(RELEASE_LDFLAGS)" -o $(RELEASE_OUT)/winterflow-$(1)-linux-$(2) ./cmd/$(1)$(NL)
+
+release-binaries:
+	rm -rf $(RELEASE_OUT) && mkdir -p $(RELEASE_OUT)
+	pnpm --dir web install --frozen-lockfile
+	pnpm --dir web run build
+	@touch web/dist/.gitkeep
+	$(foreach c,standalone agent hub,$(foreach a,$(RELEASE_ARCHES),$(call release_build,$(c),$(a))))
+	VITE_APP_MODE=distributed pnpm --dir web run build
+	@touch web/dist/.gitkeep
+	$(foreach a,$(RELEASE_ARCHES),$(call release_build,api,$(a)))
+	cd $(RELEASE_OUT) && sha256sum $(RELEASE_FILES) > SHA256SUMS
+
+# Mirror $(CDN_SRC) to the shared R2 bucket under <project>/<channel>/ (the
+# econumo bucket; objects live under winterflow/). CHANNEL is a version tag
+# (immutable cache) or latest (no-cache). Needs WINTERFLOW_R2_ENDPOINT
+# (https://<account_id>.r2.cloudflarestorage.com) and the aws CLI;
+# WINTERFLOW_R2_ACCESS_KEY_ID / _SECRET_ACCESS_KEY map to AWS_*.
+R2_BUCKET ?= econumo
+R2_PROJECT ?= winterflow
+CDN_SRC ?= $(RELEASE_OUT)
+
+cdn-upload:
+	@test -n "$(CHANNEL)" || { echo "cdn-upload: set CHANNEL (latest|vYYMMDD.N)"; exit 1; }
+	@test -n "$$WINTERFLOW_R2_ENDPOINT" || { echo "cdn-upload: WINTERFLOW_R2_ENDPOINT is required (https://<account_id>.r2.cloudflarestorage.com)"; exit 1; }
+	@if [ -n "$$WINTERFLOW_R2_ACCESS_KEY_ID" ] && [ -n "$$WINTERFLOW_R2_SECRET_ACCESS_KEY" ]; then \
+		export AWS_ACCESS_KEY_ID="$$WINTERFLOW_R2_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$$WINTERFLOW_R2_SECRET_ACCESS_KEY"; \
+	fi; \
+	export AWS_REQUEST_CHECKSUM_CALCULATION=when_required AWS_RESPONSE_CHECKSUM_VALIDATION=when_required; \
+	case "$(CHANNEL)" in \
+		latest) cache="no-cache" ;; \
+		*) cache="public, max-age=31536000, immutable" ;; \
+	esac; \
+	dest="s3://$(R2_BUCKET)/$(R2_PROJECT)/$(CHANNEL)"; \
+	n=0; \
+	for p in "$(CDN_SRC)"/*; do \
+		[ -f "$$p" ] || continue; \
+		f="$$(basename "$$p")"; \
+		echo "Uploading $$f -> $$dest/$$f"; \
+		aws s3 cp "$$p" "$$dest/$$f" \
+			--endpoint-url "$$WINTERFLOW_R2_ENDPOINT" \
+			--content-type application/octet-stream \
+			--cache-control "$$cache" || exit 1; \
+		n=$$((n+1)); \
+	done; \
+	test "$$n" -gt 0 || { echo "cdn-upload: nothing to upload in $(CDN_SRC)"; exit 1; }; \
+	echo "Uploaded channel '$(CHANNEL)' to $$dest/"
 
 # Attribution notices for every Go module and bundled npm package; goreleaser
 # regenerates and attaches this to each release (see .goreleaser.yaml).

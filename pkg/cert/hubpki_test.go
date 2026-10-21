@@ -76,3 +76,24 @@ func TestEnsureHubPKIRequiresHosts(t *testing.T) {
 		t.Error("expected error")
 	}
 }
+
+func TestEnsureServerCert(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := EnsureServerCert(dir, "redis", []string{"127.0.0.1"}); err == nil {
+		t.Fatal("issued without a CA")
+	}
+	if _, err := EnsureHubPKI(dir, []string{"hub.example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := EnsureServerCert(dir, "redis", []string{"127.0.0.1", "cp.example.com"})
+	if err != nil || !changed {
+		t.Fatalf("first issue: changed=%v err=%v", changed, err)
+	}
+	changed, err = EnsureServerCert(dir, "redis", []string{"cp.example.com", "127.0.0.1"})
+	if err != nil || changed {
+		t.Fatalf("reissue on same SANs: changed=%v err=%v", changed, err)
+	}
+	if _, err := EnsureServerCert(dir, "../x", []string{"h"}); err == nil {
+		t.Fatal("path in name accepted")
+	}
+}

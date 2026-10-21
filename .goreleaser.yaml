@@ -4,10 +4,11 @@
 #
 # Asset naming is a contract shared with two consumers — keep them in sync:
 #   - scripts/install.sh (release_asset_name) downloads
-#     winterflow-standalone-{os}-{arch} from releases/latest/download
-#   - the agent self-updater (internal/infra/orchestrator/docker_compose/
-#     updater.go) downloads winterflow-{standalone|agent}-{os}-{arch} for the
-#     tag it is told to update to
+#     winterflow-{os}-{arch} (standalone) from releases/latest/download
+#   - the self-updater (internal/infra/orchestrator/docker_compose/
+#     updater.go) downloads winterflow-{os}-{arch} (standalone) or
+#     agent-{os}-{arch} (agent) for the tag it is told to update to
+# The R2 mirror (make release-binaries / cdn-upload) uses its own names.
 #
 # CGO is off so cross-compilation works everywhere; SQLite is the pure-Go
 # modernc.org/sqlite driver.
@@ -69,8 +70,14 @@ archives:
   # Raw binaries, not tarballs: install.sh and the self-updater fetch them
   # directly. {{ .Arch }} is "arm" for the GOARM build, matching runtime.GOARCH
   # on the devices that download it.
-  - formats: [binary]
-    name_template: "{{ .Binary }}-{{ .Os }}-{{ .Arch }}"
+  - id: standalone
+    ids: [standalone]
+    formats: [binary]
+    name_template: "winterflow-{{ .Os }}-{{ .Arch }}"
+  - id: agent
+    ids: [agent]
+    formats: [binary]
+    name_template: "agent-{{ .Os }}-{{ .Arch }}"
 
 checksum:
   name_template: checksums.txt

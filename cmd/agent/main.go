@@ -10,6 +10,7 @@ import (
 	"time"
 	appagent "winterflow/internal/app/agent"
 	"winterflow/internal/app/agent/backup"
+	"winterflow/internal/app/agent/enroll"
 	backupcli "winterflow/internal/app/backup/cli"
 	ingresscaddy "winterflow/internal/infra/ingress/caddy"
 	dockercompose "winterflow/internal/infra/orchestrator/docker_compose"
@@ -30,6 +31,11 @@ func main() {
 	// binary is mounted there at /wf), before anything reads config or logs.
 	if len(os.Args) > 1 && os.Args[1] == "backup" {
 		os.Exit(backupcli.Main(os.Args[2:], os.Stdout, os.Stderr))
+	}
+	// Hidden: first-run enrollment (shows a code, stores the signed
+	// certificate). Runs before config load: no cert exists yet.
+	if len(os.Args) > 1 && os.Args[1] == "enroll" {
+		os.Exit(enroll.Main(os.Args[2:], os.Stdout, os.Stderr))
 	}
 	err := godotenv.Load()
 	cfg := config.NewServerConfig("distributed")

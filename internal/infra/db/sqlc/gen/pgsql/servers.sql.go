@@ -302,7 +302,7 @@ func (q *Queries) ListServerUserIDs(ctx context.Context, serverID string) ([]str
 
 const listServersByUser = `-- name: ListServersByUser :many
 
-SELECT server_id, organization_id, name, created_at, last_seen, vars_revision FROM servers
+SELECT server_id, organization_id, name, created_at, last_seen, vars_revision, hub_id FROM servers
 WHERE organization_id IN (SELECT organization_id FROM organization_users WHERE user_id = $1)
 ORDER BY created_at ASC, server_id ASC
 `
@@ -324,6 +324,7 @@ func (q *Queries) ListServersByUser(ctx context.Context, userID string) ([]Serve
 			&i.CreatedAt,
 			&i.LastSeen,
 			&i.VarsRevision,
+			&i.HubID,
 		); err != nil {
 			return nil, err
 		}

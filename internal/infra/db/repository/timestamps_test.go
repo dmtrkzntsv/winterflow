@@ -10,12 +10,14 @@ import (
 	"winterflow/internal/domain/dto"
 	"winterflow/internal/domain/metrics"
 	"winterflow/internal/domain/model"
+	"winterflow/internal/domain/port"
 	"winterflow/internal/infra/db"
 	"winterflow/internal/infra/db/backend"
 	"winterflow/internal/infra/db/dbtest"
 	alertrepo "winterflow/internal/infra/db/repository/alert"
 	apprepo "winterflow/internal/infra/db/repository/app"
 	appdomainrepo "winterflow/internal/infra/db/repository/appdomain"
+	enrollmentrepo "winterflow/internal/infra/db/repository/enrollment"
 	metricrepo "winterflow/internal/infra/db/repository/metric"
 	rolloutrepo "winterflow/internal/infra/db/repository/rollout"
 	serverrepo "winterflow/internal/infra/db/repository/server"
@@ -90,6 +92,29 @@ func TestSQLiteTimestampsAreDateTimeText(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := servers.SaveCapabilities(ctx, srv.ID, map[string]string{"version": "1"}, map[string]bool{"ingress": true}); err != nil {
+		t.Fatal(err)
+	}
+
+	enrollments := must(enrollmentrepo.New(d.Tx, d.Driver))
+	if err := enrollments.Create(ctx, model.Enrollment{
+		ID: dbtest.ID(401), PollSecretHash: "hash-401", CSR: "csr", Hostname: "box", Code: "ENR401",
+		CodeExpiresAt: time.Now().In(zone).Add(time.Hour), CodesIssued: 1, State: model.EnrollmentPending,
+		CreatedAt: at,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := enrollments.Create(ctx, model.Enrollment{ // stays pending, keeps its expiry
+		ID: dbtest.ID(402), PollSecretHash: "hash-402", CSR: "csr", Hostname: "box2", Code: "ENR402",
+		CodeExpiresAt: time.Now().In(zone).Add(time.Hour), CodesIssued: 1, State: model.EnrollmentPending,
+		CreatedAt: at,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := enrollments.Claim(ctx, port.ClaimEnrollment{
+		EnrollmentID: dbtest.ID(401), Code: "ENR401", ServerID: dbtest.ID(103), OrganizationID: orgID,
+		HubID: "hub-01", CertificateID: dbtest.ID(203), Certificate: "PEM",
+		CertExpiresAt: at.Add(365 * 24 * time.Hour), Now: time.Now().In(zone),
+	}); err != nil {
 		t.Fatal(err)
 	}
 

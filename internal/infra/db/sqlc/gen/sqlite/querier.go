@@ -19,6 +19,7 @@ type Querier interface {
 	// An org template's next revision. Optimistic: 0 rows when latest_revision
 	// moved past the caller's base.
 	BumpTemplateRevision(ctx context.Context, arg BumpTemplateRevisionParams) (int64, error)
+	ClaimEnrollment(ctx context.Context, arg ClaimEnrollmentParams) (int64, error)
 	ClaimRollout(ctx context.Context, arg ClaimRolloutParams) (int64, error)
 	// A live key (the partial unique index) inserts nothing (0 rows).
 	ClaimTemplateInstance(ctx context.Context, arg ClaimTemplateInstanceParams) (int64, error)
@@ -26,6 +27,7 @@ type Querier interface {
 	// looks again).
 	CompleteRollout(ctx context.Context, arg CompleteRolloutParams) (int64, error)
 	CountFiringAlertsByServer(ctx context.Context) ([]CountFiringAlertsByServerRow, error)
+	CountPendingEnrollments(ctx context.Context) (int64, error)
 	CountRolloutStep(ctx context.Context, arg CountRolloutStepParams) (int64, error)
 	CountUsers(ctx context.Context) (int64, error)
 	DeleteAlertEventsBefore(ctx context.Context, createdAt types.DateTime) (int64, error)
@@ -82,6 +84,9 @@ type Querier interface {
 	GetCredentialsByUser(ctx context.Context, userID string) (UserCredential, error)
 	// The app_domains ingress index (rebuildable from the agents' app configs).
 	GetDomainClaim(ctx context.Context, arg GetDomainClaimParams) (GetDomainClaimRow, error)
+	GetEnrollmentByCode(ctx context.Context, code *string) (AgentEnrollment, error)
+	GetEnrollmentByID(ctx context.Context, enrollmentID string) (AgentEnrollment, error)
+	GetEnrollmentBySecretHash(ctx context.Context, pollSecretHash string) (AgentEnrollment, error)
 	GetFirstConnectedAccountProvider(ctx context.Context, userID string) (string, error)
 	GetFirstServerID(ctx context.Context) (string, error)
 	GetLatestRegistrationCode(ctx context.Context) (string, error)
@@ -113,6 +118,8 @@ type Querier interface {
 	InsertCertificate(ctx context.Context, arg InsertCertificateParams) error
 	InsertConnectedAccount(ctx context.Context, arg InsertConnectedAccountParams) error
 	InsertCredentials(ctx context.Context, arg InsertCredentialsParams) error
+	// Agent enrollments (code-based pairing).
+	InsertEnrollment(ctx context.Context, arg InsertEnrollmentParams) error
 	// metric_samples: monitoring time series (see migration 0010).
 	InsertMetricSample(ctx context.Context, arg InsertMetricSampleParams) error
 	InsertNotificationChannel(ctx context.Context, arg InsertNotificationChannelParams) error
@@ -127,6 +134,7 @@ type Querier interface {
 	InsertServer(ctx context.Context, arg InsertServerParams) error
 	InsertServerDomain(ctx context.Context, arg InsertServerDomainParams) error
 	InsertServerStorage(ctx context.Context, arg InsertServerStorageParams) error
+	InsertServerWithHub(ctx context.Context, arg InsertServerWithHubParams) error
 	// Gap fill: never overwrites a copy (a concurrent rotation's new value wins).
 	InsertSharedCiphertextIfAbsent(ctx context.Context, arg InsertSharedCiphertextIfAbsentParams) error
 	InsertSharedVariable(ctx context.Context, arg InsertSharedVariableParams) error
@@ -220,8 +228,10 @@ type Querier interface {
 	// serialized), so this is a plain SELECT; Postgres adds FOR UPDATE.
 	LockOrganizationMember(ctx context.Context, arg LockOrganizationMemberParams) (string, error)
 	MarkAlertDefaultsSeeded(ctx context.Context, organizationID string) (int64, error)
+	MarkEnrollmentFailed(ctx context.Context, enrollmentID string) error
 	// A save the agent confirmed; a deleted or unlinked row stays as it is.
 	MarkTemplateInstanceSaved(ctx context.Context, arg MarkTemplateInstanceSavedParams) error
+	PruneEnrollments(ctx context.Context, arg PruneEnrollmentsParams) error
 	// Keeps the newest ended rollouts of a scope.
 	PruneRollouts(ctx context.Context, arg PruneRolloutsParams) error
 	// Lifts vars_revision past an agent-reported revision the API never issued
@@ -235,6 +245,7 @@ type Querier interface {
 	ReleaseRolloutLease(ctx context.Context, arg ReleaseRolloutLeaseParams) (int64, error)
 	RenameApp(ctx context.Context, arg RenameAppParams) error
 	RenewRolloutLease(ctx context.Context, arg RenewRolloutLeaseParams) (int64, error)
+	ReplaceEnrollmentCode(ctx context.Context, arg ReplaceEnrollmentCodeParams) (int64, error)
 	RequestRolloutStop(ctx context.Context, arg RequestRolloutStopParams) (int64, error)
 	ResolveAlertState(ctx context.Context, arg ResolveAlertStateParams) (int64, error)
 	// The app was deleted outside the instance routes: its instance's key

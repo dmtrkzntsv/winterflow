@@ -8,6 +8,21 @@ import (
 	"winterflow/internal/infra/db/types"
 )
 
+type AgentEnrollment struct {
+	EnrollmentID   string
+	PollSecretHash string
+	Csr            string
+	Hostname       string
+	Code           *string
+	CodeExpiresAt  *types.DateTime
+	CodesIssued    int64
+	State          string
+	ServerID       *string
+	Certificate    *string
+	ClaimedAt      *types.DateTime
+	CreatedAt      types.DateTime
+}
+
 type AlertEvent struct {
 	EventID        string
 	OrganizationID string
@@ -151,6 +166,7 @@ type Server struct {
 	CreatedAt      types.DateTime
 	LastSeen       *types.DateTime
 	VarsRevision   int64
+	HubID          *string
 }
 
 type ServerCapability struct {

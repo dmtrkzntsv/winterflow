@@ -99,11 +99,11 @@ func newEnv(t *testing.T) *env {
 	// Enrollment is distributed-only in production (BootstrapAPI); the
 	// suite wires it here so its routes are exercised.
 	deps.Enrollment = enrollment.New(deps.EnrollmentRepository, enrolltest.Signer(t), enrolltest.Picker{Hub: enrolltest.DefaultHub}, nil)
-	deps.HubJoin = hubjoin.New(deps.HubTokenRepository, enrolltest.Signer(t), nil)
 	live := &hubList{hubs: []model.Hub{
 		{ID: enrolltest.DefaultHub.ID, PublicAddr: enrolltest.DefaultHub.PublicAddr, Capacity: 100, Accepting: true},
 		{ID: "hub-02.test", PublicAddr: "hub-02.test:443", Capacity: 100, Accepting: true},
 	}}
+	deps.HubJoin = hubjoin.New(deps.HubTokenRepository, enrolltest.Signer(t), live, nil)
 	deps.AgentHub = agenthub.New(deps.ServerRepository, live, hubs.NewPicker(live, deps.ServerRepository, testLog), testLog)
 	agent := newFakeAgent()
 	if err := appagent.NewInProcessBridge(b, cfg, agent, testLog).Start(ctx); err != nil {

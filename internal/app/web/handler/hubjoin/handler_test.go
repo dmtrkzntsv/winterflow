@@ -1,6 +1,7 @@
 package hubjoin
 
 import (
+	"context"
 	"crypto/elliptic"
 	"encoding/json"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"winterflow/internal/app/web/api"
+	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/usecase/enrollment/enrolltest"
 	"winterflow/internal/domain/usecase/hubjoin"
 	"winterflow/internal/infra/db"
@@ -18,6 +20,11 @@ import (
 	"winterflow/internal/infra/db/repository/hubtoken"
 	"winterflow/pkg/logger"
 )
+
+// noHubs is an empty hub list: every hub id is free.
+type noHubs struct{}
+
+func (noHubs) List(context.Context) ([]model.Hub, error) { return nil, nil }
 
 func newHandler(t *testing.T) (*Handler, *hubjoin.UseCase) {
 	t.Helper()
@@ -31,7 +38,7 @@ func newHandler(t *testing.T) (*Handler, *hubjoin.UseCase) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	uc := hubjoin.New(repo, enrolltest.Signer(t), nil)
+	uc := hubjoin.New(repo, enrolltest.Signer(t), noHubs{}, nil)
 	return NewHandler(&Deps{Logger: log, Joiner: uc}), uc
 }
 

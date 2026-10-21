@@ -603,6 +603,11 @@ func TestHubConfig(t *testing.T) {
 	if got := c.GetHubID(); got != "hub-01.winterflow.dev" {
 		t.Fatalf("id = %q", got)
 	}
+	t.Setenv("HUB_PUBLIC_ADDR", "Hub-01.WinterFlow.dev:50051")
+	if got := c.GetHubID(); got != "hub-01.winterflow.dev" {
+		t.Fatalf("mixed-case id = %q, want lower case", got)
+	}
+	t.Setenv("HUB_PUBLIC_ADDR", "hub-01.winterflow.dev:50051")
 	if err := c.ValidateHub(); err != nil {
 		t.Fatalf("ValidateHub: %v", err)
 	}

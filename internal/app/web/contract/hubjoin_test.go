@@ -20,14 +20,16 @@ func TestHubEnrollRoute(t *testing.T) {
 	}
 	csr := enrolltest.CSR(t, elliptic.P256())
 
-	hub.post(t, "/api/v1/hub/enroll", hubjoin.EnrollRequest{Token: "wfh_unknown", CSR: csr, PublicAddr: "hub-02.test:443"}).expect(t, http.StatusBadRequest)
-	hub.post(t, "/api/v1/hub/enroll", hubjoin.EnrollRequest{Token: token, CSR: "garbage", PublicAddr: "hub-02.test:443"}).expect(t, http.StatusBadRequest)
+	hub.post(t, "/api/v1/hub/enroll", hubjoin.EnrollRequest{Token: "wfh_unknown", CSR: csr, PublicAddr: "hub-03.test:443"}).expect(t, http.StatusBadRequest)
+	hub.post(t, "/api/v1/hub/enroll", hubjoin.EnrollRequest{Token: token, CSR: "garbage", PublicAddr: "hub-03.test:443"}).expect(t, http.StatusBadRequest)
+	// hub-02.test is live: its id cannot be taken (and the token survives).
+	hub.post(t, "/api/v1/hub/enroll", hubjoin.EnrollRequest{Token: token, CSR: csr, PublicAddr: "HUB-02.test:443"}).expect(t, http.StatusBadRequest)
 
 	var out hubjoin.EnrollResponse
-	hub.post(t, "/api/v1/hub/enroll", hubjoin.EnrollRequest{Token: token, CSR: csr, PublicAddr: "hub-02.test:443"}).
+	hub.post(t, "/api/v1/hub/enroll", hubjoin.EnrollRequest{Token: token, CSR: csr, PublicAddr: "hub-03.test:443"}).
 		expect(t, http.StatusOK).data(t, &out)
 	if out.Certificate == "" || out.CACertificate == "" {
 		t.Fatalf("response = %+v", out)
 	}
-	hub.post(t, "/api/v1/hub/enroll", hubjoin.EnrollRequest{Token: token, CSR: csr, PublicAddr: "hub-02.test:443"}).expect(t, http.StatusBadRequest)
+	hub.post(t, "/api/v1/hub/enroll", hubjoin.EnrollRequest{Token: token, CSR: csr, PublicAddr: "hub-03.test:443"}).expect(t, http.StatusBadRequest)
 }

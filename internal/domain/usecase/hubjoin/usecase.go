@@ -17,8 +17,10 @@ import (
 	"net"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
+	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/port"
 )
 
@@ -38,7 +40,15 @@ var (
 	ErrInvalidToken = errors.New("invalid or expired hub join token")
 	ErrInvalidCSR   = errors.New("invalid certificate request")
 	ErrInvalidAddr  = errors.New("invalid public address, want host:port")
+	// ErrHubLive: a live hub already uses the requested hub id, so a token
+	// holder cannot take it over. It is an ErrInvalidAddr (a 400).
+	ErrHubLive = fmt.Errorf("%w: a live hub already uses this host", ErrInvalidAddr)
 )
+
+// HubLister is the slice of port.HubRegistry Redeem needs.
+type HubLister interface {
+	List(ctx context.Context) ([]model.Hub, error)
+}
 
 // Signer issues hub certificates from the control plane's CA.
 type Signer interface {
@@ -50,15 +60,19 @@ type Signer interface {
 type UseCase struct {
 	repo   port.HubTokenRepository
 	signer Signer
+	live   HubLister
 	now    func() time.Time
 }
 
-// New builds the use case; a nil now means time.Now.
-func New(repo port.HubTokenRepository, signer Signer, now func() time.Time) *UseCase {
+// New builds the use case. live is the hub list Redeem checks the new
+// hub's id against (nil only where nothing is redeemed, e.g. the
+// hub-token subcommand: Redeem then refuses every request); a nil now
+// means time.Now.
+func New(repo port.HubTokenRepository, signer Signer, live HubLister, now func() time.Time) *UseCase {
 	if now == nil {
 		now = time.Now
 	}
-	return &UseCase{repo: repo, signer: signer, now: now}
+	return &UseCase{repo: repo, signer: signer, live: live, now: now}
 }
 
 func hashToken(t string) string {
@@ -91,8 +105,9 @@ func (u *UseCase) Issue(ctx context.Context, ttl time.Duration) (string, time.Ti
 
 var hostRe = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$`)
 
-// hubHost validates publicAddr (host:port) and returns its host, which is
-// the hub id.
+// hubHost validates publicAddr (host:port) and returns its host in lower
+// case, which is the hub id (host names are case-insensitive; the hub
+// derives the same id, config.GetHubID).
 func hubHost(publicAddr string) (string, error) {
 	host, p, err := net.SplitHostPort(publicAddr)
 	if err != nil || host == "" || len(host) > maxHost {
@@ -104,7 +119,24 @@ func hubHost(publicAddr string) (string, error) {
 	if net.ParseIP(host) == nil && !hostRe.MatchString(host) {
 		return "", ErrInvalidAddr
 	}
-	return host, nil
+	return strings.ToLower(host), nil
+}
+
+// checkNotLive refuses a hub id a live hub already announces.
+func (u *UseCase) checkNotLive(ctx context.Context, hubID string) error {
+	if u.live == nil {
+		return errors.New("no hub list to check the hub id against")
+	}
+	listed, err := u.live.List(ctx)
+	if err != nil {
+		return fmt.Errorf("list hubs: %w", err)
+	}
+	for _, h := range listed {
+		if strings.EqualFold(h.ID, hubID) {
+			return ErrHubLive
+		}
+	}
+	return nil
 }
 
 func validateCSR(csrPEM string) error {
@@ -126,14 +158,18 @@ func validateCSR(csrPEM string) error {
 }
 
 // Redeem consumes the token and signs the hub's CSR for the host of
-// publicAddr, which is also the hub id. The address and CSR are checked
-// before the token is spent, so a typo does not burn it.
+// publicAddr, which is also the hub id. The address and CSR are checked,
+// and the id refused while a live hub uses it (ErrHubLive), before the
+// token is spent, so a typo does not burn it.
 func (u *UseCase) Redeem(ctx context.Context, token, csrPEM, publicAddr string) (certPEM, caPEM string, err error) {
 	hubID, err := hubHost(publicAddr)
 	if err != nil {
 		return "", "", err
 	}
 	if err := validateCSR(csrPEM); err != nil {
+		return "", "", err
+	}
+	if err := u.checkNotLive(ctx, hubID); err != nil {
 		return "", "", err
 	}
 	ok, err := u.repo.Consume(ctx, hashToken(token), hubID, u.now())

@@ -42,7 +42,7 @@ func runHubToken(args []string, dbURL string, log *logger.Logger, out io.Writer)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), hubTokenTimeout)
 	defer cancel()
-	token, _, err := hubjoin.New(repo, nil, nil).Issue(ctx, *ttl)
+	token, _, err := hubjoin.New(repo, nil, nil, nil).Issue(ctx, *ttl)
 	if err != nil {
 		return err
 	}

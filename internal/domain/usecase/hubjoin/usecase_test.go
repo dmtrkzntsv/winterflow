@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/usecase/enrollment/enrolltest"
 	"winterflow/internal/domain/usecase/hubjoin"
 	"winterflow/internal/infra/db"
@@ -22,9 +23,23 @@ import (
 )
 
 type fixture struct {
-	uc  *hubjoin.UseCase
-	d   *db.DB
-	now *atomic.Int64 // unix seconds
+	uc   *hubjoin.UseCase
+	d    *db.DB
+	now  *atomic.Int64 // unix seconds
+	live *liveHubs
+}
+
+// liveHubs is the hub list a test edits.
+type liveHubs struct {
+	mu   sync.Mutex
+	hubs []model.Hub
+	err  error
+}
+
+func (l *liveHubs) List(context.Context) ([]model.Hub, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]model.Hub(nil), l.hubs...), l.err
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -34,10 +49,10 @@ func newFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &fixture{d: d, now: &atomic.Int64{}}
+	f := &fixture{d: d, now: &atomic.Int64{}, live: &liveHubs{}}
 	f.now.Store(time.Now().Unix())
 	clock := func() time.Time { return time.Unix(f.now.Load(), 0).UTC() }
-	f.uc = hubjoin.New(repo, enrolltest.Signer(t), clock)
+	f.uc = hubjoin.New(repo, enrolltest.Signer(t), f.live, clock)
 	return f
 }
 
@@ -173,5 +188,48 @@ func TestIssuePrunes(t *testing.T) {
 	}
 	if got := dbtest.QueryString(t, f.d, `SELECT COUNT(*) FROM hub_join_tokens`); got != "1" {
 		t.Fatalf("%s rows, want only the fresh one", got)
+	}
+}
+
+// A live hub's id cannot be taken; the check runs before the token is
+// spent, and ids compare case-insensitively.
+func TestRedeemRefusesLiveHubID(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	token, _, _ := f.uc.Issue(ctx, time.Hour)
+	csr := enrolltest.CSR(t, elliptic.P256())
+	f.live.hubs = []model.Hub{{ID: "hub-01.example.com", Accepting: true}}
+	for _, addr := range []string{"hub-01.example.com:443", "HUB-01.Example.com:50051"} {
+		if _, _, err := f.uc.Redeem(ctx, token, csr, addr); !errors.Is(err, hubjoin.ErrHubLive) || !errors.Is(err, hubjoin.ErrInvalidAddr) {
+			t.Fatalf("%s: err = %v, want ErrHubLive (an ErrInvalidAddr)", addr, err)
+		}
+	}
+	// A list that cannot be read refuses too, without spending the token.
+	f.live.err = errors.New("redis down")
+	if _, _, err := f.uc.Redeem(ctx, token, csr, "hub-02.example.com:443"); err == nil || errors.Is(err, hubjoin.ErrInvalidToken) {
+		t.Fatalf("list error: err = %v", err)
+	}
+	f.live.err = nil
+	if _, _, err := f.uc.Redeem(ctx, token, csr, "hub-02.example.com:443"); err != nil {
+		t.Fatalf("token was spent: %v", err)
+	}
+}
+
+// The hub id is the lower-cased host, in the token row and the certificate.
+func TestRedeemLowercasesHubID(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	token, _, _ := f.uc.Issue(ctx, time.Hour)
+	certPEM, _, err := f.uc.Redeem(ctx, token, enrolltest.CSR(t, elliptic.P256()), "Hub-07.Example.COM:443")
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, _ := pem.Decode([]byte(certPEM))
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cert.Subject.CommonName != "hub-07.example.com" || len(cert.DNSNames) != 1 || cert.DNSNames[0] != "hub-07.example.com" {
+		t.Fatalf("cert CN %q SANs %v", cert.Subject.CommonName, cert.DNSNames)
 	}
 }

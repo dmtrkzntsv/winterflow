@@ -282,13 +282,15 @@ func (c *ServerConfig) GetHubPublicAddr() string {
 	return strings.TrimSpace(os.Getenv("HUB_PUBLIC_ADDR"))
 }
 
-// GetHubID identifies a hub on the bus: the host part of HUB_PUBLIC_ADDR.
+// GetHubID identifies a hub on the bus: the host part of HUB_PUBLIC_ADDR,
+// lower-cased (host names are case-insensitive; the API's hub join derives
+// the same id for the hub's certificate).
 func (c *ServerConfig) GetHubID() string {
 	host, _, err := net.SplitHostPort(c.GetHubPublicAddr())
 	if err != nil {
 		return ""
 	}
-	return host
+	return strings.ToLower(host)
 }
 
 // GetHubCapacity is how many agents this hub should carry (default 1000).

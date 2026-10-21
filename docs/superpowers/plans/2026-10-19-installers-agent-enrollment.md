@@ -100,7 +100,7 @@ Absorbs PR #33's Go config change, relaxed: standalone may still use Postgres.
 - Modify: `internal/infra/db/sqlc/shapes_test.go`, `internal/domain/port/` (new `enrollment.go`), `internal/domain/model/` (new `enrollment.go`)
 - Generated: `internal/infra/db/sqlc/gen/**` via `make sqlc`
 
-Table `agent_enrollments`: `enrollment_id` PK, `poll_secret_hash` TEXT UNIQUE NOT NULL, `csr` TEXT NOT NULL, `hostname` TEXT NOT NULL, `code` VARCHAR(6) UNIQUE NULL, `code_expires_at` timestamp NULL, `codes_issued` INT NOT NULL, `state` TEXT NOT NULL (`pending|claimed|failed`), `server_id` NULL, `certificate` TEXT NULL, `claimed_at` NULL, `created_at` NOT NULL. Index on `created_at`. `server_registrations` (standalone's path) is untouched.
+Table `agent_enrollments`: `enrollment_id` PK, `poll_secret_hash` TEXT UNIQUE NOT NULL, `csr` TEXT NOT NULL, `hostname` TEXT NOT NULL, `code` VARCHAR(6) UNIQUE NULL, `code_expires_at` timestamp NULL, `codes_issued` INT NOT NULL, `state` TEXT NOT NULL (`pending|claimed|failed`), `server_id` NULL, `certificate` TEXT NULL, `claimed_at` NULL, `created_at` NOT NULL. Index on `created_at`. The same migration adds `servers.hub_id TEXT NULL` (+ index), which `Claim` writes; Task 5 reads it. `server_registrations` (standalone's path) is untouched.
 
 **Interfaces:**
 - Produces (`internal/domain/model`): `type Enrollment struct { ID, PollSecretHash, CSR, Hostname, Code string; CodeExpiresAt time.Time; CodesIssued int; State EnrollmentState; ServerID, Certificate string; ClaimedAt, CreatedAt time.Time }`, `EnrollmentState` consts `EnrollmentPending|EnrollmentClaimed|EnrollmentFailed`.
@@ -138,7 +138,7 @@ Table `agent_enrollments`: `enrollment_id` PK, `poll_secret_hash` TEXT UNIQUE NO
 ### Task 5: Hub list in Redis and per-hub command routing
 
 **Files:**
-- Create: `internal/infra/db/migrations/{sqlite,pgsql}/0019_server_hub.sql` (`ALTER TABLE servers ADD hub_id TEXT NULL` + index; follows Task 3's `0018`)
+- (No migration: `servers.hub_id` is added by Task 3's `0018`.)
 - Modify: `internal/infra/db/sqlc/query/{sqlite,pgsql}/servers.sql` (`GetServerHub`, `CountServersByHub`), server repo + shims, `shapes_test.go`
 - Create: `internal/infra/transport/redis/hubs/{registry.go,registry_test.go}` (go-redis; tests use the repo's existing Redis test approach, or miniredis if none exists)
 - Create: `internal/domain/model/hub.go`, `internal/domain/port/hub.go`, `internal/domain/usecase/hubs/{picker.go,router.go,*_test.go}`
@@ -327,7 +327,7 @@ Copy econumo's approach (`github.com/econumo/econumo`: `Makefile` targets `relea
 - Modify: `.goreleaser.yaml` (standalone + agent only; archive `name_template` gives `winterflow-<os>-<arch>` for standalone and `agent-<os>-<arch>` for agent; the old names are not published)
 - Modify: `Makefile` — `release-binaries` (web build with `VITE_APP_MODE=distributed` for the API, then `CGO_ENABLED=0 go build -trimpath` with the goreleaser ldflags for `winterflow-{standalone,agent,api,hub}-linux-{amd64,arm64,arm}` (GOARM=6) into `release-out/`, then `SHA256SUMS`; the standalone binary embeds the standalone web build, so build the web twice in the right order); `cdn-upload` (econumo's target with `R2_BUCKET ?= econumo` (the shared bucket, decided with the owner), `R2_PROJECT ?= winterflow`, env `WINTERFLOW_R2_ENDPOINT` required, `WINTERFLOW_R2_ACCESS_KEY_ID`/`_SECRET_ACCESS_KEY` mapped to `AWS_*`, `AWS_REQUEST_CHECKSUM_CALCULATION=when_required`, cache-control by channel, uploads every file in `release-out/`); also build hub/agent in `make build` as PR #33
 - Modify: `.github/workflows/release.yml` (after goreleaser: `make release-binaries`, then `make cdn-upload CHANNEL=<tag>` and `CHANNEL=latest` with `WINTERFLOW_R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}` etc.; skip with a `::warning::` when the endpoint secret is empty)
-- Modify: `internal/infra/orchestrator/docker_compose/updater.go:75` (new names), `cmd/hub/main.go` (hidden `pki` subcommand: `winterflow-hub pki --dir D --host H [--host H2]` → `cert.EnsureHubPKI`, prints `changed`/`unchanged`; `--redis-host H` additionally issues `redis.crt`/`redis.key` for Task 16's Redis instance)
+- Modify: `internal/infra/orchestrator/docker_compose/updater.go:75` (new names), `cmd/hub/main.go` (hidden `pki` subcommand: `winterflow-hub pki --dir D --host H [--host H2]` → `cert.EnsureHubPKI`, prints `changed`/`unchanged`; `--redis-host H` additionally issues `redis.crt`/`redis.key` (server cert for those hosts, signed by the same CA) for Task 16's Redis instance — add a small `cert.EnsureServerCert(dir, base string, hosts []string) (bool, error)` next to `EnsureHubPKI` and reuse it for both)
 - Test: `internal/infra/orchestrator/docker_compose/updater_test.go`, `cmd/hub/main_test.go`, `scripts/release_test.sh` (new)
 
 The workflow edit must be pushed over SSH (the gh token lacks the `workflow` scope). Do not create or change repository secrets; the owner adds them.

@@ -163,6 +163,7 @@ func TestClaimExpiredCode(t *testing.T) {
 	if got := dbtest.QueryString(t, d, `SELECT COUNT(*) FROM servers`); got != "0" {
 		t.Fatalf("servers = %s", got)
 	}
+	assertPending(t, r, e)
 }
 
 func TestClaimTwiceSecondFails(t *testing.T) {
@@ -181,6 +182,10 @@ func TestClaimTwiceSecondFails(t *testing.T) {
 	}
 	if got := dbtest.QueryString(t, d, `SELECT COUNT(*) FROM servers`); got != "1" {
 		t.Fatalf("servers = %s", got)
+	}
+	got, err := r.GetBySecretHash(ctx, e.PollSecretHash)
+	if err != nil || got.State != model.EnrollmentClaimed || got.ServerID != srv {
+		t.Fatalf("row changed by second claim: %+v, %v", got, err)
 	}
 }
 
@@ -235,5 +240,68 @@ func TestCountPending(t *testing.T) {
 	got, err := r.CountPending(ctx)
 	if err != nil || got != 2 {
 		t.Fatalf("CountPending = %d, %v", got, err)
+	}
+}
+
+// assertPending checks the enrollment is exactly as created: pending, code
+// intact and still resolvable.
+func assertPending(t *testing.T, r *Repo, want model.Enrollment) {
+	t.Helper()
+	ctx := dbtest.Ctx(t)
+	got, err := r.GetBySecretHash(ctx, want.PollSecretHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("enrollment changed: got %+v, want %+v", got, want)
+	}
+	if byCode, err := r.GetByCode(ctx, want.Code); err != nil || byCode.ID != want.ID {
+		t.Fatalf("GetByCode = %+v, %v", byCode, err)
+	}
+}
+
+func TestClaimIsAtomic(t *testing.T) {
+	r, d := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	dbtest.SeedServer(t, d, org, srv) // the claim's server id is already taken
+	e := enrollment(1, "ABC123", now().Add(10*time.Minute))
+	if err := r.Create(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Claim(ctx, claim(e, now())); err == nil {
+		t.Fatal("claim with a duplicate server id succeeded")
+	}
+	assertPending(t, r, e)
+	if got := dbtest.QueryString(t, d, `SELECT COUNT(*) FROM servers`); got != "1" {
+		t.Fatalf("servers = %s", got)
+	}
+	if got := dbtest.QueryString(t, d, `SELECT COUNT(*) FROM server_certificates`); got != "0" {
+		t.Fatalf("certificates = %s", got)
+	}
+}
+
+func TestClaimWrongCodeOrFailedState(t *testing.T) {
+	r, d := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	dbtest.SeedOrg(t, d, org)
+	e := enrollment(1, "ABC123", now().Add(10*time.Minute))
+	if err := r.Create(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	wrong := claim(e, now())
+	wrong.Code = "WRONG1"
+	if _, err := r.Claim(ctx, wrong); !errors.Is(err, model.ErrRegistrationCodeExpired) {
+		t.Fatalf("wrong code: %v", err)
+	}
+	assertPending(t, r, e)
+
+	if err := r.MarkFailed(ctx, e.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Claim(ctx, claim(e, now())); !errors.Is(err, model.ErrRegistrationCodeExpired) {
+		t.Fatalf("failed enrollment: %v", err)
+	}
+	if got := dbtest.QueryString(t, d, `SELECT COUNT(*) FROM servers`); got != "0" {
+		t.Fatalf("servers = %s", got)
 	}
 }

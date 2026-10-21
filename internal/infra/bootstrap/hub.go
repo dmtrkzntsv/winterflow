@@ -19,6 +19,9 @@ type HubDeps struct {
 
 // BootstrapHUB connects to Redis and returns the Hub's dependencies.
 func BootstrapHUB(ctx context.Context, log *logger.Logger, cfg *config.ServerConfig) *HubDeps {
+	if err := cfg.ValidateHub(); err != nil {
+		log.Fatalf("invalid configuration: %v", err)
+	}
 	addr, pass, redisDB := cfg.GetRedisCredentials()
 	rc := redisbus.NewClient(redisbus.Config{
 		Addr:     addr,

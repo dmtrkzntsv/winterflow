@@ -277,7 +277,6 @@ render_env_file() {
 LOG_LEVEL=info
 API_PORT=${API_PORT}
 WEB_URL=http://localhost:${API_PORT}
-REGION=local
 
 # Generated at install time. Rotating it invalidates all sessions.
 JWT_SECRET=${jwt_secret}

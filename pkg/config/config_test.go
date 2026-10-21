@@ -1,6 +1,13 @@
 package config
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"math/big"
 	"os"
 	"path/filepath"
 	"testing"
@@ -31,11 +38,9 @@ func TestSimpleEnvGetters(t *testing.T) {
 		env  string
 		get  func() string
 	}{
-		{"GetRegion", "REGION", c.GetRegion},
 		{"GetLogLevel", "LOG_LEVEL", c.GetLogLevel},
 		{"GetApiPort", "API_PORT", c.GetApiPort},
 		{"GetWebURL", "WEB_URL", c.GetWebURL},
-		{"GetDbURL", "DATABASE_URL", c.GetDbURL},
 		{"GetJwtSecret", "JWT_SECRET", c.GetJwtSecret},
 		{"GetHubHost", "HUB_HOST", c.GetHubHost},
 		{"GetHubPort", "HUB_PORT", c.GetHubPort},
@@ -118,42 +123,6 @@ func TestGetRedisCredentials(t *testing.T) {
 		if _, _, db := c.GetRedisCredentials(); db != 0 {
 			t.Fatalf("REDIS_DB=%q: db = %d, want 0", bad, db)
 		}
-	}
-}
-
-func TestBusQueues(t *testing.T) {
-	c := NewServerConfig("distributed")
-	tests := []struct {
-		name        string
-		env         string
-		get         func() string
-		wantDefault string // with REGION=eu-1 and env unset
-	}{
-		{"request queue", "BUS_REQUEST_QUEUE", c.GetBusRequestQueue, "requests:eu-1"},
-		{"response queue", "BUS_RESPONSE_QUEUE", c.GetBusResponseQueue, "responses:eu-1"},
-		{"events queue", "BUS_EVENTS_QUEUE", c.GetBusEventsQueue, "events:eu-1"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Setenv("REGION", "eu-1")
-			unsetenv(t, tt.env)
-			if got := tt.get(); got != tt.wantDefault {
-				t.Fatalf("default = %q, want %q (REGION-scoped)", got, tt.wantDefault)
-			}
-
-			// Explicit env overrides the region-derived default.
-			t.Setenv(tt.env, "custom-queue")
-			if got := tt.get(); got != "custom-queue" {
-				t.Fatalf("override = %q, want custom-queue", got)
-			}
-		})
-	}
-
-	// Different regions must yield different queues (region isolation).
-	unsetenv(t, "BUS_REQUEST_QUEUE")
-	t.Setenv("REGION", "us-2")
-	if got := c.GetBusRequestQueue(); got != "requests:us-2" {
-		t.Fatalf("REGION=us-2: request queue = %q, want requests:us-2", got)
 	}
 }
 
@@ -520,6 +489,172 @@ func TestCatalogConfig(t *testing.T) {
 		t.Setenv("CATALOG_REFRESH", v)
 		if got := c.GetCatalogRefresh(); got != want {
 			t.Errorf("CATALOG_REFRESH=%s: %v, want %v", v, got, want)
+		}
+	}
+}
+
+func TestGetDbURLStandaloneDefault(t *testing.T) {
+	unsetenv(t, "DATABASE_URL")
+	if got := NewServerConfig("standalone").GetDbURL(); got != "sqlite://winterflow.sqlite" {
+		t.Fatalf("standalone default = %q", got)
+	}
+	if got := NewServerConfig("distributed").GetDbURL(); got != "" {
+		t.Fatalf("distributed unset = %q, want empty", got)
+	}
+	t.Setenv("DATABASE_URL", "postgres://x/y")
+	if got := NewServerConfig("standalone").GetDbURL(); got != "postgres://x/y" {
+		t.Fatalf("explicit = %q", got)
+	}
+}
+
+func TestValidateDatabaseURL(t *testing.T) {
+	tests := []struct {
+		mode, url string
+		wantErr   bool
+	}{
+		{"standalone", "sqlite://winterflow.sqlite", false},
+		{"standalone", "postgres://u@h/db", false},
+		{"standalone", "mysql://u@h/db", true},
+		{"distributed", "postgres://u@h/db", false},
+		{"distributed", "postgresql://u@h/db", false},
+		{"distributed", "sqlite://x.sqlite", true},
+		{"distributed", "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.mode+"/"+tt.url, func(t *testing.T) {
+			t.Setenv("DATABASE_URL", tt.url)
+			err := NewServerConfig(tt.mode).ValidateDatabaseURL()
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func writeCA(t *testing.T, certPath, keyPath string) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "test-ca"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kb, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: kb}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestValidateEnrollment(t *testing.T) {
+	c := NewServerConfig("distributed")
+
+	dir := t.TempDir()
+	t.Setenv("HUB_CERT_DIR", dir)
+	if err := c.ValidateEnrollment(); err == nil {
+		t.Fatal("empty dir: want error")
+	}
+
+	writeCA(t, c.GetHubCACertPath(), c.GetHubCAKeyPath())
+	if err := c.ValidateEnrollment(); err != nil {
+		t.Fatalf("valid pair: %v", err)
+	}
+
+	if err := os.Remove(c.GetHubCAKeyPath()); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.ValidateEnrollment(); err == nil {
+		t.Fatal("missing key: want error")
+	}
+
+	other := t.TempDir()
+	writeCA(t, filepath.Join(other, "c.pem"), filepath.Join(other, "k.pem"))
+	kb, _ := os.ReadFile(filepath.Join(other, "k.pem"))
+	if err := os.WriteFile(c.GetHubCAKeyPath(), kb, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.ValidateEnrollment(); err == nil {
+		t.Fatal("mismatched pair: want error")
+	}
+}
+
+func TestHubConfig(t *testing.T) {
+	c := NewServerConfig("distributed")
+	t.Setenv("HUB_PUBLIC_ADDR", "hub-01.winterflow.dev:50051")
+	if got := c.GetHubPublicAddr(); got != "hub-01.winterflow.dev:50051" {
+		t.Fatalf("addr = %q", got)
+	}
+	if got := c.GetHubID(); got != "hub-01.winterflow.dev" {
+		t.Fatalf("id = %q", got)
+	}
+	if err := c.ValidateHub(); err != nil {
+		t.Fatalf("ValidateHub: %v", err)
+	}
+
+	unsetenv(t, "HUB_CAPACITY")
+	if got := c.GetHubCapacity(); got != 1000 {
+		t.Fatalf("default capacity = %d", got)
+	}
+	t.Setenv("HUB_CAPACITY", "0")
+	if got := c.GetHubCapacity(); got != 1000 {
+		t.Fatalf("capacity 0 = %d", got)
+	}
+	t.Setenv("HUB_CAPACITY", "250")
+	if got := c.GetHubCapacity(); got != 250 {
+		t.Fatalf("capacity 250 = %d", got)
+	}
+
+	unsetenv(t, "HUB_ACCEPTING")
+	if !c.GetHubAccepting() {
+		t.Fatal("default accepting = false")
+	}
+	t.Setenv("HUB_ACCEPTING", "false")
+	if c.GetHubAccepting() {
+		t.Fatal("accepting=false ignored")
+	}
+
+	t.Setenv("HUB_PUBLIC_ADDR", "nohost")
+	if err := c.ValidateHub(); err == nil {
+		t.Fatal("nohost: want error")
+	}
+	t.Setenv("HUB_PUBLIC_ADDR", "")
+	if err := c.ValidateHub(); err == nil {
+		t.Fatal("empty: want error")
+	}
+}
+
+func TestChannels(t *testing.T) {
+	t.Setenv("REGION", "eu")
+	t.Setenv("HUB_PUBLIC_ADDR", "hub-01.winterflow.dev:50051")
+	c := NewServerConfig("distributed")
+	checks := map[string][2]string{
+		"request":   {c.GetBusRequestQueue(), "bus:requests"},
+		"response":  {c.GetBusResponseQueue(), "bus:responses"},
+		"events":    {c.GetBusEventsQueue(), "bus:events"},
+		"hubqueue":  {c.HubRequestQueue(c.GetHubID()), "bus:requests:hub-01.winterflow.dev"},
+		"hubreq":    {c.GetHubRequestsChannel(), "hub:requests"},
+		"broadcast": {c.GetHubBroadcastChannel(), "hub:broadcast"},
+		"hubresp":   {HubResponsesChannel("h1"), "hub:responses:h1"},
+	}
+	for name, v := range checks {
+		if v[0] != v[1] {
+			t.Errorf("%s = %q, want %q", name, v[0], v[1])
 		}
 	}
 }

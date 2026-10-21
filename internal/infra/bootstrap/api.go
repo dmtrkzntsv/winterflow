@@ -16,6 +16,12 @@ import (
 // API publishes commands to requests:<region> and drains its region's response
 // queue, routing each agent result to the originating user over SSE.
 func BootstrapAPI(ctx context.Context, log *logger.Logger, cfg *config.ServerConfig) *Deps {
+	if err := cfg.ValidateDatabaseURL(); err != nil {
+		log.Fatalf("invalid configuration: %v", err)
+	}
+	if err := cfg.ValidateEnrollment(); err != nil {
+		log.Fatalf("invalid configuration: %v", err)
+	}
 	addr, pass, redisDB := cfg.GetRedisCredentials()
 	rc := redisbus.NewClient(redisbus.Config{
 		Addr:     addr,

@@ -31,6 +31,9 @@ import (
 // replaces the gRPC Hub, and the Docker Compose orchestrator executes commands
 // locally. This proves the layered design supports the single-server app.
 func BootstrapStandalone(ctx context.Context, log *logger.Logger, cfg *config.ServerConfig) *Deps {
+	if err := cfg.ValidateDatabaseURL(); err != nil {
+		log.Fatalf("invalid configuration: %v", err)
+	}
 	dbconn, err := db.Open(log, cfg.GetDbURL())
 	if err != nil {
 		log.Fatalf("failed to open database: %v", err)

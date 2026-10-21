@@ -26,7 +26,7 @@
 # settings are kept (options you pass override the kept settings), the binary
 # is replaced and the service restarted. Stopping the service drains the hub
 # first: it tells its agents to move to other hubs and waits up to 2 minutes
-# for them to leave.
+# for them to leave (not at all when no other hub can take them).
 #
 # Logs go to the journald namespace "winterflow":
 #   journalctl --namespace winterflow -u winterflow-hub -f
@@ -482,7 +482,8 @@ ExecStart=${HUB_DEST}
 Restart=on-failure
 RestartSec=5
 # Stopping drains the hub first: it tells its agents to move to other hubs
-# and waits up to 2 minutes for them to leave, then stops gracefully.
+# and waits up to 2 minutes for them to leave (not at all when no other hub
+# can take them), then stops gracefully.
 TimeoutStopSec=150
 ${caps}
 
@@ -528,7 +529,7 @@ render_plan() {
         echo "  checks the certificate matches the key and chains to the CA, then stores ca.crt and hub.crt"
         echo "  ${CERT_DIR}: root:${HUB_USER} 0750; hub.key 0640"
     fi
-    echo "systemctl enable winterflow-hub; systemctl restart winterflow-hub (stopping drains first, up to 2 minutes)"
+    echo "systemctl enable winterflow-hub; systemctl restart winterflow-hub (stopping drains first, up to 2 minutes when another hub can take its agents)"
 }
 
 render_finish() {

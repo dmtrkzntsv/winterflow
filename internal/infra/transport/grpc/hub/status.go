@@ -19,7 +19,13 @@ const withdrawTimeout = 3 * time.Second
 // hub starts or stops draining. When ctx ends it
 // removes the entry (best effort) so the hub leaves the list at once; the
 // returned channel closes after that.
+//
+// reg is also the list a stopping hub reads to learn whether another hub
+// can take its agents (Drain).
 func (h *Hub) StartAnnouncer(ctx context.Context, reg port.HubRegistry) <-chan struct{} {
+	h.drainMu.Lock()
+	h.peers = reg
+	h.drainMu.Unlock()
 	done := make(chan struct{})
 	go func() {
 		defer close(done)

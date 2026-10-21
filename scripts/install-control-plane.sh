@@ -709,7 +709,8 @@ ExecStart=${HUB_DEST}
 Restart=on-failure
 RestartSec=5
 # Stopping drains the hub first: it tells its agents to move to other hubs
-# and waits up to 2 minutes for them to leave, then stops gracefully.
+# and waits up to 2 minutes for them to leave (not at all when no other hub
+# can take them), then stops gracefully.
 TimeoutStopSec=150
 ${caps}
 EOF

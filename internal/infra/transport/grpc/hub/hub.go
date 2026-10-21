@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 	"winterflow/internal/domain/model"
+	"winterflow/internal/domain/port"
 	"winterflow/internal/infra/transport/bus"
 	"winterflow/internal/infra/transport/codec"
 	"winterflow/internal/infra/transport/grpc/handler"
@@ -57,6 +58,12 @@ type Hub struct {
 	moverCancel context.CancelFunc
 	// drainCheckEvery overrides DrainCheckEvery (tests).
 	drainCheckEvery time.Duration
+	// moveResend overrides moveResendAfter (tests).
+	moveResend time.Duration
+	// peers is the hub list StartAnnouncer writes to (guarded by drainMu);
+	// a stopping hub reads it to learn whether another hub can take its
+	// agents. Nil until the announcer starts.
+	peers port.HubRegistry
 }
 
 type agent struct {
@@ -376,12 +383,17 @@ func (h *Hub) Serve(lis net.Listener) error {
 
 // Shutdown drains first (at most DrainTimeout, less if ctx ends sooner):
 // the hub announces draining, tells its agents to move and waits for their
-// streams to close. Then it stops the gRPC server gracefully, forcing it
-// when ctx ends.
+// streams to close. With no other hub to move them to it does not wait
+// (see Drain). Then it stops the gRPC server gracefully, forcing it when
+// ctx ends.
 func (h *Hub) Shutdown(ctx context.Context) error {
 	h.log.Info("Draining the hub before it stops", "agents", h.activeStreams())
 	drainCtx, cancelDrain := context.WithTimeout(ctx, DrainTimeout)
-	if err := h.Drain(drainCtx); err != nil {
+	switch err := h.Drain(drainCtx); {
+	case errors.Is(err, ErrNoOtherHub):
+		h.log.Info("No other hub can take this hub's agents, stopping without waiting",
+			"agents_left", h.activeStreams())
+	case err != nil:
 		h.log.Warn("Drain incomplete, stopping anyway", "agents_left", h.activeStreams())
 	}
 	cancelDrain()

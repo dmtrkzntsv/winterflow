@@ -2,6 +2,7 @@ package hub
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -27,9 +28,9 @@ const (
 	// moveEvery paces hub.move messages, about 20 agents per second, so the
 	// API is not flooded with "where to" requests.
 	moveEvery = 50 * time.Millisecond
-	// moveResend is how long an agent told to move may stay before it is
-	// told again (the API may have had no other hub at the time).
-	moveResend = time.Minute
+	// moveResendAfter is how long an agent told to move may stay before it
+	// is told again (the API may have had no other hub at the time).
+	moveResendAfter = time.Minute
 	// drainPoll is how often Drain counts the streams left.
 	drainPoll = 100 * time.Millisecond
 )
@@ -56,10 +57,7 @@ func (h *Hub) StartDrainWatch(ctx context.Context, flag DrainFlag) <-chan struct
 // moves its agents; cleared, it announces accepting again. A failed read
 // keeps the current state.
 func (h *Hub) drainLoop(ctx context.Context, flag DrainFlag, hubID string) {
-	every := h.drainCheckEvery
-	if every <= 0 {
-		every = DrainCheckEvery
-	}
+	every := h.checkEvery()
 	ticker := time.NewTicker(every)
 	defer ticker.Stop()
 	defer h.stopMover()
@@ -86,18 +84,42 @@ func (h *Hub) drainLoop(ctx context.Context, flag DrainFlag, hubID string) {
 	}
 }
 
-// Drain is what stopping does first: the hub announces draining, tells
-// every agent to move and refuses new ones, then waits until no stream is
-// left or ctx ends (ctx.Err() then).
+// ErrNoOtherHub: a stopping hub's agents have nowhere to go (no other
+// live hub accepts servers), so it does not wait for them.
+var ErrNoOtherHub = errors.New("no other hub accepts agents")
+
+// Drain is what stopping does first: the hub announces draining and
+// refuses new agents. With no stream left it returns at once. When the hub
+// list shows no other hub that accepts agents (or cannot be read) it moves
+// nobody and returns ErrNoOtherHub: the API would have nowhere to send
+// them, and waiting would only hold up the stop. Otherwise it tells every
+// agent to move and waits until no stream is left (nil), ctx ends
+// (ctx.Err()), or every agent was told and no other hub is listed any more
+// (ErrNoOtherHub; checked every drain check interval).
 func (h *Hub) Drain(ctx context.Context) error {
 	h.stopping.Store(true)
+	if h.activeStreams() == 0 {
+		h.announceSoon()
+		return nil
+	}
+	if !h.otherHubListed(ctx) {
+		h.announceSoon()
+		return ErrNoOtherHub
+	}
 	h.drainChanged()
 	defer h.stopMover()
 	ticker := time.NewTicker(drainPoll)
 	defer ticker.Stop()
+	nextPeerCheck := time.Now().Add(h.checkEvery())
 	for {
 		if h.activeStreams() == 0 {
 			return nil
+		}
+		if now := time.Now(); !now.Before(nextPeerCheck) {
+			nextPeerCheck = now.Add(h.checkEvery())
+			if h.allTold() && !h.otherHubListed(ctx) {
+				return ErrNoOtherHub
+			}
 		}
 		select {
 		case <-ctx.Done():
@@ -107,17 +129,74 @@ func (h *Hub) Drain(ctx context.Context) error {
 	}
 }
 
+// otherHubListed reports whether the hub list shows a hub other than this
+// one that accepts agents and is not draining. Without a list (no
+// announcer) it assumes one exists, so the hub drains as it would; a list
+// that cannot be read counts as none (the API reads the same list to move
+// an agent).
+func (h *Hub) otherHubListed(ctx context.Context) bool {
+	h.drainMu.Lock()
+	reg := h.peers
+	h.drainMu.Unlock()
+	if reg == nil {
+		return true
+	}
+	listed, err := reg.List(ctx)
+	if err != nil {
+		h.log.Warn("cannot read the hub list while stopping", "error", err)
+		return false
+	}
+	self := h.cfg.GetHubID()
+	for _, hub := range listed {
+		if hub.ID != self && hub.Accepting && !hub.Draining {
+			return true
+		}
+	}
+	return false
+}
+
+// allTold reports whether every active stream was told to move.
+func (h *Hub) allTold() bool {
+	h.agentsLock.RLock()
+	defer h.agentsLock.RUnlock()
+	for _, a := range h.agents {
+		if a.streamActive && a.moveSentAt.IsZero() {
+			return false
+		}
+	}
+	return true
+}
+
+func (h *Hub) checkEvery() time.Duration {
+	if h.drainCheckEvery > 0 {
+		return h.drainCheckEvery
+	}
+	return DrainCheckEvery
+}
+
+func (h *Hub) resendAfter() time.Duration {
+	if h.moveResend > 0 {
+		return h.moveResend
+	}
+	return moveResendAfter
+}
+
 // drainChanged announces the new state at once and starts or stops moving
 // agents to match it.
 func (h *Hub) drainChanged() {
-	select {
-	case h.announceNow <- struct{}{}:
-	default: // an announcement is already due, or no announcer runs
-	}
+	h.announceSoon()
 	if h.isDraining() {
 		h.startMover()
 	} else {
 		h.stopMover()
+	}
+}
+
+// announceSoon asks the announcer to announce the current state at once.
+func (h *Hub) announceSoon() {
+	select {
+	case h.announceNow <- struct{}{}:
+	default: // an announcement is already due, or no announcer runs
 	}
 }
 
@@ -153,12 +232,9 @@ type moveTarget struct {
 
 // moveAgents sends hub.move down every active stream, one per moveEvery,
 // then looks again every check interval for streams not yet told (or told
-// over moveResend ago), until ctx ends.
+// over resendAfter ago), until ctx ends.
 func (h *Hub) moveAgents(ctx context.Context) {
-	every := h.drainCheckEvery
-	if every <= 0 {
-		every = DrainCheckEvery
-	}
+	every := h.checkEvery()
 	for {
 		if targets := h.moveTargets(time.Now()); len(targets) > 0 {
 			pace := time.NewTicker(moveEvery)
@@ -183,6 +259,7 @@ func (h *Hub) moveAgents(ctx context.Context) {
 
 // moveTargets claims the active streams due a hub.move.
 func (h *Hub) moveTargets(now time.Time) []moveTarget {
+	resend := h.resendAfter()
 	h.agentsLock.Lock()
 	defer h.agentsLock.Unlock()
 	var out []moveTarget
@@ -190,7 +267,7 @@ func (h *Hub) moveTargets(now time.Time) []moveTarget {
 		if !a.streamActive || a.stream == nil {
 			continue
 		}
-		if !a.moveSentAt.IsZero() && now.Sub(a.moveSentAt) < moveResend {
+		if !a.moveSentAt.IsZero() && now.Sub(a.moveSentAt) < resend {
 			continue
 		}
 		a.moveSentAt = now

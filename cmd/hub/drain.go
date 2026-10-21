@@ -18,7 +18,7 @@ const drainTimeout = 10 * time.Second
 // runDrain is the hidden drain (on) / undrain (off) subcommand: it sets or
 // deletes this hub's flag hub:draining:<hub_id> in the Redis the hub uses
 // (same settings, TLS included). The running hub reads the flag every few
-// seconds; it survives restarts until undrain.
+// seconds; it survives hub restarts until undrain (it lives in Redis).
 func runDrain(on bool, out io.Writer) error {
 	cfg := config.NewServerConfig("distributed")
 	hubID := cfg.GetHubID()

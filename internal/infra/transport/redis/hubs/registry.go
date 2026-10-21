@@ -108,7 +108,8 @@ func (r *Registry) List(ctx context.Context) ([]model.Hub, error) {
 }
 
 // SetDraining sets (on) or deletes (off) the hub's drain flag. The flag has
-// no expiry: a drained hub stays drained across restarts until undrained.
+// no expiry: a drained hub stays drained across hub restarts until
+// undrained (or until Redis loses its data).
 func (r *Registry) SetDraining(ctx context.Context, hubID string, on bool) error {
 	if hubID == "" {
 		return errors.New("hub registry: empty hub id")

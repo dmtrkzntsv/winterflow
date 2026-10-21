@@ -239,14 +239,16 @@ treats that as "ask the API now", never as a denial.
 
 **Draining:**
 - `winterflow-hub drain` sets `hub:draining:<hub_id>` in Redis (no expiry,
-  survives restarts); `winterflow-hub undrain` deletes it. The running hub
+  survives hub restarts; lost if Redis loses its data); `winterflow-hub undrain` deletes it. The running hub
   checks it every 5 s and announces `draining: true`.
 - Stopping the hub (`systemctl stop`) drains first, then exits.
 - A draining hub sends each connected agent a `hub.move` message over its
   stream (an envelope type the agent handles itself, not a command for the
   dispatcher), about 20 agents per second so the API isn't flooded, then
   refuses new connections with `FailedPrecondition`. On stop it waits until
-  its streams are empty or 2 minutes pass (unit `TimeoutStopSec=150`).
+  its streams are empty or 2 minutes pass (unit `TimeoutStopSec=150`);
+  with no stream, or no other accepting, non-draining hub to move its
+  agents to, it moves nobody and stops at once.
 
 ### Enrollment protocol (new)
 

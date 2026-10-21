@@ -354,7 +354,7 @@ ensure_docker() {
 
     # Containers log via the json-file driver, which does NOT rotate by default:
     # one chatty app can fill the SSD. Offer daemon-wide rotation if unset.
-    DOCKER_DAEMON_JSON="/etc/docker/daemon.json"
+    DOCKER_DAEMON_JSON="${DOCKER_DAEMON_JSON:-/etc/docker/daemon.json}"
     if [ ! -f "$DOCKER_DAEMON_JSON" ]; then
         echo
         echo "Docker's default json-file log driver never rotates container logs."

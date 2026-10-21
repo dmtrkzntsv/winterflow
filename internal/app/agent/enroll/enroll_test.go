@@ -32,6 +32,8 @@ type script struct {
 	mu       sync.Mutex
 	other    bool // sign a foreign key instead of the posted CSR
 	csr      string
+	hubAddr  string // overrides the claimed hub address
+	serverID string // overrides the claimed server id
 }
 
 func (s *script) setCSR(v string) {
@@ -93,8 +95,14 @@ func (s *script) handler() http.Handler {
 		d := map[string]any{"state": st}
 		if st == "claimed" {
 			d["server_id"] = "srv-1"
+			if s.serverID != "" {
+				d["server_id"] = s.serverID
+			}
 			d["certificate"], d["ca_certificate"] = s.sign()
 			d["hub_addr"] = "hub-01.winterflow.dev:50051"
+			if s.hubAddr != "" {
+				d["hub_addr"] = s.hubAddr
+			}
 		}
 		reply(w, 200, d)
 	})
@@ -268,5 +276,43 @@ func TestEnrollRejectsMismatchedCertificate(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(dir, f)); err == nil {
 			t.Fatalf("%s written", f)
 		}
+	}
+}
+
+func TestEnrollRejectsHostileServerValues(t *testing.T) {
+	for name, c := range map[string]struct{ addr, id string }{
+		"host newline": {"hub\nLD_PRELOAD=/x:50051", "srv-1"},
+		"host space":   {"hub host:50051", "srv-1"},
+		"port zero":    {"hub.example.com:0", "srv-1"},
+		"port big":     {"hub.example.com:70000", "srv-1"},
+		"id newline":   {"hub.example.com:50051", "srv\nLD_PRELOAD=/x"},
+		"id empty chr": {"hub.example.com:50051", "srv 1"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := &script{t: t, statuses: []string{"claimed"}, hubAddr: c.addr, serverID: c.id}
+			srv := httptest.NewServer(s.handler())
+			defer srv.Close()
+			dir := t.TempDir()
+			var out bytes.Buffer
+			code, err := run(context.Background(), opts(srv.URL, dir, &out))
+			if code != ExitError || err == nil {
+				t.Fatalf("code=%d err=%v", code, err)
+			}
+			for _, f := range []string{"agent.crt", "agent.env"} {
+				if _, err := os.Stat(filepath.Join(dir, f)); err == nil {
+					t.Fatalf("%s written", f)
+				}
+			}
+		})
+	}
+}
+
+func TestEnrollAcceptsIPv6Hub(t *testing.T) {
+	s := &script{t: t, statuses: []string{"claimed"}, hubAddr: "[2001:db8::1]:50051"}
+	srv := httptest.NewServer(s.handler())
+	defer srv.Close()
+	var out bytes.Buffer
+	if code, err := run(context.Background(), opts(srv.URL, t.TempDir(), &out)); code != ExitOK {
+		t.Fatalf("code=%d err=%v", code, err)
 	}
 }

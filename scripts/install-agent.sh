@@ -69,19 +69,21 @@
 
 set -euo pipefail
 
-# WF_INSTALL_ROOT prefixes only the "already enrolled?" lookup, so tests can
-# fake an existing certificate without root. Unset in real use.
+# WF_INSTALL_ROOT prefixes every path below, so tests can run the installer
+# against a scratch directory (with stubbed systemctl/runuser). Unset in real
+# use.
 INSTALL_ROOT="${WF_INSTALL_ROOT:-}"
 
 SERVICE_NAME="winterflow-agent"
-BINARY_DEST="/usr/local/bin/winterflow-agent"
-CONFIG_DIR="/etc/winterflow"
+BINARY_DEST="${INSTALL_ROOT}/usr/local/bin/winterflow-agent"
+CONFIG_DIR="${INSTALL_ROOT}/etc/winterflow"
 ENV_FILE="${CONFIG_DIR}/agent.env"
-DATA_DIR="/var/lib/winterflow"
+DATA_DIR="${INSTALL_ROOT}/var/lib/winterflow"
 CERT_DIR="${DATA_DIR}/certs"
-UNIT_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
+ENROLL_ENV="${CERT_DIR}/enroll.env"
+UNIT_FILE="${INSTALL_ROOT}/etc/systemd/system/${SERVICE_NAME}.service"
 JOURNAL_NAMESPACE="winterflow"
-JOURNAL_CONF="/etc/systemd/journald@${JOURNAL_NAMESPACE}.conf"
+JOURNAL_CONF="${INSTALL_ROOT}/etc/systemd/journald@${JOURNAL_NAMESPACE}.conf"
 DOCKER_INSTALL_URL="https://get.docker.com"
 GITHUB_REPO="dmtrkzntsv/winterflow"
 DEFAULT_API_URL="https://api.winterflow.dev"
@@ -366,7 +368,7 @@ ensure_docker() {
 
     # Containers log via the json-file driver, which does NOT rotate by default:
     # one chatty app can fill the SSD. Offer daemon-wide rotation if unset.
-    DOCKER_DAEMON_JSON="/etc/docker/daemon.json"
+    DOCKER_DAEMON_JSON="${DOCKER_DAEMON_JSON:-/etc/docker/daemon.json}"
     if [ ! -f "$DOCKER_DAEMON_JSON" ]; then
         echo
         echo "Docker's default json-file log driver never rotates container logs."
@@ -438,7 +440,7 @@ is_valid_api_url() {
 }
 
 agent_enrolled() {
-    [ -f "${INSTALL_ROOT}${CERT_DIR}/agent.crt" ]
+    [ -f "${CERT_DIR}/agent.crt" ]
 }
 
 # --- Renderers (shared by install and --dry-run) ------------------------------
@@ -540,56 +542,104 @@ WantedBy=multi-user.target
 EOF
 }
 
+have_privdrop() {
+    command -v runuser >/dev/null 2>&1 || command -v setpriv >/dev/null 2>&1
+}
+
 run_as_service_user() {
     # The key must be created by (and owned by) the service user, so the
     # enrollment runs as it, not as root.
     if command -v runuser >/dev/null 2>&1; then
         runuser -u "$SERVICE_USER" -- env HOME="$DATA_DIR" "$@"
-    elif command -v setpriv >/dev/null 2>&1; then
-        setpriv --reuid="$SERVICE_USER" --regid="$SERVICE_GROUP" --init-groups -- env HOME="$DATA_DIR" "$@"
     else
-        die "runuser or setpriv (util-linux) is required to enroll as '${SERVICE_USER}'"
+        setpriv --reuid="$SERVICE_USER" --regid="$SERVICE_GROUP" --init-groups -- env HOME="$DATA_DIR" "$@"
     fi
+}
+
+valid_enroll_value() {
+    # valid_enroll_value KEY VALUE — the enrollment output comes from the
+    # control plane and from a directory the service user can write; root
+    # accepts only plain values for the four keys it knows.
+    local v="$2" n
+    case "$1" in
+        HUB_HOST)  printf '%s' "$v" | grep -qE '^[A-Za-z0-9.:-]+$' ;;
+        HUB_PORT)  printf '%s' "$v" | grep -qE '^[0-9]{1,5}$' || return 1
+                   n=$((10#$v)); [ "$n" -ge 1 ] && [ "$n" -le 65535 ] ;;
+        AGENT_ID)  printf '%s' "$v" | grep -qE '^[A-Za-z0-9-]+$' ;;
+        WINTERFLOW_API_URL) printf '%s' "$v" | grep -qE '^https?://[]A-Za-z0-9.:/_[-]+$' ;;
+        *) return 1 ;;
+    esac
+}
+
+checked_enroll_lines() {
+    # checked_enroll_lines FILE — print the four enrollment lines, validated.
+    # Anything else in the file, a missing or repeated key, or a bad value
+    # fails the whole file. Never returns an unvalidated byte.
+    local file="$1" content line key val k seen=" "
+    if [ ! -f "$file" ] || [ -L "$file" ]; then
+        warn "enrollment output ${file} is missing or not a regular file"
+        return 1
+    fi
+    content="$(cat "$file")" || return 1
+    while IFS= read -r line || [ -n "$line" ]; do
+        [ -n "$line" ] || continue
+        key="${line%%=*}"
+        val="${line#*=}"
+        if [ "$key" = "$line" ] || ! valid_enroll_value "$key" "$val"; then
+            warn "refusing enrollment output: unexpected or invalid line for '${key}'"
+            return 1
+        fi
+        case "$seen" in *" ${key} "*) warn "refusing enrollment output: ${key} repeated"; return 1 ;; esac
+        seen="${seen}${key} "
+    done <<<"$content"
+    for k in HUB_HOST HUB_PORT AGENT_ID WINTERFLOW_API_URL; do
+        case "$seen" in *" ${k} "*) ;; *) warn "refusing enrollment output: ${k} missing"; return 1 ;; esac
+        while IFS= read -r line; do
+            case "$line" in "${k}="*) printf '%s\n' "$line" ;; esac
+        done <<<"$content"
+    done
 }
 
 write_env_file() {
-    # write_env_file ENROLL_ENV — agent.env = the base settings (kept when the
-    # file exists) + the enrollment output, replacing earlier enrollment lines.
-    # Owned by root, 0600: systemd reads EnvironmentFile as root, the agent
-    # itself never opens it.
-    local enroll_env="$1" tmp
-    tmp="$(mktemp "${CONFIG_DIR}/.agent.env.XXXXXX")"
-    if [ -f "$ENV_FILE" ]; then
-        grep -vE '^(HUB_HOST|HUB_PORT|AGENT_ID|WINTERFLOW_API_URL)=' "$ENV_FILE" > "$tmp" || true
-    else
-        render_env_file > "$tmp"
-    fi
+    # write_env_file [ENROLL_ENV] — agent.env = the base settings (kept when
+    # the file exists) + the validated enrollment lines, replacing earlier
+    # ones. Owned by root, 0600: systemd reads EnvironmentFile as root, the
+    # agent itself never opens it. Every step is checked: callers run it in a
+    # condition, where errexit is off.
+    local enroll_env="${1:-}" tmp lines=""
     if [ -n "$enroll_env" ]; then
-        cat "$enroll_env" >> "$tmp"
+        lines="$(checked_enroll_lines "$enroll_env")" || return 1
     fi
-    chown root:root "$tmp"
-    chmod 600 "$tmp"
-    mv -f "$tmp" "$ENV_FILE"
+    tmp="$(mktemp "${CONFIG_DIR}/.agent.env.XXXXXX")" || return 1
+    if [ -f "$ENV_FILE" ]; then
+        { grep -vE '^(HUB_HOST|HUB_PORT|AGENT_ID|WINTERFLOW_API_URL)=' "$ENV_FILE" || true; } > "$tmp" || { rm -f "$tmp"; return 1; }
+    else
+        render_env_file > "$tmp" || { rm -f "$tmp"; return 1; }
+    fi
+    if [ -n "$lines" ]; then
+        printf '%s\n' "$lines" >> "$tmp" || { rm -f "$tmp"; return 1; }
+    fi
+    chown root:root "$tmp" && chmod 600 "$tmp" && mv -f "$tmp" "$ENV_FILE" || { rm -f "$tmp"; return 1; }
 }
 
 enroll_agent() {
-    # Runs `winterflow-agent enroll` as the service user. Its output (the code
-    # and instructions) goes straight to the terminal: not captured, so it
-    # shows live, piped or not. Exit codes: 0 enrolled, 2 gave up after 10
-    # codes, 3 already enrolled, 1 anything else. Returns the same.
-    local envout status=0
-    envout="${CERT_DIR}/enroll.env"
-    rm -f "$envout"
+    # Runs `winterflow-agent enroll` as the service user and returns its exit
+    # code (0 enrolled, 2 gave up after 10 codes, 3 already enrolled, 1 other).
+    # Its output (the code and instructions) goes straight to the terminal:
+    # not captured, so it shows live, piped or not. Writes ENROLL_ENV; merging
+    # it into agent.env is a separate step (write_env_file).
+    local status=0
+    rm -f "$ENROLL_ENV"
     echo
     log "Enrolling this machine with ${API_URL}"
     run_as_service_user "$BINARY_DEST" enroll \
-        --url "$API_URL" --cert-dir "$CERT_DIR" --env-out "$envout" \
+        --url "$API_URL" --cert-dir "$CERT_DIR" --env-out "$ENROLL_ENV" \
         --hostname "$(hostname 2>/dev/null || echo winterflow-agent)" </dev/null || status=$?
-    case "$status" in
-        0) write_env_file "$envout" ;;
-    esac
-    rm -f "$envout"
     return "$status"
+}
+
+stop_unit() {
+    systemctl disable --now "$SERVICE_NAME" 2>/dev/null || true
 }
 
 main() {
@@ -886,23 +936,41 @@ main() {
     if agent_enrolled; then
         log "Already enrolled (${CERT_DIR}/agent.crt exists): keeping the certificate"
         enroll_status=3
+    elif ! have_privdrop; then
+        stop_unit
+        die "runuser or setpriv (util-linux) is required to enroll as '${SERVICE_USER}'; ${SERVICE_NAME} is installed but disabled and stopped"
     else
         enroll_agent || enroll_status=$?
     fi
     case "$enroll_status" in
-        0) ;;
+        0)
+            if ! write_env_file "$ENROLL_ENV"; then
+                rm -f "$ENROLL_ENV"
+                stop_unit
+                warn "could not store the enrollment result in ${ENV_FILE}"
+                warn "${SERVICE_NAME} is installed but disabled and stopped; remove ${CERT_DIR}/agent.crt and rerun this installer"
+                exit 1
+            fi
+            rm -f "$ENROLL_ENV"
+            ;;
         3)
-            grep -q '^HUB_HOST=' "$ENV_FILE" 2>/dev/null \
-                || warn "${ENV_FILE} has no HUB_HOST: the agent cannot find its hub. Remove ${CERT_DIR}/agent.crt and rerun to enroll again"
+            if ! grep -q '^HUB_HOST=' "$ENV_FILE" 2>/dev/null; then
+                stop_unit
+                warn "${ENV_FILE} has no HUB_HOST: the agent could not find its hub."
+                warn "${SERVICE_NAME} is installed but disabled and stopped; to enroll again remove ${CERT_DIR}/agent.crt and rerun this installer"
+                exit 1
+            fi
             ;;
         2)
-            systemctl disable --now "$SERVICE_NAME" 2>/dev/null || true
+            rm -f "$ENROLL_ENV"
+            stop_unit
             warn "enrollment gave up: no code was entered in time."
             warn "${SERVICE_NAME} is installed but disabled and stopped; rerun this installer to get a new code"
             exit 1
             ;;
         *)
-            systemctl disable --now "$SERVICE_NAME" 2>/dev/null || true
+            rm -f "$ENROLL_ENV"
+            stop_unit
             warn "enrollment failed (exit ${enroll_status}); see the message above."
             warn "${SERVICE_NAME} is installed but disabled and stopped; fix the cause and rerun this installer"
             exit 1

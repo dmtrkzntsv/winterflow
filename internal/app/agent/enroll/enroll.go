@@ -21,6 +21,8 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -229,6 +231,26 @@ func generateKey(path, hostname string) (string, error) {
 	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER})), nil
 }
 
+var (
+	hostRe     = regexp.MustCompile(`^[A-Za-z0-9.:-]+$`)
+	serverIDRe = regexp.MustCompile(`^[A-Za-z0-9-]+$`)
+)
+
+// checkServerValues refuses hub host, port and server id values that are not
+// plain: they end up in an environment file read by systemd.
+func checkServerValues(host, port, serverID string) error {
+	if !hostRe.MatchString(host) {
+		return fmt.Errorf("invalid hub host %q", host)
+	}
+	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 || port != strconv.Itoa(n) {
+		return fmt.Errorf("invalid hub port %q", port)
+	}
+	if !serverIDRe.MatchString(serverID) {
+		return fmt.Errorf("invalid server id %q", serverID)
+	}
+	return nil
+}
+
 func store(o options, st statusResult, keyPath string) error {
 	if st.Certificate == "" || st.CACertificate == "" || st.ServerID == "" {
 		return errors.New("the server returned an incomplete certificate")
@@ -243,6 +265,9 @@ func store(o options, st statusResult, keyPath string) error {
 	host, port, err := net.SplitHostPort(st.HubAddr)
 	if err != nil {
 		return fmt.Errorf("invalid hub address %q: %w", st.HubAddr, err)
+	}
+	if err := checkServerValues(host, port, st.ServerID); err != nil {
+		return err
 	}
 	if err := writeFile(filepath.Join(o.certDir, "ca.crt"), []byte(st.CACertificate), 0o644); err != nil {
 		return err

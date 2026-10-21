@@ -34,7 +34,7 @@ bash "$SCRIPT" --dry-run --url http://localhost:8080 >/dev/null 2>&1 && pass "ht
 
 # --- unit ---------------------------------------------------------------------
 
-out="$(WF_INSTALL_ROOT=/nonexistent bash "$SCRIPT" --dry-run --cpu-quota 250 --memory-max 1G 2>&1)" || fail "dry-run exits 0" "exit $?"
+out="$(bash "$SCRIPT" --dry-run --cpu-quota 250 --memory-max 1G 2>&1)" || fail "dry-run exits 0" "exit $?"
 
 assert_contains "agent_unit_has_restart_prevent_78" "$out" "RestartPreventExitStatus=78"
 assert_contains "unit: runs the agent binary" "$out" "ExecStart=/usr/local/bin/winterflow-agent"
@@ -55,10 +55,10 @@ assert_contains "env: cert dir" "$out" "HUB_CERT_DIR=/var/lib/winterflow/certs"
 
 # --- enrollment URL -----------------------------------------------------------
 
-out_piped="$(cat "$SCRIPT" | WF_INSTALL_ROOT=/nonexistent bash -s -- --dry-run 2>&1)" || fail "piped dry-run exits 0" "exit $?"
+out_piped="$(cat "$SCRIPT" | bash -s -- --dry-run 2>&1)" || fail "piped dry-run exits 0" "exit $?"
 assert_contains "agent_default_url_piped" "$out_piped" "enroll --url https://api.winterflow.dev"
 
-out_url="$(WF_INSTALL_ROOT=/nonexistent bash "$SCRIPT" --dry-run --url https://api.example.com/ 2>&1)" || fail "--url dry-run exits 0" "exit $?"
+out_url="$(bash "$SCRIPT" --dry-run --url https://api.example.com/ 2>&1)" || fail "--url dry-run exits 0" "exit $?"
 assert_contains "agent_url_flag" "$out_url" "enroll --url https://api.example.com --cert-dir /var/lib/winterflow/certs"
 assert_not_contains "agent_url_flag: default not used" "$out_url" "api.winterflow.dev"
 assert_contains "enroll runs as the service user" "$out_url" "run as 'winterflow'"
@@ -82,13 +82,131 @@ assert_contains "asset template" "$src" "agent-%s-%s"
 assert_not_contains "no old asset name" "$src" "winterflow-agent-%s"
 assert_contains "downloads are checksum-verified" "$src" "sha256sum -c"
 assert_contains "release download is HTTPS from the project repo" "$src" 'GITHUB_REPO="dmtrkzntsv/winterflow"'
-assert_contains "enroll output is not captured" "$src" '--cert-dir "$CERT_DIR" --env-out "$envout"'
+assert_contains "enroll output is not captured" "$src" '--cert-dir "$CERT_DIR" --env-out "$ENROLL_ENV"'
 assert_contains "unit is not enabled before enrollment" "$src" "written, not enabled until enrollment succeeded"
 
 # --- standalone asset name ----------------------------------------------------
 
 assert_contains "standalone_uses_new_asset_name" "$(bash "$STANDALONE" --dry-run 2>&1; cat "$STANDALONE")" "winterflow-%s-%s"
 assert_not_contains "standalone: no old asset name" "$(cat "$STANDALONE")" "winterflow-standalone-"
+
+# --- real runs against a scratch root with stubbed system tools --------------
+
+# Exercises the enrollment exit codes (0/2/3/1), the env merge and the
+# rejection of injected lines. Stubs on PATH stand in for id -u (root check),
+# systemctl, runuser, docker and the ownership commands; a fake agent binary
+# plays `enroll`. Skipped when the tests already run as root.
+if [ "$(id -u)" -eq 0 ]; then
+    pass "stubbed install runs skipped (running as root)"
+else
+    me="$(id -un)"
+    real_id="$(command -v id)"
+    real_install="$(command -v install)"
+    run_install() {
+        # run_install ROOT EXITCODE ENVCONTENT [extra args] -> output, status in RUN_STATUS
+        local r="$1" code="$2" content="$3"; shift 3
+        local bin="$r/stubs"
+        mkdir -p "$bin" "$r/fake"
+        cat > "$bin/id" <<STUB
+#!/bin/sh
+if [ "\$1" = "-u" ] && [ \$# -eq 1 ]; then echo 0; exit 0; fi
+exec "$real_id" "\$@"
+STUB
+        cat > "$bin/install" <<STUB
+#!/bin/bash
+args=()
+while [ \$# -gt 0 ]; do case "\$1" in -o|-g) shift 2 ;; *) args+=("\$1"); shift ;; esac; done
+exec "$real_install" "\${args[@]}"
+STUB
+        printf '#!/bin/sh\necho "systemctl $*" >> "%s/calls"\ncase "$1" in --version) echo "systemd 255";; is-active) exit 0;; esac\nexit 0\n' "$r" > "$bin/systemctl"
+        printf '#!/bin/sh\nshift 3\nexec "$@"\n' > "$bin/runuser"
+        printf '#!/bin/sh\nexit 0\n' > "$bin/docker"
+        printf '#!/bin/sh\nexit 0\n' > "$bin/chown"
+        printf '#!/bin/sh\nexit 0\n' > "$bin/usermod"
+        printf '#!/bin/sh\nexit 0\n' > "$bin/sleep"
+        cat > "$r/fake/agent" <<STUB
+#!/bin/sh
+# fake winterflow-agent: only the enroll subcommand
+[ "\$1" = enroll ] || exit 9
+while [ \$# -gt 0 ]; do case "\$1" in --env-out) out="\$2"; shift 2 ;; --cert-dir) dir="\$2"; shift 2 ;; *) shift ;; esac; done
+echo "CODE: ABC123"
+if [ "$code" = 0 ]; then printf '%s' '$content' > "\$out"; : > "\$dir/agent.crt"; fi
+exit $code
+STUB
+        chmod +x "$bin"/* "$r/fake/agent"
+        mkdir -p "$r/etc/docker" "$r/usr/local/bin" "$r/etc/systemd/system"
+        echo '"log-opts"' > "$r/etc/docker/daemon.json"
+        : > "$r/calls"
+        RUN_STATUS=0
+        RUN_OUT="$(PATH="$bin:$PATH" WF_INSTALL_ROOT="$r" DOCKER_DAEMON_JSON="$r/etc/docker/daemon.json" \
+            bash "$SCRIPT" --yes --user "$me" --binary "$r/fake/agent" "$@" </dev/null 2>&1)" || RUN_STATUS=$?
+    }
+    good=$'HUB_HOST=hub-01.winterflow.dev\nHUB_PORT=50051\nAGENT_ID=srv-1\nWINTERFLOW_API_URL=https://api.winterflow.dev\n'
+
+    r1="$(mktemp -d)"
+    run_install "$r1" 0 "$good"
+    [ "$RUN_STATUS" -eq 0 ] && pass "enroll exit 0: installer succeeds" || fail "enroll exit 0: installer succeeds" "status $RUN_STATUS: $RUN_OUT"
+    envf="$r1/etc/winterflow/agent.env"
+    assert_contains "enroll exit 0: hub host merged" "$(cat "$envf" 2>/dev/null)" "HUB_HOST=hub-01.winterflow.dev"
+    assert_contains "enroll exit 0: base settings kept" "$(cat "$envf" 2>/dev/null)" "HUB_CERT_DIR="
+    assert_contains "enroll exit 0: code shown live" "$RUN_OUT" "CODE: ABC123"
+    assert_contains "enroll exit 0: unit enabled" "$(cat "$r1/calls")" "systemctl enable winterflow-agent"
+    assert_contains "enroll exit 0: unit restarted" "$(cat "$r1/calls")" "systemctl restart winterflow-agent"
+    [ ! -e "$r1/var/lib/winterflow/certs/enroll.env" ] && pass "enroll exit 0: temp enroll.env removed" || fail "enroll exit 0: temp enroll.env removed" "still there"
+    [ "$(stat -c %a "$envf")" = 600 ] && pass "enroll exit 0: agent.env is 0600" || fail "enroll exit 0: agent.env is 0600" "$(stat -c %a "$envf")"
+
+    # Rerun: agent.crt exists, enroll is not called again, env keeps HUB_HOST.
+    : > "$r1/calls"
+    RUN_STATUS=0
+    RUN_OUT="$(PATH="$r1/stubs:$PATH" WF_INSTALL_ROOT="$r1" DOCKER_DAEMON_JSON="$r1/etc/docker/daemon.json" bash "$SCRIPT" --yes --user "$me" --binary "$r1/fake/agent" </dev/null 2>&1)" || RUN_STATUS=$?
+    [ "$RUN_STATUS" -eq 0 ] && pass "enroll exit 3 (rerun): installer succeeds" || fail "enroll exit 3 (rerun): installer succeeds" "status $RUN_STATUS: $RUN_OUT"
+    assert_not_contains "enroll exit 3 (rerun): no new code" "$RUN_OUT" "CODE: ABC123"
+    assert_contains "enroll exit 3 (rerun): unit restarted" "$(cat "$r1/calls")" "systemctl restart winterflow-agent"
+
+    # Rerun where agent.env lost its hub: an error, the unit stays off.
+    grep -v '^HUB_HOST=' "$envf" > "$envf.new" && mv "$envf.new" "$envf"
+    : > "$r1/calls"
+    RUN_STATUS=0
+    RUN_OUT="$(PATH="$r1/stubs:$PATH" WF_INSTALL_ROOT="$r1" DOCKER_DAEMON_JSON="$r1/etc/docker/daemon.json" bash "$SCRIPT" --yes --user "$me" --binary "$r1/fake/agent" </dev/null 2>&1)" || RUN_STATUS=$?
+    [ "$RUN_STATUS" -ne 0 ] && pass "exit 3 without HUB_HOST: installer fails" || fail "exit 3 without HUB_HOST: installer fails" "status 0"
+    assert_contains "exit 3 without HUB_HOST: explains re-enrollment" "$RUN_OUT" "remove ${r1}/var/lib/winterflow/certs/agent.crt"
+    assert_not_contains "exit 3 without HUB_HOST: not restarted" "$(cat "$r1/calls")" "systemctl restart"
+
+    for code in 2 1; do
+        r="$(mktemp -d)"
+        run_install "$r" "$code" ""
+        [ "$RUN_STATUS" -ne 0 ] && pass "enroll exit ${code}: installer fails" || fail "enroll exit ${code}: installer fails" "status 0"
+        assert_contains "enroll exit ${code}: unit disabled and stopped" "$(cat "$r/calls")" "systemctl disable --now winterflow-agent"
+        assert_not_contains "enroll exit ${code}: never enabled" "$(cat "$r/calls")" "systemctl enable winterflow-agent"
+        assert_not_contains "enroll exit ${code}: never started" "$(cat "$r/calls")" "systemctl restart"
+        rm -rf "$r"
+    done
+
+    # Injected lines never reach agent.env; the installer refuses.
+    for bad in $'HUB_HOST=hub.example.com\nHUB_PORT=50051\nAGENT_ID=srv-1\nWINTERFLOW_API_URL=https://api.winterflow.dev\nLD_PRELOAD=/tmp/x.so\n' \
+               $'HUB_HOST=hub.example.com\nHUB_PORT=50051\nAGENT_ID=srv-1 x\nWINTERFLOW_API_URL=https://api.winterflow.dev\n' \
+               $'HUB_HOST=hub.example.com\nHUB_PORT=99999\nAGENT_ID=srv-1\nWINTERFLOW_API_URL=https://api.winterflow.dev\n' \
+               $'HUB_HOST=hub.example.com\nHUB_PORT=50051\nAGENT_ID=srv-1\n'; do
+        r="$(mktemp -d)"
+        run_install "$r" 0 "$bad"
+        [ "$RUN_STATUS" -ne 0 ] && pass "rejected enrollment output: installer fails" || fail "rejected enrollment output: installer fails" "status 0"
+        assert_not_contains "rejected enrollment output: nothing injected" "$(cat "$r/etc/winterflow/agent.env" 2>/dev/null)" "LD_PRELOAD"
+        assert_not_contains "rejected enrollment output: no HUB_HOST written" "$(cat "$r/etc/winterflow/agent.env" 2>/dev/null)" "HUB_HOST="
+        assert_not_contains "rejected enrollment output: never enabled" "$(cat "$r/calls")" "systemctl enable winterflow-agent"
+        assert_contains "rejected enrollment output: unit stopped" "$(cat "$r/calls")" "systemctl disable --now winterflow-agent"
+        rm -rf "$r"
+    done
+
+    # Missing runuser and setpriv: refused before enrolling, unit stays off.
+    r="$(mktemp -d)"
+    run_install "$r" 0 "$good" >/dev/null 2>&1; rm -f "$r/stubs/runuser" "$r/var/lib/winterflow/certs/agent.crt"; : > "$r/calls"
+    if ! command -v setpriv >/dev/null 2>&1; then
+        RUN_STATUS=0
+        RUN_OUT="$(PATH="$r/stubs:$PATH" WF_INSTALL_ROOT="$r" DOCKER_DAEMON_JSON="$r/etc/docker/daemon.json" bash "$SCRIPT" --yes --user "$me" --binary "$r/fake/agent" </dev/null 2>&1)" || RUN_STATUS=$?
+        [ "$RUN_STATUS" -ne 0 ] && pass "no runuser/setpriv: installer fails" || fail "no runuser/setpriv: installer fails" "status 0"
+    fi
+    rm -rf "$r" "$r1"
+fi
 
 echo
 if [ "$FAILURES" -eq 0 ]; then echo "ALL TESTS PASSED"; else echo "${FAILURES} TEST(S) FAILED"; exit 1; fi

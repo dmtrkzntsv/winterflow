@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/signal"
 	"runtime"
@@ -120,7 +121,12 @@ func main() {
 	// backoff on failure, until ctx is canceled. Runs in the background so the
 	// signal handler below stays responsive.
 	log.Info("Starting agent connection supervisor", "agent_id", agentID)
-	go agent.Run(ctx)
+	go func() {
+		if err := agent.Run(ctx); errors.Is(err, grpcagent.ErrRevoked) {
+			log.Error("The hub no longer accepts this server; stopping for good. Re-enroll it with a new code.", "error", err)
+			os.Exit(grpcagent.ExitRevoked)
+		}
+	}()
 
 	// Periodic apps-status push: feeds the API's status cache and the SSE
 	// live-status pipeline. Ticks while the stream is down are skipped.

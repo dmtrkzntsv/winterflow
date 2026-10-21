@@ -47,7 +47,10 @@ type Hub struct {
 type agent struct {
 	streamActive bool
 	lastSeen     time.Time
-	stream       grpc.BidiStreamingServer[proto.AgentMessage, proto.ServerCommand] // Reference to the active stream
+	// fingerprint is the certificate the API authorized at registration;
+	// a stream must present the same one.
+	fingerprint string
+	stream      grpc.BidiStreamingServer[proto.AgentMessage, proto.ServerCommand] // Reference to the active stream
 	// closeStream ends the bound stream's handler (revocation, or a newer
 	// stream of the same agent); nil until a stream is bound.
 	closeStream context.CancelCauseFunc
@@ -72,11 +75,11 @@ func NewHub(log *logger.Logger, cfg *config.ServerConfig, b bus.Bus, auth Author
 	h := &Hub{
 		agents:    make(map[string]*agent),
 		revokedAt: make(map[string]time.Time),
-		cfg:    cfg,
-		log:    log,
-		srv:    createServer(log, cfg),
-		bus:    b,
-		auth:   failClosed(auth),
+		cfg:       cfg,
+		log:       log,
+		srv:       createServer(log, cfg),
+		bus:       b,
+		auth:      failClosed(auth),
 	}
 	proto.RegisterAgentServiceServer(h.srv, h)
 
@@ -424,12 +427,25 @@ func (h *Hub) RegisterAgent(ctx context.Context, req *proto.RegisterAgentRequest
 	if existingAgent, exists := h.agents[agentID]; exists {
 		h.log.Info("Agent already registered, updating info", "agent_id", agentID)
 		existingAgent.lastSeen = time.Now()
+		if existingAgent.fingerprint != fingerprint {
+			// A new certificate was authorized: a stream opened with the
+			// old one must not keep running.
+			if existingAgent.closeStream != nil {
+				existingAgent.closeStream(errReplaced)
+				existingAgent.closeStream = nil
+			}
+			// Unbind it, so its cleanup leaves this registration alone.
+			existingAgent.stream = nil
+			existingAgent.streamActive = false
+			existingAgent.fingerprint = fingerprint
+		}
 	} else {
 		h.log.Info("Registering new agent", "agent_id", agentID)
 		h.agents[agentID] = &agent{
 			streamActive: false,
 			lastSeen:     time.Now(),
 			stream:       nil,
+			fingerprint:  fingerprint,
 		}
 	}
 
@@ -469,7 +485,7 @@ type recvResult struct {
 func (h *Hub) AgentStream(stream grpc.BidiStreamingServer[proto.AgentMessage, proto.ServerCommand]) error {
 	// The stream's identity is its client certificate; every message must
 	// carry the same agent id.
-	certID, _, err := peerIdentity(stream.Context())
+	certID, fingerprint, err := peerIdentity(stream.Context())
 	if err != nil {
 		return status.Errorf(codes.Unauthenticated, "no client certificate: %v", err)
 	}
@@ -490,6 +506,11 @@ func (h *Hub) AgentStream(stream grpc.BidiStreamingServer[proto.AgentMessage, pr
 		h.agentsLock.Unlock()
 		h.log.Warn("Agent not registered, closing stream", "agent_id", certID)
 		return status.Error(codes.Unauthenticated, "agent not registered")
+	}
+	if agent.fingerprint != fingerprint {
+		h.agentsLock.Unlock()
+		h.log.Warn("stream certificate differs from the registered one, closing stream", "agent_id", certID)
+		return status.Error(codes.Unauthenticated, "certificate does not match registration")
 	}
 	if agent.closeStream != nil {
 		agent.closeStream(errReplaced)

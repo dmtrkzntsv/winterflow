@@ -527,3 +527,70 @@ func TestSecondStreamReplacesFirst(t *testing.T) {
 		t.Fatalf("second stream err after revoke = %v, want PermissionDenied", err)
 	}
 }
+
+// reissueAgentCert signs a new agent certificate with the same CN (a
+// different, CA-valid certificate) over the files dialHub reads.
+func reissueAgentCert(t *testing.T, env *e2eEnv, cn string) {
+	t.Helper()
+	cm, err := cert.NewManager(env.cfg, env.log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cm.GenerateAgent(cn); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStreamRejectsOtherCertWithSameCN(t *testing.T) {
+	env := startHub(t, "srv-1", allowAll{})
+	if err := register(env.ctx, dialHub(t, env.cfg), "srv-1"); err != nil {
+		t.Fatal(err)
+	}
+	reissueAgentCert(t, env, "srv-1")
+
+	sctx, cancel := context.WithTimeout(env.ctx, 5*time.Second)
+	defer cancel()
+	stream, err := dialHub(t, env.cfg).AgentStream(sctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = stream.Send(&proto.AgentMessage{Message: &proto.AgentMessage_Heartbeat{Heartbeat: &proto.AgentHeartbeat{
+		Base: &proto.BaseMessage{AgentId: "srv-1"},
+	}}})
+	if _, err := stream.Recv(); status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("err = %v, want Unauthenticated", err)
+	}
+}
+
+// Registering again with a newly authorized certificate closes the stream of
+// the old one and keeps the registration for the new one.
+func TestReregisterWithNewCertClosesOldStream(t *testing.T) {
+	env := startHub(t, "srv-1", allowAll{})
+	oldClient := dialHub(t, env.cfg)
+	if err := register(env.ctx, oldClient, "srv-1"); err != nil {
+		t.Fatal(err)
+	}
+	sctx, cancel := context.WithTimeout(env.ctx, 10*time.Second)
+	defer cancel()
+	oldStream := openStream(t, sctx, oldClient, "srv-1")
+
+	reissueAgentCert(t, env, "srv-1")
+	newClient := dialHub(t, env.cfg)
+	if err := register(env.ctx, newClient, "srv-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := oldStream.Recv(); status.Code(err) != codes.Aborted {
+		t.Fatalf("old stream err = %v, want Aborted", err)
+	}
+
+	newStream := openStream(t, sctx, newClient, "srv-1")
+	if err := env.bus.Publish(env.ctx, env.cfg.HubRequestQueue(env.cfg.GetHubID()), bus.CommandMessage{
+		AgentID: "srv-1", RequestID: "req-new-cert", Type: string(command.TypeAppsList), Payload: []byte(`{}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cmd, err := newStream.Recv()
+	if err != nil || cmd.GetRequest().GetRequestId() != "req-new-cert" {
+		t.Fatalf("new stream got %v, %v", cmd, err)
+	}
+}

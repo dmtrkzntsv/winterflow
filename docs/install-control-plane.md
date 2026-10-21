@@ -114,11 +114,14 @@ no data and joins the existing control plane.
    export WINTERFLOW_R2_ENDPOINT=... WINTERFLOW_R2_ACCESS_KEY_ID=... WINTERFLOW_R2_SECRET_ACCESS_KEY=...
    export WINTERFLOW_HUB_REDIS_URL='rediss://:<pw>@<cp-host>:6380'
    export WINTERFLOW_HUB_TOKEN=wfh_...        # or --token (visible in the process list)
-   sudo -E bash install-hub.sh --public-addr hub-02.winterflow.dev:50051
+   sudo -E bash install-hub.sh --public-addr hub-02.winterflow.dev:50051 \
+     --api-url https://<your API URL>
    ```
 
-   Other flags: `--capacity`, `--listen-port`, `--api-url`, `--version`,
-   `--r2-bucket`, `--yes`, `--dry-run`. The public address's host goes into
+   `--api-url` is the control plane the hub joins; without it the hub joins
+   the hosted control plane, `https://api.winterflow.dev`, so on your own
+   control plane always pass it. Other flags: `--capacity`, `--listen-port`,
+   `--version`, `--r2-bucket`, `--yes`, `--dry-run`. The public address's host goes into
    the hub's certificate and is the hub's id; it cannot change later. The
    hub registers within about 30 s and new servers can then be placed on it.
 
@@ -139,9 +142,12 @@ sudo bash -c 'set -a; . /etc/winterflow/hub.env; exec winterflow-hub undrain'   
 A draining hub announces it, tells each connected agent to move (about 20 per
 second, resent after a minute), and refuses new registrations; agents ask the
 API where to go and reconnect there. The flag has no expiry and survives
-restarts. Stopping the hub service (or `--uninstall`) drains it first and
-waits up to 2 minutes, so a plain `systemctl stop winterflow-hub` is safe;
-agents left behind find another hub on their own after a few minutes.
+hub restarts (it is stored in Redis, so it is lost if Redis loses its data).
+Stopping the hub service (or `--uninstall`) drains it first and waits up to
+2 minutes, so a plain `systemctl stop winterflow-hub` is safe; agents left
+behind find another hub on their own after a few minutes. When no other hub
+accepts agents (a single hub, or every other one draining) a stopping hub
+moves nobody and stops at once; its agents reconnect when it is back.
 
 ## Updating, removing a hub
 

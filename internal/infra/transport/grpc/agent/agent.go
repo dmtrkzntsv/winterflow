@@ -6,7 +6,9 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"net"
 	"os"
+	"strings"
 	"sync"
 	"time"
 	"winterflow/pkg/config"
@@ -196,9 +198,9 @@ func (a *Agent) Connect(ctx context.Context) error {
 
 	creds := credentials.NewTLS(tlsConfig)
 
-	hubAddress := fmt.Sprintf("%s:%s", a.cfg.GetHubHost(), a.cfg.GetHubPort())
+	addr := hubAddress(a.cfg.GetHubHost(), a.cfg.GetHubPort())
 
-	conn, err := grpc.NewClient(hubAddress,
+	conn, err := grpc.NewClient(addr,
 		grpc.WithTransportCredentials(creds),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                15 * time.Second,
@@ -213,8 +215,17 @@ func (a *Agent) Connect(ctx context.Context) error {
 	a.conn = conn
 	a.client = proto.NewAgentServiceClient(conn)
 
-	a.log.Info("Connected to hub", "address", hubAddress)
+	a.log.Info("Connected to hub", "address", addr)
 	return nil
+}
+
+// hubAddress joins HUB_HOST and HUB_PORT, bracketing an IPv6 address (given
+// bare or already in brackets).
+func hubAddress(host, port string) string {
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		host = host[1 : len(host)-1]
+	}
+	return net.JoinHostPort(host, port)
 }
 
 func (a *Agent) Register(ctx context.Context) error {

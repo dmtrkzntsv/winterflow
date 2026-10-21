@@ -5,6 +5,8 @@ package agenthub
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"time"
@@ -22,7 +24,8 @@ const MaxSkew = 5 * time.Minute
 
 var (
 	// ErrUnauthorized: the signature does not verify against the server's
-	// active certificate, or there is no such server (401).
+	// active certificate, that certificate has expired, or there is no such
+	// server (401).
 	ErrUnauthorized = errors.New("signature does not verify")
 	// ErrStaleRequest: the timestamp is more than MaxSkew off (400).
 	ErrStaleRequest = errors.New("timestamp is more than 5 minutes off")
@@ -60,7 +63,7 @@ func New(servers Servers, registry HubLister, picker Picker, log *logger.Logger)
 }
 
 // Where verifies the agent's signature over (serverID, ts, nonce) against
-// the server's active certificate and the timestamp against MaxSkew, then
+// the server's active certificate (refused once it has expired) and the timestamp against MaxSkew, then
 // answers the address of the hub the agent should connect to. moved is false
 // when the server's hub is listed and not draining (the agent's trouble is
 // its own network); otherwise a hub other than the current one is picked
@@ -74,7 +77,11 @@ func (u *UseCase) Where(ctx context.Context, serverID string, ts int64, nonce, s
 		}
 		return "", false, fmt.Errorf("read certificate: %w", err)
 	}
-	if agentsig.Verify(agentauth.CertPEM(stored), agentsig.Payload(serverID, ts, nonce), sig) != nil {
+	certPEM := agentauth.CertPEM(stored)
+	if agentsig.Verify(certPEM, agentsig.Payload(serverID, ts, nonce), sig) != nil {
+		return "", false, ErrUnauthorized
+	}
+	if expired(certPEM, u.now()) {
 		return "", false, ErrUnauthorized
 	}
 	now := u.now().Unix()
@@ -123,6 +130,20 @@ func (u *UseCase) Where(ctx context.Context, serverID string, ts int64, nonce, s
 	}
 	// Its hub dropped out of the list meanwhile: the agent asks again.
 	return "", false, fmt.Errorf("server moved to hub %q, which is not listed: %w", got, hubs.ErrNoHub)
+}
+
+// expired reports whether the PEM certificate's NotAfter is before now (an
+// unreadable one counts as expired; Verify has refused it already).
+func expired(certPEM string, now time.Time) bool {
+	block, _ := pem.Decode([]byte(certPEM))
+	if block == nil {
+		return true
+	}
+	crt, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return true
+	}
+	return crt.NotAfter.Before(now)
 }
 
 func find(listed []model.Hub, id string) (model.Hub, bool) {

@@ -16,8 +16,8 @@ func (h *Handler) Routes(g api.Guards) []api.Route {
 		Middleware: []api.Middleware{g.EnrollLimit},
 		Summary:    "Ask which hub an agent should connect to", Tag: "enroll",
 		Description: "Signed by the agent: header `X-Winterflow-Signature` carries base64 of the ASN.1 " +
-			"ECDSA signature, by the key of the server's active certificate, over SHA-256 of " +
-			"`server_id + \"\\n\" + timestamp + \"\\n\" + nonce`. The timestamp (Unix seconds) must be " +
+			"ECDSA signature, by the key of the server's active (unexpired) certificate, over SHA-256 of " +
+			"`\"winterflow-agent-hub-v1\\n\" + server_id + \"\\n\" + timestamp + \"\\n\" + nonce`. The timestamp (Unix seconds) must be " +
 			"within 5 minutes of the API's clock. When the server's hub is gone or draining, the " +
 			"server is moved to another hub (`moved: true`).",
 		Request: WhereRequest{}, Response: WhereResponse{},

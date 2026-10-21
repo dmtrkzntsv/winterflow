@@ -11,6 +11,8 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"errors"
+	"fmt"
+	"os"
 	"strconv"
 )
 
@@ -20,10 +22,43 @@ const Header = "X-Winterflow-Signature"
 // ErrInvalid: the signature does not verify against the certificate.
 var ErrInvalid = errors.New("signature does not verify")
 
-// Payload is the signed form of a request: serverID, ts and nonce, each on
-// its own line.
+// Domain separates these signatures from anything else the agent key signs
+// (the TLS handshake among them): it is the first line of every payload.
+const Domain = "winterflow-agent-hub-v1"
+
+// Payload is the signed form of a request: Domain, serverID, ts and nonce,
+// each on its own line.
 func Payload(serverID string, ts int64, nonce string) []byte {
-	return []byte(serverID + "\n" + strconv.FormatInt(ts, 10) + "\n" + nonce)
+	return []byte(Domain + "\n" + serverID + "\n" + strconv.FormatInt(ts, 10) + "\n" + nonce)
+}
+
+// LoadKey reads the agent's PEM private key (SEC 1 "EC PRIVATE KEY" or
+// PKCS #8 "PRIVATE KEY" holding an ECDSA key).
+func LoadKey(path string) (*ecdsa.PrivateKey, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read key: %w", err)
+	}
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return nil, errors.New("key is not PEM")
+	}
+	switch block.Type {
+	case "EC PRIVATE KEY":
+		return x509.ParseECPrivateKey(block.Bytes)
+	case "PRIVATE KEY":
+		k, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+		if err != nil {
+			return nil, err
+		}
+		ec, ok := k.(*ecdsa.PrivateKey)
+		if !ok {
+			return nil, errors.New("key is not ECDSA")
+		}
+		return ec, nil
+	default:
+		return nil, fmt.Errorf("unsupported key type %q", block.Type)
+	}
 }
 
 // Sign signs payload with key.

@@ -166,10 +166,11 @@ paths:
   /api/v1/agent/hub:
     post:
       description: 'Signed by the agent: header `X-Winterflow-Signature` carries base64
-        of the ASN.1 ECDSA signature, by the key of the server''s active certificate,
-        over SHA-256 of `server_id + "\n" + timestamp + "\n" + nonce`. The timestamp
-        (Unix seconds) must be within 5 minutes of the API''s clock. When the server''s
-        hub is gone or draining, the server is moved to another hub (`moved: true`).'
+        of the ASN.1 ECDSA signature, by the key of the server''s active (unexpired)
+        certificate, over SHA-256 of `"winterflow-agent-hub-v1\n" + server_id + "\n"
+        + timestamp + "\n" + nonce`. The timestamp (Unix seconds) must be within 5
+        minutes of the API''s clock. When the server''s hub is gone or draining, the
+        server is moved to another hub (`moved: true`).'
       operationId: agentHub
       requestBody:
         content:

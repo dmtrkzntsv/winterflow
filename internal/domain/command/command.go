@@ -84,6 +84,12 @@ const (
 	TypeAgentUpdate Type = "agent.update"
 )
 
+// HubMove is the envelope type a draining hub sends down each agent stream:
+// the agent asks the API which hub to connect to. The agent's transport
+// handles it itself (never the dispatcher) and sends no reply; it is not a
+// command the API dispatches.
+const HubMove Type = "hub.move"
+
 // Detached reports whether a command's answer waits for long work that runs
 // elsewhere (backup.run and backup.restore wait for their run on the backup
 // scheduler, a single-app vars.reload for its turn on the reload worker).

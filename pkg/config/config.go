@@ -263,6 +263,20 @@ func (c *ServerConfig) GetHubPort() string {
 	return os.Getenv("HUB_PORT")
 }
 
+// DefaultWinterflowAPIURL is the API an agent asks where to connect when
+// WINTERFLOW_API_URL is unset.
+const DefaultWinterflowAPIURL = "https://api.winterflow.dev"
+
+// GetWinterflowAPIURL is the API origin the agent asks which hub to connect
+// to (POST /api/v1/agent/hub). Enrollment writes it to the agent's env file;
+// default DefaultWinterflowAPIURL. A trailing slash is dropped.
+func (c *ServerConfig) GetWinterflowAPIURL() string {
+	if v := strings.TrimRight(strings.TrimSpace(os.Getenv("WINTERFLOW_API_URL")), "/"); v != "" {
+		return v
+	}
+	return DefaultWinterflowAPIURL
+}
+
 // GetHubPublicAddr is the host:port agents dial to reach this hub.
 func (c *ServerConfig) GetHubPublicAddr() string {
 	return strings.TrimSpace(os.Getenv("HUB_PUBLIC_ADDR"))

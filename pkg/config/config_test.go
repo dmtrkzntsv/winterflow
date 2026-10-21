@@ -698,3 +698,15 @@ func TestGetApiListenAddr(t *testing.T) {
 		t.Fatalf("API_LISTEN_ADDR=::1 = %q, want [::1]:8080", got)
 	}
 }
+
+func TestGetWinterflowAPIURL(t *testing.T) {
+	c := NewServerConfig("distributed")
+	t.Setenv("WINTERFLOW_API_URL", "")
+	if got := c.GetWinterflowAPIURL(); got != "https://api.winterflow.dev" {
+		t.Fatalf("default = %q", got)
+	}
+	t.Setenv("WINTERFLOW_API_URL", " https://api.example.com/ ")
+	if got := c.GetWinterflowAPIURL(); got != "https://api.example.com" {
+		t.Fatalf("set = %q", got)
+	}
+}

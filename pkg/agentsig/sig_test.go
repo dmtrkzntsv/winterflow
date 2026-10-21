@@ -8,6 +8,8 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"math/big"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -27,7 +29,7 @@ func newKeyCert(t *testing.T) (*ecdsa.PrivateKey, string) {
 }
 
 func TestPayload(t *testing.T) {
-	if got := string(Payload("srv-1", 1700000000, "abc")); got != "srv-1\n1700000000\nabc" {
+	if got := string(Payload("srv-1", 1700000000, "abc")); got != "winterflow-agent-hub-v1\nsrv-1\n1700000000\nabc" {
 		t.Fatalf("payload = %q", got)
 	}
 }
@@ -56,5 +58,39 @@ func TestSignVerify(t *testing.T) {
 	}
 	if err := Verify("not a pem", payload, sig); err == nil {
 		t.Fatal("garbage certificate verified")
+	}
+}
+
+func TestLoadKey(t *testing.T) {
+	key, _ := newKeyCert(t)
+	dir := t.TempDir()
+	sec1, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkcs8, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, block := range map[string]*pem.Block{
+		"sec1":  {Type: "EC PRIVATE KEY", Bytes: sec1},
+		"pkcs8": {Type: "PRIVATE KEY", Bytes: pkcs8},
+	} {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, pem.EncodeToMemory(block), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		got, err := LoadKey(path)
+		if err != nil || !got.Equal(key) {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+	bad := filepath.Join(dir, "bad")
+	_ = os.WriteFile(bad, []byte("nope"), 0o600)
+	if _, err := LoadKey(bad); err == nil {
+		t.Fatal("garbage key loaded")
+	}
+	if _, err := LoadKey(filepath.Join(dir, "missing")); err == nil {
+		t.Fatal("missing key loaded")
 	}
 }

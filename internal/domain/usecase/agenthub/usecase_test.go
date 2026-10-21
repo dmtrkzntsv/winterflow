@@ -275,3 +275,15 @@ func TestWhereConcurrentMovesAgree(t *testing.T) {
 		t.Fatalf("updates %d, stored %q, answered %q", f.servers.updates, f.servers.hub["srv-1"], a.addr)
 	}
 }
+
+func TestWhereExpiredCertificate(t *testing.T) {
+	f := setup(t, "hub-01", []model.Hub{hub1})
+	// The certificate expires at now+1h: an hour and a minute later it is
+	// refused even with a good signature and a fresh timestamp.
+	later := now.Add(time.Hour + time.Minute)
+	f.uc.now = func() time.Time { return later }
+	ts := later.Unix()
+	if _, _, err := f.uc.Where(context.Background(), "srv-1", ts, "n1", f.sign(t, "srv-1", ts, "n1")); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("expired certificate: err = %v, want ErrUnauthorized", err)
+	}
+}

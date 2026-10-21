@@ -2,15 +2,18 @@ package agent
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
 	"time"
+	"winterflow/pkg/agentsig"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
 	"winterflow/pkg/util"
@@ -83,6 +86,17 @@ type Agent struct {
 	// now and sleep are the clock and waiter Run uses (tests replace them).
 	now   func() time.Time
 	sleep func(ctx context.Context, d time.Duration) bool
+
+	// Migration: the API (apiURL) names the hub to connect to, asked with a
+	// request signed by the agent key (loadKey); hubStore keeps its answer.
+	// fallbackHub is the env's HUB_HOST/HUB_PORT address (tests replace it).
+	hubStore    *HubStore
+	apiURL      string
+	httpClient  *http.Client
+	loadKey     func() (*ecdsa.PrivateKey, error)
+	fallbackHub func() string
+	// moveCh carries a hub.move from the stream to Run (buffered, 1).
+	moveCh chan struct{}
 }
 
 const streamSettle = 2 * time.Minute
@@ -101,7 +115,7 @@ const maxDenials = 5
 var defaultDeniedBackoff = []time.Duration{time.Minute, 2 * time.Minute, 3 * time.Minute, 4 * time.Minute}
 
 func NewAgent(log *logger.Logger, cfg *config.ServerConfig, agentID string) *Agent {
-	return &Agent{
+	a := &Agent{
 		cfg:             cfg,
 		log:             log,
 		agentID:         agentID,
@@ -113,7 +127,15 @@ func NewAgent(log *logger.Logger, cfg *config.ServerConfig, agentID string) *Age
 		streamReady:     make(chan struct{}),
 		registered:      false,
 		deniedBackoff:   defaultDeniedBackoff,
+		moveCh:          make(chan struct{}, 1),
 	}
+	if cfg != nil {
+		a.hubStore = NewHubStore(cfg.GetAgentDataDir())
+		a.apiURL = cfg.GetWinterflowAPIURL()
+		keyPath := cfg.GetAgentKeyPath()
+		a.loadKey = func() (*ecdsa.PrivateKey, error) { return agentsig.LoadKey(keyPath) }
+	}
+	return a
 }
 
 // detachedReplyWait bounds how long a detached command's reply waits for a
@@ -198,7 +220,7 @@ func (a *Agent) Connect(ctx context.Context) error {
 
 	creds := credentials.NewTLS(tlsConfig)
 
-	addr := hubAddress(a.cfg.GetHubHost(), a.cfg.GetHubPort())
+	addr := a.hubAddr()
 
 	conn, err := grpc.NewClient(addr,
 		grpc.WithTransportCredentials(creds),
@@ -459,6 +481,12 @@ func (a *Agent) SendEvent(kind string, payload []byte) error {
 // runs in its own goroutine so long-running commands don't block the receive
 // loop.
 func (a *Agent) handleRequest(ctx context.Context, stream grpc.BidiStreamingClient[proto.AgentMessage, proto.ServerCommand], req *proto.RequestEnvelope) {
+	// hub.move is the hub's own message (it is draining), not a command:
+	// Run asks the API where to go. No reply.
+	if command.Type(req.Type) == command.HubMove {
+		a.requestMove()
+		return
+	}
 	// A detached command (backup.run) waits for work that outlives a stream
 	// (the hub recycles every connection about every two hours): it runs on
 	// the agent's lifetime, and its reply goes out on whichever stream is
@@ -547,6 +575,13 @@ func (a *Agent) replyWait() time.Duration {
 // answers (from bring-up or from a stream the hub cut). Only PermissionDenied
 // counts: Unavailable and every other failure retry forever; a stream that
 // ends for another reason resets the count.
+//
+// It asks the API which hub to connect to (migrate) when the hub sends
+// hub.move, when the hub answers FailedPrecondition (the server belongs to
+// another hub, or the hub is draining), and once the agent has had no stream
+// for unreachableAsk, then every unreachableAsk while that lasts. A move is
+// stored in hub.json and dialed at once; a stay or a failed ask keeps
+// retrying the current hub.
 func (a *Agent) Run(ctx context.Context) error {
 	baseBackoff, maxBackoff := 1*time.Second, 30*time.Second
 	if a.retryBackoff != nil {
@@ -584,20 +619,54 @@ func (a *Agent) Run(ctx context.Context) error {
 		return sleep(ctx, wait), nil
 	}
 
+	// downSince is when the agent last had no stream (Run's start, or the
+	// end of the last one); lastAsk when it last asked the API where to go.
+	downSince := now()
+	var lastAsk time.Time
+	ask := func(why string) bool {
+		lastAsk = now()
+		return a.migrate(ctx, why)
+	}
+	// unreachable asks once the hub has been out of reach for
+	// unreachableAsk, then every unreachableAsk while it still is.
+	unreachable := func() bool {
+		if now().Sub(downSince) < unreachableAsk {
+			return false
+		}
+		if !lastAsk.IsZero() && now().Sub(lastAsk) < unreachableAsk {
+			return false
+		}
+		return ask("hub unreachable")
+	}
+
 	for {
 		if ctx.Err() != nil {
 			return nil
 		}
+		a.drainMove()
 
 		done, streamErr, err := bringUp(ctx)
 		if err != nil {
 			a.teardownConn()
-			if status.Code(err) == codes.PermissionDenied {
+			switch status.Code(err) {
+			case codes.PermissionDenied:
 				ok, rerr := refused(err)
 				if !ok {
 					return rerr
 				}
 				continue
+			case codes.FailedPrecondition:
+				// The hub says this server belongs elsewhere (or it is
+				// draining): ask now. Not a denial.
+				if ask("hub refused: " + err.Error()) {
+					backoff = baseBackoff
+					continue
+				}
+			default:
+				if unreachable() {
+					backoff = baseBackoff
+					continue
+				}
 			}
 			a.log.Warn("agent connection attempt failed, will retry",
 				"error", err, "retry_in", backoff.String())
@@ -609,17 +678,36 @@ func (a *Agent) Run(ctx context.Context) error {
 		}
 
 		upAt := now()
-		// Connected and streaming: wait for the stream to end or for shutdown.
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-done:
+		// Connected and streaming: wait for the stream to end, for shutdown,
+		// or for the hub to tell this agent to move.
+		moving := false
+	wait:
+		for {
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-done:
+				break wait
+			case <-a.moveCh:
+				if ask("hub asked to move") {
+					moving = true
+					break wait
+				}
+			}
+		}
+		if moving {
+			a.teardownConn()
+			denials = 0
+			backoff = baseBackoff
+			downSince = now()
+			continue
 		}
 		var endErr error
 		if streamErr != nil {
 			endErr = streamErr()
 		}
 		a.teardownConn()
+		downSince = now()
 		if now().Sub(upAt) >= settle {
 			// A stream that stayed up was a real connection: it resets the
 			// count even when it ends in a denial (a later revoke).
@@ -636,6 +724,9 @@ func (a *Agent) Run(ctx context.Context) error {
 		}
 		denials = 0
 		backoff = baseBackoff
+		if status.Code(endErr) == codes.FailedPrecondition && ask("hub ended the stream: "+endErr.Error()) {
+			continue
+		}
 		a.log.Warn("agent stream ended, reconnecting", "agent_id", a.agentID, "error", endErr)
 		if !sleep(ctx, backoff) {
 			return nil

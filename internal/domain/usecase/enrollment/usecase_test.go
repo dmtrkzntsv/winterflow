@@ -91,7 +91,7 @@ func (f *fakeRepo) CountPending(context.Context) (int, error) {
 }
 func (f *fakeRepo) Prune(_ context.Context, now time.Time) error {
 	for id, e := range f.byID {
-		if e.State == model.EnrollmentClaimed && now.Sub(e.ClaimedAt) > ClaimedTTL {
+		if e.State == model.EnrollmentClaimed && now.Sub(e.ClaimedAt) > 2*time.Hour {
 			delete(f.byID, id)
 		}
 	}
@@ -323,10 +323,14 @@ func TestStatusClaimedIsIdempotent(t *testing.T) {
 	if a.Certificate == "" || a != b {
 		t.Fatal("claimed status must repeat")
 	}
+	// Past ClaimedTTL the certificate is no longer handed out, but the agent
+	// learns why instead of reading "unknown enrollment".
 	*now = now.Add(ClaimedTTL + time.Second)
-	if _, err := e.uc.Status(ctx, r.PollSecret); !errors.Is(err, model.ErrNotFound) {
-		t.Fatalf("got %v", err)
+	st, err := e.uc.Status(ctx, r.PollSecret)
+	if err != nil || st.State != "uncollected" || st.Certificate != "" || st.ServerID != "" {
+		t.Fatalf("past ClaimedTTL: %+v %v", st, err)
 	}
+	*now = now.Add(3 * time.Hour)
 	e.repo.Prune(ctx, *now)
 	if _, err := e.uc.Status(ctx, r.PollSecret); !errors.Is(err, model.ErrNotFound) {
 		t.Fatalf("after prune: %v", err)

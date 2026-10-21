@@ -203,8 +203,10 @@ func TestPrune(t *testing.T) {
 		{model.EnrollmentPending, n.Add(-121 * time.Minute), time.Time{}, false},
 		{model.EnrollmentFailed, n.Add(-30 * time.Minute), time.Time{}, true},
 		{model.EnrollmentFailed, n.Add(-3 * time.Hour), time.Time{}, false},
-		{model.EnrollmentClaimed, n.Add(-5 * time.Hour), n.Add(-14 * time.Minute), true},
-		{model.EnrollmentClaimed, n.Add(-5 * time.Hour), n.Add(-16 * time.Minute), false},
+		// Kept past the 15-minute collection window so the agent reads
+		// "uncollected" rather than an unknown enrollment.
+		{model.EnrollmentClaimed, n.Add(-5 * time.Hour), n.Add(-119 * time.Minute), true},
+		{model.EnrollmentClaimed, n.Add(-5 * time.Hour), n.Add(-121 * time.Minute), false},
 	}
 	for i, c := range cases {
 		e := enrollment(i, "", time.Time{})

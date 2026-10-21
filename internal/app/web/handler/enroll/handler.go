@@ -61,7 +61,8 @@ type CodeResponse struct {
 }
 
 // StatusResponse is the data of the status route. State is pending, expired,
-// failed or claimed; the claim fields are set once claimed.
+// failed, claimed or uncollected (claimed, but the certificate was not
+// collected within 15 minutes); the claim fields are set once claimed.
 type StatusResponse struct {
 	State         string     `json:"state"`
 	Code          string     `json:"code,omitempty"`

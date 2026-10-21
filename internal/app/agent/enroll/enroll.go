@@ -154,6 +154,9 @@ func run(ctx context.Context, o options) (int, error) {
 			printCode(o.out, res)
 		case "failed":
 			return gaveUp(o)
+		case "uncollected":
+			fmt.Fprintln(o.out, "This server was added but the certificate wasn't collected in time. Remove it in Winterflow and run the installer again.")
+			return ExitError, nil
 		case "claimed":
 			if err := store(o, st, csrKeyPath); err != nil {
 				return ExitError, err

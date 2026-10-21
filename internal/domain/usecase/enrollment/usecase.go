@@ -56,7 +56,7 @@ type StartResult struct {
 }
 
 type Status struct {
-	State                                         string // pending|expired|failed|claimed
+	State                                         string // pending|expired|failed|claimed|uncollected
 	Code                                          string
 	ExpiresAt                                     time.Time
 	CodesLeft                                     int
@@ -182,7 +182,8 @@ func (u *UseCase) Status(ctx context.Context, pollSecret string) (Status, error)
 	switch e.State {
 	case model.EnrollmentClaimed:
 		if !e.ClaimedAt.IsZero() && now.After(e.ClaimedAt.Add(ClaimedTTL)) {
-			return Status{}, model.ErrNotFound
+			// The server exists but its certificate is no longer handed out.
+			return Status{State: "uncollected"}, nil
 		}
 		return Status{State: "claimed", CodesLeft: left, ServerID: e.ServerID, Certificate: e.Certificate,
 			CACertificate: u.signer.CACertPEM(), HubAddr: e.HubAddr}, nil

@@ -42,7 +42,9 @@ type querier interface {
 
 const (
 	pendingMaxAge = 2 * time.Hour
-	claimedMaxAge = 15 * time.Minute
+	// Past the usecase's 15-minute ClaimedTTL a claimed row only answers
+	// "uncollected"; it is kept that long so a late agent learns why.
+	claimedMaxAge = 2 * time.Hour
 	maxNameLen    = 64
 )
 

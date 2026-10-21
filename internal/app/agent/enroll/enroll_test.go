@@ -170,6 +170,22 @@ func TestEnrollGivesUp(t *testing.T) {
 	}
 }
 
+func TestEnrollUncollected(t *testing.T) {
+	s := &script{t: t, statuses: []string{"uncollected"}}
+	srv := httptest.NewServer(s.handler())
+	defer srv.Close()
+	dir := t.TempDir()
+	var out bytes.Buffer
+	code, _ := run(context.Background(), opts(srv.URL, dir, &out))
+	want := "This server was added but the certificate wasn't collected in time. Remove it in Winterflow and run the installer again."
+	if code != ExitError || !strings.Contains(out.String(), want) {
+		t.Fatalf("code=%d out=%s", code, out.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "agent.crt")); err == nil {
+		t.Fatal("agent.crt written")
+	}
+}
+
 func TestEnrollGivesUpOnNoCodesLeft(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/agent/enroll", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(409) })

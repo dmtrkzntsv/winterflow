@@ -30,7 +30,7 @@ func main() {
 	defer stop()
 
 	hubDeps := bootstrap.BootstrapHUB(ctx, log, cfg)
-	hub := grpchub.NewHub(log, cfg, hubDeps.Bus)
+	hub := grpchub.NewHub(log, cfg, hubDeps.Bus, hubDeps.Auth)
 
 	if err := hub.StartBusBridge(ctx); err != nil {
 		log.Fatal("Failed to start bus bridge", "error", err)

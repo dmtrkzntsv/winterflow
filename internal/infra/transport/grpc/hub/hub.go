@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -35,12 +36,16 @@ type Hub struct {
 	log        *logger.Logger
 	srv        *grpc.Server
 	bus        bus.Bus
+	auth       Authorizer
 }
 
 type agent struct {
 	streamActive bool
 	lastSeen     time.Time
 	stream       grpc.BidiStreamingServer[proto.AgentMessage, proto.ServerCommand] // Reference to the active stream
+	// closeStream ends the bound stream's handler (revocation); nil until a
+	// stream is bound.
+	closeStream context.CancelCauseFunc
 
 	// sendMu serializes writes to the stream: gRPC forbids concurrent SendMsg
 	// on one stream, and both the bus bridge (dispatchToAgent) and the
@@ -55,13 +60,17 @@ func (a *agent) send(stream grpc.BidiStreamingServer[proto.AgentMessage, proto.S
 	return stream.Send(cmd)
 }
 
-func NewHub(log *logger.Logger, cfg *config.ServerConfig, b bus.Bus) *Hub {
+// NewHub builds the hub. auth decides whether a connecting agent's
+// certificate is still its server's active one; a nil auth refuses every
+// registration as Unavailable.
+func NewHub(log *logger.Logger, cfg *config.ServerConfig, b bus.Bus, auth Authorizer) *Hub {
 	h := &Hub{
 		agents: make(map[string]*agent),
 		cfg:    cfg,
 		log:    log,
 		srv:    createServer(log, cfg),
 		bus:    b,
+		auth:   auth,
 	}
 	proto.RegisterAgentServiceServer(h.srv, h)
 
@@ -72,7 +81,8 @@ func NewHub(log *logger.Logger, cfg *config.ServerConfig, b bus.Bus) *Hub {
 // (bus:requests:<hub_id>, where the API routes the commands of the servers
 // assigned to it) and forwards each command onto the target agent's active
 // gRPC stream. It runs until ctx is cancelled. Agent responses are published
-// back onto the response queue from AgentStream.
+// back onto the response queue from AgentStream. It also subscribes the hub
+// broadcast channel, where the API announces revoked servers.
 func (h *Hub) StartBusBridge(ctx context.Context) error {
 	if h.bus == nil {
 		h.log.Warn("no bus configured, hub will not forward commands")
@@ -86,9 +96,33 @@ func (h *Hub) StartBusBridge(ctx context.Context) error {
 	bus.SubscribeJSON(ctx, h.bus, queue, h.log, func(cmd bus.CommandMessage) {
 		h.dispatchToAgent(cmd)
 	})
+	bus.SubscribeJSON(ctx, h.bus, h.cfg.GetHubBroadcastChannel(), h.log, func(msg bus.HubBroadcast) {
+		if msg.Type == bus.HubBroadcastRevoked && msg.ServerID != "" {
+			h.revoke(msg.ServerID)
+		}
+	})
 	go h.reapStaleAgents(ctx)
 	h.log.Info("hub bus bridge started", "request_queue", queue)
 	return nil
+}
+
+// errRevoked ends a revoked server's stream.
+var errRevoked = errors.New("server revoked")
+
+// revoke drops a server's agent if this hub holds it: its stream (if bound)
+// is closed and its registration deleted.
+func (h *Hub) revoke(serverID string) {
+	h.agentsLock.Lock()
+	defer h.agentsLock.Unlock()
+	a, ok := h.agents[serverID]
+	if !ok {
+		return
+	}
+	if a.closeStream != nil {
+		a.closeStream(errRevoked)
+	}
+	delete(h.agents, serverID)
+	h.log.Info("server revoked, agent dropped", "agent_id", serverID)
 }
 
 const (
@@ -303,6 +337,30 @@ func (h *Hub) RegisterAgent(ctx context.Context, req *proto.RegisterAgentRequest
 		return nil, status.Errorf(codes.InvalidArgument, "agent_id is required")
 	}
 
+	certID, fingerprint, err := peerIdentity(ctx)
+	if err != nil {
+		return nil, status.Errorf(codes.Unauthenticated, "no client certificate: %v", err)
+	}
+	if agentID != certID {
+		h.log.Warn("agent id does not match certificate", "agent_id", agentID, "cert_cn", certID)
+		return nil, status.Error(codes.PermissionDenied, "agent id does not match certificate")
+	}
+	if h.auth == nil {
+		return nil, status.Error(codes.Unavailable, "cannot verify server right now")
+	}
+	verdict, reason, err := h.auth.Authorize(ctx, agentID, fingerprint)
+	if err != nil {
+		h.log.Warn("agent auth check failed", "agent_id", agentID, "error", err)
+		return nil, status.Error(codes.Unavailable, "cannot verify server right now")
+	}
+	if verdict != bus.VerdictAllowed {
+		if reason == "" {
+			reason = string(verdict)
+		}
+		h.log.Warn("agent refused", "agent_id", agentID, "verdict", verdict, "reason", reason)
+		return nil, status.Errorf(codes.PermissionDenied, "server %s: %s", verdict, reason)
+	}
+
 	h.log.Info("Agent registration request",
 		"agent_id", agentID,
 		"capabilities", req.Capabilities,
@@ -350,7 +408,42 @@ type capabilitiesEvent struct {
 	Features     map[string]bool   `json:"features"`
 }
 
+// recvResult is one Recv outcome handed from the receive goroutine to the
+// stream handler.
+type recvResult struct {
+	msg *proto.AgentMessage
+	err error
+}
+
 func (h *Hub) AgentStream(stream grpc.BidiStreamingServer[proto.AgentMessage, proto.ServerCommand]) error {
+	// The stream's identity is its client certificate; every message must
+	// carry the same agent id.
+	certID, _, err := peerIdentity(stream.Context())
+	if err != nil {
+		return status.Errorf(codes.Unauthenticated, "no client certificate: %v", err)
+	}
+
+	// ctx ends when the client goes away or the server is revoked
+	// (agent.closeStream); Recv runs on its own goroutine so the handler can
+	// return on revocation while a Recv is blocked. Returning cancels the
+	// stream, which unblocks that Recv.
+	ctx, closeStream := context.WithCancelCause(stream.Context())
+	defer closeStream(nil)
+	msgs := make(chan recvResult)
+	go func() {
+		for {
+			msg, err := stream.Recv()
+			select {
+			case msgs <- recvResult{msg: msg, err: err}:
+			case <-ctx.Done():
+				return
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
 	var agentID string
 	var agent *agent
 
@@ -370,13 +463,28 @@ func (h *Hub) AgentStream(stream grpc.BidiStreamingServer[proto.AgentMessage, pr
 		}
 	}()
 
-	h.log.Info("New agent stream connection established")
+	h.log.Info("New agent stream connection established", "agent_id", certID)
 
 	for {
-		msg, err := stream.Recv()
-		if err != nil {
-			h.log.Error("Error receiving message from agent", "error", err, "agent_id", agentID)
-			return err
+		var msg *proto.AgentMessage
+		select {
+		case <-ctx.Done():
+			if errors.Is(context.Cause(ctx), errRevoked) {
+				h.log.Info("closing revoked agent's stream", "agent_id", certID)
+				return status.Error(codes.PermissionDenied, "server revoked")
+			}
+			return ctx.Err()
+		case r := <-msgs:
+			if r.err != nil {
+				h.log.Error("Error receiving message from agent", "error", r.err, "agent_id", agentID)
+				return r.err
+			}
+			msg = r.msg
+		}
+
+		if id, ok := messageAgentID(msg); ok && id != certID {
+			h.log.Warn("agent id does not match certificate in stream", "cert_cn", certID, "received", id)
+			return status.Error(codes.PermissionDenied, "agent id does not match certificate")
 		}
 
 		switch payload := msg.Message.(type) {
@@ -386,9 +494,8 @@ func (h *Hub) AgentStream(stream grpc.BidiStreamingServer[proto.AgentMessage, pr
 				continue
 			}
 
-			currentAgentID := payload.Heartbeat.Base.AgentId
 			if agentID == "" {
-				agentID = currentAgentID
+				agentID = certID
 				h.log.Info("Agent stream identified", "agent_id", agentID)
 
 				h.agentsLock.Lock()
@@ -396,6 +503,7 @@ func (h *Hub) AgentStream(stream grpc.BidiStreamingServer[proto.AgentMessage, pr
 					agent = existingAgent
 					agent.streamActive = true
 					agent.stream = stream
+					agent.closeStream = closeStream
 					agent.lastSeen = time.Now()
 				} else {
 					h.agentsLock.Unlock()
@@ -403,9 +511,6 @@ func (h *Hub) AgentStream(stream grpc.BidiStreamingServer[proto.AgentMessage, pr
 					return status.Errorf(codes.Unauthenticated, "agent not registered")
 				}
 				h.agentsLock.Unlock()
-			} else if currentAgentID != agentID {
-				h.log.Warn("Agent ID mismatch in stream", "expected", agentID, "received", currentAgentID)
-				return status.Errorf(codes.InvalidArgument, "agent ID mismatch")
 			}
 
 			if agent != nil {
@@ -443,20 +548,12 @@ func (h *Hub) AgentStream(stream grpc.BidiStreamingServer[proto.AgentMessage, pr
 		case *proto.AgentMessage_Event:
 			// Unsolicited agent push (e.g. apps.status): forward verbatim onto
 			// the events queue. Also a liveness signal.
-			sourceID := agentID
-			if sourceID == "" && payload.Event.Base != nil {
-				sourceID = payload.Event.Base.AgentId
-			}
-			if sourceID == "" {
-				h.log.Warn("event without agent identity, dropping", "kind", payload.Event.Kind)
-				continue
-			}
 			if agent != nil {
 				h.agentsLock.Lock()
 				agent.lastSeen = time.Now()
 				h.agentsLock.Unlock()
 			}
-			h.publishEvent(bus.EventKind(payload.Event.Kind), sourceID, payload.Event.Payload)
+			h.publishEvent(bus.EventKind(payload.Event.Kind), certID, payload.Event.Payload)
 
 		case *proto.AgentMessage_Response:
 			if payload.Response.Base == nil {
@@ -465,7 +562,7 @@ func (h *Hub) AgentStream(stream grpc.BidiStreamingServer[proto.AgentMessage, pr
 			}
 
 			h.log.Info("Received response from agent",
-				"agent_id", agentID,
+				"agent_id", certID,
 				"request_id", payload.Response.RequestId,
 				"type", payload.Response.Type,
 				"response_code", payload.Response.Base.ResponseCode)
@@ -479,4 +576,24 @@ func (h *Hub) AgentStream(stream grpc.BidiStreamingServer[proto.AgentMessage, pr
 			h.log.Warn("Received unknown message type from agent", "agent_id", agentID)
 		}
 	}
+}
+
+// messageAgentID returns the agent id a stream message claims; ok is false
+// when the message carries no header.
+func messageAgentID(msg *proto.AgentMessage) (id string, ok bool) {
+	switch p := msg.Message.(type) {
+	case *proto.AgentMessage_Heartbeat:
+		if b := p.Heartbeat.GetBase(); b != nil {
+			return b.AgentId, true
+		}
+	case *proto.AgentMessage_Event:
+		if b := p.Event.GetBase(); b != nil {
+			return b.AgentId, true
+		}
+	case *proto.AgentMessage_Response:
+		if b := p.Response.GetBase(); b != nil {
+			return b.AgentId, true
+		}
+	}
+	return "", false
 }

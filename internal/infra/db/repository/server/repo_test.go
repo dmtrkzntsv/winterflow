@@ -382,3 +382,46 @@ func TestCountServersByHub(t *testing.T) {
 		t.Fatalf("counts = %v", got)
 	}
 }
+
+func countRows(t *testing.T, d *db.DB, table, serverID string) string {
+	t.Helper()
+	return dbtest.QueryString(t, d, `SELECT count(*) FROM `+table+` WHERE server_id = ?`, serverID)
+}
+
+func TestDeleteServerCascades(t *testing.T) {
+	repo, d := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	dbtest.SeedServer(t, d, org1, srv1)
+	dbtest.SeedServer(t, d, org2, srv2)
+	app1, app2 := dbtest.ID(41), dbtest.ID(42)
+	dbtest.SeedApp(t, d, app1, srv1, "one")
+	dbtest.SeedApp(t, d, app2, srv2, "two")
+	for _, s := range []string{srv1, srv2} {
+		if err := repo.SaveCapabilities(ctx, s, map[string]string{"k": "v"}, map[string]bool{"f": true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dbtest.Exec(t, d, `INSERT INTO app_domains (domain, app_id, server_id, kind, ssl, upstream_port, target, code, updated_at)
+		VALUES ('a.example.com', ?, ?, 'ingress', false, 0, '', 0, '2026-01-01 00:00:00')`, app1, srv1)
+	dbtest.Exec(t, d, `INSERT INTO agent_enrollments (enrollment_id, poll_secret_hash, csr, hostname, codes_issued, state, server_id)
+		VALUES (?, 'h', 'c', 'box', 1, 'claimed', ?)`, dbtest.ID(51), srv1)
+
+	if err := repo.DeleteServer(ctx, srv1); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range []string{"servers", "server_capabilities", "server_features", "apps", "app_domains", "agent_enrollments"} {
+		if got := countRows(t, d, table, srv1); got != "0" {
+			t.Errorf("%s still has %s rows of the deleted server", table, got)
+		}
+	}
+	// The other server is untouched.
+	for _, table := range []string{"servers", "server_capabilities", "apps"} {
+		if got := countRows(t, d, table, srv2); got == "0" {
+			t.Errorf("%s lost the other server's rows", table)
+		}
+	}
+	// Unknown id is a no-op.
+	if err := repo.DeleteServer(ctx, dbtest.ID(99)); err != nil {
+		t.Fatal(err)
+	}
+}

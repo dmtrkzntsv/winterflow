@@ -183,3 +183,21 @@ func TestLatestReportKeepsTimeAndRevision(t *testing.T) {
 		t.Fatal("an expired report is still served")
 	}
 }
+
+func TestForgetDropsEverything(t *testing.T) {
+	c := NewCache(time.Minute)
+	now := time.Now()
+	rev := int64(3)
+	c.SetAppStatus("s1", nil, &rev, now)
+	c.SetVarsRevision("s1", 3)
+	c.Forget("s1")
+	if c.ServerLiveness("s1", now) != LivenessUnknown {
+		t.Error("liveness kept")
+	}
+	if _, ok := c.LatestReport("s1", now); ok {
+		t.Error("report kept")
+	}
+	if _, ok := c.VarsRevision("s1"); ok {
+		t.Error("vars revision kept")
+	}
+}

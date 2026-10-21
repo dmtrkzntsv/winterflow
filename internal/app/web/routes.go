@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"slices"
 	"winterflow/internal/app/web/spa"
+	"winterflow/internal/domain/port"
 	webdist "winterflow/web"
 
 	"winterflow/internal/app/web/api"
@@ -101,10 +102,14 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 	// spec-only table) has no enrollment usecase.
 	var (
 		claimer     server.Claimer
+		revoker     port.Revoker
 		enrollments henroll.Enrollments
 	)
 	if d.Enrollment != nil {
 		claimer, enrollments = d.Enrollment, d.Enrollment
+	}
+	if d.Revoker != nil {
+		revoker = d.Revoker
 	}
 	enrollAPI := henroll.NewHandler(&henroll.Deps{Logger: d.Log, Enrollments: enrollments})
 	serversAPI := server.NewHandler(&server.Deps{
@@ -112,6 +117,8 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 		ServerRepository: d.ServerRepository,
 		UserService:      d.UserService,
 		StatusCache:      d.StatusCache,
+		LatestMetrics:    d.LatestMetrics,
+		Revoker:          revoker,
 		Cfg:              d.Cfg,
 		Enrollment:       claimer,
 	})

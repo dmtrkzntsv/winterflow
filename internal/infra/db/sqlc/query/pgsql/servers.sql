@@ -97,3 +97,17 @@ SELECT hub_id, count(*) AS servers FROM servers
 WHERE hub_id IS NOT NULL
 GROUP BY hub_id
 ORDER BY hub_id;
+
+-- name: DeleteServerRow :exec
+-- Cascades to the server's certificates, capabilities, features, apps,
+-- storages, shared variables, metrics, alerts and template instances.
+DELETE FROM servers WHERE server_id = $1;
+
+-- name: DeleteServerDomainRows :exec
+-- app_domains carries no foreign key to servers.
+DELETE FROM app_domains WHERE server_id = $1;
+
+-- name: DeleteServerEnrollments :exec
+-- agent_enrollments.server_id carries no foreign key either; the row holds
+-- the issued certificate.
+DELETE FROM agent_enrollments WHERE server_id = $1;

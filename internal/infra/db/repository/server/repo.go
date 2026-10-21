@@ -59,6 +59,9 @@ type querier interface {
 	InsertCertificate(ctx context.Context, db backend.DBTX, p certificateParams) error
 	GetServerHub(ctx context.Context, db backend.DBTX, serverID string) (*string, error)
 	CountServersByHub(ctx context.Context, db backend.DBTX) ([]hubCountRow, error)
+	DeleteServerRow(ctx context.Context, db backend.DBTX, serverID string) error
+	DeleteServerDomainRows(ctx context.Context, db backend.DBTX, serverID string) error
+	DeleteServerEnrollments(ctx context.Context, db backend.DBTX, serverID string) error
 }
 
 // Repo is the servers repository.
@@ -335,4 +338,20 @@ func (r *Repo) CountServersByHub(ctx context.Context) (map[string]int, error) {
 		}
 	}
 	return out, nil
+}
+
+// DeleteServer removes the server and everything that hangs off it in one
+// transaction: foreign keys cascade most tables, the two without one
+// (app_domains, agent_enrollments) are deleted explicitly. Unknown id: no-op.
+func (r *Repo) DeleteServer(ctx context.Context, serverID string) error {
+	return r.tx.WithTx(ctx, func(ctx context.Context) error {
+		db := r.tx.Querier(ctx)
+		if err := r.q.DeleteServerDomainRows(ctx, db, serverID); err != nil {
+			return err
+		}
+		if err := r.q.DeleteServerEnrollments(ctx, db, serverID); err != nil {
+			return err
+		}
+		return r.q.DeleteServerRow(ctx, db, serverID)
+	})
 }

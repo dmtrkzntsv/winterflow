@@ -186,3 +186,12 @@ func (c *Cache) AppStatuses(serverID string, now time.Time) []command.AppStatus 
 	}
 	return e.apps
 }
+
+// Forget drops everything cached for serverID (its server was deleted).
+func (c *Cache) Forget(serverID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.servers, serverID)
+	delete(c.apps, serverID)
+	delete(c.vars, serverID)
+}

@@ -70,4 +70,7 @@ type Deps struct {
 	// the enroll routes are not mounted and codes come from registrations).
 	EnrollmentRepository port.EnrollmentRepository
 	Enrollment           *enrollment.UseCase
+	// Revoker tells the hubs to drop a deleted server's agent. Nil until
+	// the bus implementation is wired (distributed) and in standalone.
+	Revoker port.Revoker
 }

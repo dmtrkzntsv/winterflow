@@ -1,10 +1,13 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -160,5 +163,76 @@ func TestGetServersRequiresAuth(t *testing.T) {
 	h.GetServers(w, httptest.NewRequest("GET", "/x", nil).WithContext(dbtest.Ctx(t)))
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated must be 401, got %d", w.Code)
+	}
+}
+
+type fakeRevoker struct {
+	ids []string
+	err error
+}
+
+func (f *fakeRevoker) Revoke(_ context.Context, id string) error {
+	f.ids = append(f.ids, id)
+	return f.err
+}
+
+func postDelete(t *testing.T, h *Handler, userID, serverID string) *httptest.ResponseRecorder {
+	t.Helper()
+	body := strings.NewReader(`{"server_id":"` + serverID + `"}`)
+	w := httptest.NewRecorder()
+	h.DeleteServer(w, authedAs(t, httptest.NewRequest("POST", "/api/v1/server/delete-server", body), userID))
+	return w
+}
+
+func TestDeleteServerOK(t *testing.T) {
+	h, userID, serverID, cache := newEnv(t)
+	rev := &fakeRevoker{err: errors.New("bus down")} // a failed publish is logged, not returned
+	h.revoker = rev
+	cache.MarkOnline(serverID, time.Now())
+
+	if w := postDelete(t, h, userID, serverID); w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
+	}
+	if len(rev.ids) != 1 || rev.ids[0] != serverID {
+		t.Fatalf("revoked = %v", rev.ids)
+	}
+	if owns, _ := h.servers.UserOwnsServer(dbtest.Ctx(t), userID, serverID); owns {
+		t.Fatal("server row still there")
+	}
+	if cache.ServerLiveness(serverID, time.Now()) != status.LivenessUnknown {
+		t.Fatal("status cache still holds the server")
+	}
+}
+
+func TestDeleteServerWithoutRevoker(t *testing.T) {
+	h, userID, serverID, _ := newEnv(t)
+	if w := postDelete(t, h, userID, serverID); w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+}
+
+func TestDeleteServerOtherOrg403(t *testing.T) {
+	h, _, serverID, _ := newEnv(t)
+	rev := &fakeRevoker{}
+	h.revoker = rev
+	eve, err := h.users.FindOrCreateUser(dbtest.Ctx(t), dto.UserDTO{Name: "Eve", Provider: "google", AccountID: "g2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := postDelete(t, h, eve.ID, serverID); w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", w.Code)
+	}
+	if len(rev.ids) != 0 {
+		t.Fatal("revoked another org's server")
+	}
+	if owns, _ := h.servers.UserOwnsServer(dbtest.Ctx(t), "x", serverID); owns {
+		t.Fatal("unexpected ownership")
+	}
+}
+
+func TestDeleteServerUnknown403(t *testing.T) {
+	h, userID, _, _ := newEnv(t)
+	if w := postDelete(t, h, userID, "no-such-server"); w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", w.Code)
 	}
 }

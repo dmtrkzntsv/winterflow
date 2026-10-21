@@ -65,6 +65,38 @@ func (q *Queries) DeleteRegistration(ctx context.Context, serverID string) error
 	return err
 }
 
+const deleteServerDomainRows = `-- name: DeleteServerDomainRows :exec
+DELETE FROM app_domains WHERE server_id = ?
+`
+
+// app_domains carries no foreign key to servers.
+func (q *Queries) DeleteServerDomainRows(ctx context.Context, serverID string) error {
+	_, err := q.db.ExecContext(ctx, deleteServerDomainRows, serverID)
+	return err
+}
+
+const deleteServerEnrollments = `-- name: DeleteServerEnrollments :exec
+DELETE FROM agent_enrollments WHERE server_id = ?
+`
+
+// agent_enrollments.server_id carries no foreign key either; the row holds
+// the issued certificate.
+func (q *Queries) DeleteServerEnrollments(ctx context.Context, serverID *string) error {
+	_, err := q.db.ExecContext(ctx, deleteServerEnrollments, serverID)
+	return err
+}
+
+const deleteServerRow = `-- name: DeleteServerRow :exec
+DELETE FROM servers WHERE server_id = ?
+`
+
+// Cascades to the server's certificates, capabilities, features, apps,
+// storages, shared variables, metrics, alerts and template instances.
+func (q *Queries) DeleteServerRow(ctx context.Context, serverID string) error {
+	_, err := q.db.ExecContext(ctx, deleteServerRow, serverID)
+	return err
+}
+
 const getCapability = `-- name: GetCapability :one
 SELECT value FROM server_capabilities WHERE server_id = ? AND name = ?
 `

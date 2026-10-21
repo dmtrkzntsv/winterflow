@@ -4153,6 +4153,59 @@ paths:
       summary: Stop a rollout after the app in flight
       tags:
       - rollouts
+  /api/v1/server/delete-server:
+    post:
+      operationId: serverDeleteServer
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteServerRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    type: "null"
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Forbidden
+      security:
+      - bearer: []
+      - cookie: []
+      summary: Delete a server and its data (containers on the box are left running)
+      tags:
+      - server
   /api/v1/server/delete-shared-variable:
     post:
       description: Answers once the change is stored; each affected server's agent
@@ -7060,6 +7113,11 @@ components:
       - app_id
       - backup
       - point
+      type: object
+    DeleteServerRequest:
+      properties:
+        server_id:
+          type: string
       type: object
     DeleteServerVariableRequest:
       properties:

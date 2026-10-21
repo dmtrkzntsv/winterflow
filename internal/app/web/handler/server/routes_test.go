@@ -16,6 +16,7 @@ func TestRoutes(t *testing.T) {
 		"GET /api/v1/server/get-servers":        false,
 		"GET /api/v1/server/get-servers-status": false,
 		"GET /api/v1/server/get-public-key":     true,
+		"POST /api/v1/server/delete-server":     true,
 		"POST /api/v1/server/register":          false,
 	}
 	got := map[string]bool{}

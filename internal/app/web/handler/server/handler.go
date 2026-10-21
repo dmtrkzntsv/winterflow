@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"winterflow/internal/app/web/middleware/ratelimit"
+	"winterflow/internal/domain/metrics"
 	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/port"
 	"winterflow/internal/domain/service/status"
@@ -26,6 +27,8 @@ type Handler struct {
 	users      port.UserService
 	servers    port.ServerRepository
 	status     *status.Cache
+	latest     *metrics.LatestStore
+	revoker    port.Revoker
 	cfg        *config.ServerConfig
 	log        *logger.Logger
 }
@@ -37,7 +40,12 @@ type Deps struct {
 	ServerRepository port.ServerRepository
 	UserService      port.UserService
 	StatusCache      *status.Cache
-	Cfg              *config.ServerConfig
+	// LatestMetrics is forgotten for a deleted server; nil skips.
+	LatestMetrics *metrics.LatestStore
+	// Revoker tells the hubs to drop a deleted server's agent; nil in
+	// standalone.
+	Revoker port.Revoker
+	Cfg     *config.ServerConfig
 }
 
 func NewHandler(d *Deps) *Handler {
@@ -48,6 +56,8 @@ func NewHandler(d *Deps) *Handler {
 		users:      d.UserService,
 		servers:    d.ServerRepository,
 		status:     d.StatusCache,
+		latest:     d.LatestMetrics,
+		revoker:    d.Revoker,
 		cfg:        d.Cfg,
 		log:        d.Logger,
 	}

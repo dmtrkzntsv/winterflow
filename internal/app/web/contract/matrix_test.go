@@ -18,6 +18,10 @@ type probe struct {
 	// malformed is one call the route must answer 400 (bad body, missing
 	// parameter). Every route with input must set it (TestProbesCoverTable).
 	malformed call
+	// consumesServer marks a route that deletes the server it addresses:
+	// TestForeignServer skips its own-server control (later probes need
+	// the server); TestServerRoutes covers the success path.
+	consumesServer bool
 }
 
 func sq(id string) url.Values            { return url.Values{"server_id": {id}} }
@@ -149,7 +153,10 @@ var probes = map[string]probe{
 	}, malformed: bad("GET", "/api/v1/metrics/app")},
 
 	"GET /api/v1/server/get-public-key": {valid: func(s string) call { return get("/api/v1/server/get-public-key", sq(s)) }, malformed: bad("GET", "/api/v1/server/get-public-key")},
-	"POST /api/v1/server/register":      {malformed: post("/api/v1/server/register", map[string]any{"code": "1"})},
+	"POST /api/v1/server/delete-server": {valid: func(s string) call {
+		return post("/api/v1/server/delete-server", map[string]any{"server_id": s})
+	}, malformed: bad("POST", "/api/v1/server/delete-server"), consumesServer: true},
+	"POST /api/v1/server/register": {malformed: post("/api/v1/server/register", map[string]any{"code": "1"})},
 
 	"POST /api/v1/auth/register":         {malformed: bad("POST", "/api/v1/auth/register")},
 	"POST /api/v1/user/create-token":     {malformed: post("/api/v1/user/create-token", map[string]any{"name": ""})},
@@ -361,7 +368,7 @@ func TestForeignServer(t *testing.T) {
 	// not refused, so the 403s above come from ownership and not from, say,
 	// a request the route rejects for another reason.
 	for key, p := range probes {
-		if p.valid == nil {
+		if p.valid == nil || p.consumesServer {
 			continue
 		}
 		t.Run("own "+key, func(t *testing.T) {

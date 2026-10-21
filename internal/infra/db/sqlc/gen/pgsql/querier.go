@@ -49,7 +49,15 @@ type Querier interface {
 	DeleteNotificationChannel(ctx context.Context, arg DeleteNotificationChannelParams) (int64, error)
 	DeleteRegistration(ctx context.Context, serverID string) error
 	DeleteServerDomain(ctx context.Context, arg DeleteServerDomainParams) error
+	// app_domains carries no foreign key to servers.
+	DeleteServerDomainRows(ctx context.Context, serverID string) error
 	DeleteServerDomainsByServer(ctx context.Context, serverID string) error
+	// agent_enrollments.server_id carries no foreign key either; the row holds
+	// the issued certificate.
+	DeleteServerEnrollments(ctx context.Context, serverID *string) error
+	// Cascades to the server's certificates, capabilities, features, apps,
+	// storages, shared variables, metrics, alerts and template instances.
+	DeleteServerRow(ctx context.Context, serverID string) error
 	DeleteServerStorage(ctx context.Context, arg DeleteServerStorageParams) error
 	DeleteServerStoragesByServer(ctx context.Context, serverID string) error
 	DeleteSharedCiphertext(ctx context.Context, arg DeleteSharedCiphertextParams) error

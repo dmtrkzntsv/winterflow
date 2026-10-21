@@ -131,3 +131,15 @@ func (pgsqlQuerier) CountServersByHub(ctx context.Context, db backend.DBTX) ([]h
 	}
 	return out, nil
 }
+
+func (pgsqlQuerier) DeleteServerRow(ctx context.Context, db backend.DBTX, serverID string) error {
+	return pgsqlgen.New(db).DeleteServerRow(ctx, serverID)
+}
+
+func (pgsqlQuerier) DeleteServerDomainRows(ctx context.Context, db backend.DBTX, serverID string) error {
+	return pgsqlgen.New(db).DeleteServerDomainRows(ctx, serverID)
+}
+
+func (pgsqlQuerier) DeleteServerEnrollments(ctx context.Context, db backend.DBTX, serverID string) error {
+	return pgsqlgen.New(db).DeleteServerEnrollments(ctx, &serverID)
+}

@@ -27,6 +27,10 @@ type ServerRepository interface {
 	// ClearPendingRegistrations removes all unclaimed registrations.
 	ClearPendingRegistrations(ctx context.Context) error
 
+	// DeleteServer removes a server and everything that belongs to it
+	// (certificates, apps, capabilities, storages, variables, metrics...).
+	DeleteServer(ctx context.Context, serverID string) error
+
 	// TouchLastSeen records that a server reported in (durable info).
 	TouchLastSeen(ctx context.Context, serverID string) error
 
@@ -63,4 +67,11 @@ type ServerOwnership interface {
 	// organizations. Every server-addressed API operation must pass this check
 	// before dispatching — server ids alone are not authorization.
 	UserOwnsServer(ctx context.Context, userID, serverID string) (bool, error)
+}
+
+// Revoker tells the control plane that a server's agent must no longer be
+// served (the hubs drop its stream and refuse reconnects). Nil where there
+// are no hubs (standalone).
+type Revoker interface {
+	Revoke(ctx context.Context, serverID string) error
 }

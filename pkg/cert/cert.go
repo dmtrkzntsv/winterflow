@@ -6,8 +6,10 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"encoding/pem"
 	"fmt"
 	"log"
@@ -186,4 +188,67 @@ func SignCSR(csrData string, caCert *x509.Certificate, caKey crypto.Signer, vali
 	})
 
 	return string(certPEM), csr.Subject.CommonName, expiresAt, nil
+}
+
+// SignCSRAs issues a client-auth-only certificate for a CSR's public key with
+// the subject set to exactly CN=commonName; the CSR's own subject is ignored.
+// The CSR must carry a valid signature and an ECDSA P-256 key.
+func SignCSRAs(csrPEM, commonName string, caCert *x509.Certificate, caKey crypto.Signer, validityYears int) (string, time.Time, error) {
+	if caCert == nil || caKey == nil {
+		return "", time.Time{}, fmt.Errorf("CA certificate and key are required")
+	}
+	if validityYears <= 0 {
+		return "", time.Time{}, fmt.Errorf("validityYears must be positive")
+	}
+	if commonName == "" {
+		return "", time.Time{}, fmt.Errorf("common name is required")
+	}
+	block, _ := pem.Decode([]byte(csrPEM))
+	if block == nil {
+		return "", time.Time{}, fmt.Errorf("failed to decode CSR PEM")
+	}
+	csr, err := x509.ParseCertificateRequest(block.Bytes)
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("failed to parse CSR: %w", err)
+	}
+	if err := csr.CheckSignature(); err != nil {
+		return "", time.Time{}, fmt.Errorf("invalid CSR signature: %w", err)
+	}
+	pub, ok := csr.PublicKey.(*ecdsa.PublicKey)
+	if !ok || pub.Curve != elliptic.P256() {
+		return "", time.Time{}, fmt.Errorf("CSR key must be ECDSA P-256")
+	}
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("failed to generate serial number: %w", err)
+	}
+	now := time.Now()
+	expiresAt := now.AddDate(validityYears, 0, 0)
+	template := x509.Certificate{
+		SerialNumber:          serial,
+		Subject:               pkix.Name{CommonName: commonName},
+		NotBefore:             now.Add(-time.Hour),
+		NotAfter:              expiresAt,
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		BasicConstraintsValid: true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, &template, caCert, pub, caKey)
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("failed to create certificate: %w", err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})), expiresAt, nil
+}
+
+// Fingerprint returns the lowercase hex SHA-256 of the certificate's DER.
+func Fingerprint(certPEM string) (string, error) {
+	block, _ := pem.Decode([]byte(certPEM))
+	if block == nil || block.Type != "CERTIFICATE" {
+		return "", fmt.Errorf("failed to decode certificate PEM")
+	}
+	if _, err := x509.ParseCertificate(block.Bytes); err != nil {
+		return "", fmt.Errorf("failed to parse certificate: %w", err)
+	}
+	sum := sha256.Sum256(block.Bytes)
+	return hex.EncodeToString(sum[:]), nil
 }

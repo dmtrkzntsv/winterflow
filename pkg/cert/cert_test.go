@@ -1,9 +1,11 @@
 package cert
 
 import (
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -257,5 +259,92 @@ func TestSignCSRErrors(t *testing.T) {
 	junk := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: []byte{0xde, 0xad, 0xbe, 0xef}})
 	if _, _, _, err := SignCSR(string(junk), caCert, caKey, 1); err == nil {
 		t.Error("expected error for garbage CSR DER")
+	}
+}
+
+func csrFor(t *testing.T, cn string, key crypto.Signer) string {
+	t.Helper()
+	der, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{Subject: pkix.Name{CommonName: cn}}, key)
+	if err != nil {
+		t.Fatalf("csr: %v", err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der}))
+}
+
+func TestSignCSRAsOverridesSubject(t *testing.T) {
+	caCert, caKey, _, _ := selfSignedCA(t, t.TempDir())
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+
+	certPEM, exp, err := SignCSRAs(csrFor(t, "evil", key), "server-123", caCert, caKey, 5)
+	if err != nil {
+		t.Fatalf("SignCSRAs: %v", err)
+	}
+	if time.Until(exp) < 4*365*24*time.Hour {
+		t.Errorf("expiresAt too soon: %v", exp)
+	}
+	block, _ := pem.Decode([]byte(certPEM))
+	c, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Subject.CommonName != "server-123" || len(c.Subject.Organization) != 0 {
+		t.Errorf("subject = %v", c.Subject)
+	}
+	if len(c.ExtKeyUsage) != 1 || c.ExtKeyUsage[0] != x509.ExtKeyUsageClientAuth {
+		t.Errorf("ExtKeyUsage = %v", c.ExtKeyUsage)
+	}
+	pool := x509.NewCertPool()
+	pool.AddCert(caCert)
+	if _, err := c.Verify(x509.VerifyOptions{Roots: pool, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}); err != nil {
+		t.Errorf("verify: %v", err)
+	}
+}
+
+func TestSignCSRAsRejectsBadCSR(t *testing.T) {
+	caCert, caKey, _, _ := selfSignedCA(t, t.TempDir())
+	ec, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	good := csrFor(t, "x", ec)
+
+	block, _ := pem.Decode([]byte(good))
+	tampered := append([]byte(nil), block.Bytes...)
+	tampered[len(tampered)-5] ^= 0xff
+	tamperedPEM := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: tampered}))
+
+	rsaKey, _ := rsa.GenerateKey(rand.Reader, 2048)
+	p384, _ := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+
+	cases := map[string]string{
+		"garbage":  "not a pem",
+		"tampered": tamperedPEM,
+		"rsa":      csrFor(t, "x", rsaKey),
+		"p384":     csrFor(t, "x", p384),
+	}
+	for name, csr := range cases {
+		if _, _, err := SignCSRAs(csr, "sid", caCert, caKey, 5); err == nil {
+			t.Errorf("%s: expected error", name)
+		}
+	}
+	if _, _, err := SignCSRAs(good, "", caCert, caKey, 5); err == nil {
+		t.Error("empty common name: expected error")
+	}
+}
+
+func TestFingerprintStable(t *testing.T) {
+	caCert, caKey, _, _ := selfSignedCA(t, t.TempDir())
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	certPEM, _, err := SignCSRAs(csrFor(t, "x", key), "sid", caCert, caKey, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := Fingerprint(certPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := Fingerprint(certPEM)
+	if a != b || len(a) != 64 || a != strings.ToLower(a) {
+		t.Errorf("fingerprint %q / %q", a, b)
+	}
+	if _, err := Fingerprint("junk"); err == nil {
+		t.Error("expected error for junk")
 	}
 }

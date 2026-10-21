@@ -41,7 +41,7 @@ Layering is hexagonal: `internal/domain/{model,port,usecase,service}` (business 
 
 ## Build, Test, and Development Commands
 - `make build` – compiles the standalone and API binaries into `bin/`.
-- `make api | make hub | make agent` – runs the selected service with `go run`.
+- `make api | make hub | make agent` – runs the selected service with `go run`. Locally against the plain docker-compose Redis, set `REDIS_TLS=false` (distributed defaults to TLS).
 - `make web` – starts the Vite dev server via `pnpm --dir web dev`.
 - `pnpm --dir web run build` – type-checks (`tsc -b`) and produces a production bundle.
 - `pnpm --dir web run lint` – runs the ESLint suite configured for React 19.

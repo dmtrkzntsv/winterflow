@@ -658,3 +658,26 @@ func TestChannels(t *testing.T) {
 		}
 	}
 }
+
+func TestRedisTLSDefaults(t *testing.T) {
+	t.Setenv("REDIS_TLS", "")
+	if !NewServerConfig("distributed").GetRedisTLS() {
+		t.Fatal("distributed must default to TLS")
+	}
+	if NewServerConfig("standalone").GetRedisTLS() {
+		t.Fatal("standalone must default to no TLS")
+	}
+	t.Setenv("REDIS_TLS", "false")
+	if NewServerConfig("distributed").GetRedisTLS() {
+		t.Fatal("REDIS_TLS=false must turn TLS off")
+	}
+	t.Setenv("REDIS_CA_CERT_PATH", "")
+	c := NewServerConfig("distributed")
+	if c.GetRedisCACertPath() != c.GetHubCACertPath() {
+		t.Fatal("CA path must default to the hub CA")
+	}
+	t.Setenv("REDIS_CA_CERT_PATH", "/x/ca.pem")
+	if c.GetRedisCACertPath() != "/x/ca.pem" {
+		t.Fatal("REDIS_CA_CERT_PATH override ignored")
+	}
+}

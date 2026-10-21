@@ -22,12 +22,11 @@ func BootstrapAPI(ctx context.Context, log *logger.Logger, cfg *config.ServerCon
 	if err := cfg.ValidateEnrollment(); err != nil {
 		log.Fatalf("invalid configuration: %v", err)
 	}
-	addr, pass, redisDB := cfg.GetRedisCredentials()
-	rc := redisbus.NewClient(redisbus.Config{
-		Addr:     addr,
-		Password: pass,
-		DB:       redisDB,
-	})
+	addr, _, redisDB := cfg.GetRedisCredentials()
+	rc, err := redisbus.NewRedisClient(cfg)
+	if err != nil {
+		log.Fatalf("invalid redis configuration: %v", err)
+	}
 	if redisbus.Ping(ctx, rc) != nil {
 		log.Fatalf("failed to connect to redis at %s", addr)
 	}

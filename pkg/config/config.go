@@ -145,6 +145,28 @@ func (c *ServerConfig) GetRedisCredentials() (addr, pass string, db int) {
 	return addr, pass, db
 }
 
+// GetRedisTLS reports whether Redis connections use TLS. REDIS_TLS wins;
+// otherwise on for distributed and off for standalone (which never builds a
+// Redis client anyway).
+func (c *ServerConfig) GetRedisTLS() bool {
+	switch strings.ToLower(os.Getenv("REDIS_TLS")) {
+	case "true", "1":
+		return true
+	case "false", "0":
+		return false
+	}
+	return !c.IsStandalone()
+}
+
+// GetRedisCACertPath is the CA that signed Redis's certificate; default the
+// Winterflow CA.
+func (c *ServerConfig) GetRedisCACertPath() string {
+	if v := os.Getenv("REDIS_CA_CERT_PATH"); v != "" {
+		return v
+	}
+	return c.GetHubCACertPath()
+}
+
 // Bus channel names are fixed. Standalone's in-process bridge uses the plain
 // request queue; in the distributed topology each hub reads its own
 // HubRequestQueue.

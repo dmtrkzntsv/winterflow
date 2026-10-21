@@ -4,7 +4,7 @@
 
 **Goal:** Three scripts install Winterflow as standalone, as a distributed control plane (API + Hub + local Postgres/Redis, binaries from R2), or as an agent that enrolls with a code typed into the hosted UI; hubs admit only agents whose server still exists.
 
-**Architecture:** Hubs list themselves in Redis (key `hub-status:<hub_id>`, 90 s expiry, refreshed every 30 s); the API reads that list, assigns each enrolling server a random hub with room, and routes each command to its server's hub queue. The API gains an unauthenticated enrollment API (CSR in, code out, signed cert back after a user claims the code) and signs agent certs with the CA it now holds. Hubs verify each connecting agent's certificate name and ask the API over the existing Redis bus whether the server and certificate are still active; deleting a server revokes it. Enrollment logic on the agent side is a hidden `winterflow-agent enroll` subcommand that `install-agent.sh` calls. GitHub releases carry only standalone and agent; all four binaries go to private Cloudflare R2.
+**Architecture:** Hubs list themselves in Redis (key `hub:status:<hub_id>`, 90 s expiry, refreshed every 30 s); the API reads that list, assigns each enrolling server a random hub with room, and routes each command to its server's hub queue. The API gains an unauthenticated enrollment API (CSR in, code out, signed cert back after a user claims the code) and signs agent certs with the CA it now holds. Hubs verify each connecting agent's certificate name and ask the API over the existing Redis bus whether the server and certificate are still active; deleting a server revokes it. Enrollment logic on the agent side is a hidden `winterflow-agent enroll` subcommand that `install-agent.sh` calls. GitHub releases carry only standalone and agent; all four binaries go to private Cloudflare R2.
 
 **Tech Stack:** Go 1.27 (chi, sqlc over SQLite/Postgres, grpc, go-redis), bash + systemd, React 19 (web).
 
@@ -20,8 +20,8 @@
 - Agent: 5 consecutive `PermissionDenied` (retry gaps 1m, 2m, 3m, 4m) → exit code 78; unit has `RestartPreventExitStatus=78`. `Unavailable` and every other failure: existing 1–30 s backoff forever. A successful connection resets the count.
 - Release assets: GitHub gets `winterflow-<os>-<arch>` (standalone) and `agent-<os>-<arch>`; the old names are no longer published. R2 gets `winterflow-{standalone,agent,api,hub}-<os>-<arch>` + `checksums.txt` under `releases/<tag>/`, and `releases/latest` (text: the tag). R2 env vars: `WINTERFLOW_R2_ENDPOINT`, `WINTERFLOW_R2_BUCKET`, `WINTERFLOW_R2_ACCESS_KEY_ID`, `WINTERFLOW_R2_SECRET_ACCESS_KEY`.
 - Agent shortcut: `https://get.winterflow.dev/agent` (redirect owned outside the repo) → raw GitHub `scripts/install-agent.sh`.
-- No regions: `REGION` and the `BUS_*_QUEUE` overrides are removed. Bus channels (fixed names): agent traffic `agent-requests:<hub_id>` (API→hub; standalone uses plain `agent-requests`), `agent-responses`, `agent-events`; hub traffic `hub-requests` (hub→API), `hub-replies:<hub_id>` (API→hub), `hub-broadcast` (API→all hubs). Each channel has its own subscription/goroutine. `hub_id` = host part of `HUB_PUBLIC_ADDR`.
-- Hubs: write `hub-status:<hub_id>` (JSON, 90 s expiry) every 30 s; a hub is available while its key exists; no hubs table; capacity default 1000; a random active, accepting hub below capacity per enrolling server; all full → lowest assigned/capacity ratio + warning; none active → claim fails 503, code stays valid.
+- No regions: `REGION` and the `BUS_*_QUEUE` overrides are removed. Bus channels (fixed names): agent traffic `bus:requests:<hub_id>` (API→hub; standalone uses plain `bus:requests`), `bus:responses`, `bus:events`; hub traffic `hub:requests` (hub→API), `hub:responses:<hub_id>` (API→hub), `hub:broadcast` (API→all hubs). Each channel has its own subscription/goroutine. `hub_id` = host part of `HUB_PUBLIC_ADDR`.
+- Hubs: write `hub:status:<hub_id>` (JSON, 90 s expiry) every 30 s; a hub is available while its key exists; no hubs table; capacity default 1000; a random active, accepting hub below capacity per enrolling server; all full → lowest assigned/capacity ratio + warning; none active → claim fails 503, code stays valid.
 - Standalone defaults to SQLite (installer always uses it) but accepts Postgres; distributed API is Postgres-only (startup refuses SQLite). None of the hub auth applies to standalone.
 - Every new/changed env var goes into `.env.example` in the same task (CLAUDE.md rule). Every route change: `make openapi`, contract test + `probes` entry. New SQL: same `-- name:` in `query/sqlite` and `query/pgsql`, `make sqlc`, shapes test. Migrations identical in both engines, ASCII only.
 - Every network operation has a deadline; pending-reply maps are pruned on timeout (CLAUDE.md stability rules).
@@ -53,13 +53,13 @@ Absorbs PR #33's Go config change, relaxed: standalone may still use Postgres.
   - `func (c *ServerConfig) ValidateDatabaseURL() error` — standalone accepts `sqlite://` or `postgres://`/`postgresql://`, distributed requires `postgres://`/`postgresql://`; any other scheme is an error for both.
   - `func (c *ServerConfig) ValidateEnrollment() error` — distributed API only: `GetHubCACertPath()` / `GetHubCAKeyPath()` files exist and parse as a matching pair.
   - Hub config: `func (c *ServerConfig) GetHubPublicAddr() string` (env `HUB_PUBLIC_ADDR`, `host:port`), `func (c *ServerConfig) GetHubID() string` (host part of it), `func (c *ServerConfig) GetHubCapacity() int` (env `HUB_CAPACITY`, default 1000, values < 1 → default), `func (c *ServerConfig) GetHubAccepting() bool` (env `HUB_ACCEPTING`, default true), `func (c *ServerConfig) ValidateHub() error` (public addr is a valid `host:port`).
-  - Remove `GetRegion` and the `REGION` / `BUS_REQUEST_QUEUE` / `BUS_RESPONSE_QUEUE` / `BUS_EVENTS_QUEUE` envs. `GetBusRequestQueue()` = `"agent-requests"` (standalone's bridge), `GetBusResponseQueue()` = `"agent-responses"`, `GetBusEventsQueue()` = `"agent-events"`.
-  - `func (c *ServerConfig) HubRequestQueue(hubID string) string` = `"agent-requests:" + hubID`
-  - `func (c *ServerConfig) GetHubRequestsChannel() string` = `"hub-requests"`
-  - `func (c *ServerConfig) GetHubBroadcastChannel() string` = `"hub-broadcast"`
-  - `func HubRepliesChannel(hubID string) string` = `"hub-replies:" + hubID`
+  - Remove `GetRegion` and the `REGION` / `BUS_REQUEST_QUEUE` / `BUS_RESPONSE_QUEUE` / `BUS_EVENTS_QUEUE` envs. `GetBusRequestQueue()` = `"bus:requests"` (standalone's bridge), `GetBusResponseQueue()` = `"bus:responses"`, `GetBusEventsQueue()` = `"bus:events"`.
+  - `func (c *ServerConfig) HubRequestQueue(hubID string) string` = `"bus:requests:" + hubID`
+  - `func (c *ServerConfig) GetHubRequestsChannel() string` = `"hub:requests"`
+  - `func (c *ServerConfig) GetHubBroadcastChannel() string` = `"hub:broadcast"`
+  - `func HubResponsesChannel(hubID string) string` = `"hub:responses:" + hubID`
 
-- [ ] **Step 1: Write failing tests** `TestGetDbURLStandaloneDefault` (unset → `sqlite://winterflow.sqlite`), `TestValidateDatabaseURL` (table: standalone+sqlite ok, standalone+postgres ok, standalone+mysql err, distributed+postgres ok, distributed+postgresql ok, distributed+sqlite err, distributed+empty err), `TestValidateEnrollment` (missing CA key err, mismatched pair err, valid pair from a `t.TempDir()` CA ok), `TestHubConfig` (`HUB_PUBLIC_ADDR=hub-01.winterflow.dev:50051` → id `hub-01.winterflow.dev`; capacity default 1000, `0` → 1000, `250` → 250; accepting default true, `false` → false; `ValidateHub` errs on `nohost`), `TestChannels` (with `REGION=eu` set it is ignored: `agent-requests`, `agent-responses`, `agent-events`, `agent-requests:hub-01.winterflow.dev`, `hub-requests`, `hub-broadcast`, `HubRepliesChannel("h1")` → `hub-replies:h1`).
+- [ ] **Step 1: Write failing tests** `TestGetDbURLStandaloneDefault` (unset → `sqlite://winterflow.sqlite`), `TestValidateDatabaseURL` (table: standalone+sqlite ok, standalone+postgres ok, standalone+mysql err, distributed+postgres ok, distributed+postgresql ok, distributed+sqlite err, distributed+empty err), `TestValidateEnrollment` (missing CA key err, mismatched pair err, valid pair from a `t.TempDir()` CA ok), `TestHubConfig` (`HUB_PUBLIC_ADDR=hub-01.winterflow.dev:50051` → id `hub-01.winterflow.dev`; capacity default 1000, `0` → 1000, `250` → 250; accepting default true, `false` → false; `ValidateHub` errs on `nohost`), `TestChannels` (with `REGION=eu` set it is ignored: `bus:requests`, `bus:responses`, `bus:events`, `bus:requests:hub-01.winterflow.dev`, `hub:requests`, `hub:broadcast`, `HubResponsesChannel("h1")` → `hub:responses:h1`).
 - [ ] **Step 2: Run** `go test ./pkg/config/ -run 'DbURL|DatabaseURL|Enrollment|AgentChannels'` — FAIL (undefined).
 - [ ] **Step 3: Implement** the getters; `BootstrapStandalone` fatals on `ValidateDatabaseURL`, `BootstrapAPI` fatals on `ValidateDatabaseURL` and `ValidateEnrollment`; `BootstrapHUB` fatals on `ValidateHub`. `.env.example`: remove `REGION` and the `BUS_*_QUEUE` overrides (and `REGION` from `internal/app/web/contract/main_test.go`); document `HUB_PUBLIC_ADDR`, `HUB_CAPACITY`, `HUB_ACCEPTING` (hub), note that the API reads the CA pair from `HUB_CERT_DIR`, and the standalone `DATABASE_URL` default.
 - [ ] **Step 4: Run** `go test ./pkg/config/ ./internal/infra/bootstrap/...` — PASS. Run `go test ./internal/app/web/contract/` — PASS (contract setup may need a temp CA; add to its `TestMain` if bootstrap is used there).
@@ -127,13 +127,13 @@ Table `agent_enrollments`: `enrollment_id` PK, `poll_secret_hash` TEXT UNIQUE NO
 **Interfaces:**
 - Produces:
   - `type Hub struct { ID, PublicAddr, Version string; Capacity, ConnectedAgents, Assigned int; Accepting bool }` (`Assigned` filled by the picker from `CountServersByHub`).
-  - `port.HubRegistry`: `Announce(ctx, model.Hub, ttl time.Duration) error`, `List(ctx) ([]model.Hub, error)`. Redis impl: key `hub-status:<id>`, `SET … EX 90`; `List` = `SCAN MATCH hub-status:* COUNT 100` + `MGET`, skipping keys that vanished or don't parse. Every call bounded by a 3 s context.
+  - `port.HubRegistry`: `Announce(ctx, model.Hub, ttl time.Duration) error`, `List(ctx) ([]model.Hub, error)`. Redis impl: key `hub:status:<id>`, `SET … EX 90`; `List` = `SCAN MATCH hub:status:* COUNT 100` + `MGET`, skipping keys that vanished or don't parse. Every call bounded by a 3 s context.
   - `port.ServerRepository` additions: `ServerHub(ctx, serverID string) (string, error)` (`""` when NULL, `model.ErrNotFound` when no server), `CountServersByHub(ctx) (map[string]int, error)`.
   - `hubs.Picker{ registry; servers; rand }`, `func (p *Picker) Pick(ctx) (model.Hub, error)`; `const AnnounceEvery = 30 * time.Second; AnnounceTTL = 90 * time.Second`; `var ErrNoHub = errors.New("no hub is available, try again in a minute")`.
   - `type Router interface { QueueFor(ctx context.Context, serverID string) (string, error); Forget(serverID string) }`; `hubs.NewRouter(servers, cfg)` caches server→hub in a `sync.Map` (Task 7's delete-server calls `Forget`); a server with no hub → `ErrServerHasNoHub` ("server has no hub; reinstall the agent"). `hubs.SingleQueue(cfg)` returns `GetBusRequestQueue()` for standalone, `Forget` a no-op.
   - Hub side: `func (h *Hub) startAnnouncer(ctx, reg port.HubRegistry)` — announces at start and every 30 s; `ConnectedAgents` = active streams. On shutdown it deletes its key (best effort) so it leaves the list at once.
 
-- [ ] **Step 1: Write failing tests**: registry `TestAnnounceAndList` (two hubs listed; a key past its TTL is gone; a garbage value is skipped), `TestCountServersByHub` (repo); `TestPickRandomAmongRoomy` (3 hubs, one full, one not accepting → only the third over 100 runs with a seeded rand), `TestPickAllFullLeastRatio` (capacities 10/20 with 10/15 assigned → second), `TestPickNoneListed` (→ `ErrNoHub`), `TestRouterQueue` (`agent-requests:hub-01.winterflow.dev`; second call from cache; `Forget` forces a lookup), `TestRouterNoHub`, hub `TestAnnouncerAnnounces` (first immediately, counts active streams, key deleted on stop), dispatch `TestManagerPublishesToServersHubQueue`.
+- [ ] **Step 1: Write failing tests**: registry `TestAnnounceAndList` (two hubs listed; a key past its TTL is gone; a garbage value is skipped), `TestCountServersByHub` (repo); `TestPickRandomAmongRoomy` (3 hubs, one full, one not accepting → only the third over 100 runs with a seeded rand), `TestPickAllFullLeastRatio` (capacities 10/20 with 10/15 assigned → second), `TestPickNoneListed` (→ `ErrNoHub`), `TestRouterQueue` (`bus:requests:hub-01.winterflow.dev`; second call from cache; `Forget` forces a lookup), `TestRouterNoHub`, hub `TestAnnouncerAnnounces` (first immediately, counts active streams, key deleted on stop), dispatch `TestManagerPublishesToServersHubQueue`.
 - [ ] **Step 2: Run** `go test ./internal/domain/usecase/hubs/ ./internal/infra/transport/... ./internal/infra/db/repository/server/` — FAIL.
 - [ ] **Step 3: Implement; `make sqlc`; wire registry + picker + router in `WireCore` (distributed only), `SingleQueue` in standalone (no registry, no Redis), announcer + per-hub queue in `BootstrapHUB`.** Existing hub e2e tests set `HUB_PUBLIC_ADDR` and use the per-hub queue.
 - [ ] **Step 4: Run** `go test -race ./internal/...` and `make test-pg` — PASS.
@@ -219,22 +219,22 @@ No delete route exists today; revocation needs one.
 **Interfaces:**
 - Produces (`bus` package):
   ```go
-  // hub-requests (hub -> API); Type is "server.verify" today. json snake_case.
+  // hub:requests (hub -> API); Type is "server.verify" today. json snake_case.
   type HubRequest struct { Type, RequestID, HubID, ServerID, CertFingerprint string }
   type AgentVerdict string // "allowed" | "revoked" | "unknown"
-  // hub-replies:<hub_id> (API -> hub)
-  type HubReply struct { RequestID string; Verdict AgentVerdict; Reason string }
-  // hub-broadcast (API -> every hub); Type is "server.revoked" today.
+  // hub:responses:<hub_id> (API -> hub)
+  type HubResponse struct { RequestID string; Verdict AgentVerdict; Reason string }
+  // hub:broadcast (API -> every hub); Type is "server.revoked" today.
   type HubBroadcast struct { Type, ServerID string }
   const HubRequestVerify = "server.verify"; const HubBroadcastRevoked = "server.revoked"
   ```
 - Produces (`agentauth`):
   - `func Check(ctx, repo port.ServerRepository, serverID, fingerprint string) (bus.AgentVerdict, string, error)` — no server → `unknown` "server not found"; server exists but fingerprint ≠ its active certificate's → `revoked` "certificate is not active"; else `allowed`. DB error → returned (no reply sent; the hub times out to `Unavailable`).
-  - `func StartResponder(ctx, b bus.Bus, cfg *config.ServerConfig, repo port.ServerRepository, log) error` — subscribes `GetHubRequestsChannel()`, answers each `server.verify` request on `config.HubRepliesChannel(req.HubID)` (unknown types are logged and ignored), each check bounded by 3 s.
+  - `func StartResponder(ctx, b bus.Bus, cfg *config.ServerConfig, repo port.ServerRepository, log) error` — subscribes `GetHubRequestsChannel()`, answers each `server.verify` request on `config.HubResponsesChannel(req.HubID)` (unknown types are logged and ignored), each check bounded by 3 s.
   - `type BusRevoker struct{...}; func (r *BusRevoker) Revoke(ctx, serverID) error` — publishes `HubBroadcast{Type: HubBroadcastRevoked}` on `GetHubBroadcastChannel()`. Satisfies Task 7's `Revoker`.
 - Events defense: the API's events consumer drops events whose `ServerID` is not a known server, using a lookup cached per server id for 1 minute (positive and negative), so a metrics tick costs no extra query.
 
-- [ ] **Step 1: Write failing tests**: `TestCheckAllowed`, `TestCheckUnknownServer`, `TestCheckWrongFingerprint` (→ `revoked`), `TestResponderRepliesOnHubChannel` (mem bus: publish request with hub `h1`, receive reply on `hub-replies:h1` with matching `request_id`), `TestRevokerPublishes`, `TestEventsFromUnknownServerDropped`.
+- [ ] **Step 1: Write failing tests**: `TestCheckAllowed`, `TestCheckUnknownServer`, `TestCheckWrongFingerprint` (→ `revoked`), `TestResponderRepliesOnHubChannel` (mem bus: publish request with hub `h1`, receive reply on `hub:responses:h1` with matching `request_id`), `TestRevokerPublishes`, `TestEventsFromUnknownServerDropped`.
 - [ ] **Step 2: Run** — FAIL.
 - [ ] **Step 3: Implement; wire in `WireCore` only for distributed** (`cfg.IsStandalone()` false).
 - [ ] **Step 4: Run** `go test ./internal/... ` — PASS.

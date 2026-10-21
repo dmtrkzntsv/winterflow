@@ -8,7 +8,9 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
 	"flag"
@@ -17,8 +19,10 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -38,7 +42,7 @@ const maxTransient = 40
 type options struct {
 	url, certDir, envOut, hostname string
 	pollEvery                      time.Duration
-	sleep                          func(time.Duration)
+	sleep                          func(context.Context, time.Duration)
 	backoff                        func(attempt int) time.Duration
 	out                            io.Writer
 }
@@ -62,7 +66,7 @@ func Main(args []string, stdout, stderr io.Writer) int {
 	}
 	o.out = stdout
 	o.pollEvery = 3 * time.Second
-	o.sleep = time.Sleep
+	o.sleep = ctxSleep
 	o.backoff = func(n int) time.Duration {
 		d := time.Duration(1<<min(n, 5)) * time.Second
 		return min(d, 30*time.Second)
@@ -111,10 +115,12 @@ func run(ctx context.Context, o options) (int, error) {
 	if err := os.MkdirAll(o.certDir, 0o755); err != nil {
 		return ExitError, err
 	}
-	csr, err := generateKey(filepath.Join(o.certDir, "agent.key"), o.hostname)
+	csrKeyPath := filepath.Join(o.certDir, "agent.key")
+	csr, err := generateKey(csrKeyPath, o.hostname)
 	if err != nil {
 		return ExitError, err
 	}
+	o.url = base
 	c := newClient(base)
 
 	var res codeResult
@@ -129,7 +135,7 @@ func run(ctx context.Context, o options) (int, error) {
 			return ExitError, ctx.Err()
 		default:
 		}
-		o.sleep(o.pollEvery)
+		o.sleep(ctx, o.pollEvery)
 		var st statusResult
 		if err := withRetry(ctx, o, func() (err error) { st, err = c.status(ctx, res.PollSecret); return }); err != nil {
 			return failure(o, err)
@@ -147,7 +153,7 @@ func run(ctx context.Context, o options) (int, error) {
 		case "failed":
 			return gaveUp(o)
 		case "claimed":
-			if err := store(o, st); err != nil {
+			if err := store(o, st, csrKeyPath); err != nil {
 				return ExitError, err
 			}
 			fmt.Fprintf(o.out, "Connected as %s\n", st.ServerID)
@@ -183,7 +189,7 @@ func withRetry(ctx context.Context, o options, fn func() error) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		o.sleep(o.backoff(attempt))
+		o.sleep(ctx, o.backoff(attempt))
 	}
 }
 
@@ -193,8 +199,8 @@ func printCode(w io.Writer, r codeResult) {
 		mins = 1
 	}
 	line := "+------------------------------------------+"
-	fmt.Fprintf(w, "\n%s\n|  Enter this code in Winterflow:  %-8s|\n|  Valid for %d minutes, %d codes left%s|\n%s\n\n",
-		line, r.Code, mins, r.CodesLeft, strings.Repeat(" ", max(0, 42-len(fmt.Sprintf("  Valid for %d minutes, %d codes left", mins, r.CodesLeft)))), line)
+	info := "  Valid for " + plural(mins, "minute", "minutes") + ", " + plural(r.CodesLeft, "code", "codes") + " left"
+	fmt.Fprintf(w, "\n%s\n|  Enter this code in Winterflow:  %-8s|\n|%-42s|\n%s\n\n", line, r.Code, info, line)
 }
 
 // generateKey writes a fresh P-256 key (0600) and returns its PEM CSR.
@@ -223,9 +229,16 @@ func generateKey(path, hostname string) (string, error) {
 	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: csrDER})), nil
 }
 
-func store(o options, st statusResult) error {
+func store(o options, st statusResult, keyPath string) error {
 	if st.Certificate == "" || st.CACertificate == "" || st.ServerID == "" {
 		return errors.New("the server returned an incomplete certificate")
+	}
+	keyPEM, err := os.ReadFile(keyPath)
+	if err != nil {
+		return err
+	}
+	if _, err := tls.X509KeyPair([]byte(st.Certificate), keyPEM); err != nil {
+		return fmt.Errorf("the returned certificate does not match this agent's key: %w", err)
 	}
 	host, port, err := net.SplitHostPort(st.HubAddr)
 	if err != nil {
@@ -262,4 +275,30 @@ func writeFile(path string, data []byte, mode os.FileMode) error {
 		return err
 	}
 	return os.Rename(name, path)
+}
+
+func pkixName(cn string) pkix.Name { return pkix.Name{CommonName: cn} }
+
+func signalContext() (context.Context, context.CancelFunc) {
+	return signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
+}
+
+// ctxSleep waits d or until ctx ends.
+func ctxSleep(ctx context.Context, d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+	case <-t.C:
+	}
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return fmt.Sprintf("%d %s", n, one)
+	}
+	return fmt.Sprintf("%d %s", n, many)
 }

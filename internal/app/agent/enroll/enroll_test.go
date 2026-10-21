@@ -3,12 +3,20 @@ package enroll
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -21,7 +29,39 @@ type script struct {
 	starts   int32
 	refresh  int32
 	status   int32
+	mu       sync.Mutex
+	other    bool // sign a foreign key instead of the posted CSR
 	csr      string
+}
+
+func (s *script) setCSR(v string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.other {
+		s.csr = v
+	}
+}
+func (s *script) getCSR() string { s.mu.Lock(); defer s.mu.Unlock(); return s.csr }
+
+// sign issues a certificate for the stored CSR from a throwaway CA.
+func (s *script) sign() (string, string) {
+	block, _ := pem.Decode([]byte(s.getCSR()))
+	req, err := x509.ParseCertificateRequest(block.Bytes)
+	if err != nil {
+		s.t.Error(err)
+		return "", ""
+	}
+	caKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	caTmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "ca"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), IsCA: true, BasicConstraintsValid: true}
+	caDER, _ := x509.CreateCertificate(rand.Reader, caTmpl, caTmpl, &caKey.PublicKey, caKey)
+	caCert, _ := x509.ParseCertificate(caDER)
+	leaf := &x509.Certificate{SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "srv-1"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour)}
+	der, err := x509.CreateCertificate(rand.Reader, leaf, caCert, req.PublicKey, caKey)
+	if err != nil {
+		s.t.Error(err)
+	}
+	p := func(d []byte) string { return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: d})) }
+	return p(der), p(caDER)
 }
 
 func (s *script) handler() http.Handler {
@@ -33,7 +73,7 @@ func (s *script) handler() http.Handler {
 	mux.HandleFunc("/api/v1/agent/enroll", func(w http.ResponseWriter, r *http.Request) {
 		var b map[string]string
 		_ = json.NewDecoder(r.Body).Decode(&b)
-		s.csr = b["csr"]
+		s.setCSR(b["csr"])
 		if atomic.AddInt32(&s.fail502, -1) >= 0 {
 			reply(w, 502, nil)
 			return
@@ -53,8 +93,7 @@ func (s *script) handler() http.Handler {
 		d := map[string]any{"state": st}
 		if st == "claimed" {
 			d["server_id"] = "srv-1"
-			d["certificate"] = "CERT"
-			d["ca_certificate"] = "CA"
+			d["certificate"], d["ca_certificate"] = s.sign()
 			d["hub_addr"] = "hub-01.winterflow.dev:50051"
 		}
 		reply(w, 200, d)
@@ -64,7 +103,7 @@ func (s *script) handler() http.Handler {
 
 func opts(url, dir string, out *bytes.Buffer) options {
 	return options{url: url, certDir: dir, envOut: filepath.Join(dir, "agent.env"), hostname: "box",
-		pollEvery: time.Millisecond, sleep: func(time.Duration) {}, backoff: func(int) time.Duration { return 0 }, out: out}
+		pollEvery: time.Millisecond, sleep: func(context.Context, time.Duration) {}, backoff: func(int) time.Duration { return 0 }, out: out}
 }
 
 func TestEnrollHappyPath(t *testing.T) {
@@ -92,7 +131,7 @@ func TestEnrollHappyPath(t *testing.T) {
 	if !strings.Contains(out.String(), "AAAAAA") || !strings.Contains(out.String(), "9 codes left") || !strings.Contains(out.String(), "Connected as srv-1") {
 		t.Fatalf("output: %s", out.String())
 	}
-	if !strings.Contains(s.csr, "CERTIFICATE REQUEST") {
+	if !strings.Contains(s.getCSR(), "CERTIFICATE REQUEST") {
 		t.Fatalf("csr: %q", s.csr)
 	}
 }
@@ -103,7 +142,7 @@ func TestEnrollRefreshesExpiredCode(t *testing.T) {
 	defer srv.Close()
 	var out bytes.Buffer
 	code, err := run(context.Background(), opts(srv.URL, t.TempDir(), &out))
-	if code != ExitOK || err != nil || !strings.Contains(out.String(), "BBBBBB") || s.refresh != 1 {
+	if code != ExitOK || err != nil || !strings.Contains(out.String(), "BBBBBB") || atomic.LoadInt32(&s.refresh) != 1 {
 		t.Fatalf("code=%d err=%v out=%s", code, err, out.String())
 	}
 }
@@ -163,8 +202,8 @@ func TestEnrollTransientErrorRetries(t *testing.T) {
 	defer srv.Close()
 	var out bytes.Buffer
 	code, err := run(context.Background(), opts(srv.URL, t.TempDir(), &out))
-	if code != ExitOK || err != nil || s.starts != 1 {
-		t.Fatalf("code=%d err=%v starts=%d", code, err, s.starts)
+	if code != ExitOK || err != nil || atomic.LoadInt32(&s.starts) != 1 {
+		t.Fatalf("code=%d err=%v starts=%d", code, err, atomic.LoadInt32(&s.starts))
 	}
 }
 
@@ -172,5 +211,62 @@ func TestMainRequiresFlags(t *testing.T) {
 	var o, e bytes.Buffer
 	if Main(nil, &o, &e) != ExitError {
 		t.Fatal("want error")
+	}
+}
+
+func TestEnrollDoesNotFollowRedirects(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://203.0.113.9/api/v1/agent/enroll", http.StatusTemporaryRedirect)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	var out bytes.Buffer
+	code, err := run(context.Background(), opts(srv.URL, t.TempDir(), &out))
+	if code != ExitError || err == nil || !strings.Contains(err.Error(), "307") {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+}
+
+func TestCheckURL(t *testing.T) {
+	for u, ok := range map[string]bool{
+		"https://api.winterflow.dev": true, "http://localhost:8080": true, "http://[::1]:8080": true,
+		"http://127.0.0.1": true, "http://localhost.evil.com": false, "http://u@localhost": false,
+		"ftp://localhost": false, "http://example.com": false, "https://u@example.com": false,
+	} {
+		if _, err := checkURL(u); (err == nil) != ok {
+			t.Errorf("%s: err=%v want ok=%v", u, err, ok)
+		}
+	}
+}
+
+func TestEnrollNeverPrintsPollSecret(t *testing.T) {
+	s := &script{t: t, statuses: []string{"expired", "claimed"}}
+	srv := httptest.NewServer(s.handler())
+	defer srv.Close()
+	var out bytes.Buffer
+	run(context.Background(), opts(srv.URL, t.TempDir(), &out))
+	if strings.Contains(out.String(), "sec\n") || strings.Contains(out.String(), "poll_secret") {
+		t.Fatal(out.String())
+	}
+}
+
+func TestEnrollRejectsMismatchedCertificate(t *testing.T) {
+	s := &script{t: t, statuses: []string{"claimed"}, other: true}
+	k, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	der, _ := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{}, k)
+	s.csr = string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der}))
+	srv := httptest.NewServer(s.handler())
+	defer srv.Close()
+	dir := t.TempDir()
+	var out bytes.Buffer
+	code, err := run(context.Background(), opts(srv.URL, dir, &out))
+	if code != ExitError || err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	for _, f := range []string{"agent.crt", "ca.crt", "agent.env"} {
+		if _, err := os.Stat(filepath.Join(dir, f)); err == nil {
+			t.Fatalf("%s written", f)
+		}
 	}
 }

@@ -53,7 +53,12 @@ type client struct {
 }
 
 func newClient(base string) *client {
-	return &client{base: base, http: &http.Client{Timeout: requestTimeout}}
+	return &client{base: base, http: &http.Client{
+		Timeout: requestTimeout,
+		// The API never redirects; following one could resend the CSR or
+		// poll secret over plain http or to another host.
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}}
 }
 
 // post sends a JSON body and decodes the API envelope's data into out.

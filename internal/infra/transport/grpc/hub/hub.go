@@ -37,6 +37,11 @@ type Hub struct {
 	srv        *grpc.Server
 	bus        bus.Bus
 	auth       Authorizer
+	// revokedAt remembers recent revocations (server id -> when, guarded by
+	// agentsLock) so a registration whose auth check was in flight when the
+	// revocation arrived is refused. Entries older than revokeMemory are
+	// pruned.
+	revokedAt map[string]time.Time
 }
 
 type agent struct {
@@ -65,7 +70,8 @@ func (a *agent) send(stream grpc.BidiStreamingServer[proto.AgentMessage, proto.S
 // registration as Unavailable.
 func NewHub(log *logger.Logger, cfg *config.ServerConfig, b bus.Bus, auth Authorizer) *Hub {
 	h := &Hub{
-		agents: make(map[string]*agent),
+		agents:    make(map[string]*agent),
+		revokedAt: make(map[string]time.Time),
 		cfg:    cfg,
 		log:    log,
 		srv:    createServer(log, cfg),
@@ -120,13 +126,22 @@ var (
 	errRevoked = errors.New("server revoked")
 	// errReplaced ends a stream when the same agent opens a newer one.
 	errReplaced = errors.New("replaced by a newer stream")
+	// errStale ends a stream whose registration the reaper dropped.
+	errStale = errors.New("agent idle past its TTL")
 )
+
+// revokeMemory is how long a revocation is remembered against registrations
+// whose auth check started before it; far beyond AuthorizeTimeout.
+const revokeMemory = 5 * time.Minute
 
 // revoke drops a server's agent if this hub holds it: its stream (if bound)
 // is closed and its registration deleted.
 func (h *Hub) revoke(serverID string) {
 	h.agentsLock.Lock()
 	defer h.agentsLock.Unlock()
+	now := time.Now()
+	h.pruneRevokedLocked(now)
+	h.revokedAt[serverID] = now
 	a, ok := h.agents[serverID]
 	if !ok {
 		return
@@ -136,6 +151,16 @@ func (h *Hub) revoke(serverID string) {
 	}
 	delete(h.agents, serverID)
 	h.log.Info("server revoked, agent dropped", "agent_id", serverID)
+}
+
+// pruneRevokedLocked forgets revocations older than revokeMemory. Caller
+// holds agentsLock.
+func (h *Hub) pruneRevokedLocked(now time.Time) {
+	for id, at := range h.revokedAt {
+		if now.Sub(at) > revokeMemory {
+			delete(h.revokedAt, id)
+		}
+	}
 }
 
 const (
@@ -161,15 +186,20 @@ func (h *Hub) reapStaleAgents(ctx context.Context) {
 	}
 }
 
-// reapOnce removes agents idle past the TTL as of now. Returns the count
-// removed (exposed for testing).
+// reapOnce removes agents idle past the TTL as of now, closing their streams
+// (no stream outlives its registration, which revocation goes through).
+// Returns the count removed (exposed for testing).
 func (h *Hub) reapOnce(now time.Time) int {
 	h.agentsLock.Lock()
 	defer h.agentsLock.Unlock()
+	h.pruneRevokedLocked(now)
 	removed := 0
 	for id, a := range h.agents {
 		if now.Sub(a.lastSeen) <= staleAgentTTL {
 			continue
+		}
+		if a.closeStream != nil {
+			a.closeStream(errStale)
 		}
 		delete(h.agents, id)
 		removed++
@@ -361,6 +391,7 @@ func (h *Hub) RegisterAgent(ctx context.Context, req *proto.RegisterAgentRequest
 	if h.auth == nil {
 		return nil, status.Error(codes.Unavailable, "cannot verify server right now")
 	}
+	checkStarted := time.Now()
 	verdict, reason, err := h.auth.Authorize(ctx, agentID, fingerprint)
 	if err != nil {
 		h.log.Warn("agent auth check failed", "agent_id", agentID, "error", err)
@@ -382,6 +413,13 @@ func (h *Hub) RegisterAgent(ctx context.Context, req *proto.RegisterAgentRequest
 
 	h.agentsLock.Lock()
 	defer h.agentsLock.Unlock()
+
+	// A revocation that arrived while the check was in flight wins over its
+	// "allowed".
+	if at, revoked := h.revokedAt[agentID]; revoked && !at.Before(checkStarted) {
+		h.log.Warn("agent revoked during its auth check", "agent_id", agentID)
+		return nil, status.Error(codes.PermissionDenied, "server revoked")
+	}
 
 	if existingAgent, exists := h.agents[agentID]; exists {
 		h.log.Info("Agent already registered, updating info", "agent_id", agentID)
@@ -505,6 +543,9 @@ func (h *Hub) AgentStream(stream grpc.BidiStreamingServer[proto.AgentMessage, pr
 			case errors.Is(cause, errReplaced):
 				h.log.Info("closing agent stream replaced by a newer one", "agent_id", certID)
 				return status.Error(codes.Aborted, "replaced by a newer stream")
+			case errors.Is(cause, errStale):
+				h.log.Info("closing reaped agent's stream", "agent_id", certID)
+				return status.Error(codes.Unavailable, "agent idle past its TTL")
 			}
 			return ctx.Err()
 		case r := <-msgs:

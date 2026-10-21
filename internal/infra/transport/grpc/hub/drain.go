@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"winterflow/internal/domain/command"
+	"winterflow/internal/domain/usecase/hubs"
 	"winterflow/internal/infra/transport/grpc/proto"
 
 	"google.golang.org/grpc"
@@ -44,7 +45,7 @@ func (h *Hub) isDraining() bool {
 // StartDrainWatch reads the hub's drain flag at start and every
 // DrainCheckEvery until ctx ends; the returned channel closes after that.
 func (h *Hub) StartDrainWatch(ctx context.Context, flag DrainFlag) <-chan struct{} {
-	hubID := h.cfg.GetHubID()
+	hubID := h.id
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -146,7 +147,7 @@ func (h *Hub) otherHubListed(ctx context.Context) bool {
 		h.log.Warn("cannot read the hub list while stopping", "error", err)
 		return false
 	}
-	self := h.cfg.GetHubID()
+	self := h.id
 	for _, hub := range listed {
 		if hub.ID != self && hub.Accepting && !hub.Draining {
 			return true
@@ -232,8 +233,11 @@ type moveTarget struct {
 
 // moveAgents sends hub.move down every active stream, one per moveEvery,
 // then looks again every check interval for streams not yet told (or told
-// over resendAfter ago), until ctx ends.
+// over resendAfter ago), until ctx ends. It first lists the hub as draining
+// itself, so an agent told to move never asks the API before the hub list
+// shows it (the announcer's own write runs on another goroutine).
 func (h *Hub) moveAgents(ctx context.Context) {
+	h.announceDraining(ctx)
 	every := h.checkEvery()
 	for {
 		if targets := h.moveTargets(time.Now()); len(targets) > 0 {
@@ -254,6 +258,21 @@ func (h *Hub) moveAgents(ctx context.Context) {
 			return
 		case <-time.After(every):
 		}
+	}
+}
+
+// announceDraining writes the hub's entry (draining) to the hub list the
+// announcer uses, if one runs. A failure is logged: the announcer's own
+// write, already due, may still land.
+func (h *Hub) announceDraining(ctx context.Context) {
+	h.drainMu.Lock()
+	reg := h.peers
+	h.drainMu.Unlock()
+	if reg == nil {
+		return
+	}
+	if err := reg.Announce(ctx, h.status(), hubs.AnnounceTTL); err != nil && ctx.Err() == nil {
+		h.log.Warn("hub announce before moving agents failed", "error", err)
 	}
 }
 

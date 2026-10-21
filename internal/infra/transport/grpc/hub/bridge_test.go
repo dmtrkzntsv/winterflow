@@ -25,6 +25,8 @@ func newTestHub(t *testing.T, b bus.Bus) *Hub {
 		revokedAt:   make(map[string]time.Time),
 		announceNow: make(chan struct{}, 1),
 		cfg:         config.NewServerConfig("distributed"),
+		id:          "hub-01.winterflow.dev",
+		publicAddr:  "hub-01.winterflow.dev:50051",
 		log:         log,
 		bus:         b,
 	}

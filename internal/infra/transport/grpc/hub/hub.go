@@ -35,6 +35,10 @@ type Hub struct {
 	agents     map[string]*agent
 	agentsLock sync.RWMutex
 	cfg        *config.ServerConfig
+	// id and publicAddr are the hub's identity (HUB_PUBLIC_ADDR and its
+	// host), read once by NewHub: they never change while the hub runs.
+	id         string
+	publicAddr string
 	log        *logger.Logger
 	srv        *grpc.Server
 	bus        bus.Bus
@@ -102,6 +106,8 @@ func NewHub(log *logger.Logger, cfg *config.ServerConfig, b bus.Bus, auth Author
 		revokedAt:   make(map[string]time.Time),
 		announceNow: make(chan struct{}, 1),
 		cfg:         cfg,
+		id:          cfg.GetHubID(),
+		publicAddr:  cfg.GetHubPublicAddr(),
 		log:         log,
 		srv:         createServer(log, cfg),
 		bus:         b,
@@ -132,9 +138,9 @@ func (h *Hub) StartBusBridge(ctx context.Context) error {
 		h.log.Warn("no bus configured, hub will not forward commands")
 		return nil
 	}
-	hubID := h.cfg.GetHubID()
+	hubID := h.id
 	if hubID == "" {
-		return fmt.Errorf("HUB_PUBLIC_ADDR must be host:port (got %q)", h.cfg.GetHubPublicAddr())
+		return fmt.Errorf("HUB_PUBLIC_ADDR must be host:port (got %q)", h.publicAddr)
 	}
 	queue := h.cfg.HubRequestQueue(hubID)
 	bus.SubscribeJSON(ctx, h.bus, queue, h.log, func(cmd bus.CommandMessage) {

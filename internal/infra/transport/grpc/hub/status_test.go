@@ -95,7 +95,7 @@ func TestAnnouncerNotAccepting(t *testing.T) {
 
 func TestStartBusBridgeNeedsHubID(t *testing.T) {
 	h := newTestHub(t, membus.NewBus(quietLog()))
-	t.Setenv("HUB_PUBLIC_ADDR", "")
+	h.id, h.publicAddr = "", "" // HUB_PUBLIC_ADDR was not host:port at NewHub
 	if err := h.StartBusBridge(context.Background()); err == nil {
 		t.Fatal("bridge without a hub id: want error")
 	}

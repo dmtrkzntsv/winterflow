@@ -406,7 +406,8 @@ func TestDrainResendsThenUndrainStops(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	_, at := s.sent()
-	if gap := at[1].Sub(at[0]); gap < 300*time.Millisecond {
+	// Claimed at the resend interval, sent on the next pacing tick.
+	if gap := at[1].Sub(at[0]); gap < h.moveResend-moveEvery {
 		t.Fatalf("resent after %v, want >= moveResend", gap)
 	}
 
@@ -430,5 +431,52 @@ func TestDrainResendsThenUndrainStops(t *testing.T) {
 	time.Sleep(3 * h.moveResend)
 	if got, _ := s.sent(); len(got) != n {
 		t.Fatalf("sent %d hub.move after undrain, want %d", len(got), n)
+	}
+}
+
+// orderRegistry records when each draining announcement landed.
+type orderRegistry struct {
+	peerRegistry
+	mu       sync.Mutex
+	drainsAt []time.Time
+}
+
+func (r *orderRegistry) Announce(_ context.Context, h model.Hub, _ time.Duration) error {
+	if h.Draining {
+		r.mu.Lock()
+		r.drainsAt = append(r.drainsAt, time.Now())
+		r.mu.Unlock()
+	}
+	return nil
+}
+
+// The mover lists the hub as draining before it tells any agent to move,
+// without waiting on the announcer goroutine (none runs here).
+func TestMoverAnnouncesDrainingFirst(t *testing.T) {
+	h := newTestHub(t, nil)
+	h.drainCheckEvery = 20 * time.Millisecond
+	reg := &orderRegistry{}
+	h.peers = reg
+	s := &moveStream{}
+	h.agents["srv-1"] = &agent{streamActive: true, stream: s, lastSeen: time.Now()}
+	h.drainFlag.Store(true)
+	h.drainChanged()
+	defer h.stopMover()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if got, _ := s.sent(); len(got) > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no hub.move sent")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	_, at := s.sent()
+	reg.mu.Lock()
+	defer reg.mu.Unlock()
+	if len(reg.drainsAt) == 0 || !reg.drainsAt[0].Before(at[0]) {
+		t.Fatalf("draining announced at %v, first hub.move at %v", reg.drainsAt, at[0])
 	}
 }

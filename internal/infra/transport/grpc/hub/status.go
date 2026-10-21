@@ -47,7 +47,7 @@ func (h *Hub) startAnnouncer(ctx context.Context, reg port.HubRegistry) {
 		case <-ctx.Done():
 			wctx, cancel := context.WithTimeout(context.Background(), withdrawTimeout)
 			defer cancel()
-			if err := reg.Withdraw(wctx, h.cfg.GetHubID()); err != nil {
+			if err := reg.Withdraw(wctx, h.id); err != nil {
 				h.log.Warn("hub withdraw failed", "error", err)
 			}
 			return
@@ -60,8 +60,8 @@ func (h *Hub) startAnnouncer(ctx context.Context, reg port.HubRegistry) {
 // agents with an active stream.
 func (h *Hub) status() model.Hub {
 	return model.Hub{
-		ID:              h.cfg.GetHubID(),
-		PublicAddr:      h.cfg.GetHubPublicAddr(),
+		ID:              h.id,
+		PublicAddr:      h.publicAddr,
 		Version:         version.GetVersion(),
 		Capacity:        h.cfg.GetHubCapacity(),
 		ConnectedAgents: h.activeStreams(),

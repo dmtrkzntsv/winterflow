@@ -25,6 +25,15 @@ type CoreOption func(*coreOptions)
 
 type coreOptions struct {
 	rolloutTiming rollouts.Timing
+	hubRegistry   port.HubRegistry
+}
+
+// WithHubRegistry wires the distributed API's hubs: commands are routed to
+// the request queue of each server's hub, and Deps.HubPicker assigns hubs
+// from reg. Without it (standalone) every command goes to the plain request
+// queue the in-process bridge drains.
+func WithHubRegistry(reg port.HubRegistry) CoreOption {
+	return func(o *coreOptions) { o.hubRegistry = reg }
 }
 
 // WithRolloutTiming sets the rollout worker's bounds (zero fields keep

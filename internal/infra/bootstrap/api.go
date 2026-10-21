@@ -7,14 +7,16 @@ import (
 	"winterflow/internal/infra/transport/bus"
 	"winterflow/internal/infra/transport/dispatch"
 	redisbus "winterflow/internal/infra/transport/redis/bus"
+	hubsreg "winterflow/internal/infra/transport/redis/hubs"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
 )
 
 // BootstrapAPI wires the distributed "brain": DB-backed user/server/app services
 // (the API owns persistence) and a fire-and-forward command dispatcher. The
-// API publishes commands to requests:<region> and drains its region's response
-// queue, routing each agent result to the originating user over SSE.
+// API publishes each command to its server's hub queue (bus:requests:<hub_id>)
+// and drains the response queue, routing each agent result to the
+// originating user over SSE.
 func BootstrapAPI(ctx context.Context, log *logger.Logger, cfg *config.ServerConfig) *Deps {
 	if err := cfg.ValidateDatabaseURL(); err != nil {
 		log.Fatalf("invalid configuration: %v", err)
@@ -38,7 +40,9 @@ func BootstrapAPI(ctx context.Context, log *logger.Logger, cfg *config.ServerCon
 		log.Fatalf("failed to open database: %v", err)
 	}
 
-	deps, _ := WireCore(ctx, b, dbconn, cfg, log)
+	// Commands go to each server's hub's queue; the picker reads the hub
+	// list the hubs announce on the same Redis connection.
+	deps, _ := WireCore(ctx, b, dbconn, cfg, log, WithHubRegistry(hubsreg.NewRegistry(rc)))
 	// WireCore has started the response subscriber, so replies reach the
 	// waiting steps; the Hub consumes the request queue independently.
 	StartRollouts(ctx, deps)

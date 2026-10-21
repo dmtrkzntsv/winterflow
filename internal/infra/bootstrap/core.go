@@ -7,6 +7,7 @@ import (
 	"winterflow/internal/domain/service/alerting"
 	notificationsvc "winterflow/internal/domain/service/notification"
 	"winterflow/internal/domain/service/status"
+	"winterflow/internal/domain/usecase/hubs"
 	"winterflow/internal/domain/usecase/sharedvars"
 	"winterflow/internal/infra/db"
 	alertrepo "winterflow/internal/infra/db/repository/alert"
@@ -46,7 +47,13 @@ func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerCon
 	}
 
 	nm := notificationsvc.NewNotificationManager(log)
-	dispatcher := dispatch.NewManager(b, nm, cfg, log)
+	router := hubs.SingleQueue(cfg)
+	var picker *hubs.Picker
+	if o.hubRegistry != nil {
+		router = hubs.NewRouter(r.server, cfg)
+		picker = hubs.NewPicker(o.hubRegistry, r.server, log)
+	}
+	dispatcher := dispatch.NewManager(b, router, nm, log)
 	statusCache := status.NewCache(statusTTL)
 
 	// Metrics: the events sink stores server.metrics samples and the
@@ -109,6 +116,7 @@ func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerCon
 		AlertRepository:          r.alert,
 		AlertNotifier:            al.notifier,
 		ChannelBox:               al.box,
+		HubPicker:                picker,
 	}, r.server
 }
 

@@ -3,6 +3,7 @@ module winterflow
 go 1.27.2
 
 require (
+	github.com/alicebob/miniredis/v2 v2.40.0
 	github.com/caddyserver/caddy/v2 v2.11.7
 	github.com/getkin/kin-openapi v0.149.0
 	github.com/go-chi/chi/v5 v5.4.0
@@ -160,6 +161,7 @@ require (
 	github.com/xdg-go/scram v1.2.0 // indirect
 	github.com/xdg-go/stringprep v1.0.4 // indirect
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
+	github.com/yuin/gopher-lua v1.1.1 // indirect
 	github.com/zeebo/blake3 v0.2.4 // indirect
 	github.com/zeebo/xxh3 v1.1.0 // indirect
 	go.etcd.io/bbolt v1.5.0 // indirect

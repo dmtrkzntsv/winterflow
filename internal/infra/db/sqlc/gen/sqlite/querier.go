@@ -29,6 +29,8 @@ type Querier interface {
 	CountFiringAlertsByServer(ctx context.Context) ([]CountFiringAlertsByServerRow, error)
 	CountPendingEnrollments(ctx context.Context) (int64, error)
 	CountRolloutStep(ctx context.Context, arg CountRolloutStepParams) (int64, error)
+	// How many servers each hub carries (the hub picker's assigned counts).
+	CountServersByHub(ctx context.Context) ([]CountServersByHubRow, error)
 	CountUsers(ctx context.Context) (int64, error)
 	DeleteAlertEventsBefore(ctx context.Context, createdAt types.DateTime) (int64, error)
 	DeleteAlertEventsByApp(ctx context.Context, appID string) error
@@ -100,6 +102,8 @@ type Querier interface {
 	GetPrimaryOrganizationID(ctx context.Context, userID string) (string, error)
 	GetRegistrationByCode(ctx context.Context, code string) (ServerRegistration, error)
 	GetRollout(ctx context.Context, id string) (Rollout, error)
+	// The hub the server was assigned to (NULL: none; no row: no server).
+	GetServerHub(ctx context.Context, serverID string) (*string, error)
 	GetServerSharedVariableByName(ctx context.Context, arg GetServerSharedVariableByNameParams) (SharedVariable, error)
 	GetServerVarsInfo(ctx context.Context, serverID string) (GetServerVarsInfoRow, error)
 	GetSharedVariable(ctx context.Context, id string) (SharedVariable, error)

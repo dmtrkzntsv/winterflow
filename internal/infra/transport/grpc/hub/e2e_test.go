@@ -82,6 +82,7 @@ func TestHubAgentRoundTripOverMTLS(t *testing.T) {
 	t.Setenv("HUB_SERVER_SUBJECT", "/C=CA/O=Test/CN=localhost")
 	t.Setenv("HUB_HOST", "127.0.0.1")
 	t.Setenv("HUB_PORT", freePort(t))
+	t.Setenv("HUB_PUBLIC_ADDR", "hub-01.winterflow.dev:50051")
 	t.Setenv("AGENT_DATA_DIR", filepath.Join(dir, "agent-data"))
 
 	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "e2e"})
@@ -164,7 +165,7 @@ func TestHubAgentRoundTripOverMTLS(t *testing.T) {
 
 	// 3. Full command round-trip: request queue → stream → dispatcher →
 	// response queue, correlated by request id.
-	if err := b.Publish(ctx, cfg.GetBusRequestQueue(), bus.CommandMessage{
+	if err := b.Publish(ctx, cfg.HubRequestQueue(cfg.GetHubID()), bus.CommandMessage{
 		AgentID:   "agent-e2e",
 		RequestID: "req-e2e-1",
 		Type:      string(command.TypeAppsList),

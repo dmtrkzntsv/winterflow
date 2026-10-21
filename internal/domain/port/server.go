@@ -45,6 +45,13 @@ type ServerRepository interface {
 	// false, no error).
 	ServerInOrg(ctx context.Context, serverID, orgID string) (bool, error)
 
+	// ServerHub returns the hub the server is assigned to: "" when it has
+	// none, model.ErrNotFound when there is no such server.
+	ServerHub(ctx context.Context, serverID string) (string, error)
+
+	// CountServersByHub returns how many servers each hub carries.
+	CountServersByHub(ctx context.Context) (map[string]int, error)
+
 	ServerOwnership
 }
 

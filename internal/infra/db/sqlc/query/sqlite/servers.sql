@@ -86,3 +86,14 @@ SELECT code FROM server_registrations ORDER BY created_at DESC LIMIT 1;
 -- name: InsertCertificate :exec
 INSERT INTO server_certificates (certificate_id, server_id, certificate, is_active, expires_at, created_at)
 VALUES (?, ?, ?, ?, ?, ?);
+
+-- name: GetServerHub :one
+-- The hub the server was assigned to (NULL: none; no row: no server).
+SELECT hub_id FROM servers WHERE server_id = ?;
+
+-- name: CountServersByHub :many
+-- How many servers each hub carries (the hub picker's assigned counts).
+SELECT hub_id, count(*) AS servers FROM servers
+WHERE hub_id IS NOT NULL
+GROUP BY hub_id
+ORDER BY hub_id;

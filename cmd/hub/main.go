@@ -36,6 +36,10 @@ func main() {
 		log.Fatal("Failed to start bus bridge", "error", err)
 	}
 
+	// Lists the hub in Redis (hub:status:<hub_id>) so the API can assign
+	// servers to it; removed again when ctx ends.
+	announced := hub.StartAnnouncer(ctx, hubDeps.Registry)
+
 	go func() {
 		if err := hub.ListenAndServe(ctx); err != nil {
 			log.Fatal(err)
@@ -51,5 +55,6 @@ func main() {
 	if err := hub.Shutdown(shutdownCtx); err != nil {
 		log.Fatal("Error during shutdown", "error", err)
 	}
+	<-announced // the entry's removal is bounded by 3 s
 	log.Info("Server gracefully stopped")
 }

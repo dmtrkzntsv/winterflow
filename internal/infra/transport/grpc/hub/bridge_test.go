@@ -18,6 +18,7 @@ import (
 // exercise the bus bridge / correlation logic without TLS or a listener.
 func newTestHub(t *testing.T, b bus.Bus) *Hub {
 	t.Helper()
+	t.Setenv("HUB_PUBLIC_ADDR", "hub-01.winterflow.dev:50051")
 	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
 	return &Hub{
 		agents: make(map[string]*agent),
@@ -52,7 +53,7 @@ func TestDispatchToOfflineAgentPublishesError(t *testing.T) {
 	// Give the bridge's subscriber a moment to register before publishing.
 	time.Sleep(20 * time.Millisecond)
 
-	if err := b.Publish(ctx, cfg.GetBusRequestQueue(), bus.CommandMessage{
+	if err := b.Publish(ctx, cfg.HubRequestQueue(cfg.GetHubID()), bus.CommandMessage{
 		AgentID:   "missing-agent",
 		RequestID: "req-42",
 		Type:      string(command.TypeAppSave),

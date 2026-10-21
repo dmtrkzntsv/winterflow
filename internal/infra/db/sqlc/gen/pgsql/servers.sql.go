@@ -11,6 +11,42 @@ import (
 	"winterflow/internal/infra/db/types"
 )
 
+const countServersByHub = `-- name: CountServersByHub :many
+SELECT hub_id, count(*) AS servers FROM servers
+WHERE hub_id IS NOT NULL
+GROUP BY hub_id
+ORDER BY hub_id
+`
+
+type CountServersByHubRow struct {
+	HubID   *string
+	Servers int64
+}
+
+// How many servers each hub carries (the hub picker's assigned counts).
+func (q *Queries) CountServersByHub(ctx context.Context) ([]CountServersByHubRow, error) {
+	rows, err := q.db.QueryContext(ctx, countServersByHub)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CountServersByHubRow{}
+	for rows.Next() {
+		var i CountServersByHubRow
+		if err := rows.Scan(&i.HubID, &i.Servers); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const deleteAllRegistrations = `-- name: DeleteAllRegistrations :exec
 DELETE FROM server_registrations
 `
@@ -85,6 +121,18 @@ func (q *Queries) GetRegistrationByCode(ctx context.Context, code string) (Serve
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const getServerHub = `-- name: GetServerHub :one
+SELECT hub_id FROM servers WHERE server_id = $1
+`
+
+// The hub the server was assigned to (NULL: none; no row: no server).
+func (q *Queries) GetServerHub(ctx context.Context, serverID string) (*string, error) {
+	row := q.db.QueryRowContext(ctx, getServerHub, serverID)
+	var hub_id *string
+	err := row.Scan(&hub_id)
+	return hub_id, err
 }
 
 const hasAnyServer = `-- name: HasAnyServer :one

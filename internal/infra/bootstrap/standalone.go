@@ -45,7 +45,8 @@ func BootstrapStandalone(ctx context.Context, log *logger.Logger, cfg *config.Se
 	}
 
 	// Identical core wiring to the distributed API; Redis is replaced by an
-	// in-memory bus.
+	// in-memory bus. No hub registry: every command goes to the plain request
+	// queue the in-process bridge drains (hubs.SingleQueue).
 	b := membus.NewBus(log)
 	deps, serverRepo := WireCore(ctx, b, dbconn, cfg, log)
 

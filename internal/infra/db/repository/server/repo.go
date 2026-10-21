@@ -33,6 +33,7 @@ type (
 	getCapParams       = sqlitegen.GetCapabilityParams
 	registrationParams = sqlitegen.InsertRegistrationParams
 	certificateParams  = sqlitegen.InsertCertificateParams
+	hubCountRow        = sqlitegen.CountServersByHubRow
 )
 
 type querier interface {
@@ -56,6 +57,8 @@ type querier interface {
 	GetRegistrationByCode(ctx context.Context, db backend.DBTX, code string) (registrationRow, error)
 	GetLatestRegistrationCode(ctx context.Context, db backend.DBTX) (string, error)
 	InsertCertificate(ctx context.Context, db backend.DBTX, p certificateParams) error
+	GetServerHub(ctx context.Context, db backend.DBTX, serverID string) (*string, error)
+	CountServersByHub(ctx context.Context, db backend.DBTX) ([]hubCountRow, error)
 }
 
 // Repo is the servers repository.
@@ -300,4 +303,36 @@ func (r *Repo) PendingRegistrationCode(ctx context.Context) (string, bool, error
 		return "", false, err
 	}
 	return code, true, nil
+}
+
+// ServerHub returns the hub the server is assigned to: "" when it has none,
+// model.ErrNotFound when there is no such server.
+func (r *Repo) ServerHub(ctx context.Context, serverID string) (string, error) {
+	hub, err := r.q.GetServerHub(ctx, r.tx.Querier(ctx), serverID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", model.ErrNotFound
+		}
+		return "", err
+	}
+	if hub == nil {
+		return "", nil
+	}
+	return *hub, nil
+}
+
+// CountServersByHub returns how many servers each hub carries; servers
+// without a hub are not counted.
+func (r *Repo) CountServersByHub(ctx context.Context) (map[string]int, error) {
+	rows, err := r.q.CountServersByHub(ctx, r.tx.Querier(ctx))
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]int, len(rows))
+	for _, row := range rows {
+		if row.HubID != nil {
+			out[*row.HubID] = int(row.Servers)
+		}
+	}
+	return out, nil
 }

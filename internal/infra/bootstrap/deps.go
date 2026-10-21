@@ -5,6 +5,7 @@ import (
 	"winterflow/internal/domain/port"
 	"winterflow/internal/domain/service/alerting"
 	"winterflow/internal/domain/service/status"
+	"winterflow/internal/domain/usecase/hubs"
 	"winterflow/internal/domain/usecase/rollouts"
 	"winterflow/internal/domain/usecase/templates"
 	"winterflow/pkg/config"
@@ -60,4 +61,7 @@ type Deps struct {
 	// ChannelBox encrypts channel URLs; nil when JWT_SECRET is unset
 	// (saving or testing a channel then answers 400).
 	ChannelBox *secretbox.Box
+	// HubPicker assigns an enrolling server its hub from the live hub list;
+	// nil in standalone (no hubs).
+	HubPicker *hubs.Picker
 }

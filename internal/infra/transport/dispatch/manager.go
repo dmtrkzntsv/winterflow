@@ -16,8 +16,8 @@ import (
 
 	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/port"
+	"winterflow/internal/domain/usecase/hubs"
 	"winterflow/internal/infra/transport/bus"
-	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
 	"winterflow/pkg/util"
 )
@@ -33,30 +33,39 @@ type pending struct {
 }
 
 // Manager publishes commands and routes their results to users via the
-// NotificationManager. One per API instance (region).
+// NotificationManager. One per API instance.
 type Manager struct {
-	bus bus.Bus
-	nm  port.NotificationManager
-	cfg *config.ServerConfig
-	log *logger.Logger
+	bus    bus.Bus
+	router hubs.Router
+	nm     port.NotificationManager
+	log    *logger.Logger
 
 	mu      sync.Mutex
 	pending map[string]pending // request_id → owner
 }
 
-func NewManager(b bus.Bus, nm port.NotificationManager, cfg *config.ServerConfig, log *logger.Logger) *Manager {
+// NewManager publishes each command to the queue router names for its
+// server: the server's hub's queue (distributed) or the plain request queue
+// (standalone).
+func NewManager(b bus.Bus, router hubs.Router, nm port.NotificationManager, log *logger.Logger) *Manager {
 	return &Manager{
 		bus:     b,
+		router:  router,
 		nm:      nm,
-		cfg:     cfg,
 		log:     log,
 		pending: make(map[string]pending),
 	}
 }
 
-// Dispatch publishes a command to the request queue and returns its request_id.
-// It records request_id → userID so the eventual result can be routed back.
+// Dispatch publishes a command to its server's request queue and returns its
+// request_id. It records request_id → userID so the eventual result can be
+// routed back. A server the router cannot place (no hub) fails the dispatch
+// before anything is recorded or published.
 func (m *Manager) Dispatch(ctx context.Context, in port.DispatchInput) (string, error) {
+	queue, err := m.router.QueueFor(ctx, in.AgentID)
+	if err != nil {
+		return "", err
+	}
 	requestID := util.GenerateID()
 
 	payload, err := json.Marshal(in.Payload)
@@ -70,7 +79,7 @@ func (m *Manager) Dispatch(ctx context.Context, in port.DispatchInput) (string, 
 	}
 	m.remember(requestID, in.UserID, in.OnResult, ttl)
 
-	if err := m.bus.Publish(ctx, m.cfg.GetBusRequestQueue(), bus.CommandMessage{
+	if err := m.bus.Publish(ctx, queue, bus.CommandMessage{
 		AgentID:   in.AgentID,
 		RequestID: requestID,
 		Type:      string(in.Type),

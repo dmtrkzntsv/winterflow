@@ -68,20 +68,26 @@ func NewHub(log *logger.Logger, cfg *config.ServerConfig, b bus.Bus) *Hub {
 	return h
 }
 
-// StartBusBridge subscribes to the request queue and forwards each command
-// onto the target agent's active gRPC stream. It runs until ctx is cancelled.
-// The Hub is the only consumer of the request queue; agent responses are
-// published back onto the response queue from AgentStream.
+// StartBusBridge subscribes to this hub's own request queue
+// (bus:requests:<hub_id>, where the API routes the commands of the servers
+// assigned to it) and forwards each command onto the target agent's active
+// gRPC stream. It runs until ctx is cancelled. Agent responses are published
+// back onto the response queue from AgentStream.
 func (h *Hub) StartBusBridge(ctx context.Context) error {
 	if h.bus == nil {
 		h.log.Warn("no bus configured, hub will not forward commands")
 		return nil
 	}
-	bus.SubscribeJSON(ctx, h.bus, h.cfg.GetBusRequestQueue(), h.log, func(cmd bus.CommandMessage) {
+	hubID := h.cfg.GetHubID()
+	if hubID == "" {
+		return fmt.Errorf("HUB_PUBLIC_ADDR must be host:port (got %q)", h.cfg.GetHubPublicAddr())
+	}
+	queue := h.cfg.HubRequestQueue(hubID)
+	bus.SubscribeJSON(ctx, h.bus, queue, h.log, func(cmd bus.CommandMessage) {
 		h.dispatchToAgent(cmd)
 	})
 	go h.reapStaleAgents(ctx)
-	h.log.Info("hub bus bridge started", "request_queue", h.cfg.GetBusRequestQueue())
+	h.log.Info("hub bus bridge started", "request_queue", queue)
 	return nil
 }
 

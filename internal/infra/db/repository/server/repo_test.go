@@ -342,3 +342,43 @@ func TestRegisterServerIsAtomic(t *testing.T) {
 		t.Fatalf("previous registration lost after the failed replace, code = %q", got)
 	}
 }
+
+func TestServerHub(t *testing.T) {
+	repo, d := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	dbtest.SeedServer(t, d, org1, srv1)
+	dbtest.SeedServer(t, d, org2, srv2)
+	dbtest.Exec(t, d, `UPDATE servers SET hub_id = ? WHERE server_id = ?`, "hub-01.winterflow.dev", srv1)
+
+	if got, err := repo.ServerHub(ctx, srv1); err != nil || got != "hub-01.winterflow.dev" {
+		t.Fatalf("assigned: %q, %v", got, err)
+	}
+	if got, err := repo.ServerHub(ctx, srv2); err != nil || got != "" {
+		t.Fatalf("no hub: want empty, got %q, %v", got, err)
+	}
+	if _, err := repo.ServerHub(ctx, dbtest.ID(99)); !errors.Is(err, model.ErrNotFound) {
+		t.Fatalf("unknown server: want ErrNotFound, got %v", err)
+	}
+}
+
+func TestCountServersByHub(t *testing.T) {
+	repo, d := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	if got, err := repo.CountServersByHub(ctx); err != nil || len(got) != 0 {
+		t.Fatalf("empty: %v, %v", got, err)
+	}
+	for i, hub := range []string{"hub-01", "hub-01", "hub-02", ""} {
+		id := dbtest.ID(40 + i)
+		dbtest.SeedServer(t, d, dbtest.ID(50+i), id)
+		if hub != "" {
+			dbtest.Exec(t, d, `UPDATE servers SET hub_id = ? WHERE server_id = ?`, hub, id)
+		}
+	}
+	got, err := repo.CountServersByHub(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got["hub-01"] != 2 || got["hub-02"] != 1 {
+		t.Fatalf("counts = %v", got)
+	}
+}

@@ -115,3 +115,19 @@ func (pgsqlQuerier) GetLatestRegistrationCode(ctx context.Context, db backend.DB
 func (pgsqlQuerier) InsertCertificate(ctx context.Context, db backend.DBTX, p certificateParams) error {
 	return pgsqlgen.New(db).InsertCertificate(ctx, pgsqlgen.InsertCertificateParams(p))
 }
+
+func (pgsqlQuerier) GetServerHub(ctx context.Context, db backend.DBTX, serverID string) (*string, error) {
+	return pgsqlgen.New(db).GetServerHub(ctx, serverID)
+}
+
+func (pgsqlQuerier) CountServersByHub(ctx context.Context, db backend.DBTX) ([]hubCountRow, error) {
+	rows, err := pgsqlgen.New(db).CountServersByHub(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]hubCountRow, len(rows))
+	for i, row := range rows {
+		out[i] = hubCountRow(row)
+	}
+	return out, nil
+}

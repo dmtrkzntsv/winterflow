@@ -1,12 +1,14 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"winterflow/internal/app/web/util"
 	"winterflow/internal/domain/dto"
 	"winterflow/internal/domain/model"
+	"winterflow/internal/domain/usecase/hubs"
 )
 
 // RegisterServerRequest is the body of POST /api/v1/server/register.
@@ -51,9 +53,16 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	srv, err := h.servers.ClaimServer(r.Context(), dto.ClaimServerDTO{Code: req.Code, OrganizationID: orgID})
+	if !h.claimLimit.Allow(userID, h.now()) {
+		util.ErrorStatus(w, http.StatusTooManyRequests, "too many attempts, wait a minute")
+		return
+	}
+
+	srv, err := h.claim(r.Context(), req.Code, orgID)
 	if err != nil {
 		switch {
+		case errors.Is(err, hubs.ErrNoHub):
+			util.ErrorStatus(w, http.StatusServiceUnavailable, hubs.ErrNoHub.Error())
 		case errors.Is(err, model.ErrInvalidRegistrationCode):
 			util.Error(w, "invalid registration code", nil)
 		case errors.Is(err, model.ErrRegistrationCodeExpired):
@@ -66,4 +75,16 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	util.Success(w, "server added", RegisterServerResponse{Server: srv})
+}
+
+// claim tries an enrolled agent's code first; a code no enrollment holds
+// falls back to the registration rows (standalone's embedded agent).
+func (h *Handler) claim(ctx context.Context, code, orgID string) (model.Server, error) {
+	if h.claims != nil {
+		srv, err := h.claims.Claim(ctx, code, orgID)
+		if !errors.Is(err, model.ErrInvalidRegistrationCode) {
+			return srv, err
+		}
+	}
+	return h.servers.ClaimServer(ctx, dto.ClaimServerDTO{Code: code, OrganizationID: orgID})
 }

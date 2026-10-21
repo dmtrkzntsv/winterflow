@@ -33,12 +33,28 @@ func TestRouteTableMatchesRouter(t *testing.T) {
 			}
 			continue
 		}
+		if rt.Tag == "enroll" {
+			continue // mounted only where an enrollment usecase is wired
+		}
 		table = append(table, rt.Method+" "+rt.Path)
 	}
 	sort.Strings(walked)
 	sort.Strings(table)
 	if strings.Join(walked, "\n") != strings.Join(table, "\n") {
 		t.Errorf("router and table differ.\nrouter:\n%s\ntable:\n%s", strings.Join(walked, "\n"), strings.Join(table, "\n"))
+	}
+}
+
+// TestEnrollRoutesNotMountedWithoutEnrollment: standalone has no enrollment
+// usecase, so the public enroll routes answer 404.
+func TestEnrollRoutesNotMountedWithoutEnrollment(t *testing.T) {
+	h := testServer(t)
+	for _, p := range []string{"/api/v1/agent/enroll", "/api/v1/agent/enroll/refresh", "/api/v1/agent/enroll/status"} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, p, strings.NewReader("{}")))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("POST %s = %d, want 404", p, rec.Code)
+		}
 	}
 }
 

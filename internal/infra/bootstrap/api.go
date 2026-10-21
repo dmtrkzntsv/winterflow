@@ -3,6 +3,8 @@ package bootstrap
 import (
 	"context"
 	"winterflow/internal/domain/model"
+	"winterflow/internal/domain/usecase/enrollment"
+	"winterflow/internal/infra/cert"
 	"winterflow/internal/infra/db"
 	"winterflow/internal/infra/transport/bus"
 	"winterflow/internal/infra/transport/dispatch"
@@ -45,6 +47,13 @@ func BootstrapAPI(ctx context.Context, log *logger.Logger, cfg *config.ServerCon
 	deps, _ := WireCore(ctx, b, dbconn, cfg, log, WithHubRegistry(hubsreg.NewRegistry(rc)))
 	// WireCore has started the response subscriber, so replies reach the
 	// waiting steps; the Hub consumes the request queue independently.
+	// Agents enroll by code: the API signs their certificates with the CA
+	// ValidateEnrollment checked above.
+	signer, err := cert.NewCASigner(cfg.GetHubCACertPath(), cfg.GetHubCAKeyPath())
+	if err != nil {
+		log.Fatalf("load the CA: %v", err)
+	}
+	deps.Enrollment = enrollment.New(deps.EnrollmentRepository, signer, deps.HubPicker, nil)
 	StartRollouts(ctx, deps)
 	StartCatalog(ctx, deps)
 	return deps

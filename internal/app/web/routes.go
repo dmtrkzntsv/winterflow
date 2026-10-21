@@ -2,6 +2,7 @@ package web
 
 import (
 	"net/http"
+	"slices"
 	"winterflow/internal/app/web/spa"
 	webdist "winterflow/web"
 
@@ -11,6 +12,7 @@ import (
 	happ "winterflow/internal/app/web/handler/app"
 	hauth "winterflow/internal/app/web/handler/auth"
 	hdocker "winterflow/internal/app/web/handler/docker"
+	henroll "winterflow/internal/app/web/handler/enroll"
 	"winterflow/internal/app/web/handler/monitoring"
 	"winterflow/internal/app/web/handler/notification"
 	horg "winterflow/internal/app/web/handler/org"
@@ -43,7 +45,12 @@ func (s *Server) registerRoutes() {
 	// No role guard: every org member may do everything; server-addressed
 	// handlers still check the caller's org owns the server.
 	guards := api.Guards{AuthLimit: authLimiter.Middleware}
-	api.Register(s.Router, routeTable(s.Deps, guards), authMW)
+	routes := routeTable(s.Deps, guards)
+	if s.Deps.Enrollment == nil {
+		// Standalone: agents do not enroll by code; the routes answer 404.
+		routes = slices.DeleteFunc(routes, func(rt api.Route) bool { return rt.Tag == "enroll" })
+	}
+	api.Register(s.Router, routes, authMW)
 
 	// Serve the embedded SPA for everything the API doesn't claim (history-mode
 	// fallback). A source build without `make web-build` embeds only the
@@ -89,12 +96,23 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 		CommandDispatcher: d.CommandDispatcher,
 		Servers:           d.ServerRepository,
 	})
+	// Typed nils must not become non-nil interfaces: standalone (and the
+	// spec-only table) has no enrollment usecase.
+	var (
+		claimer     server.Claimer
+		enrollments henroll.Enrollments
+	)
+	if d.Enrollment != nil {
+		claimer, enrollments = d.Enrollment, d.Enrollment
+	}
+	enrollAPI := henroll.NewHandler(&henroll.Deps{Logger: d.Log, Enrollments: enrollments})
 	serversAPI := server.NewHandler(&server.Deps{
 		Logger:           d.Log,
 		ServerRepository: d.ServerRepository,
 		UserService:      d.UserService,
 		StatusCache:      d.StatusCache,
 		Cfg:              d.Cfg,
+		Enrollment:       claimer,
 	})
 	monitoringAPI := monitoring.NewHandler(&monitoring.Deps{
 		Logger:      d.Log,
@@ -169,6 +187,7 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 		Summary: "Liveness probe", Tag: "system",
 	}}
 	for _, table := range [][]api.Route{
+		enrollAPI.Routes(g),
 		authAPI.Routes(g),
 		notificationAPI.Routes(g),
 		appsAPI.Routes(g),

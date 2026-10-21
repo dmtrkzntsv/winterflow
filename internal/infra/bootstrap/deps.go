@@ -5,6 +5,7 @@ import (
 	"winterflow/internal/domain/port"
 	"winterflow/internal/domain/service/alerting"
 	"winterflow/internal/domain/service/status"
+	"winterflow/internal/domain/usecase/enrollment"
 	"winterflow/internal/domain/usecase/hubs"
 	"winterflow/internal/domain/usecase/rollouts"
 	"winterflow/internal/domain/usecase/templates"
@@ -64,4 +65,9 @@ type Deps struct {
 	// HubPicker assigns an enrolling server its hub from the live hub list;
 	// nil in standalone (no hubs).
 	HubPicker *hubs.Picker
+	// EnrollmentRepository stores agent enrollments; Enrollment is the
+	// usecase over it, wired by BootstrapAPI only (nil in standalone, where
+	// the enroll routes are not mounted and codes come from registrations).
+	EnrollmentRepository port.EnrollmentRepository
+	Enrollment           *enrollment.UseCase
 }

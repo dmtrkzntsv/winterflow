@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	"context"
+	enrollmentrepo "winterflow/internal/infra/db/repository/enrollment"
 
 	"winterflow/internal/domain/metrics"
 	"winterflow/internal/domain/service/alerting"
@@ -117,6 +118,7 @@ func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerCon
 		AlertNotifier:            al.notifier,
 		ChannelBox:               al.box,
 		HubPicker:                picker,
+		EnrollmentRepository:     r.enrollment,
 	}, r.server
 }
 
@@ -133,6 +135,7 @@ type repos struct {
 	template      *templaterepo.Repo
 	rollout       *rolloutrepo.Repo
 	alert         *alertrepo.Repo
+	enrollment    *enrollmentrepo.Repo
 }
 
 func newRepos(conn *db.DB, log *logger.Logger) (repos, error) {
@@ -170,6 +173,9 @@ func newRepos(conn *db.DB, log *logger.Logger) (repos, error) {
 	if r.rollout, err = rolloutrepo.New(conn.Tx, conn.Driver, log); err != nil {
 		return r, err
 	}
-	r.alert, err = alertrepo.New(conn.Tx, conn.Driver, log, util.GenerateID)
+	if r.alert, err = alertrepo.New(conn.Tx, conn.Driver, log, util.GenerateID); err != nil {
+		return r, err
+	}
+	r.enrollment, err = enrollmentrepo.New(conn.Tx, conn.Driver)
 	return r, err
 }

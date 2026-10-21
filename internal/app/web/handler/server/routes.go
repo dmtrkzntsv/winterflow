@@ -30,7 +30,7 @@ func (h *Handler) Routes(api.Guards) []api.Route {
 			Method: http.MethodPost, Path: "/api/v1/server/register", Handler: h.Register, Auth: api.User,
 			Summary: "Claim a pending server by its pairing code", Tag: "server",
 			Request: RegisterServerRequest{}, Response: RegisterServerResponse{},
-			Errors: []int{http.StatusBadRequest},
+			Errors: []int{http.StatusBadRequest, http.StatusTooManyRequests, http.StatusServiceUnavailable},
 		},
 	}
 }

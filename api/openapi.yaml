@@ -40,6 +40,123 @@ paths:
       summary: Liveness probe
       tags:
       - system
+  /api/v1/agent/enroll:
+    post:
+      operationId: agentEnroll
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/CodeResponse'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Service Unavailable
+      summary: 'Start an agent enrollment: submit a CSR, get a pairing code'
+      tags:
+      - enroll
+  /api/v1/agent/enroll/refresh:
+    post:
+      operationId: agentEnrollRefresh
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PollRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/CodeResponse'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Conflict
+      summary: Replace the code of a pending enrollment
+      tags:
+      - enroll
+  /api/v1/agent/enroll/status:
+    post:
+      operationId: agentEnrollStatus
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PollRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/StatusResponse'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+      summary: Poll an enrollment; once claimed it carries the signed certificate
+      tags:
+      - enroll
   /api/v1/agent/update:
     post:
       operationId: agentUpdate
@@ -4387,6 +4504,18 @@ paths:
               schema:
                 type: string
           description: Unauthorized
+        "429":
+          content:
+            text/plain:
+              schema:
+                type: string
+          description: Too Many Requests
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Service Unavailable
       security:
       - bearer: []
       - cookie: []
@@ -6493,6 +6622,26 @@ components:
       - covered
       - claims
       type: object
+    CodeResponse:
+      properties:
+        code:
+          type: string
+        codes_left:
+          type: integer
+        enrollment_id:
+          type: string
+        expires_at:
+          format: date-time
+          type: string
+        poll_secret:
+          type: string
+      required:
+      - enrollment_id
+      - poll_secret
+      - code
+      - expires_at
+      - codes_left
+      type: object
     ContainerStatus:
       properties:
         container_id:
@@ -8280,6 +8429,11 @@ components:
         format: double
         type: number
       type: object
+    PollRequest:
+      properties:
+        poll_secret:
+          type: string
+      type: object
     Process:
       properties:
         app_id:
@@ -9341,6 +9495,13 @@ components:
         token:
           type: string
       type: object
+    StartRequest:
+      properties:
+        csr:
+          type: string
+        hostname:
+          type: string
+      type: object
     StateResponse:
       properties:
         bootstrap:
@@ -9350,6 +9511,31 @@ components:
       required:
       - bootstrap
       - registration_enabled
+      type: object
+    StatusResponse:
+      properties:
+        ca_certificate:
+          type: string
+        certificate:
+          type: string
+        code:
+          type: string
+        codes_left:
+          type: integer
+        expires_at:
+          format: date-time
+          type:
+          - "null"
+          - string
+        hub_addr:
+          type: string
+        server_id:
+          type: string
+        state:
+          type: string
+      required:
+      - state
+      - codes_left
       type: object
     StorageInfo:
       properties:

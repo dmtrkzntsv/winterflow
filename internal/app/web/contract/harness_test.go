@@ -13,6 +13,8 @@ import (
 	appagent "winterflow/internal/app/agent"
 	"winterflow/internal/app/web"
 	"winterflow/internal/domain/dto"
+	"winterflow/internal/domain/usecase/enrollment"
+	"winterflow/internal/domain/usecase/enrollment/enrolltest"
 	"winterflow/internal/domain/usecase/rollouts"
 	"winterflow/internal/infra/bootstrap"
 	"winterflow/internal/infra/db"
@@ -89,6 +91,9 @@ func newEnv(t *testing.T) *env {
 	deps, _ := bootstrap.WireCore(ctx, b, conn, cfg, testLog, bootstrap.WithRolloutTiming(rollouts.Timing{
 		HealthSettle: 100 * time.Millisecond, HealthPoll: 50 * time.Millisecond,
 	}))
+	// Enrollment is distributed-only in production (BootstrapAPI); the
+	// suite wires it here so its routes are exercised.
+	deps.Enrollment = enrollment.New(deps.EnrollmentRepository, enrolltest.Signer(t), enrolltest.Picker{Hub: enrolltest.DefaultHub}, nil)
 	agent := newFakeAgent()
 	if err := appagent.NewInProcessBridge(b, cfg, agent, testLog).Start(ctx); err != nil {
 		t.Fatal(err)

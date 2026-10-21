@@ -1,21 +1,38 @@
 package server
 
 import (
+	"context"
+	"time"
+
+	"winterflow/internal/app/web/middleware/ratelimit"
+	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/port"
 	"winterflow/internal/domain/service/status"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
 )
 
+// Claimer binds an enrollment's pairing code to an org (the enrollment
+// usecase); nil where agents do not enroll by code (standalone).
+type Claimer interface {
+	Claim(ctx context.Context, code, orgID string) (model.Server, error)
+}
+
 type Handler struct {
-	users   port.UserService
-	servers port.ServerRepository
-	status  *status.Cache
-	cfg     *config.ServerConfig
-	log     *logger.Logger
+	claims Claimer
+	// claimLimit throttles pairing-code guesses per user.
+	claimLimit *ratelimit.Limiter
+	now        func() time.Time
+	users      port.UserService
+	servers    port.ServerRepository
+	status     *status.Cache
+	cfg        *config.ServerConfig
+	log        *logger.Logger
 }
 
 type Deps struct {
+	// Enrollment claims pairing codes of enrolled agents; nil in standalone.
+	Enrollment       Claimer
 	Logger           *logger.Logger
 	ServerRepository port.ServerRepository
 	UserService      port.UserService
@@ -25,10 +42,13 @@ type Deps struct {
 
 func NewHandler(d *Deps) *Handler {
 	return &Handler{
-		users:   d.UserService,
-		servers: d.ServerRepository,
-		status:  d.StatusCache,
-		cfg:     d.Cfg,
-		log:     d.Logger,
+		claims:     d.Enrollment,
+		claimLimit: ratelimit.New(0.1, 5),
+		now:        time.Now,
+		users:      d.UserService,
+		servers:    d.ServerRepository,
+		status:     d.StatusCache,
+		cfg:        d.Cfg,
+		log:        d.Logger,
 	}
 }

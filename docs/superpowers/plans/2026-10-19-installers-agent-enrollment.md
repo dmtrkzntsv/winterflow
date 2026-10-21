@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Three scripts install Winterflow as standalone, as a distributed control plane (API + Hub + local Postgres/Redis, binaries from R2), or as an agent that enrolls with a code typed into the hosted UI; hubs admit only agents whose server still exists.
+**Goal:** Scripts install Winterflow as standalone, as a distributed control plane (API + Hub + local Postgres/Redis, binaries from R2), as an extra hub, or as an agent that enrolls with a code typed into the hosted UI; hubs admit only agents whose server still exists, and agents move between hubs when one drains or dies.
 
 **Architecture:** Hubs list themselves in Redis (key `hub:status:<hub_id>`, 90 s expiry, refreshed every 30 s); the API reads that list, assigns each enrolling server a random hub with room, and routes each command to its server's hub queue. The API gains an unauthenticated enrollment API (CSR in, code out, signed cert back after a user claims the code) and signs agent certs with the CA it now holds. Hubs verify each connecting agent's certificate name and ask the API over the existing Redis bus whether the server and certificate are still active; deleting a server revokes it. Enrollment logic on the agent side is a hidden `winterflow-agent enroll` subcommand that `install-agent.sh` calls. GitHub releases carry only standalone and agent; all four binaries go to private Cloudflare R2.
 
@@ -18,24 +18,30 @@
 - Agent cert CN = `server_id`; the CSR's own subject is ignored. Agent private key never leaves the agent box (0600, service user).
 - Hub waits at most 5 s for the API's auth reply; no reply = `Unavailable`.
 - Agent: 5 consecutive `PermissionDenied` (retry gaps 1m, 2m, 3m, 4m) → exit code 78; unit has `RestartPreventExitStatus=78`. `Unavailable` and every other failure: existing 1–30 s backoff forever. A successful connection resets the count.
-- Release assets: GitHub gets `winterflow-<os>-<arch>` (standalone) and `agent-<os>-<arch>`; the old names are no longer published. R2 gets `winterflow-{standalone,agent,api,hub}-<os>-<arch>` + `checksums.txt` under `releases/<tag>/`, and `releases/latest` (text: the tag). R2 env vars: `WINTERFLOW_R2_ENDPOINT`, `WINTERFLOW_R2_BUCKET`, `WINTERFLOW_R2_ACCESS_KEY_ID`, `WINTERFLOW_R2_SECRET_ACCESS_KEY`.
+- Release assets: GitHub gets `winterflow-<os>-<arch>` (standalone) and `agent-<os>-<arch>`; the old names are no longer published. R2 (econumo's approach): `make release-binaries` → `release-out/winterflow-{standalone,agent,api,hub}-linux-<arch>` + `SHA256SUMS`; `make cdn-upload CHANNEL=<vX|latest>` → `s3://<bucket>/winterflow/<channel>/`. Env: `WINTERFLOW_R2_ENDPOINT` (required), `WINTERFLOW_R2_ACCESS_KEY_ID`, `WINTERFLOW_R2_SECRET_ACCESS_KEY`; bucket is a Makefile default (owner to name it).
 - Agent shortcut: `https://get.winterflow.dev/agent` (redirect owned outside the repo) → raw GitHub `scripts/install-agent.sh`.
 - No regions: `REGION` and the `BUS_*_QUEUE` overrides are removed. Bus channels (fixed names): agent traffic `bus:requests:<hub_id>` (API→hub; standalone uses plain `bus:requests`), `bus:responses`, `bus:events`; hub traffic `hub:requests` (hub→API), `hub:responses:<hub_id>` (API→hub), `hub:broadcast` (API→all hubs). Each channel has its own subscription/goroutine. `hub_id` = host part of `HUB_PUBLIC_ADDR`.
 - Hubs: write `hub:status:<hub_id>` (JSON, 90 s expiry) every 30 s; a hub is available while its key exists; no hubs table; capacity default 1000; a random active, accepting hub below capacity per enrolling server; all full → lowest assigned/capacity ratio + warning; none active → claim fails 503, code stays valid.
 - Standalone defaults to SQLite (installer always uses it) but accepts Postgres; distributed API is Postgres-only (startup refuses SQLite). None of the hub auth applies to standalone.
 - Every new/changed env var goes into `.env.example` in the same task (CLAUDE.md rule). Every route change: `make openapi`, contract test + `probes` entry. New SQL: same `-- name:` in `query/sqlite` and `query/pgsql`, `make sqlc`, shapes test. Migrations identical in both engines, ASCII only.
+- Redis: every connection uses TLS and a password (`REDIS_TLS` default true in distributed, `REDIS_CA_CERT_PATH` default the Winterflow CA). The control plane runs a dedicated `redis-server@winterflow` instance on 6380, TLS only.
+- Agent migration (Part B): the agent asks `POST /api/v1/agent/hub` (signed with its key, timestamp ±5 min) on `hub.move`, on `FailedPrecondition`, and after 3 minutes without its hub (then every 3 minutes). Current hub persisted in `{AGENT_DATA_DIR}/hub.json`. Drain flag `hub:draining:<hub_id>` (no expiry); draining hub moves ~20 agents/s, stop waits ≤ 2 min (`TimeoutStopSec=150`).
+- Hub join tokens (Part B): `wfh_` + 32 random bytes base64url, SHA-256 stored in `hub_join_tokens`, default TTL 1 h, single use, pruned a day after expiry/use.
 - Every network operation has a deadline; pending-reply maps are pruned on timeout (CLAUDE.md stability rules).
-- Three self-contained scripts (`install.sh` standalone, `install-agent.sh`, `install-control-plane.sh`), each curl-pipeable; installers never touch the firewall, Caddy, or global Postgres/Redis config; reruns keep CA, passwords, JWT secret, data.
+- Four self-contained scripts (`install.sh` standalone, `install-agent.sh`, `install-control-plane.sh`, and Part B's `install-hub.sh`), each curl-pipeable; installers never touch the firewall, Caddy, or global Postgres/Redis config; reruns keep CA, passwords, JWT secret, data.
 
 ## Review Focus
 
-1. **Claim races a refresh**: a user types code N while the script has just refreshed to N+1. Expect "code has expired" for N (not a 500, not a claim), and N+1 works. → Task 5 test `TestClaimOldCodeAfterRefresh`.
-2. **Script loses the network after the claim** and polls again minutes later. Expect `claimed` with the same cert, not a second server. Past 15 minutes: `expired`, and the server exists without a collected cert. → Task 5 test `TestStatusClaimedIsIdempotent`.
-3. **Two API replicas answer the same auth question**, or a reply arrives after the 5 s timeout. Expect the first reply used, late/duplicate replies dropped without leaking map entries or blocking. → Task 9 test `TestAuthorizerLateAndDuplicateReplies`.
-4. **Agent rerun on an already-enrolled box** (`install-agent.sh` again). Expect binary/unit refreshed, no new enrollment, cert untouched, service restarted. → Task 14 dry-run test `agent_rerun_keeps_enrollment`.
-5. **Agent stream sends a heartbeat/event with a different `AgentId`** than its cert. Expect the stream closed, nothing published for the foreign id. → Task 9 test `TestStreamRejectsForeignAgentID`.
+1. **Claim races a refresh**: a user types code N while the script has just refreshed to N+1. Expect "code has expired" for N (not a 500, not a claim), and N+1 works. → Task 6 test `TestClaimOldCodeAfterRefresh`.
+2. **Script loses the network after the claim** and polls again minutes later. Expect `claimed` with the same cert, not a second server. Past 15 minutes: `expired`, and the server exists without a collected cert. → Task 6 test `TestStatusClaimedIsIdempotent`.
+3. **Two API replicas answer the same auth question**, or a reply arrives after the 5 s timeout. Expect the first reply used, late/duplicate replies dropped without leaking map entries or blocking. → Task 10 test `TestAuthorizerLateAndDuplicateReplies`.
+4. **Agent rerun on an already-enrolled box** (`install-agent.sh` again). Expect binary/unit refreshed, no new enrollment, cert untouched, service restarted. → Task 15 dry-run test `agent_rerun_keeps_enrollment`.
+6. **A hub dies with many agents on it** (Part B). Expect every agent to ask after ~3 minutes, all land on live hubs, and two API replicas never send one server to two hubs. → Task 19 test `TestWhereConcurrentMovesAgree`, Task 21 e2e.
+5. **Agent stream sends a heartbeat/event with a different `AgentId`** than its cert. Expect the stream closed, nothing published for the foreign id. → Task 10 test `TestStreamRejectsForeignAgentID`.
 
 ---
+
+## Part A — enrollment, one hub, installers, releases (ends in PR A)
 
 ### Task 1: Topology database rules and new config
 
@@ -114,7 +120,22 @@ Table `agent_enrollments`: `enrollment_id` PK, `poll_secret_hash` TEXT UNIQUE NO
 - [ ] **Step 4: Run** `go test ./internal/infra/db/...` and `make test-pg` — PASS; `make sqlc-check` clean.
 - [ ] **Step 5: Commit** `feat(db): agent_enrollments table and repository`
 
-### Task 4: Hub list in Redis and per-hub command routing
+### Task 4: Redis over TLS with a password
+
+**Files:**
+- Modify: `pkg/config/config.go` (`GetRedisCredentials` ~:107), `internal/infra/transport/redis/bus/bus.go` (client construction), `.env.example`
+- Test: `pkg/config/config_test.go`, `internal/infra/transport/redis/bus/bus_test.go`
+
+**Interfaces:**
+- Produces: `func (c *ServerConfig) GetRedisTLS() bool` (env `REDIS_TLS`; default `true` when distributed, `false` when standalone), `func (c *ServerConfig) GetRedisCACertPath() string` (env `REDIS_CA_CERT_PATH`, default `GetHubCACertPath()`), `func NewRedisClient(cfg *config.ServerConfig) (*redis.Client, error)` in the redis bus package — TLS 1.2+, `RootCAs` from the CA file, server name from `REDIS_ADDR`'s host; every caller (API, hub, Task 5's registry) builds its client through it. A missing/unparsable CA file with TLS on is an error at startup.
+
+- [ ] **Step 1: Write failing tests**: `TestRedisTLSDefaults` (distributed → true, standalone → false, `REDIS_TLS=false` → false), `TestNewRedisClientTLS` (spins a TLS listener with a test CA, client handshake succeeds; with a different CA it fails), `TestNewRedisClientMissingCA` (error).
+- [ ] **Step 2: Run** `go test ./pkg/config/ ./internal/infra/transport/redis/...` — FAIL.
+- [ ] **Step 3: Implement; document `REDIS_TLS`, `REDIS_CA_CERT_PATH` in `.env.example`.** Local dev (`make api`/`make hub`) docs say to set `REDIS_TLS=false`.
+- [ ] **Step 4: Run** — PASS.
+- [ ] **Step 5: Commit** `feat(redis): TLS and CA verification for every Redis connection`
+
+### Task 5: Hub list in Redis and per-hub command routing
 
 **Files:**
 - Create: `internal/infra/db/migrations/{sqlite,pgsql}/0019_server_hub.sql` (`ALTER TABLE servers ADD hub_id TEXT NULL` + index; follows Task 3's `0018`)
@@ -126,26 +147,26 @@ Table `agent_enrollments`: `enrollment_id` PK, `poll_secret_hash` TEXT UNIQUE NO
 
 **Interfaces:**
 - Produces:
-  - `type Hub struct { ID, PublicAddr, Version string; Capacity, ConnectedAgents, Assigned int; Accepting bool }` (`Assigned` filled by the picker from `CountServersByHub`).
+  - `type Hub struct { ID, PublicAddr, Version string; Capacity, ConnectedAgents, Assigned int; Accepting, Draining bool }` (`Draining` stays false until Part B's Task 21 sets it; the picker already skips draining hubs) (`Assigned` filled by the picker from `CountServersByHub`).
   - `port.HubRegistry`: `Announce(ctx, model.Hub, ttl time.Duration) error`, `List(ctx) ([]model.Hub, error)`. Redis impl: key `hub:status:<id>`, `SET … EX 90`; `List` = `SCAN MATCH hub:status:* COUNT 100` + `MGET`, skipping keys that vanished or don't parse. Every call bounded by a 3 s context.
   - `port.ServerRepository` additions: `ServerHub(ctx, serverID string) (string, error)` (`""` when NULL, `model.ErrNotFound` when no server), `CountServersByHub(ctx) (map[string]int, error)`.
   - `hubs.Picker{ registry; servers; rand }`, `func (p *Picker) Pick(ctx) (model.Hub, error)`; `const AnnounceEvery = 30 * time.Second; AnnounceTTL = 90 * time.Second`; `var ErrNoHub = errors.New("no hub is available, try again in a minute")`.
-  - `type Router interface { QueueFor(ctx context.Context, serverID string) (string, error); Forget(serverID string) }`; `hubs.NewRouter(servers, cfg)` caches server→hub in a `sync.Map` (Task 7's delete-server calls `Forget`); a server with no hub → `ErrServerHasNoHub` ("server has no hub; reinstall the agent"). `hubs.SingleQueue(cfg)` returns `GetBusRequestQueue()` for standalone, `Forget` a no-op.
+  - `type Router interface { QueueFor(ctx context.Context, serverID string) (string, error) }`; `hubs.NewRouter(servers, cfg)` reads `servers.hub_id` on every call, no cache (other API replicas would go stale after a migration);  a server with no hub → `ErrServerHasNoHub` ("server has no hub; reinstall the agent"). `hubs.SingleQueue(cfg)` returns `GetBusRequestQueue()` for standalone.
   - Hub side: `func (h *Hub) startAnnouncer(ctx, reg port.HubRegistry)` — announces at start and every 30 s; `ConnectedAgents` = active streams. On shutdown it deletes its key (best effort) so it leaves the list at once.
 
-- [ ] **Step 1: Write failing tests**: registry `TestAnnounceAndList` (two hubs listed; a key past its TTL is gone; a garbage value is skipped), `TestCountServersByHub` (repo); `TestPickRandomAmongRoomy` (3 hubs, one full, one not accepting → only the third over 100 runs with a seeded rand), `TestPickAllFullLeastRatio` (capacities 10/20 with 10/15 assigned → second), `TestPickNoneListed` (→ `ErrNoHub`), `TestRouterQueue` (`bus:requests:hub-01.winterflow.dev`; second call from cache; `Forget` forces a lookup), `TestRouterNoHub`, hub `TestAnnouncerAnnounces` (first immediately, counts active streams, key deleted on stop), dispatch `TestManagerPublishesToServersHubQueue`.
+- [ ] **Step 1: Write failing tests**: registry `TestAnnounceAndList` (two hubs listed; a key past its TTL is gone; a garbage value is skipped), `TestCountServersByHub` (repo); `TestPickRandomAmongRoomy` (4 hubs: one full, one not accepting, one draining → only the fourth over 100 runs with a seeded rand), `TestPickAllFullLeastRatio` (capacities 10/20 with 10/15 assigned → second), `TestPickNoneListed` (→ `ErrNoHub`), `TestRouterQueue` (`bus:requests:hub-01.winterflow.dev`; after the server's `hub_id` changes, the next call returns the new queue), `TestRouterNoHub`, hub `TestAnnouncerAnnounces` (first immediately, counts active streams, key deleted on stop), dispatch `TestManagerPublishesToServersHubQueue`.
 - [ ] **Step 2: Run** `go test ./internal/domain/usecase/hubs/ ./internal/infra/transport/... ./internal/infra/db/repository/server/` — FAIL.
 - [ ] **Step 3: Implement; `make sqlc`; wire registry + picker + router in `WireCore` (distributed only), `SingleQueue` in standalone (no registry, no Redis), announcer + per-hub queue in `BootstrapHUB`.** Existing hub e2e tests set `HUB_PUBLIC_ADDR` and use the per-hub queue.
 - [ ] **Step 4: Run** `go test -race ./internal/...` and `make test-pg` — PASS.
 - [ ] **Step 5: Commit** `feat: hubs list themselves in Redis; the API assigns hubs and routes commands per hub`
 
-### Task 5: Enrollment usecase
+### Task 6: Enrollment usecase
 
 **Files:**
 - Create: `internal/domain/usecase/enrollment/{usecase.go,usecase_test.go}`
 
 **Interfaces:**
-- Consumes: Task 2 `SignCSRAs`, `Fingerprint`; Task 3 `port.EnrollmentRepository`; Task 4 `hubs.Picker`, `hubs.ErrNoHub`.
+- Consumes: Task 2 `SignCSRAs`, `Fingerprint`; Task 3 `port.EnrollmentRepository`; Task 5 `hubs.Picker`, `hubs.ErrNoHub`.
 - Produces:
   ```go
   const (CodeTTL = 10 * time.Minute; MaxCodes = 10; ClaimedTTL = 15 * time.Minute; MaxPending = 1000)
@@ -154,7 +175,7 @@ Table `agent_enrollments`: `enrollment_id` PK, `poll_secret_hash` TEXT UNIQUE NO
   type StartResult struct { EnrollmentID, PollSecret, Code string; ExpiresAt time.Time; CodesLeft int }
   type Status struct { State string /* pending|expired|failed|claimed */; Code string; ExpiresAt time.Time; CodesLeft int; ServerID, Certificate, CACertificate, HubAddr string /* picked hub's public_addr */ }
   func New(repo port.EnrollmentRepository, signer Signer, hubs HubPicker, now func() time.Time) *UseCase
-  type HubPicker interface { Pick(ctx context.Context) (model.Hub, error) } // Task 4's hubs.Picker
+  type HubPicker interface { Pick(ctx context.Context) (model.Hub, error) } // Task 5's hubs.Picker
   func (u *UseCase) Start(ctx, csrPEM, hostname string) (StartResult, error)
   func (u *UseCase) Refresh(ctx, pollSecret string) (StartResult, error)
   func (u *UseCase) Status(ctx, pollSecret string) (Status, error)
@@ -168,7 +189,7 @@ Table `agent_enrollments`: `enrollment_id` PK, `poll_secret_hash` TEXT UNIQUE NO
 - [ ] **Step 4: Run** — PASS.
 - [ ] **Step 5: Commit** `feat(enrollment): code-based agent enrollment usecase`
 
-### Task 6: Enrollment HTTP API and claim integration
+### Task 7: Enrollment HTTP API and claim integration
 
 **Files:**
 - Create: `internal/app/web/handler/enroll/{handler.go,routes.go,handler_test.go}`
@@ -176,7 +197,7 @@ Table `agent_enrollments`: `enrollment_id` PK, `poll_secret_hash` TEXT UNIQUE NO
 - Modify: `internal/app/web/contract/*` (happy paths + probes), `api/openapi.yaml` (via `make openapi`)
 
 **Interfaces:**
-- Consumes: Task 5 `*enrollment.UseCase`.
+- Consumes: Task 6 `*enrollment.UseCase`.
 - Produces routes (all `Auth: api.Public`, `Middleware: []api.Middleware{g.AuthLimit}`, tag `enroll`):
   - `POST /api/v1/agent/enroll` `{csr, hostname}` → `{enrollment_id, poll_secret, code, expires_at, codes_left}`
   - `POST /api/v1/agent/enroll/refresh` `{poll_secret}` → same shape
@@ -190,18 +211,18 @@ Table `agent_enrollments`: `enrollment_id` PK, `poll_secret_hash` TEXT UNIQUE NO
 - [ ] **Step 4: Run** `go test ./internal/app/web/...` and `make test-pg` — PASS; `TestOpenAPIUpToDate` PASS.
 - [ ] **Step 5: Commit** `feat(api): agent enrollment routes; claiming a code signs the agent's cert`
 
-### Task 7: Delete a server
+### Task 8: Delete a server
 
 No delete route exists today; revocation needs one.
 
 **Files:**
 - Modify: `internal/app/web/handler/server/{routes.go,handler.go}`; create `delete.go`
 - Modify: `internal/domain/port` (`ServerRepository.DeleteServer(ctx, serverID string) error`), `internal/infra/db/sqlc/query/{sqlite,pgsql}/servers.sql`, server repo + shims
-- Define in `internal/domain/port`: `type Revoker interface { Revoke(ctx context.Context, serverID string) error }` (nil in standalone; Task 8 provides the bus implementation)
+- Define in `internal/domain/port`: `type Revoker interface { Revoke(ctx context.Context, serverID string) error }` (nil in standalone; Task 9 provides the bus implementation)
 - Test: handler tests, contract test + probe, repo test
 
 **Interfaces:**
-- Produces: `POST /api/v1/server/delete-server` `{server_id}` → 200 `{}`; `webutil.RequireServerAccess` first (403 on another org's server). Deletes the `servers` row (FK cascades remove certificates, apps rows, capabilities…), drops the server from the in-memory status cache and the hub router (`Router.Forget`, Task 4), then calls `Revoker.Revoke`. A revoke publish failure is logged, not returned (the hub's connect-time check still denies the next connection). Containers on the box are not touched.
+- Produces: `POST /api/v1/server/delete-server` `{server_id}` → 200 `{}`; `webutil.RequireServerAccess` first (403 on another org's server). Deletes the `servers` row (FK cascades remove certificates, apps rows, capabilities…), drops the server from the in-memory status cache, then calls `Revoker.Revoke`. A revoke publish failure is logged, not returned (the hub's connect-time check still denies the next connection). Containers on the box are not touched.
 
 - [ ] **Step 1: Write failing tests**: `TestDeleteServerOK` (row gone, revoker called with id), `TestDeleteServerOtherOrg403`, `TestDeleteServerUnknown403`, repo `TestDeleteServerCascades`.
 - [ ] **Step 2: Run** — FAIL.
@@ -209,7 +230,7 @@ No delete route exists today; revocation needs one.
 - [ ] **Step 4: Run** `go test ./internal/... ` and `make test-pg` — PASS.
 - [ ] **Step 5: Commit** `feat(api): delete a server`
 
-### Task 8: Agent auth on the API side
+### Task 9: Agent auth on the API side
 
 **Files:**
 - Modify: `internal/infra/transport/bus/bus.go` (message types)
@@ -231,7 +252,7 @@ No delete route exists today; revocation needs one.
 - Produces (`agentauth`):
   - `func Check(ctx, repo port.ServerRepository, serverID, fingerprint string) (bus.AgentVerdict, string, error)` — no server → `unknown` "server not found"; server exists but fingerprint ≠ its active certificate's → `revoked` "certificate is not active"; else `allowed`. DB error → returned (no reply sent; the hub times out to `Unavailable`).
   - `func StartResponder(ctx, b bus.Bus, cfg *config.ServerConfig, repo port.ServerRepository, log) error` — subscribes `GetHubRequestsChannel()`, answers each `server.verify` request on `config.HubResponsesChannel(req.HubID)` (unknown types are logged and ignored), each check bounded by 3 s.
-  - `type BusRevoker struct{...}; func (r *BusRevoker) Revoke(ctx, serverID) error` — publishes `HubBroadcast{Type: HubBroadcastRevoked}` on `GetHubBroadcastChannel()`. Satisfies Task 7's `Revoker`.
+  - `type BusRevoker struct{...}; func (r *BusRevoker) Revoke(ctx, serverID) error` — publishes `HubBroadcast{Type: HubBroadcastRevoked}` on `GetHubBroadcastChannel()`. Satisfies Task 8's `Revoker`.
 - Events defense: the API's events consumer drops events whose `ServerID` is not a known server, using a lookup cached per server id for 1 minute (positive and negative), so a metrics tick costs no extra query.
 
 - [ ] **Step 1: Write failing tests**: `TestCheckAllowed`, `TestCheckUnknownServer`, `TestCheckWrongFingerprint` (→ `revoked`), `TestResponderRepliesOnHubChannel` (mem bus: publish request with hub `h1`, receive reply on `hub:responses:h1` with matching `request_id`), `TestRevokerPublishes`, `TestEventsFromUnknownServerDropped`.
@@ -240,7 +261,7 @@ No delete route exists today; revocation needs one.
 - [ ] **Step 4: Run** `go test ./internal/... ` — PASS.
 - [ ] **Step 5: Commit** `feat(api): answer hubs' agent auth checks; publish revocations`
 
-### Task 9: Hub identity and authorization
+### Task 10: Hub identity and authorization
 
 **Files:**
 - Create: `internal/infra/transport/grpc/hub/{identity.go,authorizer.go,identity_test.go,authorizer_test.go}`
@@ -248,7 +269,7 @@ No delete route exists today; revocation needs one.
 - Test: `internal/infra/transport/grpc/hub/e2e_test.go`
 
 **Interfaces:**
-- Consumes: Task 8 bus types; Task 2 `Fingerprint`.
+- Consumes: Task 9 bus types; Task 2 `Fingerprint`.
 - Produces:
   - `func peerIdentity(ctx context.Context) (serverID, fingerprint string, err error)` — from `peer.FromContext` → `credentials.TLSInfo` → `State.VerifiedChains[0][0]`; CN and SHA-256 of `Raw` (same hex form as `cert.Fingerprint`).
   - `type Authorizer interface { Authorize(ctx context.Context, serverID, fingerprint string) (bus.AgentVerdict, string, error) }`
@@ -265,7 +286,7 @@ No delete route exists today; revocation needs one.
 - [ ] **Step 4: Run** `go test -race ./internal/infra/transport/grpc/...` — PASS.
 - [ ] **Step 5: Commit** `feat(hub): agents must match their certificate and an active server`
 
-### Task 10: Agent gives up after repeated denial
+### Task 11: Agent gives up after repeated denial
 
 **Files:**
 - Modify: `internal/infra/transport/grpc/agent/agent.go` (`Run` ~:496), `cmd/agent/main.go`
@@ -281,49 +302,50 @@ No delete route exists today; revocation needs one.
 - [ ] **Step 4: Run** `go test -race ./internal/infra/transport/grpc/agent/` — PASS.
 - [ ] **Step 5: Commit** `feat(agent): stop for good after the hub repeatedly refuses this server`
 
-### Task 11: `winterflow-agent enroll`
+### Task 12: `winterflow-agent enroll`
 
 **Files:**
 - Create: `internal/app/agent/enroll/{enroll.go,client.go,enroll_test.go}`
 - Modify: `cmd/agent/main.go` (hidden subcommand before config load, like `backup`)
 
 **Interfaces:**
-- Consumes: Task 6 routes and JSON shapes.
-- Produces: `func Main(args []string, stdout, stderr io.Writer) int` with flags `--url` (default `https://api.winterflow.dev`), `--cert-dir` (required), `--env-out` (required: file receiving `HUB_HOST=`, `HUB_PORT=`, `AGENT_ID=` lines), `--hostname` (default `os.Hostname()`). Exit codes: 0 enrolled, 2 gave up (10 codes unused), 3 already enrolled (`agent.crt` exists; nothing changed), 1 any other error.
+- Consumes: Task 7 routes and JSON shapes.
+- Produces: `func Main(args []string, stdout, stderr io.Writer) int` with flags `--url` (default `https://api.winterflow.dev`), `--cert-dir` (required), `--env-out` (required: file receiving `HUB_HOST=`, `HUB_PORT=`, `AGENT_ID=`, `WINTERFLOW_API_URL=` lines), `--hostname` (default `os.Hostname()`). Exit codes: 0 enrolled, 2 gave up (10 codes unused), 3 already enrolled (`agent.crt` exists; nothing changed), 1 any other error.
 - Behavior: URL must be https unless the host is loopback. Writes `agent.key` (0600) and keeps it across retries within the run; every HTTP call has a 30 s timeout; transient HTTP errors retry with backoff and don't consume codes. Prints each code in a framed block with the minutes it is valid and "N codes left", then polls `status` every 3 s; on `expired` calls `refresh` and prints the new code; on `failed`/409 exits 2 with "No code was entered. Run the installer again to get a new one." On `claimed`: writes `agent.crt`, `ca.crt` (0644), the env file (0600), prints "Connected as <server_id>". Files are written to temp names and renamed.
 
-- [ ] **Step 1: Write failing tests** against an `httptest` server scripted per case: `TestEnrollHappyPath` (files written, modes, env content `HUB_HOST=hub-01.winterflow.dev`, `HUB_PORT=50051`, `AGENT_ID=<id>`), `TestEnrollRefreshesExpiredCode` (second code printed), `TestEnrollGivesUp` (exit 2, no `agent.crt`), `TestEnrollAlreadyEnrolled` (exit 3, files untouched), `TestEnrollRejectsHTTPURL` (non-loopback http → exit 1), `TestEnrollTransientErrorRetries` (one 502 then ok).
+- [ ] **Step 1: Write failing tests** against an `httptest` server scripted per case: `TestEnrollHappyPath` (files written, modes, env content `HUB_HOST=hub-01.winterflow.dev`, `HUB_PORT=50051`, `AGENT_ID=<id>`, `WINTERFLOW_API_URL=<url>`), `TestEnrollRefreshesExpiredCode` (second code printed), `TestEnrollGivesUp` (exit 2, no `agent.crt`), `TestEnrollAlreadyEnrolled` (exit 3, files untouched), `TestEnrollRejectsHTTPURL` (non-loopback http → exit 1), `TestEnrollTransientErrorRetries` (one 502 then ok).
 - [ ] **Step 2: Run** `go test ./internal/app/agent/enroll/` — FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** — PASS.
 - [ ] **Step 5: Commit** `feat(agent): enroll subcommand that shows a code and collects the signed certificate`
 
-### Task 12: Release assets, R2 upload, hub PKI subcommand
+### Task 13: Release assets, econumo-style R2 upload, hub PKI subcommand
+
+Copy econumo's approach (`github.com/econumo/econumo`: `Makefile` targets `release-binaries` and `cdn-upload`, `.github/workflows/publish-release.yml` step "Mirror binaries to R2"); read them before starting.
 
 **Files:**
 - Modify: `.goreleaser.yaml` (standalone + agent only; archive `name_template` gives `winterflow-<os>-<arch>` for standalone and `agent-<os>-<arch>` for agent; the old names are not published)
-- Create: `scripts/build-distributed.sh` (builds `winterflow-api` with a web build using `VITE_APP_MODE=distributed`, and `winterflow-hub`; `CGO_ENABLED=0`, same platforms and ldflags as goreleaser; writes `dist-r2/` with all four `winterflow-*` binaries copied from goreleaser's `dist/` plus a fresh `checksums.txt`)
-- Create: `scripts/upload-r2.sh` (uploads `dist-r2/*` to `releases/<tag>/` and writes `releases/latest`; `curl --aws-sigv4 "aws:amz:auto:s3" --user "$KEY:$SECRET"`; exits 0 with a warning when any R2 var is unset)
-- Modify: `.github/workflows/release.yml` (after goreleaser: run both scripts with the four R2 secrets in env; never echo them)
-- Modify: `internal/infra/orchestrator/docker_compose/updater.go:75` (new names: standalone → `winterflow-<os>-<arch>`, agent → `agent-<os>-<arch>`), `cmd/hub/main.go` (hidden `pki` subcommand: `winterflow-hub pki --dir D --host H [--host H2]` → `cert.EnsureHubPKI`, prints `changed`/`unchanged`), `Makefile` (build hub/agent too, as PR #33)
+- Modify: `Makefile` — `release-binaries` (web build with `VITE_APP_MODE=distributed` for the API, then `CGO_ENABLED=0 go build -trimpath` with the goreleaser ldflags for `winterflow-{standalone,agent,api,hub}-linux-{amd64,arm64,arm}` (GOARM=6) into `release-out/`, then `SHA256SUMS`; the standalone binary embeds the standalone web build, so build the web twice in the right order); `cdn-upload` (econumo's target with `R2_BUCKET ?= <bucket>` — ask the owner for the bucket name before committing — `R2_PROJECT ?= winterflow`, env `WINTERFLOW_R2_ENDPOINT` required, `WINTERFLOW_R2_ACCESS_KEY_ID`/`_SECRET_ACCESS_KEY` mapped to `AWS_*`, `AWS_REQUEST_CHECKSUM_CALCULATION=when_required`, cache-control by channel, uploads every file in `release-out/`); also build hub/agent in `make build` as PR #33
+- Modify: `.github/workflows/release.yml` (after goreleaser: `make release-binaries`, then `make cdn-upload CHANNEL=<tag>` and `CHANNEL=latest` with `WINTERFLOW_R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}` etc.; skip with a `::warning::` when the endpoint secret is empty)
+- Modify: `internal/infra/orchestrator/docker_compose/updater.go:75` (new names), `cmd/hub/main.go` (hidden `pki` subcommand: `winterflow-hub pki --dir D --host H [--host H2]` → `cert.EnsureHubPKI`, prints `changed`/`unchanged`; `--redis-host H` additionally issues `redis.crt`/`redis.key` for Task 16's Redis instance)
 - Test: `internal/infra/orchestrator/docker_compose/updater_test.go`, `cmd/hub/main_test.go`, `scripts/release_test.sh` (new)
 
 The workflow edit must be pushed over SSH (the gh token lacks the `workflow` scope). Do not create or change repository secrets; the owner adds them.
 
-- [ ] **Step 1: Write failing tests**: `TestUpdaterAssetNames` (standalone → `winterflow-linux-amd64`, agent → `agent-linux-amd64`), `TestPKISubcommand` (creates files, second run prints `unchanged`), `release_test.sh`: `upload_skips_without_env` (exit 0, warning), `upload_dry_lists_keys` (with fake env and `--dry-run`: prints `releases/v1/winterflow-api-linux-amd64` … and `releases/latest`), `goreleaser_names` (`goreleaser check` + grep the config for both name sets, skipped when goreleaser is absent).
+- [ ] **Step 1: Write failing tests**: `TestUpdaterAssetNames` (standalone → `winterflow-linux-amd64`, agent → `agent-linux-amd64`), `TestPKISubcommand` (creates files, second run prints `unchanged`, `--redis-host` adds the Redis pair), `release_test.sh`: `cdn_upload_requires_channel`, `cdn_upload_requires_endpoint`, `cdn_upload_dry_run_lists_targets` (with a stub `aws` on `PATH` recording its args: `s3://<bucket>/winterflow/v1/winterflow-api-linux-amd64`, `--endpoint-url`, `immutable` cache for a version, `no-cache` for `latest`), `release_binaries_names` (`make -n release-binaries` lists all twelve outputs and `SHA256SUMS`).
 - [ ] **Step 2: Run** — FAIL.
 - [ ] **Step 3: Implement.**
-- [ ] **Step 4: Run** `go test ./internal/infra/orchestrator/docker_compose/ ./cmd/hub/`, `bash scripts/release_test.sh`, `bash scripts/build-distributed.sh --dry-run` — PASS.
-- [ ] **Step 5: Commit** `build: renamed GitHub assets; all binaries to R2; hub pki subcommand`
+- [ ] **Step 4: Run** `go test ./internal/infra/orchestrator/docker_compose/ ./cmd/hub/`, `bash scripts/release_test.sh` — PASS.
+- [ ] **Step 5: Commit** `build: renamed GitHub assets; econumo-style R2 mirror of every binary; hub pki subcommand`
 
-### Task 13: Web UI — install command and removing a server
+### Task 14: Web UI — install command and removing a server
 
 **Files:**
 - Modify: `web/src/components/server-creation-dialog.tsx` (+ its test)
 - Modify: the server settings/details view that lists a server's actions (find via the servers page; add "Remove server"), plus a client function in `web/src/lib` next to the existing server calls
 
 **Interfaces:**
-- Consumes: Task 6 (claim errors incl. 429), Task 7 route.
+- Consumes: Task 7 (claim errors incl. 429), Task 8 route.
 - Produces: `buildInstallCommand(apiOrigin: string): string` →
   `curl -fsSL https://get.winterflow.dev/agent | sudo bash -s -- --url <apiOrigin>`. Copy for the code step: codes refresh every 10 minutes on the server, the installer gives up after 10. `codeProblem` maps `too many attempts, wait a minute` to plain words. Remove server: a confirm dialog saying the server disconnects at once, its apps vanish from Winterflow but keep running on the machine, and reconnecting it means running the installer again.
 
@@ -333,7 +355,7 @@ The workflow edit must be pushed over SSH (the gh token lacks the `workflow` sco
 - [ ] **Step 4: Run** `pnpm --dir web test`, `pnpm --dir web run lint`, `pnpm --dir web run build` — PASS.
 - [ ] **Step 5: Commit** `feat(web): install command from this instance; remove a server`
 
-### Task 14: `install-agent.sh` (and standalone asset rename)
+### Task 15: `install-agent.sh` (and standalone asset rename)
 
 **Files:**
 - Create: `scripts/install-agent.sh`, `scripts/install_agent_test.sh`
@@ -341,7 +363,7 @@ The workflow edit must be pushed over SSH (the gh token lacks the `workflow` sco
 - Create: `scripts/shared_helpers_test.sh` — extracts blocks between `# --- shared: <name> ---` / `# --- end shared ---` markers from every installer and fails when copies of the same block differ.
 
 **Interfaces:**
-- Consumes: GitHub asset `agent-<os>-<arch>` (Task 12), `winterflow-agent enroll` exit codes (Task 11).
+- Consumes: GitHub asset `agent-<os>-<arch>` (Task 13), `winterflow-agent enroll` exit codes (Task 12).
 - Behavior: Docker check/offer; install `/usr/local/bin/winterflow-agent`; `/etc/winterflow/agent.env` (`AGENT_DATA_DIR=/var/lib/winterflow`, `HUB_CERT_DIR=/var/lib/winterflow/certs`, plus the enroll output); unit `winterflow-agent.service` with standalone's hardening and limits, `RestartPreventExitStatus=78`, installed but **not enabled** until `enroll` exits 0. `--url` optional: without it an interactive run asks with `https://api.winterflow.dev` pre-filled, a piped run uses it silently. Enroll exit 3 → skip enrollment (rerun: refresh binary/unit, restart). Exit 2/1 → print the failure, leave the unit disabled and stopped, exit non-zero. Options: `--url`, `--version`, `--binary`, `--user`, `--cpu-quota`, `--memory-max`, `--yes`, `--dry-run`, `--uninstall`, `--purge`.
 
 - [ ] **Step 1: Write failing dry-run tests**: `agent_unit_has_restart_prevent_78`, `agent_default_url_piped`, `agent_url_flag`, `agent_rerun_keeps_enrollment` (fake existing `agent.crt` under a temp root → no enroll call in the printed plan), `agent_downloads_new_asset_name`; `standalone_uses_new_asset_name`; `shared_helpers_identical`.
@@ -350,23 +372,23 @@ The workflow edit must be pushed over SSH (the gh token lacks the `workflow` sco
 - [ ] **Step 4: Run** `bash scripts/install_test.sh && bash scripts/install_agent_test.sh && bash scripts/shared_helpers_test.sh`, `bash -n` on both scripts, `shellcheck` (if available) — PASS.
 - [ ] **Step 5: Commit** `feat(install): agent installer that enrolls with a code`
 
-### Task 15: `install-control-plane.sh`
+### Task 16: `install-control-plane.sh`
 
 **Files:**
 - Create: `scripts/install-control-plane.sh`, `scripts/install_control_plane_test.sh`
 - Modify: `.github/workflows/ci.yml` (run the new test)
 
 **Interfaces:**
-- Consumes: R2 layout and env vars (Task 12), `winterflow-hub pki` (Task 12), `ValidateEnrollment` env (Task 1).
-- Behavior: refuses to start (clear message naming the four variables) unless the `WINTERFLOW_R2_*` variables are set; downloads `winterflow-api` and `winterflow-hub` (`releases/latest`, or `--version`) with `curl --aws-sigv4`, verifies `checksums.txt`. Debian/Ubuntu only. Detect Postgres and Redis; ask before `apt-get install` of each missing one (`--yes` = yes; declining = exit naming what to install). Create role/db `winterflow` with a generated password only if absent (kept in `/etc/winterflow/control-plane.env`, reused on rerun). Ask: public UI URL (→ `ALLOWED_ORIGINS`, secure cookies), API port (default 8080, bound to 127.0.0.1), hub public address (default `$(hostname -f):50051`) and capacity (default 1000). Run `winterflow-hub pki --dir /var/lib/winterflow/pki --host <hub host> --host $(hostname -f)`. Units `winterflow-api.service` (env: `DATABASE_URL=postgres://…`, Redis, `HUB_CERT_DIR` = pki dir, JWT secret) and `winterflow-hub.service` (CA cert + hub pair only, `HUB_PUBLIC_ADDR`, `HUB_CAPACITY`, Redis). Separate users `winterflow-api` / `winterflow-hub`; `ca.key` owned by `winterflow-api`, 0600. Shared helpers copied with markers (Task 14's sync test covers this file too). Finish by printing: proxy Caddy to `127.0.0.1:<port>`, open TCP `<hub port>`, the URL to open.
+- Consumes: R2 layout and env vars (Task 13), `winterflow-hub pki` (Task 13), `ValidateEnrollment` env (Task 1).
+- Behavior: refuses to start (clear message naming the four variables) unless the `WINTERFLOW_R2_*` variables are set; downloads `winterflow-api` and `winterflow-hub` from `s3://<bucket>/winterflow/<latest|vX>/` with `curl --aws-sigv4 "aws:amz:auto:s3"`, verifies `SHA256SUMS`. Debian/Ubuntu only. Detect Postgres and the `redis-server` package; ask before `apt-get install` of each missing one (`--yes` = yes; declining = exit naming what to install). Create role/db `winterflow` with a generated password only if absent (kept in `/etc/winterflow/control-plane.env`, reused on rerun). Ask: public UI URL (→ `ALLOWED_ORIGINS`, secure cookies), API port (default 8080, bound to 127.0.0.1), hub public address (default `$(hostname -f):50051`) and capacity (default 1000). Run `winterflow-hub pki --dir /var/lib/winterflow/pki --host <hub host> --host $(hostname -f) --redis-host $(hostname -f) [--redis-host <tailscale name>]`. Redis: a dedicated `redis-server@winterflow` instance (`/etc/redis/redis-winterflow.conf`: `port 0`, `tls-port 6380`, cert/key/CA from the pki dir readable by the `redis` user, `requirepass` generated once and kept, `bind 127.0.0.1` plus addresses from `--redis-bind`); the default Redis instance is never touched. Units `winterflow-api.service` (env: `DATABASE_URL=postgres://…`, Redis, `HUB_CERT_DIR` = pki dir, JWT secret) and `winterflow-hub.service` (CA cert + hub pair only, `HUB_PUBLIC_ADDR`, `HUB_CAPACITY`, Redis). Separate users `winterflow-api` / `winterflow-hub`; `ca.key` owned by `winterflow-api`, 0600. Shared helpers copied with markers (Task 15's sync test covers this file too). Finish by printing: proxy Caddy to `127.0.0.1:<port>`, open TCP `<hub port>`, the URL to open.
 
-- [ ] **Step 1: Write failing dry-run tests**: `refuses_without_r2_env`, `downloads_from_r2_with_sigv4` (printed curl uses `--aws-sigv4` and `releases/latest`), `units_and_env` (both units; API env has `DATABASE_URL=postgres://`; hub env has `HUB_PUBLIC_ADDR` and `HUB_CAPACITY` and no CA key path), `refuses_non_debian`, `rerun_keeps_password` (existing env file → same password in plan).
+- [ ] **Step 1: Write failing dry-run tests**: `refuses_without_r2_env`, `downloads_from_r2_with_sigv4` (printed curl uses `--aws-sigv4` and `winterflow/latest/`), `units_and_env` (both units; API env has `DATABASE_URL=postgres://`; hub env has `HUB_PUBLIC_ADDR` and `HUB_CAPACITY` and no CA key path), `refuses_non_debian`, `rerun_keeps_password` (existing env file → same Postgres and Redis passwords in plan), `redis_instance_tls_only` (config has `port 0`, `tls-port 6380`, `requirepass`; API and hub env have `REDIS_TLS=true`, `REDIS_ADDR=127.0.0.1:6380`).
 - [ ] **Step 2: Run** `bash scripts/install_control_plane_test.sh` — FAIL.
 - [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** it plus `bash scripts/shared_helpers_test.sh`, `bash -n`, `shellcheck` — PASS.
 - [ ] **Step 5: Commit** `feat(install): control-plane installer (API, hub, Postgres, Redis) from R2`
 
-### Task 16: Docs, full check, PR
+### Task 17: Docs, full check, PR A
 
 **Files:**
 - Modify: `CLAUDE.md` (Architecture: enrollment, agent auth, delete-server, release/R2 layout; Commands: the three scripts and their tests), `AGENTS.md`
@@ -376,4 +398,104 @@ The workflow edit must be pushed over SSH (the gh token lacks the `workflow` sco
 - [ ] **Step 1: Write the docs.**
 - [ ] **Step 2: Run the CI reproduction from CLAUDE.md** (`make test`, `make test-pg …`, `make web-test`, `go run ./tools/diffcov --base main --min 80 …`, `make lint`, `make sqlc-check`, all `scripts/*_test.sh`) — all PASS, diff coverage ≥ 80%.
 - [ ] **Step 3: Commit** `docs: installers and agent enrollment`
-- [ ] **Step 4: Push, open a draft PR**; after it's open, comment on PR #33 that it's superseded and close it (the approved design absorbs #33). Tell the owner to add the four R2 secrets to GitHub Actions and the `get.winterflow.dev/agent` redirect.
+- [ ] **Step 4: Push, open a draft PR**; after it's open, comment on PR #33 that it's superseded and close it (the approved design absorbs #33). Tell the owner to add the three R2 secrets (`R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`) to GitHub Actions and the `get.winterflow.dev/agent` redirect. Part B starts on a new branch off PR A's branch (or off `main` once PR A merges).
+
+## Part B — several hubs: joining, draining, migration (ends in PR B)
+
+### Task 18: Hub join tokens
+
+**Files:**
+- Create: `internal/infra/db/migrations/{sqlite,pgsql}/0020_hub_join_tokens.sql` (`token_hash` TEXT PK, `expires_at`, `used_at` NULL, `used_by_hub` NULL, `created_at`), queries, `internal/infra/db/repository/hubtoken/*`
+- Create: `internal/domain/usecase/hubjoin/{usecase.go,usecase_test.go}`, `internal/app/web/handler/hubjoin/{handler.go,routes.go,handler_test.go}`
+- Modify: `cmd/api/main.go` (hidden `hub-token [--ttl 1h]` subcommand: loads config + DB like the server, prints the token once), `pkg/cert/cert.go` (`SignHubCSR`), contract tests, `api/openapi.yaml`
+
+**Interfaces:**
+- Consumes: Task 2 `LoadCA`; Task 6's CA signer.
+- Produces:
+  - `func SignHubCSR(csrPEM, hubID string, hosts []string, caCert *x509.Certificate, caKey crypto.Signer, validityYears int) (certPEM string, expiresAt time.Time, err error)` — `CN = hubID`, SANs from `hosts` (DNS or IP), ExtKeyUsage ServerAuth, P-256 CSR only.
+  - `hubjoin.New(repo, signer, now)`; `Issue(ctx, ttl time.Duration) (token string, expiresAt time.Time, err error)`; `Redeem(ctx, token, csrPEM, publicAddr string) (certPEM, caPEM string, err error)` — `ErrInvalidToken` for unknown/used/expired alike (no oracle); consume is one conditional `UPDATE … WHERE token_hash=? AND used_at IS NULL AND expires_at > now`; `hubID` = host of `publicAddr`; prunes rows a day past expiry/use on each `Issue`.
+  - Route `POST /api/v1/hub/enroll` `{token, csr, public_addr}` → `{certificate, ca_certificate}`; `Auth: api.Public`, `g.AuthLimit`; 400 invalid token / CSR / address; not mounted in standalone.
+
+- [ ] **Step 1: Write failing tests**: `TestSignHubCSR` (CN, SANs for a DNS name and an IP, ServerAuth only), `TestIssueRedeem`, `TestRedeemTwice` (second → `ErrInvalidToken`), `TestRedeemExpired`, `TestRedeemConcurrent` (two goroutines, exactly one wins), `TestHubTokenSubcommand` (prints `wfh_` + 43 chars, row stored hashed), handler happy path + 400s, contract test + probe.
+- [ ] **Step 2: Run** — FAIL.
+- [ ] **Step 3: Implement; `make sqlc`, `make openapi`.**
+- [ ] **Step 4: Run** `go test ./...` and `make test-pg` — PASS.
+- [ ] **Step 5: Commit** `feat(api): one-time hub join tokens`
+
+### Task 19: "Where should I go" for agents
+
+**Files:**
+- Create: `internal/domain/usecase/agenthub/{usecase.go,usecase_test.go}`, `internal/app/web/handler/agenthub/{handler.go,routes.go,handler_test.go}`, `pkg/agentsig/{sig.go,sig_test.go}`
+- Modify: `internal/domain/usecase/agentauth/check.go` (verdict `moved`), `internal/infra/transport/bus/bus.go` (`AgentVerdict` gains `"moved"`), server repo (`SetServerHub(ctx, serverID, fromHubID, toHubID string) (current string, err error)` — conditional on the current value; when another replica moved it first, returns that hub instead), `internal/infra/transport/grpc/hub/hub.go` (verdict `moved` → `FailedPrecondition`; pass the hub's id to the check), contract tests, `api/openapi.yaml`
+
+**Interfaces:**
+- Consumes: Task 5 `hubs.Picker`, `port.HubRegistry`; Task 9 `agentauth.Check`.
+- Produces:
+  - `pkg/agentsig`: `func Payload(serverID string, ts int64, nonce string) []byte` (`serverID + "\n" + ts + "\n" + nonce`), `func Sign(key *ecdsa.PrivateKey, payload []byte) (string, error)` (base64 ASN.1 over SHA-256), `func Verify(certPEM string, payload []byte, sig string) error`. Shared by agent and API.
+  - `agenthub.Where(ctx, serverID string, ts int64, nonce, sig string) (addr string, moved bool, err error)` — verify against the active certificate, `|now-ts| <= 5m` else `ErrStaleRequest`; current hub listed and not draining → `(addr, false)`; else `Picker.Pick` excluding the current hub → `SetServerHub` (if another replica already moved it, answer with that hub) → `(addr, true)`; `hubs.ErrNoHub` passed through.
+  - `Picker.PickExcept(ctx, hubID string) (model.Hub, error)` added in `internal/domain/usecase/hubs`.
+  - Route `POST /api/v1/agent/hub` `{server_id, timestamp, nonce}` + header `X-Winterflow-Signature` → `{hub_addr, moved}`; `Auth: api.Public`, `g.AuthLimit`; 401 bad signature / unknown server, 400 stale timestamp, 503 no hub.
+  - `agentauth.Check(ctx, repo, serverID, fingerprint, hubID string)` — new `hubID` argument: server's `hub_id` ≠ `hubID` → `moved` "server belongs to another hub".
+
+- [ ] **Step 1: Write failing tests**: `TestSignVerify` (round trip; tampered payload fails; other key fails), `TestWhereStay`, `TestWhereMovesFromDrainingHub`, `TestWhereMovesFromMissingHub`, `TestWhereStaleTimestamp`, `TestWhereBadSignature`, `TestWhereNoHub`, `TestWhereConcurrentMovesAgree` (two calls race; both answer the same hub, one row update), `TestCheckMoved`, hub `TestRegisterMovedIsFailedPrecondition`, handler tests, contract test + probe.
+- [ ] **Step 2: Run** — FAIL.
+- [ ] **Step 3: Implement; `make openapi`.**
+- [ ] **Step 4: Run** `go test ./...` and `make test-pg` — PASS.
+- [ ] **Step 5: Commit** `feat(api): agents ask where to connect; verify answers moved for a reassigned server`
+
+### Task 20: Agent side of migration
+
+**Files:**
+- Create: `internal/infra/transport/grpc/agent/{hubstore.go,migrate.go,migrate_test.go}`
+- Modify: `internal/infra/transport/grpc/agent/agent.go` (`Run`, `handleRequest`), `pkg/config/config.go` (`GetWinterflowAPIURL()`, env `WINTERFLOW_API_URL`, default `https://api.winterflow.dev`), `.env.example`
+
+**Interfaces:**
+- Consumes: Task 19 route and `pkg/agentsig`; Task 11's `Run` error handling.
+- Produces:
+  - `type HubStore struct{...}`; `Load() (host, port string, ok bool)`, `Save(host, port string) error` — `{AGENT_DATA_DIR}/hub.json`, temp file + rename, 0600; `Agent` dials `HubStore` first, else `HUB_HOST`/`HUB_PORT`.
+  - `func (a *Agent) askWhere(ctx) (addr string, moved bool, err error)` — 30 s timeout, signs with the agent key.
+  - Triggers in `Run`: a `hub.move` envelope (handled in `handleRequest` before the dispatcher; no reply) → ask now; `codes.FailedPrecondition` from connect/register → ask now (not counted as a denial); no successful connection for 3 minutes → ask, then every 3 minutes while still failing. `moved: true` → save and reconnect at once; `moved: false` → keep retrying; ask errors → keep retrying.
+
+- [ ] **Step 1: Write failing tests** (fake connect func + `httptest` API): `TestMoveMessageTriggersAsk`, `TestFailedPreconditionTriggersAskNotDenial`, `TestUnreachableThreeMinutesAsks` (injectable clock), `TestStayKeepsHub`, `TestMovedSavesAndReconnects` (hub.json written, next dial uses the new address), `TestHubStoreAtomic`.
+- [ ] **Step 2: Run** `go test -race ./internal/infra/transport/grpc/agent/` — FAIL.
+- [ ] **Step 3: Implement; document `WINTERFLOW_API_URL`.**
+- [ ] **Step 4: Run** — PASS.
+- [ ] **Step 5: Commit** `feat(agent): move to the hub the API names when told to or when the hub is gone`
+
+### Task 21: Draining a hub
+
+**Files:**
+- Create: `internal/infra/transport/grpc/hub/{drain.go,drain_test.go}`
+- Modify: `cmd/hub/main.go` (hidden `drain` / `undrain` subcommands: connect to Redis via `NewRedisClient`, set/delete `hub:draining:<hub_id>`), `internal/infra/transport/grpc/hub/hub.go` (refuse new connections while draining with `FailedPrecondition`; `Shutdown` drains first), the Task 5 announcer (`Draining` field), `internal/infra/transport/redis/hubs/registry.go` (`SetDraining(ctx, hubID string, on bool) error`, `IsDraining(ctx, hubID) (bool, error)`)
+
+**Interfaces:**
+- Produces: `func (h *Hub) drainLoop(ctx)` — checks `IsDraining` every 5 s; on draining: announce `draining: true`, send `hub.move` to every active stream at ≤ 20 per second; `func (h *Hub) Drain(ctx context.Context) error` — same, then waits until no streams or ctx done (Shutdown passes a 2-minute ctx). Envelope type constant `command.HubMove = "hub.move"` in `internal/domain/command`.
+
+- [ ] **Step 1: Write failing tests**: `TestDrainFlagSetsDraining` (fake registry; announce shows draining within one check), `TestDrainSendsMoveRateLimited` (50 fake streams → all get `hub.move`, ≥ 2 s elapsed), `TestDrainingRefusesNewAgents` (`FailedPrecondition`), `TestShutdownDrainsThenStops` (returns when streams close; returns at deadline otherwise), `TestDrainSubcommand` (sets and clears the key).
+- [ ] **Step 2: Run** `go test -race ./internal/infra/transport/grpc/hub/ ./cmd/hub/` — FAIL.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run** — PASS. Also an e2e in `e2e_test.go`: two hubs (one Redis via miniredis or the test bus), drain hub A → its agent ends up streaming on hub B and a command reaches it.
+- [ ] **Step 5: Commit** `feat(hub): drain moves agents to other hubs`
+
+### Task 22: `install-hub.sh`
+
+**Files:**
+- Create: `scripts/install-hub.sh`, `scripts/install_hub_test.sh`
+- Modify: `scripts/shared_helpers_test.sh` (include the new file), `.github/workflows/ci.yml`
+
+**Interfaces:**
+- Consumes: R2 layout (Task 13), `POST /api/v1/hub/enroll` (Task 18), `winterflow-hub drain` (Task 21).
+- Behavior: refuses without the `WINTERFLOW_R2_*` variables; Debian/Ubuntu; downloads `winterflow-hub` (`latest` or `--version`) with `curl --aws-sigv4`, verifies `SHA256SUMS`. First install requires `--token`, `--public-addr`, `--redis-url rediss://…`; optional `--capacity` (1000), `--api-url` (`https://api.winterflow.dev`). Makes `hub.key` locally (`openssl ecparam -name prime256v1` or a hidden `winterflow-hub csr` subcommand — prefer the subcommand), posts the CSR, writes `hub.crt`, `ca.crt`, `/etc/winterflow/hub.env` (`HUB_PUBLIC_ADDR`, `HUB_CAPACITY`, `REDIS_ADDR`, `REDIS_PASSWORD`, `REDIS_TLS=true`, `HUB_CERT_DIR`), unit `winterflow-hub.service` (standalone's hardening, journald namespace, limits, `TimeoutStopSec=150`), enables and starts it. Rerun with a certificate present = update: new binary, keep cert/settings (given flags override), `systemctl restart` (which drains first). Options also: `--dry-run`, `--uninstall`, `--purge`, `--yes`.
+
+- [ ] **Step 1: Write failing dry-run tests**: `refuses_without_r2_env`, `first_install_requires_token_addr_redis`, `enrolls_and_writes_env` (plan shows the POST and env lines; no CA key anywhere), `rerun_updates_without_token` (fake existing `hub.crt` → no enroll, binary replaced, restart), `unit_has_timeout_stop_150`; `shared_helpers_identical` covers the new file.
+- [ ] **Step 2: Run** — FAIL.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run** all `scripts/*_test.sh`, `bash -n`, `shellcheck` — PASS.
+- [ ] **Step 5: Commit** `feat(install): hub-only installer and updater`
+
+### Task 23: Docs, full check, PR B
+
+- [ ] **Step 1: Docs**: `CLAUDE.md` (hub join tokens, agent migration, draining), `docs/install-control-plane.md` (adding a hub: `winterflow-api hub-token`, `install-hub.sh`, Tailscale + `rediss://`, `winterflow-hub drain`).
+- [ ] **Step 2: Run the CI reproduction from CLAUDE.md** — all PASS, diff coverage ≥ 80%.
+- [ ] **Step 3: Commit** `docs: several hubs, joining and draining`
+- [ ] **Step 4: Push, open a draft PR B.**

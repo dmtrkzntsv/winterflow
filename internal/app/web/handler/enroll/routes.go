@@ -10,7 +10,7 @@ import (
 // unauthenticated (the agent has no account) and throttled per client IP;
 // routeTable mounts them only where an enrollment usecase is wired.
 func (h *Handler) Routes(g api.Guards) []api.Route {
-	mw := []api.Middleware{g.AuthLimit}
+	mw := []api.Middleware{g.EnrollLimit}
 	errs := []int{http.StatusBadRequest}
 	return []api.Route{
 		{

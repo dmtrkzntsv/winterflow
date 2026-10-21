@@ -45,8 +45,8 @@ var probes = map[string]probe{
 	"POST /api/v1/agent/enroll":         {malformed: bad("POST", "/api/v1/agent/enroll")},
 	"POST /api/v1/agent/enroll/refresh": {malformed: bad("POST", "/api/v1/agent/enroll/refresh")},
 	"POST /api/v1/agent/enroll/status":  {malformed: bad("POST", "/api/v1/agent/enroll/status")},
-	"GET /api/v1/app/get-apps":        {valid: func(s string) call { return get("/api/v1/app/get-apps", sq(s)) }, malformed: bad("GET", "/api/v1/app/get-apps")},
-	"GET /api/v1/app/get-apps-status": {valid: func(s string) call { return get("/api/v1/app/get-apps-status", sq(s)) }, malformed: bad("GET", "/api/v1/app/get-apps-status")},
+	"GET /api/v1/app/get-apps":          {valid: func(s string) call { return get("/api/v1/app/get-apps", sq(s)) }, malformed: bad("GET", "/api/v1/app/get-apps")},
+	"GET /api/v1/app/get-apps-status":   {valid: func(s string) call { return get("/api/v1/app/get-apps-status", sq(s)) }, malformed: bad("GET", "/api/v1/app/get-apps-status")},
 	"POST /api/v1/app/refresh-apps": {valid: func(s string) call {
 		return call{Method: http.MethodPost, Path: "/api/v1/app/refresh-apps", Query: sq(s)}
 	}, malformed: call{Method: http.MethodPost, Path: "/api/v1/app/refresh-apps", Invalid: true}},

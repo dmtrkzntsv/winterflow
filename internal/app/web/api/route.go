@@ -36,6 +36,10 @@ const (
 type Guards struct {
 	// AuthLimit is the per-IP limiter for bcrypt-priced endpoints.
 	AuthLimit Middleware
+	// EnrollLimit is the per-IP limiter of the public agent enrollment
+	// routes, separate from AuthLimit so agents polling behind a shared
+	// proxy IP cannot lock users out of login.
+	EnrollLimit Middleware
 }
 
 // Route describes one endpoint: how to serve it and how to document it.

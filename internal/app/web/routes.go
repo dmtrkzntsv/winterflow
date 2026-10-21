@@ -44,7 +44,8 @@ func (s *Server) registerRoutes() {
 	authMW := patauth.Middleware(s.Deps.UserService, amw.Auth)
 	// No role guard: every org member may do everything; server-addressed
 	// handlers still check the caller's org owns the server.
-	guards := api.Guards{AuthLimit: authLimiter.Middleware}
+	enrollLimiter := ratelimit.New(5, 30)
+	guards := api.Guards{AuthLimit: authLimiter.Middleware, EnrollLimit: enrollLimiter.Middleware}
 	routes := routeTable(s.Deps, guards)
 	if s.Deps.Enrollment == nil {
 		// Standalone: agents do not enroll by code; the routes answer 404.

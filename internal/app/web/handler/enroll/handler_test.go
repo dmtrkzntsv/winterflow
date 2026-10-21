@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"winterflow/internal/app/web/api"
 	"winterflow/internal/domain/usecase/enrollment"
 	"winterflow/internal/domain/usecase/enrollment/enrolltest"
 	"winterflow/internal/infra/db"
@@ -112,5 +113,22 @@ func TestRefreshNoCodesLeft409(t *testing.T) {
 	}
 	if w := call(t, h.Refresh, PollRequest{PollSecret: res.PollSecret}); w.Code != http.StatusConflict {
 		t.Fatalf("last refresh: %d %s", w.Code, w.Body)
+	}
+}
+
+// The enroll routes carry their own limiter guard, not the login one.
+func TestRoutesUseEnrollLimit(t *testing.T) {
+	var enrollHits, authHits int
+	g := api.Guards{
+		AuthLimit:   func(next http.Handler) http.Handler { authHits++; return next },
+		EnrollLimit: func(next http.Handler) http.Handler { enrollHits++; return next },
+	}
+	for _, rt := range newHandler(t).Routes(g) {
+		for _, m := range rt.Middleware {
+			m(http.NotFoundHandler())
+		}
+	}
+	if enrollHits != 3 || authHits != 0 {
+		t.Fatalf("enroll guard applied %d times, auth guard %d", enrollHits, authHits)
 	}
 }

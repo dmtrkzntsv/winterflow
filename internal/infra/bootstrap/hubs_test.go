@@ -21,8 +21,8 @@ import (
 type staticHubs []model.Hub
 
 func (s staticHubs) Announce(context.Context, model.Hub, time.Duration) error { return nil }
-func (s staticHubs) Withdraw(context.Context, string) error                  { return nil }
-func (s staticHubs) List(context.Context) ([]model.Hub, error)               { return s, nil }
+func (s staticHubs) Withdraw(context.Context, string) error                   { return nil }
+func (s staticHubs) List(context.Context) ([]model.Hub, error)                { return s, nil }
 
 // With a hub registry WireCore routes commands to each server's hub queue
 // and builds the picker; without one (standalone) neither.

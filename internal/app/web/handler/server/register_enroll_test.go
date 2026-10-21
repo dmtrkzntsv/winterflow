@@ -26,6 +26,7 @@ import (
 type enrollEnv struct {
 	h      *Handler
 	uc     *enrollment.UseCase
+	repo   *enrollmentrepo.Repo
 	userID string
 	picker *enrolltest.Picker
 	// regCode is a pending registration (standalone's path).
@@ -69,7 +70,7 @@ func newEnrollEnv(t *testing.T) *enrollEnv {
 		Logger: log, ServerRepository: servers, UserService: users, StatusCache: nil,
 		Cfg: config.NewServerConfig("distributed"), Enrollment: uc,
 	})
-	return &enrollEnv{h: h, uc: uc, userID: u.ID, picker: picker, regCode: "REGREG"}
+	return &enrollEnv{h: h, uc: uc, repo: repo, userID: u.ID, picker: picker, regCode: "REGREG"}
 }
 
 func (e *enrollEnv) register(t *testing.T, code string) *httptest.ResponseRecorder {
@@ -140,5 +141,19 @@ func TestRegisterRateLimitedPerUser(t *testing.T) {
 	}
 	if w := e.register(t, "ZZZZZZ"); w.Code != http.StatusTooManyRequests || !strings.Contains(w.Body.String(), "too many attempts, wait a minute") {
 		t.Fatalf("6th attempt = %d %s", w.Code, w.Body)
+	}
+}
+
+func TestRegisterExpiredEnrollmentCodeDoesNotFallBack(t *testing.T) {
+	e := newEnrollEnv(t)
+	past := time.Now().Add(-time.Hour)
+	uc := enrollment.New(e.repo, enrolltest.Signer(t), e.picker, func() time.Time { return past })
+	res, err := uc.Start(dbtest.Ctx(t), enrolltest.CSR(t, elliptic.P256()), "box")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := e.register(t, res.Code)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "registration code has expired") {
+		t.Fatalf("register = %d %s", w.Code, w.Body)
 	}
 }

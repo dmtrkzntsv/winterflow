@@ -21,11 +21,12 @@ func newTestHub(t *testing.T, b bus.Bus) *Hub {
 	t.Setenv("HUB_PUBLIC_ADDR", "hub-01.winterflow.dev:50051")
 	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
 	return &Hub{
-		agents:    make(map[string]*agent),
-		revokedAt: make(map[string]time.Time),
-		cfg:       config.NewServerConfig("distributed"),
-		log:       log,
-		bus:       b,
+		agents:      make(map[string]*agent),
+		revokedAt:   make(map[string]time.Time),
+		announceNow: make(chan struct{}, 1),
+		cfg:         config.NewServerConfig("distributed"),
+		log:         log,
+		bus:         b,
 	}
 }
 

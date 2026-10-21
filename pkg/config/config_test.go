@@ -681,3 +681,20 @@ func TestRedisTLSDefaults(t *testing.T) {
 		t.Fatal("REDIS_CA_CERT_PATH override ignored")
 	}
 }
+
+func TestGetApiListenAddr(t *testing.T) {
+	c := NewServerConfig("distributed")
+	t.Setenv("API_PORT", "8080")
+	unsetenv(t, "API_LISTEN_ADDR")
+	if got := c.GetApiListenAddr(); got != ":8080" {
+		t.Fatalf("unset API_LISTEN_ADDR = %q, want :8080 (all interfaces)", got)
+	}
+	t.Setenv("API_LISTEN_ADDR", "127.0.0.1")
+	if got := c.GetApiListenAddr(); got != "127.0.0.1:8080" {
+		t.Fatalf("API_LISTEN_ADDR=127.0.0.1 = %q, want 127.0.0.1:8080", got)
+	}
+	t.Setenv("API_LISTEN_ADDR", " ::1 ")
+	if got := c.GetApiListenAddr(); got != "[::1]:8080" {
+		t.Fatalf("API_LISTEN_ADDR=::1 = %q, want [::1]:8080", got)
+	}
+}

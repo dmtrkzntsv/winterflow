@@ -51,7 +51,7 @@ dry() {
 # --- help / validation --------------------------------------------------------
 
 help_out="$(bash "$SCRIPT" --help)" || fail "--help exits 0" "exit $?"
-for opt in --web-url --port --hub-addr --capacity --redis-bind --redis-host --version --r2-bucket --yes --dry-run; do
+for opt in --web-url --port --hub-addr --capacity --redis-bind --redis-host --version --r2-bucket --yes --dry-run --uninstall; do
     assert_contains "--help documents ${opt}" "$help_out" "$opt"
 done
 dry --nonsense >/dev/null && fail "unknown option rejected" "exit 0" || pass "unknown option rejected"
@@ -108,8 +108,8 @@ assert_contains "checksums verified in the script" "$src" "sha256sum -c"
 
 # --- units_and_env ------------------------------------------------------------
 
-api_env="$(section "$out" /etc/winterflow/api.env)"
-hub_env="$(section "$out" /etc/winterflow/hub.env)"
+api_env="$(section "$out" /etc/winterflow/control-plane-api.env)"
+hub_env="$(section "$out" /etc/winterflow/control-plane-hub.env)"
 api_unit="$(section "$out" /etc/systemd/system/winterflow-api.service)"
 hub_unit="$(section "$out" /etc/systemd/system/winterflow-hub.service)"
 [ -n "$api_env" ] && [ -n "$hub_env" ] && [ -n "$api_unit" ] && [ -n "$hub_unit" ] \
@@ -118,40 +118,62 @@ hub_unit="$(section "$out" /etc/systemd/system/winterflow-hub.service)"
 assert_contains "units_and_env: api postgres" "$api_env" "DATABASE_URL=postgres://winterflow:"
 assert_contains "units_and_env: api postgres db" "$api_env" "@127.0.0.1:5432/winterflow"
 assert_contains "units_and_env: api port" "$api_env" "API_PORT=8090"
+assert_contains "units_and_env: api listens on loopback only" "$api_env" "API_LISTEN_ADDR=127.0.0.1"
 assert_contains "units_and_env: api web url" "$api_env" "WEB_URL=https://flow.example.com"
 assert_contains "units_and_env: api cors origin" "$api_env" "CORS_ALLOW_ORIGINS=https://flow.example.com"
 assert_contains "units_and_env: api jwt secret" "$api_env" "JWT_SECRET="
-assert_contains "units_and_env: api signs with the pki dir" "$api_env" "HUB_CERT_DIR=/var/lib/winterflow/pki"
+assert_contains "units_and_env: api signs with the pki dir" "$api_env" "HUB_CERT_DIR=/var/lib/winterflow-control/pki"
 assert_contains "units_and_env: api unit" "$api_unit" "ExecStart=/usr/local/bin/winterflow-api"
 assert_contains "units_and_env: api user" "$api_unit" "User=winterflow-api"
-assert_contains "units_and_env: api env file" "$api_unit" "EnvironmentFile=/etc/winterflow/api.env"
+assert_contains "units_and_env: api env file" "$api_unit" "EnvironmentFile=/etc/winterflow/control-plane-api.env"
 assert_contains "units_and_env: api after redis" "$api_unit" "redis-server@winterflow.service"
 assert_contains "units_and_env: api hardened" "$api_unit" "ProtectSystem=strict"
 
 assert_contains "units_and_env: hub public addr" "$hub_env" "HUB_PUBLIC_ADDR=hub-01.example.com:50051"
 assert_contains "units_and_env: hub capacity" "$hub_env" "HUB_CAPACITY=500"
 assert_contains "units_and_env: hub listen port" "$hub_env" "HUB_PORT=50051"
-assert_contains "units_and_env: hub cert dir" "$hub_env" "HUB_CERT_DIR=/var/lib/winterflow/hub-certs"
+assert_contains "units_and_env: hub cert dir" "$hub_env" "HUB_CERT_DIR=/var/lib/winterflow-control/hub-certs"
 assert_not_contains "units_and_env: hub has no CA key" "$hub_env" "ca.key"
-assert_not_contains "units_and_env: hub not on the pki dir" "$hub_env" "/var/lib/winterflow/pki"
+assert_not_contains "units_and_env: hub not on the pki dir" "$hub_env" "/var/lib/winterflow-control/pki"
 assert_not_contains "units_and_env: hub has no db" "$hub_env" "DATABASE_URL"
 assert_not_contains "units_and_env: hub has no jwt" "$hub_env" "JWT_SECRET"
 assert_contains "units_and_env: hub unit" "$hub_unit" "ExecStart=/usr/local/bin/winterflow-hub"
 assert_contains "units_and_env: hub user" "$hub_unit" "User=winterflow-hub"
-assert_contains "units_and_env: hub env file" "$hub_unit" "EnvironmentFile=/etc/winterflow/hub.env"
+assert_contains "units_and_env: hub env file" "$hub_unit" "EnvironmentFile=/etc/winterflow/control-plane-hub.env"
 assert_contains "units_and_env: hub drains on stop" "$hub_unit" "TimeoutStopSec=150"
 assert_contains "units_and_env: journal namespace" "$out" "LogNamespace=winterflow"
 
 plan="$(section "$out" plan)"
-assert_contains "pki: hub host and redis names" "$plan" "winterflow-hub pki --dir /var/lib/winterflow/pki --host hub-01.example.com"
+assert_contains "pki: hub host and redis names" "$plan" "winterflow-hub pki --dir /var/lib/winterflow-control/pki --host hub-01.example.com"
 assert_contains "pki: redis on loopback" "$plan" "--redis-host 127.0.0.1"
 assert_contains "pki: tailscale name" "$plan" "--redis-host cp.tail1234.ts.net"
 assert_contains "pki: CA key owned by the api user" "$plan" "ca.key: winterflow-api 0600"
-assert_contains "pki: hub gets only the CA cert and its pair" "$plan" "/var/lib/winterflow/hub-certs: ca.crt hub.crt hub.key"
+assert_contains "pki: hub gets only the CA cert and its pair" "$plan" "/var/lib/winterflow-control/hub-certs: ca.crt hub.crt hub.key"
 assert_contains "postgres: role created only if absent" "$plan" "create role and database 'winterflow' if absent"
 assert_contains "finish: proxy target" "$out" "127.0.0.1:8090"
 assert_contains "finish: open the hub port" "$out" "TCP 50051"
 assert_contains "finish: url" "$out" "https://flow.example.com"
+assert_not_contains "finish: no all-interfaces caveat" "$out" "every interface"
+assert_not_contains "state never under the agent's data dir" "$out" "/var/lib/winterflow/"
+assert_not_contains "state never under the agent's data dir (script)" "$src" '/var/lib/winterflow"'
+
+# --- uninstall ----------------------------------------------------------------
+
+out_un="$(dry --uninstall)" || fail "uninstall dry-run exits 0" "exit $?: $out_un"
+assert_contains "uninstall: stops the units" "$out_un" "systemctl disable --now winterflow-api winterflow-hub"
+assert_contains "uninstall: removes the units" "$out_un" "rm -f /etc/systemd/system/winterflow-api.service /etc/systemd/system/winterflow-hub.service"
+assert_contains "uninstall: removes the binaries" "$out_un" "/usr/local/bin/winterflow-api /usr/local/bin/winterflow-hub"
+assert_contains "uninstall: disables the redis instance" "$out_un" "systemctl disable --now redis-server@winterflow.service"
+assert_contains "uninstall: keeps the control-plane data" "$out_un" "kept: /var/lib/winterflow-control"
+assert_contains "uninstall: keeps the env files" "$out_un" "/etc/winterflow/control-plane.env"
+assert_contains "uninstall: keeps the redis config" "$out_un" "/etc/redis/redis-winterflow.conf"
+assert_contains "uninstall: keeps the database" "$out_un" "PostgreSQL database 'winterflow'"
+assert_not_contains "uninstall: never removes data" "$out_un" "rm -rf"
+assert_not_contains "uninstall: default redis untouched" "$out_un" "redis-server.service"
+assert_not_contains "uninstall: no download" "$out_un" "aws-sigv4"
+env -u WINTERFLOW_R2_ENDPOINT -u WINTERFLOW_R2_ACCESS_KEY_ID -u WINTERFLOW_R2_SECRET_ACCESS_KEY \
+    WF_INSTALL_ROOT="$debian" bash "$SCRIPT" --dry-run --uninstall >/dev/null 2>&1 \
+    && pass "uninstall needs no R2 variables" || fail "uninstall needs no R2 variables" "exit $?"
 
 # --- redis_instance_tls_only --------------------------------------------------
 
@@ -186,9 +208,9 @@ REDIS_HOSTS=kept.tail.ts.net
 EOF
 out_rerun="$(WF_INSTALL_ROOT="$rerun" bash "$SCRIPT" --dry-run 2>&1)" || fail "rerun dry-run exits 0" "exit $?: $out_rerun"
 out_rerun="${out_rerun//$rerun/}"
-assert_contains "rerun_keeps_password: postgres" "$(section "$out_rerun" "/etc/winterflow/api.env")" "postgres://winterflow:aaaa1111bbbb2222@"
-assert_contains "rerun_keeps_password: redis api" "$(section "$out_rerun" "/etc/winterflow/api.env")" "REDIS_PASSWORD=cccc3333dddd4444"
-assert_contains "rerun_keeps_password: redis hub" "$(section "$out_rerun" "/etc/winterflow/hub.env")" "REDIS_PASSWORD=cccc3333dddd4444"
+assert_contains "rerun_keeps_password: postgres" "$(section "$out_rerun" "/etc/winterflow/control-plane-api.env")" "postgres://winterflow:aaaa1111bbbb2222@"
+assert_contains "rerun_keeps_password: redis api" "$(section "$out_rerun" "/etc/winterflow/control-plane-api.env")" "REDIS_PASSWORD=cccc3333dddd4444"
+assert_contains "rerun_keeps_password: redis hub" "$(section "$out_rerun" "/etc/winterflow/control-plane-hub.env")" "REDIS_PASSWORD=cccc3333dddd4444"
 assert_contains "rerun_keeps_password: redis conf" "$(section "$out_rerun" "/etc/redis/redis-winterflow.conf")" "requirepass cccc3333dddd4444"
 assert_contains "rerun keeps the jwt secret" "$out_rerun" "JWT_SECRET=eeee5555ffff6666"
 assert_contains "rerun keeps settings: web url" "$out_rerun" "WEB_URL=https://kept.example.com"
@@ -305,20 +327,20 @@ STUB
     [ "$(stat -c %a "$r1/etc/winterflow/control-plane.env")" = 600 ] && pass "real run: state file 0600" || fail "real run: state file 0600" "$(stat -c %a "$r1/etc/winterflow/control-plane.env")"
     assert_contains "real run: role created with the kept password" "$(cat "$r1/calls")" "CREATE ROLE winterflow LOGIN PASSWORD '${pg_pw}'"
     assert_contains "real run: database created" "$(cat "$r1/calls")" "createdb -O winterflow winterflow"
-    assert_contains "real run: api env uses it" "$(cat "$r1/etc/winterflow/api.env")" "postgres://winterflow:${pg_pw}@127.0.0.1:5432/winterflow"
+    assert_contains "real run: api env uses it" "$(cat "$r1/etc/winterflow/control-plane-api.env")" "postgres://winterflow:${pg_pw}@127.0.0.1:5432/winterflow"
     assert_contains "real run: redis conf password" "$(cat "$r1/etc/redis/redis-winterflow.conf")" "requirepass ${redis_pw}"
-    assert_contains "real run: hub env password" "$(cat "$r1/etc/winterflow/hub.env")" "REDIS_PASSWORD=${redis_pw}"
+    assert_contains "real run: hub env password" "$(cat "$r1/etc/winterflow/control-plane-hub.env")" "REDIS_PASSWORD=${redis_pw}"
     assert_not_contains "real run: secret never on curl's command line" "$(cat "$r1/curl-args")" "$SECRET"
     assert_contains "real run: secret passed on curl's stdin" "$(cat "$r1/curl-stdin")" "$SECRET"
     assert_contains "real run: sigv4" "$(cat "$r1/curl-args")" "--aws-sigv4 aws:amz:auto:s3"
     [ -x "$r1/usr/local/bin/winterflow-api" ] && [ -x "$r1/usr/local/bin/winterflow-hub" ] \
         && pass "real run: binaries installed" || fail "real run: binaries installed" "missing"
-    assert_contains "real run: pki for the hub host" "$(cat "$r1/var/lib/winterflow/pki/pki-args")" "--host cp.example.com"
-    assert_contains "real run: pki redis on loopback" "$(cat "$r1/var/lib/winterflow/pki/pki-args")" "--redis-host 127.0.0.1"
-    assert_contains "real run: pki redis tailscale name" "$(cat "$r1/var/lib/winterflow/pki/pki-args")" "--redis-host cp.tail.ts.net"
-    [ "$(stat -c %a "$r1/var/lib/winterflow/pki/ca.key")" = 600 ] && pass "real run: ca.key 0600" || fail "real run: ca.key 0600" "$(stat -c %a "$r1/var/lib/winterflow/pki/ca.key")"
-    [ "$(ls "$r1/var/lib/winterflow/hub-certs" | tr '\n' ' ')" = "ca.crt hub.crt hub.key " ] \
-        && pass "real run: hub cert dir has no CA key" || fail "real run: hub cert dir has no CA key" "$(ls "$r1/var/lib/winterflow/hub-certs")"
+    assert_contains "real run: pki for the hub host" "$(cat "$r1/var/lib/winterflow-control/pki/pki-args")" "--host cp.example.com"
+    assert_contains "real run: pki redis on loopback" "$(cat "$r1/var/lib/winterflow-control/pki/pki-args")" "--redis-host 127.0.0.1"
+    assert_contains "real run: pki redis tailscale name" "$(cat "$r1/var/lib/winterflow-control/pki/pki-args")" "--redis-host cp.tail.ts.net"
+    [ "$(stat -c %a "$r1/var/lib/winterflow-control/pki/ca.key")" = 600 ] && pass "real run: ca.key 0600" || fail "real run: ca.key 0600" "$(stat -c %a "$r1/var/lib/winterflow-control/pki/ca.key")"
+    [ "$(ls "$r1/var/lib/winterflow-control/hub-certs" | tr '\n' ' ')" = "ca.crt hub.crt hub.key " ] \
+        && pass "real run: hub cert dir has no CA key" || fail "real run: hub cert dir has no CA key" "$(ls "$r1/var/lib/winterflow-control/hub-certs")"
     [ -f "$r1/etc/redis/winterflow-tls/redis.key" ] && [ ! -e "$r1/etc/redis/winterflow-tls/ca.key" ] \
         && pass "real run: redis gets its pair, not the CA key" || fail "real run: redis gets its pair, not the CA key" "$(ls "$r1/etc/redis/winterflow-tls")"
     [ -f "$r1/etc/systemd/system/winterflow-api.service" ] && [ -f "$r1/etc/systemd/system/winterflow-hub.service" ] \
@@ -344,6 +366,17 @@ STUB
     run_cp "$r1" --redis-bind 10.1.1.1
     assert_contains "rerun: new redis bind written" "$(cat "$r1/etc/redis/redis-winterflow.conf")" "bind 127.0.0.1 10.1.1.1"
     assert_contains "rerun: changed redis config restarts redis" "$(cat "$r1/calls")" "systemctl restart redis-server@winterflow.service"
+
+    # Real uninstall: units and binaries go, data and config stay.
+    : > "$r1/calls"
+    RUN_STATUS=0
+    RUN_OUT="$(PATH="$r1/stubs:$PATH" WF_INSTALL_ROOT="$r1" bash "$SCRIPT" --uninstall </dev/null 2>&1)" || RUN_STATUS=$?
+    [ "$RUN_STATUS" -eq 0 ] && pass "uninstall: succeeds" || fail "uninstall: succeeds" "status $RUN_STATUS: $RUN_OUT"
+    [ ! -e "$r1/etc/systemd/system/winterflow-api.service" ] && [ ! -e "$r1/usr/local/bin/winterflow-hub" ] \
+        && pass "uninstall: units and binaries removed" || fail "uninstall: units and binaries removed" "still there"
+    [ -f "$r1/var/lib/winterflow-control/pki/ca.key" ] && [ -f "$r1/etc/winterflow/control-plane.env" ] && [ -f "$r1/etc/redis/redis-winterflow.conf" ] \
+        && pass "uninstall: CA, state and redis config kept" || fail "uninstall: CA, state and redis config kept" "removed"
+    assert_contains "uninstall: redis instance disabled" "$(cat "$r1/calls")" "systemctl disable --now redis-server@winterflow.service"
 
     # A role that exists without a kept password is refused, not overwritten.
     r2="$tmp/real2"; mkdir -p "$r2"; make_stubs "$r2"; : > "$r2/role"

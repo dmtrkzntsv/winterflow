@@ -50,7 +50,7 @@ func NewServer(baseCtx context.Context, deps *bootstrap.Deps) *http.Server {
 	s.registerRoutes()
 
 	return &http.Server{
-		Addr:        ":" + cfg.GetApiPort(),
+		Addr:        cfg.GetApiListenAddr(),
 		Handler:     s.Router,
 		BaseContext: func(net.Listener) context.Context { return baseCtx },
 	}

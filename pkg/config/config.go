@@ -28,6 +28,12 @@ func (c *ServerConfig) GetApiPort() string {
 	return os.Getenv("API_PORT")
 }
 
+// GetApiListenAddr is the address the HTTP API listens on: API_LISTEN_ADDR
+// (an IP or host; empty = every interface) joined with API_PORT.
+func (c *ServerConfig) GetApiListenAddr() string {
+	return net.JoinHostPort(strings.TrimSpace(os.Getenv("API_LISTEN_ADDR")), c.GetApiPort())
+}
+
 func (c *ServerConfig) GetWebURL() string {
 	return os.Getenv("WEB_URL")
 }

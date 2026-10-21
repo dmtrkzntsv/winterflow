@@ -58,6 +58,11 @@
 #                      packages) and take the defaults above.
 #   --dry-run          Print every file and command that would be used and
 #                      exit without changing anything. Does not require root.
+#   --uninstall        Stop and remove winterflow-api, winterflow-hub (units
+#                      and binaries) and disable redis-server@winterflow.
+#                      Keeps /var/lib/winterflow-control (the CA), the
+#                      /etc/winterflow env files, the Redis config and data,
+#                      and the Postgres database. There is no --purge.
 #   -h, --help         Show this help.
 
 set -euo pipefail
@@ -68,9 +73,11 @@ INSTALL_ROOT="${WF_INSTALL_ROOT:-}"
 
 CONFIG_DIR="${INSTALL_ROOT}/etc/winterflow"
 STATE_FILE="${CONFIG_DIR}/control-plane.env"
-API_ENV_FILE="${CONFIG_DIR}/api.env"
-HUB_ENV_FILE="${CONFIG_DIR}/hub.env"
-DATA_DIR="${INSTALL_ROOT}/var/lib/winterflow"
+API_ENV_FILE="${CONFIG_DIR}/control-plane-api.env"
+HUB_ENV_FILE="${CONFIG_DIR}/control-plane-hub.env"
+# Its own data root, apart from the agent's /var/lib/winterflow, so an agent
+# install or --purge on the same host never touches the CA.
+DATA_DIR="${INSTALL_ROOT}/var/lib/winterflow-control"
 PKI_DIR="${DATA_DIR}/pki"
 HUB_CERT_DIR="${DATA_DIR}/hub-certs"
 API_HOME="${DATA_DIR}/api"
@@ -116,6 +123,7 @@ RELEASE_VERSION=""
 CHANNEL="latest"
 ASSUME_YES=0
 DRY_RUN=0
+UNINSTALL=0
 FQDN=""
 CPU_QUOTA=""
 MEMORY_MAX=""
@@ -507,7 +515,9 @@ render_api_env() {
 # WinterFlow API (written by install-control-plane.sh from
 # ${STATE_FILE}; a rerun rewrites it). See .env.example in the repo.
 LOG_LEVEL=info
-# The API listens on this port; your Caddy proxies ${WEB_URL} to it.
+# The API listens on 127.0.0.1:${API_PORT} only; your Caddy proxies
+# ${WEB_URL} to it.
+API_LISTEN_ADDR=127.0.0.1
 API_PORT=${API_PORT}
 WEB_URL=${WEB_URL}
 CORS_ALLOW_ORIGINS=$(url_origin "$WEB_URL")
@@ -722,8 +732,6 @@ Next steps (this installer does not touch Caddy or the firewall):
        $(url_host "$WEB_URL") {
            reverse_proxy 127.0.0.1:${API_PORT}
        }
-     The API listens on port ${API_PORT} on every interface: keep it closed
-     to the outside so only Caddy reaches it.
   2. Open TCP ${hub_port} so agents can reach the hub at ${HUB_PUBLIC_ADDR}.
   3. Open ${WEB_URL} and create the first account.
 EOF
@@ -845,19 +853,47 @@ start_redis() {
     die "${REDIS_SERVICE} does not answer on 127.0.0.1:${REDIS_PORT}; see journalctl -u ${REDIS_SERVICE}"
 }
 
-check_data_dir() {
-    # An agent install on this host may own ${DATA_DIR} with mode 0750; the
-    # control-plane users must still be able to traverse it.
-    if [ -d "$DATA_DIR" ]; then
-        local mode
-        mode="$(stat -c %a "$DATA_DIR")"
-        case "$mode" in
-            *[1357]) ;;
-            *) die "${DATA_DIR} (mode ${mode}) is not traversable by ${API_USER}/${HUB_USER}; another WinterFlow install owns it. Use a separate host for the control plane, or chmod o+x ${DATA_DIR}" ;;
-        esac
-    else
-        install -d -m 755 -o root -g root "$DATA_DIR"
+render_uninstall() {
+    # The uninstall steps, printed by --dry-run --uninstall.
+    cat <<EOF
+systemctl disable --now winterflow-api winterflow-hub
+rm -f ${API_UNIT} ${HUB_UNIT} ${API_DEST} ${HUB_DEST}
+systemctl disable --now ${REDIS_SERVICE}
+systemctl daemon-reload
+EOF
+}
+
+render_kept() {
+    cat <<EOF
+kept: ${DATA_DIR} (the CA and certificates)
+kept: ${STATE_FILE}, ${API_ENV_FILE}, ${HUB_ENV_FILE}
+kept: ${REDIS_CONF}, ${REDIS_TLS_DIR}, ${REDIS_DATA_DIR}
+kept: the PostgreSQL database '${DB_NAME}' and role '${DB_USER}', the default Redis
+kept: the users ${API_USER} and ${HUB_USER}, and the journal namespace '${JOURNAL_NAMESPACE}'
+A rerun of this installer brings the control plane back with the same CA and data.
+EOF
+}
+
+uninstall() {
+    # Stop and remove the services; keep every piece of state.
+    if [ "$DRY_RUN" -eq 1 ]; then
+        log "Dry run: printing the uninstall steps, changing nothing."
+        echo
+        echo "### uninstall"
+        render_uninstall
+        echo
+        echo "### kept"
+        render_kept
+        return 0
     fi
+    log "Stopping and removing winterflow-api and winterflow-hub"
+    systemctl disable --now winterflow-api winterflow-hub 2>/dev/null || true
+    rm -f "$API_UNIT" "$HUB_UNIT" "$API_DEST" "$HUB_DEST"
+    log "Stopping and disabling ${REDIS_SERVICE} (its config and data stay)"
+    systemctl disable --now "$REDIS_SERVICE" 2>/dev/null || true
+    systemctl daemon-reload
+    log "Removed the services and binaries."
+    render_kept
 }
 
 ask_settings() {
@@ -917,6 +953,7 @@ main() {
             --r2-bucket)  R2_BUCKET="${2:?--r2-bucket needs a name}"; shift 2 ;;
             --yes)        ASSUME_YES=1; shift ;;
             --dry-run)    DRY_RUN=1; shift ;;
+            --uninstall)  UNINSTALL=1; shift ;;
             -h|--help)    usage; exit 0 ;;
             *) die "unknown option: $1 (see --help)" ;;
         esac
@@ -929,6 +966,15 @@ main() {
         printf '%s' "$RELEASE_VERSION" | grep -qE '^v[0-9][0-9A-Za-z.-]*$' \
             || die "invalid --version: ${RELEASE_VERSION}"
         CHANNEL="$RELEASE_VERSION"
+    fi
+
+    if [ "$UNINSTALL" -eq 1 ]; then
+        if [ "$DRY_RUN" -eq 0 ]; then
+            [ "$(id -u)" -eq 0 ] || die "must run as root (try: sudo $0 --uninstall)"
+            command -v systemctl >/dev/null 2>&1 || die "systemd is required (systemctl not found)"
+        fi
+        uninstall
+        exit 0
     fi
 
     require_r2_env
@@ -1041,7 +1087,7 @@ main() {
 
     # --- Users, directories, binaries -----------------------------------------
 
-    check_data_dir
+    install -d -m 755 -o root -g root "$DATA_DIR"
     ensure_system_user "$API_USER" "$API_HOME"
     ensure_system_user "$HUB_USER" "$HUB_HOME"
     install -d -m 750 -o "$API_USER" -g "$API_USER" "$API_HOME" "$API_HOME/avatars"

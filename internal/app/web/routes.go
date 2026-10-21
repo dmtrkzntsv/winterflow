@@ -58,6 +58,14 @@ func (s *Server) registerRoutes() {
 		// join or move between; the routes answer 404.
 		routes = slices.DeleteFunc(routes, func(rt api.Route) bool { return rt.Tag == "enroll" })
 	}
+	// The hub join and agent hub routes are mounted only where their
+	// usecase is wired (a nil one would panic on the first request).
+	if s.Deps.HubJoin == nil {
+		routes = slices.DeleteFunc(routes, func(rt api.Route) bool { return rt.Path == hhubjoin.EnrollPath })
+	}
+	if s.Deps.AgentHub == nil {
+		routes = slices.DeleteFunc(routes, func(rt api.Route) bool { return rt.Path == hagenthub.HubPath })
+	}
 	api.Register(s.Router, routes, authMW)
 
 	// Serve the embedded SPA for everything the API doesn't claim (history-mode

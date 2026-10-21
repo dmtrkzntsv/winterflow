@@ -1,11 +1,17 @@
 package web
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"sort"
 	"strings"
 	"testing"
+
+	"winterflow/internal/domain/usecase/enrollment"
+	"winterflow/internal/infra/bootstrap"
+	"winterflow/pkg/config"
+	"winterflow/pkg/logger"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -64,5 +70,26 @@ func TestHealth(t *testing.T) {
 	want := `{"success":true,"message":"healthy","data":null}` + "\n"
 	if rec.Code != http.StatusOK || rec.Body.String() != want {
 		t.Fatalf("GET /_/health = %d %q, want 200 %q", rec.Code, rec.Body.String(), want)
+	}
+}
+
+// TestHubRoutesNeedTheirUsecase: with enrollment wired but no hub join or
+// agent hub usecase, those two routes answer 404 instead of panicking.
+func TestHubRoutesNeedTheirUsecase(t *testing.T) {
+	t.Setenv("JWT_SECRET", "test-secret")
+	t.Setenv("WEB_URL", "http://localhost")
+	t.Setenv("AVATARS_STORAGE_PATH", t.TempDir())
+	deps := &bootstrap.Deps{
+		Log:        logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error"}),
+		Cfg:        config.NewServerConfig("distributed"),
+		Enrollment: &enrollment.UseCase{},
+	}
+	h := NewServer(context.Background(), deps).Handler
+	for _, p := range []string{"/api/v1/hub/enroll", "/api/v1/agent/hub"} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, p, strings.NewReader("{}")))
+		if rec.Code != http.StatusNotFound {
+			t.Errorf("POST %s = %d, want 404", p, rec.Code)
+		}
 	}
 }

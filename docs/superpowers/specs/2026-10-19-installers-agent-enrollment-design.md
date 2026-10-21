@@ -313,7 +313,8 @@ Decided with the owner:
     `https://<account_id>.r2.cloudflarestorage.com`),
     `WINTERFLOW_R2_ACCESS_KEY_ID`, `WINTERFLOW_R2_SECRET_ACCESS_KEY` (mapped
     to `AWS_*` for the aws call only). The bucket is a Makefile default
-    (`R2_BUCKET`), as in econumo, not a secret.
+    (`R2_BUCKET ?= econumo`): Winterflow shares econumo's bucket under the
+    `winterflow/` prefix (decided with the owner). Not a secret.
   - The release workflow runs `make cdn-upload` for the version and for
     `latest`, with the three values from GitHub secrets
     (`R2_ENDPOINT`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`); it skips the

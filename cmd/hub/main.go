@@ -24,6 +24,14 @@ func main() {
 		}
 		return
 	}
+	// Hidden subcommand for the hub installer: make a key and print a CSR.
+	if len(os.Args) > 1 && os.Args[1] == "csr" {
+		if err := runCSR(os.Args[2:], os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	// Hidden subcommands: drain (move this hub's agents to other hubs and
 	// refuse new ones) and undrain, through the flag in Redis.
 	if len(os.Args) > 1 && (os.Args[1] == "drain" || os.Args[1] == "undrain") {

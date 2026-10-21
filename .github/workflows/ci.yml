@@ -105,6 +105,9 @@ jobs:
       - name: install-control-plane.sh dry-run suite
         run: bash scripts/install_control_plane_test.sh
 
+      - name: install-hub.sh dry-run suite
+        run: bash scripts/install_hub_test.sh
+
       - name: shared installer helpers stay identical
         run: bash scripts/shared_helpers_test.sh
 

@@ -100,10 +100,22 @@ The distributed API refuses to start without the CA key/cert pair.
 
 Decided with the owner: Winterflow has no regions. The `REGION` setting and
 the queue-name overrides (`BUS_REQUEST_QUEUE`, `BUS_RESPONSE_QUEUE`,
-`BUS_EVENTS_QUEUE`) are removed; bus channels have fixed names: `responses`,
-`events`, `agent-auth`, `agent-auth-reply:<hub_id>`, `agent-revoke`,
-`requests:<hub_id>` per hub, and `requests` for standalone's in-process
-bridge. One Redis serves one hosted Winterflow: the API replicas and every
+`BUS_EVENTS_QUEUE`) are removed. Bus channels have fixed names, in two
+groups (decided with the owner):
+
+| Channel | Direction | Carries |
+|---|---|---|
+| `agent-requests:<hub_id>` | API -> hub -> agent | commands for agents |
+| `agent-responses` | hubs -> API | agent replies to commands |
+| `agent-events` | hubs -> API | agent events (no answer) |
+| `hub-requests` | hubs -> API | questions from a hub (today: verify a server) |
+| `hub-replies:<hub_id>` | API -> that hub | answers to a hub's questions |
+| `hub-broadcast` | API -> every hub | notices to all hubs (today: server removed) |
+
+Standalone's in-process bridge uses `agent-requests` (no hub id),
+`agent-responses` and `agent-events` on the in-memory bus. Each channel has
+its own subscription and handling goroutine on both sides, so a burst of
+agent traffic never delays a hub's question. One Redis serves one hosted Winterflow: the API replicas and every
 hub, wherever the hubs run. Standalone is a single-server install with no
 hubs and no Redis.
 
@@ -118,10 +130,10 @@ hubs and no Redis.
   servers but gets no new ones.
 
 **Live hub list in Redis** (decided with the owner; no database table):
-every 30 s each hub writes the key `hub:<hub_id>` with a 90 s expiry, value
+every 30 s each hub writes the key `hub-status:<hub_id>` with a 90 s expiry, value
 JSON `{hub_id, public_addr, capacity, connected_agents, accepting, version}`.
 A hub that stops or dies drops out when its key expires. The API reads the
-list with `SCAN MATCH hub:*` when it needs it (at a claim); the count of
+list with `SCAN MATCH hub-status:*` when it needs it (at a claim); the count of
 hubs is small, so no index is kept. The database stores only
 `servers.hub_id`, used for routing and to count each hub's assigned servers.
 
@@ -139,7 +151,7 @@ hubs is small, so no index is kept. The database stores only
 **Command routing:** today every hub listens on one shared request queue and
 a hub that lacks the target agent answers "agent not connected", which can
 beat the real answer. With several hubs that breaks commands, so *(my call)*
-each hub consumes its own queue `requests:<hub_id>`, and the API
+each hub consumes its own queue `agent-requests:<hub_id>`, and the API
 publishes each command to the queue of the hub its server is on (server ->
 hub cached in memory, refreshed on miss). A server with no `hub_id` (none
 exist in distributed today) gets "server has no hub; reinstall the agent".
@@ -308,9 +320,9 @@ receives a question and a question nobody hears is lost):
 
 | Channel | Direction | Payload |
 |---|---|---|
-| `agent-auth` | hub → API | `{request_id, hub_id, server_id, cert_fingerprint}` |
-| `agent-auth-reply:<hub_id>` | API → the asking hub | `{request_id, verdict, reason}` |
-| `agent-revoke` | API → all hubs | `{server_id}` on server delete |
+| `hub-requests` | hub → API | `{request_id, hub_id, server_id, cert_fingerprint}` |
+| `hub-replies:<hub_id>` | API → the asking hub | `{request_id, verdict, reason}` |
+| `hub-broadcast` | API → all hubs | `{server_id}` on server delete |
 
 - `verdict`: `allowed`, `unknown` (no such server, which includes a deleted
   one: its rows are gone), or `revoked` (the server exists but this
@@ -322,7 +334,7 @@ receives a question and a question nobody hears is lost):
 reading `servers` and the server's active certificate
 (`server_certificates`). Every replica answers; the hub takes the first reply
 per `request_id` and drops the rest. Deleting a server publishes
-`agent-revoke`. Defense in depth: the API also ignores responses and events
+`server.revoked` on `hub-broadcast`. Defense in depth: the API also ignores responses and events
 tagged with a server id it doesn't know.
 
 **Hub:** waits up to 5 s for a reply.
@@ -330,7 +342,7 @@ tagged with a server id it doesn't know.
 - `revoked` / `unknown`: refuse with gRPC `PermissionDenied` and the reason.
 - no reply in time, or a bus error: refuse with `Unavailable` (fail closed,
   but transient).
-- On `agent-revoke`: close that agent's stream if this hub holds it.
+- On `server.revoked` (from `hub-broadcast`): close that agent's stream if this hub holds it.
 
 **Agent:**
 - `PermissionDenied` five times in a row (spread over about 10 minutes): log

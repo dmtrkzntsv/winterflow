@@ -35,7 +35,9 @@
 #   sudo bash install-agent.sh
 #
 # Rerunning refreshes the binary and the unit and restarts the service; an
-# already enrolled machine keeps its certificate and is not enrolled again.
+# already enrolled machine keeps its certificate and is not enrolled again
+# unless --reenroll is given (after the server was removed in Winterflow):
+#   curl -fsSL https://get.winterflow.dev/agent | sudo bash -s -- --url <url> --reenroll
 #
 # Options:
 #   --url URL        Control plane API to enroll with (default:
@@ -56,6 +58,12 @@
 #   --yes            Non-interactive: assume "yes" to all prompts (including
 #                    installing Docker if missing) and keep the default service
 #                    user (winterflow) and URL unless --user/--url say otherwise.
+#   --reenroll       Enroll an already enrolled machine again: stops the
+#                    service, sets the old certificate, key, CA and the
+#                    agent.env enrollment lines aside (*.old-<timestamp>) and
+#                    enrolls as on a fresh machine. Needed after the server
+#                    was removed in Winterflow; the old server is never
+#                    reactivated.
 #   --dry-run        Print the unit/config and the enrollment plan that would
 #                    be used and exit without changing anything. Does not
 #                    require root.
@@ -104,6 +112,7 @@ ASSUME_YES=0
 DRY_RUN=0
 UNINSTALL=0
 PURGE=0
+REENROLL=0
 
 HAS_LOG_NAMESPACE=0
 sysd_ver=""
@@ -642,6 +651,26 @@ stop_unit() {
     systemctl disable --now "$SERVICE_NAME" 2>/dev/null || true
 }
 
+set_aside_enrollment() {
+    # --reenroll: stop the agent, move its certificate, key and CA aside and
+    # drop the enrollment lines from agent.env (a copy of the old file is kept
+    # beside it, root-only), so the enrollment below runs as on a fresh
+    # machine. Every step is checked: callers run it in a condition.
+    local ts f
+    ts="$(date -u +%Y%m%dT%H%M%SZ)" || return 1
+    log "Re-enrolling: stopping ${SERVICE_NAME}; the old enrollment is kept as *.old-${ts}"
+    stop_unit
+    for f in agent.crt agent.key ca.crt; do
+        if [ -e "${CERT_DIR}/${f}" ]; then
+            mv -f "${CERT_DIR}/${f}" "${CERT_DIR}/${f}.old-${ts}" || return 1
+        fi
+    done
+    if [ -f "$ENV_FILE" ]; then
+        cp -p "$ENV_FILE" "${ENV_FILE}.old-${ts}" || return 1
+        write_env_file "" || return 1
+    fi
+}
+
 main() {
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -655,6 +684,7 @@ main() {
             --dry-run)    DRY_RUN=1; shift ;;
             --uninstall)  UNINSTALL=1; shift ;;
             --purge)      UNINSTALL=1; PURGE=1; shift ;;
+            --reenroll)   REENROLL=1; shift ;;
             -h|--help)    usage; exit 0 ;;
             *) die "unknown option: $1 (see --help)" ;;
         esac
@@ -762,9 +792,16 @@ main() {
         fi
         echo
         echo "### enrollment"
-        if agent_enrolled; then
+        if agent_enrolled && [ "$REENROLL" -eq 1 ]; then
+            echo "re-enroll: ${SERVICE_NAME} is stopped; agent.crt, agent.key, ca.crt and the"
+            echo "HUB_HOST/HUB_PORT/AGENT_ID/WINTERFLOW_API_URL lines of ${ENV_FILE} are"
+            echo "set aside as *.old-<timestamp>, then:"
+            echo "winterflow-agent enroll --url ${API_URL} --cert-dir ${CERT_DIR} --env-out <temp file>"
+            echo "run as '${SERVICE_USER}'; on success ${SERVICE_NAME} is enabled and started"
+        elif agent_enrolled; then
             echo "already enrolled: ${CERT_DIR}/agent.crt exists, enrollment is skipped"
             echo "the binary and unit are refreshed and ${SERVICE_NAME} is restarted"
+            echo "to enroll again (after removing the server in Winterflow), rerun with --reenroll"
         else
             echo "winterflow-agent enroll --url ${API_URL} --cert-dir ${CERT_DIR} --env-out <temp file>"
             echo "run as '${SERVICE_USER}'; on success ${SERVICE_NAME} is enabled and started"
@@ -932,9 +969,16 @@ main() {
 
     # --- Enrollment -----------------------------------------------------------
 
+    if [ "$REENROLL" -eq 1 ] && agent_enrolled; then
+        if ! set_aside_enrollment; then
+            stop_unit
+            die "could not set the old enrollment aside in ${CERT_DIR} / ${ENV_FILE}; ${SERVICE_NAME} is disabled and stopped"
+        fi
+    fi
     enroll_status=0
     if agent_enrolled; then
         log "Already enrolled (${CERT_DIR}/agent.crt exists): keeping the certificate"
+        log "To enroll again (after removing the server in Winterflow), rerun with --reenroll"
         enroll_status=3
     elif ! have_privdrop; then
         stop_unit
@@ -948,7 +992,7 @@ main() {
                 rm -f "$ENROLL_ENV"
                 stop_unit
                 warn "could not store the enrollment result in ${ENV_FILE}"
-                warn "${SERVICE_NAME} is installed but disabled and stopped; remove ${CERT_DIR}/agent.crt and rerun this installer"
+                warn "${SERVICE_NAME} is installed but disabled and stopped; rerun this installer with --reenroll"
                 exit 1
             fi
             rm -f "$ENROLL_ENV"
@@ -957,7 +1001,7 @@ main() {
             if ! grep -q '^HUB_HOST=' "$ENV_FILE" 2>/dev/null; then
                 stop_unit
                 warn "${ENV_FILE} has no HUB_HOST: the agent could not find its hub."
-                warn "${SERVICE_NAME} is installed but disabled and stopped; to enroll again remove ${CERT_DIR}/agent.crt and rerun this installer"
+                warn "${SERVICE_NAME} is installed but disabled and stopped; to enroll again rerun this installer with --reenroll"
                 exit 1
             fi
             ;;

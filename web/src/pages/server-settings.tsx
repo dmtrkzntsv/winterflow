@@ -15,6 +15,7 @@ import { apiBase, isStandalone } from "@/config";
 import { useDocker, type Docker } from "@/context/use-docker";
 import { useServers } from "@/context/use-servers";
 import { createJsonClient, jsonPost } from "@/lib/api";
+import { buildReenrollCommand } from "@/lib/install-command";
 import { serverSettingsPath } from "@/lib/routes";
 import { serverFacts, versionLabel } from "@/lib/server-facts";
 import { serverStatus } from "@/lib/status";
@@ -144,7 +145,15 @@ function RemoveServer({ id, name }: { id: string; name: string }) {
         open={open}
         onOpenChange={setOpen}
         title={`Remove ${name}?`}
-        description="The server disconnects at once. Its apps disappear from Winterflow but keep running on the machine. To connect it again, run the installer on it again."
+        description={
+          <>
+            The server disconnects at once. Its apps disappear from Winterflow but keep running on the machine. To
+            connect it again, run the installer on it with --reenroll:
+            <code data-testid="reenroll-command" className="mt-2 block select-all break-all font-mono text-xs">
+              {buildReenrollCommand(apiBase)}
+            </code>
+          </>
+        }
         confirmLabel="Remove server"
         pendingLabel="Removing…"
         onConfirm={remove}

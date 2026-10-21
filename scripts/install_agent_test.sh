@@ -22,7 +22,7 @@ assert_not_contains "never reads /dev/tty (hangs under sudo use_pty)" "$src" "</
 # --- help / validation --------------------------------------------------------
 
 help_out="$(bash "$SCRIPT" --help)" || fail "--help exits 0" "exit $?"
-for opt in --url --version --binary --user --cpu-quota --memory-max --yes --dry-run --uninstall --purge; do
+for opt in --url --version --binary --user --cpu-quota --memory-max --yes --dry-run --uninstall --purge --reenroll; do
     assert_contains "--help documents ${opt}" "$help_out" "$opt"
 done
 bash "$SCRIPT" --nonsense >/dev/null 2>&1 && fail "unknown option rejected" "exit 0" || pass "unknown option rejected"
@@ -74,6 +74,11 @@ assert_contains "agent_rerun_keeps_enrollment: skip is announced" "$out_rerun" "
 assert_not_contains "agent_rerun_keeps_enrollment: no enroll call" "$out_rerun" "winterflow-agent enroll"
 assert_contains "agent_rerun_keeps_enrollment: unit is refreshed" "$out_rerun" "RestartPreventExitStatus=78"
 assert_contains "fresh machine does enroll" "$out_url" "winterflow-agent enroll"
+assert_contains "rerun: points at --reenroll" "$out_rerun" "--reenroll"
+out_reenroll="$(WF_INSTALL_ROOT="$root" bash "$SCRIPT" --dry-run --reenroll 2>&1)" || fail "--reenroll dry-run exits 0" "exit $?"
+assert_contains "reenroll dry-run: old enrollment set aside" "$out_reenroll" "set aside as *.old-<timestamp>"
+assert_contains "reenroll dry-run: enrolls again" "$out_reenroll" "winterflow-agent enroll --url"
+assert_not_contains "reenroll dry-run: no skip" "$out_reenroll" "already enrolled"
 
 # --- release download ---------------------------------------------------------
 
@@ -162,6 +167,34 @@ STUB
     [ "$RUN_STATUS" -eq 0 ] && pass "enroll exit 3 (rerun): installer succeeds" || fail "enroll exit 3 (rerun): installer succeeds" "status $RUN_STATUS: $RUN_OUT"
     assert_not_contains "enroll exit 3 (rerun): no new code" "$RUN_OUT" "CODE: ABC123"
     assert_contains "enroll exit 3 (rerun): unit restarted" "$(cat "$r1/calls")" "systemctl restart winterflow-agent"
+    assert_contains "enroll exit 3 (rerun): --reenroll hint" "$RUN_OUT" "rerun with --reenroll"
+
+    # --reenroll: the unit is stopped, the old cert/key/CA and the enrollment
+    # lines are set aside, and a new enrollment is stored.
+    r2="$(mktemp -d)"
+    run_install "$r2" 0 "$good"
+    certs="$r2/var/lib/winterflow/certs"
+    echo old-crt > "$certs/agent.crt"; echo old-key > "$certs/agent.key"; echo old-ca > "$certs/ca.crt"
+    run_install "$r2" 0 "${good/srv-1/srv-2}" --reenroll
+    [ "$RUN_STATUS" -eq 0 ] && pass "reenroll: installer succeeds" || fail "reenroll: installer succeeds" "status $RUN_STATUS: $RUN_OUT"
+    assert_contains "reenroll: a new code is shown" "$RUN_OUT" "CODE: ABC123"
+    calls2="$(cat "$r2/calls")"
+    first="$(grep -m1 -E 'disable --now winterflow|restart winterflow' <<<"$calls2")"
+    [ "$first" = "systemctl disable --now winterflow-agent" ] && pass "reenroll: unit stopped before enrolling" || fail "reenroll: unit stopped before enrolling" "$calls2"
+    assert_contains "reenroll: unit restarted" "$calls2" "systemctl restart winterflow-agent"
+    for f in agent.crt agent.key ca.crt; do
+        set -- "$certs/$f".old-*
+        [ -f "$1" ] && pass "reenroll: ${f} set aside" || fail "reenroll: ${f} set aside" "no ${f}.old-*"
+        assert_contains "reenroll: ${f} backup holds the old file" "$(cat "$1" 2>/dev/null)" "old-"
+    done
+    env2="$(cat "$r2/etc/winterflow/agent.env")"
+    assert_contains "reenroll: new server id stored" "$env2" "AGENT_ID=srv-2"
+    assert_not_contains "reenroll: old server id gone" "$env2" "AGENT_ID=srv-1"
+    [ "$(grep -c '^HUB_HOST=' <<<"$env2")" = 1 ] && pass "reenroll: one HUB_HOST line" || fail "reenroll: one HUB_HOST line" "$env2"
+    set -- "$r2/etc/winterflow/agent.env".old-*
+    assert_contains "reenroll: old env lines kept aside" "$(cat "$1" 2>/dev/null)" "AGENT_ID=srv-1"
+    [ "$(stat -c %a "$1" 2>/dev/null)" = 600 ] && pass "reenroll: env backup is 0600" || fail "reenroll: env backup is 0600" "$(stat -c %a "$1" 2>/dev/null)"
+    rm -rf "$r2"
 
     # Rerun where agent.env lost its hub: an error, the unit stays off.
     grep -v '^HUB_HOST=' "$envf" > "$envf.new" && mv "$envf.new" "$envf"
@@ -169,7 +202,7 @@ STUB
     RUN_STATUS=0
     RUN_OUT="$(PATH="$r1/stubs:$PATH" WF_INSTALL_ROOT="$r1" DOCKER_DAEMON_JSON="$r1/etc/docker/daemon.json" bash "$SCRIPT" --yes --user "$me" --binary "$r1/fake/agent" </dev/null 2>&1)" || RUN_STATUS=$?
     [ "$RUN_STATUS" -ne 0 ] && pass "exit 3 without HUB_HOST: installer fails" || fail "exit 3 without HUB_HOST: installer fails" "status 0"
-    assert_contains "exit 3 without HUB_HOST: explains re-enrollment" "$RUN_OUT" "remove ${r1}/var/lib/winterflow/certs/agent.crt"
+    assert_contains "exit 3 without HUB_HOST: explains re-enrollment" "$RUN_OUT" "rerun this installer with --reenroll"
     assert_not_contains "exit 3 without HUB_HOST: not restarted" "$(cat "$r1/calls")" "systemctl restart"
 
     for code in 2 1; do

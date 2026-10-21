@@ -4,6 +4,7 @@ import type { ReactElement } from "react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { apiBase } from "@/config";
 import { fakeAPI } from "@/test/fake-api";
 import { ServerDockerPage, ServerDomainsPage, ServerGeneralPage, ServerStoragesPage } from "@/pages/server-settings";
 
@@ -192,7 +193,10 @@ describe("server settings pages", () => {
     await user.click(screen.getByRole("button", { name: "Remove server" }));
     const dialog = screen.getByRole("alertdialog", { name: "Remove Alpha?" });
     expect(dialog).toHaveTextContent("keep running on the machine");
-    expect(dialog).toHaveTextContent("run the installer on it again");
+    expect(dialog).toHaveTextContent("run the installer on it with --reenroll");
+    expect(within(dialog).getByTestId("reenroll-command")).toHaveTextContent(
+      `curl -fsSL https://get.winterflow.dev/agent | sudo bash -s -- --url ${apiBase} --reenroll`,
+    );
     expect(api.calls).toHaveLength(0);
     await user.click(within(dialog).getByRole("button", { name: "Remove server" }));
     await waitFor(() => expect(refresh).toHaveBeenCalled());

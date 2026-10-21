@@ -93,6 +93,15 @@ The agent installer prints a 6-character code (valid 10 minutes, refreshed
 automatically, up to 10 codes in total); type it into the UI. The control plane signs the
 agent's certificate, picks a hub for it and the installer starts the service.
 
+Rerunning the installer on an enrolled machine keeps its enrollment. After
+removing a server in the UI, connect the machine again with `--reenroll`
+(the Remove-server dialog shows the command); the old certificate and
+settings are kept beside the new ones as `*.old-<timestamp>`:
+
+```sh
+curl -fsSL https://get.winterflow.dev/agent | sudo bash -s -- --url https://app.example.com --reenroll
+```
+
 ## Owner to-dos
 
 - Add the GitHub Actions secrets `R2_ENDPOINT`, `R2_ACCESS_KEY_ID` and

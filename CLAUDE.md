@@ -98,7 +98,7 @@ Winterflow ships to small always-on home servers — think mini-PCs and Raspberr
 
 **Security (fail closed):**
 - A `server_id` from a request is NOT authorization. Every server-addressed route must verify org ownership before dispatching: `webutil.RequireServerAccess` (backed by `ServerRepository.UserOwnsServer`); the app handlers' `authorize` and the docker handlers' `caller` helpers do this — reuse them. The guard denies when unwired (nil), and tests assert 403 per route.
-- bcrypt-priced endpoints (login/register) sit behind the per-IP limiter in `internal/app/web/middleware/ratelimit`; put any new expensive unauthenticated endpoint behind it too. The client IP comes from `internal/app/web/middleware/realip`, which honours `X-Real-IP` / the last `X-Forwarded-For` entry only when the direct peer is loopback (never use chi's `RealIP`: it trusts any client's header).
+- bcrypt-priced endpoints (login/register) sit behind the per-IP limiter in `internal/app/web/middleware/ratelimit`; put any new expensive unauthenticated endpoint behind it too. The client IP comes from `internal/app/web/middleware/realip`, which honours only the last `X-Forwarded-For` entry (the hop the local proxy wrote; `X-Real-IP` is ignored because a plain reverse proxy passes a client's through) and only when the direct peer is loopback; the Caddy snippet sets it with `header_up X-Forwarded-For {client_ip}` (never use chi's `RealIP`: it trusts any client's header).
 - Secret values never leave the agent (mask with the `<encrypted>` placeholder; secret files 0600). Docker/git CLI args are always `[]string` — never build shell strings; user-supplied paths go through `safeRel`, app ids through `filepath.Base`.
 
 **Stability (months of uptime between restarts):**

@@ -110,6 +110,8 @@ out_ver="$(dry --version 260101.1 --r2-bucket other-bucket)"
 assert_contains "--version picks the channel" "$out_ver" "/other-bucket/winterflow/v260101.1/winterflow-api-linux-"
 assert_contains "checksums verified in the script" "$src" "sha256sum -c"
 
+assert_contains "caddy snippet sets the client address" "$out" "header_up X-Forwarded-For {client_ip}"
+
 # --- units_and_env ------------------------------------------------------------
 
 api_env="$(section "$out" /etc/winterflow/control-plane-api.env)"

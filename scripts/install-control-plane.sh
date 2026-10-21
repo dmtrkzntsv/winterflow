@@ -762,7 +762,9 @@ render_finish() {
 Next steps (this installer does not touch Caddy or the firewall):
   1. Proxy your Caddy to 127.0.0.1:${API_PORT}, e.g.
        $(url_host "$WEB_URL") {
-           reverse_proxy 127.0.0.1:${API_PORT}
+           reverse_proxy 127.0.0.1:${API_PORT} {
+               header_up X-Forwarded-For {client_ip}
+           }
        }
   2. Open TCP ${hub_port} so agents can reach the hub at ${HUB_PUBLIC_ADDR}.
   3. Open ${WEB_URL} and create the first account.

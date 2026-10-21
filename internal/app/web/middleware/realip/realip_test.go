@@ -37,13 +37,15 @@ func TestHeadersFromLoopbackHonoured(t *testing.T) {
 		headers map[string]string
 		want    string
 	}{
-		{"127.0.0.1:5000", map[string]string{"X-Real-IP": "198.51.100.4"}, "198.51.100.4"},
-		{"[::1]:5000", map[string]string{"X-Real-IP": "2001:db8::1"}, "2001:db8::1"},
+		{"[::1]:5000", map[string]string{"X-Forwarded-For": "2001:db8::1"}, "2001:db8::1"},
+		{"127.0.0.1:5000", map[string]string{"X-Forwarded-For": "1.2.3.4, 5.6.7.8"}, "5.6.7.8"},
+		// X-Real-IP is client-controlled behind a plain reverse proxy: ignored.
+		{"127.0.0.1:5000", map[string]string{"X-Real-IP": "198.51.100.4"}, "127.0.0.1"},
 		// The proxy appends the peer it saw: the last entry is the one it vouches for.
 		{"127.0.0.1:5000", map[string]string{"X-Forwarded-For": "10.9.9.9, 198.51.100.4"}, "198.51.100.4"},
-		{"127.0.0.1:5000", map[string]string{"X-Real-IP": "198.51.100.4", "X-Forwarded-For": "192.0.2.1"}, "198.51.100.4"},
+		{"127.0.0.1:5000", map[string]string{"X-Real-IP": "198.51.100.4", "X-Forwarded-For": "192.0.2.1"}, "192.0.2.1"},
 		// Garbage keeps the peer.
-		{"127.0.0.1:5000", map[string]string{"X-Real-IP": "not-an-ip"}, "127.0.0.1"},
+		{"127.0.0.1:5000", map[string]string{"X-Forwarded-For": "not-an-ip"}, "127.0.0.1"},
 		{"127.0.0.1:5000", nil, "127.0.0.1"},
 	}
 	for _, c := range cases {

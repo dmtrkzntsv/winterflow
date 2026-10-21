@@ -1,8 +1,12 @@
 // Package realip sets a request's RemoteAddr to the client's address. Unlike
-// chi's RealIP it trusts X-Real-IP / X-Forwarded-For only when the direct
-// peer is a loopback address (the documented deployment binds the API to
-// 127.0.0.1 behind Caddy or the embedded ingress); from anywhere else those
-// headers are client-controlled and would let any per-IP limit be bypassed.
+// chi's RealIP it reads only the last X-Forwarded-For entry (the hop the local
+// proxy wrote), and only when the direct peer is a loopback address (the
+// documented deployment binds the API to 127.0.0.1 behind Caddy or the
+// embedded ingress). X-Real-IP is ignored: a plain reverse proxy passes a
+// client-supplied one through unchanged, which would let any client pick its
+// own address and bypass every per-IP limit. The proxy must set
+// X-Forwarded-For to the real client (Caddy: header_up X-Forwarded-For
+// {client_ip}).
 package realip
 
 import (
@@ -24,15 +28,13 @@ func Middleware(next http.Handler) http.Handler {
 	})
 }
 
-// forwarded returns X-Real-IP, else the last X-Forwarded-For entry (the one
-// the proxy appended), when it is a valid IP address.
+// forwarded returns the last X-Forwarded-For entry (the one the local proxy
+// wrote) when it is a valid IP address.
 func forwarded(r *http.Request) string {
-	v := strings.TrimSpace(r.Header.Get("X-Real-IP"))
-	if v == "" {
-		if xff := r.Header.Values("X-Forwarded-For"); len(xff) > 0 {
-			last := xff[len(xff)-1]
-			v = strings.TrimSpace(last[strings.LastIndex(last, ",")+1:])
-		}
+	var v string
+	if xff := r.Header.Values("X-Forwarded-For"); len(xff) > 0 {
+		last := xff[len(xff)-1]
+		v = strings.TrimSpace(last[strings.LastIndex(last, ",")+1:])
 	}
 	if ip := net.ParseIP(v); ip != nil {
 		return ip.String()

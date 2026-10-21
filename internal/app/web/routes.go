@@ -9,6 +9,7 @@ import (
 
 	"winterflow/internal/app/web/api"
 	authprvd "winterflow/internal/app/web/auth"
+	hagenthub "winterflow/internal/app/web/handler/agenthub"
 	halerts "winterflow/internal/app/web/handler/alerts"
 	happ "winterflow/internal/app/web/handler/app"
 	hauth "winterflow/internal/app/web/handler/auth"
@@ -54,7 +55,7 @@ func (s *Server) registerRoutes() {
 	routes := routeTable(s.Deps, guards)
 	if s.Deps.Enrollment == nil {
 		// Standalone: agents do not enroll by code and there are no hubs to
-		// join; the routes answer 404.
+		// join or move between; the routes answer 404.
 		routes = slices.DeleteFunc(routes, func(rt api.Route) bool { return rt.Tag == "enroll" })
 	}
 	api.Register(s.Router, routes, authMW)
@@ -122,6 +123,11 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 	}
 	enrollAPI := henroll.NewHandler(&henroll.Deps{Logger: d.Log, Enrollments: enrollments})
 	hubJoinAPI := hhubjoin.NewHandler(&hhubjoin.Deps{Logger: d.Log, Joiner: hubJoiner})
+	var locator hagenthub.Locator
+	if d.AgentHub != nil {
+		locator = d.AgentHub
+	}
+	agentHubAPI := hagenthub.NewHandler(&hagenthub.Deps{Logger: d.Log, Locator: locator})
 	serversAPI := server.NewHandler(&server.Deps{
 		Logger:           d.Log,
 		ServerRepository: d.ServerRepository,
@@ -207,6 +213,7 @@ func routeTable(d *bootstrap.Deps, g api.Guards) []api.Route {
 	for _, table := range [][]api.Route{
 		enrollAPI.Routes(g),
 		hubJoinAPI.Routes(g),
+		agentHubAPI.Routes(g),
 		authAPI.Routes(g),
 		notificationAPI.Routes(g),
 		appsAPI.Routes(g),

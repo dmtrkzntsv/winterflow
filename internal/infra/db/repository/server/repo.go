@@ -34,6 +34,7 @@ type (
 	registrationParams = sqlitegen.InsertRegistrationParams
 	certificateParams  = sqlitegen.InsertCertificateParams
 	hubCountRow        = sqlitegen.CountServersByHubRow
+	setHubParams       = sqlitegen.SetServerHubParams
 )
 
 type querier interface {
@@ -58,6 +59,7 @@ type querier interface {
 	GetLatestRegistrationCode(ctx context.Context, db backend.DBTX) (string, error)
 	InsertCertificate(ctx context.Context, db backend.DBTX, p certificateParams) error
 	GetServerHub(ctx context.Context, db backend.DBTX, serverID string) (*string, error)
+	SetServerHub(ctx context.Context, db backend.DBTX, p setHubParams) (int64, error)
 	GetActiveServerCertificate(ctx context.Context, db backend.DBTX, serverID string) (string, error)
 	CountServersByHub(ctx context.Context, db backend.DBTX) ([]hubCountRow, error)
 	DeleteServerRow(ctx context.Context, db backend.DBTX, serverID string) error
@@ -323,6 +325,21 @@ func (r *Repo) ServerHub(ctx context.Context, serverID string) (string, error) {
 		return "", nil
 	}
 	return *hub, nil
+}
+
+// SetServerHub moves the server to toHubID only while it is still on
+// fromHubID ("" for none) and returns the hub it is on afterwards: toHubID,
+// or the hub another mover put it on first. model.ErrNotFound when there is
+// no such server.
+func (r *Repo) SetServerHub(ctx context.Context, serverID, fromHubID, toHubID string) (string, error) {
+	n, err := r.q.SetServerHub(ctx, r.tx.Querier(ctx), setHubParams{ToHub: &toHubID, ServerID: serverID, FromHub: &fromHubID})
+	if err != nil {
+		return "", err
+	}
+	if n == 1 {
+		return toHubID, nil
+	}
+	return r.ServerHub(ctx, serverID)
 }
 
 // CountServersByHub returns how many servers each hub carries; servers

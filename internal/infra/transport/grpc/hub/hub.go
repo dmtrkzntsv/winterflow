@@ -400,6 +400,15 @@ func (h *Hub) RegisterAgent(ctx context.Context, req *proto.RegisterAgentRequest
 		h.log.Warn("agent auth check failed", "agent_id", agentID, "error", err)
 		return nil, status.Error(codes.Unavailable, "cannot verify server right now")
 	}
+	if verdict == bus.VerdictMoved {
+		// Not a denial: the agent asks the API where to go. Nothing is
+		// recorded.
+		if reason == "" {
+			reason = "server belongs to another hub"
+		}
+		h.log.Info("agent belongs to another hub", "agent_id", agentID)
+		return nil, status.Error(codes.FailedPrecondition, reason)
+	}
 	if verdict != bus.VerdictAllowed {
 		if reason == "" {
 			reason = string(verdict)

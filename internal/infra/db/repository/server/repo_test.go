@@ -361,6 +361,32 @@ func TestServerHub(t *testing.T) {
 	}
 }
 
+func TestSetServerHubIsConditional(t *testing.T) {
+	repo, d := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	dbtest.SeedServer(t, d, org1, srv1)
+	dbtest.SeedServer(t, d, org2, srv2)
+	dbtest.Exec(t, d, `UPDATE servers SET hub_id = ? WHERE server_id = ?`, "hub-01", srv1)
+
+	if got, err := repo.SetServerHub(ctx, srv1, "hub-01", "hub-02"); err != nil || got != "hub-02" {
+		t.Fatalf("move: %q, %v", got, err)
+	}
+	// A second mover that read hub-01 loses and learns where it went.
+	if got, err := repo.SetServerHub(ctx, srv1, "hub-01", "hub-03"); err != nil || got != "hub-02" {
+		t.Fatalf("lost race: %q, %v", got, err)
+	}
+	if got, _ := repo.ServerHub(ctx, srv1); got != "hub-02" {
+		t.Fatalf("stored hub = %q", got)
+	}
+	// A server without a hub moves from "".
+	if got, err := repo.SetServerHub(ctx, srv2, "", "hub-02"); err != nil || got != "hub-02" {
+		t.Fatalf("from none: %q, %v", got, err)
+	}
+	if _, err := repo.SetServerHub(ctx, dbtest.ID(99), "", "hub-02"); !errors.Is(err, model.ErrNotFound) {
+		t.Fatalf("unknown server: want ErrNotFound, got %v", err)
+	}
+}
+
 func TestCountServersByHub(t *testing.T) {
 	repo, d := newRepo(t)
 	ctx := dbtest.Ctx(t)

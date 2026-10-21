@@ -34,6 +34,8 @@ var (
 	_ = pgsqlgen.DeleteTokenParams(sqlitegen.DeleteTokenParams{})
 	_ = sqlitegen.CountServersByHubRow(pgsqlgen.CountServersByHubRow{})
 	_ = pgsqlgen.CountServersByHubRow(sqlitegen.CountServersByHubRow{})
+	_ = sqlitegen.SetServerHubParams(pgsqlgen.SetServerHubParams{})
+	_ = pgsqlgen.SetServerHubParams(sqlitegen.SetServerHubParams{})
 	_ = sqlitegen.GetCapabilityParams(pgsqlgen.GetCapabilityParams{})
 	_ = pgsqlgen.GetCapabilityParams(sqlitegen.GetCapabilityParams{})
 	_ = sqlitegen.GetConnectedAccountUserIDParams(pgsqlgen.GetConnectedAccountUserIDParams{})

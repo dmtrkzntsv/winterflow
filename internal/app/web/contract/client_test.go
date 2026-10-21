@@ -33,6 +33,7 @@ type call struct {
 	Path    string
 	Query   url.Values
 	Body    any
+	Header  http.Header // extra request headers
 	Invalid bool
 }
 
@@ -96,6 +97,9 @@ func (c *client) do(t *testing.T, k call) *response {
 	}
 	if c.bearer != "" {
 		req.Header.Set("Authorization", "Bearer "+c.bearer)
+	}
+	for k, v := range k.Header {
+		req.Header[k] = v
 	}
 	if !k.Invalid {
 		validateRequest(t, req)

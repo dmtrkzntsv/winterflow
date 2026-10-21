@@ -55,7 +55,7 @@ func answer(ctx context.Context, b bus.Bus, repo store, req bus.HubRequest, log 
 	}
 	ctx, cancel := context.WithTimeout(ctx, checkTimeout)
 	defer cancel()
-	verdict, reason, err := Check(ctx, repo, req.ServerID, req.CertFingerprint)
+	verdict, reason, err := Check(ctx, repo, req.ServerID, req.CertFingerprint, req.HubID)
 	if err != nil {
 		log.Error("agent auth check failed", err, "server_id", req.ServerID)
 		return

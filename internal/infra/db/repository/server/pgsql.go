@@ -120,6 +120,10 @@ func (pgsqlQuerier) GetServerHub(ctx context.Context, db backend.DBTX, serverID 
 	return pgsqlgen.New(db).GetServerHub(ctx, serverID)
 }
 
+func (pgsqlQuerier) SetServerHub(ctx context.Context, db backend.DBTX, p setHubParams) (int64, error) {
+	return pgsqlgen.New(db).SetServerHub(ctx, pgsqlgen.SetServerHubParams(p))
+}
+
 func (pgsqlQuerier) CountServersByHub(ctx context.Context, db backend.DBTX) ([]hubCountRow, error) {
 	rows, err := pgsqlgen.New(db).CountServersByHub(ctx)
 	if err != nil {

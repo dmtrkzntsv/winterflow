@@ -21,6 +21,7 @@ import (
 
 type fakeRepo struct {
 	servers map[string]bool
+	hubs    map[string]string
 	cert    map[string]string
 	err     error
 }
@@ -32,7 +33,7 @@ func (f fakeRepo) ServerHub(_ context.Context, id string) (string, error) {
 	if !f.servers[id] {
 		return "", model.ErrNotFound
 	}
-	return "", nil
+	return f.hubs[id], nil
 }
 
 func (f fakeRepo) ActiveServerCertificate(_ context.Context, id string) (string, error) {
@@ -65,19 +66,19 @@ func newCert(t *testing.T, cn string) (string, string) {
 func TestCheckAllowed(t *testing.T) {
 	pemA, fpA := newCert(t, "srv-1")
 	repo := fakeRepo{servers: map[string]bool{"srv-1": true}, cert: map[string]string{"srv-1": pemA}}
-	v, _, err := Check(context.Background(), repo, "srv-1", fpA)
+	v, _, err := Check(context.Background(), repo, "srv-1", fpA, "")
 	if err != nil || v != bus.VerdictAllowed {
 		t.Fatalf("got %q, %v", v, err)
 	}
 	// The old registration flow stored the PEM base64-encoded.
 	repo.cert["srv-1"] = base64.StdEncoding.EncodeToString([]byte(pemA))
-	if v, _, err := Check(context.Background(), repo, "srv-1", fpA); err != nil || v != bus.VerdictAllowed {
+	if v, _, err := Check(context.Background(), repo, "srv-1", fpA, ""); err != nil || v != bus.VerdictAllowed {
 		t.Fatalf("base64 form: got %q, %v", v, err)
 	}
 }
 
 func TestCheckUnknownServer(t *testing.T) {
-	v, reason, err := Check(context.Background(), fakeRepo{}, "nope", "ab")
+	v, reason, err := Check(context.Background(), fakeRepo{}, "nope", "ab", "")
 	if err != nil || v != bus.VerdictUnknown || reason != "server not found" {
 		t.Fatalf("got %q %q %v", v, reason, err)
 	}
@@ -88,22 +89,44 @@ func TestCheckWrongFingerprint(t *testing.T) {
 	_, fpB := newCert(t, "srv-1")
 	repo := fakeRepo{servers: map[string]bool{"srv-1": true}, cert: map[string]string{"srv-1": pemA}}
 	for _, fp := range []string{fpB, ""} {
-		v, reason, err := Check(context.Background(), repo, "srv-1", fp)
+		v, reason, err := Check(context.Background(), repo, "srv-1", fp, "")
 		if err != nil || v != bus.VerdictRevoked || reason != "certificate is not active" {
 			t.Fatalf("fp %q: got %q %q %v", fp, v, reason, err)
 		}
 	}
 	// A server without any active certificate is revoked too.
 	repo.cert = nil
-	if v, _, _ := Check(context.Background(), repo, "srv-1", fpB); v != bus.VerdictRevoked {
+	if v, _, _ := Check(context.Background(), repo, "srv-1", fpB, ""); v != bus.VerdictRevoked {
 		t.Fatalf("no cert: got %q", v)
 	}
 }
 
 func TestCheckDBErrorIsReturned(t *testing.T) {
 	boom := errors.New("db down")
-	_, _, err := Check(context.Background(), fakeRepo{err: boom}, "srv-1", "x")
+	_, _, err := Check(context.Background(), fakeRepo{err: boom}, "srv-1", "x", "")
 	if !errors.Is(err, boom) {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestCheckMoved(t *testing.T) {
+	pemA, fpA := newCert(t, "srv-1")
+	_, fpB := newCert(t, "srv-1")
+	repo := fakeRepo{servers: map[string]bool{"srv-1": true}, hubs: map[string]string{"srv-1": "hub-02"}, cert: map[string]string{"srv-1": pemA}}
+	v, reason, err := Check(context.Background(), repo, "srv-1", fpA, "hub-01")
+	if err != nil || v != bus.VerdictMoved || reason != "server belongs to another hub" {
+		t.Fatalf("got %q %q %v", v, reason, err)
+	}
+	if v, _, err := Check(context.Background(), repo, "srv-1", fpA, "hub-02"); err != nil || v != bus.VerdictAllowed {
+		t.Fatalf("own hub: got %q %v", v, err)
+	}
+	// A revoked certificate is refused, never sent elsewhere.
+	if v, _, _ := Check(context.Background(), repo, "srv-1", fpB, "hub-01"); v != bus.VerdictRevoked {
+		t.Fatalf("revoked on another hub: got %q", v)
+	}
+	// A server without a hub (enrolled before hubs) is sent to ask the API.
+	repo.hubs = nil
+	if v, _, _ := Check(context.Background(), repo, "srv-1", fpA, "hub-01"); v != bus.VerdictMoved {
+		t.Fatalf("no hub: got %q", v)
 	}
 }

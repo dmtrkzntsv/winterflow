@@ -274,6 +274,9 @@ type Querier interface {
 	// the caller's primary organization only).
 	ServerInOrganization(ctx context.Context, arg ServerInOrganizationParams) (bool, error)
 	SetAlertEventDeliveries(ctx context.Context, arg SetAlertEventDeliveriesParams) error
+	// Moves a server to another hub only while it is still on from_hub (empty for
+	// none): a replica that moved it first wins, the caller reads that hub.
+	SetServerHub(ctx context.Context, arg SetServerHubParams) (int64, error)
 	// A pending instance's backup settings; a confirmed one's belong to the app.
 	SetTemplateInstanceBackups(ctx context.Context, arg SetTemplateInstanceBackupsParams) error
 	SetTemplateInstanceError(ctx context.Context, arg SetTemplateInstanceErrorParams) error

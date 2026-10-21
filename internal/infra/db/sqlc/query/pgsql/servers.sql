@@ -91,6 +91,12 @@ VALUES ($1, $2, $3, $4, $5, $6);
 -- The hub the server was assigned to (NULL: none; no row: no server).
 SELECT hub_id FROM servers WHERE server_id = $1;
 
+-- name: SetServerHub :execrows
+-- Moves a server to another hub only while it is still on from_hub (empty for
+-- none): a replica that moved it first wins, the caller reads that hub.
+UPDATE servers SET hub_id = sqlc.arg(to_hub)
+WHERE server_id = sqlc.arg(server_id) AND COALESCE(hub_id, '') = sqlc.arg(from_hub);
+
 -- name: CountServersByHub :many
 -- How many servers each hub carries (the hub picker's assigned counts).
 SELECT hub_id, count(*) AS servers FROM servers

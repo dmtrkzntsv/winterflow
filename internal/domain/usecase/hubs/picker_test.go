@@ -133,3 +133,27 @@ func TestPickErrors(t *testing.T) {
 		t.Fatal("count error: want error")
 	}
 }
+
+func TestPickExceptSkipsTheHub(t *testing.T) {
+	hubs := []model.Hub{
+		{ID: "a", Capacity: 10, Accepting: true},
+		{ID: "b", Capacity: 10, Accepting: true},
+	}
+	p := newTestPicker(hubs, nil)
+	for range 50 {
+		got, err := p.PickExcept(context.Background(), "a")
+		if err != nil || got.ID != "b" {
+			t.Fatalf("picked %+v, %v", got, err)
+		}
+	}
+	// The least-loaded fallback skips it too.
+	p = newTestPicker(hubs, map[string]int{"a": 10, "b": 20})
+	if got, err := p.PickExcept(context.Background(), "a"); err != nil || got.ID != "b" {
+		t.Fatalf("full: picked %+v, %v", got, err)
+	}
+	// The only hub excluded: none.
+	p = newTestPicker(hubs[:1], nil)
+	if _, err := p.PickExcept(context.Background(), "a"); !errors.Is(err, ErrNoHub) {
+		t.Fatalf("err = %v, want ErrNoHub", err)
+	}
+}

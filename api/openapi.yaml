@@ -163,6 +163,61 @@ paths:
       summary: Poll an enrollment; once claimed it carries the signed certificate
       tags:
       - enroll
+  /api/v1/agent/hub:
+    post:
+      description: 'Signed by the agent: header `X-Winterflow-Signature` carries base64
+        of the ASN.1 ECDSA signature, by the key of the server''s active certificate,
+        over SHA-256 of `server_id + "\n" + timestamp + "\n" + nonce`. The timestamp
+        (Unix seconds) must be within 5 minutes of the API''s clock. When the server''s
+        hub is gone or draining, the server is moved to another hub (`moved: true`).'
+      operationId: agentHub
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WhereRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    $ref: '#/components/schemas/WhereResponse'
+                  message:
+                    type: string
+                  success:
+                    const: true
+                    type: boolean
+                required:
+                - success
+                - data
+                type: object
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+            text/plain:
+              schema:
+                type: string
+          description: Unauthorized
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Service Unavailable
+      summary: Ask which hub an agent should connect to
+      tags:
+      - enroll
   /api/v1/agent/update:
     post:
       operationId: agentUpdate
@@ -10252,6 +10307,26 @@ components:
       - in_use
       - orphan
       - anonymous
+      type: object
+    WhereRequest:
+      properties:
+        nonce:
+          type: string
+        server_id:
+          type: string
+        timestamp:
+          format: int64
+          type: integer
+      type: object
+    WhereResponse:
+      properties:
+        hub_addr:
+          type: string
+        moved:
+          type: boolean
+      required:
+      - hub_addr
+      - moved
       type: object
   securitySchemes:
     bearer:

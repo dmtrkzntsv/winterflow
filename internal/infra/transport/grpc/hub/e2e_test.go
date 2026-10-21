@@ -299,6 +299,32 @@ func TestRegisterDeniedForUnknownServer(t *testing.T) {
 	}
 }
 
+// A server assigned to another hub is not a denial: the agent gets
+// FailedPrecondition with the reason (it asks the API where to go), and the
+// hub records no registration.
+func TestRegisterMovedIsFailedPrecondition(t *testing.T) {
+	env := startHub(t, "srv-1", nil)
+	answerVerify(t, env, bus.VerdictMoved, "server belongs to another hub")
+	client := dialHub(t, env.cfg)
+	err := register(env.ctx, client, "srv-1")
+	if status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "server belongs to another hub") {
+		t.Fatalf("err = %v, want FailedPrecondition with the reason", err)
+	}
+	sctx, cancel := context.WithTimeout(env.ctx, 5*time.Second)
+	defer cancel()
+	stream, err := client.AgentStream(sctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = stream.Send(&proto.AgentMessage{Message: &proto.AgentMessage_Event{Event: &proto.AgentEvent{
+		Base: &proto.BaseMessage{AgentId: "srv-1"},
+		Kind: string(bus.EventAppsStatus),
+	}}})
+	if _, err := stream.Recv(); status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("stream err = %v, want Unauthenticated (no registration)", err)
+	}
+}
+
 func TestRegisterAllowedByResponder(t *testing.T) {
 	env := startHub(t, "srv-1", nil)
 	answerVerify(t, env, bus.VerdictAllowed, "")

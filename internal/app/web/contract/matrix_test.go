@@ -50,6 +50,7 @@ var probes = map[string]probe{
 	"POST /api/v1/agent/enroll/refresh": {malformed: bad("POST", "/api/v1/agent/enroll/refresh")},
 	"POST /api/v1/agent/enroll/status":  {malformed: bad("POST", "/api/v1/agent/enroll/status")},
 	"POST /api/v1/hub/enroll":           {malformed: bad("POST", "/api/v1/hub/enroll")},
+	"POST /api/v1/agent/hub":            {malformed: bad("POST", "/api/v1/agent/hub")},
 	"GET /api/v1/app/get-apps":          {valid: func(s string) call { return get("/api/v1/app/get-apps", sq(s)) }, malformed: bad("GET", "/api/v1/app/get-apps")},
 	"GET /api/v1/app/get-apps-status":   {valid: func(s string) call { return get("/api/v1/app/get-apps-status", sq(s)) }, malformed: bad("GET", "/api/v1/app/get-apps-status")},
 	"POST /api/v1/app/refresh-apps": {valid: func(s string) call {
@@ -306,8 +307,8 @@ func serverAddressed(rt api.Route) bool {
 }
 
 // TestProbesCoverTable: every non-Mounted route with input (query or body)
-// has a probe with a malformed call, every server-addressed route has a
-// valid call for TestForeignServer, and every probe names a real route.
+// has a probe with a malformed call, every server-addressed User route has
+// a valid call for TestForeignServer, and every probe names a real route.
 func TestProbesCoverTable(t *testing.T) {
 	t.Parallel()
 	known := map[string]bool{}
@@ -320,7 +321,9 @@ func TestProbesCoverTable(t *testing.T) {
 		if p, ok := probes[key]; !ok || p.malformed.Path == "" {
 			t.Errorf("%s takes input but has no malformed probe", key)
 		}
-		if serverAddressed(rt) && probes[key].valid == nil {
+		// A Public route has no caller account to own a server (the agent
+		// hub route authenticates the agent's signature instead).
+		if rt.Auth == api.User && serverAddressed(rt) && probes[key].valid == nil {
 			t.Errorf("%s is server-addressed but has no valid probe, so TestForeignServer would skip its ownership check", key)
 		}
 	}

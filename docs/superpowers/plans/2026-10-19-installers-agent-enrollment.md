@@ -36,8 +36,8 @@
 2. **Script loses the network after the claim** and polls again minutes later. Expect `claimed` with the same cert, not a second server. Past 15 minutes: `expired`, and the server exists without a collected cert. → Task 6 test `TestStatusClaimedIsIdempotent`.
 3. **Two API replicas answer the same auth question**, or a reply arrives after the 5 s timeout. Expect the first reply used, late/duplicate replies dropped without leaking map entries or blocking. → Task 10 test `TestAuthorizerLateAndDuplicateReplies`.
 4. **Agent rerun on an already-enrolled box** (`install-agent.sh` again). Expect binary/unit refreshed, no new enrollment, cert untouched, service restarted. → Task 15 dry-run test `agent_rerun_keeps_enrollment`.
-6. **A hub dies with many agents on it** (Part B). Expect every agent to ask after ~3 minutes, all land on live hubs, and two API replicas never send one server to two hubs. → Task 19 test `TestWhereConcurrentMovesAgree`, Task 21 e2e.
 5. **Agent stream sends a heartbeat/event with a different `AgentId`** than its cert. Expect the stream closed, nothing published for the foreign id. → Task 10 test `TestStreamRejectsForeignAgentID`.
+6. **A hub dies with many agents on it** (Part B). Expect every agent to ask after ~3 minutes, all land on live hubs, and two API replicas never send one server to two hubs. → Task 19 test `TestWhereConcurrentMovesAgree`, Task 21 e2e.
 
 ---
 

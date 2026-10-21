@@ -54,8 +54,19 @@ func (q *Queries) CountPendingEnrollments(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const countPendingEnrollmentsByIP = `-- name: CountPendingEnrollmentsByIP :one
+SELECT COUNT(*) FROM agent_enrollments WHERE state = 'pending' AND client_ip = ?
+`
+
+func (q *Queries) CountPendingEnrollmentsByIP(ctx context.Context, clientIp string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countPendingEnrollmentsByIP, clientIp)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const getEnrollmentByCode = `-- name: GetEnrollmentByCode :one
-SELECT enrollment_id, poll_secret_hash, csr, hostname, code, code_expires_at, codes_issued, state, server_id, certificate, hub_addr, claimed_at, created_at FROM agent_enrollments WHERE code = ?
+SELECT enrollment_id, poll_secret_hash, csr, hostname, code, code_expires_at, codes_issued, state, server_id, certificate, hub_addr, client_ip, claimed_at, created_at FROM agent_enrollments WHERE code = ?
 `
 
 func (q *Queries) GetEnrollmentByCode(ctx context.Context, code *string) (AgentEnrollment, error) {
@@ -73,6 +84,7 @@ func (q *Queries) GetEnrollmentByCode(ctx context.Context, code *string) (AgentE
 		&i.ServerID,
 		&i.Certificate,
 		&i.HubAddr,
+		&i.ClientIp,
 		&i.ClaimedAt,
 		&i.CreatedAt,
 	)
@@ -80,7 +92,7 @@ func (q *Queries) GetEnrollmentByCode(ctx context.Context, code *string) (AgentE
 }
 
 const getEnrollmentByID = `-- name: GetEnrollmentByID :one
-SELECT enrollment_id, poll_secret_hash, csr, hostname, code, code_expires_at, codes_issued, state, server_id, certificate, hub_addr, claimed_at, created_at FROM agent_enrollments WHERE enrollment_id = ?
+SELECT enrollment_id, poll_secret_hash, csr, hostname, code, code_expires_at, codes_issued, state, server_id, certificate, hub_addr, client_ip, claimed_at, created_at FROM agent_enrollments WHERE enrollment_id = ?
 `
 
 func (q *Queries) GetEnrollmentByID(ctx context.Context, enrollmentID string) (AgentEnrollment, error) {
@@ -98,6 +110,7 @@ func (q *Queries) GetEnrollmentByID(ctx context.Context, enrollmentID string) (A
 		&i.ServerID,
 		&i.Certificate,
 		&i.HubAddr,
+		&i.ClientIp,
 		&i.ClaimedAt,
 		&i.CreatedAt,
 	)
@@ -105,7 +118,7 @@ func (q *Queries) GetEnrollmentByID(ctx context.Context, enrollmentID string) (A
 }
 
 const getEnrollmentBySecretHash = `-- name: GetEnrollmentBySecretHash :one
-SELECT enrollment_id, poll_secret_hash, csr, hostname, code, code_expires_at, codes_issued, state, server_id, certificate, hub_addr, claimed_at, created_at FROM agent_enrollments WHERE poll_secret_hash = ?
+SELECT enrollment_id, poll_secret_hash, csr, hostname, code, code_expires_at, codes_issued, state, server_id, certificate, hub_addr, client_ip, claimed_at, created_at FROM agent_enrollments WHERE poll_secret_hash = ?
 `
 
 func (q *Queries) GetEnrollmentBySecretHash(ctx context.Context, pollSecretHash string) (AgentEnrollment, error) {
@@ -123,6 +136,7 @@ func (q *Queries) GetEnrollmentBySecretHash(ctx context.Context, pollSecretHash 
 		&i.ServerID,
 		&i.Certificate,
 		&i.HubAddr,
+		&i.ClientIp,
 		&i.ClaimedAt,
 		&i.CreatedAt,
 	)
@@ -131,8 +145,8 @@ func (q *Queries) GetEnrollmentBySecretHash(ctx context.Context, pollSecretHash 
 
 const insertEnrollment = `-- name: InsertEnrollment :exec
 
-INSERT INTO agent_enrollments (enrollment_id, poll_secret_hash, csr, hostname, code, code_expires_at, codes_issued, state, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO agent_enrollments (enrollment_id, poll_secret_hash, csr, hostname, code, code_expires_at, codes_issued, state, created_at, client_ip)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `
 
 type InsertEnrollmentParams struct {
@@ -145,6 +159,7 @@ type InsertEnrollmentParams struct {
 	CodesIssued    int64
 	State          string
 	CreatedAt      types.DateTime
+	ClientIp       string
 }
 
 // Agent enrollments (code-based pairing).
@@ -159,6 +174,7 @@ func (q *Queries) InsertEnrollment(ctx context.Context, arg InsertEnrollmentPara
 		arg.CodesIssued,
 		arg.State,
 		arg.CreatedAt,
+		arg.ClientIp,
 	)
 	return err
 }

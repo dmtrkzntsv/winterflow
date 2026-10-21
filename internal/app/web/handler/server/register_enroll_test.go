@@ -84,7 +84,7 @@ func (e *enrollEnv) register(t *testing.T, code string) *httptest.ResponseRecord
 func TestRegisterClaimsEnrollment(t *testing.T) {
 	e := newEnrollEnv(t)
 	ctx := dbtest.Ctx(t)
-	res, err := e.uc.Start(ctx, enrolltest.CSR(t, elliptic.P256()), "box")
+	res, err := e.uc.Start(ctx, enrolltest.CSR(t, elliptic.P256()), "box", "203.0.113.1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestRegisterFallsBackToRegistration(t *testing.T) {
 
 func TestRegisterNoHub503(t *testing.T) {
 	e := newEnrollEnv(t)
-	res, err := e.uc.Start(dbtest.Ctx(t), enrolltest.CSR(t, elliptic.P256()), "box")
+	res, err := e.uc.Start(dbtest.Ctx(t), enrolltest.CSR(t, elliptic.P256()), "box", "203.0.113.1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ func TestRegisterExpiredEnrollmentCodeDoesNotFallBack(t *testing.T) {
 	e := newEnrollEnv(t)
 	past := time.Now().Add(-time.Hour)
 	uc := enrollment.New(e.repo, enrolltest.Signer(t), e.picker, func() time.Time { return past })
-	res, err := uc.Start(dbtest.Ctx(t), enrolltest.CSR(t, elliptic.P256()), "box")
+	res, err := uc.Start(dbtest.Ctx(t), enrolltest.CSR(t, elliptic.P256()), "box", "203.0.113.1")
 	if err != nil {
 		t.Fatal(err)
 	}

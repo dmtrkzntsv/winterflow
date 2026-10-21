@@ -1,8 +1,8 @@
 -- Agent enrollments (code-based pairing).
 
 -- name: InsertEnrollment :exec
-INSERT INTO agent_enrollments (enrollment_id, poll_secret_hash, csr, hostname, code, code_expires_at, codes_issued, state, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+INSERT INTO agent_enrollments (enrollment_id, poll_secret_hash, csr, hostname, code, code_expires_at, codes_issued, state, created_at, client_ip)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetEnrollmentBySecretHash :one
 SELECT * FROM agent_enrollments WHERE poll_secret_hash = ?;
@@ -32,6 +32,9 @@ VALUES (?, ?, ?, ?, ?);
 
 -- name: CountPendingEnrollments :one
 SELECT COUNT(*) FROM agent_enrollments WHERE state = 'pending';
+
+-- name: CountPendingEnrollmentsByIP :one
+SELECT COUNT(*) FROM agent_enrollments WHERE state = 'pending' AND client_ip = ?;
 
 -- name: PruneEnrollments :exec
 DELETE FROM agent_enrollments

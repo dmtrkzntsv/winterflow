@@ -7,17 +7,20 @@ import (
 )
 
 // Routes is the enroll handler's slice of the route table. The routes are
-// unauthenticated (the agent has no account) and throttled per client IP;
-// routeTable mounts them only where an enrollment usecase is wired.
+// unauthenticated (the agent has no account) and throttled per client IP:
+// Start, which stores a row, by its own tight limiter; refresh and status,
+// which an installer polls every few seconds, by the polling one. routeTable
+// mounts them only where an enrollment usecase is wired.
 func (h *Handler) Routes(g api.Guards) []api.Route {
 	mw := []api.Middleware{g.EnrollLimit}
 	errs := []int{http.StatusBadRequest}
 	return []api.Route{
 		{
-			Method: http.MethodPost, Path: "/api/v1/agent/enroll", Handler: h.Start, Auth: api.Public, Middleware: mw,
-			Summary: "Start an agent enrollment: submit a CSR, get a pairing code", Tag: "enroll",
+			Method: http.MethodPost, Path: "/api/v1/agent/enroll", Handler: h.Start, Auth: api.Public,
+			Middleware: []api.Middleware{g.EnrollStartLimit},
+			Summary:    "Start an agent enrollment: submit a CSR, get a pairing code", Tag: "enroll",
 			Request: StartRequest{}, Response: CodeResponse{},
-			Errors: []int{http.StatusBadRequest, http.StatusServiceUnavailable},
+			Errors: []int{http.StatusBadRequest, http.StatusTooManyRequests, http.StatusServiceUnavailable},
 		},
 		{
 			Method: http.MethodPost, Path: "/api/v1/agent/enroll/refresh", Handler: h.Refresh, Auth: api.Public, Middleware: mw,

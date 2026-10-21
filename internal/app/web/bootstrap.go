@@ -10,6 +10,7 @@ import (
 	authprvd "winterflow/internal/app/web/auth"
 	corsmw "winterflow/internal/app/web/middleware/cors"
 	logmw "winterflow/internal/app/web/middleware/logger"
+	"winterflow/internal/app/web/middleware/realip"
 	"winterflow/internal/domain/dto"
 	"winterflow/internal/domain/model"
 	"winterflow/internal/infra/bootstrap"
@@ -60,7 +61,7 @@ func (s *Server) registerMiddleware() {
 	//s.Router.Use(middleware.Logger)
 	s.Router.Use(logmw.WithLogger(s.Logger))
 	s.Router.Use(middleware.RequestID)
-	s.Router.Use(middleware.RealIP)
+	s.Router.Use(realip.Middleware)
 	s.Router.Use(corsmw.UseCORS(s.Cfg.GetAllowedOrigins()))
 	s.Router.Use(middleware.Recoverer)
 }

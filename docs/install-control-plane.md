@@ -15,7 +15,11 @@ read its output.
 - Caddy (or any proxy) in front of the API, terminating TLS with your
   Cloudflare certificates and proxying to `127.0.0.1:<API port>`. The
   installer does not install or configure Caddy; it binds the API to
-  loopback only and prints the address to proxy to.
+  loopback only and prints the address to proxy to. The API's per-IP limits
+  read the client address from `X-Real-IP` (else the last `X-Forwarded-For`
+  entry) only on connections from loopback, so the proxy must set one of them
+  to the real client: behind Cloudflare, give Caddy Cloudflare's ranges as
+  `trusted_proxies`, or every agent counts as one Cloudflare address.
 - The hub port (default 50051) reachable from the internet, with no proxy in
   front: agents verify the hub's certificate against the Winterflow CA. The
   installer does not touch the firewall.

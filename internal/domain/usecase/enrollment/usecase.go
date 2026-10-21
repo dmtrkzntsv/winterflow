@@ -27,15 +27,19 @@ const (
 	MaxCodes   = 10
 	ClaimedTTL = 15 * time.Minute
 	MaxPending = 1000
+	// MaxPendingPerIP caps the pending enrollments one client address may
+	// hold, so a single client cannot fill MaxPending.
+	MaxPendingPerIP = 10
 
 	codeLength  = 6
 	codeRetries = 5
 )
 
 var (
-	ErrTooManyPending = errors.New("too many pending enrollments, try again later")
-	ErrInvalidCSR     = errors.New("invalid certificate request")
-	ErrNoCodesLeft    = errors.New("no registration codes left, restart the installer")
+	ErrTooManyPending       = errors.New("too many pending enrollments, try again later")
+	ErrTooManyPendingFromIP = errors.New("too many pending enrollments from this address, try again later")
+	ErrInvalidCSR           = errors.New("invalid certificate request")
+	ErrNoCodesLeft          = errors.New("no registration codes left, restart the installer")
 )
 
 // Signer issues agent certificates from the control plane's CA.
@@ -101,8 +105,9 @@ func validateCSR(csrPEM string) error {
 	return nil
 }
 
-// Start stores a new enrollment and returns its first code and poll secret.
-func (u *UseCase) Start(ctx context.Context, csrPEM, hostname string) (StartResult, error) {
+// Start stores a new enrollment started from clientIP and returns its first
+// code and poll secret.
+func (u *UseCase) Start(ctx context.Context, csrPEM, hostname, clientIP string) (StartResult, error) {
 	if err := validateCSR(csrPEM); err != nil {
 		return StartResult{}, err
 	}
@@ -117,6 +122,11 @@ func (u *UseCase) Start(ctx context.Context, csrPEM, hostname string) (StartResu
 	if n >= MaxPending {
 		return StartResult{}, ErrTooManyPending
 	}
+	if n, err := u.repo.CountPendingByIP(ctx, clientIP); err != nil {
+		return StartResult{}, fmt.Errorf("count enrollments: %w", err)
+	} else if n >= MaxPendingPerIP {
+		return StartResult{}, ErrTooManyPendingFromIP
+	}
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return StartResult{}, fmt.Errorf("poll secret: %w", err)
@@ -130,6 +140,7 @@ func (u *UseCase) Start(ctx context.Context, csrPEM, hostname string) (StartResu
 		CodeExpiresAt:  now.Add(CodeTTL),
 		CodesIssued:    1,
 		State:          model.EnrollmentPending,
+		ClientIP:       clientIP,
 		CreatedAt:      now,
 	}
 	for i := 0; i < codeRetries; i++ {

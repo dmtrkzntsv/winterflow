@@ -47,6 +47,10 @@ func (sqliteQuerier) InsertCertificate(ctx context.Context, db backend.DBTX, p c
 	return sqlitegen.New(db).InsertCertificate(ctx, p)
 }
 
+func (sqliteQuerier) CountPendingEnrollmentsByIP(ctx context.Context, db backend.DBTX, ip string) (int64, error) {
+	return sqlitegen.New(db).CountPendingEnrollmentsByIP(ctx, ip)
+}
+
 func (sqliteQuerier) CountPendingEnrollments(ctx context.Context, db backend.DBTX) (int64, error) {
 	return sqlitegen.New(db).CountPendingEnrollments(ctx)
 }

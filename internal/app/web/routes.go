@@ -46,7 +46,10 @@ func (s *Server) registerRoutes() {
 	// No role guard: every org member may do everything; server-addressed
 	// handlers still check the caller's org owns the server.
 	enrollLimiter := ratelimit.New(5, 30)
-	guards := api.Guards{AuthLimit: authLimiter.Middleware, EnrollLimit: enrollLimiter.Middleware}
+	// Starting an enrollment stores a row: about 3 a minute per IP, burst 5.
+	enrollStartLimiter := ratelimit.New(0.05, 5)
+	guards := api.Guards{AuthLimit: authLimiter.Middleware, EnrollLimit: enrollLimiter.Middleware,
+		EnrollStartLimit: enrollStartLimiter.Middleware}
 	routes := routeTable(s.Deps, guards)
 	if s.Deps.Enrollment == nil {
 		// Standalone: agents do not enroll by code; the routes answer 404.

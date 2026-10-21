@@ -50,6 +50,10 @@ func (pgsqlQuerier) InsertCertificate(ctx context.Context, db backend.DBTX, p ce
 	return pgsqlgen.New(db).InsertCertificate(ctx, pgsqlgen.InsertCertificateParams(p))
 }
 
+func (pgsqlQuerier) CountPendingEnrollmentsByIP(ctx context.Context, db backend.DBTX, ip string) (int64, error) {
+	return pgsqlgen.New(db).CountPendingEnrollmentsByIP(ctx, ip)
+}
+
 func (pgsqlQuerier) CountPendingEnrollments(ctx context.Context, db backend.DBTX) (int64, error) {
 	return pgsqlgen.New(db).CountPendingEnrollments(ctx)
 }

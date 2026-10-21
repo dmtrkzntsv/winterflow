@@ -30,7 +30,9 @@ type EnrollmentRepository interface {
 	// when the code no longer matches a pending enrollment or has expired.
 	Claim(ctx context.Context, c ClaimEnrollment) (model.Server, error)
 	CountPending(ctx context.Context) (int, error)
+	// CountPendingByIP counts the pending enrollments started from ip.
+	CountPendingByIP(ctx context.Context, ip string) (int, error)
 	// Prune deletes pending/failed rows older than 2 h and claimed rows
-	// claimed more than 15 min ago.
+	// claimed more than 2 h ago.
 	Prune(ctx context.Context, now time.Time) error
 }

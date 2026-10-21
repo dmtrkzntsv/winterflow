@@ -28,6 +28,7 @@ type Querier interface {
 	CompleteRollout(ctx context.Context, arg CompleteRolloutParams) (int64, error)
 	CountFiringAlertsByServer(ctx context.Context) ([]CountFiringAlertsByServerRow, error)
 	CountPendingEnrollments(ctx context.Context) (int64, error)
+	CountPendingEnrollmentsByIP(ctx context.Context, clientIp string) (int64, error)
 	CountRolloutStep(ctx context.Context, arg CountRolloutStepParams) (int64, error)
 	// How many servers each hub carries (the hub picker's assigned counts).
 	CountServersByHub(ctx context.Context) ([]CountServersByHubRow, error)

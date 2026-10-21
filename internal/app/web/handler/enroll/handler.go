@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"winterflow/internal/app/web/middleware/realip"
 	"winterflow/internal/app/web/util"
 	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/usecase/enrollment"
@@ -23,7 +24,7 @@ const (
 
 // Enrollments is the slice of *enrollment.UseCase the routes use.
 type Enrollments interface {
-	Start(ctx context.Context, csrPEM, hostname string) (enrollment.StartResult, error)
+	Start(ctx context.Context, csrPEM, hostname, clientIP string) (enrollment.StartResult, error)
 	Refresh(ctx context.Context, pollSecret string) (enrollment.StartResult, error)
 	Status(ctx context.Context, pollSecret string) (enrollment.Status, error)
 }
@@ -88,6 +89,9 @@ func (h *Handler) fail(w http.ResponseWriter, err error, what string) {
 		util.Error(w, "unknown enrollment", nil)
 	case errors.Is(err, enrollment.ErrNoCodesLeft):
 		util.ErrorStatus(w, http.StatusConflict, "no codes left")
+	case errors.Is(err, enrollment.ErrTooManyPendingFromIP):
+		w.Header().Set("Retry-After", "60")
+		util.ErrorStatus(w, http.StatusTooManyRequests, "too many pending enrollments from this address")
 	case errors.Is(err, enrollment.ErrTooManyPending):
 		util.ErrorStatus(w, http.StatusServiceUnavailable, "too many pending enrollments")
 	default:
@@ -110,7 +114,7 @@ func (h *Handler) Start(w http.ResponseWriter, r *http.Request) {
 		util.Error(w, "hostname is too long", nil)
 		return
 	}
-	res, err := h.uc.Start(r.Context(), req.CSR, req.Hostname)
+	res, err := h.uc.Start(r.Context(), req.CSR, req.Hostname, realip.ClientIP(r))
 	if err != nil {
 		h.fail(w, err, "failed to start enrollment")
 		return

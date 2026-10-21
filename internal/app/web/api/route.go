@@ -40,6 +40,9 @@ type Guards struct {
 	// routes, separate from AuthLimit so agents polling behind a shared
 	// proxy IP cannot lock users out of login.
 	EnrollLimit Middleware
+	// EnrollStartLimit is the tighter per-IP limiter of the enrollment start
+	// route, the one that stores a row.
+	EnrollStartLimit Middleware
 }
 
 // Route describes one endpoint: how to serve it and how to document it.

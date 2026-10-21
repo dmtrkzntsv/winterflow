@@ -89,6 +89,15 @@ func (f *fakeRepo) CountPending(context.Context) (int, error) {
 	}
 	return n, nil
 }
+func (f *fakeRepo) CountPendingByIP(_ context.Context, ip string) (int, error) {
+	n := 0
+	for _, e := range f.byID {
+		if e.State == model.EnrollmentPending && e.ClientIP == ip {
+			n++
+		}
+	}
+	return n, nil
+}
 func (f *fakeRepo) Prune(_ context.Context, now time.Time) error {
 	for id, e := range f.byID {
 		if e.State == model.EnrollmentClaimed && now.Sub(e.ClaimedAt) > 2*time.Hour {
@@ -164,7 +173,7 @@ var _ HubPicker = (*hubs.Picker)(nil)
 
 func TestStartReturnsCodeAndSecret(t *testing.T) {
 	e, now := setup(t)
-	r, err := e.uc.Start(context.Background(), csrPEM(t, elliptic.P256()), "box")
+	r, err := e.uc.Start(context.Background(), csrPEM(t, elliptic.P256()), "box", "203.0.113.1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +190,7 @@ func TestStartReturnsCodeAndSecret(t *testing.T) {
 func TestStartRejectsBadCSR(t *testing.T) {
 	e, _ := setup(t)
 	for _, c := range []string{"garbage", csrPEM(t, elliptic.P384())} {
-		if _, err := e.uc.Start(context.Background(), c, "box"); !errors.Is(err, ErrInvalidCSR) {
+		if _, err := e.uc.Start(context.Background(), c, "box", "203.0.113.1"); !errors.Is(err, ErrInvalidCSR) {
 			t.Fatalf("want ErrInvalidCSR, got %v", err)
 		}
 	}
@@ -195,15 +204,38 @@ func TestStartTooManyPending(t *testing.T) {
 	for i := 0; i < MaxPending; i++ {
 		e.repo.byID[util.GenerateID()] = &model.Enrollment{State: model.EnrollmentPending}
 	}
-	if _, err := e.uc.Start(context.Background(), csrPEM(t, elliptic.P256()), "box"); !errors.Is(err, ErrTooManyPending) {
+	if _, err := e.uc.Start(context.Background(), csrPEM(t, elliptic.P256()), "box", "203.0.113.1"); !errors.Is(err, ErrTooManyPending) {
 		t.Fatalf("got %v", err)
+	}
+}
+
+// One address cannot fill the pending table: past MaxPendingPerIP its
+// starts are refused, while other addresses still enroll.
+func TestStartTooManyPendingFromOneIP(t *testing.T) {
+	e, _ := setup(t)
+	ctx := context.Background()
+	for i := 0; i < MaxPendingPerIP; i++ {
+		if _, err := e.uc.Start(ctx, csrPEM(t, elliptic.P256()), "box", "198.51.100.4"); err != nil {
+			t.Fatalf("start %d: %v", i, err)
+		}
+	}
+	if _, err := e.uc.Start(ctx, csrPEM(t, elliptic.P256()), "box", "198.51.100.4"); !errors.Is(err, ErrTooManyPendingFromIP) {
+		t.Fatalf("got %v", err)
+	}
+	if _, err := e.uc.Start(ctx, csrPEM(t, elliptic.P256()), "box", "198.51.100.5"); err != nil {
+		t.Fatalf("other address refused: %v", err)
+	}
+	for _, en := range e.repo.byID {
+		if en.ClientIP == "" {
+			t.Fatalf("client ip not stored: %+v", en)
+		}
 	}
 }
 
 func TestRefreshIssuesNewCode(t *testing.T) {
 	e, _ := setup(t)
 	ctx := context.Background()
-	r, _ := e.uc.Start(ctx, csrPEM(t, elliptic.P256()), "box")
+	r, _ := e.uc.Start(ctx, csrPEM(t, elliptic.P256()), "box", "203.0.113.1")
 	r2, err := e.uc.Refresh(ctx, r.PollSecret)
 	if err != nil {
 		t.Fatal(err)
@@ -219,7 +251,7 @@ func TestRefreshIssuesNewCode(t *testing.T) {
 func TestRefreshCapAt10(t *testing.T) {
 	e, _ := setup(t)
 	ctx := context.Background()
-	r, _ := e.uc.Start(ctx, csrPEM(t, elliptic.P256()), "box")
+	r, _ := e.uc.Start(ctx, csrPEM(t, elliptic.P256()), "box", "203.0.113.1")
 	for i := 0; i < MaxCodes-1; i++ {
 		if _, err := e.uc.Refresh(ctx, r.PollSecret); err != nil {
 			t.Fatalf("refresh %d: %v", i, err)
@@ -237,7 +269,7 @@ func TestRefreshCapAt10(t *testing.T) {
 func TestStatusExpiredWhenCodeLapsed(t *testing.T) {
 	e, now := setup(t)
 	ctx := context.Background()
-	r, _ := e.uc.Start(ctx, csrPEM(t, elliptic.P256()), "box")
+	r, _ := e.uc.Start(ctx, csrPEM(t, elliptic.P256()), "box", "203.0.113.1")
 	st, _ := e.uc.Status(ctx, r.PollSecret)
 	if st.State != "pending" || st.Code != r.Code {
 		t.Fatalf("%+v", st)
@@ -255,7 +287,7 @@ func TestStatusExpiredWhenCodeLapsed(t *testing.T) {
 func TestClaimSignsAsServerID(t *testing.T) {
 	e, _ := setup(t)
 	ctx := context.Background()
-	r, _ := e.uc.Start(ctx, csrPEM(t, elliptic.P256()), "box")
+	r, _ := e.uc.Start(ctx, csrPEM(t, elliptic.P256()), "box", "203.0.113.1")
 	srv, err := e.uc.Claim(ctx, r.Code, "org-1")
 	if err != nil {
 		t.Fatal(err)
@@ -287,7 +319,7 @@ func TestClaimSignsAsServerID(t *testing.T) {
 func TestClaimOldCodeAfterRefresh(t *testing.T) {
 	e, _ := setup(t)
 	ctx := context.Background()
-	r, _ := e.uc.Start(ctx, csrPEM(t, elliptic.P256()), "box")
+	r, _ := e.uc.Start(ctx, csrPEM(t, elliptic.P256()), "box", "203.0.113.1")
 	e.uc.Refresh(ctx, r.PollSecret)
 	if _, err := e.uc.Claim(ctx, r.Code, "org"); !errors.Is(err, model.ErrInvalidRegistrationCode) {
 		t.Fatalf("got %v", err)
@@ -300,7 +332,7 @@ func TestClaimOldCodeAfterRefresh(t *testing.T) {
 func TestClaimNoHub(t *testing.T) {
 	e, _ := setup(t)
 	ctx := context.Background()
-	r, _ := e.uc.Start(ctx, csrPEM(t, elliptic.P256()), "box")
+	r, _ := e.uc.Start(ctx, csrPEM(t, elliptic.P256()), "box", "203.0.113.1")
 	e.pick.err = hubs.ErrNoHub
 	if _, err := e.uc.Claim(ctx, r.Code, "org"); !errors.Is(err, hubs.ErrNoHub) {
 		t.Fatalf("got %v", err)
@@ -314,7 +346,7 @@ func TestClaimNoHub(t *testing.T) {
 func TestStatusClaimedIsIdempotent(t *testing.T) {
 	e, now := setup(t)
 	ctx := context.Background()
-	r, _ := e.uc.Start(ctx, csrPEM(t, elliptic.P256()), "box")
+	r, _ := e.uc.Start(ctx, csrPEM(t, elliptic.P256()), "box", "203.0.113.1")
 	if _, err := e.uc.Claim(ctx, r.Code, "org"); err != nil {
 		t.Fatal(err)
 	}

@@ -72,6 +72,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: Bad Request
+        "429":
+          content:
+            text/plain:
+              schema:
+                type: string
+          description: Too Many Requests
         "503":
           content:
             application/json:

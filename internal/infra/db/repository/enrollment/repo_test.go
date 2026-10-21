@@ -245,6 +245,35 @@ func TestCountPending(t *testing.T) {
 	}
 }
 
+func TestCountPendingByIP(t *testing.T) {
+	r, _ := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	for i, c := range []struct {
+		st model.EnrollmentState
+		ip string
+	}{
+		{model.EnrollmentPending, "198.51.100.4"},
+		{model.EnrollmentPending, "198.51.100.4"},
+		{model.EnrollmentFailed, "198.51.100.4"},
+		{model.EnrollmentPending, "2001:db8::1"},
+	} {
+		e := enrollment(i, "", time.Time{})
+		e.State, e.ClientIP = c.st, c.ip
+		if err := r.Create(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for ip, want := range map[string]int{"198.51.100.4": 2, "2001:db8::1": 1, "192.0.2.1": 0} {
+		if got, err := r.CountPendingByIP(ctx, ip); err != nil || got != want {
+			t.Errorf("CountPendingByIP(%s) = %d, %v; want %d", ip, got, err, want)
+		}
+	}
+	got, err := r.GetBySecretHash(ctx, enrollment(3, "", time.Time{}).PollSecretHash)
+	if err != nil || got.ClientIP != "2001:db8::1" {
+		t.Fatalf("client ip round trip: %+v %v", got, err)
+	}
+}
+
 // assertPending checks the enrollment is exactly as created: pending, code
 // intact and still resolvable.
 func assertPending(t *testing.T, r *Repo, want model.Enrollment) {

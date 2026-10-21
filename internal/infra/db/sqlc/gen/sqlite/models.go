@@ -20,6 +20,7 @@ type AgentEnrollment struct {
 	ServerID       *string
 	Certificate    *string
 	HubAddr        *string
+	ClientIp       string
 	ClaimedAt      *types.DateTime
 	CreatedAt      types.DateTime
 }

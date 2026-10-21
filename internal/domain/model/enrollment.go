@@ -27,6 +27,7 @@ type Enrollment struct {
 	ServerID       string
 	Certificate    string
 	HubAddr        string // public address of the hub assigned at the claim
+	ClientIP       string // address that started the enrollment
 	ClaimedAt      time.Time
 	CreatedAt      time.Time
 }

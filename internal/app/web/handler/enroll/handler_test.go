@@ -116,19 +116,51 @@ func TestRefreshNoCodesLeft409(t *testing.T) {
 	}
 }
 
-// The enroll routes carry their own limiter guard, not the login one.
+// The enroll routes carry their own limiter guards, not the login one: Start
+// its tight one, refresh and status the polling one.
 func TestRoutesUseEnrollLimit(t *testing.T) {
-	var enrollHits, authHits int
-	g := api.Guards{
-		AuthLimit:   func(next http.Handler) http.Handler { authHits++; return next },
-		EnrollLimit: func(next http.Handler) http.Handler { enrollHits++; return next },
+	hits := map[string][]string{}
+	guard := func(name string) api.Middleware {
+		return func(next http.Handler) http.Handler { hits[name] = append(hits[name], "x"); return next }
 	}
+	g := api.Guards{AuthLimit: guard("auth"), EnrollLimit: guard("enroll"), EnrollStartLimit: guard("start")}
+	perRoute := map[string]int{}
 	for _, rt := range newHandler(t).Routes(g) {
+		before := len(hits["start"])
 		for _, m := range rt.Middleware {
 			m(http.NotFoundHandler())
 		}
+		perRoute[rt.Path] = len(hits["start"]) - before
 	}
-	if enrollHits != 3 || authHits != 0 {
-		t.Fatalf("enroll guard applied %d times, auth guard %d", enrollHits, authHits)
+	if len(hits["enroll"]) != 2 || len(hits["start"]) != 1 || len(hits["auth"]) != 0 {
+		t.Fatalf("guards applied: %v", hits)
+	}
+	if perRoute["/api/v1/agent/enroll"] != 1 {
+		t.Fatalf("start route lacks its limiter: %v", perRoute)
+	}
+}
+
+// Past MaxPendingPerIP from one client address, Start answers 429; the
+// address is the request's (realip-rewritten) RemoteAddr.
+func TestEnrollStartTooManyFromOneIP429(t *testing.T) {
+	h := newHandler(t)
+	post := func(remote string) *httptest.ResponseRecorder {
+		b, _ := json.Marshal(StartRequest{CSR: enrolltest.CSR(t, elliptic.P256()), Hostname: "box"})
+		r := httptest.NewRequest("POST", "/", strings.NewReader(string(b))).WithContext(dbtest.Ctx(t))
+		r.RemoteAddr = remote
+		w := httptest.NewRecorder()
+		h.Start(w, r)
+		return w
+	}
+	for i := 0; i < enrollment.MaxPendingPerIP; i++ {
+		if w := post("198.51.100.4:1000"); w.Code != http.StatusOK {
+			t.Fatalf("start %d = %d %s", i, w.Code, w.Body)
+		}
+	}
+	if w := post("198.51.100.4:2000"); w.Code != http.StatusTooManyRequests {
+		t.Fatalf("over the cap = %d %s, want 429", w.Code, w.Body)
+	}
+	if w := post("198.51.100.5:1000"); w.Code != http.StatusOK {
+		t.Fatalf("other address = %d", w.Code)
 	}
 }

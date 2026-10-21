@@ -37,6 +37,7 @@ type querier interface {
 	InsertServerWithHub(ctx context.Context, db backend.DBTX, p serverParams) error
 	InsertCertificate(ctx context.Context, db backend.DBTX, p certParams) error
 	CountPendingEnrollments(ctx context.Context, db backend.DBTX) (int64, error)
+	CountPendingEnrollmentsByIP(ctx context.Context, db backend.DBTX, ip string) (int64, error)
 	PruneEnrollments(ctx context.Context, db backend.DBTX, p pruneParams) error
 }
 
@@ -109,6 +110,7 @@ func hydrate(r row) model.Enrollment {
 		ServerID:       deref(r.ServerID),
 		Certificate:    deref(r.Certificate),
 		HubAddr:        deref(r.HubAddr),
+		ClientIP:       r.ClientIp,
 		ClaimedAt:      derefTime(r.ClaimedAt),
 		CreatedAt:      r.CreatedAt.Time(),
 	}
@@ -137,6 +139,7 @@ func (r *Repo) Create(ctx context.Context, e model.Enrollment) error {
 		CodesIssued:    int64(e.CodesIssued),
 		State:          string(e.State),
 		CreatedAt:      types.DateTime(created),
+		ClientIp:       e.ClientIP,
 	})
 }
 
@@ -247,6 +250,12 @@ func truncate(s string, n int) string {
 // CountPending returns how many enrollments are waiting for a claim.
 func (r *Repo) CountPending(ctx context.Context) (int, error) {
 	n, err := r.q.CountPendingEnrollments(ctx, r.tx.Querier(ctx))
+	return int(n), err
+}
+
+// CountPendingByIP returns how many pending enrollments ip started.
+func (r *Repo) CountPendingByIP(ctx context.Context, ip string) (int, error) {
+	n, err := r.q.CountPendingEnrollmentsByIP(ctx, r.tx.Querier(ctx), ip)
 	return int(n), err
 }
 

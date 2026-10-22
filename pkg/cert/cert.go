@@ -10,6 +10,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/hex"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"math/big"
 	"net"
@@ -40,6 +41,9 @@ func SignCSRAs(csrPEM, commonName string, caCert *x509.Certificate, caKey crypto
 		return "", time.Time{}, fmt.Errorf("failed to generate serial number: %w", err)
 	}
 	now := time.Now()
+	if err := checkCAValid(caCert, now); err != nil {
+		return "", time.Time{}, err
+	}
 	expiresAt := capToCA(now.AddDate(validityYears, 0, 0), caCert)
 	template := x509.Certificate{
 		SerialNumber:          serial,
@@ -100,6 +104,9 @@ func SignHubCSR(csrPEM, hubID string, hosts []string, caCert *x509.Certificate, 
 		return "", time.Time{}, fmt.Errorf("failed to generate serial number: %w", err)
 	}
 	now := time.Now()
+	if err := checkCAValid(caCert, now); err != nil {
+		return "", time.Time{}, err
+	}
 	expiresAt := capToCA(now.AddDate(validityYears, 0, 0), caCert)
 	template := x509.Certificate{
 		SerialNumber:          serial,
@@ -155,6 +162,22 @@ func HubIDFromCert(c *x509.Certificate) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// ErrCAExpired: the CA's validity has ended (or not begun), so a
+// certificate it signed would be invalid from the start.
+var ErrCAExpired = errors.New("the CA certificate has expired")
+
+// checkCAValid refuses to sign with a CA outside its validity window
+// (ErrCAExpired) instead of issuing a leaf that is already expired.
+func checkCAValid(ca *x509.Certificate, now time.Time) error {
+	if now.After(ca.NotAfter) {
+		return fmt.Errorf("%w (on %s): issue a new CA, then re-join every hub and re-enroll every agent", ErrCAExpired, ca.NotAfter.UTC().Format(time.DateOnly))
+	}
+	if now.Before(ca.NotBefore) {
+		return fmt.Errorf("the CA certificate is not valid before %s (is the clock right?)", ca.NotBefore.UTC().Format(time.RFC3339))
+	}
+	return nil
 }
 
 // capToCA returns t, or the CA's NotAfter when that is earlier: no leaf

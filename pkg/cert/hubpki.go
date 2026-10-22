@@ -95,6 +95,9 @@ func ensureServerCert(dir, base string, hosts []string, uris []*url.URL) (bool, 
 	if err != nil {
 		return false, err
 	}
+	if err := checkCAValid(caCert, time.Now()); err != nil {
+		return false, err
+	}
 	certPath, keyPath := filepath.Join(dir, base+".crt"), filepath.Join(dir, base+".key")
 
 	dns, ips := splitHosts(hosts)

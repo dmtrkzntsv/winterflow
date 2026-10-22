@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -172,5 +173,53 @@ func TestCreateCAAtomic(t *testing.T) {
 		if e.Name() != "ca.crt" {
 			t.Fatalf("stray file %s", e.Name())
 		}
+	}
+}
+
+// writeCA writes a CA valid from notBefore to notAfter into dir.
+func writeCA(t *testing.T, dir string, notBefore, notAfter time.Time) {
+	t.Helper()
+	k, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	tmpl := &x509.Certificate{SerialNumber: big.NewInt(9), Subject: pkix.Name{CommonName: "old"},
+		NotBefore: notBefore, NotAfter: notAfter,
+		KeyUsage: x509.KeyUsageCertSign, BasicConstraintsValid: true, IsCA: true, MaxPathLenZero: true}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &k.PublicKey, k)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kd, _ := x509.MarshalECPrivateKey(k)
+	if err := os.WriteFile(filepath.Join(dir, "ca.crt"), pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "ca.key"), pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: kd}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestExpiredCARefusesToSign(t *testing.T) {
+	dir := t.TempDir()
+	writeCA(t, dir, time.Now().Add(-48*time.Hour), time.Now().Add(-time.Hour))
+	ca, key, err := LoadCA(filepath.Join(dir, "ca.crt"), filepath.Join(dir, "ca.key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := SignCSRAs(testCSR(t), "srv", ca, key, 10); !errors.Is(err, ErrCAExpired) {
+		t.Fatalf("SignCSRAs: err = %v, want ErrCAExpired", err)
+	}
+	if _, _, err := SignHubCSR(testCSR(t), "hub-01", []string{"hub-01.example.com"}, ca, key, 10); !errors.Is(err, ErrCAExpired) {
+		t.Fatalf("SignHubCSR: err = %v, want ErrCAExpired", err)
+	}
+	if _, err := EnsureServerCert(dir, "redis", []string{"127.0.0.1"}); !errors.Is(err, ErrCAExpired) {
+		t.Fatalf("EnsureServerCert: err = %v, want ErrCAExpired", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "redis.crt")); err == nil {
+		t.Fatal("a certificate was written with an expired CA")
+	}
+	// A CA not valid yet (a wrong clock) is refused too.
+	future := t.TempDir()
+	writeCA(t, future, time.Now().Add(time.Hour), time.Now().Add(48*time.Hour))
+	ca, key, _ = LoadCA(filepath.Join(future, "ca.crt"), filepath.Join(future, "ca.key"))
+	if _, _, err := SignCSRAs(testCSR(t), "srv", ca, key, 10); err == nil {
+		t.Fatal("SignCSRAs signed with a CA that is not valid yet")
 	}
 }

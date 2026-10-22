@@ -99,7 +99,8 @@ Winterflow's `hub:*` keys in this instance.
 - The control plane's own hub gets its user from `winterflow-api hub-trust`,
   run by the installer on every run (it resets the password, writes it to
   `control-plane-hub.env` and restarts the hub). That env file never holds
-  the admin password.
+  the admin password. A rerun whose `hub-trust` fails after the reset leaves
+  the local hub unable to log in to Redis; rerun the installer to recover.
 - `winterflow-api hub-retire` removes access: retiring a hub (or its last
   active certificate) deletes its Redis user and disconnects it. The
   installer's changed-`--hub-addr` path does the same for the old hub id.

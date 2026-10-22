@@ -196,8 +196,11 @@ func TestIntegrationHubRunsOnItsRedisUser(t *testing.T) {
 	// Stopping with an agent on it: the drain reads the hub list (SCAN +
 	// MGET of every hub's status). Other tests sharing this Redis may have
 	// listed a hub, so the drain either finds none (ErrNoOtherHub) or tells
-	// the agent to move and waits for it (the deadline); either way the
-	// listing ran as the hub's user.
+	// the agent to move and waits for it (the deadline). Its result says
+	// nothing about the ACL (a list it cannot read counts as no other hub,
+	// so a refused listing also ends in ErrNoOtherHub); the real assertions
+	// are the direct List below, as the hub's user, and the empty ACL LOG
+	// at the end.
 	drainCtx, cancelDrain := context.WithTimeout(ctx, 2*time.Second)
 	err = h.Drain(drainCtx)
 	cancelDrain()

@@ -33,7 +33,12 @@ type HubCertRepository interface {
 	// joins at the same moment is not released after its new certificate
 	// was trusted. This happens even when nothing was retired this time,
 	// so a rerun finishes a release that failed. A release error is
-	// returned (wrapped) after the retire was committed.
+	// returned (wrapped) after the retire was committed. The per-hub lock
+	// is a Postgres advisory lock; on SQLite it is a no-op, which
+	// serializes only within one process (its single connection), not the
+	// hub-retire command against a running API: there a join racing a
+	// retire that wrote nothing may lose its new Redis user (rejoin).
+	// Distributed deployments run on Postgres.
 	Retire(ctx context.Context, hubID, fingerprint string, now time.Time, release func(ctx context.Context, hubID string) error) (int, error)
 	// Active lists the active fingerprints, sorted.
 	Active(ctx context.Context) ([]string, error)

@@ -10,6 +10,10 @@ import (
 	certpkg "winterflow/pkg/cert"
 )
 
+// validityYears is how long issued agent and hub certificates last (capped at
+// the CA's own lifetime).
+const validityYears = 10
+
 // CASigner signs agent certificates with the control plane's CA.
 type CASigner struct {
 	caCert *x509.Certificate

@@ -21,7 +21,6 @@ import (
 	"winterflow/internal/domain/usecase/agenthub"
 	"winterflow/internal/domain/usecase/enrollment/enrolltest"
 	"winterflow/internal/domain/usecase/hubs"
-	"winterflow/internal/infra/cert"
 	"winterflow/internal/infra/transport/bus"
 	grpcagent "winterflow/internal/infra/transport/grpc/agent"
 	"winterflow/internal/infra/transport/grpc/hub"
@@ -183,28 +182,14 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 // "moved" for the server afterwards.
 func TestAgentMigratesThroughTheAPI(t *testing.T) {
 	dir := t.TempDir()
-	extPath := filepath.Join(dir, "ext.cnf")
-	if err := os.WriteFile(extPath, []byte(extCnf), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	t.Setenv("HUB_CERT_DIR", filepath.Join(dir, "certs"))
-	t.Setenv("HUB_CERT_EXT_PATH", extPath)
-	t.Setenv("HUB_CA_SUBJECT", "/C=CA/O=Test/CN=Test CA")
-	t.Setenv("HUB_SERVER_SUBJECT", "/C=CA/O=Test/CN=localhost")
 	dataDir := filepath.Join(dir, "agent-data")
 	t.Setenv("AGENT_DATA_DIR", dataDir)
 	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "e2e"})
 	cfg := config.NewServerConfig("distributed")
-	cm, err := cert.NewManager(cfg, log)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cm.GenerateServer(true)
 	issueHubCert(t, cfg)
 	const agentID = "srv-migrate"
-	if _, err := cm.GenerateAgent(agentID); err != nil {
-		t.Fatal(err)
-	}
+	issueAgentCert(t, cfg, agentID)
 	certPEM, err := os.ReadFile(cfg.GetAgentCertPath())
 	if err != nil {
 		t.Fatal(err)

@@ -1,7 +1,12 @@
 package cert
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
+	"encoding/pem"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -110,7 +115,9 @@ func TestEnsureServerCertReissuesMismatchedPair(t *testing.T) {
 		t.Fatal(err)
 	}
 	keyPath := filepath.Join(dir, "redis.key")
-	if err := GeneratePrivateKey(keyPath); err != nil {
+	k, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	der, _ := x509.MarshalECPrivateKey(k)
+	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der}), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	changed, err := EnsureServerCert(dir, "redis", []string{"127.0.0.1"})

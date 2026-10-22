@@ -51,3 +51,26 @@ func runPKI(args []string, out io.Writer) error {
 	}
 	return nil
 }
+
+// runDevAgentCert implements the hidden `dev-agent-cert` subcommand behind
+// `make generate-agent-certs`: it writes agent.key, agent.crt (CN =
+// --server-id, signed by the CA in --dir) and ca.crt into --out, for local
+// hub/agent testing without enrollment.
+func runDevAgentCert(args []string, out io.Writer) error {
+	fs := flag.NewFlagSet("dev-agent-cert", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	dir := fs.String("dir", "", "directory holding the CA (ca.crt, ca.key)")
+	outDir := fs.String("out", "", "directory for agent.key, agent.crt and ca.crt")
+	serverID := fs.String("server-id", "", "server id, the certificate's CN")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *dir == "" || *outDir == "" || strings.TrimSpace(*serverID) == "" {
+		return fmt.Errorf("dev-agent-cert: --dir, --out and --server-id are required")
+	}
+	if err := cert.IssueAgentCert(filepath.Clean(*dir), filepath.Clean(*outDir), *serverID); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "agent certificate for %s written to %s\n", strings.TrimSpace(*serverID), *outDir)
+	return nil
+}

@@ -58,3 +58,35 @@ func TestPKISubcommandRequiresDirAndHost(t *testing.T) {
 		t.Error("missing --host accepted")
 	}
 }
+
+func TestDevAgentCertSubcommand(t *testing.T) {
+	ca := t.TempDir()
+	var out bytes.Buffer
+	if err := runPKI([]string{"--dir", ca, "--host", "localhost"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(t.TempDir(), "agent-certs")
+	out.Reset()
+	if err := runDevAgentCert([]string{"--dir", ca, "--out", dst, "--server-id", "srv-dev"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"agent.key", "agent.crt", "ca.crt"} {
+		if _, err := os.Stat(filepath.Join(dst, f)); err != nil {
+			t.Errorf("%s missing: %v", f, err)
+		}
+	}
+	if out.Len() == 0 {
+		t.Error("no output")
+	}
+	for name, args := range map[string][]string{
+		"no dir":       {"--out", dst, "--server-id", "s"},
+		"no out":       {"--dir", ca, "--server-id", "s"},
+		"no server id": {"--dir", ca, "--out", dst},
+		"no CA":        {"--dir", t.TempDir(), "--out", dst, "--server-id", "s"},
+		"bad flag":     {"--nope"},
+	} {
+		if err := runDevAgentCert(args, &out); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}

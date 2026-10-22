@@ -433,9 +433,6 @@ AGENT_DATA_DIR=${DATA_DIR}/data
 AVATARS_STORAGE_PATH=${DATA_DIR}/data/avatars
 
 HUB_CERT_DIR=${DATA_DIR}/data/hub-certs
-HUB_CERT_EXT_PATH=${DATA_DIR}/data/ext.cnf
-HUB_CA_SUBJECT="/C=CA/O=WinterFlow.dev/OU=CA/CN=WinterFlow.dev CA/emailAddress=info@winterflow.dev"
-HUB_SERVER_SUBJECT="/C=CA/O=WinterFlow.dev/OU=SERVER/CN=WinterFlow.dev/emailAddress=info@winterflow.dev"
 
 # Embedded ingress (Caddy) — an optional reverse proxy for your deployed
 # apps, off by default so it never fights another proxy or tunnel for

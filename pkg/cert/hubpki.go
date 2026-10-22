@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha1"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -220,6 +221,15 @@ func createCA(certPath, keyPath string) (err error) {
 		}
 	}()
 	return writeFileAtomic(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600)
+}
+
+func subjectKeyID(pub crypto.PublicKey) ([]byte, error) {
+	pubKeyBytes, err := x509.MarshalPKIXPublicKey(pub)
+	if err != nil {
+		return nil, fmt.Errorf("marshal public key: %w", err)
+	}
+	sum := sha1.Sum(pubKeyBytes)
+	return sum[:], nil
 }
 
 func urisEqual(c *x509.Certificate, want []*url.URL) bool {

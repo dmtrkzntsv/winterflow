@@ -231,6 +231,17 @@ o="$(WF_INSTALL_ROOT="$rerun" bash "$SCRIPT" --dry-run 2>&1)" \
 assert_contains "no kept redis user: asks for a token" "$o" "has no Redis user"
 WF_INSTALL_ROOT="$rerun" bash "$SCRIPT" --dry-run --token "$TOKEN" >/dev/null 2>&1 \
     && pass "no kept redis user: rejoin with a token" || fail "no kept redis user: rejoin with a token" "exit $?"
+# A kept user that is not this hub's (hub:<its id>) is dropped: without a
+# token the rerun asks for one, with one the join replaces it.
+sed 's/^REDIS_USERNAME=.*/REDIS_USERNAME=hub:other.example.com/' "$tmp/hub.env.keep" > "$rerun/etc/winterflow/hub.env"
+o="$(WF_INSTALL_ROOT="$rerun" bash "$SCRIPT" --dry-run 2>&1)" \
+    && fail "another hub's kept redis user: rerun without a token refused" "exit 0" || pass "another hub's kept redis user: rerun without a token refused"
+assert_contains "another hub's kept redis user: warns" "$o" "is not this hub's Redis user (hub:hub-kept.example.com)"
+assert_contains "another hub's kept redis user: asks for a token" "$o" "has no Redis user"
+o="$(WF_INSTALL_ROOT="$rerun" bash "$SCRIPT" --dry-run --token "$TOKEN" 2>&1)" \
+    && pass "another hub's kept redis user: rejoin with a token" || fail "another hub's kept redis user: rejoin with a token" "$o"
+assert_contains "another hub's kept redis user: rejoin names this hub's user" "$o" "REDIS_USERNAME=hub:hub-kept.example.com"
+grep -v '^REDIS_USERNAME=' "$tmp/hub.env.keep" > "$rerun/etc/winterflow/hub.env"
 printf 'REDIS_USERNAME=hub:x y\n' >> "$rerun/etc/winterflow/hub.env"
 WF_INSTALL_ROOT="$rerun" bash "$SCRIPT" --dry-run --token "$TOKEN" >/dev/null 2>&1 \
     && fail "invalid kept redis user refused" "exit 0" || pass "invalid kept redis user refused"
@@ -409,6 +420,7 @@ STUB
     assert_contains "failed rejoin: stopped first" "$(cat "$r1/calls")" "systemctl stop winterflow-hub"
     assert_contains "failed rejoin: started again" "$(cat "$r1/calls")" "systemctl start winterflow-hub"
     assert_contains "failed rejoin: join error shown" "$RUN_OUT" "joining the control plane failed"
+    assert_contains "failed rejoin: the previous certificate serves" "$RUN_OUT" "Starting winterflow-hub again with its previous certificate"
     rm -f "$r1/join-exit"
     : > "$r1/calls"; printf '2' > "$r1/join-live"
     run_hub "$r1" --token "$TOKEN"
@@ -422,6 +434,9 @@ STUB
         run_hub "$r1" --token "$TOKEN"
         [ "$RUN_STATUS" -ne 0 ] && pass "${m}: installer fails" || fail "${m}: installer fails" "status 0"
         assert_contains "${m}: says the credentials were refused" "$RUN_OUT" "refusing the join's Redis credentials"
+        assert_contains "${m}: says the certificate was replaced" "$RUN_OUT" "certificate was replaced, but the join's Redis credentials were refused"
+        assert_not_contains "${m}: does not claim the previous certificate" "$RUN_OUT" "with its previous certificate"
+        assert_contains "${m}: started again" "$(cat "$r1/calls")" "systemctl start winterflow-hub"
         [ "$(cat "$r1/etc/winterflow/hub.env")" = "$env_before" ] && pass "${m}: hub env untouched" || fail "${m}: hub env untouched" "changed"
         assert_not_contains "${m}: not restarted" "$(cat "$r1/calls")" "systemctl restart winterflow-hub"
         rm -f "$r1/$m"

@@ -125,6 +125,7 @@ UNINSTALL=0
 PURGE=0
 JOINED=0
 REJOIN=0
+ENROLL_JOINED=0
 CPU_QUOTA=""
 MEMORY_MAX=""
 
@@ -319,6 +320,14 @@ load_kept() {
     [ -z "$v" ] || { valid_redis_user "$v" || die "${ENV_FILE}: REDIS_USERNAME is not a hub's Redis user (hub:<hub id>)"; REDIS_USERNAME="$v"; }
     v="$(env_value REDIS_PASSWORD)"
     [ -z "$v" ] || { valid_password "$v" || die "${ENV_FILE}: REDIS_PASSWORD has unsupported characters"; REDIS_PASSWORD="$v"; }
+    # The kept user must be this hub's (hub:<its id>); another hub's
+    # credentials are dropped, so the hub has to join again for its own.
+    if [ -n "$REDIS_USERNAME" ] && [ -n "$HUB_PUBLIC_ADDR" ] \
+        && [ "$REDIS_USERNAME" != "hub:$(hub_id_of "$HUB_PUBLIC_ADDR")" ]; then
+        warn "${ENV_FILE}: REDIS_USERNAME ${REDIS_USERNAME} is not this hub's Redis user (hub:$(hub_id_of "$HUB_PUBLIC_ADDR")); ignoring the kept Redis credentials"
+        REDIS_USERNAME=""
+        REDIS_PASSWORD=""
+    fi
 }
 
 # --- Release mirror (R2) ------------------------------------------------------
@@ -464,6 +473,7 @@ enroll_once() {
     # into hub.env after checks). The token reaches it on stdin, never a
     # command line.
     local st=0 out redis_env="${WORK_DIR}/redis.env"
+    ENROLL_JOINED=0
     rm -f "$redis_env"
     out="$(printf '%s\n' "$JOIN_TOKEN" | "$HUB_DEST" join --api-url "$API_URL" \
         --public-addr "$HUB_PUBLIC_ADDR" --cert-dir "$CERT_DIR" --redis-env-out "$redis_env" 2>&1)" || st=$?
@@ -472,6 +482,9 @@ enroll_once() {
         2) ENROLL_ERR="${out} (a token works once and expires after an hour; ask for a new one)"; return 1 ;;
         *) ENROLL_ERR="joining the control plane failed: ${out}"; return 1 ;;
     esac
+    # The join went through: the new pair is stored and the control plane
+    # has reset the hub's Redis password.
+    ENROLL_JOINED=1
     chown root:"$HUB_USER" "${CERT_DIR}/hub.key" "${CERT_DIR}/hub.crt" "${CERT_DIR}/ca.crt"
     chmod 640 "${CERT_DIR}/hub.key"
     log "$out"
@@ -507,7 +520,13 @@ rejoin() {
                     continue
                 fi ;;
         esac
-        log "Starting winterflow-hub again with its previous certificate"
+        if [ "$ENROLL_JOINED" -eq 1 ]; then
+            # The join replaced the certificate and reset the Redis password,
+            # but its credentials were refused: the kept password is stale.
+            log "winterflow-hub's certificate was replaced, but the join's Redis credentials were refused and its previous Redis password no longer works; starting winterflow-hub again (it cannot reach Redis until you join again with a new token)"
+        else
+            log "Starting winterflow-hub again with its previous certificate"
+        fi
         systemctl start winterflow-hub 2>/dev/null || true
         die "$ENROLL_ERR"
     done

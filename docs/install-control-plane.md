@@ -80,6 +80,35 @@ Rerunning keeps the CA, passwords, JWT secret and data, updates the binaries
 and units, and restarts the services. A changed `--hub-addr` reissues the hub
 certificate (the CA is kept). Pass `--version vYYMMDD.N` to pin a release.
 
+### Upgrading to this version
+
+Rerun `install-control-plane.sh` and every `install-hub.sh` before agents
+update. Hub certificates now carry a `winterflow-hub:<id>` URI name, which
+`pki` and `join` add when they reissue the certificate; upgraded agents refuse
+a hub certificate without it. The installer also records the control plane's
+hub certificate as trusted (`winterflow-api hub-trust`). An agent's
+`hub.json` overrides later `HUB_HOST` edits in `agent.env`.
+
+## Back up the CA
+
+Back up `/var/lib/winterflow-control/pki/ca.key` and `ca.crt` (with the
+database and `/etc/winterflow`). Losing them means re-joining every hub and
+re-enrolling every agent: nothing else can sign certificates the agents
+accept. The installer repeats this when it finishes.
+
+## A hub key leaked or a hub removed
+
+On the control-plane host, with the API's environment:
+
+```sh
+sudo bash -c 'set -a; . /etc/winterflow/control-plane.env; . /etc/winterflow/control-plane-api.env; exec winterflow-api hub-retire --hub <hub id>'
+```
+
+(`--fingerprint <sha256>` retires one certificate instead.) Connected agents
+stop accepting the retired certificate within 6 hours, when they refresh the
+set of certificates they pin. Rejoining the hub (`install-hub.sh` with a new
+token) issues it a new certificate.
+
 ## Uninstall
 
 `sudo bash scripts/install-control-plane.sh --uninstall` stops and removes the

@@ -452,6 +452,27 @@ func (q *Queries) ServerInOrganization(ctx context.Context, arg ServerInOrganiza
 	return exists, err
 }
 
+const setServerHub = `-- name: SetServerHub :execrows
+UPDATE servers SET hub_id = ?1
+WHERE server_id = ?2 AND COALESCE(hub_id, '') = ?3
+`
+
+type SetServerHubParams struct {
+	ToHub    *string
+	ServerID string
+	FromHub  *string
+}
+
+// Moves a server to another hub only while it is still on from_hub (empty for
+// none): a replica that moved it first wins, the caller reads that hub.
+func (q *Queries) SetServerHub(ctx context.Context, arg SetServerHubParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, setServerHub, arg.ToHub, arg.ServerID, arg.FromHub)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
 const touchServerLastSeen = `-- name: TouchServerLastSeen :exec
 UPDATE servers SET last_seen = ? WHERE server_id = ?
 `

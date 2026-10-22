@@ -175,6 +175,7 @@ STUB
     run_install "$r2" 0 "$good"
     certs="$r2/var/lib/winterflow/certs"
     echo old-crt > "$certs/agent.crt"; echo old-key > "$certs/agent.key"; echo old-ca > "$certs/ca.crt"
+    echo '{"host":"old-hub","port":"443"}' > "$r2/var/lib/winterflow/hub.json"
     run_install "$r2" 0 "${good/srv-1/srv-2}" --reenroll
     [ "$RUN_STATUS" -eq 0 ] && pass "reenroll: installer succeeds" || fail "reenroll: installer succeeds" "status $RUN_STATUS: $RUN_OUT"
     assert_contains "reenroll: a new code is shown" "$RUN_OUT" "CODE: ABC123"
@@ -187,6 +188,10 @@ STUB
         [ -f "$1" ] && pass "reenroll: ${f} set aside" || fail "reenroll: ${f} set aside" "no ${f}.old-*"
         assert_contains "reenroll: ${f} backup holds the old file" "$(cat "$1" 2>/dev/null)" "old-"
     done
+    # The old hub.json would override the new enrollment's HUB_HOST/HUB_PORT.
+    [ ! -e "$r2/var/lib/winterflow/hub.json" ] && pass "reenroll: hub.json set aside" || fail "reenroll: hub.json set aside" "still there"
+    set -- "$r2/var/lib/winterflow/hub.json".old-*
+    assert_contains "reenroll: hub.json backup holds the old hub" "$(cat "$1" 2>/dev/null)" "old-hub"
     env2="$(cat "$r2/etc/winterflow/agent.env")"
     assert_contains "reenroll: new server id stored" "$env2" "AGENT_ID=srv-2"
     assert_not_contains "reenroll: old server id gone" "$env2" "AGENT_ID=srv-1"

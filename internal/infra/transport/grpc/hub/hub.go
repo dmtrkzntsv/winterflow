@@ -10,8 +10,10 @@ import (
 	"net"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 	"winterflow/internal/domain/model"
+	"winterflow/internal/domain/port"
 	"winterflow/internal/infra/transport/bus"
 	"winterflow/internal/infra/transport/codec"
 	"winterflow/internal/infra/transport/grpc/handler"
@@ -33,6 +35,10 @@ type Hub struct {
 	agents     map[string]*agent
 	agentsLock sync.RWMutex
 	cfg        *config.ServerConfig
+	// id and publicAddr are the hub's identity (HUB_PUBLIC_ADDR and its
+	// host), read once by NewHub: they never change while the hub runs.
+	id         string
+	publicAddr string
 	log        *logger.Logger
 	srv        *grpc.Server
 	bus        bus.Bus
@@ -42,6 +48,26 @@ type Hub struct {
 	// revocation arrived is refused. Entries older than revokeMemory are
 	// pruned.
 	revokedAt map[string]time.Time
+
+	// drainFlag mirrors the hub's drain flag in Redis (StartDrainWatch);
+	// stopping is set by Drain. Either makes the hub draining.
+	drainFlag atomic.Bool
+	stopping  atomic.Bool
+	// announceNow asks the announcer to announce at once (the draining
+	// state changed).
+	announceNow chan struct{}
+	// drainMu guards moverCancel, which stops the goroutine sending
+	// hub.move (nil while none runs).
+	drainMu     sync.Mutex
+	moverCancel context.CancelFunc
+	// drainCheckEvery overrides DrainCheckEvery (tests).
+	drainCheckEvery time.Duration
+	// moveResend overrides moveResendAfter (tests).
+	moveResend time.Duration
+	// peers is the hub list StartAnnouncer writes to (guarded by drainMu);
+	// a stopping hub reads it to learn whether another hub can take its
+	// agents. Nil until the announcer starts.
+	peers port.HubRegistry
 }
 
 type agent struct {
@@ -54,6 +80,9 @@ type agent struct {
 	// closeStream ends the bound stream's handler (revocation, or a newer
 	// stream of the same agent); nil until a stream is bound.
 	closeStream context.CancelCauseFunc
+	// moveSentAt is when the hub last told this agent to move (draining);
+	// guarded by agentsLock.
+	moveSentAt time.Time
 
 	// sendMu serializes writes to the stream: gRPC forbids concurrent SendMsg
 	// on one stream, and both the bus bridge (dispatchToAgent) and the
@@ -73,13 +102,16 @@ func (a *agent) send(stream grpc.BidiStreamingServer[proto.AgentMessage, proto.S
 // registration as Unavailable.
 func NewHub(log *logger.Logger, cfg *config.ServerConfig, b bus.Bus, auth Authorizer) *Hub {
 	h := &Hub{
-		agents:    make(map[string]*agent),
-		revokedAt: make(map[string]time.Time),
-		cfg:       cfg,
-		log:       log,
-		srv:       createServer(log, cfg),
-		bus:       b,
-		auth:      failClosed(auth),
+		agents:      make(map[string]*agent),
+		revokedAt:   make(map[string]time.Time),
+		announceNow: make(chan struct{}, 1),
+		cfg:         cfg,
+		id:          cfg.GetHubID(),
+		publicAddr:  cfg.GetHubPublicAddr(),
+		log:         log,
+		srv:         createServer(log, cfg),
+		bus:         b,
+		auth:        failClosed(auth),
 	}
 	proto.RegisterAgentServiceServer(h.srv, h)
 
@@ -106,9 +138,9 @@ func (h *Hub) StartBusBridge(ctx context.Context) error {
 		h.log.Warn("no bus configured, hub will not forward commands")
 		return nil
 	}
-	hubID := h.cfg.GetHubID()
+	hubID := h.id
 	if hubID == "" {
-		return fmt.Errorf("HUB_PUBLIC_ADDR must be host:port (got %q)", h.cfg.GetHubPublicAddr())
+		return fmt.Errorf("HUB_PUBLIC_ADDR must be host:port (got %q)", h.publicAddr)
 	}
 	queue := h.cfg.HubRequestQueue(hubID)
 	bus.SubscribeJSON(ctx, h.bus, queue, h.log, func(cmd bus.CommandMessage) {
@@ -132,6 +164,10 @@ var (
 	// errStale ends a stream whose registration the reaper dropped.
 	errStale = errors.New("agent idle past its TTL")
 )
+
+// errDraining is the FailedPrecondition message a draining hub refuses new
+// registrations with.
+const errDraining = "hub is draining"
 
 // revokeMemory is how long a revocation is remembered against registrations
 // whose auth check started before it; far beyond AuthorizeTimeout.
@@ -338,8 +374,12 @@ func (h *Hub) ListenAndServe(ctx context.Context) error {
 	if err != nil {
 		h.log.Fatal("Failed to listen", "error", err)
 	}
+	return h.Serve(lis)
+}
 
-	h.log.Info("gRPC server listening", "port", h.cfg.GetHubPort())
+// Serve runs the gRPC server on lis until the hub shuts down.
+func (h *Hub) Serve(lis net.Listener) error {
+	h.log.Info("gRPC server listening", "addr", lis.Addr().String())
 	if err := h.srv.Serve(lis); err != nil {
 		h.log.Error("Failed to serve", "error", err)
 	}
@@ -347,7 +387,23 @@ func (h *Hub) ListenAndServe(ctx context.Context) error {
 	return nil
 }
 
+// Shutdown drains first (at most DrainTimeout, less if ctx ends sooner):
+// the hub announces draining, tells its agents to move and waits for their
+// streams to close. With no other hub to move them to it does not wait
+// (see Drain). Then it stops the gRPC server gracefully, forcing it when
+// ctx ends.
 func (h *Hub) Shutdown(ctx context.Context) error {
+	h.log.Info("Draining the hub before it stops", "agents", h.activeStreams())
+	drainCtx, cancelDrain := context.WithTimeout(ctx, DrainTimeout)
+	switch err := h.Drain(drainCtx); {
+	case errors.Is(err, ErrNoOtherHub):
+		h.log.Info("No other hub can take this hub's agents, stopping without waiting",
+			"agents_left", h.activeStreams())
+	case err != nil:
+		h.log.Warn("Drain incomplete, stopping anyway", "agents_left", h.activeStreams())
+	}
+	cancelDrain()
+
 	h.log.Info("Shutting down gRPC server")
 
 	// Active agent streams are torn down by GracefulStop / Stop below; the
@@ -382,6 +438,10 @@ func (h *Hub) RegisterAgent(ctx context.Context, req *proto.RegisterAgentRequest
 	if agentID == "" {
 		return nil, status.Errorf(codes.InvalidArgument, "agent_id is required")
 	}
+	// Not a denial: the agent asks the API which hub to use instead.
+	if h.isDraining() {
+		return nil, status.Error(codes.FailedPrecondition, errDraining)
+	}
 
 	certID, fingerprint, err := peerIdentity(ctx)
 	if err != nil {
@@ -400,6 +460,15 @@ func (h *Hub) RegisterAgent(ctx context.Context, req *proto.RegisterAgentRequest
 		h.log.Warn("agent auth check failed", "agent_id", agentID, "error", err)
 		return nil, status.Error(codes.Unavailable, "cannot verify server right now")
 	}
+	if verdict == bus.VerdictMoved {
+		// Not a denial: the agent asks the API where to go. Nothing is
+		// recorded.
+		if reason == "" {
+			reason = "server belongs to another hub"
+		}
+		h.log.Info("agent belongs to another hub", "agent_id", agentID)
+		return nil, status.Error(codes.FailedPrecondition, reason)
+	}
 	if verdict != bus.VerdictAllowed {
 		if reason == "" {
 			reason = string(verdict)
@@ -416,6 +485,11 @@ func (h *Hub) RegisterAgent(ctx context.Context, req *proto.RegisterAgentRequest
 
 	h.agentsLock.Lock()
 	defer h.agentsLock.Unlock()
+
+	// Draining started while the check was in flight.
+	if h.isDraining() {
+		return nil, status.Error(codes.FailedPrecondition, errDraining)
+	}
 
 	// A revocation that arrived while the check was in flight wins over its
 	// "allowed".

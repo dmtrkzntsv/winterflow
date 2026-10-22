@@ -33,7 +33,7 @@ func TestResponderRepliesOnHubChannel(t *testing.T) {
 	b := membus.NewBus(testLog())
 	cfg := config.NewServerConfig("distributed")
 	pemA, fpA := newCert(t, "srv-1")
-	repo := fakeRepo{servers: map[string]bool{"srv-1": true}, cert: map[string]string{"srv-1": pemA}}
+	repo := fakeRepo{servers: map[string]bool{"srv-1": true}, hubs: map[string]string{"srv-1": "h1"}, cert: map[string]string{"srv-1": pemA}}
 	if err := StartResponder(ctx, b, cfg, repo, testLog()); err != nil {
 		t.Fatal(err)
 	}

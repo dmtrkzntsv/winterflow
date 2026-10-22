@@ -36,5 +36,10 @@ func (s *CASigner) Sign(csrPEM, commonName string) (string, time.Time, error) {
 	return certpkg.SignCSRAs(csrPEM, commonName, s.caCert, s.caKey, validityYears)
 }
 
+// SignHub issues a server certificate for a hub: CN = hubID, SANs = hosts.
+func (s *CASigner) SignHub(csrPEM, hubID string, hosts []string) (string, time.Time, error) {
+	return certpkg.SignHubCSR(csrPEM, hubID, hosts, s.caCert, s.caKey, validityYears)
+}
+
 // CACertPEM is the CA certificate agents pin the hub against.
 func (s *CASigner) CACertPEM() string { return s.caPEM }

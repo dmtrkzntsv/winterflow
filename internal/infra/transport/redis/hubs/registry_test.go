@@ -81,3 +81,40 @@ func TestRegistryRedisDown(t *testing.T) {
 		t.Fatal("announce with redis down: want error")
 	}
 }
+
+func TestDrainFlag(t *testing.T) {
+	reg, mr := newRegistry(t)
+	ctx := context.Background()
+	const id = "hub-01.winterflow.dev"
+	if on, err := reg.IsDraining(ctx, id); err != nil || on {
+		t.Fatalf("before = %v, %v", on, err)
+	}
+	if err := reg.SetDraining(ctx, id, true); err != nil {
+		t.Fatal(err)
+	}
+	if !mr.Exists("hub:draining:" + id) {
+		t.Fatal("flag key missing")
+	}
+	if ttl := mr.TTL("hub:draining:" + id); ttl != 0 {
+		t.Fatalf("flag has an expiry: %v", ttl)
+	}
+	if on, err := reg.IsDraining(ctx, id); err != nil || !on {
+		t.Fatalf("after set = %v, %v", on, err)
+	}
+	if on, _ := reg.IsDraining(ctx, "hub-02.winterflow.dev"); on {
+		t.Fatal("another hub reads draining")
+	}
+	if err := reg.SetDraining(ctx, id, false); err != nil {
+		t.Fatal(err)
+	}
+	if on, err := reg.IsDraining(ctx, id); err != nil || on {
+		t.Fatalf("after clear = %v, %v", on, err)
+	}
+	if err := reg.SetDraining(ctx, "", true); err == nil {
+		t.Fatal("empty hub id accepted")
+	}
+	mr.Close()
+	if _, err := reg.IsDraining(ctx, id); err == nil {
+		t.Fatal("is-draining with redis down: want error")
+	}
+}

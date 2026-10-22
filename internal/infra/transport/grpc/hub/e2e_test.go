@@ -23,9 +23,12 @@ import (
 	"winterflow/internal/infra/transport/grpc/hub"
 	"winterflow/internal/infra/transport/grpc/proto"
 	membus "winterflow/internal/infra/transport/mem/bus"
+	hubsreg "winterflow/internal/infra/transport/redis/hubs"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
@@ -296,6 +299,32 @@ func TestRegisterDeniedForUnknownServer(t *testing.T) {
 	err := register(env.ctx, dialHub(t, env.cfg), "srv-1")
 	if status.Code(err) != codes.PermissionDenied || !strings.Contains(err.Error(), "server not found") {
 		t.Fatalf("err = %v, want PermissionDenied with the reason", err)
+	}
+}
+
+// A server assigned to another hub is not a denial: the agent gets
+// FailedPrecondition with the reason (it asks the API where to go), and the
+// hub records no registration.
+func TestRegisterMovedIsFailedPrecondition(t *testing.T) {
+	env := startHub(t, "srv-1", nil)
+	answerVerify(t, env, bus.VerdictMoved, "server belongs to another hub")
+	client := dialHub(t, env.cfg)
+	err := register(env.ctx, client, "srv-1")
+	if status.Code(err) != codes.FailedPrecondition || !strings.Contains(err.Error(), "server belongs to another hub") {
+		t.Fatalf("err = %v, want FailedPrecondition with the reason", err)
+	}
+	sctx, cancel := context.WithTimeout(env.ctx, 5*time.Second)
+	defer cancel()
+	stream, err := client.AgentStream(sctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = stream.Send(&proto.AgentMessage{Message: &proto.AgentMessage_Event{Event: &proto.AgentEvent{
+		Base: &proto.BaseMessage{AgentId: "srv-1"},
+		Kind: string(bus.EventAppsStatus),
+	}}})
+	if _, err := stream.Recv(); status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("stream err = %v, want Unauthenticated (no registration)", err)
 	}
 }
 
@@ -592,5 +621,160 @@ func TestReregisterWithNewCertClosesOldStream(t *testing.T) {
 	cmd, err := newStream.Recv()
 	if err != nil || cmd.GetRequest().GetRequestId() != "req-new-cert" {
 		t.Fatalf("new stream got %v, %v", cmd, err)
+	}
+}
+
+// dialAddr is dialHub against an explicit hub address.
+func dialAddr(t *testing.T, cfg *config.ServerConfig, addr string) proto.AgentServiceClient {
+	t.Helper()
+	caPEM, err := os.ReadFile(cfg.GetAgentCACertPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := x509.NewCertPool()
+	pool.AppendCertsFromPEM(caPEM)
+	pair, err := tls.LoadX509KeyPair(cfg.GetAgentCertPath(), cfg.GetAgentKeyPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	creds := credentials.NewTLS(&tls.Config{Certificates: []tls.Certificate{pair}, RootCAs: pool, MinVersion: tls.VersionTLS12, NextProtos: []string{"h2"}})
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(creds))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	return proto.NewAgentServiceClient(conn)
+}
+
+// serveHub runs a hub for the HUB_PUBLIC_ADDR currently set, on its own
+// loopback listener, and returns its address.
+func serveHub(t *testing.T, ctx context.Context, log *logger.Logger, cfg *config.ServerConfig, b bus.Bus) (*hub.Hub, string) {
+	t.Helper()
+	h := hub.NewHub(log, cfg, b, allowAll{})
+	if err := h.StartBusBridge(ctx); err != nil {
+		t.Fatal(err)
+	}
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = h.Serve(lis) }()
+	t.Cleanup(func() {
+		shutdownCtx, c := context.WithTimeout(context.Background(), 5*time.Second)
+		defer c()
+		_ = h.Shutdown(shutdownCtx)
+	})
+	return h, lis.Addr().String()
+}
+
+// Draining hub A (its Redis flag) moves its agent to hub B: A tells the
+// agent to move and refuses it from then on, the agent (here a test client
+// whose "ask the API" answers hub B) registers on B, and a command routed
+// to B reaches it.
+func TestDrainMovesAgentToAnotherHub(t *testing.T) {
+	dir := t.TempDir()
+	extPath := filepath.Join(dir, "ext.cnf")
+	if err := os.WriteFile(extPath, []byte(extCnf), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HUB_CERT_DIR", filepath.Join(dir, "certs"))
+	t.Setenv("HUB_CERT_EXT_PATH", extPath)
+	t.Setenv("HUB_CA_SUBJECT", "/C=CA/O=Test/CN=Test CA")
+	t.Setenv("HUB_SERVER_SUBJECT", "/C=CA/O=Test/CN=localhost")
+	t.Setenv("AGENT_DATA_DIR", filepath.Join(dir, "agent-data"))
+	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "e2e"})
+	cfg := config.NewServerConfig("distributed")
+	cm, err := cert.NewManager(cfg, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cm.GenerateServer(true)
+	const agentID = "srv-move"
+	if _, err := cm.GenerateAgent(agentID); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	b := membus.NewBus(log)
+	mr := miniredis.RunT(t)
+	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rc.Close() })
+	reg := hubsreg.NewRegistry(rc)
+
+	// The hub reads HUB_PUBLIC_ADDR when its bridge and drain watch start.
+	t.Setenv("HUB_PUBLIC_ADDR", "hub-a.test:50051")
+	hubA, addrA := serveHub(t, ctx, log, cfg, b)
+	hub.SetDrainCheckEvery(hubA, 50*time.Millisecond)
+	watched := hubA.StartDrainWatch(ctx, reg)
+	t.Cleanup(func() { cancel(); <-watched })
+	t.Setenv("HUB_PUBLIC_ADDR", "hub-b.test:50051")
+	_, addrB := serveHub(t, ctx, log, cfg, b)
+	where := func() string { return addrB } // the API's answer to "where to"
+
+	responses, cancelResponses, err := b.Subscribe(ctx, cfg.GetBusResponseQueue())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cancelResponses()
+
+	// The agent streams on hub A.
+	clientA := dialAddr(t, cfg, addrA)
+	if err := register(ctx, clientA, agentID); err != nil {
+		t.Fatal(err)
+	}
+	sctxA, cancelA := context.WithTimeout(ctx, 10*time.Second)
+	defer cancelA()
+	streamA := openStream(t, sctxA, clientA, agentID)
+
+	if err := reg.SetDraining(ctx, "hub-a.test", true); err != nil {
+		t.Fatal(err)
+	}
+	cmd, err := streamA.Recv()
+	if err != nil || cmd.GetRequest().GetType() != string(command.HubMove) {
+		t.Fatalf("hub A sent %v, %v; want hub.move", cmd, err)
+	}
+	cancelA() // the agent leaves hub A
+
+	if err := register(ctx, clientA, agentID); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("draining hub A: register err = %v, want FailedPrecondition", err)
+	}
+
+	clientB := dialAddr(t, cfg, where())
+	if err := register(ctx, clientB, agentID); err != nil {
+		t.Fatal(err)
+	}
+	sctxB, cancelB := context.WithTimeout(ctx, 10*time.Second)
+	defer cancelB()
+	streamB := openStream(t, sctxB, clientB, agentID)
+
+	if err := b.Publish(ctx, cfg.HubRequestQueue("hub-b.test"), bus.CommandMessage{
+		AgentID: agentID, RequestID: "req-after-move", Type: string(command.TypeAppsList), Payload: []byte(`{}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := streamB.Recv()
+	if err != nil || got.GetRequest().GetRequestId() != "req-after-move" {
+		t.Fatalf("hub B sent %v, %v", got, err)
+	}
+	if err := streamB.Send(&proto.AgentMessage{Message: &proto.AgentMessage_Response{Response: &proto.ResponseEnvelope{
+		Base:      &proto.BaseResponse{AgentId: agentID, ResponseCode: proto.ResponseCode_RESPONSE_CODE_SUCCESS},
+		RequestId: "req-after-move",
+		Type:      string(command.TypeAppsList),
+		Payload:   []byte(`{}`),
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case msg := <-responses:
+		var ntf model.Notification
+		if err := json.Unmarshal([]byte(msg.Payload), &ntf); err != nil {
+			t.Fatal(err)
+		}
+		if ntf.Ref != "req-after-move" || ntf.Status != model.NotificationStatusSuccess {
+			t.Fatalf("notification = %+v", ntf)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no result for the command on hub B")
 	}
 }

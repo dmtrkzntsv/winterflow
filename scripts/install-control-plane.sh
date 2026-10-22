@@ -708,9 +708,9 @@ WorkingDirectory=${HUB_HOME}
 ExecStart=${HUB_DEST}
 Restart=on-failure
 RestartSec=5
-# Stopping shuts the hub down gracefully (up to 30 s); its agents reconnect
-# with backoff once it is back. The headroom is for draining agents to other
-# hubs, which a later release adds.
+# Stopping drains the hub first: it tells its agents to move to other hubs
+# and waits up to 2 minutes for them to leave (not at all when no other hub
+# can take them), then stops gracefully.
 TimeoutStopSec=150
 ${caps}
 EOF

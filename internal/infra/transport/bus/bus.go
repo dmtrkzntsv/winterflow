@@ -99,6 +99,9 @@ const (
 	VerdictAllowed AgentVerdict = "allowed"
 	VerdictRevoked AgentVerdict = "revoked"
 	VerdictUnknown AgentVerdict = "unknown"
+	// VerdictMoved: the server is assigned to another hub; the hub answers
+	// FailedPrecondition and the agent asks the API where to go.
+	VerdictMoved AgentVerdict = "moved"
 )
 
 // HubResponse is the API -> hub reply on hub:responses:<hub_id>.

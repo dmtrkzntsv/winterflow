@@ -53,6 +53,12 @@ type ServerRepository interface {
 	// none, model.ErrNotFound when there is no such server.
 	ServerHub(ctx context.Context, serverID string) (string, error)
 
+	// SetServerHub moves the server to toHubID only while it is still on
+	// fromHubID ("" for none); it returns the hub the server is on
+	// afterwards (another replica's choice when that one moved it first).
+	// model.ErrNotFound when there is no such server.
+	SetServerHub(ctx context.Context, serverID, fromHubID, toHubID string) (string, error)
+
 	// ActiveServerCertificate returns the server's newest active certificate
 	// as stored (PEM, or base64 of it); model.ErrNotFound when it has none.
 	ActiveServerCertificate(ctx context.Context, serverID string) (string, error)

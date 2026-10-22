@@ -99,6 +99,14 @@ type AppDomain struct {
 	UpdatedAt    types.DateTime
 }
 
+type HubJoinToken struct {
+	TokenHash string
+	ExpiresAt types.DateTime
+	UsedAt    *types.DateTime
+	UsedByHub *string
+	CreatedAt types.DateTime
+}
+
 type MetricSample struct {
 	ServerID    string
 	AppID       string

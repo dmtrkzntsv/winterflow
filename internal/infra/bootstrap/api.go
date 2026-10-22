@@ -3,7 +3,9 @@ package bootstrap
 import (
 	"context"
 	"winterflow/internal/domain/model"
+	"winterflow/internal/domain/usecase/agenthub"
 	"winterflow/internal/domain/usecase/enrollment"
+	"winterflow/internal/domain/usecase/hubjoin"
 	"winterflow/internal/infra/cert"
 	"winterflow/internal/infra/db"
 	"winterflow/internal/infra/transport/bus"
@@ -44,7 +46,8 @@ func BootstrapAPI(ctx context.Context, log *logger.Logger, cfg *config.ServerCon
 
 	// Commands go to each server's hub's queue; the picker reads the hub
 	// list the hubs announce on the same Redis connection.
-	deps, _ := WireCore(ctx, b, dbconn, cfg, log, WithHubRegistry(hubsreg.NewRegistry(rc)))
+	registry := hubsreg.NewRegistry(rc)
+	deps, servers := WireCore(ctx, b, dbconn, cfg, log, WithHubRegistry(registry))
 	// WireCore has started the response subscriber, so replies reach the
 	// waiting steps; the Hub consumes the request queue independently.
 	// Agents enroll by code: the API signs their certificates with the CA
@@ -54,6 +57,8 @@ func BootstrapAPI(ctx context.Context, log *logger.Logger, cfg *config.ServerCon
 		log.Fatalf("load the CA: %v", err)
 	}
 	deps.Enrollment = enrollment.New(deps.EnrollmentRepository, signer, deps.HubPicker, nil)
+	deps.HubJoin = hubjoin.New(deps.HubTokenRepository, signer, registry, nil)
+	deps.AgentHub = agenthub.New(servers, registry, deps.HubPicker, log)
 	StartRollouts(ctx, deps)
 	StartCatalog(ctx, deps)
 	return deps

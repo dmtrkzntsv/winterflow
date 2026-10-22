@@ -1,6 +1,7 @@
 // Package hubs keeps the list of live hubs in Redis: each hub writes
 // hub:status:<hub_id> (JSON) with an expiry and renews it; a hub is
-// available while its key exists.
+// available while its key exists. A hub's drain flag is
+// hub:draining:<hub_id>, with no expiry.
 package hubs
 
 import (
@@ -18,6 +19,9 @@ import (
 
 const (
 	keyPrefix = "hub:status:"
+	// drainPrefix keys a hub's drain flag; set and cleared by the
+	// operator (winterflow-hub drain / undrain), never expires.
+	drainPrefix = "hub:draining:"
 	// callTimeout bounds every Redis call the registry makes.
 	callTimeout = 3 * time.Second
 	scanCount   = 100
@@ -101,4 +105,36 @@ func (r *Registry) List(ctx context.Context) ([]model.Hub, error) {
 		out = append(out, h)
 	}
 	return out, nil
+}
+
+// SetDraining sets (on) or deletes (off) the hub's drain flag. The flag has
+// no expiry: a drained hub stays drained across hub restarts until
+// undrained (or until Redis loses its data).
+func (r *Registry) SetDraining(ctx context.Context, hubID string, on bool) error {
+	if hubID == "" {
+		return errors.New("hub registry: empty hub id")
+	}
+	ctx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
+	var err error
+	if on {
+		err = r.rc.Set(ctx, drainPrefix+hubID, "1", 0).Err()
+	} else {
+		err = r.rc.Del(ctx, drainPrefix+hubID).Err()
+	}
+	if err != nil {
+		return fmt.Errorf("hub registry: set draining %s: %w", hubID, err)
+	}
+	return nil
+}
+
+// IsDraining reports whether the hub's drain flag is set.
+func (r *Registry) IsDraining(ctx context.Context, hubID string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
+	n, err := r.rc.Exists(ctx, drainPrefix+hubID).Result()
+	if err != nil {
+		return false, fmt.Errorf("hub registry: is draining %s: %w", hubID, err)
+	}
+	return n > 0, nil
 }

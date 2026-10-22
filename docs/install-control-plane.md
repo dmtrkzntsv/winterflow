@@ -87,6 +87,78 @@ API and hub units and binaries and disables `redis-server@winterflow`. It
 keeps `/var/lib/winterflow-control` (the CA), the `/etc/winterflow` env files,
 the Redis config and data, and the Postgres database. There is no `--purge`.
 
+## Adding a hub
+
+A second hub runs on another machine with `scripts/install-hub.sh`; it holds
+no data and joins the existing control plane.
+
+1. Let remote hubs reach Redis: install the control plane with `--redis-bind`
+   (an address of this host, e.g. its Tailscale IP) and `--redis-host` (the
+   name to put in the Redis certificate, e.g. its Tailscale name); rerun it
+   if it was installed without them. Hubs connect over TLS only
+   (`rediss://:<password>@<cp-host>:6380`); the password is in
+   `/etc/winterflow/control-plane.env`.
+2. On the API host, create a one-time join token (valid 1 hour, single use;
+   the command needs the API's environment, `DATABASE_URL` above all):
+
+   ```sh
+   sudo bash -c 'set -a; . /etc/winterflow/control-plane.env; . /etc/winterflow/control-plane-api.env; exec winterflow-api hub-token'   # --ttl 30m for another lifetime
+   ```
+
+   Whoever holds the token chooses the new hub's host name (any but one a
+   running hub already uses), so hand it over only to the person who runs
+   the hub.
+3. On the new machine, open the hub's port (the one in `--public-addr`, or
+   `--listen-port` if given; the installer does not touch the firewall) and run:
+
+   ```sh
+   export WINTERFLOW_R2_ENDPOINT=... WINTERFLOW_R2_ACCESS_KEY_ID=... WINTERFLOW_R2_SECRET_ACCESS_KEY=...
+   export WINTERFLOW_HUB_REDIS_URL='rediss://:<pw>@<cp-host>:6380'
+   export WINTERFLOW_HUB_TOKEN=wfh_...        # or --token (visible in the process list)
+   sudo -E bash install-hub.sh --public-addr hub-02.winterflow.dev:50051 \
+     --api-url https://<your API URL>
+   ```
+
+   `--api-url` is the control plane the hub joins; without it the hub joins
+   the hosted control plane, `https://api.winterflow.dev`, so on your own
+   control plane always pass it. Other flags: `--capacity`, `--listen-port`,
+   `--version`, `--r2-bucket`, `--yes`, `--dry-run`. The public address's host goes into
+   the hub's certificate and is the hub's id; it cannot change later. The
+   hub registers within about 30 s and new servers can then be placed on it.
+
+New agents are spread over accepting hubs; existing agents stay where they
+are until a hub drains.
+
+## Draining and moving agents
+
+The subcommand needs the hub's own settings (`HUB_PUBLIC_ADDR`, `REDIS_*`), so
+load its env file. On a hub-only machine that is `/etc/winterflow/hub.env`; on
+the control plane's own hub it is `/etc/winterflow/control-plane-hub.env`:
+
+```sh
+sudo bash -c 'set -a; . /etc/winterflow/hub.env; exec winterflow-hub drain'     # stop taking agents, send the connected ones to other hubs
+sudo bash -c 'set -a; . /etc/winterflow/hub.env; exec winterflow-hub undrain'   # accept agents again
+```
+
+A draining hub announces it, tells each connected agent to move (about 20 per
+second, resent after a minute), and refuses new registrations; agents ask the
+API where to go and reconnect there. The flag has no expiry and survives
+hub restarts (it is stored in Redis, so it is lost if Redis loses its data).
+Stopping the hub service (or `--uninstall`) drains it first and waits up to
+2 minutes, so a plain `systemctl stop winterflow-hub` is safe; agents left
+behind find another hub on their own after a few minutes. When no other hub
+accepts agents (a single hub, or every other one draining) a stopping hub
+moves nobody and stops at once; its agents reconnect when it is back.
+
+## Updating, removing a hub
+
+Rerun `install-hub.sh` (no token needed): it replaces the binary and
+restarts the service, keeping the certificate and `/etc/winterflow/hub.env`.
+`--uninstall` drains the hub and removes the unit and binary, keeping the
+certificate and settings so a rerun brings it back; `--uninstall --purge` also
+deletes the certificate, `hub.env`, data and user, after which the hub needs a
+new token to join.
+
 ## Adding agents
 
 In the web UI, "Add server" shows the command to run on the new machine:

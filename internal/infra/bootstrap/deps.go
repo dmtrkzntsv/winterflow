@@ -5,7 +5,9 @@ import (
 	"winterflow/internal/domain/port"
 	"winterflow/internal/domain/service/alerting"
 	"winterflow/internal/domain/service/status"
+	"winterflow/internal/domain/usecase/agenthub"
 	"winterflow/internal/domain/usecase/enrollment"
+	"winterflow/internal/domain/usecase/hubjoin"
 	"winterflow/internal/domain/usecase/hubs"
 	"winterflow/internal/domain/usecase/rollouts"
 	"winterflow/internal/domain/usecase/templates"
@@ -70,6 +72,14 @@ type Deps struct {
 	// the enroll routes are not mounted and codes come from registrations).
 	EnrollmentRepository port.EnrollmentRepository
 	Enrollment           *enrollment.UseCase
+	// HubTokenRepository stores hub join tokens; HubJoin is the usecase
+	// over it, wired by BootstrapAPI only (nil in standalone, where the hub
+	// enroll route is not mounted).
+	HubTokenRepository port.HubTokenRepository
+	HubJoin            *hubjoin.UseCase
+	// AgentHub answers agents asking which hub to connect to; wired by
+	// BootstrapAPI only (nil in standalone, where its route is not mounted).
+	AgentHub *agenthub.UseCase
 	// Revoker tells the hubs to drop a deleted server's agent. Nil until
 	// the bus implementation is wired (distributed) and in standalone.
 	Revoker port.Revoker

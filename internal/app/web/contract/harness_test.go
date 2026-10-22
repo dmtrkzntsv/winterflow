@@ -13,8 +13,12 @@ import (
 	appagent "winterflow/internal/app/agent"
 	"winterflow/internal/app/web"
 	"winterflow/internal/domain/dto"
+	"winterflow/internal/domain/model"
+	"winterflow/internal/domain/usecase/agenthub"
 	"winterflow/internal/domain/usecase/enrollment"
 	"winterflow/internal/domain/usecase/enrollment/enrolltest"
+	"winterflow/internal/domain/usecase/hubjoin"
+	"winterflow/internal/domain/usecase/hubs"
 	"winterflow/internal/domain/usecase/rollouts"
 	"winterflow/internal/infra/bootstrap"
 	"winterflow/internal/infra/db"
@@ -38,6 +42,7 @@ type env struct {
 	bus   *membus.Bus
 	cfg   *config.ServerConfig
 	conn  *db.DB
+	hubs  *hubList // the live hub list the agent hub route reads
 
 	mu       sync.Mutex
 	requests map[string]string // request_id -> "METHOD /path" that dispatched it
@@ -94,6 +99,12 @@ func newEnv(t *testing.T) *env {
 	// Enrollment is distributed-only in production (BootstrapAPI); the
 	// suite wires it here so its routes are exercised.
 	deps.Enrollment = enrollment.New(deps.EnrollmentRepository, enrolltest.Signer(t), enrolltest.Picker{Hub: enrolltest.DefaultHub}, nil)
+	live := &hubList{hubs: []model.Hub{
+		{ID: enrolltest.DefaultHub.ID, PublicAddr: enrolltest.DefaultHub.PublicAddr, Capacity: 100, Accepting: true},
+		{ID: "hub-02.test", PublicAddr: "hub-02.test:443", Capacity: 100, Accepting: true},
+	}}
+	deps.HubJoin = hubjoin.New(deps.HubTokenRepository, enrolltest.Signer(t), live, nil)
+	deps.AgentHub = agenthub.New(deps.ServerRepository, live, hubs.NewPicker(live, deps.ServerRepository, testLog), testLog)
 	agent := newFakeAgent()
 	if err := appagent.NewInProcessBridge(b, cfg, agent, testLog).Start(ctx); err != nil {
 		t.Fatal(err)
@@ -115,7 +126,7 @@ func newEnv(t *testing.T) *env {
 	t.Cleanup(srv.Close)
 	t.Cleanup(cancel) // runs before srv.Close (LIFO)
 
-	e := &env{ctx: ctx, deps: deps, agent: agent, srv: srv, bus: b, cfg: cfg, conn: conn, requests: map[string]string{}}
+	e := &env{ctx: ctx, deps: deps, agent: agent, srv: srv, bus: b, cfg: cfg, conn: conn, hubs: live, requests: map[string]string{}}
 	e.seedPendingServer(t)
 	return e
 }
@@ -205,5 +216,31 @@ func eventually(t *testing.T, cond func() bool) {
 			t.Fatal("condition not met within " + resultTimeout.String())
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// hubList is a settable stand-in for the Redis hub registry.
+type hubList struct {
+	mu   sync.Mutex
+	hubs []model.Hub
+}
+
+func (l *hubList) Announce(context.Context, model.Hub, time.Duration) error { return nil }
+func (l *hubList) Withdraw(context.Context, string) error                   { return nil }
+
+func (l *hubList) List(context.Context) ([]model.Hub, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]model.Hub(nil), l.hubs...), nil
+}
+
+// setDraining marks the listed hub id draining.
+func (l *hubList) setDraining(id string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for i := range l.hubs {
+		if l.hubs[i].ID == id {
+			l.hubs[i].Draining = true
+		}
 	}
 }

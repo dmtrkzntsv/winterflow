@@ -56,6 +56,11 @@ func NewPicker(registry port.HubRegistry, servers HubCounts, log *logger.Logger)
 // one with the lowest assigned/capacity ratio and logs a warning. No hub
 // accepting new servers is ErrNoHub.
 func (p *Picker) Pick(ctx context.Context) (model.Hub, error) {
+	return p.PickExcept(ctx, "")
+}
+
+// PickExcept is Pick over every hub but hubID (a server leaving its hub).
+func (p *Picker) PickExcept(ctx context.Context, hubID string) (model.Hub, error) {
 	listed, err := p.registry.List(ctx)
 	if err != nil {
 		return model.Hub{}, fmt.Errorf("list hubs: %w", err)
@@ -66,7 +71,7 @@ func (p *Picker) Pick(ctx context.Context) (model.Hub, error) {
 	}
 	var open, roomy []model.Hub
 	for _, h := range listed {
-		if !h.Accepting || h.Draining {
+		if !h.Accepting || h.Draining || (hubID != "" && h.ID == hubID) {
 			continue
 		}
 		h.Assigned = counts[h.ID]

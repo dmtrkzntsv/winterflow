@@ -30,6 +30,7 @@ type fixture struct {
 	now   *atomic.Int64 // unix seconds
 	live  *liveHubs
 	certs *hubcert.Repo
+	users *enrolltest.RedisUsers
 }
 
 // liveHubs is the hub list a test edits.
@@ -56,10 +57,10 @@ func newFixture(t *testing.T) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &fixture{d: d, now: &atomic.Int64{}, live: &liveHubs{}, certs: certs}
+	f := &fixture{d: d, now: &atomic.Int64{}, live: &liveHubs{}, certs: certs, users: &enrolltest.RedisUsers{}}
 	f.now.Store(time.Now().Unix())
 	clock := func() time.Time { return time.Unix(f.now.Load(), 0).UTC() }
-	f.uc = hubjoin.New(repo, certs, enrolltest.Signer(t), f.live, clock)
+	f.uc = hubjoin.New(repo, certs, f.users, enrolltest.Signer(t), f.live, clock)
 	return f
 }
 
@@ -84,11 +85,11 @@ func TestIssueRedeem(t *testing.T) {
 		t.Fatal("plaintext token stored")
 	}
 
-	certPEM, caPEM, err := f.uc.Redeem(ctx, token, enrolltest.CSR(t, elliptic.P256()), "hub-01.example.com:443")
+	j, err := f.uc.Redeem(ctx, token, enrolltest.CSR(t, elliptic.P256()), "hub-01.example.com:443")
 	if err != nil {
 		t.Fatal(err)
 	}
-	block, _ := pem.Decode([]byte(certPEM))
+	block, _ := pem.Decode([]byte(j.CertPEM))
 	c, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
 		t.Fatal(err)
@@ -96,8 +97,12 @@ func TestIssueRedeem(t *testing.T) {
 	if c.Subject.CommonName != "hub-01.example.com" || len(c.DNSNames) != 1 || c.DNSNames[0] != "hub-01.example.com" {
 		t.Fatalf("cert CN %q SANs %v", c.Subject.CommonName, c.DNSNames)
 	}
-	if !strings.Contains(caPEM, "BEGIN CERTIFICATE") {
-		t.Fatalf("ca = %q", caPEM)
+	if !strings.Contains(j.CAPEM, "BEGIN CERTIFICATE") {
+		t.Fatalf("ca = %q", j.CAPEM)
+	}
+	// The hub's Redis user was created; its credentials come back.
+	if j.RedisUsername != "hub:hub-01.example.com" || j.RedisPassword == "" || f.users.Password("hub-01.example.com") != j.RedisPassword {
+		t.Fatalf("redis user %q password %q", j.RedisUsername, j.RedisPassword)
 	}
 	if got := dbtest.QueryString(t, f.d, `SELECT used_by_hub FROM hub_join_tokens`); got != "hub-01.example.com" {
 		t.Fatalf("used_by_hub = %q", got)
@@ -109,17 +114,17 @@ func TestRedeemTwice(t *testing.T) {
 	ctx := context.Background()
 	token, _, _ := f.uc.Issue(ctx, time.Hour)
 	csr := enrolltest.CSR(t, elliptic.P256())
-	if _, _, err := f.uc.Redeem(ctx, token, csr, "h.example.com:443"); err != nil {
+	if _, err := f.uc.Redeem(ctx, token, csr, "h.example.com:443"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := f.uc.Redeem(ctx, token, csr, "h.example.com:443"); !errors.Is(err, hubjoin.ErrInvalidToken) {
+	if _, err := f.uc.Redeem(ctx, token, csr, "h.example.com:443"); !errors.Is(err, hubjoin.ErrInvalidToken) {
 		t.Fatalf("second redeem = %v", err)
 	}
 }
 
 func TestRedeemUnknown(t *testing.T) {
 	f := newFixture(t)
-	if _, _, err := f.uc.Redeem(context.Background(), "wfh_nope", enrolltest.CSR(t, elliptic.P256()), "h.example.com:443"); !errors.Is(err, hubjoin.ErrInvalidToken) {
+	if _, err := f.uc.Redeem(context.Background(), "wfh_nope", enrolltest.CSR(t, elliptic.P256()), "h.example.com:443"); !errors.Is(err, hubjoin.ErrInvalidToken) {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -129,7 +134,7 @@ func TestRedeemExpired(t *testing.T) {
 	ctx := context.Background()
 	token, _, _ := f.uc.Issue(ctx, time.Minute)
 	f.now.Add(61)
-	if _, _, err := f.uc.Redeem(ctx, token, enrolltest.CSR(t, elliptic.P256()), "h.example.com:443"); !errors.Is(err, hubjoin.ErrInvalidToken) {
+	if _, err := f.uc.Redeem(ctx, token, enrolltest.CSR(t, elliptic.P256()), "h.example.com:443"); !errors.Is(err, hubjoin.ErrInvalidToken) {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -145,7 +150,7 @@ func TestRedeemConcurrent(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, _, err := f.uc.Redeem(ctx, token, csr, "h.example.com:443")
+			_, err := f.uc.Redeem(ctx, token, csr, "h.example.com:443")
 			switch {
 			case err == nil:
 				wins.Add(1)
@@ -168,17 +173,17 @@ func TestRedeemBadInputKeepsToken(t *testing.T) {
 	token, _, _ := f.uc.Issue(ctx, time.Hour)
 	good := enrolltest.CSR(t, elliptic.P256())
 	for _, addr := range []string{"", "host", "h.example.com:0", "h.example.com:x", ":443", "bad host:443", "h_x.example.com:443", strings.Repeat("a", 64) + ".com:443"} {
-		if _, _, err := f.uc.Redeem(ctx, token, good, addr); !errors.Is(err, hubjoin.ErrInvalidAddr) {
+		if _, err := f.uc.Redeem(ctx, token, good, addr); !errors.Is(err, hubjoin.ErrInvalidAddr) {
 			t.Errorf("addr %q = %v", addr, err)
 		}
 	}
 	for _, csr := range []string{"", "garbage", enrolltest.CSR(t, elliptic.P384())} {
-		if _, _, err := f.uc.Redeem(ctx, token, csr, "h.example.com:443"); !errors.Is(err, hubjoin.ErrInvalidCSR) {
+		if _, err := f.uc.Redeem(ctx, token, csr, "h.example.com:443"); !errors.Is(err, hubjoin.ErrInvalidCSR) {
 			t.Errorf("csr = %v", err)
 		}
 	}
 	// None of that spent the token; an IP address is a valid host too.
-	if _, _, err := f.uc.Redeem(ctx, token, good, "203.0.113.7:443"); err != nil {
+	if _, err := f.uc.Redeem(ctx, token, good, "203.0.113.7:443"); err != nil {
 		t.Fatalf("token was spent: %v", err)
 	}
 }
@@ -207,17 +212,17 @@ func TestRedeemRefusesLiveHubID(t *testing.T) {
 	csr := enrolltest.CSR(t, elliptic.P256())
 	f.live.hubs = []model.Hub{{ID: "hub-01.example.com", Accepting: true}}
 	for _, addr := range []string{"hub-01.example.com:443", "HUB-01.Example.com:50051"} {
-		if _, _, err := f.uc.Redeem(ctx, token, csr, addr); !errors.Is(err, hubjoin.ErrHubLive) || !errors.Is(err, hubjoin.ErrInvalidAddr) {
+		if _, err := f.uc.Redeem(ctx, token, csr, addr); !errors.Is(err, hubjoin.ErrHubLive) || !errors.Is(err, hubjoin.ErrInvalidAddr) {
 			t.Fatalf("%s: err = %v, want ErrHubLive (an ErrInvalidAddr)", addr, err)
 		}
 	}
 	// A list that cannot be read refuses too, without spending the token.
 	f.live.err = errors.New("redis down")
-	if _, _, err := f.uc.Redeem(ctx, token, csr, "hub-02.example.com:443"); err == nil || errors.Is(err, hubjoin.ErrInvalidToken) {
+	if _, err := f.uc.Redeem(ctx, token, csr, "hub-02.example.com:443"); err == nil || errors.Is(err, hubjoin.ErrInvalidToken) {
 		t.Fatalf("list error: err = %v", err)
 	}
 	f.live.err = nil
-	if _, _, err := f.uc.Redeem(ctx, token, csr, "hub-02.example.com:443"); err != nil {
+	if _, err := f.uc.Redeem(ctx, token, csr, "hub-02.example.com:443"); err != nil {
 		t.Fatalf("token was spent: %v", err)
 	}
 }
@@ -227,11 +232,11 @@ func TestRedeemLowercasesHubID(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 	token, _, _ := f.uc.Issue(ctx, time.Hour)
-	certPEM, _, err := f.uc.Redeem(ctx, token, enrolltest.CSR(t, elliptic.P256()), "Hub-07.Example.COM:443")
+	j, err := f.uc.Redeem(ctx, token, enrolltest.CSR(t, elliptic.P256()), "Hub-07.Example.COM:443")
 	if err != nil {
 		t.Fatal(err)
 	}
-	block, _ := pem.Decode([]byte(certPEM))
+	block, _ := pem.Decode([]byte(j.CertPEM))
 	cert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
 		t.Fatal(err)
@@ -250,11 +255,11 @@ func TestRedeemTrustsTheCertificate(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		certPEM, _, err := f.uc.Redeem(ctx, token, enrolltest.CSR(t, elliptic.P256()), "Hub-01.example.com:443")
+		j, err := f.uc.Redeem(ctx, token, enrolltest.CSR(t, elliptic.P256()), "Hub-01.example.com:443")
 		if err != nil {
 			t.Fatal(err)
 		}
-		fp, err := certpkg.Fingerprint(certPEM)
+		fp, err := certpkg.Fingerprint(j.CertPEM)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -283,21 +288,70 @@ func (failingCerts) Trust(context.Context, string, string, time.Time) error {
 func TestRedeemFailsWhenTrustFails(t *testing.T) {
 	d := dbtest.Open(t)
 	repo, _ := hubtoken.New(d.Tx, d.Driver)
-	uc := hubjoin.New(repo, failingCerts{}, enrolltest.Signer(t), &liveHubs{}, nil)
+	uc := hubjoin.New(repo, failingCerts{}, &enrolltest.RedisUsers{}, enrolltest.Signer(t), &liveHubs{}, nil)
 	ctx := context.Background()
 	token, _, _ := uc.Issue(ctx, 0)
-	if _, _, err := uc.Redeem(ctx, token, enrolltest.CSR(t, elliptic.P256()), "h.example.com:443"); err == nil || !strings.Contains(err.Error(), "db down") {
+	if _, err := uc.Redeem(ctx, token, enrolltest.CSR(t, elliptic.P256()), "h.example.com:443"); err == nil || !strings.Contains(err.Error(), "db down") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestRedeemFailsWhenRedisUserFails(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	f.users.Err = errors.New("redis down")
+	token, _, _ := f.uc.Issue(ctx, 0)
+	j, err := f.uc.Redeem(ctx, token, enrolltest.CSR(t, elliptic.P256()), "h.example.com:443")
+	if err == nil || !strings.Contains(err.Error(), "redis down") || !strings.Contains(err.Error(), "token is spent") || j != (hubjoin.Joined{}) {
+		t.Fatalf("joined %+v, err = %v", j, err)
+	}
+	// The token is spent: a new one is needed.
+	f.users.Err = nil
+	if _, err := f.uc.Redeem(ctx, token, enrolltest.CSR(t, elliptic.P256()), "h.example.com:443"); !errors.Is(err, hubjoin.ErrInvalidToken) {
+		t.Fatalf("replay err = %v", err)
+	}
+}
+
+// Re-joining resets the user's password.
+func TestRedeemResetsTheRedisPassword(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	var pws []string
+	for range 2 {
+		token, _, _ := f.uc.Issue(ctx, 0)
+		j, err := f.uc.Redeem(ctx, token, enrolltest.CSR(t, elliptic.P256()), "h.example.com:443")
+		if err != nil {
+			t.Fatal(err)
+		}
+		pws = append(pws, j.RedisPassword)
+	}
+	if pws[0] == pws[1] || f.users.Password("h.example.com") != pws[1] {
+		t.Fatalf("passwords %v, current %q", pws, f.users.Password("h.example.com"))
+	}
+}
+
+func TestRedeemRefusedWithoutRedisUsers(t *testing.T) {
+	d := dbtest.Open(t)
+	repo, _ := hubtoken.New(d.Tx, d.Driver)
+	certs, _ := hubcert.New(d.Tx, d.Driver)
+	uc := hubjoin.New(repo, certs, nil, enrolltest.Signer(t), &liveHubs{}, nil)
+	ctx := context.Background()
+	token, _, _ := uc.Issue(ctx, 0)
+	if _, err := uc.Redeem(ctx, token, enrolltest.CSR(t, elliptic.P256()), "h.example.com:443"); err == nil {
+		t.Fatal("redeemed without a Redis user manager")
+	}
+	if got := dbtest.QueryString(t, d, `SELECT COUNT(*) FROM hub_join_tokens WHERE used_at IS NULL`); got != "1" {
+		t.Fatalf("unused tokens = %s", got)
 	}
 }
 
 func TestRedeemRefusedWithoutCertRegistry(t *testing.T) {
 	d := dbtest.Open(t)
 	repo, _ := hubtoken.New(d.Tx, d.Driver)
-	uc := hubjoin.New(repo, nil, enrolltest.Signer(t), &liveHubs{}, nil)
+	uc := hubjoin.New(repo, nil, &enrolltest.RedisUsers{}, enrolltest.Signer(t), &liveHubs{}, nil)
 	ctx := context.Background()
 	token, _, _ := uc.Issue(ctx, 0)
-	if _, _, err := uc.Redeem(ctx, token, enrolltest.CSR(t, elliptic.P256()), "h.example.com:443"); err == nil {
+	if _, err := uc.Redeem(ctx, token, enrolltest.CSR(t, elliptic.P256()), "h.example.com:443"); err == nil {
 		t.Fatal("redeemed without a certificate registry")
 	}
 	// The token was not spent.

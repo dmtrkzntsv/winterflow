@@ -11,6 +11,18 @@ import (
 	"winterflow/internal/infra/db/types"
 )
 
+const countActiveHubCertificatesByHub = `-- name: CountActiveHubCertificatesByHub :one
+SELECT COUNT(*) FROM hub_certificates
+WHERE hub_id = $1 AND retired_at IS NULL
+`
+
+func (q *Queries) CountActiveHubCertificatesByHub(ctx context.Context, hubID string) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countActiveHubCertificatesByHub, hubID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const getHubCertificate = `-- name: GetHubCertificate :one
 SELECT hub_id, retired_at FROM hub_certificates WHERE fingerprint = $1
 `

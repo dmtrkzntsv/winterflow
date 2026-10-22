@@ -20,6 +20,10 @@ WHERE hub_id = $2 AND retired_at IS NULL;
 UPDATE hub_certificates SET retired_at = $1
 WHERE fingerprint = $2 AND retired_at IS NULL;
 
+-- name: CountActiveHubCertificatesByHub :one
+SELECT COUNT(*) FROM hub_certificates
+WHERE hub_id = $1 AND retired_at IS NULL;
+
 -- name: ListActiveHubCertificates :many
 SELECT fingerprint FROM hub_certificates
 WHERE retired_at IS NULL

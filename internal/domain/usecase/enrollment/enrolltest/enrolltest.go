@@ -1,5 +1,5 @@
 // Package enrolltest holds the fixtures the enrollment HTTP tests share: a
-// real P-256 CSR, a CA-backed signer and a fixed hub picker.
+// real P-256 CSR, a CA-backed signer, a fixed hub picker and in-memory hub Redis users.
 package enrolltest
 
 import (
@@ -10,10 +10,13 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"winterflow/internal/domain/model"
+	"winterflow/internal/domain/port"
 	"winterflow/internal/infra/cert"
 	certpkg "winterflow/pkg/cert"
 )
@@ -64,3 +67,51 @@ type Pins struct {
 }
 
 func (p Pins) Active(context.Context) ([]string, error) { return p.Fingerprints, p.Err }
+
+// RedisUsers is an in-memory port.HubRedisUsers: Ensure gives each hub id
+// "hub:<id>" and a new password per call; Delete forgets it. Err, when set,
+// fails both.
+type RedisUsers struct {
+	mu      sync.Mutex
+	n       int
+	Err     error
+	Users   map[string]string // username → current password
+	Deleted []string          // hub ids, in Delete order
+}
+
+var _ port.HubRedisUsers = (*RedisUsers)(nil)
+
+// Ensure creates or resets the hub's user.
+func (r *RedisUsers) Ensure(_ context.Context, hubID string) (string, string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.Err != nil {
+		return "", "", r.Err
+	}
+	if r.Users == nil {
+		r.Users = map[string]string{}
+	}
+	r.n++
+	user, pass := "hub:"+hubID, fmt.Sprintf("pw-%s-%d", hubID, r.n)
+	r.Users[user] = pass
+	return user, pass, nil
+}
+
+// Delete removes the hub's user (a missing one is not an error).
+func (r *RedisUsers) Delete(_ context.Context, hubID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.Err != nil {
+		return r.Err
+	}
+	delete(r.Users, "hub:"+hubID)
+	r.Deleted = append(r.Deleted, hubID)
+	return nil
+}
+
+// Password is the hub's current password ("" when it has no user).
+func (r *RedisUsers) Password(hubID string) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.Users["hub:"+hubID]
+}

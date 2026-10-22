@@ -7556,9 +7556,15 @@ components:
           type: string
         certificate:
           type: string
+        redis_password:
+          type: string
+        redis_username:
+          type: string
       required:
       - certificate
       - ca_certificate
+      - redis_username
+      - redis_password
       type: object
     Error:
       properties:

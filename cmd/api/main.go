@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -10,7 +11,10 @@ import (
 	"syscall"
 	"time"
 	"winterflow/internal/app/web"
+	"winterflow/internal/domain/port"
 	"winterflow/internal/infra/bootstrap"
+	redisbus "winterflow/internal/infra/transport/redis/bus"
+	"winterflow/internal/infra/transport/redis/hubusers"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
 
@@ -22,9 +26,28 @@ func subcommands(cfg *config.ServerConfig) map[string]func(args []string, dbURL 
 	return map[string]func(args []string, dbURL string, log *logger.Logger, out io.Writer) error{
 		"hub-token": runHubToken,
 		"hub-trust": func(args []string, dbURL string, log *logger.Logger, out io.Writer) error {
-			return runHubTrust(args, dbURL, cfg.GetHubCACertPath(), log, out)
+			return runHubTrust(args, dbURL, cfg.GetHubCACertPath(), openHubUsers(cfg), log, out)
 		},
-		"hub-retire": runHubRetire,
+		"hub-retire": func(args []string, dbURL string, log *logger.Logger, out io.Writer) error {
+			return runHubRetire(args, dbURL, openHubUsers(cfg), log, out)
+		},
+	}
+}
+
+// openHubUsers connects to Redis with the API's settings (the admin user
+// that manages the hubs' users).
+func openHubUsers(cfg *config.ServerConfig) openUsersFunc {
+	return func(ctx context.Context) (port.HubRedisUsers, func(), error) {
+		rc, err := redisbus.NewRedisClient(cfg)
+		if err != nil {
+			return nil, nil, fmt.Errorf("redis configuration: %w", err)
+		}
+		if err := redisbus.Ping(ctx, rc); err != nil {
+			_ = rc.Close()
+			addr, _, _ := cfg.GetRedisCredentials()
+			return nil, nil, fmt.Errorf("connect to redis at %s: %w", addr, err)
+		}
+		return hubusers.New(rc), func() { _ = rc.Close() }, nil
 	}
 }
 

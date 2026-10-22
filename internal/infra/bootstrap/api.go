@@ -12,6 +12,7 @@ import (
 	"winterflow/internal/infra/transport/dispatch"
 	redisbus "winterflow/internal/infra/transport/redis/bus"
 	hubsreg "winterflow/internal/infra/transport/redis/hubs"
+	"winterflow/internal/infra/transport/redis/hubusers"
 	"winterflow/pkg/config"
 	"winterflow/pkg/logger"
 )
@@ -57,7 +58,9 @@ func BootstrapAPI(ctx context.Context, log *logger.Logger, cfg *config.ServerCon
 		log.Fatalf("load the CA: %v", err)
 	}
 	deps.Enrollment = enrollment.New(deps.EnrollmentRepository, signer, deps.HubPicker, deps.HubCertRepository, nil)
-	deps.HubJoin = hubjoin.New(deps.HubTokenRepository, deps.HubCertRepository, signer, registry, nil)
+	// Hubs join with a token; each gets its own Redis user, managed over
+	// the API's own (admin) connection.
+	deps.HubJoin = hubjoin.New(deps.HubTokenRepository, deps.HubCertRepository, hubusers.New(rc), signer, registry, nil)
 	deps.AgentHub = agenthub.New(servers, registry, deps.HubPicker, deps.HubCertRepository, log)
 	StartRollouts(ctx, deps)
 	StartCatalog(ctx, deps)

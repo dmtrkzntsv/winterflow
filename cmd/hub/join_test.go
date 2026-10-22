@@ -59,7 +59,10 @@ func (ca *testCA) sign(t *testing.T, pub *ecdsa.PublicKey) string {
 }
 
 func ok(w http.ResponseWriter, cert, ca string) {
-	_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]string{"certificate": cert, "ca_certificate": ca}})
+	_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]string{
+		"certificate": cert, "ca_certificate": ca,
+		"redis_username": "hub:hub-02.example.com", "redis_password": "s3cret-PW_x",
+	}})
 }
 
 func join(t *testing.T, url, dir, token string) error {
@@ -276,5 +279,71 @@ func TestRefusedRejoinKeepsExistingPair(t *testing.T) {
 	crt2, _ := os.ReadFile(filepath.Join(dir, "hub.crt"))
 	if !bytes.Equal(key1, key2) || !bytes.Equal(crt1, crt2) {
 		t.Fatal("a refused rejoin changed the working pair")
+	}
+}
+
+func joinEnv(t *testing.T, url, dir, envOut string, out *bytes.Buffer) error {
+	t.Helper()
+	t.Setenv("WINTERFLOW_HUB_TOKEN", "wfh_tok")
+	return runJoin([]string{"--api-url", url, "--public-addr", "hub-02.example.com:50051", "--cert-dir", dir, "--redis-env-out", envOut},
+		strings.NewReader(""), out)
+}
+
+func TestJoinWritesRedisEnv(t *testing.T) {
+	ca := newTestCA(t)
+	dir := t.TempDir()
+	envOut := filepath.Join(t.TempDir(), "redis.env")
+	var out bytes.Buffer
+	if err := joinEnv(t, signingServer(t, ca).URL, dir, envOut, &out); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(envOut)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "REDIS_USERNAME=hub:hub-02.example.com\nREDIS_PASSWORD=s3cret-PW_x\n" {
+		t.Fatalf("env file = %q", data)
+	}
+	if st, _ := os.Stat(envOut); st.Mode().Perm() != 0o600 {
+		t.Fatalf("env file mode %v", st.Mode().Perm())
+	}
+	if strings.Contains(out.String(), "s3cret") || !strings.Contains(out.String(), envOut) {
+		t.Fatalf("output = %q", out.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "hub.crt")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Without credentials in the answer, or with an unusable certificate,
+// nothing is written.
+func TestJoinRedisEnvNotWrittenOnFailure(t *testing.T) {
+	ca := newTestCA(t)
+	noCreds := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var b struct{ CSR string }
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		blk, _ := pem.Decode([]byte(b.CSR))
+		csr, _ := x509.ParseCertificateRequest(blk.Bytes)
+		_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]string{
+			"certificate": ca.sign(t, csr.PublicKey.(*ecdsa.PublicKey)), "ca_certificate": ca.pem,
+		}})
+	}))
+	defer noCreds.Close()
+	otherKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	mismatched := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ok(w, ca.sign(t, &otherKey.PublicKey), ca.pem)
+	}))
+	defer mismatched.Close()
+	for name, url := range map[string]string{"no credentials": noCreds.URL, "bad certificate": mismatched.URL} {
+		dir := t.TempDir()
+		envOut := filepath.Join(t.TempDir(), "redis.env")
+		if err := joinEnv(t, url, dir, envOut, &bytes.Buffer{}); err == nil {
+			t.Errorf("%s: join succeeded", name)
+		}
+		for _, f := range []string{envOut, filepath.Join(dir, "hub.crt"), filepath.Join(dir, "hub.key")} {
+			if _, err := os.Stat(f); !os.IsNotExist(err) {
+				t.Errorf("%s: %s written", name, f)
+			}
+		}
 	}
 }

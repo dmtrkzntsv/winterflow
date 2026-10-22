@@ -87,29 +87,34 @@ func TestTrustIdempotentAndRetiresSiblings(t *testing.T) {
 }
 
 func TestRetire(t *testing.T) {
-	r, _ := open(t)
+	r, d := open(t)
 	ctx := context.Background()
 	for _, c := range []struct{ hub, fp string }{{"hub-01", "aa"}, {"hub-02", "bb"}, {"hub-03", "cc"}} {
 		if err := r.Trust(ctx, c.hub, c.fp, now); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if n, err := r.Retire(ctx, "hub-01", "", now); err != nil || n != 1 {
-		t.Fatalf("by hub = %d, %v", n, err)
+	retire := func(hub, fp string, wantN int, wantOrphaned []string) {
+		t.Helper()
+		n, orphaned, err := r.Retire(ctx, hub, fp, now)
+		if err != nil || n != wantN || !reflect.DeepEqual(orphaned, wantOrphaned) {
+			t.Fatalf("Retire(%q, %q) = %d, %v, %v; want %d, %v", hub, fp, n, orphaned, err, wantN, wantOrphaned)
+		}
 	}
-	if n, err := r.Retire(ctx, "hub-01", "", now); err != nil || n != 0 {
-		t.Fatalf("again = %d, %v", n, err)
-	}
-	if n, err := r.Retire(ctx, "", "bb", now); err != nil || n != 1 {
-		t.Fatalf("by fingerprint = %d, %v", n, err)
-	}
-	if n, err := r.Retire(ctx, "", "zz", now); err != nil || n != 0 {
-		t.Fatalf("unknown = %d, %v", n, err)
-	}
-	if _, err := r.Retire(ctx, "hub-03", "cc", now); err == nil {
+	retire("hub-01", "", 1, []string{"hub-01"})
+	// Again: nothing retired, but the hub is still reported (a rerun
+	// finishes the cleanup).
+	retire("hub-01", "", 0, []string{"hub-01"})
+	retire("", "bb", 1, []string{"hub-02"})
+	retire("", "bb", 0, []string{"hub-02"})
+	retire("", "zz", 0, nil)
+	// A hub with another active certificate left is not orphaned.
+	dbtest.Exec(t, d, `INSERT INTO hub_certificates (fingerprint, hub_id, created_at) VALUES (?, ?, ?)`, "c2", "hub-03", now)
+	retire("", "c2", 1, nil)
+	if _, _, err := r.Retire(ctx, "hub-03", "cc", now); err == nil {
 		t.Fatal("both filters accepted")
 	}
-	if _, err := r.Retire(ctx, "", "", now); err == nil {
+	if _, _, err := r.Retire(ctx, "", "", now); err == nil {
 		t.Fatal("no filter accepted")
 	}
 	if got := active(t, r); !reflect.DeepEqual(got, []string{"cc"}) {

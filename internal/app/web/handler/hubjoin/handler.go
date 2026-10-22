@@ -17,7 +17,7 @@ const maxBody = 64 << 10
 
 // Joiner is the slice of *hubjoin.UseCase the route uses.
 type Joiner interface {
-	Redeem(ctx context.Context, token, csrPEM, publicAddr string) (certPEM, caPEM string, err error)
+	Redeem(ctx context.Context, token, csrPEM, publicAddr string) (hubjoin.Joined, error)
 }
 
 type Handler struct {
@@ -39,10 +39,13 @@ type EnrollRequest struct {
 	PublicAddr string `json:"public_addr"`
 }
 
-// EnrollResponse is the data of the route.
+// EnrollResponse is the data of the route: the hub's certificate, the CA,
+// and the Redis user the hub connects as (created or reset by this call).
 type EnrollResponse struct {
 	Certificate   string `json:"certificate"`
 	CACertificate string `json:"ca_certificate"`
+	RedisUsername string `json:"redis_username"`
+	RedisPassword string `json:"redis_password"`
 }
 
 // Enroll handles POST /api/v1/hub/enroll.
@@ -52,10 +55,13 @@ func (h *Handler) Enroll(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	cert, ca, err := h.uc.Redeem(r.Context(), req.Token, req.CSR, req.PublicAddr)
+	j, err := h.uc.Redeem(r.Context(), req.Token, req.CSR, req.PublicAddr)
 	switch {
 	case err == nil:
-		util.Success(w, "hub enrolled", EnrollResponse{Certificate: cert, CACertificate: ca})
+		util.Success(w, "hub enrolled", EnrollResponse{
+			Certificate: j.CertPEM, CACertificate: j.CAPEM,
+			RedisUsername: j.RedisUsername, RedisPassword: j.RedisPassword,
+		})
 	case errors.Is(err, hubjoin.ErrInvalidToken), errors.Is(err, hubjoin.ErrInvalidCSR), errors.Is(err, hubjoin.ErrInvalidAddr):
 		util.Error(w, err.Error(), nil)
 	default:

@@ -31,6 +31,7 @@ type querier interface {
 	RetireHubCertificatesByHub(ctx context.Context, db backend.DBTX, p retireHubParams) (int64, error)
 	RetireHubCertificateByFingerprint(ctx context.Context, db backend.DBTX, p retireFpParams) (int64, error)
 	ListActiveHubCertificates(ctx context.Context, db backend.DBTX) ([]string, error)
+	CountActiveHubCertificatesByHub(ctx context.Context, db backend.DBTX, hubID string) (int64, error)
 }
 
 // Repo is the hub certificates repository.
@@ -92,22 +93,56 @@ func (r *Repo) Trust(ctx context.Context, hubID, fingerprint string, now time.Ti
 	})
 }
 
-// Retire retires by hub id or by fingerprint (exactly one non-empty).
-func (r *Repo) Retire(ctx context.Context, hubID, fingerprint string, now time.Time) (int, error) {
+// Retire retires by hub id or by fingerprint (exactly one non-empty), in
+// one transaction, and reports the hub ids left with no active certificate.
+func (r *Repo) Retire(ctx context.Context, hubID, fingerprint string, now time.Time) (int, []string, error) {
+	if (hubID == "") == (fingerprint == "") {
+		return 0, nil, errors.New("give exactly one of hub id and fingerprint")
+	}
 	at := types.DateTime(now)
 	var (
-		n   int64
-		err error
+		n        int64
+		orphaned []string
 	)
-	switch {
-	case hubID != "" && fingerprint == "":
-		n, err = r.q.RetireHubCertificatesByHub(ctx, r.tx.Querier(ctx), retireHubParams{RetiredAt: &at, HubID: hubID})
-	case fingerprint != "" && hubID == "":
-		n, err = r.q.RetireHubCertificateByFingerprint(ctx, r.tx.Querier(ctx), retireFpParams{RetiredAt: &at, Fingerprint: fingerprint})
-	default:
-		return 0, errors.New("give exactly one of hub id and fingerprint")
+	err := r.tx.WithTx(ctx, func(ctx context.Context) error {
+		db := r.tx.Querier(ctx)
+		var err error
+		if hubID != "" {
+			if err := r.q.LockHubCertificates(ctx, db, hubID); err != nil {
+				return fmt.Errorf("lock hub certificates: %w", err)
+			}
+			if n, err = r.q.RetireHubCertificatesByHub(ctx, db, retireHubParams{RetiredAt: &at, HubID: hubID}); err != nil {
+				return err
+			}
+			orphaned = []string{hubID}
+			return nil
+		}
+		row, err := r.q.GetHubCertificate(ctx, db, fingerprint)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil // an unknown fingerprint: nothing to retire
+		}
+		if err != nil {
+			return fmt.Errorf("read hub certificate: %w", err)
+		}
+		if err := r.q.LockHubCertificates(ctx, db, row.HubID); err != nil {
+			return fmt.Errorf("lock hub certificates: %w", err)
+		}
+		if n, err = r.q.RetireHubCertificateByFingerprint(ctx, db, retireFpParams{RetiredAt: &at, Fingerprint: fingerprint}); err != nil {
+			return err
+		}
+		left, err := r.q.CountActiveHubCertificatesByHub(ctx, db, row.HubID)
+		if err != nil {
+			return fmt.Errorf("count active hub certificates: %w", err)
+		}
+		if left == 0 {
+			orphaned = []string{row.HubID}
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, nil, err
 	}
-	return int(n), err
+	return int(n), orphaned, nil
 }
 
 // Active lists the active fingerprints, sorted; never nil.

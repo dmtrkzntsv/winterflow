@@ -69,21 +69,31 @@ var _ CertTruster = port.HubCertRepository(nil)
 type UseCase struct {
 	repo   port.HubTokenRepository
 	certs  CertTruster
+	users  port.HubRedisUsers
 	signer Signer
 	live   HubLister
 	now    func() time.Time
 }
 
+// Joined is what a redeemed token gives the new hub: its certificate, the
+// CA, and the Redis user it connects as (the password is never logged).
+type Joined struct {
+	CertPEM       string
+	CAPEM         string
+	RedisUsername string
+	RedisPassword string
+}
+
 // New builds the use case. certs records each issued certificate as
-// trusted, and live is the hub list Redeem checks the new hub's id
-// against; both are nil only where nothing is redeemed (the hub-token
-// subcommand: Redeem then refuses every request). A nil now means
-// time.Now.
-func New(repo port.HubTokenRepository, certs CertTruster, signer Signer, live HubLister, now func() time.Time) *UseCase {
+// trusted, users creates the hub's Redis user, and live is the hub list
+// Redeem checks the new hub's id against; all three are nil only where
+// nothing is redeemed (the hub-token subcommand: Redeem then refuses every
+// request). A nil now means time.Now.
+func New(repo port.HubTokenRepository, certs CertTruster, users port.HubRedisUsers, signer Signer, live HubLister, now func() time.Time) *UseCase {
 	if now == nil {
 		now = time.Now
 	}
-	return &UseCase{repo: repo, certs: certs, signer: signer, live: live, now: now}
+	return &UseCase{repo: repo, certs: certs, users: users, signer: signer, live: live, now: now}
 }
 
 func hashToken(t string) string {
@@ -172,40 +182,48 @@ func validateCSR(csrPEM string) error {
 // publicAddr, which is also the hub id. The address and CSR are checked,
 // and the id refused while a live hub uses it (ErrHubLive), before the
 // token is spent, so a typo does not burn it. The signed certificate is
-// recorded as trusted (retiring the hub id's older ones) before it is
-// returned; when that fails the token is already spent and the hub needs
-// a new one.
-func (u *UseCase) Redeem(ctx context.Context, token, csrPEM, publicAddr string) (certPEM, caPEM string, err error) {
+// recorded as trusted (retiring the hub id's older ones), then the hub's
+// Redis user is created or reset (a new password; the old one's sessions
+// are disconnected), before anything is returned; when either fails the
+// token is already spent and the hub needs a new one.
+func (u *UseCase) Redeem(ctx context.Context, token, csrPEM, publicAddr string) (Joined, error) {
 	if u.certs == nil {
-		return "", "", errors.New("no hub certificate registry to record the certificate in")
+		return Joined{}, errors.New("no hub certificate registry to record the certificate in")
+	}
+	if u.users == nil {
+		return Joined{}, errors.New("no Redis user manager to create the hub's user with")
 	}
 	hubID, err := hubHost(publicAddr)
 	if err != nil {
-		return "", "", err
+		return Joined{}, err
 	}
 	if err := validateCSR(csrPEM); err != nil {
-		return "", "", err
+		return Joined{}, err
 	}
 	if err := u.checkNotLive(ctx, hubID); err != nil {
-		return "", "", err
+		return Joined{}, err
 	}
 	ok, err := u.repo.Consume(ctx, hashToken(token), hubID, u.now())
 	if err != nil {
-		return "", "", fmt.Errorf("redeem hub token: %w", err)
+		return Joined{}, fmt.Errorf("redeem hub token: %w", err)
 	}
 	if !ok {
-		return "", "", ErrInvalidToken
+		return Joined{}, ErrInvalidToken
 	}
-	certPEM, _, err = u.signer.SignHub(csrPEM, hubID, []string{hubID})
+	certPEM, _, err := u.signer.SignHub(csrPEM, hubID, []string{hubID})
 	if err != nil {
-		return "", "", fmt.Errorf("sign hub certificate: %w", err)
+		return Joined{}, fmt.Errorf("sign hub certificate: %w", err)
 	}
 	fp, err := certpkg.Fingerprint(certPEM)
 	if err != nil {
-		return "", "", fmt.Errorf("fingerprint hub certificate: %w", err)
+		return Joined{}, fmt.Errorf("fingerprint hub certificate: %w", err)
 	}
 	if err := u.certs.Trust(ctx, hubID, fp, u.now()); err != nil {
-		return "", "", fmt.Errorf("trust hub certificate (the join token is spent): %w", err)
+		return Joined{}, fmt.Errorf("trust hub certificate (the join token is spent): %w", err)
 	}
-	return certPEM, u.signer.CACertPEM(), nil
+	user, pass, err := u.users.Ensure(ctx, hubID)
+	if err != nil {
+		return Joined{}, fmt.Errorf("create the hub's Redis user (the join token is spent): %w", err)
+	}
+	return Joined{CertPEM: certPEM, CAPEM: u.signer.CACertPEM(), RedisUsername: user, RedisPassword: pass}, nil
 }

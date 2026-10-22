@@ -26,8 +26,12 @@ type HubCertRepository interface {
 	Trust(ctx context.Context, hubID, fingerprint string, now time.Time) error
 	// Retire retires the active certificates of hubID, or the one with
 	// fingerprint (exactly one of the two is non-empty), and returns how
-	// many it retired.
-	Retire(ctx context.Context, hubID, fingerprint string, now time.Time) (int, error)
+	// many it retired and the hub ids it concerns that have no active
+	// certificate left (by hub id: hubID itself; by fingerprint: the
+	// certificate's hub id, when it was its last active one). Both are
+	// reported even when nothing was retired this time, so a rerun can
+	// finish cleaning up after a hub whose certificates were retired before.
+	Retire(ctx context.Context, hubID, fingerprint string, now time.Time) (retired int, orphaned []string, err error)
 	// Active lists the active fingerprints, sorted.
 	Active(ctx context.Context) ([]string, error)
 }

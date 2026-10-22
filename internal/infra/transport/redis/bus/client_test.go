@@ -161,3 +161,28 @@ func TestNewRedisClientMissingCA(t *testing.T) {
 	}
 	rc.Close()
 }
+
+func TestNewRedisClientUsername(t *testing.T) {
+	t.Setenv("REDIS_ADDR", "127.0.0.1:6380")
+	t.Setenv("REDIS_TLS", "false")
+	t.Setenv("REDIS_PASSWORD", "pw")
+	t.Setenv("REDIS_USERNAME", "hub:hub-01.winterflow.dev")
+	rc, err := NewRedisClient(config.NewServerConfig("distributed"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc.Close()
+	if o := rc.Options(); o.Username != "hub:hub-01.winterflow.dev" || o.Password != "pw" {
+		t.Fatalf("options: username %q password %q", o.Username, o.Password)
+	}
+
+	t.Setenv("REDIS_USERNAME", "")
+	rc2, err := NewRedisClient(config.NewServerConfig("distributed"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc2.Close()
+	if u := rc2.Options().Username; u != "" {
+		t.Fatalf("unset REDIS_USERNAME: username %q, want the default user", u)
+	}
+}

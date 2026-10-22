@@ -3,7 +3,7 @@ BIN_DIR := bin
 STANDALONE_BIN := $(BIN_DIR)/standalone
 API_BIN := $(BIN_DIR)/api
 
-.PHONY: build lint standalone api web web-build release-binaries cdn-upload third-party-licenses test web-test cover diffcov openapi test-pg sqlc sqlc-check
+.PHONY: build lint standalone api web web-build release-binaries cdn-upload third-party-licenses test web-test cover diffcov openapi test-pg test-redis sqlc sqlc-check
 
 # Release build: bundle the SPA first so go:embed picks up a fresh web/dist,
 # then compile. The binaries are fully self-contained (API + web UI) and
@@ -112,6 +112,13 @@ test:
 # make test-pg TEST_PG_ARGS='-run TestParity -v'
 test-pg:
 	GO=$(GO) bash scripts/test-pg.sh $(TEST_PG_ARGS)
+
+# The Redis packages, the per-hub ACL user integration tests included,
+# against a throwaway redis:8 container with an aclfile (Docker). Plain
+# `go test ./...` skips the integration tests. Extra go test flags:
+# make test-redis TEST_REDIS_ARGS='-run TestIntegration -v'
+test-redis:
+	GO=$(GO) bash scripts/test-redis.sh $(TEST_REDIS_ARGS)
 
 # Web unit tests (Vitest) with coverage into web/coverage/lcov.info.
 web-test:

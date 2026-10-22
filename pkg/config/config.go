@@ -151,6 +151,13 @@ func (c *ServerConfig) GetRedisCredentials() (addr, pass string, db int) {
 	return addr, pass, db
 }
 
+// GetRedisUsername is the Redis ACL user to connect as (REDIS_USERNAME);
+// empty means the default user. A hub connects as its own user,
+// hub:<hub_id>, created by the API when the hub enrolls.
+func (c *ServerConfig) GetRedisUsername() string {
+	return os.Getenv("REDIS_USERNAME")
+}
+
 // GetRedisTLS reports whether Redis connections use TLS. REDIS_TLS wins;
 // otherwise on for distributed and off for standalone (which never builds a
 // Redis client anyway).

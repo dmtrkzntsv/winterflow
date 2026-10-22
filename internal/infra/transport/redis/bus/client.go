@@ -14,13 +14,13 @@ import (
 )
 
 // NewRedisClient builds the one Redis client every process uses (API, hub,
-// the hub registry). With REDIS_TLS on (default in distributed) it speaks
+// the hub registry), as REDIS_USERNAME (empty: the default user). With REDIS_TLS on (default in distributed) it speaks
 // TLS 1.2+ and verifies the server against REDIS_CA_CERT_PATH; a missing or
 // unparsable CA file is an error rather than a silent fallback to the system
 // roots or to plaintext.
 func NewRedisClient(cfg *config.ServerConfig) (*redis.Client, error) {
 	addr, pass, db := cfg.GetRedisCredentials()
-	opts := &redis.Options{Addr: addr, Password: pass, DB: db}
+	opts := &redis.Options{Addr: addr, Username: cfg.GetRedisUsername(), Password: pass, DB: db}
 	if cfg.GetRedisTLS() {
 		host, _, err := net.SplitHostPort(addr)
 		if err != nil {

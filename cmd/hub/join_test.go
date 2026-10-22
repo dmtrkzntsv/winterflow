@@ -213,14 +213,68 @@ func TestJoinNeedsToken(t *testing.T) {
 	}
 }
 
-func TestJoinKeepsExistingKey(t *testing.T) {
+// signingServer answers every join with a certificate for the CSR's key.
+func signingServer(t *testing.T, ca *testCA) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var b struct{ CSR string }
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		blk, _ := pem.Decode([]byte(b.CSR))
+		csr, _ := x509.ParseCertificateRequest(blk.Bytes)
+		ok(w, ca.sign(t, csr.PublicKey.(*ecdsa.PublicKey)), ca.pem)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestRejoinReplacesKeyAndCertificate(t *testing.T) {
+	ca := newTestCA(t)
+	srv := signingServer(t, ca)
 	dir := t.TempDir()
-	key, err := loadOrCreateKey(filepath.Join(dir, "hub.key"))
-	if err != nil {
+	if err := join(t, srv.URL, dir, "wfh_one"); err != nil {
 		t.Fatal(err)
 	}
-	again, err := loadOrCreateKey(filepath.Join(dir, "hub.key"))
-	if err != nil || !again.Equal(key) {
-		t.Fatal("existing key replaced")
+	key1, _ := os.ReadFile(filepath.Join(dir, "hub.key"))
+	crt1, _ := os.ReadFile(filepath.Join(dir, "hub.crt"))
+	if err := join(t, srv.URL, dir, "wfh_two"); err != nil {
+		t.Fatal(err)
+	}
+	key2, _ := os.ReadFile(filepath.Join(dir, "hub.key"))
+	crt2, _ := os.ReadFile(filepath.Join(dir, "hub.crt"))
+	if bytes.Equal(key1, key2) || bytes.Equal(crt1, crt2) {
+		t.Fatal("a rejoin kept the old key or certificate")
+	}
+	if err := verifyJoin(string(crt2), ca.pem, key2); err != nil {
+		t.Fatalf("new pair: %v", err)
+	}
+	if st, _ := os.Stat(filepath.Join(dir, "hub.key")); st.Mode().Perm() != 0o600 {
+		t.Fatalf("key mode %v", st.Mode().Perm())
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 3 {
+		t.Fatalf("dir holds %d entries, want hub.key, hub.crt, ca.crt only", len(entries))
+	}
+}
+
+func TestRefusedRejoinKeepsExistingPair(t *testing.T) {
+	ca := newTestCA(t)
+	dir := t.TempDir()
+	if err := join(t, signingServer(t, ca).URL, dir, "wfh_one"); err != nil {
+		t.Fatal(err)
+	}
+	key1, _ := os.ReadFile(filepath.Join(dir, "hub.key"))
+	crt1, _ := os.ReadFile(filepath.Join(dir, "hub.crt"))
+	refuse := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"success":false,"message":"invalid or expired token"}`))
+	}))
+	defer refuse.Close()
+	if err := join(t, refuse.URL, dir, "wfh_bad"); err == nil {
+		t.Fatal("refused join succeeded")
+	}
+	key2, _ := os.ReadFile(filepath.Join(dir, "hub.key"))
+	crt2, _ := os.ReadFile(filepath.Join(dir, "hub.crt"))
+	if !bytes.Equal(key1, key2) || !bytes.Equal(crt1, crt2) {
+		t.Fatal("a refused rejoin changed the working pair")
 	}
 }

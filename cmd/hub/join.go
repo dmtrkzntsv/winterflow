@@ -47,10 +47,14 @@ func joinFail(code int, format string, a ...any) error {
 const joinTimeout = 30 * time.Second
 
 // runJoin is the hidden `join` subcommand the hub installer calls. It makes
-// (or keeps) the hub's P-256 key in --cert-dir, redeems the one-time token
-// (read from the WINTERFLOW_HUB_TOKEN variable, else the first line of in) at
-// the API, checks that the returned certificate matches the key and chains
-// to the returned CA, and stores ca.crt then hub.crt (written last).
+// a new P-256 key, redeems the one-time token (read from the
+// WINTERFLOW_HUB_TOKEN variable, else the first line of in) at the API,
+// checks that the returned certificate matches the key and chains to the
+// returned CA, and only then stores ca.crt, hub.key and hub.crt (written
+// last), replacing those of an earlier join: a rejoin (a leaked key, a
+// certificate from before the hub marker) always gets a new key, and the
+// control plane retires the hub's older certificates. A refused or failed
+// join leaves the existing files as they were.
 func runJoin(args []string, in io.Reader, out io.Writer) error {
 	fs := flag.NewFlagSet("join", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -80,11 +84,15 @@ func runJoin(args []string, in io.Reader, out io.Writer) error {
 		return errors.New("join: no token (stdin or WINTERFLOW_HUB_TOKEN)")
 	}
 
-	keyPath := filepath.Join(*dir, "hub.key")
-	key, err := loadOrCreateKey(keyPath)
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return err
 	}
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	if err != nil {
+		return err
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER})
 	der, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
 		Subject: pkix.Name{CommonName: host},
 	}, key)
@@ -97,13 +105,20 @@ func runJoin(args []string, in io.Reader, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err := verifyJoin(certPEM, caPEM, keyPath); err != nil {
+	if err := verifyJoin(certPEM, caPEM, keyPEM); err != nil {
 		return joinFail(exitOther, "the control plane's certificate is unusable: %v", err)
 	}
-	if err := writeAtomic(filepath.Join(*dir, "ca.crt"), []byte(caPEM)); err != nil {
+	if err := os.MkdirAll(*dir, 0o750); err != nil {
 		return err
 	}
-	if err := writeAtomic(filepath.Join(*dir, "hub.crt"), []byte(certPEM)); err != nil {
+	if err := writeAtomic(filepath.Join(*dir, "ca.crt"), []byte(caPEM), 0o644); err != nil {
+		return err
+	}
+	// The key and the certificate replace the old pair back to back.
+	if err := writeAtomic(filepath.Join(*dir, "hub.key"), keyPEM, 0o600); err != nil {
+		return err
+	}
+	if err := writeAtomic(filepath.Join(*dir, "hub.crt"), []byte(certPEM), 0o644); err != nil {
 		return err
 	}
 	_, err = fmt.Fprintf(out, "joined: certificate for %s stored in %s\n", host, *dir)
@@ -164,11 +179,7 @@ func postJoin(endpoint, token, csr, addr string) (cert, ca string, err error) {
 }
 
 // verifyJoin checks the certificate parses, matches the key and chains to the CA.
-func verifyJoin(certPEM, caPEM, keyPath string) error {
-	keyPEM, err := os.ReadFile(keyPath)
-	if err != nil {
-		return err
-	}
+func verifyJoin(certPEM, caPEM string, keyPEM []byte) error {
 	pair, err := tls.X509KeyPair([]byte(certPEM), keyPEM)
 	if err != nil {
 		return err
@@ -191,8 +202,8 @@ func verifyJoin(certPEM, caPEM, keyPath string) error {
 	return err
 }
 
-// writeAtomic writes a world-readable file by renaming a temp file in place.
-func writeAtomic(path string, data []byte) error {
+// writeAtomic writes a file with mode by renaming a temp file in place.
+func writeAtomic(path string, data []byte, mode os.FileMode) error {
 	tmp, err := os.CreateTemp(filepath.Dir(path), ".join-*")
 	if err != nil {
 		return err
@@ -205,47 +216,8 @@ func writeAtomic(path string, data []byte) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
+	if err := os.Chmod(tmp.Name(), mode); err != nil {
 		return err
 	}
 	return os.Rename(tmp.Name(), path)
-}
-
-func loadOrCreateKey(path string) (*ecdsa.PrivateKey, error) {
-	if b, err := os.ReadFile(path); err == nil {
-		block, _ := pem.Decode(b)
-		if block == nil {
-			return nil, fmt.Errorf("%s is not a PEM file", path)
-		}
-		key, err := x509.ParseECPrivateKey(block.Bytes)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", path, err)
-		}
-		if key.Curve != elliptic.P256() {
-			return nil, fmt.Errorf("%s: expected a P-256 key", path)
-		}
-		return key, nil
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return nil, err
-	}
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return nil, err
-	}
-	der, err := x509.MarshalECPrivateKey(key)
-	if err != nil {
-		return nil, err
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
-		return nil, err
-	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return nil, err
-	}
-	if err := pem.Encode(f, &pem.Block{Type: "EC PRIVATE KEY", Bytes: der}); err != nil {
-		_ = f.Close()
-		return nil, err
-	}
-	return key, f.Close()
 }

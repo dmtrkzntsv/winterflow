@@ -40,6 +40,14 @@ ADDR="hub-02.example.com:50051"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
+# fake_pem BODY -> a PEM block whose decoded bytes are BODY (the installer
+# only looks for the winterflow-hub: URI in them).
+fake_pem() {
+    printf -- '-----BEGIN CERTIFICATE-----\n%s\n-----END CERTIFICATE-----\n' "$(printf '%s' "$1" | base64 -w 64)"
+}
+MARKED_PEM="$(fake_pem "0..URI winterflow-hub:hub-kept.example.com..")"
+UNMARKED_PEM="$(fake_pem "0..DNS hub-kept.example.com..")"
+
 # new_root NAME OS_ID -> a scratch install root with /etc/os-release.
 new_root() {
     local r="$tmp/$1"
@@ -174,7 +182,8 @@ assert_contains "unit: bind capability on a low port" "$(dry --token "$TOKEN" --
 
 rerun="$(new_root rerun debian)"
 mkdir -p "$rerun/etc/winterflow" "$rerun/var/lib/winterflow-hub/certs"
-for f in hub.crt hub.key ca.crt; do echo "$f" > "$rerun/var/lib/winterflow-hub/certs/$f"; done
+for f in hub.key ca.crt; do echo "$f" > "$rerun/var/lib/winterflow-hub/certs/$f"; done
+printf '%s\n' "$MARKED_PEM" > "$rerun/var/lib/winterflow-hub/certs/hub.crt"
 cat > "$rerun/etc/winterflow/hub.env" <<EOF
 LOG_LEVEL=info
 HUB_PUBLIC_ADDR=hub-kept.example.com:50052
@@ -205,6 +214,25 @@ WF_INSTALL_ROOT="$rerun" bash "$SCRIPT" --dry-run --public-addr other.example.co
     && fail "rerun: changing the public host refused" "exit 0" || pass "rerun: changing the public host refused"
 out_redis="$(WF_INSTALL_ROOT="$rerun" bash "$SCRIPT" --dry-run --redis-url "rediss://:newpw123456@new-redis.example.com:6380" 2>&1)"
 assert_contains "rerun: --redis-url overrides" "$out_redis" "REDIS_ADDR=new-redis.example.com:6380"
+
+# --- rejoin -------------------------------------------------------------------
+
+out_rejoin="$(WF_INSTALL_ROOT="$rerun" bash "$SCRIPT" --dry-run --token "$TOKEN" 2>&1)" \
+    && pass "rejoin: a rerun with a token runs" || fail "rejoin: a rerun with a token runs" "$out_rejoin"
+out_rejoin="${out_rejoin//$rerun/}"
+assert_contains "rejoin: says the pair is replaced" "$(section "$out_rejoin" plan)" "rejoin: a new hub.key and hub.crt replace the old pair"
+assert_contains "rejoin: join step" "$(section "$out_rejoin" plan)" "winterflow-hub join --api-url"
+assert_not_contains "rejoin: token never printed" "$out_rejoin" "$TOKEN"
+o="$(WINTERFLOW_HUB_TOKEN="$TOKEN" WF_INSTALL_ROOT="$rerun" bash "$SCRIPT" --dry-run 2>&1)"
+assert_contains "rejoin: token from the environment" "$(section "$o" plan)" "rejoin:"
+printf '%s\n' "$UNMARKED_PEM" > "$rerun/var/lib/winterflow-hub/certs/hub.crt"
+out_old="$(WF_INSTALL_ROOT="$rerun" bash "$SCRIPT" --dry-run 2>&1)" \
+    && fail "rejoin: a certificate without the hub URI needs a token" "exit 0" || pass "rejoin: a certificate without the hub URI needs a token"
+assert_contains "rejoin: says a token is required to reissue" "$out_old" "a join token is required to reissue it"
+out_old="$(WF_INSTALL_ROOT="$rerun" bash "$SCRIPT" --dry-run --token "$TOKEN" 2>&1)" \
+    && pass "rejoin: a certificate without the hub URI rejoins with a token" || fail "rejoin: a certificate without the hub URI rejoins with a token" "$out_old"
+assert_contains "rejoin: unmarked certificate reissued" "$(section "$out_old" plan)" "rejoin:"
+printf '%s\n' "$MARKED_PEM" > "$rerun/var/lib/winterflow-hub/certs/hub.crt"
 
 # --- uninstall ----------------------------------------------------------------
 
@@ -267,10 +295,11 @@ echo "\$*" >> "$r/join-args"
 cat > "$r/join-stdin"
 if [ -f "$r/join-exit" ]; then echo "the control plane refused the join: invalid or expired token" >&2; exit "\$(cat "$r/join-exit")"; fi
 while [ \$# -gt 0 ]; do case "\$1" in --cert-dir) dir="\$2"; shift 2 ;; *) shift ;; esac; done
-echo "private key" > "\$dir/hub.key"; chmod 600 "\$dir/hub.key"
-echo HUBCERT > "\$dir/hub.crt"; echo CACERT > "\$dir/ca.crt"
+echo "private key \$\$" > "\$dir/hub.key"; chmod 600 "\$dir/hub.key"
+cat "$r/hub-pem" > "\$dir/hub.crt"; echo CACERT > "\$dir/ca.crt"
 echo "joined: certificate stored"
 STUB
+        printf '%s\n' "$MARKED_PEM" > "$r/hub-pem"
         (cd "$r/r2" && sha256sum winterflow-hub-linux-amd64 > SHA256SUMS)
         chmod +x "$bin"/*
         mkdir -p "$r/etc" "$r/usr/local/bin" "$r/etc/systemd/system"
@@ -289,7 +318,7 @@ STUB
     run_hub "$r1" "${join_args[@]}"
     [ "$RUN_STATUS" -eq 0 ] && pass "real run: installer succeeds" || fail "real run: installer succeeds" "status $RUN_STATUS: $RUN_OUT"
     cd1="$r1/var/lib/winterflow-hub/certs"
-    assert_contains "real run: hub.crt stored" "$(cat "$cd1/hub.crt" 2>/dev/null)" "HUBCERT"
+    assert_contains "real run: hub.crt stored" "$(cat "$cd1/hub.crt" 2>/dev/null)" "BEGIN CERTIFICATE"
     assert_contains "real run: ca.crt stored" "$(cat "$cd1/ca.crt" 2>/dev/null)" "CACERT"
     [ "$(stat -c %a "$cd1/hub.key")" = 640 ] && pass "real run: hub.key 0640" || fail "real run: hub.key 0640" "$(stat -c %a "$cd1/hub.key")"
     [ "$(stat -c %a "$cd1")" = 750 ] && pass "real run: cert dir 0750" || fail "real run: cert dir 0750" "$(stat -c %a "$cd1")"
@@ -316,8 +345,29 @@ STUB
     assert_contains "rerun: capacity overridden" "$(cat "$r1/etc/winterflow/hub.env")" "HUB_CAPACITY=77"
     assert_contains "rerun: redis password kept" "$(cat "$r1/etc/winterflow/hub.env")" "REDIS_PASSWORD=${REDIS_PW}"
     assert_contains "rerun: addr kept" "$(cat "$r1/etc/winterflow/hub.env")" "HUB_PUBLIC_ADDR=${ADDR}"
-    assert_contains "rerun: certificate kept" "$(cat "$cd1/hub.crt")" "HUBCERT"
+    assert_contains "rerun: certificate kept" "$(cat "$cd1/hub.crt")" "BEGIN CERTIFICATE"
     assert_contains "rerun: service restarted" "$(cat "$r1/calls")" "systemctl restart winterflow-hub"
+
+    # Rerun with a token: joins again, a new key replaces the old one.
+    key_before="$(cat "$cd1/hub.key")"; rm -f "$r1/join-args" "$r1/join-stdin"
+    run_hub "$r1" --token "$TOKEN"
+    [ "$RUN_STATUS" -eq 0 ] && pass "rejoin: installer succeeds" || fail "rejoin: installer succeeds" "status $RUN_STATUS: $RUN_OUT"
+    [ -e "$r1/join-args" ] && pass "rejoin: join runs" || fail "rejoin: join runs" "no join"
+    assert_contains "rejoin: token on stdin" "$(cat "$r1/join-stdin" 2>/dev/null)" "$TOKEN"
+    [ "$(cat "$cd1/hub.key")" != "$key_before" ] && pass "rejoin: new key" || fail "rejoin: new key" "key kept"
+    [ "$(stat -c %a "$cd1/hub.key")" = 640 ] && pass "rejoin: hub.key 0640" || fail "rejoin: hub.key 0640" "$(stat -c %a "$cd1/hub.key")"
+    assert_not_contains "rejoin: token not in the output" "$RUN_OUT" "$TOKEN"
+
+    # A certificate from before the hub marker: a rerun without a token stops
+    # before anything changes; with one it is reissued.
+    printf '%s\n' "$UNMARKED_PEM" > "$cd1/hub.crt"; : > "$r1/calls"; rm -f "$r1/join-args"
+    run_hub "$r1"
+    [ "$RUN_STATUS" -ne 0 ] && pass "unmarked certificate: rerun without a token refused" || fail "unmarked certificate: rerun without a token refused" "status 0"
+    assert_contains "unmarked certificate: asks for a token" "$RUN_OUT" "a join token is required to reissue it"
+    [ ! -s "$r1/calls" ] && [ ! -e "$r1/join-args" ] && pass "unmarked certificate: nothing changed" || fail "unmarked certificate: nothing changed" "$(cat "$r1/calls")"
+    run_hub "$r1" --token "$TOKEN"
+    [ "$RUN_STATUS" -eq 0 ] && [ -e "$r1/join-args" ] && pass "unmarked certificate: reissued with a token" || fail "unmarked certificate: reissued with a token" "status $RUN_STATUS: $RUN_OUT"
+    assert_contains "unmarked certificate: marked one stored" "$(cat "$cd1/hub.crt")" "$(printf '%s\n' "$MARKED_PEM" | sed -n 2p)"
 
     # Real uninstall: unit and binary go, certs and env stay.
     : > "$r1/calls"

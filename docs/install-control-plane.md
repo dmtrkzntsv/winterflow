@@ -85,9 +85,13 @@ certificate (the CA is kept). Pass `--version vYYMMDD.N` to pin a release.
 Rerun `install-control-plane.sh` and every `install-hub.sh` before agents
 update. Hub certificates now carry a `winterflow-hub:<id>` URI name, which
 `pki` and `join` add when they reissue the certificate; upgraded agents refuse
-a hub certificate without it. The installer also records the control plane's
-hub certificate as trusted (`winterflow-api hub-trust`). An agent's
-`hub.json` overrides later `HUB_HOST` edits in `agent.env`.
+a hub certificate without it. The control-plane installer reissues its own
+hub's certificate by itself and records it as trusted (`winterflow-api
+hub-trust`). A hub joined before this version has a certificate without the
+URI and no record on the control plane: rerun its `install-hub.sh` with a new
+join token (`--token` or `WINTERFLOW_HUB_TOKEN`, made with `hub-token`
+below); without one the rerun stops and asks for it. An agent's `hub.json`
+overrides later `HUB_HOST` edits in `agent.env`.
 
 ## Back up the CA
 
@@ -101,13 +105,16 @@ accept. The installer repeats this when it finishes.
 On the control-plane host, with the API's environment:
 
 ```sh
-sudo bash -c 'set -a; . /etc/winterflow/control-plane.env; . /etc/winterflow/control-plane-api.env; exec winterflow-api hub-retire --hub <hub id>'
+sudo bash -c 'set -a; . /etc/winterflow/control-plane-api.env; exec winterflow-api hub-retire --hub <hub id>'
 ```
 
-(`--fingerprint <sha256>` retires one certificate instead.) Connected agents
-stop accepting the retired certificate within 6 hours, when they refresh the
-set of certificates they pin. Rejoining the hub (`install-hub.sh` with a new
-token) issues it a new certificate.
+(`--fingerprint <sha256>` retires one certificate instead.) Agents stop
+accepting the retired certificate when they next ask the API for the set of
+certificates they pin: at their next start, and every 6 hours while
+connected. Rejoining the hub (rerun `install-hub.sh` on it with a new token)
+gives it a new key and certificate and retires its older ones. Once an agent
+has pinned a set, retiring every certificate makes it refuse every hub until
+the API trusts one again; it does not fall back to checking the CA only.
 
 ## Uninstall
 
@@ -131,7 +138,7 @@ no data and joins the existing control plane.
    the command needs the API's environment, `DATABASE_URL` above all):
 
    ```sh
-   sudo bash -c 'set -a; . /etc/winterflow/control-plane.env; . /etc/winterflow/control-plane-api.env; exec winterflow-api hub-token'   # --ttl 30m for another lifetime
+   sudo bash -c 'set -a; . /etc/winterflow/control-plane-api.env; exec winterflow-api hub-token'   # --ttl 30m for another lifetime
    ```
 
    Whoever holds the token chooses the new hub's host name (any but one a
@@ -183,6 +190,11 @@ moves nobody and stops at once; its agents reconnect when it is back.
 
 Rerun `install-hub.sh` (no token needed): it replaces the binary and
 restarts the service, keeping the certificate and `/etc/winterflow/hub.env`.
+A rerun with a join token joins again instead: a new key and certificate
+replace the old pair (only once the join succeeds) and the control plane
+retires the hub's older certificates; do this after a hub key leaked, and
+for a certificate from before the hub URI (such a rerun refuses to go on
+without a token).
 `--uninstall` drains the hub and removes the unit and binary, keeping the
 certificate and settings so a rerun brings it back; `--uninstall --purge` also
 deletes the certificate, `hub.env`, data and user, after which the hub needs a

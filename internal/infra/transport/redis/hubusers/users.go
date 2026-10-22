@@ -1,8 +1,8 @@
 // Package hubusers manages the Redis ACL user of every hub (hub:<hub_id>):
 // the API creates or resets it when a hub enrolls and deletes it when the
-// hub is retired, over its own admin connection. A hub's user may touch only
-// its own keys and the bus channels a hub uses, with the few commands that
-// takes; every change is written to the server's aclfile (ACL SAVE).
+// hub is retired, over its own admin connection. A hub's user may write only
+// its own keys, read every hub's status (its peer listing) and use the bus
+// channels a hub uses, with the few commands that takes; every change is written to the server's aclfile (ACL SAVE).
 package hubusers
 
 import (
@@ -49,7 +49,8 @@ func New(rc *redis.Client) *Users { return &Users{rc: rc} }
 func Username(hubID string) string { return "hub:" + hubID }
 
 // HubACLRules is the exact rule list of hubID's user (after "reset on
-// >password"): its own status and drain keys, the hub's channels, and the
+// >password"): its own status and drain keys, read-only every hub's status
+// key (the peer listing a stopping hub does), the hub's channels, and the
 // commands the hub's go-redis client sends for them, the connection
 // handshake included.
 func HubACLRules(hubID string) []string {
@@ -57,12 +58,15 @@ func HubACLRules(hubID string) []string {
 		"resetkeys", "resetchannels",
 		"~hub:status:" + hubID,
 		"~hub:draining:" + hubID,
+		// Read-only: every hub's status, for the stopping hub's peer
+		// listing (Registry.List: SCAN + MGET).
+		"%R~hub:status:*",
 		"&bus:requests:" + hubID,
 		"&hub:responses:" + hubID,
 		"&bus:responses", "&bus:events", "&hub:requests", "&hub:broadcast",
 		"-@all",
 		"+ping", "+hello", "+auth", "+client|setinfo", "+client|setname",
-		"+get", "+set", "+del", "+exists",
+		"+get", "+set", "+del", "+exists", "+scan", "+mget",
 		"+publish", "+subscribe", "+unsubscribe",
 	}
 }

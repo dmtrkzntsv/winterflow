@@ -598,12 +598,14 @@ compatibility: the distributed version is not in production, so the shared
 hub password goes away entirely.
 
 - **Users.** `hub:<hub_id>` with a random password (32 bytes, base64url).
-  Allowed: its own keys `hub:status:<id>` and `hub:draining:<id>`; channels
+  Allowed: its own keys `hub:status:<id>` and `hub:draining:<id>`
+  (read/write); every hub's `hub:status:*` read-only (`%R~hub:status:*`, so
+  a stopping hub can list its peers: SCAN + MGET); channels
   `bus:requests:<id>`, `hub:responses:<id>`, `bus:responses`, `bus:events`,
   `hub:requests`, `hub:broadcast`; commands for those (get/set/del/exists on
-  its keys, publish, subscribe/unsubscribe, ping, and the connection
-  handshake commands the client sends). Nothing else — no SCAN, no other
-  keys, no other channels.
+  its keys, scan/mget for the peer listing, publish, subscribe/unsubscribe,
+  ping, and the connection handshake commands the client sends). Nothing
+  else — no writes to other hubs' keys, no other keys, no other channels.
 - **Who manages them.** The API, over its own Redis connection (the instance's
   admin user, `default` with `requirepass`; only the control-plane host has
   that password). Every change is followed by `ACL SAVE`; the dedicated Redis

@@ -185,6 +185,29 @@ func TestIntegrationHubUserCanDoExactlyTheHubOperations(t *testing.T) {
 		}
 	}
 
+	// The stopping hub's peer listing (SCAN + MGET over every hub's status)
+	// works, and reads another hub's status.
+	if err := admin.Set(ctx, "hub:status:"+other, `{"id":"`+other+`","accepting":true}`, time.Minute).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := reg.Announce(ctx, model.Hub{ID: id, Accepting: true}, 90*time.Second); err != nil {
+		t.Fatalf("announce: %v", err)
+	}
+	listed, err := reg.List(ctx)
+	if err != nil {
+		t.Fatalf("registry List: %v", err)
+	}
+	ids := []string{}
+	for _, h := range listed {
+		ids = append(ids, h.ID)
+	}
+	if !slices.Contains(ids, id) || !slices.Contains(ids, other) {
+		t.Fatalf("registry List = %q, want both hubs", ids)
+	}
+	if v, err := rc.Get(ctx, "hub:status:"+other).Result(); err != nil || v == "" {
+		t.Fatalf("get other status = %q, %v", v, err)
+	}
+
 	// Nothing on the way was refused: the handshake commands go-redis sends
 	// are all allowed.
 	if log := aclLog(t, admin); len(log) != 0 {
@@ -193,7 +216,10 @@ func TestIntegrationHubUserCanDoExactlyTheHubOperations(t *testing.T) {
 
 	// Refused: another hub's keys and channels, other keys, SCAN, FLUSHALL.
 	refused := map[string]error{
-		"get other status":     rc.Get(ctx, "hub:status:"+other).Err(),
+		"get other draining":   rc.Get(ctx, "hub:draining:"+other).Err(),
+		"mget other draining":  rc.MGet(ctx, "hub:status:"+other, "hub:draining:"+other).Err(),
+		"mget unrelated":       rc.MGet(ctx, "session:x").Err(),
+		"expire other status":  rc.Expire(ctx, "hub:status:"+other, time.Second).Err(),
 		"set other status":     rc.Set(ctx, "hub:status:"+other, "x", time.Minute).Err(),
 		"set other draining":   rc.Set(ctx, "hub:draining:"+other, "1", 0).Err(),
 		"exists other":         rc.Exists(ctx, "hub:draining:"+other).Err(),
@@ -202,9 +228,7 @@ func TestIntegrationHubUserCanDoExactlyTheHubOperations(t *testing.T) {
 		"publish other queue":  rc.Publish(ctx, "bus:requests:"+other, "x").Err(),
 		"publish other resp":   rc.Publish(ctx, "hub:responses:"+other, "x").Err(),
 		"publish bus:requests": rc.Publish(ctx, "bus:requests", "x").Err(),
-		"scan":                 rc.Scan(ctx, 0, "*", 10).Err(),
 		"keys":                 rc.Keys(ctx, "*").Err(),
-		"mget":                 rc.MGet(ctx, "hub:status:"+id).Err(),
 		"flushall":             rc.FlushAll(ctx).Err(),
 		"acl whoami":           rc.Do(ctx, "ACL", "WHOAMI").Err(),
 		"config get":           rc.ConfigGet(ctx, "*").Err(),
@@ -220,9 +244,8 @@ func TestIntegrationHubUserCanDoExactlyTheHubOperations(t *testing.T) {
 	if _, err := ps2.Receive(ctx); !isNoPerm(err) {
 		t.Errorf("subscribe to another hub's channel: want NOPERM, got %v", err)
 	}
-	// The registry's List (SCAN + MGET over every hub) is refused too.
-	if _, err := reg.List(ctx); err == nil {
-		t.Error("registry List: want an error")
+	if v := admin.Get(ctx, "hub:status:"+other).Val(); v == "" || v == "x" {
+		t.Errorf("another hub's status was changed or deleted: %q", v)
 	}
 }
 
@@ -315,8 +338,14 @@ func TestIntegrationUsersSurviveACLLoad(t *testing.T) {
 	if err := rc.Set(ctx, "hub:status:"+id, "{}", time.Minute).Err(); err != nil {
 		t.Fatalf("after ACL LOAD: %v", err)
 	}
-	if err := rc.Get(ctx, "hub:status:other").Err(); !isNoPerm(err) {
-		t.Fatalf("rules after ACL LOAD: want NOPERM, got %v", err)
+	if err := rc.Set(ctx, "hub:status:other", "{}", time.Minute).Err(); !isNoPerm(err) {
+		t.Fatalf("rules after ACL LOAD: write another hub's status: want NOPERM, got %v", err)
+	}
+	if err := rc.Get(ctx, "hub:draining:other").Err(); !isNoPerm(err) {
+		t.Fatalf("rules after ACL LOAD: read another hub's drain flag: want NOPERM, got %v", err)
+	}
+	if err := rc.Get(ctx, "hub:status:other").Err(); err != nil && !errors.Is(err, redis.Nil) {
+		t.Fatalf("rules after ACL LOAD: read another hub's status: %v", err)
 	}
 }
 

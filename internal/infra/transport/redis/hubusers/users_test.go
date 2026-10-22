@@ -13,12 +13,13 @@ func TestHubACLRules(t *testing.T) {
 		"resetkeys", "resetchannels",
 		"~hub:status:hub-01.winterflow.dev",
 		"~hub:draining:hub-01.winterflow.dev",
+		"%R~hub:status:*",
 		"&bus:requests:hub-01.winterflow.dev",
 		"&hub:responses:hub-01.winterflow.dev",
 		"&bus:responses", "&bus:events", "&hub:requests", "&hub:broadcast",
 		"-@all",
 		"+ping", "+hello", "+auth", "+client|setinfo", "+client|setname",
-		"+get", "+set", "+del", "+exists",
+		"+get", "+set", "+del", "+exists", "+scan", "+mget",
 		"+publish", "+subscribe", "+unsubscribe",
 	}
 	if !slices.Equal(got, want) {

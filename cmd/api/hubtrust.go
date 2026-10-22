@@ -140,7 +140,8 @@ func normalizeFingerprint(s string) (string, error) {
 
 // runHubRetire is the hidden `hub-retire --hub <id> | --fingerprint <fp>`
 // subcommand: it retires a hub's certificates (a removed hub) or one
-// certificate (a leaked key) and prints how many it retired. Agents stop
+// certificate (a leaked key) and prints how many it retired; retiring none
+// is an error (exit status 1). Agents stop
 // accepting a retired certificate once they refresh their pin set.
 func runHubRetire(args []string, dbURL string, log *logger.Logger, out io.Writer) error {
 	fs := flag.NewFlagSet("hub-retire", flag.ContinueOnError)
@@ -174,6 +175,13 @@ func runHubRetire(args []string, dbURL string, log *logger.Logger, out io.Writer
 	n, err := repo.Retire(ctx, hubID, fp, time.Now())
 	if err != nil {
 		return err
+	}
+	if n == 0 {
+		// Nothing matched: a mistyped id or fingerprint must not pass as done.
+		if hubID != "" {
+			return fmt.Errorf("no active hub certificate of hub %q to retire (already retired, or a wrong hub id)", hubID)
+		}
+		return fmt.Errorf("no active hub certificate with fingerprint %s to retire (already retired, or a wrong fingerprint)", fp)
 	}
 	_, err = fmt.Fprintf(out, "retired %d hub certificate(s)\n", n)
 	return err

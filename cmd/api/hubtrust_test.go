@@ -99,8 +99,12 @@ func TestHubTrustAndRetire(t *testing.T) {
 		t.Fatalf("by hub: %q %v", out.String(), err)
 	}
 	out.Reset()
-	if err := runHubRetire([]string{"--hub", "hub-01.winterflow.dev"}, url, log, &out); err != nil || out.String() != "retired 0 hub certificate(s)\n" {
+	// Nothing left to retire is an error, by hub and by fingerprint.
+	if err := runHubRetire([]string{"--hub", "hub-01.winterflow.dev"}, url, log, &out); err == nil || !strings.Contains(err.Error(), "no active hub certificate") || out.Len() != 0 {
 		t.Fatalf("again: %q %v", out.String(), err)
+	}
+	if err := runHubRetire([]string{"--fingerprint", fp3}, url, log, &out); err == nil || !strings.Contains(err.Error(), "no active hub certificate") {
+		t.Fatalf("again by fingerprint: %v", err)
 	}
 	if got := activeRows(t, dbPath); len(got) != 0 {
 		t.Fatalf("active = %v", got)

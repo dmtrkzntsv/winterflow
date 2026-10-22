@@ -751,6 +751,7 @@ render_plan() {
     echo "runuser -u ${API_USER} -- winterflow-hub pki $(pki_args | paste -sd ' ' -)"
     echo "  ${PKI_DIR}: ${API_USER} 0700; ca.key: ${API_USER} 0600 (only the API reads the CA key)"
     echo "  ${HUB_CERT_DIR}: ca.crt hub.crt hub.key copied, root:${HUB_USER}, key 0640"
+    echo "runuser -u ${API_USER} -- winterflow-api hub-trust --cert ${PKI_DIR}/hub.crt (API env: DATABASE_URL, HUB_CERT_DIR; after PostgreSQL is ready; a retired certificate is reissued once)"
     echo "  ${REDIS_TLS_DIR}: ca.crt redis.crt redis.key copied, root:${REDIS_USER}, key 0640"
     echo "postgres: create role and database '${DB_NAME}' if absent (password from ${STATE_FILE})"
     echo "systemctl enable ${REDIS_SERVICE}; restart it when its config or certificate changed"
@@ -769,6 +770,7 @@ Next steps (this installer does not touch Caddy or the firewall):
        }
   2. Open TCP ${hub_port} so agents can reach the hub at ${HUB_PUBLIC_ADDR}.
   3. Open ${WEB_URL} and create the first account.
+  4. Back up ${PKI_DIR}/ca.key and ca.crt. Losing them means re-joining every hub and re-enrolling every agent.
 EOF
 }
 
@@ -839,10 +841,18 @@ provision_postgres() {
     fi
 }
 
-issue_pki() {
-    # The CA is created once and kept; hub and Redis certificates are
-    # (re)issued when their names change. Run as the API user, so ca.key is
-    # owned by it from the start.
+copy_hub_certs() {
+    # The hub gets copies of the CA certificate and its own pair only (it is
+    # restarted on every run, so no change tracking).
+    install -d -m 750 -o root -g "$HUB_USER" "$HUB_CERT_DIR"
+    put_file "$HUB_CERT_DIR/ca.crt" 644 root "$HUB_USER" < "$PKI_DIR/ca.crt"
+    put_file "$HUB_CERT_DIR/hub.crt" 644 root "$HUB_USER" < "$PKI_DIR/hub.crt"
+    put_file "$HUB_CERT_DIR/hub.key" 640 root "$HUB_USER" < "$PKI_DIR/hub.key"
+}
+
+run_pki() {
+    # winterflow-hub pki as the API user, so ca.key is owned by it from the
+    # start.
     local args=() line
     while IFS= read -r line; do args+=("$line"); done < <(pki_args)
     install -d -m 700 -o "$API_USER" -g "$API_USER" "$PKI_DIR"
@@ -851,13 +861,44 @@ issue_pki() {
     chown -R "$API_USER:$API_USER" "$PKI_DIR"
     chmod 700 "$PKI_DIR"
     chmod 600 "$PKI_DIR"/*.key
+}
 
-    # The hub gets copies of the CA certificate and its own pair only (it is
-    # restarted on every run, so no change tracking).
-    install -d -m 750 -o root -g "$HUB_USER" "$HUB_CERT_DIR"
-    put_file "$HUB_CERT_DIR/ca.crt" 644 root "$HUB_USER" < "$PKI_DIR/ca.crt"
-    put_file "$HUB_CERT_DIR/hub.crt" 644 root "$HUB_USER" < "$PKI_DIR/hub.crt"
-    put_file "$HUB_CERT_DIR/hub.key" 640 root "$HUB_USER" < "$PKI_DIR/hub.key"
+env_value() {
+    # env_value FILE KEY — the value of KEY=... in an env file.
+    sed -n "s/^$2=//p" "$1" | tail -n 1
+}
+
+hub_trust() {
+    # winterflow-api hub-trust on the hub certificate, as the API user with
+    # the API's database; HUB_TRUST_STATUS and HUB_TRUST_OUT hold the result.
+    HUB_TRUST_STATUS=0
+    HUB_TRUST_OUT="$(runuser -u "$API_USER" -- env \
+        "DATABASE_URL=$(env_value "$API_ENV_FILE" DATABASE_URL)" \
+        "HUB_CERT_DIR=$(env_value "$API_ENV_FILE" HUB_CERT_DIR)" \
+        "$API_DEST" hub-trust --cert "$PKI_DIR/hub.crt" 2>&1)" || HUB_TRUST_STATUS=$?
+}
+
+trust_hub_cert() {
+    # Records the control plane's hub certificate as trusted, so agents pin
+    # it. Needs the database. A certificate retired earlier (its key leaked,
+    # say) is refused: issue a new one, once, and trust that.
+    hub_trust
+    if [ "$HUB_TRUST_STATUS" -ne 0 ] && grep -q "was retired" <<<"$HUB_TRUST_OUT"; then
+        warn "the hub certificate was retired; issuing a new one"
+        rm -f "$PKI_DIR/hub.crt" "$PKI_DIR/hub.key"
+        run_pki
+        copy_hub_certs
+        hub_trust
+    fi
+    [ "$HUB_TRUST_STATUS" -eq 0 ] \
+        || die "winterflow-api hub-trust failed: ${HUB_TRUST_OUT}"
+}
+
+issue_pki() {
+    # The CA is created once and kept; hub and Redis certificates are
+    # (re)issued when their names change.
+    run_pki
+    copy_hub_certs
 
     # Redis (user redis) gets the CA certificate and its pair.
     REDIS_CHANGED=0
@@ -1153,11 +1194,14 @@ main() {
     start_redis
     provision_postgres
 
-    # --- Config and units -----------------------------------------------------
-
     log "Writing ${API_ENV_FILE} and ${HUB_ENV_FILE}"
     put_file "$API_ENV_FILE" 600 root root < <(render_api_env)
     put_file "$HUB_ENV_FILE" 600 root root < <(render_hub_env)
+
+    log "Trusting the hub certificate"
+    trust_hub_cert
+
+    # --- Config and units -----------------------------------------------------
 
     if [ "$HAS_LOG_NAMESPACE" -eq 1 ]; then
         if [ -f "$JOURNAL_CONF" ]; then

@@ -135,15 +135,24 @@ func TestEnsureAgentIdentityRegenerates(t *testing.T) {
 		})
 	}
 
-	// A valid pair for another server id is replaced too.
+	// A valid pair for another server id is refused, not replaced: its key
+	// is what stored secrets are encrypted to.
 	dir := t.TempDir()
 	if _, _, err := EnsureAgentIdentity(dir, "srv-old"); err != nil {
 		t.Fatal(err)
 	}
-	if _, created, err := EnsureAgentIdentity(dir, "srv-new"); err != nil || !created {
-		t.Fatalf("created=%v err=%v", created, err)
+	keyBefore, err := os.ReadFile(filepath.Join(dir, AgentKeyFile))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if c := readAgentCert(t, dir); c.Subject.CommonName != "srv-new" {
+	if _, created, err := EnsureAgentIdentity(dir, "srv-new"); err == nil || created {
+		t.Fatalf("created=%v err=%v, want a refusal", created, err)
+	}
+	keyAfter, _ := os.ReadFile(filepath.Join(dir, AgentKeyFile))
+	if !bytes.Equal(keyBefore, keyAfter) {
+		t.Error("agent.key was replaced")
+	}
+	if c := readAgentCert(t, dir); c.Subject.CommonName != "srv-old" {
 		t.Errorf("CN = %q", c.Subject.CommonName)
 	}
 }

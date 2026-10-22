@@ -30,8 +30,10 @@ const (
 // as is, whoever signed it: the agent's secrets are encrypted to that key.
 // Otherwise both are created, the certificate self-signed (client auth, 10
 // years), each file by a rename of a temp file beside it; a crash between the
-// two leaves a mismatched pair the next call replaces. It returns the
-// certificate PEM and whether it created the pair.
+// two leaves a mismatched pair the next call replaces. A matching pair whose
+// CN is another id is an error, never replaced: agent.key is what every
+// stored secret is encrypted to, so overwriting it would make them all
+// unreadable. It returns the certificate PEM and whether it created the pair.
 func EnsureAgentIdentity(dir, serverID string) ([]byte, bool, error) {
 	if dir == "" {
 		return nil, false, fmt.Errorf("agent identity: directory is not configured")
@@ -40,7 +42,10 @@ func EnsureAgentIdentity(dir, serverID string) ([]byte, bool, error) {
 	if serverID == "" {
 		return nil, false, fmt.Errorf("agent identity: server id is required")
 	}
-	if cn, certPEM, ok := loadAgentIdentity(dir); ok && cn == serverID {
+	if cn, certPEM, ok := loadAgentIdentity(dir); ok {
+		if cn != serverID {
+			return nil, false, fmt.Errorf("agent identity: %s holds the identity of %q, not %q; refusing to replace the key (stored secrets are encrypted to it)", dir, cn, serverID)
+		}
 		return certPEM, false, nil
 	}
 

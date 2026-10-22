@@ -297,8 +297,10 @@ func store(o options, st statusResult, keyPath string) error {
 		return err
 	}
 	if o.dataDir != "" {
-		// The hub and the certificates the API trusts for it (atomic, 0600).
-		if err := grpcagent.NewHubStore(o.dataDir).Save(host, port, st.HubFingerprints); err != nil {
+		// The hub and the certificates the API trusts for it (atomic, 0600),
+		// replacing any state of an earlier enrollment: the agent is pinned
+		// (an empty set later trusts no hub) only when the set is not empty.
+		if err := grpcagent.NewHubStore(o.dataDir).Reset(host, port, st.HubFingerprints); err != nil {
 			return err
 		}
 	}

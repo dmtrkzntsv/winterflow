@@ -175,8 +175,9 @@ func TestEnrollWritesHubJSON(t *testing.T) {
 	var f struct {
 		Host, Port   string
 		Fingerprints []string
+		Pinned       bool
 	}
-	if err := json.Unmarshal(raw, &f); err != nil || f.Host != "hub-01.winterflow.dev" || f.Port != "50051" || len(f.Fingerprints) != 1 || f.Fingerprints[0] != fp {
+	if err := json.Unmarshal(raw, &f); err != nil || f.Host != "hub-01.winterflow.dev" || f.Port != "50051" || len(f.Fingerprints) != 1 || f.Fingerprints[0] != fp || !f.Pinned {
 		t.Fatalf("hub.json = %s (%v)", raw, err)
 	}
 
@@ -187,11 +188,15 @@ func TestEnrollWritesHubJSON(t *testing.T) {
 	dir2 := t.TempDir()
 	o2 := opts(srv2.URL, dir2, &bytes.Buffer{})
 	o2.dataDir = dir2
+	// A pinned hub.json from an earlier enrollment does not carry over.
+	if err := os.WriteFile(filepath.Join(dir2, "hub.json"), []byte(`{"host":"old","port":"1","fingerprints":["`+fp+`"],"pinned":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if code, err := run(context.Background(), o2); code != ExitOK || err != nil {
 		t.Fatalf("code=%d err=%v", code, err)
 	}
 	raw, _ = os.ReadFile(filepath.Join(dir2, "hub.json"))
-	if !strings.Contains(string(raw), `"fingerprints":[]`) {
+	if !strings.Contains(string(raw), `"fingerprints":[]`) || strings.Contains(string(raw), `"pinned"`) {
 		t.Fatalf("hub.json = %s", raw)
 	}
 }

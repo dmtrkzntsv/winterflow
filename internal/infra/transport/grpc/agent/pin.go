@@ -14,7 +14,8 @@ import (
 // ErrHubNotTrusted marks a connection attempt that failed because the hub's
 // certificate is not one the agent accepts: it lacks the winterflow-hub URI
 // SAN (a CA-signed certificate that is not a hub's, such as the Redis one),
-// or its fingerprint is not in the stored pin set. Run answers it with an
+// its fingerprint is not in the stored pin set, or the agent is pinned and
+// the API trusts no hub certificate (an empty set). Run answers it with an
 // ask (the pin set may be stale), at most once per askFloor.
 var ErrHubNotTrusted = errors.New("hub certificate not trusted")
 
@@ -22,9 +23,12 @@ var ErrHubNotTrusted = errors.New("hub certificate not trusted")
 // chain and host name verification against the agent's CA, so the first
 // verified chain's leaf is the hub's certificate: it must carry a
 // winterflow-hub URI SAN and, when a pin set is stored, its fingerprint must
-// be in the set. With no set stored (an agent installed before pinning, or
-// an API that trusts none yet) the CA and marker checks are all, logged
-// once.
+// be in the set. An empty set means two things: an agent that has never
+// stored a set (installed before pinning, or under an API that trusts none
+// yet) checks the CA and the marker only, logged once; a pinned agent (one
+// that stored a non-empty set before) trusts no hub at all: every hub
+// certificate is refused, and Run keeps asking the API (at most once per
+// askFloor) until it names one again.
 func (a *Agent) verifyHub(_ [][]byte, chains [][]*x509.Certificate) error {
 	if len(chains) == 0 || len(chains[0]) == 0 {
 		return a.notTrusted(errors.New("no verified hub certificate chain"))
@@ -37,6 +41,9 @@ func (a *Agent) verifyHub(_ [][]byte, chains [][]*x509.Certificate) error {
 	}
 	fps := a.pins()
 	if len(fps) == 0 {
+		if a.pinned() {
+			return a.notTrusted(fmt.Errorf("the API trusts no hub certificate (fingerprint %s)", fp))
+		}
 		if a.warnedNoPins.CompareAndSwap(false, true) {
 			a.log.Warn("no trusted hub certificates stored: checking the CA and the hub marker only until the API names some", "fingerprint", fp)
 		}

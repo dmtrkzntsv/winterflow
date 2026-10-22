@@ -127,6 +127,9 @@ func migratingClock(t *testing.T, addr string, moved bool) (*Agent, *fakeAPI, co
 	a.fallbackHub = func() string { return "env-hub:50051" }
 	var mu sync.Mutex
 	clock := time.Unix(1_700_000_000, 0)
+	// The API answered just now: Run skips its ask at start (tested by
+	// TestStartAsksForPins).
+	a.hubStore.refreshedAt = clock
 	a.now = func() time.Time { mu.Lock(); defer mu.Unlock(); return clock }
 	a.sleep = func(ctx context.Context, d time.Duration) bool {
 		mu.Lock()

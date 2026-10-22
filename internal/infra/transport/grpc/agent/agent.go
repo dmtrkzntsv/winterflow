@@ -596,8 +596,10 @@ func (a *Agent) replyWait() time.Duration {
 // another hub, or the hub is draining), when the hub's certificate is
 // refused (ErrHubNotTrusted: not in the pin set, or not a hub's), all at
 // most once per askFloor, once the agent has had no stream for
-// unreachableAsk, then every unreachableAsk while that lasts, and, while
-// connected, refreshEvery after the last answered ask (the pin set). An
+// unreachableAsk, then every unreachableAsk while that lasts, at start
+// (before the first connection, unless the API answered within askFloor),
+// and, while connected, refreshEvery after the last answered ask (the pin
+// set; hub.json's refreshed_at carries that time across restarts). An
 // answer naming another hub is stored in hub.json and dialed at once; its
 // pin set replaces the stored one; a stay or a failed ask keeps retrying the
 // current hub.
@@ -643,15 +645,29 @@ func (a *Agent) Run(ctx context.Context) error {
 	downSince := now()
 	var lastAsk time.Time
 	// nextRefresh is when a connected agent asks again for the pin set:
-	// refreshEvery after the last answered ask (every ask fetches the set).
+	// refreshEvery after the last answered ask (every ask fetches the set),
+	// counted from hub.json's refreshed_at so a restart does not reset it.
 	nextRefresh := now().Add(a.refreshEvery())
-	askAs := func(why string, connected bool) (bool, error) {
-		lastAsk = now()
+	if a.hubStore != nil {
+		if at := a.hubStore.RefreshedAt(); !at.IsZero() {
+			nextRefresh = at.Add(a.refreshEvery())
+		}
+	}
+	// refreshAs asks the API (migrate) and schedules the next refresh.
+	refreshAs := func(why string, connected bool) (bool, error) {
 		reconnect, err := a.migrate(ctx, why, connected)
 		if err == nil {
 			nextRefresh = now().Add(a.refreshEvery())
+		} else {
+			// Try again sooner than a full period.
+			nextRefresh = now().Add(min(unreachableAsk, a.refreshEvery()))
 		}
 		return reconnect, err
+	}
+	// askAs is refreshAs counted for askFloor.
+	askAs := func(why string, connected bool) (bool, error) {
+		lastAsk = now()
+		return refreshAs(why, connected)
 	}
 	ask := func(why string) bool {
 		reconnect, _ := askAs(why, false)
@@ -675,6 +691,16 @@ func (a *Agent) Run(ctx context.Context) error {
 			return false
 		}
 		return ask("hub unreachable")
+	}
+
+	// The pin set may have changed while the agent was down (a hub
+	// certificate retired): ask before the first connection, unless the
+	// API answered within askFloor (a restart loop must not hammer it). It
+	// does not count for askFloor: a hub prompt right after it may ask
+	// again. A failed ask connects with the stored set and retries while
+	// connected.
+	if a.apiURL != "" && (a.hubStore == nil || now().Sub(a.hubStore.RefreshedAt()) >= a.floor()) {
+		_, _ = refreshAs("refreshing the trusted hub certificates at start", false)
 	}
 
 	for {
@@ -765,12 +791,7 @@ func (a *Agent) Run(ctx context.Context) error {
 			case <-done:
 				break wait
 			case <-refresh:
-				reconnect, err := askAs("refreshing the trusted hub certificates", true)
-				if err != nil {
-					// Try again sooner than a full period.
-					nextRefresh = now().Add(min(unreachableAsk, a.refreshEvery()))
-				}
-				if reconnect {
+				if reconnect, _ := askAs("refreshing the trusted hub certificates", true); reconnect {
 					moving = true
 					break wait
 				}

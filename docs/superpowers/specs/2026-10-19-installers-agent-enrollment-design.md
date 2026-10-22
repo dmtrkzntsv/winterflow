@@ -542,9 +542,25 @@ is valid for 10 years and re-joining does not invalidate it.
   hub's leaf certificate fingerprint is in the stored set. A mismatch fails
   the connection and makes the agent ask the API (same 30 s floor) to refresh
   the set; while connected it also refreshes every 6 hours, so a retired
-  certificate stops being accepted within 6 hours.
-- An agent with no stored set (installed before Part C) keeps CA-only
-  verification and fetches the set on its next ask.
+  certificate stops being accepted within 6 hours. An answer holding an
+  entry that is not a 64-character hex fingerprint is ignored (the stored
+  set is kept).
+- The agent also asks at start, before its first connection (unless the API
+  answered within the 30 s floor, so a restart loop does not hammer it), so
+  an agent that was down while a certificate was retired does not use the
+  stale set. `hub.json` keeps the time of the last answer (`refreshed_at`),
+  and the 6-hour refresh is counted from it, so restarts do not reset it.
+- Pinned is sticky: `hub.json` carries `pinned: true` once a non-empty set
+  was stored (by enrollment or any ask; a file written before the flag that
+  holds a set reads as pinned). From then on an empty set means "trust no
+  hub": every hub certificate is refused, a connected agent drops its
+  stream, and the agent keeps asking (30 s floor) until the API names a
+  certificate again. So retiring every active certificate never falls back
+  to CA-only checks that a leaked key would pass. Enrollment starts the
+  state over (pinned only when its claimed set is not empty).
+- An agent that has never been pinned (installed before Part C, or under an
+  API that trusts no hub certificate yet) keeps CA-only verification (plus
+  the hub marker) and fetches the set on its next ask.
 
 **Hub-only certificates.** The Redis certificate and a hub certificate are
 both CA-signed server certificates, and Redis's carries the host's own name,

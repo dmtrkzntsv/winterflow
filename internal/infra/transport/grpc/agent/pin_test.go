@@ -158,6 +158,12 @@ func (e *pinEnv) storePins(t *testing.T, fps []string) {
 
 const otherFP = "00000000000000000000000000000000000000000000000000000000000000aa"
 
+// fpA and fpB are well-formed fingerprints of scripted (fake) hubs.
+const (
+	fpA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	fpB = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+)
+
 func TestPinnedHubAccepted(t *testing.T) {
 	e := startPinEnv(t, "hub")
 	e.storePins(t, []string{otherFP, strings.ToUpper(e.hubFP)})
@@ -317,27 +323,27 @@ func refreshing(t *testing.T, a *Agent, api *fakeAPI, ctx context.Context, cance
 
 func TestRefreshUpdatesHubJSON(t *testing.T) {
 	a, api, ctx, cancel := migrating(t, "env-hub:50051", false)
-	if err := a.hubStore.Save("env-hub", "50051", []string{"aa"}); err != nil {
+	if err := a.hubStore.Save("env-hub", "50051", []string{fpA}); err != nil {
 		t.Fatal(err)
 	}
-	a.seenFP = "aa"
-	api.setFingerprints([]string{"AA", "bb"})
+	a.seenFP = fpA
+	api.setFingerprints([]string{strings.ToUpper(fpA), fpB})
 	if ups := refreshing(t, a, api, ctx, cancel, 2); ups != 1 {
 		t.Fatalf("bring-ups = %d: a refresh that still trusts the hub reconnected", ups)
 	}
 	host, port, fps, ok := NewHubStore(filepath.Dir(a.hubStore.path)).Load()
-	if !ok || host != "env-hub" || port != "50051" || !slices.Equal(fps, []string{"aa", "bb"}) {
+	if !ok || host != "env-hub" || port != "50051" || !slices.Equal(fps, []string{fpA, fpB}) {
 		t.Fatalf("hub.json = %q %q %v %v", host, port, fps, ok)
 	}
 }
 
 func TestRefreshDropsRetiredHub(t *testing.T) {
 	a, api, ctx, cancel := migrating(t, "env-hub:50051", false)
-	if err := a.hubStore.Save("env-hub", "50051", []string{"aa"}); err != nil {
+	if err := a.hubStore.Save("env-hub", "50051", []string{fpA}); err != nil {
 		t.Fatal(err)
 	}
-	a.seenFP = "aa"
-	api.setFingerprints([]string{"bb"}) // the connected hub's certificate was retired
+	a.seenFP = fpA
+	api.setFingerprints([]string{fpB}) // the connected hub's certificate was retired
 	if ups := refreshing(t, a, api, ctx, cancel, 1); ups != 2 {
 		t.Fatalf("bring-ups = %d, want a reconnect after the refresh", ups)
 	}
@@ -345,12 +351,12 @@ func TestRefreshDropsRetiredHub(t *testing.T) {
 
 func TestAnswerWithoutFingerprintsKeepsSet(t *testing.T) {
 	a, api, ctx, cancel := migrating(t, "env-hub:50051", false)
-	if err := a.hubStore.Save("env-hub", "50051", []string{"aa"}); err != nil {
+	if err := a.hubStore.Save("env-hub", "50051", []string{fpA}); err != nil {
 		t.Fatal(err)
 	}
 	api.setFingerprints(nil) // an API older than the pin set
 	refreshing(t, a, api, ctx, cancel, 1)
-	if _, _, fps, _ := a.hubStore.Load(); !slices.Equal(fps, []string{"aa"}) {
+	if _, _, fps, _ := a.hubStore.Load(); !slices.Equal(fps, []string{fpA}) {
 		t.Fatalf("stored set = %v, want it kept", fps)
 	}
 }
@@ -370,5 +376,227 @@ func TestHubStoreFingerprints(t *testing.T) {
 	raw, _ = os.ReadFile(filepath.Join(dir, "hub.json"))
 	if !strings.Contains(string(raw), `"fingerprints":[]`) {
 		t.Fatalf("hub.json = %s", raw)
+	}
+}
+
+func TestPinnedEmptySetTrustsNothing(t *testing.T) {
+	e := startPinEnv(t, "hub")
+	e.storePins(t, []string{e.hubFP})
+	// Every hub certificate retired: the API answers an empty set.
+	e.api.setFingerprints([]string{})
+	reconnect, err := e.agent.migrate(context.Background(), "test", false)
+	if err != nil || !reconnect {
+		t.Fatalf("migrate = %v, %v", reconnect, err)
+	}
+	if err := e.connectOnce(t); !errors.Is(err, ErrHubNotTrusted) {
+		t.Fatalf("err = %v, want ErrHubNotTrusted (a pinned agent trusts no hub on an empty set)", err)
+	}
+	if e.hub.streams.Load() != 0 {
+		t.Fatal("a stream was opened with an empty set")
+	}
+	// The next start reads the same: pinned, empty.
+	s := NewHubStore(e.dataDir)
+	if _, _, fps, ok := s.Load(); !ok || len(fps) != 0 || !s.Pinned() {
+		t.Fatalf("hub.json: fps=%v ok=%v pinned=%v", fps, ok, s.Pinned())
+	}
+}
+
+func TestNeverPinnedEmptySetConnects(t *testing.T) {
+	e := startPinEnv(t, "hub")
+	e.api.setFingerprints([]string{})
+	if _, err := e.agent.migrate(context.Background(), "test", false); err != nil {
+		t.Fatal(err)
+	}
+	if e.agent.pinned() {
+		t.Fatal("an empty set pinned the agent")
+	}
+	if err := e.connectOnce(t); err != nil {
+		t.Fatalf("never-pinned agent with an empty set: %v", err)
+	}
+}
+
+func TestPinnedEmptySetKeepsAskingUntilTrusted(t *testing.T) {
+	e := startPinEnv(t, "hub")
+	e.storePins(t, []string{e.hubFP})
+	e.api.setFingerprints([]string{})
+	a := e.agent
+	a.askFloor = 50 * time.Millisecond
+	a.retryBackoff = &[2]time.Duration{10 * time.Millisecond, 20 * time.Millisecond}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ran := make(chan error, 1)
+	go func() { ran <- a.Run(ctx) }()
+	deadline := time.Now().Add(10 * time.Second)
+	for e.api.count() < 3 {
+		if time.Now().After(deadline) {
+			t.Fatalf("asks = %d, want it to keep asking", e.api.count())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if e.hub.streams.Load() != 0 {
+		t.Fatal("a stream was opened while the API trusts no hub")
+	}
+	// The API trusts the hub again: the next ask lets the agent in.
+	e.api.setFingerprints([]string{e.hubFP})
+	for e.hub.streams.Load() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("no stream after the API trusted the hub again")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	if err := <-ran; err != nil {
+		t.Fatalf("Run = %v", err)
+	}
+}
+
+func TestRefreshDropsHubOnEmptySetOncePinned(t *testing.T) {
+	a, api, ctx, cancel := migrating(t, "env-hub:50051", false)
+	if err := a.hubStore.Save("env-hub", "50051", []string{fpA}); err != nil {
+		t.Fatal(err)
+	}
+	a.seenFP = fpA
+	api.setFingerprints([]string{})
+	if ups := refreshing(t, a, api, ctx, cancel, 1); ups != 2 {
+		t.Fatalf("bring-ups = %d, want a reconnect: a pinned agent trusts no hub on an empty set", ups)
+	}
+}
+
+func TestRefreshKeepsHubOnEmptySetNeverPinned(t *testing.T) {
+	a, api, ctx, cancel := migrating(t, "env-hub:50051", false)
+	if err := a.hubStore.Save("env-hub", "50051", nil); err != nil {
+		t.Fatal(err)
+	}
+	a.seenFP = fpA
+	api.setFingerprints([]string{})
+	if ups := refreshing(t, a, api, ctx, cancel, 2); ups != 1 {
+		t.Fatalf("bring-ups = %d: a never-pinned agent dropped its hub on an empty set", ups)
+	}
+}
+
+func TestInvalidFingerprintAnswerKeepsSet(t *testing.T) {
+	for _, answer := range [][]string{{"zz"}, {fpB, "not-a-fingerprint"}, {fpB, ""}} {
+		a, api, _, _ := migrating(t, "env-hub:50051", false)
+		if err := a.hubStore.Save("env-hub", "50051", []string{fpA}); err != nil {
+			t.Fatal(err)
+		}
+		api.setFingerprints(answer)
+		if _, err := a.migrate(context.Background(), "test", false); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, fps, _ := NewHubStore(filepath.Dir(a.hubStore.path)).Load(); !slices.Equal(fps, []string{fpA}) {
+			t.Fatalf("answer %q: stored set = %v, want it kept", answer, fps)
+		}
+	}
+}
+
+func TestStartAsksForPins(t *testing.T) {
+	a, api, ctx, cancel := migrating(t, "env-hub:50051", false)
+	a.hubStore.refreshedAt = time.Time{} // never answered
+	api.setFingerprints([]string{fpA})
+	asksAtDial := -1
+	start := a.now()
+	a.bringUp = func(context.Context) (<-chan struct{}, func() error, error) {
+		asksAtDial = api.count()
+		cancel()
+		return nil, nil, errors.New("script over")
+	}
+	if err := a.Run(ctx); err != nil {
+		t.Fatalf("Run = %v", err)
+	}
+	if asksAtDial != 1 {
+		t.Fatalf("asks before the first dial = %d, want 1", asksAtDial)
+	}
+	s := NewHubStore(filepath.Dir(a.hubStore.path))
+	if _, _, fps, _ := s.Load(); !slices.Equal(fps, []string{fpA}) || !s.RefreshedAt().Equal(start) {
+		t.Fatalf("hub.json: fps=%v refreshed_at=%v, want [fpA] at %v", fps, s.RefreshedAt(), start)
+	}
+}
+
+func TestStartSkipsAskRightAfterOne(t *testing.T) {
+	a, api, ctx, cancel := migrating(t, "env-hub:50051", false)
+	// migrating stamps refreshed_at with the clock: within askFloor.
+	a.bringUp = func(context.Context) (<-chan struct{}, func() error, error) {
+		cancel()
+		return nil, nil, errors.New("script over")
+	}
+	if err := a.Run(ctx); err != nil {
+		t.Fatalf("Run = %v", err)
+	}
+	if api.count() != 0 {
+		t.Fatalf("asks = %d, want none within askFloor of the last answer", api.count())
+	}
+}
+
+func TestRefreshClockSurvivesRestart(t *testing.T) {
+	a, api, ctx, cancel := migrating(t, "env-hub:50051", false)
+	// The last answer was a full refresh period ago, by hub.json (no ask at
+	// start: the floor is longer here). The refresh is due at once, not a
+	// period after this start.
+	a.askFloor = 2 * time.Hour
+	a.pinRefresh = time.Hour
+	a.hubStore.refreshedAt = a.now().Add(-time.Hour)
+	ups := 0
+	a.bringUp = func(context.Context) (<-chan struct{}, func() error, error) {
+		ups++
+		if ups > 1 {
+			cancel()
+			return nil, nil, errors.New("script over")
+		}
+		return make(chan struct{}), func() error { return nil }, nil
+	}
+	go func() {
+		select {
+		case <-api.hit:
+		case <-time.After(5 * time.Second):
+			t.Error("no refresh at once after a restart past the period")
+		}
+		cancel()
+	}()
+	if err := a.Run(ctx); err != nil {
+		t.Fatalf("Run = %v", err)
+	}
+}
+
+func TestHubStorePinnedSticky(t *testing.T) {
+	dir := t.TempDir()
+	s := NewHubStore(dir)
+	if err := s.Save("hub-01", "443", nil); err != nil {
+		t.Fatal(err)
+	}
+	if s.Pinned() {
+		t.Fatal("an empty set pinned the store")
+	}
+	if err := s.Save("hub-01", "443", []string{fpA}); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Unix(1_700_000_000, 0)
+	if err := s.SaveAnswer("hub-01", "443", []string{}, at); err != nil {
+		t.Fatal(err)
+	}
+	r := NewHubStore(dir)
+	if _, _, fps, _ := r.Load(); len(fps) != 0 || !r.Pinned() || !r.RefreshedAt().Equal(at) {
+		t.Fatalf("reread: fps=%v pinned=%v refreshed_at=%v", fps, r.Pinned(), r.RefreshedAt())
+	}
+	// Save keeps the refresh time.
+	if err := r.Save("hub-02", "443", nil); err != nil {
+		t.Fatal(err)
+	}
+	if !NewHubStore(dir).RefreshedAt().Equal(at) || !NewHubStore(dir).Pinned() {
+		t.Fatal("Save dropped the refresh time or the pin")
+	}
+	// A file from before the flag that holds a set reads as pinned.
+	if err := os.WriteFile(filepath.Join(dir, "hub.json"), []byte(`{"host":"h","port":"1","fingerprints":["`+fpA+`"]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !NewHubStore(dir).Pinned() {
+		t.Fatal("a stored set from before the flag is not pinned")
+	}
+	// Reset (enrollment) starts over.
+	if err := NewHubStore(dir).Reset("h", "1", nil); err != nil {
+		t.Fatal(err)
+	}
+	if r := NewHubStore(dir); r.Pinned() || !r.RefreshedAt().IsZero() {
+		t.Fatalf("after Reset: pinned=%v refreshed_at=%v", r.Pinned(), r.RefreshedAt())
 	}
 }

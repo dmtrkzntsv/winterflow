@@ -32,6 +32,9 @@ const (
 	// hub certificates it trusts, so a retired certificate stops being
 	// accepted within this long.
 	pinRefresh = 6 * time.Hour
+	// refreshPersist is how stale hub.json's refreshed_at may get before an
+	// answer that changes nothing rewrites it.
+	refreshPersist = 10 * time.Minute
 )
 
 // hubAddr is the address the next connection dials: the hub in hub.json
@@ -56,6 +59,12 @@ func (a *Agent) pins() []string {
 	}
 	_, _, fps, _ := a.hubStore.Load()
 	return fps
+}
+
+// pinned reports whether the agent ever stored a non-empty pin set: from
+// then on an empty set trusts no hub.
+func (a *Agent) pinned() bool {
+	return a.hubStore != nil && a.hubStore.Pinned()
 }
 
 // requestMove records that the hub asked this agent to move (hub.move);
@@ -84,8 +93,9 @@ type hubAnswer struct {
 	Moved bool
 	// Fingerprints is the set of hub certificates the API trusts, nil when
 	// the answer carries none (an API older than the pin set: the stored
-	// set is kept). An empty, non-nil set means none is trusted yet: the
-	// agent checks the CA and the hub marker only.
+	// set is kept). An empty, non-nil set means none is trusted: an agent
+	// that was never pinned checks the CA and the hub marker only, a pinned
+	// one refuses every hub.
 	Fingerprints *[]string
 }
 
@@ -158,12 +168,16 @@ func (a *Agent) askWhere(ctx context.Context) (hubAnswer, error) {
 // migrate asks the API where to connect and stores the answer: a hub other
 // than the one the agent dials (a move, or a "stay" on a hub the agent is
 // not using: a stale hub.json, an answer lost after the API moved the
-// server) and the pin set, which replaces the stored one. It reports whether
-// the agent should reconnect at once (err is nil then):
+// server) and the pin set, which replaces the stored one (a set holding an
+// entry that is not a SHA-256 fingerprint is ignored: the stored one is
+// kept), and the time of the answer (hub.json's refreshed_at). It reports
+// whether the agent should reconnect at once (err is nil then):
 //   - another hub: always;
 //   - a changed pin set while disconnected: the next dial may now pass;
-//   - while connected (connected true): when the set is not empty and no
-//     longer holds the certificate of the hub the agent is connected to.
+//   - while connected (connected true): when the set no longer holds the
+//     certificate of the hub the agent is connected to, which for a pinned
+//     agent includes an empty set (it trusts no hub); a never-pinned agent
+//     keeps its connection on an empty set.
 //
 // A stay with nothing to change keeps the connection. err is the failed ask
 // (the caller retries later).
@@ -181,20 +195,31 @@ func (a *Agent) migrate(ctx context.Context, why string, connected bool) (bool, 
 	oldPins := a.pins()
 	fps := oldPins
 	if ans.Fingerprints != nil {
-		fps = normalizeFingerprints(*ans.Fingerprints)
+		if bad, ok := validFingerprints(*ans.Fingerprints); ok {
+			fps = normalizeFingerprints(*ans.Fingerprints)
+		} else {
+			a.log.Warn("the API answered an invalid hub certificate fingerprint; keeping the stored set", "reason", why, "fingerprint", bad)
+		}
 	}
 	setChanged := !slices.Equal(normalizeFingerprints(oldPins), fps)
 	sameHub := hubAddress(host, port) == a.hubAddr()
+	if a.hubStore == nil {
+		if !sameHub {
+			a.log.Warn("no hub store: cannot store the API's answer", "hub", ans.Addr)
+		}
+		return false, nil
+	}
+	// An answer that changes nothing rewrites hub.json only to move a
+	// refresh time older than refreshPersist (asks can come every askFloor).
+	at := a.clock()
+	if !sameHub || setChanged || at.Sub(a.hubStore.RefreshedAt()) >= refreshPersist {
+		if err := a.hubStore.SaveAnswer(host, port, fps, at); err != nil {
+			a.log.Error("failed to store the API's answer; using it until restart", "error", err, "hub", ans.Addr)
+		}
+	}
 	if sameHub && !setChanged {
 		a.log.Info("the API says to stay on the current hub", "reason", why, "hub", ans.Addr, "moved", ans.Moved)
 		return false, nil
-	}
-	if a.hubStore == nil {
-		a.log.Warn("no hub store: cannot store the API's answer", "hub", ans.Addr)
-		return false, nil
-	}
-	if err := a.hubStore.Save(host, port, fps); err != nil {
-		a.log.Error("failed to store the API's answer; using it until restart", "error", err, "hub", ans.Addr)
 	}
 	if !sameHub {
 		a.log.Info("moved to another hub", "reason", why, "hub", ans.Addr, "moved", ans.Moved)
@@ -205,7 +230,7 @@ func (a *Agent) migrate(ctx context.Context, why string, connected bool) (bool, 
 		return true, nil
 	}
 	peer := a.peerFingerprint()
-	if len(fps) > 0 && peer != "" && !slices.Contains(fps, peer) {
+	if peer != "" && !slices.Contains(fps, peer) && (len(fps) > 0 || a.hubStore.Pinned()) {
 		a.log.Warn("the connected hub's certificate is no longer trusted, reconnecting", "hub", ans.Addr, "fingerprint", peer)
 		return true, nil
 	}

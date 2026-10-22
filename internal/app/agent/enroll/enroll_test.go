@@ -31,6 +31,7 @@ type script struct {
 	status   int32
 	mu       sync.Mutex
 	other    bool // sign a foreign key instead of the posted CSR
+	otherCA  bool // return a CA that did not sign the certificate
 	csr      string
 	hubAddr  string // overrides the claimed hub address
 	serverID string // overrides the claimed server id
@@ -63,6 +64,11 @@ func (s *script) sign() (string, string) {
 		s.t.Error(err)
 	}
 	p := func(d []byte) string { return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: d})) }
+	if s.otherCA {
+		oKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		oDER, _ := x509.CreateCertificate(rand.Reader, caTmpl, caTmpl, &oKey.PublicKey, oKey)
+		return p(der), p(oDER)
+	}
 	return p(der), p(caDER)
 }
 
@@ -286,6 +292,23 @@ func TestEnrollRejectsMismatchedCertificate(t *testing.T) {
 	var out bytes.Buffer
 	code, err := run(context.Background(), opts(srv.URL, dir, &out))
 	if code != ExitError || err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("code=%d err=%v", code, err)
+	}
+	for _, f := range []string{"agent.crt", "ca.crt", "agent.env"} {
+		if _, err := os.Stat(filepath.Join(dir, f)); err == nil {
+			t.Fatalf("%s written", f)
+		}
+	}
+}
+
+func TestEnrollRejectsCertFromOtherCA(t *testing.T) {
+	s := &script{t: t, statuses: []string{"claimed"}, otherCA: true}
+	srv := httptest.NewServer(s.handler())
+	defer srv.Close()
+	dir := t.TempDir()
+	var out bytes.Buffer
+	code, err := run(context.Background(), opts(srv.URL, dir, &out))
+	if code != ExitError || err == nil || !strings.Contains(err.Error(), "chain") {
 		t.Fatalf("code=%d err=%v", code, err)
 	}
 	for _, f := range []string{"agent.crt", "ca.crt", "agent.env"} {

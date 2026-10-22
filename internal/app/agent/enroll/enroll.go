@@ -265,6 +265,9 @@ func store(o options, st statusResult, keyPath string) error {
 	if _, err := tls.X509KeyPair([]byte(st.Certificate), keyPEM); err != nil {
 		return fmt.Errorf("the returned certificate does not match this agent's key: %w", err)
 	}
+	if err := verifyChain(st.Certificate, st.CACertificate); err != nil {
+		return err
+	}
 	host, port, err := net.SplitHostPort(st.HubAddr)
 	if err != nil {
 		return fmt.Errorf("invalid hub address %q: %w", st.HubAddr, err)
@@ -281,6 +284,27 @@ func store(o options, st statusResult, keyPath string) error {
 	}
 	// The certificate goes last: its presence marks the agent as enrolled.
 	return writeFile(filepath.Join(o.certDir, "agent.crt"), []byte(st.Certificate), 0o644)
+}
+
+// verifyChain checks the agent certificate chains to the returned CA for
+// client authentication.
+func verifyChain(certPEM, caPEM string) error {
+	block, _ := pem.Decode([]byte(certPEM))
+	if block == nil {
+		return errors.New("the returned certificate is not PEM")
+	}
+	leaf, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return fmt.Errorf("the returned certificate is invalid: %w", err)
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM([]byte(caPEM)) {
+		return errors.New("the returned CA certificate is invalid")
+	}
+	if _, err := leaf.Verify(x509.VerifyOptions{Roots: roots, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}}); err != nil {
+		return fmt.Errorf("the returned certificate does not chain to the returned CA: %w", err)
+	}
+	return nil
 }
 
 // writeFile writes to a temp name beside path and renames it into place.

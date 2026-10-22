@@ -39,7 +39,7 @@ func TestEnsureHubPKI(t *testing.T) {
 	}
 	caCrt, caKey, hubCrt := readFile(t, dir+"/ca.crt"), readFile(t, dir+"/ca.key"), readFile(t, dir+"/hub.crt")
 
-	changed, err = EnsureHubPKI(dir, []string{"10.0.0.5", "hub-01.example.com"})
+	changed, err = EnsureHubPKI(dir, []string{"hub-01.example.com", "10.0.0.5"})
 	if err != nil || changed {
 		t.Fatalf("second call: changed=%v err=%v", changed, err)
 	}

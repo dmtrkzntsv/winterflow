@@ -15,8 +15,10 @@ import (
 	"log"
 	"math/big"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -213,7 +215,7 @@ func SignCSRAs(csrPEM, commonName string, caCert *x509.Certificate, caKey crypto
 		return "", time.Time{}, fmt.Errorf("failed to generate serial number: %w", err)
 	}
 	now := time.Now()
-	expiresAt := now.AddDate(validityYears, 0, 0)
+	expiresAt := capToCA(now.AddDate(validityYears, 0, 0), caCert)
 	template := x509.Certificate{
 		SerialNumber:          serial,
 		Subject:               pkix.Name{CommonName: commonName},
@@ -273,7 +275,7 @@ func SignHubCSR(csrPEM, hubID string, hosts []string, caCert *x509.Certificate, 
 		return "", time.Time{}, fmt.Errorf("failed to generate serial number: %w", err)
 	}
 	now := time.Now()
-	expiresAt := now.AddDate(validityYears, 0, 0)
+	expiresAt := capToCA(now.AddDate(validityYears, 0, 0), caCert)
 	template := x509.Certificate{
 		SerialNumber:          serial,
 		Subject:               pkix.Name{CommonName: hubID},
@@ -282,6 +284,7 @@ func SignHubCSR(csrPEM, hubID string, hosts []string, caCert *x509.Certificate, 
 		KeyUsage:              x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
+		URIs:                  []*url.URL{HubURI(hubID)},
 	}
 	for _, h := range hosts {
 		if ip := net.ParseIP(h); ip != nil {
@@ -308,4 +311,32 @@ func Fingerprint(certPEM string) (string, error) {
 	}
 	sum := sha256.Sum256(block.Bytes)
 	return hex.EncodeToString(sum[:]), nil
+}
+
+// HubURIPrefix starts the URI SAN that marks a certificate as a hub's.
+const HubURIPrefix = "winterflow-hub:"
+
+// HubURI is the URI SAN a hub certificate carries: winterflow-hub:<id>, lower
+// case (hub ids are).
+func HubURI(hubID string) *url.URL {
+	return &url.URL{Scheme: "winterflow-hub", Opaque: strings.ToLower(hubID)}
+}
+
+// HubIDFromCert returns the hub id in c's winterflow-hub URI SAN.
+func HubIDFromCert(c *x509.Certificate) (string, bool) {
+	for _, u := range c.URIs {
+		if u.Scheme == "winterflow-hub" && u.Opaque != "" {
+			return u.Opaque, true
+		}
+	}
+	return "", false
+}
+
+// capToCA returns t, or the CA's NotAfter when that is earlier: no leaf
+// outlives its issuer.
+func capToCA(t time.Time, ca *x509.Certificate) time.Time {
+	if ca != nil && t.After(ca.NotAfter) {
+		return ca.NotAfter
+	}
+	return t
 }

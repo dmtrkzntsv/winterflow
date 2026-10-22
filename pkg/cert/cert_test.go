@@ -279,8 +279,8 @@ func TestSignCSRAsOverridesSubject(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SignCSRAs: %v", err)
 	}
-	if time.Until(exp) < 4*365*24*time.Hour {
-		t.Errorf("expiresAt too soon: %v", exp)
+	if exp.After(caCert.NotAfter) {
+		t.Errorf("expiresAt %v outlives the CA %v", exp, caCert.NotAfter)
 	}
 	block, _ := pem.Decode([]byte(certPEM))
 	c, err := x509.ParseCertificate(block.Bytes)

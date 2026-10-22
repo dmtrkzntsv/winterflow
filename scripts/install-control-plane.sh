@@ -726,9 +726,10 @@ hub_pki_hosts() { uniq_words "${HUB_PUBLIC_ADDR%:*}" "$FQDN"; }
 
 redis_pki_hosts() {
     # 127.0.0.1 because the API and the local hub dial Redis there (the
-    # client checks it against the certificate), plus each bind address.
+    # client checks it against the certificate), plus each bind address and
+    # --redis-host; the host's own name is not added.
     # shellcheck disable=SC2086 # word lists by design
-    uniq_words 127.0.0.1 "$FQDN" $REDIS_HOSTS $REDIS_BIND
+    uniq_words 127.0.0.1 $REDIS_HOSTS $REDIS_BIND
 }
 
 pki_args() {

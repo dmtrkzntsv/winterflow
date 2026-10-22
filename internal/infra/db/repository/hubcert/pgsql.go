@@ -35,3 +35,7 @@ func (pgsqlQuerier) RetireHubCertificateByFingerprint(ctx context.Context, db ba
 func (pgsqlQuerier) ListActiveHubCertificates(ctx context.Context, db backend.DBTX) ([]string, error) {
 	return pgsqlgen.New(db).ListActiveHubCertificates(ctx)
 }
+
+func (pgsqlQuerier) LockHubCertificates(ctx context.Context, db backend.DBTX, hubID string) error {
+	return pgsqlgen.New(db).LockHubCertificates(ctx, hubID)
+}

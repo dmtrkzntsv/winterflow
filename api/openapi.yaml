@@ -9730,7 +9730,9 @@ components:
         hub_fingerprints:
           items:
             type: string
-          type: array
+          type:
+          - "null"
+          - array
         server_id:
           type: string
         state:

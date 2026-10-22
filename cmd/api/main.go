@@ -18,10 +18,14 @@ import (
 )
 
 // subcommands are the hidden maintenance commands, by name.
-var subcommands = map[string]func(args []string, dbURL string, log *logger.Logger, out io.Writer) error{
-	"hub-token":  runHubToken,
-	"hub-trust":  runHubTrust,
-	"hub-retire": runHubRetire,
+func subcommands(cfg *config.ServerConfig) map[string]func(args []string, dbURL string, log *logger.Logger, out io.Writer) error {
+	return map[string]func(args []string, dbURL string, log *logger.Logger, out io.Writer) error{
+		"hub-token": runHubToken,
+		"hub-trust": func(args []string, dbURL string, log *logger.Logger, out io.Writer) error {
+			return runHubTrust(args, dbURL, cfg.GetHubCACertPath(), log, out)
+		},
+		"hub-retire": runHubRetire,
+	}
 }
 
 func main() {
@@ -38,7 +42,7 @@ func main() {
 	// Hidden maintenance subcommands: print a one-time hub join token;
 	// trust or retire hub certificates.
 	if len(os.Args) > 1 {
-		if run, ok := subcommands[os.Args[1]]; ok {
+		if run, ok := subcommands(cfg)[os.Args[1]]; ok {
 			if err := cfg.ValidateDatabaseURL(); err != nil {
 				log.Fatalf("invalid configuration: %v", err)
 			}

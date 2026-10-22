@@ -24,3 +24,8 @@ WHERE fingerprint = ? AND retired_at IS NULL;
 SELECT fingerprint FROM hub_certificates
 WHERE retired_at IS NULL
 ORDER BY fingerprint;
+
+-- LockHubCertificates serializes Trust per hub id on Postgres; SQLite has
+-- one connection and serializes transactions already, so this is a no-op.
+-- name: LockHubCertificates :exec
+SELECT CAST(sqlc.arg(hub_id) AS TEXT);

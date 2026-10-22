@@ -245,6 +245,9 @@ type Querier interface {
 	// own servers, oldest first: what a template_upgrade rollout of the org may
 	// still touch.
 	ListUpgradableInstances(ctx context.Context, arg ListUpgradableInstancesParams) ([]TemplateInstance, error)
+	// LockHubCertificates serializes Trust per hub id on Postgres; SQLite has
+	// one connection and serializes transactions already, so this is a no-op.
+	LockHubCertificates(ctx context.Context, hubID string) error
 	// LockOrganizationMember re-reads the caller's membership inside
 	// RemoveMember's transaction. SQLite has no row locks (its writers are
 	// serialized), so this is a plain SELECT; Postgres adds FOR UPDATE.

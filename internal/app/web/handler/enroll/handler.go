@@ -73,9 +73,10 @@ type StatusResponse struct {
 	Certificate   string     `json:"certificate,omitempty"`
 	CACertificate string     `json:"ca_certificate,omitempty"`
 	HubAddr       string     `json:"hub_addr,omitempty"`
-	// HubFingerprints (claimed only) is the trusted hub certificate set the
-	// agent pins: lowercase hex SHA-256 of each certificate's DER.
-	HubFingerprints []string `json:"hub_fingerprints,omitempty"`
+	// HubFingerprints is the trusted hub certificate set the agent pins:
+	// lowercase hex SHA-256 of each certificate's DER. Always present when
+	// claimed (an empty array when nothing is trusted yet), absent otherwise.
+	HubFingerprints *[]string `json:"hub_fingerprints,omitempty"`
 }
 
 // decode reads a size-capped JSON body.
@@ -155,7 +156,14 @@ func (h *Handler) Status(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := StatusResponse{State: st.State, Code: st.Code, CodesLeft: st.CodesLeft, ServerID: st.ServerID,
-		Certificate: st.Certificate, CACertificate: st.CACertificate, HubAddr: st.HubAddr, HubFingerprints: st.HubFingerprints}
+		Certificate: st.Certificate, CACertificate: st.CACertificate, HubAddr: st.HubAddr}
+	if st.State == "claimed" {
+		fps := st.HubFingerprints
+		if fps == nil {
+			fps = []string{}
+		}
+		out.HubFingerprints = &fps
+	}
 	if !st.ExpiresAt.IsZero() {
 		out.ExpiresAt = &st.ExpiresAt
 	}

@@ -14,6 +14,7 @@ import (
 	"winterflow/internal/domain/model"
 	"winterflow/internal/domain/port"
 	"winterflow/internal/domain/usecase/agentauth"
+	"winterflow/internal/domain/usecase/hubpins"
 	"winterflow/internal/domain/usecase/hubs"
 	"winterflow/pkg/agentsig"
 	"winterflow/pkg/logger"
@@ -29,17 +30,13 @@ var (
 	ErrUnauthorized = errors.New("signature does not verify")
 	// ErrStaleRequest: the timestamp is more than MaxSkew off (400).
 	ErrStaleRequest = errors.New("timestamp is more than 5 minutes off")
-	// ErrPinsUnavailable: the trusted hub certificate set could not be read
-	// (503; the agent asks again). No answer goes out without it.
-	ErrPinsUnavailable = errors.New("trusted hub certificates unavailable")
+	// ErrPinsUnavailable: the trusted hub certificate set could not be
+	// read (503; the agent asks again).
+	ErrPinsUnavailable = hubpins.ErrUnavailable
 )
 
-// Pins is the slice of port.HubCertRepository the usecase reads.
-type Pins interface {
-	Active(ctx context.Context) ([]string, error)
-}
-
-var _ Pins = port.HubCertRepository(nil)
+// Pins is the trusted hub certificate set the answers carry.
+type Pins = hubpins.Source
 
 // Answer is where the agent should connect: the hub's address, whether the
 // server was just moved there, and the fingerprints (lowercase hex SHA-256
@@ -95,7 +92,7 @@ func (u *UseCase) Where(ctx context.Context, serverID string, ts int64, nonce, s
 	if err := u.verify(ctx, serverID, ts, nonce, sig); err != nil {
 		return Answer{}, err
 	}
-	fps, err := u.activePins(ctx)
+	fps, err := hubpins.Active(ctx, u.pins)
 	if err != nil {
 		return Answer{}, err
 	}
@@ -127,21 +124,6 @@ func (u *UseCase) verify(ctx context.Context, serverID string, ts int64, nonce, 
 		return ErrStaleRequest
 	}
 	return nil
-}
-
-// activePins reads the trusted set; never nil on success.
-func (u *UseCase) activePins(ctx context.Context) ([]string, error) {
-	if u.pins == nil {
-		return nil, fmt.Errorf("%w: no hub certificate registry", ErrPinsUnavailable)
-	}
-	fps, err := u.pins.Active(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrPinsUnavailable, err)
-	}
-	if fps == nil {
-		fps = []string{}
-	}
-	return fps, nil
 }
 
 func (u *UseCase) locate(ctx context.Context, serverID string) (string, bool, error) {

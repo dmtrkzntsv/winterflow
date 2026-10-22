@@ -181,8 +181,24 @@ func TestEnrollStatusClaimedCarriesHubFingerprints(t *testing.T) {
 	}
 	w := call(t, h.Status, PollRequest{PollSecret: res.PollSecret})
 	st := data[StatusResponse](t, w)
-	if w.Code != 200 || st.State != "claimed" || st.HubAddr == "" || len(st.HubFingerprints) != 2 || st.HubFingerprints[1] != "bb" {
+	if w.Code != 200 || st.State != "claimed" || st.HubAddr == "" || st.HubFingerprints == nil || len(*st.HubFingerprints) != 2 || (*st.HubFingerprints)[1] != "bb" {
 		t.Fatalf("status = %d %+v", w.Code, st)
+	}
+}
+
+func TestEnrollStatusClaimedNothingTrustedSendsEmptyArray(t *testing.T) {
+	h, uc := newHandlerWithPins(t, enrolltest.Pins{})
+	res := start(t, h)
+	// Pending: the field is absent.
+	if w := call(t, h.Status, PollRequest{PollSecret: res.PollSecret}); strings.Contains(w.Body.String(), "hub_fingerprints") {
+		t.Fatalf("pending carries hub_fingerprints: %s", w.Body)
+	}
+	if _, err := uc.Claim(dbtest.Ctx(t), res.Code, "org-1"); err != nil {
+		t.Fatal(err)
+	}
+	w := call(t, h.Status, PollRequest{PollSecret: res.PollSecret})
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"hub_fingerprints":[]`) {
+		t.Fatalf("status = %d %s", w.Code, w.Body)
 	}
 }
 

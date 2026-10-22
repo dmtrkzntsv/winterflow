@@ -116,3 +116,22 @@ func TestRetire(t *testing.T) {
 		t.Fatalf("active = %v", got)
 	}
 }
+
+func TestTrustConcurrentSameHub(t *testing.T) {
+	r, _ := open(t)
+	ctx := context.Background()
+	fps := []string{"f1", "f2", "f3", "f4"}
+	errs := make(chan error, len(fps))
+	for _, fp := range fps {
+		go func() { errs <- r.Trust(ctx, "hub-01", fp, now) }()
+	}
+	for range fps {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	// However they interleave, exactly one certificate of the hub stays active.
+	if got := active(t, r); len(got) != 1 {
+		t.Fatalf("active = %v, want exactly one", got)
+	}
+}

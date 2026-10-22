@@ -75,6 +75,18 @@ func (q *Queries) ListActiveHubCertificates(ctx context.Context) ([]string, erro
 	return items, nil
 }
 
+const lockHubCertificates = `-- name: LockHubCertificates :exec
+SELECT pg_advisory_xact_lock(hashtext($1::text))
+`
+
+// LockHubCertificates serializes Trust per hub id: a transaction-scoped
+// advisory lock, so two concurrent Trusts of one hub id cannot both leave
+// their certificate active (each would miss the other's uncommitted row).
+func (q *Queries) LockHubCertificates(ctx context.Context, hubID string) error {
+	_, err := q.db.ExecContext(ctx, lockHubCertificates, hubID)
+	return err
+}
+
 const retireHubCertificateByFingerprint = `-- name: RetireHubCertificateByFingerprint :execrows
 UPDATE hub_certificates SET retired_at = $1
 WHERE fingerprint = $2 AND retired_at IS NULL

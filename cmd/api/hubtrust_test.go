@@ -14,13 +14,13 @@ import (
 	"winterflow/pkg/logger"
 )
 
-func hubCertFile(t *testing.T, host string) (path, fp string) {
+func hubCertFile(t *testing.T, host string) (path, ca, fp string) {
 	t.Helper()
 	dir := t.TempDir()
 	if _, err := certpkg.EnsureHubPKI(dir, []string{host}); err != nil {
 		t.Fatal(err)
 	}
-	path = filepath.Join(dir, "hub.crt")
+	path, ca = filepath.Join(dir, "hub.crt"), filepath.Join(dir, "ca.crt")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -28,7 +28,7 @@ func hubCertFile(t *testing.T, host string) (path, fp string) {
 	if fp, err = certpkg.Fingerprint(string(data)); err != nil {
 		t.Fatal(err)
 	}
-	return path, fp
+	return path, ca, fp
 }
 
 func activeRows(t *testing.T, dbPath string) map[string]string {
@@ -58,29 +58,35 @@ func TestHubTrustAndRetire(t *testing.T) {
 	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
 	dbPath := filepath.Join(t.TempDir(), "api.sqlite")
 	url := "sqlite://" + dbPath
-	trust := func(path string) string {
+	trust := func(path, ca string) string {
 		t.Helper()
 		var out bytes.Buffer
-		if err := runHubTrust([]string{"--cert", path}, url, log, &out); err != nil {
+		if err := runHubTrust([]string{"--cert", path}, url, ca, log, &out); err != nil {
 			t.Fatal(err)
 		}
 		return out.String()
 	}
-	first, fp1 := hubCertFile(t, "hub-01.winterflow.dev")
-	if out := trust(first); !strings.Contains(out, fp1) || !strings.Contains(out, "hub-01.winterflow.dev") {
+	first, ca1, fp1 := hubCertFile(t, "hub-01.winterflow.dev")
+	if out := trust(first, ca1); !strings.Contains(out, fp1) || !strings.Contains(out, "hub-01.winterflow.dev") {
 		t.Fatalf("output = %q", out)
 	}
-	trust(first) // idempotent
-	other, fp3 := hubCertFile(t, "hub-02.winterflow.dev")
-	trust(other)
+	trust(first, ca1) // idempotent
+	other, ca3, fp3 := hubCertFile(t, "hub-02.winterflow.dev")
+	// A certificate of another CA is refused (a wrong file), also via --ca.
+	if err := runHubTrust([]string{"--cert", other}, url, ca1, log, &bytes.Buffer{}); err == nil {
+		t.Fatal("certificate of another CA trusted")
+	}
+	if err := runHubTrust([]string{"--cert", other, "--ca", ca3}, url, ca1, log, &bytes.Buffer{}); err != nil {
+		t.Fatalf("--ca: %v", err)
+	}
 	// A new certificate for hub-01 retires the first one.
-	second, fp2 := hubCertFile(t, "hub-01.winterflow.dev")
-	trust(second)
+	second, ca2, fp2 := hubCertFile(t, "hub-01.winterflow.dev")
+	trust(second, ca2)
 	if got := activeRows(t, dbPath); len(got) != 2 || got[fp2] != "hub-01.winterflow.dev" || got[fp3] != "hub-02.winterflow.dev" {
 		t.Fatalf("active = %v", got)
 	}
 	// The retired certificate is not trusted again.
-	if err := runHubTrust([]string{"--cert", first}, url, log, &bytes.Buffer{}); err == nil {
+	if err := runHubTrust([]string{"--cert", first}, url, ca1, log, &bytes.Buffer{}); err == nil {
 		t.Fatal("retired certificate trusted again")
 	}
 
@@ -119,8 +125,10 @@ func TestHubTrustRefusesNonHubCert(t *testing.T) {
 		{"--cert", filepath.Join(dir, "missing")},
 		{},
 		{"--cert", filepath.Join(dir, "hub.crt"), "extra"},
+		{"--cert", filepath.Join(dir, "hub.crt"), "--ca", filepath.Join(dir, "missing")},
+		{"--cert", filepath.Join(dir, "hub.crt"), "--ca", ""},
 	} {
-		if err := runHubTrust(args, url, log, &bytes.Buffer{}); err == nil {
+		if err := runHubTrust(args, url, filepath.Join(dir, "ca.crt"), log, &bytes.Buffer{}); err == nil {
 			t.Errorf("%v accepted", args)
 		}
 	}

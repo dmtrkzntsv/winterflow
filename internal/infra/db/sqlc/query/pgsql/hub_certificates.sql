@@ -24,3 +24,9 @@ WHERE fingerprint = $2 AND retired_at IS NULL;
 SELECT fingerprint FROM hub_certificates
 WHERE retired_at IS NULL
 ORDER BY fingerprint;
+
+-- LockHubCertificates serializes Trust per hub id: a transaction-scoped
+-- advisory lock, so two concurrent Trusts of one hub id cannot both leave
+-- their certificate active (each would miss the other's uncommitted row).
+-- name: LockHubCertificates :exec
+SELECT pg_advisory_xact_lock(hashtext(sqlc.arg(hub_id)::text));

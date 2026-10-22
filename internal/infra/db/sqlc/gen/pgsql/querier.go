@@ -245,6 +245,10 @@ type Querier interface {
 	// own servers, oldest first: what a template_upgrade rollout of the org may
 	// still touch.
 	ListUpgradableInstances(ctx context.Context, arg ListUpgradableInstancesParams) ([]TemplateInstance, error)
+	// LockHubCertificates serializes Trust per hub id: a transaction-scoped
+	// advisory lock, so two concurrent Trusts of one hub id cannot both leave
+	// their certificate active (each would miss the other's uncommitted row).
+	LockHubCertificates(ctx context.Context, hubID string) error
 	// LockOrganizationMember re-reads and row-locks the caller's membership
 	// inside RemoveMember's transaction, so two members removing each other
 	// concurrently cannot empty the org.

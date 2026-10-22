@@ -75,6 +75,17 @@ func (q *Queries) ListActiveHubCertificates(ctx context.Context) ([]string, erro
 	return items, nil
 }
 
+const lockHubCertificates = `-- name: LockHubCertificates :exec
+SELECT CAST(?1 AS TEXT)
+`
+
+// LockHubCertificates serializes Trust per hub id on Postgres; SQLite has
+// one connection and serializes transactions already, so this is a no-op.
+func (q *Queries) LockHubCertificates(ctx context.Context, hubID string) error {
+	_, err := q.db.ExecContext(ctx, lockHubCertificates, hubID)
+	return err
+}
+
 const retireHubCertificateByFingerprint = `-- name: RetireHubCertificateByFingerprint :execrows
 UPDATE hub_certificates SET retired_at = ?
 WHERE fingerprint = ? AND retired_at IS NULL

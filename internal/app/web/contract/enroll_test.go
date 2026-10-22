@@ -2,6 +2,7 @@ package contract_test
 
 import (
 	"crypto/elliptic"
+	"encoding/json"
 	"net/http"
 	"testing"
 	"time"
@@ -37,20 +38,28 @@ func TestEnrollRoutes(t *testing.T) {
 	}
 	agent.post(t, "/api/v1/agent/enroll/status", enroll.PollRequest{PollSecret: "unknown"}).expect(t, http.StatusBadRequest)
 
+	// The user claims the code. Nothing is trusted yet: the claimed answer
+	// carries an empty set.
+	var reg server.RegisterServerResponse
+	owner.post(t, "/api/v1/server/register", server.RegisterServerRequest{Code: refreshed.Code}).
+		expect(t, http.StatusOK).data(t, &reg)
+	var raw map[string]json.RawMessage
+	agent.post(t, "/api/v1/agent/enroll/status", enroll.PollRequest{PollSecret: started.PollSecret}).
+		expect(t, http.StatusOK).data(t, &raw)
+	if got := string(raw["hub_fingerprints"]); got != "[]" {
+		t.Fatalf("hub_fingerprints = %q, want []", got)
+	}
 	// The control plane's hub certificate is trusted; claimed answers carry
 	// the set.
 	const pin = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	if err := e.deps.HubCertRepository.Trust(e.dbCtx(t), enrolltest.DefaultHub.ID, pin, time.Now()); err != nil {
 		t.Fatal(err)
 	}
-	// The user claims the code; the agent's poll then returns its certificate.
-	var reg server.RegisterServerResponse
-	owner.post(t, "/api/v1/server/register", server.RegisterServerRequest{Code: refreshed.Code}).
-		expect(t, http.StatusOK).data(t, &reg)
+	// The agent's poll returns its certificate.
 	agent.post(t, "/api/v1/agent/enroll/status", enroll.PollRequest{PollSecret: started.PollSecret}).
 		expect(t, http.StatusOK).data(t, &st)
 	if st.State != "claimed" || st.ServerID != reg.Server.ID || st.Certificate == "" || st.CACertificate == "" || st.HubAddr != enrolltest.DefaultHub.PublicAddr ||
-		len(st.HubFingerprints) != 1 || st.HubFingerprints[0] != pin {
+		st.HubFingerprints == nil || len(*st.HubFingerprints) != 1 || (*st.HubFingerprints)[0] != pin {
 		t.Fatalf("claimed status: %+v", st)
 	}
 }

@@ -34,3 +34,7 @@ func (sqliteQuerier) RetireHubCertificateByFingerprint(ctx context.Context, db b
 func (sqliteQuerier) ListActiveHubCertificates(ctx context.Context, db backend.DBTX) ([]string, error) {
 	return sqlitegen.New(db).ListActiveHubCertificates(ctx)
 }
+
+func (sqliteQuerier) LockHubCertificates(ctx context.Context, db backend.DBTX, hubID string) error {
+	return sqlitegen.New(db).LockHubCertificates(ctx, hubID)
+}

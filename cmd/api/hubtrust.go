@@ -35,28 +35,47 @@ func openHubCerts(dbURL string, log *logger.Logger) (*hubcert.Repo, func(), erro
 	return repo, func() { _ = conn.Shutdown() }, nil
 }
 
-// readHubCert reads a PEM hub certificate and returns its hub id (from the
-// winterflow-hub URI SAN) and fingerprint.
-func readHubCert(path string) (hubID, fingerprint string, err error) {
+// readCertFile reads the first PEM certificate of a size-capped file.
+func readCertFile(path string) (*x509.Certificate, *pem.Block, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return "", "", err
+		return nil, nil, err
 	}
 	defer f.Close()
 	data, err := io.ReadAll(io.LimitReader(f, maxCertFile+1))
 	if err != nil {
-		return "", "", err
+		return nil, nil, err
 	}
 	if len(data) > maxCertFile {
-		return "", "", fmt.Errorf("%s: larger than %d bytes", path, maxCertFile)
+		return nil, nil, fmt.Errorf("%s: larger than %d bytes", path, maxCertFile)
 	}
 	block, _ := pem.Decode(data)
 	if block == nil || block.Type != "CERTIFICATE" {
-		return "", "", fmt.Errorf("%s: not a PEM certificate", path)
+		return nil, nil, fmt.Errorf("%s: not a PEM certificate", path)
 	}
 	crt, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		return "", "", fmt.Errorf("%s: %w", path, err)
+		return nil, nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return crt, block, nil
+}
+
+// readHubCert reads a PEM hub certificate, checks that it chains to the CA
+// at caPath (a server certificate, valid now), and returns its hub id (from
+// the winterflow-hub URI SAN) and fingerprint.
+func readHubCert(path, caPath string) (hubID, fingerprint string, err error) {
+	crt, block, err := readCertFile(path)
+	if err != nil {
+		return "", "", err
+	}
+	ca, _, err := readCertFile(caPath)
+	if err != nil {
+		return "", "", fmt.Errorf("read the CA: %w", err)
+	}
+	roots := x509.NewCertPool()
+	roots.AddCert(ca)
+	if _, err := crt.Verify(x509.VerifyOptions{Roots: roots, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}); err != nil {
+		return "", "", fmt.Errorf("%s does not chain to the CA %s: %w", path, caPath, err)
 	}
 	id, ok := certpkg.HubIDFromCert(crt)
 	if !ok {
@@ -72,10 +91,13 @@ func readHubCert(path string) (hubID, fingerprint string, err error) {
 // runHubTrust is the hidden `hub-trust --cert <path>` subcommand: it
 // records a hub certificate (the control plane's own, made by
 // `winterflow-hub pki`) as trusted and retires the older certificates of
-// its hub id. Rerunning it with the same certificate changes nothing.
-func runHubTrust(args []string, dbURL string, log *logger.Logger, out io.Writer) error {
+// its hub id. The certificate must chain to the CA (--ca, default
+// $HUB_CERT_DIR/ca.crt, the CA the API signs with), which catches a wrong file. Rerunning it with
+// the same certificate changes nothing.
+func runHubTrust(args []string, dbURL, caPath string, log *logger.Logger, out io.Writer) error {
 	fs := flag.NewFlagSet("hub-trust", flag.ContinueOnError)
 	path := fs.String("cert", "", "the hub certificate (PEM)")
+	ca := fs.String("ca", caPath, "the CA certificate the hub certificate must chain to")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -85,7 +107,10 @@ func runHubTrust(args []string, dbURL string, log *logger.Logger, out io.Writer)
 	if *path == "" {
 		return fmt.Errorf("--cert is required")
 	}
-	hubID, fp, err := readHubCert(*path)
+	if *ca == "" {
+		return fmt.Errorf("--ca is required")
+	}
+	hubID, fp, err := readHubCert(*path, *ca)
 	if err != nil {
 		return err
 	}

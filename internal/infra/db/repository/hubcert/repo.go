@@ -24,6 +24,7 @@ type (
 )
 
 type querier interface {
+	LockHubCertificates(ctx context.Context, db backend.DBTX, hubID string) error
 	InsertHubCertificate(ctx context.Context, db backend.DBTX, p insertParams) error
 	GetHubCertificate(ctx context.Context, db backend.DBTX, fingerprint string) (getRow, error)
 	RetireOtherHubCertificates(ctx context.Context, db backend.DBTX, p retireOtherParams) error
@@ -52,13 +53,20 @@ func New(tx *backend.TxManager, driver string) (*Repo, error) {
 }
 
 // Trust inserts the fingerprint (idempotent) and retires the hub's other
-// active certificates in one transaction.
+// active certificates in one transaction. On Postgres the transaction
+// first takes a per-hub-id advisory lock, so two concurrent Trusts of one
+// hub id run one after the other and only the later certificate stays
+// active (under READ COMMITTED each would otherwise miss the other's
+// uncommitted row); SQLite serializes transactions already.
 func (r *Repo) Trust(ctx context.Context, hubID, fingerprint string, now time.Time) error {
 	if hubID == "" || fingerprint == "" {
 		return errors.New("hub id and fingerprint are required")
 	}
 	return r.tx.WithTx(ctx, func(ctx context.Context) error {
 		db := r.tx.Querier(ctx)
+		if err := r.q.LockHubCertificates(ctx, db, hubID); err != nil {
+			return fmt.Errorf("lock hub certificates: %w", err)
+		}
 		if err := r.q.InsertHubCertificate(ctx, db, insertParams{
 			Fingerprint: fingerprint, HubID: hubID, CreatedAt: types.DateTime(now),
 		}); err != nil {

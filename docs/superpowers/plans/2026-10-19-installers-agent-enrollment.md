@@ -499,3 +499,66 @@ The workflow edit must be pushed over SSH (the gh token lacks the `workflow` sco
 - [ ] **Step 2: Run the CI reproduction from CLAUDE.md** — all PASS, diff coverage ≥ 80%.
 - [ ] **Step 3: Commit** `docs: several hubs, joining and draining`
 - [ ] **Step 4: Push, open a draft PR B.**
+
+## Part C — certificate hardening (ends in PR C, stacked on PR B)
+
+Spec: section "Part C — certificate hardening". Next migration number: 0020.
+
+### Task 24: CA and leaf constraints; hub marker; Redis SANs; enroll chain check
+
+**Files:** `pkg/cert/hubpki.go`, `pkg/cert/cert.go` (+ tests), `internal/app/agent/enroll/enroll.go` (+ test), `scripts/install-control-plane.sh` (+ test), `cmd/hub` pki (if flags change)
+
+**Interfaces:**
+- Produces: `const HubURIPrefix = "winterflow-hub:"`; `func HubURI(hubID string) *url.URL` (`winterflow-hub:<id>`, lower case); `func HubIDFromCert(c *x509.Certificate) (string, bool)` (reads that URI SAN).
+- CA template: `BasicConstraintsValid, IsCA, MaxPathLen: 0, MaxPathLenZero: true`; `createCA` writes key and cert via temp + rename (cert last); a half-present CA stays an error.
+- Every issuer (`EnsureServerCert` hub use, `SignHubCSR`, `SignCSRAs`) caps `NotAfter` at the CA's `NotAfter`.
+- Hub certificates carry `HubURI(hubID)`: `SignHubCSR` always; `EnsureHubPKI(dir, hubHosts)` uses the first host as the hub id. `EnsureServerCert` reissues when the URI SAN set differs. The Redis pair (`EnsureServerCert(dir, "redis", hosts)`) carries no hub URI.
+- `install-control-plane.sh` `redis_pki_hosts`: `127.0.0.1` + `--redis-host` + `--redis-bind` only (no `$FQDN` by default).
+- `enroll`: before writing, verify the agent cert chains to the returned CA (`x509.Verify` with ClientAuth usage); failure → exit 1, nothing written.
+
+- [ ] **Step 1: Failing tests:** `TestCAHasMaxPathLenZero`, `TestLeafNeverOutlivesCA` (CA with 1 day left → leaf NotAfter ≤ CA NotAfter, for SignCSRAs, SignHubCSR, EnsureServerCert), `TestHubCertCarriesHubURI` (EnsureHubPKI and SignHubCSR; HubIDFromCert round-trips), `TestRedisCertHasNoHubURI`, `TestEnsureHubPKIReissuesCertWithoutURI`, `TestCreateCAAtomic` (simulated failure leaves no half CA), `TestEnrollRejectsCertFromOtherCA`; installer test `redis_sans_exclude_fqdn_by_default`.
+- [ ] **Step 2-4:** implement; `go test ./pkg/cert/ ./internal/app/agent/enroll/ ./cmd/hub/`, installer tests, shellcheck.
+- [ ] **Step 5:** commit `fix(cert): CA path length 0, leaves within CA lifetime, hub URI SAN, no host name on Redis cert`
+
+### Task 25: Hub certificate registry and pin set on the API
+
+**Files:** `internal/infra/db/migrations/{sqlite,pgsql}/0020_hub_certificates.sql`, queries, `internal/infra/db/repository/hubcert/*`, `internal/domain/port/hubcert.go`, `internal/domain/usecase/hubjoin/usecase.go`, `internal/domain/usecase/agenthub/usecase.go`, `internal/domain/usecase/enrollment/usecase.go`, handlers (`agenthub`, `enroll` status), `cmd/api/hubtrust.go` (+ `hub-trust`, `hub-retire` subcommands), bootstrap wiring, contract tests, `api/openapi.yaml`
+
+**Interfaces:**
+- Table `hub_certificates(fingerprint TEXT PK, hub_id TEXT NOT NULL, created_at, retired_at NULL)`, index on hub_id.
+- `port.HubCertRepository`: `Trust(ctx, hubID, fingerprint string, now time.Time) error` — inserts (idempotent) and retires every other active cert of that hub id in one transaction; `Retire(ctx, hubID, fingerprint string, now time.Time) (int, error)` (either filter); `Active(ctx) ([]string, error)`.
+- `hubjoin.Redeem` calls `Trust` with the issued cert's fingerprint (same transaction is not required; trust after a successful sign, before answering).
+- `winterflow-api hub-trust --cert <path>`: reads the cert, hub id from `HubIDFromCert` (refuse if absent), `Trust`. `winterflow-api hub-retire --hub <id> | --fingerprint <fp>` prints how many were retired.
+- `Where` answer and enrollment `Status` (claimed) gain `HubFingerprints []string` (JSON `hub_fingerprints`), from `Active`.
+- Tests: repo (trust idempotent, retires siblings, retire by hub/fingerprint, active), Redeem trusts, Where/status include the set, CLI subcommands, contract happy paths updated; `make sqlc`, `make openapi`, `make test-pg`.
+- Commit `feat(api): trusted hub certificates; agents get the active set`
+
+### Task 26: Agent pins hub certificates
+
+**Files:** `internal/infra/transport/grpc/agent/{agent.go,hubstore.go,migrate.go}` (+ tests), `internal/app/agent/enroll/enroll.go` (+ test)
+
+**Interfaces:**
+- `hub.json` gains `"fingerprints": [...]` (`HubStore.Save(host, port string, fps []string)`, `Load` returns them); enroll writes `hub.json` with the claimed answer's `hub_fingerprints` (into `AGENT_DATA_DIR` — enroll gets a `--data-dir` flag; install-agent.sh passes it).
+- TLS: `VerifyPeerCertificate` after chain verification: leaf must carry a `winterflow-hub:` URI SAN, and, when the stored set is non-empty, its fingerprint must be in the set. Empty set → CA + URI check only, logged once.
+- A pin/marker failure is a connection error that triggers an ask (30 s floor) whose answer replaces the stored set (and address if different).
+- While connected, refresh the set via an ask every 6 h (injectable).
+- Tests: pinned hub accepted; unknown fingerprint refused then ask refreshes set and connects; missing hub URI refused; empty set accepted with warning; 6-hour refresh updates hub.json; enroll writes fingerprints.
+- Commit `feat(agent): pin hub certificates to the set the API trusts`
+
+### Task 27: Standalone identity and legacy removal
+
+**Files:** `internal/infra/bootstrap/standalone.go`, `internal/infra/agent/service/agent.go`, `internal/infra/cert/*` (Manager, server.go → remove), `pkg/cert/generator.go`, `pkg/cert/util.go` (remove what becomes unused), `pkg/config/config.go` (drop HUB_CA_SUBJECT/HUB_SERVER_SUBJECT/HUB_CERT_EXT_PATH and fullchain/CSR filename getters if unused), `.env.example`, `scripts/install.sh` (+ test golden), `Makefile` (dev targets), CLAUDE.md/AGENTS.md command lines
+
+**Interfaces:**
+- `pkg/cert.EnsureAgentIdentity(dir, serverID string) (certPEM []byte, created bool, err error)` — P-256 `agent.key` (0600) + self-signed `agent.crt` (CN = serverID, ClientAuth, 10 y) written atomically once; an existing pair is kept (if the pair mismatches → regenerate both).
+- Standalone registration uses it (server id known before the cert) instead of `GenerateAgent`; `public_key` capability still comes from `agent.crt`.
+- Remove the boot-time `GenerateServer` call and every file it produced; existing installs' stray `ca.*`, `hub.*`, `hub_fullchain.crt`, `*.csr` files are left alone (no deletion).
+- Makefile: `generate-hub-certs` → `go run ./cmd/hub pki --dir data/hub-certs --host localhost`; `generate-agent-certs` → a hidden `winterflow-hub dev-agent-cert --dir data/hub-certs --out data/agent-certs --server-id <id>` (signs CN = id with the local CA) — or document dev enrollment if simpler; pick one and update AGENTS.md.
+- Tests: EnsureAgentIdentity (create, keep, regenerate mismatched, atomic); standalone bootstrap test no longer creates ca.*/hub.*; install.sh golden updated; config tests updated.
+- Commit `refactor: standalone keeps only an agent identity; drop the legacy certificate generator`
+
+### Task 28: Backups notice, docs, full check, PR C
+
+- `install-control-plane.sh` finish message: "Back up /var/lib/winterflow-control/pki/ca.key and ca.crt — losing them means re-joining every hub and re-enrolling every agent." (+ test); installer runs `winterflow-api hub-trust --cert <hub.crt>` after `pki` (+ test, as the API user with the API env).
+- Docs: CLAUDE.md (pinning, hub URI SAN, CA constraints, standalone identity, removed settings), `docs/install-control-plane.md` (backup section, `hub-retire` for a leaked/removed hub), `.env.example` (removed vars).
+- Full CI reproduction; commit `docs: certificate hardening`; push; draft PR C based on `feat/multi-hub`.

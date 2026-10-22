@@ -78,7 +78,9 @@ root needed), `--uninstall`.
 
 Rerunning keeps the CA, passwords, JWT secret and data, updates the binaries
 and units, and restarts the services. A changed `--hub-addr` reissues the hub
-certificate (the CA is kept). Pass `--version vYYMMDD.N` to pin a release.
+certificate (the CA is kept) and, once the new one is trusted, retires the
+old hub id's certificates (`winterflow-api hub-retire`); a retire that fails
+only warns and is retried on the next run. Pass `--version vYYMMDD.N` to pin a release.
 
 ### Upgrading to this version
 
@@ -92,6 +94,12 @@ URI and no record on the control plane: rerun its `install-hub.sh` with a new
 join token (`--token` or `WINTERFLOW_HUB_TOKEN`, made with `hub-token`
 below); without one the rerun stops and asks for it. An agent's `hub.json`
 overrides later `HUB_HOST` edits in `agent.env`.
+
+The Redis certificate no longer lists the host's own name (FQDN). Joined hubs
+that reach Redis by that name need it back: rerun `install-control-plane.sh`
+with `--redis-host <fqdn>` (kept for later reruns). Hubs that use an address
+given with `--redis-bind`/`--redis-host` are not affected. An existing CA
+keeps its old path-length setting; nothing to do about it.
 
 ## Back up the CA
 

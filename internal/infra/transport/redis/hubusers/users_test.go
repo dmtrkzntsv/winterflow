@@ -17,7 +17,7 @@ func TestHubACLRules(t *testing.T) {
 		"&hub:requests", "&bus:responses", "&bus:events",
 		"-@all",
 		"+ping", "+hello", "+auth", "+select",
-		"+client|setinfo", "+client|setname",
+		"+client|setname",
 		"+get", "+set", "+del", "+exists", "+scan", "+mget",
 		"+publish", "+unsubscribe",
 		"(&bus:requests:hub-01.winterflow.dev &hub:responses:hub-01.winterflow.dev &hub:broadcast +subscribe)",

@@ -175,6 +175,11 @@ func TestNewRedisClientUsername(t *testing.T) {
 	if o := rc.Options(); o.Username != "hub:hub-01.winterflow.dev" || o.Password != "pw" {
 		t.Fatalf("options: username %q password %q", o.Username, o.Password)
 	}
+	// A hub's ACL user cannot run CLIENT SETINFO (Redis 7.0/7.1 do not know
+	// it), so the client must not send it.
+	if !rc.Options().DisableIdentity {
+		t.Fatal("DisableIdentity off: the client would send CLIENT SETINFO")
+	}
 
 	t.Setenv("REDIS_USERNAME", "")
 	rc2, err := NewRedisClient(config.NewServerConfig("distributed"))

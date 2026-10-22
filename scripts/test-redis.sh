@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Run the Redis packages' tests and the hub's (the ACL integration tests
-# included: the hub running on its own ACL user) against a throwaway redis:8
-# container on a random host port (make test-redis). The server runs with a
+# included: the hub running on its own ACL user) against a throwaway Redis
+# container on a random host port (make test-redis). REDIS_IMAGE picks the
+# image (default redis:8; CI also runs redis:7.0, the oldest the control
+# plane installer admits and what Debian 12 / Ubuntu 24.04 ship). The server runs with a
 # password for the default user and an aclfile, like the control plane's
 # dedicated instance (TLS off: the ACL logic does not depend on it). The
 # container is removed on exit, pass or fail. Extra arguments go to `go test`
@@ -9,6 +11,7 @@
 set -euo pipefail
 
 GO="${GO:-go}"
+REDIS_IMAGE="${REDIS_IMAGE:-redis:8}"
 password="test-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
 
 # The aclfile must exist before redis-server starts, and it must define the
@@ -18,11 +21,11 @@ password="test-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
 # container so the server can write it (ACL SAVE) as its own user. The
 # password is a throwaway, passed through the environment.
 password_hash="$(printf '%s' "$password" | sha256sum | cut -d' ' -f1)"
-cid="$(docker run -d --rm -p 127.0.0.1:0:6379 -e WF_PW="$password" -e WF_PW_HASH="$password_hash" --entrypoint sh redis:8 -c \
+cid="$(docker run -d --rm -p 127.0.0.1:0:6379 -e WF_PW="$password" -e WF_PW_HASH="$password_hash" --entrypoint sh "$REDIS_IMAGE" -c \
 	'printf "user default on sanitize-payload #%s ~* &* +@all\n" "$WF_PW_HASH" > /data/users.acl && exec redis-server --port 6379 --aclfile /data/users.acl --requirepass "$WF_PW"')"
 # A second server without an aclfile (and without a password): ACL SAVE there
 # must surface as a configuration error.
-noacl="$(docker run -d --rm -p 127.0.0.1:0:6379 redis:8 redis-server --port 6379 --protected-mode no)"
+noacl="$(docker run -d --rm -p 127.0.0.1:0:6379 "$REDIS_IMAGE" redis-server --port 6379 --protected-mode no)"
 trap 'docker rm -f "$cid" "$noacl" >/dev/null 2>&1 || true' EXIT
 
 ready() {
@@ -42,4 +45,6 @@ WF_TEST_REDIS_ADDR="127.0.0.1:$(hostport "$cid")"
 WF_TEST_REDIS_NOACL_ADDR="127.0.0.1:$(hostport "$noacl")"
 WF_TEST_REDIS_PASSWORD="$password"
 export WF_TEST_REDIS_ADDR WF_TEST_REDIS_NOACL_ADDR WF_TEST_REDIS_PASSWORD
-"$GO" test -count=1 "$@" ./internal/infra/transport/redis/... ./internal/infra/transport/grpc/hub/
+# -p 1: the packages share one server, and one package's ACL LOG RESET (or
+# user changes) would hide or disturb another's assertions if they ran at once.
+"$GO" test -count=1 -p 1 "$@" ./internal/infra/transport/redis/... ./internal/infra/transport/grpc/hub/

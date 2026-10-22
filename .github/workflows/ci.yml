@@ -168,10 +168,12 @@ jobs:
           path: contract-postgres.out
           if-no-files-found: error
 
-  # The Redis packages against a real redis:8 with an aclfile: the per-hub
+  # The Redis packages against a real Redis with an aclfile: the per-hub
   # ACL user integration tests (skipped by plain go test). A service
   # container cannot be given an aclfile, so the job runs the same script as
-  # `make test-redis`, which starts the containers itself.
+  # `make test-redis`, which starts the containers itself. Twice: redis:8
+  # (coverage) and redis:7.0, the oldest the control plane installer admits
+  # and what Debian 12 / Ubuntu 24.04 ship (it refuses ACL rules 7.2 added).
   redis:
     runs-on: ubuntu-latest
     steps:
@@ -185,6 +187,11 @@ jobs:
         run: >-
           bash scripts/test-redis.sh -race -covermode=atomic -coverpkg=./...
           -coverprofile=redis.out
+
+      - name: Redis packages (redis:7.0, ACL integration)
+        env:
+          REDIS_IMAGE: redis:7.0
+        run: bash scripts/test-redis.sh -race
 
       - uses: actions/upload-artifact@v4
         with:

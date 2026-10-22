@@ -57,7 +57,10 @@ func Username(hubID string) string { return "hub:" + hubID }
 //     hub:responses:<id>, and hub:broadcast (so no hub can forge a
 //     broadcast or read another hub's or the API's traffic);
 //   - the commands its go-redis client sends, the connection handshake and
-//     SELECT (a non-zero REDIS_DB) included.
+//     SELECT (a non-zero REDIS_DB) included. Not CLIENT SETINFO: Redis 7.0
+//     and 7.1 (what Debian 12 and Ubuntu 24.04 ship) refuse the whole
+//     SETUSER over a subcommand they do not know, and NewRedisClient sets
+//     DisableIdentity, so the client never sends it.
 func HubACLRules(hubID string) []string {
 	return []string{
 		"resetkeys", "resetchannels",
@@ -67,7 +70,7 @@ func HubACLRules(hubID string) []string {
 		"&hub:requests", "&bus:responses", "&bus:events",
 		"-@all",
 		"+ping", "+hello", "+auth", "+select",
-		"+client|setinfo", "+client|setname",
+		"+client|setname",
 		"+get", "+set", "+del", "+exists", "+scan", "+mget",
 		"+publish", "+unsubscribe",
 		"(&bus:requests:" + hubID + " &hub:responses:" + hubID +

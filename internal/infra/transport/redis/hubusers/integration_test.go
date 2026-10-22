@@ -111,7 +111,7 @@ func TestIntegrationHubUserCanDoExactlyTheHubOperations(t *testing.T) {
 	}
 
 	// Everything the hub does, through the hub's own code paths: connect
-	// (HELLO, CLIENT SETINFO), announce, drain flag, the bus.
+	// (HELLO; no CLIENT SETINFO, see NewRedisClient), announce, drain flag, the bus.
 	rc := hubClient(t, name, pw)
 	if err := redisbus.Ping(ctx, rc); err != nil {
 		t.Fatalf("ping: %v", err)

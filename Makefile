@@ -114,7 +114,8 @@ test-pg:
 	GO=$(GO) bash scripts/test-pg.sh $(TEST_PG_ARGS)
 
 # The Redis packages, the per-hub ACL user integration tests included,
-# against a throwaway redis:8 container with an aclfile (Docker). Plain
+# against a throwaway redis:8 container with an aclfile (Docker; another
+# image: REDIS_IMAGE=redis:7.0 make test-redis). Plain
 # `go test ./...` skips the integration tests. Extra go test flags:
 # make test-redis TEST_REDIS_ARGS='-run TestIntegration -v'
 test-redis:

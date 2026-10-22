@@ -33,9 +33,9 @@ export WINTERFLOW_R2_SECRET_ACCESS_KEY="$SECRET"
 unset WINTERFLOW_HUB_TOKEN
 
 TOKEN="wfh_AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-abcde"
-REDIS_PW="redispw0123456789abcdef"
-REDIS_URL="rediss://:${REDIS_PW}@cp.example.com:6380"
+REDIS_ADDR="cp.example.com:6380"
 ADDR="hub-02.example.com:50051"
+unset WINTERFLOW_HUB_REDIS_ADDR WINTERFLOW_HUB_REDIS_URL
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -63,41 +63,44 @@ dry() {
     printf '%s\n' "${o//$debian/}"
     return "$s"
 }
-join_args=(--token "$TOKEN" --public-addr "$ADDR" --redis-url "$REDIS_URL")
+join_args=(--token "$TOKEN" --public-addr "$ADDR" --redis-addr "$REDIS_ADDR")
 
 # --- help / validation --------------------------------------------------------
 
 help_out="$(bash "$SCRIPT" --help)" || fail "--help exits 0" "exit $?"
-for opt in --token --public-addr --redis-url --capacity --listen-port --api-url --version --r2-bucket --yes --dry-run --uninstall --purge; do
+for opt in --token --public-addr --redis-addr --capacity --listen-port --api-url --version --r2-bucket --yes --dry-run --uninstall --purge; do
     assert_contains "--help documents ${opt}" "$help_out" "$opt"
 done
 dry --nonsense >/dev/null && fail "unknown option rejected" "exit 0" || pass "unknown option rejected"
 dry "${join_args[@]}" --capacity abc >/dev/null && fail "non-numeric capacity rejected" "exit 0" || pass "non-numeric capacity rejected"
 dry "${join_args[@]}" --listen-port 70000 >/dev/null && fail "invalid listen port rejected" "exit 0" || pass "invalid listen port rejected"
-dry --token "$TOKEN" --public-addr 'bad/host:50051' --redis-url "$REDIS_URL" >/dev/null && fail "invalid public addr rejected" "exit 0" || pass "invalid public addr rejected"
-dry --token "$TOKEN" --public-addr nohost --redis-url "$REDIS_URL" >/dev/null && fail "public addr without port rejected" "exit 0" || pass "public addr without port rejected"
-dry --token nope --public-addr "$ADDR" --redis-url "$REDIS_URL" >/dev/null && fail "malformed token rejected" "exit 0" || pass "malformed token rejected"
+dry --token "$TOKEN" --public-addr 'bad/host:50051' --redis-addr "$REDIS_ADDR" >/dev/null && fail "invalid public addr rejected" "exit 0" || pass "invalid public addr rejected"
+dry --token "$TOKEN" --public-addr nohost --redis-addr "$REDIS_ADDR" >/dev/null && fail "public addr without port rejected" "exit 0" || pass "public addr without port rejected"
+dry --token nope --public-addr "$ADDR" --redis-addr "$REDIS_ADDR" >/dev/null && fail "malformed token rejected" "exit 0" || pass "malformed token rejected"
 dry "${join_args[@]}" --api-url http://api.example.com >/dev/null && fail "plain http api url rejected" "exit 0" || pass "plain http api url rejected"
 dry "${join_args[@]}" --r2-bucket 'Bad_Bucket' >/dev/null && fail "invalid bucket rejected" "exit 0" || pass "invalid bucket rejected"
 dry "${join_args[@]}" --purge >/dev/null && fail "--purge needs --uninstall" "exit 0" || pass "--purge needs --uninstall"
 assert_contains "cd / before running commands" "$src" "cd /"
 
-# --- redis url ----------------------------------------------------------------
+# --- redis addr ---------------------------------------------------------------
 
-out_plain="$(dry --token "$TOKEN" --public-addr "$ADDR" --redis-url "redis://:${REDIS_PW}@cp.example.com:6380")" \
-    && fail "redis:// refused" "exit 0" || pass "redis:// refused"
-assert_contains "redis:// refused: says TLS" "$out_plain" "rediss://"
-assert_not_contains "redis:// refused: password not echoed" "$out_plain" "$REDIS_PW"
-dry --token "$TOKEN" --public-addr "$ADDR" --redis-url "rediss://cp.example.com:6380" >/dev/null \
-    && fail "redis url without password refused" "exit 0" || pass "redis url without password refused"
-dry --token "$TOKEN" --public-addr "$ADDR" --redis-url "rediss://:${REDIS_PW}@cp.example.com" >/dev/null \
-    && fail "redis url without port refused" "exit 0" || pass "redis url without port refused"
-
-o="$(WINTERFLOW_HUB_REDIS_URL="$REDIS_URL" WF_INSTALL_ROOT="$debian" bash "$SCRIPT" --dry-run --token "$TOKEN" --public-addr "$ADDR" 2>&1)" \
-    && pass "redis url from the environment accepted" || fail "redis url from the environment accepted" "$o"
-assert_contains "redis url from the environment: used" "$o" "REDIS_ADDR=cp.example.com:6380"
-assert_not_contains "redis url from the environment: password not printed" "$o" "$REDIS_PW"
-assert_contains "redis password path documented" "$help_out" "WINTERFLOW_HUB_REDIS_URL"
+assert_not_contains "--help: no --redis-url any more" "$help_out" "--redis-url"
+assert_contains "--help: address from the environment" "$help_out" "WINTERFLOW_HUB_REDIS_ADDR"
+assert_contains "--help: no Redis password on a hub machine" "$help_out" "no Redis password is ever given to a hub"
+o="$(dry --token "$TOKEN" --public-addr "$ADDR" --redis-url "rediss://:pw0123456789@cp.example.com:6380")" \
+    && fail "--redis-url refused" "exit 0" || pass "--redis-url refused"
+assert_contains "--redis-url refused: points at --redis-addr" "$o" "--redis-addr host:port"
+assert_not_contains "--redis-url refused: password not echoed" "$o" "pw0123456789"
+o="$(WINTERFLOW_HUB_REDIS_URL="rediss://:pw0123456789@cp.example.com:6380" WF_INSTALL_ROOT="$debian" bash "$SCRIPT" --dry-run --token "$TOKEN" --public-addr "$ADDR" 2>&1)" \
+    && fail "WINTERFLOW_HUB_REDIS_URL refused" "exit 0" || pass "WINTERFLOW_HUB_REDIS_URL refused"
+assert_contains "WINTERFLOW_HUB_REDIS_URL refused: points at the new variable" "$o" "WINTERFLOW_HUB_REDIS_ADDR"
+for bad in cp.example.com 'rediss://cp.example.com:6380' 'cp.example.com:99999' ':6380'; do
+    dry --token "$TOKEN" --public-addr "$ADDR" --redis-addr "$bad" >/dev/null \
+        && fail "--redis-addr '${bad}' refused" "exit 0" || pass "--redis-addr '${bad}' refused"
+done
+o="$(WINTERFLOW_HUB_REDIS_ADDR="$REDIS_ADDR" WF_INSTALL_ROOT="$debian" bash "$SCRIPT" --dry-run --token "$TOKEN" --public-addr "$ADDR" 2>&1)" \
+    && pass "redis addr from the environment accepted" || fail "redis addr from the environment accepted" "$o"
+assert_contains "redis addr from the environment: used" "$o" "REDIS_ADDR=cp.example.com:6380"
 
 # --- refuses_without_r2_env ---------------------------------------------------
 
@@ -121,13 +124,13 @@ WF_INSTALL_ROOT="$ubuntu" bash "$SCRIPT" --dry-run "${join_args[@]}" >/dev/null 
 
 # --- first_install_requires_token_addr_redis ----------------------------------
 
-o="$(dry --public-addr "$ADDR" --redis-url "$REDIS_URL")" && fail "first_install_requires_token_addr_redis: no token" "exit 0" || pass "first_install_requires_token_addr_redis: no token"
+o="$(dry --public-addr "$ADDR" --redis-addr "$REDIS_ADDR")" && fail "first_install_requires_token_addr_redis: no token" "exit 0" || pass "first_install_requires_token_addr_redis: no token"
 assert_contains "first_install_requires_token_addr_redis: asks for the token" "$o" "--token"
-o="$(dry --token "$TOKEN" --redis-url "$REDIS_URL")" && fail "first_install_requires_token_addr_redis: no public addr" "exit 0" || pass "first_install_requires_token_addr_redis: no public addr"
+o="$(dry --token "$TOKEN" --redis-addr "$REDIS_ADDR")" && fail "first_install_requires_token_addr_redis: no public addr" "exit 0" || pass "first_install_requires_token_addr_redis: no public addr"
 assert_contains "first_install_requires_token_addr_redis: asks for the address" "$o" "--public-addr"
-o="$(dry --token "$TOKEN" --public-addr "$ADDR")" && fail "first_install_requires_token_addr_redis: no redis url" "exit 0" || pass "first_install_requires_token_addr_redis: no redis url"
-assert_contains "first_install_requires_token_addr_redis: asks for the redis url" "$o" "--redis-url"
-o="$(WINTERFLOW_HUB_TOKEN="$TOKEN" WF_INSTALL_ROOT="$debian" bash "$SCRIPT" --dry-run --public-addr "$ADDR" --redis-url "$REDIS_URL" 2>&1)" \
+o="$(dry --token "$TOKEN" --public-addr "$ADDR")" && fail "first_install_requires_token_addr_redis: no redis addr" "exit 0" || pass "first_install_requires_token_addr_redis: no redis addr"
+assert_contains "first_install_requires_token_addr_redis: asks for the redis addr" "$o" "--redis-addr"
+o="$(WINTERFLOW_HUB_TOKEN="$TOKEN" WF_INSTALL_ROOT="$debian" bash "$SCRIPT" --dry-run --public-addr "$ADDR" --redis-addr "$REDIS_ADDR" 2>&1)" \
     && pass "token from the environment accepted" || fail "token from the environment accepted" "$o"
 
 # --- enrolls_and_writes_env ---------------------------------------------------
@@ -141,7 +144,9 @@ assert_contains "enrolls_and_writes_env: port" "$env_out" "HUB_PORT=50051"
 assert_contains "enrolls_and_writes_env: capacity" "$env_out" "HUB_CAPACITY=500"
 assert_contains "enrolls_and_writes_env: cert dir" "$env_out" "HUB_CERT_DIR=/var/lib/winterflow-hub/certs"
 assert_contains "enrolls_and_writes_env: redis addr" "$env_out" "REDIS_ADDR=cp.example.com:6380"
-assert_contains "enrolls_and_writes_env: redis password line" "$env_out" "REDIS_PASSWORD="
+assert_contains "enrolls_and_writes_env: the hub's own redis user" "$env_out" "REDIS_USERNAME=hub:hub-02.example.com"
+assert_contains "enrolls_and_writes_env: redis password from the join" "$env_out" "REDIS_PASSWORD=<from the join>"
+assert_contains "enrolls_and_writes_env: join writes the credentials" "$plan" "--redis-env-out <temp file>"
 assert_contains "enrolls_and_writes_env: redis tls" "$env_out" "REDIS_TLS=true"
 assert_contains "enrolls_and_writes_env: redis ca is the joined ca" "$env_out" "REDIS_CA_CERT_PATH=/var/lib/winterflow-hub/certs/ca.crt"
 assert_not_contains "enrolls_and_writes_env: no CA key anywhere" "$out" "ca.key"
@@ -150,7 +155,6 @@ assert_contains "enrolls_and_writes_env: POST shown" "$plan" "POST https://api.w
 assert_contains "enrolls_and_writes_env: key stays here" "$plan" "hub.key 0640"
 assert_contains "enrolls_and_writes_env: api url option" "$(dry "${join_args[@]}" --api-url https://api.example.com)" "--api-url https://api.example.com"
 assert_not_contains "enrolls_and_writes_env: token never printed" "$out" "$TOKEN"
-assert_not_contains "enrolls_and_writes_env: redis password never printed" "$out" "$REDIS_PW"
 assert_not_contains "enrolls_and_writes_env: r2 secret never printed" "$out" "$SECRET"
 assert_contains "downloads: sigv4" "$out" '--aws-sigv4 "aws:amz:auto:s3"'
 assert_contains "downloads: latest hub" "$out" "https://acct.r2.cloudflarestorage.com/econumo/winterflow/latest/winterflow-hub-linux-"
@@ -176,7 +180,7 @@ assert_contains "unit: cpu quota" "$unit" "CPUQuota="
 assert_contains "unit: memory max" "$unit" "MemoryMax="
 assert_contains "unit: no capabilities on a high port" "$unit" "CapabilityBoundingSet="
 assert_not_contains "unit: no bind capability on a high port" "$unit" "CAP_NET_BIND_SERVICE"
-assert_contains "unit: bind capability on a low port" "$(dry --token "$TOKEN" --public-addr hub-02.example.com:443 --redis-url "$REDIS_URL")" "CAP_NET_BIND_SERVICE"
+assert_contains "unit: bind capability on a low port" "$(dry --token "$TOKEN" --public-addr hub-02.example.com:443 --redis-addr "$REDIS_ADDR")" "CAP_NET_BIND_SERVICE"
 
 # --- rerun_updates_without_token ----------------------------------------------
 
@@ -191,6 +195,7 @@ HUB_PORT=50052
 HUB_CAPACITY=42
 HUB_CERT_DIR=/var/lib/winterflow-hub/certs
 REDIS_ADDR=kept-redis.example.com:6380
+REDIS_USERNAME=hub:hub-kept.example.com
 REDIS_PASSWORD=keptpw987654321
 REDIS_TLS=true
 REDIS_CA_CERT_PATH=/var/lib/winterflow-hub/certs/ca.crt
@@ -208,12 +213,28 @@ assert_contains "rerun keeps settings: port" "$out_rerun" "HUB_PORT=50052"
 assert_contains "rerun keeps settings: capacity" "$out_rerun" "HUB_CAPACITY=42"
 assert_contains "rerun keeps settings: redis" "$out_rerun" "REDIS_ADDR=kept-redis.example.com:6380"
 assert_not_contains "rerun masks the kept password" "$out_rerun" "keptpw987654321"
+assert_contains "rerun keeps the redis user" "$out_rerun" "REDIS_USERNAME=hub:hub-kept.example.com"
+assert_contains "rerun keeps the redis password (hidden)" "$out_rerun" "REDIS_PASSWORD=<hidden>"
 out_flag="$(WF_INSTALL_ROOT="$rerun" bash "$SCRIPT" --dry-run --capacity 7 2>&1)"
 assert_contains "rerun: a flag overrides a kept setting" "$out_flag" "HUB_CAPACITY=7"
 WF_INSTALL_ROOT="$rerun" bash "$SCRIPT" --dry-run --public-addr other.example.com:50052 >/dev/null 2>&1 \
     && fail "rerun: changing the public host refused" "exit 0" || pass "rerun: changing the public host refused"
-out_redis="$(WF_INSTALL_ROOT="$rerun" bash "$SCRIPT" --dry-run --redis-url "rediss://:newpw123456@new-redis.example.com:6380" 2>&1)"
-assert_contains "rerun: --redis-url overrides" "$out_redis" "REDIS_ADDR=new-redis.example.com:6380"
+out_redis="$(WF_INSTALL_ROOT="$rerun" bash "$SCRIPT" --dry-run --redis-addr new-redis.example.com:6380 2>&1)"
+assert_contains "rerun: --redis-addr overrides" "$out_redis" "REDIS_ADDR=new-redis.example.com:6380"
+assert_contains "rerun: --redis-addr keeps the user" "$out_redis" "REDIS_USERNAME=hub:hub-kept.example.com"
+# A hub joined before hubs had their own Redis users (no REDIS_USERNAME
+# kept) must join again.
+cp "$rerun/etc/winterflow/hub.env" "$tmp/hub.env.keep"
+grep -v '^REDIS_USERNAME=' "$tmp/hub.env.keep" > "$rerun/etc/winterflow/hub.env"
+o="$(WF_INSTALL_ROOT="$rerun" bash "$SCRIPT" --dry-run 2>&1)" \
+    && fail "no kept redis user: rerun without a token refused" "exit 0" || pass "no kept redis user: rerun without a token refused"
+assert_contains "no kept redis user: asks for a token" "$o" "has no Redis user"
+WF_INSTALL_ROOT="$rerun" bash "$SCRIPT" --dry-run --token "$TOKEN" >/dev/null 2>&1 \
+    && pass "no kept redis user: rejoin with a token" || fail "no kept redis user: rejoin with a token" "exit $?"
+printf 'REDIS_USERNAME=hub:x y\n' >> "$rerun/etc/winterflow/hub.env"
+WF_INSTALL_ROOT="$rerun" bash "$SCRIPT" --dry-run --token "$TOKEN" >/dev/null 2>&1 \
+    && fail "invalid kept redis user refused" "exit 0" || pass "invalid kept redis user refused"
+cp "$tmp/hub.env.keep" "$rerun/etc/winterflow/hub.env"
 
 # --- rejoin -------------------------------------------------------------------
 
@@ -223,6 +244,7 @@ out_rejoin="${out_rejoin//$rerun/}"
 assert_contains "rejoin: says the pair is replaced" "$(section "$out_rejoin" plan)" "rejoin: a new hub.key and hub.crt replace the old pair"
 assert_contains "rejoin: join step" "$(section "$out_rejoin" plan)" "winterflow-hub join --api-url"
 assert_contains "rejoin: stop before, start after" "$(section "$out_rejoin" plan)" "systemctl stop winterflow-hub before the join"
+assert_contains "rejoin: new redis password from the join" "$(section "$out_rejoin" /etc/winterflow/hub.env)" "REDIS_PASSWORD=<from the join>"
 assert_not_contains "rejoin: token never printed" "$out_rejoin" "$TOKEN"
 o="$(WINTERFLOW_HUB_TOKEN="$TOKEN" WF_INSTALL_ROOT="$rerun" bash "$SCRIPT" --dry-run 2>&1)"
 assert_contains "rejoin: token from the environment" "$(section "$o" plan)" "rejoin:"
@@ -296,9 +318,15 @@ echo "\$*" >> "$r/join-args"
 cat > "$r/join-stdin"
 if [ -f "$r/join-live" ]; then n=\$(cat "$r/join-live"); if [ "\$n" -gt 0 ]; then echo \$((n-1)) > "$r/join-live"; echo "a live hub already uses this host" >&2; exit 1; fi; fi
 if [ -f "$r/join-exit" ]; then echo "the control plane refused the join: invalid or expired token" >&2; exit "\$(cat "$r/join-exit")"; fi
-while [ \$# -gt 0 ]; do case "\$1" in --cert-dir) dir="\$2"; shift 2 ;; *) shift ;; esac; done
+envout=""; host=""
+while [ \$# -gt 0 ]; do case "\$1" in --cert-dir) dir="\$2"; shift 2 ;; --redis-env-out) envout="\$2"; shift 2 ;; --public-addr) host="\$(printf '%s' "\${2%:*}" | tr '[:upper:]' '[:lower:]')"; shift 2 ;; *) shift ;; esac; done
 echo "private key \$\$" > "\$dir/hub.key"; chmod 600 "\$dir/hub.key"
 cat "$r/hub-pem" > "\$dir/hub.crt"; echo CACERT > "\$dir/ca.crt"
+user="hub:\$host"; [ ! -f "$r/join-wronguser" ] || user="hub:other.example.com"
+if [ -n "\$envout" ]; then
+    printf 'REDIS_USERNAME=%s\nREDIS_PASSWORD=hubpw-%s-abcdefghijklmnop\n' "\$user" "\$\$" > "\$envout"
+    [ ! -f "$r/join-badenv" ] || echo 'LD_PRELOAD=/tmp/x.so' >> "\$envout"
+fi
 echo "joined: certificate stored"
 STUB
         printf '%s\n' "$MARKED_PEM" > "$r/hub-pem"
@@ -325,15 +353,20 @@ STUB
     [ "$(stat -c %a "$cd1/hub.key")" = 640 ] && pass "real run: hub.key 0640" || fail "real run: hub.key 0640" "$(stat -c %a "$cd1/hub.key")"
     [ "$(stat -c %a "$cd1")" = 750 ] && pass "real run: cert dir 0750" || fail "real run: cert dir 0750" "$(stat -c %a "$cd1")"
     [ "$(stat -c %a "$r1/etc/winterflow/hub.env")" = 600 ] && pass "real run: hub.env 0600" || fail "real run: hub.env 0600" "$(stat -c %a "$r1/etc/winterflow/hub.env")"
-    assert_contains "real run: env password" "$(cat "$r1/etc/winterflow/hub.env")" "REDIS_PASSWORD=${REDIS_PW}"
-    assert_contains "real run: env addr" "$(cat "$r1/etc/winterflow/hub.env")" "REDIS_ADDR=cp.example.com:6380"
+    hub_env="$(cat "$r1/etc/winterflow/hub.env")"
+    assert_contains "real run: env user from the join" "$hub_env" "REDIS_USERNAME=hub:hub-02.example.com"
+    assert_contains "real run: env password from the join" "$hub_env" "REDIS_PASSWORD=hubpw-"
+    hub_pw="$(sed -n 's/^REDIS_PASSWORD=//p' "$r1/etc/winterflow/hub.env")"
+    assert_contains "real run: env addr" "$hub_env" "REDIS_ADDR=cp.example.com:6380"
+    assert_contains "real run: join writes the credentials to a temp file" "$(cat "$r1/join-args")" "--redis-env-out $r1/winterflow-install."
+    [ -z "$(find "$r1" -maxdepth 1 -name 'winterflow-install.*')" ] && pass "real run: temp credentials removed" || fail "real run: temp credentials removed" "$(ls "$r1")"
     assert_contains "real run: join gets the token on stdin" "$(cat "$r1/join-stdin")" "$TOKEN"
     assert_contains "real run: join args" "$(cat "$r1/join-args")" "join --api-url https://api.winterflow.dev --public-addr ${ADDR} --cert-dir ${cd1}"
     assert_not_contains "real run: token never in join's argv" "$(cat "$r1/join-args")" "$TOKEN"
     assert_not_contains "real run: token never on a curl command line" "$(cat "$r1/curl-args")" "$TOKEN"
     assert_not_contains "real run: r2 secret never on a command line" "$(cat "$r1/curl-args")" "$SECRET"
     assert_contains "real run: r2 secret passed on curl's stdin" "$(cat "$r1/curl-stdin")" "$SECRET"
-    assert_not_contains "real run: password not in the output" "$RUN_OUT" "$REDIS_PW"
+    assert_not_contains "real run: password not in the output" "$RUN_OUT" "$hub_pw"
     assert_not_contains "real run: token not in the output" "$RUN_OUT" "$TOKEN"
     [ -x "$r1/usr/local/bin/winterflow-hub" ] && pass "real run: binary installed" || fail "real run: binary installed" "missing"
     [ -f "$r1/etc/systemd/system/winterflow-hub.service" ] && pass "real run: unit written" || fail "real run: unit written" "missing"
@@ -345,7 +378,8 @@ STUB
     [ "$RUN_STATUS" -eq 0 ] && pass "rerun: installer succeeds without a token" || fail "rerun: installer succeeds without a token" "status $RUN_STATUS: $RUN_OUT"
     [ ! -e "$r1/join-args" ] && pass "rerun: no join" || fail "rerun: no join" "joined"
     assert_contains "rerun: capacity overridden" "$(cat "$r1/etc/winterflow/hub.env")" "HUB_CAPACITY=77"
-    assert_contains "rerun: redis password kept" "$(cat "$r1/etc/winterflow/hub.env")" "REDIS_PASSWORD=${REDIS_PW}"
+    assert_contains "rerun: redis password kept" "$(cat "$r1/etc/winterflow/hub.env")" "REDIS_PASSWORD=${hub_pw}"
+    assert_contains "rerun: redis user kept" "$(cat "$r1/etc/winterflow/hub.env")" "REDIS_USERNAME=hub:hub-02.example.com"
     assert_contains "rerun: addr kept" "$(cat "$r1/etc/winterflow/hub.env")" "HUB_PUBLIC_ADDR=${ADDR}"
     assert_contains "rerun: certificate kept" "$(cat "$cd1/hub.crt")" "BEGIN CERTIFICATE"
     assert_contains "rerun: service restarted" "$(cat "$r1/calls")" "systemctl restart winterflow-hub"
@@ -357,6 +391,9 @@ STUB
     [ -e "$r1/join-args" ] && pass "rejoin: join runs" || fail "rejoin: join runs" "no join"
     assert_contains "rejoin: token on stdin" "$(cat "$r1/join-stdin" 2>/dev/null)" "$TOKEN"
     [ "$(cat "$cd1/hub.key")" != "$key_before" ] && pass "rejoin: new key" || fail "rejoin: new key" "key kept"
+    new_pw="$(sed -n 's/^REDIS_PASSWORD=//p' "$r1/etc/winterflow/hub.env")"
+    [ -n "$new_pw" ] && [ "$new_pw" != "$hub_pw" ] && pass "rejoin: the join's new redis password replaces the old" || fail "rejoin: the join's new redis password replaces the old" "$new_pw"
+    [ "$(grep -c '^REDIS_PASSWORD=' "$r1/etc/winterflow/hub.env")" -eq 1 ] && pass "rejoin: one password line" || fail "rejoin: one password line" "$(cat "$r1/etc/winterflow/hub.env")"
     [ "$(stat -c %a "$cd1/hub.key")" = 640 ] && pass "rejoin: hub.key 0640" || fail "rejoin: hub.key 0640" "$(stat -c %a "$cd1/hub.key")"
     assert_not_contains "rejoin: token not in the output" "$RUN_OUT" "$TOKEN"
     stop_ln="$(grep -n 'systemctl stop winterflow-hub' "$r1/calls" | head -1 | cut -d: -f1)"
@@ -377,6 +414,18 @@ STUB
     run_hub "$r1" --token "$TOKEN"
     [ "$RUN_STATUS" -eq 0 ] && pass "rejoin: a live-hub refusal is retried" || fail "rejoin: a live-hub refusal is retried" "status $RUN_STATUS: $RUN_OUT"
     rm -f "$r1/join-live"
+
+    # Credentials from the join that are tampered with (an extra line, a user
+    # for another hub) are refused: the env file is not rewritten.
+    for m in join-badenv join-wronguser; do
+        env_before="$(cat "$r1/etc/winterflow/hub.env")"; : > "$r1/$m"; : > "$r1/calls"
+        run_hub "$r1" --token "$TOKEN"
+        [ "$RUN_STATUS" -ne 0 ] && pass "${m}: installer fails" || fail "${m}: installer fails" "status 0"
+        assert_contains "${m}: says the credentials were refused" "$RUN_OUT" "refusing the join's Redis credentials"
+        [ "$(cat "$r1/etc/winterflow/hub.env")" = "$env_before" ] && pass "${m}: hub env untouched" || fail "${m}: hub env untouched" "changed"
+        assert_not_contains "${m}: not restarted" "$(cat "$r1/calls")" "systemctl restart winterflow-hub"
+        rm -f "$r1/$m"
+    done
 
     # A certificate from before the hub marker: a rerun without a token stops
     # before anything changes; with one it is reissued.

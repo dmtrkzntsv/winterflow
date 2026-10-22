@@ -416,3 +416,36 @@ func TestIntegrationNoACLFileIsAConfigurationError(t *testing.T) {
 	}
 	_ = u.Delete(context.Background(), "hub-noacl.wf-test.dev")
 }
+
+// Check passes for the admin connection and fails for a hub's user and for
+// a server without an aclfile.
+func TestIntegrationCheck(t *testing.T) {
+	admin := adminClient(t)
+	if err := New(admin).Check(t.Context()); err != nil {
+		t.Fatalf("Check as the admin: %v", err)
+	}
+	name, pw := ensure(t, New(admin), "hub-check.wf-test.dev")
+	t.Cleanup(func() { _ = New(admin).Delete(context.Background(), "hub-check.wf-test.dev") })
+	err := New(hubClient(t, name, pw)).Check(t.Context())
+	if err == nil || !strings.Contains(err.Error(), name) {
+		t.Fatalf("Check as a hub's user: want a refusal naming %s, got %v", name, err)
+	}
+	// A user that may run ACL DRYRUN but not the admin commands.
+	ctx := t.Context()
+	if err := admin.Do(ctx, "ACL", "SETUSER", "wf-check-limited", "reset", "on", ">limited-pw", "~*", "+@all", "-@admin").Err(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { admin.Do(context.Background(), "ACL", "DELUSER", "wf-check-limited") })
+	lim := redis.NewClient(&redis.Options{Addr: os.Getenv("WF_TEST_REDIS_ADDR"), Username: "wf-check-limited", Password: "limited-pw"})
+	t.Cleanup(func() { _ = lim.Close() })
+	if err := New(lim).Check(ctx); err == nil || !strings.Contains(err.Error(), "acl|") {
+		t.Fatalf("Check as a limited user: want the refused command, got %v", err)
+	}
+	if addr := os.Getenv("WF_TEST_REDIS_NOACL_ADDR"); addr != "" {
+		rc := redis.NewClient(&redis.Options{Addr: addr})
+		t.Cleanup(func() { _ = rc.Close() })
+		if err := New(rc).Check(ctx); !errors.Is(err, ErrNoACLFile) {
+			t.Fatalf("Check without an aclfile: want ErrNoACLFile, got %v", err)
+		}
+	}
+}

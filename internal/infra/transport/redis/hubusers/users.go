@@ -129,6 +129,49 @@ func (u *Users) Delete(ctx context.Context, hubID string) error {
 	return u.save(ctx)
 }
 
+// adminCommands are what Ensure and Delete run, as ACL DRYRUN probes them.
+var adminCommands = [][]any{
+	{"ACL", "SETUSER", "hub:probe"},
+	{"ACL", "DELUSER", "hub:probe"},
+	{"ACL", "SAVE"},
+	{"CLIENT", "KILL", "USER", "hub:probe"},
+}
+
+// Check reports whether this connection can manage the hubs' users: its
+// user (ACL WHOAMI) may run every command Ensure and Delete send (ACL
+// DRYRUN, Redis 7.0+; nothing is changed), and the server has an aclfile
+// (ErrNoACLFile; not checked when CONFIG GET is refused). The API runs it
+// at startup, so a wrong REDIS_USERNAME shows before a join spends a token.
+func (u *Users) Check(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, callTimeout)
+	defer cancel()
+	who, err := u.rc.Do(ctx, "ACL", "WHOAMI").Text()
+	if err != nil {
+		// Redis 7.0 does not name the user in a refusal: name the one
+		// this connection logs in as.
+		as := u.rc.Options().Username
+		if as == "" {
+			as = "default"
+		}
+		return fmt.Errorf("redis hub users: user %s cannot manage the hubs' users: acl whoami: %w", as, err)
+	}
+	for _, cmd := range adminCommands {
+		args := append([]any{"ACL", "DRYRUN", who}, cmd...)
+		res, err := u.rc.Do(ctx, args...).Text()
+		if err != nil {
+			return fmt.Errorf("redis hub users: user %s: acl dryrun: %w", who, err)
+		}
+		if res != "OK" {
+			return fmt.Errorf("redis hub users: user %s cannot manage the hubs' users: %s", who, res)
+		}
+	}
+	files, err := u.rc.ConfigGet(ctx, "aclfile").Result()
+	if err == nil && files["aclfile"] == "" {
+		return ErrNoACLFile
+	}
+	return nil
+}
+
 // kill disconnects every session of user name; a missing user or no
 // session is not an error.
 func (u *Users) kill(ctx context.Context, name string) error {

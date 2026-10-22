@@ -600,3 +600,40 @@ func TestHubStorePinnedSticky(t *testing.T) {
 		t.Fatalf("after Reset: pinned=%v refreshed_at=%v", r.Pinned(), r.RefreshedAt())
 	}
 }
+
+func TestStartAskIsPersistedSoTheRestartGuardHolds(t *testing.T) {
+	a, api, ctx, cancel := migrating(t, "env-hub:50051", false)
+	// The last answer is older than the ask floor but younger than
+	// refreshPersist: the start-up ask must still record its time.
+	a.hubStore.refreshedAt = a.now().Add(-2 * a.floor())
+	start := a.now()
+	a.bringUp = func(context.Context) (<-chan struct{}, func() error, error) {
+		cancel()
+		return nil, nil, errors.New("script over")
+	}
+	if err := a.Run(ctx); err != nil {
+		t.Fatalf("Run = %v", err)
+	}
+	if api.count() != 1 {
+		t.Fatalf("asks = %d, want 1", api.count())
+	}
+	if got := NewHubStore(filepath.Dir(a.hubStore.path)).RefreshedAt(); !got.Equal(start) {
+		t.Fatalf("persisted refreshed_at = %v, want %v", got, start)
+	}
+}
+
+func TestStartAsksWhenRefreshedAtIsInTheFuture(t *testing.T) {
+	a, api, ctx, cancel := migrating(t, "env-hub:50051", false)
+	// The clock was behind when hub.json was written: treated as never.
+	a.hubStore.refreshedAt = a.now().Add(48 * time.Hour)
+	a.bringUp = func(context.Context) (<-chan struct{}, func() error, error) {
+		cancel()
+		return nil, nil, errors.New("script over")
+	}
+	if err := a.Run(ctx); err != nil {
+		t.Fatalf("Run = %v", err)
+	}
+	if api.count() != 1 {
+		t.Fatalf("asks = %d, want 1 for a refreshed_at in the future", api.count())
+	}
+}

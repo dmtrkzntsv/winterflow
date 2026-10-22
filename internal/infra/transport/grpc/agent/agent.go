@@ -649,7 +649,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	// counted from hub.json's refreshed_at so a restart does not reset it.
 	nextRefresh := now().Add(a.refreshEvery())
 	if a.hubStore != nil {
-		if at := a.hubStore.RefreshedAt(); !at.IsZero() {
+		if at := a.refreshedAt(); !at.IsZero() {
 			nextRefresh = at.Add(a.refreshEvery())
 		}
 	}
@@ -699,7 +699,7 @@ func (a *Agent) Run(ctx context.Context) error {
 	// does not count for askFloor: a hub prompt right after it may ask
 	// again. A failed ask connects with the stored set and retries while
 	// connected.
-	if a.apiURL != "" && (a.hubStore == nil || now().Sub(a.hubStore.RefreshedAt()) >= a.floor()) {
+	if a.apiURL != "" && (a.hubStore == nil || now().Sub(a.refreshedAt()) >= a.floor()) {
 		_, _ = refreshAs("refreshing the trusted hub certificates at start", false)
 	}
 

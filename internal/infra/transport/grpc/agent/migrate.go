@@ -210,9 +210,11 @@ func (a *Agent) migrate(ctx context.Context, why string, connected bool) (bool, 
 		return false, nil
 	}
 	// An answer that changes nothing rewrites hub.json only to move a
-	// refresh time older than refreshPersist (asks can come every askFloor).
+	// refresh time older than refreshPersist, or than the ask floor when that
+	// is shorter: the start-up guard reads it, so an ask it allowed must be
+	// recorded or a restart loop would ask every time.
 	at := a.clock()
-	if !sameHub || setChanged || at.Sub(a.hubStore.RefreshedAt()) >= refreshPersist {
+	if !sameHub || setChanged || at.Sub(a.refreshedAt()) >= min(refreshPersist, a.floor()) {
 		if err := a.hubStore.SaveAnswer(host, port, fps, at); err != nil {
 			a.log.Error("failed to store the API's answer; using it until restart", "error", err, "hub", ans.Addr)
 		}
@@ -235,6 +237,20 @@ func (a *Agent) migrate(ctx context.Context, why string, connected bool) (bool, 
 		return true, nil
 	}
 	return false, nil
+}
+
+// refreshedAt is hub.json's refreshed_at, or zero when there is none or it
+// lies in the future (the clock was behind when it was written): such a
+// time would otherwise suppress asking until the clock caught up.
+func (a *Agent) refreshedAt() time.Time {
+	if a.hubStore == nil {
+		return time.Time{}
+	}
+	at := a.hubStore.RefreshedAt()
+	if at.After(a.clock()) {
+		return time.Time{}
+	}
+	return at
 }
 
 // floor is the least time between hub-prompted asks (askFloor; tests

@@ -9,9 +9,9 @@ data/
 # coverage reports (make test)
 /coverage.out
 # Postgres coverage profile (make test-pg TEST_PG_ARGS='... -coverprofile=contract-postgres.out')
-redis.out
 /contract-postgres.out
-redis.out
+# Redis integration coverage profile (scripts/test-redis.sh ... -coverprofile=redis.out)
+/redis.out
 
 # root-built binaries (go build ./cmd/...)
 /agent

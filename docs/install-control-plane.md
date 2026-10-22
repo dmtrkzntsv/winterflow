@@ -120,7 +120,9 @@ sudo bash -c 'set -a; . /etc/winterflow/control-plane-api.env; exec winterflow-a
 accepting the retired certificate when they next ask the API for the set of
 certificates they pin: at their next start, and every 6 hours while
 connected. Rejoining the hub (rerun `install-hub.sh` on it with a new token)
-gives it a new key and certificate and retires its older ones. Once an agent
+stops the hub briefly (it drains first), gives it a new key and certificate,
+retires its older ones and restarts it; if the join fails the hub is started
+again with its old certificate. Once an agent
 has pinned a set, retiring every certificate makes it refuse every hub until
 the API trusts one again; it does not fall back to checking the CA only.
 

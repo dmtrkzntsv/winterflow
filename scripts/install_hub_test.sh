@@ -222,6 +222,7 @@ out_rejoin="$(WF_INSTALL_ROOT="$rerun" bash "$SCRIPT" --dry-run --token "$TOKEN"
 out_rejoin="${out_rejoin//$rerun/}"
 assert_contains "rejoin: says the pair is replaced" "$(section "$out_rejoin" plan)" "rejoin: a new hub.key and hub.crt replace the old pair"
 assert_contains "rejoin: join step" "$(section "$out_rejoin" plan)" "winterflow-hub join --api-url"
+assert_contains "rejoin: stop before, start after" "$(section "$out_rejoin" plan)" "systemctl stop winterflow-hub before the join"
 assert_not_contains "rejoin: token never printed" "$out_rejoin" "$TOKEN"
 o="$(WINTERFLOW_HUB_TOKEN="$TOKEN" WF_INSTALL_ROOT="$rerun" bash "$SCRIPT" --dry-run 2>&1)"
 assert_contains "rejoin: token from the environment" "$(section "$o" plan)" "rejoin:"
@@ -293,6 +294,7 @@ STUB
 [ "\$1" = join ] || exit 0
 echo "\$*" >> "$r/join-args"
 cat > "$r/join-stdin"
+if [ -f "$r/join-live" ]; then n=\$(cat "$r/join-live"); if [ "\$n" -gt 0 ]; then echo \$((n-1)) > "$r/join-live"; echo "a live hub already uses this host" >&2; exit 1; fi; fi
 if [ -f "$r/join-exit" ]; then echo "the control plane refused the join: invalid or expired token" >&2; exit "\$(cat "$r/join-exit")"; fi
 while [ \$# -gt 0 ]; do case "\$1" in --cert-dir) dir="\$2"; shift 2 ;; *) shift ;; esac; done
 echo "private key \$\$" > "\$dir/hub.key"; chmod 600 "\$dir/hub.key"
@@ -357,6 +359,24 @@ STUB
     [ "$(cat "$cd1/hub.key")" != "$key_before" ] && pass "rejoin: new key" || fail "rejoin: new key" "key kept"
     [ "$(stat -c %a "$cd1/hub.key")" = 640 ] && pass "rejoin: hub.key 0640" || fail "rejoin: hub.key 0640" "$(stat -c %a "$cd1/hub.key")"
     assert_not_contains "rejoin: token not in the output" "$RUN_OUT" "$TOKEN"
+    stop_ln="$(grep -n 'systemctl stop winterflow-hub' "$r1/calls" | head -1 | cut -d: -f1)"
+    start_ln="$(grep -n 'systemctl restart winterflow-hub' "$r1/calls" | tail -1 | cut -d: -f1)"
+    [ -n "$stop_ln" ] && [ -n "$start_ln" ] && [ "$stop_ln" -lt "$start_ln" ] \
+        && pass "rejoin: hub stopped before the join, restarted after" || fail "rejoin: hub stopped before the join, restarted after" "$(cat "$r1/calls")"
+
+    # A failed rejoin starts the old hub again and fails; a live-hub refusal
+    # is retried (sleep is stubbed) and then gives up.
+    : > "$r1/calls"; printf '1' > "$r1/join-exit"
+    run_hub "$r1" --token "$TOKEN"
+    [ "$RUN_STATUS" -ne 0 ] && pass "failed rejoin: installer fails" || fail "failed rejoin: installer fails" "status 0"
+    assert_contains "failed rejoin: stopped first" "$(cat "$r1/calls")" "systemctl stop winterflow-hub"
+    assert_contains "failed rejoin: started again" "$(cat "$r1/calls")" "systemctl start winterflow-hub"
+    assert_contains "failed rejoin: join error shown" "$RUN_OUT" "joining the control plane failed"
+    rm -f "$r1/join-exit"
+    : > "$r1/calls"; printf '2' > "$r1/join-live"
+    run_hub "$r1" --token "$TOKEN"
+    [ "$RUN_STATUS" -eq 0 ] && pass "rejoin: a live-hub refusal is retried" || fail "rejoin: a live-hub refusal is retried" "status $RUN_STATUS: $RUN_OUT"
+    rm -f "$r1/join-live"
 
     # A certificate from before the hub marker: a rerun without a token stops
     # before anything changes; with one it is reissued.

@@ -416,7 +416,9 @@ hub_cert_marked() {
     [ "${n:-0}" -gt 0 ]
 }
 
-enroll() {
+# enroll_once: one `winterflow-hub join`. Sets ENROLL_ERR and returns the
+# status on failure; the caller decides whether that ends the install.
+enroll_once() {
     # Make (or keep) the key and redeem the token: `winterflow-hub join`
     # posts the request, checks that the certificate matches the key and
     # chains to the CA, and stores ca.crt and hub.crt. The token reaches it
@@ -426,12 +428,42 @@ enroll() {
         --public-addr "$HUB_PUBLIC_ADDR" --cert-dir "$CERT_DIR" 2>&1)" || st=$?
     case "$st" in
         0) ;;
-        2) die "${out} (a token works once and expires after an hour; ask for a new one)" ;;
-        *) die "joining the control plane failed: ${out}" ;;
+        2) ENROLL_ERR="${out} (a token works once and expires after an hour; ask for a new one)"; return 1 ;;
+        *) ENROLL_ERR="joining the control plane failed: ${out}"; return 1 ;;
     esac
     chown root:"$HUB_USER" "${CERT_DIR}/hub.key" "${CERT_DIR}/hub.crt" "${CERT_DIR}/ca.crt"
     chmod 640 "${CERT_DIR}/hub.key"
     log "$out"
+}
+
+enroll() {
+    enroll_once || die "$ENROLL_ERR"
+}
+
+# rejoin: a running hub announces this host's hub id, which the control plane
+# refuses to reissue while it is live (the refusal does not spend the token).
+# Stop the hub first (stopping drains it and withdraws its entry), join, and
+# start it again whatever the outcome, so the old certificate keeps serving
+# when the join fails. A withdraw that did not happen expires within 90 s, so
+# a "live hub" refusal is retried for up to 100 s.
+rejoin() {
+    local tries=0
+    log "Stopping winterflow-hub (the control plane refuses a new certificate while it is live)"
+    systemctl stop winterflow-hub 2>/dev/null || true
+    while ! enroll_once; do
+        case "$ENROLL_ERR" in
+            *"a live hub already uses this host"*)
+                if [ "$tries" -lt 10 ]; then
+                    tries=$((tries + 1))
+                    log "The hub's entry has not expired yet; retrying in 10 s (${tries}/10)"
+                    sleep 10
+                    continue
+                fi ;;
+        esac
+        log "Starting winterflow-hub again with its previous certificate"
+        systemctl start winterflow-hub 2>/dev/null || true
+        die "$ENROLL_ERR"
+    done
 }
 
 # --- Renderers (shared by install and --dry-run) ------------------------------
@@ -546,6 +578,7 @@ render_plan() {
         echo "  POST ${API_URL}/api/v1/hub/enroll {token, csr, public_addr}; hub.key made here and never sent"
         echo "  checks the certificate matches the key and chains to the CA, then stores ca.crt and hub.crt"
         echo "  ${CERT_DIR}: root:${HUB_USER} 0750; hub.key 0640"
+        [ "$REJOIN" -eq 0 ] || echo "  rejoin: systemctl stop winterflow-hub before the join (the control plane refuses while it is live; retried up to 100 s), systemctl start winterflow-hub if the join fails"
     fi
     echo "systemctl enable winterflow-hub; systemctl restart winterflow-hub (stopping drains first, up to 2 minutes when another hub can take its agents)"
 }
@@ -801,7 +834,7 @@ main() {
         enroll
     elif [ "$REJOIN" -eq 1 ]; then
         log "Joining again with the token: a new key and certificate replace the old pair"
-        enroll
+        rejoin
     else
         log "Already joined (${CERT_DIR}/hub.crt): keeping the certificate"
     fi

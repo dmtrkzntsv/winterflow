@@ -5,6 +5,8 @@ import (
 	"winterflow/internal/domain/port"
 	"winterflow/internal/domain/service/alerting"
 	"winterflow/internal/domain/service/status"
+	"winterflow/internal/domain/usecase/enrollment"
+	"winterflow/internal/domain/usecase/hubs"
 	"winterflow/internal/domain/usecase/rollouts"
 	"winterflow/internal/domain/usecase/templates"
 	"winterflow/pkg/config"
@@ -60,4 +62,15 @@ type Deps struct {
 	// ChannelBox encrypts channel URLs; nil when JWT_SECRET is unset
 	// (saving or testing a channel then answers 400).
 	ChannelBox *secretbox.Box
+	// HubPicker assigns an enrolling server its hub from the live hub list;
+	// nil in standalone (no hubs).
+	HubPicker *hubs.Picker
+	// EnrollmentRepository stores agent enrollments; Enrollment is the
+	// usecase over it, wired by BootstrapAPI only (nil in standalone, where
+	// the enroll routes are not mounted and codes come from registrations).
+	EnrollmentRepository port.EnrollmentRepository
+	Enrollment           *enrollment.UseCase
+	// Revoker tells the hubs to drop a deleted server's agent. Nil until
+	// the bus implementation is wired (distributed) and in standalone.
+	Revoker port.Revoker
 }

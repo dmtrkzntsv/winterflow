@@ -62,15 +62,15 @@ func TestUpdateAgentDownloadFailure(t *testing.T) {
 	}
 }
 
-func TestUpdateAgentAssetNameMatchesTopology(t *testing.T) {
+func TestUpdaterAssetNames(t *testing.T) {
 	// The asset must match the binary being replaced: the standalone binary in
 	// standalone mode, the agent binary otherwise. The server 404s so the test
 	// executable is never actually swapped; only the requested path matters.
 	tests := []struct {
-		mode      string
-		component string
+		mode  string
+		asset string
 	}{
-		{"standalone", "standalone"},
+		{"standalone", "winterflow"},
 		{"distributed", "agent"},
 	}
 	for _, tt := range tests {
@@ -92,7 +92,7 @@ func TestUpdateAgentAssetNameMatchesTopology(t *testing.T) {
 			if err == nil {
 				t.Fatal("expected error from 404 download")
 			}
-			want := fmt.Sprintf("/v999.0.0/winterflow-%s-%s-%s", tt.component, runtime.GOOS, runtime.GOARCH)
+			want := fmt.Sprintf("/v999.0.0/%s-%s-%s", tt.asset, runtime.GOOS, runtime.GOARCH)
 			if gotPath != want {
 				t.Errorf("requested asset path = %q, want %q", gotPath, want)
 			}

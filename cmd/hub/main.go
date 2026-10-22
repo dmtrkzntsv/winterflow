@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -15,6 +16,15 @@ import (
 )
 
 func main() {
+	// Hidden subcommand for the installers: issue the hub/Redis PKI and exit.
+	if len(os.Args) > 1 && os.Args[1] == "pki" {
+		if err := runPKI(os.Args[2:], os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	err := godotenv.Load()
 	cfg := config.NewServerConfig("distributed")
 	log := logger.NewLogger(logger.LoggerConfiguration{
@@ -30,11 +40,15 @@ func main() {
 	defer stop()
 
 	hubDeps := bootstrap.BootstrapHUB(ctx, log, cfg)
-	hub := grpchub.NewHub(log, cfg, hubDeps.Bus)
+	hub := grpchub.NewHub(log, cfg, hubDeps.Bus, hubDeps.Auth)
 
 	if err := hub.StartBusBridge(ctx); err != nil {
 		log.Fatal("Failed to start bus bridge", "error", err)
 	}
+
+	// Lists the hub in Redis (hub:status:<hub_id>) so the API can assign
+	// servers to it; removed again when ctx ends.
+	announced := hub.StartAnnouncer(ctx, hubDeps.Registry)
 
 	go func() {
 		if err := hub.ListenAndServe(ctx); err != nil {
@@ -51,5 +65,6 @@ func main() {
 	if err := hub.Shutdown(shutdownCtx); err != nil {
 		log.Fatal("Error during shutdown", "error", err)
 	}
+	<-announced // the entry's removal is bounded by 3 s
 	log.Info("Server gracefully stopped")
 }

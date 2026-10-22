@@ -4,8 +4,11 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
+	"net"
 	"os"
+	"strings"
 	"sync"
 	"time"
 	"winterflow/pkg/config"
@@ -16,8 +19,10 @@ import (
 	"winterflow/internal/infra/transport/grpc/proto"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -46,6 +51,7 @@ type Agent struct {
 	streamActive bool
 	streamCancel context.CancelFunc
 	streamDone   chan struct{} // closed when the active stream's receive loop exits
+	streamErr    error         // why the receive loop ended (read after streamDone closes)
 	stream       grpc.BidiStreamingClient[proto.AgentMessage, proto.ServerCommand]
 	sendMutex    sync.Mutex // serializes stream.Send across heartbeat + handler goroutines
 	// lifeCtx is the context of the agent's lifetime (Run's), which detached
@@ -60,7 +66,39 @@ type Agent struct {
 
 	registered      bool
 	registeredMutex sync.RWMutex
+
+	// bringUp is one connect+register+stream attempt (connectRegisterStream;
+	// tests replace it): the stream's done channel, a func giving the error
+	// that ended the stream once done is closed, or the bring-up error.
+	bringUp func(ctx context.Context) (<-chan struct{}, func() error, error)
+	// deniedBackoff are the waits between PermissionDenied retries; the
+	// attempt after the last one gives up with ErrRevoked.
+	deniedBackoff []time.Duration
+	// retryBackoff overrides the {base, max} of the ordinary reconnect
+	// backoff (tests).
+	retryBackoff *[2]time.Duration
+	// settle is how long a stream must stay up for its connection to count as
+	// a success that resets the denial count (default streamSettle).
+	settle time.Duration
+	// now and sleep are the clock and waiter Run uses (tests replace them).
+	now   func() time.Time
+	sleep func(ctx context.Context, d time.Duration) bool
 }
+
+const streamSettle = 2 * time.Minute
+
+// ErrRevoked is returned by Run once the hub has refused this server
+// maxDenials times in a row: the server was removed or its certificate is no
+// longer active, and retrying cannot help.
+var ErrRevoked = errors.New("server was removed or its certificate is not active")
+
+// ExitRevoked is the process exit status after ErrRevoked; the systemd unit
+// lists it in RestartPreventExitStatus.
+const ExitRevoked = 78
+
+const maxDenials = 5
+
+var defaultDeniedBackoff = []time.Duration{time.Minute, 2 * time.Minute, 3 * time.Minute, 4 * time.Minute}
 
 func NewAgent(log *logger.Logger, cfg *config.ServerConfig, agentID string) *Agent {
 	return &Agent{
@@ -74,6 +112,7 @@ func NewAgent(log *logger.Logger, cfg *config.ServerConfig, agentID string) *Age
 		streamActive:    false,
 		streamReady:     make(chan struct{}),
 		registered:      false,
+		deniedBackoff:   defaultDeniedBackoff,
 	}
 }
 
@@ -159,9 +198,9 @@ func (a *Agent) Connect(ctx context.Context) error {
 
 	creds := credentials.NewTLS(tlsConfig)
 
-	hubAddress := fmt.Sprintf("%s:%s", a.cfg.GetHubHost(), a.cfg.GetHubPort())
+	addr := hubAddress(a.cfg.GetHubHost(), a.cfg.GetHubPort())
 
-	conn, err := grpc.NewClient(hubAddress,
+	conn, err := grpc.NewClient(addr,
 		grpc.WithTransportCredentials(creds),
 		grpc.WithKeepaliveParams(keepalive.ClientParameters{
 			Time:                15 * time.Second,
@@ -176,8 +215,17 @@ func (a *Agent) Connect(ctx context.Context) error {
 	a.conn = conn
 	a.client = proto.NewAgentServiceClient(conn)
 
-	a.log.Info("Connected to hub", "address", hubAddress)
+	a.log.Info("Connected to hub", "address", addr)
 	return nil
+}
+
+// hubAddress joins HUB_HOST and HUB_PORT, bracketing an IPv6 address (given
+// bare or already in brackets).
+func hubAddress(host, port string) string {
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		host = host[1 : len(host)-1]
+	}
+	return net.JoinHostPort(host, port)
 }
 
 func (a *Agent) Register(ctx context.Context) error {
@@ -251,6 +299,7 @@ func (a *Agent) StartStream(ctx context.Context) error {
 	a.streamActive = true
 	a.streamCancel = cancel
 	a.streamDone = done
+	a.streamErr = nil
 	a.stream = stream
 	a.lifeCtx = ctx
 	a.markUpLocked()
@@ -333,6 +382,9 @@ func (a *Agent) handleIncomingMessages(ctx context.Context, stream grpc.BidiStre
 		default:
 			msg, err := stream.Recv()
 			if err != nil {
+				a.streamMutex.Lock()
+				a.streamErr = err
+				a.streamMutex.Unlock()
 				a.log.Error("Error receiving message from hub", "error", err, "agent_id", a.agentID)
 				return
 			}
@@ -490,66 +542,129 @@ func (a *Agent) replyWait() time.Duration {
 
 // Run supervises the agent connection for the lifetime of ctx: it connects,
 // registers, starts the stream, and waits. When the stream drops (network blip,
-// hub restart) it reconnects with exponential backoff. It returns only when ctx
-// is canceled. This replaces the one-shot Connect/Register/StartStream sequence
-// so a transient failure no longer kills the agent.
-func (a *Agent) Run(ctx context.Context) {
-	const (
-		baseBackoff = 1 * time.Second
-		maxBackoff  = 30 * time.Second
-	)
+// hub restart) it reconnects with exponential backoff. It returns nil when ctx
+// is canceled, or ErrRevoked after maxDenials consecutive PermissionDenied
+// answers (from bring-up or from a stream the hub cut). Only PermissionDenied
+// counts: Unavailable and every other failure retry forever; a stream that
+// ends for another reason resets the count.
+func (a *Agent) Run(ctx context.Context) error {
+	baseBackoff, maxBackoff := 1*time.Second, 30*time.Second
+	if a.retryBackoff != nil {
+		baseBackoff, maxBackoff = a.retryBackoff[0], a.retryBackoff[1]
+	}
 	backoff := baseBackoff
+	denials := 0
+	settle := streamSettle
+	if a.settle > 0 {
+		settle = a.settle
+	}
+	now, sleep := a.now, a.sleep
+	if now == nil {
+		now = time.Now
+	}
+	if sleep == nil {
+		sleep = util.Sleep
+	}
+	bringUp := a.bringUp
+	if bringUp == nil {
+		bringUp = a.connectRegisterStream
+	}
+
+	// refused counts a denial and waits its backoff; false means stop (ctx
+	// canceled or given up, with the reason in err).
+	refused := func(cause error) (bool, error) {
+		denials++
+		if denials >= maxDenials {
+			a.log.Error("hub refused this server repeatedly, giving up", "error", cause, "denials", denials)
+			return false, ErrRevoked
+		}
+		wait := a.deniedBackoff[min(denials-1, len(a.deniedBackoff)-1)]
+		a.log.Warn("hub refused this server, will retry",
+			"error", cause, "denials", denials, "retry_in", wait.String())
+		return sleep(ctx, wait), nil
+	}
 
 	for {
 		if ctx.Err() != nil {
-			return
+			return nil
 		}
 
-		done, err := a.connectRegisterStream(ctx)
+		done, streamErr, err := bringUp(ctx)
 		if err != nil {
+			a.teardownConn()
+			if status.Code(err) == codes.PermissionDenied {
+				ok, rerr := refused(err)
+				if !ok {
+					return rerr
+				}
+				continue
+			}
 			a.log.Warn("agent connection attempt failed, will retry",
 				"error", err, "retry_in", backoff.String())
-			a.teardownConn()
-			if !util.Sleep(ctx, backoff) {
-				return
+			if !sleep(ctx, backoff) {
+				return nil
 			}
 			backoff = nextBackoff(backoff, maxBackoff)
 			continue
 		}
 
-		// Connected and streaming — reset backoff and wait for the stream to end
-		// or for shutdown.
-		backoff = baseBackoff
+		upAt := now()
+		// Connected and streaming: wait for the stream to end or for shutdown.
 		select {
 		case <-ctx.Done():
-			return
+			return nil
 		case <-done:
-			a.log.Warn("agent stream ended, reconnecting", "agent_id", a.agentID)
-			a.teardownConn()
-			if !util.Sleep(ctx, backoff) {
-				return
-			}
-			backoff = nextBackoff(backoff, maxBackoff)
 		}
+		var endErr error
+		if streamErr != nil {
+			endErr = streamErr()
+		}
+		a.teardownConn()
+		if now().Sub(upAt) >= settle {
+			// A stream that stayed up was a real connection: it resets the
+			// count even when it ends in a denial (a later revoke).
+			denials = 0
+		}
+		if status.Code(endErr) == codes.PermissionDenied {
+			// The hub cut or refused the stream (a revoke): a denial, and
+			// the connection is not a success that resets the count.
+			ok, rerr := refused(endErr)
+			if !ok {
+				return rerr
+			}
+			continue
+		}
+		denials = 0
+		backoff = baseBackoff
+		a.log.Warn("agent stream ended, reconnecting", "agent_id", a.agentID, "error", endErr)
+		if !sleep(ctx, backoff) {
+			return nil
+		}
+		backoff = nextBackoff(backoff, maxBackoff)
 	}
 }
 
-// connectRegisterStream performs one full bring-up and returns the stream's done
-// channel. On any step failure it returns the error (the caller backs off).
-func (a *Agent) connectRegisterStream(ctx context.Context) (chan struct{}, error) {
+// connectRegisterStream performs one full bring-up and returns the stream's
+// done channel and the func reporting how it ended. On any step failure it
+// returns the error (the caller backs off).
+func (a *Agent) connectRegisterStream(ctx context.Context) (<-chan struct{}, func() error, error) {
 	if err := a.Connect(ctx); err != nil {
-		return nil, fmt.Errorf("connect: %w", err)
+		return nil, nil, fmt.Errorf("connect: %w", err)
 	}
 	if err := a.Register(ctx); err != nil {
-		return nil, fmt.Errorf("register: %w", err)
+		return nil, nil, fmt.Errorf("register: %w", err)
 	}
 	if err := a.StartStream(ctx); err != nil {
-		return nil, fmt.Errorf("start stream: %w", err)
+		return nil, nil, fmt.Errorf("start stream: %w", err)
 	}
 	a.streamMutex.RLock()
 	done := a.streamDone
 	a.streamMutex.RUnlock()
-	return done, nil
+	return done, func() error {
+		a.streamMutex.RLock()
+		defer a.streamMutex.RUnlock()
+		return a.streamErr
+	}, nil
 }
 
 // teardownConn closes the connection and clears per-connection state so the next

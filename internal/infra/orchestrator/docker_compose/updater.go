@@ -63,16 +63,17 @@ func (r *Repository) UpdateAgent(ctx context.Context, in command.UpdateAgentRequ
 
 	// The downloaded asset must match the running binary: in standalone the
 	// executable being replaced is the standalone binary, not the agent.
+	// Release assets: standalone -> winterflow-<os>-<arch>, agent -> agent-<os>-<arch>.
 	component := "agent"
 	if r.cfg.IsStandalone() {
-		component = "standalone"
+		component = "winterflow"
 	}
 	// Release tags are v-prefixed calver (v260823.1); accept a bare version too.
 	tag := in.Version
 	if !strings.HasPrefix(tag, "v") {
 		tag = "v" + tag
 	}
-	binaryName := fmt.Sprintf("winterflow-%s-%s-%s", component, runtime.GOOS, runtime.GOARCH)
+	binaryName := fmt.Sprintf("%s-%s-%s", component, runtime.GOOS, runtime.GOARCH)
 	url := fmt.Sprintf("%s/%s/%s", r.cfg.GetGitHubReleasesURL(), tag, binaryName)
 	r.log.Info("downloading agent update", "url", url, "target", in.Version)
 

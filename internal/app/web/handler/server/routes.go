@@ -30,7 +30,13 @@ func (h *Handler) Routes(api.Guards) []api.Route {
 			Method: http.MethodPost, Path: "/api/v1/server/register", Handler: h.Register, Auth: api.User,
 			Summary: "Claim a pending server by its pairing code", Tag: "server",
 			Request: RegisterServerRequest{}, Response: RegisterServerResponse{},
-			Errors: []int{http.StatusBadRequest},
+			Errors: []int{http.StatusBadRequest, http.StatusTooManyRequests, http.StatusServiceUnavailable},
+		},
+		{
+			Method: http.MethodPost, Path: "/api/v1/server/delete-server", Handler: h.DeleteServer, Auth: api.User,
+			Summary: "Delete a server and its data (containers on the box are left running)", Tag: "server",
+			Request: DeleteServerRequest{},
+			Errors:  []int{http.StatusBadRequest, http.StatusForbidden, http.StatusConflict},
 		},
 	}
 }

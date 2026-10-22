@@ -98,9 +98,11 @@ sysd_ver=""
 WORK_DIR=""
 trap '[ -n "$WORK_DIR" ] && rm -rf "$WORK_DIR"' EXIT
 
+# --- shared: log ---
 log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33mwarning:\033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
+# --- end shared ---
 
 usage() {
     # Print the header comment block (everything up to the first non-comment
@@ -113,6 +115,7 @@ usage() {
     fi
 }
 
+# --- shared: prompts ---
 prompt_read() {
     # prompt_read "prompt" -> sets REPLY. Only reads when stdin is a real
     # terminal. Piped runs (curl | sudo bash) get NO prompts: sudo's use_pty
@@ -153,7 +156,9 @@ ask() {
     prompt_read "${prompt} [${default}] " || REPLY=""
     printf '%s' "${REPLY:-$default}"
 }
+# --- end shared ---
 
+# --- shared: users ---
 is_valid_user_name() {
     # useradd's portable name rule, minus root: a typo (or a uid-0 account)
     # must never land as "User=" in the unit.
@@ -167,6 +172,53 @@ validate_user_name() {
  letters, digits, '_' and '-', and not root (uid 0)"
 }
 
+# The primary group of an existing account is not always <name> (user-private
+# groups are a convention, not a rule), so resolve it instead of assuming.
+resolve_group() {
+    if id "$SERVICE_USER" >/dev/null 2>&1; then
+        SERVICE_GROUP="$(id -gn "$SERVICE_USER")"
+    else
+        SERVICE_GROUP="$SERVICE_USER"
+    fi
+}
+
+ensure_service_user() {
+    # Create the service user when missing (behind a confirm) and offer the
+    # docker group: the service drives docker compose through the socket.
+    if id "$SERVICE_USER" >/dev/null 2>&1; then
+        log "User '${SERVICE_USER}' already exists, running the service as it"
+    else
+        echo
+        echo "'${SERVICE_USER}' does not exist yet. It will be created as an"
+        echo "unprivileged system user (no login shell, home ${DATA_DIR})."
+        if confirm "Create system user '${SERVICE_USER}'?"; then
+            useradd --system --user-group \
+                --home-dir "$DATA_DIR" --no-create-home \
+                --shell /usr/sbin/nologin "$SERVICE_USER"
+            log "Created system user '${SERVICE_USER}'"
+        else
+            die "refusing to install without a service user; rerun with --user NAME to use an existing account"
+        fi
+    fi
+    resolve_group
+
+    # The agent drives docker compose, which needs access to the Docker socket.
+    if getent group docker >/dev/null 2>&1 && ! id -nG "$SERVICE_USER" | tr ' ' '\n' | grep -qx docker; then
+        echo
+        echo "The service deploys apps via 'docker compose', which requires access"
+        echo "to the Docker socket. Note: docker group membership is effectively"
+        echo "root-equivalent on the host — this is inherent to driving Docker."
+        if confirm "Add '${SERVICE_USER}' to the 'docker' group?"; then
+            usermod -aG docker "$SERVICE_USER"
+            log "Added '${SERVICE_USER}' to the docker group"
+        else
+            warn "skipping docker group; app deployments will fail until '${SERVICE_USER}' can reach the Docker socket"
+        fi
+    fi
+}
+# --- end shared ---
+
+# --- shared: download ---
 fetch_url() {
     # fetch_url URL DEST — HTTPS only; curl or wget, whichever is present.
     if command -v curl >/dev/null 2>&1; then
@@ -178,25 +230,23 @@ fetch_url() {
     fi
 }
 
-release_asset_name() {
-    # Map this machine to a release asset. The naming is a contract with
-    # .goreleaser.yaml and the agent self-updater:
-    # winterflow-standalone-{os}-{arch}, arch as Go spells it.
-    local os arch
-    os="$(uname -s | tr '[:upper:]' '[:lower:]')"
-    [ "$os" = "linux" ] || die "prebuilt binaries are linux-only (this is ${os}); build from source (see --help)"
+detect_platform() {
+    # Sets RELEASE_OS and RELEASE_ARCH (arch as Go spells it). The release
+    # asset naming built from them is a contract with .goreleaser.yaml and the
+    # agent self-updater.
+    RELEASE_OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
+    [ "$RELEASE_OS" = "linux" ] || die "prebuilt binaries are linux-only (this is ${RELEASE_OS}); build from source (see --help)"
     case "$(uname -m)" in
-        x86_64|amd64)  arch=amd64 ;;
-        aarch64|arm64) arch=arm64 ;;
-        armv6l|armv7l) arch=arm ;;
+        x86_64|amd64)  RELEASE_ARCH=amd64 ;;
+        aarch64|arm64) RELEASE_ARCH=arm64 ;;
+        armv6l|armv7l) RELEASE_ARCH=arm ;;
         *) die "no prebuilt binary for $(uname -m); build from source (see --help)" ;;
     esac
-    printf 'winterflow-standalone-%s-%s' "$os" "$arch"
 }
 
 download_release() {
-    # Fetch the standalone binary (+ checksum) from GitHub releases into
-    # WORK_DIR and point BINARY_SRC at it.
+    # Fetch this script's binary (release_asset_name) and its checksum from
+    # GitHub releases into WORK_DIR and point BINARY_SRC at it.
     local asset base
     asset="$(release_asset_name)"
     if [ -n "$RELEASE_VERSION" ]; then
@@ -221,7 +271,9 @@ download_release() {
     chmod 755 "${WORK_DIR}/${asset}"
     BINARY_SRC="${WORK_DIR}/${asset}"
 }
+# --- end shared ---
 
+# --- shared: docker ---
 install_docker() {
     # Docker's official convenience script. It knows every distro layout we
     # care about (Debian/Ubuntu/Raspberry Pi OS, Fedora, CentOS, openSUSE),
@@ -256,14 +308,109 @@ install_compose_plugin() {
     fi
 }
 
-# The primary group of an existing account is not always <name> (user-private
-# groups are a convention, not a rule), so resolve it instead of assuming.
-resolve_group() {
-    if id "$SERVICE_USER" >/dev/null 2>&1; then
-        SERVICE_GROUP="$(id -gn "$SERVICE_USER")"
-    else
-        SERVICE_GROUP="$SERVICE_USER"
+ensure_docker() {
+    # Docker is the runtime for every deployed app; offer to install it rather
+    # than sending the user away mid-install.
+    if ! command -v docker >/dev/null 2>&1; then
+        echo
+        echo "Docker is required: the agent deploys apps by shelling out to"
+        echo "'docker compose', and it is not installed on this machine."
+        echo "Docker's official install script (${DOCKER_INSTALL_URL}) sets up the"
+        echo "package repo for this distro and installs the engine, containerd and"
+        echo "the compose plugin. Review it first if you prefer:"
+        echo "  curl -fsSL ${DOCKER_INSTALL_URL} | less"
+        if confirm "Download and run Docker's official install script?"; then
+            install_docker
+        else
+            die "docker is required (the agent deploys apps via the docker compose CLI)"
+        fi
+        command -v docker >/dev/null 2>&1 \
+            || die "docker is still not on PATH after installation; install it manually and rerun"
+        log "Docker installed"
     fi
+
+    # A fresh install (or a stopped unit) leaves the daemon down; compose needs it.
+    if ! docker info >/dev/null 2>&1; then
+        log "Starting the docker service"
+        systemctl enable --now docker >/dev/null 2>&1 || true
+        docker info >/dev/null 2>&1 \
+            || warn "the docker daemon is not responding; app deployments will fail until it is up"
+    fi
+
+    if ! docker compose version >/dev/null 2>&1; then
+        echo
+        echo "Docker is installed but the compose v2 plugin ('docker compose') is"
+        echo "not, and every app is deployed with it."
+        if confirm "Install the docker-compose-plugin package?"; then
+            install_compose_plugin \
+                || die "could not install the compose plugin automatically; install docker-compose-plugin and rerun"
+            docker compose version >/dev/null 2>&1 \
+                || die "the compose plugin is still missing after installation; install it manually and rerun"
+            log "Docker compose plugin installed"
+        else
+            die "the 'docker compose' plugin is required (docker compose version failed)"
+        fi
+    fi
+
+    # Containers log via the json-file driver, which does NOT rotate by default:
+    # one chatty app can fill the SSD. Offer daemon-wide rotation if unset.
+    DOCKER_DAEMON_JSON="${DOCKER_DAEMON_JSON:-/etc/docker/daemon.json}"
+    if [ ! -f "$DOCKER_DAEMON_JSON" ]; then
+        echo
+        echo "Docker's default json-file log driver never rotates container logs."
+        echo "Recommended: cap them at 10MB x 3 files per container via"
+        echo "${DOCKER_DAEMON_JSON} (applies to containers created afterwards)."
+        if confirm "Write ${DOCKER_DAEMON_JSON} with log rotation and restart docker?"; then
+            install -d -m 755 /etc/docker
+            cat > "$DOCKER_DAEMON_JSON" <<'JSON'
+{
+  "log-driver": "json-file",
+  "log-opts": { "max-size": "10m", "max-file": "3" }
+}
+JSON
+            systemctl restart docker || warn "docker restart failed; restart it manually to apply log rotation"
+            log "Docker container log rotation configured"
+        else
+            warn "skipping: container logs will grow unbounded until you configure log-opts"
+        fi
+    elif ! grep -q 'log-opts' "$DOCKER_DAEMON_JSON"; then
+        warn "${DOCKER_DAEMON_JSON} has no log-opts: container logs grow unbounded."
+        warn "add: \"log-driver\": \"json-file\", \"log-opts\": {\"max-size\": \"10m\", \"max-file\": \"3\"}"
+    fi
+}
+# --- end shared ---
+
+# --- shared: limits ---
+default_cpu_quota() {
+    # Leave one core of headroom so orchestration bursts (docker compose,
+    # git) cannot pin every core and spike temperatures.
+    local cores quota
+    cores="$(nproc 2>/dev/null || echo 2)"
+    quota=$(( (cores - 1) * 100 ))
+    [ "$quota" -ge 100 ] || quota=100
+    printf '%s' "$quota"
+}
+
+default_memory_max() {
+    # Half of RAM, clamped to 512M..2G — sized to the actual box, from
+    # Raspberry Pi-class boards up, instead of assuming a roomy host.
+    local mem_kb half_mb
+    mem_kb="$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null || echo 0)"
+    if [ "${mem_kb:-0}" -gt 0 ] 2>/dev/null; then
+        half_mb=$(( mem_kb / 2048 ))
+        [ "$half_mb" -ge 512 ]  || half_mb=512
+        [ "$half_mb" -le 2048 ] || half_mb=2048
+        printf '%sM' "$half_mb"
+    else
+        printf '1G'
+    fi
+}
+# --- end shared ---
+
+release_asset_name() {
+    # winterflow-{os}-{arch}: the standalone GitHub release asset.
+    detect_platform
+    printf 'winterflow-%s-%s' "$RELEASE_OS" "$RELEASE_ARCH"
 }
 
 # --- Renderers (shared by install and --dry-run) ------------------------------
@@ -277,7 +424,6 @@ render_env_file() {
 LOG_LEVEL=info
 API_PORT=${API_PORT}
 WEB_URL=http://localhost:${API_PORT}
-REGION=local
 
 # Generated at install time. Rotating it invalidates all sessions.
 JWT_SECRET=${jwt_secret}
@@ -288,8 +434,8 @@ AVATARS_STORAGE_PATH=${DATA_DIR}/data/avatars
 
 HUB_CERT_DIR=${DATA_DIR}/data/hub-certs
 HUB_CERT_EXT_PATH=${DATA_DIR}/data/ext.cnf
-HUB_CA_SUBJECT="/C=CA/O=WinterFlow.io/OU=CA/CN=WinterFlow.io CA/emailAddress=info@winterflow.io"
-HUB_SERVER_SUBJECT="/C=CA/O=WinterFlow.io/OU=SERVER/CN=WinterFlow.io/emailAddress=info@winterflow.io"
+HUB_CA_SUBJECT="/C=CA/O=WinterFlow.dev/OU=CA/CN=WinterFlow.dev CA/emailAddress=info@winterflow.dev"
+HUB_SERVER_SUBJECT="/C=CA/O=WinterFlow.dev/OU=SERVER/CN=WinterFlow.dev/emailAddress=info@winterflow.dev"
 
 # Embedded ingress (Caddy) — an optional reverse proxy for your deployed
 # apps, off by default so it never fights another proxy or tunnel for
@@ -420,9 +566,7 @@ main() {
     # Default CPU quota: leave one core of headroom so orchestration bursts
     # (docker compose, git) cannot pin every core and spike temperatures.
     if [ -z "$CPU_QUOTA" ]; then
-        cores="$(nproc 2>/dev/null || echo 2)"
-        CPU_QUOTA=$(( (cores - 1) * 100 ))
-        [ "$CPU_QUOTA" -ge 100 ] || CPU_QUOTA=100
+        CPU_QUOTA="$(default_cpu_quota)"
     fi
     case "$CPU_QUOTA" in
         ''|*[!0-9]*) die "--cpu-quota must be a number (percent), got: ${CPU_QUOTA}" ;;
@@ -431,15 +575,7 @@ main() {
     # Default memory cap: half of RAM, clamped to 512M..2G — sized to the actual
     # box, from Raspberry Pi-class boards up, instead of assuming a roomy host.
     if [ -z "$MEMORY_MAX" ]; then
-        mem_kb="$(awk '/^MemTotal:/{print $2}' /proc/meminfo 2>/dev/null || echo 0)"
-        if [ "${mem_kb:-0}" -gt 0 ] 2>/dev/null; then
-            half_mb=$(( mem_kb / 2048 ))
-            [ "$half_mb" -ge 512 ]  || half_mb=512
-            [ "$half_mb" -le 2048 ] || half_mb=2048
-            MEMORY_MAX="${half_mb}M"
-        else
-            MEMORY_MAX="1G"
-        fi
+        MEMORY_MAX="$(default_memory_max)"
     fi
 
     if [ "$DRY_RUN" -eq 0 ]; then
@@ -536,74 +672,7 @@ main() {
 
     # --- Preflight ------------------------------------------------------------
 
-    # Docker is the runtime for every deployed app; offer to install it rather
-    # than sending the user away mid-install.
-    if ! command -v docker >/dev/null 2>&1; then
-        echo
-        echo "Docker is required: the agent deploys apps by shelling out to"
-        echo "'docker compose', and it is not installed on this machine."
-        echo "Docker's official install script (${DOCKER_INSTALL_URL}) sets up the"
-        echo "package repo for this distro and installs the engine, containerd and"
-        echo "the compose plugin. Review it first if you prefer:"
-        echo "  curl -fsSL ${DOCKER_INSTALL_URL} | less"
-        if confirm "Download and run Docker's official install script?"; then
-            install_docker
-        else
-            die "docker is required (the agent deploys apps via the docker compose CLI)"
-        fi
-        command -v docker >/dev/null 2>&1 \
-            || die "docker is still not on PATH after installation; install it manually and rerun"
-        log "Docker installed"
-    fi
-
-    # A fresh install (or a stopped unit) leaves the daemon down; compose needs it.
-    if ! docker info >/dev/null 2>&1; then
-        log "Starting the docker service"
-        systemctl enable --now docker >/dev/null 2>&1 || true
-        docker info >/dev/null 2>&1 \
-            || warn "the docker daemon is not responding; app deployments will fail until it is up"
-    fi
-
-    if ! docker compose version >/dev/null 2>&1; then
-        echo
-        echo "Docker is installed but the compose v2 plugin ('docker compose') is"
-        echo "not, and every app is deployed with it."
-        if confirm "Install the docker-compose-plugin package?"; then
-            install_compose_plugin \
-                || die "could not install the compose plugin automatically; install docker-compose-plugin and rerun"
-            docker compose version >/dev/null 2>&1 \
-                || die "the compose plugin is still missing after installation; install it manually and rerun"
-            log "Docker compose plugin installed"
-        else
-            die "the 'docker compose' plugin is required (docker compose version failed)"
-        fi
-    fi
-
-    # Containers log via the json-file driver, which does NOT rotate by default:
-    # one chatty app can fill the SSD. Offer daemon-wide rotation if unset.
-    DOCKER_DAEMON_JSON="/etc/docker/daemon.json"
-    if [ ! -f "$DOCKER_DAEMON_JSON" ]; then
-        echo
-        echo "Docker's default json-file log driver never rotates container logs."
-        echo "Recommended: cap them at 10MB x 3 files per container via"
-        echo "${DOCKER_DAEMON_JSON} (applies to containers created afterwards)."
-        if confirm "Write ${DOCKER_DAEMON_JSON} with log rotation and restart docker?"; then
-            install -d -m 755 /etc/docker
-            cat > "$DOCKER_DAEMON_JSON" <<'EOF'
-{
-  "log-driver": "json-file",
-  "log-opts": { "max-size": "10m", "max-file": "3" }
-}
-EOF
-            systemctl restart docker || warn "docker restart failed; restart it manually to apply log rotation"
-            log "Docker container log rotation configured"
-        else
-            warn "skipping: container logs will grow unbounded until you configure log-opts"
-        fi
-    elif ! grep -q 'log-opts' "$DOCKER_DAEMON_JSON"; then
-        warn "${DOCKER_DAEMON_JSON} has no log-opts: container logs grow unbounded."
-        warn "add: \"log-driver\": \"json-file\", \"log-opts\": {\"max-size\": \"10m\", \"max-file\": \"3\"}"
-    fi
+    ensure_docker
 
     # Locate the binary: --binary PATH, a repo checkout around this script
     # (prebuilt bin/standalone, or build it), or — the curl | bash path —
@@ -710,36 +779,7 @@ EOF
         validate_user_name "$SERVICE_USER"
     fi
 
-    if id "$SERVICE_USER" >/dev/null 2>&1; then
-        log "User '${SERVICE_USER}' already exists, running the service as it"
-    else
-        echo
-        echo "'${SERVICE_USER}' does not exist yet. It will be created as an"
-        echo "unprivileged system user (no login shell, home ${DATA_DIR})."
-        if confirm "Create system user '${SERVICE_USER}'?"; then
-            useradd --system --user-group \
-                --home-dir "$DATA_DIR" --no-create-home \
-                --shell /usr/sbin/nologin "$SERVICE_USER"
-            log "Created system user '${SERVICE_USER}'"
-        else
-            die "refusing to install without a service user; rerun with --user NAME to use an existing account"
-        fi
-    fi
-    resolve_group
-
-    # The agent drives docker compose, which needs access to the Docker socket.
-    if getent group docker >/dev/null 2>&1 && ! id -nG "$SERVICE_USER" | tr ' ' '\n' | grep -qx docker; then
-        echo
-        echo "The service deploys apps via 'docker compose', which requires access"
-        echo "to the Docker socket. Note: docker group membership is effectively"
-        echo "root-equivalent on the host — this is inherent to driving Docker."
-        if confirm "Add '${SERVICE_USER}' to the 'docker' group?"; then
-            usermod -aG docker "$SERVICE_USER"
-            log "Added '${SERVICE_USER}' to the docker group"
-        else
-            warn "skipping docker group; app deployments will fail until '${SERVICE_USER}' can reach the Docker socket"
-        fi
-    fi
+    ensure_service_user
 
     # --- Filesystem layout ----------------------------------------------------
 

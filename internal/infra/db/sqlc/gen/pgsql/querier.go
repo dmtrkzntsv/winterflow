@@ -19,6 +19,7 @@ type Querier interface {
 	// An org template's next revision. Optimistic: 0 rows when latest_revision
 	// moved past the caller's base.
 	BumpTemplateRevision(ctx context.Context, arg BumpTemplateRevisionParams) (int64, error)
+	ClaimEnrollment(ctx context.Context, arg ClaimEnrollmentParams) (int64, error)
 	ClaimRollout(ctx context.Context, arg ClaimRolloutParams) (int64, error)
 	// A live key (the partial unique index) inserts nothing (0 rows).
 	ClaimTemplateInstance(ctx context.Context, arg ClaimTemplateInstanceParams) (int64, error)
@@ -26,7 +27,11 @@ type Querier interface {
 	// looks again).
 	CompleteRollout(ctx context.Context, arg CompleteRolloutParams) (int64, error)
 	CountFiringAlertsByServer(ctx context.Context) ([]CountFiringAlertsByServerRow, error)
+	CountPendingEnrollments(ctx context.Context) (int64, error)
+	CountPendingEnrollmentsByIP(ctx context.Context, clientIp string) (int64, error)
 	CountRolloutStep(ctx context.Context, arg CountRolloutStepParams) (int64, error)
+	// How many servers each hub carries (the hub picker's assigned counts).
+	CountServersByHub(ctx context.Context) ([]CountServersByHubRow, error)
 	CountUsers(ctx context.Context) (int64, error)
 	DeleteAlertEventsBefore(ctx context.Context, createdAt types.DateTime) (int64, error)
 	DeleteAlertEventsByApp(ctx context.Context, appID string) error
@@ -45,7 +50,15 @@ type Querier interface {
 	DeleteNotificationChannel(ctx context.Context, arg DeleteNotificationChannelParams) (int64, error)
 	DeleteRegistration(ctx context.Context, serverID string) error
 	DeleteServerDomain(ctx context.Context, arg DeleteServerDomainParams) error
+	// app_domains carries no foreign key to servers.
+	DeleteServerDomainRows(ctx context.Context, serverID string) error
 	DeleteServerDomainsByServer(ctx context.Context, serverID string) error
+	// agent_enrollments.server_id carries no foreign key either; the row holds
+	// the issued certificate.
+	DeleteServerEnrollments(ctx context.Context, serverID *string) error
+	// Cascades to the server's certificates, capabilities, features, apps,
+	// storages, shared variables, metrics, alerts and template instances.
+	DeleteServerRow(ctx context.Context, serverID string) error
 	DeleteServerStorage(ctx context.Context, arg DeleteServerStorageParams) error
 	DeleteServerStoragesByServer(ctx context.Context, serverID string) error
 	DeleteSharedCiphertext(ctx context.Context, arg DeleteSharedCiphertextParams) error
@@ -70,6 +83,8 @@ type Querier interface {
 	// replicas evaluate the same events).
 	FireAlertState(ctx context.Context, arg FireAlertStateParams) (int64, error)
 	GetActiveRollout(ctx context.Context, arg GetActiveRolloutParams) (Rollout, error)
+	// The newest active certificate of a server (no row: none).
+	GetActiveServerCertificate(ctx context.Context, serverID string) (string, error)
 	// GetAlertEventTrimCutoff is the newest event of an org that falls outside
 	// the newest `keep` (none when the org has at most `keep`).
 	GetAlertEventTrimCutoff(ctx context.Context, arg GetAlertEventTrimCutoffParams) (GetAlertEventTrimCutoffRow, error)
@@ -82,6 +97,9 @@ type Querier interface {
 	GetCredentialsByUser(ctx context.Context, userID string) (UserCredential, error)
 	// The app_domains ingress index (rebuildable from the agents' app configs).
 	GetDomainClaim(ctx context.Context, arg GetDomainClaimParams) (GetDomainClaimRow, error)
+	GetEnrollmentByCode(ctx context.Context, code *string) (AgentEnrollment, error)
+	GetEnrollmentByID(ctx context.Context, enrollmentID string) (AgentEnrollment, error)
+	GetEnrollmentBySecretHash(ctx context.Context, pollSecretHash string) (AgentEnrollment, error)
 	GetFirstConnectedAccountProvider(ctx context.Context, userID string) (string, error)
 	GetFirstServerID(ctx context.Context) (string, error)
 	GetLatestRegistrationCode(ctx context.Context) (string, error)
@@ -95,6 +113,8 @@ type Querier interface {
 	GetPrimaryOrganizationID(ctx context.Context, userID string) (string, error)
 	GetRegistrationByCode(ctx context.Context, code string) (ServerRegistration, error)
 	GetRollout(ctx context.Context, id string) (Rollout, error)
+	// The hub the server was assigned to (NULL: none; no row: no server).
+	GetServerHub(ctx context.Context, serverID string) (*string, error)
 	GetServerSharedVariableByName(ctx context.Context, arg GetServerSharedVariableByNameParams) (SharedVariable, error)
 	GetServerVarsInfo(ctx context.Context, serverID string) (GetServerVarsInfoRow, error)
 	GetSharedVariable(ctx context.Context, id string) (SharedVariable, error)
@@ -113,6 +133,8 @@ type Querier interface {
 	InsertCertificate(ctx context.Context, arg InsertCertificateParams) error
 	InsertConnectedAccount(ctx context.Context, arg InsertConnectedAccountParams) error
 	InsertCredentials(ctx context.Context, arg InsertCredentialsParams) error
+	// Agent enrollments (code-based pairing).
+	InsertEnrollment(ctx context.Context, arg InsertEnrollmentParams) error
 	// metric_samples: monitoring time series (see migration 0010).
 	InsertMetricSample(ctx context.Context, arg InsertMetricSampleParams) error
 	InsertNotificationChannel(ctx context.Context, arg InsertNotificationChannelParams) error
@@ -127,6 +149,7 @@ type Querier interface {
 	InsertServer(ctx context.Context, arg InsertServerParams) error
 	InsertServerDomain(ctx context.Context, arg InsertServerDomainParams) error
 	InsertServerStorage(ctx context.Context, arg InsertServerStorageParams) error
+	InsertServerWithHub(ctx context.Context, arg InsertServerWithHubParams) error
 	// Gap fill: never overwrites a copy (a concurrent rotation's new value wins).
 	InsertSharedCiphertextIfAbsent(ctx context.Context, arg InsertSharedCiphertextIfAbsentParams) error
 	InsertSharedVariable(ctx context.Context, arg InsertSharedVariableParams) error
@@ -220,8 +243,10 @@ type Querier interface {
 	// concurrently cannot empty the org.
 	LockOrganizationMember(ctx context.Context, arg LockOrganizationMemberParams) (string, error)
 	MarkAlertDefaultsSeeded(ctx context.Context, organizationID string) (int64, error)
+	MarkEnrollmentFailed(ctx context.Context, enrollmentID string) error
 	// A save the agent confirmed; a deleted or unlinked row stays as it is.
 	MarkTemplateInstanceSaved(ctx context.Context, arg MarkTemplateInstanceSavedParams) error
+	PruneEnrollments(ctx context.Context, arg PruneEnrollmentsParams) error
 	// Keeps the newest ended rollouts of a scope.
 	PruneRollouts(ctx context.Context, arg PruneRolloutsParams) error
 	// Lifts vars_revision past an agent-reported revision the API never issued
@@ -235,6 +260,7 @@ type Querier interface {
 	ReleaseRolloutLease(ctx context.Context, arg ReleaseRolloutLeaseParams) (int64, error)
 	RenameApp(ctx context.Context, arg RenameAppParams) error
 	RenewRolloutLease(ctx context.Context, arg RenewRolloutLeaseParams) (int64, error)
+	ReplaceEnrollmentCode(ctx context.Context, arg ReplaceEnrollmentCodeParams) (int64, error)
 	RequestRolloutStop(ctx context.Context, arg RequestRolloutStopParams) (int64, error)
 	ResolveAlertState(ctx context.Context, arg ResolveAlertStateParams) (int64, error)
 	// The app was deleted outside the instance routes: its instance's key

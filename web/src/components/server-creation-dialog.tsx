@@ -11,10 +11,11 @@ import { ResponsiveDialog } from "@/components/responsive-dialog";
 import { apiBase } from "@/config";
 import { createJsonClient, jsonPost } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
+import { buildInstallCommand } from "@/lib/install-command";
 
-// INSTALL_COMMAND installs Winterflow on a new server; when it finishes it
-// shows the 6-character code that connects the server here.
-const INSTALL_COMMAND = "curl -fsSL https://get.winterflow.io/agent | sudo bash";
+// The install command points the new server at this instance; when it
+// finishes it shows the 6-character code that connects the server here.
+const INSTALL_COMMAND = buildInstallCommand(apiBase);
 const CODE_LENGTH = 6;
 
 type Provider = { name: string; url: string; logo: string; note: string };
@@ -35,6 +36,12 @@ function codeProblem(message: string): string {
   }
   if (message === "registration code has expired") {
     return "That code has expired. Get a new code from the server and try again.";
+  }
+  if (message === "no hub is available, try again in a minute") {
+    return "Winterflow can't take new servers right now. Try again in a minute.";
+  }
+  if (message === "too many attempts, wait a minute") {
+    return "Too many tries. Wait a minute, then try again.";
   }
   return message;
 }
@@ -175,7 +182,7 @@ export function ServerSelectionDialog({ isOpen, onClose, onServerAdded }: Props)
             </p>
           ) : null}
           <p className="text-muted-foreground">
-            When it finishes, it shows a 6-character code. You enter that code in the next step.{" "}
+            When it finishes, it shows a 6-character code. You enter that code in the next step. The code changes every 10 minutes. After 10 codes (about 100 minutes) the installer stops waiting, so run it again if it times out.{" "}
             <a
               href="https://docs.winterflow.io/quick-start"
               target="_blank"

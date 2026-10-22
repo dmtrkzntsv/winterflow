@@ -33,6 +33,7 @@ type (
 	getCapParams       = sqlitegen.GetCapabilityParams
 	registrationParams = sqlitegen.InsertRegistrationParams
 	certificateParams  = sqlitegen.InsertCertificateParams
+	hubCountRow        = sqlitegen.CountServersByHubRow
 )
 
 type querier interface {
@@ -56,6 +57,12 @@ type querier interface {
 	GetRegistrationByCode(ctx context.Context, db backend.DBTX, code string) (registrationRow, error)
 	GetLatestRegistrationCode(ctx context.Context, db backend.DBTX) (string, error)
 	InsertCertificate(ctx context.Context, db backend.DBTX, p certificateParams) error
+	GetServerHub(ctx context.Context, db backend.DBTX, serverID string) (*string, error)
+	GetActiveServerCertificate(ctx context.Context, db backend.DBTX, serverID string) (string, error)
+	CountServersByHub(ctx context.Context, db backend.DBTX) ([]hubCountRow, error)
+	DeleteServerRow(ctx context.Context, db backend.DBTX, serverID string) error
+	DeleteServerDomainRows(ctx context.Context, db backend.DBTX, serverID string) error
+	DeleteServerEnrollments(ctx context.Context, db backend.DBTX, serverID string) error
 }
 
 // Repo is the servers repository.
@@ -300,4 +307,66 @@ func (r *Repo) PendingRegistrationCode(ctx context.Context) (string, bool, error
 		return "", false, err
 	}
 	return code, true, nil
+}
+
+// ServerHub returns the hub the server is assigned to: "" when it has none,
+// model.ErrNotFound when there is no such server.
+func (r *Repo) ServerHub(ctx context.Context, serverID string) (string, error) {
+	hub, err := r.q.GetServerHub(ctx, r.tx.Querier(ctx), serverID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", model.ErrNotFound
+		}
+		return "", err
+	}
+	if hub == nil {
+		return "", nil
+	}
+	return *hub, nil
+}
+
+// CountServersByHub returns how many servers each hub carries; servers
+// without a hub are not counted.
+func (r *Repo) CountServersByHub(ctx context.Context) (map[string]int, error) {
+	rows, err := r.q.CountServersByHub(ctx, r.tx.Querier(ctx))
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]int, len(rows))
+	for _, row := range rows {
+		if row.HubID != nil {
+			out[*row.HubID] = int(row.Servers)
+		}
+	}
+	return out, nil
+}
+
+// DeleteServer removes the server and everything that hangs off it in one
+// transaction: foreign keys cascade most tables, the two without one
+// (app_domains, agent_enrollments) are deleted explicitly. Unknown id: no-op.
+func (r *Repo) DeleteServer(ctx context.Context, serverID string) error {
+	return r.tx.WithTx(ctx, func(ctx context.Context) error {
+		db := r.tx.Querier(ctx)
+		if err := r.q.DeleteServerDomainRows(ctx, db, serverID); err != nil {
+			return err
+		}
+		if err := r.q.DeleteServerEnrollments(ctx, db, serverID); err != nil {
+			return err
+		}
+		return r.q.DeleteServerRow(ctx, db, serverID)
+	})
+}
+
+// ActiveServerCertificate returns the stored certificate of the server's
+// newest active certificate (as written: a PEM, or a base64-encoded PEM for
+// registrations made by the old flow); model.ErrNotFound when there is none.
+func (r *Repo) ActiveServerCertificate(ctx context.Context, serverID string) (string, error) {
+	c, err := r.q.GetActiveServerCertificate(ctx, r.tx.Querier(ctx), serverID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", model.ErrNotFound
+		}
+		return "", err
+	}
+	return c, nil
 }

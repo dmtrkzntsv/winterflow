@@ -1,8 +1,9 @@
 import { useState, type ReactNode } from "react";
-import { Navigate } from "react-router-dom";
+import { Navigate, useNavigate } from "react-router-dom";
 import { ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Disclosure } from "@/components/disclosure";
 import { PageHeader } from "@/components/page-header";
 import { Section } from "@/components/section";
@@ -10,9 +11,11 @@ import { StatusPill } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { isStandalone } from "@/config";
+import { apiBase, isStandalone } from "@/config";
 import { useDocker, type Docker } from "@/context/use-docker";
 import { useServers } from "@/context/use-servers";
+import { createJsonClient, jsonPost } from "@/lib/api";
+import { buildReenrollCommand } from "@/lib/install-command";
 import { serverSettingsPath } from "@/lib/routes";
 import { serverFacts, versionLabel } from "@/lib/server-facts";
 import { serverStatus } from "@/lib/status";
@@ -109,6 +112,56 @@ function AgentUpdate({ docker, running }: { docker: Docker; running: string }) {
   );
 }
 
+// RemoveServer takes the server out of Winterflow (distributed only: the
+// standalone build's one server is the process itself).
+function RemoveServer({ id, name }: { id: string; name: string }) {
+  const [open, setOpen] = useState(false);
+  const { refresh } = useServers();
+  const navigate = useNavigate();
+
+  const remove = async () => {
+    try {
+      await createJsonClient(apiBase).call("/api/v1/server/delete-server", jsonPost({ server_id: id }));
+    } catch (e) {
+      toast.error("Couldn't remove the server", { description: e instanceof Error ? e.message : undefined });
+      throw e;
+    }
+    toast.success(`Removed ${name}`);
+    await refresh();
+    navigate("/", { replace: true });
+  };
+
+  return (
+    <Section title="Remove server">
+      <p className="text-sm text-muted-foreground">
+        Disconnects this server from Winterflow. Its apps keep running on the machine.
+      </p>
+      <div>
+        <Button variant="outline" onClick={() => setOpen(true)}>
+          Remove server
+        </Button>
+      </div>
+      <ConfirmDialog
+        open={open}
+        onOpenChange={setOpen}
+        title={`Remove ${name}?`}
+        description={
+          <>
+            The server disconnects at once. Its apps disappear from Winterflow but keep running on the machine. To
+            connect it again, run the installer on it with --reenroll:
+            <code data-testid="reenroll-command" className="mt-2 block select-all break-all font-mono text-xs">
+              {buildReenrollCommand(apiBase)}
+            </code>
+          </>
+        }
+        confirmLabel="Remove server"
+        pendingLabel="Removing…"
+        onConfirm={remove}
+      />
+    </Section>
+  );
+}
+
 // ServerGeneralPage is the server's General page: its name, whether its
 // agent is connected, what the agent reported about the machine (read-only:
 // the API has no rename) and the agent update.
@@ -139,6 +192,7 @@ export function ServerGeneralPage() {
         </dl>
       </Section>
       <AgentUpdate key={activeServer.id} docker={docker} running={caps.version ?? ""} />
+      {isStandalone ? null : <RemoveServer key={`remove-${activeServer.id}`} id={activeServer.id} name={activeServer.name} />}
     </div>
   );
 }

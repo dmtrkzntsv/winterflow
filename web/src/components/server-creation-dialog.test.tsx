@@ -3,12 +3,13 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ServerSelectionDialog } from "@/components/server-creation-dialog";
+import { apiBase } from "@/config";
 import { fakeAPI } from "@/test/fake-api";
 
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
 
-const COMMAND = "curl -fsSL https://get.winterflow.io/agent | sudo bash";
+const COMMAND = `curl -fsSL https://get.winterflow.dev/agent | sudo bash -s -- --url ${apiBase}`;
 
 function renderDialog(isOpen = true) {
   const onClose = vi.fn();
@@ -35,6 +36,7 @@ describe("ServerSelectionDialog", () => {
     const { onClose, onServerAdded } = renderDialog();
     const dialog = screen.getByRole("dialog", { name: "Add a server" });
     expect(dialog).toHaveTextContent("Step 1 of 2");
+    expect(dialog).toHaveTextContent("After 10 codes (about 100 minutes) the installer stops waiting");
     expect(screen.getByTestId("install-command")).toHaveTextContent(COMMAND);
     await user.click(within(dialog).getByRole("button", { name: "Copy" }));
     expect(await navigator.clipboard.readText()).toBe(COMMAND);
@@ -75,6 +77,16 @@ describe("ServerSelectionDialog", () => {
     fakeAPI({ "/api/v1/server/register": new Error("registration code has expired") });
     await user.click(screen.getByRole("button", { name: "Add server" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("That code has expired");
+    vi.unstubAllGlobals();
+
+    fakeAPI({ "/api/v1/server/register": new Error("too many attempts, wait a minute") });
+    await user.click(screen.getByRole("button", { name: "Add server" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Too many tries. Wait a minute");
+    vi.unstubAllGlobals();
+
+    fakeAPI({ "/api/v1/server/register": new Error("no hub is available, try again in a minute") });
+    await user.click(screen.getByRole("button", { name: "Add server" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("can't take new servers right now");
   });
 
   it("goes back to Copy a moment after copying, and links the quick-start guide", async () => {

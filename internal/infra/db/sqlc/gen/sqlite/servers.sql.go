@@ -11,6 +11,42 @@ import (
 	"winterflow/internal/infra/db/types"
 )
 
+const countServersByHub = `-- name: CountServersByHub :many
+SELECT hub_id, count(*) AS servers FROM servers
+WHERE hub_id IS NOT NULL
+GROUP BY hub_id
+ORDER BY hub_id
+`
+
+type CountServersByHubRow struct {
+	HubID   *string
+	Servers int64
+}
+
+// How many servers each hub carries (the hub picker's assigned counts).
+func (q *Queries) CountServersByHub(ctx context.Context) ([]CountServersByHubRow, error) {
+	rows, err := q.db.QueryContext(ctx, countServersByHub)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CountServersByHubRow{}
+	for rows.Next() {
+		var i CountServersByHubRow
+		if err := rows.Scan(&i.HubID, &i.Servers); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const deleteAllRegistrations = `-- name: DeleteAllRegistrations :exec
 DELETE FROM server_registrations
 `
@@ -27,6 +63,53 @@ DELETE FROM server_registrations WHERE server_id = ?
 func (q *Queries) DeleteRegistration(ctx context.Context, serverID string) error {
 	_, err := q.db.ExecContext(ctx, deleteRegistration, serverID)
 	return err
+}
+
+const deleteServerDomainRows = `-- name: DeleteServerDomainRows :exec
+DELETE FROM app_domains WHERE server_id = ?
+`
+
+// app_domains carries no foreign key to servers.
+func (q *Queries) DeleteServerDomainRows(ctx context.Context, serverID string) error {
+	_, err := q.db.ExecContext(ctx, deleteServerDomainRows, serverID)
+	return err
+}
+
+const deleteServerEnrollments = `-- name: DeleteServerEnrollments :exec
+DELETE FROM agent_enrollments WHERE server_id = ?
+`
+
+// agent_enrollments.server_id carries no foreign key either; the row holds
+// the issued certificate.
+func (q *Queries) DeleteServerEnrollments(ctx context.Context, serverID *string) error {
+	_, err := q.db.ExecContext(ctx, deleteServerEnrollments, serverID)
+	return err
+}
+
+const deleteServerRow = `-- name: DeleteServerRow :exec
+DELETE FROM servers WHERE server_id = ?
+`
+
+// Cascades to the server's certificates, capabilities, features, apps,
+// storages, shared variables, metrics, alerts and template instances.
+func (q *Queries) DeleteServerRow(ctx context.Context, serverID string) error {
+	_, err := q.db.ExecContext(ctx, deleteServerRow, serverID)
+	return err
+}
+
+const getActiveServerCertificate = `-- name: GetActiveServerCertificate :one
+SELECT certificate FROM server_certificates
+WHERE server_id = ? AND is_active = TRUE
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+// The newest active certificate of a server (no row: none).
+func (q *Queries) GetActiveServerCertificate(ctx context.Context, serverID string) (string, error) {
+	row := q.db.QueryRowContext(ctx, getActiveServerCertificate, serverID)
+	var certificate string
+	err := row.Scan(&certificate)
+	return certificate, err
 }
 
 const getCapability = `-- name: GetCapability :one
@@ -85,6 +168,18 @@ func (q *Queries) GetRegistrationByCode(ctx context.Context, code string) (Serve
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const getServerHub = `-- name: GetServerHub :one
+SELECT hub_id FROM servers WHERE server_id = ?
+`
+
+// The hub the server was assigned to (NULL: none; no row: no server).
+func (q *Queries) GetServerHub(ctx context.Context, serverID string) (*string, error) {
+	row := q.db.QueryRowContext(ctx, getServerHub, serverID)
+	var hub_id *string
+	err := row.Scan(&hub_id)
+	return hub_id, err
 }
 
 const hasAnyServer = `-- name: HasAnyServer :one
@@ -302,7 +397,7 @@ func (q *Queries) ListServerUserIDs(ctx context.Context, serverID string) ([]str
 
 const listServersByUser = `-- name: ListServersByUser :many
 
-SELECT server_id, organization_id, name, created_at, last_seen, vars_revision FROM servers
+SELECT server_id, organization_id, name, created_at, last_seen, vars_revision, hub_id FROM servers
 WHERE organization_id IN (SELECT organization_id FROM organization_users WHERE user_id = ?)
 ORDER BY created_at ASC, server_id ASC
 `
@@ -324,6 +419,7 @@ func (q *Queries) ListServersByUser(ctx context.Context, userID string) ([]Serve
 			&i.CreatedAt,
 			&i.LastSeen,
 			&i.VarsRevision,
+			&i.HubID,
 		); err != nil {
 			return nil, err
 		}

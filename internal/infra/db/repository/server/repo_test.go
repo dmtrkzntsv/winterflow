@@ -342,3 +342,105 @@ func TestRegisterServerIsAtomic(t *testing.T) {
 		t.Fatalf("previous registration lost after the failed replace, code = %q", got)
 	}
 }
+
+func TestServerHub(t *testing.T) {
+	repo, d := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	dbtest.SeedServer(t, d, org1, srv1)
+	dbtest.SeedServer(t, d, org2, srv2)
+	dbtest.Exec(t, d, `UPDATE servers SET hub_id = ? WHERE server_id = ?`, "hub-01.winterflow.dev", srv1)
+
+	if got, err := repo.ServerHub(ctx, srv1); err != nil || got != "hub-01.winterflow.dev" {
+		t.Fatalf("assigned: %q, %v", got, err)
+	}
+	if got, err := repo.ServerHub(ctx, srv2); err != nil || got != "" {
+		t.Fatalf("no hub: want empty, got %q, %v", got, err)
+	}
+	if _, err := repo.ServerHub(ctx, dbtest.ID(99)); !errors.Is(err, model.ErrNotFound) {
+		t.Fatalf("unknown server: want ErrNotFound, got %v", err)
+	}
+}
+
+func TestCountServersByHub(t *testing.T) {
+	repo, d := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	if got, err := repo.CountServersByHub(ctx); err != nil || len(got) != 0 {
+		t.Fatalf("empty: %v, %v", got, err)
+	}
+	for i, hub := range []string{"hub-01", "hub-01", "hub-02", ""} {
+		id := dbtest.ID(40 + i)
+		dbtest.SeedServer(t, d, dbtest.ID(50+i), id)
+		if hub != "" {
+			dbtest.Exec(t, d, `UPDATE servers SET hub_id = ? WHERE server_id = ?`, hub, id)
+		}
+	}
+	got, err := repo.CountServersByHub(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got["hub-01"] != 2 || got["hub-02"] != 1 {
+		t.Fatalf("counts = %v", got)
+	}
+}
+
+func countRows(t *testing.T, d *db.DB, table, serverID string) string {
+	t.Helper()
+	return dbtest.QueryString(t, d, `SELECT count(*) FROM `+table+` WHERE server_id = ?`, serverID)
+}
+
+func TestDeleteServerCascades(t *testing.T) {
+	repo, d := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	dbtest.SeedServer(t, d, org1, srv1)
+	dbtest.SeedServer(t, d, org2, srv2)
+	app1, app2 := dbtest.ID(41), dbtest.ID(42)
+	dbtest.SeedApp(t, d, app1, srv1, "one")
+	dbtest.SeedApp(t, d, app2, srv2, "two")
+	for _, s := range []string{srv1, srv2} {
+		if err := repo.SaveCapabilities(ctx, s, map[string]string{"k": "v"}, map[string]bool{"f": true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dbtest.Exec(t, d, `INSERT INTO app_domains (domain, app_id, server_id, kind, ssl, upstream_port, target, code, updated_at)
+		VALUES ('a.example.com', ?, ?, 'ingress', false, 0, '', 0, '2026-01-01 00:00:00')`, app1, srv1)
+	dbtest.Exec(t, d, `INSERT INTO agent_enrollments (enrollment_id, poll_secret_hash, csr, hostname, codes_issued, state, server_id)
+		VALUES (?, 'h', 'c', 'box', 1, 'claimed', ?)`, dbtest.ID(51), srv1)
+
+	if err := repo.DeleteServer(ctx, srv1); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range []string{"servers", "server_capabilities", "server_features", "apps", "app_domains", "agent_enrollments"} {
+		if got := countRows(t, d, table, srv1); got != "0" {
+			t.Errorf("%s still has %s rows of the deleted server", table, got)
+		}
+	}
+	// The other server is untouched.
+	for _, table := range []string{"servers", "server_capabilities", "apps"} {
+		if got := countRows(t, d, table, srv2); got == "0" {
+			t.Errorf("%s lost the other server's rows", table)
+		}
+	}
+	// Unknown id is a no-op.
+	if err := repo.DeleteServer(ctx, dbtest.ID(99)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestActiveServerCertificate(t *testing.T) {
+	repo, d := newRepo(t)
+	ctx := dbtest.Ctx(t)
+	dbtest.SeedOrg(t, d, org1)
+	dbtest.SeedMember(t, d, alice, org1)
+	register(t, repo, "111111", time.Now().Add(time.Hour))
+
+	if _, err := repo.ActiveServerCertificate(ctx, pendingSrv); !errors.Is(err, model.ErrNotFound) {
+		t.Fatalf("unclaimed: err = %v", err)
+	}
+	if _, err := repo.ClaimServer(ctx, dto.ClaimServerDTO{Code: "111111", OrganizationID: org1}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.ActiveServerCertificate(ctx, pendingSrv)
+	if err != nil || got != base64.StdEncoding.EncodeToString([]byte("PEM")) {
+		t.Fatalf("got %q, %v", got, err)
+	}
+}

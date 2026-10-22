@@ -112,8 +112,8 @@ prebuilt binaries.
   counting up from 1 within the day (`v260823.1`, `v260823.2`, …). The next
   number is derived from existing tags, and runs are serialized, so parallel
   pushes cannot collide.
-- **Assets** per release: `winterflow-{standalone|agent}-linux-{amd64|arm64|arm}`
-  raw binaries plus `checksums.txt`. The installer and the agent self-updater
+- **Assets** per release: `winterflow-linux-{amd64|arm64|arm}` (standalone) and
+  `agent-linux-{amd64|arm64|arm}` raw binaries plus `checksums.txt`. The installer and the agent self-updater
   both rely on this exact naming — it is defined in
   [.goreleaser.yaml](.goreleaser.yaml) and must stay in sync with
   `scripts/install.sh` and the self-updater.

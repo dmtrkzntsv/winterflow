@@ -79,6 +79,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Tag calver release
+        id: tag
         if: steps.released.outputs.skip != 'true'
         run: |
           git config user.name "github-actions[bot]"
@@ -89,6 +90,7 @@ jobs:
           echo "Releasing ${tag}"
           git tag "$tag"
           git push origin "$tag"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
 
       - uses: goreleaser/goreleaser-action@v6
         if: steps.released.outputs.skip != 'true'
@@ -97,3 +99,23 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Mirror every binary (standalone, agent, api, hub) to the shared R2
+      # bucket under winterflow/<tag>/ and winterflow/latest/ (see the
+      # release-binaries and cdn-upload Makefile targets). The R2_* secrets are
+      # added by the repository owner; without them the mirror is skipped.
+      - name: Mirror binaries to R2
+        if: steps.released.outputs.skip != 'true'
+        env:
+          WINTERFLOW_R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          WINTERFLOW_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          WINTERFLOW_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          if [ -z "$WINTERFLOW_R2_ENDPOINT" ]; then
+            echo "::warning::R2_ENDPOINT secret is empty; skipping the R2 mirror"
+            exit 0
+          fi
+          make release-binaries VERSION="${TAG#v}"
+          make cdn-upload CHANNEL="$TAG"
+          make cdn-upload CHANNEL=latest

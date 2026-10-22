@@ -2,11 +2,15 @@ package bootstrap
 
 import (
 	"context"
+	enrollmentrepo "winterflow/internal/infra/db/repository/enrollment"
 
 	"winterflow/internal/domain/metrics"
+	"winterflow/internal/domain/port"
 	"winterflow/internal/domain/service/alerting"
 	notificationsvc "winterflow/internal/domain/service/notification"
 	"winterflow/internal/domain/service/status"
+	"winterflow/internal/domain/usecase/agentauth"
+	"winterflow/internal/domain/usecase/hubs"
 	"winterflow/internal/domain/usecase/sharedvars"
 	"winterflow/internal/infra/db"
 	alertrepo "winterflow/internal/infra/db/repository/alert"
@@ -46,7 +50,13 @@ func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerCon
 	}
 
 	nm := notificationsvc.NewNotificationManager(log)
-	dispatcher := dispatch.NewManager(b, nm, cfg, log)
+	router := hubs.SingleQueue(cfg)
+	var picker *hubs.Picker
+	if o.hubRegistry != nil {
+		router = hubs.NewRouter(r.server, cfg)
+		picker = hubs.NewPicker(o.hubRegistry, r.server, log)
+	}
+	dispatcher := dispatch.NewManager(b, router, nm, log)
 	statusCache := status.NewCache(statusTTL)
 
 	// Metrics: the events sink stores server.metrics samples and the
@@ -87,6 +97,17 @@ func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerCon
 	instances := newInstances(r, dispatcher, statusCache, log)
 	queue := newRollouts(r, instances, dispatcher, statusCache, nm, o.rolloutTiming, log)
 
+	// Distributed only: hubs ask the API whether a connecting agent's
+	// certificate is still its server's active one, and a deleted server's
+	// agent is dropped by a broadcast. Standalone has no hubs.
+	var revoker port.Revoker
+	if !cfg.IsStandalone() {
+		if err := agentauth.StartResponder(ctx, b, cfg, r.server, log); err != nil {
+			log.Fatalf("failed to subscribe to %s: %v", cfg.GetHubRequestsChannel(), err)
+		}
+		revoker = agentauth.NewBusRevoker(b, cfg)
+	}
+
 	return &Deps{
 		Log:                      log,
 		Cfg:                      cfg,
@@ -109,6 +130,9 @@ func WireCore(ctx context.Context, b bus.Bus, conn *db.DB, cfg *config.ServerCon
 		AlertRepository:          r.alert,
 		AlertNotifier:            al.notifier,
 		ChannelBox:               al.box,
+		HubPicker:                picker,
+		EnrollmentRepository:     r.enrollment,
+		Revoker:                  revoker,
 	}, r.server
 }
 
@@ -125,6 +149,7 @@ type repos struct {
 	template      *templaterepo.Repo
 	rollout       *rolloutrepo.Repo
 	alert         *alertrepo.Repo
+	enrollment    *enrollmentrepo.Repo
 }
 
 func newRepos(conn *db.DB, log *logger.Logger) (repos, error) {
@@ -162,6 +187,9 @@ func newRepos(conn *db.DB, log *logger.Logger) (repos, error) {
 	if r.rollout, err = rolloutrepo.New(conn.Tx, conn.Driver, log); err != nil {
 		return r, err
 	}
-	r.alert, err = alertrepo.New(conn.Tx, conn.Driver, log, util.GenerateID)
+	if r.alert, err = alertrepo.New(conn.Tx, conn.Driver, log, util.GenerateID); err != nil {
+		return r, err
+	}
+	r.enrollment, err = enrollmentrepo.New(conn.Tx, conn.Driver)
 	return r, err
 }

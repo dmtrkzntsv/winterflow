@@ -1,9 +1,11 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { apiBase } from "@/config";
+import { fakeAPI } from "@/test/fake-api";
 import { ServerDockerPage, ServerDomainsPage, ServerGeneralPage, ServerStoragesPage } from "@/pages/server-settings";
 
 type FakeServer = {
@@ -30,14 +32,23 @@ const ALPHA: FakeServer = {
 
 const state = vi.hoisted(() => ({ server: null as FakeServer | null, online: true }));
 const docker = vi.hoisted(() => ({ hasServer: true, updateAgent: vi.fn() }));
+const mode = vi.hoisted(() => ({ standalone: false }));
+const refresh = vi.hoisted(() => vi.fn());
 const toastSuccess = vi.hoisted(() => vi.fn());
 const toastError = vi.hoisted(() => vi.fn());
 
 vi.mock("@/context/use-servers", () => ({
   useServers: () => ({
     activeServer: state.server,
+    refresh,
     statusByServer: state.server && state.online ? { [state.server.id]: "online" } : {},
   }),
+}));
+vi.mock("@/config", async (orig) => ({
+  ...(await orig<typeof import("@/config")>()),
+  get isStandalone() {
+    return mode.standalone;
+  },
 }));
 vi.mock("@/context/use-docker", () => ({ useDocker: () => docker }));
 vi.mock("sonner", () => ({ toast: { success: toastSuccess, error: toastError } }));
@@ -51,6 +62,7 @@ function renderPage(page: ReactElement) {
       <Routes>
         <Route path="/server/s1/settings/x" element={page} />
         <Route path="/server/s1/settings/general" element={<p>general page</p>} />
+        <Route path="/" element={<p>home page</p>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -60,6 +72,9 @@ describe("server settings pages", () => {
   beforeEach(() => {
     state.server = ALPHA;
     state.online = true;
+    mode.standalone = false;
+    refresh.mockReset();
+    vi.unstubAllGlobals();
     docker.hasServer = true;
     docker.updateAgent.mockReset();
     toastSuccess.mockReset();
@@ -169,5 +184,43 @@ describe("server settings pages", () => {
     state.server = null;
     renderPage(<ServerGeneralPage />);
     expect(screen.getByText("Select a server to manage its settings.")).toBeInTheDocument();
+  });
+
+  it("removes the server after a confirm, then reloads the list and leaves the page", async () => {
+    const user = userEvent.setup({ delay: null });
+    const api = fakeAPI({ "/api/v1/server/delete-server": {} });
+    renderPage(<ServerGeneralPage />);
+    await user.click(screen.getByRole("button", { name: "Remove server" }));
+    const dialog = screen.getByRole("alertdialog", { name: "Remove Alpha?" });
+    expect(dialog).toHaveTextContent("keep running on the machine");
+    expect(dialog).toHaveTextContent("run the installer on it with --reenroll");
+    expect(within(dialog).getByTestId("reenroll-command")).toHaveTextContent(
+      `curl -fsSL https://get.winterflow.dev/agent | sudo bash -s -- --url ${apiBase} --reenroll`,
+    );
+    expect(api.calls).toHaveLength(0);
+    await user.click(within(dialog).getByRole("button", { name: "Remove server" }));
+    await waitFor(() => expect(refresh).toHaveBeenCalled());
+    expect(api.posted("/api/v1/server/delete-server")).toEqual([{ server_id: "s1" }]);
+    expect(toastSuccess).toHaveBeenCalledWith("Removed Alpha");
+    expect(await screen.findByText("home page")).toBeInTheDocument();
+  });
+
+  it("keeps the dialog open and says why when the removal is refused", async () => {
+    const user = userEvent.setup({ delay: null });
+    fakeAPI({ "/api/v1/server/delete-server": new Error("not allowed") });
+    renderPage(<ServerGeneralPage />);
+    await user.click(screen.getByRole("button", { name: "Remove server" }));
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Remove server" }));
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith("Couldn't remove the server", { description: "not allowed" }),
+    );
+    expect(refresh).not.toHaveBeenCalled();
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+  });
+
+  it("offers no removal on the standalone build", () => {
+    mode.standalone = true;
+    renderPage(<ServerGeneralPage />);
+    expect(screen.queryByRole("button", { name: "Remove server" })).not.toBeInTheDocument();
   });
 });

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/signal"
 	"runtime"
@@ -9,6 +10,7 @@ import (
 	"time"
 	appagent "winterflow/internal/app/agent"
 	"winterflow/internal/app/agent/backup"
+	"winterflow/internal/app/agent/enroll"
 	backupcli "winterflow/internal/app/backup/cli"
 	ingresscaddy "winterflow/internal/infra/ingress/caddy"
 	dockercompose "winterflow/internal/infra/orchestrator/docker_compose"
@@ -29,6 +31,11 @@ func main() {
 	// binary is mounted there at /wf), before anything reads config or logs.
 	if len(os.Args) > 1 && os.Args[1] == "backup" {
 		os.Exit(backupcli.Main(os.Args[2:], os.Stdout, os.Stderr))
+	}
+	// Hidden: first-run enrollment (shows a code, stores the signed
+	// certificate). Runs before config load: no cert exists yet.
+	if len(os.Args) > 1 && os.Args[1] == "enroll" {
+		os.Exit(enroll.Main(os.Args[2:], os.Stdout, os.Stderr))
 	}
 	err := godotenv.Load()
 	cfg := config.NewServerConfig("distributed")
@@ -120,7 +127,12 @@ func main() {
 	// backoff on failure, until ctx is canceled. Runs in the background so the
 	// signal handler below stays responsive.
 	log.Info("Starting agent connection supervisor", "agent_id", agentID)
-	go agent.Run(ctx)
+	go func() {
+		if err := agent.Run(ctx); errors.Is(err, grpcagent.ErrRevoked) {
+			log.Error("The hub no longer accepts this server; stopping for good. Re-enroll it with a new code.", "error", err)
+			os.Exit(grpcagent.ExitRevoked)
+		}
+	}()
 
 	// Periodic apps-status push: feeds the API's status cache and the SSE
 	// live-status pipeline. Ticks while the stream is down are skipped.

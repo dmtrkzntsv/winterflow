@@ -51,13 +51,14 @@ patterns chosen by whether the agent is involved:
    correlated by `request_id`.
 3. **Agent-initiated push → SSE (unsolicited).** Heartbeat liveness +
    capabilities + app/server status events flow up the agent stream; the Hub
-   forwards them to `events:<region>`; the region's API updates its DB/cache and
+   forwards them to `bus:events`; the API updates its DB/cache and
    pushes to open SSE connections.
 
-**Addressing: a `REGION` = exactly one API instance.** Queue names are
-region-scoped (`requests:<REGION>`, `responses:<REGION>`, `events:<REGION>`),
-each consumed by that region's single API. No per-instance ids, no fan-out.
-`REGION` must match across API and Hub.
+**Addressing (superseded: there is no `REGION` any more).** Channel names are
+fixed: `bus:requests:<hub_id>` (one queue per hub, routed by `servers.hub_id`),
+`bus:responses`, `bus:events`, plus the hub-conversation channels `hub:requests`,
+`hub:responses:<hub_id>` and `hub:broadcast`. See CLAUDE.md ("Bus abstraction").
+The events in step 3 above travel on `bus:events`.
 
 **Info vs. status are separate concerns:**
 - **Info** (servers, apps — name/config/metadata) is **DB-backed**, served
@@ -123,7 +124,7 @@ ciphertext+tag)`.
 ## What's done (✅) and what's not
 
 ### ✅ Phase 1 — Foundation
-- Fire-and-forward command contract (202 + SSE), region addressing.
+- Fire-and-forward command contract (202 + SSE), per-hub addressing (originally region addressing; regions were removed).
 - App DB persistence + `apps.list` reconcile (full sync).
 - SSE stream uses the authenticated user id.
 - Capabilities/heartbeat write path; in-memory TTL status cache; `last_seen` in DB.

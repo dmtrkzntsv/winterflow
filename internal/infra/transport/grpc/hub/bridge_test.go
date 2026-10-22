@@ -18,12 +18,14 @@ import (
 // exercise the bus bridge / correlation logic without TLS or a listener.
 func newTestHub(t *testing.T, b bus.Bus) *Hub {
 	t.Helper()
+	t.Setenv("HUB_PUBLIC_ADDR", "hub-01.winterflow.dev:50051")
 	log := logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"})
 	return &Hub{
-		agents: make(map[string]*agent),
-		cfg:    config.NewServerConfig("distributed"),
-		log:    log,
-		bus:    b,
+		agents:    make(map[string]*agent),
+		revokedAt: make(map[string]time.Time),
+		cfg:       config.NewServerConfig("distributed"),
+		log:       log,
+		bus:       b,
 	}
 }
 
@@ -52,7 +54,7 @@ func TestDispatchToOfflineAgentPublishesError(t *testing.T) {
 	// Give the bridge's subscriber a moment to register before publishing.
 	time.Sleep(20 * time.Millisecond)
 
-	if err := b.Publish(ctx, cfg.GetBusRequestQueue(), bus.CommandMessage{
+	if err := b.Publish(ctx, cfg.HubRequestQueue(cfg.GetHubID()), bus.CommandMessage{
 		AgentID:   "missing-agent",
 		RequestID: "req-42",
 		Type:      string(command.TypeAppSave),
@@ -120,5 +122,19 @@ func TestPublishNotificationSuccess(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("no result published")
+	}
+}
+
+// A typed-nil *BusAuthorizer must fail closed like a nil Authorizer.
+func TestFailClosedTypedNilAuthorizer(t *testing.T) {
+	var ba *BusAuthorizer
+	if failClosed(ba) != nil {
+		t.Fatal("typed nil kept")
+	}
+	if failClosed(nil) != nil {
+		t.Fatal("nil changed")
+	}
+	if _, ok := failClosed(&BusAuthorizer{}).(*BusAuthorizer); !ok {
+		t.Fatal("real authorizer dropped")
 	}
 }

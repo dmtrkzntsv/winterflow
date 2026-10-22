@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -35,12 +36,24 @@ type Hub struct {
 	log        *logger.Logger
 	srv        *grpc.Server
 	bus        bus.Bus
+	auth       Authorizer
+	// revokedAt remembers recent revocations (server id -> when, guarded by
+	// agentsLock) so a registration whose auth check was in flight when the
+	// revocation arrived is refused. Entries older than revokeMemory are
+	// pruned.
+	revokedAt map[string]time.Time
 }
 
 type agent struct {
 	streamActive bool
 	lastSeen     time.Time
-	stream       grpc.BidiStreamingServer[proto.AgentMessage, proto.ServerCommand] // Reference to the active stream
+	// fingerprint is the certificate the API authorized at registration;
+	// a stream must present the same one.
+	fingerprint string
+	stream      grpc.BidiStreamingServer[proto.AgentMessage, proto.ServerCommand] // Reference to the active stream
+	// closeStream ends the bound stream's handler (revocation, or a newer
+	// stream of the same agent); nil until a stream is bound.
+	closeStream context.CancelCauseFunc
 
 	// sendMu serializes writes to the stream: gRPC forbids concurrent SendMsg
 	// on one stream, and both the bus bridge (dispatchToAgent) and the
@@ -55,34 +68,102 @@ func (a *agent) send(stream grpc.BidiStreamingServer[proto.AgentMessage, proto.S
 	return stream.Send(cmd)
 }
 
-func NewHub(log *logger.Logger, cfg *config.ServerConfig, b bus.Bus) *Hub {
+// NewHub builds the hub. auth decides whether a connecting agent's
+// certificate is still its server's active one; a nil auth refuses every
+// registration as Unavailable.
+func NewHub(log *logger.Logger, cfg *config.ServerConfig, b bus.Bus, auth Authorizer) *Hub {
 	h := &Hub{
-		agents: make(map[string]*agent),
-		cfg:    cfg,
-		log:    log,
-		srv:    createServer(log, cfg),
-		bus:    b,
+		agents:    make(map[string]*agent),
+		revokedAt: make(map[string]time.Time),
+		cfg:       cfg,
+		log:       log,
+		srv:       createServer(log, cfg),
+		bus:       b,
+		auth:      failClosed(auth),
 	}
 	proto.RegisterAgentServiceServer(h.srv, h)
 
 	return h
 }
 
-// StartBusBridge subscribes to the request queue and forwards each command
-// onto the target agent's active gRPC stream. It runs until ctx is cancelled.
-// The Hub is the only consumer of the request queue; agent responses are
-// published back onto the response queue from AgentStream.
+// failClosed turns a typed-nil *BusAuthorizer into a nil Authorizer, so a
+// missing authorizer refuses registrations instead of panicking.
+func failClosed(auth Authorizer) Authorizer {
+	if ba, ok := auth.(*BusAuthorizer); ok && ba == nil {
+		return nil
+	}
+	return auth
+}
+
+// StartBusBridge subscribes to this hub's own request queue
+// (bus:requests:<hub_id>, where the API routes the commands of the servers
+// assigned to it) and forwards each command onto the target agent's active
+// gRPC stream. It runs until ctx is cancelled. Agent responses are published
+// back onto the response queue from AgentStream. It also subscribes the hub
+// broadcast channel, where the API announces revoked servers.
 func (h *Hub) StartBusBridge(ctx context.Context) error {
 	if h.bus == nil {
 		h.log.Warn("no bus configured, hub will not forward commands")
 		return nil
 	}
-	bus.SubscribeJSON(ctx, h.bus, h.cfg.GetBusRequestQueue(), h.log, func(cmd bus.CommandMessage) {
+	hubID := h.cfg.GetHubID()
+	if hubID == "" {
+		return fmt.Errorf("HUB_PUBLIC_ADDR must be host:port (got %q)", h.cfg.GetHubPublicAddr())
+	}
+	queue := h.cfg.HubRequestQueue(hubID)
+	bus.SubscribeJSON(ctx, h.bus, queue, h.log, func(cmd bus.CommandMessage) {
 		h.dispatchToAgent(cmd)
 	})
+	bus.SubscribeJSON(ctx, h.bus, h.cfg.GetHubBroadcastChannel(), h.log, func(msg bus.HubBroadcast) {
+		if msg.Type == bus.HubBroadcastRevoked && msg.ServerID != "" {
+			h.revoke(msg.ServerID)
+		}
+	})
 	go h.reapStaleAgents(ctx)
-	h.log.Info("hub bus bridge started", "request_queue", h.cfg.GetBusRequestQueue())
+	h.log.Info("hub bus bridge started", "request_queue", queue)
 	return nil
+}
+
+var (
+	// errRevoked ends a revoked server's stream.
+	errRevoked = errors.New("server revoked")
+	// errReplaced ends a stream when the same agent opens a newer one.
+	errReplaced = errors.New("replaced by a newer stream")
+	// errStale ends a stream whose registration the reaper dropped.
+	errStale = errors.New("agent idle past its TTL")
+)
+
+// revokeMemory is how long a revocation is remembered against registrations
+// whose auth check started before it; far beyond AuthorizeTimeout.
+const revokeMemory = 5 * time.Minute
+
+// revoke drops a server's agent if this hub holds it: its stream (if bound)
+// is closed and its registration deleted.
+func (h *Hub) revoke(serverID string) {
+	h.agentsLock.Lock()
+	defer h.agentsLock.Unlock()
+	now := time.Now()
+	h.pruneRevokedLocked(now)
+	h.revokedAt[serverID] = now
+	a, ok := h.agents[serverID]
+	if !ok {
+		return
+	}
+	if a.closeStream != nil {
+		a.closeStream(errRevoked)
+	}
+	delete(h.agents, serverID)
+	h.log.Info("server revoked, agent dropped", "agent_id", serverID)
+}
+
+// pruneRevokedLocked forgets revocations older than revokeMemory. Caller
+// holds agentsLock.
+func (h *Hub) pruneRevokedLocked(now time.Time) {
+	for id, at := range h.revokedAt {
+		if now.Sub(at) > revokeMemory {
+			delete(h.revokedAt, id)
+		}
+	}
 }
 
 const (
@@ -108,15 +189,20 @@ func (h *Hub) reapStaleAgents(ctx context.Context) {
 	}
 }
 
-// reapOnce removes agents idle past the TTL as of now. Returns the count
-// removed (exposed for testing).
+// reapOnce removes agents idle past the TTL as of now, closing their streams
+// (no stream outlives its registration, which revocation goes through).
+// Returns the count removed (exposed for testing).
 func (h *Hub) reapOnce(now time.Time) int {
 	h.agentsLock.Lock()
 	defer h.agentsLock.Unlock()
+	h.pruneRevokedLocked(now)
 	removed := 0
 	for id, a := range h.agents {
 		if now.Sub(a.lastSeen) <= staleAgentTTL {
 			continue
+		}
+		if a.closeStream != nil {
+			a.closeStream(errStale)
 		}
 		delete(h.agents, id)
 		removed++
@@ -297,6 +383,31 @@ func (h *Hub) RegisterAgent(ctx context.Context, req *proto.RegisterAgentRequest
 		return nil, status.Errorf(codes.InvalidArgument, "agent_id is required")
 	}
 
+	certID, fingerprint, err := peerIdentity(ctx)
+	if err != nil {
+		return nil, status.Errorf(codes.Unauthenticated, "no client certificate: %v", err)
+	}
+	if agentID != certID {
+		h.log.Warn("agent id does not match certificate", "agent_id", agentID, "cert_cn", certID)
+		return nil, status.Error(codes.PermissionDenied, "agent id does not match certificate")
+	}
+	if h.auth == nil {
+		return nil, status.Error(codes.Unavailable, "cannot verify server right now")
+	}
+	checkStarted := time.Now()
+	verdict, reason, err := h.auth.Authorize(ctx, agentID, fingerprint)
+	if err != nil {
+		h.log.Warn("agent auth check failed", "agent_id", agentID, "error", err)
+		return nil, status.Error(codes.Unavailable, "cannot verify server right now")
+	}
+	if verdict != bus.VerdictAllowed {
+		if reason == "" {
+			reason = string(verdict)
+		}
+		h.log.Warn("agent refused", "agent_id", agentID, "verdict", verdict, "reason", reason)
+		return nil, status.Errorf(codes.PermissionDenied, "server %s: %s", verdict, reason)
+	}
+
 	h.log.Info("Agent registration request",
 		"agent_id", agentID,
 		"capabilities", req.Capabilities,
@@ -306,15 +417,35 @@ func (h *Hub) RegisterAgent(ctx context.Context, req *proto.RegisterAgentRequest
 	h.agentsLock.Lock()
 	defer h.agentsLock.Unlock()
 
+	// A revocation that arrived while the check was in flight wins over its
+	// "allowed".
+	if at, revoked := h.revokedAt[agentID]; revoked && !at.Before(checkStarted) {
+		h.log.Warn("agent revoked during its auth check", "agent_id", agentID)
+		return nil, status.Error(codes.PermissionDenied, "server revoked")
+	}
+
 	if existingAgent, exists := h.agents[agentID]; exists {
 		h.log.Info("Agent already registered, updating info", "agent_id", agentID)
 		existingAgent.lastSeen = time.Now()
+		if existingAgent.fingerprint != fingerprint {
+			// A new certificate was authorized: a stream opened with the
+			// old one must not keep running.
+			if existingAgent.closeStream != nil {
+				existingAgent.closeStream(errReplaced)
+				existingAgent.closeStream = nil
+			}
+			// Unbind it, so its cleanup leaves this registration alone.
+			existingAgent.stream = nil
+			existingAgent.streamActive = false
+			existingAgent.fingerprint = fingerprint
+		}
 	} else {
 		h.log.Info("Registering new agent", "agent_id", agentID)
 		h.agents[agentID] = &agent{
 			streamActive: false,
 			lastSeen:     time.Now(),
 			stream:       nil,
+			fingerprint:  fingerprint,
 		}
 	}
 
@@ -344,33 +475,111 @@ type capabilitiesEvent struct {
 	Features     map[string]bool   `json:"features"`
 }
 
+// recvResult is one Recv outcome handed from the receive goroutine to the
+// stream handler.
+type recvResult struct {
+	msg *proto.AgentMessage
+	err error
+}
+
 func (h *Hub) AgentStream(stream grpc.BidiStreamingServer[proto.AgentMessage, proto.ServerCommand]) error {
-	var agentID string
-	var agent *agent
+	// The stream's identity is its client certificate; every message must
+	// carry the same agent id.
+	certID, fingerprint, err := peerIdentity(stream.Context())
+	if err != nil {
+		return status.Errorf(codes.Unauthenticated, "no client certificate: %v", err)
+	}
+
+	// ctx ends when the client goes away or the server is revoked
+	// (agent.closeStream); Recv runs on its own goroutine so the handler can
+	// return on revocation while a Recv is blocked. Returning cancels the
+	// stream, which unblocks that Recv.
+	ctx, closeStream := context.WithCancelCause(stream.Context())
+	defer closeStream(nil)
+
+	// Only a registered agent may stream: RegisterAgent is where the API
+	// vouches for the certificate. One stream per agent: a newer stream
+	// closes the one bound before it.
+	h.agentsLock.Lock()
+	agent, registered := h.agents[certID]
+	if !registered {
+		h.agentsLock.Unlock()
+		h.log.Warn("Agent not registered, closing stream", "agent_id", certID)
+		return status.Error(codes.Unauthenticated, "agent not registered")
+	}
+	if agent.fingerprint != fingerprint {
+		h.agentsLock.Unlock()
+		h.log.Warn("stream certificate differs from the registered one, closing stream", "agent_id", certID)
+		return status.Error(codes.Unauthenticated, "certificate does not match registration")
+	}
+	if agent.closeStream != nil {
+		agent.closeStream(errReplaced)
+	}
+	agent.streamActive = true
+	agent.stream = stream
+	agent.closeStream = closeStream
+	agent.lastSeen = time.Now()
+	h.agentsLock.Unlock()
+	agentID := certID
 
 	defer func() {
-		if agentID != "" {
-			h.agentsLock.Lock()
-			// Remove the agent entirely on stream close: a disconnected agent
-			// should not linger in the registry (it would appear registered, and
-			// stale entries accumulate across reconnects). It re-registers on
-			// reconnect. Only delete if the map still points at this stream, so a
-			// fast reconnect that already replaced the entry isn't clobbered.
-			if cur, ok := h.agents[agentID]; ok && cur == agent {
-				delete(h.agents, agentID)
+		h.agentsLock.Lock()
+		// Remove the agent entirely on stream close: a disconnected agent
+		// should not linger in the registry (it would appear registered, and
+		// stale entries accumulate across reconnects). It re-registers on
+		// reconnect. Only delete while the entry still holds this stream, so
+		// a newer stream that already took it over isn't clobbered.
+		if cur, ok := h.agents[agentID]; ok && cur.stream == stream {
+			delete(h.agents, agentID)
+		}
+		h.agentsLock.Unlock()
+		h.log.Info("Agent stream closed", "agent_id", agentID)
+	}()
+
+	msgs := make(chan recvResult)
+	go func() {
+		for {
+			msg, err := stream.Recv()
+			select {
+			case msgs <- recvResult{msg: msg, err: err}:
+			case <-ctx.Done():
+				return
 			}
-			h.agentsLock.Unlock()
-			h.log.Info("Agent stream closed", "agent_id", agentID)
+			if err != nil {
+				return
+			}
 		}
 	}()
 
-	h.log.Info("New agent stream connection established")
+	h.log.Info("New agent stream connection established", "agent_id", certID)
 
 	for {
-		msg, err := stream.Recv()
-		if err != nil {
-			h.log.Error("Error receiving message from agent", "error", err, "agent_id", agentID)
-			return err
+		var msg *proto.AgentMessage
+		select {
+		case <-ctx.Done():
+			switch cause := context.Cause(ctx); {
+			case errors.Is(cause, errRevoked):
+				h.log.Info("closing revoked agent's stream", "agent_id", certID)
+				return status.Error(codes.PermissionDenied, "server revoked")
+			case errors.Is(cause, errReplaced):
+				h.log.Info("closing agent stream replaced by a newer one", "agent_id", certID)
+				return status.Error(codes.Aborted, "replaced by a newer stream")
+			case errors.Is(cause, errStale):
+				h.log.Info("closing reaped agent's stream", "agent_id", certID)
+				return status.Error(codes.Unavailable, "agent idle past its TTL")
+			}
+			return ctx.Err()
+		case r := <-msgs:
+			if r.err != nil {
+				h.log.Error("Error receiving message from agent", "error", r.err, "agent_id", agentID)
+				return r.err
+			}
+			msg = r.msg
+		}
+
+		if id, ok := messageAgentID(msg); ok && id != certID {
+			h.log.Warn("agent id does not match certificate in stream", "cert_cn", certID, "received", id)
+			return status.Error(codes.PermissionDenied, "agent id does not match certificate")
 		}
 
 		switch payload := msg.Message.(type) {
@@ -380,33 +589,9 @@ func (h *Hub) AgentStream(stream grpc.BidiStreamingServer[proto.AgentMessage, pr
 				continue
 			}
 
-			currentAgentID := payload.Heartbeat.Base.AgentId
-			if agentID == "" {
-				agentID = currentAgentID
-				h.log.Info("Agent stream identified", "agent_id", agentID)
-
-				h.agentsLock.Lock()
-				if existingAgent, exists := h.agents[agentID]; exists {
-					agent = existingAgent
-					agent.streamActive = true
-					agent.stream = stream
-					agent.lastSeen = time.Now()
-				} else {
-					h.agentsLock.Unlock()
-					h.log.Warn("Agent not registered, closing stream", "agent_id", agentID)
-					return status.Errorf(codes.Unauthenticated, "agent not registered")
-				}
-				h.agentsLock.Unlock()
-			} else if currentAgentID != agentID {
-				h.log.Warn("Agent ID mismatch in stream", "expected", agentID, "received", currentAgentID)
-				return status.Errorf(codes.InvalidArgument, "agent ID mismatch")
-			}
-
-			if agent != nil {
-				h.agentsLock.Lock()
-				agent.lastSeen = time.Now()
-				h.agentsLock.Unlock()
-			}
+			h.agentsLock.Lock()
+			agent.lastSeen = time.Now()
+			h.agentsLock.Unlock()
 
 			// A heartbeat is a liveness pulse: tell the API the server is up so
 			// it can update last_seen + the in-memory status cache.
@@ -437,20 +622,10 @@ func (h *Hub) AgentStream(stream grpc.BidiStreamingServer[proto.AgentMessage, pr
 		case *proto.AgentMessage_Event:
 			// Unsolicited agent push (e.g. apps.status): forward verbatim onto
 			// the events queue. Also a liveness signal.
-			sourceID := agentID
-			if sourceID == "" && payload.Event.Base != nil {
-				sourceID = payload.Event.Base.AgentId
-			}
-			if sourceID == "" {
-				h.log.Warn("event without agent identity, dropping", "kind", payload.Event.Kind)
-				continue
-			}
-			if agent != nil {
-				h.agentsLock.Lock()
-				agent.lastSeen = time.Now()
-				h.agentsLock.Unlock()
-			}
-			h.publishEvent(bus.EventKind(payload.Event.Kind), sourceID, payload.Event.Payload)
+			h.agentsLock.Lock()
+			agent.lastSeen = time.Now()
+			h.agentsLock.Unlock()
+			h.publishEvent(bus.EventKind(payload.Event.Kind), certID, payload.Event.Payload)
 
 		case *proto.AgentMessage_Response:
 			if payload.Response.Base == nil {
@@ -459,7 +634,7 @@ func (h *Hub) AgentStream(stream grpc.BidiStreamingServer[proto.AgentMessage, pr
 			}
 
 			h.log.Info("Received response from agent",
-				"agent_id", agentID,
+				"agent_id", certID,
 				"request_id", payload.Response.RequestId,
 				"type", payload.Response.Type,
 				"response_code", payload.Response.Base.ResponseCode)
@@ -473,4 +648,24 @@ func (h *Hub) AgentStream(stream grpc.BidiStreamingServer[proto.AgentMessage, pr
 			h.log.Warn("Received unknown message type from agent", "agent_id", agentID)
 		}
 	}
+}
+
+// messageAgentID returns the agent id a stream message claims; ok is false
+// when the message carries no header.
+func messageAgentID(msg *proto.AgentMessage) (id string, ok bool) {
+	switch p := msg.Message.(type) {
+	case *proto.AgentMessage_Heartbeat:
+		if b := p.Heartbeat.GetBase(); b != nil {
+			return b.AgentId, true
+		}
+	case *proto.AgentMessage_Event:
+		if b := p.Event.GetBase(); b != nil {
+			return b.AgentId, true
+		}
+	case *proto.AgentMessage_Response:
+		if b := p.Response.GetBase(); b != nil {
+			return b.AgentId, true
+		}
+	}
+	return "", false
 }

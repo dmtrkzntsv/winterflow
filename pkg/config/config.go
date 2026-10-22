@@ -1,6 +1,9 @@
 package config
 
 import (
+	"crypto/tls"
+	"fmt"
+	"net"
 	"os"
 	"path"
 	"path/filepath"
@@ -17,16 +20,18 @@ func NewServerConfig(mode string) *ServerConfig {
 	return &ServerConfig{mode: mode}
 }
 
-func (c *ServerConfig) GetRegion() string {
-	return os.Getenv("REGION")
-}
-
 func (c *ServerConfig) GetLogLevel() string {
 	return os.Getenv("LOG_LEVEL")
 }
 
 func (c *ServerConfig) GetApiPort() string {
 	return os.Getenv("API_PORT")
+}
+
+// GetApiListenAddr is the address the HTTP API listens on: API_LISTEN_ADDR
+// (an IP or host; empty = every interface) joined with API_PORT.
+func (c *ServerConfig) GetApiListenAddr() string {
+	return net.JoinHostPort(strings.TrimSpace(os.Getenv("API_LISTEN_ADDR")), c.GetApiPort())
 }
 
 func (c *ServerConfig) GetWebURL() string {
@@ -42,8 +47,41 @@ func (c *ServerConfig) GetSecureCookies() bool {
 	return strings.HasPrefix(os.Getenv("WEB_URL"), "https://")
 }
 
+// GetDbURL is DATABASE_URL. Standalone defaults to a local SQLite file;
+// the distributed API has no default (Postgres is required).
 func (c *ServerConfig) GetDbURL() string {
-	return os.Getenv("DATABASE_URL")
+	v := os.Getenv("DATABASE_URL")
+	if v == "" && c.IsStandalone() {
+		return "sqlite://winterflow.sqlite"
+	}
+	return v
+}
+
+// ValidateDatabaseURL checks the DATABASE_URL scheme against the topology:
+// standalone takes sqlite or postgres, the distributed API postgres only.
+func (c *ServerConfig) ValidateDatabaseURL() error {
+	u := c.GetDbURL()
+	isPG := strings.HasPrefix(u, "postgres://") || strings.HasPrefix(u, "postgresql://")
+	isSQLite := strings.HasPrefix(u, "sqlite://")
+	if c.IsStandalone() {
+		if !isPG && !isSQLite {
+			return fmt.Errorf("DATABASE_URL must start with sqlite://, postgres:// or postgresql:// in standalone mode")
+		}
+		return nil
+	}
+	if !isPG {
+		return fmt.Errorf("DATABASE_URL must start with postgres:// or postgresql:// in distributed mode (SQLite is standalone only)")
+	}
+	return nil
+}
+
+// ValidateEnrollment checks that the CA the API signs agent certificates
+// with (HUB_CERT_DIR) exists and that its key matches its certificate.
+func (c *ServerConfig) ValidateEnrollment() error {
+	if _, err := tls.LoadX509KeyPair(c.GetHubCACertPath(), c.GetHubCAKeyPath()); err != nil {
+		return fmt.Errorf("enrollment CA (%s, %s): %w", c.GetHubCACertPath(), c.GetHubCAKeyPath(), err)
+	}
+	return nil
 }
 
 func (c *ServerConfig) GetAllowedOrigins() string {
@@ -113,32 +151,49 @@ func (c *ServerConfig) GetRedisCredentials() (addr, pass string, db int) {
 	return addr, pass, db
 }
 
-func (c *ServerConfig) GetBusRequestQueue() string {
-	v := os.Getenv("BUS_REQUEST_QUEUE")
-	if v == "" {
-		v = "requests:" + c.GetRegion()
+// GetRedisTLS reports whether Redis connections use TLS. REDIS_TLS wins;
+// otherwise on for distributed and off for standalone (which never builds a
+// Redis client anyway).
+func (c *ServerConfig) GetRedisTLS() bool {
+	switch strings.ToLower(os.Getenv("REDIS_TLS")) {
+	case "true", "1":
+		return true
+	case "false", "0":
+		return false
 	}
-	return v
+	return !c.IsStandalone()
 }
 
-func (c *ServerConfig) GetBusResponseQueue() string {
-	v := os.Getenv("BUS_RESPONSE_QUEUE")
-	if v == "" {
-		v = "responses:" + c.GetRegion()
+// GetRedisCACertPath is the CA that signed Redis's certificate; default the
+// Winterflow CA.
+func (c *ServerConfig) GetRedisCACertPath() string {
+	if v := os.Getenv("REDIS_CA_CERT_PATH"); v != "" {
+		return v
 	}
-	return v
+	return c.GetHubCACertPath()
 }
+
+// Bus channel names are fixed. Standalone's in-process bridge uses the plain
+// request queue; in the distributed topology each hub reads its own
+// HubRequestQueue.
+func (c *ServerConfig) GetBusRequestQueue() string  { return "bus:requests" }
+func (c *ServerConfig) GetBusResponseQueue() string { return "bus:responses" }
 
 // GetBusEventsQueue is the channel agents push unsolicited events onto
-// (heartbeat liveness, app/server status). Region-scoped: a region maps to a
-// single API instance, which is the sole consumer.
-func (c *ServerConfig) GetBusEventsQueue() string {
-	v := os.Getenv("BUS_EVENTS_QUEUE")
-	if v == "" {
-		v = "events:" + c.GetRegion()
-	}
-	return v
-}
+// (heartbeat liveness, app/server status).
+func (c *ServerConfig) GetBusEventsQueue() string { return "bus:events" }
+
+// HubRequestQueue is the API->hub command queue of one hub.
+func (c *ServerConfig) HubRequestQueue(hubID string) string { return "bus:requests:" + hubID }
+
+// GetHubRequestsChannel carries hub->API requests (agent auth, enrollment).
+func (c *ServerConfig) GetHubRequestsChannel() string { return "hub:requests" }
+
+// GetHubBroadcastChannel carries API->all-hubs messages.
+func (c *ServerConfig) GetHubBroadcastChannel() string { return "hub:broadcast" }
+
+// HubResponsesChannel carries API->hub replies for one hub.
+func HubResponsesChannel(hubID string) string { return "hub:responses:" + hubID }
 
 // GetAgentDataDir is the root under which the agent stores app revisions and
 // rendered deployments. Defaults to "data" (relative to the working directory)
@@ -206,6 +261,51 @@ func (c *ServerConfig) GetHubHost() string {
 
 func (c *ServerConfig) GetHubPort() string {
 	return os.Getenv("HUB_PORT")
+}
+
+// GetHubPublicAddr is the host:port agents dial to reach this hub.
+func (c *ServerConfig) GetHubPublicAddr() string {
+	return strings.TrimSpace(os.Getenv("HUB_PUBLIC_ADDR"))
+}
+
+// GetHubID identifies a hub on the bus: the host part of HUB_PUBLIC_ADDR.
+func (c *ServerConfig) GetHubID() string {
+	host, _, err := net.SplitHostPort(c.GetHubPublicAddr())
+	if err != nil {
+		return ""
+	}
+	return host
+}
+
+// GetHubCapacity is how many agents this hub should carry (default 1000).
+func (c *ServerConfig) GetHubCapacity() int {
+	n, err := strconv.Atoi(strings.TrimSpace(os.Getenv("HUB_CAPACITY")))
+	if err != nil || n < 1 {
+		return 1000
+	}
+	return n
+}
+
+// GetHubAccepting reports whether new agents may be assigned to this hub
+// (default true; HUB_ACCEPTING=false drains it of new enrollments).
+func (c *ServerConfig) GetHubAccepting() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("HUB_ACCEPTING"))) {
+	case "false", "0", "no", "off":
+		return false
+	}
+	return true
+}
+
+// ValidateHub checks HUB_PUBLIC_ADDR is a host:port.
+func (c *ServerConfig) ValidateHub() error {
+	host, port, err := net.SplitHostPort(c.GetHubPublicAddr())
+	if err != nil || host == "" || port == "" {
+		return fmt.Errorf("HUB_PUBLIC_ADDR must be host:port (got %q)", c.GetHubPublicAddr())
+	}
+	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+		return fmt.Errorf("HUB_PUBLIC_ADDR has an invalid port %q", port)
+	}
+	return nil
 }
 
 // IsIngressEnabled reports whether the embedded reverse proxy should run.

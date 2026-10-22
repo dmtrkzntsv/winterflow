@@ -78,4 +78,24 @@ func TestServerRoutes(t *testing.T) {
 			t.Fatalf("owner's servers %+v lack the member's %s", list.Servers, reg.Server.ID)
 		}
 	})
+
+	t.Run("delete removes the server and refuses a foreign one", func(t *testing.T) {
+		foreign := e.foreignServer(t)
+		owner.post(t, "/api/v1/server/delete-server", server.DeleteServerRequest{ServerID: foreign}).expect(t, http.StatusForbidden)
+		owner.post(t, "/api/v1/server/delete-server", server.DeleteServerRequest{ServerID: "00000000-0000-0000-0000-0000000000ff"}).expect(t, http.StatusForbidden)
+
+		victim := owner.registerServer(t)
+		e.publishEvent(t, bus.EventMessage{ServerID: victim, Kind: bus.EventServerOnline})
+		owner.post(t, "/api/v1/server/delete-server", server.DeleteServerRequest{ServerID: victim}).expect(t, http.StatusOK)
+		var list server.GetServersResponse
+		owner.get(t, "/api/v1/server/get-servers", nil).expect(t, http.StatusOK).data(t, &list)
+		for _, s := range list.Servers {
+			if s.ID == victim {
+				t.Fatalf("deleted server still listed: %+v", list.Servers)
+			}
+		}
+		owner.get(t, "/api/v1/server/get-public-key", url.Values{"server_id": {victim}}).expect(t, http.StatusForbidden)
+		// A second delete finds nothing owned.
+		owner.post(t, "/api/v1/server/delete-server", server.DeleteServerRequest{ServerID: victim}).expect(t, http.StatusForbidden)
+	})
 }

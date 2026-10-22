@@ -27,7 +27,6 @@ func TestMain(m *testing.M) {
 	for k, v := range map[string]string{
 		"JWT_SECRET":           "contract-secret",
 		"WEB_URL":              "http://127.0.0.1",
-		"REGION":               "contract",
 		"AVATARS_STORAGE_PATH": tmp,
 		"AGENT_DATA_DIR":       tmp,
 		"INGRESS_ENABLED":      "false",

@@ -272,3 +272,58 @@ func TestFanSyncDrivesEverySync(t *testing.T) {
 		}
 	}
 }
+
+type idLookup struct {
+	known map[string]bool
+	calls map[string]int
+}
+
+func (l *idLookup) ServerHub(_ context.Context, id string) (string, error) {
+	l.calls[id]++
+	if !l.known[id] {
+		return "", model.ErrNotFound
+	}
+	return "", nil
+}
+
+func TestEventsFromUnknownServerDropped(t *testing.T) {
+	rec := &recorder{}
+	sink, cache := newTestSink(rec, []string{"alice"})
+	l := &idLookup{known: map[string]bool{"srv-1": true}, calls: map[string]int{}}
+	now := time.Now()
+	k := newKnownServers(l)
+	k.now = func() time.Time { return now }
+	sink.known = k.known
+	ctx := context.Background()
+
+	for range 3 {
+		sink.handle(ctx, bus.EventMessage{ServerID: "ghost", Kind: bus.EventServerOnline})
+		sink.handle(ctx, bus.EventMessage{ServerID: "srv-1", Kind: bus.EventServerOnline})
+	}
+	if cache.ServerLiveness("ghost", now) == status.LivenessOnline {
+		t.Fatal("event from unknown server was processed")
+	}
+	if rec.count() != 1 {
+		t.Fatalf("want 1 notification (srv-1 only), got %d", rec.count())
+	}
+	if l.calls["ghost"] != 1 || l.calls["srv-1"] != 1 {
+		t.Fatalf("lookups not cached: %v", l.calls)
+	}
+	// After the TTL the lookup runs again (a server created since is seen).
+	l.known["ghost"] = true
+	now = now.Add(2 * time.Minute)
+	if !k.known(ctx, "ghost") || l.calls["ghost"] != 2 {
+		t.Fatalf("negative entry did not expire: %v", l.calls)
+	}
+}
+
+func TestKnownServersCacheBounded(t *testing.T) {
+	l := &idLookup{known: map[string]bool{}, calls: map[string]int{}}
+	k := newKnownServers(l)
+	for i := range knownServersMax * 2 {
+		k.known(context.Background(), fmt.Sprintf("id-%d", i))
+	}
+	if len(k.entries) > knownServersMax {
+		t.Fatalf("cache grew to %d", len(k.entries))
+	}
+}

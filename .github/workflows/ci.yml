@@ -99,6 +99,18 @@ jobs:
       - name: install.sh dry-run suite
         run: bash scripts/install_test.sh
 
+      - name: install-agent.sh dry-run suite
+        run: bash scripts/install_agent_test.sh
+
+      - name: install-control-plane.sh dry-run suite
+        run: bash scripts/install_control_plane_test.sh
+
+      - name: shared installer helpers stay identical
+        run: bash scripts/shared_helpers_test.sh
+
+      - name: release build and upload contract
+        run: bash scripts/release_test.sh
+
   # Generated sqlc code (internal/infra/db/sqlc/gen) must match the queries
   # and migrations it is built from.
   sqlc:

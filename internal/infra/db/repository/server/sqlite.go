@@ -90,3 +90,27 @@ func (sqliteQuerier) GetLatestRegistrationCode(ctx context.Context, db backend.D
 func (sqliteQuerier) InsertCertificate(ctx context.Context, db backend.DBTX, p certificateParams) error {
 	return sqlitegen.New(db).InsertCertificate(ctx, p)
 }
+
+func (sqliteQuerier) GetServerHub(ctx context.Context, db backend.DBTX, serverID string) (*string, error) {
+	return sqlitegen.New(db).GetServerHub(ctx, serverID)
+}
+
+func (sqliteQuerier) CountServersByHub(ctx context.Context, db backend.DBTX) ([]hubCountRow, error) {
+	return sqlitegen.New(db).CountServersByHub(ctx)
+}
+
+func (sqliteQuerier) DeleteServerRow(ctx context.Context, db backend.DBTX, serverID string) error {
+	return sqlitegen.New(db).DeleteServerRow(ctx, serverID)
+}
+
+func (sqliteQuerier) DeleteServerDomainRows(ctx context.Context, db backend.DBTX, serverID string) error {
+	return sqlitegen.New(db).DeleteServerDomainRows(ctx, serverID)
+}
+
+func (sqliteQuerier) DeleteServerEnrollments(ctx context.Context, db backend.DBTX, serverID string) error {
+	return sqlitegen.New(db).DeleteServerEnrollments(ctx, &serverID)
+}
+
+func (sqliteQuerier) GetActiveServerCertificate(ctx context.Context, db backend.DBTX, serverID string) (string, error) {
+	return sqlitegen.New(db).GetActiveServerCertificate(ctx, serverID)
+}

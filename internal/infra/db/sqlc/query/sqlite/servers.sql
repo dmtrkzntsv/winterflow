@@ -86,3 +86,35 @@ SELECT code FROM server_registrations ORDER BY created_at DESC LIMIT 1;
 -- name: InsertCertificate :exec
 INSERT INTO server_certificates (certificate_id, server_id, certificate, is_active, expires_at, created_at)
 VALUES (?, ?, ?, ?, ?, ?);
+
+-- name: GetServerHub :one
+-- The hub the server was assigned to (NULL: none; no row: no server).
+SELECT hub_id FROM servers WHERE server_id = ?;
+
+-- name: CountServersByHub :many
+-- How many servers each hub carries (the hub picker's assigned counts).
+SELECT hub_id, count(*) AS servers FROM servers
+WHERE hub_id IS NOT NULL
+GROUP BY hub_id
+ORDER BY hub_id;
+
+-- name: DeleteServerRow :exec
+-- Cascades to the server's certificates, capabilities, features, apps,
+-- storages, shared variables, metrics, alerts and template instances.
+DELETE FROM servers WHERE server_id = ?;
+
+-- name: DeleteServerDomainRows :exec
+-- app_domains carries no foreign key to servers.
+DELETE FROM app_domains WHERE server_id = ?;
+
+-- name: DeleteServerEnrollments :exec
+-- agent_enrollments.server_id carries no foreign key either; the row holds
+-- the issued certificate.
+DELETE FROM agent_enrollments WHERE server_id = ?;
+
+-- name: GetActiveServerCertificate :one
+-- The newest active certificate of a server (no row: none).
+SELECT certificate FROM server_certificates
+WHERE server_id = ? AND is_active = TRUE
+ORDER BY created_at DESC
+LIMIT 1;

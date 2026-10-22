@@ -1,8 +1,9 @@
 // Package hubusers manages the Redis ACL user of every hub (hub:<hub_id>):
 // the API creates or resets it when a hub enrolls and deletes it when the
 // hub is retired, over its own admin connection. A hub's user may write only
-// its own keys, read every hub's status (its peer listing) and use the bus
-// channels a hub uses, with the few commands that takes; every change is written to the server's aclfile (ACL SAVE).
+// its own keys, read every hub's status (its peer listing), publish and
+// subscribe only where a hub does, with the few commands that takes. Every
+// change is written to the server's aclfile (ACL SAVE).
 package hubusers
 
 import (
@@ -49,25 +50,32 @@ func New(rc *redis.Client) *Users { return &Users{rc: rc} }
 func Username(hubID string) string { return "hub:" + hubID }
 
 // HubACLRules is the exact rule list of hubID's user (after "reset on
-// >password"): its own status and drain keys, read-only every hub's status
-// key (the peer listing a stopping hub does), the hub's channels, and the
-// commands the hub's go-redis client sends for them, the connection
-// handshake included.
+// >password"), matching what a hub does and nothing more:
+//   - keys: its own status and drain keys read/write; every hub's status
+//     read-only (the peer listing a stopping hub does: SCAN + MGET). SCAN
+//     shows every key name, so the dedicated Redis instance must hold only
+//     hub:* keys;
+//   - root channels, publish only: hub:requests (to the API), bus:responses
+//     and bus:events (agent replies and events);
+//   - a selector, subscribe only: its own bus:requests:<id> and
+//     hub:responses:<id>, and hub:broadcast (so no hub can forge a
+//     broadcast or read another hub's or the API's traffic);
+//   - the commands its go-redis client sends, the connection handshake and
+//     SELECT (a non-zero REDIS_DB) included.
 func HubACLRules(hubID string) []string {
 	return []string{
 		"resetkeys", "resetchannels",
 		"~hub:status:" + hubID,
 		"~hub:draining:" + hubID,
-		// Read-only: every hub's status, for the stopping hub's peer
-		// listing (Registry.List: SCAN + MGET).
 		"%R~hub:status:*",
-		"&bus:requests:" + hubID,
-		"&hub:responses:" + hubID,
-		"&bus:responses", "&bus:events", "&hub:requests", "&hub:broadcast",
+		"&hub:requests", "&bus:responses", "&bus:events",
 		"-@all",
-		"+ping", "+hello", "+auth", "+client|setinfo", "+client|setname",
+		"+ping", "+hello", "+auth", "+select",
+		"+client|setinfo", "+client|setname",
 		"+get", "+set", "+del", "+exists", "+scan", "+mget",
-		"+publish", "+subscribe", "+unsubscribe",
+		"+publish", "+unsubscribe",
+		"(&bus:requests:" + hubID + " &hub:responses:" + hubID +
+			" &hub:broadcast +subscribe)",
 	}
 }
 

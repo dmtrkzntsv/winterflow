@@ -14,13 +14,13 @@ func TestHubACLRules(t *testing.T) {
 		"~hub:status:hub-01.winterflow.dev",
 		"~hub:draining:hub-01.winterflow.dev",
 		"%R~hub:status:*",
-		"&bus:requests:hub-01.winterflow.dev",
-		"&hub:responses:hub-01.winterflow.dev",
-		"&bus:responses", "&bus:events", "&hub:requests", "&hub:broadcast",
+		"&hub:requests", "&bus:responses", "&bus:events",
 		"-@all",
-		"+ping", "+hello", "+auth", "+client|setinfo", "+client|setname",
+		"+ping", "+hello", "+auth", "+select",
+		"+client|setinfo", "+client|setname",
 		"+get", "+set", "+del", "+exists", "+scan", "+mget",
-		"+publish", "+subscribe", "+unsubscribe",
+		"+publish", "+unsubscribe",
+		"(&bus:requests:hub-01.winterflow.dev &hub:responses:hub-01.winterflow.dev &hub:broadcast +subscribe)",
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("rules:\n got %q\nwant %q", got, want)

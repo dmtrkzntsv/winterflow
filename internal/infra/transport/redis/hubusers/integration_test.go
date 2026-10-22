@@ -139,34 +139,54 @@ func TestIntegrationHubUserCanDoExactlyTheHubOperations(t *testing.T) {
 		t.Fatalf("withdraw: %v", err)
 	}
 
-	allowed := []string{
-		"bus:requests:" + id, "hub:responses:" + id,
-		"bus:responses", "bus:events", "hub:requests", "hub:broadcast",
-	}
-	ps := rc.Subscribe(ctx, allowed...)
+	// The hub subscribes to its own queue, its replies and the broadcast;
+	// the API (admin here) publishes on them.
+	subs := []string{"bus:requests:" + id, "hub:responses:" + id, "hub:broadcast"}
+	ps := rc.Subscribe(ctx, subs...)
 	defer ps.Close()
-	for range allowed {
+	for range subs {
 		if _, err := ps.Receive(ctx); err != nil {
 			t.Fatalf("subscribe: %v", err)
 		}
 	}
-	for _, ch := range allowed {
-		if err := rc.Publish(ctx, ch, "m:"+ch).Err(); err != nil {
-			t.Fatalf("publish %s: %v", ch, err)
+	for _, ch := range subs {
+		if err := admin.Publish(ctx, ch, "m:"+ch).Err(); err != nil {
+			t.Fatal(err)
 		}
 		msg, err := ps.ReceiveMessage(ctx)
 		if err != nil || msg.Channel != ch || msg.Payload != "m:"+ch {
 			t.Fatalf("receive on %s: %+v, %v", ch, msg, err)
 		}
 	}
-	if err := ps.Unsubscribe(ctx, allowed[0]); err != nil {
+	if err := ps.Unsubscribe(ctx, subs[0]); err != nil {
 		t.Fatalf("unsubscribe: %v", err)
 	}
 	if err := ps.Ping(ctx); err != nil {
 		t.Fatalf("ping while subscribed: %v", err)
 	}
 
-	// The bus the hub runs on: subscribe and publish a JSON message.
+	// The hub publishes agent replies, agent events and its requests to the
+	// API; the API (admin here) reads them.
+	pubs := []string{"hub:requests", "bus:responses", "bus:events"}
+	aps := admin.Subscribe(ctx, pubs...)
+	defer aps.Close()
+	for range pubs {
+		if _, err := aps.Receive(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, ch := range pubs {
+		if err := rc.Publish(ctx, ch, "m:"+ch).Err(); err != nil {
+			t.Fatalf("publish %s: %v", ch, err)
+		}
+		msg, err := aps.ReceiveMessage(ctx)
+		if err != nil || msg.Channel != ch || msg.Payload != "m:"+ch {
+			t.Fatalf("receive on %s: %+v, %v", ch, msg, err)
+		}
+	}
+
+	// The bus the hub runs on: a JSON message in on its reply channel, one
+	// out on hub:requests.
 	b := redisbus.NewBus(rc, logger.NewLogger(logger.LoggerConfiguration{LogLevel: "error", Service: "test"}))
 	msgs, stop, err := b.Subscribe(ctx, "hub:responses:"+id)
 	if err != nil {
@@ -175,7 +195,7 @@ func TestIntegrationHubUserCanDoExactlyTheHubOperations(t *testing.T) {
 	defer func() { _ = stop() }()
 	deadline := time.After(10 * time.Second)
 	for got := false; !got; {
-		_ = b.Publish(ctx, "hub:responses:"+id, map[string]string{"k": "v"})
+		_ = admin.Publish(ctx, "hub:responses:"+id, `{"k":"v"}`).Err()
 		select {
 		case m := <-msgs:
 			got = m.Payload == `{"k":"v"}`
@@ -184,6 +204,24 @@ func TestIntegrationHubUserCanDoExactlyTheHubOperations(t *testing.T) {
 			t.Fatal("no bus message")
 		}
 	}
+	if err := b.Publish(ctx, "hub:requests", map[string]string{"k": "v"}); err != nil {
+		t.Fatalf("bus publish: %v", err)
+	}
+	if msg, err := aps.ReceiveMessage(ctx); err != nil || msg.Payload != `{"k":"v"}` {
+		t.Fatalf("bus publish received: %+v, %v", msg, err)
+	}
+
+	// A non-zero REDIS_DB makes go-redis send SELECT on connect.
+	t.Setenv("REDIS_DB", "1")
+	rc1, err := redisbus.NewRedisClient(config.NewServerConfig("distributed"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rc1.Close()
+	if err := rc1.Set(ctx, "hub:status:"+id, "{}", time.Minute).Err(); err != nil {
+		t.Fatalf("REDIS_DB=1: %v", err)
+	}
+	_ = rc1.Del(ctx, "hub:status:"+id)
 
 	// The stopping hub's peer listing (SCAN + MGET over every hub's status)
 	// works, and reads another hub's status.
@@ -226,6 +264,9 @@ func TestIntegrationHubUserCanDoExactlyTheHubOperations(t *testing.T) {
 		"del other":            rc.Del(ctx, "hub:status:"+other).Err(),
 		"get unrelated":        rc.Get(ctx, "session:x").Err(),
 		"publish other queue":  rc.Publish(ctx, "bus:requests:"+other, "x").Err(),
+		"publish broadcast":    rc.Publish(ctx, "hub:broadcast", "x").Err(),
+		"publish own queue":    rc.Publish(ctx, "bus:requests:"+id, "x").Err(),
+		"publish own replies":  rc.Publish(ctx, "hub:responses:"+id, "x").Err(),
 		"publish other resp":   rc.Publish(ctx, "hub:responses:"+other, "x").Err(),
 		"publish bus:requests": rc.Publish(ctx, "bus:requests", "x").Err(),
 		"keys":                 rc.Keys(ctx, "*").Err(),
@@ -239,10 +280,15 @@ func TestIntegrationHubUserCanDoExactlyTheHubOperations(t *testing.T) {
 			t.Errorf("%s: want NOPERM, got %v", what, err)
 		}
 	}
-	ps2 := rc.Subscribe(ctx, "hub:responses:"+other)
-	defer ps2.Close()
-	if _, err := ps2.Receive(ctx); !isNoPerm(err) {
-		t.Errorf("subscribe to another hub's channel: want NOPERM, got %v", err)
+	for _, ch := range []string{
+		"hub:responses:" + other, "bus:requests:" + other,
+		"bus:responses", "bus:events", "hub:requests",
+	} {
+		ps2 := rc.Subscribe(ctx, ch)
+		if _, err := ps2.Receive(ctx); !isNoPerm(err) {
+			t.Errorf("subscribe %s: want NOPERM, got %v", ch, err)
+		}
+		_ = ps2.Close()
 	}
 	if v := admin.Get(ctx, "hub:status:"+other).Val(); v == "" || v == "x" {
 		t.Errorf("another hub's status was changed or deleted: %q", v)
